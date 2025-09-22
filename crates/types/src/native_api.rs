@@ -4,6 +4,7 @@ use crate::{
 };
 use alloc::vec;
 use alloy_primitives::{Bytes, B256};
+use core::cell::RefCell;
 
 /// A trait for providing shared API functionality.
 pub trait NativeAPI {
@@ -70,9 +71,9 @@ pub trait NativeAPI {
     fn fuel(&self) -> u64;
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64;
     fn charge_fuel(&self, fuel_consumed: u64);
-    fn exec<I: Into<BytecodeOrHash>>(
+    fn exec(
         &self,
-        code_hash: I,
+        code_hash: BytecodeOrHash,
         input: &[u8],
         fuel_limit: Option<u64>,
         state: u32,
@@ -106,20 +107,62 @@ pub trait NativeAPI {
     }
 }
 
-#[macro_export]
-macro_rules! bn254_add_common_impl {
-    ($p: ident, $q: ident, $action_p_eq_q: block, $action_rest: block) => {
-        if *$p == [0u8; 64] {
-            if *$q != [0u8; 64] {
-                *$p = *$q;
-            }
-            return;
-        } else if *$q == [0u8; 64] {
-            return;
-        } else if *$p == *$q {
-            $action_p_eq_q
-        } else {
-            $action_rest
-        }
-    };
+pub trait InterruptAPI {
+    fn interrupt(
+        &self,
+        code_hash: BytecodeOrHash,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32);
+}
+
+impl<T: NativeAPI + ?Sized> InterruptAPI for T {
+    // #[inline(always)]
+    fn interrupt(
+        &self,
+        code_hash: BytecodeOrHash,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32) {
+        NativeAPI::exec(self, code_hash, input, fuel_limit, state)
+    }
+}
+
+pub struct ExtractedInterruptionContext {
+    pub code_hash: B256,
+    pub input: Bytes,
+    pub fuel_limit: Option<u64>,
+    pub state: u32,
+}
+
+#[derive(Default)]
+pub struct InterruptionExtractingAdapter {
+    interruption: RefCell<Option<ExtractedInterruptionContext>>,
+}
+
+impl InterruptionExtractingAdapter {
+    pub fn extract(self) -> ExtractedInterruptionContext {
+        self.interruption.into_inner().unwrap()
+    }
+}
+
+impl InterruptAPI for InterruptionExtractingAdapter {
+    fn interrupt(
+        &self,
+        code_hash: BytecodeOrHash,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32) {
+        let context = ExtractedInterruptionContext {
+            code_hash: code_hash.code_hash(),
+            input: Bytes::copy_from_slice(input),
+            fuel_limit,
+            state,
+        };
+        _ = self.interruption.borrow_mut().insert(context);
+        (0, 0, 0)
+    }
 }

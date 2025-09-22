@@ -104,15 +104,22 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
         buffer
     }
 
+    fn bytes_input(&self) -> Bytes {
+        Bytes::from(self.input())
+    }
+
     fn read_context(&self, target: &mut [u8], offset: u32);
 
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64);
 
     fn sync_evm_gas(&self, gas_consumed: u64, gas_refunded: i64) {
-        // TODO(dmitry123): "do we care about overflow here?"
         self.charge_fuel_manually(
-            gas_consumed * FUEL_DENOM_RATE,
-            gas_refunded * FUEL_DENOM_RATE as i64,
+            gas_consumed
+                .checked_mul(FUEL_DENOM_RATE)
+                .unwrap_or(u64::MAX),
+            gas_refunded
+                .checked_mul(FUEL_DENOM_RATE as i64)
+                .unwrap_or(i64::MAX),
         );
     }
 
@@ -133,6 +140,16 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     }
 
     fn native_exit(&self, exit_code: ExitCode) -> !;
+
+    fn native_exec(
+        &self,
+        code_hash: B256,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32);
+
+    fn return_data(&self) -> Bytes;
 
     fn exit(&self) -> ! {
         self.native_exit(ExitCode::Ok)

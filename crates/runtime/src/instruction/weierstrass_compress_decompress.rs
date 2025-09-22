@@ -1,20 +1,17 @@
 use crate::{
-    instruction::weierstrass_helpers::{
-        g1_from_compressed_bytes,
-        g1_from_decompressed_bytes,
-        g2_from_compressed_bytes,
-        g2_from_decompressed_bytes,
+    instruction::{
+        syscall_process_exit_code,
+        weierstrass_helpers::{
+            g1_from_compressed_bytes, g1_from_decompressed_bytes, g2_from_compressed_bytes,
+            g2_from_decompressed_bytes,
+        },
     },
-    utils::syscall_process_exit_code,
     RuntimeContext,
 };
 use ark_serialize::{CanonicalSerialize, Compress};
 use fluentbase_types::{
-    ExitCode,
-    BN254_G1_POINT_COMPRESSED_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE,
+    ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 use std::marker::PhantomData;

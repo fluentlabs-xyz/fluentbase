@@ -1,21 +1,17 @@
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall};
 use core::str::from_utf8;
-use fluentbase_sdk::{address, bytes, calc_create_address, constructor, Address, U256};
-use fluentbase_sdk_testing::{
-    try_print_utf8_error,
-    EvmTestingContext,
-    HostTestingContextNativeAPI,
-    TxBuilder,
+use fluentbase_sdk::{
+    address, bytes, calc_create_address, constructor::encode_constructor_params, Address, U256,
+};
+use fluentbase_testing::{
+    try_print_utf8_error, EvmTestingContext, HostTestingContextNativeAPI, TxBuilder,
 };
 use fluentbase_types::{PRECOMPILE_BLAKE2F, PRECOMPILE_SECP256K1_RECOVER};
 use hex_literal::hex;
 use revm::{
-    bytecode::opcode,
-    context::result::ExecutionResult::Revert,
-    primitives::hardfork::SpecId,
+    bytecode::opcode, context::result::ExecutionResult::Revert, primitives::hardfork::SpecId,
 };
-use fluentbase_sdk::constructor::encode_constructor_params;
 
 #[test]
 fn test_evm_greeting() {

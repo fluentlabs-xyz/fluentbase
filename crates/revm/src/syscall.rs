@@ -5,30 +5,35 @@ use crate::{
     ExecutionResult, NextAction,
 };
 use core::cmp::min;
+use fluentbase_evm::EthereumMetadata;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address, is_system_precompile, keccak256, syscall, Address, Bytes, ExitCode, Log,
-    LogData, B256, FUEL_DENOM_RATE, STATE_MAIN, SVM_ELF_MAGIC_BYTES, SVM_MAX_CODE_SIZE, U256,
-    WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
+    calc_create4_address, is_system_precompile, keccak256,
+    syscall::*,
+    Address, Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY,
+    PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
 };
-use revm::bytecode::opcode;
-use revm::interpreter::interpreter::ExtBytecode;
 use revm::{
-    bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
+    bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
     context::{Cfg, ContextError, ContextTr, CreateScheme, JournalTr},
     interpreter::{
         gas,
         gas::{sload_cost, sstore_cost, sstore_refund, warm_cold_cost},
+        interpreter::ExtBytecode,
         interpreter_types::InputsTr,
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, Gas, Host,
         MAX_INITCODE_SIZE,
     },
-    primitives::hardfork::{SpecId, BERLIN, ISTANBUL, TANGERINE},
+    primitives::{
+        hardfork::{SpecId, BERLIN, ISTANBUL, TANGERINE},
+        wasm::wasm_max_code_size,
+    },
     Database, Inspector,
 };
 use std::{boxed::Box, vec::Vec};
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn inspect_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
@@ -39,12 +44,12 @@ pub(crate) fn inspect_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     let prev_bytecode = frame.interpreter.bytecode.clone();
     let prev_hash = frame.interpreter.bytecode.hash().clone();
     let evm_opcode = match &inputs.syscall_params.code_hash {
-        &syscall::SYSCALL_ID_CALL => opcode::CALL,
-        &syscall::SYSCALL_ID_STATIC_CALL => opcode::STATICCALL,
-        &syscall::SYSCALL_ID_CALL_CODE => opcode::CALLCODE,
-        &syscall::SYSCALL_ID_DELEGATE_CALL => opcode::DELEGATECALL,
-        &syscall::SYSCALL_ID_CREATE => opcode::CREATE,
-        &syscall::SYSCALL_ID_CREATE2 => opcode::CREATE2,
+        &SYSCALL_ID_CALL => opcode::CALL,
+        &SYSCALL_ID_STATIC_CALL => opcode::STATICCALL,
+        &SYSCALL_ID_CALL_CODE => opcode::CALLCODE,
+        &SYSCALL_ID_DELEGATE_CALL => opcode::DELEGATECALL,
+        &SYSCALL_ID_CREATE => opcode::CREATE,
+        &SYSCALL_ID_CREATE2 => opcode::CREATE2,
         _ => return execute_rwasm_interruption::<CTX, INSP>(frame, ctx, inputs),
     };
     let bytecode = Bytecode::Rwasm([evm_opcode].into());
@@ -70,6 +75,7 @@ pub(crate) fn inspect_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     Ok(result)
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
@@ -151,8 +157,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 MalformedBuiltinParams
             );
             let slot = U256::from_le_slice(&inputs.syscall_params.input[0..32]);
-            #[cfg(feature = "debug-print")]
-            println!("SYSCALL_STORAGE_READ: slot={}", slot);
             // execute sload
             let value = ctx.journal_mut().sload(current_target_address, slot)?;
             charge_gas!(sload_cost(spec_id, value.is_cold));
@@ -171,8 +175,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
             let slot = U256::from_le_slice(&inputs.syscall_params.input[0..32]);
             let new_value = U256::from_le_slice(&inputs.syscall_params.input[32..64]);
-            #[cfg(feature = "debug-print")]
-            println!("SYSCALL_STORAGE_WRITE: slot={slot}, new_value={new_value}");
             // execute sstore
             let value = ctx
                 .journal_mut()
@@ -196,8 +198,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let target_address = Address::from_slice(&inputs.syscall_params.input[0..20]);
             let value = U256::from_le_slice(&inputs.syscall_params.input[20..52]);
             let contract_input = inputs.syscall_params.input.slice(52..);
-            #[cfg(feature = "debug-print")]
-            println!("SYSCALL_CALL: callee_address={target_address}, value={value}",);
             // for static calls with value greater than 0 - revert
             let has_transfer = !value.is_zero();
             if inputs.is_static && has_transfer {
@@ -281,8 +281,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE
             };
             charge_gas!(gas_limit);
-            #[cfg(feature = "debug-print")]
-            println!("SYSCALL_ID_STATIC_CALL: target_address={target_address}");
             inspect!(
                 opcode::STATICCALL,
                 [
@@ -319,8 +317,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let target_address = Address::from_slice(&inputs.syscall_params.input[0..20]);
             let value = U256::from_le_slice(&inputs.syscall_params.input[20..52]);
             let contract_input = inputs.syscall_params.input.slice(52..);
-            #[cfg(feature = "debug-print")]
-            println!("SYSCALL_CALL_CODE: target_address={target_address}, value={value}");
             let mut account_load = ctx.journal_mut().load_account_delegated(target_address)?;
             // set is_empty to false as we are not creating this account
             account_load.is_empty = false;
@@ -340,8 +336,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 gas_limit = gas_limit.saturating_add(gas::CALL_STIPEND);
             }
             // create call inputs
-            #[cfg(feature = "debug-print")]
-            println!("SYSCALL_CALL_CODE_inputs: target_address={}, caller={}, bytecode_address={}, gas={:?}", target_address, target_address, target_address, gas_limit);
             inspect!(
                 opcode::CALLCODE,
                 [
@@ -377,8 +371,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
             let target_address = Address::from_slice(&inputs.syscall_params.input[0..20]);
             let contract_input = inputs.syscall_params.input.slice(20..);
-            #[cfg(feature = "debug-print")]
-            println!("SYSCALL_DELEGATE_CALL: target_address={target_address}");
             let mut account_load = ctx.journal_mut().load_account_delegated(target_address)?;
             // set is_empty to false as we are not creating this account.
             account_load.is_empty = false;
@@ -447,20 +439,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 let init_code = inputs.syscall_params.input.slice(32..);
                 (CreateScheme::Create, value, init_code)
             };
-            #[cfg(feature = "debug-print")]
-            println!(
-                "SYSCALL_CREATE/CREATE2: scheme={scheme:?} value={value} init_code_len={}",
-                init_code.len()
-            );
             // make sure we don't exceed max possible init code
             // TODO(khasan): take into consideration evm.ctx().cfg().max_init_code
-            let max_initcode_size = if init_code.len() >= 4 && init_code[0..4] == WASM_MAGIC_BYTES {
-                WASM_MAX_CODE_SIZE
-            } else if init_code.len() >= 4 && init_code[0..4] == SVM_ELF_MAGIC_BYTES {
-                SVM_MAX_CODE_SIZE
-            } else {
-                MAX_INITCODE_SIZE
-            };
+            let max_initcode_size = wasm_max_code_size(&init_code).unwrap_or(MAX_INITCODE_SIZE);
             assert_return!(
                 init_code.len() <= max_initcode_size,
                 CreateContractSizeLimit
@@ -589,8 +570,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             if result.data.target_exists && is_system_precompile(&target) {
                 result.data.target_exists = false;
             }
-            #[cfg(feature = "debug-print")]
-            println!("SYSCALL_DESTROY_ACCOUNT: target={target} result={result:?}",);
             // charge gas cost
             charge_gas!(gas::selfdestruct_cost(spec_id, result));
             // return value as bytes with success exit code
@@ -644,25 +623,36 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 MalformedBuiltinParams
             );
             let address = Address::from_slice(&inputs.syscall_params.input[0..20]);
-            #[cfg(feature = "debug-print")]
-            println!("SYSCALL_CODE_SIZE: address={address}");
-            let code = ctx.journal_mut().code(address)?;
-            charge_gas!(if spec_id.is_enabled_in(BERLIN) {
-                warm_cold_cost(code.is_cold)
-            } else if spec_id.is_enabled_in(TANGERINE) {
-                700
-            } else {
-                20
-            });
-            let mut code_len = code.data.len() as u32;
-            // we store system precompile bytecode in the state trie,
-            // according to evm requirements, we should return empty code
+
+            // Load an account with the bytecode
+            let account = ctx.journal_mut().load_account_code(address)?;
+            charge_gas!(warm_cold_cost(account.is_cold));
+
+            // A special case for precompiled runtimes, where the way of extracting bytecode might be different.
+            // We keep this condition here and moved away from the runtime because Rust applications
+            // might also request EVM bytecode and initiating extra interruptions to fetch the data might be redundant.
+            let mut code_len = match &account.data.info.code {
+                Some(Bytecode::OwnableAccount(ownable_account_bytecode))
+                    if ownable_account_bytecode.owner_address == PRECOMPILE_EVM_RUNTIME =>
+                {
+                    EthereumMetadata::read_from_bytes(&ownable_account_bytecode.metadata)
+                        .as_ref()
+                        .map(EthereumMetadata::code_size)
+                        .unwrap_or(0)
+                }
+                code => code.as_ref().map(Bytecode::len).unwrap_or(0),
+            };
+
+            // We store system precompile bytecode in the state trie,
+            // according to EVM requirements, we should return empty code
             if is_system_precompile(&address) {
                 code_len = 0;
             }
+
+            // Code size we encode as 32-bytes in LE encoding,
+            // there is no need to return it as 32-bytes array, but it's more EVM friendly
             let code_size = U256::from(code_len);
-            let output = code_size.to_le_bytes::<32>();
-            return_result!(output, Ok);
+            return_result!(code_size.to_le_bytes::<32>(), Ok);
         }
 
         SYSCALL_ID_CODE_HASH => {
@@ -672,25 +662,39 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 MalformedBuiltinParams
             );
             let address = Address::from_slice(&inputs.syscall_params.input[0..20]);
-            let code_hash = ctx.journal_mut().code_hash(address)?;
-            #[cfg(feature = "debug-print")]
-            println!(
-                "SYSCALL_CODE_HASH: address={address} code_hash={}",
-                code_hash.data,
-            );
-            charge_gas!(if spec_id.is_enabled_in(BERLIN) {
-                warm_cold_cost(code_hash.is_cold)
-            } else if spec_id.is_enabled_in(TANGERINE) {
-                700
-            } else {
-                400
-            });
-            let mut code_hash = code_hash.data;
-            // we store system precompile bytecode in the state trie,
-            // according to evm requirements, we should return empty code
+
+            // Load an account from database
+            let account = ctx.journal_mut().load_account_code(address)?;
+            charge_gas!(warm_cold_cost(account.is_cold));
+
+            // Extract code hash for an account for delegated account.
+            // For EVM, we extract code hash from the metadata to satisfy EVM requirements.
+            // It requires the account to be loaded with bytecode.
+            let mut code_hash = match &account.data.info.code {
+                Some(Bytecode::OwnableAccount(ownable_account_bytecode))
+                    if ownable_account_bytecode.owner_address == PRECOMPILE_EVM_RUNTIME =>
+                {
+                    EthereumMetadata::read_from_bytes(&ownable_account_bytecode.metadata)
+                        .as_ref()
+                        .map(EthereumMetadata::code_hash)
+                        .unwrap_or(B256::ZERO)
+                }
+                // We return code hash only if account exists (not empty),
+                // this is a requirement from EVM
+                _ if account.is_empty() => B256::ZERO,
+                _ => account.info.code_hash,
+            };
+
             if is_system_precompile(&address) {
+                // We store system precompile bytecode in the state trie,
+                // according to evm requirements, we should return empty code
                 code_hash = B256::ZERO;
+            } else if code_hash == B256::ZERO && !account.is_empty() {
+                // If the delegated code hash is zero, then it might be a contract deployment stage,
+                // for non-empty account return KECCAK_EMPTY
+                code_hash = KECCAK_EMPTY;
             }
+
             return_result!(code_hash, Ok);
         }
 
@@ -704,24 +708,43 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let mut reader = inputs.syscall_params.input[20..].reader();
             let _code_offset = reader.read_u64::<LittleEndian>().unwrap();
             let code_length = reader.read_u64::<LittleEndian>().unwrap();
-            #[cfg(feature = "debug-print")]
-            println!("SYSCALL_CODE_COPY: address={address} code_offset={_code_offset} code_length={code_length}");
-            let code = ctx.journal_mut().code(address)?;
-            let Some(gas_cost) = gas::extcodecopy_cost(spec_id, code_length as usize, code.is_cold)
+
+            // Load account with bytecode and charge gas for the call
+            let account = ctx.journal_mut().load_account_code(address)?;
+            let Some(gas_cost) =
+                gas::extcodecopy_cost(spec_id, code_length as usize, account.is_cold)
             else {
                 return_result!(OutOfFuel);
             };
             charge_gas!(gas_cost);
+
+            // If requested code length is zero, then there is no need to proceed
             if code_length == 0 {
                 return_result!(Bytes::new(), Ok);
             }
-            let mut bytecode = code.data;
+
+            let mut bytecode = match &account.data.info.code {
+                Some(Bytecode::OwnableAccount(ownable_account_bytecode))
+                    if ownable_account_bytecode.owner_address == PRECOMPILE_EVM_RUNTIME =>
+                {
+                    EthereumMetadata::read_from_bytes(&ownable_account_bytecode.metadata)
+                        .as_ref()
+                        .map(EthereumMetadata::code_copy)
+                        .unwrap_or_default()
+                }
+                code => code
+                    .as_ref()
+                    .map(Bytecode::original_bytes)
+                    .unwrap_or_default(),
+            };
+
             // we store system precompile bytecode in the state trie,
             // according to evm requirements, we should return empty code
             if is_system_precompile(&address) {
                 bytecode = Bytes::new();
             }
-            // TODO(dmitry123): "add offset/length checks"
+
+            // TODO(dmitry123): Add offset/length checks, otherwise gas can be abused!
             return_result!(bytecode, Ok);
         }
 
@@ -771,11 +794,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
             let mut output = [0u8; 4 + 3];
             LittleEndian::write_u32(&mut output, ownable_account_bytecode.metadata.len() as u32);
-            #[cfg(feature = "debug-print")]
-            println!(
-                "SYSCALL_METADATA_SIZE: address={address} metadata_size={}",
-                ownable_account_bytecode.metadata.len() as u32
-            );
             output[4] = 0x01u8; // the account belongs to the same runtime
             output[5] = account.is_cold as u8;
             output[6] = account.is_empty() as u8;
@@ -799,11 +817,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let account = ctx
                 .journal_mut()
                 .load_account_code(derived_metadata_address)?;
-            #[cfg(feature = "debug-print")]
-            println!(
-                "SYSCALL_METADATA_CREATE: address={derived_metadata_address} salt={salt} length={}",
-                metadata.len(),
-            );
             // make sure there is no account create collision
             if !account.is_empty() {
                 return_result!(CreateContractCollision);
@@ -854,11 +867,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     let offset =
                         LittleEndian::read_u32(&inputs.syscall_params.input[20..24]) as usize;
                     let length = inputs.syscall_params.input[24..].len();
-                    #[cfg(feature = "debug-print")]
-                    println!(
-                        "SYSCALL_METADATA_WRITE: address={address} offset={}, length={}",
-                        offset, length,
-                    );
                     // TODO(dmitry123): "figure out a way how to optimize it"
                     let mut metadata = ownable_account_bytecode.metadata.to_vec();
                     metadata.resize(offset + length, 0);
@@ -879,11 +887,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     );
                     let offset = LittleEndian::read_u32(&inputs.syscall_params.input[20..24]);
                     let length = LittleEndian::read_u32(&inputs.syscall_params.input[24..28]);
-                    #[cfg(feature = "debug-print")]
-                    println!(
-                        "SYSCALL_METADATA_COPY: address={address} offset={}, length={}, metadata_length={}",
-                        offset, length, ownable_account_bytecode.metadata.len(),
-                    );
                     // take min
                     let length = length.min(ownable_account_bytecode.metadata.len() as u32);
                     let metadata = ownable_account_bytecode
@@ -958,8 +961,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // read value from storage
             let slot = U256::from_le_slice(&inputs.syscall_params.input[0..32].as_ref());
             let value = ctx.journal_mut().tload(current_target_address, slot);
-            #[cfg(feature = "debug-print")]
-            println!("SYSCALL_TRANSIENT_READ: slot={slot} value={value}");
             // charge gas
             charge_gas!(gas::WARM_STORAGE_READ_COST);
             // return value
@@ -977,8 +978,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // read input
             let slot = U256::from_le_slice(&inputs.syscall_params.input[0..32]);
             let value = U256::from_le_slice(&inputs.syscall_params.input[32..64]);
-            #[cfg(feature = "debug-print")]
-            println!("SYSCALL_TRANSIENT_WRITE: slot={slot} value={value}");
             // charge gas
             charge_gas!(gas::WARM_STORAGE_READ_COST);
             ctx.journal_mut()
@@ -993,23 +992,15 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 MalformedBuiltinParams
             );
             charge_gas!(gas::BLOCKHASH);
-
             let requested_block = LittleEndian::read_u64(&inputs.syscall_params.input[0..8]);
             let current_block = ctx.block_number().as_limbs()[0];
-
-            #[cfg(feature = "debug-print")]
-            println!(
-                "SYSCALL_BLOCK_HASH: requested_block={}; current_block={}",
-                requested_block, current_block
-            );
-            // https://ethervm.io/#40
+            // Why do we return in big-endian here? :facepalm:
             let hash = match current_block.checked_sub(requested_block) {
                 Some(diff) if diff > 0 && diff <= 256 => {
                     ctx.block_hash(requested_block).unwrap_or(B256::ZERO)
                 }
                 _ => B256::ZERO,
             };
-
             return_result!(hash, Ok);
         }
 

@@ -1,6 +1,9 @@
 use crate::{
-    instruction::curve25519_edwards_decompress_validate::SyscallCurve25519EdwardsDecompressValidate,
-    utils::syscall_process_exit_code, RuntimeContext,
+    instruction::{
+        curve25519_edwards_decompress_validate::SyscallCurve25519EdwardsDecompressValidate,
+        syscall_process_exit_code,
+    },
+    RuntimeContext,
 };
 use curve25519_dalek::{traits::MultiscalarMul, EdwardsPoint, Scalar};
 use fluentbase_types::ExitCode;

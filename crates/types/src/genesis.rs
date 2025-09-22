@@ -82,23 +82,8 @@ pub const PRECOMPILE_ADDRESSES: &[Address] = &[
 ];
 
 pub fn is_system_precompile(address: &Address) -> bool {
-    // TODO(dmitry123): "add spec check here"
+    // TODO(dmitry123): Add spec check here, once we have first fork
     PRECOMPILE_ADDRESSES.contains(address)
-}
-
-pub const fn is_resumable_precompile(address: &Address) -> bool {
-    match address {
-        &PRECOMPILE_EIP2935
-        | &PRECOMPILE_ERC20_RUNTIME
-        | &PRECOMPILE_EVM_RUNTIME
-        | &PRECOMPILE_FAIRBLOCK_VERIFIER
-        | &PRECOMPILE_SVM_RUNTIME
-        | &PRECOMPILE_WASM_RUNTIME
-        | &PRECOMPILE_WEBAUTHN_VERIFIER
-        | &PRECOMPILE_WRAPPED_ETH
-        | &SVM_EXECUTABLE_PREIMAGE => true,
-        _ => false,
-    }
 }
 
 /// Resolves and returns the account owner `Address` based on the provided input byte slice.

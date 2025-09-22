@@ -7,8 +7,8 @@ extern crate fluentbase_sdk;
 use alloc::{string::String, vec::Vec};
 use alloy_sol_types::{sol, SolEvent};
 use fluentbase_sdk::{
-    derive::{router, Storage},
     basic_entrypoint,
+    derive::{router, Storage},
     storage::{StorageMap, StorageString, StorageU256},
     Address, ContextReader, SharedAPI, B256, U256,
 };
@@ -181,7 +181,7 @@ basic_entrypoint!(ERC20);
 mod tests {
     use super::*;
     use fluentbase_sdk::{address, codec::Encoder, ContractContextV1, U256};
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_testing::HostTestingContext;
 
     #[test]
     fn test_constructor_initializes_correctly() {

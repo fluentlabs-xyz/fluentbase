@@ -5,7 +5,7 @@ use fluentbase_erc20::{
     storage::{Feature, InitialSettings, DECIMALS_DEFAULT},
 };
 use fluentbase_sdk::{address, constructor::encode_constructor_params, Address, Bytes, U256};
-use fluentbase_sdk_testing::EvmTestingContext;
+use fluentbase_testing::EvmTestingContext;
 use fluentbase_types::{ContractContextV1, PRECOMPILE_ERC20_RUNTIME};
 use hex_literal::hex;
 

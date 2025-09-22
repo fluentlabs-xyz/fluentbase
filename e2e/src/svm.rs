@@ -13,13 +13,11 @@ mod tests {
     use fluentbase_sdk::{
         address, Address, ContextReader, ContractContextV1, SharedAPI, PRECOMPILE_SVM_RUNTIME, U256,
     };
-    use fluentbase_sdk_testing::EvmTestingContext;
-    use fluentbase_svm::helpers::storage_write_metadata;
     use fluentbase_svm::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         common::{evm_balance_from_lamports, pubkey_from_evm_address},
         fluentbase::common::BatchMessage,
-        helpers::storage_read_account_data,
+        helpers::{storage_read_account_data, storage_write_metadata},
         pubkey::Pubkey,
         solana_program::{
             instruction::{AccountMeta, Instruction},
@@ -29,16 +27,16 @@ mod tests {
         },
         system_program, token_2022,
     };
-    use fluentbase_svm_shared::test_structs::{EvmCall, Invoke, Transfer};
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
             AltBn128Compression, Blake3, CreateAccountAndModifySomeData1, CurveGroupOp,
-            CurveMultiscalarMultiplication, CurvePointValidation, Keccak256, Poseidon,
-            SetGetReturnData, Sha256, SolBigModExp, SolSecp256k1Recover, SyscallAltBn128,
-            TestCommand, EXPECTED_RET_ERR, EXPECTED_RET_OK,
+            CurveMultiscalarMultiplication, CurvePointValidation, EvmCall, Invoke, Keccak256,
+            Poseidon, SetGetReturnData, Sha256, SolBigModExp, SolSecp256k1Recover, SyscallAltBn128,
+            TestCommand, Transfer, EXPECTED_RET_ERR, EXPECTED_RET_OK,
         },
     };
+    use fluentbase_testing::EvmTestingContext;
     use fluentbase_types::{
         helpers::convert_endianness_fixed, BN254_G1_POINT_COMPRESSED_SIZE,
         BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,

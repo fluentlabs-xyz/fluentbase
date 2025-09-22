@@ -1,4 +1,4 @@
-use crate::{utils::syscall_process_exit_code, RuntimeContext};
+use crate::{instruction::syscall_process_exit_code, RuntimeContext};
 use fluentbase_types::{ExitCode, B256};
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 use solana_poseidon::HASH_BYTES;

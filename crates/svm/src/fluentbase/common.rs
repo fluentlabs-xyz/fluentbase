@@ -1,7 +1,6 @@
-use crate::common::{evm_balance_from_lamports, lamports_from_evm_balance, pubkey_to_u256};
 use crate::{
     account::{AccountSharedData, ReadableAccount},
-    common::is_evm_pubkey,
+    common::{evm_balance_from_lamports, is_evm_pubkey, lamports_from_evm_balance, pubkey_to_u256},
     error::{RuntimeError, SvmError},
     helpers::{storage_read_account_data, storage_write_account_data},
     native_loader,
@@ -11,7 +10,7 @@ use crate::{
 use alloc::{string::String, vec::Vec};
 use core::marker::PhantomData;
 use fluentbase_sdk::{MetadataAPI, SharedAPI, U256};
-use fluentbase_types::{syscall::SyscallResult, ExitCode, MetadataStorageAPI};
+use fluentbase_types::{ExitCode, MetadataStorageAPI, SyscallResult};
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};

@@ -19,7 +19,7 @@ entrypoint!(main_entry, deploy);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_testing::HostTestingContext;
 
     #[test]
     fn test_simple_storage_set_and_get() {

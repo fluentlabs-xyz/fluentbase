@@ -1,25 +1,23 @@
-use crate::inspector::inspect_syscall;
-use crate::syscall::{execute_rwasm_interruption, inspect_rwasm_interruption};
 use crate::{
     api::RwasmFrame,
+    inspector::inspect_syscall,
     instruction_result_from_exit_code,
+    syscall::{execute_rwasm_interruption, inspect_rwasm_interruption},
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
-use core::cell::RefCell;
 use fluentbase_runtime::{
     instruction::{exec::SyscallExec, resume::SyscallResume},
     RuntimeContext,
 };
 use fluentbase_sdk::{
-    is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule,
-    syscall::SyscallInvocationParams, BlockContextV1, BytecodeOrHash, Bytes, ContractContextV1,
-    ExitCode, SharedContextInput, SharedContextInputV1, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY,
+    is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule, BlockContextV1,
+    BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode, SharedContextInput,
+    SharedContextInputV1, SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY,
     STATE_MAIN, U256,
 };
-use revm::bytecode::opcode;
 use revm::{
-    bytecode::Bytecode,
+    bytecode::{opcode, Bytecode},
     context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
     handler::FrameData,
     interpreter::{
@@ -30,6 +28,7 @@ use revm::{
     Database, Inspector,
 };
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
@@ -104,6 +103,7 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
     Ok(next_action)
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
@@ -176,30 +176,30 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     };
     let bytecode_hash = BytecodeOrHash::Bytecode {
         address: effective_bytecode_address,
-        rwasm_module: rwasm_bytecode,
-        code_hash: rwasm_code_hash,
+        bytecode: rwasm_bytecode,
+        hash: rwasm_code_hash,
     };
 
-    // fuel limit we denominate later to gas
+    // Fuel limit we denominate later to gas
     let fuel_limit = interpreter
         .gas
         .remaining()
         .checked_mul(FUEL_DENOM_RATE)
         .unwrap_or(u64::MAX);
 
+    // Check whenever bytecode has self-managed gas,
+    // it's possible only for system precompiled contracts, like EVM, WASM, etc.
     let is_gas_free = fluentbase_sdk::is_system_precompile(&effective_bytecode_address);
 
-    // execute function
-    let mut runtime_context = RuntimeContext::root(fuel_limit);
+    // Execute function
+    let mut runtime_context = RuntimeContext::default();
     if is_gas_free {
-        runtime_context = runtime_context.without_fuel();
+        runtime_context = runtime_context.with_disabled_fuel();
     }
-    let runtime_context = RefCell::new(runtime_context);
-
     let (fuel_consumed, fuel_refunded, exit_code) = SyscallExec::fn_impl(
-        &mut runtime_context.borrow_mut(),
+        &mut runtime_context,
         bytecode_hash,
-        &context_input,
+        BytesOrRef::Bytes(context_input.into()),
         fuel_limit,
         if is_create { STATE_DEPLOY } else { STATE_MAIN },
     );
@@ -212,7 +212,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     // extract return data from the execution context
     let return_data: Bytes;
-    return_data = runtime_context.borrow_mut().take_return_data().into();
+    return_data = runtime_context.execution_result.return_data.into();
     let gas = interpreter.gas;
 
     process_exec_result(
@@ -228,6 +228,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     )
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
@@ -273,13 +274,12 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         _ => ExitCode::UnknownError,
     };
 
-    let mut runtime_context = RuntimeContext::root(0);
+    let mut runtime_context = RuntimeContext::default();
     if inputs.is_gas_free {
-        runtime_context = runtime_context.without_fuel();
+        runtime_context = runtime_context.with_disabled_fuel();
     }
-    let runtime_context = RefCell::new(runtime_context);
     let (fuel_consumed, fuel_refunded, exit_code) = SyscallResume::fn_impl(
-        &mut runtime_context.borrow_mut(),
+        &mut runtime_context,
         inputs.call_id,
         result.output.as_ref(),
         exit_code.into_i32(),
@@ -287,7 +287,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         fuel_refunded,
         inputs.syscall_params.fuel16_ptr,
     );
-    let return_data: Bytes = runtime_context.borrow_mut().take_return_data().into();
+    let return_data: Bytes = runtime_context.execution_result.return_data.into();
 
     // if we're free from paying gas,
     // then just take the previous gas value and don't charge anything
@@ -317,6 +317,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     )
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
@@ -369,6 +370,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     }
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,

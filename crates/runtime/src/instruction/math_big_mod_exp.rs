@@ -1,4 +1,4 @@
-use crate::{utils::syscall_process_exit_code, RuntimeContext};
+use crate::{instruction::syscall_process_exit_code, RuntimeContext};
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 

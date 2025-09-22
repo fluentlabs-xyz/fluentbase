@@ -26,6 +26,8 @@ revm/e2e/tests
 
 evm-e2e/target
 evm-e2e/Cargo.lock
+contracts/target
+examples/target
 
 genesis-devnet.json
 node_modules

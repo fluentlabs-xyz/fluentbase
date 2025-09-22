@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use core::str::from_utf8;
 use fluentbase_codec::SolidityABI;
 use fluentbase_sdk::{address, compile_wasm_to_rwasm, Address, Bytes};
-use fluentbase_sdk_testing::EvmTestingContext;
+use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
 
 #[test]

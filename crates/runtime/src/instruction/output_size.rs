@@ -1,9 +1,11 @@
 use crate::RuntimeContext;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
+/// Builtin to query the size of the current return_data buffer.
 pub struct SyscallOutputSize;
 
 impl SyscallOutputSize {
+    /// Writes the length of ctx.execution_result.return_data into result[0].
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         _params: &[Value],

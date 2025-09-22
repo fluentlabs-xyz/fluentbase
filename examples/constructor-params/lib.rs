@@ -27,7 +27,7 @@ entrypoint!(main_entry, deploy);
 mod tests {
     use super::*;
     use fluentbase_sdk::{address, ContractContextV1, U256};
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_testing::HostTestingContext;
 
     #[test]
     fn test_constructor_params() {

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use fluentbase_build::{execute_build, Artifact, BuildArgs};
-use fluentbase_sdk::{rwasm_core};
+use fluentbase_sdk::rwasm_core;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
@@ -176,9 +176,9 @@ fn handle_verify(cmd: VerifyCommand) -> Result<()> {
     let build_result = execute_build(&build_args, Some(cmd.path))
         .context("Failed to build contract for verification")?;
 
-
     // Read the generated wasm file
-    let wasm_bytes = fs::read(&build_result.wasm_path).context("Failed to read generated rwasm file")?;
+    let wasm_bytes =
+        fs::read(&build_result.wasm_path).context("Failed to read generated rwasm file")?;
 
     // Calculate hash of locally built wasm
     let local_hash = calculate_hash(&wasm_bytes);
@@ -190,8 +190,7 @@ fn handle_verify(cmd: VerifyCommand) -> Result<()> {
     let (deployed_module, _read_len) = rwasm_core::RwasmModule::new(&deployed_bytecode);
 
     // Calculate hash of deployed wasm
-    let deployed_hash = calculate_hash(&deployed_module.wasm_section);
-
+    let deployed_hash = calculate_hash(&deployed_module.hint_section);
 
     // Get metadata path - required for version info
     let metadata_path = build_result.metadata_path.ok_or_else(|| {

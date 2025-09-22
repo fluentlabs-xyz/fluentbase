@@ -1,19 +1,20 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(dead_code)]
 
-pub mod bytecode;
-pub mod evm;
-pub mod gas;
-pub mod macros;
-pub mod memory;
-pub mod result;
-pub mod stack;
-pub mod utils;
-
-pub use evm::EVM;
-
 extern crate alloc;
 extern crate core;
 
-/// Number of block hashes that EVM can access in the past (pre-Prague).
-pub const BLOCK_HASH_HISTORY: u64 = 256;
+pub mod bytecode;
+
+mod evm;
+mod host;
+mod metadata;
+mod opcodes;
+mod types;
+mod utils;
+
+pub use bytecode::AnalyzedBytecode;
+pub use evm::EthVM;
+pub use metadata::EthereumMetadata;
+pub use revm_interpreter::gas;
+pub use types::ExecutionResult;

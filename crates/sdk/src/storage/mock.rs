@@ -1,7 +1,6 @@
 #![allow(dead_code)]
-use alloc::string::String;
-use alloc::vec::Vec;
-use fluentbase_types::{hex, syscall::SyscallResult, ExitCode, StorageAPI, U256};
+use alloc::{string::String, vec::Vec};
+use fluentbase_types::{hex, ExitCode, StorageAPI, SyscallResult, U256};
 use hashbrown::HashMap;
 
 /// A mock implementation of `StorageAPI` that simulates contract storage

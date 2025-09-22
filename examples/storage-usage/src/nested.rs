@@ -151,7 +151,7 @@ mod tests {
     use super::*;
     use crate::{assert_storage_layout, utils::storage_from_fixture};
     use fluentbase_sdk::address;
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_testing::HostTestingContext;
 
     #[test]
     fn test_layout_calculations() {

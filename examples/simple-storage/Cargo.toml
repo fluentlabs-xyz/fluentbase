@@ -14,7 +14,7 @@ fluentbase-sdk = { workspace = true }
 hex-literal = { version = "0.4.1", default-features = false }
 
 [dev-dependencies]
-fluentbase-sdk-testing = { workspace = true }
+fluentbase-testing = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

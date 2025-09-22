@@ -7,6 +7,13 @@ build:
 	# build genesis files
 	#cd crates/genesis && $(MAKE) # build genesis
 
+.PHONY: update-deps
+update-deps:
+	cargo update --manifest-path=./contracts/Cargo.toml
+	cargo update --manifest-path=./examples/Cargo.toml
+	cargo update
+	cargo update --manifest-path=./evm-e2e/Cargo.toml
+
 .PHONY: examples
 examples:
 	cd examples && $(MAKE)
@@ -15,13 +22,15 @@ examples:
 clean:
 	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE) clean; fi
 	cargo clean
-	cd contracts/examples/svm/solana-program && $(MAKE) clean
-	cd contracts/examples/svm/solana-program-state-usage && $(MAKE) clean
-	cd contracts/examples/svm/solana-program-transfer-with-cpi && $(MAKE) clean
+	cd examples/svm/solana-program && $(MAKE) clean
+	cd examples/svm/solana-program-state-usage && $(MAKE) clean
+	cd examples/svm/solana-program-transfer-with-cpi && $(MAKE) clean
 	cd revm/e2e && cargo clean
 
 .PHONY: test
 test:
+	cargo test --manifest-path=./contracts/Cargo.toml
+	cargo test --manifest-path=./examples/Cargo.toml
 	cargo test #--no-fail-fast #-q
 
 .PHONY: svm_tests

@@ -1,15 +1,8 @@
-use crate::{runtime::Runtime, RuntimeContext};
+use crate::{runtime::Runtime, ExecutionResult, RuntimeContext};
 use fluentbase_types::{
-    compile_wasm_to_rwasm,
-    keccak256,
-    Address,
-    BytecodeOrHash,
-    Bytes,
-    STATE_DEPLOY,
-    STATE_MAIN,
+    compile_wasm_to_rwasm, keccak256, Address, BytecodeOrHash, Bytes, STATE_DEPLOY, STATE_MAIN,
 };
 use hex_literal::hex;
-use rwasm::Store;
 
 pub(crate) fn wat2rwasm(wat: &str) -> Bytes {
     let wasm_binary = wat::parse_str(wat).unwrap();
@@ -42,9 +35,11 @@ fn test_simple() {
     "#,
     );
 
-    let ctx = RuntimeContext::new(new_bytecode_or_hash(rwasm_binary)).with_fuel_limit(10_000_000);
-    let execution_result = Runtime::run_with_context(ctx);
-    assert_eq!(execution_result.exit_code, 0);
+    let ctx = RuntimeContext::default().with_fuel_limit(1_000_000);
+    let ExecutionResult { exit_code, .. } = Runtime::new(new_bytecode_or_hash(rwasm_binary), ctx)
+        .execute()
+        .into_execution_result();
+    assert_eq!(exit_code, 0);
 }
 
 #[test]
@@ -69,15 +64,18 @@ fn test_wrong_indirect_type() {
     ))
     "#,
     );
-    let ctx = RuntimeContext::new(new_bytecode_or_hash(rwasm_bytecode))
-        .with_fuel_limit(1_000_000)
-        .with_state(STATE_DEPLOY);
-    let mut runtime = Runtime::new(ctx);
-    let res = runtime.call();
-    let ctx = runtime.store.context(|ctx| ctx.clone());
-    assert_eq!(res.exit_code, 0);
-    let res = Runtime::run_with_context(ctx.with_state(STATE_MAIN));
-    assert_eq!(res.exit_code, -2003);
+    let ctx = RuntimeContext::default()
+        .with_state(STATE_DEPLOY)
+        .with_fuel_limit(1_000_000);
+    let runtime = Runtime::new(new_bytecode_or_hash(rwasm_bytecode.clone()), ctx);
+    let ExecutionResult { exit_code, .. } = runtime.execute().into_execution_result();
+    assert_eq!(exit_code, 0);
+    let ctx = RuntimeContext::default()
+        .with_state(STATE_MAIN)
+        .with_fuel_limit(1_000_000);
+    let runtime = Runtime::new(new_bytecode_or_hash(rwasm_bytecode), ctx);
+    let ExecutionResult { exit_code, .. } = runtime.execute().into_execution_result();
+    assert_eq!(exit_code, -2003);
 }
 
 #[test]
@@ -104,8 +102,10 @@ fn test_keccak256() {
   (export "main" (func $main)))
     "#,
     );
-    let ctx = RuntimeContext::new(new_bytecode_or_hash(rwasm_binary)).with_fuel_limit(1_000_000);
-    let execution_result = Runtime::run_with_context(ctx);
+    let ctx = RuntimeContext::default().with_fuel_limit(1_000_000);
+    let execution_result = Runtime::new(new_bytecode_or_hash(rwasm_binary), ctx)
+        .execute()
+        .into_execution_result();
     println!("fuel consumed: {}", execution_result.fuel_consumed);
     assert_eq!(execution_result.exit_code, 0);
     assert_eq!(

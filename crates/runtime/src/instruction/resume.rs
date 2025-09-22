@@ -5,9 +5,11 @@ use fluentbase_types::{
 };
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
+/// Syscall entry points for resuming a previously interrupted runtime.
 pub struct SyscallResume;
 
 impl SyscallResume {
+    /// Handles the resume syscall. Copies return data, applies fuel, resumes the target, and writes back the exit code.
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
@@ -50,6 +52,7 @@ impl SyscallResume {
         Ok(())
     }
 
+    /// Resumes the runtime identified by call_id using the provided return data and fuel accounting.
     pub fn fn_impl(
         ctx: &mut RuntimeContext,
         call_id: u32,
@@ -64,48 +67,33 @@ impl SyscallResume {
             return (0, 0, ExitCode::RootCallOnly.into_i32());
         }
 
-        let mut recoverable_runtime = Runtime::recover_runtime(call_id);
+        let mut runtime = Runtime::recover_runtime(call_id);
 
         // during the résumé we must clear output, otherwise collision might happen
-        recoverable_runtime
+        runtime
             .store
-            .context_mut(|ctx| ctx.clear_output());
+            .context_mut(|ctx| ctx.execution_result.output.clear());
 
         // we can charge fuel only if fuel is not disabled,
         // when fuel is disabled,
         // we only pass consumed fuel amount into the contract back,
         // and it can decide on charging
-        if !ctx.disable_fuel && fuel_consumed > 0 {
-            let store = &mut recoverable_runtime.store;
+        if !ctx.is_fuel_disabled() && fuel_consumed > 0 {
             // charge fuel that was spent during the interruption
             // to make sure our fuel calculations are aligned
-            if let Err(_) = store.try_consume_fuel(fuel_consumed) {
+            if let Err(_) = runtime.store.try_consume_fuel(fuel_consumed) {
                 return (0, 0, ExitCode::OutOfFuel.into_i32());
             }
         }
 
         // copy return data into return data
-        recoverable_runtime.store.context_mut(|ctx| {
-            ctx.return_data_mut().clear();
-            ctx.return_data_mut().extend(return_data);
+        runtime.store.context_mut(|ctx| {
+            ctx.execution_result.return_data.clear();
+            ctx.execution_result.return_data.extend(return_data);
         });
 
-        let mut execution_result =
-            recoverable_runtime.resume(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code);
-
-        // if execution was interrupted,
-        if execution_result.interrupted {
-            // then we remember this runtime and assign call id into exit code (positive exit code
-            // stands for interrupted runtime call id, negative or zero for error)
-            execution_result.exit_code = recoverable_runtime.remember_runtime(ctx);
-        }
-
-        ctx.execution_result.return_data = execution_result.output.clone();
-
-        (
-            execution_result.fuel_consumed,
-            execution_result.fuel_refunded,
-            execution_result.exit_code,
-        )
+        runtime
+            .resume(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code)
+            .finalize(ctx)
     }
 }

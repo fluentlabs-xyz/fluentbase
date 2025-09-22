@@ -2,7 +2,7 @@ use crate::{emit_fuel_procedure, SysFuncIdx};
 use alloc::rc::Rc;
 use rwasm::{ImportLinker, ImportName, ValType};
 
-pub fn create_import_linker() -> Rc<ImportLinker> {
+pub fn import_linker_v1_preview() -> Rc<ImportLinker> {
     let mut import_linker = ImportLinker::default();
     macro_rules! import_function {
         ($func_name:literal, $sys_func_idx:ident, $params:expr, $results:expr $(,)?) => {

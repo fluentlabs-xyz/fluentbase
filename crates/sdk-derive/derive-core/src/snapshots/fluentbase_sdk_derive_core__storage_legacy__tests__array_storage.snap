@@ -21,7 +21,7 @@ impl Arr {
         sdk: &SDK,
         arg0: U256,
     ) -> fluentbase_sdk::U256 {
-        use fluentbase_sdk::native_api::NativeAPI;
+        use fluentbase_sdk::NativeAPI;
         let mut key = Self::SLOT;
         let storage_key = {
             let storage_key = sdk.keccak256(&key.to_be_bytes::<32>());
@@ -63,7 +63,7 @@ impl NestedArr {
         arg1: U256,
         arg2: U256,
     ) -> fluentbase_sdk::U256 {
-        use fluentbase_sdk::native_api::NativeAPI;
+        use fluentbase_sdk::NativeAPI;
         let mut key = Self::SLOT;
         let storage_key = {
             let storage_key = sdk.keccak256(&key.to_be_bytes::<32>());

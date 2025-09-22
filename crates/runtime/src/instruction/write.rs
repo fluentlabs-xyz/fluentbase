@@ -1,9 +1,11 @@
 use crate::RuntimeContext;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
+/// Builtin to append bytes to the runtime output buffer.
 pub struct SyscallWrite;
 
 impl SyscallWrite {
+    /// Reads a slice from linear memory and appends it to ctx.execution_result.output.
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
