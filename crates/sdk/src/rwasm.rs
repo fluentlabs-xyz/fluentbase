@@ -17,7 +17,7 @@ pub use crate::{
     B256,
 };
 use fluentbase_types::{
-    native_api::NativeAPI, BytecodeOrHash, ExitCode, BN254_G1_POINT_COMPRESSED_SIZE,
+    BytecodeOrHash, ExitCode, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
@@ -173,20 +173,6 @@ impl NativeAPI for RwasmContext {
             _bn254_add(p.as_ptr() as u32, q.as_ptr() as u32);
         }
         Ok(*p)
-        // bn254_add_common_impl!(
-        //     p,
-        //     q,
-        //     {
-        //         unsafe {
-        //             _bn254_double(p.as_ptr() as u32);
-        //         }
-        //     },
-        //     {
-        //         unsafe {
-        //             _bn254_add(p.as_ptr() as u32, q.as_ptr() as u32);
-        //         }
-        //     }
-        // )
     }
 
     #[inline(always)]

@@ -274,10 +274,6 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::bn254_g2_decompress(point)
     }
 
-    fn bn254_double(p: &mut [u8; 64]) {
-        API::bn254_double(p)
-    }
-
     fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
         API::bn254_fp_mul(p, q)
     }

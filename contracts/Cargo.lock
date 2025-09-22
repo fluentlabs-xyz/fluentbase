@@ -1852,7 +1852,7 @@ name = "fluentbase-contracts-bls12381"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
 ]
 
 [[package]]
@@ -1860,7 +1860,7 @@ name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "fluentbase-types",
 ]
 
@@ -1985,7 +1985,7 @@ name = "fluentbase-contracts-sha256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
 ]
 
 [[package]]
@@ -2067,7 +2067,7 @@ dependencies = [
  "curve25519-dalek",
  "fluentbase-types",
  "group",
- "hashbrown 0.15.4",
+ "hashbrown 0.15.5",
  "k256",
  "num",
  "num-bigint 0.4.6",

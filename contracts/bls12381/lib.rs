@@ -625,23 +625,6 @@ mod tests {
         assert_eq!(gas_limit - gas_remaining, expected_gas);
     }
 
-    fn exec_evm_precompile_fail(address: Address, inputs: &[u8], expected_exit_code: ExitCode) {
-        let gas_limit = 120_000;
-        let sdk = HostTestingContext::default()
-            .with_input(Bytes::copy_from_slice(inputs))
-            .with_contract_context(ContractContextV1 {
-                address,
-                bytecode_address: address,
-                gas_limit,
-                ..Default::default()
-            })
-            .with_gas_limit(gas_limit);
-        main_entry(sdk.clone());
-        // let output = sdk.take_output();
-        // let zero_output = Vec::<u8>::new();
-        // assert_eq!(output, zero_output);
-    }
-
     // ==================================== G1 ADD ====================================
     mod g1_add {
         use super::*;

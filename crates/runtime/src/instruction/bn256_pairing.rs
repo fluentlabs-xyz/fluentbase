@@ -1,4 +1,4 @@
-use crate::{utils::syscall_process_exit_code, RuntimeContext};
+use crate::{instruction::syscall_process_exit_code, RuntimeContext};
 use ark_bn254::{Bn254, G1Affine, G2Affine};
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::One;

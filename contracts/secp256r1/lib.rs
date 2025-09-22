@@ -5,9 +5,7 @@ extern crate fluentbase_sdk;
 
 use alloc::vec;
 
-use fluentbase_sdk::{
-    alloc_slice, entrypoint, native_api::NativeAPI, Bytes, ContextReader, ExitCode, SharedAPI,
-};
+use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
 
 const INPUT_LENGTH: usize = 160;
 const P256_VERIFY_GAS: u64 = 3450;

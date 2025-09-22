@@ -1902,7 +1902,7 @@ dependencies = [
  "curve25519-dalek",
  "fluentbase-types",
  "group",
- "hashbrown 0.15.4",
+ "hashbrown 0.15.5",
  "k256",
  "num",
  "num-bigint",

@@ -55,7 +55,7 @@ use crate::{
     RuntimeContext,
 };
 use fluentbase_types::{
-    native_api::NativeAPI, BytecodeOrHash, Bytes, ExitCode, UnwrapExitCode, B256,
+    BytecodeOrHash, Bytes, BytesOrRef, ExitCode, NativeAPI, UnwrapExitCode, B256,
     BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, G1_COMPRESSED_SIZE,
     G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, GT_COMPRESSED_SIZE,

@@ -1,4 +1,4 @@
-use crate::{utils::syscall_process_exit_code, RuntimeContext};
+use crate::{instruction::syscall_process_exit_code, RuntimeContext};
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use fluentbase_types::{ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE};

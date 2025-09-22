@@ -33,7 +33,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     sdk.write(result.0.as_ref());
 }
 
-/// Gas estimation for SHA-256 (based on EVM gas model)
+/// Gas estimation for SHA-256 (based on an EVM gas model)
 /// - Base cost: 60 gas
 /// - Per word (32 bytes): 12 gas
 #[inline(always)]
@@ -48,7 +48,7 @@ entrypoint!(main_entry);
 mod tests {
     use super::*;
     use fluentbase_sdk::{hex, Bytes, ContractContextV1, FUEL_DENOM_RATE};
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_testing::HostTestingContext;
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 100_000;
