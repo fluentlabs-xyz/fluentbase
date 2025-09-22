@@ -12,9 +12,13 @@ use std::{cell::RefCell, collections::LinkedList, rc::Rc, sync::Arc};
 /// TODO(dmitry123): What's the most optimal value here? It depends on the type of application we execute,
 ///  what engine is used and how many nested calls are allowed. For example, in EVM we have 1024, but what if we
 ///  cover only most common cases? Like 10 or 30 nested calls?
-const N_DEFAULT_CACHED_STORE: usize = 0;
+const N_DEFAULT_CACHED_STORE: usize = 10;
+const N_MAX_CACHED_STORE: usize = 5_000;
 
 /// A cache entry holding a compiled module strategy and a pool of reusable stores.
+///
+/// TODO(dmitry123): Is it better to use sync here (like lock-free linked-list) to support multi-threading?
+///  Right now it's not in use, but we might want to have this implemented by BlockSTM support.
 pub struct CachedModule {
     strategy: Arc<Strategy>,
     stores: LinkedList<TypedStore<RuntimeContext>>,
@@ -45,14 +49,17 @@ impl CachedModule {
 
     /// Returns a used store back into the pool for reuse.
     pub fn return_store(&mut self, store: TypedStore<RuntimeContext>) {
-        self.stores.push_back(store);
+        if self.stores.len() <= N_MAX_CACHED_STORE {
+            self.stores.push_back(store);
+        }
     }
 }
 
 /// Global factory maintaining compiled module cache and resumable runtime instances.
 pub struct RuntimeFactory {
-    // TODO(dmitry123): Add LRU cache to this map to avoid memory leak (or remove HashMap?)
     /// Cache of compiled modules keyed by code hash.
+    ///
+    /// TODO(dmitry123): Add LRU cache to this map to avoid memory leak (or remove HashMap?)
     pub cached_modules: HashMap<B256, CachedModule>,
     /// Suspended runtimes keyed by per-transaction call identifier.
     pub recoverable_runtimes: HashMap<u32, Runtime>,
@@ -62,8 +69,8 @@ pub struct RuntimeFactory {
     pub transaction_call_id_counter: u32,
 }
 
-/// Thread-local access to the runtime factory with shared caches.
 thread_local! {
+    // Thread-local access to the runtime factory with shared caches.
     pub static CACHING_RUNTIME_FACTORY: RefCell<RuntimeFactory> = RefCell::new(RuntimeFactory::new_v1_preview());
 }
 
@@ -96,6 +103,7 @@ impl RuntimeFactory {
                 ..
             } => (address, rwasm_module),
             BytecodeOrHash::Hash(_hash) => {
+                // TODO(dmitry123): Do we want to have lock here until resources are warmed up?
                 panic!("runtime: can't compile just by hash")
             }
         };

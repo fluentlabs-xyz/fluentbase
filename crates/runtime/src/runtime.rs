@@ -1,5 +1,6 @@
 use crate::{
-    context::RuntimeContext, factory::CACHING_RUNTIME_FACTORY,
+    context::RuntimeContext,
+    factory::{CachedModule, CACHING_RUNTIME_FACTORY},
     syscall_handler::runtime_syscall_handler,
 };
 use fluentbase_types::{
@@ -102,6 +103,7 @@ impl Runtime {
             // If there is cached store then reuse it, but rewrite the context data
             if let Some(store) = store.as_mut() {
                 match store {
+                    // TODO(dmitry123): Eliminate this check, we don't need the reset function, it's used for rWasm's e2e tests only.
                     TypedStore::Rwasm(rwasm_store) => {
                         // A special case for rWasm, we need to reset state
                         rwasm_store.reset(false);
@@ -197,6 +199,17 @@ impl Runtime {
                 bytecode,
                 hash,
             });
+        })
+    }
+
+    pub fn warmup_strategy_raw(code_hash: B256, strategy: Strategy) {
+        // Ensure the strategy is created and cached ahead of time to avoid JIT cost on first call
+        CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
+            // TODO(dmitry123): Caching doesn't work, because we're in a different thread
+            caching_runtime.cached_modules.insert(
+                code_hash,
+                CachedModule::new(strategy, caching_runtime.import_linker.clone()),
+            );
         })
     }
 
