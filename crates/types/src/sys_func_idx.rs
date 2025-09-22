@@ -4,7 +4,7 @@ use strum_macros::{Display, FromRepr};
 #[repr(u32)]
 #[allow(non_camel_case_types)]
 pub enum SysFuncIdx {
-    // SYS host
+    // input/output & state control (0x00)
     EXIT = 0x0001,
     STATE = 0x0002,
     READ_INPUT = 0x0003,
@@ -22,92 +22,79 @@ pub enum SysFuncIdx {
     DEBUG_LOG = 0x0010,
     CHARGE_FUEL = 0x0011,
 
-    // hashing
+    // hashing functions (0x01)
+    #[deprecated(note = "use permute instead")]
     KECCAK256 = 0x0101,
     KECCAK256_PERMUTE = 0x0102,
     POSEIDON = 0x0103,
     // POSEIDON_HASH = 0x0104,
     SHA256_EXTEND = 0x0105,
     SHA256_COMPRESS = 0x0106,
+    #[deprecated(note = "use extend/compress instead")]
     SHA256 = 0x0118,
     BLAKE3 = 0x0117,
 
-    // ed25519
-    ED25519_ADD = 0x0107,
-    ED25519_DECOMPRESS = 0x0108,
-    ED25519_EDWARDS_DECOMPRESS_VALIDATE = 0x0109,
-    ED25519_EDWARDS_ADD = 0x010b,
-    ED25519_EDWARDS_SUB = 0x010c,
-    ED25519_EDWARDS_MUL = 0x010d,
-    ED25519_EDWARDS_MULTISCALAR_MUL = 0x0115,
-    ED25519_RISTRETTO_DECOMPRESS_VALIDATE = 0x010a,
-    ED25519_RISTRETTO_ADD = 0x010e,
-    ED25519_RISTRETTO_SUB = 0x010f,
-    ED25519_RISTRETTO_MUL = 0x0114,
-    ED25519_RISTRETTO_MULTISCALAR_MUL = 0x0116,
+    // ed25519 (0x02)
+    ED25519_DECOMPRESS = 0x0201,
+    ED25519_ADD = 0x0202,
+    ED25519_SUB = 0x0203,
+    ED25519_MULTISCALAR_MUL = 0x0114,
+    ED25519_MUL = 0x0205,
 
-    // secp256k1
-    SECP256K1_RECOVER = 0x0110,
-    SECP256K1_ADD = 0x0111,
-    SECP256K1_DECOMPRESS = 0x0112,
-    SECP256K1_DOUBLE = 0x0113,
+    // ristretto255 (0x03)
+    RISTRETTO255_DECOMPRESS = 0x0301,
+    RISTRETTO255_ADD = 0x0302,
+    RISTRETTO255_SUB = 0x0303,
+    RISTRETTO255_MULTISCALAR_MUL = 0x0304,
+    RISTRETTO255_MUL = 0x0305,
 
-    // bls12381
-    BLS12381_DECOMPRESS = 0x0120,
-    BLS12381_ADD = 0x0121,
-    BLS12381_DOUBLE = 0x0122,
-    BLS12381_FP_ADD = 0x0123,
-    BLS12381_FP_SUB = 0x0124,
-    BLS12381_FP_MUL = 0x0125,
-    BLS12381_FP2_ADD = 0x0126,
-    BLS12381_FP2_SUB = 0x0127,
-    BLS12381_FP2_MUL = 0x0128,
+    // secp256k1 (0x04)
+    SECP256K1_RECOVER = 0x00401,
+    SECP256K1_ADD = 0x0402,
+    SECP256K1_DECOMPRESS = 0x0403,
+    SECP256K1_DOUBLE = 0x0404,
 
-    // bn254
-    BN254_ADD = 0x0130,
-    BN254_DOUBLE = 0x0131,
-    BN254_MUL = 0x0138,
-    BN254_MULTI_PAIRING = 0x0139,
-    BN254_G1_COMPRESS = 0x013a,
-    BN254_G1_DECOMPRESS = 0x013b,
-    BN254_G2_COMPRESS = 0x013c,
-    BN254_G2_DECOMPRESS = 0x013e,
-    BN254_FP_ADD = 0x0132,
-    BN254_FP_SUB = 0x0133,
-    BN254_FP_MUL = 0x0134,
-    BN254_FP2_ADD = 0x0135,
-    BN254_FP2_SUB = 0x0136,
-    BN254_FP2_MUL = 0x0137,
+    // secp256r1 (0x05)
+    SECP256R1_VERIFY = 0x0501,
 
-    // uint256
-    UINT256_MUL = 0x011D,
-    // sp1
-    // WRITE_FD = 0x0202,
-    // ENTER_UNCONSTRAINED = 0x0203,
-    // EXIT_UNCONSTRAINED = 0x0204,
-    // COMMIT = 0x0210,
-    // COMMIT_DEFERRED_PROOFS = 0x021A,
-    // VERIFY_SP1_PROOF = 0x021B,
-    // HINT_LEN = 0x02F0,
-    // HINT_READ = 0x02F1,
+    // bls12381 (0x06)
+    BLS12381_G1_ADD = 0x0601,
+    BLS12381_G1_MSM = 0x0602,
+    BLS12381_G2_ADD = 0x0603,
+    BLS12381_G2_MSM = 0x0604,
+    BLS12381_PAIRING = 0x0605,
+    BLS12381_MAP_G1 = 0x0606,
+    BLS12381_MAP_G2 = 0x0607,
 
-    // math
-    BIG_MOD_EXP = 0x0300,
-}
+    // bn254 (0x07)
+    BN254_ADD = 0x0701,
+    BN254_DOUBLE = 0x0702,
+    BN254_MUL = 0x0703,
+    BN254_MULTI_PAIRING = 0x0704,
+    BN254_G1_COMPRESS = 0x0705,
+    BN254_G1_DECOMPRESS = 0x0706,
+    BN254_G2_COMPRESS = 0x0707,
+    BN254_G2_DECOMPRESS = 0x0708,
+    BN254_FP_ADD = 0x0709,
+    BN254_FP_SUB = 0x070a,
+    BN254_FP_MUL = 0x070b,
+    BN254_FP2_ADD = 0x070c,
+    BN254_FP2_SUB = 0x070d,
+    BN254_FP2_MUL = 0x070e,
 
-impl SysFuncIdx {
-    pub fn fuel_cost(&self) -> u32 {
-        match self {
-            SysFuncIdx::EXIT => 1,
-            SysFuncIdx::STATE => 1,
-            SysFuncIdx::READ_INPUT => 1,
-            SysFuncIdx::INPUT_SIZE => 1,
-            SysFuncIdx::WRITE_OUTPUT => 1,
-            SysFuncIdx::KECCAK256 => 1,
-            SysFuncIdx::SECP256K1_RECOVER => 1,
-            _ => 1, //unreachable!("not configured fuel for opcode: {:?}", self),
-        }
-    }
+    // uint256 (0x08)
+    BIGINT_UINT256_MUL = 0x0801,
+    BIGINT_MOD_EXP = 0x0802,
+
+    // sp1 (0x51)
+    WRITE_FD = 0x5101,
+    ENTER_UNCONSTRAINED = 0x5102,
+    EXIT_UNCONSTRAINED = 0x5103,
+    COMMIT = 0x5104,
+    COMMIT_DEFERRED_PROOFS = 0x5105,
+    VERIFY_SP1_PROOF = 0x5106,
+    HINT_LEN = 0x5107,
+    HINT_READ = 0x5108,
 }
 
 impl Into<u32> for SysFuncIdx {

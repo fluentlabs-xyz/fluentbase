@@ -156,6 +156,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::secp256k1_recover(digest, sig, rec_id)
     }
 
+    fn curve256r1_verify(input: &[u8]) -> bool {
+        API::curve256r1_verify(input)
+    }
+
     fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
         API::curve25519_edwards_decompress_validate(p)
     }
@@ -202,15 +206,47 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::curve25519_ristretto_multiscalar_mul(pairs, out)
     }
 
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
+    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
+        API::bls12_381_g1_add(p, q)
+    }
+
+    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]) {
+        API::bls12_381_g1_msm(pairs, out)
+    }
+
+    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) {
+        API::bls12_381_g2_add(p, q)
+    }
+
+    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]) {
+        API::bls12_381_g2_msm(pairs, out)
+    }
+
+    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]) {
+        API::bls12_381_pairing(pairs, out)
+    }
+
+    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]) {
+        API::bls12_381_map_fp_to_g1(p, out)
+    }
+
+    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
+        API::bls12_381_map_fp2_to_g2(p, out)
+    }
+
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
         API::bn254_add(p, q)
     }
 
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+    fn bn254_double(p: &mut [u8; 64]) {
+        API::bn254_double(p)
+    }
+
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
         API::bn254_mul(p, q)
     }
 
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
         API::bn254_multi_pairing(elements)
     }
 
@@ -236,10 +272,6 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
         API::bn254_g2_decompress(point)
-    }
-
-    fn bn254_double(p: &mut [u8; 64]) {
-        API::bn254_double(p)
     }
 
     fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {

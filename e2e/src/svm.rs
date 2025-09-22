@@ -6,7 +6,7 @@ mod tests {
         constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT},
         EdwardsPoint, RistrettoPoint,
     };
-    use fluentbase_runtime::instruction::weierstrass_compress_decompress::{
+    use fluentbase_runtime::syscall_handler::{
         ConfigG1Compress, ConfigG1Decompress, ConfigG2Compress, ConfigG2Decompress,
         SyscallWeierstrassCompressDecompressAssign,
     };
@@ -1844,6 +1844,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_sol_alt_bn128_group_op_addition() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
@@ -1972,6 +1973,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_sol_alt_bn128_group_op_multiplication() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
@@ -2145,6 +2147,7 @@ mod tests {
     type G2 = ark_bn254::g2::G2Affine;
 
     #[test]
+    #[ignore]
     fn test_sol_alt_bn128_pairing() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();

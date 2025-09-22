@@ -93,7 +93,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let Some(analyzed_bytecode) = load_evm_bytecode(&sdk) else {
         return;
     };
-    let mut result =
+    let result =
         EthVM::new(sdk.context(), sdk.bytes_input(), analyzed_bytecode).run_the_loop(&mut sdk);
     if !result.result.is_ok() {
         return handle_not_ok_result(sdk, result);

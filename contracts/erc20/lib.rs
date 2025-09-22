@@ -206,7 +206,7 @@ fn unpause(mut sdk: impl SharedAPI, _input: &[u8]) {
     sdk.write(&fixed_bytes_from_u256(&U256::from(1)));
 }
 
-fn token2022(mut sdk: impl SharedAPI, input: &[u8]) -> ProgramResult {
+fn token2022(_sdk: impl SharedAPI, input: &[u8]) -> ProgramResult {
     debug_log_ext!("token2022(): input.len={} input={:x?}", input.len(), input);
     // input: program_id (pk 32 bytes) + accounts_meta_number (u8) + account_meta[] (AccountMeta) + data ([u8])
     let mut offset = 0;
@@ -225,7 +225,7 @@ fn token2022(mut sdk: impl SharedAPI, input: &[u8]) -> ProgramResult {
         offset += size_of::<AccountMeta>();
     }
     offset += size_of::<AccountMeta>() * account_meta_count;
-    let input = &input[offset..];
+    let _input = &input[offset..];
     // Processor::process(&program_id, &account_metas, input)
     // sdk.write(&fixed_bytes_from_u256(&U256::from(1)));
     ProgramResult::Ok(())

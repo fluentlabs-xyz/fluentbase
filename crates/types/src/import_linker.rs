@@ -58,61 +58,61 @@ pub fn import_linker_v1_preview() -> Rc<ImportLinker> {
     );
     import_function!(
         "_ed25519_edwards_decompress_validate",
-        ED25519_EDWARDS_DECOMPRESS_VALIDATE,
+        ED25519_DECOMPRESS,
         &[ValType::I32; 1],
         &[ValType::I32; 1]
     );
     import_function!(
         "_ed25519_edwards_add",
-        ED25519_EDWARDS_ADD,
+        ED25519_ADD,
         &[ValType::I32; 2],
         &[ValType::I32; 1]
     );
     import_function!(
         "_ed25519_edwards_sub",
-        ED25519_EDWARDS_SUB,
+        ED25519_SUB,
         &[ValType::I32; 2],
         &[ValType::I32; 1]
     );
     import_function!(
         "_ed25519_edwards_mul",
-        ED25519_EDWARDS_MUL,
+        ED25519_MUL,
         &[ValType::I32; 2],
         &[ValType::I32; 1]
     );
     import_function!(
         "_ed25519_edwards_multiscalar_mul",
-        ED25519_EDWARDS_MULTISCALAR_MUL,
+        ED25519_MULTISCALAR_MUL,
         &[ValType::I32; 3],
         &[ValType::I32; 1]
     );
     import_function!(
         "_ed25519_ristretto_decompress_validate",
-        ED25519_RISTRETTO_DECOMPRESS_VALIDATE,
+        RISTRETTO255_DECOMPRESS,
         &[ValType::I32; 1],
         &[ValType::I32; 1]
     );
     import_function!(
         "_ed25519_ristretto_add",
-        ED25519_RISTRETTO_ADD,
+        RISTRETTO255_ADD,
         &[ValType::I32; 2],
         &[ValType::I32; 1]
     );
     import_function!(
         "_ed25519_ristretto_sub",
-        ED25519_RISTRETTO_SUB,
+        RISTRETTO255_SUB,
         &[ValType::I32; 2],
         &[ValType::I32; 1]
     );
     import_function!(
         "_ed25519_ristretto_mul",
-        ED25519_RISTRETTO_MUL,
+        RISTRETTO255_MUL,
         &[ValType::I32; 2],
         &[ValType::I32; 1]
     );
     import_function!(
         "_ed25519_ristretto_multiscalar_mul",
-        ED25519_RISTRETTO_MULTISCALAR_MUL,
+        RISTRETTO255_MULTISCALAR_MUL,
         &[ValType::I32; 3],
         &[ValType::I32; 1]
     );
@@ -153,9 +153,54 @@ pub fn import_linker_v1_preview() -> Rc<ImportLinker> {
     import_function!("_bn254_fp2_mul", BN254_FP2_MUL, &[ValType::I32; 2], &[]);
     import_function!(
         "_big_mod_exp",
-        BIG_MOD_EXP,
+        BIGINT_MOD_EXP,
         &[ValType::I32; 6],
         &[ValType::I32; 1]
     );
+
+    // BLS12-381 high-level operations
+    import_function!(
+        "_bls12_381_g1_add",
+        BLS12381_G1_ADD,
+        &[ValType::I32; 2],
+        &[]
+    );
+    import_function!(
+        "_bls12_381_g1_msm",
+        BLS12381_G1_MSM,
+        &[ValType::I32; 3],
+        &[]
+    );
+    import_function!(
+        "_bls12_381_g2_add",
+        BLS12381_G2_ADD,
+        &[ValType::I32; 2],
+        &[]
+    );
+    import_function!(
+        "_bls12_381_g2_msm",
+        BLS12381_G2_MSM,
+        &[ValType::I32; 3],
+        &[]
+    );
+    import_function!(
+        "_bls12_381_pairing",
+        BLS12381_PAIRING,
+        &[ValType::I32; 3],
+        &[]
+    );
+    import_function!(
+        "_bls12_381_map_fp_to_g1",
+        BLS12381_MAP_G1,
+        &[ValType::I32; 2],
+        &[]
+    );
+    import_function!(
+        "_bls12_381_map_fp2_to_g2",
+        BLS12381_MAP_G2,
+        &[ValType::I32; 2],
+        &[]
+    );
+
     Rc::new(import_linker)
 }

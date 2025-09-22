@@ -60,6 +60,10 @@ mod tests {
             todo!()
         }
 
+        fn curve256r1_verify(_input: &[u8]) -> bool {
+            todo!()
+        }
+
         fn blake3(_data: &[u8]) -> B256 {
             todo!()
         }
@@ -118,7 +122,35 @@ mod tests {
             todo!()
         }
 
-        fn bn254_add(_p: &mut [u8; 64], _q: &[u8; 64]) {
+        fn bls12_381_g1_add(_p: &mut [u8; 96], _q: &[u8; 96]) {
+            todo!()
+        }
+
+        fn bls12_381_g1_msm(_pairs: &[([u8; 96], [u8; 32])], _out: &mut [u8; 96]) {
+            todo!()
+        }
+
+        fn bls12_381_g2_add(_p: &mut [u8; 192], _q: &[u8; 192]) {
+            todo!()
+        }
+
+        fn bls12_381_g2_msm(_pairs: &[([u8; 192], [u8; 32])], _out: &mut [u8; 192]) {
+            todo!()
+        }
+
+        fn bls12_381_pairing(_pairs: &[([u8; 48], [u8; 96])], _out: &mut [u8; 288]) {
+            todo!()
+        }
+
+        fn bls12_381_map_fp_to_g1(_p: &[u8; 64], _out: &mut [u8; 96]) {
+            todo!()
+        }
+
+        fn bls12_381_map_fp2_to_g2(_p: &[u8; 128], _out: &mut [u8; 192]) {
+            todo!()
+        }
+
+        fn bn254_add(_p: &mut [u8; 64], _q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
             todo!()
         }
 
@@ -126,11 +158,11 @@ mod tests {
             todo!()
         }
 
-        fn bn254_mul(_p: &mut [u8; 64], _q: &[u8; 32]) {
+        fn bn254_mul(_p: &mut [u8; 64], _q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
             todo!()
         }
 
-        fn bn254_multi_pairing(_elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+        fn bn254_multi_pairing(_elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
             todo!()
         }
 

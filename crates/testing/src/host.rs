@@ -288,6 +288,11 @@ impl SharedAPI for HostTestingContext {
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         RuntimeContextWrapper::secp256k1_recover(digest, sig, rec_id)
     }
+
+    fn curve256r1_verify(input: &[u8]) -> bool {
+        RuntimeContextWrapper::curve256r1_verify(input)
+    }
+
     fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
         RuntimeContextWrapper::curve25519_edwards_decompress_validate(p)
     }
@@ -324,16 +329,37 @@ impl SharedAPI for HostTestingContext {
     ) -> bool {
         RuntimeContextWrapper::curve25519_ristretto_multiscalar_mul(pairs, out)
     }
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
-        RuntimeContextWrapper::bn254_add(p, q);
+    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
+        RuntimeContextWrapper::bls12_381_g1_add(p, q)
+    }
+    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]) {
+        RuntimeContextWrapper::bls12_381_g1_msm(pairs, out);
+    }
+    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) {
+        RuntimeContextWrapper::bls12_381_g2_add(p, q)
+    }
+    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]) {
+        RuntimeContextWrapper::bls12_381_g2_msm(pairs, out);
+    }
+    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]) {
+        RuntimeContextWrapper::bls12_381_pairing(pairs, out);
+    }
+    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]) {
+        RuntimeContextWrapper::bls12_381_map_fp_to_g1(p, out);
+    }
+    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
+        RuntimeContextWrapper::bls12_381_map_fp2_to_g2(p, out);
+    }
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
+        RuntimeContextWrapper::bn254_add(p, q)
     }
     fn bn254_double(p: &mut [u8; 64]) {
         RuntimeContextWrapper::bn254_double(p);
     }
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
-        RuntimeContextWrapper::bn254_mul(p, q);
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
+        RuntimeContextWrapper::bn254_mul(p, q)
     }
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
         RuntimeContextWrapper::bn254_multi_pairing(elements)
     }
     fn bn254_g1_compress(

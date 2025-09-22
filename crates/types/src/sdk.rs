@@ -42,6 +42,7 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     fn blake3(data: &[u8]) -> B256;
     fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode>;
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
+    fn curve256r1_verify(input: &[u8]) -> bool;
     fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool;
     fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
     fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
@@ -58,9 +59,16 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
         pairs: &[([u8; 32], [u8; 32])],
         out: &mut [u8; 32],
     ) -> bool;
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]);
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]);
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32];
+    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]);
+    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]);
+    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]);
+    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]);
+    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]);
+    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]);
+    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]);
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode>;
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode>;
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode>;
     fn bn254_g1_compress(
         point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode>;
