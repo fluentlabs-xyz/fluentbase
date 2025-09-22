@@ -63,7 +63,7 @@ pub fn with_accounts_mut(
         accounts.push(account_data.into());
     }
     f(accounts.as_mut_slice());
-    for ((i, account)) in accounts.iter().enumerate() {
+    for (i, account) in accounts.iter().enumerate() {
         let pk = pks[i];
         let account_data: AccountSharedData = account.clone().into();
         storage_write_account_data(

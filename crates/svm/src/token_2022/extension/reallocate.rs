@@ -5,7 +5,7 @@ use crate::token_2022::extension::{
 use crate::token_2022::processor::Processor;
 use crate::token_2022::state::Account;
 use alloc::vec::Vec;
-use fluentbase_sdk::{debug_log, debug_log_ext};
+use fluentbase_sdk::debug_log;
 use fluentbase_types::SharedAPI;
 use solana_account_info::{next_account_info, AccountInfo};
 use solana_program_error::ProgramResult;

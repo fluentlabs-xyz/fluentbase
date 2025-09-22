@@ -10,7 +10,7 @@ use crate::token_2022::pod_instruction::{
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::marker::PhantomData;
-use fluentbase_sdk::{debug_log, debug_log_ext};
+use fluentbase_sdk::debug_log;
 use fluentbase_types::{Address, SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use itertools::min;
 use solana_account_info::{next_account_info, AccountInfo};
@@ -2183,7 +2183,6 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
                 for (position, key) in multisig.signers[0..multisig.n as usize].iter().enumerate() {
                     if key == signer.key && !matched[position] {
                         if !signer.is_signer {
-                            debug_log_ext!();
                             return Err(ProgramError::MissingRequiredSignature);
                         }
                         matched[position] = true;
@@ -2192,7 +2191,6 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
                 }
             }
             if num_signers < multisig.m {
-                debug_log_ext!();
                 return Err(ProgramError::MissingRequiredSignature);
             }
             return Ok(());

@@ -497,7 +497,6 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         SIG_THAW_ACCOUNT => thaw_account(&mut sdk, input),
         SIG_CLOSE_ACCOUNT => close_account(&mut sdk, input),
         SIG_GET_ACCOUNT_DATA_SIZE => get_account_data_size(&mut sdk, input),
-        // SIG_TOTAL_SUPPLY => total_supply(&mut sdk),
         SIG_TOKEN2022 => {
             token2022_process_raw::<false, _>(&mut sdk, input).expect("failed to process")
         }

@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use fluentbase_sdk::{
-    calc_create4_address, debug_log_ext, keccak256, Address, Bytes, ExitCode, IsAccountEmpty,
-    IsAccountOwnable, IsColdAccess, MetadataAPI, PRECOMPILE_SVM_RUNTIME, U256,
+    calc_create4_address, keccak256, Address, Bytes, ExitCode, IsAccountEmpty, IsAccountOwnable,
+    IsColdAccess, MetadataAPI, PRECOMPILE_SVM_RUNTIME, U256,
 };
 use fluentbase_types::syscall::SyscallResult;
 use fluentbase_types::MetadataStorageAPI;

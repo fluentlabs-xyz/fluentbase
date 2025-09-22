@@ -58,9 +58,7 @@ use crate::{
     error::SvmError,
     solana_program::sysvar::Sysvar,
 };
-use fluentbase_sdk::{
-    calc_create4_address, debug_log_ext, keccak256, Bytes, MetadataAPI, PRECOMPILE_SVM_RUNTIME,
-};
+use fluentbase_sdk::{calc_create4_address, keccak256, Bytes, MetadataAPI, PRECOMPILE_SVM_RUNTIME};
 use fluentbase_types::{Address, MetadataStorageAPI, SharedAPI, StorageAPI, B256};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
