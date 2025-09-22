@@ -5,6 +5,8 @@ edition = "2021"
 resolver = "2"
 
 [dependencies]
+fluentbase-runtime = { path = "../crates/runtime" }
+fluentbase-contracts = { path = "../crates/contracts", default-features = false }
 fluentbase-sdk = { path = "../crates/sdk" }
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 
@@ -28,6 +30,14 @@ thiserror = "1.0"
 triehash = "0.8"
 walkdir = "2.5"
 k256 = { version = "0.13.3", features = ["ecdsa"] }
+ctor = "0.5.0"
+
+[build-dependencies]
+fluentbase-genesis = { path = "../crates/genesis", default-features = false }
+fluentbase-contracts = { path = "../crates/contracts", default-features = false }
+fluentbase-types = { path = "../crates/types", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel" }
+#rwasm = { path = "../rwasm", default-features = false }
 
 [features]
 default = [
