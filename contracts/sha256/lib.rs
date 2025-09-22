@@ -8,6 +8,15 @@ fn sha256_with_sdk<SDK: SharedAPI>(_: &SDK, data: &[u8]) -> fluentbase_sdk::B256
     SDK::sha256(data)
 }
 
+/// Main entry point for the sha256 wrapper contract.
+/// This contract wraps the sha256 precompile (EIP-210) which computes the SHA-256 hash of a given input.
+///
+/// Input:
+/// - A byte array of arbitrary length
+///
+/// Output:
+/// - A 32-byte array representing the SHA-256 hash of the input
+///
 pub fn main_entry(mut sdk: impl SharedAPI) {
     // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
@@ -24,10 +33,11 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     sdk.write(result.0.as_ref());
 }
 
-// Gas estimation for SHA-256 (based on EVM gas model)
+/// Gas estimation for SHA-256 (based on EVM gas model)
+/// - Base cost: 60 gas
+/// - Per word (32 bytes): 12 gas
+#[inline(always)]
 fn estimate_gas(input_len: usize) -> u64 {
-    // Base cost: 60 gas
-    // Per word (32 bytes): 12 gas
     let words = (input_len + 31) / 32;
     60 + (words as u64 * 12)
 }

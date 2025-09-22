@@ -3,21 +3,23 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
+use fluentbase_types::{
+    BN254_ADD_INPUT_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
+    BN254_MUL_INPUT_SIZE, BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, SCALAR_SIZE,
+};
+
 use fluentbase_sdk::{
     alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BN256_ADD,
     PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
 };
-use revm_precompile::bn128::{
-    add::ISTANBUL_ADD_GAS_COST,
-    mul::ISTANBUL_MUL_GAS_COST,
-    pair::{ISTANBUL_PAIR_BASE, ISTANBUL_PAIR_PER_POINT},
-    ADD_INPUT_LEN, MUL_INPUT_LEN, PAIR_ELEMENT_LEN,
-};
 
-const G1_LEN: usize = 64;
-const G2_LEN: usize = 128;
+/// BN256 precompile constants (EIP-196, EIP-197)
+const ISTANBUL_ADD_GAS_COST: u64 = 150;
+const ISTANBUL_MUL_GAS_COST: u64 = 6000;
+const ISTANBUL_PAIR_BASE: u64 = 45000;
+const ISTANBUL_PAIR_PER_POINT: u64 = 34000;
 
-/// Right-pad input to specified length with zeros
+/// Right-pad input to a specified length with zeros
 #[inline(always)]
 fn right_pad<const N: usize>(input: &[u8]) -> [u8; N] {
     let mut result = [0u8; N];
@@ -43,45 +45,48 @@ fn check_gas_and_sync<SDK: SharedAPI>(sdk: &SDK, gas_used: u64, gas_limit: u64) 
 #[inline(always)]
 fn bn256_add_with_sdk<SDK: SharedAPI>(
     _: &SDK,
-    p: &mut [u8; 64],
-    q: &[u8; 64],
-) -> Result<[u8; 64], ExitCode> {
+    p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+    q: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
     SDK::bn254_add(p, q)
 }
 
 #[inline(always)]
 fn bn256_mul_with_sdk<SDK: SharedAPI>(
     _: &SDK,
-    p: &mut [u8; 64],
-    q: &[u8; 32],
-) -> Result<[u8; 64], ExitCode> {
+    p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+    q: &[u8; SCALAR_SIZE],
+) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
     SDK::bn254_mul(p, q)
 }
 
 #[inline(always)]
-fn read_g1_point(input: &[u8]) -> Result<[u8; 64], ExitCode> {
-    if input.len() != G1_LEN {
+fn read_g1_point(input: &[u8]) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
+    if input.len() != BN254_G1_POINT_DECOMPRESSED_SIZE {
         return Err(ExitCode::InputOutputOutOfBounds);
     }
-    let mut g1 = [0u8; 64];
-    g1[..G1_LEN].copy_from_slice(input);
+    let mut g1 = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
+    g1[..BN254_G1_POINT_DECOMPRESSED_SIZE].copy_from_slice(input);
     Ok(g1)
 }
 
 #[inline(always)]
-fn read_g2_point(input: &[u8]) -> Result<[u8; 128], ExitCode> {
-    if input.len() != G2_LEN {
+fn read_g2_point(input: &[u8]) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
+    if input.len() != BN254_G2_POINT_DECOMPRESSED_SIZE {
         return Err(ExitCode::InputOutputOutOfBounds);
     }
-    let mut g2 = [0u8; 128];
-    g2[..G2_LEN].copy_from_slice(input);
+    let mut g2 = [0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
+    g2[..BN254_G2_POINT_DECOMPRESSED_SIZE].copy_from_slice(input);
     Ok(g2)
 }
 
 #[inline(always)]
 fn bn256_pair_with_sdk<SDK: SharedAPI>(
     _: &SDK,
-    pairs: &mut [([u8; 64], [u8; 128])],
+    pairs: &mut [(
+        [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+        [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+    )],
 ) -> Result<[u8; 32], ExitCode> {
     SDK::bn254_multi_pairing(pairs)
 }
@@ -97,10 +102,16 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     match bytecode_address {
         PRECOMPILE_BN256_ADD => {
             validate_and_consume_gas(&sdk, ISTANBUL_ADD_GAS_COST, gas_limit);
-            let padded_input = right_pad::<ADD_INPUT_LEN>(&input);
+            let padded_input = right_pad::<BN254_ADD_INPUT_SIZE>(&input);
 
-            let mut p: [u8; 64] = padded_input[..64].try_into().unwrap();
-            let q: [u8; 64] = padded_input[64..].try_into().unwrap();
+            let mut p: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = padded_input
+                [..BN254_G1_POINT_DECOMPRESSED_SIZE]
+                .try_into()
+                .unwrap();
+            let q: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = padded_input
+                [BN254_G1_POINT_DECOMPRESSED_SIZE..]
+                .try_into()
+                .unwrap();
 
             let result = bn256_add_with_sdk(&sdk, &mut p, &q);
             let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
@@ -108,11 +119,17 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         }
         PRECOMPILE_BN256_MUL => {
             validate_and_consume_gas(&sdk, ISTANBUL_MUL_GAS_COST, gas_limit);
-            let padded_input = right_pad::<MUL_INPUT_LEN>(&input);
+            let padded_input = right_pad::<BN254_MUL_INPUT_SIZE>(&input);
 
             // Pass inputs as big-endian; runtime handles conversions internally
-            let mut p: [u8; 64] = padded_input[0..64].try_into().unwrap();
-            let q: [u8; 32] = padded_input[64..96].try_into().unwrap();
+            let mut p: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = padded_input
+                [0..BN254_G1_POINT_DECOMPRESSED_SIZE]
+                .try_into()
+                .unwrap();
+            let q: [u8; SCALAR_SIZE] = padded_input
+                [BN254_G1_POINT_DECOMPRESSED_SIZE..BN254_G1_POINT_DECOMPRESSED_SIZE + SCALAR_SIZE]
+                .try_into()
+                .unwrap();
 
             let result = bn256_mul_with_sdk(&sdk, &mut p, &q);
             let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
@@ -120,30 +137,33 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.write(&result);
         }
         PRECOMPILE_BN256_PAIR => {
-            let gas_used = (input.len() / PAIR_ELEMENT_LEN) as u64 * ISTANBUL_PAIR_PER_POINT
+            let gas_used = (input.len() / BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN) as u64
+                * ISTANBUL_PAIR_PER_POINT
                 + ISTANBUL_PAIR_BASE;
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
+            // validate_and_consume_gas(&sdk, gas_used, gas_limit);
+            // let gas_used = required_gas;
 
-            // Check input length is valid (must be multiple of PAIR_ELEMENT_LEN)
-            if input.len() % PAIR_ELEMENT_LEN != 0 {
+            if input.len() % BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN != 0 {
                 sdk.native_exit(ExitCode::InputOutputOutOfBounds);
             }
 
-            let elements = input.len() / PAIR_ELEMENT_LEN;
+            let elements = input.len() / BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN;
             let mut pairs = alloc::vec::Vec::with_capacity(elements);
 
             for idx in 0..elements {
                 // Offset to the start of the pairing element at index `idx` in the byte slice
-                let start = idx * PAIR_ELEMENT_LEN;
+                let start = idx * BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN;
                 let g1_start = start;
                 // Offset to the start of the G2 element in the pairing element
                 // This is where G1 ends.
-                let g2_start = start + G1_LEN;
+                let g2_start = start + BN254_G1_POINT_DECOMPRESSED_SIZE;
 
                 let encoded_g1_element = &input[g1_start..g2_start];
-                let encoded_g2_element = &input[g2_start..g2_start + G2_LEN];
+                let encoded_g2_element =
+                    &input[g2_start..g2_start + BN254_G2_POINT_DECOMPRESSED_SIZE];
 
                 // Get G1 and G2 points from the input
                 let a = read_g1_point(encoded_g1_element)
@@ -174,7 +194,7 @@ mod tests {
     use fluentbase_sdk_testing::HostTestingContext;
 
     fn exec_evm_precompile(address: Address, inputs: &[u8], expected: &[u8], expected_gas: u64) {
-        let gas_limit = 300_000;
+        let gas_limit = 200_000;
         let sdk = HostTestingContext::default()
             .with_input(Bytes::copy_from_slice(inputs))
             .with_contract_context(ContractContextV1 {

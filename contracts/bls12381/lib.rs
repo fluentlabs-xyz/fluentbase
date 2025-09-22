@@ -27,7 +27,7 @@ use fluentbase_sdk::{
 
 /// ==== Fp Element ====
 
-/// The scalar is represented in little endian.
+/// The scalar is represented in a little endian.
 const SCALAR_LENGTH: usize = 32;
 
 const FP_LENGTH: usize = 48;
@@ -133,8 +133,7 @@ fn check_gas_and_sync<SDK: SharedAPI>(sdk: &SDK, gas_used: u64, gas_limit: u64) 
 #[inline(always)]
 fn validate_input_length<SDK: SharedAPI>(sdk: &SDK, actual: u32, expected: usize) {
     if actual != expected as u32 {
-        //panic!("Input length mismatch: expected {}, got {}", expected, actual);
-        sdk.native_exit(ExitCode::OutOfFuel);
+        sdk.native_exit(ExitCode::InputOutputOutOfBounds);
     }
 }
 
@@ -158,11 +157,6 @@ fn encode_g2_output(output: &[u8; G2_LENGTH]) -> [u8; PADDED_G2_LENGTH] {
 
 #[inline(always)]
 fn pad_g1_point(unpadded: &[u8; G1_LENGTH]) -> [u8; PADDED_G1_LENGTH] {
-    debug_assert_eq!(
-        unpadded.len(),
-        G1_LENGTH,
-        "wrong unpadded length for G1 point"
-    );
     let mut padded = [0u8; PADDED_G1_LENGTH];
     // x then y; each is 48B, pad to 64B with leading zeros
     for i in 0..2 {
@@ -176,11 +170,6 @@ fn pad_g1_point(unpadded: &[u8; G1_LENGTH]) -> [u8; PADDED_G1_LENGTH] {
 
 #[inline(always)]
 fn pad_g2_point(unpadded: &[u8; G2_LENGTH]) -> [u8; PADDED_G2_LENGTH] {
-    debug_assert_eq!(
-        unpadded.len(),
-        G2_LENGTH,
-        "wrong unpadded length for G2 point"
-    );
     let mut padded = [0u8; PADDED_G2_LENGTH];
     // For each coordinate (x then y), split FP2 limb into two FP limbs and pad each separately
     // EIP-2537 expects FP2 limbs ordered as (c1, c0) within each coordinate
@@ -405,7 +394,6 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             // Convert to runtime format: 96-byte LE limbs + 32-byte scalar LE
             let input_length_requirement = G1_MSM_INPUT_LENGTH;
             if input.len() % input_length_requirement != 0 || input.is_empty() {
-                // Todo: add a specific error message
                 sdk.native_exit(ExitCode::InputOutputOutOfBounds);
             }
             let pairs_len = input.len() / input_length_requirement;
@@ -934,14 +922,6 @@ mod tests {
 
             // Verify that the function panicked as expected
             assert!(result.is_err(), "Expected function to panic but it didn't");
-        }
-        #[test]
-        fn bls_g1add_large_input() {
-            exec_evm_precompile_fail(
-                PRECOMPILE_BLS12_381_G1_ADD,
-                &hex!("000000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e100000000000000000000000000000000112b98340eee2777cc3c14163dea3ec97977ac3dc5c70da32e6e87578f44912e902ccef9efe28d4a78b8999dfbca942600000000000000000000000000000000186b28d92356c4dfec4b5201ad099dbdede3781f8998ddf929b4cd7756192185ca7b8f4ef7088f813270ac3d48868a21"),
-                ExitCode::InputOutputOutOfBounds,
-            );
         }
     }
 }

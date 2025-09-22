@@ -8,6 +8,7 @@ use crate::{
         bls12_381_map_fp2_to_g2::SyscallBls12381MapFp2ToG2,
         bls12_381_map_fp_to_g1::SyscallBls12381MapFpToG1,
         bls12_381_pairing::SyscallBls12381Pairing,
+        bn256_add::SyscallBn256Add,
         bn256_mul::SyscallBn256Mul,
         bn256_pairing::SyscallBn256Pairing,
         charge_fuel::SyscallChargeFuel,
@@ -30,7 +31,6 @@ use crate::{
         fp2_mul::SyscallFp2Mul,
         fp_op::SyscallFpOp,
         fuel::SyscallFuel,
-        g1_add::SyscallG1Add,
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
         math_big_mod_exp::SyscallMathBigModExp,
@@ -57,7 +57,9 @@ use crate::{
 use fluentbase_types::{
     native_api::NativeAPI, BytecodeOrHash, Bytes, ExitCode, UnwrapExitCode, B256,
     BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, G1_COMPRESSED_SIZE,
+    G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, GT_COMPRESSED_SIZE,
+    PADDED_FP2_SIZE, PADDED_FP_SIZE, SCALAR_SIZE,
 };
 use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
 use std::{cell::RefCell, mem::take, rc::Rc};
@@ -158,56 +160,73 @@ impl NativeAPI for RuntimeContextWrapper {
         true
     }
 
-    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
+    fn bls12_381_g1_add(p: &mut [u8; G1_UNCOMPRESSED_SIZE], q: &[u8; G1_UNCOMPRESSED_SIZE]) {
         SyscallBls12381G1Add::fn_impl(p, q);
     }
 
-    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]) {
+    fn bls12_381_g1_msm(
+        pairs: &[([u8; G1_UNCOMPRESSED_SIZE], [u8; SCALAR_SIZE])],
+        out: &mut [u8; G1_UNCOMPRESSED_SIZE],
+    ) {
         SyscallBls12381G1Msm::fn_impl(pairs, out)
     }
 
-    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) {
+    fn bls12_381_g2_add(p: &mut [u8; G2_UNCOMPRESSED_SIZE], q: &[u8; G2_UNCOMPRESSED_SIZE]) {
         SyscallBls12381G2Add::fn_impl(p, q)
     }
 
-    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]) {
+    fn bls12_381_g2_msm(
+        pairs: &[([u8; G2_UNCOMPRESSED_SIZE], [u8; SCALAR_SIZE])],
+        out: &mut [u8; G2_UNCOMPRESSED_SIZE],
+    ) {
         SyscallBls12381G2Msm::fn_impl(pairs, out)
     }
 
-    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]) {
+    fn bls12_381_pairing(
+        pairs: &[([u8; G1_COMPRESSED_SIZE], [u8; G2_COMPRESSED_SIZE])],
+        out: &mut [u8; GT_COMPRESSED_SIZE],
+    ) {
         SyscallBls12381Pairing::fn_impl(pairs, out)
     }
 
-    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]) {
-        // Convert padded BE Fp (64 bytes) into library 48B BE limb for x, then map via syscall
-        // Here syscall expects 64B input per EIP (Fp padded) and returns 96B uncompressed G1
-        // So delegate directly.
-        let mut tmp_out = [0u8; 96];
+    fn bls12_381_map_fp_to_g1(p: &[u8; PADDED_FP_SIZE], out: &mut [u8; G1_UNCOMPRESSED_SIZE]) {
+        let mut tmp_out = [0u8; G1_UNCOMPRESSED_SIZE];
         SyscallBls12381MapFpToG1::fn_impl(p, &mut tmp_out);
         out.copy_from_slice(&tmp_out);
     }
 
-    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
+    fn bls12_381_map_fp2_to_g2(p: &[u8; PADDED_FP2_SIZE], out: &mut [u8; G2_UNCOMPRESSED_SIZE]) {
         SyscallBls12381MapFp2ToG2::fn_impl(p, out)
     }
 
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
-        SyscallG1Add::fn_impl(p, q).map_err(|_| ExitCode::PrecompileError)?;
+    fn bn254_add(
+        p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+        q: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        SyscallBn256Add::fn_impl(p, q).map_err(|_| ExitCode::PrecompileError)?;
         Ok(*p)
     }
 
-    fn bn254_double(p: &mut [u8; 64]) {
+    fn bn254_double(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE]) {
         let result = SyscallWeierstrassDoubleAssign::<Bn254>::fn_impl(p);
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);
     }
 
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
+    fn bn254_mul(
+        p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+        q: &[u8; SCALAR_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
         let result = SyscallBn256Mul::fn_impl(p, q).map_err(|_| ExitCode::PrecompileError)?;
         Ok(result)
     }
 
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
+    fn bn254_multi_pairing(
+        elements: &[(
+            [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+            [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+        )],
+    ) -> Result<[u8; SCALAR_SIZE], ExitCode> {
         let mut pairs = elements.to_vec();
         let result =
             SyscallBn256Pairing::fn_impl(&mut pairs).map_err(|_| ExitCode::PrecompileError)?;
@@ -246,13 +265,13 @@ impl NativeAPI for RuntimeContextWrapper {
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
 
-    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+    fn bn254_fp_mul(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
         let result = SyscallFpOp::<Bn254BaseField, FieldMul>::fn_impl(p, q);
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);
     }
 
-    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+    fn bn254_fp2_mul(p: &mut [u8; BN254_G2_POINT_COMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
         let result = SyscallFp2Mul::<Bn254BaseField>::fn_impl(p, q);
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);

@@ -14,7 +14,7 @@ impl SyscallBls12381G1Msm {
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
         let pairs_ptr = params[0].i32().unwrap() as usize;
-        let pairs_len = params[1].i32().unwrap() as usize; // number of pairs
+        let pairs_len = params[1].i32().unwrap() as usize;
         let out_ptr = params[2].i32().unwrap() as usize;
 
         // Each pair is (point||scalar): 96-byte uncompressed G1 (BE) + 32-byte scalar (LE)
@@ -22,7 +22,6 @@ impl SyscallBls12381G1Msm {
         let mut buf = vec![0u8; total_len];
         caller.memory_read(pairs_ptr, &mut buf)?;
 
-        // parse into pairs of (point, scalar)
         let mut pairs: Vec<([u8; G1_UNCOMPRESSED_LENGTH], [u8; SCALAR_LENGTH])> =
             Vec::with_capacity(pairs_len);
         for i in 0..pairs_len {

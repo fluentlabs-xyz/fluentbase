@@ -1801,7 +1801,6 @@ dependencies = [
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "fluentbase-types",
- "revm-precompile",
 ]
 
 [[package]]
@@ -1917,7 +1916,6 @@ dependencies = [
  "fluentbase-sdk-testing",
  "hex",
  "p256",
- "revm-precompile",
  "sha2 0.10.9",
 ]
 

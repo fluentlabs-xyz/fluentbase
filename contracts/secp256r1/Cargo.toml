@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-revm-precompile = { workspace = true }
 sha2 = { version = "0.10", default-features = false }
 
 [dev-dependencies]
@@ -23,4 +22,4 @@ path = "lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "revm-precompile/std"]
+std = ["fluentbase-sdk/std"]

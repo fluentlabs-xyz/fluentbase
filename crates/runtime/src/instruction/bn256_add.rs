@@ -1,22 +1,22 @@
 use crate::{utils::syscall_process_exit_code, RuntimeContext};
-use ark_bn254::{Fr, G1Affine, G1Projective};
+use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
-use fluentbase_types::{ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE, SCALAR_SIZE};
+use fluentbase_types::{ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE};
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
-use super::bn256_helpers::{encode_g1_point, read_g1_point, read_scalar};
+use super::bn256_helpers::{encode_g1_point, read_g1_point};
 
-pub struct SyscallBn256Mul;
+pub struct SyscallBn256Add;
 
-/// Performs point multiplication on a G1 point.
+/// Performs point addition on two G1 points.
 #[inline]
-fn bn256_point_mul(p: G1Affine, scalar: Fr) -> G1Affine {
-    let p_jacobian: G1Projective = p.into();
-    let result = p_jacobian * scalar;
-    result.into_affine()
+fn g1_point_add(p1: G1Affine, p2: G1Affine) -> G1Affine {
+    let p1_jacobian: G1Projective = p1.into();
+    let p3 = p1_jacobian + p2;
+    p3.into_affine()
 }
 
-impl SyscallBn256Mul {
+impl SyscallBn256Add {
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
@@ -28,7 +28,7 @@ impl SyscallBn256Mul {
         let mut p = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
         caller.memory_read(p_ptr, &mut p)?;
 
-        let mut q = [0u8; SCALAR_SIZE];
+        let mut q = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
         caller.memory_read(q_ptr, &mut q)?;
 
         let res = Self::fn_impl(&mut p, &q).map_err(|e| syscall_process_exit_code(caller, e));
@@ -41,12 +41,12 @@ impl SyscallBn256Mul {
 
     pub fn fn_impl(
         p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-        q: &[u8; SCALAR_SIZE],
+        q: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
         // Direct implementation matching revm precompile exactly
         let p1 = read_g1_point(p).map_err(|_| ExitCode::MalformedBuiltinParams)?;
-        let scalar = read_scalar(q);
-        let result = bn256_point_mul(p1, scalar);
+        let p2 = read_g1_point(q).map_err(|_| ExitCode::MalformedBuiltinParams)?;
+        let result = g1_point_add(p1, p2);
 
         let output = encode_g1_point(result);
         p.copy_from_slice(&output);

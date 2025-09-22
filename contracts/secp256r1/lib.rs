@@ -14,18 +14,25 @@ const P256_VERIFY_GAS: u64 = 3450;
 
 /// Helper function for common validation and gas checking pattern
 #[inline(always)]
-fn validate_and_consume_gas<SDK: SharedAPI>(sdk: &SDK, gas_cost: u64, gas_limit: u64) {
-    check_gas_and_sync(sdk, gas_cost, gas_limit);
+fn validate_and_consume_gas<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    gas_cost: u64,
+    gas_limit: u64,
+    input: &[u8],
+) -> bool {
+    if (!verify_input_length(&input)) {
+        sdk.sync_evm_gas(gas_cost, 0);
+        sdk.write(&[]);
+        return false;
+    }
+    if gas_cost > gas_limit {
+        sdk.native_exit(ExitCode::OutOfFuel);
+    }
+    sdk.sync_evm_gas(gas_cost, 0);
+    true
 }
 
 #[inline(always)]
-fn check_gas_and_sync<SDK: SharedAPI>(sdk: &SDK, gas_used: u64, gas_limit: u64) {
-    if gas_used > gas_limit {
-        sdk.native_exit(ExitCode::OutOfFuel);
-    }
-    sdk.sync_evm_gas(gas_used, 0);
-}
-
 fn verify_input_length(input: &[u8]) -> bool {
     if input.len() == INPUT_LENGTH {
         return true;
@@ -56,24 +63,18 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
     let input = Bytes::copy_from_slice(input);
-    // Check input length
-    if !verify_input_length(&input) {
-        sdk.sync_evm_gas(P256_VERIFY_GAS, 0);
-        sdk.write(&[]);
+
+    if !validate_and_consume_gas(&mut sdk, P256_VERIFY_GAS, gas_limit, &input) {
         return;
     }
 
-    // Use the curve256r1_verify instruction
     let verification_result = curve256r1_verify_with_sdk(&sdk, &input);
-
-    sdk.sync_evm_gas(P256_VERIFY_GAS, 0);
-
     if verification_result {
         let mut result = vec![0u8; 32];
-        result[31] = 1; // success marker
+        result[31] = 1;
         sdk.write(&result);
     } else {
-        sdk.write(&[]); // empty result for failure
+        sdk.write(&[]);
     }
 }
 

@@ -37,7 +37,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     // Parse fields
     let digest = B256::from_slice(&data[0..32]);
 
-    // v is 32-byte big-endian integer; require top 31 bytes to be zero AND v must be 27 or 28
+    // v is 32-byte big-endian integer; require top 31 bytes to be zero, AND v must be 27 or 28
     let v_bytes = &data[32..64];
     if !(v_bytes[..31].iter().all(|&b| b == 0) && matches!(v_bytes[31], 27 | 28)) {
         // Invalid v, return empty
@@ -64,7 +64,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         }
     };
 
-    // Compute address = last 20 bytes of keccak256(uncompressed_pubkey[1..])
+    // Compute address = last 20 bytes of keccak256(uncompressed_pubkey[1...])
     // SDK returns 65-byte uncompressed pubkey [0x04 || x || y]
     let hashed = sdk.keccak256(&pubkey[1..65]);
     let mut out = [0u8; 32];
@@ -76,7 +76,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
 
 // Gas estimation for ECRECOVER (based on EVM gas model)
 fn estimate_gas(_input_len: usize) -> u64 {
-    // ECRECOVER precompile has fixed cost of 3000 gas(const ECRECOVER_BASE: u64 = 3_000;)
+    // ECRECOVER precompile has a fixed cost of 3000 gas(const ECRECOVER_BASE: u64 = 3_000;)
     3000
 }
 
