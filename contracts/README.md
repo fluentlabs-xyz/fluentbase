@@ -72,4 +72,4 @@ Shared configuration and dependencies are defined in contracts/Cargo.toml:
 ## Repository
 
 For more information, visit the repository:
-https://github.com/fluentlabs-xyz/fuentbase
+https://github.com/fluentlabs-xyz/fluentbase
