@@ -31,10 +31,13 @@ once_cell = { workspace = true, features = ["alloc"] }
 # rwasm (keep this dep here to enforce feature propagation)
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm.git", branch = "devel", default-features = false }
 
+tracing = { version = "0.1" }
+
 # Optional
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
 
 # fluentbase
+fluentbase-evm = { workspace = true }
 fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
 
@@ -58,6 +61,7 @@ std = [
     "fluentbase-sdk/std",
     "rwasm/std",
     "fluentbase-runtime/std",
+    "fluentbase-evm/std",
 ]
 hashbrown = ["revm/hashbrown"]
 serde = [

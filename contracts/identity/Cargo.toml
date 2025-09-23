@@ -8,7 +8,7 @@ fluentbase-sdk = { workspace = true }
 revm-precompile = { workspace = true }
 
 [dev-dependencies]
-fluentbase-sdk-testing = { workspace = true }
+fluentbase-testing = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

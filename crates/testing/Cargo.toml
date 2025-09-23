@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-sdk-testing"
+name = "fluentbase-testing"
 version.workspace = true
 authors.workspace = true
 repository.workspace = true

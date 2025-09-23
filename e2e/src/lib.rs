@@ -4,7 +4,7 @@ extern crate alloc;
 extern crate core;
 
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
-use fluentbase_sdk_testing::EvmTestingContext;
+use fluentbase_testing::EvmTestingContext;
 use fluentbase_types::{GenesisContract, PRECOMPILE_WASM_RUNTIME};
 
 #[cfg(test)]
@@ -23,6 +23,7 @@ mod eip2935;
 mod evm;
 #[cfg(test)]
 mod gas;
+#[cfg(test)]
 mod helpers;
 #[cfg(test)]
 mod multicall;

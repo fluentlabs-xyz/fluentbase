@@ -1,2 +1,3 @@
 /tmp
 flamegraph.svg
+*.trace.json

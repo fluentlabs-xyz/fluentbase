@@ -1,25 +1,16 @@
 use crate::{
-    EvmTestingContextWithGenesis,
-    EXAMPLE_CHECKMATE,
-    EXAMPLE_ERC20,
-    EXAMPLE_GREETING,
-    EXAMPLE_JSON,
-    EXAMPLE_KECCAK256,
-    EXAMPLE_PANIC,
-    EXAMPLE_RWASM,
-    EXAMPLE_SECP256K1,
-    EXAMPLE_SIMPLE_STORAGE,
+    EvmTestingContextWithGenesis, EXAMPLE_CHECKMATE, EXAMPLE_ERC20, EXAMPLE_GREETING, EXAMPLE_JSON,
+    EXAMPLE_KECCAK256, EXAMPLE_PANIC, EXAMPLE_RWASM, EXAMPLE_SECP256K1, EXAMPLE_SIMPLE_STORAGE,
     EXAMPLE_TINY_KECCAK256,
 };
 use core::str::from_utf8;
 use fluentbase_codec::{bytes::BytesMut, SolidityABI};
-use fluentbase_sdk::{bytes, Address, Bytes, U256};
-use fluentbase_sdk_testing::EvmTestingContext;
+use fluentbase_sdk::{bytes, constructor::encode_constructor_params, Address, Bytes, U256};
+use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
 use revm::bytecode::Bytecode;
 use rwasm::RwasmModule;
 use std::str::from_utf8_unchecked;
-use fluentbase_sdk::constructor::encode_constructor_params;
 
 #[test]
 fn test_wasm_greeting() {
@@ -293,3 +284,19 @@ fn deploy_and_load_wasm_contract() {
         }
     }
 }
+
+// #[test]
+// fn test_reduce_binary() {
+//     use rwasm::{instruction_set, RwasmModule};
+//     use std::fs;
+//     let raw_input = include_str!("./input.hex");
+//     let input = hex::decode(raw_input).unwrap();
+//     let (mut module, _) = RwasmModule::new(&input);
+//     module.code_section = instruction_set! {
+//         Unreachable
+//     };
+//     module.data_section = vec![];
+//     module.elem_section = vec![];
+//     let module = module.serialize();
+//     fs::write("./input-fixed.hex", hex::encode(&module)).unwrap();
+// }

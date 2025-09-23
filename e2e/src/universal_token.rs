@@ -1,19 +1,17 @@
-use crate::helpers::call_with_sig;
+use crate::helpers::{
+    call_with_sig, with_svm_account_info_mut, with_svm_account_mut, with_svm_account_state_mut,
+};
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use fluentbase_sdk::Address;
-use fluentbase_sdk_testing::{utf8_to_bytes, EvmTestingContext};
-use fluentbase_svm::account::{AccountSharedData, ReadableAccount};
-use fluentbase_svm::account_info::AccountInfo;
+use fluentbase_svm::account::ReadableAccount;
 use fluentbase_svm::error::SvmError;
 use fluentbase_svm::helpers::{
     serialize_svm_program_params_from_instruction, storage_read_account_data,
-    storage_write_account_data,
 };
 use fluentbase_svm::pubkey::Pubkey;
-use fluentbase_svm::solana_program::instruction::{AccountMeta, Instruction};
+use fluentbase_svm::solana_program::instruction::Instruction;
 use fluentbase_svm::token_2022;
-use fluentbase_svm::token_2022::helpers::account_info_from_meta_and_account;
 use fluentbase_svm::token_2022::instruction::initialize_mint;
 use fluentbase_svm::token_2022::instruction::initialize_mint2;
 use fluentbase_svm::token_2022::instruction::mint_to;
@@ -28,6 +26,7 @@ use fluentbase_svm_common::universal_token::{
     FreezeAccountParams, InitializeAccountParams, InitializeMintParams, MintToParams, RevokeParams,
     SetAuthorityParams, ThawAccountParams, TransferFromParams, TransferParams,
 };
+use fluentbase_testing::{utf8_to_bytes, EvmTestingContext};
 use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::{
@@ -49,75 +48,6 @@ const USER_ADDRESS7: Address = Address::repeat_byte(0x7);
 const USER_ADDRESS8: Address = Address::repeat_byte(0x8);
 const USER_ADDRESS9: Address = Address::repeat_byte(0x9);
 const USER_ADDRESS10: Address = Address::repeat_byte(0xa);
-pub fn with_accounts_mut(
-    ctx: &mut EvmTestingContext,
-    pks: &[&Pubkey],
-    f: impl FnOnce(&mut [fluentbase_svm::account::Account]),
-) {
-    ctx.commit_db_to_sdk();
-    let mut accounts: Vec<fluentbase_svm::account::Account> = Default::default();
-    for pk in pks {
-        let account_data =
-            storage_read_account_data(&ctx.sdk, pk, Some(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME))
-                .unwrap();
-        accounts.push(account_data.into());
-    }
-    f(accounts.as_mut_slice());
-    for (i, account) in accounts.iter().enumerate() {
-        let pk = pks[i];
-        let account_data: AccountSharedData = account.clone().into();
-        storage_write_account_data(
-            &mut ctx.sdk,
-            &pk,
-            &account_data,
-            Some(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME),
-        )
-        .unwrap();
-    }
-    ctx.commit_sdk_to_db();
-}
-pub fn with_account_mut(
-    ctx: &mut EvmTestingContext,
-    pk: &Pubkey,
-    f: impl FnOnce(&mut fluentbase_svm::account::Account),
-) {
-    ctx.commit_db_to_sdk();
-    let account_data =
-        storage_read_account_data(&ctx.sdk, &pk, Some(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME)).unwrap();
-    let mut account: fluentbase_svm::account::Account = account_data.into();
-    f(&mut account);
-    let account_data: AccountSharedData = account.into();
-    storage_write_account_data(
-        &mut ctx.sdk,
-        &pk,
-        &account_data,
-        Some(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME),
-    )
-    .unwrap();
-    ctx.commit_sdk_to_db();
-}
-pub fn with_account_info_mut(
-    ctx: &mut EvmTestingContext,
-    pk: &Pubkey,
-    f: impl FnOnce(&mut AccountInfo),
-) {
-    with_account_mut(ctx, pk, |mut account| {
-        let account_meta = AccountMeta::default();
-        let mut account_info = account_info_from_meta_and_account(&account_meta, &mut account);
-        f(&mut account_info);
-    });
-}
-pub fn with_account_state_mut(
-    ctx: &mut EvmTestingContext,
-    pk: &Pubkey,
-    f: impl FnOnce(&mut Account),
-) {
-    with_account_info_mut(ctx, pk, |account_info| {
-        let mut account1_state = Account::unpack_unchecked(&account_info.data.borrow()).unwrap();
-        f(&mut account1_state);
-        Account::pack(account1_state, &mut account_info.data.borrow_mut()).unwrap();
-    });
-}
 pub fn build_input_raw(prefix: &[u8], instruction_data: &[u8]) -> Vec<u8> {
     let input = prefix
         .iter()
@@ -394,7 +324,7 @@ fn test_transfer_dups() {
     ctx.commit_db_to_sdk();
 
     // source-delegate transfer
-    with_account_state_mut(&mut ctx, &account1_key, |account_state| {
+    with_svm_account_state_mut(&mut ctx, &account1_key, |account_state| {
         account_state.amount = 1000;
         account_state.delegated_amount = 1000;
         account_state.delegate = COption::Some(account1_key);
@@ -449,10 +379,10 @@ fn test_transfer_dups() {
     let _output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address).unwrap();
 
-    with_account_info_mut(&mut ctx, &account1_key, |account1_info| {
+    with_svm_account_info_mut(&mut ctx, &account1_key, |account1_info| {
         account1_info.is_signer = false;
     });
-    with_account_info_mut(&mut ctx, &account2_key, |account2_info| {
+    with_svm_account_info_mut(&mut ctx, &account2_key, |account2_info| {
         account2_info.is_signer = true;
     });
     #[allow(deprecated)]
@@ -622,7 +552,7 @@ fn test_transfer_dups_abi() {
     ctx.commit_db_to_sdk();
 
     // source-delegate transfer
-    with_account_state_mut(&mut ctx, &account1_key, |account_state| {
+    with_svm_account_state_mut(&mut ctx, &account1_key, |account_state| {
         account_state.amount = 1000;
         account_state.delegated_amount = 1000;
         account_state.delegate = COption::Some(account1_key);
@@ -682,10 +612,10 @@ fn test_transfer_dups_abi() {
     assert_eq!(output_data.len(), 1);
     assert_eq!(output_data[0], 1);
 
-    with_account_info_mut(&mut ctx, &account1_key, |account1_info| {
+    with_svm_account_info_mut(&mut ctx, &account1_key, |account1_info| {
         account1_info.is_signer = false;
     });
-    with_account_info_mut(&mut ctx, &account2_key, |account2_info| {
+    with_svm_account_info_mut(&mut ctx, &account2_key, |account2_info| {
         account2_info.is_signer = true;
     });
     let amount: u64 = 500;
@@ -733,7 +663,7 @@ fn test_transfer_dups_abi() {
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
 
     // balance
-    let mut input_data = vec![];
+    let input_data = vec![];
     let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &input_data);
     let output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
@@ -830,7 +760,7 @@ fn test_transfer_dups_abi() {
 }
 
 #[test]
-fn test_approve() {
+fn test_approve_abi() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
         address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
@@ -1245,7 +1175,7 @@ fn test_approve() {
 }
 
 #[test]
-fn test_set_authority() {
+fn test_set_authority_abi() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
         address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
@@ -1528,7 +1458,7 @@ fn test_set_authority() {
     let input = build_input_raw(&sig_to_bytes(SIG_APPROVE), &input_data);
     let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
     assert_eq!(output_data.unwrap(), vec![1]);
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         let account = Account::unpack_unchecked(&account_account.data).unwrap();
         assert_eq!(account.delegate, COption::Some(owner2_key));
         assert_eq!(account.delegated_amount, u64::MAX);
@@ -1565,7 +1495,7 @@ fn test_set_authority() {
     // let account = Account::unpack_unchecked(&account_account.data).unwrap();
     // assert_eq!(account.delegate, COption::None);
     // assert_eq!(account.delegated_amount, 0);
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         let account = Account::unpack_unchecked(&account_account.data).unwrap();
         assert_eq!(account.delegate, COption::None);
         assert_eq!(account.delegated_amount, 0);
@@ -1894,7 +1824,7 @@ fn test_set_authority() {
 }
 
 #[test]
-fn test_burn() {
+fn test_burn_abi() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
         address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
@@ -2069,7 +1999,7 @@ fn test_burn() {
     let input = build_input_raw(&sig_to_bytes(SIG_MINT_TO), &input_data);
     let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address).unwrap();
     assert_eq!(result, vec![1]);
-    with_account_mut(&mut ctx, &mismatch_key, |mismatch_account| {
+    with_svm_account_mut(&mut ctx, &mismatch_key, |mismatch_account| {
         let mut account = Account::unpack_unchecked(&mismatch_account.data).unwrap();
         account.mint = mint2_key;
         Account::pack(account, &mut mismatch_account.data).unwrap();
@@ -2129,7 +2059,7 @@ fn test_burn() {
     //     )
     // );
     // account_account.owner = program_id;
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         account_account.owner = not_program_id;
     });
     let amount = 0;
@@ -2149,7 +2079,7 @@ fn test_burn() {
         result.1,
         utf8_to_bytes("failed to process: IncorrectProgramId")
     );
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         account_account.owner = program_id;
     });
 
@@ -2165,7 +2095,7 @@ fn test_burn() {
     //     )
     // );
     // mint_account.owner = program_id;
-    with_account_mut(&mut ctx, &mint_key, |mint_account| {
+    with_svm_account_mut(&mut ctx, &mint_key, |mint_account| {
         mint_account.owner = not_program_id;
     });
     let amount = 0;
@@ -2185,7 +2115,7 @@ fn test_burn() {
         result.1,
         utf8_to_bytes("failed to process: IncorrectProgramId")
     );
-    with_account_mut(&mut ctx, &mint_key, |mint_account| {
+    with_svm_account_mut(&mut ctx, &mint_key, |mint_account| {
         mint_account.owner = program_id;
     });
 
@@ -2284,13 +2214,13 @@ fn test_burn() {
 
     // let mint = Mint::unpack_unchecked(&mint_account.data).unwrap();
     // assert_eq!(mint.supply, 2000 - 42);
-    with_account_mut(&mut ctx, &mint_key, |mint_account| {
+    with_svm_account_mut(&mut ctx, &mint_key, |mint_account| {
         let mint = Mint::unpack_unchecked(&mint_account.data).unwrap();
         assert_eq!(mint.supply, 2000 - 42);
     });
     // let account = Account::unpack_unchecked(&account_account.data).unwrap();
     // assert_eq!(account.amount, 1000 - 42);
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         let account = Account::unpack_unchecked(&account_account.data).unwrap();
         assert_eq!(account.amount, 1000 - 42);
     });
@@ -2446,13 +2376,13 @@ fn test_burn() {
     // // match
     // let mint = Mint::unpack_unchecked(&mint_account.data).unwrap();
     // assert_eq!(mint.supply, 2000 - 42 - 84);
-    with_account_mut(&mut ctx, &mint_key, |mint_account| {
+    with_svm_account_mut(&mut ctx, &mint_key, |mint_account| {
         let mint = Mint::unpack_unchecked(&mint_account.data).unwrap();
         assert_eq!(mint.supply, 2000 - 42 - 84);
     });
     // let account = Account::unpack_unchecked(&account_account.data).unwrap();
     // assert_eq!(account.amount, 1000 - 42 - 84);
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         let account = Account::unpack_unchecked(&account_account.data).unwrap();
         assert_eq!(account.amount, 1000 - 42 - 84);
     });
@@ -2487,7 +2417,7 @@ fn test_burn() {
 }
 
 #[test]
-fn test_freeze_account() {
+fn test_freeze_account_abi() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
         address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
@@ -2592,7 +2522,7 @@ fn test_freeze_account() {
     // let mut mint = Mint::unpack_unchecked(&mint_account.data).unwrap();
     // mint.freeze_authority = COption::Some(owner_key);
     // Mint::pack(mint, &mut mint_account.data).unwrap();
-    with_account_mut(&mut ctx, &mint_key, |mint_account| {
+    with_svm_account_mut(&mut ctx, &mint_key, |mint_account| {
         let mut mint = Mint::unpack_unchecked(&mint_account.data).unwrap();
         mint.freeze_authority = COption::Some(owner_key);
         Mint::pack(mint, &mut mint_account.data).unwrap();
@@ -2659,7 +2589,7 @@ fn test_freeze_account() {
     assert_eq!(result, vec![1]);
     // let account = Account::unpack_unchecked(&account_account.data).unwrap();
     // assert_eq!(account.state, AccountState::Frozen);
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         let account = Account::unpack_unchecked(&account_account.data).unwrap();
         assert_eq!(account.state, AccountState::Frozen);
     });
@@ -2727,14 +2657,14 @@ fn test_freeze_account() {
     let input = build_input_raw(&sig_to_bytes(SIG_THAW_ACCOUNT), &input_data);
     let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap();
     assert_eq!(result, vec![1]);
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         let account = Account::unpack_unchecked(&account_account.data).unwrap();
         assert_eq!(account.state, AccountState::Initialized);
     })
 }
 
 #[test]
-fn test_close_account() {
+fn test_close_account_abi() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
         address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
@@ -2849,7 +2779,7 @@ fn test_close_account() {
     // let account = Account::unpack_unchecked(&account_account.data).unwrap();
     // assert_eq!(account.amount, 42);
     ctx.commit_db_to_sdk();
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         let account = Account::unpack_unchecked(&account_account.data).unwrap();
         assert_eq!(account.amount, 42);
     });
@@ -2881,7 +2811,7 @@ fn test_close_account() {
     assert_eq!(result.0, u32::MAX);
     assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(11)"));
     ctx.commit_db_to_sdk();
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         assert_eq!(account_account.lamports, account_minimum_balance());
     });
 
@@ -2957,10 +2887,10 @@ fn test_close_account() {
     let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address).unwrap();
     assert_eq!(result, vec![1]);
     ctx.commit_db_to_sdk();
-    with_account_mut(&mut ctx, &account3_key, |account3_account| {
+    with_svm_account_mut(&mut ctx, &account3_key, |account3_account| {
         assert_eq!(account3_account.lamports, 2 * account_minimum_balance());
     });
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         assert_eq!(account_account.lamports, 0);
         let account = Account::unpack_unchecked(&account_account.data).unwrap();
         assert_eq!(account.amount, 0);
@@ -3003,7 +2933,7 @@ fn test_close_account() {
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
     let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap();
     assert_eq!(result, vec![1]);
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         account_account.lamports = 2;
     });
 
@@ -3033,7 +2963,7 @@ fn test_close_account() {
     let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address);
     assert_eq!(output_data.unwrap(), vec![1]);
     ctx.commit_db_to_sdk();
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         assert_eq!(account_account.lamports, 2);
     });
 
@@ -3089,12 +3019,12 @@ fn test_close_account() {
     let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS8, &contract_address).unwrap();
     assert_eq!(result, vec![1]);
     ctx.commit_db_to_sdk();
-    with_account_mut(&mut ctx, &account_key, |account_account| {
+    with_svm_account_mut(&mut ctx, &account_key, |account_account| {
         assert_eq!(account_account.lamports, 0);
         let account = Account::unpack_unchecked(&account_account.data).unwrap();
         assert_eq!(account.amount, 0);
     });
-    with_account_mut(&mut ctx, &account3_key, |account3_account| {
+    with_svm_account_mut(&mut ctx, &account3_key, |account3_account| {
         assert_eq!(account3_account.lamports, 2 * account_minimum_balance() + 2);
     });
 }

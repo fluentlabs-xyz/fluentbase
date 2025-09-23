@@ -4,6 +4,7 @@ use crate::{
 };
 use alloc::vec;
 use alloy_primitives::{Bytes, B256};
+use core::cell::RefCell;
 
 /// A trait for providing shared API functionality.
 pub trait NativeAPI {
@@ -12,6 +13,7 @@ pub trait NativeAPI {
     fn blake3(data: &[u8]) -> B256;
     fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode>;
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
+    fn curve256r1_verify(input: &[u8]) -> bool;
     fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool;
     fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
     fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
@@ -28,10 +30,17 @@ pub trait NativeAPI {
         pairs: &[([u8; 32], [u8; 32])],
         out: &mut [u8; 32],
     ) -> bool;
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]);
+    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]);
+    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]);
+    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]);
+    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]);
+    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]);
+    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]);
+    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]);
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode>;
     fn bn254_double(p: &mut [u8; 64]);
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]);
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32];
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode>;
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode>;
     fn bn254_g1_compress(
         point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode>;
@@ -62,9 +71,9 @@ pub trait NativeAPI {
     fn fuel(&self) -> u64;
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64;
     fn charge_fuel(&self, fuel_consumed: u64);
-    fn exec<I: Into<BytecodeOrHash>>(
+    fn exec(
         &self,
-        code_hash: I,
+        code_hash: BytecodeOrHash,
         input: &[u8],
         fuel_limit: Option<u64>,
         state: u32,
@@ -98,20 +107,62 @@ pub trait NativeAPI {
     }
 }
 
-#[macro_export]
-macro_rules! bn254_add_common_impl {
-    ($p: ident, $q: ident, $action_p_eq_q: block, $action_rest: block) => {
-        if *$p == [0u8; 64] {
-            if *$q != [0u8; 64] {
-                *$p = *$q;
-            }
-            return;
-        } else if *$q == [0u8; 64] {
-            return;
-        } else if *$p == *$q {
-            $action_p_eq_q
-        } else {
-            $action_rest
-        }
-    };
+pub trait InterruptAPI {
+    fn interrupt(
+        &self,
+        code_hash: BytecodeOrHash,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32);
+}
+
+impl<T: NativeAPI + ?Sized> InterruptAPI for T {
+    // #[inline(always)]
+    fn interrupt(
+        &self,
+        code_hash: BytecodeOrHash,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32) {
+        NativeAPI::exec(self, code_hash, input, fuel_limit, state)
+    }
+}
+
+pub struct ExtractedInterruptionContext {
+    pub code_hash: B256,
+    pub input: Bytes,
+    pub fuel_limit: Option<u64>,
+    pub state: u32,
+}
+
+#[derive(Default)]
+pub struct InterruptionExtractingAdapter {
+    interruption: RefCell<Option<ExtractedInterruptionContext>>,
+}
+
+impl InterruptionExtractingAdapter {
+    pub fn extract(self) -> ExtractedInterruptionContext {
+        self.interruption.into_inner().unwrap()
+    }
+}
+
+impl InterruptAPI for InterruptionExtractingAdapter {
+    fn interrupt(
+        &self,
+        code_hash: BytecodeOrHash,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32) {
+        let context = ExtractedInterruptionContext {
+            code_hash: code_hash.code_hash(),
+            input: Bytes::copy_from_slice(input),
+            fuel_limit,
+            state,
+        };
+        _ = self.interruption.borrow_mut().insert(context);
+        (0, 0, 0)
+    }
 }

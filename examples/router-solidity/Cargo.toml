@@ -7,7 +7,7 @@ version = "0.1.0"
 fluentbase-sdk = { workspace = true }
 
 [dev-dependencies]
-fluentbase-sdk-testing = { workspace = true }
+fluentbase-testing = { workspace = true }
 alloy-sol-types = { workspace = true }
 hex = "0.4.3"
 

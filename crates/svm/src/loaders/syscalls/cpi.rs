@@ -31,9 +31,8 @@ use core::{fmt::Debug, marker::PhantomData, ptr};
 use fluentbase_sdk::ContextReader;
 use fluentbase_sdk::{Address, SharedAPI};
 use fluentbase_svm_common::common::evm_address_from_pubkey;
-use fluentbase_types::syscall::SyscallResult;
 use fluentbase_types::{
-    IsAccountEmpty, IsAccountOwnable, IsColdAccess, ERC20_MAGIC_BYTES,
+    IsAccountEmpty, IsAccountOwnable, IsColdAccess, SyscallResult, ERC20_MAGIC_BYTES,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, SVM_ELF_MAGIC_BYTES, U256,
 };
 use fluentbase_universal_token::common::sig_to_bytes;

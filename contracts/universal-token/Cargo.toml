@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 fluentbase-sdk = { workspace = true, features = [
     #    "fast-panic",
-    "debug-print",
+    #    "debug-print",
 ] }
 fluentbase-universal-token = { workspace = true }
 fluentbase-svm = { workspace = true }
@@ -16,7 +16,7 @@ solana-program-option = { workspace = true }
 solana-bincode = { workspace = true }
 
 [dev-dependencies]
-fluentbase-sdk-testing = { workspace = true }
+fluentbase-testing = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

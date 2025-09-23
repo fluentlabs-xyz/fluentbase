@@ -1,8 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall, SolValue};
-use fluentbase_sdk::{hex, Address, Bytes};
-use fluentbase_sdk::constructor::encode_constructor_params;
-use fluentbase_sdk_testing::EvmTestingContext;
+use fluentbase_sdk::{constructor::encode_constructor_params, hex, Address, Bytes};
+use fluentbase_testing::EvmTestingContext;
 
 /// Contract `ContractDeployer.sol` is a smart contract that deploys
 /// the given smart contract using the CREATE opcode of the EVM.

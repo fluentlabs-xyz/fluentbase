@@ -1,14 +1,14 @@
 use core::cell::RefCell;
-use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
+use fluentbase_runtime::RuntimeContextWrapper;
 use fluentbase_sdk::{
-    bytes::Buf, calc_create4_address, native_api::NativeAPI, syscall::SyscallResult, Address,
-    Bytes, ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable,
-    IsColdAccess, MetadataAPI, MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI,
-    B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    bytes::Buf, calc_create4_address, Address, Bytes, ContextReader, ContractContextV1, ExitCode,
+    IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI,
+    SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256,
+    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
 use hashbrown::HashMap;
-use std::rc::Rc;
+use std::{mem::take, rc::Rc};
 
 #[derive(Clone)]
 pub struct HostTestingContext {
@@ -26,21 +26,14 @@ impl HostTestingContext {
         self.inner.borrow_mut().shared_context_input_v1.contract = contract_context;
         self
     }
-    pub fn with_devnet_genesis(self) -> Self {
-        // TODO(dmitry123): "implement this"
-        self
-    }
     pub fn with_block_number(self, number: u64) -> Self {
         self.inner.borrow_mut().shared_context_input_v1.block.number = number;
         self
     }
     pub fn with_input<I: Into<Bytes>>(self, input: I) -> Self {
-        self.inner
-            .borrow_mut()
-            .native_sdk
-            .ctx
-            .borrow_mut()
-            .change_input(input.into());
+        let mut ctx = self.inner.borrow_mut();
+        ctx.input = input.into();
+        drop(ctx);
         self
     }
     /// Sets the initial storage state
@@ -73,21 +66,20 @@ impl HostTestingContext {
         self.inner.borrow_mut().ownable_account_address = Some(address);
     }
     pub fn with_fuel_limit(self, fuel_limit: u64) -> Self {
-        self.inner.borrow_mut().native_sdk.set_fuel(fuel_limit);
+        self.inner.borrow_mut().fuel_limit = Some(fuel_limit);
         self
     }
     pub fn with_gas_limit(self, gas_limit: u64) -> Self {
-        self.inner
-            .borrow_mut()
-            .native_sdk
-            .set_fuel(gas_limit * FUEL_DENOM_RATE);
+        self.inner.borrow_mut().fuel_limit = Some(gas_limit * FUEL_DENOM_RATE);
         self
     }
     pub fn take_output(&self) -> Vec<u8> {
-        self.inner.borrow_mut().native_sdk.take_output()
+        let mut ctx = self.inner.borrow_mut();
+        take(&mut ctx.output)
     }
     pub fn exit_code(&self) -> i32 {
-        self.inner.borrow_mut().native_sdk.exit_code()
+        let ctx = self.inner.borrow();
+        ctx.exit_code
     }
     pub fn dump_storage(&self) -> HashMap<(Address, U256), U256> {
         self.inner.borrow().persistent_storage.clone()
@@ -120,13 +112,18 @@ impl HostTestingContext {
 
 struct TestingContextInner {
     shared_context_input_v1: SharedContextInputV1,
-    native_sdk: RuntimeContextWrapper,
     persistent_storage: HashMap<(Address, U256), U256>,
     metadata: HashMap<(Address, Address), Vec<u8>>,
     metadata_storage: HashMap<(Address, U256), U256>,
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     ownable_account_address: Option<Address>,
+    input: Bytes,
+    output: Vec<u8>,
+    exit_code: i32,
+    consumed_fuel: u64,
+    fuel_limit: Option<u64>,
+    refunded_fuel: i64,
 }
 
 impl Default for HostTestingContext {
@@ -134,13 +131,18 @@ impl Default for HostTestingContext {
         Self {
             inner: Rc::new(RefCell::new(TestingContextInner {
                 shared_context_input_v1: SharedContextInputV1::default(),
-                native_sdk: RuntimeContextWrapper::new(RuntimeContext::root(0)),
                 persistent_storage: Default::default(),
                 metadata: Default::default(),
                 metadata_storage: Default::default(),
                 transient_storage: Default::default(),
                 logs: vec![],
                 ownable_account_address: None,
+                input: Default::default(),
+                output: vec![],
+                exit_code: 0,
+                consumed_fuel: 0,
+                fuel_limit: None,
+                refunded_fuel: 0,
             })),
         }
     }
@@ -300,6 +302,11 @@ impl SharedAPI for HostTestingContext {
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         RuntimeContextWrapper::secp256k1_recover(digest, sig, rec_id)
     }
+
+    fn curve256r1_verify(input: &[u8]) -> bool {
+        RuntimeContextWrapper::curve256r1_verify(input)
+    }
+
     fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
         RuntimeContextWrapper::curve25519_edwards_decompress_validate(p)
     }
@@ -336,16 +343,37 @@ impl SharedAPI for HostTestingContext {
     ) -> bool {
         RuntimeContextWrapper::curve25519_ristretto_multiscalar_mul(pairs, out)
     }
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
-        RuntimeContextWrapper::bn254_add(p, q);
+    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
+        RuntimeContextWrapper::bls12_381_g1_add(p, q)
+    }
+    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]) {
+        RuntimeContextWrapper::bls12_381_g1_msm(pairs, out);
+    }
+    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) {
+        RuntimeContextWrapper::bls12_381_g2_add(p, q)
+    }
+    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]) {
+        RuntimeContextWrapper::bls12_381_g2_msm(pairs, out);
+    }
+    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]) {
+        RuntimeContextWrapper::bls12_381_pairing(pairs, out);
+    }
+    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]) {
+        RuntimeContextWrapper::bls12_381_map_fp_to_g1(p, out);
+    }
+    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
+        RuntimeContextWrapper::bls12_381_map_fp2_to_g2(p, out);
+    }
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
+        RuntimeContextWrapper::bn254_add(p, q)
     }
     fn bn254_double(p: &mut [u8; 64]) {
         RuntimeContextWrapper::bn254_double(p);
     }
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
-        RuntimeContextWrapper::bn254_mul(p, q);
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
+        RuntimeContextWrapper::bn254_mul(p, q)
     }
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
         RuntimeContextWrapper::bn254_multi_pairing(elements)
     }
     fn bn254_g1_compress(
@@ -379,11 +407,17 @@ impl SharedAPI for HostTestingContext {
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
-        self.inner.borrow().native_sdk.read(target, offset);
+        let ctx = self.inner.borrow();
+        if offset + target.len() as u32 <= ctx.input.len() as u32 {
+            target.copy_from_slice(&ctx.input[(offset as usize)..(offset as usize + target.len())]);
+        } else {
+            panic!("can't read input: InputOutputOutOfBounds");
+        }
     }
 
     fn input_size(&self) -> u32 {
-        self.inner.borrow().native_sdk.input_size()
+        let ctx = self.inner.borrow();
+        ctx.input.len() as u32
     }
 
     fn read_context(&self, target: &mut [u8], offset: u32) {
@@ -400,22 +434,38 @@ impl SharedAPI for HostTestingContext {
     }
 
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) {
-        self.inner
-            .borrow()
-            .native_sdk
-            .charge_fuel_manually(fuel_consumed, fuel_refunded);
+        let mut ctx = self.inner.borrow_mut();
+        ctx.consumed_fuel += fuel_consumed;
+        ctx.refunded_fuel += fuel_refunded;
     }
 
     fn fuel(&self) -> u64 {
-        self.inner.borrow().native_sdk.fuel()
+        let ctx = self.inner.borrow();
+        let fuel_limit = ctx.fuel_limit.expect("fuel is disabled");
+        fuel_limit - ctx.consumed_fuel
     }
 
     fn write(&mut self, output: &[u8]) {
-        self.inner.borrow().native_sdk.write(output);
+        let mut ctx = self.inner.borrow_mut();
+        ctx.output.extend_from_slice(output);
     }
 
     fn native_exit(&self, exit_code: ExitCode) -> ! {
-        self.inner.borrow().native_sdk.exit(exit_code);
+        unreachable!("exit code: {} ({})", exit_code, exit_code as i32)
+    }
+
+    fn native_exec(
+        &self,
+        _code_hash: B256,
+        _input: &[u8],
+        _fuel_limit: Option<u64>,
+        _state: u32,
+    ) -> (u64, i64, i32) {
+        unimplemented!("native exec is not supported");
+    }
+
+    fn return_data(&self) -> Bytes {
+        unimplemented!("return data is not supported");
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {

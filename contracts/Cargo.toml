@@ -1,6 +1,6 @@
 [workspace]
 members = ["*"]
-exclude = [".cargo", "fairblock"]
+exclude = [".cargo", "fairblock", "target"]
 resolver = "2"
 
 [workspace.package]
@@ -16,7 +16,9 @@ readme = "README.md"
 
 [workspace.dependencies]
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
-revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-precompile", default-features = false }
+fluentbase-types = { path = "../crates/types", default-features = false }
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
+#revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
 fluentbase-universal-token = { path = "../crates/universal-token", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
 fluentbase-svm = { path = "../crates/svm", default-features = false }
@@ -24,11 +26,7 @@ fluentbase-svm-common = { path = "../crates/svm-common", default-features = fals
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-hex-literal = { version = "0.4.1", default-features = false }
-alloy-sol-types = { version = "1.2.0", default-features = false, features = ["json"] }
-serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
-tiny-keccak = { version = "2.0.2", features = ["keccak"] }
-fluentbase-sdk-testing = { path = "../crates/testing" }
+fluentbase-testing = { path = "../crates/testing" }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 
 [profile.release]

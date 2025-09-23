@@ -1,69 +1,27 @@
-use crate::{
-    instruction::{
-        blake3::SyscallBlake3,
-        charge_fuel::SyscallChargeFuel,
-        charge_fuel_manually::SyscallChargeFuelManually,
-        curve25519_edwards_add::SyscallCurve25519EdwardsAdd,
-        curve25519_edwards_decompress_validate::SyscallCurve25519EdwardsDecompressValidate,
-        curve25519_edwards_mul::SyscallCurve25519EdwardsMul,
-        curve25519_edwards_multiscalar_mul::SyscallCurve25519EdwardsMultiscalarMul,
-        curve25519_edwards_sub::SyscallCurve25519EdwardsSub,
-        curve25519_ristretto_add::SyscallCurve25519RistrettoAdd,
-        curve25519_ristretto_decompress_validate::SyscallCurve25519RistrettoDecompressValidate,
-        curve25519_ristretto_mul::SyscallCurve25519RistrettoMul,
-        curve25519_ristretto_multiscalar_mul::SyscallCurve25519RistrettoMultiscalarMul,
-        curve25519_ristretto_sub::SyscallCurve25519RistrettoSub,
-        debug_log::SyscallDebugLog,
-        exec::SyscallExec,
-        exit::SyscallExit,
-        forward_output::SyscallForwardOutput,
-        fp2_mul::SyscallFp2Mul,
-        fp_op::SyscallFpOp,
-        fuel::SyscallFuel,
-        input_size::SyscallInputSize,
-        keccak256::SyscallKeccak256,
-        math_big_mod_exp::SyscallMathBigModExp,
-        output_size::SyscallOutputSize,
-        poseidon::SyscallPoseidon,
-        preimage_copy::SyscallPreimageCopy,
-        preimage_size::SyscallPreimageSize,
-        read::SyscallRead,
-        read_output::SyscallReadOutput,
-        resume::SyscallResume,
-        secp256k1_recover::SyscallSecp256k1Recover,
-        sha256::SyscallSha256,
-        state::SyscallState,
-        weierstrass_add::SyscallWeierstrassAddAssign,
-        weierstrass_compress_decompress::{
-            ConfigG1Compress, ConfigG1Decompress, ConfigG2Compress, ConfigG2Decompress,
-            SyscallWeierstrassCompressDecompressAssign,
-        },
-        weierstrass_double::SyscallWeierstrassDoubleAssign,
-        weierstrass_mul::SyscallWeierstrassMulAssign,
-        weierstrass_multi_pairing::SyscallWeierstrassMultiPairingAssign,
-        write::SyscallWrite,
-        FieldMul,
-    },
-    RuntimeContext,
-};
+use crate::{syscall_handler::*, RuntimeContext};
 use fluentbase_types::{
-    bn254_add_common_impl, native_api::NativeAPI, BytecodeOrHash, Bytes, ExitCode, UnwrapExitCode,
-    B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
+    BytecodeOrHash, Bytes, BytesOrRef, ExitCode, NativeAPI, UnwrapExitCode, B256,
+    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, G1_COMPRESSED_SIZE,
+    G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, GT_COMPRESSED_SIZE,
+    PADDED_FP2_SIZE, PADDED_FP_SIZE, SCALAR_SIZE,
 };
 use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
-use std::{cell::RefCell, mem::take, rc::Rc};
+use std::cell::RefCell;
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct RuntimeContextWrapper {
-    pub ctx: Rc<RefCell<RuntimeContext>>,
+    pub ctx: RefCell<RuntimeContext>,
 }
 
 impl RuntimeContextWrapper {
     pub fn new(ctx: RuntimeContext) -> Self {
         Self {
-            ctx: Rc::new(RefCell::new(ctx)),
+            ctx: RefCell::new(ctx),
         }
+    }
+    pub fn into_inner(self) -> RuntimeContext {
+        self.ctx.into_inner()
     }
 }
 
@@ -85,6 +43,10 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)
+    }
+
+    fn curve256r1_verify(input: &[u8]) -> bool {
+        SyscallCurve256r1Verify::fn_impl(input)
     }
 
     fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
@@ -146,31 +108,77 @@ impl NativeAPI for RuntimeContextWrapper {
         true
     }
 
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
-        let result = bn254_add_common_impl!(
-            p,
-            q,
-            { SyscallWeierstrassDoubleAssign::<Bn254>::fn_impl(p) },
-            { SyscallWeierstrassAddAssign::<Bn254>::fn_impl(p, q) }
-        );
-        let min = core::cmp::min(p.len(), result.len());
-        p[..min].copy_from_slice(&result[..min]);
+    fn bls12_381_g1_add(p: &mut [u8; G1_UNCOMPRESSED_SIZE], q: &[u8; G1_UNCOMPRESSED_SIZE]) {
+        SyscallBls12381G1Add::fn_impl(p, q);
     }
 
-    fn bn254_double(p: &mut [u8; 64]) {
+    fn bls12_381_g1_msm(
+        pairs: &[([u8; G1_UNCOMPRESSED_SIZE], [u8; SCALAR_SIZE])],
+        out: &mut [u8; G1_UNCOMPRESSED_SIZE],
+    ) {
+        SyscallBls12381G1Msm::fn_impl(pairs, out)
+    }
+
+    fn bls12_381_g2_add(p: &mut [u8; G2_UNCOMPRESSED_SIZE], q: &[u8; G2_UNCOMPRESSED_SIZE]) {
+        SyscallBls12381G2Add::fn_impl(p, q)
+    }
+
+    fn bls12_381_g2_msm(
+        pairs: &[([u8; G2_UNCOMPRESSED_SIZE], [u8; SCALAR_SIZE])],
+        out: &mut [u8; G2_UNCOMPRESSED_SIZE],
+    ) {
+        SyscallBls12381G2Msm::fn_impl(pairs, out)
+    }
+
+    fn bls12_381_pairing(
+        pairs: &[([u8; G1_COMPRESSED_SIZE], [u8; G2_COMPRESSED_SIZE])],
+        out: &mut [u8; GT_COMPRESSED_SIZE],
+    ) {
+        SyscallBls12381Pairing::fn_impl(pairs, out)
+    }
+
+    fn bls12_381_map_fp_to_g1(p: &[u8; PADDED_FP_SIZE], out: &mut [u8; G1_UNCOMPRESSED_SIZE]) {
+        let mut tmp_out = [0u8; G1_UNCOMPRESSED_SIZE];
+        SyscallBls12381MapFpToG1::fn_impl(p, &mut tmp_out);
+        out.copy_from_slice(&tmp_out);
+    }
+
+    fn bls12_381_map_fp2_to_g2(p: &[u8; PADDED_FP2_SIZE], out: &mut [u8; G2_UNCOMPRESSED_SIZE]) {
+        SyscallBls12381MapFp2ToG2::fn_impl(p, out)
+    }
+
+    fn bn254_add(
+        p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+        q: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        SyscallBn256Add::fn_impl(p, q).map_err(|_| ExitCode::PrecompileError)?;
+        Ok(*p)
+    }
+
+    fn bn254_double(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE]) {
         let result = SyscallWeierstrassDoubleAssign::<Bn254>::fn_impl(p);
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);
     }
 
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
-        let result = SyscallWeierstrassMulAssign::<Bn254>::fn_impl(p, q);
-        p.copy_from_slice(&result);
+    fn bn254_mul(
+        p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+        q: &[u8; SCALAR_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        let result = SyscallBn256Mul::fn_impl(p, q).map_err(|_| ExitCode::PrecompileError)?;
+        Ok(result)
     }
 
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
-        let result = SyscallWeierstrassMultiPairingAssign::<Bn254>::fn_impl(elements);
-        result.try_into().unwrap()
+    fn bn254_multi_pairing(
+        elements: &[(
+            [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+            [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+        )],
+    ) -> Result<[u8; SCALAR_SIZE], ExitCode> {
+        let mut pairs = elements.to_vec();
+        let result =
+            SyscallBn256Pairing::fn_impl(&mut pairs).map_err(|_| ExitCode::PrecompileError)?;
+        Ok(result)
     }
 
     fn bn254_g1_compress(
@@ -205,13 +213,13 @@ impl NativeAPI for RuntimeContextWrapper {
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
 
-    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+    fn bn254_fp_mul(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
         let result = SyscallFpOp::<Bn254BaseField, FieldMul>::fn_impl(p, q);
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);
     }
 
-    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+    fn bn254_fp2_mul(p: &mut [u8; BN254_G2_POINT_COMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
         let result = SyscallFp2Mul::<Bn254BaseField>::fn_impl(p, q);
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);
@@ -270,15 +278,16 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
         SyscallChargeFuelManually::fn_impl(&mut self.ctx.borrow_mut(), fuel_consumed, fuel_refunded)
+            .unwrap()
     }
 
     fn charge_fuel(&self, fuel_consumed: u64) {
-        SyscallChargeFuel::fn_impl(&mut self.ctx.borrow_mut(), fuel_consumed);
+        SyscallChargeFuel::fn_impl(&mut self.ctx.borrow_mut(), fuel_consumed).unwrap();
     }
 
-    fn exec<I: Into<BytecodeOrHash>>(
+    fn exec(
         &self,
-        code_hash: I,
+        code_hash: BytecodeOrHash,
         input: &[u8],
         fuel_limit: Option<u64>,
         state: u32,
@@ -286,7 +295,7 @@ impl NativeAPI for RuntimeContextWrapper {
         let (fuel_consumed, fuel_refunded, exit_code) = SyscallExec::fn_impl(
             &mut self.ctx.borrow_mut(),
             code_hash,
-            input,
+            BytesOrRef::Ref(input),
             fuel_limit.unwrap_or(u64::MAX),
             state,
         );
@@ -323,41 +332,7 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn return_data(&self) -> Bytes {
-        self.ctx.borrow_mut().return_data().clone().into()
-    }
-}
-
-pub type TestingContext = RuntimeContextWrapper;
-
-impl TestingContext {
-    pub fn empty() -> Self {
-        Self::new(RuntimeContext::default())
-    }
-
-    pub fn with_input<I: Into<Bytes>>(mut self, input: I) -> Self {
-        self.set_input(input);
-        self
-    }
-
-    pub fn set_input<I: Into<Bytes>>(&mut self, input: I) {
-        self.ctx
-            .replace_with(|ctx| take(ctx).with_input(input.into()));
-    }
-
-    pub fn with_fuel(mut self, fuel: u64) -> Self {
-        self.set_fuel(fuel);
-        self
-    }
-
-    pub fn set_fuel(&mut self, fuel: u64) {
-        self.ctx.replace_with(|ctx| take(ctx).with_fuel_limit(fuel));
-    }
-
-    pub fn take_output(&self) -> Vec<u8> {
-        take(self.ctx.borrow_mut().output_mut())
-    }
-
-    pub fn exit_code(&self) -> i32 {
-        self.ctx.borrow_mut().exit_code()
+        let ctx = self.ctx.borrow();
+        ctx.execution_result.return_data.clone().into()
     }
 }

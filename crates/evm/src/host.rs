@@ -1,0 +1,155 @@
+//! Bridge between revm Host trait and the external SDK host.
+//!
+//! We do not execute Host methods directly; host-bound opcodes are routed
+//! via interruptions. The unreachable!() bodies here document that path.
+use core::ops::{Deref, DerefMut};
+use fluentbase_sdk::{Address, Bytes, ContextReader, Log, SharedAPI, B256, U256};
+use revm_context::journaled_state::{AccountLoad, StateLoad};
+use revm_interpreter::{Host, SStoreResult, SelfDestructResult};
+use revm_primitives::{StorageKey, StorageValue};
+
+/// Helper trait to access the underlying SDK from opcode handlers.
+pub(crate) trait HostWrapper {
+    fn sdk_mut(&mut self) -> &mut impl SharedAPI;
+}
+
+/// Wrapper that implements revm::Host for our SDK, but actual effects
+/// are performed through the interruption protocol.
+pub(crate) struct HostWrapperImpl<'a, SDK: SharedAPI> {
+    sdk: &'a mut SDK,
+}
+
+impl<'a, SDK: SharedAPI> Deref for HostWrapperImpl<'a, SDK> {
+    type Target = SDK;
+
+    fn deref(&self) -> &Self::Target {
+        &self.sdk
+    }
+}
+impl<'a, SDK: SharedAPI> DerefMut for HostWrapperImpl<'a, SDK> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.sdk
+    }
+}
+
+impl<'a, SDK: SharedAPI> HostWrapperImpl<'a, SDK> {
+    pub fn wrap(sdk: &'a mut SDK) -> Self {
+        Self { sdk }
+    }
+}
+
+impl<'a, SDK: SharedAPI> HostWrapper for HostWrapperImpl<'a, SDK> {
+    fn sdk_mut(&mut self) -> &mut impl SharedAPI {
+        self.sdk
+    }
+}
+
+impl<'a, SDK: SharedAPI> Host for HostWrapperImpl<'a, SDK> {
+    fn basefee(&self) -> U256 {
+        self.sdk.context().block_base_fee()
+    }
+
+    fn blob_gasprice(&self) -> U256 {
+        // TODO(dmitry123): Why block base fee works here and tests pass if blob price equals to base price?
+        //  Check test (cargo:test://evm_e2e::short_tests::good_coverage_tests::opc4_adiff_places)
+        //  P.S: We don't support blobs in Fluent yet, so need to check how it can affect the system.
+        self.sdk.context().block_base_fee()
+    }
+
+    fn gas_limit(&self) -> U256 {
+        U256::from(self.sdk.context().block_gas_limit())
+    }
+
+    fn difficulty(&self) -> U256 {
+        self.sdk.context().block_difficulty()
+    }
+
+    fn prevrandao(&self) -> Option<U256> {
+        Some(self.sdk.context().block_prev_randao().into())
+    }
+
+    fn block_number(&self) -> U256 {
+        U256::from(self.sdk.context().block_number())
+    }
+
+    fn timestamp(&self) -> U256 {
+        U256::from(self.sdk.context().block_timestamp())
+    }
+
+    fn beneficiary(&self) -> Address {
+        self.sdk.context().block_coinbase()
+    }
+
+    fn chain_id(&self) -> U256 {
+        U256::from(self.sdk.context().block_chain_id())
+    }
+
+    fn effective_gas_price(&self) -> U256 {
+        self.sdk.context().tx_gas_price()
+    }
+
+    fn caller(&self) -> Address {
+        self.sdk.context().tx_origin()
+    }
+
+    fn blob_hash(&self, _number: usize) -> Option<U256> {
+        Some(U256::ZERO)
+    }
+
+    fn max_initcode_size(&self) -> usize {
+        unreachable!()
+    }
+
+    fn block_hash(&mut self, _number: u64) -> Option<B256> {
+        unreachable!()
+    }
+
+    fn selfdestruct(
+        &mut self,
+        _address: Address,
+        _target: Address,
+    ) -> Option<StateLoad<SelfDestructResult>> {
+        unreachable!()
+    }
+
+    fn log(&mut self, _log: Log) {
+        unreachable!()
+    }
+
+    fn sstore(
+        &mut self,
+        _address: Address,
+        _key: StorageKey,
+        _value: StorageValue,
+    ) -> Option<StateLoad<SStoreResult>> {
+        unreachable!()
+    }
+
+    fn sload(&mut self, _address: Address, _key: StorageKey) -> Option<StateLoad<StorageValue>> {
+        unreachable!()
+    }
+
+    fn tstore(&mut self, _address: Address, _key: StorageKey, _value: StorageValue) {
+        unreachable!()
+    }
+
+    fn tload(&mut self, _address: Address, _key: StorageKey) -> StorageValue {
+        unreachable!()
+    }
+
+    fn balance(&mut self, _address: Address) -> Option<StateLoad<U256>> {
+        unreachable!()
+    }
+
+    fn load_account_delegated(&mut self, _address: Address) -> Option<StateLoad<AccountLoad>> {
+        unreachable!()
+    }
+
+    fn load_account_code(&mut self, _address: Address) -> Option<StateLoad<Bytes>> {
+        unreachable!()
+    }
+
+    fn load_account_code_hash(&mut self, _address: Address) -> Option<StateLoad<B256>> {
+        unreachable!()
+    }
+}

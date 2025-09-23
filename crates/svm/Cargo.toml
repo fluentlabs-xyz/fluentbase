@@ -72,7 +72,7 @@ itertools = { workspace = true, default-features = false, features = ["use_alloc
 [dev-dependencies]
 rand = { version = "0.9.0", default-features = false, features = ["alloc", "thread_rng"] }
 memoffset = { workspace = true, default-features = false }
-fluentbase-sdk-testing = { workspace = true }
+fluentbase-testing = { workspace = true }
 serde_derive = { workspace = true }
 array-bytes = { workspace = true }
 proptest = { workspace = true }

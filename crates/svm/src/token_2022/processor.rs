@@ -3537,7 +3537,7 @@ mod tests {
     use crate::token_2022::processor::Processor;
     use crate::token_2022::state::{Account, AccountState, Mint, Multisig};
     use crate::{solana_program, system_program};
-    use fluentbase_sdk_testing::EvmTestingContext;
+    use fluentbase_testing::EvmTestingContext;
     use fluentbase_types::SharedAPI;
     use solana_account_info::{AccountInfo, IntoAccountInfo};
     use solana_clock::{Clock, Epoch};

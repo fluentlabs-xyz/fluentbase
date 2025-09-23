@@ -1773,7 +1773,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "24.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#a62e70955bfb0d383279f0c0ed2e84955afaaff4"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254 0.5.0",
@@ -1794,7 +1794,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "20.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#a62e70955bfb0d383279f0c0ed2e84955afaaff4"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "alloy-primitives",
  "num_enum",

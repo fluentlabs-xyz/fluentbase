@@ -2,21 +2,40 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{alloc_slice, entrypoint, ContextReader, ExitCode, SharedAPI};
 
-pub fn main_entry(mut sdk: impl SharedAPI) {
+/// Main entry point for the sha256 wrapper contract.
+/// This contract wraps the sha256 precompile (EIP-210) which computes the SHA-256 hash of a given input.
+///
+/// Input:
+/// - A byte array of arbitrary length
+///
+/// Output:
+/// - A 32-byte array representing the SHA-256 hash of the input
+///
+pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
-    let input = Bytes::copy_from_slice(input);
-    // call sha256 function
-    let result = revm_precompile::hash::sha256_run(&input, gas_limit)
-        .unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
-    sdk.sync_evm_gas(result.gas_used, 0);
-    // write output
-    sdk.write(result.bytes.as_ref());
+
+    let gas_used = estimate_gas(input.len());
+    if gas_used > gas_limit {
+        sdk.native_exit(ExitCode::OutOfFuel);
+    }
+    let result = SDK::sha256(&input);
+    sdk.sync_evm_gas(gas_used, 0);
+    sdk.write(result.0.as_ref());
+}
+
+/// Gas estimation for SHA-256 (based on an EVM gas model)
+/// - Base cost: 60 gas
+/// - Per word (32 bytes): 12 gas
+#[inline(always)]
+fn estimate_gas(input_len: usize) -> u64 {
+    let words = (input_len + 31) / 32;
+    60 + (words as u64 * 12)
 }
 
 entrypoint!(main_entry);
@@ -24,8 +43,8 @@ entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, ContractContextV1, FUEL_DENOM_RATE};
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_sdk::{hex, Bytes, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_testing::HostTestingContext;
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 100_000;

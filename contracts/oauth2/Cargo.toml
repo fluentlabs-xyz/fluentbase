@@ -7,7 +7,7 @@ edition = "2021"
 fluentbase-sdk = { workspace = true }
 
 [dev-dependencies]
-fluentbase-sdk-testing = { workspace = true }
+fluentbase-testing = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

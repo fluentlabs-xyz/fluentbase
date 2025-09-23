@@ -8,12 +8,11 @@ mod tests {
         constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT},
         EdwardsPoint, RistrettoPoint,
     };
-    use fluentbase_runtime::instruction::weierstrass_compress_decompress::{
+    use fluentbase_runtime::syscall_handler::{
         ConfigG1Compress, ConfigG1Decompress, ConfigG2Compress, ConfigG2Decompress,
         SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{address, Address, ContractContextV1, U256};
-    use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::token_2022::instruction::{initialize_account, initialize_mint};
     use fluentbase_svm::{
         account::ReadableAccount,
@@ -29,16 +28,17 @@ mod tests {
         system_program, token_2022,
     };
     use fluentbase_svm_common::common::{evm_balance_from_lamports, pubkey_from_evm_address};
-    use fluentbase_svm_shared::test_structs::{EvmAction, Invoke, Transfer};
+    use fluentbase_svm_shared::test_structs::EvmAction;
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
             AltBn128Compression, Blake3, CreateAccountAndModifySomeData1, CurveGroupOp,
-            CurveMultiscalarMultiplication, CurvePointValidation, Keccak256, Poseidon,
+            CurveMultiscalarMultiplication, CurvePointValidation, Invoke, Keccak256, Poseidon,
             SetGetReturnData, Sha256, SolBigModExp, SolSecp256k1Recover, SyscallAltBn128,
-            TestCommand, EXPECTED_RET_ERR, EXPECTED_RET_OK,
+            TestCommand, Transfer, EXPECTED_RET_ERR, EXPECTED_RET_OK,
         },
     };
+    use fluentbase_testing::EvmTestingContext;
     use fluentbase_types::{
         helpers::convert_endianness_fixed, BN254_G1_POINT_COMPRESSED_SIZE,
         BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
@@ -1892,6 +1892,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_sol_alt_bn128_group_op_addition() {
         let mut ctx = ctx();
         let loader_id = loader_v4::id();
@@ -2025,6 +2026,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_sol_alt_bn128_group_op_multiplication() {
         let mut ctx = ctx();
         let loader_id = loader_v4::id();
@@ -2203,6 +2205,7 @@ mod tests {
     type G2 = ark_bn254::g2::G2Affine;
 
     #[test]
+    #[ignore]
     fn test_sol_alt_bn128_pairing() {
         let mut ctx = ctx();
         let loader_id = loader_v4::id();

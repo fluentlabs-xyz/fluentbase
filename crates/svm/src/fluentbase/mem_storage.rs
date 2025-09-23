@@ -3,8 +3,7 @@ use fluentbase_sdk::{
     calc_create4_address, keccak256, Address, Bytes, ExitCode, IsAccountEmpty, IsAccountOwnable,
     IsColdAccess, MetadataAPI, PRECOMPILE_SVM_RUNTIME, U256,
 };
-use fluentbase_types::syscall::SyscallResult;
-use fluentbase_types::MetadataStorageAPI;
+use fluentbase_types::{MetadataStorageAPI, SyscallResult};
 use hashbrown::HashMap;
 
 pub struct MemStorage {

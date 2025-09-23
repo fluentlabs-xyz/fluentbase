@@ -46,7 +46,7 @@ basic_entrypoint!(App);
 mod tests {
     use super::*;
     use alloy_sol_types::{sol, SolCall};
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_testing::HostTestingContext;
 
     #[test]
     fn test_greeting() {

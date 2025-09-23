@@ -1,16 +1,12 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use fluentbase_e2e::{EvmTestingContextWithGenesis, EXAMPLE_ERC20};
-use fluentbase_sdk::constructor::encode_constructor_params;
-use fluentbase_sdk::{address, Address, Bytes};
-use fluentbase_sdk_testing::{try_print_utf8_error, EvmTestingContext};
-use fluentbase_svm::error::SvmError;
-use fluentbase_svm::helpers::serialize_svm_program_params_from_instruction;
-use fluentbase_svm::solana_program::instruction::Instruction;
-use fluentbase_svm::token_2022;
-use fluentbase_svm::token_2022::instruction::{
-    initialize_account, initialize_mint, mint_to, transfer,
+use fluentbase_erc20::{
+    common::fixed_bytes_from_u256,
+    storage::{Feature, InitialSettings, DECIMALS_DEFAULT},
 };
+use fluentbase_sdk::{address, constructor::encode_constructor_params, Address, Bytes, U256};
 use fluentbase_svm_common::common::pubkey_from_evm_address;
+use fluentbase_testing::EvmTestingContext;
 use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::SIG_TOKEN2022;
