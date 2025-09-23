@@ -32,9 +32,9 @@ use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSA
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::{
     SIG_ALLOWANCE, SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE, SIG_BALANCE_OF, SIG_BURN,
-    SIG_BURN_CHECKED, SIG_CLOSE_ACCOUNT, SIG_DECIMALS, SIG_FREEZE_ACCOUNT, SIG_INITIALIZE_ACCOUNT,
-    SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE, SIG_SET_AUTHORITY, SIG_THAW_ACCOUNT,
-    SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
+    SIG_BURN_CHECKED, SIG_CLOSE_ACCOUNT, SIG_DECIMALS, SIG_DECIMALS_FOR_MINT, SIG_FREEZE_ACCOUNT,
+    SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE, SIG_SET_AUTHORITY,
+    SIG_THAW_ACCOUNT, SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
 };
 use solana_program_option::COption;
 use solana_program_pack::Pack;
@@ -473,10 +473,10 @@ fn test_transfer_dups_abi() {
 
     ctx.commit_db_to_sdk();
 
-    // decimals
+    // decimals for mint
     let mut input_data = vec![];
     input_data.extend_from_slice(mint_key.as_ref());
-    let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS), &input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS_FOR_MINT), &input_data);
     let output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
     assert_eq!(output_data.len(), 1);
@@ -495,6 +495,14 @@ fn test_transfer_dups_abi() {
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
     assert_eq!(output_data.len(), 1);
     assert_eq!(output_data[0], 1);
+
+    // decimals for account
+    let mut input_data = vec![];
+    input_data.extend_from_slice(account1_key.as_ref());
+    let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS), &input_data);
+    let output_data =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+    assert_eq!(output_data, vec![decimals]);
 
     // initialize_account2
     let mut input_data = vec![];

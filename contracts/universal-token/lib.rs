@@ -26,25 +26,45 @@ use fluentbase_universal_token::{
     consts::{
         ERR_MALFORMED_INPUT, SIG_ALLOWANCE, SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE,
         SIG_BALANCE_OF, SIG_BURN, SIG_BURN_CHECKED, SIG_CLOSE_ACCOUNT, SIG_DECIMALS,
-        SIG_FREEZE_ACCOUNT, SIG_GET_ACCOUNT_DATA_SIZE, SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT,
-        SIG_MINT_TO, SIG_REVOKE, SIG_SET_AUTHORITY, SIG_THAW_ACCOUNT, SIG_TOKEN2022, SIG_TRANSFER,
-        SIG_TRANSFER_FROM,
+        SIG_DECIMALS_FOR_MINT, SIG_FREEZE_ACCOUNT, SIG_GET_ACCOUNT_DATA_SIZE,
+        SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE, SIG_SET_AUTHORITY,
+        SIG_THAW_ACCOUNT, SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
     },
     storage::SIG_LEN_BYTES,
 };
 use solana_program_error::ProgramError;
 
-fn decimals_for_pubkey<SDK: SharedAPI>(sdk: &mut SDK, pk: &Pubkey) -> Result<u8, ProgramError> {
+fn decimals_for_mint_pubkey<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    pk: &Pubkey,
+) -> Result<u8, ProgramError> {
     let mut processor = Processor::new(sdk);
-    let decimals = processor.decimals(&pk)?;
+    let decimals = processor.decimals_for_mint(&pk)?;
     Ok(decimals)
 }
 
-fn decimals<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
+fn decimals_for_account_pubkey<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    pk: &Pubkey,
+) -> Result<u8, ProgramError> {
+    let mut processor = Processor::new(sdk);
+    let decimals = processor.decimals_for_account(&pk)?;
+    Ok(decimals)
+}
+
+fn decimals_for_mint<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     let Ok(pk) = pubkey_try_from_slice(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-    let decimals = decimals_for_pubkey(sdk, &pk).expect("failed to get decimals");
+    let decimals = decimals_for_mint_pubkey(sdk, &pk).expect("failed to get decimals");
+    sdk.write(&[decimals]);
+}
+
+fn decimals_for_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
+    let Ok(pk) = pubkey_try_from_slice(input) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let decimals = decimals_for_account_pubkey(sdk, &pk).expect("failed to get decimals");
     sdk.write(&[decimals]);
 }
 
@@ -507,7 +527,8 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         SIG_TRANSFER_FROM => transfer_from(&mut sdk, input),
         SIG_INITIALIZE_ACCOUNT => initialize_account(&mut sdk, input),
         SIG_MINT_TO => mint_to(&mut sdk, input),
-        SIG_DECIMALS => decimals(&mut sdk, input),
+        SIG_DECIMALS_FOR_MINT => decimals_for_mint(&mut sdk, input),
+        SIG_DECIMALS => decimals_for_account(&mut sdk, input),
         SIG_ALLOWANCE => allowance(&mut sdk, input),
         SIG_APPROVE => approve(&mut sdk, input),
         SIG_APPROVE_CHECKED => approve_checked(&mut sdk, input),

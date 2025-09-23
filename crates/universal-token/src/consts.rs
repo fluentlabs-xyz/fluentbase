@@ -15,6 +15,7 @@ pub const ERR_OVERFLOW: u32 = derive_evm_error!("Overflow()");
 pub const ERR_UNINIT: u32 = derive_evm_error!("UninitError()");
 pub const ERR_CONVERSION: u32 = derive_evm_error!("ConversionError()");
 
+pub const SIG_DECIMALS_FOR_MINT: u32 = derive_keccak256_id!("decimalsForMint(pubkey)"); // mint
 pub const SIG_DECIMALS: u32 = derive_keccak256_id!("decimals(pubkey)"); // mint
 pub const SIG_TOTAL_SUPPLY: u32 = derive_keccak256_id!("totalSupply()");
 pub const SIG_BALANCE: u32 = derive_keccak256_id!("balance()");

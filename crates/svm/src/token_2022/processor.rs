@@ -10,7 +10,7 @@ use crate::token_2022::pod_instruction::{
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::marker::PhantomData;
-use fluentbase_sdk::debug_log;
+use fluentbase_sdk::{debug_log, debug_log_ext};
 use fluentbase_types::{Address, SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use itertools::min;
 use solana_account_info::{next_account_info, AccountInfo};
@@ -316,13 +316,13 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         Ok(destination_account.base.amount.into())
     }
 
-    pub fn decimals(&mut self, mint_pk: &Pubkey) -> Result<u8, ProgramError> {
+    pub fn decimals_for_mint(&mut self, mint_pk: &Pubkey) -> Result<u8, ProgramError> {
         let account_metas = vec![AccountMeta::new_readonly(mint_pk.clone(), false)];
         let mut accounts: Vec<crate::account::Account> =
             reconstruct_accounts::<_, true>(self.sdk, &account_metas)
-                .expect("failed to reconstruct accounts");
+                .map_err(|_e| ProgramError::InvalidAccountData)?;
         let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
-            .expect("failed to reconstruct accounts infos");
+            .map_err(|_e| ProgramError::InvalidAccountData)?;
 
         let account_info_iter = &mut account_infos.iter();
 
@@ -332,6 +332,24 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         let mut mint = PodStateWithExtensionsMut::<PodMint>::unpack(&mut account_data)?;
 
         Ok(mint.base.decimals)
+    }
+
+    pub fn decimals_for_account(&mut self, account_pk: &Pubkey) -> Result<u8, ProgramError> {
+        let account_metas = vec![AccountMeta::new_readonly(account_pk.clone(), false)];
+        let mut accounts: Vec<crate::account::Account> =
+            reconstruct_accounts::<_, true>(self.sdk, &account_metas)
+                .map_err(|_e| ProgramError::InvalidAccountData)?;
+        let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
+            .map_err(|_e| ProgramError::InvalidAccountData)?;
+
+        let account_info_iter = &mut account_infos.iter();
+
+        let account_info = next_account_info(account_info_iter)?;
+
+        let mut account_data = account_info.data.borrow_mut();
+        let mut account = PodStateWithExtensionsMut::<PodAccount>::unpack(&mut account_data)?;
+
+        Ok(self.decimals_for_mint(&account.base.mint)?)
     }
 
     pub fn allowance(&mut self, delegate: &Pubkey, account: &Pubkey) -> Result<u64, ProgramError> {
