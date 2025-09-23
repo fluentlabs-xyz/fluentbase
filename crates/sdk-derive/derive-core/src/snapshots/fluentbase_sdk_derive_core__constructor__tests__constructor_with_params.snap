@@ -82,18 +82,14 @@ impl<SDK: SharedAPI> Token<SDK> {
     /// This method is called once during contract deployment.
     pub fn deploy(&mut self) {
         let input_length = self.sdk.input_size();
-        if input_length > 0 {
-            let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
-            self.sdk.read(&mut call_data, 0);
-            let (param0, param1) = match ConstructorCall::decode(&&call_data[..]) {
-                Ok(decoded) => (decoded.0.0, decoded.0.1),
-                Err(err) => {
-                    panic!("Failed to decode constructor parameters: {:?}", err);
-                }
-            };
-            self.constructor(param0, param1);
-        } else {
-            self.constructor(param0, param1);
-        }
+        let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
+        self.sdk.read(&mut call_data, 0);
+        let (param0, param1) = match ConstructorCall::decode(&&call_data[..]) {
+            Ok(decoded) => (decoded.0.0, decoded.0.1),
+            Err(err) => {
+                panic!("Failed to decode constructor parameters: {:?}", err);
+            }
+        };
+        self.constructor(param0, param1);
     }
 }

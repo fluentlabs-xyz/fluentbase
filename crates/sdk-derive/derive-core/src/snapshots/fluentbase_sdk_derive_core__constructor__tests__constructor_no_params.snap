@@ -82,12 +82,8 @@ impl<SDK: SharedAPI> MyContract<SDK> {
     /// This method is called once during contract deployment.
     pub fn deploy(&mut self) {
         let input_length = self.sdk.input_size();
-        if input_length > 0 {
-            let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
-            self.sdk.read(&mut call_data, 0);
-            self.constructor();
-        } else {
-            self.constructor();
-        }
+        let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
+        self.sdk.read(&mut call_data, 0);
+        self.constructor();
     }
 }

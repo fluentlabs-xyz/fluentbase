@@ -8,7 +8,7 @@ use alloc::{string::String, vec::Vec};
 use alloy_sol_types::{sol, SolEvent};
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{router, Storage},
+    derive::{constructor, router, Storage},
     storage::{StorageMap, StorageString, StorageU256},
     Address, ContextReader, SharedAPI, B256, U256,
 };
@@ -29,6 +29,20 @@ fn emit_event<SDK: SharedAPI, T: SolEvent>(sdk: &mut SDK, event: T) {
     sdk.emit_log(&topics, &data);
 }
 
+// Define ERC20 trait interface
+pub trait ERC20Interface {
+    fn name(&self) -> String;
+    fn symbol(&self) -> String;
+    fn decimals(&self) -> U256;
+    fn total_supply(&self) -> U256;
+    fn balance_of(&self, account: Address) -> U256;
+    fn transfer(&mut self, to: Address, value: U256) -> U256;
+    fn allowance(&self, owner: Address, spender: Address) -> U256;
+    fn approve(&mut self, spender: Address, value: U256) -> U256;
+    fn transfer_from(&mut self, from: Address, to: Address, value: U256) -> U256;
+}
+
+// Storage structure
 #[derive(Storage)]
 pub struct ERC20<SDK> {
     sdk: SDK,
@@ -39,7 +53,8 @@ pub struct ERC20<SDK> {
     allowances: StorageMap<Address, StorageMap<Address, StorageU256>>,
 }
 
-#[router(mode = "solidity")]
+// Separate constructor implementation
+#[constructor(mode = "solidity")]
 impl<SDK: SharedAPI> ERC20<SDK> {
     pub fn constructor(&mut self, name: String, symbol: String, initial_supply: U256) {
         // Set token metadata
@@ -64,28 +79,32 @@ impl<SDK: SharedAPI> ERC20<SDK> {
             },
         );
     }
+}
 
-    pub fn name(&self) -> String {
+// Router implementation for trait methods
+#[router(mode = "solidity")]
+impl<SDK: SharedAPI> ERC20Interface for ERC20<SDK> {
+    fn name(&self) -> String {
         self.token_name_accessor().get(&self.sdk)
     }
 
-    pub fn symbol(&self) -> String {
+    fn symbol(&self) -> String {
         self.token_symbol_accessor().get(&self.sdk)
     }
 
-    pub fn decimals(&self) -> U256 {
+    fn decimals(&self) -> U256 {
         U256::from(18)
     }
 
-    pub fn total_supply(&self) -> U256 {
+    fn total_supply(&self) -> U256 {
         self.total_supply_accessor().get(&self.sdk)
     }
 
-    pub fn balance_of(&self, account: Address) -> U256 {
+    fn balance_of(&self, account: Address) -> U256 {
         self.balances_accessor().entry(account).get(&self.sdk)
     }
 
-    pub fn transfer(&mut self, to: Address, value: U256) -> U256 {
+    fn transfer(&mut self, to: Address, value: U256) -> U256 {
         let from = self.sdk.context().contract_caller();
 
         // Check sufficient balance
@@ -108,14 +127,14 @@ impl<SDK: SharedAPI> ERC20<SDK> {
         U256::from(1)
     }
 
-    pub fn allowance(&self, owner: Address, spender: Address) -> U256 {
+    fn allowance(&self, owner: Address, spender: Address) -> U256 {
         self.allowances_accessor()
             .entry(owner)
             .entry(spender)
             .get(&self.sdk)
     }
 
-    pub fn approve(&mut self, spender: Address, value: U256) -> U256 {
+    fn approve(&mut self, spender: Address, value: U256) -> U256 {
         let owner = self.sdk.context().contract_caller();
 
         self.allowances_accessor()
@@ -134,7 +153,7 @@ impl<SDK: SharedAPI> ERC20<SDK> {
         U256::from(1)
     }
 
-    pub fn transfer_from(&mut self, from: Address, to: Address, value: U256) -> U256 {
+    fn transfer_from(&mut self, from: Address, to: Address, value: U256) -> U256 {
         let spender = self.sdk.context().contract_caller();
 
         // Check allowance

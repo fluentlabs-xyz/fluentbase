@@ -6,7 +6,7 @@ use crate::{
 use darling::{ast::NestedMeta, FromMeta};
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use proc_macro_error::{abort, abort_call_site, emit_error};
-use quote::{format_ident, quote, ToTokens};
+use quote::{quote, ToTokens};
 use syn::{spanned::Spanned, visit, Error, ImplItemFn, ItemImpl, Result};
 
 /// Attributes for the constructor configuration.
@@ -153,83 +153,15 @@ impl Constructor {
         let target_type = &self.impl_block.self_ty;
         let generic_params = &self.impl_block.generics;
 
-        let constructor_call = self.generate_constructor_call()?;
+        let deploy_body = self.constructor_method.generate_deploy_body();
 
         Ok(quote! {
             impl #generic_params #target_type {
                 /// Deploy entry point for contract initialization.
                 /// This method is called once during contract deployment.
                 pub fn deploy(&mut self) {
-                    #constructor_call
+                    #deploy_body
                 }
-            }
-        })
-    }
-
-    /// Generates the constructor call logic with parameter decoding.
-    fn generate_constructor_call(&self) -> Result<TokenStream2> {
-        let fn_name = format_ident!("constructor");
-        let params = self.constructor_method.parsed_signature().parameters();
-        let param_count = params.len();
-
-        let call_struct = format_ident!("ConstructorCall");
-
-        // Generate parameter decoding based on parameter count
-        let (param_handling, fn_call) = match param_count {
-            0 => {
-                // No parameters - simple call
-                (quote! {}, quote! { self.#fn_name() })
-            }
-            1 => {
-                // Single parameter
-                let param_handling = quote! {
-                    let param0 = match #call_struct::decode(&&call_data[..]) {
-                        Ok(decoded) => decoded.0.0,
-                        Err(err) => {
-                            panic!("Failed to decode constructor parameter: {:?}", err);
-                        }
-                    };
-                };
-                let fn_call = quote! { self.#fn_name(param0) };
-                (param_handling, fn_call)
-            }
-            _ => {
-                // Multiple parameters
-                let param_names = (0..param_count)
-                    .map(|i| format_ident!("param{}", i))
-                    .collect::<Vec<_>>();
-                let param_indices = (0..param_count).map(syn::Index::from).collect::<Vec<_>>();
-
-                let param_handling = quote! {
-                    let (#(#param_names),*) = match #call_struct::decode(&&call_data[..]) {
-                        Ok(decoded) => (#(decoded.0.#param_indices),*),
-                        Err(err) => {
-                            panic!("Failed to decode constructor parameters: {:?}", err);
-                        }
-                    };
-                };
-
-                let fn_call = quote! { self.#fn_name(#(#param_names),*) };
-                (param_handling, fn_call)
-            }
-        };
-
-        // Generate complete constructor call with input reading
-        Ok(quote! {
-            // Read input data
-            let input_length = self.sdk.input_size();
-
-            if input_length > 0 {
-                // Read constructor parameters if provided
-                let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
-                self.sdk.read(&mut call_data, 0);
-
-                // Decode parameters and call constructor
-                #param_handling
-                #fn_call;
-            } else {
-                // Call constructor without parameters
-                #fn_call;
             }
         })
     }
