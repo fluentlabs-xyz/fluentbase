@@ -425,3 +425,91 @@ pub fn derive_storage_layout(input: TokenStream) -> TokenStream {
         Err(err) => err.to_compile_error().into(),
     }
 }
+
+/// Constructor macro for Fluentbase smart contracts.
+///
+/// Creates a deployment entry point that handles contract initialization,
+/// automatically managing parameter decoding for the constructor method.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// #[constructor(mode = "solidity")]
+/// impl<SDK: SharedAPI> MyContract<SDK> {
+///     pub fn constructor(&mut self, owner: Address, initial_supply: U256) {
+///         // Initialization logic
+///         self.owner = owner;
+///         self.total_supply = initial_supply;
+///     }
+/// }
+/// ```
+///
+/// # Special Requirements
+///
+/// - **Must contain exactly one method named `constructor`**
+/// - Other methods in the impl block will be ignored
+/// - Use `#[router]` for regular contract methods
+///
+/// # Generated Code
+///
+/// The macro generates:
+///
+/// 1. **Codec types** for constructor parameters:
+///    - `ConstructorCall` and `ConstructorCallArgs`
+///    - Encoding/decoding implementations
+///
+/// 2. **Deploy method** that:
+///    - Reads input data from the SDK
+///    - Decodes constructor parameters
+///    - Calls the constructor with decoded arguments
+///
+/// # Attributes
+///
+/// - **mode**: Encoding mode (same as router)
+///   - `"solidity"`: Full EVM compatibility (default)
+///   - `"fluent"`: Optimized encoding for WASM
+///
+/// # Example with No Parameters
+///
+/// ```rust,ignore
+/// #[constructor(mode = "solidity")]
+/// impl<SDK: SharedAPI> SimpleContract<SDK> {
+///     pub fn constructor(&mut self) {
+///         // Simple initialization without parameters
+///     }
+/// }
+/// ```
+///
+/// # Working with Router
+///
+/// Use both macros for complete contract implementation:
+///
+/// ```rust,ignore
+/// // Constructor for initialization
+/// #[constructor(mode = "solidity")]
+/// impl<SDK: SharedAPI> Token<SDK> {
+///     pub fn constructor(&mut self, initial_supply: U256) {
+///         self.total_supply = initial_supply;
+///     }
+/// }
+///
+/// // Router for runtime methods
+/// #[router(mode = "solidity")]
+/// impl<SDK: SharedAPI> Token<SDK> {
+///     pub fn balance_of(&self, account: Address) -> U256 {
+///         // Implementation
+///     }
+///     
+///     pub fn transfer(&mut self, to: Address, amount: U256) -> bool {
+///         // Implementation
+///     }
+/// }
+/// ```
+#[proc_macro_attribute]
+#[proc_macro_error]
+pub fn constructor(attr: TokenStream, input: TokenStream) -> TokenStream {
+    match fluentbase_sdk_derive_core::constructor::process_constructor(attr.into(), input.into()) {
+        Ok(constructor) => constructor.to_token_stream().into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
