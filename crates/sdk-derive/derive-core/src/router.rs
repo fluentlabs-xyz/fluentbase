@@ -198,7 +198,15 @@ impl Router {
     /// Generates the complete router implementation with all artifacts.
     pub fn generate(&self) -> Result<TokenStream2> {
         // Start with the implementation block
-        let impl_block = self.impl_block();
+        let mut clean_impl_block = self.impl_block.clone();
+
+        for item in &mut clean_impl_block.items {
+            if let syn::ImplItem::Fn(method) = item {
+                method
+                    .attrs
+                    .retain(|attr| !attr.path().is_ident("function_id"));
+            }
+        }
 
         // Generate codec implementations
         let method_codecs = self.generate_codec_implementations()?;
@@ -215,9 +223,7 @@ impl Router {
 
         // Build the base output
         let output = quote! {
-            #[allow(unused_imports)]
-            use ::fluentbase_sdk::derive::function_id;
-            #impl_block
+            #clean_impl_block
 
             #(#method_codecs)*
 
