@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true, features = [
-    #    "fast-panic",
-    "debug-print",
+    "fast-panic",
+    #    "debug-print",
 ] }
 fluentbase-universal-token = { workspace = true }
 fluentbase-svm = { workspace = true }
