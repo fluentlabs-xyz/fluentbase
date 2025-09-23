@@ -58,11 +58,13 @@ default = [
     "wasmtime",
     "debug-print",
     "enable-svm",
+    #    "enable-error-text-checks", # when 'fast-panic' is off
 ]
 enable-svm = [
     "fluentbase-genesis/enable-svm",
     "fluentbase-svm/use-extended-debug-log"
 ]
+enable-error-text-checks = []
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",
