@@ -215,10 +215,15 @@ fn erc20_transfer_benches(c: &mut Criterion) {
                     None,
                     None,
                 );
-                // let out = result.output().unwrap();
-                // if out.to_vec() != vec![1] {
-                //     panic!("unexpected output: {:x?}", out);
-                // }
+                match &result {
+                    ExecutionResult::Success { .. } => {}
+                    ExecutionResult::Revert { .. } => {}
+                    ExecutionResult::Halt { .. } => {}
+                }
+                let out = result.output().unwrap();
+                if out.to_vec() != vec![1] {
+                    panic!("unexpected output: {:x?}", out);
+                }
             });
         });
     }
