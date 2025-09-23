@@ -43,7 +43,7 @@ fn warmup_wasmtime_modules() {
     Runtime::warmup_strategy_raw(
         b256!("0xc62b88c3b842aea2c89fb1a69212d8e24925936873c4f52c38c4496eb6c491b2"),
         Strategy::Wasmtime {
-            module: Rc::new(wasmtime_module),
+            module: wasmtime_module,
         },
     );
 }
