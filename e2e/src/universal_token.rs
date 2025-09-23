@@ -64,11 +64,6 @@ pub fn build_input(prefix: &[u8], instruction: &Instruction) -> Result<Vec<u8>, 
     Ok(input)
 }
 
-fn mint_minimum_balance() -> u64 {
-    // Rent::default().minimum_balance(Mint::get_packed_len())
-    0
-}
-
 fn account_minimum_balance() -> u64 {
     // Rent::default().minimum_balance(Account::get_packed_len())
     0
