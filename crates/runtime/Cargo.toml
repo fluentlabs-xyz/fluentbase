@@ -12,6 +12,9 @@ categories.workspace = true
 [dependencies]
 fluentbase-types = { workspace = true }
 rwasm = { workspace = true }
+dashmap = "5"
+crossbeam-queue = "0.3"
+once_cell = "1"
 
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
@@ -22,7 +25,6 @@ secp256k1 = { version = "=0.30", default-features = false, features = [
     "rand",
     "global-context",
 ] }
-hashbrown = { workspace = true }
 hex = { version = "0.4.3", optional = true }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 blake3 = { workspace = true, default-features = false }

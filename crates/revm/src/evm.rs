@@ -135,7 +135,7 @@ where
             return Ok(ItemOrResult::Result(output));
         }
 
-        // if it is new frame, initialize the interpreter.
+        // if it is a new frame, initialize the interpreter.
         let (ctx, inspector, frame) = self.ctx_inspector_frame();
         let interp = &mut frame.interpreter;
         inspector.initialize_interp(interp, ctx);
@@ -200,7 +200,6 @@ where
         ItemOrResult<&mut Self::Frame, <Self::Frame as FrameTr>::FrameResult>,
         ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
     > {
-        let _span = tracing::info_span!("revm.frame_init.init_with_context").entered();
         let is_first_init = self.0.frame_stack.index().is_none();
         let new_frame = if is_first_init {
             self.0.frame_stack.start_init()

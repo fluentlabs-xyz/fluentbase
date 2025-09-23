@@ -5,10 +5,15 @@ use crate::{
 };
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    Address, BytecodeOrHash, Bytes, ExitCode, B256, STATE_DEPLOY, STATE_MAIN,
+    import_linker_v1_preview, Address, BytecodeOrHash, Bytes, ExitCode, B256, STATE_DEPLOY,
+    STATE_MAIN,
 };
 use rwasm::{Store, Strategy, TrapCode, TypedStore, Value};
-use std::{fmt::Debug, mem::take, sync::Arc};
+use std::{
+    fmt::Debug,
+    mem::take,
+    sync::{atomic::Ordering, Arc},
+};
 
 /// Finalized outcome of a single runtime invocation.
 ///
@@ -93,41 +98,40 @@ impl Runtime {
     /// Creates a runtime from bytecode or code hash and initializes its store with the provided context.
     #[tracing::instrument(level = "info", skip_all)]
     pub fn new(bytecode_or_hash: BytecodeOrHash, runtime_context: RuntimeContext) -> Self {
-        CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
-            let code_hash = bytecode_or_hash.code_hash();
+        let caching_runtime = &*CACHING_RUNTIME_FACTORY;
+        let code_hash = bytecode_or_hash.code_hash();
 
-            // If we have a cached module, then use it, otherwise create a new one and cache
-            let cached_module = caching_runtime.get_module_or_init(bytecode_or_hash);
-            let (strategy, mut store) = cached_module.acquire_shared();
+        // If we have a cached module, then use it, otherwise create a new one and cache
+        let cached_module = caching_runtime.get_module_or_init(bytecode_or_hash);
+        let (strategy, mut store) = cached_module.acquire_shared();
 
-            // If there is cached store then reuse it, but rewrite the context data
-            if let Some(store) = store.as_mut() {
-                match store {
-                    // TODO(dmitry123): Eliminate this check, we don't need the reset function, it's used for rWasm's e2e tests only.
-                    TypedStore::Rwasm(rwasm_store) => {
-                        // A special case for rWasm, we need to reset state
-                        rwasm_store.reset(false);
-                    }
-                    _ => {}
+        // If there is cached store then reuse it, but rewrite the context data
+        if let Some(store) = store.as_mut() {
+            match store {
+                // TODO(dmitry123): Eliminate this check, we don't need the reset function, it's used for rWasm's e2e tests only.
+                TypedStore::Rwasm(rwasm_store) => {
+                    // A special case for rWasm, we need to reset state
+                    rwasm_store.reset(false);
                 }
-                store.context_mut(|context_ref| *context_ref = runtime_context.clone());
+                _ => {}
             }
+            store.context_mut(|context_ref| *context_ref = runtime_context.clone());
+        }
 
-            // If there is no cached store, then construct a new one (slow)
-            let store = store.unwrap_or_else(|| {
-                strategy.create_store(
-                    caching_runtime.import_linker.clone(),
-                    runtime_context,
-                    runtime_syscall_handler,
-                )
-            });
+        // If there is no cached store, then construct a new one (slow)
+        let store = store.unwrap_or_else(|| {
+            strategy.create_store(
+                import_linker_v1_preview(),
+                runtime_context,
+                runtime_syscall_handler,
+            )
+        });
 
-            Self {
-                strategy,
-                store,
-                code_hash,
-            }
-        })
+        Self {
+            strategy,
+            store,
+            code_hash,
+        }
     }
 
     /// Executes the entry function of the module determined by the current execution state.
@@ -193,56 +197,48 @@ impl Runtime {
     /// Pre-compiles and caches a module for the given code hash and address if not already cached.
     pub fn warmup_strategy(bytecode: Bytes, hash: B256, address: Address) {
         // Ensure the strategy is created and cached ahead of time to avoid JIT cost on first call
-        CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
-            caching_runtime.get_module_or_init(BytecodeOrHash::Bytecode {
-                address,
-                bytecode,
-                hash,
-            });
-        })
+        let caching_runtime = &*CACHING_RUNTIME_FACTORY;
+        caching_runtime.get_module_or_init(BytecodeOrHash::Bytecode {
+            address,
+            bytecode,
+            hash,
+        });
     }
 
     pub fn warmup_strategy_raw(code_hash: B256, strategy: Strategy) {
         // Ensure the strategy is created and cached ahead of time to avoid JIT cost on first call
-        CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
-            // TODO(dmitry123): Caching doesn't work, because we're in a different thread
-            caching_runtime.cached_modules.insert(
-                code_hash,
-                CachedModule::new(strategy, caching_runtime.import_linker.clone()),
-            );
-        })
+        let caching_runtime = &*CACHING_RUNTIME_FACTORY;
+        let cached = Arc::new(CachedModule::new(strategy, import_linker_v1_preview()));
+        caching_runtime.cached_modules.insert(code_hash, cached);
     }
 
     /// Saves the current runtime instance for later resumption and returns its call identifier.
     pub(crate) fn remember_runtime(self, _root_ctx: &mut RuntimeContext) -> i32 {
         // save the current runtime state for future recovery
-        CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
-            let call_id = caching_runtime.transaction_call_id_counter;
-            caching_runtime.transaction_call_id_counter += 1;
-            // root_ctx.call_counter += 1;
-            // let call_id = root_ctx.call_counter;
-            caching_runtime.recoverable_runtimes.insert(call_id, self);
-            call_id as i32
-        })
+        let factory = &*CACHING_RUNTIME_FACTORY;
+        let call_id = factory
+            .transaction_call_id_counter
+            .fetch_add(1, Ordering::Relaxed);
+        factory.recoverable_runtimes.insert(call_id, self);
+        call_id as i32
     }
 
     /// Returns the internal store to the cache associated with this runtime's code hash.
     pub(crate) fn return_store(self) {
-        CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
-            if let Some(cached_module) = caching_runtime.cached_modules.get_mut(&self.code_hash) {
-                cached_module.return_store(self.store);
-            }
-        });
+        let factory = &*CACHING_RUNTIME_FACTORY;
+        if let Some(cached_module) = factory.cached_modules.get(&self.code_hash) {
+            cached_module.value().return_store(self.store);
+        }
     }
 
     /// Fetches and removes a previously remembered runtime by its call identifier.
     pub(crate) fn recover_runtime(call_id: u32) -> Runtime {
-        CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
-            caching_runtime
-                .recoverable_runtimes
-                .remove(&call_id)
-                .expect("runtime: can't resolve runtime by id, it should never happen")
-        })
+        let factory = &*CACHING_RUNTIME_FACTORY;
+        factory
+            .recoverable_runtimes
+            .remove(&call_id)
+            .map(|(_, v)| v)
+            .expect("runtime: can't resolve runtime by id, it should never happen")
     }
 
     /// Consolidates the trap/result of an invocation into a RuntimeResult and updates accounting.
@@ -326,8 +322,9 @@ impl Runtime {
 ///
 /// Intended to be invoked at the beginning of a new transaction.
 pub fn reset_call_id_counter() {
-    CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
-        caching_runtime.transaction_call_id_counter = 1;
-        caching_runtime.recoverable_runtimes.clear();
-    });
+    let factory = &*CACHING_RUNTIME_FACTORY;
+    factory
+        .transaction_call_id_counter
+        .store(1, Ordering::Relaxed);
+    factory.recoverable_runtimes.clear();
 }

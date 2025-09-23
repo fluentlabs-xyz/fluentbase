@@ -37,7 +37,7 @@ fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 fluentbase-contracts = { path = "../crates/contracts", default-features = false }
 fluentbase-types = { path = "../crates/types", default-features = false }
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel" }
-#rwasm = { path = "../rwasm", default-features = false }
+#rwasm = { path = "../../rwasm" }
 
 [features]
 default = [
