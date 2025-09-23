@@ -13,6 +13,7 @@ use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::SIG_TOKEN2022;
 use hex_literal::hex;
 use revm::context::result::ExecutionResult;
+use std::time::Duration;
 
 fn erc20_transfer_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("ERC20 Transfer Comparison");
@@ -229,5 +230,13 @@ fn erc20_transfer_benches(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, erc20_transfer_benches);
+// criterion_group!(benches, erc20_transfer_benches);
+pub fn benches() {
+    let mut criterion: Criterion<_> = Criterion::default()
+        .configure_from_args()
+        .warm_up_time(Duration::from_secs(1))
+        .measurement_time(Duration::from_secs(1))
+        .sample_size(1000);
+    erc20_transfer_benches(&mut criterion);
+}
 criterion_main!(benches);
