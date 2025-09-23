@@ -20,18 +20,19 @@ use fluentbase_svm::token_2022::instruction::transfer;
 use fluentbase_svm::token_2022::instruction::transfer_checked;
 use fluentbase_svm::token_2022::instruction::{initialize_account, AuthorityType};
 use fluentbase_svm::token_2022::state::{Account, AccountState, Mint};
-use fluentbase_svm_common::common::pubkey_from_evm_address;
+use fluentbase_svm_common::common::{lamports_try_from_slice, pubkey_from_evm_address};
 use fluentbase_svm_common::universal_token::{
-    ApproveCheckedParams, ApproveParams, BurnCheckedParams, BurnParams, CloseAccountParams,
-    FreezeAccountParams, InitializeAccountParams, InitializeMintParams, MintToParams, RevokeParams,
-    SetAuthorityParams, ThawAccountParams, TransferFromParams, TransferParams,
+    AllowanceParams, ApproveCheckedParams, ApproveParams, BurnCheckedParams, BurnParams,
+    CloseAccountParams, FreezeAccountParams, InitializeAccountParams, InitializeMintParams,
+    MintToParams, RevokeParams, SetAuthorityParams, ThawAccountParams, TransferFromParams,
+    TransferParams,
 };
 use fluentbase_testing::{utf8_to_bytes, EvmTestingContext};
 use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::{
-    SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE, SIG_BALANCE_OF, SIG_BURN, SIG_BURN_CHECKED,
-    SIG_CLOSE_ACCOUNT, SIG_DECIMALS, SIG_FREEZE_ACCOUNT, SIG_INITIALIZE_ACCOUNT,
+    SIG_ALLOWANCE, SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE, SIG_BALANCE_OF, SIG_BURN,
+    SIG_BURN_CHECKED, SIG_CLOSE_ACCOUNT, SIG_DECIMALS, SIG_FREEZE_ACCOUNT, SIG_INITIALIZE_ACCOUNT,
     SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE, SIG_SET_AUTHORITY, SIG_THAW_ACCOUNT,
     SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
 };
@@ -917,7 +918,7 @@ fn test_approve_abi() {
     let amount = 100;
     let mut input_data = vec![];
     ApproveParams {
-        from: &account_key,
+        source: &account_key,
         delegate: &delegate_key,
         owner: &owner2_key,
         amount: &amount,
@@ -928,6 +929,18 @@ fn test_approve_abi() {
     let result = output_data.unwrap_err();
     assert_eq!(result.0, u32::MAX);
     assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(4)"));
+
+    let mut input_data = vec![];
+    AllowanceParams {
+        source: &account_key,
+        delegate: &delegate_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_ALLOWANCE), &input_data);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address).unwrap();
+    assert_eq!(result.len(), size_of::<u64>());
+    let allowance = lamports_try_from_slice(&result).expect("allowance bytes");
+    assert_eq!(allowance, 0);
 
     // // approve delegate
     // do_process_instruction(
@@ -951,7 +964,7 @@ fn test_approve_abi() {
     let amount = 100;
     let mut input_data = vec![];
     ApproveParams {
-        from: &account_key,
+        source: &account_key,
         delegate: &delegate_key,
         owner: &owner_key,
         amount: &amount,
@@ -961,6 +974,18 @@ fn test_approve_abi() {
     let output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address).unwrap();
     assert_eq!(output_data, vec![1]);
+
+    let mut input_data = vec![];
+    AllowanceParams {
+        source: &account_key,
+        delegate: &delegate_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_ALLOWANCE), &input_data);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address).unwrap();
+    assert_eq!(result.len(), size_of::<u64>());
+    let allowance = lamports_try_from_slice(&result).expect("allowance bytes");
+    assert_eq!(allowance, amount);
 
     // // approve delegate 2, with incorrect decimals
     // assert_eq!(
@@ -1044,6 +1069,18 @@ fn test_approve_abi() {
     assert_eq!(result.0, u32::MAX);
     assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(3)"));
 
+    let mut input_data = vec![];
+    AllowanceParams {
+        source: &account_key,
+        delegate: &delegate_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_ALLOWANCE), &input_data);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address).unwrap();
+    assert_eq!(result.len(), size_of::<u64>());
+    let allowance = lamports_try_from_slice(&result).expect("allowance bytes");
+    assert_eq!(allowance, amount);
+
     // // approve delegate 2
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1078,8 +1115,20 @@ fn test_approve_abi() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_APPROVE_CHECKED), &input_data);
-    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
-    assert_eq!(output_data.unwrap(), vec![1]);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address).unwrap();
+    assert_eq!(result, vec![1]);
+
+    let mut input_data = vec![];
+    AllowanceParams {
+        source: &account_key,
+        delegate: &delegate_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_ALLOWANCE), &input_data);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address).unwrap();
+    assert_eq!(result.len(), size_of::<u64>());
+    let allowance = lamports_try_from_slice(&result).expect("allowance bytes");
+    assert_eq!(allowance, amount);
 
     // // revoke delegate
     // do_process_instruction(
@@ -1449,7 +1498,7 @@ fn test_set_authority_abi() {
     let amount = u64::MAX;
     let mut input_data = vec![];
     ApproveParams {
-        from: &account_key,
+        source: &account_key,
         delegate: &owner2_key,
         owner: &owner_key,
         amount: &amount,
@@ -2279,7 +2328,7 @@ fn test_burn_abi() {
     let amount = 84;
     let mut input_data = vec![];
     ApproveParams {
-        from: &account_key,
+        source: &account_key,
         delegate: &delegate_key,
         owner: &owner_key,
         amount: &amount,

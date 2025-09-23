@@ -16,52 +16,74 @@ use fluentbase_svm_common::common::{
     lamports_to_bytes, pubkey_from_evm_address, pubkey_try_from_slice,
 };
 use fluentbase_svm_common::universal_token::{
-    ApproveCheckedParams, ApproveParams, BurnCheckedParams, BurnParams, CloseAccountParams,
-    FreezeAccountParams, GetAccountDataSizeParams, InitializeAccountParams, InitializeMintParams,
-    MintToParams, RevokeParams, SetAuthorityParams, ThawAccountParams, TransferFromParams,
-    TransferParams,
+    AllowanceParams, ApproveCheckedParams, ApproveParams, BurnCheckedParams, BurnParams,
+    CloseAccountParams, FreezeAccountParams, GetAccountDataSizeParams, InitializeAccountParams,
+    InitializeMintParams, MintToParams, RevokeParams, SetAuthorityParams, ThawAccountParams,
+    TransferFromParams, TransferParams,
 };
 use fluentbase_universal_token::{
     common::bytes_to_sig,
     consts::{
-        ERR_MALFORMED_INPUT, SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE, SIG_BALANCE_OF,
-        SIG_BURN, SIG_BURN_CHECKED, SIG_CLOSE_ACCOUNT, SIG_DECIMALS, SIG_FREEZE_ACCOUNT,
-        SIG_GET_ACCOUNT_DATA_SIZE, SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO,
-        SIG_REVOKE, SIG_SET_AUTHORITY, SIG_THAW_ACCOUNT, SIG_TOKEN2022, SIG_TRANSFER,
+        ERR_MALFORMED_INPUT, SIG_ALLOWANCE, SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE,
+        SIG_BALANCE_OF, SIG_BURN, SIG_BURN_CHECKED, SIG_CLOSE_ACCOUNT, SIG_DECIMALS,
+        SIG_FREEZE_ACCOUNT, SIG_GET_ACCOUNT_DATA_SIZE, SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT,
+        SIG_MINT_TO, SIG_REVOKE, SIG_SET_AUTHORITY, SIG_THAW_ACCOUNT, SIG_TOKEN2022, SIG_TRANSFER,
         SIG_TRANSFER_FROM,
     },
     storage::SIG_LEN_BYTES,
 };
+use solana_program_error::ProgramError;
 
-fn decimals_for_pubkey<SDK: SharedAPI>(sdk: &mut SDK, pk: &Pubkey) -> u8 {
+fn decimals_for_pubkey<SDK: SharedAPI>(sdk: &mut SDK, pk: &Pubkey) -> Result<u8, ProgramError> {
     let mut processor = Processor::new(sdk);
-    let decimals = processor.decimals(&pk).expect("failed to get decimals");
-    decimals
+    let decimals = processor.decimals(&pk)?;
+    Ok(decimals)
 }
 
 fn decimals<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     let Ok(pk) = pubkey_try_from_slice(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-    let decimals = decimals_for_pubkey(sdk, &pk);
+    let decimals = decimals_for_pubkey(sdk, &pk).expect("failed to get decimals");
     sdk.write(&[decimals]);
+}
+
+fn allowance_for<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    delegate: &Pubkey,
+    account: &Pubkey,
+) -> Result<u64, ProgramError> {
+    let mut processor = Processor::new(sdk);
+    let allowance = processor.allowance(delegate, account)?;
+    Ok(allowance)
+}
+
+fn allowance<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
+    let Ok(p) = AllowanceParams::try_parse(input) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(allowance) = allowance_for(sdk, p.delegate, p.source) else {
+        sdk.write(&lamports_to_bytes(0));
+        return;
+    };
+    sdk.write(&lamports_to_bytes(allowance));
 }
 
 fn transfer<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     let from = &pubkey_from_evm_address::<true>(&sdk.context().contract_caller());
-    let Ok(params) = TransferParams::try_parse(input) else {
+    let Ok(p) = TransferParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
 
     let instruction = token_2022::instruction::transfer_checked(
         &token_2022::lib::id(),
         &from,
-        &params.mint,
-        &params.to,
-        &params.authority,
+        &p.mint,
+        &p.to,
+        &p.authority,
         &[],
-        params.amount,
-        params.decimals,
+        p.amount,
+        p.decimals,
     )
     .unwrap();
 
@@ -76,20 +98,20 @@ fn transfer<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn transfer_from<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = TransferFromParams::try_parse(input) else {
+    let Ok(p) = TransferFromParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
 
     #[allow(deprecated)]
     let instruction = token_2022::instruction::transfer_checked(
         &token_2022::lib::id(),
-        &params.from,
-        &params.mint,
-        &params.to,
-        &params.authority,
+        &p.from,
+        &p.mint,
+        &p.to,
+        &p.authority,
         &[],
-        *params.amount,
-        params.decimals,
+        *p.amount,
+        p.decimals,
     )
     .unwrap();
 
@@ -105,16 +127,16 @@ fn transfer_from<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 
 fn initialize_mint<SDK: SharedAPI, const IS_DEPLOY: bool>(sdk: &mut SDK, input: &[u8]) {
     debug_log_ext!("IS_DEPLOY={}", IS_DEPLOY);
-    let Ok(params) = InitializeMintParams::try_parse(input) else {
+    let Ok(p) = InitializeMintParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
 
     let instruction = token_2022::instruction::initialize_mint(
         &token_2022::lib::id(),
-        &params.mint,
-        &params.mint_authority,
-        params.freeze_opt,
-        params.decimals,
+        &p.mint,
+        &p.mint_authority,
+        p.freeze_opt,
+        p.decimals,
     )
     .unwrap();
 
@@ -132,15 +154,15 @@ fn initialize_mint<SDK: SharedAPI, const IS_DEPLOY: bool>(sdk: &mut SDK, input: 
 }
 
 fn initialize_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = InitializeAccountParams::try_parse(input) else {
+    let Ok(p) = InitializeAccountParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
 
     let instruction = token_2022::instruction::initialize_account(
         &token_2022::lib::id(),
-        &params.account,
-        &params.mint,
-        &params.owner,
+        &p.account,
+        &p.mint,
+        &p.owner,
     )
     .unwrap();
 
@@ -156,17 +178,17 @@ fn initialize_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn mint_to<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = MintToParams::try_parse(input) else {
+    let Ok(p) = MintToParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
 
     let instruction = token_2022::instruction::mint_to(
         &token_2022::lib::id(),
-        &params.mint,
-        &params.account,
-        &params.owner,
+        &p.mint,
+        &p.account,
+        &p.owner,
         &[],
-        *params.amount,
+        *p.amount,
     )
     .unwrap();
 
@@ -182,16 +204,16 @@ fn mint_to<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn approve<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = ApproveParams::try_parse(input) else {
+    let Ok(p) = ApproveParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let instruction = token_2022::instruction::approve(
         &token_2022::lib::id(),
-        &params.from,
-        &params.delegate,
-        &params.owner,
+        &p.source,
+        &p.delegate,
+        &p.owner,
         &[],
-        *params.amount,
+        *p.amount,
     )
     .unwrap();
 
@@ -206,19 +228,19 @@ fn approve<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn approve_checked<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = ApproveCheckedParams::try_parse(input) else {
+    let Ok(p) = ApproveCheckedParams::try_parse(input) else {
         debug_log_ext!();
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let instruction = token_2022::instruction::approve_checked(
         &token_2022::lib::id(),
-        &params.source,
-        &params.mint,
-        &params.delegate,
-        &params.owner,
+        &p.source,
+        &p.mint,
+        &p.delegate,
+        &p.owner,
         &[],
-        *params.amount,
-        params.decimals,
+        *p.amount,
+        p.decimals,
     )
     .unwrap();
 
@@ -233,12 +255,11 @@ fn approve_checked<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn revoke<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = RevokeParams::try_parse(input) else {
+    let Ok(p) = RevokeParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let instruction =
-        token_2022::instruction::revoke(&token_2022::lib::id(), &params.source, &params.owner, &[])
-            .unwrap();
+        token_2022::instruction::revoke(&token_2022::lib::id(), &p.source, &p.owner, &[]).unwrap();
 
     token2022_process::<false, _>(
         sdk,
@@ -251,15 +272,15 @@ fn revoke<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn set_authority<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = SetAuthorityParams::try_parse(input) else {
+    let Ok(p) = SetAuthorityParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let instruction = token_2022::instruction::set_authority(
         &token_2022::lib::id(),
-        &params.owned,
-        params.new_authority,
-        AuthorityType::from(params.authority_type).expect("invalid AuthorityType"),
-        &params.owner,
+        &p.owned,
+        p.new_authority,
+        AuthorityType::from(p.authority_type).expect("invalid AuthorityType"),
+        &p.owner,
         &[],
     )
     .unwrap();
@@ -275,16 +296,16 @@ fn set_authority<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn burn<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = BurnParams::try_parse(input) else {
+    let Ok(p) = BurnParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let instruction = token_2022::instruction::burn(
         &token_2022::lib::id(),
-        &params.account,
-        &params.mint,
-        &params.authority,
+        &p.account,
+        &p.mint,
+        &p.authority,
         &[],
-        *params.amount,
+        *p.amount,
     )
     .unwrap();
 
@@ -299,17 +320,17 @@ fn burn<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn burn_checked<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = BurnCheckedParams::try_parse(input) else {
+    let Ok(p) = BurnCheckedParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let instruction = token_2022::instruction::burn_checked(
         &token_2022::lib::id(),
-        params.account,
-        params.mint,
-        params.authority,
+        p.account,
+        p.mint,
+        p.authority,
         &[],
-        *params.amount,
-        params.decimals,
+        *p.amount,
+        p.decimals,
     )
     .unwrap();
 
@@ -324,14 +345,14 @@ fn burn_checked<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn close_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = CloseAccountParams::try_parse(input) else {
+    let Ok(p) = CloseAccountParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let instruction = token_2022::instruction::close_account(
         &token_2022::lib::id(),
-        params.account,
-        params.destination,
-        params.owner,
+        p.account,
+        p.destination,
+        p.owner,
         &[],
     )
     .unwrap();
@@ -347,14 +368,14 @@ fn close_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn freeze_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = FreezeAccountParams::try_parse(input) else {
+    let Ok(p) = FreezeAccountParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let instruction = token_2022::instruction::freeze_account(
         &token_2022::lib::id(),
-        params.account,
-        params.mint,
-        params.owner,
+        p.account,
+        p.mint,
+        p.owner,
         &[],
     )
     .unwrap();
@@ -370,14 +391,14 @@ fn freeze_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn thaw_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = ThawAccountParams::try_parse(input) else {
+    let Ok(p) = ThawAccountParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let instruction = token_2022::instruction::thaw_account(
         &token_2022::lib::id(),
-        &params.account,
-        &params.mint,
-        &params.owner,
+        &p.account,
+        &p.mint,
+        &p.owner,
         &[],
     )
     .unwrap();
@@ -393,10 +414,10 @@ fn thaw_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn get_account_data_size<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(params) = GetAccountDataSizeParams::try_parse(input) else {
+    let Ok(p) = GetAccountDataSizeParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-    let extension_types: Result<Vec<ExtensionType>, _> = params
+    let extension_types: Result<Vec<ExtensionType>, _> = p
         .extension_types
         .iter()
         .map(|v| ExtensionType::try_from(*v))
@@ -404,7 +425,7 @@ fn get_account_data_size<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     let extension_types = extension_types.expect("valid extension types");
     let instruction = token_2022::instruction::get_account_data_size(
         &token_2022::lib::id(),
-        params.mint,
+        p.mint,
         &extension_types,
     )
     .unwrap();
@@ -487,6 +508,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         SIG_INITIALIZE_ACCOUNT => initialize_account(&mut sdk, input),
         SIG_MINT_TO => mint_to(&mut sdk, input),
         SIG_DECIMALS => decimals(&mut sdk, input),
+        SIG_ALLOWANCE => allowance(&mut sdk, input),
         SIG_APPROVE => approve(&mut sdk, input),
         SIG_APPROVE_CHECKED => approve_checked(&mut sdk, input),
         SIG_REVOKE => revoke(&mut sdk, input),

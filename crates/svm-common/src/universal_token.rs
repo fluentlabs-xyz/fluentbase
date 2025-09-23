@@ -240,7 +240,7 @@ impl<'a> MintToParams<'a> {
 }
 
 pub struct ApproveParams<'a> {
-    pub from: &'a Pubkey,
+    pub source: &'a Pubkey,
     pub delegate: &'a Pubkey,
     pub owner: &'a Pubkey,
     pub amount: &'a u64,
@@ -248,15 +248,15 @@ pub struct ApproveParams<'a> {
 
 impl<'a> ApproveParams<'a> {
     pub fn try_parse(input: &'a [u8]) -> Result<Self, ()> {
-        const FROM_OFFSET: usize = 0;
-        const DELEGATE_OFFSET: usize = FROM_OFFSET + PUBKEY_BYTES;
+        const SOURCE_OFFSET: usize = 0;
+        const DELEGATE_OFFSET: usize = SOURCE_OFFSET + PUBKEY_BYTES;
         const OWNER_OFFSET: usize = DELEGATE_OFFSET + PUBKEY_BYTES;
         const AMOUNT_OFFSET: usize = OWNER_OFFSET + PUBKEY_BYTES;
 
         let Ok(amount) = lamports_ref_try_from_slice(&input[AMOUNT_OFFSET..]) else {
             return Err(());
         };
-        let Ok(from) = pubkey_ref_try_from_slice(&input[FROM_OFFSET..]) else {
+        let Ok(source) = pubkey_ref_try_from_slice(&input[SOURCE_OFFSET..]) else {
             return Err(());
         };
         let Ok(delegate) = pubkey_ref_try_from_slice(&input[DELEGATE_OFFSET..]) else {
@@ -267,7 +267,7 @@ impl<'a> ApproveParams<'a> {
         };
 
         Ok(Self {
-            from,
+            source,
             delegate,
             owner,
             amount,
@@ -275,7 +275,7 @@ impl<'a> ApproveParams<'a> {
     }
 
     pub fn serialize_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.from.as_ref());
+        out.extend_from_slice(self.source.as_ref());
         out.extend_from_slice(self.delegate.as_ref());
         out.extend_from_slice(self.owner.as_ref());
         out.extend_from_slice(lamports_ref_to_bytes_ref(self.amount));
@@ -336,6 +336,32 @@ impl<'a> ApproveCheckedParams<'a> {
         out.extend_from_slice(self.owner.as_ref());
         out.extend_from_slice(lamports_ref_to_bytes_ref(self.amount));
         out.push(self.decimals);
+    }
+}
+
+pub struct AllowanceParams<'a> {
+    pub source: &'a Pubkey,
+    pub delegate: &'a Pubkey,
+}
+
+impl<'a> AllowanceParams<'a> {
+    pub fn try_parse(input: &'a [u8]) -> Result<Self, ()> {
+        const SOURCE_OFFSET: usize = 0;
+        const DELEGATE_OFFSET: usize = SOURCE_OFFSET + PUBKEY_BYTES;
+
+        let Ok(delegate) = pubkey_ref_try_from_slice(&input[DELEGATE_OFFSET..]) else {
+            return Err(());
+        };
+        let Ok(source) = pubkey_ref_try_from_slice(&input[SOURCE_OFFSET..]) else {
+            return Err(());
+        };
+
+        Ok(Self { source, delegate })
+    }
+
+    pub fn serialize_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.source.as_ref());
+        out.extend_from_slice(self.delegate.as_ref());
     }
 }
 
@@ -613,7 +639,6 @@ impl<'a> ThawAccountParams<'a> {
 }
 
 pub struct GetAccountDataSizeParams<'a> {
-    // TODO mint_pubkey: &Pubkey, extension_types: &[ExtensionType]
     pub mint: &'a Pubkey,
     pub extension_types: Vec<u16>,
 }
@@ -623,23 +648,23 @@ impl<'a> GetAccountDataSizeParams<'a> {
         const EXTENSION_TYPES_COUNT_OFFSET: usize = MINT_OFFSET + PUBKEY_BYTES; // 1 byte
         const EXTENSION_TYPES_OFFSET: usize = EXTENSION_TYPES_COUNT_OFFSET + 1;
 
-        let Ok(mint) = pubkey_ref_try_from_slice(&input[MINT_OFFSET..]) else {
-            return Err(());
-        };
         let Some(extension_types_count) = input.get(EXTENSION_TYPES_COUNT_OFFSET).cloned() else {
             return Err(());
         };
         let mut extension_types = Vec::<u16>::with_capacity(extension_types_count as usize);
         for i in 0..extension_types_count {
-            let base_offset = EXTENSION_TYPES_OFFSET * i as usize;
+            let base = EXTENSION_TYPES_OFFSET * i as usize;
             let extension_type_bytes: Result<[u8; size_of::<u16>()], _> =
-                input[base_offset..base_offset + size_of::<u16>()].try_into();
+                input[base..base + size_of::<u16>()].try_into();
             if let Ok(extension_type_bytes) = extension_type_bytes {
                 extension_types.push(u16::from_be_bytes(extension_type_bytes));
             } else {
                 return Err(());
             }
         }
+        let Ok(mint) = pubkey_ref_try_from_slice(&input[MINT_OFFSET..]) else {
+            return Err(());
+        };
 
         Ok(Self {
             mint,

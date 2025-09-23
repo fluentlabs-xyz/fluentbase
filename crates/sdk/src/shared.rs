@@ -4,9 +4,7 @@ use crate::{
     byteorder::{ByteOrder, LittleEndian},
     syscall::*,
 };
-use alloc::vec;
 use core::cell::OnceCell;
-use core::cell::RefCell;
 use fluentbase_types::{
     Address, BytecodeOrHash, Bytes, ContextReader, ExitCode, IsAccountEmpty, IsAccountOwnable,
     IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI, SharedAPI, SharedContextInputV1,

@@ -334,6 +334,36 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         Ok(mint.base.decimals)
     }
 
+    pub fn allowance(&mut self, delegate: &Pubkey, account: &Pubkey) -> Result<u64, ProgramError> {
+        let account_metas = vec![
+            AccountMeta::new_readonly(delegate.clone(), false),
+            AccountMeta::new_readonly(account.clone(), false),
+        ];
+        let mut accounts: Vec<crate::account::Account> =
+            reconstruct_accounts::<_, true>(self.sdk, &account_metas)
+                .expect("failed to reconstruct accounts");
+        let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
+            .expect("failed to reconstruct accounts infos");
+
+        let account_info_iter = &mut account_infos.iter();
+
+        let delegate_info = next_account_info(account_info_iter)?;
+        let account_info = next_account_info(account_info_iter)?;
+
+        let mut account_data = account_info.data.borrow_mut();
+
+        let source_account = PodStateWithExtensionsMut::<PodAccount>::unpack(&mut account_data)?;
+
+        if source_account.base.delegate.is_none() {
+            return Err(ProgramError::InvalidAccountData);
+        };
+        if &source_account.base.delegate.value != delegate_info.key {
+            return Err(ProgramError::InvalidAccountData);
+        }
+
+        Ok(source_account.base.delegated_amount.into())
+    }
+
     /// Processes a [Transfer](enum.TokenInstruction.html) instruction.
     pub fn process_transfer<const CHECKED: bool>(
         &mut self,

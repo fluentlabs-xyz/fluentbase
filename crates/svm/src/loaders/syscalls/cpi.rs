@@ -669,18 +669,17 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     let mut input_prefix: Option<[u8; 4]> = None;
     let mut is_call_or_create = true;
     let address = evm_address_from_pubkey::<true>(&instruction.program_id);
-    if address.is_ok_and(|v| {
-        if v == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
+    if address.is_ok_and(|addr| {
+        if addr == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
             is_call_or_create = false;
             return true;
         }
         let metadata_account_owner_result: SyscallResult<Address> =
-            invoke_context.sdk.metadata_account_owner(&v);
+            invoke_context.sdk.metadata_account_owner(&addr);
         metadata_account_owner_result.status.is_ok()
             && metadata_account_owner_result.data == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
     }) {
-        let sig_token2022_bytes = sig_to_bytes(SIG_TOKEN2022);
-        input_prefix = Some(sig_token2022_bytes);
+        input_prefix = Some(sig_to_bytes(SIG_TOKEN2022));
     }
     if input_prefix.is_some()
         || !is_program_exists(invoke_context.sdk, &instruction.program_id, None)?
