@@ -26,7 +26,7 @@ pub struct CachedModule {
 
 impl CachedModule {
     /// Constructs a cache entry for the given strategy and import linker, optionally pre-populating stores.
-    pub fn new(strategy: Strategy, import_linker: Rc<ImportLinker>) -> Self {
+    pub fn new(strategy: Strategy, import_linker: Arc<ImportLinker>) -> Self {
         let mut stores = LinkedList::new();
         for _ in 0..N_DEFAULT_CACHED_STORE {
             let store = strategy.create_store(
@@ -64,7 +64,7 @@ pub struct RuntimeFactory {
     /// Suspended runtimes keyed by per-transaction call identifier.
     pub recoverable_runtimes: HashMap<u32, Runtime>,
     /// Import linker used to instantiate new stores.
-    pub import_linker: Rc<ImportLinker>,
+    pub import_linker: Arc<ImportLinker>,
     /// Monotonically increasing counter for assigning call identifiers.
     pub transaction_call_id_counter: u32,
 }
@@ -111,7 +111,7 @@ impl RuntimeFactory {
         println!("missing strategy: code_hash={code_hash} address={address}");
 
         let _span = tracing::info_span!("parse_rwasm_module").entered();
-        let rwasm_module = Rc::new(RwasmModule::new_or_empty(rwasm_module.as_ref()).0);
+        let (rwasm_module, _) = RwasmModule::new_or_empty(rwasm_module.as_ref());
         drop(_span);
 
         #[cfg(feature = "wasmtime")]
@@ -128,9 +128,9 @@ impl RuntimeFactory {
     #[tracing::instrument(level = "info", skip_all, fields(code_hash = %code_hash))]
     /// Initializes a Wasmtime-based strategy for the given module and inserts it into the cache.
     fn init_wasmtime(
-        import_linker: Rc<ImportLinker>,
+        import_linker: Arc<ImportLinker>,
         entry: VacantEntry<B256, CachedModule>,
-        rwasm_module: Rc<RwasmModule>,
+        rwasm_module: RwasmModule,
         #[allow(unused)] code_hash: B256,
     ) -> &mut CachedModule {
         // The lock helps to avoid recompiling same wasmtime modules,
@@ -150,7 +150,7 @@ impl RuntimeFactory {
             .expect("failed to compile wasmtime module, this should never happen");
 
         let strategy = Strategy::Wasmtime {
-            module: Rc::new(wasmtime_module),
+            module: wasmtime_module,
         };
         let cached_module = CachedModule::new(strategy, import_linker);
         entry.insert(cached_module)
@@ -158,9 +158,9 @@ impl RuntimeFactory {
 
     #[tracing::instrument(level = "info", skip_all, fields(code_hash = %code_hash))]
     fn init_rwasm(
-        import_linker: Rc<ImportLinker>,
+        import_linker: Arc<ImportLinker>,
         entry: VacantEntry<B256, CachedModule>,
-        rwasm_module: Rc<RwasmModule>,
+        rwasm_module: RwasmModule,
         #[allow(unused)] code_hash: B256,
     ) -> &mut CachedModule {
         let strategy = Strategy::Rwasm {

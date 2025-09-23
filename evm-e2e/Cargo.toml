@@ -36,8 +36,8 @@ ctor = "0.5.0"
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 fluentbase-contracts = { path = "../crates/contracts", default-features = false }
 fluentbase-types = { path = "../crates/types", default-features = false }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel" }
-#rwasm = { path = "../rwasm", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", features = ["wasmtime"] }
+#rwasm = { path = "../../rwasm", default-features = false, features = ["wasmtime"] }
 
 [features]
 default = [

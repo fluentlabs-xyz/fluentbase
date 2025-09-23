@@ -8,7 +8,7 @@ use fluentbase_sdk::{
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use hex_literal::hex;
 use revm::context::result::{ExecutionResult, Output};
-use rwasm::{instruction_set, RwasmModule};
+use rwasm::{instruction_set, RwasmModule, RwasmModuleInner};
 
 #[test]
 fn test_simple_nested_call() {
@@ -124,7 +124,7 @@ fn test_simple_nested_call() {
     };
     ctx.add_wasm_contract(
         ACCOUNT3_ADDRESS,
-        RwasmModule {
+        RwasmModuleInner {
             code_section,
             data_section,
             ..Default::default()
@@ -300,7 +300,7 @@ fn test_blended_gas_spend_evm_from_wasm() {
     };
     ctx.add_wasm_contract(
         ACCOUNT3_ADDRESS,
-        RwasmModule {
+        RwasmModuleInner {
             code_section,
             data_section,
             ..Default::default()
