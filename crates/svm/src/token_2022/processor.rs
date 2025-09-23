@@ -300,10 +300,10 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
     pub fn balance_of(&mut self, pk: &Pubkey) -> Result<u64, ProgramError> {
         let account_metas = vec![AccountMeta::new_readonly(pk.clone(), false)];
         let mut accounts: Vec<crate::account::Account> =
-            reconstruct_accounts::<_, true>(self.sdk, &account_metas)
-                .expect("failed to reconstruct accounts");
+            reconstruct_accounts::<_, false>(self.sdk, &account_metas)
+                .map_err(|_e| ProgramError::InvalidAccountData)?;
         let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
-            .expect("failed to reconstruct accounts");
+            .map_err(|_e| ProgramError::InvalidAccountData)?;
 
         let account_info_iter = &mut account_infos.iter();
 
@@ -319,7 +319,7 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
     pub fn decimals_for_mint(&mut self, mint_pk: &Pubkey) -> Result<u8, ProgramError> {
         let account_metas = vec![AccountMeta::new_readonly(mint_pk.clone(), false)];
         let mut accounts: Vec<crate::account::Account> =
-            reconstruct_accounts::<_, true>(self.sdk, &account_metas)
+            reconstruct_accounts::<_, false>(self.sdk, &account_metas)
                 .map_err(|_e| ProgramError::InvalidAccountData)?;
         let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
             .map_err(|_e| ProgramError::InvalidAccountData)?;
@@ -337,7 +337,7 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
     pub fn decimals_for_account(&mut self, account_pk: &Pubkey) -> Result<u8, ProgramError> {
         let account_metas = vec![AccountMeta::new_readonly(account_pk.clone(), false)];
         let mut accounts: Vec<crate::account::Account> =
-            reconstruct_accounts::<_, true>(self.sdk, &account_metas)
+            reconstruct_accounts::<_, false>(self.sdk, &account_metas)
                 .map_err(|_e| ProgramError::InvalidAccountData)?;
         let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
             .map_err(|_e| ProgramError::InvalidAccountData)?;
@@ -358,10 +358,10 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
             AccountMeta::new_readonly(account.clone(), false),
         ];
         let mut accounts: Vec<crate::account::Account> =
-            reconstruct_accounts::<_, true>(self.sdk, &account_metas)
-                .expect("failed to reconstruct accounts");
+            reconstruct_accounts::<_, false>(self.sdk, &account_metas)
+                .map_err(|_e| ProgramError::InvalidAccountData)?;
         let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
-            .expect("failed to reconstruct accounts infos");
+            .map_err(|_e| ProgramError::InvalidAccountData)?;
 
         let account_info_iter = &mut account_infos.iter();
 
@@ -1893,9 +1893,9 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         }
         let mut accounts: Vec<crate::account::Account> =
             reconstruct_accounts::<_, true>(self.sdk, &account_metas)
-                .expect("failed to reconstruct accounts");
+                .map_err(|_e| ProgramError::InvalidAccountData)?;
         let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
-            .expect("failed to reconstruct accounts");
+            .map_err(|_e| ProgramError::InvalidAccountData)?;
         self.process(program_id, &account_infos, input, Some(instruction_type))?;
         Ok((accounts))
     }
@@ -2251,7 +2251,7 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
             let contract_caller = self.sdk.context().contract_caller();
             assert_eq!(
                 evm_address_from_pubkey::<true>(&owner_account_info.key)
-                    .expect("evm compatible pk"),
+                    .expect("pk is evm compatible"),
                 contract_caller,
                 "cannot be writable nor signer"
             );
