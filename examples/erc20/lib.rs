@@ -12,6 +12,7 @@ use fluentbase_sdk::{
     storage::{StorageMap, StorageString, StorageU256},
     Address, ContextReader, SharedAPI, B256, U256,
 };
+use fluentbase_sdk::derive::Contract;
 
 // Define the Transfer and Approval events
 sol! {
@@ -43,7 +44,7 @@ pub trait ERC20Interface {
 }
 
 // Storage structure
-#[derive(Storage)]
+#[derive(Contract)]
 pub struct ERC20<SDK> {
     sdk: SDK,
     token_name: StorageString,

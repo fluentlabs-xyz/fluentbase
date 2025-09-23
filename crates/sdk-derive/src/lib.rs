@@ -1,10 +1,7 @@
-use crate::contract::impl_derive_contract;
 use fluentbase_sdk_derive_core::{client, router, storage_legacy};
 use proc_macro::TokenStream;
 use proc_macro_error::proc_macro_error;
 use quote::{quote, ToTokens};
-
-mod contract;
 mod utils;
 use fluentbase_sdk_derive_core::storage::process_storage_layout;
 use syn::parse_macro_input;
@@ -397,114 +394,69 @@ pub fn derive_evm_error(token: TokenStream) -> TokenStream {
     })
 }
 
-/// Derives the Contract implementation for a struct.
-///
-/// This macro implements basic contract functionality for a struct,
-/// allowing it to be used with router and other SDK features.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// #[derive(Contract)]
-/// pub struct MyContract<SDK> {
-///     sdk: SDK,
-/// }
-/// ```
-#[proc_macro_derive(Contract)]
-pub fn contract_macro_derive(input: TokenStream) -> TokenStream {
-    let ast = syn::parse(input).unwrap();
-    impl_derive_contract(&ast)
-}
-
-#[proc_macro_derive(Storage)]
-pub fn derive_storage_layout(input: TokenStream) -> TokenStream {
+fn derive_storage_layout(input: TokenStream) -> TokenStream {
     let input = syn::parse(input).unwrap();
-
     match process_storage_layout(input) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
 }
 
-/// Constructor macro for Fluentbase smart contracts.
+/// Derives storage layout for nested structures.
 ///
-/// Creates a deployment entry point that handles contract initialization,
-/// automatically managing parameter decoding for the constructor method.
+/// Use for composite storage types within contracts.
+/// For main contracts, use `#[derive(Contract)]` instead.
 ///
-/// # Usage
+/// # Example
+/// ```rust,ignore
+/// #[derive(Storage)]
+/// struct Config {
+///     owner: StoragePrimitive<Address>,
+///     version: StoragePrimitive<u32>,
+/// }
+/// ```
+#[proc_macro_derive(Storage)]
+pub fn derive_storage(input: TokenStream) -> TokenStream {
+    derive_storage_layout(input)
+}
+
+/// Derives contract implementation with storage support.
 ///
+/// Generates initialization and storage accessor methods for contract structs.
+/// For nested storage structures, use `#[derive(Storage)]` instead.
+///
+/// # Example
+/// ```rust,ignore
+/// #[derive(Contract)]
+/// pub struct MyToken<SDK> {
+///     sdk: SDK,
+///     total_supply: StorageU256,
+///     balances: StorageMap<Address, U256>,
+/// }
+/// ```
+#[proc_macro_derive(Contract)]
+pub fn derive_contract(input: TokenStream) -> TokenStream {
+    derive_storage_layout(input)
+}
+
+/// Defines contract initialization logic.
+///
+/// Generates a `deploy()` entry point that handles parameter decoding
+/// during contract deployment. Use when implementing traits or when
+/// you need initialization separate from runtime methods.
+///
+/// # Example
 /// ```rust,ignore
 /// #[constructor(mode = "solidity")]
 /// impl<SDK: SharedAPI> MyContract<SDK> {
-///     pub fn constructor(&mut self, owner: Address, initial_supply: U256) {
+///     pub fn constructor(&mut self, owner: Address, supply: U256) {
 ///         // Initialization logic
-///         self.owner = owner;
-///         self.total_supply = initial_supply;
 ///     }
 /// }
 /// ```
-///
-/// # Special Requirements
-///
-/// - **Must contain exactly one method named `constructor`**
-/// - Other methods in the impl block will be ignored
-/// - Use `#[router]` for regular contract methods
-///
-/// # Generated Code
-///
-/// The macro generates:
-///
-/// 1. **Codec types** for constructor parameters:
-///    - `ConstructorCall` and `ConstructorCallArgs`
-///    - Encoding/decoding implementations
-///
-/// 2. **Deploy method** that:
-///    - Reads input data from the SDK
-///    - Decodes constructor parameters
-///    - Calls the constructor with decoded arguments
 ///
 /// # Attributes
-///
-/// - **mode**: Encoding mode (same as router)
-///   - `"solidity"`: Full EVM compatibility (default)
-///   - `"fluent"`: Optimized encoding for WASM
-///
-/// # Example with No Parameters
-///
-/// ```rust,ignore
-/// #[constructor(mode = "solidity")]
-/// impl<SDK: SharedAPI> SimpleContract<SDK> {
-///     pub fn constructor(&mut self) {
-///         // Simple initialization without parameters
-///     }
-/// }
-/// ```
-///
-/// # Working with Router
-///
-/// Use both macros for complete contract implementation:
-///
-/// ```rust,ignore
-/// // Constructor for initialization
-/// #[constructor(mode = "solidity")]
-/// impl<SDK: SharedAPI> Token<SDK> {
-///     pub fn constructor(&mut self, initial_supply: U256) {
-///         self.total_supply = initial_supply;
-///     }
-/// }
-///
-/// // Router for runtime methods
-/// #[router(mode = "solidity")]
-/// impl<SDK: SharedAPI> Token<SDK> {
-///     pub fn balance_of(&self, account: Address) -> U256 {
-///         // Implementation
-///     }
-///     
-///     pub fn transfer(&mut self, to: Address, amount: U256) -> bool {
-///         // Implementation
-///     }
-/// }
-/// ```
+/// - `mode`: `"solidity"` (EVM) or `"fluent"` (optimized)
 #[proc_macro_attribute]
 #[proc_macro_error]
 pub fn constructor(attr: TokenStream, input: TokenStream) -> TokenStream {

@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use fluentbase_sdk::derive::Contract;
 use fluentbase_sdk::{
     derive::Storage,
     storage::{
@@ -26,7 +27,7 @@ pub struct StorageInventory {
     item_count: StorageU32,
 }
 
-#[derive(Storage)]
+#[derive(Contract)]
 pub struct Game<SDK> {
     sdk: SDK,
     admin: StorageAddress,
