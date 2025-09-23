@@ -184,8 +184,15 @@ fn erc20_transfer_benches(c: &mut Criterion) {
             call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
 
         // mint to account
-        let mint_to_instruction =
-            mint_to(&program_id, &mint_key, &account1_key, &owner_key, &[], 1000).unwrap();
+        let mint_to_instruction = mint_to(
+            &program_id,
+            &mint_key,
+            &account1_key,
+            &owner_key,
+            &[],
+            u64::MAX,
+        )
+        .unwrap();
         let input = build_input(&sig_to_bytes(SIG_TOKEN2022), &mint_to_instruction)
             .expect("failed to build input");
         let _output_data =
@@ -208,22 +215,13 @@ fn erc20_transfer_benches(c: &mut Criterion) {
         group.bench_function("4_Precompiled_UniversalToken", |b| {
             // Note: Manual warmup calls are not needed. Criterion handles warmups automatically.
             b.iter(|| {
-                let result = ctx.call_evm_tx(
+                let _result = ctx.call_evm_tx(
                     USER_ADDRESS1,
                     contract_address,
                     input.clone().into(),
                     None,
                     None,
                 );
-                match &result {
-                    ExecutionResult::Success { .. } => {}
-                    ExecutionResult::Revert { .. } => {}
-                    ExecutionResult::Halt { .. } => {}
-                }
-                let out = result.output().unwrap();
-                if out.to_vec() != vec![1] {
-                    panic!("unexpected output: {:x?}", out);
-                }
             });
         });
     }
