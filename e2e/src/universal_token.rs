@@ -27,7 +27,9 @@ use fluentbase_svm_common::universal_token::{
     MintToParams, RevokeParams, SetAuthorityParams, ThawAccountParams, TransferFromParams,
     TransferParams,
 };
-use fluentbase_testing::{utf8_to_bytes, EvmTestingContext};
+#[cfg(feature = "enable-error-text-checks")]
+use fluentbase_testing::utf8_to_bytes;
+use fluentbase_testing::EvmTestingContext;
 use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::{

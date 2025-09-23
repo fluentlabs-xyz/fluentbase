@@ -68,28 +68,6 @@ impl EvmAction {
 
         out
     }
-    // pub fn from(data: &[u8]) -> EvmAction {
-    //     let mut offset = 0;
-    //     let address: Address = data[offset..offset + size_of::<Address>()]
-    //         .try_into()
-    //         .unwrap();
-    //     offset += size_of::<Address>();
-    //     let value: U256 = data[offset..offset + size_of::<Address>()]
-    //         .try_into()
-    //         .unwrap();
-    //     offset += size_of::<U256>();
-    //     let gas_limit: u64 =
-    //         u64::from_le_bytes(data[offset..offset + size_of::<u64>()].try_into().unwrap());
-    //     offset += size_of::<u64>();
-    //     let data = data[offset..].to_vec();
-    //     Self {
-    //         address,
-    //         value,
-    //         gas_limit,
-    //         data,
-    //         result_data_expected: Default::default(),
-    //     }
-    // }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

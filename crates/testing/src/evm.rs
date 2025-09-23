@@ -107,23 +107,6 @@ impl EvmTestingContext {
                     .accounts
                     .insert(address.clone(), new_db_account);
             });
-
-        // self.sdk.visit_inner_metadata_storage_mut(|meta_storage| {
-        //     for ((address, slot), value) in meta_storage {
-        //         let db_account = self.db.cache.accounts.get_mut(address).expect("found");
-        //         db_account.storage.insert(slot.clone(), value.clone());
-        //         if let Some(code) = db_account.info.code.as_mut() {
-        //             match code {
-        //                 Bytecode::OwnableAccount(account) => {
-        //                     self.sdk
-        //                         .metadata_write(address, 0, account.metadata.clone());
-        //                 }
-        //                 _ => {}
-        //             }
-        //         }
-        //         assert!(db_account.storage.len() >= 0);
-        //     }
-        // })
     }
 
     pub fn commit_db_to_sdk(&mut self) {
