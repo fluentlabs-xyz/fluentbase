@@ -2,7 +2,10 @@
 
 ## Overview
 
-The `router` macro provides a robust method dispatch system for Fluentbase smart contracts. It automatically transforms function calls with Solidity-compatible selectors into appropriate Rust function calls, handling parameter decoding and result encoding. The router macro serves as the foundation for building interoperable smart contracts that can be called from EVM-compatible environments.
+The `router` macro provides a robust method dispatch system for Fluentbase smart contracts. It automatically transforms
+function calls with Solidity-compatible selectors into appropriate Rust function calls, handling parameter decoding and
+result encoding. The router macro serves as the foundation for building interoperable smart contracts that can be called
+from EVM-compatible environments.
 
 ## Usage
 
@@ -17,11 +20,6 @@ impl<SDK: SharedAPI> ContractTrait for Contract<SDK> {
     #[function_id("0xe8927fbc")]  // Direct selector specification
     fn custom_method(&self, value: U256) -> bool {
         // Implementation
-    }
-
-    // Special method - not exposed via function selectors
-    fn deploy(&self) {
-        // Deployment logic
     }
 
     // Special method - handles unmatched selectors
@@ -58,9 +56,17 @@ pub trait ERC20Interface {
     fn transfer(&self, to: Address, amount: U256) -> bool;
 }
 
+// Separate constructor for initialization
+#[constructor(mode = "solidity")]
+impl<SDK: SharedAPI> ERC20<SDK> {
+    pub fn constructor(&mut self, name: String, symbol: String, initial_supply: U256) {
+        // Initialize token parameters
+    }
+}
+
+// Router for trait implementation
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> ERC20Interface for ERC20<SDK> {
-
     fn total_supply(&self) -> U256 {
         // Implementation
     }
@@ -69,14 +75,13 @@ impl<SDK: SharedAPI> ERC20Interface for ERC20<SDK> {
         // Implementation
     }
 
-
     fn transfer(&self, to: Address, amount: U256) -> bool {
         // Implementation
     }
 }
 ```
 
-### Direct Implementation
+### Direct Implementation with Constructor
 
 ```rust,ignore
 #[derive(Contract)]
@@ -86,6 +91,11 @@ pub struct SimpleStorage<SDK> {
 
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> SimpleStorage<SDK> {
+    // Constructor - generates deploy() entry point
+    pub fn constructor(&mut self, initial_value: U256) {
+        // Initialization logic
+    }
+
     pub fn store(&mut self, value: U256) {
         // Implementation
     }
@@ -101,12 +111,38 @@ impl<SDK: SharedAPI> SimpleStorage<SDK> {
 }
 ```
 
+## Special Methods
+
+### Constructor
+
+The `constructor` method is a special initialization function:
+
+- **Name**: Must be exactly `constructor`
+- **Purpose**: Runs once during contract deployment
+- **Generated**: Creates a `deploy()` entry point that decodes parameters
+- **No selector**: Not callable after deployment
+- **Alternative**: Use `#[constructor]` macro for initialization-only implementations
+
+```rust,ignore
+pub fn constructor(&mut self, owner: Address, initial_supply: U256) {
+    // Initialization code
+}
+```
+
+### Fallback
+
+The `fallback` method handles unmatched function selectors:
+
+- **Signature**: Must be `fn fallback(&self)` with no parameters or return
+- **Optional**: Contract reverts on unknown selectors if not defined
+
 ## Notes & Best Practices
 
-- **Special Methods**: `deploy` is always excluded from routing, `fallback` is used for unmatched selectors
 - **Method Visibility**: In direct implementations, only `pub` methods are included in selector routing
+- **Constructor in Router**: Can include constructor in direct implementations for convenience
+- **Separate Constructor**: Use `#[constructor]` macro when you only need initialization
 - **Error Handling**: Invalid selectors trigger the fallback handler or panic if none is defined
-- **Generated Code**: Includes method-specific codec implementations and a comprehensive dispatch method
+- **Generated Code**: Includes method-specific codec implementations and dispatch logic
 - **Performance**: The `"fluent"` mode provides more compact encoding at the cost of EVM compatibility
-- **Function IDs**: Always use validation to ensure selector consistency (disable only when absolutely necessary)
-- **Selector Collisions**: Automatically detected at compile time to prevent routing issues
+- **Function IDs**: Always use validation to ensure selector consistency
+- **Selector Collisions**: Automatically detected at compile time

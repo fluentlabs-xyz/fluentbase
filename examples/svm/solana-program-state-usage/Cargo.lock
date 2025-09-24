@@ -933,7 +933,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm-shared"
-version = "0.4.5-dev"
+version = "0.4.6-dev"
 dependencies = [
  "bincode 1.3.3",
  "fluentbase-types",
@@ -944,7 +944,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.4.5-dev"
+version = "0.4.6-dev"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",

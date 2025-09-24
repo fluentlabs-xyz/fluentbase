@@ -1,0 +1,95 @@
+---
+source: crates/sdk-derive/derive-core/src/constructor.rs
+expression: formatted
+---
+impl<SDK: SharedAPI> Token<SDK> {
+    pub fn constructor(&mut self, owner: Address, initial_supply: U256) {}
+}
+pub type ConstructorCallArgs = (Address, U256);
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstructorCall(pub ConstructorCallArgs);
+pub type ConstructorReturnArgs = ();
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstructorReturn(pub ConstructorReturnArgs);
+const _: () = {
+    impl ConstructorCall {
+        pub const SELECTOR: [u8; 4] = [0u8, 0u8, 0u8, 0u8];
+        pub const SIGNATURE: &'static str = "constructor(address,uint256)";
+        /// Creates a new call instance from arguments
+        pub fn new(args: ConstructorCallArgs) -> Self {
+            Self(args)
+        }
+        /// Encodes without selector (for constructor)
+        pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
+            let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            fluentbase_sdk::codec::encoder::SolidityABI::encode_function_args(
+                    &self.0,
+                    &mut buf,
+                )
+                .expect("Failed to encode values");
+            buf.freeze()
+        }
+        /// Decodes call arguments from bytes
+        pub fn decode(
+            buf: &impl fluentbase_sdk::codec::bytes::Buf,
+        ) -> Result<Self, fluentbase_sdk::codec::CodecError> {
+            let args = fluentbase_sdk::codec::encoder::SolidityABI::<
+                ConstructorCallArgs,
+            >::decode_function_args(buf)?;
+            Ok(Self(args))
+        }
+    }
+    impl ::core::ops::Deref for ConstructorCall {
+        type Target = ConstructorCallArgs;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl ConstructorReturn {
+        /// Creates a new return instance from values
+        pub fn new(args: ConstructorReturnArgs) -> Self {
+            Self(args)
+        }
+        /// Encodes the return values to bytes
+        pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
+            let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            fluentbase_sdk::codec::encoder::SolidityABI::encode_function_args(
+                    &self.0,
+                    &mut buf,
+                )
+                .expect("Failed to encode values");
+            buf.freeze()
+        }
+        /// Decodes return values from bytes
+        pub fn decode(
+            buf: &impl fluentbase_sdk::codec::bytes::Buf,
+        ) -> Result<Self, fluentbase_sdk::codec::CodecError> {
+            let args = fluentbase_sdk::codec::encoder::SolidityABI::<
+                ConstructorReturnArgs,
+            >::decode_function_args(buf)?;
+            Ok(Self(args))
+        }
+    }
+    impl ::core::ops::Deref for ConstructorReturn {
+        type Target = ConstructorReturnArgs;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+};
+impl<SDK: SharedAPI> Token<SDK> {
+    /// Deploy entry point for contract initialization.
+    /// This method is called once during contract deployment.
+    pub fn deploy(&mut self) {
+        let input_length = self.sdk.input_size();
+        let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
+        self.sdk.read(&mut call_data, 0);
+        let (param0, param1) = match ConstructorCall::decode(&&call_data[..]) {
+            Ok(decoded) => (decoded.0.0, decoded.0.1),
+            Err(err) => {
+                panic!("Failed to decode constructor parameters: {:?}", err);
+            }
+        };
+        self.constructor(param0, param1);
+    }
+}
