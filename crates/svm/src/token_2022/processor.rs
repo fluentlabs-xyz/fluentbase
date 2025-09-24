@@ -76,7 +76,6 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         decimals: u8,
         mint_authority: &Pubkey,
         freeze_authority: PodCOption<Pubkey>,
-        rent_sysvar_account: bool,
     ) -> ProgramResult {
         let account_info_iter = &mut accounts.iter();
         let mint_info = next_item(account_info_iter)?;
@@ -114,7 +113,7 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         mint_authority: &Pubkey,
         freeze_authority: PodCOption<Pubkey>,
     ) -> ProgramResult {
-        Self::_process_initialize_mint(accounts, decimals, mint_authority, freeze_authority, true)
+        Self::_process_initialize_mint(accounts, decimals, mint_authority, freeze_authority)
     }
 
     /// Processes an [InitializeMint2](enum.TokenInstruction.html) instruction.
@@ -124,7 +123,7 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         mint_authority: &Pubkey,
         freeze_authority: PodCOption<Pubkey>,
     ) -> ProgramResult {
-        Self::_process_initialize_mint(accounts, decimals, mint_authority, freeze_authority, false)
+        Self::_process_initialize_mint(accounts, decimals, mint_authority, freeze_authority)
     }
 
     fn _process_initialize_account(
@@ -141,20 +140,11 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
             next_account_info(account_info_iter)?.key
         };
         let new_account_info_data_len = new_account_info.data_len();
-        // let rent = if rent_sysvar_account {
-        //     Rent::from_account_info(next_account_info(account_info_iter)?)?
-        // } else {
-        //     Rent::get()?
-        // };
 
         let mut account_data = new_account_info.data.borrow_mut();
         // unpack_uninitialized checks account.base.is_initialized() under the hood
         let mut account =
             PodStateWithExtensionsMut::<PodAccount>::unpack_uninitialized(&mut account_data)?;
-
-        // if !rent.is_exempt(new_account_info.lamports(), new_account_info_data_len) {
-        //     return Err(TokenError::NotRentExempt.into());
-        // }
 
         // get_required_account_extensions checks mint validity
         let mint_data = mint_info.data.borrow();
@@ -192,18 +182,9 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         account.base.delegate = PodCOption::none();
         account.base.delegated_amount = 0.into();
         account.base.state = starting_state.into();
-        // if mint_info.key == &native_mint::id() {
-        //     let rent_exempt_reserve = rent.minimum_balance(new_account_info_data_len);
-        //     account.base.is_native = PodCOption::some(rent_exempt_reserve.into());
-        //     account.base.amount = new_account_info
-        //         .lamports()
-        //         .checked_sub(rent_exempt_reserve)
-        //         .ok_or(TokenError::Overflow)?
-        //         .into();
-        // } else {
+
         account.base.is_native = PodCOption::none();
         account.base.amount = 0.into();
-        // };
 
         account.init_account_type()?;
 
@@ -236,21 +217,12 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         let account_info_iter = &mut accounts.iter();
         let multisig_info = next_account_info(account_info_iter)?;
         let multisig_info_data_len = multisig_info.data_len();
-        // let rent = if rent_sysvar_account {
-        //     Rent::from_account_info(next_account_info(account_info_iter)?)?
-        // } else {
-        //     Rent::get()?
-        // };
 
         let mut multisig_data = multisig_info.data.borrow_mut();
         let multisig = pod_from_bytes_mut::<PodMultisig>(&mut multisig_data)?;
         if bool::from(multisig.is_initialized) {
             return Err(TokenError::AlreadyInUse.into());
         }
-
-        // if !rent.is_exempt(multisig_info.lamports(), multisig_info_data_len) {
-        //     return Err(TokenError::NotRentExempt.into());
-        // }
 
         let signer_infos = account_info_iter.as_slice();
         multisig.m = m;
@@ -1434,124 +1406,24 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
                 )
                 .expect("failed to write initialized mint account");
             }
-            PodTokenInstruction::InitializeAccount => {
+            PodTokenInstruction::InitializeAccount
+            | PodTokenInstruction::InitializeAccount2
+            | PodTokenInstruction::InitializeAccount3
+            | PodTokenInstruction::Transfer
+            | PodTokenInstruction::TransferChecked
+            | PodTokenInstruction::Approve
+            | PodTokenInstruction::ApproveChecked
+            | PodTokenInstruction::Revoke
+            | PodTokenInstruction::SetAuthority
+            | PodTokenInstruction::MintTo
+            | PodTokenInstruction::MintToChecked
+            | PodTokenInstruction::Burn
+            | PodTokenInstruction::BurnChecked
+            | PodTokenInstruction::CloseAccount
+            | PodTokenInstruction::FreezeAccount
+            | PodTokenInstruction::ThawAccount
+            | PodTokenInstruction::GetAccountDataSize => {
                 if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::InitializeAccount2 => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::InitializeAccount3 => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::Transfer | PodTokenInstruction::TransferChecked => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::Approve | PodTokenInstruction::ApproveChecked => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::Revoke => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::SetAuthority => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::MintTo | PodTokenInstruction::MintToChecked => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::Burn | PodTokenInstruction::BurnChecked => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::CloseAccount => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::FreezeAccount => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::ThawAccount => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::GetAccountDataSize => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::SyncNative => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::InitializeImmutableOwner => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::InitializeMintCloseAuthority => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::TransferFeeExtension => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::DefaultAccountStateExtension => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::Reallocate => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::InitializeNonTransferableMint => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::WithdrawExcessLamports => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
                     panic!("action not supported")
                 }
             }
@@ -1872,7 +1744,6 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
 /// Helper function to mostly delete an account in a test environment.  We could
 /// potentially muck around the bytes assuming that a vec is passed in, but that
 /// would be more trouble than it's worth.
-// #[cfg(not(target_os = "solana"))]
 fn delete_account(account_info: &AccountInfo) -> Result<(), ProgramError> {
     account_info.assign(&system_program::id());
     let mut account_data = account_info.data.borrow_mut();
@@ -1905,9 +1776,6 @@ mod tests {
         }
 
         fn sol_get_clock_sysvar(&self, var_addr: *mut u8) -> u64 {
-            // unsafe {
-            //     *(var_addr as *mut _ as *mut Clock) = Clock::default();
-            // }
             SUCCESS
         }
 
@@ -1971,10 +1839,6 @@ mod tests {
     fn return_token_error_as_program_error() -> ProgramError {
         TokenError::MintMismatch.into()
     }
-
-    // fn rent_sysvar() -> SolanaAccount {
-    //     create_account_for_test(&Clock::default())
-    // }
 
     fn mint_minimum_balance() -> u64 {
         0
