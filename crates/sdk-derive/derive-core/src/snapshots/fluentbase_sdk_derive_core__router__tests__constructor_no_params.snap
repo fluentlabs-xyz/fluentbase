@@ -2,8 +2,6 @@
 source: crates/sdk-derive/derive-core/src/router.rs
 expression: formatted
 ---
-#[allow(unused_imports)]
-use ::fluentbase_sdk::derive::function_id;
 impl<SDK: SharedAPI> App<SDK> {
     pub fn constructor(&mut self) {}
     pub fn get_value(&self) -> u32 {

@@ -2,13 +2,10 @@
 source: crates/sdk-derive/derive-core/src/router.rs
 expression: formatted
 ---
-#[allow(unused_imports)]
-use ::fluentbase_sdk::derive::function_id;
 impl<SDK: SharedAPI> RouterAPI for App<SDK> {
     fn greeting(&self, message: String, owner: Address, amount: U256) -> String {
         message
     }
-    #[function_id("customGreeting(string)")]
     fn custom_greeting(&self, message: String) -> String {
         message
     }
