@@ -14,11 +14,6 @@ bincode = { version = "1.3.3", default-features = false, features = [] }
 serde = { workspace = true, default-features = false, features = ["derive"] }
 hex = { workspace = true, default-features = false }
 
-solana-pubkey = { workspace = true, default-features = false }
-
-fluentbase-types = { workspace = true, default-features = false }
-
-
 [features]
 default = []
 std = []

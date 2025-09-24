@@ -13,9 +13,11 @@ mod tests {
         SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{address, Address, ContractContextV1, U256};
-    use fluentbase_svm::token_2022::instruction::{
-        initialize_account, initialize_mint, mint_to, transfer,
-    };
+    use fluentbase_svm::token_2022::instruction::initialize_account;
+    use fluentbase_svm::token_2022::instruction::initialize_mint;
+    use fluentbase_svm::token_2022::instruction::mint_to;
+    #[allow(deprecated)]
+    use fluentbase_svm::token_2022::instruction::transfer;
     use fluentbase_svm::{
         account::ReadableAccount,
         fluentbase::common::BatchMessage,

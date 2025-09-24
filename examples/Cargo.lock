@@ -1851,7 +1851,7 @@ dependencies = [
  "alloy-sol-types",
  "fluentbase-sdk",
  "fluentbase-testing",
- "hex-literal 1.0.0",
+ "hex-literal 0.4.1",
  "serial_test",
 ]
 
