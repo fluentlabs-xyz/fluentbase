@@ -521,6 +521,14 @@ fn test_transfer_dups_abi() {
     assert_eq!(output_data.len(), 1);
     assert_eq!(output_data[0], 1);
 
+    // balance
+    let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+    let output_data =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+    assert_eq!(output_data.len(), size_of::<u64>());
+    let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+    assert_eq!(balance, 0);
+
     // mint_to
     let amount = 1000;
     let mut input_data = vec![];

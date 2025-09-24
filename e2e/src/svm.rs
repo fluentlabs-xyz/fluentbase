@@ -1,6 +1,6 @@
 mod tests {
-    use crate::helpers::{load_program_account_from_elf_file, svm_deploy};
-    use crate::universal_token::build_input;
+    use crate::helpers::{call_with_sig, load_program_account_from_elf_file, svm_deploy};
+    use crate::universal_token::{build_input, build_input_raw};
     use crate::EvmTestingContextWithGenesis;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
     use core::str::from_utf8;
@@ -13,7 +13,9 @@ mod tests {
         SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{address, Address, ContractContextV1, U256};
-    use fluentbase_svm::token_2022::instruction::{initialize_account, initialize_mint};
+    use fluentbase_svm::token_2022::instruction::{
+        initialize_account, initialize_mint, mint_to, transfer,
+    };
     use fluentbase_svm::{
         account::ReadableAccount,
         fluentbase::common::BatchMessage,
@@ -44,6 +46,8 @@ mod tests {
         BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
         BN254_G2_POINT_DECOMPRESSED_SIZE, PRECOMPILE_SHA256, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
     };
+    use fluentbase_universal_token::common::sig_to_bytes;
+    use fluentbase_universal_token::consts::{SIG_BALANCE, SIG_DECIMALS, SIG_DECIMALS_FOR_MINT};
     use hex_literal::hex;
     use rand::random_range;
     use serde::Deserialize;
@@ -71,8 +75,10 @@ mod tests {
     use solana_poseidon::{Endianness, Parameters};
     use std::{ops::Neg, time::Instant};
 
-    const USER_ADDRESS1: Address = address!("1111111111111111111111111111111111111111");
-    const USER_ADDRESS2: Address = address!("2222222222222222222222222222222222222222");
+    const USER_ADDRESS1: Address = Address::repeat_byte(1);
+    const USER_ADDRESS2: Address = Address::repeat_byte(2);
+    const USER_ADDRESS3: Address = Address::repeat_byte(3);
+    const USER_ADDRESS4: Address = Address::repeat_byte(4);
 
     fn process_test_commands(
         ctx: &mut EvmTestingContext,
@@ -553,15 +559,15 @@ mod tests {
     #[test]
     fn test_svm_universal_token() {
         let mut ctx = ctx();
+        ctx.add_balance(USER_ADDRESS3, U256::from(1e18));
         let loader_id = loader_v4::id();
-        let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             "../examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_initial_lamports = 101;
         let seed1 = b"seed";
-        let (pk_deployer1, pk_contract, _pk_new, svm_contract_address) = svm_deploy(
+        let (_pk_deployer1, pk_contract, _pk_new, svm_contract_address) = svm_deploy(
             &mut ctx,
             &USER_ADDRESS1,
             account_with_program.data(),
@@ -571,16 +577,18 @@ mod tests {
         ctx.commit_db_to_sdk();
 
         let program_id = token_2022::lib::id();
-        let owner_key = pubkey_from_evm_address::<true>(&USER_ADDRESS1);
-        let mint_key = pubkey_from_evm_address::<true>(&USER_ADDRESS1);
-        let account_key = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
+        let account1_key = pubkey_from_evm_address::<true>(&USER_ADDRESS1);
+        let account2_key = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
+        let owner_key = pubkey_from_evm_address::<true>(&USER_ADDRESS3);
+        let mint_key = pubkey_from_evm_address::<true>(&USER_ADDRESS4);
 
-        // deploy through svm app
+        // initialize_mint
 
-        let token_contract_address =
-            Address::from_slice(hex!("6d725c63c935b6d8e31db216f6551ec36131f81a").as_slice());
+        let contract_address = address!("4be51af5a276e68592bef1d21ecfd74d3f2f5374");
 
-        let instruction = initialize_mint(&program_id, &mint_key, &owner_key, None, 2).unwrap();
+        let decimals = 2;
+        let instruction =
+            initialize_mint(&program_id, &mint_key, &owner_key, None, decimals).unwrap();
         let instruction_input = build_input(&[], &instruction).expect("failed to build input");
         let mut invoke_data: Vec<u8> = Default::default();
         invoke_data.extend_from_slice(&instruction_input);
@@ -589,17 +597,14 @@ mod tests {
             data: invoke_data,
             account_info_idxs: vec![],
             account_metas: vec![],
-            result_data_expected: token_contract_address.0.to_vec(),
+            result_data_expected: contract_address.0.to_vec(),
         };
         let test_command: TestCommand = test_command_data.clone().into();
         let instruction_data = serialize(&test_command).unwrap();
         let instructions = vec![Instruction::new_with_bincode(
             pk_contract.clone(),
             &instruction_data,
-            vec![
-                AccountMeta::new(pk_deployer1, true),
-                AccountMeta::new(system_program_id, false),
-            ],
+            vec![],
         )];
         let message = Message::new(&instructions, None);
         let mut batch_message = BatchMessage::new(None);
@@ -619,29 +624,26 @@ mod tests {
         }
         assert!(result.is_success());
 
-        // exec through svm app
+        // initialize_account1
 
         let instruction =
-            initialize_account(&program_id, &account_key, &mint_key, &owner_key).unwrap();
+            initialize_account(&program_id, &account1_key, &mint_key, &owner_key).unwrap();
         let instruction_input = build_input(&[], &instruction).expect("failed to build input");
         let mut invoke_data: Vec<u8> = Default::default();
         invoke_data.extend_from_slice(&instruction_input);
         let test_command_data = Invoke {
-            pubkey: pubkey_from_evm_address::<true>(&token_contract_address).to_bytes(),
+            pubkey: pubkey_from_evm_address::<true>(&contract_address).to_bytes(),
             data: invoke_data,
             account_info_idxs: vec![],
             account_metas: vec![],
-            result_data_expected: Default::default(),
+            result_data_expected: vec![1],
         };
         let test_command: TestCommand = test_command_data.clone().into();
         let instruction_data = serialize(&test_command).unwrap();
         let instructions = vec![Instruction::new_with_bincode(
             pk_contract.clone(),
             &instruction_data,
-            vec![
-                AccountMeta::new(pk_deployer1, true),
-                AccountMeta::new(system_program_id, false),
-            ],
+            vec![],
         )];
         let message = Message::new(&instructions, None);
         let mut batch_message = BatchMessage::new(None);
@@ -660,6 +662,218 @@ mod tests {
             println!("output.len {} output '{}'", output.len(), out_text);
         }
         assert!(result.is_success());
+
+        // decimals for mint
+        let mut input_data = vec![];
+        input_data.extend_from_slice(mint_key.as_ref());
+        let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS_FOR_MINT), &input_data);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), 1);
+        assert_eq!(output_data[0], decimals);
+
+        // decimals for account
+        let mut input_data = vec![];
+        input_data.extend_from_slice(account1_key.as_ref());
+        let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS), &input_data);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), 1);
+        assert_eq!(output_data[0], decimals);
+
+        // initialize_account2
+
+        let instruction =
+            initialize_account(&program_id, &account2_key, &mint_key, &owner_key).unwrap();
+        let instruction_input = build_input(&[], &instruction).expect("failed to build input");
+        let mut invoke_data: Vec<u8> = Default::default();
+        invoke_data.extend_from_slice(&instruction_input);
+        let test_command_data = Invoke {
+            pubkey: pubkey_from_evm_address::<true>(&contract_address).to_bytes(),
+            data: invoke_data,
+            account_info_idxs: vec![],
+            account_metas: vec![],
+            result_data_expected: vec![1],
+        };
+        let test_command: TestCommand = test_command_data.clone().into();
+        let instruction_data = serialize(&test_command).unwrap();
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_contract.clone(),
+            &instruction_data,
+            vec![],
+        )];
+        let message = Message::new(&instructions, None);
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = serialize(&batch_message).unwrap();
+        let result = ctx.call_evm_tx_simple(
+            USER_ADDRESS1,
+            svm_contract_address,
+            input.clone().into(),
+            None,
+            None,
+        );
+        let output = result.output().unwrap();
+        if output.len() > 0 {
+            let out_text = from_utf8(output).unwrap();
+            println!("output.len {} output '{}'", output.len(), out_text);
+        }
+        assert!(result.is_success());
+
+        // decimals for mint
+
+        let mut input_data = vec![];
+        input_data.extend_from_slice(mint_key.as_ref());
+        let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS_FOR_MINT), &input_data);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), 1);
+        assert_eq!(output_data[0], decimals);
+
+        // decimals for account
+
+        let mut input_data = vec![];
+        input_data.extend_from_slice(account1_key.as_ref());
+        let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS), &input_data);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), 1);
+        assert_eq!(output_data[0], decimals);
+
+        // balance for account1
+        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), size_of::<u64>());
+        let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+        assert_eq!(balance, 0);
+
+        // mint_to
+
+        let amount = 1000;
+        let instruction = mint_to(
+            &program_id,
+            &mint_key,
+            &account1_key,
+            &owner_key,
+            &[],
+            amount,
+        )
+        .unwrap();
+        let instruction_input = build_input(&[], &instruction).expect("failed to build input");
+        let mut invoke_data: Vec<u8> = Default::default();
+        invoke_data.extend_from_slice(&instruction_input);
+        let test_command_data = Invoke {
+            pubkey: pubkey_from_evm_address::<true>(&contract_address).to_bytes(),
+            data: invoke_data,
+            account_info_idxs: vec![],
+            account_metas: vec![],
+            result_data_expected: vec![1],
+        };
+        let test_command: TestCommand = test_command_data.clone().into();
+        let instruction_data = serialize(&test_command).unwrap();
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_contract.clone(),
+            &instruction_data,
+            vec![],
+        )];
+        let message = Message::new(&instructions, None);
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = serialize(&batch_message).unwrap();
+        let result = ctx.call_evm_tx_simple(
+            USER_ADDRESS3,
+            svm_contract_address,
+            input.clone().into(),
+            None,
+            None,
+        );
+        let output = result.output().unwrap();
+        if output.len() > 0 {
+            let out_text = from_utf8(output).unwrap();
+            println!("output.len {} output '{}'", output.len(), out_text);
+        }
+        assert!(result.is_success());
+
+        // balance for account1
+        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), size_of::<u64>());
+        let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+        assert_eq!(balance, amount);
+
+        // balance for account2
+        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+        assert_eq!(output_data.len(), size_of::<u64>());
+        let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+        assert_eq!(balance, 0);
+
+        // mint_to
+
+        let amount = 500;
+        #[allow(deprecated)]
+        let instruction = transfer(
+            &program_id,
+            &account1_key,
+            &account2_key,
+            &owner_key,
+            &[],
+            amount,
+        )
+        .unwrap();
+        let instruction_input = build_input(&[], &instruction).expect("failed to build input");
+        let mut invoke_data: Vec<u8> = Default::default();
+        invoke_data.extend_from_slice(&instruction_input);
+        let test_command_data = Invoke {
+            pubkey: pubkey_from_evm_address::<true>(&contract_address).to_bytes(),
+            data: invoke_data,
+            account_info_idxs: vec![],
+            account_metas: vec![],
+            result_data_expected: vec![1],
+        };
+        let test_command: TestCommand = test_command_data.clone().into();
+        let instruction_data = serialize(&test_command).unwrap();
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_contract.clone(),
+            &instruction_data,
+            vec![],
+        )];
+        let message = Message::new(&instructions, None);
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = serialize(&batch_message).unwrap();
+        let result = ctx.call_evm_tx_simple(
+            USER_ADDRESS3,
+            svm_contract_address,
+            input.clone().into(),
+            None,
+            None,
+        );
+        let output = result.output().unwrap();
+        if output.len() > 0 {
+            let out_text = from_utf8(output).unwrap();
+            println!("output.len {} output '{}'", output.len(), out_text);
+        }
+        assert!(result.is_success());
+
+        // balance for account1
+        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), size_of::<u64>());
+        let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+        assert_eq!(balance, amount);
+
+        // balance for account2
+        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+        assert_eq!(output_data.len(), size_of::<u64>());
+        let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+        assert_eq!(balance, amount);
     }
 
     #[test]
