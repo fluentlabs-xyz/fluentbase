@@ -8,7 +8,9 @@ use fluentbase_svm::token_2022;
 use fluentbase_svm::token_2022::instruction::{initialize_account, initialize_mint, mint_to};
 use fluentbase_svm_common::common::pubkey_from_evm_address;
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext};
-use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
+use fluentbase_types::{
+    ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, UNIVERSAL_TOKEN_MAGIC_BYTES,
+};
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::SIG_TOKEN2022;
 use hex_literal::hex;
@@ -158,7 +160,7 @@ fn erc20_transfer_benches(c: &mut Criterion) {
         let initialize_mint_instruction =
             initialize_mint(&program_id, &mint_key, &owner_key, None, 2).unwrap();
 
-        let init_bytecode = build_input(&ERC20_MAGIC_BYTES, &initialize_mint_instruction)
+        let init_bytecode = build_input(&UNIVERSAL_TOKEN_MAGIC_BYTES, &initialize_mint_instruction)
             .expect("failed to build input");
         let contract_address = ctx.deploy_evm_tx(USER_ADDRESS5, init_bytecode.clone().into());
 

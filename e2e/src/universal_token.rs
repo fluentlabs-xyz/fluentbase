@@ -30,7 +30,9 @@ use fluentbase_svm_common::universal_token::{
 #[cfg(feature = "enable-error-text-checks")]
 use fluentbase_testing::utf8_to_bytes;
 use fluentbase_testing::EvmTestingContext;
-use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
+use fluentbase_types::{
+    ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, UNIVERSAL_TOKEN_MAGIC_BYTES,
+};
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::{
     SIG_ALLOWANCE, SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE, SIG_BALANCE_OF, SIG_BURN,
@@ -87,15 +89,17 @@ fn test_initialize_mint() {
     let mint2_key = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
     let initialize_mint_instruction1 =
         initialize_mint(&program_id, &mint_key, &owner_key, None, 2).unwrap();
-    let init_bytecode: Vec<u8> = build_input(&ERC20_MAGIC_BYTES, &initialize_mint_instruction1)
-        .expect("failed to build input");
+    let init_bytecode: Vec<u8> =
+        build_input(&UNIVERSAL_TOKEN_MAGIC_BYTES, &initialize_mint_instruction1)
+            .expect("failed to build input");
     let _contract_address = ctx.deploy_evm_tx(USER_ADDRESS1, init_bytecode.clone().into());
 
     // create another mint that can freeze
     let initialize_mint_instruction2 =
         initialize_mint(&program_id, &mint2_key, &owner_key, Some(&owner_key), 2).unwrap();
-    let init_bytecode: Vec<u8> = build_input(&ERC20_MAGIC_BYTES, &initialize_mint_instruction2)
-        .expect("failed to build input");
+    let init_bytecode: Vec<u8> =
+        build_input(&UNIVERSAL_TOKEN_MAGIC_BYTES, &initialize_mint_instruction2)
+            .expect("failed to build input");
     let _contract_address = ctx.deploy_evm_tx(USER_ADDRESS2, init_bytecode.clone().into());
 
     ctx.commit_db_to_sdk();
@@ -135,8 +139,9 @@ fn test_initialize_mint2() {
     let mint2_key = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
     let initialize_mint2_instruction1 =
         initialize_mint2(&program_id, &mint_key, &owner_key, None, 2).unwrap();
-    let init_bytecode: Vec<u8> = build_input(&ERC20_MAGIC_BYTES, &initialize_mint2_instruction1)
-        .expect("failed to build input");
+    let init_bytecode: Vec<u8> =
+        build_input(&UNIVERSAL_TOKEN_MAGIC_BYTES, &initialize_mint2_instruction1)
+            .expect("failed to build input");
     let _contract_address = ctx.deploy_evm_tx(USER_ADDRESS1, init_bytecode.clone().into());
     // try to create 2nd time
     assert!(ctx
@@ -146,8 +151,9 @@ fn test_initialize_mint2() {
     // create another mint that can freeze
     let initialize_mint2_instruction2 =
         initialize_mint2(&program_id, &mint2_key, &owner_key, Some(&owner_key), 2).unwrap();
-    let init_bytecode: Vec<u8> = build_input(&ERC20_MAGIC_BYTES, &initialize_mint2_instruction2)
-        .expect("failed to build input");
+    let init_bytecode: Vec<u8> =
+        build_input(&UNIVERSAL_TOKEN_MAGIC_BYTES, &initialize_mint2_instruction2)
+            .expect("failed to build input");
     let _contract_address = ctx.deploy_evm_tx(USER_ADDRESS2, init_bytecode.clone().into());
     // try to create 2nd time
     assert!(ctx
@@ -191,7 +197,7 @@ fn test_initialize_mint_account() {
     let account_key = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
     let initialize_mint_instruction =
         initialize_mint(&program_id, &mint_key, &owner_key, None, 2).unwrap();
-    let init_bytecode = build_input(&ERC20_MAGIC_BYTES, &initialize_mint_instruction)
+    let init_bytecode = build_input(&UNIVERSAL_TOKEN_MAGIC_BYTES, &initialize_mint_instruction)
         .expect("failed to build input");
     let token_contract_address = ctx.deploy_evm_tx(USER_ADDRESS1, init_bytecode.clone().into());
 
@@ -252,7 +258,7 @@ fn test_transfer_dups() {
 
     let initialize_mint_instruction =
         initialize_mint(&program_id, &mint_key, &owner_key, None, decimals).unwrap();
-    let init_bytecode = build_input(&ERC20_MAGIC_BYTES, &initialize_mint_instruction)
+    let init_bytecode = build_input(&UNIVERSAL_TOKEN_MAGIC_BYTES, &initialize_mint_instruction)
         .expect("failed to build input");
     let contract_address = ctx.deploy_evm_tx(USER_ADDRESS5, init_bytecode.clone().into());
 
@@ -465,7 +471,7 @@ fn test_transfer_dups_abi() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_MINT), &input_data);
-    let input = build_input_raw(&ERC20_MAGIC_BYTES, &input);
+    let input = build_input_raw(&UNIVERSAL_TOKEN_MAGIC_BYTES, &input);
     let contract_address = ctx.deploy_evm_tx(USER_ADDRESS5, input.into());
 
     ctx.commit_db_to_sdk();
@@ -794,7 +800,7 @@ fn test_approve_abi() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_MINT), &input_data);
-    let input = build_input_raw(&ERC20_MAGIC_BYTES, &input);
+    let input = build_input_raw(&UNIVERSAL_TOKEN_MAGIC_BYTES, &input);
     let contract_address = ctx.deploy_evm_tx(USER_ADDRESS5, input.into());
 
     // create account
@@ -1057,7 +1063,7 @@ fn test_set_authority_abi() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_MINT), &input_data);
-    let input = build_input_raw(&ERC20_MAGIC_BYTES, &input);
+    let input = build_input_raw(&UNIVERSAL_TOKEN_MAGIC_BYTES, &input);
     let contract_address = ctx.deploy_evm_tx(USER_ADDRESS6, input.into());
 
     // create mint with owner and freeze_authority
@@ -1375,7 +1381,7 @@ fn test_burn_abi() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_MINT), &input_data);
-    let input = build_input_raw(&ERC20_MAGIC_BYTES, &input);
+    let input = build_input_raw(&UNIVERSAL_TOKEN_MAGIC_BYTES, &input);
     let contract_address = ctx.deploy_evm_tx(USER_ADDRESS6, input.into());
 
     // create account
@@ -1738,7 +1744,7 @@ fn test_freeze_account_abi() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_MINT), &input_data);
-    let input = build_input_raw(&ERC20_MAGIC_BYTES, &input);
+    let input = build_input_raw(&UNIVERSAL_TOKEN_MAGIC_BYTES, &input);
     let contract_address = ctx.deploy_evm_tx(USER_ADDRESS6, input.into());
 
     // create account
@@ -1909,7 +1915,7 @@ fn test_close_account_abi() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_MINT), &input_data);
-    let input = build_input_raw(&ERC20_MAGIC_BYTES, &input);
+    let input = build_input_raw(&UNIVERSAL_TOKEN_MAGIC_BYTES, &input);
     let contract_address = ctx.deploy_evm_tx(USER_ADDRESS6, input.into());
 
     // uninitialized

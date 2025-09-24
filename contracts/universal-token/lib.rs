@@ -4,7 +4,7 @@ extern crate core;
 
 use alloc::vec::Vec;
 use fluentbase_sdk::{
-    debug_log_ext, entrypoint, Address, ContextReader, SharedAPI, ERC20_MAGIC_BYTES,
+    debug_log_ext, entrypoint, Address, ContextReader, SharedAPI, UNIVERSAL_TOKEN_MAGIC_BYTES,
 };
 use fluentbase_svm::fluentbase::token2022::{token2022_process, token2022_process_raw};
 use fluentbase_svm::pubkey::{Pubkey, PUBKEY_BYTES};
@@ -496,7 +496,7 @@ pub fn deploy_entry(mut sdk: impl SharedAPI) {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     }
     let (sig1_bytes, input1) = sdk.input().split_at(SIG_LEN_BYTES);
-    if sig1_bytes != ERC20_MAGIC_BYTES {
+    if sig1_bytes != UNIVERSAL_TOKEN_MAGIC_BYTES {
         panic!("invalid input signature");
     }
     let (sig2_bytes, input2) = &input1.split_at(SIG_LEN_BYTES);

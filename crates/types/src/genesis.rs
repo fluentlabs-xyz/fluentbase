@@ -1,4 +1,4 @@
-use crate::{ERC20_MAGIC_BYTES, SVM_ELF_MAGIC_BYTES, WASM_MAGIC_BYTES};
+use crate::{SVM_ELF_MAGIC_BYTES, UNIVERSAL_TOKEN_MAGIC_BYTES, WASM_MAGIC_BYTES};
 use alloy_primitives::{address, hex, Address, Bytes, B256};
 
 /// An address of EVM runtime that is used to execute an EVM program
@@ -103,8 +103,8 @@ pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
         && input[..SVM_ELF_MAGIC_BYTES.len()] == SVM_ELF_MAGIC_BYTES
     {
         PRECOMPILE_SVM_RUNTIME
-    } else if input.len() > ERC20_MAGIC_BYTES.len()
-        && input[..ERC20_MAGIC_BYTES.len()] == ERC20_MAGIC_BYTES
+    } else if input.len() > UNIVERSAL_TOKEN_MAGIC_BYTES.len()
+        && input[..UNIVERSAL_TOKEN_MAGIC_BYTES.len()] == UNIVERSAL_TOKEN_MAGIC_BYTES
     {
         PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
     } else {

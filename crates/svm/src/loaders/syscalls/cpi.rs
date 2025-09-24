@@ -32,8 +32,8 @@ use fluentbase_sdk::ContextReader;
 use fluentbase_sdk::{Address, SharedAPI};
 use fluentbase_svm_common::common::evm_address_from_pubkey;
 use fluentbase_types::{
-    IsAccountEmpty, IsAccountOwnable, IsColdAccess, SyscallResult, ERC20_MAGIC_BYTES,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, SVM_ELF_MAGIC_BYTES, U256,
+    IsAccountEmpty, IsAccountOwnable, IsColdAccess, SyscallResult,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, SVM_ELF_MAGIC_BYTES, U256, UNIVERSAL_TOKEN_MAGIC_BYTES,
 };
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::SIG_TOKEN2022;
@@ -732,7 +732,7 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
             salt_bytes.extend_from_slice(&ctx.tx_nonce().to_le_bytes());
             drop(ctx);
             let salt = Some(U256::from_le_slice(&salt_bytes));
-            let mut init_code = ERC20_MAGIC_BYTES.to_vec();
+            let mut init_code = UNIVERSAL_TOKEN_MAGIC_BYTES.to_vec();
             init_code.extend_from_slice(&input);
             invoke_context.sdk.create(salt, &value, &init_code)
         };

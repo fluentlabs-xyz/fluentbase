@@ -7,7 +7,9 @@ use crate::{
 use alloc::vec::Vec;
 use bincode::{Decode, Encode};
 use core::ops::Range;
-use fluentbase_sdk::{derive::solidity_storage, Address, SharedAPI, B256, ERC20_MAGIC_BYTES, U256};
+use fluentbase_sdk::{
+    derive::solidity_storage, Address, SharedAPI, B256, U256, UNIVERSAL_TOKEN_MAGIC_BYTES,
+};
 
 pub const ADDRESS_LEN_BYTES: usize = Address::len_bytes();
 pub const U256_LEN_BYTES: usize = size_of::<U256>();
@@ -50,7 +52,7 @@ impl InitialSettings {
         serialize(self)
     }
     pub fn try_encode_for_deploy(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
-        let mut init_bytecode: Vec<u8> = ERC20_MAGIC_BYTES.to_vec();
+        let mut init_bytecode: Vec<u8> = UNIVERSAL_TOKEN_MAGIC_BYTES.to_vec();
         init_bytecode.extend(self.try_encode()?);
         Ok(init_bytecode)
     }
