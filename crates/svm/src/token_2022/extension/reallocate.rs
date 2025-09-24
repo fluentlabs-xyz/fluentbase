@@ -1,6 +1,6 @@
 use crate::error::TokenError;
 use crate::token_2022::extension::{
-    AccountType, BaseStateWithExtensions, ExtensionType, StateWithExtensions,
+    set_account_type, AccountType, BaseStateWithExtensions, ExtensionType, StateWithExtensions,
 };
 use crate::token_2022::processor::Processor;
 use crate::token_2022::state::Account;
@@ -65,45 +65,9 @@ pub fn process_reallocate<SDK: SharedAPI>(
     );
     token_account_info.realloc(needed_account_len, false)?;
 
-    // if additional lamports needed to remain rent-exempt, transfer them
-    // let rent = Rent::get()?;
-    // let new_rent_exempt_reserve = rent.minimum_balance(needed_account_len);
-
-    let current_lamport_reserve = token_account_info
-        .lamports()
-        .checked_sub(native_token_amount.unwrap_or(0))
-        .ok_or(TokenError::Overflow)?;
-    // TODO
-    // let lamports_diff = new_rent_exempt_reserve.saturating_sub(current_lamport_reserve);
-    // if lamports_diff > 0 {
-    //     invoke(
-    //         &system_instruction::transfer(payer_info.key, token_account_info.key, lamports_diff),
-    //         &[
-    //             payer_info.clone(),
-    //             token_account_info.clone(),
-    //             system_program_info.clone(),
-    //         ],
-    //     )?;
-    // }
-
-    // // set account_type, if needed
-    // let mut token_account_data = token_account_info.data.borrow_mut();
-    // set_account_type::<Account>(&mut token_account_data)?;
-
-    // // sync the rent exempt reserve for native accounts
-    // if let Some(native_token_amount) = native_token_amount {
-    //     let mut token_account = StateWithExtensionsMut::<Account>::unpack(&mut token_account_data)?;
-    //     // sanity check that there are enough lamports to cover the token amount
-    //     // and the rent exempt reserve
-    //     let minimum_lamports = new_rent_exempt_reserve
-    //         .checked_add(native_token_amount)
-    //         .ok_or(TokenError::Overflow)?;
-    //     if token_account_info.lamports() < minimum_lamports {
-    //         return Err(TokenError::InvalidState.into());
-    //     }
-    //     token_account.base.is_native = COption::Some(new_rent_exempt_reserve);
-    //     token_account.pack_base();
-    // }
+    // set account_type, if needed
+    let mut token_account_data = token_account_info.data.borrow_mut();
+    set_account_type::<Account>(&mut token_account_data)?;
 
     Ok(())
 }

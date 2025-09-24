@@ -79,7 +79,6 @@ pub(crate) fn process_instruction<SDK: SharedAPI>(
     let (instruction, state) = decode_instruction(input)?;
     match instruction {
         DefaultAccountStateInstruction::Initialize => {
-            // msg!("DefaultAccountStateInstruction::Initialize");
             process_initialize_default_account_state(accounts, state)
         }
         DefaultAccountStateInstruction::Update => {
