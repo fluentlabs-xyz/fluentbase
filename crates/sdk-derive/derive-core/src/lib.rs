@@ -5,6 +5,7 @@ pub mod abi;
 pub mod attr;
 pub mod client;
 mod codec;
+pub mod constructor;
 mod method;
 pub mod router;
 mod signature;

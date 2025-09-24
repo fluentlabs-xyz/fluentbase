@@ -1,13 +1,13 @@
 #![allow(dead_code)]
+use fluentbase_sdk::derive::Contract;
 use fluentbase_sdk::{
-    derive::Storage,
     storage::{
         StorageAddress, StorageBool, StorageMap, StorageString, StorageU256, StorageU32, StorageVec,
     },
     Address, SharedAPI, U256,
 };
 
-#[derive(Storage)]
+#[derive(Contract)]
 pub struct App<SDK> {
     sdk: SDK,
     owner: StorageAddress,

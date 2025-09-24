@@ -2,8 +2,10 @@ use crate::{
     attr::{function_id::FunctionID, FunctionIDAttribute},
     signature::ParsedSignature,
 };
-use proc_macro2::Span;
+
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use proc_macro_error::{abort, abort_call_site};
+use quote::{format_ident, quote};
 use std::collections::HashSet;
 use syn::{
     spanned::Spanned,
@@ -201,6 +203,72 @@ impl<T: MethodLike> ParsedMethod<T> {
     pub fn is_constructor(&self) -> bool {
         self.sig.rust_name() == CONSTRUCTOR_METHOD
     }
+    // В method.rs, добавить в impl<T: MethodLike> ParsedMethod<T>
+
+    /// Generates the deploy method body for a constructor.
+    /// This includes parameter decoding and constructor call logic.
+    pub fn generate_deploy_body(&self) -> TokenStream2 {
+        assert!(
+            self.is_constructor(),
+            "generate_deploy_body should only be called for constructor methods"
+        );
+
+        let fn_name = format_ident!("constructor");
+        let params = self.parsed_signature().parameters();
+        let param_count = params.len();
+
+        let call_struct = format_ident!("ConstructorCall");
+
+        // Generate parameter handling based on parameter count
+        let param_handling = match param_count {
+            0 => quote! {},
+            1 => quote! {
+                let param0 = match #call_struct::decode(&&call_data[..]) {
+                    Ok(decoded) => decoded.0.0,
+                    Err(err) => {
+                        panic!("Failed to decode constructor parameters: {:?}", err);
+                    }
+                };
+            },
+            _ => {
+                let param_names = (0..param_count)
+                    .map(|i| format_ident!("param{}", i))
+                    .collect::<Vec<_>>();
+                let param_indices = (0..param_count).map(syn::Index::from).collect::<Vec<_>>();
+
+                quote! {
+                    let (#(#param_names),*) = match #call_struct::decode(&&call_data[..]) {
+                        Ok(decoded) => (#(decoded.0.#param_indices),*),
+                        Err(err) => {
+                            panic!("Failed to decode constructor parameters: {:?}", err);
+                        }
+                    };
+                }
+            }
+        };
+
+        // Generate function call based on parameter count
+        let fn_call = match param_count {
+            0 => quote! { self.#fn_name() },
+            1 => quote! { self.#fn_name(param0) },
+            _ => {
+                let param_names = (0..param_count)
+                    .map(|i| format_ident!("param{}", i))
+                    .collect::<Vec<_>>();
+                quote! { self.#fn_name(#(#param_names),*) }
+            }
+        };
+
+        // Generate complete deploy body
+        quote! {
+            let input_length = self.sdk.input_size();
+            let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
+            self.sdk.read(&mut call_data, 0);
+
+            #param_handling
+            #fn_call;
+        }
+    }
 }
 
 /// Collector for gathering methods from trait or impl blocks
@@ -261,13 +329,13 @@ impl<T: MethodLike> MethodCollector<T> {
 
             if count > 1 {
                 return Err(Error::new(
-                   method.parsed_signature().span(),
-                   format!(
-                       "Function selector collision detected for '{}'. Selector: {:02x}{:02x}{:02x}{:02x}",
-                       method.parsed_signature().rust_name(),
-                       selector[0], selector[1], selector[2], selector[3]
-                   ),
-               ));
+                    method.parsed_signature().span(),
+                    format!(
+                        "Function selector collision detected for '{}'. Selector: {:02x}{:02x}{:02x}{:02x}",
+                        method.parsed_signature().rust_name(),
+                        selector[0], selector[1], selector[2], selector[3]
+                    ),
+                ));
             }
         }
 
@@ -284,13 +352,13 @@ impl<T: MethodLike> MethodCollector<T> {
         let selector = method.function_id();
         if !self.selectors.insert(selector) {
             self.add_error(
-               method.parsed_signature().span(),
-               format!(
-                   "Function selector collision detected for '{}'. Selector: {:02x}{:02x}{:02x}{:02x}",
-                   method.parsed_signature().rust_name(),
-                   selector[0], selector[1], selector[2], selector[3]
-               ),
-           );
+                method.parsed_signature().span(),
+                format!(
+                    "Function selector collision detected for '{}'. Selector: {:02x}{:02x}{:02x}{:02x}",
+                    method.parsed_signature().rust_name(),
+                    selector[0], selector[1], selector[2], selector[3]
+                ),
+            );
         } else {
             self.methods.push(method);
         }
@@ -320,10 +388,10 @@ impl<T: MethodLike> MethodCollector<T> {
     fn handle_fallback_method(&mut self, method_sig: &Signature, span: Span) {
         if !self.validate_fallback_signature(method_sig) {
             self.add_error(
-               span,
-               format!("{} method must have signature 'fn {}(&self)' with no parameters and no return value",
-                       FALLBACK_METHOD, FALLBACK_METHOD),
-           );
+                span,
+                format!("{} method must have signature 'fn {}(&self)' with no parameters and no return value",
+                        FALLBACK_METHOD, FALLBACK_METHOD),
+            );
         }
     }
 
