@@ -186,17 +186,6 @@ mod state_root_mismatch {
     }
 }
 
-mod v82_failing_tests {
-    define_tests! {
-        fn create2collision_selfdestructed("tests/GeneralStateTests/stCreate2/create2collisionSelfdestructed.json");
-        fn create2collision_selfdestructed2("tests/GeneralStateTests/stCreate2/create2collisionSelfdestructed2.json");
-        fn create2collision_selfdestructed_revert("tests/GeneralStateTests/stCreate2/create2collisionSelfdestructedRevert.json");
-        fn create_acreate_b_bsuicide_bstore("tests/GeneralStateTests/stCreateTest/CREATE_AcreateB_BSuicide_BStore.json");
-        fn failed_tx_xcf416c53_paris("tests/GeneralStateTests/stSpecialTest/failed_tx_xcf416c53_Paris.json");
-        fn underflow_test("tests/GeneralStateTests/stStackTests/underflowTest.json");
-    }
-}
-
 mod new_v82_interpreter_failing_tests {
     define_tests! {
         fn invalid_addr("tests/GeneralStateTests/stBadOpcode/invalidAddr.json");

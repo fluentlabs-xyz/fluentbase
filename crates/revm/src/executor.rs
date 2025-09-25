@@ -205,6 +205,10 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     );
 
     // make sure we have enough gas to charge from the call
+    // assert_eq!(
+    //     (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE,
+    //     fuel_consumed / FUEL_DENOM_RATE
+    // );
     if !interpreter.gas.record_denominated_cost(fuel_consumed) {
         return Ok(NextAction::error(ExitCode::OutOfFuel, interpreter.gas));
     }
@@ -298,6 +302,10 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     };
 
     // make sure we have enough gas to charge from the call
+    // assert_eq!(
+    //     (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE,
+    //     fuel_consumed / FUEL_DENOM_RATE
+    // );
     if !gas.record_denominated_cost(fuel_consumed) {
         return Ok(NextAction::error(ExitCode::OutOfFuel, gas));
     }

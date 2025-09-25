@@ -1,9 +1,4 @@
 use crate::runner::execute_test_suite;
-use fluentbase_runtime::Runtime;
-use fluentbase_sdk::{
-    keccak256,
-    rwasm_core::{deserialize_wasmtime_module, CompilationConfig, Strategy},
-};
 use k256::ecdsa::SigningKey;
 use revm::primitives::Address;
 use std::{
@@ -25,20 +20,23 @@ pub(crate) fn run_e2e_test(test_path: &'static str) {
     execute_test_suite(Path::new(path.as_str()), &elapsed, false, false).unwrap();
 }
 
-mod precompiled {
-    include!(concat!(env!("OUT_DIR"), "/precompiled_module.rs"));
-}
-
-#[ctor::ctor]
-fn warmup_wasmtime_modules() {
-    for (wasmtime_module, rwasm_module) in precompiled::PRECOMPILED_MODULES {
-        let module = deserialize_wasmtime_module(CompilationConfig::default(), wasmtime_module)
-            .expect("failed to parse wasmtime module");
-        let code_hash = keccak256(rwasm_module);
-        println!("precompiled evm runtime code hash: {:?}", code_hash);
-        Runtime::warmup_strategy_raw(code_hash, Strategy::Wasmtime { module });
-    }
-}
+// mod precompiled {
+//     include!(concat!(env!("OUT_DIR"), "/precompiled_module.rs"));
+// }
+//
+// #[ctor::ctor]
+// fn warmup_wasmtime_modules() {
+//     for (name, wasmtime_module, rwasm_module) in precompiled::PRECOMPILED_MODULES {
+//         let module = deserialize_wasmtime_module(CompilationConfig::default(), wasmtime_module)
+//             .expect("failed to parse wasmtime module");
+//         let code_hash = keccak256(rwasm_module);
+//         println!(
+//             "warmed precompiled system contract ({name}): {:?}",
+//             code_hash
+//         );
+//         default_runtime_executor().warmup_raw(code_hash, Strategy::Wasmtime { module });
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

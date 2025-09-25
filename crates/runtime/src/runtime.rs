@@ -1,19 +1,10 @@
-use crate::{
-    context::RuntimeContext,
-    factory::{CachedModule, CACHING_RUNTIME_FACTORY},
-    syscall_handler::runtime_syscall_handler,
-};
+use crate::context::RuntimeContext;
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    import_linker_v1_preview, Address, BytecodeOrHash, Bytes, ExitCode, B256, STATE_DEPLOY,
-    STATE_MAIN,
+    ExitCode, B256, STATE_DEPLOY, STATE_MAIN,
 };
 use rwasm::{Store, Strategy, TrapCode, TypedStore, Value};
-use std::{
-    fmt::Debug,
-    mem::take,
-    sync::{atomic::Ordering, Arc},
-};
+use std::{fmt::Debug, mem::take, sync::Arc};
 
 /// Finalized outcome of a single runtime invocation.
 ///
@@ -26,13 +17,14 @@ pub struct ExecutionResult {
     pub fuel_consumed: u64,
     /// Fuel refunded to the caller (negative values are not expected).
     pub fuel_refunded: i64,
-    /// Return data propagated back to the parent on success paths of nested calls.
-    pub return_data: Vec<u8>,
     /// Raw output buffer produced by the callee; for nested calls it is moved into the parent's return_data.
     pub output: Vec<u8>,
+    /// Return data propagated back to the parent on success paths of nested calls.
+    pub return_data: Vec<u8>,
 }
 
 /// Captures an intentional execution interruption that must be resumed by the root context.
+#[derive(Debug, Default, Clone)]
 pub struct ExecutionInterruption {
     /// Fuel spent up to the interruption point.
     pub fuel_consumed: u64,
@@ -40,11 +32,10 @@ pub struct ExecutionInterruption {
     pub fuel_refunded: i64,
     /// Encoded interruption payload (e.g., delegated call parameters).
     pub output: Vec<u8>,
-    /// Suspended runtime instance to be resumed by the root.
-    pub runtime: Runtime,
 }
 
 /// Result of running or resuming a runtime.
+#[derive(Clone, Debug)]
 pub enum RuntimeResult {
     /// Execution finished; contains the finalized result.
     Result(ExecutionResult),
@@ -58,28 +49,6 @@ impl RuntimeResult {
         match self {
             RuntimeResult::Result(result) => result,
             _ => unreachable!(),
-        }
-    }
-
-    /// Finalizes the result into (fuel_consumed, fuel_refunded, exit_code) and updates the parent context.
-    pub fn finalize(self, ctx: &mut RuntimeContext) -> (u64, i64, i32) {
-        match self {
-            RuntimeResult::Result(result) => {
-                // Move output into parent's return data
-                ctx.execution_result.return_data = result.output;
-                (result.fuel_consumed, result.fuel_refunded, result.exit_code)
-            }
-            RuntimeResult::Interruption(interruption) => {
-                // Move output into parent's return data
-                ctx.execution_result.return_data = interruption.output;
-                let call_id = interruption.runtime.remember_runtime(ctx);
-                (
-                    interruption.fuel_consumed,
-                    interruption.fuel_refunded,
-                    // We return `call_id` as exit code, it's safe since exit code can't be positive
-                    call_id,
-                )
-            }
         }
     }
 }
@@ -96,37 +65,11 @@ pub struct Runtime {
 
 impl Runtime {
     /// Creates a runtime from bytecode or code hash and initializes its store with the provided context.
-    #[tracing::instrument(level = "info", skip_all)]
-    pub fn new(bytecode_or_hash: BytecodeOrHash, runtime_context: RuntimeContext) -> Self {
-        let caching_runtime = &*CACHING_RUNTIME_FACTORY;
-        let code_hash = bytecode_or_hash.code_hash();
-
-        // If we have a cached module, then use it, otherwise create a new one and cache
-        let cached_module = caching_runtime.get_module_or_init(bytecode_or_hash);
-        let (strategy, mut store) = cached_module.acquire_shared();
-
-        // If there is cached store then reuse it, but rewrite the context data
-        if let Some(store) = store.as_mut() {
-            match store {
-                // TODO(dmitry123): Eliminate this check, we don't need the reset function, it's used for rWasm's e2e tests only.
-                TypedStore::Rwasm(rwasm_store) => {
-                    // A special case for rWasm, we need to reset state
-                    rwasm_store.reset(false);
-                }
-                _ => {}
-            }
-            store.context_mut(|context_ref| *context_ref = runtime_context.clone());
-        }
-
-        // If there is no cached store, then construct a new one (slow)
-        let store = store.unwrap_or_else(|| {
-            strategy.create_store(
-                import_linker_v1_preview(),
-                runtime_context,
-                runtime_syscall_handler,
-            )
-        });
-
+    pub fn new(
+        strategy: Arc<Strategy>,
+        store: TypedStore<RuntimeContext>,
+        code_hash: B256,
+    ) -> Self {
         Self {
             strategy,
             store,
@@ -138,15 +81,15 @@ impl Runtime {
     ///
     /// Returns either a finalized result or an interruption that must be resumed by the root.
     #[tracing::instrument(level = "info", skip_all)]
-    pub fn execute(mut self) -> RuntimeResult {
+    pub fn execute(&mut self) -> RuntimeResult {
         let (fuel_limit, disable_fuel) =
             self.store.context(|ctx| (ctx.fuel_limit, ctx.disable_fuel));
-        let result = self.execute_inner(Some(fuel_limit));
+        let result = self.execute_inner();
         let fuel_limit = if disable_fuel { None } else { Some(fuel_limit) };
         self.handle_execution_result(result, fuel_limit)
     }
 
-    fn execute_inner(&mut self, fuel: Option<u64>) -> Result<(), TrapCode> {
+    fn execute_inner(&mut self) -> Result<(), TrapCode> {
         let state = self.store.context(|ctx| ctx.state);
         let func_name = match state {
             STATE_MAIN => "main",
@@ -154,7 +97,7 @@ impl Runtime {
             _ => unreachable!(),
         };
         self.strategy
-            .execute(&mut self.store, func_name, &[], &mut [], fuel)
+            .execute(&mut self.store, func_name, &[], &mut [])
     }
 
     /// Resumes a previously interrupted runtime.
@@ -162,28 +105,58 @@ impl Runtime {
     /// fuel16_ptr optionally points to a 16-byte buffer where fuel consumption and refund are written back.
     #[tracing::instrument(level = "info", skip_all, fields(fuel_ptr = fuel16_ptr, exit_code = exit_code))]
     pub fn resume(
-        mut self,
+        &mut self,
+        return_data: Vec<u8>,
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
         exit_code: i32,
     ) -> RuntimeResult {
-        let disable_fuel = self.store.context(|ctx| ctx.is_fuel_disabled());
+        let disable_fuel = self.store.context(RuntimeContext::is_fuel_disabled);
         let mut fuel_remaining = self.store.remaining_fuel();
         if disable_fuel {
             fuel_remaining = None;
         }
-        let result = self.resume_inner(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code);
+        let result = self.resume_inner(
+            return_data,
+            fuel16_ptr,
+            fuel_consumed,
+            fuel_refunded,
+            exit_code,
+        );
+        // We need to adjust the fuel limit because `fuel_consumed` should not be included into spent.
+        // We can safely unwrap here, because `OutOfFuel` check we did in `resume_inner`.
+        let fuel_remaining = fuel_remaining.map(|v| v.checked_sub(fuel_consumed).unwrap());
         self.handle_execution_result(result, fuel_remaining)
     }
 
     fn resume_inner(
         &mut self,
+        return_data: Vec<u8>,
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
         exit_code: i32,
     ) -> Result<(), TrapCode> {
+        let fuel_cost = self.store.context_mut(|ctx| {
+            // During the résumé we must clear output, otherwise collision might happen
+            ctx.execution_result.output.clear();
+            // When fuel is disabled, we only pass consumed fuel amount into the contract back,
+            // and it can decide on charging
+            let fuel_cost = if !ctx.is_fuel_disabled() && fuel_consumed > 0 {
+                Some(fuel_consumed)
+            } else {
+                None
+            };
+            // Copy return data into return data
+            ctx.execution_result.return_data = return_data;
+            fuel_cost
+        });
+        if let Some(fuel_cost) = fuel_cost {
+            // Charge fuel that was spent during the interruption
+            // to make sure our fuel calculations are aligned
+            self.store.try_consume_fuel(fuel_cost)?;
+        }
         if fuel16_ptr > 0 {
             let mut buffer = [0u8; 16];
             LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
@@ -194,60 +167,13 @@ impl Runtime {
             .resume(&mut self.store, &[Value::I32(exit_code)], &mut [])
     }
 
-    /// Pre-compiles and caches a module for the given code hash and address if not already cached.
-    pub fn warmup_strategy(bytecode: Bytes, hash: B256, address: Address) {
-        // Ensure the strategy is created and cached ahead of time to avoid JIT cost on first call
-        let caching_runtime = &*CACHING_RUNTIME_FACTORY;
-        caching_runtime.get_module_or_init(BytecodeOrHash::Bytecode {
-            address,
-            bytecode,
-            hash,
-        });
-    }
-
-    pub fn warmup_strategy_raw(code_hash: B256, strategy: Strategy) {
-        // Ensure the strategy is created and cached ahead of time to avoid JIT cost on first call
-        let caching_runtime = &*CACHING_RUNTIME_FACTORY;
-        let cached = Arc::new(CachedModule::new(strategy, import_linker_v1_preview()));
-        caching_runtime.cached_modules.insert(code_hash, cached);
-    }
-
-    /// Saves the current runtime instance for later resumption and returns its call identifier.
-    pub(crate) fn remember_runtime(self, _root_ctx: &mut RuntimeContext) -> i32 {
-        // save the current runtime state for future recovery
-        let factory = &*CACHING_RUNTIME_FACTORY;
-        let call_id = factory
-            .transaction_call_id_counter
-            .fetch_add(1, Ordering::Relaxed);
-        factory.recoverable_runtimes.insert(call_id, self);
-        call_id as i32
-    }
-
-    /// Returns the internal store to the cache associated with this runtime's code hash.
-    pub(crate) fn return_store(self) {
-        let factory = &*CACHING_RUNTIME_FACTORY;
-        if let Some(cached_module) = factory.cached_modules.get(&self.code_hash) {
-            cached_module.value().return_store(self.store);
-        }
-    }
-
-    /// Fetches and removes a previously remembered runtime by its call identifier.
-    pub(crate) fn recover_runtime(call_id: u32) -> Runtime {
-        let factory = &*CACHING_RUNTIME_FACTORY;
-        factory
-            .recoverable_runtimes
-            .remove(&call_id)
-            .map(|(_, v)| v)
-            .expect("runtime: can't resolve runtime by id, it should never happen")
-    }
-
     /// Consolidates the trap/result of an invocation into a RuntimeResult and updates accounting.
     ///
     /// When fuel_consumed_before_the_call is provided, computes precise fuel usage by diffing the
     /// store's remaining fuel. Returns either a finalized result or an interruption wrapper.
     #[tracing::instrument(level = "info", skip_all)]
     fn handle_execution_result(
-        mut self,
+        &mut self,
         next_result: Result<(), TrapCode>,
         fuel_consumed_before_the_call: Option<u64>,
     ) -> RuntimeResult {
@@ -273,7 +199,6 @@ impl Runtime {
                 }
             }
         }
-        self.return_store();
         RuntimeResult::Result(execution_result)
     }
 
@@ -281,7 +206,7 @@ impl Runtime {
     ///
     /// Clears transient buffers, encodes the delegated invocation parameters, and packages the
     /// suspended runtime for recovery by the root context.
-    fn handle_resumable_state(mut self, execution_result: ExecutionResult) -> RuntimeResult {
+    fn handle_resumable_state(&mut self, execution_result: ExecutionResult) -> RuntimeResult {
         let ExecutionResult {
             fuel_consumed,
             fuel_refunded,
@@ -313,18 +238,6 @@ impl Runtime {
             fuel_consumed,
             fuel_refunded,
             output,
-            runtime: self,
         })
     }
-}
-
-/// Resets the per-transaction call identifier counter and clears recoverable runtimes.
-///
-/// Intended to be invoked at the beginning of a new transaction.
-pub fn reset_call_id_counter() {
-    let factory = &*CACHING_RUNTIME_FACTORY;
-    factory
-        .transaction_call_id_counter
-        .store(1, Ordering::Relaxed);
-    factory.recoverable_runtimes.clear();
 }

@@ -10,11 +10,12 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+# fluent
 fluentbase-types = { workspace = true }
 rwasm = { workspace = true }
-dashmap = "5"
-crossbeam-queue = "0.3"
-once_cell = "1"
+
+# wasmtime
+wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", optional = true, features = ["disable-fpu", "cache"] }
 
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
@@ -46,6 +47,7 @@ num-traits = { workspace = true }
 paste = { workspace = true }
 fs2 = { version = "0.4.3", optional = true }
 tracing = { version = "0.1" }
+core_affinity = "0.8.3"
 
 [dev-dependencies]
 sha2 = { workspace = true, default-features = false }
@@ -63,13 +65,7 @@ debug-print = [
     "dep:hex",
     #    "rwasm/debug-print",
 ]
-cache-compiled-artifacts = [
-    "rwasm/cache-compiled-artifacts"
-]
-wasmtime = [
-    "rwasm/wasmtime",
-    "cache-compiled-artifacts"
-]
+wasmtime = ["dep:wasmtime"]
 inter-process-lock = [
     "dep:fs2",
 ]

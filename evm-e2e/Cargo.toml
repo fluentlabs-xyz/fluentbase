@@ -30,7 +30,7 @@ thiserror = "1.0"
 triehash = "0.8"
 walkdir = "2.5"
 k256 = { version = "0.13.3", features = ["ecdsa"] }
-ctor = "0.5.0"
+#ctor = "0.5.0"
 
 [build-dependencies]
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
@@ -52,6 +52,7 @@ std = [
 debug-print = [
     "revm/debug-print",
     "fluentbase-revm/debug-print",
+    #    "rwasm/debug-print",
 ]
 wasmtime = [
     "fluentbase-revm/wasmtime",

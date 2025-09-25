@@ -67,7 +67,7 @@ fn erc20_transfer_benches(c: &mut Criterion) {
     {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         const OWNER_ADDRESS: Address = Address::ZERO;
-        let bytecode: &[u8] = crate::EXAMPLE_ERC20.into();
+        let bytecode: &[u8] = EXAMPLE_ERC20.into();
 
         // constructor params for ERC20:
         //     name: "TestToken"
@@ -87,13 +87,17 @@ fn erc20_transfer_benches(c: &mut Criterion) {
 
         group.bench_function("3_rWasm_Contract_ERC20", |b| {
             b.iter(|| {
-                ctx.call_evm_tx(
+                let result = ctx.call_evm_tx(
                     OWNER_ADDRESS,
                     contract_address,
                     transfer_payload.clone(),
                     None,
                     None,
                 );
+                if !result.is_success() {
+                    println!("{:?}", result);
+                }
+                assert!(result.is_success())
             });
         });
     }

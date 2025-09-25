@@ -1,7 +1,7 @@
 use crate::{HostTestingContext, HostTestingContextNativeAPI};
 use core::{borrow::Borrow, mem::take, str::from_utf8};
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
-use fluentbase_runtime::{Runtime, RuntimeContext};
+use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecutor};
 use fluentbase_sdk::{
     bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, debug_log_ext, Address,
     BytecodeOrHash, Bytes, ContextReader, ExitCode, GenesisContract, MetadataAPI, SharedAPI,
@@ -18,7 +18,7 @@ use revm::{
     state::{Account, AccountInfo, Bytecode},
     DatabaseCommit, ExecuteCommitEvm, MainBuilder,
 };
-use rwasm::{RwasmModule, Store};
+use rwasm::RwasmModule;
 
 #[allow(dead_code)]
 pub struct EvmTestingContext {
@@ -170,7 +170,7 @@ impl EvmTestingContext {
             Bytecode::Rwasm(rwasm_bytecode) => rwasm_bytecode.clone(),
             _ => unreachable!(),
         };
-        Runtime::warmup_strategy(rwasm_bytecode, bytecode.hash_slow(), address);
+        default_runtime_executor().warmup(rwasm_bytecode, bytecode.hash_slow(), address);
     }
 
     pub fn add_balance(&mut self, address: Address, value: U256) {
@@ -396,9 +396,7 @@ pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec
         .with_fuel_limit(100_000_000_000)
         .with_state(STATE_MAIN)
         .with_input(context_input);
-    let mut runtime = Runtime::new(bytecode_or_hash, ctx);
-    runtime.store.context_mut(RuntimeContext::clear_output);
-    let result = runtime.execute().into_execution_result();
+    let result = default_runtime_executor().execute(bytecode_or_hash, ctx);
     println!(
         "exit_code: {} ({})",
         result.exit_code,

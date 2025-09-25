@@ -1,4 +1,4 @@
-use crate::{runtime::Runtime, ExecutionResult, RuntimeContext};
+use crate::{default_runtime_executor, executor::RuntimeExecutor, ExecutionResult, RuntimeContext};
 use fluentbase_types::{
     compile_wasm_to_rwasm, keccak256, Address, BytecodeOrHash, Bytes, STATE_DEPLOY, STATE_MAIN,
 };
@@ -36,9 +36,8 @@ fn test_simple() {
     );
 
     let ctx = RuntimeContext::default().with_fuel_limit(1_000_000);
-    let ExecutionResult { exit_code, .. } = Runtime::new(new_bytecode_or_hash(rwasm_binary), ctx)
-        .execute()
-        .into_execution_result();
+    let ExecutionResult { exit_code, .. } =
+        default_runtime_executor().execute(new_bytecode_or_hash(rwasm_binary), ctx);
     assert_eq!(exit_code, 0);
 }
 
@@ -67,14 +66,14 @@ fn test_wrong_indirect_type() {
     let ctx = RuntimeContext::default()
         .with_state(STATE_DEPLOY)
         .with_fuel_limit(1_000_000);
-    let runtime = Runtime::new(new_bytecode_or_hash(rwasm_bytecode.clone()), ctx);
-    let ExecutionResult { exit_code, .. } = runtime.execute().into_execution_result();
+    let ExecutionResult { exit_code, .. } =
+        default_runtime_executor().execute(new_bytecode_or_hash(rwasm_bytecode.clone()), ctx);
     assert_eq!(exit_code, 0);
     let ctx = RuntimeContext::default()
         .with_state(STATE_MAIN)
         .with_fuel_limit(1_000_000);
-    let runtime = Runtime::new(new_bytecode_or_hash(rwasm_bytecode), ctx);
-    let ExecutionResult { exit_code, .. } = runtime.execute().into_execution_result();
+    let ExecutionResult { exit_code, .. } =
+        default_runtime_executor().execute(new_bytecode_or_hash(rwasm_bytecode), ctx);
     assert_eq!(exit_code, -2003);
 }
 
@@ -103,9 +102,8 @@ fn test_keccak256() {
     "#,
     );
     let ctx = RuntimeContext::default().with_fuel_limit(1_000_000);
-    let execution_result = Runtime::new(new_bytecode_or_hash(rwasm_binary), ctx)
-        .execute()
-        .into_execution_result();
+    let execution_result =
+        default_runtime_executor().execute(new_bytecode_or_hash(rwasm_binary), ctx);
     println!("fuel consumed: {}", execution_result.fuel_consumed);
     assert_eq!(execution_result.exit_code, 0);
     assert_eq!(

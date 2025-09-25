@@ -6,8 +6,8 @@ use curve25519_dalek::{traits::MultiscalarMul, EdwardsPoint, Scalar};
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
-pub const POINT_LEN: usize = 32;
-pub const SCALAR_LEN: usize = 32;
+const POINT_LEN: usize = 32;
+const SCALAR_LEN: usize = 32;
 const PAIR_LEN: usize = POINT_LEN + SCALAR_LEN;
 
 pub struct SyscallCurve25519EdwardsMultiscalarMul {}
