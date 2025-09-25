@@ -3,7 +3,10 @@
 use crate::generators::struct_parser::{enrich_abi_entry, parse_structs_from_dir};
 use anyhow::{Context, Result};
 use convert_case::{Case, Casing};
-use fluentbase_sdk_derive_core::router::{process_router, Router};
+use fluentbase_sdk_derive_core::{
+    constructor::{process_constructor, Constructor},
+    router::{process_router, Router},
+};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::ToTokens;
 use serde_json::Value;
@@ -40,11 +43,11 @@ pub fn generate_abi(contract_dir: &Path) -> Result<Abi> {
     // Parse all structs from the src directory
     let structs = parse_structs_from_dir(&src_dir)?;
 
-    // Parse routers from the main file
-    let routers = parse_routers(&main_file)?;
+    // Parse contract methods (routers and constructors) from the main file
+    let methods = parse_contract_methods(&main_file)?;
 
-    // Generate ABI from routers with struct enrichment
-    generate_abi_from_routers(&routers, &structs)
+    // Generate ABI from contract methods with struct enrichment
+    generate_abi_from_methods(&methods, &structs)
 }
 
 /// Generate Solidity interface from ABI
@@ -71,7 +74,8 @@ pub fn generate_interface(contract_name: &str, abi: &Abi) -> Result<String> {
     let mut seen_structs = HashSet::new();
     let mut struct_definitions = Vec::new();
 
-    for entry in abi.iter().filter(|e| e["type"] == "function") {
+    // Collect structs from both constructor and functions
+    for entry in abi {
         if let Some(inputs) = entry.get("inputs").and_then(Value::as_array) {
             collect_structs(inputs, &mut seen_structs, &mut struct_definitions);
         }
@@ -88,7 +92,8 @@ pub fn generate_interface(contract_name: &str, abi: &Abi) -> Result<String> {
         }
     }
 
-    // Add functions
+    // Note: Constructors are not included in interfaces
+    // Add only functions to the interface
     for func in abi.iter().filter(|e| e["type"] == "function") {
         interface.push_str("    ");
         interface.push_str(&format_function(func)?);
@@ -99,10 +104,16 @@ pub fn generate_interface(contract_name: &str, abi: &Abi) -> Result<String> {
     Ok(interface)
 }
 
-// Internal functions
+// Internal types and functions
 
-/// Parses a Rust file and extracts all router implementations
-fn parse_routers(path: &Path) -> Result<Vec<Router>> {
+/// Container for all contract elements found during parsing
+struct ContractMethods {
+    constructor: Option<Constructor>,
+    routers: Vec<Router>,
+}
+
+/// Parses a Rust file and extracts all contract elements (routers and constructors)
+fn parse_contract_methods(path: &Path) -> Result<ContractMethods> {
     // Read file content
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read file: {}", path.display()))?;
@@ -111,34 +122,32 @@ fn parse_routers(path: &Path) -> Result<Vec<Router>> {
     let ast =
         parse_file(&content).map_err(|e| anyhow::anyhow!("Failed to parse Rust file: {}", e))?;
 
-    // Find routers
-    let mut finder = RouterFinder::new();
+    // Find contract methods
+    let mut finder = ContractMethodFinder::new();
     finder.visit_file(&ast);
 
     // Return first error if any occurred during processing
     if let Some(error) = finder.errors.into_iter().next() {
-        return Err(anyhow::anyhow!("Router parsing error: {}", error));
+        return Err(anyhow::anyhow!("Contract parsing error: {}", error));
     }
 
-    Ok(finder.routers)
+    Ok(ContractMethods {
+        constructor: finder.constructor,
+        routers: finder.routers,
+    })
 }
 
-/// Generates ABI from parsed routers with struct enrichment
-fn generate_abi_from_routers(
-    routers: &[Router],
+/// Generates ABI from parsed contract methods with struct enrichment
+fn generate_abi_from_methods(
+    methods: &ContractMethods,
     structs: &HashMap<String, DeriveInput>,
 ) -> Result<Abi> {
-    if routers.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Take first router for now
-    let router = &routers[0];
     let mut entries = Vec::new();
 
-    // Add constructor if present
-    if let Some(constructor) = router.constructor() {
-        if let Ok(constructor_abi) = constructor.parsed_signature().constructor_abi() {
+    // Process constructor first (they appear first in standard ABIs)
+    if let Some(constructor) = &methods.constructor {
+        let constructor_method = constructor.constructor_method();
+        if let Ok(constructor_abi) = constructor_method.parsed_signature().constructor_abi() {
             if let Ok(mut json) = constructor_abi.to_json_value() {
                 // Enrich the ABI entry with struct components
                 enrich_abi_entry(&mut json, structs)?;
@@ -147,13 +156,28 @@ fn generate_abi_from_routers(
         }
     }
 
-    // Add all functions
-    for method in router.available_methods() {
-        if let Ok(func_abi) = method.parsed_signature().function_abi() {
-            if let Ok(mut json) = func_abi.to_json_value() {
-                // Enrich the ABI entry with struct components
-                enrich_abi_entry(&mut json, structs)?;
-                entries.push(json);
+    // Process routers - take first router if multiple exist
+    if let Some(router) = methods.routers.first() {
+        // Check if router has a constructor (for backward compatibility)
+        // Skip it if we already processed standalone constructors
+        if methods.constructor.is_none() {
+            if let Some(constructor) = router.constructor() {
+                if let Ok(constructor_abi) = constructor.parsed_signature().constructor_abi() {
+                    if let Ok(mut json) = constructor_abi.to_json_value() {
+                        enrich_abi_entry(&mut json, structs)?;
+                        entries.push(json);
+                    }
+                }
+            }
+        }
+
+        // Add all functions from the router
+        for method in router.available_methods() {
+            if let Ok(func_abi) = method.parsed_signature().function_abi() {
+                if let Ok(mut json) = func_abi.to_json_value() {
+                    enrich_abi_entry(&mut json, structs)?;
+                    entries.push(json);
+                }
             }
         }
     }
@@ -161,22 +185,24 @@ fn generate_abi_from_routers(
     Ok(entries)
 }
 
-/// Internal visitor for finding router implementations
-struct RouterFinder {
+/// Internal visitor for finding contract elements (routers and constructors)
+struct ContractMethodFinder {
     routers: Vec<Router>,
+    constructor: Option<Constructor>,
     errors: Vec<syn::Error>,
 }
 
-impl RouterFinder {
+impl ContractMethodFinder {
     fn new() -> Self {
         Self {
             routers: Vec::new(),
+            constructor: None,
             errors: Vec::new(),
         }
     }
 
     fn process_router_impl(&mut self, attr: &Attribute, impl_block: &ItemImpl) {
-        match extract_router_tokens(attr) {
+        match extract_attribute_tokens(attr) {
             Ok(attr_tokens) => match process_router(attr_tokens, impl_block.to_token_stream()) {
                 Ok(router) => self.routers.push(router),
                 Err(error) => self.errors.push(error),
@@ -184,16 +210,30 @@ impl RouterFinder {
             Err(error) => self.errors.push(error),
         }
     }
+
+    fn process_constructor_impl(&mut self, attr: &Attribute, impl_block: &ItemImpl) {
+        match extract_attribute_tokens(attr) {
+            Ok(attr_tokens) => {
+                match process_constructor(attr_tokens, impl_block.to_token_stream()) {
+                    Ok(constructor) => self.constructor = Some(constructor),
+                    Err(error) => self.errors.push(error),
+                }
+            }
+            Err(error) => self.errors.push(error),
+        }
+    }
 }
 
-impl<'ast> Visit<'ast> for RouterFinder {
+impl<'ast> Visit<'ast> for ContractMethodFinder {
     fn visit_item_impl(&mut self, node: &'ast ItemImpl) {
-        // Look for router attribute
+        // Look for router or constructor attributes
         for attr in &node.attrs {
             if is_router_attribute(attr) {
                 self.process_router_impl(attr, node);
-                // Found router attribute - no need to check other attributes
-                break;
+                break; // Found router attribute - no need to check other attributes
+            } else if is_constructor_attribute(attr) {
+                self.process_constructor_impl(attr, node);
+                break; // Found constructor attribute - no need to check other attributes
             }
         }
 
@@ -207,14 +247,19 @@ fn is_router_attribute(attr: &Attribute) -> bool {
     attr.path().is_ident("router")
 }
 
-/// Extracts tokens from router attribute
-fn extract_router_tokens(attr: &Attribute) -> syn::Result<TokenStream2> {
+/// Checks if an attribute is a constructor attribute
+fn is_constructor_attribute(attr: &Attribute) -> bool {
+    attr.path().is_ident("constructor")
+}
+
+/// Extracts tokens from an attribute (works for both router and constructor)
+fn extract_attribute_tokens(attr: &Attribute) -> syn::Result<TokenStream2> {
     match &attr.meta {
         syn::Meta::List(meta_list) => Ok(meta_list.tokens.clone()),
-        syn::Meta::Path(_) => Ok(TokenStream2::new()), // #[router] without parameters
+        syn::Meta::Path(_) => Ok(TokenStream2::new()), // Attribute without parameters
         _ => Err(syn::Error::new_spanned(
             attr,
-            "Invalid router attribute format. Expected #[router] or #[router(...)]",
+            "Invalid attribute format. Expected #[router] or #[constructor] with optional parameters",
         )),
     }
 }
@@ -474,7 +519,7 @@ mod tests {
         ];
 
         let interface = generate_interface("ERC20Token", &abi).unwrap();
-        println!("interface: {interface}");
+
         assert!(interface.contains("interface IErc20Token"));
         assert!(interface
             .contains("function transfer(address to, uint256 amount) external returns (bool);"));
@@ -509,6 +554,39 @@ mod tests {
         assert!(interface.contains(
             "function submitOrder(Order calldata order) external payable returns (bool success);"
         ));
+    }
+
+    #[test]
+    fn test_generate_interface_with_constructor() {
+        let abi = vec![
+            serde_json::json!({
+                "type": "constructor",
+                "inputs": [
+                    {"name": "owner", "type": "address", "internalType": "address"},
+                    {"name": "initialSupply", "type": "uint256", "internalType": "uint256"}
+                ],
+                "stateMutability": "nonpayable"
+            }),
+            serde_json::json!({
+                "name": "transfer",
+                "type": "function",
+                "inputs": [
+                    {"name": "to", "type": "address", "internalType": "address"},
+                    {"name": "amount", "type": "uint256", "internalType": "uint256"}
+                ],
+                "outputs": [{"name": "", "type": "bool", "internalType": "bool"}],
+                "stateMutability": "nonpayable"
+            }),
+        ];
+
+        let interface = generate_interface("Token", &abi).unwrap();
+
+        // Constructor should not appear in interface
+        assert!(!interface.contains("constructor"));
+
+        // But function should appear
+        assert!(interface
+            .contains("function transfer(address to, uint256 amount) external returns (bool);"));
     }
 
     #[test]
