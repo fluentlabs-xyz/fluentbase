@@ -7,6 +7,12 @@ expression: interface
 pragma solidity ^0.8.0;
 
 interface IAllTypesContract {
+    struct TokenConfig {
+        string name;
+        string symbol;
+        uint256 total_supply;
+    }
+
     function transfer(address to, uint256 amount) external returns (bool _0);
     function balanceOf(address account) external returns (uint256 _0);
     function totalSupply() external returns (uint256 _0);
