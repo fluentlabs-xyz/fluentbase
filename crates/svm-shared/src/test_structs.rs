@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use core::mem::size_of;
 use serde::{Deserialize, Serialize};
 
 pub const EXPECTED_RET_OK: u64 = 0;
@@ -45,7 +46,7 @@ pub struct Invoke {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct EvmCall {
+pub struct EvmAction {
     pub address: Address,
     pub value: U256,
     pub gas_limit: u64,
@@ -53,11 +54,14 @@ pub struct EvmCall {
     pub result_data_expected: Vec<u8>,
 }
 
-impl EvmCall {
-    pub fn params_to_vec(&self) -> Vec<u8> {
-        use core::mem::size_of;
-        let mut out = Vec::with_capacity(size_of::<U256>() + size_of::<u64>() + self.data.len());
+impl EvmAction {
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(
+            /*size_of::<Address>() +*/
+            size_of::<U256>() + size_of::<u64>() + self.data.len(),
+        );
 
+        // out.extend_from_slice(&self.address);
         out.extend_from_slice(&self.value);
         out.extend_from_slice(&self.gas_limit.to_le_bytes());
         out.extend_from_slice(&self.data);
@@ -205,7 +209,7 @@ impl_structs!(
     CreateAccountAndModifySomeData1,
     Transfer,
     Invoke,
-    EvmCall,
+    EvmAction,
     SolBigModExp,
     SolSecp256k1Recover,
     Keccak256,

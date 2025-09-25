@@ -19,6 +19,7 @@ revm = { workspace = true }
 fluentbase-revm = { workspace = true }
 rwasm = { workspace = true }
 hex = { workspace = true }
+bytes = "1.10.1"
 
 [features]
 default = ["std"]
@@ -34,5 +35,5 @@ debug-print = [
     "fluentbase-sdk/debug-print",
     "fluentbase-runtime/debug-print",
     "revm/debug-print",
-    "fluentbase-revm/debug-print",
+    #    "fluentbase-revm/debug-print",
 ]

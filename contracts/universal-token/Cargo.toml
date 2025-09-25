@@ -1,0 +1,27 @@
+[package]
+name = "fluentbase-universal-token"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true, features = [
+    "fast-panic",
+    #    "debug-print",
+] }
+fluentbase-universal-token = { workspace = true }
+fluentbase-svm = { workspace = true }
+fluentbase-svm-common = { workspace = true }
+solana-program-error = { workspace = true }
+solana-program-option = { workspace = true }
+solana-bincode = { workspace = true }
+
+[dev-dependencies]
+fluentbase-testing = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std"]

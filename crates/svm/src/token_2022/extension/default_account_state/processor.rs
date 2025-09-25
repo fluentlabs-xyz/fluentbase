@@ -8,6 +8,7 @@ use crate::token_2022::lib::check_program_account;
 use crate::token_2022::pod::{PodCOption, PodMint};
 use crate::token_2022::processor::Processor;
 use crate::token_2022::state::AccountState;
+use fluentbase_types::SharedAPI;
 use solana_account_info::{next_account_info, AccountInfo};
 use solana_program_error::ProgramResult;
 use solana_pubkey::Pubkey;
@@ -33,7 +34,8 @@ fn process_initialize_default_account_state(
     Ok(())
 }
 
-fn process_update_default_account_state(
+fn process_update_default_account_state<SDK: SharedAPI>(
+    sdk: &mut SDK,
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     state: AccountState,
@@ -51,7 +53,7 @@ fn process_update_default_account_state(
         PodCOption {
             option: PodCOption::<Pubkey>::SOME,
             value: freeze_authority,
-        } => Processor::validate_owner(
+        } => Processor::new(sdk).validate_owner(
             program_id,
             freeze_authority,
             freeze_authority_info,
@@ -66,7 +68,8 @@ fn process_update_default_account_state(
     Ok(())
 }
 
-pub(crate) fn process_instruction(
+pub(crate) fn process_instruction<SDK: SharedAPI>(
+    sdk: &mut SDK,
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     input: &[u8],
@@ -76,12 +79,11 @@ pub(crate) fn process_instruction(
     let (instruction, state) = decode_instruction(input)?;
     match instruction {
         DefaultAccountStateInstruction::Initialize => {
-            // msg!("DefaultAccountStateInstruction::Initialize");
             process_initialize_default_account_state(accounts, state)
         }
         DefaultAccountStateInstruction::Update => {
             // msg!("DefaultAccountStateInstruction::Update");
-            process_update_default_account_state(program_id, accounts, state)
+            process_update_default_account_state(sdk, program_id, accounts, state)
         }
     }
 }

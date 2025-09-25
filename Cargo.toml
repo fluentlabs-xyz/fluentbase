@@ -12,7 +12,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "0.4.5-dev"
+version = "0.4.6-dev"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
@@ -39,7 +39,8 @@ fluentbase-testing = { path = "crates/testing" }
 fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-svm = { path = "./crates/svm", default-features = false }
 fluentbase-svm-shared = { path = "./crates/svm-shared", default-features = false }
-fluentbase-erc20 = { path = "./crates/erc20", default-features = false }
+fluentbase-svm-common = { path = "./crates/svm-common", default-features = false }
+fluentbase-universal-token = { path = "./crates/universal-token", default-features = false }
 
 # solana
 solana-pubkey = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
@@ -179,7 +180,7 @@ num-bigint = { version = "0.4.6", default-features = false, features = [] }
 curve25519-dalek = { version = "4.1.3", default-features = false, features = ["alloc"] }
 
 # dev-dependencies
-serde_derive = "1.0"
+serde_derive = { version = "1.0", default-features = false }
 thiserror = "2.0"
 array-bytes = "1.6.0"
 

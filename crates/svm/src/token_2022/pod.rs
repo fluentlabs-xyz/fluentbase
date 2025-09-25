@@ -12,7 +12,6 @@ use {
     crate::solana_program::program_error::ProgramError,
     crate::token_2022::spl_pod::{
         bytemuck::pod_get_packed_len,
-        // optional_keys::OptionalNonZeroPubkey,
         primitives::{PodBool, PodU64},
     },
     crate::token_2022::state::{AccountState, PackedSizeOf},
@@ -96,7 +95,6 @@ impl PodAccount {
     /// incinerator
     pub fn is_owned_by_system_program_or_incinerator(&self) -> bool {
         system_program::check_id(&self.owner)
-        // || solana_program::incinerator::check_id(&self.owner)
     }
 }
 impl IsInitialized for PodAccount {
