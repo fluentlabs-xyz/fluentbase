@@ -79,7 +79,7 @@ pub const CALL_STACK_LIMIT: u32 = 1024;
 pub fn is_delegated_runtime_address(address: &Address) -> bool {
     address == &PRECOMPILE_EVM_RUNTIME
         || address == &PRECOMPILE_SVM_RUNTIME
-        || address == &PRECOMPILE_ERC20_RUNTIME
+        || address == &PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
         || address == &PRECOMPILE_WASM_RUNTIME
 }
 
@@ -97,7 +97,7 @@ pub const WASM_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::WASM_MAGIC_BYTES;
 /// Solana magic bytes
 pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::SVM_ELF_MAGIC_BYTES;
 /// ERC20 magic bytes: as char codes for "ERC" and the number 0x20
-pub const ERC20_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::ERC20_MAGIC_BYTES;
+pub const UNIVERSAL_TOKEN_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::ERC20_MAGIC_BYTES;
 
 /// EIP-170: Contract code size limit
 ///

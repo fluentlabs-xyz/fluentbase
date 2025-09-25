@@ -1,34 +1,28 @@
-use crate::common::{pubkey_to_u256, GlobalLamportsBalance};
-use crate::fluentbase::common::{flush_account, flush_accounts};
-use crate::helpers::{storage_read_account_data, storage_read_account_data_or_default};
+use crate::common::{GlobalLamportsBalance};
+use crate::fluentbase::common::flush_account;
+use crate::helpers::storage_read_account_data_or_default;
 use crate::{
-    account::{AccountSharedData, ReadableAccount, WritableAccount},
-    common::{
-        evm_address_from_pubkey, evm_balance_from_lamports, lamports_from_evm_balance,
-        pubkey_from_evm_address,
-    },
+    account::{ReadableAccount, WritableAccount},
+    common::{},
     fluentbase::helpers::exec_encoded_svm_batch_message,
     helpers::storage_write_account_data,
-    loaders::bpf_loader_v4::get_state_mut,
-    native_loader,
-    native_loader::create_loadable_account_with_fields2,
+    loaders::bpf_loader_v4::get_state_mut
+
+    ,
     solana_program::{
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status},
-    },
-    system_program,
+    }
+    ,
 };
-use alloc::vec::Vec;
 pub use deploy_entry_simplified as deploy_entry;
-use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, SharedAPI, U256};
-use hashbrown::HashMap;
-use solana_clock::Epoch;
-use solana_pubkey::Pubkey;
+use fluentbase_sdk::{Bytes, ContextReader, SharedAPI};
 use solana_rbpf::{
     aligned_memory::{is_memory_aligned, AlignedMemory},
     ebpf::HOST_ALIGN,
     elf_parser::Elf64,
 };
+use fluentbase_svm_common::common::{evm_balance_from_lamports, lamports_from_evm_balance, pubkey_from_evm_address};
 
 pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
     let elf_program_slice = sdk.input();
@@ -59,13 +53,14 @@ pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
         &pk_contract,
         LoaderV4State::program_data_offset().saturating_add(elf_program_bytes.len()),
         Some(&loader_v4::id()),
+        None,
     );
     let state = get_state_mut(contract_account_data.data_as_mut_slice())
         .expect("contract account has not enough data len");
     state.status = LoaderV4Status::Deployed;
     contract_account_data.data_as_mut_slice()[LoaderV4State::program_data_offset()..]
         .copy_from_slice(&elf_program_bytes);
-    storage_write_account_data(&mut sdk, &pk_contract, &contract_account_data)
+    storage_write_account_data(&mut sdk, &pk_contract, &contract_account_data, None)
         .expect("failed to write contract account");
 }
 
@@ -110,7 +105,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                             None,
                         );
                     }
-                    flush_account::<true, _>(&mut sdk, pk, account_data)
+                    flush_account::<true, _>(&mut sdk, pk, account_data, None)
                         .expect("failed to save accounts");
                 }
             }

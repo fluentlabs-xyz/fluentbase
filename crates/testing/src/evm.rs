@@ -7,6 +7,7 @@ use fluentbase_sdk::{
     BytecodeOrHash, Bytes, ContextReader, ExitCode, GenesisContract, MetadataAPI, SharedAPI,
     SharedContextInputV1, STATE_MAIN, U256,
 };
+use revm::database::DbAccount;
 use revm::{
     context::{
         result::{ExecutionResult, ExecutionResult::Success, Output},
@@ -81,25 +82,42 @@ impl EvmTestingContext {
             self.db
                 .insert_account_storage(*address, *slot, *value)
                 .unwrap();
-        })
+        });
+
+        let metadata_storage = self.sdk.dump_metadata_storage();
+        metadata_storage
+            .iter()
+            .for_each(|((address, slot), value)| {
+                let db_account = self.db.cache.accounts.get_mut(address).expect("found");
+                db_account.storage.insert(*slot, *value);
+            });
+
+        let metadata = self.sdk.dump_metadata();
+        metadata
+            .iter()
+            .for_each(|((ownable_address, address), metadata_value)| {
+                let account_info = AccountInfo::default();
+                let mut new_db_account = DbAccount::from(account_info);
+                new_db_account.info.code = Some(Bytecode::new_ownable_account(
+                    ownable_address.clone(),
+                    metadata_value.clone().into(),
+                ));
+                self.db
+                    .cache
+                    .accounts
+                    .insert(address.clone(), new_db_account);
+            });
     }
 
     pub fn commit_db_to_sdk(&mut self) {
         for (address, db_account) in &mut self.db.cache.accounts {
             self.sdk.visit_inner_storage_mut(|storage| {
                 for (k, v) in &db_account.storage {
-                    debug_log_ext!("db storage -> sdk storage ({}, {})={}", address, k, v);
                     storage.insert((*address, *k), *v);
                 }
             });
             self.sdk.visit_inner_metadata_storage_mut(|storage| {
                 for (k, v) in &db_account.storage {
-                    debug_log_ext!(
-                        "db storage -> sdk metadata storage ({}, {})={}",
-                        address,
-                        k,
-                        v
-                    );
                     storage.insert((*address, *k), *v);
                 }
             });
@@ -217,6 +235,39 @@ impl EvmTestingContext {
             result
         );
         (contract_address, result.gas_used())
+    }
+
+    pub fn deploy_evm_tx_result(
+        &mut self,
+        deployer: Address,
+        init_bytecode: Bytes,
+    ) -> Result<Address, ExecutionResult> {
+        let (contract_address, _) = self.deploy_evm_tx_with_gas_result(deployer, init_bytecode)?;
+        Ok(contract_address)
+    }
+
+    pub fn deploy_evm_tx_with_gas_result(
+        &mut self,
+        deployer: Address,
+        init_bytecode: Bytes,
+    ) -> Result<(Address, u64), ExecutionResult> {
+        let nonce = self.nonce(deployer);
+        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into()).exec();
+        if !result.is_success() {
+            try_print_utf8_error(result.output().cloned().unwrap_or_default().as_ref());
+            return Err(result);
+        }
+        #[cfg(feature = "debug-print")]
+        println!("deployment gas used: {}", result.gas_used());
+        let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, nonce);
+        assert_eq!(contract_address, deployer.create(nonce));
+
+        assert!(
+            matches!(result, Success { output: Output::Create(_, Some(addr)), .. } if addr == contract_address),
+            "deploy transaction didn't return expected address: {:?}",
+            result
+        );
+        Ok((contract_address, result.gas_used()))
     }
 
     pub fn call_evm_tx_simple(
@@ -363,6 +414,10 @@ pub fn try_print_utf8_error(mut output: &[u8]) {
             .unwrap_or("can't decode utf-8")
             .trim_end_matches("\0")
     );
+}
+
+pub fn utf8_to_bytes(output: &str) -> &[u8] {
+    output.as_bytes()
 }
 
 pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec<u8>, i32) {

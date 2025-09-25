@@ -38,5 +38,5 @@ INPUT_NAME=solana_program_state_usage
 .PHONY: build_cargo_powered_solana_program
 build_cargo_powered_solana_program:
 	cargo build-sbf #-- -Znext-lockfile-bump
-	cp ../../../../target/contracts/sbf-solana-solana/$(TARGET)/fluentbase_examples_svm_$(INPUT_NAME).so ../assets/$(INPUT_NAME).so
+	cp ../../../target/contracts/sbf-solana-solana/$(TARGET)/fluentbase_examples_svm_$(INPUT_NAME).so ../assets/$(INPUT_NAME).so
 	ls -alh ../assets/$(INPUT_NAME).so

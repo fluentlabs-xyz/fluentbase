@@ -1882,18 +1882,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-contracts-erc20"
-version = "0.1.0"
-dependencies = [
- "fluentbase-erc20",
- "fluentbase-sdk",
- "fluentbase-svm",
- "fluentbase-testing",
- "solana-bincode",
- "solana-program-error",
-]
-
-[[package]]
 name = "fluentbase-contracts-evm"
 version = "0.1.0"
 dependencies = [
@@ -2019,14 +2007,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-erc20"
-version = "0.4.6-dev"
-dependencies = [
- "bincode 2.0.1",
- "fluentbase-sdk",
-]
-
-[[package]]
 name = "fluentbase-evm"
 version = "0.4.6-dev"
 dependencies = [
@@ -2134,7 +2114,6 @@ dependencies = [
 name = "fluentbase-svm"
 version = "0.4.6-dev"
 dependencies = [
- "ark-bn254",
  "arrayref",
  "bincode 2.0.1",
  "bitflags",
@@ -2142,14 +2121,13 @@ dependencies = [
  "bytemuck",
  "bytemuck_derive",
  "byteorder",
- "fluentbase-erc20",
  "fluentbase-sdk",
+ "fluentbase-svm-common",
  "fluentbase-types",
+ "fluentbase-universal-token 0.4.6-dev",
  "hashbrown 0.15.5",
  "itertools 0.14.0",
  "lazy_static",
- "libsecp256k1 0.7.2",
- "num-bigint 0.4.6",
  "num-derive",
  "num-traits",
  "num_enum",
@@ -2169,7 +2147,6 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-poseidon",
- "solana-precompile-error",
  "solana-program-entrypoint",
  "solana-program-error",
  "solana-program-memory",
@@ -2189,9 +2166,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-svm-common"
+version = "0.4.6-dev"
+dependencies = [
+ "fluentbase-types",
+ "serde",
+ "solana-pubkey",
+]
+
+[[package]]
 name = "fluentbase-testing"
 version = "0.4.6-dev"
 dependencies = [
+ "bytes",
  "fluentbase-codec",
  "fluentbase-revm",
  "fluentbase-runtime",
@@ -2217,6 +2204,30 @@ dependencies = [
  "revm-primitives",
  "rwasm",
  "strum_macros 0.27.2",
+]
+
+[[package]]
+name = "fluentbase-universal-token"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-svm",
+ "fluentbase-svm-common",
+ "fluentbase-testing",
+ "fluentbase-universal-token 0.4.6-dev",
+ "solana-bincode",
+ "solana-program-error",
+ "solana-program-option",
+]
+
+[[package]]
+name = "fluentbase-universal-token"
+version = "0.4.6-dev"
+dependencies = [
+ "bincode 2.0.1",
+ "fluentbase-sdk",
+ "fluentbase-svm-common",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -4816,15 +4827,6 @@ dependencies = [
  "ark-bn254",
  "light-poseidon",
  "solana-define-syscall",
-]
-
-[[package]]
-name = "solana-precompile-error"
-version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
-dependencies = [
- "num-traits",
- "solana-decode-error",
 ]
 
 [[package]]

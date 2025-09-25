@@ -4,7 +4,7 @@ use crate::{
     solana_program::{message::SanitizedMessage, sysvar::instructions},
 };
 use alloc::vec::Vec;
-use fluentbase_sdk::{debug_log_ext, SharedAPI};
+use fluentbase_sdk::SharedAPI;
 use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
@@ -101,7 +101,6 @@ impl MessageProcessor {
                     &instruction_accounts,
                     program_indices,
                 );
-                debug_log_ext!("result {:?}", result);
                 result
             };
 

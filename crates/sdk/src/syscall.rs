@@ -32,6 +32,7 @@ pub const SYSCALL_ID_METADATA_COPY: B256 = B256::with_last_byte(0x43);
 
 pub const SYSCALL_ID_METADATA_STORAGE_READ: B256 = B256::with_last_byte(0x44);
 pub const SYSCALL_ID_METADATA_STORAGE_WRITE: B256 = B256::with_last_byte(0x45);
+pub const SYSCALL_ID_METADATA_ACCOUNT_OWNER: B256 = B256::with_last_byte(0x46);
 
 pub fn pack_storage_read(target: &mut [u8], slot: &U256) {
     target.copy_from_slice(slot.as_le_slice())
@@ -51,6 +52,7 @@ pub trait SyscallInterruptExecutor {
         metadata: Bytes,
     ) -> (u64, i64, i32);
     fn metadata_size(&self, address: &Address) -> (u64, i64, i32);
+    fn metadata_account_owner(&self, address: &Address) -> (u64, i64, i32);
     fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> (u64, i64, i32);
     fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> (u64, i64, i32);
     fn metadata_storage_read(&self, slot: &U256) -> (u64, i64, i32);
@@ -144,6 +146,14 @@ impl<T: InterruptAPI + ?Sized> SyscallInterruptExecutor for T {
     fn metadata_size(&self, address: &Address) -> (u64, i64, i32) {
         self.interrupt(
             BytecodeOrHash::Hash(SYSCALL_ID_METADATA_SIZE),
+            address.as_slice(),
+            None,
+            STATE_MAIN,
+        )
+    }
+    fn metadata_account_owner(&self, address: &Address) -> (u64, i64, i32) {
+        self.interrupt(
+            BytecodeOrHash::Hash(SYSCALL_ID_METADATA_ACCOUNT_OWNER),
             address.as_slice(),
             None,
             STATE_MAIN,

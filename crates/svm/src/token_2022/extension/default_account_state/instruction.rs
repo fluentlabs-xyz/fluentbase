@@ -8,15 +8,7 @@ use serde::{Deserialize, Serialize};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_program_error::ProgramError;
 use solana_pubkey::Pubkey;
-use {
-    crate::token_2022::lib::check_program_account,
-    // solana_program::{
-    //     instruction::{AccountMeta, Instruction},
-    //     program_error::ProgramError,
-    //     pubkey::Pubkey,
-    // },
-    core::convert::TryFrom,
-};
+use {crate::token_2022::lib::check_program_account, core::convert::TryFrom};
 
 /// Default Account State extension instructions
 #[derive(Serialize, Deserialize)]

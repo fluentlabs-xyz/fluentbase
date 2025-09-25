@@ -84,6 +84,12 @@ impl HostTestingContext {
     pub fn dump_storage(&self) -> HashMap<(Address, U256), U256> {
         self.inner.borrow().persistent_storage.clone()
     }
+    pub fn dump_metadata_storage(&self) -> HashMap<(Address, U256), U256> {
+        self.inner.borrow().metadata_storage.clone()
+    }
+    pub fn dump_metadata(&self) -> HashMap<(Address, Address), Vec<u8>> {
+        self.inner.borrow().metadata.clone()
+    }
     pub fn visit_inner_storage_mut<F: FnMut(&mut HashMap<(Address, U256), U256>)>(&self, mut f: F) {
         f(&mut self.inner.borrow_mut().persistent_storage)
     }
@@ -184,7 +190,7 @@ impl MetadataAPI for HostTestingContext {
             ctx.metadata
                 .insert((account_owner, address.clone()), metadata.to_vec());
         }
-        SyscallResult::new((), 0, 0, ExitCode::Err)
+        SyscallResult::new((), 0, 0, ExitCode::Ok)
     }
 
     fn metadata_size(
@@ -237,6 +243,14 @@ impl MetadataAPI for HostTestingContext {
             );
         }
         SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)
+    }
+
+    fn metadata_account_owner(&self, _address: &Address) -> SyscallResult<Address> {
+        let ctx = self.inner.borrow();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        SyscallResult::new(account_owner, 0, 0, ExitCode::Ok)
     }
 }
 

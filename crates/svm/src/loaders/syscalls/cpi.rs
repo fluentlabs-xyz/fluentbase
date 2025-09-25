@@ -1,7 +1,13 @@
 use super::*;
-use crate::common::{evm_address_from_pubkey, pubkey_from_evm_address};
+use crate::error::RuntimeError;
 use crate::fluentbase::common::SYSTEM_PROGRAMS_KEYS;
-use crate::helpers::{is_program_exists, storage_read_account_data, storage_read_metadata_params};
+use crate::helpers::{
+    deserialize_svm_program_params, deserialize_svm_program_params_into_instruction,
+    is_program_exists, serialize_svm_program_params, serialize_svm_program_params_from_instruction,
+    storage_read_account_data, storage_read_metadata_params,
+};
+use crate::token_2022::instruction::decode_instruction_type;
+use crate::token_2022::pod_instruction::PodTokenInstruction;
 use crate::{
     account::BorrowedAccount,
     builtins::SyscallInvokeSignedRust,
@@ -22,10 +28,15 @@ use crate::{
 };
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{fmt::Debug, marker::PhantomData, ptr};
-use fluentbase_erc20::common::sig_to_bytes;
-use fluentbase_erc20::consts::SIG_TOKEN2022;
-use fluentbase_sdk::{debug_log_ext, Address, SharedAPI};
-use fluentbase_types::{PRECOMPILE_ERC20_RUNTIME, SVM_ELF_MAGIC_BYTES, U256};
+use fluentbase_sdk::ContextReader;
+use fluentbase_sdk::{Address, SharedAPI};
+use fluentbase_svm_common::common::evm_address_from_pubkey;
+use fluentbase_types::{
+    IsAccountEmpty, IsAccountOwnable, IsColdAccess, SyscallResult,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, SVM_ELF_MAGIC_BYTES, U256, UNIVERSAL_TOKEN_MAGIC_BYTES,
+};
+use fluentbase_universal_token::common::sig_to_bytes;
+use fluentbase_universal_token::consts::SIG_TOKEN2022;
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_instruction::{error::InstructionError, AccountMeta};
 use solana_program_entrypoint::SUCCESS;
@@ -655,50 +666,41 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     // changes so the callee can see them.
     let mut instruction: StableInstruction =
         S::translate_instruction(instruction_addr, memory_mapping, invoke_context)?;
-    let mut reroute_to_evm_input_prefix: Option<[u8; 4]> = None;
-    if instruction.program_id == token_2022::lib::id() {
-        instruction.program_id = pubkey_from_evm_address::<true>(&PRECOMPILE_ERC20_RUNTIME);
-        // TODO 4test, temp solution for routing to spl-token2022
-        let sig_token2022_bytes = sig_to_bytes(SIG_TOKEN2022);
-        // let mut data = Vec::with_capacity(sig_token2022_bytes.len() + instruction.data.len());
-        // data.extend_from_slice(&sig_token2022_bytes);
-        // data.extend_from_slice(&instruction.data);
-        // instruction.data = data.into();
-        reroute_to_evm_input_prefix = Some(sig_token2022_bytes);
+    let mut input_prefix: Option<[u8; 4]> = None;
+    let mut is_call_or_create = true;
+    let address = evm_address_from_pubkey::<true>(&instruction.program_id);
+    if address.is_ok_and(|addr| {
+        if addr == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
+            is_call_or_create = false;
+            return true;
+        }
+        let metadata_account_owner_result: SyscallResult<Address> =
+            invoke_context.sdk.metadata_account_owner(&addr);
+        metadata_account_owner_result.status.is_ok()
+            && metadata_account_owner_result.data == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
+    }) {
+        input_prefix = Some(sig_to_bytes(SIG_TOKEN2022));
     }
-    if reroute_to_evm_input_prefix.is_some()
-        || !is_program_exists(invoke_context.sdk, &instruction.program_id)?
+    if input_prefix.is_some()
+        || !is_program_exists(invoke_context.sdk, &instruction.program_id, None)?
     {
         let mut data: StableVec<u8>;
         let mut offset = 0;
-        let address = evm_address_from_pubkey::<false>(&instruction.program_id)?;
+        let address =
+            evm_address_from_pubkey::<false>(&instruction.program_id).expect("evm compatible pk");
         let value;
         let fuel_limit;
-        if let Some(prefix) = reroute_to_evm_input_prefix {
-            value = U256::ZERO;
+        if let Some(prefix) = input_prefix {
+            value = invoke_context.sdk.context().tx_value();
             fuel_limit = None;
-            // data: prefix ([u8; 4]) + program_id ([u8; 32]) + accounts_meta_number (u8) + account_meta[] (AccountMeta) + data ([u8])
-            let mut data_tmp = Vec::with_capacity(
-                prefix.len()
-                    + PUBKEY_BYTES
-                    + 1
-                    + instruction.accounts.len() * size_of::<AccountMeta>()
-                    + instruction.data.len(),
-            );
-            data_tmp.extend_from_slice(&prefix);
-            data_tmp.extend_from_slice(&instruction.program_id.to_bytes());
-            data_tmp.push(instruction.accounts.len() as u8);
-            let tmp_am = AccountMeta::new(instruction.program_id, false);
-            let tmp_am_ser = solana_bincode::serialize(&tmp_am)?;
-            debug_log_ext!("tmp_am_ser.len={}", tmp_am_ser.len());
-            for am in instruction.accounts.iter() {
-                let am_ser = solana_bincode::serialize(am)?;
-                debug_log_ext!("am_ser.len={}", am_ser.len());
-                data_tmp.extend_from_slice(&am_ser);
-            }
-            data_tmp.extend_from_slice(&instruction.data);
+            let mut data_tmp = if is_call_or_create {
+                let mut data = prefix.to_vec();
+                data.extend_from_slice(instruction.data.as_ref());
+                data
+            } else {
+                instruction.data.to_vec()
+            };
             data = data_tmp.into();
-            debug_log_ext!("data.len={}", data.len());
         } else {
             data = instruction.data;
             const MIN_LEN: usize = size_of::<U256>() + size_of::<u64>();
@@ -721,18 +723,23 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
             offset += size_of::<u64>();
         }
         let input = &data[offset..];
-        debug_log_ext!(
-            "invoke_context.sdk.call({}, {}, {:x?}, {:x?})",
-            address,
-            value,
-            input,
-            fuel_limit
-        );
-        let call_result = invoke_context.sdk.call(address, value, input, fuel_limit);
-        if !call_result.status.is_ok() {
+        let action_result = if is_call_or_create {
+            invoke_context.sdk.delegate_call(address, input, fuel_limit)
+        } else {
+            let ctx = invoke_context.sdk.context();
+            let contract_caller = ctx.contract_caller();
+            let mut salt_bytes = contract_caller.to_vec();
+            salt_bytes.extend_from_slice(&ctx.tx_nonce().to_le_bytes());
+            drop(ctx);
+            let salt = Some(U256::from_le_slice(&salt_bytes));
+            let mut init_code = UNIVERSAL_TOKEN_MAGIC_BYTES.to_vec();
+            init_code.extend_from_slice(&input);
+            invoke_context.sdk.create(salt, &value, &init_code)
+        };
+        if !action_result.status.is_ok() {
             return Ok(1);
         };
-        let return_data = call_result.data.to_vec();
+        let return_data = action_result.data.to_vec();
         invoke_context
             .transaction_context
             .set_return_data(instruction.program_id, return_data);

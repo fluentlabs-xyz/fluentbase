@@ -28,6 +28,7 @@ pub trait MetadataAPI {
     ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)>;
     fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()>;
     fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
+    fn metadata_account_owner(&self, address: &Address) -> SyscallResult<Address>;
 }
 
 pub trait MetadataStorageAPI {

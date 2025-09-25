@@ -17,8 +17,9 @@ fluentbase-sdk = { workspace = true }
 fluentbase-testing = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-svm = { workspace = true }
+fluentbase-svm-common = { workspace = true }
 fluentbase-svm-shared = { workspace = true }
-fluentbase-erc20 = { workspace = true }
+fluentbase-universal-token = { workspace = true }
 fluentbase-contracts = { workspace = true }
 curve25519-dalek = { workspace = true }
 
@@ -37,9 +38,11 @@ sha2 = { workspace = true }
 fluentbase-svm = { workspace = true }
 fluentbase-types = { workspace = true }
 criterion = "0.6.0"
-solana-curve25519 = { workspace = true, default-features = false, features = [] }
-solana-bn254 = { workspace = true, default-features = false, features = [] }
-solana-poseidon = { workspace = true, default-features = false, features = [] }
+solana-curve25519 = { workspace = true, default-features = false }
+solana-bn254 = { workspace = true, default-features = false }
+solana-poseidon = { workspace = true, default-features = false }
+solana-program-pack = { workspace = true, default-features = false }
+solana-program-option = { workspace = true, default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 array-bytes = { workspace = true }
@@ -55,11 +58,13 @@ default = [
     "wasmtime",
     #    "debug-print",
     "enable-svm",
+    #    "enable-error-text-checks", # when 'fast-panic' is off
 ]
 enable-svm = [
     "fluentbase-genesis/enable-svm",
     "fluentbase-svm/use-extended-debug-log"
 ]
+enable-error-text-checks = []
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",
@@ -70,10 +75,11 @@ std = [
 ]
 debug-print = [
     "fluentbase-runtime/debug-print",
-    "revm/debug-print",
-    "fluentbase-revm/debug-print",
+    "fluentbase-sdk/debug-print",
+    #    "revm/debug-print",
+    #    "fluentbase-revm/debug-print",
     "fluentbase-svm/debug-print",
-    "rwasm/debug-print",
+    #    "rwasm/debug-print",
 ]
 wasmtime = [
     "fluentbase-runtime/wasmtime",
