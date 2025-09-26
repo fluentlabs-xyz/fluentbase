@@ -8,13 +8,13 @@ use crate::{
     RuntimeContext,
 };
 use blstrs::{G2Affine, G2Projective};
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallBls12381G2Add;
 
 impl SyscallBls12381G2Add {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

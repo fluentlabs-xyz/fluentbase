@@ -44,7 +44,7 @@ pub(crate) fn runtime_syscall_handler(
 /// This is the central runtime syscall dispatcher used by runtime_syscall_handler.
 /// It routes the call based on SysFuncIdx without performing additional validation.
 pub fn invoke_runtime_handler(
-    caller: &mut TypedCaller<RuntimeContext>,
+    caller: &mut impl Store<RuntimeContext>,
     sys_func_idx: SysFuncIdx,
     params: &[Value],
     result: &mut [Value],
@@ -136,7 +136,7 @@ pub fn invoke_runtime_handler(
 
 /// Stores the exit code in the context and converts it into a halting TrapCode.
 pub(crate) fn syscall_process_exit_code(
-    caller: &mut TypedCaller<RuntimeContext>,
+    caller: &mut impl Store<RuntimeContext>,
     exit_code: ExitCode,
 ) -> TrapCode {
     caller.context_mut(|ctx| ctx.execution_result.exit_code = exit_code.into());

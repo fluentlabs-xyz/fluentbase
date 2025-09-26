@@ -1,18 +1,19 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_main, Criterion};
 use fluentbase_e2e::{EvmTestingContextWithGenesis, EXAMPLE_ERC20};
-use fluentbase_sdk::{address, constructor::encode_constructor_params, Address, Bytes, U256};
-use fluentbase_svm::error::SvmError;
-use fluentbase_svm::helpers::serialize_svm_program_params_from_instruction;
-use fluentbase_svm::solana_program::instruction::Instruction;
-use fluentbase_svm::token_2022;
-use fluentbase_svm::token_2022::instruction::{initialize_account, initialize_mint, mint_to};
+use fluentbase_sdk::{address, constructor::encode_constructor_params, Address, Bytes};
+use fluentbase_svm::{
+    error::SvmError,
+    helpers::serialize_svm_program_params_from_instruction,
+    solana_program::instruction::Instruction,
+    token_2022,
+    token_2022::instruction::{initialize_account, initialize_mint, mint_to},
+};
 use fluentbase_svm_common::common::pubkey_from_evm_address;
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext};
 use fluentbase_types::{
     ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, UNIVERSAL_TOKEN_MAGIC_BYTES,
 };
-use fluentbase_universal_token::common::sig_to_bytes;
-use fluentbase_universal_token::consts::SIG_TOKEN2022;
+use fluentbase_universal_token::{common::sig_to_bytes, consts::SIG_TOKEN2022};
 use hex_literal::hex;
 use revm::context::result::ExecutionResult;
 use std::time::Duration;
@@ -75,7 +76,7 @@ fn erc20_transfer_benches(c: &mut Criterion) {
     {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         const OWNER_ADDRESS: Address = Address::ZERO;
-        let bytecode: &[u8] = crate::EXAMPLE_ERC20.into();
+        let bytecode: &[u8] = EXAMPLE_ERC20.into();
 
         // constructor params for ERC20:
         //     name: "TestToken"
@@ -95,13 +96,17 @@ fn erc20_transfer_benches(c: &mut Criterion) {
 
         group.bench_function("3_rWasm_Contract_ERC20", |b| {
             b.iter(|| {
-                ctx.call_evm_tx(
+                let result = ctx.call_evm_tx(
                     OWNER_ADDRESS,
                     contract_address,
                     transfer_payload.clone(),
                     None,
                     None,
                 );
+                if !result.is_success() {
+                    println!("{:?}", result);
+                }
+                assert!(result.is_success())
             });
         });
     }

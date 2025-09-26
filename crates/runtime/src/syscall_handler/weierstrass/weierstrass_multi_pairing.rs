@@ -9,7 +9,7 @@ use fluentbase_types::{
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
     BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN,
 };
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use sp1_curves::weierstrass::WeierstrassParameters;
 use std::marker::PhantomData;
 
@@ -28,7 +28,7 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMultiPairingAssign<E> {
     }
 
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

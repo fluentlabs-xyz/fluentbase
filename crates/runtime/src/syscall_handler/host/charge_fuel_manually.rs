@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 /// Builtin to manually charge and refund fuel when VM metering is disabled.
 pub struct SyscallChargeFuelManually;
@@ -8,7 +8,7 @@ pub struct SyscallChargeFuelManually;
 impl SyscallChargeFuelManually {
     /// Validates that fuel metering is disabled, applies manual charge/refund, and returns remaining fuel.
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

@@ -3,7 +3,7 @@ use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use fluentbase_types::{ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE};
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallBn256Add;
 
@@ -17,7 +17,7 @@ fn g1_point_add(p1: G1Affine, p2: G1Affine) -> G1Affine {
 
 impl SyscallBn256Add {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

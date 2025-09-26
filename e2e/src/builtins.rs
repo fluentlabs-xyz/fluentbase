@@ -56,20 +56,16 @@ fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult<R
         None,
         None,
     );
-    println!("RESULT: {:?}", result);
     result
 }
 
 /// Calculates how much gas is consumed by the builtins
 fn run_twice_and_find_gas_difference(wat: &str, call_data_size: usize) -> u64 {
-    println!("Code: {}", wat);
-    println!("-------------");
-    println!("Running with builtins_consume_fuel=true");
     let result1 = run_main(wat, call_data_size);
     assert!(result1.is_success());
     let init_gas =
         calculate_initial_tx_gas(SpecId::PRAGUE, &vec![0u8; call_data_size], false, 0, 0, 0);
-    result1.gas_used() - init_gas.initial_gas - 10 // 10 for 10 memory pages (1 page is 1024 fuel)
+    result1.gas_used() - init_gas.initial_gas
 }
 
 #[test]

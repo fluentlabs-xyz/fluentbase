@@ -1,6 +1,6 @@
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallMathBigModExp {}
 
@@ -12,7 +12,7 @@ impl SyscallMathBigModExp {
 
     /// Handles the syscall for point addition on a Weierstrass curve.
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

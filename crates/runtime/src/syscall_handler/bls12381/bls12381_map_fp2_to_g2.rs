@@ -9,13 +9,13 @@ use blst::{
     blst_fp, blst_fp2, blst_fp_from_bendian, blst_map_to_g2, blst_p2, blst_p2_affine,
     blst_p2_affine_serialize, blst_p2_to_affine,
 };
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallBls12381MapFp2ToG2;
 
 impl SyscallBls12381MapFp2ToG2 {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

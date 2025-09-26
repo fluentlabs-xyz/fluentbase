@@ -86,7 +86,9 @@ fn devnet_chain_config() -> ChainConfig {
 fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
     let mut cache = HashMap::new();
 
-    let config = default_compilation_config().with_builtins_consume_fuel(false);
+    let config = default_compilation_config()
+        .with_consume_fuel(false)
+        .with_builtins_consume_fuel(false);
     for (_, contract) in GENESIS_CONTRACTS {
         if !cache.contains_key(contract.wasm_bytecode) {
             let start = Instant::now();

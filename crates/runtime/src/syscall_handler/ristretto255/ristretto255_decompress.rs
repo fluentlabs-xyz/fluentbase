@@ -1,7 +1,7 @@
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint};
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallCurve25519RistrettoDecompressValidate {}
 
@@ -13,7 +13,7 @@ impl SyscallCurve25519RistrettoDecompressValidate {
 
 impl SyscallCurve25519RistrettoDecompressValidate {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

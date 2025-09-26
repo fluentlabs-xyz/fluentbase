@@ -1,9 +1,12 @@
-use crate::{Runtime, RuntimeContext};
+use crate::{
+    executor::{default_runtime_executor, RuntimeExecutor},
+    RuntimeContext,
+};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     BytecodeOrHash, Bytes, BytesOrRef, ExitCode, SyscallInvocationParams, B256, CALL_STACK_LIMIT,
 };
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use std::{
     cmp::min,
     fmt::{Debug, Display, Formatter},
@@ -36,7 +39,7 @@ impl Display for InterruptionHolder {
 impl SyscallExec {
     /// Dispatches the exec syscall: validates fuel, captures parameters, and triggers an interruption.
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
@@ -89,7 +92,7 @@ impl SyscallExec {
 
     /// Continues an exec after an interruption, executing the delegated call.
     pub fn fn_continue(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         context: &InterruptionHolder,
     ) -> (u64, i64, i32) {
         let fuel_limit = context.params.fuel_limit;
@@ -117,7 +120,6 @@ impl SyscallExec {
         if ctx.call_depth >= CALL_STACK_LIMIT {
             return (fuel_limit, 0, ExitCode::CallDepthOverflow.into_i32());
         }
-
         // create a new runtime instance with the context
         let mut ctx2 = RuntimeContext::default()
             .with_fuel_limit(fuel_limit)
@@ -128,7 +130,8 @@ impl SyscallExec {
             ctx2 = ctx2.with_disabled_fuel();
         }
 
-        let runtime = Runtime::new(code_hash.into(), ctx2);
-        runtime.execute().finalize(ctx)
+        let result = default_runtime_executor().execute(code_hash.into(), ctx2);
+        ctx.execution_result.return_data = result.output;
+        (result.fuel_consumed, result.fuel_refunded, result.exit_code)
     }
 }

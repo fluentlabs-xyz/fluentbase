@@ -6,7 +6,7 @@ use p256::{
     elliptic_curve::FieldBytes,
     PublicKey,
 };
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 /// Gas cost for p256 verification (based on EIP-7212)
 const P256_VERIFY_GAS: u64 = 3450;
@@ -63,7 +63,7 @@ fn reconstruct_public_key(x_bytes: &[u8], y_bytes: &[u8]) -> Result<VerifyingKey
 
 impl SyscallCurve256r1Verify {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

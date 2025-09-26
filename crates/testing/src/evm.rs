@@ -1,25 +1,24 @@
 use crate::{HostTestingContext, HostTestingContextNativeAPI};
 use core::{borrow::Borrow, mem::take, str::from_utf8};
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
-use fluentbase_runtime::{Runtime, RuntimeContext};
+use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecutor};
 use fluentbase_sdk::{
-    bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, debug_log_ext, Address,
-    BytecodeOrHash, Bytes, ContextReader, ExitCode, GenesisContract, MetadataAPI, SharedAPI,
-    SharedContextInputV1, STATE_MAIN, U256,
+    bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, Address, BytecodeOrHash, Bytes,
+    ContextReader, ExitCode, GenesisContract, MetadataAPI, SharedAPI, SharedContextInputV1,
+    STATE_MAIN, U256,
 };
-use revm::database::DbAccount;
 use revm::{
     context::{
         result::{ExecutionResult, ExecutionResult::Success, Output},
         BlockEnv, CfgEnv, TransactTo, TxEnv,
     },
-    database::InMemoryDB,
+    database::{DbAccount, InMemoryDB},
     handler::MainnetContext,
-    primitives::{hardfork::PRAGUE, keccak256, map::DefaultHashBuilder, HashMap},
+    primitives::{hardfork::PRAGUE, keccak256, HashMap},
     state::{Account, AccountInfo, Bytecode},
     DatabaseCommit, ExecuteCommitEvm, MainBuilder,
 };
-use rwasm::{RwasmModule, Store};
+use rwasm::RwasmModule;
 
 #[allow(dead_code)]
 pub struct EvmTestingContext {
@@ -188,7 +187,7 @@ impl EvmTestingContext {
             Bytecode::Rwasm(rwasm_bytecode) => rwasm_bytecode.clone(),
             _ => unreachable!(),
         };
-        Runtime::warmup_strategy(rwasm_bytecode, bytecode.hash_slow(), address);
+        default_runtime_executor().warmup(rwasm_bytecode.module, bytecode.hash_slow(), address);
     }
 
     pub fn add_balance(&mut self, address: Address, value: U256) {
@@ -196,8 +195,8 @@ impl EvmTestingContext {
         account.info.balance += value;
         let mut revm_account = Account::from(account.info.clone());
         revm_account.mark_touch();
-        let changes: HashMap<Address, Account, DefaultHashBuilder> =
-            HashMap::from([(address, revm_account)]);
+        let mut changes: HashMap<Address, Account> = HashMap::default();
+        changes.insert(address, revm_account);
         self.db.commit(changes);
     }
 
@@ -444,16 +443,14 @@ pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec
     let code_hash = keccak256(&rwasm_binary);
     let bytecode_or_hash = BytecodeOrHash::Bytecode {
         address: Address::ZERO,
-        bytecode: Bytes::from(rwasm_binary),
+        bytecode: RwasmModule::new(&rwasm_binary).0,
         hash: code_hash,
     };
     let ctx = RuntimeContext::default()
         .with_fuel_limit(100_000_000_000)
         .with_state(STATE_MAIN)
         .with_input(context_input);
-    let mut runtime = Runtime::new(bytecode_or_hash, ctx);
-    runtime.store.context_mut(RuntimeContext::clear_output);
-    let result = runtime.execute().into_execution_result();
+    let result = default_runtime_executor().execute(bytecode_or_hash, ctx);
     println!(
         "exit_code: {} ({})",
         result.exit_code,
@@ -482,12 +479,4 @@ pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec
     //     );
     // }
     (result.output.into(), result.exit_code)
-}
-
-#[allow(dead_code)]
-pub fn catch_panic(ctx: &fluentbase_runtime::ExecutionResult) {
-    if ctx.exit_code != -1 {
-        return;
-    }
-    println!("panic with err: {}", from_utf8(&ctx.output).unwrap());
 }

@@ -23,14 +23,14 @@ pub enum SysFuncIdx {
     CHARGE_FUEL = 0x0011,
 
     // hashing functions (0x01)
-    #[deprecated(note = "use permute instead")]
+    // #[deprecated(note = "use permute instead")]
     KECCAK256 = 0x0101,
     KECCAK256_PERMUTE = 0x0102,
     POSEIDON = 0x0103,
     // POSEIDON_HASH = 0x0104,
     SHA256_EXTEND = 0x0105,
     SHA256_COMPRESS = 0x0106,
-    #[deprecated(note = "use extend/compress instead")]
+    // #[deprecated(note = "use extend/compress instead")]
     SHA256 = 0x0118,
     BLAKE3 = 0x0117,
 

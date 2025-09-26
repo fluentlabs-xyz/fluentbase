@@ -89,7 +89,7 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
         );
         let bytecode_hash = keccak256(rwasm_module_raw.as_ref());
         // Rewrite overridden rWasm bytecode
-        let bytecode = Bytecode::Rwasm(rwasm_module_raw);
+        let bytecode = Bytecode::new_rwasm(rwasm_module_raw);
         ctx.journal_mut()
             .set_code(create_frame.created_address, bytecode.clone());
         // Change input params
@@ -176,7 +176,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     };
     let bytecode_hash = BytecodeOrHash::Bytecode {
         address: effective_bytecode_address,
-        bytecode: rwasm_bytecode,
+        bytecode: rwasm_bytecode.module,
         hash: rwasm_code_hash,
     };
 
@@ -205,6 +205,10 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     );
 
     // make sure we have enough gas to charge from the call
+    // assert_eq!(
+    //     (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE,
+    //     fuel_consumed / FUEL_DENOM_RATE
+    // );
     if !interpreter.gas.record_denominated_cost(fuel_consumed) {
         return Ok(NextAction::error(ExitCode::OutOfFuel, interpreter.gas));
     }
@@ -298,6 +302,10 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     };
 
     // make sure we have enough gas to charge from the call
+    // assert_eq!(
+    //     (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE,
+    //     fuel_consumed / FUEL_DENOM_RATE
+    // );
     if !gas.record_denominated_cost(fuel_consumed) {
         return Ok(NextAction::error(ExitCode::OutOfFuel, gas));
     }

@@ -4,7 +4,7 @@ use crate::{
 };
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
 use num::BigUint;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{params::NumWords, weierstrass::FpOpField};
 use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;
@@ -16,7 +16,7 @@ pub struct SyscallFp2AddSub<P, OP> {
 
 impl<P: FpOpField, OP: FieldOp2> SyscallFp2AddSub<P, OP> {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

@@ -10,7 +10,7 @@ use fluentbase_types::{
     ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use std::marker::PhantomData;
 
 type G1 = ark_bn254::g1::G1Affine;
@@ -73,7 +73,7 @@ impl<E: Config> SyscallWeierstrassCompressDecompressAssign<E> {
     }
 
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

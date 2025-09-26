@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 /// Builtin to copy a slice of the input buffer into linear memory.
 pub struct SyscallRead;
@@ -8,7 +8,7 @@ pub struct SyscallRead;
 impl SyscallRead {
     /// Reads [offset, offset+length) from ctx.input and writes it at target_ptr.
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

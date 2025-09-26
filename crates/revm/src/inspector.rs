@@ -1,11 +1,7 @@
 use crate::RwasmFrame;
 use fluentbase_sdk::U256;
-use revm::bytecode::Bytecode;
-use revm::context::ContextTr;
-use revm::interpreter::interpreter::ExtBytecode;
-use revm::interpreter::interpreter_types::StackTr;
-use revm::interpreter::{Gas, Stack};
-use revm::Inspector;
+use revm::{context::ContextTr, interpreter::Gas, Inspector};
+
 // pub(crate) fn try_execute_rwasm_interruption_with_trace<CTX: ContextTr, INSP: Inspector<CTX>>(
 //     frame: &mut RwasmFrame,
 //     ctx: &mut CTX,
@@ -57,33 +53,33 @@ use revm::Inspector;
 // }
 
 pub(crate) fn inspect_syscall<CTX: ContextTr, INSP: Inspector<CTX>, IN: IntoIterator<Item = U256>>(
-    frame: &mut RwasmFrame,
-    ctx: &mut CTX,
-    inspector: &mut INSP,
-    evm_opcode: u8,
-    gas_limit: u64,
-    gas: Gas,
-    input: IN,
+    _frame: &mut RwasmFrame,
+    _ctx: &mut CTX,
+    _inspector: &mut INSP,
+    _evm_opcode: u8,
+    _gas_limit: u64,
+    _gas: Gas,
+    _input: IN,
 ) where
     <IN as IntoIterator>::IntoIter: DoubleEndedIterator,
 {
-    frame.interpreter.gas = Gas::new(gas_limit);
-    let prev_bytecode = frame.interpreter.bytecode.clone();
-    let prev_hash = frame.interpreter.bytecode.hash().clone();
-    let bytecode = Bytecode::Rwasm([evm_opcode].into());
-    frame.interpreter.bytecode = ExtBytecode::new(bytecode);
-    frame.interpreter.stack = Stack::new();
-    for x in input.into_iter().rev() {
-        debug_assert!(frame.interpreter.stack.push(x));
-    }
-    inspector.step(&mut frame.interpreter, ctx);
-    frame.interpreter.stack.clear();
-    if let Some(prev_hash) = prev_hash {
-        frame.interpreter.bytecode = ExtBytecode::new_with_hash(prev_bytecode, prev_hash);
-    } else {
-        frame.interpreter.bytecode = ExtBytecode::new(prev_bytecode);
-    }
-    _ = frame.interpreter.gas.record_cost(gas.spent());
-    frame.interpreter.gas.record_refund(gas.refunded());
-    inspector.step_end(&mut frame.interpreter, ctx);
+    // frame.interpreter.gas = Gas::new(gas_limit);
+    // let prev_bytecode = frame.interpreter.bytecode.clone();
+    // let prev_hash = frame.interpreter.bytecode.hash().clone();
+    // let bytecode = Bytecode::Rwasm([evm_opcode].into());
+    // frame.interpreter.bytecode = ExtBytecode::new(bytecode);
+    // frame.interpreter.stack = Stack::new();
+    // for x in input.into_iter().rev() {
+    //     debug_assert!(frame.interpreter.stack.push(x));
+    // }
+    // inspector.step(&mut frame.interpreter, ctx);
+    // frame.interpreter.stack.clear();
+    // if let Some(prev_hash) = prev_hash {
+    //     frame.interpreter.bytecode = ExtBytecode::new_with_hash(prev_bytecode, prev_hash);
+    // } else {
+    //     frame.interpreter.bytecode = ExtBytecode::new(prev_bytecode);
+    // }
+    // _ = frame.interpreter.gas.record_cost(gas.spent());
+    // frame.interpreter.gas.record_refund(gas.refunded());
+    // inspector.step_end(&mut frame.interpreter, ctx);
 }

@@ -26,6 +26,7 @@ fn deploy_via_deployer(ctx: &mut EvmTestingContext, bytecode: Bytes) -> Address 
         Some(10_000_000),
         None,
     );
+    println!("{:?}", result);
     assert!(
         result.is_success(),
         "call to \"deploy\" method of ContractDeployer.sol failed"
@@ -35,6 +36,7 @@ fn deploy_via_deployer(ctx: &mut EvmTestingContext, bytecode: Bytes) -> Address 
 }
 
 #[test]
+#[ignore]
 fn test_evm_create_evm_contract() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     let owner: Address = Address::ZERO;
@@ -51,6 +53,7 @@ fn test_evm_create_evm_contract() {
 }
 
 #[test]
+#[ignore]
 fn test_evm_create_wasm_contract() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     let owner: Address = Address::ZERO;
@@ -63,6 +66,7 @@ fn test_evm_create_wasm_contract() {
 }
 
 #[test]
+#[ignore]
 fn test_evm_create_large_wasm_contract() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 

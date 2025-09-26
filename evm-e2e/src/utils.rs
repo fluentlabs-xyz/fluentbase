@@ -1,14 +1,9 @@
 use crate::runner::execute_test_suite;
-use fluentbase_runtime::Runtime;
-use fluentbase_sdk::{
-    b256, keccak256,
-    rwasm_core::{deserialize_wasmtime_module, CompilationConfig, Strategy},
-};
+use fluentbase_runtime::default_runtime_executor;
 use k256::ecdsa::SigningKey;
 use revm::primitives::Address;
 use std::{
     path::Path,
-    rc::Rc,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -26,26 +21,32 @@ pub(crate) fn run_e2e_test(test_path: &'static str) {
     execute_test_suite(Path::new(path.as_str()), &elapsed, false, false).unwrap();
 }
 
+#[cfg(feature = "wasmtime")]
 mod precompiled {
     include!(concat!(env!("OUT_DIR"), "/precompiled_module.rs"));
 }
 
+#[cfg(feature = "wasmtime")]
 #[ctor::ctor]
 fn warmup_wasmtime_modules() {
-    let wasmtime_module = deserialize_wasmtime_module(
-        CompilationConfig::default(),
-        &precompiled::PRECOMPILED_RUNTIME_EVM_CWASM_MODULE,
-    )
-    .expect("failed to parse wasmtime module");
-    let code_hash = keccak256(&precompiled::PRECOMPILED_RUNTIME_EVM_RWASM_MODULE);
-    println!("precompiled evm runtime code hash: {:?}", code_hash);
-    // 0xc62b88c3b842aea2c89fb1a69212d8e24925936873c4f52c38c4496eb6c491b2
-    Runtime::warmup_strategy_raw(
-        b256!("0xc62b88c3b842aea2c89fb1a69212d8e24925936873c4f52c38c4496eb6c491b2"),
-        Strategy::Wasmtime {
-            module: wasmtime_module,
-        },
-    );
+    use fluentbase_runtime::RuntimeExecutor;
+    use fluentbase_sdk::rwasm_core::{
+        wasmtime::deserialize_wasmtime_module, CompilationConfig, RwasmModule,
+    };
+    for (name, wasmtime_module) in precompiled::PRECOMPILED_MODULES {
+        let module = deserialize_wasmtime_module(CompilationConfig::default(), wasmtime_module)
+            .expect("failed to parse wasmtime module");
+        let contract = fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS
+            .values()
+            .find(|v| v.name.contains(name))
+            .expect("missing genesis contract");
+        let (rwasm_module, _) = RwasmModule::new(contract.rwasm_bytecode.as_ref());
+        default_runtime_executor().warmup_wasmtime(
+            rwasm_module,
+            module,
+            contract.rwasm_bytecode_hash,
+        );
+    }
 }
 
 #[cfg(test)]

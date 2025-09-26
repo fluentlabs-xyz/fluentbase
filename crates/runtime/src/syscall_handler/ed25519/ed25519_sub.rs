@@ -4,7 +4,7 @@ use crate::{
 };
 use curve25519_dalek::EdwardsPoint;
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallCurve25519EdwardsSub {}
 
@@ -16,7 +16,7 @@ impl SyscallCurve25519EdwardsSub {
 
 impl SyscallCurve25519EdwardsSub {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

@@ -1,7 +1,7 @@
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use curve25519_dalek::{edwards::CompressedEdwardsY, EdwardsPoint};
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallCurve25519EdwardsDecompressValidate {}
 
@@ -13,7 +13,7 @@ impl SyscallCurve25519EdwardsDecompressValidate {
 
 impl SyscallCurve25519EdwardsDecompressValidate {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

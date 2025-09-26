@@ -1,0 +1,88 @@
+name: Bench
+
+on:
+  push:
+    branches: [ main, devel ]
+  pull_request:
+    branches: [ main, devel ]
+  workflow_dispatch:
+
+jobs:
+  baseline-on-push:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-amd64-8core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run Criterion (save baseline "devel")
+        env:
+          CRITERION_NO_PLOTTING: "1"
+          CRITERION_WARM_UP_TIME: "3"
+          CRITERION_MEASUREMENT_TIME: "5"
+          CRITERION_SAMPLE_SIZE: "50"
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cd e2e && cargo bench -- --save-baseline devel
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-baseline-devel
+          path: target/criterion
+          if-no-files-found: error
+          compression-level: 6
+
+  compare-on-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-amd64-8core
+    permissions:
+      contents: read
+      pull-requests: write  # needed to comment on PRs (won’t work for forks; see note below)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Try to fetch the latest successful baseline from devel
+      - name: Download baseline from devel
+        id: dl
+        uses: dawidd6/action-download-artifact@v3
+        continue-on-error: true            # allow first PRs without a baseline
+        with:
+          workflow: bench.yml
+          workflow_conclusion: success
+          name: criterion-baseline-devel
+          branch: devel
+          path: target/criterion
+
+      - name: Run Criterion (compare if baseline exists)
+        env:
+          CRITERION_NO_PLOTTING: "1"
+          CRITERION_WARM_UP_TIME: "1"
+          CRITERION_MEASUREMENT_TIME: "2"
+          CRITERION_SAMPLE_SIZE: "20"
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cd e2e && cargo bench | grep -v ignored | tee bench_output.txt
+
+      - name: Upload full report
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-report-${{ github.sha }}
+          path: target/criterion
+          compression-level: 6
+
+      - name: Post summary in PR
+        run: |
+          {
+            echo "### Criterion results (vs baseline)"
+            echo
+            echo '```'
+            sed -n '1,200p' e2e/bench_output.txt
+            echo '```'
+            echo
+            echo "_Heads-up_: runner perf is noisy; treat deltas as a smoke check."
+          } > comment.md
+      - uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: comment.md
