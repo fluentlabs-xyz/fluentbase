@@ -37,7 +37,7 @@ sha2 = { workspace = true }
 [dev-dependencies]
 fluentbase-svm = { workspace = true }
 fluentbase-types = { workspace = true }
-criterion = "0.6.0"
+criterion = "0.7.0"
 solana-curve25519 = { workspace = true, default-features = false }
 solana-bn254 = { workspace = true, default-features = false }
 solana-poseidon = { workspace = true, default-features = false }
