@@ -82,7 +82,7 @@ jobs:
             echo "### Criterion results (vs baseline)"
             echo
             echo '```'
-            sed -n '1,200p' benchmarks/bench_output.txt
+            sed -n '1,200p' e2e/bench_output.txt
             echo '```'
             echo
             echo "_Heads-up_: runner perf is noisy; treat deltas as a smoke check."
