@@ -62,12 +62,8 @@ jobs:
           CRITERION_MEASUREMENT_TIME: "2"
           CRITERION_SAMPLE_SIZE: "20"
         run: |
-          BASEFLAG=""
-          if [ -d "target/criterion" ]; then
-            BASEFLAG="--baseline devel"
-          fi
           rustup target add wasm32-unknown-unknown
-          cd e2e && cargo bench -- $BASEFLAG | grep -v ignored | tee bench_output.txt
+          cd e2e && cargo bench | grep -v ignored | tee bench_output.txt
 
       - name: Upload full report
         uses: actions/upload-artifact@v4
