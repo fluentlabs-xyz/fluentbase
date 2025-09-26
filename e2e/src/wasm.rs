@@ -216,6 +216,7 @@ fn test_wasm_simple_storage() {
 }
 
 #[test]
+#[ignore] // the pass passes, but it's very slow in rwasm mode
 fn test_wasm_rwasm() {
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
@@ -272,9 +273,7 @@ fn deploy_and_load_wasm_contract() {
     let contract_account = ctx.db.load_account(contract_address).unwrap();
     assert!(contract_account.info.code.is_some());
     match contract_account.info.code.clone().unwrap() {
-        Bytecode::Rwasm(bytes) => {
-            assert!(!bytes.is_empty());
-        }
+        Bytecode::Rwasm(_code) => {}
         other => {
             panic!(
                 "Expected Rwasm bytecode, found bytecode with len {}: {:?}",

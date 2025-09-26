@@ -1,8 +1,7 @@
 use crate::RuntimeContext;
-use blstrs::Compress as _;
-use blstrs::{pairing, G1Affine, G2Affine, Gt};
+use blstrs::{pairing, Compress as _, G1Affine, G2Affine, Gt};
 use group::Group;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 const G1_COMPRESSED_SIZE: usize = 48;
 const G2_COMPRESSED_SIZE: usize = 96;
@@ -19,7 +18,7 @@ pub struct SyscallBls12381Pairing;
 /// point fails to decompress/validate, the output buffer is filled with zeros.
 impl SyscallBls12381Pairing {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

@@ -6,7 +6,7 @@ use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     ExitCode,
 };
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 /// Syscall entry points for resuming a previously interrupted runtime.
 pub struct SyscallResume;
@@ -14,7 +14,7 @@ pub struct SyscallResume;
 impl SyscallResume {
     /// Handles the resume syscall. Copies return data, applies fuel, resumes the target, and writes back the exit code.
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

@@ -9,18 +9,15 @@ use fluentbase_evm::EthereumMetadata;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address, is_system_precompile, keccak256,
-    syscall::*,
-    Address, Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY,
-    PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
+    calc_create4_address, is_system_precompile, keccak256, Address, Bytes, ExitCode, Log, LogData,
+    B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
 };
 use revm::{
-    bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
+    bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
     context::{Cfg, ContextError, ContextTr, CreateScheme, JournalTr},
     interpreter::{
         gas,
         gas::{sload_cost, sstore_cost, sstore_refund, warm_cold_cost},
-        interpreter::ExtBytecode,
         interpreter_types::InputsTr,
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, Gas, Host,
         MAX_INITCODE_SIZE,
@@ -35,44 +32,45 @@ use std::{boxed::Box, vec::Vec};
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn inspect_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
-    frame: &mut RwasmFrame,
-    ctx: &mut CTX,
-    inspector: &mut INSP,
-    inputs: SystemInterruptionInputs,
+    _frame: &mut RwasmFrame,
+    _ctx: &mut CTX,
+    _inspector: &mut INSP,
+    _inputs: SystemInterruptionInputs,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
-    frame.interpreter.gas = Gas::new(inputs.gas.remaining());
-    let prev_bytecode = frame.interpreter.bytecode.clone();
-    let prev_hash = frame.interpreter.bytecode.hash().clone();
-    let evm_opcode = match &inputs.syscall_params.code_hash {
-        &SYSCALL_ID_CALL => opcode::CALL,
-        &SYSCALL_ID_STATIC_CALL => opcode::STATICCALL,
-        &SYSCALL_ID_CALL_CODE => opcode::CALLCODE,
-        &SYSCALL_ID_DELEGATE_CALL => opcode::DELEGATECALL,
-        &SYSCALL_ID_CREATE => opcode::CREATE,
-        &SYSCALL_ID_CREATE2 => opcode::CREATE2,
-        _ => return execute_rwasm_interruption::<CTX, INSP>(frame, ctx, inputs),
-    };
-    let bytecode = Bytecode::Rwasm([evm_opcode].into());
-    frame.interpreter.bytecode = ExtBytecode::new(bytecode);
-    inspector.step(&mut frame.interpreter, ctx);
-    let result = execute_rwasm_interruption::<CTX, INSP>(frame, ctx, inputs)?;
-    if let Some(prev_hash) = prev_hash {
-        frame.interpreter.bytecode = ExtBytecode::new_with_hash(prev_bytecode, prev_hash);
-    } else {
-        frame.interpreter.bytecode = ExtBytecode::new(prev_bytecode);
-    }
-    let gas = if let Some(interrupted_outcome) = frame.interrupted_outcome.as_ref() {
-        interrupted_outcome.remaining_gas
-    } else {
-        match &result {
-            NextAction::Return(result) => result.gas,
-            _ => unreachable!("frame can't return here"),
-        }
-    };
-    _ = frame.interpreter.gas.record_cost(gas.spent());
-    frame.interpreter.gas.record_refund(gas.refunded());
-    inspector.step_end(&mut frame.interpreter, ctx);
-    Ok(result)
+    // frame.interpreter.gas = Gas::new(inputs.gas.remaining());
+    // let prev_bytecode = frame.interpreter.bytecode.clone();
+    // let prev_hash = frame.interpreter.bytecode.hash().clone();
+    // let evm_opcode = match &inputs.syscall_params.code_hash {
+    //     &SYSCALL_ID_CALL => opcode::CALL,
+    //     &SYSCALL_ID_STATIC_CALL => opcode::STATICCALL,
+    //     &SYSCALL_ID_CALL_CODE => opcode::CALLCODE,
+    //     &SYSCALL_ID_DELEGATE_CALL => opcode::DELEGATECALL,
+    //     &SYSCALL_ID_CREATE => opcode::CREATE,
+    //     &SYSCALL_ID_CREATE2 => opcode::CREATE2,
+    //     _ => return execute_rwasm_interruption::<CTX, INSP>(frame, ctx, inputs),
+    // };
+    // let bytecode = Bytecode::Rwasm([evm_opcode].into());
+    // frame.interpreter.bytecode = ExtBytecode::new(bytecode);
+    // inspector.step(&mut frame.interpreter, ctx);
+    // let result = execute_rwasm_interruption::<CTX, INSP>(frame, ctx, inputs)?;
+    // if let Some(prev_hash) = prev_hash {
+    //     frame.interpreter.bytecode = ExtBytecode::new_with_hash(prev_bytecode, prev_hash);
+    // } else {
+    //     frame.interpreter.bytecode = ExtBytecode::new(prev_bytecode);
+    // }
+    // let gas = if let Some(interrupted_outcome) = frame.interrupted_outcome.as_ref() {
+    //     interrupted_outcome.remaining_gas
+    // } else {
+    //     match &result {
+    //         NextAction::Return(result) => result.gas,
+    //         _ => unreachable!("frame can't return here"),
+    //     }
+    // };
+    // _ = frame.interpreter.gas.record_cost(gas.spent());
+    // frame.interpreter.gas.record_refund(gas.refunded());
+    // inspector.step_end(&mut frame.interpreter, ctx);
+    // Ok(result)
+    todo!()
 }
 
 #[tracing::instrument(level = "info", skip_all)]

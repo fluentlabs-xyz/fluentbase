@@ -6,20 +6,16 @@ mod context;
 #[cfg(feature = "std")]
 mod context_wrapper;
 mod executor;
-mod factory;
+#[cfg(feature = "global-executor")]
 mod global_executor;
 #[cfg(all(feature = "wasmtime", feature = "inter-process-lock"))]
 mod inter_process_lock;
-mod local_executor;
+mod module_factory;
 mod runtime;
 pub mod syscall_handler;
-#[cfg(test)]
-mod tests;
-#[cfg(feature = "wasmtime")]
-mod wasmtime;
+mod utils;
 
 pub use context::*;
 #[cfg(feature = "std")]
 pub use context_wrapper::*;
 pub use executor::{default_runtime_executor, RuntimeExecutor};
-pub use runtime::*;

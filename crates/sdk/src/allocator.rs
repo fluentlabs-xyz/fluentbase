@@ -44,6 +44,9 @@ pub fn alloc_vec(len: usize) -> Vec<u8> {
 pub struct HeapBaseAllocator {}
 
 #[cfg(target_arch = "wasm32")]
+static mut HEAP_POS: usize = 0;
+
+#[cfg(target_arch = "wasm32")]
 unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
     #[inline(never)]
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
@@ -52,7 +55,6 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
         extern "C" {
             static __heap_base: u8;
         }
-        static mut HEAP_POS: usize = 0;
         let mut heap_pos = unsafe { HEAP_POS };
         if heap_pos == 0 {
             heap_pos = unsafe { (&__heap_base) as *const u8 as usize };
@@ -84,4 +86,14 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: core::alloc::Layout) {
         // ops, no dealoc
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __heap_reset() {
+    extern "C" {
+        static __heap_base: u8;
+    }
+    let mut heap_pos = unsafe { HEAP_POS };
+    heap_pos = unsafe { (&__heap_base) as *const u8 as usize };
 }

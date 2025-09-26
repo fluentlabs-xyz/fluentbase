@@ -1,19 +1,16 @@
 use fluentbase_sdk::{Address, Bytes};
-use fluentbase_svm::account::{AccountSharedData, WritableAccount};
-use fluentbase_svm::account_info::AccountInfo;
-use fluentbase_svm::helpers::{storage_read_account_data, storage_write_account_data};
-use fluentbase_svm::pubkey::Pubkey;
-use fluentbase_svm::solana_program::instruction::AccountMeta;
-use fluentbase_svm::token_2022::helpers::account_info_from_meta_and_account;
-use fluentbase_svm::token_2022::state::Account;
-use fluentbase_svm_common::common::{evm_balance_from_lamports, pubkey_from_evm_address};
+use fluentbase_svm::{
+    account::AccountSharedData,
+    account_info::AccountInfo,
+    helpers::{storage_read_account_data, storage_write_account_data},
+    pubkey::Pubkey,
+    solana_program::instruction::AccountMeta,
+    token_2022::{helpers::account_info_from_meta_and_account, state::Account},
+};
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext};
-use fluentbase_types::{PRECOMPILE_SVM_RUNTIME, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
+use fluentbase_types::PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME;
 use revm::context::result::ExecutionResult;
 use solana_program_pack::Pack;
-use std::fs::File;
-use std::io::Read;
-use std::time::Instant;
 
 pub fn call_with_sig(
     ctx: &mut EvmTestingContext,
@@ -48,6 +45,7 @@ pub fn call_with_sig(
     }
 }
 
+#[cfg(feature = "enable-svm")]
 pub fn svm_deploy(
     ctx: &mut EvmTestingContext,
     deployer_address: &Address,
@@ -81,6 +79,7 @@ pub fn svm_deploy(
     (pk_deployer1, pk_contract, pk_new, contract_address)
 }
 
+#[cfg(feature = "enable-svm")]
 pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
     let mut file = File::open(path).expect("file open failed");
     let mut elf = Vec::new();

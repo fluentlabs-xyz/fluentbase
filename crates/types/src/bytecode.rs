@@ -1,5 +1,6 @@
-use crate::{Address, Bytes, B256, KECCAK_EMPTY, RWASM_SIG, RWASM_SIG_LEN, WASM_SIG, WASM_SIG_LEN};
+use crate::{Address, Bytes, B256, RWASM_SIG, RWASM_SIG_LEN, WASM_SIG, WASM_SIG_LEN};
 use core::fmt::Formatter;
+use rwasm_core::RwasmModule;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(non_camel_case_types)]
@@ -26,7 +27,7 @@ impl BytecodeType {
 #[derive(Clone, Debug)]
 pub enum BytecodeOrHash {
     Bytecode {
-        bytecode: Bytes,
+        bytecode: RwasmModule,
         hash: B256,
         address: Address,
     },
@@ -38,16 +39,10 @@ impl core::fmt::Display for BytecodeOrHash {
         match self {
             BytecodeOrHash::Bytecode {
                 address,
-                bytecode: rwasm_module,
                 hash: code_hash,
+                ..
             } => {
-                write!(
-                    f,
-                    "bytecode {}::{}::{}",
-                    address,
-                    rwasm_module.len(),
-                    code_hash
-                )
+                write!(f, "bytecode {}::{}", address, code_hash)
             }
             BytecodeOrHash::Hash(code_hash) => write!(f, "{}", code_hash),
         }
@@ -60,25 +55,11 @@ impl From<B256> for BytecodeOrHash {
         Self::Hash(value)
     }
 }
-impl From<(Address, Bytes, B256)> for BytecodeOrHash {
-    #[inline(always)]
-    fn from(value: (Address, Bytes, B256)) -> Self {
-        Self::Bytecode {
-            address: value.0,
-            bytecode: value.1,
-            hash: value.2,
-        }
-    }
-}
 
 impl Default for BytecodeOrHash {
     #[inline(always)]
     fn default() -> Self {
-        Self::Bytecode {
-            address: Address::ZERO,
-            bytecode: Bytes::new(),
-            hash: KECCAK_EMPTY,
-        }
+        Self::Hash(B256::ZERO)
     }
 }
 

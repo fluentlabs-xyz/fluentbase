@@ -1,6 +1,6 @@
 use crate::{syscall_handler::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{
     params::NumWords,
     weierstrass::{SwCurve, WeierstrassParameters},
@@ -23,7 +23,7 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMulAssign<E> {
 
     /// Handles the syscall for point addition on a Weierstrass curve.
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

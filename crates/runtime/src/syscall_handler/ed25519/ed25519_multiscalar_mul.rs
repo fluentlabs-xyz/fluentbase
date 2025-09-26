@@ -4,7 +4,7 @@ use crate::{
 };
 use curve25519_dalek::{traits::MultiscalarMul, EdwardsPoint, Scalar};
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 const POINT_LEN: usize = 32;
 const SCALAR_LEN: usize = 32;
@@ -20,7 +20,7 @@ impl SyscallCurve25519EdwardsMultiscalarMul {
 
 impl SyscallCurve25519EdwardsMultiscalarMul {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

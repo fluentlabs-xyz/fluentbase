@@ -1,13 +1,11 @@
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{
     params::NumLimbs,
     weierstrass::{bls12_381::bls12381_decompress, secp256k1::secp256k1_decompress},
-    AffinePoint,
-    CurveType,
-    EllipticCurve,
+    AffinePoint, CurveType, EllipticCurve,
 };
 use sp1_primitives::consts::{bytes_to_words_le_vec, words_to_bytes_le_vec};
 use std::marker::PhantomData;
@@ -26,7 +24,7 @@ impl<E: EllipticCurve> SyscallWeierstrassDecompressAssign<E> {
 
     /// Handles the syscall for point addition on a Weierstrass curve.
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

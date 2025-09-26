@@ -7,7 +7,7 @@ use fluentbase_types::{
     ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
     BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, SCALAR_SIZE,
 };
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallBn256Pairing;
 
@@ -24,7 +24,7 @@ fn pairing_check(pairs: &[(G1Affine, G2Affine)]) -> bool {
 
 impl SyscallBn256Pairing {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

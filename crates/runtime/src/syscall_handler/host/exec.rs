@@ -6,7 +6,7 @@ use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     BytecodeOrHash, Bytes, BytesOrRef, ExitCode, SyscallInvocationParams, B256, CALL_STACK_LIMIT,
 };
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use std::{
     cmp::min,
     fmt::{Debug, Display, Formatter},
@@ -39,7 +39,7 @@ impl Display for InterruptionHolder {
 impl SyscallExec {
     /// Dispatches the exec syscall: validates fuel, captures parameters, and triggers an interruption.
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
@@ -92,7 +92,7 @@ impl SyscallExec {
 
     /// Continues an exec after an interruption, executing the delegated call.
     pub fn fn_continue(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         context: &InterruptionHolder,
     ) -> (u64, i64, i32) {
         let fuel_limit = context.params.fuel_limit;

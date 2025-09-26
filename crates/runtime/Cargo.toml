@@ -16,6 +16,8 @@ rwasm = { workspace = true }
 
 # wasmtime
 wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", optional = true, features = ["disable-fpu", "cache"] }
+anyhow = { version = "1.0.98", default-features = false, optional = true }
+smallvec = { version = "1.15.1", optional = true }
 
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
@@ -26,7 +28,6 @@ secp256k1 = { version = "=0.30", default-features = false, features = [
     "rand",
     "global-context",
 ] }
-hex = { version = "0.4.3", optional = true }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 blake3 = { workspace = true, default-features = false }
 sha2 = { workspace = true, default-features = false }
@@ -46,8 +47,9 @@ num-bigint = { workspace = true }
 num-traits = { workspace = true }
 paste = { workspace = true }
 fs2 = { version = "0.4.3", optional = true }
-tracing = { version = "0.1" }
-core_affinity = "0.8.3"
+
+# global executor
+core_affinity = { version = "0.8.3", optional = true }
 
 [dev-dependencies]
 sha2 = { workspace = true, default-features = false }
@@ -62,10 +64,16 @@ std = [
 ]
 rwasm = []
 debug-print = [
-    "dep:hex",
     #    "rwasm/debug-print",
 ]
-wasmtime = ["dep:wasmtime"]
+wasmtime = [
+    "dep:wasmtime",
+    "dep:anyhow",
+    "dep:smallvec",
+    "rwasm/wasmtime",
+    "rwasm/cache-compiled-artifacts",
+]
 inter-process-lock = [
     "dep:fs2",
 ]
+global-executor = ["dep:core_affinity"]

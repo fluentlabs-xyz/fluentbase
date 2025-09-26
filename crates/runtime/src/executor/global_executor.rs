@@ -1,8 +1,8 @@
 use crate::{
-    executor::RuntimeFactoryExecutor, factory::RuntimeFactory, ExecutionResult, RuntimeContext,
-    RuntimeExecutor,
+    executor::RuntimeFactoryExecutor, types::ExecutionResult, RuntimeContext, RuntimeExecutor,
 };
-use fluentbase_types::{Address, BytecodeOrHash, Bytes, B256};
+use fluentbase_types::{import_linker_v1_preview, Address, BytecodeOrHash, Bytes, B256};
+use rwasm::RwasmModule;
 use std::{
     panic,
     sync::{
@@ -31,7 +31,7 @@ enum ExecutorCommand {
         reply: SyncSender<ExecutorReply<ExecutionResult>>,
     },
     Warmup {
-        bytecode: Bytes,
+        bytecode: RwasmModule,
         hash: B256,
         address: Address,
         reply: SyncSender<ExecutorReply<()>>,
@@ -39,11 +39,6 @@ enum ExecutorCommand {
     ResetCallIdCounter {
         reply: SyncSender<ExecutorReply<()>>,
     },
-    // CacheModule {
-    //     code_hash: B256,
-    //     strategy: Strategy,
-    //     reply: SyncSender<ExecutorReply<()>>,
-    // },
 }
 
 fn assert_send<T: Send>() {}
@@ -117,7 +112,7 @@ impl RuntimeExecutor for GlobalExecutor {
         }
     }
 
-    fn warmup(&mut self, bytecode: Bytes, hash: B256, address: Address) {
+    fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {
         let (rtx, rrx) = sync_channel(0);
         self.tx
             .send(ExecutorCommand::Warmup {
@@ -131,6 +126,18 @@ impl RuntimeExecutor for GlobalExecutor {
             Ok(result) => result,
             Err(panic_payload) => panic::resume_unwind(panic_payload),
         }
+    }
+
+    #[cfg(feature = "wasmtime")]
+    fn warmup_wasmtime(
+        &mut self,
+        bytecode: RwasmModule,
+        _wasmtime_module: wasmtime::Module,
+        hash: B256,
+        address: Address,
+    ) {
+        // TODO(dmitry123): Add event for passing wasmtime module
+        self.warmup(bytecode, hash, address)
     }
 
     fn reset_call_id_counter(&mut self) {
@@ -150,8 +157,7 @@ fn runtime_thread(rx: Receiver<ExecutorCommand>) {
     let core_id = cores[0];
     core_affinity::set_for_current(core_id);
 
-    let mut runtime_factory = RuntimeFactory::new_v1_preview();
-    let mut runtime_executor = RuntimeFactoryExecutor::new(&mut runtime_factory);
+    let mut runtime_executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
 
     while let Ok(cmd) = rx.recv() {
         match cmd {
@@ -196,15 +202,7 @@ fn runtime_thread(rx: Receiver<ExecutorCommand>) {
                     runtime_executor.warmup(bytecode, hash, address)
                 }));
                 let _ = reply.send(result);
-            } // ExecutorCommand::CacheModule {
-            //     code_hash,
-            //     strategy,
-            //     reply,
-            // } => {
-            //     let cached_module = CachedModule::new(strategy, import_linker.clone());
-            //     runtime_factory.cache_module(code_hash, cached_module);
-            //     let _ = reply.send(());
-            // }
+            }
             ExecutorCommand::ResetCallIdCounter { reply } => {
                 let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
                     runtime_executor.reset_call_id_counter()

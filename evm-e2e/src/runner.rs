@@ -7,14 +7,9 @@ use crate::inspector::{InspectorEvent, TraceInspector};
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm};
 use fluentbase_sdk::{Address, PRECOMPILE_EVM_RUNTIME};
-use hashbrown::HashSet;
 use indicatif::{ProgressBar, ProgressDrawTarget};
-use revm::bytecode::opcode;
-use revm::interpreter::gas::MemoryGas;
-use revm::interpreter::{return_error, return_ok, return_revert};
-use revm::primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE;
 use revm::{
-    bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
+    bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
     context::{
         result::ExecutionResult, transaction::AccessListItem, BlockEnv, CfgEnv, TransactTo,
         TransactionType::Eip1559, TxEnv,
@@ -22,7 +17,11 @@ use revm::{
     context_interface::block::calc_excess_blob_gas,
     database::{CacheState, InMemoryDB, State, StateBuilder},
     handler::MainnetContext,
-    primitives::{hardfork::SpecId, keccak256, Bytes, B256, U256},
+    interpreter::{gas::MemoryGas, return_error, return_ok, return_revert},
+    primitives::{
+        eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, hardfork::SpecId, keccak256, Bytes, B256,
+        U256,
+    },
     state::AccountInfo,
     ExecuteCommitEvm, InspectCommitEvm, MainBuilder, MainnetEvm,
 };
@@ -617,6 +616,17 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone, INSP>(
     Ok(())
 }
 
+thread_local! {
+    pub static GENESIS_CONTRACTS: Arc<Vec<(Address, B256, Bytecode)>> = {
+        let mut genesis_contracts = vec![];
+        for (address, genesis_account) in GENESIS_CONTRACTS_BY_ADDRESS.iter() {
+            let bytecode = Bytecode::new_raw(genesis_account.rwasm_bytecode.clone());
+            genesis_contracts.push((*address, genesis_account.rwasm_bytecode_hash, bytecode));
+        }
+        Arc::new(genesis_contracts)
+    };
+}
+
 pub fn execute_test_suite(
     path: &Path,
     elapsed: &Arc<Mutex<Duration>>,
@@ -635,6 +645,8 @@ pub fn execute_test_suite(
         kind: e.into(),
     })?;
 
+    let genesis_contracts = GENESIS_CONTRACTS.with(Clone::clone);
+
     let selected_test_cases = vec![];
     for (name, unit) in suite.0 {
         if selected_test_cases.len() > 0 && !selected_test_cases.contains(&name.as_str()) {
@@ -647,27 +659,14 @@ pub fn execute_test_suite(
 
         println!("\nloading genesis accounts:");
         let start = Instant::now();
-        let mut genesis_addresses: HashSet<Address> = Default::default();
-        for (address, genesis_account) in GENESIS_CONTRACTS_BY_ADDRESS.iter() {
-            let start = Instant::now();
-            print!("- loading genesis account ({address})... ");
-            let bytecode = Bytecode::new_raw(genesis_account.rwasm_bytecode.clone());
+        for (address, code_hash, bytecode) in genesis_contracts.iter() {
             let acc_info = AccountInfo {
                 balance: U256::ZERO,
                 nonce: 0,
-                code_hash: genesis_account.rwasm_bytecode_hash,
-                code: Some(bytecode),
+                code_hash: *code_hash,
+                code: Some(bytecode.clone()),
             };
-            println!(
-                "loaded in ({:?}): address={}, nonce={}, balance={} code_hash={}",
-                start.elapsed(),
-                address,
-                acc_info.nonce,
-                acc_info.balance,
-                acc_info.code_hash
-            );
             cache_state2.insert_account(*address, acc_info);
-            genesis_addresses.insert(*address);
         }
         println!("loaded genesis accounts in: {:?}", start.elapsed());
 
@@ -705,10 +704,10 @@ pub fn execute_test_suite(
                 );
             }
             let evm_code_hash = keccak256(&info.code);
-            println!(
-                " - address={address}, evm_code_hash={evm_code_hash}, evm_code_hash_u256={}, code_len={}",
-                Into::<U256>::into(evm_code_hash), info.code.len(),
-            );
+            // println!(
+            //     " - address={address}, evm_code_hash={evm_code_hash}, evm_code_hash_u256={}, code_len={}",
+            //     Into::<U256>::into(evm_code_hash), info.code.len(),
+            // );
             // write EVM code hash state
             if info.code.len() > 0 {
                 // set account info bytecode to the proxy loader

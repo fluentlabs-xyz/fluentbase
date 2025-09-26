@@ -1,13 +1,13 @@
 use crate::RuntimeContext;
 use fluentbase_types::B256;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use sha2::{Digest, Sha256};
 
 pub struct SyscallSha256;
 
 impl SyscallSha256 {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

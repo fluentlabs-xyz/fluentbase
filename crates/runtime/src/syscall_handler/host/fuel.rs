@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 /// Builtin to query remaining engine fuel.
 pub struct SyscallFuel;
@@ -7,7 +7,7 @@ pub struct SyscallFuel;
 impl SyscallFuel {
     /// Writes the remaining fuel (or u64::MAX if metering is disabled) into result[0].
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         _params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

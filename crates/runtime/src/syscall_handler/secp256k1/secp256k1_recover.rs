@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::B256;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
     Message, SECP256K1,
@@ -10,7 +10,7 @@ pub struct SyscallSecp256k1Recover;
 
 impl SyscallSecp256k1Recover {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

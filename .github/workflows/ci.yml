@@ -169,8 +169,8 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
         continue-on-error: true
 
-  evm-e2e-tests:
-    name: EVM Testing Suite
+  evm-e2e-tests-rwasm:
+    name: EVM Testing Suite (rwasm)
     runs-on: ubuntu-amd64-8core
     timeout-minutes: 40
     steps:
@@ -220,9 +220,67 @@ jobs:
         working-directory: evm-e2e
         run: make sync_tests
 
-      - name: Run ethereum tests
+      - name: Run ethereum tests (rwasm)
         working-directory: evm-e2e
-        run: make run_general_state_tests
+        run: cargo test --release --package evm-e2e --bin evm-e2e tests::good_coverage_tests
+
+      - name: Show sccache stats
+        run: ${SCCACHE_PATH} --show-stats
+
+  evm-e2e-tests-wasmtime:
+    name: EVM Testing Suite (wasmtime)
+    runs-on: ubuntu-amd64-8core
+    timeout-minutes: 40
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: "30720"
+          remove-dotnet: "true"
+
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Speed up git fetches
+        run: git config --global net.git-fetch-with-cli true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install wasm32 target
+        run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
+
+      - name: Install Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "18"
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Rust cache (registries + git)
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          cache-all-crates: true
+          cache-workspace-crates: true
+          cache-on-failure: true
+
+      - name: Prefetch deps (evm-e2e)
+        working-directory: evm-e2e
+        run: cargo fetch
+
+      - name: Sync ethereum tests
+        working-directory: evm-e2e
+        run: make sync_tests
+
+      - name: Run ethereum tests (wasmtime)
+        working-directory: evm-e2e
+        run: cargo test --release --features=wasmtime --package evm-e2e --bin evm-e2e tests::good_coverage_tests
 
       - name: Show sccache stats
         run: ${SCCACHE_PATH} --show-stats
