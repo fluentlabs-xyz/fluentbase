@@ -1,4 +1,4 @@
-use fluentbase_types::{Address, BytecodeOrHash, HashMap, B256};
+use fluentbase_types::{BytecodeOrHash, HashMap, B256};
 use rwasm::RwasmModule;
 use std::sync::{Arc, LazyLock, RwLock};
 
@@ -44,7 +44,7 @@ impl ModuleFactory {
     pub fn get_wasmtime_module_or_compile(
         &mut self,
         code_hash: B256,
-        address: Address,
+        address: fluentbase_types::Address,
     ) -> wasmtime::Module {
         let ctx = self.inner.read().unwrap();
         if let Some(module) = ctx.wasmtime_modules.get(&code_hash) {
