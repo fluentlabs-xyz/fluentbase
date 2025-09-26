@@ -14,7 +14,7 @@ use revm::{
     },
     database::{DbAccount, InMemoryDB},
     handler::MainnetContext,
-    primitives::{hardfork::PRAGUE, keccak256, map::DefaultHashBuilder, HashMap},
+    primitives::{hardfork::PRAGUE, keccak256, HashMap},
     state::{Account, AccountInfo, Bytecode},
     DatabaseCommit, ExecuteCommitEvm, MainBuilder,
 };
@@ -195,8 +195,8 @@ impl EvmTestingContext {
         account.info.balance += value;
         let mut revm_account = Account::from(account.info.clone());
         revm_account.mark_touch();
-        let changes: HashMap<Address, Account, DefaultHashBuilder> =
-            HashMap::from([(address, revm_account)]);
+        let mut changes: HashMap<Address, Account> = HashMap::default();
+        changes.insert(address, revm_account);
         self.db.commit(changes);
     }
 

@@ -169,7 +169,6 @@ sha2 = { version = "0.10.9", default-features = false }
 
 # revme
 clap = { version = "4", features = ["derive"] }
-criterion = { package = "codspeed-criterion-compat", version = "2.7" }
 
 # misc
 bitflags = { version = "2.6.0", default-features = false }
