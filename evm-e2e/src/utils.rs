@@ -1,5 +1,4 @@
 use crate::runner::execute_test_suite;
-use fluentbase_runtime::default_runtime_executor;
 use k256::ecdsa::SigningKey;
 use revm::primitives::Address;
 use std::{
@@ -41,7 +40,7 @@ fn warmup_wasmtime_modules() {
             .find(|v| v.name.contains(name))
             .expect("missing genesis contract");
         let (rwasm_module, _) = RwasmModule::new(contract.rwasm_bytecode.as_ref());
-        default_runtime_executor().warmup_wasmtime(
+        fluentbase_runtime::default_runtime_executor().warmup_wasmtime(
             rwasm_module,
             module,
             contract.rwasm_bytecode_hash,
