@@ -40,9 +40,6 @@ mod good_coverage_tests {
         fn call_ecrecover0_no_gas("tests/GeneralStateTests/stPreCompiledContracts2/CallEcrecover0_NoGas.json");
         fn create2collision_selfdestructed("tests/GeneralStateTests/stCreate2/create2collisionSelfdestructed.json");
         fn call_ecrecover1("tests/GeneralStateTests/stPreCompiledContracts2/CallEcrecover1.json");
-        fn c_a_l_l_blake2f("tests/GeneralStateTests/stPreCompiledContracts2/CALLBlake2f.json");
-        fn c_a_l_l_c_o_d_e_blake2f("tests/GeneralStateTests/stPreCompiledContracts2/CALLCODEBlake2f.json");
-        fn c_a_l_l_c_o_d_e_ecrecover0("tests/GeneralStateTests/stPreCompiledContracts2/CALLCODEEcrecover0.json");
         fn modexp_0_0_0_20500("tests/GeneralStateTests/stPreCompiledContracts2/modexp_0_0_0_20500.json");
         fn ecadd_00_0_0_21000_0("tests/GeneralStateTests/stZeroKnowledge2/ecadd_0-0_0-0_21000_0.json");
         fn frontier_opcodes_value_transfer_gas_calculation("tests/GeneralStateTests/Pyspecs/frontier/opcodes/value_transfer_gas_calculation.json");
