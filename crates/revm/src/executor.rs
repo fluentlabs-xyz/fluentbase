@@ -2,7 +2,7 @@ use crate::{
     api::RwasmFrame,
     inspector::inspect_syscall,
     instruction_result_from_exit_code,
-    syscall::{execute_rwasm_interruption, inspect_rwasm_interruption},
+    syscall::execute_rwasm_interruption,
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
@@ -371,11 +371,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         is_gas_free,
     };
 
-    if let Some(inspector) = inspector {
-        inspect_rwasm_interruption::<CTX, INSP>(frame, ctx, inspector, inputs)
-    } else {
-        execute_rwasm_interruption::<CTX, INSP>(frame, ctx, inputs)
-    }
+    execute_rwasm_interruption::<CTX, INSP>(frame, inspector, ctx, inputs)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -400,7 +396,7 @@ fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
             }
         };
         if let Some(evm_opcode) = evm_opcode {
-            inspect_syscall(frame, ctx, inspector, evm_opcode, 0, Gas::new(0), []);
+            inspect_syscall(frame, ctx, inspector, evm_opcode, []);
         }
     }
     NextAction::Return(ExecutionResult {
