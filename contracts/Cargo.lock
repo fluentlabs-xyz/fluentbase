@@ -1827,7 +1827,7 @@ checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1839,7 +1839,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -2019,7 +2019,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -2032,7 +2032,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-revm"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "fluentbase-evm",
  "fluentbase-runtime",
@@ -2046,7 +2046,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2075,7 +2075,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "dlmalloc",
  "fluentbase-codec",
@@ -2087,7 +2087,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -2100,7 +2100,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -2122,7 +2122,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "arrayref",
  "bincode 2.0.1",
@@ -2134,7 +2134,7 @@ dependencies = [
  "fluentbase-sdk",
  "fluentbase-svm-common",
  "fluentbase-types",
- "fluentbase-universal-token 0.4.7-dev",
+ "fluentbase-universal-token 0.4.8-dev",
  "hashbrown 0.15.5",
  "itertools 0.14.0",
  "lazy_static",
@@ -2177,7 +2177,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm-common"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "fluentbase-types",
  "serde",
@@ -2186,7 +2186,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-testing"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "bytes",
  "fluentbase-codec",
@@ -2201,7 +2201,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -2224,7 +2224,7 @@ dependencies = [
  "fluentbase-svm",
  "fluentbase-svm-common",
  "fluentbase-testing",
- "fluentbase-universal-token 0.4.7-dev",
+ "fluentbase-universal-token 0.4.8-dev",
  "solana-bincode",
  "solana-program-error",
  "solana-program-option",
@@ -2232,7 +2232,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-universal-token"
-version = "0.4.7-dev"
+version = "0.4.8-dev"
 dependencies = [
  "bincode 2.0.1",
  "fluentbase-sdk",
