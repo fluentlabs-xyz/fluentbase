@@ -24,7 +24,7 @@ pub(crate) fn inspect_syscall<CTX: ContextTr, INSP: Inspector<CTX>, IN: IntoIter
     frame.interpreter.bytecode = ExtBytecode::new(bytecode);
     frame.interpreter.stack = Stack::new();
     for x in input.into_iter().rev() {
-        debug_assert!(frame.interpreter.stack.push(x));
+        _ = frame.interpreter.stack.push(x);
     }
     inspector.step(&mut frame.interpreter, ctx);
     // TODO: We should call `step_end` once instruction is over for proper gas & output stack calculation.
