@@ -137,7 +137,8 @@ pub const UPDATE_GENESIS_AUTH: Address = address!("0xa7bf6a9168fe8a111307b7c94b8
 
 /// The prefix that must appear at the beginning of the transaction `calldata`
 /// to signal that the transaction is intended to perform an account update.
-pub const UPDATE_GENESIS_PREFIX: [u8; 4] = hex!("0x69bc6f64");
+pub const UPDATE_GENESIS_PREFIX_V1: [u8; 4] = hex!("0x69bc6f64");
+pub const UPDATE_GENESIS_PREFIX_V2: [u8; 4] = hex!("0x69bc6f65");
 
 #[derive(Clone)]
 pub struct GenesisContract {
