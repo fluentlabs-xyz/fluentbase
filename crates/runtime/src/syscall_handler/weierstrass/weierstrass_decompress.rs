@@ -63,7 +63,6 @@
 //         let decompress_fn = match E::CURVE_TYPE {
 //             CurveType::Secp256k1 => secp256k1_decompress::<E>,
 //             CurveType::Bls12381 => bls12381_decompress::<E>,
-//             CurveType::Bn254 => bn254_decompress::<E>,
 //             _ => panic!("unsupported curve"),
 //         };
 

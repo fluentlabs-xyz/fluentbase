@@ -1,10 +1,13 @@
+//! Helper functions for Weierstrass curve operations, BN254 specific
+//!
+//! This module provides utility functions for point parsing, validation, format conversions,
+//! and other common operations across different Weierstrass curves.
+
 use ark_ec::AffineRepr;
 use ark_serialize::{CanonicalDeserialize, Compress, Validate};
 use fluentbase_types::{
-    BN254_G1_POINT_COMPRESSED_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE,
+    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
 
 type G1 = ark_bn254::g1::G1Affine;
@@ -88,4 +91,36 @@ pub fn g2_from_compressed_bytes(bytes: &[u8; BN254_G2_POINT_COMPRESSED_SIZE]) ->
         }
         Err(_) => Err(()),
     }
+}
+
+pub fn is_zero_point(data: &[u8]) -> bool {
+    data.iter().all(|&b| b == 0)
+}
+
+pub fn be_xy_to_le_words64(
+    input: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+) -> [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] {
+    const FQ_SIZE: usize = BN254_G1_POINT_DECOMPRESSED_SIZE / 2;
+    let mut out = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
+    for i in 0..FQ_SIZE {
+        out[i] = input[FQ_SIZE - 1 - i];
+    }
+    for i in 0..FQ_SIZE {
+        out[FQ_SIZE + i] = input[BN254_G1_POINT_DECOMPRESSED_SIZE - 1 - i];
+    }
+    out
+}
+
+pub fn le_words64_to_be_xy(
+    input: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+) -> [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] {
+    const FQ_SIZE: usize = BN254_G1_POINT_DECOMPRESSED_SIZE / 2;
+    let mut out = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
+    for i in 0..FQ_SIZE {
+        out[i] = input[FQ_SIZE - 1 - i];
+    }
+    for i in 0..FQ_SIZE {
+        out[FQ_SIZE + i] = input[BN254_G1_POINT_DECOMPRESSED_SIZE - 1 - i];
+    }
+    out
 }

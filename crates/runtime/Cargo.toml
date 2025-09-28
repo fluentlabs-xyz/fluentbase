@@ -16,6 +16,7 @@ rwasm = { workspace = true }
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
+elliptic-curve = { version = "0.13", default-features = false }
 secp256k1 = { version = "=0.30", default-features = false, features = [
     "alloc",
     "recovery",
@@ -29,8 +30,8 @@ blake3 = { workspace = true, default-features = false }
 sha2 = { workspace = true, default-features = false }
 solana-poseidon = { workspace = true }
 num = "0.4.3"
-sp1-curves = { version = "5.1.0" }
-sp1-primitives = { version = "5.1.0" }
+sp1-curves = { version = "5.2.1" }
+sp1-primitives = { version = "5.2.1" }
 blstrs = { version = "0.7" }
 group = { version = "0.13", default-features = false }
 blst = { version = "0.3" }

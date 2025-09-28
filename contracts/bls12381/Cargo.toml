@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
+fluentbase-types = { workspace = true }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }

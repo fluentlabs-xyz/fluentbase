@@ -1,4 +1,6 @@
-use super::bn256_helpers::{encode_g1_point, read_g1_point, read_scalar};
+use crate::syscall_handler::weierstrass::bn256_helpers::{
+    encode_g1_point, read_g1_point, read_scalar,
+};
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use ark_bn254::{Fr, G1Affine, G1Projective};
 use ark_ec::CurveGroup;

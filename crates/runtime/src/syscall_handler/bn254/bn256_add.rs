@@ -1,4 +1,4 @@
-use super::bn256_helpers::{encode_g1_point, read_g1_point};
+use crate::syscall_handler::weierstrass::bn256_helpers::{encode_g1_point, read_g1_point};
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
@@ -7,7 +7,6 @@ use rwasm::{Store, TrapCode, TypedCaller, Value};
 
 pub struct SyscallBn256Add;
 
-/// Performs point addition on two G1 points.
 #[inline]
 fn g1_point_add(p1: G1Affine, p2: G1Affine) -> G1Affine {
     let p1_jacobian: G1Projective = p1.into();
@@ -42,7 +41,6 @@ impl SyscallBn256Add {
         p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
         q: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        // Direct implementation matching revm precompile exactly
         let p1 = read_g1_point(p).map_err(|_| ExitCode::MalformedBuiltinParams)?;
         let p2 = read_g1_point(q).map_err(|_| ExitCode::MalformedBuiltinParams)?;
         let result = g1_point_add(p1, p2);

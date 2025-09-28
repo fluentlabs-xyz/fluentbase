@@ -1,4 +1,17 @@
-use crate::{syscall_handler::*, RuntimeContext};
+use crate::{
+    syscall_handler::{
+        weierstrass::{
+            Bls12381G1MapConfig, Bls12381G2MapConfig, Bn254G1MulConfig, Bn254G2DecompressConfig,
+            Secp256r1VerifyConfig, SyscallWeierstrassAddAssign,
+            SyscallWeierstrassCompressDecompressAssign, SyscallWeierstrassDoubleAssign,
+            SyscallWeierstrassMapAssign, SyscallWeierstrassMulAssign,
+            SyscallWeierstrassPairingAssign, SyscallWeierstrassRecoverAssign,
+            SyscallWeierstrassVerifyAssign,
+        },
+        *,
+    },
+    RuntimeContext,
+};
 use fluentbase_types::{
     BytecodeOrHash, Bytes, BytesOrRef, ExitCode, NativeAPI, UnwrapExitCode, B256,
     BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
@@ -6,7 +19,10 @@ use fluentbase_types::{
     G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, GT_COMPRESSED_SIZE,
     PADDED_FP2_SIZE, PADDED_FP_SIZE, SCALAR_SIZE,
 };
-use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
+use sp1_curves::weierstrass::{
+    bls12_381::Bls12381,
+    bn254::{Bn254, Bn254BaseField},
+};
 use std::cell::RefCell;
 
 #[derive(Default)]
@@ -41,118 +57,125 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallPoseidon::fn_impl(parameters as u64, endianness as u64, data)
     }
 
+    /////// Weierstrass curves ///////
+
+    /// Secp256k1
+    ///
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
-        SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)
+        SyscallWeierstrassRecoverAssign::<Secp256k1RecoverConfig>::fn_impl(digest, sig, rec_id).map(
+            |v| {
+                let mut result = [0u8; 65];
+                let min = core::cmp::min(result.len(), v.len());
+                result[..min].copy_from_slice(&v[..min]);
+                result
+            },
+        )
     }
 
     fn curve256r1_verify(input: &[u8]) -> bool {
-        SyscallCurve256r1Verify::fn_impl(input)
-    }
-
-    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        SyscallCurve25519EdwardsDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
-    }
-
-    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519EdwardsAdd::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519EdwardsSub::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519EdwardsMul::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_edwards_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        let result = SyscallCurve25519EdwardsMultiscalarMul::fn_impl(pairs);
-        match result {
-            Ok(v) => {
-                *out = v.compress().to_bytes();
-            }
-            Err(_) => return false,
-        }
-        true
-    }
-
-    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
-        SyscallCurve25519RistrettoDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
-    }
-
-    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519RistrettoAdd::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519RistrettoSub::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519RistrettoMul::fn_impl(p, q).is_ok()
-    }
-    fn curve25519_ristretto_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        let result = SyscallCurve25519RistrettoMultiscalarMul::fn_impl(pairs);
-        match result {
-            Ok(v) => {
-                *out = v.compress().to_bytes();
-            }
-            Err(_) => return false,
-        }
-        true
+        SyscallWeierstrassVerifyAssign::<Secp256r1VerifyConfig>::fn_impl(input)
     }
 
     fn bls12_381_g1_add(p: &mut [u8; G1_UNCOMPRESSED_SIZE], q: &[u8; G1_UNCOMPRESSED_SIZE]) {
-        SyscallBls12381G1Add::fn_impl(p, q);
+        if let Ok(result) = SyscallWeierstrassAddAssign::<Bls12381G1AddConfig>::fn_impl(p, q) {
+            p.copy_from_slice(&result[..G1_UNCOMPRESSED_SIZE]);
+        }
     }
 
     fn bls12_381_g1_msm(
         pairs: &[([u8; G1_UNCOMPRESSED_SIZE], [u8; SCALAR_SIZE])],
         out: &mut [u8; G1_UNCOMPRESSED_SIZE],
     ) {
-        SyscallBls12381G1Msm::fn_impl(pairs, out)
+        if pairs.is_empty() {
+            // Return identity point if no pairs
+            out.fill(0);
+            return;
+        }
+
+        // Convert pairs to the format expected by the MSM implementation
+        let pairs_vec: Vec<(Vec<u8>, Vec<u8>)> = pairs
+            .iter()
+            .map(|(point, scalar)| (point.to_vec(), scalar.to_vec()))
+            .collect();
+
+        // Use the new MSM implementation
+        let result = SyscallWeierstrassMsm::<Bls12381G1MulConfig>::fn_impl(&pairs_vec);
+
+        // Copy result to output
+        if !result.is_empty() {
+            out.copy_from_slice(&result);
+        } else {
+            out.fill(0);
+        }
     }
 
     fn bls12_381_g2_add(p: &mut [u8; G2_UNCOMPRESSED_SIZE], q: &[u8; G2_UNCOMPRESSED_SIZE]) {
-        SyscallBls12381G2Add::fn_impl(p, q)
+        if let Ok(result) = SyscallWeierstrassAddAssign::<Bls12381G2AddConfig>::fn_impl(p, q) {
+            if !result.is_empty() {
+                p.copy_from_slice(&result[..G2_UNCOMPRESSED_SIZE]);
+            }
+        }
     }
 
     fn bls12_381_g2_msm(
         pairs: &[([u8; G2_UNCOMPRESSED_SIZE], [u8; SCALAR_SIZE])],
         out: &mut [u8; G2_UNCOMPRESSED_SIZE],
     ) {
-        SyscallBls12381G2Msm::fn_impl(pairs, out)
+        if pairs.is_empty() {
+            // Return identity point if no pairs
+            out.fill(0);
+            return;
+        }
+
+        // Convert pairs to the format expected by the MSM implementation
+        let pairs_vec: Vec<(Vec<u8>, Vec<u8>)> = pairs
+            .iter()
+            .map(|(point, scalar)| (point.to_vec(), scalar.to_vec()))
+            .collect();
+
+        // Use the new MSM implementation
+        let result = SyscallWeierstrassMsm::<Bls12381G2MulConfig>::fn_impl(&pairs_vec);
+
+        // Copy result to output
+        if !result.is_empty() {
+            out.copy_from_slice(&result);
+        } else {
+            out.fill(0);
+        }
     }
 
     fn bls12_381_pairing(
         pairs: &[([u8; G1_COMPRESSED_SIZE], [u8; G2_COMPRESSED_SIZE])],
         out: &mut [u8; GT_COMPRESSED_SIZE],
     ) {
-        SyscallBls12381Pairing::fn_impl(pairs, out)
+        let _ = SyscallWeierstrassPairingAssign::<Bls12381>::fn_impl_compressed(pairs, out);
     }
 
     fn bls12_381_map_fp_to_g1(p: &[u8; PADDED_FP_SIZE], out: &mut [u8; G1_UNCOMPRESSED_SIZE]) {
-        let mut tmp_out = [0u8; G1_UNCOMPRESSED_SIZE];
-        SyscallBls12381MapFpToG1::fn_impl(p, &mut tmp_out);
-        out.copy_from_slice(&tmp_out);
+        let result = SyscallWeierstrassMapAssign::<Bls12381G1MapConfig>::fn_impl(p.as_slice());
+        out.copy_from_slice(&result[..G1_UNCOMPRESSED_SIZE]);
     }
 
     fn bls12_381_map_fp2_to_g2(p: &[u8; PADDED_FP2_SIZE], out: &mut [u8; G2_UNCOMPRESSED_SIZE]) {
-        SyscallBls12381MapFp2ToG2::fn_impl(p, out)
+        let result = SyscallWeierstrassMapAssign::<Bls12381G2MapConfig>::fn_impl(p.as_slice());
+        out.copy_from_slice(&result[..G2_UNCOMPRESSED_SIZE]);
     }
 
     fn bn254_add(
         p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
         q: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        SyscallBn256Add::fn_impl(p, q).map_err(|_| ExitCode::PrecompileError)?;
-        Ok(*p)
+        match SyscallWeierstrassAddAssign::<Bn254G1AddConfig>::fn_impl(p, q) {
+            Ok(result) => {
+                if result.is_empty() {
+                    return Err(ExitCode::MalformedBuiltinParams);
+                }
+                let min = core::cmp::min(p.len(), result.len());
+                p[..min].copy_from_slice(&result[..min]);
+                Ok(*p)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     fn bn254_double(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE]) {
@@ -184,24 +207,27 @@ impl NativeAPI for RuntimeContextWrapper {
     fn bn254_g1_compress(
         point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
-        let result =
-            SyscallWeierstrassCompressDecompressAssign::<ConfigG1Compress>::fn_impl(point)?;
+        let result = SyscallWeierstrassCompressDecompressAssign::<
+            crate::syscall_handler::weierstrass::Bn254G1CompressConfig,
+        >::fn_impl(point)?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
 
     fn bn254_g1_decompress(
         point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let result =
-            SyscallWeierstrassCompressDecompressAssign::<ConfigG1Decompress>::fn_impl(point)?;
+        let result = SyscallWeierstrassCompressDecompressAssign::<
+            crate::syscall_handler::weierstrass::Bn254G1DecompressConfig,
+        >::fn_impl(point)?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
 
     fn bn254_g2_compress(
         point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
-        let result =
-            SyscallWeierstrassCompressDecompressAssign::<ConfigG2Compress>::fn_impl(point)?;
+        let result = SyscallWeierstrassCompressDecompressAssign::<
+            crate::syscall_handler::weierstrass::Bn254G2CompressConfig,
+        >::fn_impl(point)?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
 
@@ -209,7 +235,7 @@ impl NativeAPI for RuntimeContextWrapper {
         point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
         let result =
-            SyscallWeierstrassCompressDecompressAssign::<ConfigG2Decompress>::fn_impl(point)?;
+            SyscallWeierstrassCompressDecompressAssign::<Bn254G2DecompressConfig>::fn_impl(point)?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
 
@@ -223,6 +249,66 @@ impl NativeAPI for RuntimeContextWrapper {
         let result = SyscallFp2Mul::<Bn254BaseField>::fn_impl(p, q);
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);
+    }
+
+    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+        SyscallCurve25519RistrettoDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
+    }
+
+    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallCurve25519RistrettoAdd::fn_impl(p, q).is_ok()
+    }
+
+    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallCurve25519RistrettoSub::fn_impl(p, q).is_ok()
+    }
+
+    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallCurve25519RistrettoMul::fn_impl(p, q).is_ok()
+    }
+
+    fn curve25519_ristretto_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool {
+        let result = SyscallCurve25519RistrettoMultiscalarMul::fn_impl(pairs);
+        match result {
+            Ok(v) => {
+                *out = v.compress().to_bytes();
+            }
+            Err(_) => return false,
+        }
+        true
+    }
+
+    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        SyscallCurve25519EdwardsDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
+    }
+
+    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallCurve25519EdwardsAdd::fn_impl(p, q).is_ok()
+    }
+
+    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallCurve25519EdwardsSub::fn_impl(p, q).is_ok()
+    }
+
+    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallCurve25519EdwardsMul::fn_impl(p, q).is_ok()
+    }
+
+    fn curve25519_edwards_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool {
+        let result = SyscallCurve25519EdwardsMultiscalarMul::fn_impl(pairs);
+        match result {
+            Ok(v) => {
+                *out = v.compress().to_bytes();
+            }
+            Err(_) => return false,
+        }
+        true
     }
 
     fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {

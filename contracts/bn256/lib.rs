@@ -3,6 +3,10 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
+use ark_bn254::{Fq, G1Affine};
+use ark_ec::AffineRepr;
+use ark_ff::{PrimeField, Zero};
+use ark_serialize::CanonicalDeserialize;
 use fluentbase_sdk::{
     alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BN256_ADD,
     PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
@@ -12,7 +16,10 @@ use fluentbase_types::{
     BN254_MUL_INPUT_SIZE, BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, SCALAR_SIZE,
 };
 
-/// BN256 precompile constants (EIP-196, EIP-197)
+/// =============== Constants ==================
+///  BN256 precompile constants (EIP-196, EIP-197)
+/// ============================================
+
 const ISTANBUL_ADD_GAS_COST: u64 = 150;
 const ISTANBUL_MUL_GAS_COST: u64 = 6000;
 const ISTANBUL_PAIR_BASE: u64 = 45000;
@@ -59,6 +66,70 @@ fn read_g2_point(input: &[u8]) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
     let mut g2 = [0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
     g2[..BN254_G2_POINT_DECOMPRESSED_SIZE].copy_from_slice(input);
     Ok(g2)
+}
+
+#[inline(always)]
+fn parse_fq_be(input_be: &[u8]) -> Result<Fq, ExitCode> {
+    const FQ_SIZE: usize = BN254_G1_POINT_DECOMPRESSED_SIZE / 2;
+    if input_be.len() != FQ_SIZE {
+        return Err(ExitCode::InputOutputOutOfBounds);
+    }
+    let mut input_le = [0u8; FQ_SIZE];
+    input_le.copy_from_slice(input_be);
+    input_le.reverse();
+    Fq::deserialize_uncompressed(&input_le[..]).map_err(|_| ExitCode::PrecompileError)
+}
+
+#[inline(always)]
+fn validate_g1_point_be(encoded: &[u8]) -> Result<(), ExitCode> {
+    const FQ_SIZE: usize = BN254_G1_POINT_DECOMPRESSED_SIZE / 2;
+    if encoded.len() != BN254_G1_POINT_DECOMPRESSED_SIZE {
+        return Err(ExitCode::InputOutputOutOfBounds);
+    }
+    let x = parse_fq_be(&encoded[0..FQ_SIZE])?;
+    let y = parse_fq_be(&encoded[FQ_SIZE..2 * FQ_SIZE])?;
+    if x.is_zero() && y.is_zero() {
+        return Ok(());
+    }
+    let point = G1Affine::new_unchecked(x, y);
+    if !point.is_on_curve() || !point.is_in_correct_subgroup_assuming_on_curve() {
+        return Err(ExitCode::PrecompileError);
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn be_xy_to_le_words64(
+    input: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+) -> [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] {
+    const FQ_SIZE: usize = BN254_G1_POINT_DECOMPRESSED_SIZE / 2; // 32
+    let mut out = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
+    // x BE -> x LE
+    for i in 0..FQ_SIZE {
+        out[i] = input[FQ_SIZE - 1 - i];
+    }
+    // y BE -> y LE
+    for i in 0..FQ_SIZE {
+        out[FQ_SIZE + i] = input[BN254_G1_POINT_DECOMPRESSED_SIZE - 1 - i];
+    }
+    out
+}
+
+#[inline(always)]
+fn le_words64_to_be_xy(
+    input: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+) -> [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] {
+    const FQ_SIZE: usize = BN254_G1_POINT_DECOMPRESSED_SIZE / 2; // 32
+    let mut out = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
+    // x LE -> x BE
+    for i in 0..FQ_SIZE {
+        out[i] = input[FQ_SIZE - 1 - i];
+    }
+    // y LE -> y BE
+    for i in 0..FQ_SIZE {
+        out[FQ_SIZE + i] = input[BN254_G1_POINT_DECOMPRESSED_SIZE - 1 - i];
+    }
+    out
 }
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {

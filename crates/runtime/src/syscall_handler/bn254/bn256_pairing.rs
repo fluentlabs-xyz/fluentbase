@@ -1,4 +1,4 @@
-use super::bn256_helpers::{read_g1_point, read_g2_point};
+use crate::syscall_handler::weierstrass::bn256_helpers::{read_g1_point, read_g2_point};
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use ark_bn254::{Bn254, G1Affine, G2Affine};
 use ark_ec::{pairing::Pairing, AffineRepr};

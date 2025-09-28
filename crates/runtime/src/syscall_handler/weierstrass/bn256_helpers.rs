@@ -1,4 +1,4 @@
-use ark_bn254::{Fq, Fq2, Fr, G1Affine, G2Affine};
+pub use ark_bn254::{Fq, Fq2, Fr, G1Affine, G2Affine};
 use ark_ec::AffineRepr;
 use ark_ff::{PrimeField, Zero};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

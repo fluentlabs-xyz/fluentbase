@@ -2,29 +2,24 @@ use crate::RuntimeContext;
 use fluentbase_types::{ExitCode, SysFuncIdx};
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::weierstrass::{
+    bls12_381::Bls12381,
     bn254::{Bn254, Bn254BaseField},
     secp256k1::Secp256k1,
 };
 
-mod bls12381;
-pub use bls12381::*;
-mod bn254;
-pub use bn254::*;
 mod ed25519;
 pub use ed25519::*;
 mod ristretto255;
 pub use ristretto255::*;
-mod secp256r1;
-pub use secp256r1::*;
 mod host;
 pub use host::*;
 mod hashing;
 pub use hashing::*;
-mod secp256k1;
-pub use secp256k1::*;
 mod bigint;
 pub use bigint::*;
-mod weierstrass;
+mod bn254;
+pub use bn254::*;
+pub mod weierstrass;
 pub use weierstrass::*;
 
 /// Routes a syscall identified by func_idx to the corresponding runtime instruction handler.
@@ -92,32 +87,32 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::RISTRETTO255_MUL => SyscallCurve25519RistrettoMul::fn_handler(caller, params, result),
 
         // secp256k1 (0x04)
-        SysFuncIdx::SECP256K1_RECOVER => SyscallSecp256k1Recover::fn_handler(caller, params, result),
-        SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller, params, result),
-        SysFuncIdx::SECP256K1_DECOMPRESS => SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_RECOVER => SyscallWeierstrassRecoverAssign::<Secp256k1RecoverConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1AddConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_DECOMPRESS => SyscallWeierstrassCompressDecompressAssign::<Secp256k1DecompressConfig>::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_DOUBLE => SyscallWeierstrassDoubleAssign::<Secp256k1>::fn_handler(caller, params, result),
 
         // secp256r1 (0x05)
-        SysFuncIdx::SECP256R1_VERIFY => SyscallCurve256r1Verify::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256R1_VERIFY => SyscallWeierstrassVerifyAssign::<Secp256r1VerifyConfig>::fn_handler(caller, params, result),
 
         // bls12381 (0x06)
-        SysFuncIdx::BLS12381_G1_ADD => SyscallBls12381G1Add::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_G1_MSM => SyscallBls12381G1Msm::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_G2_ADD => SyscallBls12381G2Add::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_G2_MSM => SyscallBls12381G2Msm::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_PAIRING => SyscallBls12381Pairing::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_MAP_G1 => SyscallBls12381MapFpToG1::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_MAP_G2 => SyscallBls12381MapFp2ToG2::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_G1_ADD => SyscallWeierstrassAddAssign::<Bls12381G1AddConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_G1_MSM => SyscallWeierstrassMsm::<Bls12381G1MulConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_G2_ADD => SyscallWeierstrassAddAssign::<Bls12381G2AddConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_G2_MSM => SyscallWeierstrassMsm::<Bls12381G2MulConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_PAIRING => SyscallWeierstrassPairingAssign::<Bls12381>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_MAP_G1 => SyscallWeierstrassMapAssign::<Bls12381G1MapConfig>:: fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_MAP_G2 => SyscallWeierstrassMapAssign::<Bls12381G2MapConfig>::fn_handler(caller, params, result),
 
         // bn254 (0x07)
-        SysFuncIdx::BN254_ADD => SyscallBn256Add::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_ADD => SyscallWeierstrassAddAssign::<Bn254G1AddConfig>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_MUL => SyscallBn256Mul::fn_handler(caller, params, result),
         SysFuncIdx::BN254_MULTI_PAIRING => SyscallBn256Pairing::fn_handler(caller, params, result),
         SysFuncIdx::BN254_DOUBLE => SyscallWeierstrassDoubleAssign::<Bn254>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_G1_COMPRESS => SyscallWeierstrassCompressDecompressAssign::<ConfigG1Compress>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_G1_DECOMPRESS => SyscallWeierstrassCompressDecompressAssign::<ConfigG1Decompress>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_G2_COMPRESS => SyscallWeierstrassCompressDecompressAssign::<ConfigG2Compress>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_G2_DECOMPRESS => SyscallWeierstrassCompressDecompressAssign::<ConfigG2Decompress>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_G1_COMPRESS => SyscallWeierstrassCompressDecompressAssign::<Bn254G1CompressConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_G1_DECOMPRESS => SyscallWeierstrassCompressDecompressAssign::<Bn254G1DecompressConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_G2_COMPRESS => SyscallWeierstrassCompressDecompressAssign::<Bn254G2CompressConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_G2_DECOMPRESS => SyscallWeierstrassCompressDecompressAssign::<Bn254G2DecompressConfig>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP_ADD => SyscallFpOp::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP_SUB => SyscallFpOp::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP_MUL => SyscallFpOp::<Bn254BaseField, FieldMul>::fn_handler(caller, params, result),
