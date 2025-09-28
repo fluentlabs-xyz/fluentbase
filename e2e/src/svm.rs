@@ -7,8 +7,8 @@ mod tests {
         EdwardsPoint, RistrettoPoint,
     };
     use fluentbase_runtime::syscall_handler::{
-        ConfigG1Compress, ConfigG1Decompress, ConfigG2Compress, ConfigG2Decompress,
-        SyscallWeierstrassCompressDecompressAssign,
+        Bn254G1CompressConfig, Bn254G1DecompressConfig, Bn254G2CompressConfig,
+        Bn254G2DecompressConfig, SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{
         address, Address, ContextReader, ContractContextV1, SharedAPI, PRECOMPILE_SVM_RUNTIME, U256,
@@ -2352,7 +2352,7 @@ mod tests {
 
             test_commands.push(test_case.into());
             let syscall_decompressed =
-                SyscallWeierstrassCompressDecompressAssign::<ConfigG1Decompress>::fn_impl(
+                SyscallWeierstrassCompressDecompressAssign::<Bn254G1DecompressConfig>::fn_impl(
                     &convert_endianness_fixed::<
                         BN254_G1_POINT_COMPRESSED_SIZE,
                         BN254_G1_POINT_COMPRESSED_SIZE,
@@ -2373,7 +2373,7 @@ mod tests {
 
             test_commands.push(test_case.into());
             let syscall_compressed =
-                SyscallWeierstrassCompressDecompressAssign::<ConfigG1Compress>::fn_impl(
+                SyscallWeierstrassCompressDecompressAssign::<Bn254G1CompressConfig>::fn_impl(
                     &convert_endianness_fixed::<
                         BN254_G1_POINT_COMPRESSED_SIZE,
                         BN254_G1_POINT_DECOMPRESSED_SIZE,
@@ -2465,7 +2465,7 @@ mod tests {
 
             test_commands.push(test_case.into());
             let syscall_decompressed =
-                SyscallWeierstrassCompressDecompressAssign::<ConfigG2Decompress>::fn_impl(
+                SyscallWeierstrassCompressDecompressAssign::<Bn254G2DecompressConfig>::fn_impl(
                     &convert_endianness_fixed::<
                         BN254_G2_POINT_COMPRESSED_SIZE,
                         BN254_G2_POINT_COMPRESSED_SIZE,
@@ -2486,7 +2486,7 @@ mod tests {
 
             test_commands.push(test_case.into());
             let syscall_compressed =
-                SyscallWeierstrassCompressDecompressAssign::<ConfigG2Compress>::fn_impl(
+                SyscallWeierstrassCompressDecompressAssign::<Bn254G2CompressConfig>::fn_impl(
                     &convert_endianness_fixed::<
                         BN254_G2_POINT_COMPRESSED_SIZE,
                         BN254_G2_POINT_DECOMPRESSED_SIZE,
