@@ -1,10 +1,11 @@
 //! Implementation of the [`ExecuteEvm`] trait for the [`RwasmEvm`].
-use crate::api::RwasmFrame;
-use crate::{evm::RwasmEvm, handler::RwasmHandler, RwasmHaltReason, RwasmSpecId};
-use revm::context::result::InvalidTransaction;
-use revm::context::Transaction;
+use crate::{api::RwasmFrame, evm::RwasmEvm, handler::RwasmHandler, RwasmHaltReason, RwasmSpecId};
+use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use revm::{
-    context::{result::ExecResultAndState, ContextSetters},
+    context::{
+        result::{ExecResultAndState, InvalidTransaction},
+        ContextSetters, Transaction,
+    },
     context_interface::{
         result::{EVMError, ExecutionResult},
         Cfg, ContextTr, Database, JournalTr,
@@ -62,6 +63,7 @@ where
     }
 
     fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
+        default_runtime_executor().reset_call_id_counter();
         self.0.ctx.set_tx(tx);
         let mut h = RwasmHandler::<_, _, RwasmFrame>::default();
         h.run(self)
@@ -74,6 +76,7 @@ where
     fn replay(
         &mut self,
     ) -> Result<ExecResultAndState<Self::ExecutionResult, Self::State>, Self::Error> {
+        default_runtime_executor().reset_call_id_counter();
         let mut h = RwasmHandler::<_, _, RwasmFrame>::default();
         h.run(self).map(|result| {
             let state = self.finalize();
@@ -107,6 +110,7 @@ where
     }
 
     fn inspect_one_tx(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
+        default_runtime_executor().reset_call_id_counter();
         self.0.ctx.set_tx(tx);
         let mut h = RwasmHandler::<_, _, RwasmFrame>::default();
         h.inspect_run(self)
