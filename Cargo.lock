@@ -1887,7 +1887,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.1",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2056,7 +2056,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.1",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2168,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-build"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -2192,7 +2192,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-cli"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "anyhow",
  "clap",
@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -2222,7 +2222,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "bytes",
  "convert_case 0.6.0",
@@ -2237,7 +2237,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-contracts"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "alloy-genesis",
  "cargo_metadata",
@@ -2292,7 +2292,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -2305,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-genesis"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "alloy-genesis",
  "fluentbase-contracts",
@@ -2317,7 +2317,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-revm"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -2335,7 +2335,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "anyhow",
  "ark-bn254",
@@ -2371,7 +2371,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "dlmalloc",
  "fluentbase-codec",
@@ -2383,7 +2383,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -2398,7 +2398,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -2423,7 +2423,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "array-bytes",
  "arrayref",
@@ -2484,7 +2484,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm-common"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "fluentbase-types",
  "serde",
@@ -2493,7 +2493,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm-shared"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "bincode 1.3.3",
  "hex",
@@ -2502,7 +2502,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-testing"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "bytes",
  "fluentbase-codec",
@@ -2517,7 +2517,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -2536,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-universal-token"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "bincode 2.0.1",
  "fluentbase-sdk",
@@ -5280,7 +5280,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.1",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5337,7 +5337,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#bf9f1bf5c13bcd157aa99f3a6bde968649712c52"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#d808ed0eca4e099cbb8ef5e9c4a39ada7dc4c920"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -6616,7 +6616,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.1",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7709,7 +7709,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.1",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

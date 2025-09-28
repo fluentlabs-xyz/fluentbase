@@ -1709,7 +1709,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.1",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1827,7 +1827,7 @@ checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1839,7 +1839,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -2019,7 +2019,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -2032,7 +2032,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-revm"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "fluentbase-evm",
  "fluentbase-runtime",
@@ -2046,7 +2046,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2075,7 +2075,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "dlmalloc",
  "fluentbase-codec",
@@ -2087,7 +2087,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -2100,7 +2100,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -2122,7 +2122,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "arrayref",
  "bincode 2.0.1",
@@ -2134,7 +2134,7 @@ dependencies = [
  "fluentbase-sdk",
  "fluentbase-svm-common",
  "fluentbase-types",
- "fluentbase-universal-token 0.4.8-dev",
+ "fluentbase-universal-token 0.4.9-dev",
  "hashbrown 0.15.5",
  "itertools 0.14.0",
  "lazy_static",
@@ -2177,7 +2177,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm-common"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "fluentbase-types",
  "serde",
@@ -2186,7 +2186,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-testing"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "bytes",
  "fluentbase-codec",
@@ -2201,7 +2201,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -2224,7 +2224,7 @@ dependencies = [
  "fluentbase-svm",
  "fluentbase-svm-common",
  "fluentbase-testing",
- "fluentbase-universal-token 0.4.8-dev",
+ "fluentbase-universal-token 0.4.9-dev",
  "solana-bincode",
  "solana-program-error",
  "solana-program-option",
@@ -2232,7 +2232,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-universal-token"
-version = "0.4.8-dev"
+version = "0.4.9-dev"
 dependencies = [
  "bincode 2.0.1",
  "fluentbase-sdk",
@@ -4255,7 +4255,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.1",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4279,7 +4279,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#bf9f1bf5c13bcd157aa99f3a6bde968649712c52"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#d808ed0eca4e099cbb8ef5e9c4a39ada7dc4c920"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -4463,9 +4463,9 @@ dependencies = [
 
 [[package]]
 name = "serde"
-version = "1.0.227"
+version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80ece43fc6fbed4eb5392ab50c07334d3e577cbf40997ee896fe7af40bba4245"
+checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
@@ -4492,18 +4492,18 @@ dependencies = [
 
 [[package]]
 name = "serde_core"
-version = "1.0.227"
+version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a576275b607a2c86ea29e410193df32bc680303c82f31e275bbfcafe8b33be5"
+checksum = "41d385c7d4ca58e59fc732af25c3983b67ac852c1a25000afe1175de458b67ad"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.227"
+version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51e694923b8824cf0e9b382adf0f60d4e05f348f357b38833a3fa5ed7c2ede04"
+checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5411,7 +5411,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.1",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6279,7 +6279,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.1",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6401,15 +6401,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
 dependencies = [
  "windows-targets 0.53.4",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.61.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f109e41dd4a3c848907eb83d5a42ea98b3769495597450cf6d153507b166f0f"
-dependencies = [
- "windows-link",
 ]
 
 [[package]]
