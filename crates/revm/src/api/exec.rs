@@ -138,6 +138,7 @@ where
         system_contract_address: Address,
         data: Bytes,
     ) -> Result<Self::ExecutionResult, Self::Error> {
+        default_runtime_executor().reset_call_id_counter();
         self.0.ctx.set_tx(CTX::Tx::new_system_tx_with_caller(
             caller,
             system_contract_address,
