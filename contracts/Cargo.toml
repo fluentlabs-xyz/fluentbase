@@ -19,10 +19,12 @@ fluentbase-sdk = { path = "../crates/sdk", default-features = false }
 fluentbase-types = { path = "../crates/types", default-features = false }
 revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
 #revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
-fluentbase-erc20 = { path = "../crates/erc20", default-features = false }
+fluentbase-universal-token = { path = "../crates/universal-token", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
 fluentbase-svm = { path = "../crates/svm", default-features = false }
+fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 fluentbase-testing = { path = "../crates/testing" }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }

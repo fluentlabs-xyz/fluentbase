@@ -1,12 +1,15 @@
 //! Contains the `[RwasmEvm]` type and its implementation of the execution EVM traits.
 
 use crate::{
-    api::RwasmFrame, executor::run_rwasm_loop, precompiles::RwasmPrecompiles,
-    types::SystemInterruptionOutcome, upgrade::upgrade_runtime_hook,
+    api::RwasmFrame,
+    executor::run_rwasm_loop,
+    precompiles::RwasmPrecompiles,
+    types::SystemInterruptionOutcome,
+    upgrade::{upgrade_runtime_hook_v1, upgrade_runtime_hook_v2},
 };
 use fluentbase_sdk::{
     resolve_precompiled_runtime_from_input, try_resolve_precompile_account_from_input, Address,
-    Bytes, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX,
+    Bytes, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX_V1, UPDATE_GENESIS_PREFIX_V2,
 };
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
@@ -135,7 +138,7 @@ where
             return Ok(ItemOrResult::Result(output));
         }
 
-        // if it is new frame, initialize the interpreter.
+        // if it is a new frame, initialize the interpreter.
         let (ctx, inspector, frame) = self.ctx_inspector_frame();
         let interp = &mut frame.interpreter;
         inspector.initialize_interp(interp, ctx);
@@ -200,7 +203,6 @@ where
         ItemOrResult<&mut Self::Frame, <Self::Frame as FrameTr>::FrameResult>,
         ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
     > {
-        let _span = tracing::info_span!("revm.frame_init.init_with_context").entered();
         let is_first_init = self.0.frame_stack.index().is_none();
         let new_frame = if is_first_init {
             self.0.frame_stack.start_init()
@@ -225,10 +227,13 @@ where
                         let _span = tracing::info_span!("revm.frame_init.call_hook").entered();
                         // a special hook for runtime upgrade
                         // that is used only for testnet to upgrade genesis without forks
-                        if inputs.caller == UPDATE_GENESIS_AUTH
-                            && inputs.input.bytes(ctx).starts_with(&UPDATE_GENESIS_PREFIX)
-                        {
-                            return upgrade_runtime_hook(ctx, inputs);
+                        if inputs.caller == UPDATE_GENESIS_AUTH {
+                            let input = inputs.input.bytes(ctx);
+                            if input.starts_with(&UPDATE_GENESIS_PREFIX_V1) {
+                                return upgrade_runtime_hook_v1(ctx, inputs);
+                            } else if input.starts_with(&UPDATE_GENESIS_PREFIX_V2) {
+                                return upgrade_runtime_hook_v2(ctx, inputs);
+                            }
                         }
                         // TODO(dmitry123): "do we want to disable it for mainnet?"
                         if let Some(precompiled_address) = try_resolve_precompile_account_from_input(

@@ -9,10 +9,8 @@ use fluentbase_evm::EthereumMetadata;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address, is_system_precompile, keccak256,
-    syscall::*,
-    Address, Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY,
-    PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
+    calc_create4_address, is_system_precompile, keccak256, Address, Bytes, ExitCode, Log, LogData,
+    B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -20,7 +18,6 @@ use revm::{
     interpreter::{
         gas,
         gas::{sload_cost, sstore_cost, sstore_refund, warm_cold_cost},
-        interpreter::ExtBytecode,
         interpreter_types::InputsTr,
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, Gas, Host,
         MAX_INITCODE_SIZE,
@@ -34,50 +31,9 @@ use revm::{
 use std::{boxed::Box, vec::Vec};
 
 #[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn inspect_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
-    frame: &mut RwasmFrame,
-    ctx: &mut CTX,
-    inspector: &mut INSP,
-    inputs: SystemInterruptionInputs,
-) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
-    frame.interpreter.gas = Gas::new(inputs.gas.remaining());
-    let prev_bytecode = frame.interpreter.bytecode.clone();
-    let prev_hash = frame.interpreter.bytecode.hash().clone();
-    let evm_opcode = match &inputs.syscall_params.code_hash {
-        &SYSCALL_ID_CALL => opcode::CALL,
-        &SYSCALL_ID_STATIC_CALL => opcode::STATICCALL,
-        &SYSCALL_ID_CALL_CODE => opcode::CALLCODE,
-        &SYSCALL_ID_DELEGATE_CALL => opcode::DELEGATECALL,
-        &SYSCALL_ID_CREATE => opcode::CREATE,
-        &SYSCALL_ID_CREATE2 => opcode::CREATE2,
-        _ => return execute_rwasm_interruption::<CTX, INSP>(frame, ctx, inputs),
-    };
-    let bytecode = Bytecode::Rwasm([evm_opcode].into());
-    frame.interpreter.bytecode = ExtBytecode::new(bytecode);
-    inspector.step(&mut frame.interpreter, ctx);
-    let result = execute_rwasm_interruption::<CTX, INSP>(frame, ctx, inputs)?;
-    if let Some(prev_hash) = prev_hash {
-        frame.interpreter.bytecode = ExtBytecode::new_with_hash(prev_bytecode, prev_hash);
-    } else {
-        frame.interpreter.bytecode = ExtBytecode::new(prev_bytecode);
-    }
-    let gas = if let Some(interrupted_outcome) = frame.interrupted_outcome.as_ref() {
-        interrupted_outcome.remaining_gas
-    } else {
-        match &result {
-            NextAction::Return(result) => result.gas,
-            _ => unreachable!("frame can't return here"),
-        }
-    };
-    _ = frame.interpreter.gas.record_cost(gas.spent());
-    frame.interpreter.gas.record_refund(gas.refunded());
-    inspector.step_end(&mut frame.interpreter, ctx);
-    Ok(result)
-}
-
-#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
+    mut inspector: Option<&mut INSP>,
     ctx: &mut CTX,
     inputs: SystemInterruptionInputs,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
@@ -134,17 +90,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     }
     macro_rules! inspect {
         ($evm_opcode:expr, $inputs:expr, $outputs:expr) => {{
-            // if let Some(inspector) = inspector.as_mut() {
-            //     inspect_syscall(
-            //         frame,
-            //         ctx,
-            //         inspector,
-            //         $evm_opcode,
-            //         inputs.gas.remaining(),
-            //         local_gas,
-            //         $inputs,
-            //     );
-            // }
+            if let Some(inspector) = inspector.as_mut() {
+                crate::inspector::inspect_syscall(frame, ctx, inspector, $evm_opcode, $inputs);
+            }
         }};
     }
 
@@ -160,7 +108,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // execute sload
             let value = ctx.journal_mut().sload(current_target_address, slot)?;
             charge_gas!(sload_cost(spec_id, value.is_cold));
-            // inspect!(opcode::SLOAD, [slot], [value.data]);
+            inspect!(opcode::SLOAD, [slot], [value.data]);
             let output: [u8; 32] = value.to_le_bytes();
             return_result!(output, Ok)
         }
@@ -185,7 +133,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let gas_cost = sstore_cost(spec_id.clone(), &value.data, value.is_cold);
             charge_gas!(gas_cost);
             local_gas.record_refund(sstore_refund(spec_id, &value.data));
-            // inspect!(opcode::SSTORE, [slot, new_value], []);
+            inspect!(opcode::SSTORE, [slot, new_value], []);
             return_result!(Ok)
         }
 
@@ -465,7 +413,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 CreateScheme::Create => {
                     inspect!(opcode::CREATE, [value, U256::ZERO, U256::ZERO], []);
                 }
-                CreateScheme::Create2 { .. } => {
+                CreateScheme::Create2 { salt } => {
                     inspect!(opcode::CREATE2, [value, U256::ZERO, U256::ZERO, salt], []);
                 }
                 CreateScheme::Custom { .. } => {}
@@ -798,6 +746,27 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             output[5] = account.is_cold as u8;
             output[6] = account.is_empty() as u8;
             return_result!(output, Ok)
+        }
+
+        SYSCALL_ID_METADATA_ACCOUNT_OWNER => {
+            assert_return!(
+                inputs.syscall_params.input.len() >= 20
+                    && inputs.syscall_params.state == STATE_MAIN,
+                MalformedBuiltinParams
+            );
+            // syscall is allowed only for accounts that are owned by somebody
+            let Some(_account_owner_address) = account_owner_address else {
+                return_result!(MalformedBuiltinParams);
+            };
+            let address = Address::from_slice(&inputs.syscall_params.input[..Address::len_bytes()]);
+            let account = ctx.journal_mut().load_account_code(address)?;
+            match account.info.code.as_ref() {
+                Some(Bytecode::OwnableAccount(ownable_account_bytecode)) => {
+                    return_result!(ownable_account_bytecode.owner_address.0, Ok)
+                }
+                _ => {}
+            };
+            return_result!(Address::ZERO.0, Ok)
         }
         SYSCALL_ID_METADATA_CREATE => {
             assert_return!(

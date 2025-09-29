@@ -9,7 +9,7 @@ path = "src/solana_program.rs"
 
 [dependencies]
 fluentbase-examples-svm-bindings = { path = "../bindings" }
-fluentbase-svm-shared = { path = "../../../../crates/svm-shared" }
+fluentbase-svm-shared = { path = "../../../crates/svm-shared" }
 
 solana-pubkey = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 solana-account-info = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }

@@ -1,7 +1,7 @@
 use crate::{
     syscall_handler::syscall_process_exit_code,
     syscall_handler::weierstrass::{
-        config::{Config, Curve, CurveConfig, Mode},
+        config::{Curve, CurveConfig, Mode},
         weierstrass_helpers::{
             g1_from_compressed_bytes, g1_from_decompressed_bytes, g2_from_compressed_bytes,
             g2_from_decompressed_bytes,
@@ -17,7 +17,7 @@ use fluentbase_types::{
     G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
 };
 use group::prime::PrimeCurveAffine;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use sp1_curves::CurveType;
 use std::marker::PhantomData;
 
@@ -30,11 +30,6 @@ pub struct SyscallWeierstrassCompressDecompressAssign<C: CurveConfig> {
     _phantom: PhantomData<C>,
 }
 
-/// Legacy handler for backward compatibility
-pub struct LegacySyscallWeierstrassCompressDecompressAssign<E: Config> {
-    _phantom: PhantomData<E>,
-}
-
 impl<C: CurveConfig> SyscallWeierstrassCompressDecompressAssign<C> {
     pub const fn new() -> Self {
         Self {
@@ -43,7 +38,7 @@ impl<C: CurveConfig> SyscallWeierstrassCompressDecompressAssign<C> {
     }
 
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {
@@ -352,176 +347,3 @@ impl<C: CurveConfig> SyscallWeierstrassCompressDecompressAssign<C> {
         Ok(uncompressed.as_bytes().to_vec())
     }
 }
-
-// Legacy implementation for backward compatibility
-impl<E: Config> LegacySyscallWeierstrassCompressDecompressAssign<E> {
-    pub const fn new() -> Self {
-        Self {
-            _phantom: PhantomData,
-        }
-    }
-
-    pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
-        params: &[Value],
-        result: &mut [Value],
-    ) -> Result<(), TrapCode> {
-        let (point_ptr, out_ptr) = (
-            params[0].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
-            params[1].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
-        );
-
-        let point_len = E::input_point_len();
-        let mut point = vec![0u8; point_len];
-        caller.memory_read(point_ptr as usize, &mut point)?;
-
-        let result_point = Self::fn_impl(&point);
-        match &result_point {
-            Ok(v) => {
-                caller.memory_write(out_ptr as usize, v)?;
-            }
-            Err(error) => {
-                syscall_process_exit_code(caller, *error);
-            }
-        }
-        result[0] = Value::I32(result_point.is_err() as i32);
-
-        Ok(())
-    }
-
-    pub fn fn_impl(point: &[u8]) -> Result<Vec<u8>, ExitCode> {
-        let result = match E::MODE {
-            Mode::Compress => match E::CURVE {
-                Curve::G1 => Self::g1_compress_fn_impl(
-                    &point
-                        .try_into()
-                        .map_err(|_| ExitCode::MalformedBuiltinParams)?,
-                ),
-                Curve::G2 => Self::g2_compress_fn_impl(
-                    &point
-                        .try_into()
-                        .map_err(|_| ExitCode::MalformedBuiltinParams)?,
-                ),
-            },
-            Mode::Decompress => match E::CURVE {
-                Curve::G1 => Self::g1_decompress_fn_impl(
-                    &point
-                        .try_into()
-                        .map_err(|_| ExitCode::MalformedBuiltinParams)?,
-                ),
-                Curve::G2 => Self::g2_decompress_fn_impl(
-                    &point
-                        .try_into()
-                        .map_err(|_| ExitCode::MalformedBuiltinParams)?,
-                ),
-            },
-        };
-        Ok(result)
-    }
-
-    fn g1_decompress_fn_impl(
-        point_compressed_bytes: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
-    ) -> Vec<u8> {
-        let point = match g1_from_compressed_bytes(point_compressed_bytes) {
-            Ok(point) => point,
-            Err(_) => return vec![0u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-        };
-
-        let mut point_uncompressed_bytes = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
-
-        if point
-            .x
-            .serialize_with_mode(
-                &mut point_uncompressed_bytes[..BN254_G1_POINT_COMPRESSED_SIZE],
-                Compress::No,
-            )
-            .is_err()
-        {
-            return vec![0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
-        }
-
-        if point
-            .y
-            .serialize_with_mode(
-                &mut point_uncompressed_bytes[BN254_G1_POINT_COMPRESSED_SIZE..],
-                Compress::No,
-            )
-            .is_err()
-        {
-            return vec![0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
-        }
-
-        point_uncompressed_bytes.to_vec()
-    }
-
-    fn g1_compress_fn_impl(
-        point_decompressed_bytes: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-    ) -> Vec<u8> {
-        let point = match g1_from_decompressed_bytes(point_decompressed_bytes) {
-            Ok(point) => point,
-            Err(_) => return vec![0u8; BN254_G1_POINT_COMPRESSED_SIZE],
-        };
-
-        let mut point_compressed_bytes = [0u8; BN254_G1_POINT_COMPRESSED_SIZE];
-
-        if G1::serialize_compressed(&point, point_compressed_bytes.as_mut_slice()).is_err() {
-            return vec![0u8; BN254_G1_POINT_COMPRESSED_SIZE];
-        }
-
-        point_compressed_bytes.to_vec()
-    }
-
-    fn g2_decompress_fn_impl(
-        point_compressed_bytes: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
-    ) -> Vec<u8> {
-        let point = match g2_from_compressed_bytes(point_compressed_bytes) {
-            Ok(point) => point,
-            Err(_) => return vec![0u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-        };
-
-        let mut point_uncompressed_bytes = [0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
-
-        if point
-            .x
-            .serialize_with_mode(
-                &mut point_uncompressed_bytes[..BN254_G2_POINT_COMPRESSED_SIZE],
-                Compress::No,
-            )
-            .is_err()
-        {
-            return vec![0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
-        }
-
-        if point
-            .y
-            .serialize_with_mode(
-                &mut point_uncompressed_bytes[BN254_G2_POINT_COMPRESSED_SIZE..],
-                Compress::No,
-            )
-            .is_err()
-        {
-            return vec![0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
-        }
-
-        point_uncompressed_bytes.to_vec()
-    }
-
-    fn g2_compress_fn_impl(
-        point_decompressed_bytes: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-    ) -> Vec<u8> {
-        let point = match g2_from_decompressed_bytes(point_decompressed_bytes) {
-            Ok(point) => point,
-            Err(_) => return vec![0u8; BN254_G2_POINT_COMPRESSED_SIZE],
-        };
-
-        let mut point_compressed_bytes = [0u8; BN254_G2_POINT_COMPRESSED_SIZE];
-
-        if G2::serialize_compressed(&point, point_compressed_bytes.as_mut_slice()).is_err() {
-            return vec![0u8; BN254_G2_POINT_COMPRESSED_SIZE];
-        }
-
-        point_compressed_bytes.to_vec()
-    }
-}
-
-// Type aliases for backward compatibility - these are defined by the macro above

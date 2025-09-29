@@ -1,0 +1,30 @@
+[package]
+name = "fluentbase-universal-token"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+fluentbase-sdk = { workspace = true, features = [
+    "fast-panic",
+    #    "debug-print"
+] }
+fluentbase-svm-common = { workspace = true, default-features = false }
+
+solana-pubkey = { workspace = true, default-features = false }
+
+bincode = { workspace = true, default-features = false, features = ["serde"] }
+
+[dev-dependencies]
+
+[features]
+default = [
+    "std",
+]
+std = []
+debug-print = []

@@ -9,7 +9,6 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use proc_macro_error::{abort, abort_call_site, emit_error};
 use quote::{format_ident, quote, ToTokens};
 use syn::{spanned::Spanned, visit, Error, Ident, ImplItemFn, ItemImpl, Result};
-
 /// Attributes for the router configuration.
 #[derive(Debug, FromMeta, Default, Clone)]
 pub struct RouterAttributes {
@@ -198,7 +197,15 @@ impl Router {
     /// Generates the complete router implementation with all artifacts.
     pub fn generate(&self) -> Result<TokenStream2> {
         // Start with the implementation block
-        let impl_block = self.impl_block();
+        let mut clean_impl_block = self.impl_block.clone();
+
+        for item in &mut clean_impl_block.items {
+            if let syn::ImplItem::Fn(method) = item {
+                method
+                    .attrs
+                    .retain(|attr| !attr.path().is_ident("function_id"));
+            }
+        }
 
         // Generate codec implementations
         let method_codecs = self.generate_codec_implementations()?;
@@ -215,9 +222,7 @@ impl Router {
 
         // Build the base output
         let output = quote! {
-            #[allow(unused_imports)]
-            use ::fluentbase_sdk::derive::function_id;
-            #impl_block
+            #clean_impl_block
 
             #(#method_codecs)*
 
@@ -286,61 +291,13 @@ impl Router {
 
         let target_type = &self.impl_block.self_ty;
         let generic_params = &self.impl_block.generics;
-
-        let fn_name = format_ident!("constructor");
-        let params = constructor.parsed_signature().parameters();
-        let param_count = params.len();
-
-        let call_struct = format_ident!("ConstructorCall");
-
-        let param_handling = match param_count {
-            0 => quote! {},
-            1 => quote! {
-                let param0 = match #call_struct::decode(&&call_data[..]) {
-                    Ok(decoded) => decoded.0.0,
-                    Err(err) => {
-                        panic!("Failed to decode constructor parameters: {:?}", err);
-                    }
-                };
-            },
-            _ => {
-                let param_names = (0..param_count)
-                    .map(|i| format_ident!("param{}", i))
-                    .collect::<Vec<_>>();
-                let param_indices = (0..param_count).map(syn::Index::from).collect::<Vec<_>>();
-
-                quote! {
-                    let (#(#param_names),*) = match #call_struct::decode(&&call_data[..]) {
-                        Ok(decoded) => (#(decoded.0.#param_indices),*),
-                        Err(err) => {
-                            panic!("Failed to decode constructor parameters: {:?}", err);
-                        }
-                    };
-                }
-            }
-        };
-
-        // Generate function call
-        let fn_call = match param_count {
-            0 => quote! { self.#fn_name() },
-            1 => quote! { self.#fn_name(param0) },
-            _ => {
-                let param_names = (0..param_count)
-                    .map(|i| format_ident!("param{}", i))
-                    .collect::<Vec<_>>();
-                quote! { self.#fn_name(#(#param_names),*) }
-            }
-        };
+        
+        let deploy_body = constructor.generate_deploy_body();
 
         Ok(quote! {
             impl #generic_params #target_type {
                 pub fn deploy(&mut self) {
-                    let input_length = self.sdk.input_size();
-                    let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
-                    self.sdk.read(&mut call_data, 0);
-
-                    #param_handling
-                    #fn_call;
+                    #deploy_body
                 }
             }
         })

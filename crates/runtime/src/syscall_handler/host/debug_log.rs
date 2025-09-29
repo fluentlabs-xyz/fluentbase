@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use core::cell::Cell;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallDebugLog;
 
@@ -10,7 +10,7 @@ thread_local! {
 
 impl SyscallDebugLog {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
 use fluentbase_types::B256;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallBlake3;
 
 impl SyscallBlake3 {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

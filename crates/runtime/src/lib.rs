@@ -5,15 +5,17 @@ extern crate core;
 mod context;
 #[cfg(feature = "std")]
 mod context_wrapper;
-mod factory;
+mod executor;
+#[cfg(feature = "global-executor")]
+mod global_executor;
 #[cfg(all(feature = "wasmtime", feature = "inter-process-lock"))]
 mod inter_process_lock;
+mod module_factory;
 mod runtime;
 pub mod syscall_handler;
-#[cfg(test)]
-mod tests;
+mod utils;
 
 pub use context::*;
 #[cfg(feature = "std")]
 pub use context_wrapper::*;
-pub use runtime::*;
+pub use executor::{default_runtime_executor, RuntimeExecutor};

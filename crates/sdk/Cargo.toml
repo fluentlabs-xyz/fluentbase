@@ -16,6 +16,7 @@ fluentbase-types = { workspace = true }
 fluentbase-sdk-derive = { workspace = true }
 hashbrown = { workspace = true }
 revm-bytecode = { workspace = true }
+dlmalloc = "0.2.11"
 
 [dev-dependencies]
 

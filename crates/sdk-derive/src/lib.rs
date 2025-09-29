@@ -1,10 +1,7 @@
-use crate::contract::impl_derive_contract;
 use fluentbase_sdk_derive_core::{client, router, storage_legacy};
 use proc_macro::TokenStream;
 use proc_macro_error::proc_macro_error;
 use quote::{quote, ToTokens};
-
-mod contract;
 mod utils;
 use fluentbase_sdk_derive_core::storage::process_storage_layout;
 use syn::parse_macro_input;
@@ -397,31 +394,74 @@ pub fn derive_evm_error(token: TokenStream) -> TokenStream {
     })
 }
 
-/// Derives the Contract implementation for a struct.
+fn derive_storage_layout(input: TokenStream) -> TokenStream {
+    let input = syn::parse(input).unwrap();
+    match process_storage_layout(input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Derives storage layout for nested structures.
 ///
-/// This macro implements basic contract functionality for a struct,
-/// allowing it to be used with router and other SDK features.
+/// Use for composite storage types within contracts.
+/// For main contracts, use `#[derive(Contract)]` instead.
 ///
 /// # Example
+/// ```rust,ignore
+/// #[derive(Storage)]
+/// struct Config {
+///     owner: StoragePrimitive<Address>,
+///     version: StoragePrimitive<u32>,
+/// }
+/// ```
+#[proc_macro_derive(Storage)]
+pub fn derive_storage(input: TokenStream) -> TokenStream {
+    derive_storage_layout(input)
+}
+
+/// Derives contract implementation with storage support.
 ///
+/// Generates initialization and storage accessor methods for contract structs.
+/// For nested storage structures, use `#[derive(Storage)]` instead.
+///
+/// # Example
 /// ```rust,ignore
 /// #[derive(Contract)]
-/// pub struct MyContract<SDK> {
+/// pub struct MyToken<SDK> {
 ///     sdk: SDK,
+///     total_supply: StorageU256,
+///     balances: StorageMap<Address, U256>,
 /// }
 /// ```
 #[proc_macro_derive(Contract)]
-pub fn contract_macro_derive(input: TokenStream) -> TokenStream {
-    let ast = syn::parse(input).unwrap();
-    impl_derive_contract(&ast)
+pub fn derive_contract(input: TokenStream) -> TokenStream {
+    derive_storage_layout(input)
 }
 
-#[proc_macro_derive(Storage)]
-pub fn derive_storage_layout(input: TokenStream) -> TokenStream {
-    let input = syn::parse(input).unwrap();
-
-    match process_storage_layout(input) {
-        Ok(tokens) => tokens.into(),
+/// Defines contract initialization logic.
+///
+/// Generates a `deploy()` entry point that handles parameter decoding
+/// during contract deployment. Use when implementing traits or when
+/// you need initialization separate from runtime methods.
+///
+/// # Example
+/// ```rust,ignore
+/// #[constructor(mode = "solidity")]
+/// impl<SDK: SharedAPI> MyContract<SDK> {
+///     pub fn constructor(&mut self, owner: Address, supply: U256) {
+///         // Initialization logic
+///     }
+/// }
+/// ```
+///
+/// # Attributes
+/// - `mode`: `"solidity"` (EVM) or `"fluent"` (optimized)
+#[proc_macro_attribute]
+#[proc_macro_error]
+pub fn constructor(attr: TokenStream, input: TokenStream) -> TokenStream {
+    match fluentbase_sdk_derive_core::constructor::process_constructor(attr.into(), input.into()) {
+        Ok(constructor) => constructor.to_token_stream().into(),
         Err(err) => err.to_compile_error().into(),
     }
 }

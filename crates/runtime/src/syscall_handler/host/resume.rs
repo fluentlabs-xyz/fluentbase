@@ -1,9 +1,12 @@
-use crate::{Runtime, RuntimeContext};
+use crate::{
+    executor::{default_runtime_executor, RuntimeExecutor},
+    RuntimeContext,
+};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     ExitCode,
 };
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 /// Syscall entry points for resuming a previously interrupted runtime.
 pub struct SyscallResume;
@@ -11,7 +14,7 @@ pub struct SyscallResume;
 impl SyscallResume {
     /// Handles the resume syscall. Copies return data, applies fuel, resumes the target, and writes back the exit code.
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {
@@ -66,34 +69,21 @@ impl SyscallResume {
         if ctx.call_depth > 0 {
             return (0, 0, ExitCode::RootCallOnly.into_i32());
         }
-
-        let mut runtime = Runtime::recover_runtime(call_id);
-
-        // during the résumé we must clear output, otherwise collision might happen
-        runtime
-            .store
-            .context_mut(|ctx| ctx.execution_result.output.clear());
-
-        // we can charge fuel only if fuel is not disabled,
-        // when fuel is disabled,
-        // we only pass consumed fuel amount into the contract back,
-        // and it can decide on charging
-        if !ctx.is_fuel_disabled() && fuel_consumed > 0 {
-            // charge fuel that was spent during the interruption
-            // to make sure our fuel calculations are aligned
-            if let Err(_) = runtime.store.try_consume_fuel(fuel_consumed) {
-                return (0, 0, ExitCode::OutOfFuel.into_i32());
-            }
-        }
-
-        // copy return data into return data
-        runtime.store.context_mut(|ctx| {
-            ctx.execution_result.return_data.clear();
-            ctx.execution_result.return_data.extend(return_data);
-        });
-
-        runtime
-            .resume(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code)
-            .finalize(ctx)
+        let result = default_runtime_executor().resume(
+            call_id,
+            return_data.to_vec(),
+            fuel16_ptr,
+            fuel_consumed,
+            fuel_refunded,
+            exit_code,
+        );
+        // Move output into parent's return data
+        ctx.execution_result.return_data = result.output;
+        (
+            result.fuel_consumed,
+            result.fuel_refunded,
+            // We return `call_id` as exit code, it's safe since exit code can't be positive
+            result.exit_code,
+        )
     }
 }

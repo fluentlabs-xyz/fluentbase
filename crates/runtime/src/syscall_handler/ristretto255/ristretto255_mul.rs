@@ -4,7 +4,7 @@ use crate::{
 };
 use curve25519_dalek::RistrettoPoint;
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallCurve25519RistrettoMul {}
 
@@ -16,7 +16,7 @@ impl SyscallCurve25519RistrettoMul {
 
 impl SyscallCurve25519RistrettoMul {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

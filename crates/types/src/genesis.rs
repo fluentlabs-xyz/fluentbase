@@ -1,4 +1,4 @@
-use crate::{ERC20_MAGIC_BYTES, SVM_ELF_MAGIC_BYTES, WASM_MAGIC_BYTES};
+use crate::{SVM_ELF_MAGIC_BYTES, UNIVERSAL_TOKEN_MAGIC_BYTES, WASM_MAGIC_BYTES};
 use alloy_primitives::{address, hex, Address, Bytes, B256};
 
 /// An address of EVM runtime that is used to execute an EVM program
@@ -9,7 +9,6 @@ pub const PRECOMPILE_FAIRBLOCK_VERIFIER: Address =
 
 /// An address for SVM runtime
 pub const PRECOMPILE_SVM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520003");
-pub const SVM_EXECUTABLE_PREIMAGE: Address = address!("0x0000000000000000000000000000000000520010");
 pub const PRECOMPILE_WRAPPED_ETH: Address = address!("0x0000000000000000000000000000000000520004");
 pub const PRECOMPILE_WEBAUTHN_VERIFIER: Address =
     address!("0x0000000000000000000000000000000000520005");
@@ -17,7 +16,7 @@ pub const PRECOMPILE_OAUTH2_VERIFIER: Address =
     address!("0x0000000000000000000000000000000000520006");
 pub const PRECOMPILE_NITRO_VERIFIER: Address =
     address!("0x0000000000000000000000000000000000520007");
-pub const PRECOMPILE_ERC20_RUNTIME: Address =
+pub const PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME: Address =
     address!("0x0000000000000000000000000000000000520008");
 pub const PRECOMPILE_WASM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520009");
 pub const PRECOMPILE_EIP2935: Address = address!("0x0000F90827F1C53a10cb7A02335B175320002935");
@@ -64,7 +63,7 @@ pub const PRECOMPILE_ADDRESSES: &[Address] = &[
     PRECOMPILE_BN256_MUL,
     PRECOMPILE_BN256_PAIR,
     PRECOMPILE_EIP2935,
-    PRECOMPILE_ERC20_RUNTIME,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
     PRECOMPILE_EVM_RUNTIME,
     PRECOMPILE_FAIRBLOCK_VERIFIER,
     PRECOMPILE_IDENTITY,
@@ -78,7 +77,6 @@ pub const PRECOMPILE_ADDRESSES: &[Address] = &[
     PRECOMPILE_WASM_RUNTIME,
     PRECOMPILE_WEBAUTHN_VERIFIER,
     PRECOMPILE_WRAPPED_ETH,
-    SVM_EXECUTABLE_PREIMAGE,
 ];
 
 pub fn is_system_precompile(address: &Address) -> bool {
@@ -103,10 +101,10 @@ pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
         && input[..SVM_ELF_MAGIC_BYTES.len()] == SVM_ELF_MAGIC_BYTES
     {
         PRECOMPILE_SVM_RUNTIME
-    } else if input.len() > ERC20_MAGIC_BYTES.len()
-        && input[..ERC20_MAGIC_BYTES.len()] == ERC20_MAGIC_BYTES
+    } else if input.len() > UNIVERSAL_TOKEN_MAGIC_BYTES.len()
+        && input[..UNIVERSAL_TOKEN_MAGIC_BYTES.len()] == UNIVERSAL_TOKEN_MAGIC_BYTES
     {
-        PRECOMPILE_ERC20_RUNTIME
+        PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
     } else {
         PRECOMPILE_EVM_RUNTIME
     }
@@ -139,7 +137,8 @@ pub const UPDATE_GENESIS_AUTH: Address = address!("0xa7bf6a9168fe8a111307b7c94b8
 
 /// The prefix that must appear at the beginning of the transaction `calldata`
 /// to signal that the transaction is intended to perform an account update.
-pub const UPDATE_GENESIS_PREFIX: [u8; 4] = hex!("0x69bc6f64");
+pub const UPDATE_GENESIS_PREFIX_V1: [u8; 4] = hex!("0x69bc6f64");
+pub const UPDATE_GENESIS_PREFIX_V2: [u8; 4] = hex!("0x69bc6f65");
 
 #[derive(Clone)]
 pub struct GenesisContract {

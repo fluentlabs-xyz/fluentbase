@@ -3,14 +3,14 @@
 
 use super::config::MulConfig;
 use crate::syscall_handler::weierstrass::{
-    g2_be_uncompressed_to_le_limbs, g2_le_limbs_to_be_uncompressed, parse_affine_g2,
+    g2_be_uncompressed_to_le_limbs, g2_le_limbs_to_be_uncompressed, helpers_bls::parse_affine_g2,
     parse_bls12381_g1_point_uncompressed,
 };
 use crate::RuntimeContext;
 use blstrs::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
 use fluentbase_types::{G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, SCALAR_SIZE};
 use group::Group;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use sp1_curves::CurveType;
 use std::marker::PhantomData;
 
@@ -27,7 +27,7 @@ impl<C: MulConfig> SyscallWeierstrassMsm<C> {
     }
 
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
@@ -52,10 +52,7 @@ impl<C: MulConfig> SyscallWeierstrassMsm<C> {
             pairs.push((point, scalar));
         }
 
-        // Perform multi-scalar multiplication
         let result = Self::fn_impl(&pairs);
-
-        // Write result back to memory
         if !result.is_empty() {
             caller.memory_write(out_ptr, &result)?;
         }
@@ -65,20 +62,12 @@ impl<C: MulConfig> SyscallWeierstrassMsm<C> {
 
     pub fn fn_impl(pairs: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
         match C::CURVE_TYPE {
-            CurveType::Bls12381 => {
-                match C::POINT_SIZE {
-                    G1_UNCOMPRESSED_SIZE => Self::fn_impl_bls12381_g1(pairs),
-                    G2_UNCOMPRESSED_SIZE => Self::fn_impl_bls12381_g2(pairs),
-                    _ => {
-                        // Unsupported point size
-                        vec![]
-                    }
-                }
-            }
-            _ => {
-                // Unsupported curve type
-                vec![]
-            }
+            CurveType::Bls12381 => match C::POINT_SIZE {
+                G1_UNCOMPRESSED_SIZE => Self::fn_impl_bls12381_g1(pairs),
+                G2_UNCOMPRESSED_SIZE => Self::fn_impl_bls12381_g2(pairs),
+                _ => vec![],
+            },
+            _ => vec![],
         }
     }
 

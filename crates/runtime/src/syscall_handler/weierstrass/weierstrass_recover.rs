@@ -6,7 +6,7 @@
 //!
 use crate::RuntimeContext;
 use fluentbase_types::B256;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
     Message, SECP256K1,
@@ -28,11 +28,10 @@ impl<C: RecoverConfig> SyscallWeierstrassRecoverAssign<C> {
     }
 
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {
-        // Dispatch based on curve type since we can't use generic const expressions
         match C::CURVE_TYPE {
             CurveType::Secp256k1 => Self::secp256k1_handler(caller, params, result),
             _ => Err(TrapCode::UnreachableCodeReached),
@@ -40,17 +39,14 @@ impl<C: RecoverConfig> SyscallWeierstrassRecoverAssign<C> {
     }
 
     pub fn fn_impl(digest: &B256, sig: &[u8], rec_id: u8) -> Option<Vec<u8>> {
-        // Dispatch based on curve type
         match C::CURVE_TYPE {
             CurveType::Secp256k1 => Self::secp256k1_recover_impl(digest, sig, rec_id),
-            // Add new curve types here:
-            // CurveType::Secp256r1 => Self::secp256r1_recover_impl(digest, sig, rec_id),
-            _ => None, // Unsupported curve type
+            _ => None,
         }
     }
 
     fn secp256k1_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {
@@ -80,8 +76,6 @@ impl<C: RecoverConfig> SyscallWeierstrassRecoverAssign<C> {
         Ok(())
     }
 
-    /// Secp256k1 recover implementation
-    ///
     fn secp256k1_recover_impl(digest: &B256, sig: &[u8], rec_id: u8) -> Option<Vec<u8>> {
         // Ensure we have the correct signature size for Secp256k1
         if sig.len() != Secp256k1RecoverConfig::SIGNATURE_SIZE {

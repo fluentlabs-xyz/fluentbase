@@ -21,11 +21,9 @@ libzktrie.so
 contracts/**/lib.wasm
 examples/**/lib.wasm
 
-revm/e2e/Cargo.lock
 revm/e2e/tests
 
 evm-e2e/target
-evm-e2e/Cargo.lock
 contracts/target
 examples/target
 

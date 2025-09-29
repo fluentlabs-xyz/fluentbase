@@ -29,10 +29,6 @@ pub fn parse_bls12381_g2_point_uncompressed(input: &[u8; G2_UNCOMPRESSED_SIZE]) 
     }
 }
 
-pub fn serialize_bls12381_g1_point_uncompressed(point: &G1Affine) -> [u8; G1_UNCOMPRESSED_SIZE] {
-    point.to_uncompressed()
-}
-
 pub fn g2_le_limbs_to_be_uncompressed(
     le_limbs: &[u8; G2_UNCOMPRESSED_SIZE],
 ) -> [u8; G2_UNCOMPRESSED_SIZE] {
@@ -87,4 +83,18 @@ pub fn g2_be_uncompressed_to_le_limbs(
     le_point[3 * FP_SIZE..4 * FP_SIZE].copy_from_slice(&limb); // y1 LE
 
     le_point
+}
+
+// Parse into affine points (validated), add in projective, and convert back to affine
+pub fn parse_affine_g2(be: &[u8; G2_UNCOMPRESSED_SIZE]) -> G2Affine {
+    if be.iter().all(|&b| b == 0) {
+        G2Affine::identity()
+    } else {
+        let ct = G2Affine::from_uncompressed(be);
+        if ct.is_none().unwrap_u8() == 1 {
+            G2Affine::identity()
+        } else {
+            ct.unwrap_or(G2Affine::identity())
+        }
+    }
 }

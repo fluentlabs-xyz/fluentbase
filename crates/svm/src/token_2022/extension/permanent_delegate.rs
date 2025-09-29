@@ -1,9 +1,9 @@
+use crate::token_2022::spl_pod::optional_keys::OptionalNonZeroPubkey;
 use serde::{Deserialize, Serialize};
+use solana_pubkey::Pubkey;
 use {
-    crate::extension::{BaseState, BaseStateWithExtensions, Extension, ExtensionType},
+    crate::token_2022::extension::{BaseState, BaseStateWithExtensions, Extension, ExtensionType},
     bytemuck::{Pod, Zeroable},
-    solana_program::pubkey::Pubkey,
-    spl_pod::optional_keys::OptionalNonZeroPubkey,
 };
 
 /// Permanent delegate extension data for mints.

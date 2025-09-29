@@ -14,7 +14,7 @@ use blst::{
 use fluentbase_types::{
     FP_PAD_BY, FP_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, PADDED_FP2_SIZE, PADDED_FP_SIZE,
 };
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use sp1_curves::CurveType;
 
 use std::marker::PhantomData;
@@ -27,7 +27,7 @@ pub struct SyscallWeierstrassMapAssign<C: MapConfig> {
 
 impl<C: MapConfig> SyscallWeierstrassMapAssign<C> {
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

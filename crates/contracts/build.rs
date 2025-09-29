@@ -1,6 +1,5 @@
 use cargo_metadata::{CrateType, MetadataCommand, Package, PackageId, TargetKind};
-use std::collections::HashSet;
-use std::{env, fs, path::PathBuf, process::Command};
+use std::{collections::HashSet, env, fs, path::PathBuf, process::Command};
 
 #[derive(Default, Debug)]
 struct PackagesResolver {

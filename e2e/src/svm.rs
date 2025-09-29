@@ -1,4 +1,6 @@
 mod tests {
+    use crate::helpers::{call_with_sig, load_program_account_from_elf_file, svm_deploy};
+    use crate::universal_token::{build_input, build_input_raw};
     use crate::EvmTestingContextWithGenesis;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
     use core::str::from_utf8;
@@ -10,14 +12,16 @@ mod tests {
         Bn254G1CompressConfig, Bn254G1DecompressConfig, Bn254G2CompressConfig,
         Bn254G2DecompressConfig, SyscallWeierstrassCompressDecompressAssign,
     };
-    use fluentbase_sdk::{
-        address, Address, ContextReader, ContractContextV1, SharedAPI, PRECOMPILE_SVM_RUNTIME, U256,
-    };
+    use fluentbase_sdk::{address, Address, ContractContextV1, U256};
+    use fluentbase_svm::token_2022::instruction::initialize_account;
+    use fluentbase_svm::token_2022::instruction::initialize_mint;
+    use fluentbase_svm::token_2022::instruction::mint_to;
+    #[allow(deprecated)]
+    use fluentbase_svm::token_2022::instruction::transfer;
     use fluentbase_svm::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        common::{evm_balance_from_lamports, pubkey_from_evm_address},
+        account::ReadableAccount,
         fluentbase::common::BatchMessage,
-        helpers::{storage_read_account_data, storage_write_metadata},
+        helpers::storage_read_account_data,
         pubkey::Pubkey,
         solana_program::{
             instruction::{AccountMeta, Instruction},
@@ -27,12 +31,14 @@ mod tests {
         },
         system_program, token_2022,
     };
+    use fluentbase_svm_common::common::{evm_balance_from_lamports, pubkey_from_evm_address};
+    use fluentbase_svm_shared::test_structs::EvmAction;
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
             AltBn128Compression, Blake3, CreateAccountAndModifySomeData1, CurveGroupOp,
-            CurveMultiscalarMultiplication, CurvePointValidation, EvmCall, Invoke, Keccak256,
-            Poseidon, SetGetReturnData, Sha256, SolBigModExp, SolSecp256k1Recover, SyscallAltBn128,
+            CurveMultiscalarMultiplication, CurvePointValidation, Invoke, Keccak256, Poseidon,
+            SetGetReturnData, Sha256, SolBigModExp, SolSecp256k1Recover, SyscallAltBn128,
             TestCommand, Transfer, EXPECTED_RET_ERR, EXPECTED_RET_OK,
         },
     };
@@ -40,8 +46,10 @@ mod tests {
     use fluentbase_types::{
         helpers::convert_endianness_fixed, BN254_G1_POINT_COMPRESSED_SIZE,
         BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-        BN254_G2_POINT_DECOMPRESSED_SIZE, PRECOMPILE_SHA256,
+        BN254_G2_POINT_DECOMPRESSED_SIZE, PRECOMPILE_SHA256, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
     };
+    use fluentbase_universal_token::common::sig_to_bytes;
+    use fluentbase_universal_token::consts::{SIG_BALANCE, SIG_DECIMALS, SIG_DECIMALS_FOR_MINT};
     use hex_literal::hex;
     use rand::random_range;
     use serde::Deserialize;
@@ -67,12 +75,14 @@ mod tests {
         scalar::PodScalar,
     };
     use solana_poseidon::{Endianness, Parameters};
-    use std::{fs::File, io::Read, ops::Neg, time::Instant};
+    use std::{ops::Neg, time::Instant};
 
-    const DEPLOYER_ADDRESS1: Address = address!("1231238908230948230948209348203984029834");
-    const DEPLOYER_ADDRESS2: Address = address!("1231238928230949230948209148203584029234");
+    const USER_ADDRESS1: Address = Address::repeat_byte(1);
+    const USER_ADDRESS2: Address = Address::repeat_byte(2);
+    const USER_ADDRESS3: Address = Address::repeat_byte(3);
+    const USER_ADDRESS4: Address = Address::repeat_byte(4);
 
-    pub fn process_test_commands(
+    fn process_test_commands(
         ctx: &mut EvmTestingContext,
         contract_address: &Address,
         pk_exec: &Pubkey,
@@ -100,7 +110,7 @@ mod tests {
             println!("exec started");
             let measure = Instant::now();
             let result = ctx.call_evm_tx_simple(
-                DEPLOYER_ADDRESS1,
+                USER_ADDRESS1,
                 contract_address.clone(),
                 input.into(),
                 None,
@@ -119,20 +129,9 @@ mod tests {
         }
     }
 
-    pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
-        let mut file = File::open(path).expect("file open failed");
-        let mut elf = Vec::new();
-        file.read_to_end(&mut elf).unwrap();
-        let mut program_account = AccountSharedData::new(0, 0, loader_id);
-        program_account.set_data(elf);
-        program_account.set_executable(true);
-        program_account
-    }
-
     #[test]
     fn test_svm_deploy() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
-        ctx.sdk.set_ownable_account_address(PRECOMPILE_SVM_RUNTIME);
+        let mut ctx = ctx();
         ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
             ..Default::default()
         });
@@ -147,45 +146,12 @@ mod tests {
         );
 
         let program_bytes = account_with_program.data().to_vec();
-        ctx.add_balance(DEPLOYER_ADDRESS1, U256::from(1e18));
+        ctx.add_balance(USER_ADDRESS1, U256::from(1e18));
 
         let measure = Instant::now();
         let (_contract_address, _gas_used) =
-            ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS1, program_bytes.into());
+            ctx.deploy_evm_tx_with_gas(USER_ADDRESS1, program_bytes.into());
         println!("deploy took: {:.2?}", measure.elapsed());
-    }
-
-    fn svm_deploy(
-        ctx: &mut EvmTestingContext,
-        account_with_program: &AccountSharedData,
-        seed1: &[u8],
-        payer_initial_lamports: u64,
-    ) -> (Pubkey, Pubkey, Pubkey, Address) {
-        ctx.sdk.set_ownable_account_address(PRECOMPILE_SVM_RUNTIME);
-        assert_eq!(ctx.sdk.context().block_number(), 0);
-
-        // setup initial accounts
-
-        let pk_deployer1 = pubkey_from_evm_address::<true>(&DEPLOYER_ADDRESS1);
-        ctx.add_balance(
-            DEPLOYER_ADDRESS1,
-            evm_balance_from_lamports(payer_initial_lamports),
-        );
-
-        // deploy and get exec contract
-
-        let program_bytes = account_with_program.data().to_vec();
-        let measure = Instant::now();
-        let (contract_address, _gas) =
-            ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS1, program_bytes.into());
-        println!("deploy took: {:.2?}", measure.elapsed());
-
-        let pk_contract = pubkey_from_evm_address::<true>(&contract_address);
-
-        let seeds = &[seed1, pk_deployer1.as_ref()];
-        let (pk_new, _bump) = Pubkey::find_program_address(seeds, &pk_contract);
-
-        (pk_deployer1, pk_contract, pk_new, contract_address)
     }
 
     #[test]
@@ -202,15 +168,16 @@ mod tests {
 
         let (pk_deployer1, pk_contract, pk_new, contract_address) = svm_deploy(
             &mut ctx,
-            &account_with_program,
+            &USER_ADDRESS1,
+            account_with_program.data(),
             seed1,
             deployer1_initial_lamports,
         );
-        let pk_deployer2 = pubkey_from_evm_address::<true>(&DEPLOYER_ADDRESS2);
+        let pk_deployer2 = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
         // some balance for gas payment
-        ctx.add_balance(DEPLOYER_ADDRESS2, evm_balance_from_lamports(1));
+        ctx.add_balance(USER_ADDRESS2, evm_balance_from_lamports(1));
 
-        let deployer1_balance = ctx.get_balance(DEPLOYER_ADDRESS1);
+        let deployer1_balance = ctx.get_balance(USER_ADDRESS1);
         println!("deployer1 balance: {:?}", deployer1_balance);
 
         ctx.commit_db_to_sdk();
@@ -251,7 +218,7 @@ mod tests {
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
         let result = ctx.call_evm_tx_simple(
-            DEPLOYER_ADDRESS1,
+            USER_ADDRESS1,
             contract_address,
             input.clone().into(),
             None,
@@ -271,7 +238,7 @@ mod tests {
         let expected_output = hex!("");
         assert_eq!(hex::encode(expected_output), hex::encode(output));
 
-        let contract_account = storage_read_account_data(&ctx.sdk, &pk_contract)
+        let contract_account = storage_read_account_data(&ctx.sdk, &pk_contract, None)
             .expect(format!("failed to read exec account data: {}", pk_contract).as_str());
         assert_eq!(contract_account.lamports(), 0);
         assert_eq!(
@@ -283,12 +250,12 @@ mod tests {
             account_with_program.data()
         );
 
-        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1)
+        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1, None)
             .expect("failed to read payer account data");
         assert_eq!(0, deployer1_account.lamports()); // we returned all lamports back to evm account
         assert_eq!(deployer1_account.data().len(), 0);
 
-        let new_account = storage_read_account_data(&ctx.sdk, &pk_new)
+        let new_account = storage_read_account_data(&ctx.sdk, &pk_new, None)
             .expect(format!("failed to read new account data: {}", pk_new).as_str());
         assert_eq!(test_command_data.lamports_to_send, new_account.lamports());
         assert_eq!(new_account.data().len(), space as usize);
@@ -327,7 +294,7 @@ mod tests {
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
         let result = ctx.call_evm_tx_simple(
-            DEPLOYER_ADDRESS1,
+            USER_ADDRESS1,
             contract_address,
             input.clone().into(),
             None,
@@ -367,7 +334,7 @@ mod tests {
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
         let result = ctx.call_evm_tx_simple(
-            DEPLOYER_ADDRESS1,
+            USER_ADDRESS1,
             contract_address,
             input.clone().into(),
             None,
@@ -377,12 +344,12 @@ mod tests {
 
         ctx.commit_db_to_sdk();
 
-        let new_account = storage_read_account_data(&ctx.sdk, &pk_new)
+        let new_account = storage_read_account_data(&ctx.sdk, &pk_new, None)
             .expect(format!("failed to read new account data: {}", pk_new).as_str());
         assert_eq!(new_account_lamports, new_account.lamports());
         assert_eq!(new_account.data().len(), space as usize);
 
-        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1)
+        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1, None)
             .expect("failed to read payer account data");
         assert_eq!(0, deployer1_account.lamports());
         assert_eq!(deployer1_account.data().len(), 0);
@@ -417,7 +384,7 @@ mod tests {
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
         let result = ctx.call_evm_tx_simple(
-            DEPLOYER_ADDRESS1,
+            USER_ADDRESS1,
             contract_address,
             input.clone().into(),
             None,
@@ -427,12 +394,12 @@ mod tests {
 
         ctx.commit_db_to_sdk();
 
-        let deployer2_account = storage_read_account_data(&ctx.sdk, &pk_deployer2)
+        let deployer2_account = storage_read_account_data(&ctx.sdk, &pk_deployer2, None)
             .expect(format!("failed to read new account data: {}", pk_deployer2).as_str());
         assert_eq!(deployer2_lamports, deployer2_account.lamports());
         assert_eq!(deployer2_account.data().len(), 0);
 
-        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1)
+        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1, None)
             .expect("failed to read payer account data");
         assert_eq!(0, deployer1_account.lamports());
         assert_eq!(deployer1_account.data().len(), 0);
@@ -466,7 +433,7 @@ mod tests {
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
         let result = ctx.call_evm_tx_simple(
-            DEPLOYER_ADDRESS2,
+            USER_ADDRESS2,
             contract_address,
             input.clone().into(),
             None,
@@ -476,20 +443,24 @@ mod tests {
 
         ctx.commit_db_to_sdk();
 
-        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1)
+        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1, None)
             .expect("failed to read payer account data");
         assert_eq!(3, deployer1_account.lamports());
         assert_eq!(deployer1_account.data().len(), 0);
 
-        let deployer2_account = storage_read_account_data(&ctx.sdk, &pk_deployer2)
+        let deployer2_account = storage_read_account_data(&ctx.sdk, &pk_deployer2, None)
             .expect(format!("failed to read new account data: {}", pk_deployer2).as_str());
         assert_eq!(0, deployer2_account.lamports());
         assert_eq!(deployer2_account.data().len(), 0);
     }
 
+    fn ctx() -> EvmTestingContext {
+        EvmTestingContext::default().with_full_genesis()
+    }
+
     #[test]
     fn test_svm_deploy_exec_cross_call_evm_sha256() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -501,7 +472,8 @@ mod tests {
 
         let (pk_deployer1, pk_contract, _pk_new, contract_address) = svm_deploy(
             &mut ctx,
-            &account_with_program,
+            &USER_ADDRESS1,
+            account_with_program.data(),
             seed1,
             payer_initial_lamports,
         );
@@ -517,7 +489,7 @@ mod tests {
         let gas_limit: u64 = u64::MAX;
         let call_data: Vec<u8> = vec![1, 2, 3];
         let call_data_sha256_vec = sha2::Sha256::digest(call_data.as_slice()).to_vec();
-        let test_command_data = EvmCall {
+        let test_command_data = EvmAction {
             address: address.0 .0,
             value: value.to_le_bytes(),
             gas_limit,
@@ -544,15 +516,15 @@ mod tests {
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
-        let deployer1_balance_before = ctx.get_balance(DEPLOYER_ADDRESS1);
+        let deployer1_balance_before = ctx.get_balance(USER_ADDRESS1);
         let result = ctx.call_evm_tx_simple(
-            DEPLOYER_ADDRESS1,
+            USER_ADDRESS1,
             contract_address,
             input.clone().into(),
             None,
             None,
         );
-        let deployer1_balance_after = ctx.get_balance(DEPLOYER_ADDRESS1);
+        let deployer1_balance_after = ctx.get_balance(USER_ADDRESS1);
         let deployer1_balance_spent = deployer1_balance_before - deployer1_balance_after;
         assert_eq!(U256::from(27320), deployer1_balance_spent);
         let output = result.output().unwrap();
@@ -568,7 +540,7 @@ mod tests {
         let expected_output = hex!("");
         assert_eq!(hex::encode(expected_output), hex::encode(output));
 
-        let contract_account = storage_read_account_data(&ctx.sdk, &pk_contract)
+        let contract_account = storage_read_account_data(&ctx.sdk, &pk_contract, None)
             .expect(format!("failed to read exec account data: {}", pk_contract).as_str());
         assert_eq!(contract_account.lamports(), 0);
         assert_eq!(
@@ -580,75 +552,69 @@ mod tests {
             account_with_program.data()
         );
 
-        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1)
+        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1, None)
             .expect("failed to read payer account data");
         assert_eq!(deployer1_lamports, deployer1_account.lamports());
         assert_eq!(deployer1_account.data().len(), 0);
     }
 
-    #[ignore]
     #[test]
-    fn test_svm_deploy_exec_cross_call_token2022() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+    fn test_svm_universal_token() {
+        let mut ctx = ctx();
+        ctx.add_balance(USER_ADDRESS3, U256::from(1e18));
         let loader_id = loader_v4::id();
-        let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             "../examples/svm/assets/solana_program_state_usage.so",
         );
-        let deployer1_initial_lamports = 101;
+        let payer_initial_lamports = 101;
         let seed1 = b"seed";
-
-        let (pk_deployer1, pk_contract, _pk_new, contract_address) = svm_deploy(
+        let (_pk_deployer1, pk_contract, _pk_new, svm_contract_address) = svm_deploy(
             &mut ctx,
-            &account_with_program,
+            &USER_ADDRESS1,
+            account_with_program.data(),
             seed1,
-            deployer1_initial_lamports,
+            payer_initial_lamports,
         );
-
         ctx.commit_db_to_sdk();
 
-        // exec
+        let program_id = token_2022::lib::id();
+        let account1_key = pubkey_from_evm_address::<true>(&USER_ADDRESS1);
+        let account2_key = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
+        let owner_key = pubkey_from_evm_address::<true>(&USER_ADDRESS3);
+        let mint_key = pubkey_from_evm_address::<true>(&USER_ADDRESS4);
 
-        let deployer1_lamports = 0;
+        // initialize_mint
 
-        // let address = PRECOMPILE_ERC20_RUNTIME;
-        // let value: U256 = U256::from(0);
-        // let gas_limit: u64 = u64::MAX;
-        let call_data: Vec<u8> = vec![1, 2, 3, 4];
-        let call_data_sha256_vec = sha2::Sha256::digest(call_data.as_slice()).to_vec();
+        let contract_address = address!("4be51af5a276e68592bef1d21ecfd74d3f2f5374");
+
+        let decimals = 2;
+        let instruction =
+            initialize_mint(&program_id, &mint_key, &owner_key, None, decimals).unwrap();
+        let instruction_input = build_input(&[], &instruction).expect("failed to build input");
+        let mut invoke_data: Vec<u8> = Default::default();
+        invoke_data.extend_from_slice(&instruction_input);
         let test_command_data = Invoke {
-            pubkey: token_2022::lib::id().to_bytes(),
-            data: call_data,
+            pubkey: pubkey_from_evm_address::<true>(&PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME).to_bytes(),
+            data: invoke_data,
             account_info_idxs: vec![],
             account_metas: vec![],
-            result_data_expected: call_data_sha256_vec,
+            result_data_expected: contract_address.0.to_vec(),
         };
         let test_command: TestCommand = test_command_data.clone().into();
         let instruction_data = serialize(&test_command).unwrap();
-        println!(
-            "instruction_data ({}): {:x?}",
-            instruction_data.len(),
-            &instruction_data
-        );
-
-        storage_write_metadata(&mut ctx.sdk, &token_2022::lib::id(), vec![1, 2, 3].into()).unwrap();
-
         let instructions = vec![Instruction::new_with_bincode(
             pk_contract.clone(),
             &instruction_data,
-            vec![
-                AccountMeta::new(pk_deployer1, true),
-                AccountMeta::new(system_program_id, false),
-            ],
+            vec![],
         )];
         let message = Message::new(&instructions, None);
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
         let result = ctx.call_evm_tx_simple(
-            DEPLOYER_ADDRESS1,
-            contract_address,
+            USER_ADDRESS1,
+            svm_contract_address,
             input.clone().into(),
             None,
             None,
@@ -660,33 +626,261 @@ mod tests {
         }
         assert!(result.is_success());
 
-        ctx.commit_db_to_sdk();
+        // initialize_account1
 
-        let output = result.output().unwrap_or_default();
-        let expected_output = hex!("");
-        assert_eq!(hex::encode(expected_output), hex::encode(output));
-
-        let contract_account = storage_read_account_data(&ctx.sdk, &pk_contract)
-            .expect(format!("failed to read exec account data: {}", pk_contract).as_str());
-        assert_eq!(contract_account.lamports(), 0);
-        assert_eq!(
-            contract_account.data().len(),
-            LoaderV4State::program_data_offset() + account_with_program.data().len()
+        let instruction =
+            initialize_account(&program_id, &account1_key, &mint_key, &owner_key).unwrap();
+        let instruction_input = build_input(&[], &instruction).expect("failed to build input");
+        let mut invoke_data: Vec<u8> = Default::default();
+        invoke_data.extend_from_slice(&instruction_input);
+        let test_command_data = Invoke {
+            pubkey: pubkey_from_evm_address::<true>(&contract_address).to_bytes(),
+            data: invoke_data,
+            account_info_idxs: vec![],
+            account_metas: vec![],
+            result_data_expected: vec![1],
+        };
+        let test_command: TestCommand = test_command_data.clone().into();
+        let instruction_data = serialize(&test_command).unwrap();
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_contract.clone(),
+            &instruction_data,
+            vec![],
+        )];
+        let message = Message::new(&instructions, None);
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = serialize(&batch_message).unwrap();
+        let result = ctx.call_evm_tx_simple(
+            USER_ADDRESS1,
+            svm_contract_address,
+            input.clone().into(),
+            None,
+            None,
         );
-        assert_eq!(
-            &contract_account.data()[LoaderV4State::program_data_offset()..],
-            account_with_program.data()
-        );
+        let output = result.output().unwrap();
+        if output.len() > 0 {
+            let out_text = from_utf8(output).unwrap();
+            println!("output.len {} output '{}'", output.len(), out_text);
+        }
+        assert!(result.is_success());
 
-        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1)
-            .expect("failed to read payer account data");
-        assert_eq!(deployer1_lamports, deployer1_account.lamports());
-        assert_eq!(deployer1_account.data().len(), 0);
+        // decimals for mint
+        let mut input_data = vec![];
+        input_data.extend_from_slice(mint_key.as_ref());
+        let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS_FOR_MINT), &input_data);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), 1);
+        assert_eq!(output_data[0], decimals);
+
+        // decimals for account
+        let mut input_data = vec![];
+        input_data.extend_from_slice(account1_key.as_ref());
+        let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS), &input_data);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), 1);
+        assert_eq!(output_data[0], decimals);
+
+        // initialize_account2
+
+        let instruction =
+            initialize_account(&program_id, &account2_key, &mint_key, &owner_key).unwrap();
+        let instruction_input = build_input(&[], &instruction).expect("failed to build input");
+        let mut invoke_data: Vec<u8> = Default::default();
+        invoke_data.extend_from_slice(&instruction_input);
+        let test_command_data = Invoke {
+            pubkey: pubkey_from_evm_address::<true>(&contract_address).to_bytes(),
+            data: invoke_data,
+            account_info_idxs: vec![],
+            account_metas: vec![],
+            result_data_expected: vec![1],
+        };
+        let test_command: TestCommand = test_command_data.clone().into();
+        let instruction_data = serialize(&test_command).unwrap();
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_contract.clone(),
+            &instruction_data,
+            vec![],
+        )];
+        let message = Message::new(&instructions, None);
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = serialize(&batch_message).unwrap();
+        let result = ctx.call_evm_tx_simple(
+            USER_ADDRESS1,
+            svm_contract_address,
+            input.clone().into(),
+            None,
+            None,
+        );
+        let output = result.output().unwrap();
+        if output.len() > 0 {
+            let out_text = from_utf8(output).unwrap();
+            println!("output.len {} output '{}'", output.len(), out_text);
+        }
+        assert!(result.is_success());
+
+        // decimals for mint
+
+        let mut input_data = vec![];
+        input_data.extend_from_slice(mint_key.as_ref());
+        let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS_FOR_MINT), &input_data);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), 1);
+        assert_eq!(output_data[0], decimals);
+
+        // decimals for account
+
+        let mut input_data = vec![];
+        input_data.extend_from_slice(account1_key.as_ref());
+        let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS), &input_data);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), 1);
+        assert_eq!(output_data[0], decimals);
+
+        // balance for account1
+        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), size_of::<u64>());
+        let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+        assert_eq!(balance, 0);
+
+        // mint_to
+
+        let amount = 1000;
+        let instruction = mint_to(
+            &program_id,
+            &mint_key,
+            &account1_key,
+            &owner_key,
+            &[],
+            amount,
+        )
+        .unwrap();
+        let instruction_input = build_input(&[], &instruction).expect("failed to build input");
+        let mut invoke_data: Vec<u8> = Default::default();
+        invoke_data.extend_from_slice(&instruction_input);
+        let test_command_data = Invoke {
+            pubkey: pubkey_from_evm_address::<true>(&contract_address).to_bytes(),
+            data: invoke_data,
+            account_info_idxs: vec![],
+            account_metas: vec![],
+            result_data_expected: vec![1],
+        };
+        let test_command: TestCommand = test_command_data.clone().into();
+        let instruction_data = serialize(&test_command).unwrap();
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_contract.clone(),
+            &instruction_data,
+            vec![],
+        )];
+        let message = Message::new(&instructions, None);
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = serialize(&batch_message).unwrap();
+        let result = ctx.call_evm_tx_simple(
+            USER_ADDRESS3,
+            svm_contract_address,
+            input.clone().into(),
+            None,
+            None,
+        );
+        let output = result.output().unwrap();
+        if output.len() > 0 {
+            let out_text = from_utf8(output).unwrap();
+            println!("output.len {} output '{}'", output.len(), out_text);
+        }
+        assert!(result.is_success());
+
+        // balance for account1
+        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), size_of::<u64>());
+        let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+        assert_eq!(balance, amount);
+
+        // balance for account2
+        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+        assert_eq!(output_data.len(), size_of::<u64>());
+        let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+        assert_eq!(balance, 0);
+
+        // mint_to
+
+        let amount = 500;
+        #[allow(deprecated)]
+        let instruction = transfer(
+            &program_id,
+            &account1_key,
+            &account2_key,
+            &owner_key,
+            &[],
+            amount,
+        )
+        .unwrap();
+        let instruction_input = build_input(&[], &instruction).expect("failed to build input");
+        let mut invoke_data: Vec<u8> = Default::default();
+        invoke_data.extend_from_slice(&instruction_input);
+        let test_command_data = Invoke {
+            pubkey: pubkey_from_evm_address::<true>(&contract_address).to_bytes(),
+            data: invoke_data,
+            account_info_idxs: vec![],
+            account_metas: vec![],
+            result_data_expected: vec![1],
+        };
+        let test_command: TestCommand = test_command_data.clone().into();
+        let instruction_data = serialize(&test_command).unwrap();
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_contract.clone(),
+            &instruction_data,
+            vec![],
+        )];
+        let message = Message::new(&instructions, None);
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = serialize(&batch_message).unwrap();
+        let result = ctx.call_evm_tx_simple(
+            USER_ADDRESS3,
+            svm_contract_address,
+            input.clone().into(),
+            None,
+            None,
+        );
+        let output = result.output().unwrap();
+        if output.len() > 0 {
+            let out_text = from_utf8(output).unwrap();
+            println!("output.len {} output '{}'", output.len(), out_text);
+        }
+        assert!(result.is_success());
+
+        // balance for account1
+        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+        assert_eq!(output_data.len(), size_of::<u64>());
+        let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+        assert_eq!(balance, amount);
+
+        // balance for account2
+        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+        assert_eq!(output_data.len(), size_of::<u64>());
+        let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+        assert_eq!(balance, amount);
     }
 
     #[test]
     fn test_svm_sol_big_mod_exp() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -696,8 +890,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -788,7 +987,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_secp256k1_recover() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -798,8 +997,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -846,7 +1050,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_keccak256() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -856,8 +1060,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -883,7 +1092,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_sha256() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -893,8 +1102,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -921,7 +1135,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_blake3() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -931,8 +1145,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -958,7 +1177,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_poseidon_input_ones_be() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -968,8 +1187,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -1006,7 +1230,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_poseidon_input_ones_le() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1016,8 +1240,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -1054,7 +1283,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_poseidon_input_ones_twos_be() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1064,8 +1293,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -1107,7 +1341,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_poseidon_input_ones_twos_le() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1117,8 +1351,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -1160,7 +1399,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_poseidon_input_one() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1170,8 +1409,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -1284,7 +1528,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_return_data() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1294,8 +1538,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -1317,7 +1566,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_curve_validate_point() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1327,8 +1576,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -1377,7 +1631,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_curve_group_op() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1387,8 +1641,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -1710,7 +1969,7 @@ mod tests {
 
     #[test]
     fn test_sol_curve_multiscalar_mul() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1720,8 +1979,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -1846,7 +2110,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_sol_alt_bn128_group_op_addition() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1856,8 +2120,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -1975,7 +2244,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_sol_alt_bn128_group_op_multiplication() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1985,8 +2254,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -2149,7 +2423,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_sol_alt_bn128_pairing() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -2159,8 +2433,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -2289,7 +2568,7 @@ mod tests {
 
     #[test]
     fn test_sol_alt_bn128_compression_g1_compress_decompress() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -2299,8 +2578,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -2399,7 +2683,7 @@ mod tests {
 
     #[test]
     fn test_sol_alt_bn128_compression_g2_compress_decompress() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -2409,8 +2693,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 
@@ -2512,7 +2801,7 @@ mod tests {
 
     #[test]
     fn test_sol_alt_bn128_compression_pairing() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -2522,8 +2811,13 @@ mod tests {
         let payer_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_payer, pk_exec, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &USER_ADDRESS1,
+            account_with_program.data(),
+            seed1,
+            payer_lamports,
+        );
 
         // exec
 

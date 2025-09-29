@@ -11,9 +11,8 @@ categories.workspace = true
 
 [dependencies]
 bincode = { version = "1.3.3", default-features = false, features = [] }
-serde = { workspace = true, features = ["derive"] }
-hex = { workspace = true }
-
+serde = { workspace = true, default-features = false, features = ["derive"] }
+hex = { workspace = true, default-features = false }
 
 [features]
 default = []

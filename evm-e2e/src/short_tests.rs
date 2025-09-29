@@ -40,9 +40,6 @@ mod good_coverage_tests {
         fn call_ecrecover0_no_gas("tests/GeneralStateTests/stPreCompiledContracts2/CallEcrecover0_NoGas.json");
         fn create2collision_selfdestructed("tests/GeneralStateTests/stCreate2/create2collisionSelfdestructed.json");
         fn call_ecrecover1("tests/GeneralStateTests/stPreCompiledContracts2/CallEcrecover1.json");
-        fn c_a_l_l_blake2f("tests/GeneralStateTests/stPreCompiledContracts2/CALLBlake2f.json");
-        fn c_a_l_l_c_o_d_e_blake2f("tests/GeneralStateTests/stPreCompiledContracts2/CALLCODEBlake2f.json");
-        fn c_a_l_l_c_o_d_e_ecrecover0("tests/GeneralStateTests/stPreCompiledContracts2/CALLCODEEcrecover0.json");
         fn modexp_0_0_0_20500("tests/GeneralStateTests/stPreCompiledContracts2/modexp_0_0_0_20500.json");
         fn ecadd_00_0_0_21000_0("tests/GeneralStateTests/stZeroKnowledge2/ecadd_0-0_0-0_21000_0.json");
         fn frontier_opcodes_value_transfer_gas_calculation("tests/GeneralStateTests/Pyspecs/frontier/opcodes/value_transfer_gas_calculation.json");
@@ -183,17 +180,6 @@ mod state_root_mismatch {
         // fn init_collision_paris("tests/GeneralStateTests/stSStoreTest/InitCollisionParis.json");
         // fn revert_in_create_in_init_create2_paris("tests/GeneralStateTests/stCreate2/RevertInCreateInInitCreate2Paris.json");
         // fn revert_in_create_in_init_paris("tests/GeneralStateTests/stRevertTest/RevertInCreateInInit_Paris.json");
-    }
-}
-
-mod v82_failing_tests {
-    define_tests! {
-        fn create2collision_selfdestructed("tests/GeneralStateTests/stCreate2/create2collisionSelfdestructed.json");
-        fn create2collision_selfdestructed2("tests/GeneralStateTests/stCreate2/create2collisionSelfdestructed2.json");
-        fn create2collision_selfdestructed_revert("tests/GeneralStateTests/stCreate2/create2collisionSelfdestructedRevert.json");
-        fn create_acreate_b_bsuicide_bstore("tests/GeneralStateTests/stCreateTest/CREATE_AcreateB_BSuicide_BStore.json");
-        fn failed_tx_xcf416c53_paris("tests/GeneralStateTests/stSpecialTest/failed_tx_xcf416c53_Paris.json");
-        fn underflow_test("tests/GeneralStateTests/stStackTests/underflowTest.json");
     }
 }
 

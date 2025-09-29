@@ -186,13 +186,13 @@ pub fn process_instruction(
                 account_infos,
             )?;
         }
-        TestCommand::EvmCall(p) => {
+        TestCommand::EvmAction(p) => {
             let account_infos = &[];
             let mut evm_address_pk = [0u8; PUBKEY_BYTES];
             evm_address_pk[12..].copy_from_slice(&p.address);
             let evm_address_pk = Pubkey::new_from_array(evm_address_pk);
             invoke(
-                &Instruction::new_with_bytes(evm_address_pk, &p.params_to_vec(), vec![]),
+                &Instruction::new_with_bytes(evm_address_pk, &p.to_vec(), vec![]),
                 account_infos,
             )?;
             let return_data_result = get_return_data();
@@ -209,7 +209,7 @@ pub fn process_instruction(
         TestCommand::Invoke(p) => {
             let mut account_infos = vec![];
             let mut account_metas = vec![];
-            let evm_address_pk = Pubkey::new_from_array(p.pubkey);
+            let pk = Pubkey::new_from_array(p.pubkey);
             for i in p.account_info_idxs {
                 account_infos.push(accounts[i].clone())
             }
@@ -220,8 +220,9 @@ pub fn process_instruction(
                     is_writable,
                 })
             }
+            msg!("p.data({}) {:x?}", p.data.len(), p.data);
             let invoke_result = invoke(
-                &Instruction::new_with_bytes(evm_address_pk, &p.data, account_metas),
+                &Instruction::new_with_bytes(pk, &p.data, account_metas),
                 &account_infos,
             );
             match invoke_result {

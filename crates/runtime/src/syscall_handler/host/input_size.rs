@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 /// Builtin to query the size of ctx.input.
 pub struct SyscallInputSize;
@@ -7,7 +7,7 @@ pub struct SyscallInputSize;
 impl SyscallInputSize {
     /// Writes the input length in bytes into result[0].
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         _params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {

@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use sp1_curves::CurveType;
 use std::marker::PhantomData;
 
@@ -59,44 +59,8 @@ impl<C: VerifyConfig> SyscallWeierstrassVerifyAssign<C> {
         }
     }
 
-    /// Parse input components for signature verification
-    ///
-    /// This function extracts the message hash, signature components (r, s),
-    /// and public key coordinates (x, y) from the input bytes according to
-    /// the configuration's layout specification.
-    fn parse_input_components(input: &[u8]) -> Result<VerifyInputComponents, VerifyError> {
-        // Check input length
-        if input.len() != C::TOTAL_INPUT_SIZE {
-            return Err(VerifyError::InvalidInputLength);
-        }
-
-        // Parse input components according to the layout:
-        // [message_hash][r][s][pubkey_x][pubkey_y]
-        let message_hash = &input[0..C::MESSAGE_HASH_SIZE];
-        let r_bytes = &input[C::MESSAGE_HASH_SIZE..C::MESSAGE_HASH_SIZE + C::SIGNATURE_R_SIZE];
-        let s_bytes = &input[C::MESSAGE_HASH_SIZE + C::SIGNATURE_R_SIZE
-            ..C::MESSAGE_HASH_SIZE + C::SIGNATURE_R_SIZE + C::SIGNATURE_S_SIZE];
-        let pubkey_x = &input[C::MESSAGE_HASH_SIZE + C::SIGNATURE_R_SIZE + C::SIGNATURE_S_SIZE
-            ..C::MESSAGE_HASH_SIZE
-                + C::SIGNATURE_R_SIZE
-                + C::SIGNATURE_S_SIZE
-                + C::PUBLIC_KEY_X_SIZE];
-        let pubkey_y = &input[C::MESSAGE_HASH_SIZE
-            + C::SIGNATURE_R_SIZE
-            + C::SIGNATURE_S_SIZE
-            + C::PUBLIC_KEY_X_SIZE..C::TOTAL_INPUT_SIZE];
-
-        Ok(VerifyInputComponents {
-            message_hash,
-            r_bytes,
-            s_bytes,
-            pubkey_x,
-            pubkey_y,
-        })
-    }
-
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {
@@ -114,7 +78,7 @@ impl<C: VerifyConfig> SyscallWeierstrassVerifyAssign<C> {
             success_result[31] = 1; // success marker
             success_result
         } else {
-            vec![] // empty result for failure
+            vec![]
         };
 
         caller.memory_write(output_ptr, &result_bytes)?;
@@ -124,15 +88,13 @@ impl<C: VerifyConfig> SyscallWeierstrassVerifyAssign<C> {
     }
 
     pub fn fn_impl(input: &[u8]) -> bool {
-        // Dispatch based on curve type
         match C::CURVE_TYPE {
             CurveType::Secp256r1 => Self::secp256r1_verify_impl(input),
             CurveType::Secp256k1 => Self::secp256k1_verify_impl(input),
-            _ => false, // Unsupported curve type
+            _ => false,
         }
     }
 
-    /// Secp256r1 verification implementation
     fn secp256r1_verify_impl(input: &[u8]) -> bool {
         let components = match Self::parse_input_components(input) {
             Ok(components) => components,
@@ -160,7 +122,6 @@ impl<C: VerifyConfig> SyscallWeierstrassVerifyAssign<C> {
             .is_ok()
     }
 
-    /// Secp256k1 verification implementation
     fn secp256k1_verify_impl(input: &[u8]) -> bool {
         let components = match Self::parse_input_components(input) {
             Ok(components) => components,
@@ -194,7 +155,41 @@ impl<C: VerifyConfig> SyscallWeierstrassVerifyAssign<C> {
             .is_ok()
     }
 
-    /// Reconstructs a p256 signature from r and s components
+    /// Parse input components for signature verification
+    ///
+    /// This function extracts the message hash, signature components (r, s),
+    /// and public key coordinates (x, y) from the input bytes according to
+    /// the configuration's layout specification.
+    fn parse_input_components(input: &[u8]) -> Result<VerifyInputComponents, VerifyError> {
+        if input.len() != C::TOTAL_INPUT_SIZE {
+            return Err(VerifyError::InvalidInputLength);
+        }
+
+        // Parse input components according to the layout:
+        // [message_hash][r][s][pubkey_x][pubkey_y]
+        let message_hash = &input[0..C::MESSAGE_HASH_SIZE];
+        let r_bytes = &input[C::MESSAGE_HASH_SIZE..C::MESSAGE_HASH_SIZE + C::SIGNATURE_R_SIZE];
+        let s_bytes = &input[C::MESSAGE_HASH_SIZE + C::SIGNATURE_R_SIZE
+            ..C::MESSAGE_HASH_SIZE + C::SIGNATURE_R_SIZE + C::SIGNATURE_S_SIZE];
+        let pubkey_x = &input[C::MESSAGE_HASH_SIZE + C::SIGNATURE_R_SIZE + C::SIGNATURE_S_SIZE
+            ..C::MESSAGE_HASH_SIZE
+                + C::SIGNATURE_R_SIZE
+                + C::SIGNATURE_S_SIZE
+                + C::PUBLIC_KEY_X_SIZE];
+        let pubkey_y = &input[C::MESSAGE_HASH_SIZE
+            + C::SIGNATURE_R_SIZE
+            + C::SIGNATURE_S_SIZE
+            + C::PUBLIC_KEY_X_SIZE..C::TOTAL_INPUT_SIZE];
+
+        Ok(VerifyInputComponents {
+            message_hash,
+            r_bytes,
+            s_bytes,
+            pubkey_x,
+            pubkey_y,
+        })
+    }
+
     fn reconstruct_p256_signature(
         r_bytes: &[u8],
         s_bytes: &[u8],
@@ -215,7 +210,6 @@ impl<C: VerifyConfig> SyscallWeierstrassVerifyAssign<C> {
         Signature::from_bytes(&sig_bytes.into()).map_err(|_| ())
     }
 
-    /// Reconstructs a p256 public key from x and y coordinates
     fn reconstruct_p256_public_key(
         x_bytes: &[u8],
         y_bytes: &[u8],
@@ -233,7 +227,6 @@ impl<C: VerifyConfig> SyscallWeierstrassVerifyAssign<C> {
         Ok(VerifyingKey::from(&public_key))
     }
 
-    /// Reconstructs a secp256k1 signature from r and s components
     fn reconstruct_secp256k1_signature(
         r_bytes: &[u8],
         s_bytes: &[u8],
@@ -247,7 +240,6 @@ impl<C: VerifyConfig> SyscallWeierstrassVerifyAssign<C> {
         Signature::from_compact(&sig_bytes).map_err(|_| ())
     }
 
-    /// Reconstructs a secp256k1 public key from x and y coordinates
     fn reconstruct_secp256k1_public_key(
         x_bytes: &[u8],
         y_bytes: &[u8],
@@ -271,7 +263,6 @@ mod tests {
     use super::*;
     use hex_literal::hex;
 
-    // Test vectors for secp256r1 verification
     const SECP256R1_TEST_VECTOR: &[u8] = &hex!(
         "0000000000000000000000000000000000000000000000000000000000000000" // message hash
         "0000000000000000000000000000000000000000000000000000000000000000" // r

@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 
 /// Builtin that charges fuel against the VM and the runtime accounting.
 pub struct SyscallChargeFuel;
@@ -7,7 +7,7 @@ pub struct SyscallChargeFuel;
 impl SyscallChargeFuel {
     /// Consumes fuel from the engine and mirrors the consumption in the runtime context.
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

@@ -15,10 +15,6 @@ use crate::{
     },
     RuntimeContext,
 };
-use group::Group;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
-
-// BN254 imports
 use ark_bn254::{Bn254, G1Affine as Bn254G1Affine, G2Affine as Bn254G2Affine};
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::One;
@@ -27,18 +23,18 @@ use fluentbase_types::{
     BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, FP_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
     GT_COMPRESSED_SIZE, SCALAR_SIZE,
 };
+use group::Group;
+use rwasm::{Store, TrapCode, Value};
 
 use sp1_curves::{CurveType, EllipticCurve};
 
-/// Generic pairing handler that dispatches based on curve type
 pub struct SyscallWeierstrassPairingAssign<E: EllipticCurve> {
     _phantom: std::marker::PhantomData<E>,
 }
 
 impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
-    /// Unified handler that works for all supported curve types
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
@@ -51,7 +47,6 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
         let pairs_byte_len =
             BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN.saturating_mul(pairs_count as usize);
 
-        // Read pair elements from memory
         let mut pair_elements = vec![0u8; pairs_byte_len];
         caller.memory_read(pairs_ptr as usize, &mut pair_elements)?;
 
@@ -76,7 +71,6 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
                 [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
             )>>();
 
-        // Use the multi-pairing implementation with proper error handling
         let output =
             Self::fn_impl_multi_pairing(&pairs).map_err(|e| syscall_process_exit_code(caller, e));
         if let Ok(result_data) = output {
@@ -86,7 +80,6 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
         Ok(())
     }
 
-    /// Generic implementation that takes x and y byte arrays and returns pairing result
     pub fn fn_impl(x: &[u8], y: &[u8]) -> Vec<u8> {
         let mut result = vec![0u8; SCALAR_SIZE];
 
@@ -161,7 +154,6 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
         result
     }
 
-    /// Multi-pairing implementation that takes pairs of G1 and G2 points
     pub fn fn_impl_multi_pairing(
         pairs: &[(
             [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
@@ -206,7 +198,6 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
         }
     }
 
-    /// Generic implementation for compressed format (used by context_wrapper)
     pub fn fn_impl_compressed(
         pairs: &[([u8; FP_SIZE], [u8; G1_UNCOMPRESSED_SIZE])], // Compressed sizes for BLS12-381
         out: &mut [u8; GT_COMPRESSED_SIZE],                    // GT compressed size
@@ -218,8 +209,6 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
                 for (g1_compressed, g2_compressed) in pairs.iter() {
                     // Decompress G1 point (48 bytes -> 96 bytes)
                     let mut g1_uncompressed = [0u8; G1_UNCOMPRESSED_SIZE];
-                    // TODO: Implement decompression logic here
-                    // For now, we'll assume the input is already in the right format
                     g1_uncompressed[..FP_SIZE].copy_from_slice(g1_compressed);
 
                     // Decompress G2 point (96 bytes -> 192 bytes)

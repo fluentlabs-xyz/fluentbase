@@ -27,7 +27,7 @@ use fluentbase_types::{
     SCALAR_SIZE,
 };
 use group::prime::PrimeCurveAffine;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, Value};
 use sp1_curves::CurveType;
 use std::marker::PhantomData;
 
@@ -46,7 +46,7 @@ impl<C: MulConfig> SyscallWeierstrassMulAssign<C> {
     /// Handles the syscall for point multiplication on a Weierstrass curve.
     /// Uses the MulConfig to determine curve type and field (G1/G2).
     pub fn fn_handler(
-        caller: &mut TypedCaller<RuntimeContext>,
+        caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

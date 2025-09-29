@@ -1,7 +1,7 @@
 use crate::{
     syscall_handler::{
         weierstrass::{
-            Bls12381G1MapConfig, Bls12381G2MapConfig, Bn254G1MulConfig, Bn254G2DecompressConfig,
+            Bls12381G1MapConfig, Bls12381G2MapConfig, Bn254G2DecompressConfig,
             Secp256r1VerifyConfig, SyscallWeierstrassAddAssign,
             SyscallWeierstrassCompressDecompressAssign, SyscallWeierstrassDoubleAssign,
             SyscallWeierstrassMapAssign, SyscallWeierstrassMulAssign,
@@ -59,8 +59,6 @@ impl NativeAPI for RuntimeContextWrapper {
 
     /////// Weierstrass curves ///////
 
-    /// Secp256k1
-    ///
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         SyscallWeierstrassRecoverAssign::<Secp256k1RecoverConfig>::fn_impl(digest, sig, rec_id).map(
             |v| {
