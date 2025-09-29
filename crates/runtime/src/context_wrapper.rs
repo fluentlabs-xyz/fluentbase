@@ -142,7 +142,19 @@ impl NativeAPI for RuntimeContextWrapper {
         pairs: &[([u8; G1_COMPRESSED_SIZE], [u8; G2_COMPRESSED_SIZE])],
         out: &mut [u8; GT_COMPRESSED_SIZE],
     ) {
-        let _ = SyscallWeierstrassPairingAssign::<Bls12381>::fn_impl_compressed(pairs, out);
+        let result = SyscallWeierstrassPairingAssign::<Bls12381>::fn_impl_bls12_381(&pairs);
+        match result {
+            Ok(v) => {
+                let min = core::cmp::min(out.len(), v.len());
+                out[..min].copy_from_slice(&v[..min]);
+                if min < out.len() {
+                    out[min..].fill(0);
+                }
+            }
+            Err(_) => {
+                out.fill(0);
+            }
+        }
     }
 
     fn bls12_381_map_fp_to_g1(p: &[u8; PADDED_FP_SIZE], out: &mut [u8; G1_UNCOMPRESSED_SIZE]) {
@@ -190,12 +202,12 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn bn254_multi_pairing(
-        elements: &[(
+        pairs: &[(
             [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
             [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
         )],
     ) -> Result<[u8; SCALAR_SIZE], ExitCode> {
-        let result = SyscallWeierstrassPairingAssign::<Bn254>::fn_impl_multi_pairing(elements)
+        let result = SyscallWeierstrassPairingAssign::<Bn254>::fn_impl_bn254(&pairs)
             .map_err(|_| ExitCode::PrecompileError)?;
         let result_array: [u8; SCALAR_SIZE] =
             result.try_into().map_err(|_| ExitCode::PrecompileError)?;

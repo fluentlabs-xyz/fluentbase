@@ -2,7 +2,7 @@
 //!
 //! This module provides BLST library bindings for high-performance elliptic curve operations
 //! with comprehensive error handling and edge case management.
-
+//!
 use crate::{
     syscall_handler::{
         syscall_process_exit_code,
@@ -20,8 +20,8 @@ use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::One;
 use fluentbase_types::{
     ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
-    BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, FP_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
-    GT_COMPRESSED_SIZE, SCALAR_SIZE,
+    BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, G1_COMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE,
+    G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, GT_COMPRESSED_SIZE, SCALAR_SIZE,
 };
 use group::Group;
 use rwasm::{Store, TrapCode, Value};
@@ -44,35 +44,44 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
             params[2].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
         );
 
-        let pairs_byte_len =
-            BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN.saturating_mul(pairs_count as usize);
+        // Determine expected per-pair byte length based on curve
+        let element_len = match E::CURVE_TYPE {
+            CurveType::Bn254 => BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN,
+            CurveType::Bls12381 => G1_UNCOMPRESSED_SIZE + G2_UNCOMPRESSED_SIZE,
+            _ => BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN,
+        };
+
+        let pairs_byte_len = element_len.saturating_mul(pairs_count as usize);
 
         let mut pair_elements = vec![0u8; pairs_byte_len];
         caller.memory_read(pairs_ptr as usize, &mut pair_elements)?;
 
-        let pairs = pair_elements
-            .chunks(BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN)
-            .filter_map(|v| {
-                if v.len() < BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN {
+        // Build pairs as (Vec<u8>, Vec<u8>)
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = pair_elements
+            .chunks(element_len)
+            .filter_map(|chunk| {
+                if chunk.len() < element_len {
                     return None;
                 }
-
-                let g1_bytes = &v[0..BN254_G1_POINT_DECOMPRESSED_SIZE];
-                let g2_bytes =
-                    &v[BN254_G1_POINT_DECOMPRESSED_SIZE..BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN];
-
-                let g1: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = g1_bytes.try_into().ok()?;
-                let g2: [u8; BN254_G2_POINT_DECOMPRESSED_SIZE] = g2_bytes.try_into().ok()?;
-
+                let (g1_len, g2_len) = match E::CURVE_TYPE {
+                    CurveType::Bn254 => (
+                        BN254_G1_POINT_DECOMPRESSED_SIZE,
+                        BN254_G2_POINT_DECOMPRESSED_SIZE,
+                    ),
+                    CurveType::Bls12381 => (G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE),
+                    _ => (
+                        BN254_G1_POINT_DECOMPRESSED_SIZE,
+                        BN254_G2_POINT_DECOMPRESSED_SIZE,
+                    ),
+                };
+                let g1 = chunk[0..g1_len].to_vec();
+                let g2 = chunk[g1_len..g1_len + g2_len].to_vec();
                 Some((g1, g2))
             })
-            .collect::<Vec<(
-                [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-                [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-            )>>();
+            .collect();
 
-        let output =
-            Self::fn_impl_multi_pairing(&pairs).map_err(|e| syscall_process_exit_code(caller, e));
+        let output: Result<Vec<u8>, _> =
+            Self::fn_impl(&pairs).map_err(|e| syscall_process_exit_code(caller, e));
         if let Ok(result_data) = output {
             caller.memory_write(out_ptr as usize, &result_data)?;
         }
@@ -80,164 +89,134 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
         Ok(())
     }
 
-    pub fn fn_impl(x: &[u8], y: &[u8]) -> Vec<u8> {
-        let mut result = vec![0u8; SCALAR_SIZE];
-
+    pub fn fn_impl(pairs: &[(Vec<u8>, Vec<u8>)]) -> Result<Vec<u8>, ExitCode> {
         match E::CURVE_TYPE {
-            CurveType::Bls12381 => {
-                // Parse G1 and G2 points from x and y byte arrays
-                if x.len() >= G1_UNCOMPRESSED_SIZE && y.len() >= G2_UNCOMPRESSED_SIZE {
-                    let g1_bytes: [u8; G1_UNCOMPRESSED_SIZE] = x[..G1_UNCOMPRESSED_SIZE]
-                        .try_into()
-                        .unwrap_or([0u8; G1_UNCOMPRESSED_SIZE]);
-                    let g2_bytes: [u8; G2_UNCOMPRESSED_SIZE] = y[..G2_UNCOMPRESSED_SIZE]
-                        .try_into()
-                        .unwrap_or([0u8; G2_UNCOMPRESSED_SIZE]);
-
-                    let g1_aff = parse_bls12381_g1_point_uncompressed(&g1_bytes);
-                    let g2_aff = parse_bls12381_g2_point_uncompressed(&g2_bytes);
-
-                    // Perform BLS12-381 pairing check
-                    let pairing_check = blstrs::pairing(&g1_aff, &g2_aff);
-                    let is_identity: bool = pairing_check.is_identity().into();
-                    if !is_identity {
-                        result[SCALAR_SIZE - 1] = 1; // Set the last byte to 1 for true (big-endian)
-                    }
-                }
-            }
             CurveType::Bn254 => {
-                // Parse G1 and G2 points from x and y byte arrays for BN254
-                if x.len() >= BN254_G1_POINT_DECOMPRESSED_SIZE
-                    && y.len() >= BN254_G2_POINT_DECOMPRESSED_SIZE
-                {
-                    let g1_bytes: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = x
-                        [..BN254_G1_POINT_DECOMPRESSED_SIZE]
-                        .try_into()
-                        .unwrap_or([0u8; BN254_G1_POINT_DECOMPRESSED_SIZE]);
-                    let g2_bytes: [u8; BN254_G2_POINT_DECOMPRESSED_SIZE] = y
-                        [..BN254_G2_POINT_DECOMPRESSED_SIZE]
-                        .try_into()
-                        .unwrap_or([0u8; BN254_G2_POINT_DECOMPRESSED_SIZE]);
-
-                    // Parse points using the same logic as the original bn256_pairing.rs
-                    let mut parsed_pairs = Vec::new();
-
-                    match (read_g1_point(&g1_bytes), read_g2_point(&g2_bytes)) {
-                        (Ok(g1_aff), Ok(g2_aff)) => {
-                            // Skip zero points (same logic as original implementation)
-                            if !g1_aff.is_zero() && !g2_aff.is_zero() {
-                                parsed_pairs.push((g1_aff, g2_aff));
-                            }
+                let typed: Vec<(
+                    [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+                    [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+                )> = pairs
+                    .iter()
+                    .filter_map(|(g1, g2)| {
+                        if g1.len() < BN254_G1_POINT_DECOMPRESSED_SIZE
+                            || g2.len() < BN254_G2_POINT_DECOMPRESSED_SIZE
+                        {
+                            return None;
                         }
-                        _ => {
-                            // Points failed to parse - leave result as all zeros
-                        }
-                    }
-
-                    // If no valid pairs after filtering, return true (empty pairing is valid)
-                    let success = if parsed_pairs.is_empty() {
-                        true
-                    } else {
-                        bn254_pairing_check(&parsed_pairs)
-                    };
-
-                    if success {
-                        result[SCALAR_SIZE - 1] = 1; // Set the last byte to 1 for true (big-endian)
-                    }
+                        let g1a = g1[..BN254_G1_POINT_DECOMPRESSED_SIZE].try_into().ok()?;
+                        let g2a = g2[..BN254_G2_POINT_DECOMPRESSED_SIZE].try_into().ok()?;
+                        Some((g1a, g2a))
+                    })
+                    .collect();
+                Self::fn_impl_bn254(&typed)
+            }
+            CurveType::Bls12381 => {
+                // Prefer compressed inputs; if not all compressed, try uncompressed fallback
+                let all_compressed = pairs.iter().all(|(g1, g2)| {
+                    g1.len() == G1_COMPRESSED_SIZE && g2.len() == G2_COMPRESSED_SIZE
+                });
+                if all_compressed {
+                    let typed: Vec<([u8; G1_COMPRESSED_SIZE], [u8; G2_COMPRESSED_SIZE])> = pairs
+                        .iter()
+                        .filter_map(|(g1, g2)| {
+                            Some((
+                                g1.as_slice().try_into().ok()?,
+                                g2.as_slice().try_into().ok()?,
+                            ))
+                        })
+                        .collect();
+                    return Self::fn_impl_bls12_381(&typed);
                 }
-            }
-            _ => {
-                // Unsupported curve type - result remains all zeros
-            }
-        }
 
-        result
+                // Uncompressed fallback
+                let mut pairing_result_all_non_identity = true;
+                for (g1_bytes_vec, g2_bytes_vec) in pairs.iter() {
+                    if g1_bytes_vec.len() >= G1_UNCOMPRESSED_SIZE
+                        && g2_bytes_vec.len() >= G2_UNCOMPRESSED_SIZE
+                    {
+                        let g1_bytes: [u8; G1_UNCOMPRESSED_SIZE] = g1_bytes_vec
+                            [..G1_UNCOMPRESSED_SIZE]
+                            .try_into()
+                            .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+                        let g2_bytes: [u8; G2_UNCOMPRESSED_SIZE] = g2_bytes_vec
+                            [..G2_UNCOMPRESSED_SIZE]
+                            .try_into()
+                            .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+                        let g1_aff = parse_bls12381_g1_point_uncompressed(&g1_bytes);
+                        let g2_aff = parse_bls12381_g2_point_uncompressed(&g2_bytes);
+                        let gt = blstrs::pairing(&g1_aff, &g2_aff);
+                        let is_identity: bool = gt.is_identity().into();
+                        if is_identity {
+                            pairing_result_all_non_identity = false;
+                            break;
+                        }
+                        continue;
+                    }
+                    pairing_result_all_non_identity = false;
+                    break;
+                }
+                let mut out = vec![0u8; GT_COMPRESSED_SIZE];
+                if pairing_result_all_non_identity {
+                    out[GT_COMPRESSED_SIZE - 1] = 1;
+                }
+                Ok(out)
+            }
+            _ => Err(ExitCode::PrecompileError),
+        }
     }
 
-    pub fn fn_impl_multi_pairing(
+    pub fn fn_impl_bn254(
         pairs: &[(
             [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
             [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
         )],
     ) -> Result<Vec<u8>, ExitCode> {
-        let mut result = vec![0u8; SCALAR_SIZE];
-
-        match E::CURVE_TYPE {
-            CurveType::Bn254 => {
-                // Parse points using the same logic as the original bn256_pairing.rs
-                let mut parsed_pairs = Vec::new();
-
-                for (g1_bytes, g2_bytes) in pairs.iter() {
-                    let g1 =
-                        read_g1_point(g1_bytes).map_err(|_| ExitCode::MalformedBuiltinParams)?;
-                    let g2 =
-                        read_g2_point(g2_bytes).map_err(|_| ExitCode::MalformedBuiltinParams)?;
-
-                    // Skip zero points (same logic as original implementation)
-                    if !g1.is_zero() && !g2.is_zero() {
-                        parsed_pairs.push((g1, g2));
-                    }
-                }
-
-                // If no valid pairs after filtering, return true (empty pairing is valid)
-                let success = if parsed_pairs.is_empty() {
-                    true
-                } else {
-                    bn254_pairing_check(&parsed_pairs)
-                };
-
-                if success {
-                    result[SCALAR_SIZE - 1] = 1; // Set the last byte to 1 for true (big-endian)
-                }
-                Ok(result)
-            }
-            _ => {
-                // Unsupported curve type - result remains all zeros
-                Err(ExitCode::MalformedBuiltinParams)
+        let mut parsed_pairs: Vec<(Bn254G1Affine, Bn254G2Affine)> = Vec::new();
+        for (g1_bytes, g2_bytes) in pairs.iter() {
+            let g1 = read_g1_point(g1_bytes).map_err(|_| ExitCode::MalformedBuiltinParams)?;
+            let g2 = read_g2_point(g2_bytes).map_err(|_| ExitCode::MalformedBuiltinParams)?;
+            if !g1.is_zero() && !g2.is_zero() {
+                parsed_pairs.push((g1, g2));
             }
         }
+
+        let success = if parsed_pairs.is_empty() {
+            true
+        } else {
+            bn254_pairing_check(&parsed_pairs)
+        };
+
+        let mut out = vec![0u8; SCALAR_SIZE];
+        if success {
+            out[SCALAR_SIZE - 1] = 1;
+        }
+        Ok(out)
     }
 
-    pub fn fn_impl_compressed(
-        pairs: &[([u8; FP_SIZE], [u8; G1_UNCOMPRESSED_SIZE])], // Compressed sizes for BLS12-381
-        out: &mut [u8; GT_COMPRESSED_SIZE],                    // GT compressed size
-    ) -> Result<(), ExitCode> {
-        match E::CURVE_TYPE {
-            CurveType::Bls12381 => {
-                // For BLS12-381, we need to decompress the points first
-                let mut bls_pairs = Vec::with_capacity(pairs.len());
-                for (g1_compressed, g2_compressed) in pairs.iter() {
-                    // Decompress G1 point (48 bytes -> 96 bytes)
-                    let mut g1_uncompressed = [0u8; G1_UNCOMPRESSED_SIZE];
-                    g1_uncompressed[..FP_SIZE].copy_from_slice(g1_compressed);
-
-                    // Decompress G2 point (96 bytes -> 192 bytes)
-                    let mut g2_uncompressed = [0u8; G2_UNCOMPRESSED_SIZE];
-                    g2_uncompressed[..G1_UNCOMPRESSED_SIZE].copy_from_slice(g2_compressed);
-
-                    let g1_aff = parse_bls12381_g1_point_uncompressed(&g1_uncompressed);
-                    let g2_aff = parse_bls12381_g2_point_uncompressed(&g2_uncompressed);
-                    bls_pairs.push((g1_aff, g2_aff));
+    pub fn fn_impl_bls12_381(
+        pairs: &[([u8; G1_COMPRESSED_SIZE], [u8; G2_COMPRESSED_SIZE])],
+    ) -> Result<Vec<u8>, ExitCode> {
+        let mut pairing_result_all_non_identity = true;
+        for (g1c, g2c) in pairs.iter() {
+            let maybe_g1 = blstrs::G1Affine::from_compressed(g1c);
+            let maybe_g2 = blstrs::G2Affine::from_compressed(g2c);
+            if let (Some(g1_aff), Some(g2_aff)) = (maybe_g1.into(), maybe_g2.into()) {
+                let gt = blstrs::pairing(&g1_aff, &g2_aff);
+                let is_identity: bool = gt.is_identity().into();
+                if is_identity {
+                    pairing_result_all_non_identity = false;
+                    break;
                 }
-
-                // Perform BLS12-381 pairing check
-                let mut pairing_result = true;
-                for (g1, g2) in bls_pairs.iter() {
-                    let pairing_check = blstrs::pairing(g1, g2);
-                    if pairing_check.is_identity().into() {
-                        pairing_result = false;
-                        break;
-                    }
-                }
-
-                // Set output based on result
-                if pairing_result {
-                    out[GT_COMPRESSED_SIZE - 1] = 1; // Set the last byte to 1 for true (big-endian)
-                }
-                Ok(())
+            } else {
+                pairing_result_all_non_identity = false;
+                break;
             }
-            _ => Err(ExitCode::UnknownError),
         }
+        let mut out = vec![0u8; GT_COMPRESSED_SIZE];
+        if pairing_result_all_non_identity {
+            out[GT_COMPRESSED_SIZE - 1] = 1;
+        }
+        Ok(out)
     }
 }
 

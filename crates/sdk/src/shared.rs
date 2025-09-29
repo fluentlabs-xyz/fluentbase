@@ -10,7 +10,8 @@ use fluentbase_types::{
     IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI, SharedAPI, SharedContextInputV1,
     StorageAPI, SyscallResult, B256, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE, U256,
+    BN254_G2_POINT_DECOMPRESSED_SIZE, G1_COMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE,
+    G2_UNCOMPRESSED_SIZE, GT_COMPRESSED_SIZE, PADDED_FP2_SIZE, PADDED_FP_SIZE, SCALAR_SIZE, U256,
 };
 
 pub struct SharedContextImpl<API: NativeAPI> {
@@ -214,47 +215,67 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::curve25519_ristretto_multiscalar_mul(pairs, out)
     }
 
-    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
+    fn bls12_381_g1_add(p: &mut [u8; G1_UNCOMPRESSED_SIZE], q: &[u8; G1_UNCOMPRESSED_SIZE]) {
         API::bls12_381_g1_add(p, q)
     }
 
-    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]) {
+    fn bls12_381_g1_msm(
+        pairs: &[([u8; G1_UNCOMPRESSED_SIZE], [u8; SCALAR_SIZE])],
+        out: &mut [u8; G1_UNCOMPRESSED_SIZE],
+    ) {
         API::bls12_381_g1_msm(pairs, out)
     }
 
-    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) {
+    fn bls12_381_g2_add(p: &mut [u8; G2_UNCOMPRESSED_SIZE], q: &[u8; G2_UNCOMPRESSED_SIZE]) {
         API::bls12_381_g2_add(p, q)
     }
 
-    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]) {
+    fn bls12_381_g2_msm(
+        pairs: &[([u8; G2_UNCOMPRESSED_SIZE], [u8; SCALAR_SIZE])],
+        out: &mut [u8; G2_UNCOMPRESSED_SIZE],
+    ) {
         API::bls12_381_g2_msm(pairs, out)
     }
 
-    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]) {
+    fn bls12_381_pairing(
+        pairs: &[([u8; G1_COMPRESSED_SIZE], [u8; G2_COMPRESSED_SIZE])],
+        out: &mut [u8; GT_COMPRESSED_SIZE],
+    ) {
         API::bls12_381_pairing(pairs, out)
     }
 
-    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]) {
+    fn bls12_381_map_fp_to_g1(p: &[u8; PADDED_FP_SIZE], out: &mut [u8; G1_UNCOMPRESSED_SIZE]) {
         API::bls12_381_map_fp_to_g1(p, out)
     }
 
-    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
+    fn bls12_381_map_fp2_to_g2(p: &[u8; PADDED_FP2_SIZE], out: &mut [u8; G2_UNCOMPRESSED_SIZE]) {
         API::bls12_381_map_fp2_to_g2(p, out)
     }
 
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
+    fn bn254_add(
+        p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+        q: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
         API::bn254_add(p, q)
     }
 
-    fn bn254_double(p: &mut [u8; 64]) {
+    fn bn254_double(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE]) {
         API::bn254_double(p)
     }
 
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
+    fn bn254_mul(
+        p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+        q: &[u8; SCALAR_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
         API::bn254_mul(p, q)
     }
 
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
+    fn bn254_multi_pairing(
+        elements: &[(
+            [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+            [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+        )],
+    ) -> Result<[u8; SCALAR_SIZE], ExitCode> {
         API::bn254_multi_pairing(elements)
     }
 
@@ -282,11 +303,11 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::bn254_g2_decompress(point)
     }
 
-    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+    fn bn254_fp_mul(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
         API::bn254_fp_mul(p, q)
     }
 
-    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+    fn bn254_fp2_mul(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
         API::bn254_fp2_mul(p, q)
     }
 

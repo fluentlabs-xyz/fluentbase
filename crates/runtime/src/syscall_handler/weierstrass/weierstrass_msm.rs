@@ -84,7 +84,6 @@ impl<C: MulConfig> SyscallWeierstrassMsm<C> {
 
             let point_aff = parse_bls12381_g1_point_uncompressed(&point);
 
-            // Skip if scalar is zero
             if scalar.iter().all(|&b| b == 0) {
                 continue;
             }
