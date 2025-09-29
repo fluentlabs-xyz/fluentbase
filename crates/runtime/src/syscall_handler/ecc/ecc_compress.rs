@@ -1,11 +1,13 @@
 use crate::{
-    syscall_handler::syscall_process_exit_code,
-    syscall_handler::weierstrass::{
-        config::{Curve, CurveConfig, Mode},
-        weierstrass_helpers::{
-            g1_from_compressed_bytes, g1_from_decompressed_bytes, g2_from_compressed_bytes,
-            g2_from_decompressed_bytes,
+    syscall_handler::{
+        ecc::{
+            ecc_config::{Curve, CurveConfig, Mode},
+            ecc_helpers::{
+                g1_from_compressed_bytes, g1_from_decompressed_bytes, g2_from_compressed_bytes,
+                g2_from_decompressed_bytes,
+            },
         },
+        syscall_process_exit_code,
     },
     RuntimeContext,
 };
@@ -26,11 +28,11 @@ type G1 = ark_bn254::g1::G1Affine;
 type G2 = ark_bn254::g2::G2Affine;
 
 /// Generic Weierstrass compress/decompress syscall handler
-pub struct SyscallWeierstrassCompressDecompressAssign<C: CurveConfig> {
+pub struct SyscallEccCompressDecompress<C: CurveConfig> {
     _phantom: PhantomData<C>,
 }
 
-impl<C: CurveConfig> SyscallWeierstrassCompressDecompressAssign<C> {
+impl<C: CurveConfig> SyscallEccCompressDecompress<C> {
     pub const fn new() -> Self {
         Self {
             _phantom: PhantomData,

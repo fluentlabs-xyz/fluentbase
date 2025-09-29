@@ -1,3 +1,4 @@
+use super::ecc_config::MapConfig;
 /// Generic mapping handler for Weierstrass curves, specifically for
 /// - Fp(size: 64) to G1(size: 96)
 /// - Fp2(size: 128) to G2(size: 192)
@@ -16,16 +17,13 @@ use fluentbase_types::{
 };
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::CurveType;
-
 use std::marker::PhantomData;
 
-use super::config::MapConfig;
-
-pub struct SyscallWeierstrassMapAssign<C: MapConfig> {
+pub struct SyscallEccMapping<C: MapConfig> {
     _phantom: PhantomData<C>,
 }
 
-impl<C: MapConfig> SyscallWeierstrassMapAssign<C> {
+impl<C: MapConfig> SyscallEccMapping<C> {
     pub fn fn_handler(
         caller: &mut impl Store<RuntimeContext>,
         params: &[Value],

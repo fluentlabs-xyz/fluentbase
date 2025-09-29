@@ -4,6 +4,7 @@
 //! on different Weierstrass curves. It dispatches to curve-specific implementations
 //! based on the provided configuration.
 //!
+use super::ecc_config::{RecoverConfig, Secp256k1RecoverConfig};
 use crate::RuntimeContext;
 use fluentbase_types::B256;
 use rwasm::{Store, TrapCode, Value};
@@ -14,13 +15,11 @@ use secp256k1::{
 use sp1_curves::CurveType;
 use std::marker::PhantomData;
 
-use super::config::{RecoverConfig, Secp256k1RecoverConfig};
-
-pub struct SyscallWeierstrassRecoverAssign<C: RecoverConfig> {
+pub struct SyscallEccRecover<C: RecoverConfig> {
     _phantom: PhantomData<C>,
 }
 
-impl<C: RecoverConfig> SyscallWeierstrassRecoverAssign<C> {
+impl<C: RecoverConfig> SyscallEccRecover<C> {
     pub const fn new() -> Self {
         Self {
             _phantom: PhantomData,
@@ -109,8 +108,7 @@ impl<C: RecoverConfig> SyscallWeierstrassRecoverAssign<C> {
 mod secp256k1_tests {
     extern crate alloc;
 
-    use super::super::config::Secp256k1RecoverConfig;
-    use super::SyscallWeierstrassRecoverAssign;
+    use super::{super::ecc_config::Secp256k1RecoverConfig, SyscallEccRecover};
     use fluentbase_types::B256;
     use hex_literal::hex;
     use k256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey};
@@ -153,7 +151,7 @@ mod secp256k1_tests {
             let pk_uncompressed = public_key.to_encoded_point(false);
             let expected_pk = pk_uncompressed.as_bytes();
 
-            let result = SyscallWeierstrassRecoverAssign::<Secp256k1RecoverConfig>::fn_impl(
+            let result = SyscallEccRecover::<Secp256k1RecoverConfig>::fn_impl(
                 &B256::from_slice(&digest),
                 &vector.sig[1..],
                 vector.rec_id,
@@ -173,7 +171,7 @@ mod secp256k1_tests {
         };
         let digest = Sha256::new_with_prefix(vector.msg).finalize();
 
-        let result = SyscallWeierstrassRecoverAssign::<Secp256k1RecoverConfig>::fn_impl(
+        let result = SyscallEccRecover::<Secp256k1RecoverConfig>::fn_impl(
             &B256::from_slice(&digest),
             &vector.sig[1..],
             vector.rec_id,
@@ -187,7 +185,7 @@ mod secp256k1_tests {
         let digest = Sha256::new_with_prefix(vector.msg).finalize();
 
         // Test with invalid recovery ID (should be 0-3 for secp256k1)
-        let result = SyscallWeierstrassRecoverAssign::<Secp256k1RecoverConfig>::fn_impl(
+        let result = SyscallEccRecover::<Secp256k1RecoverConfig>::fn_impl(
             &B256::from_slice(&digest),
             &vector.sig[1..],
             4, // Invalid recovery ID
@@ -202,7 +200,7 @@ mod secp256k1_tests {
 
         // Test with invalid signature length (should be 64 bytes)
         let invalid_sig = [0u8; 32];
-        let result = SyscallWeierstrassRecoverAssign::<Secp256k1RecoverConfig>::fn_impl(
+        let result = SyscallEccRecover::<Secp256k1RecoverConfig>::fn_impl(
             &B256::from_slice(&digest),
             &invalid_sig,
             vector.rec_id,
@@ -217,7 +215,7 @@ mod secp256k1_tests {
 
         // Test with invalid signature format (all zeros)
         let invalid_sig = [0u8; 64];
-        let result = SyscallWeierstrassRecoverAssign::<Secp256k1RecoverConfig>::fn_impl(
+        let result = SyscallEccRecover::<Secp256k1RecoverConfig>::fn_impl(
             &B256::from_slice(&digest),
             &invalid_sig,
             vector.rec_id,

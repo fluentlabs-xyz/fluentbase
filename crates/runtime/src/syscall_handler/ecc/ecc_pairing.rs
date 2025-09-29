@@ -5,13 +5,13 @@
 //!
 use crate::{
     syscall_handler::{
-        syscall_process_exit_code,
-        weierstrass::{
-            bn256_helpers::{read_g1_point, read_g2_point},
-            helpers_bls::{
+        ecc::{
+            ecc_bls12381::{
                 parse_bls12381_g1_point_uncompressed, parse_bls12381_g2_point_uncompressed,
             },
+            ecc_bn256::{read_g1_point, read_g2_point},
         },
+        syscall_process_exit_code,
     },
     RuntimeContext,
 };
@@ -25,14 +25,13 @@ use fluentbase_types::{
 };
 use group::Group;
 use rwasm::{Store, TrapCode, Value};
-
 use sp1_curves::{CurveType, EllipticCurve};
 
-pub struct SyscallWeierstrassPairingAssign<E: EllipticCurve> {
+pub struct SyscallEccPairing<E: EllipticCurve> {
     _phantom: std::marker::PhantomData<E>,
 }
 
-impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
+impl<E: EllipticCurve> SyscallEccPairing<E> {
     pub fn fn_handler(
         caller: &mut impl Store<RuntimeContext>,
         params: &[Value],

@@ -1,12 +1,14 @@
 //! Handles the syscall for multi-scalar multiplication on a Weierstrass curve.
 //! Expects parameters: (pairs_ptr, pairs_len, out_ptr)
 
-use super::config::MulConfig;
-use crate::syscall_handler::weierstrass::{
-    g2_be_uncompressed_to_le_limbs, g2_le_limbs_to_be_uncompressed, helpers_bls::parse_affine_g2,
-    parse_bls12381_g1_point_uncompressed,
+use super::ecc_config::MulConfig;
+use crate::{
+    syscall_handler::ecc::{
+        ecc_bls12381::parse_affine_g2, g2_be_uncompressed_to_le_limbs,
+        g2_le_limbs_to_be_uncompressed, parse_bls12381_g1_point_uncompressed,
+    },
+    RuntimeContext,
 };
-use crate::RuntimeContext;
 use blstrs::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
 use fluentbase_types::{G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, SCALAR_SIZE};
 use group::Group;
@@ -14,12 +16,12 @@ use rwasm::{Store, TrapCode, Value};
 use sp1_curves::CurveType;
 use std::marker::PhantomData;
 
-pub struct SyscallWeierstrassMsm<C: MulConfig> {
+pub struct SyscallEccMsm<C: MulConfig> {
     _phantom: PhantomData<C>,
 }
 
-impl<C: MulConfig> SyscallWeierstrassMsm<C> {
-    /// Create a new instance of the [`SyscallWeierstrassMsm`].
+impl<C: MulConfig> SyscallEccMsm<C> {
+    /// Create a new instance of the [`SyscallEccMsm`].
     pub const fn new() -> Self {
         Self {
             _phantom: PhantomData,

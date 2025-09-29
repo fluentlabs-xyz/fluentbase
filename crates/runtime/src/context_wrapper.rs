@@ -1,11 +1,9 @@
 use crate::{
     syscall_handler::{
-        weierstrass::{
+        ecc::{
             Bls12381G1MapConfig, Bls12381G2MapConfig, Bn254G2DecompressConfig,
-            Secp256r1VerifyConfig, SyscallWeierstrassAddAssign,
-            SyscallWeierstrassCompressDecompressAssign, SyscallWeierstrassDoubleAssign,
-            SyscallWeierstrassMapAssign, SyscallWeierstrassMulAssign,
-            SyscallWeierstrassPairingAssign, SyscallWeierstrassRecoverAssign,
+            Secp256r1VerifyConfig, SyscallEccAdd, SyscallEccCompressDecompress, SyscallEccDouble,
+            SyscallEccMapping, SyscallEccMul, SyscallEccPairing, SyscallEccRecover,
             SyscallWeierstrassVerifyAssign,
         },
         *,
@@ -60,14 +58,12 @@ impl NativeAPI for RuntimeContextWrapper {
     /////// Weierstrass curves ///////
 
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
-        SyscallWeierstrassRecoverAssign::<Secp256k1RecoverConfig>::fn_impl(digest, sig, rec_id).map(
-            |v| {
-                let mut result = [0u8; 65];
-                let min = core::cmp::min(result.len(), v.len());
-                result[..min].copy_from_slice(&v[..min]);
-                result
-            },
-        )
+        SyscallEccRecover::<Secp256k1RecoverConfig>::fn_impl(digest, sig, rec_id).map(|v| {
+            let mut result = [0u8; 65];
+            let min = core::cmp::min(result.len(), v.len());
+            result[..min].copy_from_slice(&v[..min]);
+            result
+        })
     }
 
     fn curve256r1_verify(input: &[u8]) -> bool {
@@ -75,7 +71,7 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn bls12_381_g1_add(p: &mut [u8; G1_UNCOMPRESSED_SIZE], q: &[u8; G1_UNCOMPRESSED_SIZE]) {
-        if let Ok(result) = SyscallWeierstrassAddAssign::<Bls12381G1AddConfig>::fn_impl(p, q) {
+        if let Ok(result) = SyscallEccAdd::<Bls12381G1AddConfig>::fn_impl(p, q) {
             p.copy_from_slice(&result[..G1_UNCOMPRESSED_SIZE]);
         }
     }
@@ -96,7 +92,7 @@ impl NativeAPI for RuntimeContextWrapper {
             .collect();
 
         // Use the new MSM implementation
-        let result = SyscallWeierstrassMsm::<Bls12381G1MulConfig>::fn_impl(&pairs_vec);
+        let result = SyscallEccMsm::<Bls12381G1MulConfig>::fn_impl(&pairs_vec);
 
         // Copy result to output
         if !result.is_empty() {
@@ -107,7 +103,7 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn bls12_381_g2_add(p: &mut [u8; G2_UNCOMPRESSED_SIZE], q: &[u8; G2_UNCOMPRESSED_SIZE]) {
-        if let Ok(result) = SyscallWeierstrassAddAssign::<Bls12381G2AddConfig>::fn_impl(p, q) {
+        if let Ok(result) = SyscallEccAdd::<Bls12381G2AddConfig>::fn_impl(p, q) {
             if !result.is_empty() {
                 p.copy_from_slice(&result[..G2_UNCOMPRESSED_SIZE]);
             }
@@ -130,7 +126,7 @@ impl NativeAPI for RuntimeContextWrapper {
             .collect();
 
         // Use the new MSM implementation
-        let result = SyscallWeierstrassMsm::<Bls12381G2MulConfig>::fn_impl(&pairs_vec);
+        let result = SyscallEccMsm::<Bls12381G2MulConfig>::fn_impl(&pairs_vec);
         if !result.is_empty() {
             out.copy_from_slice(&result);
         } else {
@@ -142,7 +138,7 @@ impl NativeAPI for RuntimeContextWrapper {
         pairs: &[([u8; G1_COMPRESSED_SIZE], [u8; G2_COMPRESSED_SIZE])],
         out: &mut [u8; GT_COMPRESSED_SIZE],
     ) {
-        let result = SyscallWeierstrassPairingAssign::<Bls12381>::fn_impl_bls12_381(&pairs);
+        let result = SyscallEccPairing::<Bls12381>::fn_impl_bls12_381(&pairs);
         match result {
             Ok(v) => {
                 let min = core::cmp::min(out.len(), v.len());
@@ -158,12 +154,12 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn bls12_381_map_fp_to_g1(p: &[u8; PADDED_FP_SIZE], out: &mut [u8; G1_UNCOMPRESSED_SIZE]) {
-        let result = SyscallWeierstrassMapAssign::<Bls12381G1MapConfig>::fn_impl(p.as_slice());
+        let result = SyscallEccMapping::<Bls12381G1MapConfig>::fn_impl(p.as_slice());
         out.copy_from_slice(&result[..G1_UNCOMPRESSED_SIZE]);
     }
 
     fn bls12_381_map_fp2_to_g2(p: &[u8; PADDED_FP2_SIZE], out: &mut [u8; G2_UNCOMPRESSED_SIZE]) {
-        let result = SyscallWeierstrassMapAssign::<Bls12381G2MapConfig>::fn_impl(p.as_slice());
+        let result = SyscallEccMapping::<Bls12381G2MapConfig>::fn_impl(p.as_slice());
         out.copy_from_slice(&result[..G2_UNCOMPRESSED_SIZE]);
     }
 
@@ -171,7 +167,7 @@ impl NativeAPI for RuntimeContextWrapper {
         p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
         q: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        match SyscallWeierstrassAddAssign::<Bn254G1AddConfig>::fn_impl(p, q) {
+        match SyscallEccAdd::<Bn254G1AddConfig>::fn_impl(p, q) {
             Ok(result) => {
                 if result.is_empty() {
                     return Err(ExitCode::MalformedBuiltinParams);
@@ -185,7 +181,7 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn bn254_double(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE]) {
-        let result = SyscallWeierstrassDoubleAssign::<Bn254>::fn_impl(p);
+        let result = SyscallEccDouble::<Bn254>::fn_impl(p);
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);
     }
@@ -194,7 +190,7 @@ impl NativeAPI for RuntimeContextWrapper {
         p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
         q: &[u8; SCALAR_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let result = SyscallWeierstrassMulAssign::<Bn254G1MulConfig>::fn_impl(p, q)
+        let result = SyscallEccMul::<Bn254G1MulConfig>::fn_impl(p, q)
             .map_err(|_| ExitCode::PrecompileError)?;
         let result_array: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] =
             result.try_into().map_err(|_| ExitCode::PrecompileError)?;
@@ -207,7 +203,7 @@ impl NativeAPI for RuntimeContextWrapper {
             [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
         )],
     ) -> Result<[u8; SCALAR_SIZE], ExitCode> {
-        let result = SyscallWeierstrassPairingAssign::<Bn254>::fn_impl_bn254(&pairs)
+        let result = SyscallEccPairing::<Bn254>::fn_impl_bn254(&pairs)
             .map_err(|_| ExitCode::PrecompileError)?;
         let result_array: [u8; SCALAR_SIZE] =
             result.try_into().map_err(|_| ExitCode::PrecompileError)?;
@@ -217,8 +213,8 @@ impl NativeAPI for RuntimeContextWrapper {
     fn bn254_g1_compress(
         point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
-        let result = SyscallWeierstrassCompressDecompressAssign::<
-            crate::syscall_handler::weierstrass::Bn254G1CompressConfig,
+        let result = SyscallEccCompressDecompress::<
+            crate::syscall_handler::ecc::Bn254G1CompressConfig,
         >::fn_impl(point)?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
@@ -226,8 +222,8 @@ impl NativeAPI for RuntimeContextWrapper {
     fn bn254_g1_decompress(
         point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let result = SyscallWeierstrassCompressDecompressAssign::<
-            crate::syscall_handler::weierstrass::Bn254G1DecompressConfig,
+        let result = SyscallEccCompressDecompress::<
+            crate::syscall_handler::ecc::Bn254G1DecompressConfig,
         >::fn_impl(point)?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
@@ -235,8 +231,8 @@ impl NativeAPI for RuntimeContextWrapper {
     fn bn254_g2_compress(
         point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
-        let result = SyscallWeierstrassCompressDecompressAssign::<
-            crate::syscall_handler::weierstrass::Bn254G2CompressConfig,
+        let result = SyscallEccCompressDecompress::<
+            crate::syscall_handler::ecc::Bn254G2CompressConfig,
         >::fn_impl(point)?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
@@ -244,19 +240,18 @@ impl NativeAPI for RuntimeContextWrapper {
     fn bn254_g2_decompress(
         point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let result =
-            SyscallWeierstrassCompressDecompressAssign::<Bn254G2DecompressConfig>::fn_impl(point)?;
+        let result = SyscallEccCompressDecompress::<Bn254G2DecompressConfig>::fn_impl(point)?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
 
     fn bn254_fp_mul(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
-        let result = SyscallFpOp::<Bn254BaseField, FieldMul>::fn_impl(p, q);
+        let result = SyscallEccFpOp::<Bn254BaseField, FieldMul>::fn_impl(p, q);
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);
     }
 
     fn bn254_fp2_mul(p: &mut [u8; BN254_G2_POINT_COMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
-        let result = SyscallFp2Mul::<Bn254BaseField>::fn_impl(p, q);
+        let result = SyscallEccFp2Mul::<Bn254BaseField>::fn_impl(p, q);
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);
     }

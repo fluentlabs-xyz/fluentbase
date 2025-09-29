@@ -1,7 +1,4 @@
-use crate::{
-    syscall_handler::{cast_u8_to_u32, FieldOp2},
-    RuntimeContext,
-};
+use crate::{syscall_handler::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
 use num::BigUint;
 use rwasm::{Store, TrapCode, Value};
@@ -9,12 +6,11 @@ use sp1_curves::{params::NumWords, weierstrass::FpOpField};
 use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;
 
-pub struct SyscallFp2AddSub<P, OP> {
-    _op: PhantomData<OP>,
+pub struct SyscallEccFp2Mul<P> {
     _marker: PhantomData<P>,
 }
 
-impl<P: FpOpField, OP: FieldOp2> SyscallFp2AddSub<P, OP> {
+impl<P: FpOpField> SyscallEccFp2Mul<P> {
     pub fn fn_handler(
         caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
@@ -25,14 +21,16 @@ impl<P: FpOpField, OP: FieldOp2> SyscallFp2AddSub<P, OP> {
             params[1].i32().unwrap() as u32,
         );
 
-        let mut x = vec![0u8; <P as NumWords>::WordsFieldElement::USIZE * 4];
+        let num_words = <P as NumWords>::WordsFieldElement::USIZE;
+
+        let mut x = vec![0u8; num_words * 4];
         caller.memory_read(x_ptr as usize, &mut x)?;
-        let mut y = vec![0u8; <P as NumWords>::WordsFieldElement::USIZE * 4];
+        let mut y = vec![0u8; num_words * 4];
         caller.memory_read(y_ptr as usize, &mut y)?;
 
         let result_vec = Self::fn_impl(&x, &y);
-
         caller.memory_write(x_ptr as usize, &result_vec)?;
+
         Ok(())
     }
 
@@ -51,7 +49,12 @@ impl<P: FpOpField, OP: FieldOp2> SyscallFp2AddSub<P, OP> {
         let bc1 = &BigUint::from_slice(bc1);
         let modulus = &BigUint::from_bytes_le(P::MODULUS);
 
-        let (c0, c1) = OP::execute(ac0, ac1, bc0, bc1, modulus);
+        #[allow(clippy::match_bool)]
+        let c0 = match (ac0 * bc0) % modulus < (ac1 * bc1) % modulus {
+            true => ((modulus + (ac0 * bc0) % modulus) - (ac1 * bc1) % modulus) % modulus,
+            false => ((ac0 * bc0) % modulus - (ac1 * bc1) % modulus) % modulus,
+        };
+        let c1 = ((ac0 * bc1) % modulus + (ac1 * bc0) % modulus) % modulus;
 
         let mut result = c0
             .to_u32_digits()

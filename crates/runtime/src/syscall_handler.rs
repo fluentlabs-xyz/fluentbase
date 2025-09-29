@@ -17,8 +17,8 @@ mod hashing;
 pub use hashing::*;
 mod bigint;
 pub use bigint::*;
-pub mod weierstrass;
-pub use weierstrass::*;
+pub mod ecc;
+pub use ecc::*;
 
 /// Routes a syscall identified by func_idx to the corresponding runtime instruction handler.
 pub(crate) fn runtime_syscall_handler(
@@ -85,38 +85,38 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::RISTRETTO255_MUL => SyscallCurve25519RistrettoMul::fn_handler(caller, params, result),
 
         // secp256k1 (0x04)
-        SysFuncIdx::SECP256K1_RECOVER => SyscallWeierstrassRecoverAssign::<Secp256k1RecoverConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1AddConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::SECP256K1_DECOMPRESS => SyscallWeierstrassCompressDecompressAssign::<Secp256k1DecompressConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::SECP256K1_DOUBLE => SyscallWeierstrassDoubleAssign::<Secp256k1>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_RECOVER => SyscallEccRecover::<Secp256k1RecoverConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_ADD => SyscallEccAdd::<Secp256k1AddConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_DECOMPRESS => SyscallEccCompressDecompress::<Secp256k1DecompressConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_DOUBLE => SyscallEccDouble::<Secp256k1>::fn_handler(caller, params, result),
 
         // secp256r1 (0x05)
         SysFuncIdx::SECP256R1_VERIFY => SyscallWeierstrassVerifyAssign::<Secp256r1VerifyConfig>::fn_handler(caller, params, result),
 
         // bls12381 (0x06)
-        SysFuncIdx::BLS12381_G1_ADD => SyscallWeierstrassAddAssign::<Bls12381G1AddConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_G1_MSM => SyscallWeierstrassMsm::<Bls12381G1MulConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_G2_ADD => SyscallWeierstrassAddAssign::<Bls12381G2AddConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_G2_MSM => SyscallWeierstrassMsm::<Bls12381G2MulConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_PAIRING => SyscallWeierstrassPairingAssign::<Bls12381>::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_MAP_G1 => SyscallWeierstrassMapAssign::<Bls12381G1MapConfig>:: fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_MAP_G2 => SyscallWeierstrassMapAssign::<Bls12381G2MapConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_G1_ADD => SyscallEccAdd::<Bls12381G1AddConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_G1_MSM => SyscallEccMsm::<Bls12381G1MulConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_G2_ADD => SyscallEccAdd::<Bls12381G2AddConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_G2_MSM => SyscallEccMsm::<Bls12381G2MulConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_PAIRING => SyscallEccPairing::<Bls12381>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_MAP_G1 => SyscallEccMapping::<Bls12381G1MapConfig>:: fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_MAP_G2 => SyscallEccMapping::<Bls12381G2MapConfig>::fn_handler(caller, params, result),
 
         // bn254 (0x07)
-        SysFuncIdx::BN254_ADD => SyscallWeierstrassAddAssign::<Bn254G1AddConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_MUL => SyscallWeierstrassMulAssign::<Bn254G1MulConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_MULTI_PAIRING => SyscallWeierstrassPairingAssign::<Bn254>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_DOUBLE => SyscallWeierstrassDoubleAssign::<Bn254>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_G1_COMPRESS => SyscallWeierstrassCompressDecompressAssign::<Bn254G1CompressConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_G1_DECOMPRESS => SyscallWeierstrassCompressDecompressAssign::<Bn254G1DecompressConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_G2_COMPRESS => SyscallWeierstrassCompressDecompressAssign::<Bn254G2CompressConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_G2_DECOMPRESS => SyscallWeierstrassCompressDecompressAssign::<Bn254G2DecompressConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_FP_ADD => SyscallFpOp::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_FP_SUB => SyscallFpOp::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_FP_MUL => SyscallFpOp::<Bn254BaseField, FieldMul>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_FP2_ADD => SyscallFp2AddSub::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_FP2_SUB => SyscallFp2AddSub::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_FP2_MUL => SyscallFp2Mul::<Bn254BaseField>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_ADD => SyscallEccAdd::<Bn254G1AddConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_MUL => SyscallEccMul::<Bn254G1MulConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_MULTI_PAIRING => SyscallEccPairing::<Bn254>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_DOUBLE => SyscallEccDouble::<Bn254>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_G1_COMPRESS => SyscallEccCompressDecompress::<Bn254G1CompressConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_G1_DECOMPRESS => SyscallEccCompressDecompress::<Bn254G1DecompressConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_G2_COMPRESS => SyscallEccCompressDecompress::<Bn254G2CompressConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_G2_DECOMPRESS => SyscallEccCompressDecompress::<Bn254G2DecompressConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_FP_ADD => SyscallEccFpOp::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_FP_SUB => SyscallEccFpOp::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_FP_MUL => SyscallEccFpOp::<Bn254BaseField, FieldMul>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_FP2_ADD => SyscallEccFp2AddSub::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_FP2_SUB => SyscallEccFp2AddSub::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_FP2_MUL => SyscallEccFp2Mul::<Bn254BaseField>::fn_handler(caller, params, result),
 
         // uint256 (0x08)
         SysFuncIdx::BIGINT_MOD_EXP => SyscallMathBigModExp::fn_handler(caller, params, result),

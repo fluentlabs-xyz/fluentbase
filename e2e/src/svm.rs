@@ -1,7 +1,9 @@
 mod tests {
-    use crate::helpers::{call_with_sig, load_program_account_from_elf_file, svm_deploy};
-    use crate::universal_token::{build_input, build_input_raw};
-    use crate::EvmTestingContextWithGenesis;
+    use crate::{
+        helpers::{call_with_sig, load_program_account_from_elf_file, svm_deploy},
+        universal_token::{build_input, build_input_raw},
+        EvmTestingContextWithGenesis,
+    };
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
     use core::str::from_utf8;
     use curve25519_dalek::{
@@ -10,12 +12,9 @@ mod tests {
     };
     use fluentbase_runtime::syscall_handler::{
         Bn254G1CompressConfig, Bn254G1DecompressConfig, Bn254G2CompressConfig,
-        Bn254G2DecompressConfig, SyscallWeierstrassCompressDecompressAssign,
+        Bn254G2DecompressConfig, SyscallEccCompressDecompress,
     };
     use fluentbase_sdk::{address, Address, ContractContextV1, U256};
-    use fluentbase_svm::token_2022::instruction::initialize_account;
-    use fluentbase_svm::token_2022::instruction::initialize_mint;
-    use fluentbase_svm::token_2022::instruction::mint_to;
     #[allow(deprecated)]
     use fluentbase_svm::token_2022::instruction::transfer;
     use fluentbase_svm::{
@@ -30,15 +29,15 @@ mod tests {
             message::Message,
         },
         system_program, token_2022,
+        token_2022::instruction::{initialize_account, initialize_mint, mint_to},
     };
     use fluentbase_svm_common::common::{evm_balance_from_lamports, pubkey_from_evm_address};
-    use fluentbase_svm_shared::test_structs::EvmAction;
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
             AltBn128Compression, Blake3, CreateAccountAndModifySomeData1, CurveGroupOp,
-            CurveMultiscalarMultiplication, CurvePointValidation, Invoke, Keccak256, Poseidon,
-            SetGetReturnData, Sha256, SolBigModExp, SolSecp256k1Recover, SyscallAltBn128,
+            CurveMultiscalarMultiplication, CurvePointValidation, EvmAction, Invoke, Keccak256,
+            Poseidon, SetGetReturnData, Sha256, SolBigModExp, SolSecp256k1Recover, SyscallAltBn128,
             TestCommand, Transfer, EXPECTED_RET_ERR, EXPECTED_RET_OK,
         },
     };
@@ -48,8 +47,10 @@ mod tests {
         BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
         BN254_G2_POINT_DECOMPRESSED_SIZE, PRECOMPILE_SHA256, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
     };
-    use fluentbase_universal_token::common::sig_to_bytes;
-    use fluentbase_universal_token::consts::{SIG_BALANCE, SIG_DECIMALS, SIG_DECIMALS_FOR_MINT};
+    use fluentbase_universal_token::{
+        common::sig_to_bytes,
+        consts::{SIG_BALANCE, SIG_DECIMALS, SIG_DECIMALS_FOR_MINT},
+    };
     use hex_literal::hex;
     use rand::random_range;
     use serde::Deserialize;
@@ -2636,7 +2637,7 @@ mod tests {
 
             test_commands.push(test_case.into());
             let syscall_decompressed =
-                SyscallWeierstrassCompressDecompressAssign::<Bn254G1DecompressConfig>::fn_impl(
+                SyscallEccCompressDecompress::<Bn254G1DecompressConfig>::fn_impl(
                     &convert_endianness_fixed::<
                         BN254_G1_POINT_COMPRESSED_SIZE,
                         BN254_G1_POINT_COMPRESSED_SIZE,
@@ -2657,7 +2658,7 @@ mod tests {
 
             test_commands.push(test_case.into());
             let syscall_compressed =
-                SyscallWeierstrassCompressDecompressAssign::<Bn254G1CompressConfig>::fn_impl(
+                SyscallEccCompressDecompress::<Bn254G1CompressConfig>::fn_impl(
                     &convert_endianness_fixed::<
                         BN254_G1_POINT_COMPRESSED_SIZE,
                         BN254_G1_POINT_DECOMPRESSED_SIZE,
@@ -2754,7 +2755,7 @@ mod tests {
 
             test_commands.push(test_case.into());
             let syscall_decompressed =
-                SyscallWeierstrassCompressDecompressAssign::<Bn254G2DecompressConfig>::fn_impl(
+                SyscallEccCompressDecompress::<Bn254G2DecompressConfig>::fn_impl(
                     &convert_endianness_fixed::<
                         BN254_G2_POINT_COMPRESSED_SIZE,
                         BN254_G2_POINT_COMPRESSED_SIZE,
@@ -2775,7 +2776,7 @@ mod tests {
 
             test_commands.push(test_case.into());
             let syscall_compressed =
-                SyscallWeierstrassCompressDecompressAssign::<Bn254G2CompressConfig>::fn_impl(
+                SyscallEccCompressDecompress::<Bn254G2CompressConfig>::fn_impl(
                     &convert_endianness_fixed::<
                         BN254_G2_POINT_COMPRESSED_SIZE,
                         BN254_G2_POINT_DECOMPRESSED_SIZE,

@@ -1,12 +1,12 @@
-use std::marker::PhantomData;
-
-use super::config::AddConfig;
+use super::ecc_config::AddConfig;
 use crate::{
-    syscall_handler::cast_u8_to_u32,
-    syscall_handler::syscall_process_exit_code,
-    syscall_handler::weierstrass::{
-        bn256_helpers, g2_be_uncompressed_to_le_limbs, g2_le_limbs_to_be_uncompressed,
-        helpers_bls::parse_affine_g2, parse_bls12381_g1_point_uncompressed,
+    syscall_handler::{
+        cast_u8_to_u32,
+        ecc::{
+            ecc_bls12381::parse_affine_g2, ecc_bn256, g2_be_uncompressed_to_le_limbs,
+            g2_le_limbs_to_be_uncompressed, parse_bls12381_g1_point_uncompressed,
+        },
+        syscall_process_exit_code,
     },
     RuntimeContext,
 };
@@ -18,12 +18,13 @@ use fluentbase_types::{
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{AffinePoint, CurveType, EllipticCurve};
 use sp1_primitives::consts::words_to_bytes_le_vec;
+use std::marker::PhantomData;
 
-pub struct SyscallWeierstrassAddAssign<C: AddConfig> {
+pub struct SyscallEccAdd<C: AddConfig> {
     _phantom: PhantomData<C>,
 }
 
-impl<C: AddConfig> SyscallWeierstrassAddAssign<C> {
+impl<C: AddConfig> SyscallEccAdd<C> {
     pub const fn new() -> Self {
         Self {
             _phantom: PhantomData,
@@ -103,13 +104,13 @@ impl<C: AddConfig> SyscallWeierstrassAddAssign<C> {
             Err(_) => return Err(ExitCode::MalformedBuiltinParams),
         };
 
-        let p1 = bn256_helpers::read_g1_point(&p_array)?;
-        let p2 = bn256_helpers::read_g1_point(&q_array)?;
+        let p1 = ecc_bn256::read_g1_point(&p_array)?;
+        let p2 = ecc_bn256::read_g1_point(&q_array)?;
 
         let p1_jacobian: ark_bn254::G1Projective = p1.into();
         let p3 = p1_jacobian + p2;
 
-        let output = bn256_helpers::encode_g1_point(p3.into_affine());
+        let output = ecc_bn256::encode_g1_point(p3.into_affine());
         Ok(output.to_vec())
     }
 

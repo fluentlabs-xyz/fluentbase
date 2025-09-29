@@ -1,16 +1,16 @@
-use crate::{syscall_handler::weierstrass::weierstrass_utils::cast_u8_to_u32, RuntimeContext};
+use crate::{syscall_handler::ecc::ecc_utils::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{params::NumWords, AffinePoint, EllipticCurve};
 use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;
 
-pub struct SyscallWeierstrassDoubleAssign<E: EllipticCurve> {
+pub struct SyscallEccDouble<E: EllipticCurve> {
     _phantom: PhantomData<E>,
 }
 
-impl<E: EllipticCurve> SyscallWeierstrassDoubleAssign<E> {
-    /// Create a new instance of the [`SyscallWeierstrassDoubleAssign`].
+impl<E: EllipticCurve> SyscallEccDouble<E> {
+    /// Create a new instance of the [`SyscallEccDouble`].
     pub const fn new() -> Self {
         Self {
             _phantom: PhantomData,

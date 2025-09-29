@@ -1,10 +1,9 @@
+use super::ecc_config::VerifyConfig;
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::CurveType;
 use std::marker::PhantomData;
-
-use super::config::VerifyConfig;
 
 /// Error type for verification operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,8 +258,10 @@ impl<C: VerifyConfig> SyscallWeierstrassVerifyAssign<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::config::{Secp256k1VerifyConfig, Secp256r1VerifyConfig};
-    use super::*;
+    use super::{
+        super::ecc_config::{Secp256k1VerifyConfig, Secp256r1VerifyConfig},
+        *,
+    };
     use hex_literal::hex;
 
     const SECP256R1_TEST_VECTOR: &[u8] = &hex!(

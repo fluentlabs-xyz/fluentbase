@@ -1,4 +1,7 @@
-use crate::{syscall_handler::cast_u8_to_u32, RuntimeContext};
+use crate::{
+    syscall_handler::{cast_u8_to_u32, FieldOp},
+    RuntimeContext,
+};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
 use num::BigUint;
 use rwasm::{Store, TrapCode, Value};
@@ -6,11 +9,12 @@ use sp1_curves::{params::NumWords, weierstrass::FpOpField};
 use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;
 
-pub struct SyscallFp2Mul<P> {
+pub struct SyscallEccFpOp<P, OP> {
+    _op: PhantomData<OP>,
     _marker: PhantomData<P>,
 }
 
-impl<P: FpOpField> SyscallFp2Mul<P> {
+impl<P: FpOpField, OP: FieldOp> SyscallEccFpOp<P, OP> {
     pub fn fn_handler(
         caller: &mut impl Store<RuntimeContext>,
         params: &[Value],
@@ -40,27 +44,13 @@ impl<P: FpOpField> SyscallFp2Mul<P> {
         let x = cast_u8_to_u32(x).unwrap();
         let y = cast_u8_to_u32(y).unwrap();
 
-        let (ac0, ac1) = x.split_at(x.len() / 2);
-        let (bc0, bc1) = y.split_at(y.len() / 2);
-
-        let ac0 = &BigUint::from_slice(ac0);
-        let ac1 = &BigUint::from_slice(ac1);
-        let bc0 = &BigUint::from_slice(bc0);
-        let bc1 = &BigUint::from_slice(bc1);
         let modulus = &BigUint::from_bytes_le(P::MODULUS);
+        let a = BigUint::from_slice(&x) % modulus;
+        let b = BigUint::from_slice(&y) % modulus;
 
-        #[allow(clippy::match_bool)]
-        let c0 = match (ac0 * bc0) % modulus < (ac1 * bc1) % modulus {
-            true => ((modulus + (ac0 * bc0) % modulus) - (ac1 * bc1) % modulus) % modulus,
-            false => ((ac0 * bc0) % modulus - (ac1 * bc1) % modulus) % modulus,
-        };
-        let c1 = ((ac0 * bc1) % modulus + (ac1 * bc0) % modulus) % modulus;
+        let result = OP::execute(a, b, modulus);
 
-        let mut result = c0
-            .to_u32_digits()
-            .into_iter()
-            .chain(c1.to_u32_digits())
-            .collect::<Vec<u32>>();
+        let mut result = result.to_u32_digits();
         result.resize(num_words, 0);
 
         words_to_bytes_le_vec(result.as_slice())

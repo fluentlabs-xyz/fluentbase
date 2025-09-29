@@ -8,18 +8,22 @@
 //!
 //! Expects parameters: (p_ptr, q_ptr) where p is the point and q is the scalar
 
-use super::config::{
-    Bls12381G1MulConfig, Bls12381G2MulConfig, Bn254G1MulConfig, Bn254G2MulConfig, MulConfig,
+use super::{
+    ecc_config::{
+        Bls12381G1MulConfig, Bls12381G2MulConfig, Bn254G1MulConfig, Bn254G2MulConfig, MulConfig,
+    },
+    ecc_helpers::is_zero_point,
 };
-use crate::syscall_handler::weierstrass::{
-    parse_bls12381_g1_point_uncompressed, parse_bls12381_g2_point_uncompressed,
+use crate::{
+    syscall_handler::{
+        ecc::{
+            ecc_bn256::{encode_g1_point, read_g1_point, read_scalar},
+            parse_bls12381_g1_point_uncompressed, parse_bls12381_g2_point_uncompressed,
+        },
+        syscall_process_exit_code,
+    },
+    RuntimeContext,
 };
-
-use super::weierstrass_helpers::is_zero_point;
-use crate::syscall_handler::weierstrass::bn256_helpers::{
-    encode_g1_point, read_g1_point, read_scalar,
-};
-use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use ark_ec::CurveGroup;
 use blstrs::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
 use fluentbase_types::{
@@ -31,11 +35,11 @@ use rwasm::{Store, TrapCode, Value};
 use sp1_curves::CurveType;
 use std::marker::PhantomData;
 
-pub struct SyscallWeierstrassMulAssign<C: MulConfig> {
+pub struct SyscallEccMul<C: MulConfig> {
     _phantom: PhantomData<C>,
 }
 
-impl<C: MulConfig> SyscallWeierstrassMulAssign<C> {
+impl<C: MulConfig> SyscallEccMul<C> {
     /// Create a new instance of the [`WeierstrassMulAssignSyscall`].
     pub const fn new() -> Self {
         Self {
