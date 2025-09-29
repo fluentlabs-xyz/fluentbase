@@ -12,8 +12,6 @@ mod ecc_fp2_mul;
 pub use ecc_fp2_mul::*;
 mod ecc_fp_op;
 pub use ecc_fp_op::*;
-mod ecc_helpers;
-pub use ecc_helpers::*;
 mod ecc_mul;
 pub use ecc_mul::*;
 mod ecc_msm;

@@ -3,9 +3,6 @@ use super::ecc_config::MapConfig;
 /// - Fp(size: 64) to G1(size: 96)
 /// - Fp2(size: 128) to G2(size: 192)
 ///
-/// This module provides generic handlers for mapping field elements to curve points
-/// using the BLST library for high-performance operations.
-///
 use crate::RuntimeContext;
 use blst::{
     blst_fp, blst_fp2, blst_fp_from_bendian, blst_map_to_g1, blst_map_to_g2, blst_p1,

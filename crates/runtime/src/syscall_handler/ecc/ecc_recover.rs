@@ -1,9 +1,3 @@
-//! Generic Weierstrass recover syscall handler
-//!
-//! This handler provides a generic interface for public key recovery operations
-//! on different Weierstrass curves. It dispatches to curve-specific implementations
-//! based on the provided configuration.
-//!
 use super::ecc_config::{RecoverConfig, Secp256k1RecoverConfig};
 use crate::RuntimeContext;
 use fluentbase_types::B256;
@@ -82,7 +76,6 @@ impl<C: RecoverConfig> SyscallEccRecover<C> {
         }
 
         let sig_array: [u8; Secp256k1RecoverConfig::SIGNATURE_SIZE] = sig.try_into().ok()?;
-
         let recid = match RecoveryId::try_from(rec_id as i32) {
             Ok(recid) => recid,
             Err(_) => return None,
@@ -92,13 +85,11 @@ impl<C: RecoverConfig> SyscallEccRecover<C> {
             Ok(sig) => sig,
             Err(_) => return None,
         };
-
         let msg = Message::from_digest(digest.0);
         let public = match SECP256K1.recover_ecdsa(&msg, &sig) {
             Ok(public) => public,
             Err(_) => return None,
         };
-
         let uncompressed = public.serialize_uncompressed();
         Some(uncompressed.to_vec())
     }

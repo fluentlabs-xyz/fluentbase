@@ -133,7 +133,6 @@ impl<C: AddConfig> SyscallEccAdd<C> {
     ) -> Vec<u8> {
         // p, q layout: x0||x1||y0||y1, each limb 48 bytes little-endian
         // Convert to blstrs uncompressed big-endian bytes with c0/c1 swapped, add, then convert back.
-
         let a_be = g2_le_limbs_to_be_uncompressed(p);
         let b_be = g2_le_limbs_to_be_uncompressed(q);
 

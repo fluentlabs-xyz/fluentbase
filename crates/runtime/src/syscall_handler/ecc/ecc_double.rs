@@ -1,4 +1,4 @@
-use crate::{syscall_handler::ecc::ecc_utils::cast_u8_to_u32, RuntimeContext};
+use crate::{syscall_handler::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{params::NumWords, AffinePoint, EllipticCurve};

@@ -1,23 +1,10 @@
-//! Handles the syscall for point multiplication on a Weierstrass curve.
-//!
-//! This module provides a generic syscall handler for scalar multiplication operations on various
-//! Weierstrass curves including BLS12-381, BN254, Secp256k1, and Secp256r1. It supports both G1
-//! and G2 group operations where applicable, with curve-specific implementations for optimal
-//! performance. The handler uses a configuration-driven approach through MulConfig traits to
-//! determine the appropriate curve type, field size, and operation parameters.
-//!
-//! Expects parameters: (p_ptr, q_ptr) where p is the point and q is the scalar
-
-use super::{
-    ecc_config::{
-        Bls12381G1MulConfig, Bls12381G2MulConfig, Bn254G1MulConfig, Bn254G2MulConfig, MulConfig,
-    },
-    ecc_helpers::is_zero_point,
+use super::ecc_config::{
+    Bls12381G1MulConfig, Bls12381G2MulConfig, Bn254G1MulConfig, Bn254G2MulConfig, MulConfig,
 };
 use crate::{
     syscall_handler::{
         ecc::{
-            ecc_bn256::{encode_g1_point, read_g1_point, read_scalar},
+            ecc_bn256::{encode_g1_point, is_zero_point, read_g1_point, read_scalar},
             parse_bls12381_g1_point_uncompressed, parse_bls12381_g2_point_uncompressed,
         },
         syscall_process_exit_code,
@@ -47,8 +34,6 @@ impl<C: MulConfig> SyscallEccMul<C> {
         }
     }
 
-    /// Handles the syscall for point multiplication on a Weierstrass curve.
-    /// Uses the MulConfig to determine curve type and field (G1/G2).
     pub fn fn_handler(
         caller: &mut impl Store<RuntimeContext>,
         params: &[Value],

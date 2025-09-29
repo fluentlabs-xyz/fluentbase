@@ -1,9 +1,11 @@
 pub use ark_bn254::{Fq, Fq2, Fr, G1Affine, G2Affine};
 use ark_ec::AffineRepr;
 use ark_ff::{PrimeField, Zero};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 use fluentbase_types::{
-    ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE, FQ2_SIZE, FQ_SIZE, SCALAR_SIZE,
+    ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FQ2_SIZE, FQ_SIZE,
+    SCALAR_SIZE,
 };
 
 /// Reads a scalar from the input slice.
@@ -130,4 +132,106 @@ pub fn encode_g1_point(point: G1Affine) -> [u8; BN254_G1_POINT_DECOMPRESSED_SIZE
     output[FQ_SIZE..(FQ_SIZE * 2)].copy_from_slice(&y_bytes);
 
     output
+}
+
+// BN254 helper functions for compression/decompression operations
+
+/// Parse BN254 G1 point from decompressed bytes
+pub fn g1_from_decompressed_bytes(
+    bytes: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+) -> Result<G1Affine, ()> {
+    if *bytes == [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE] {
+        return Ok(G1Affine::zero());
+    }
+    let reader = &bytes[..];
+    let affine = G1Affine::deserialize_with_mode(reader, Compress::No, Validate::Yes);
+
+    match affine {
+        Ok(affine) => {
+            if !affine.is_on_curve() {
+                Err(())
+            } else {
+                Ok(affine)
+            }
+        }
+        Err(_) => Err(()),
+    }
+}
+
+/// Parse BN254 G1 point from compressed bytes
+pub fn g1_from_compressed_bytes(
+    bytes: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
+) -> Result<G1Affine, ()> {
+    if *bytes == [0u8; BN254_G1_POINT_COMPRESSED_SIZE] {
+        return Ok(G1Affine::zero());
+    }
+    let reader = &bytes[..];
+    let affine = G1Affine::deserialize_with_mode(reader, Compress::Yes, Validate::Yes);
+
+    match affine {
+        Ok(affine) => {
+            if !affine.is_on_curve() {
+                Err(())
+            } else {
+                Ok(affine)
+            }
+        }
+        Err(_) => Err(()),
+    }
+}
+
+/// Parse BN254 G2 point from decompressed bytes
+pub fn g2_from_decompressed_bytes(
+    bytes: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+) -> Result<G2Affine, ()> {
+    if *bytes == [0u8; BN254_G2_POINT_DECOMPRESSED_SIZE] {
+        return Ok(G2Affine::zero());
+    }
+    let reader = &bytes[..];
+    let affine = G2Affine::deserialize_with_mode(reader, Compress::No, Validate::Yes);
+
+    match affine {
+        Ok(affine) => {
+            if !affine.is_on_curve() {
+                Err(())
+            } else {
+                Ok(affine)
+            }
+        }
+        Err(_) => Err(()),
+    }
+}
+
+/// Parse BN254 G2 point from compressed bytes
+pub fn g2_from_compressed_bytes(
+    bytes: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
+) -> Result<G2Affine, ()> {
+    if *bytes == [0u8; BN254_G2_POINT_COMPRESSED_SIZE] {
+        return Ok(G2Affine::zero());
+    }
+    let reader = &bytes[..];
+    let affine = G2Affine::deserialize_with_mode(reader, Compress::Yes, Validate::Yes);
+
+    match affine {
+        Ok(affine) => {
+            if !affine.is_on_curve() {
+                Err(())
+            } else {
+                Ok(affine)
+            }
+        }
+        Err(_) => Err(()),
+    }
+}
+
+/// Constant-time check for zero point to prevent timing attacks
+pub fn is_zero_point(data: &[u8]) -> bool {
+    use elliptic_curve::subtle::ConstantTimeEq;
+
+    // Use constant-time comparison to prevent timing attacks
+    let mut result = 0u8;
+    for &byte in data {
+        result |= byte;
+    }
+    result.ct_eq(&0u8).into()
 }

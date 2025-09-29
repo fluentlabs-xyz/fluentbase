@@ -1,7 +1,7 @@
 use crate::{
     syscall_handler::{
         ecc::{
-            Bls12381G1MapConfig, Bls12381G2MapConfig, Bn254G2DecompressConfig,
+            Bls12381G1MapConfig, Bls12381G2MapConfig, Bn254G2DecompressConfig, FieldMul,
             Secp256r1VerifyConfig, SyscallEccAdd, SyscallEccCompressDecompress, SyscallEccDouble,
             SyscallEccMapping, SyscallEccMul, SyscallEccPairing, SyscallEccRecover,
             SyscallWeierstrassVerifyAssign,

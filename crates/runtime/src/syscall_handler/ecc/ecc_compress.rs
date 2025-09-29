@@ -1,11 +1,11 @@
 use crate::{
     syscall_handler::{
         ecc::{
-            ecc_config::{Curve, CurveConfig, Mode},
-            ecc_helpers::{
+            ecc_bn256::{
                 g1_from_compressed_bytes, g1_from_decompressed_bytes, g2_from_compressed_bytes,
                 g2_from_decompressed_bytes,
             },
+            ecc_config::{Curve, CurveConfig, Mode},
         },
         syscall_process_exit_code,
     },
@@ -68,7 +68,6 @@ impl<C: CurveConfig> SyscallEccCompressDecompress<C> {
     }
 
     pub fn fn_impl(point: &[u8]) -> Result<Vec<u8>, ExitCode> {
-        // Dispatch based on curve type and mode
         match C::CURVE_TYPE {
             CurveType::Bn254 => Self::bn254_impl(point),
             CurveType::Bls12381 => Self::bls12381_impl(point),
