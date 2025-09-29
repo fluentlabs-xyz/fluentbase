@@ -3,10 +3,6 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use ark_bn254::{Fq, G1Affine};
-use ark_ec::AffineRepr;
-use ark_ff::{PrimeField, Zero};
-use ark_serialize::CanonicalDeserialize;
 use fluentbase_sdk::{
     alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BN256_ADD,
     PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,

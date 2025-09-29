@@ -6,10 +6,6 @@ edition = "2021"
 [dependencies]
 fluentbase-sdk = { workspace = true }
 fluentbase-types = { workspace = true }
-ark-bn254 = { version = "0.4" }
-ark-ff = { version = "0.4" }
-ark-serialize = { version = "0.4" }
-ark-ec = { version = "0.4" }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }
@@ -20,4 +16,4 @@ path = "lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "ark-bn254/std", "ark-ff/std", "ark-serialize/std", "ark-ec/std"]
+std = ["fluentbase-sdk/std"]
