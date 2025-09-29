@@ -68,26 +68,6 @@ pub trait MulConfig {
     const SCALAR_SIZE: usize;
 }
 
-// /// Configuration trait for point compression operations
-// pub trait CompressConfig {
-//     /// The curve type
-//     const CURVE_TYPE: CurveType;
-//     /// Size of the uncompressed point in bytes
-//     const UNCOMPRESSED_SIZE: usize;
-//     /// Size of the compressed point in bytes
-//     const COMPRESSED_SIZE: usize;
-// }
-
-// /// Configuration trait for point decompression operations
-// pub trait DecompressConfig {
-//     /// The curve type
-//     const CURVE_TYPE: CurveType;
-//     /// Size of the compressed point in bytes
-//     const COMPRESSED_SIZE: usize;
-//     /// Size of the uncompressed point in bytes
-//     const UNCOMPRESSED_SIZE: usize;
-// }
-
 /// Configuration trait for mapping operations (field elements to curve points)
 pub trait MapConfig {
     /// The curve type
