@@ -19,11 +19,12 @@ use super::weierstrass_helpers::is_zero_point;
 use crate::syscall_handler::weierstrass::bn256_helpers::{
     encode_g1_point, read_g1_point, read_scalar,
 };
-use crate::RuntimeContext;
+use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use ark_ec::CurveGroup;
 use blstrs::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
 use fluentbase_types::{
-    BN254_G1_POINT_DECOMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, SCALAR_SIZE,
+    ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
+    SCALAR_SIZE,
 };
 use group::prime::PrimeCurveAffine;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
@@ -50,8 +51,8 @@ impl<C: MulConfig> SyscallWeierstrassMulAssign<C> {
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
         let (p_ptr, q_ptr) = (
-            params[0].i32().unwrap() as u32,
-            params[1].i32().unwrap() as u32,
+            params[0].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
+            params[1].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
         );
 
         // Read point and scalar from memory using config sizes
@@ -60,68 +61,57 @@ impl<C: MulConfig> SyscallWeierstrassMulAssign<C> {
         caller.memory_read(p_ptr as usize, &mut point)?;
         caller.memory_read(q_ptr as usize, &mut scalar)?;
 
-        // Perform scalar multiplication
-        let result = Self::fn_impl(&point, &scalar);
-
-        // Write result back to memory
-        if !result.is_empty() {
-            caller.memory_write(p_ptr as usize, &result)?;
+        // Perform scalar multiplication with proper error handling
+        let result =
+            Self::fn_impl(&point, &scalar).map_err(|e| syscall_process_exit_code(caller, e));
+        if let Ok(result_data) = result {
+            caller.memory_write(p_ptr as usize, &result_data)?;
         }
 
         Ok(())
     }
 
-    pub fn fn_impl(p: &[u8], q: &[u8]) -> Vec<u8> {
+    pub fn fn_impl(p: &[u8], q: &[u8]) -> Result<Vec<u8>, ExitCode> {
         match C::CURVE_TYPE {
             CurveType::Bn254 => {
                 if C::POINT_SIZE == Bn254G1MulConfig::POINT_SIZE {
                     Self::fn_impl_bn254_g1(p, q)
                 } else if C::POINT_SIZE == Bn254G2MulConfig::POINT_SIZE {
-                    assert!(false, "Bn254G2MulConfig is not supported");
-                    vec![]
-                    // Self::fn_impl_bn254_g2(p, q)
+                    // Bn254G2MulConfig is not currently supported
+                    Err(ExitCode::MalformedBuiltinParams)
                 } else {
-                    // Fallback to generic implementation
-                    Self::fn_impl_generic(p, q)
+                    Err(ExitCode::MalformedBuiltinParams)
                 }
             }
             CurveType::Bls12381 => {
                 if C::POINT_SIZE == Bls12381G1MulConfig::POINT_SIZE {
-                    Self::fn_impl_bls12381_g1(p, q)
+                    Ok(Self::fn_impl_bls12381_g1(p, q))
                 } else if C::POINT_SIZE == Bls12381G2MulConfig::POINT_SIZE {
-                    Self::fn_impl_bls12381_g2(p, q)
+                    Ok(Self::fn_impl_bls12381_g2(p, q))
                 } else {
-                    // Fallback to generic implementation
-                    Self::fn_impl_generic(p, q)
+                    Err(ExitCode::MalformedBuiltinParams)
                 }
             }
             CurveType::Secp256k1 => {
-                assert!(false, "Secp256k1 is not supported");
-                vec![]
+                // Secp256k1 scalar multiplication is not currently supported
+                Err(ExitCode::MalformedBuiltinParams)
             }
             CurveType::Secp256r1 => {
-                assert!(false, "Secp256r1 is not supported");
-                vec![]
+                // Secp256r1 scalar multiplication is not currently supported
+                Err(ExitCode::MalformedBuiltinParams)
             }
-            _ => {
-                // Generic implementation for other curves
-                Self::fn_impl_generic(p, q)
-            }
+            _ => Err(ExitCode::MalformedBuiltinParams),
         }
     }
 
-    pub fn fn_impl_bn254_g1(p: &[u8], q: &[u8]) -> Vec<u8> {
+    pub fn fn_impl_bn254_g1(p: &[u8], q: &[u8]) -> Result<Vec<u8>, ExitCode> {
         // Convert input to big-endian format expected by ark-bn254
-        let p_be: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = p
-            .try_into()
-            .unwrap_or([0u8; BN254_G1_POINT_DECOMPRESSED_SIZE]);
-        let q_be: [u8; SCALAR_SIZE] = q.try_into().unwrap_or([0u8; SCALAR_SIZE]);
+        let p_be: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] =
+            p.try_into().map_err(|_| ExitCode::MalformedBuiltinParams)?;
+        let q_be: [u8; SCALAR_SIZE] = q.try_into().map_err(|_| ExitCode::MalformedBuiltinParams)?;
 
         // Parse point and scalar using ark-bn254
-        let p_ark = match read_g1_point(&p_be) {
-            Ok(point) => point,
-            Err(_) => return vec![0u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-        };
+        let p_ark = read_g1_point(&p_be).map_err(|_| ExitCode::MalformedBuiltinParams)?;
         let scalar = read_scalar(&q_be);
 
         // Use ark-bn254 for multiplication
@@ -131,7 +121,7 @@ impl<C: MulConfig> SyscallWeierstrassMulAssign<C> {
 
         // Convert result back to BE format
         let result_be = encode_g1_point(result_ark);
-        result_be.to_vec()
+        Ok(result_be.to_vec())
     }
 
     fn fn_impl_bls12381_g1(p: &[u8], q: &[u8]) -> Vec<u8> {
@@ -152,7 +142,8 @@ impl<C: MulConfig> SyscallWeierstrassMulAssign<C> {
             return G1Affine::identity().to_uncompressed().to_vec();
         }
 
-        let result_proj = G1Projective::from(point_aff) * scalar_scalar.unwrap();
+        let result_proj =
+            G1Projective::from(point_aff) * scalar_scalar.unwrap_or(Scalar::from(0u64));
         G1Affine::from(result_proj).to_uncompressed().to_vec()
     }
 
@@ -174,14 +165,8 @@ impl<C: MulConfig> SyscallWeierstrassMulAssign<C> {
             return G2Affine::identity().to_uncompressed().to_vec();
         }
 
-        let result_proj = G2Projective::from(point_aff) * scalar_scalar.unwrap();
+        let result_proj =
+            G2Projective::from(point_aff) * scalar_scalar.unwrap_or(Scalar::from(0u64));
         G2Affine::from(result_proj).to_uncompressed().to_vec()
-    }
-
-    /// Generic implementation for other curves using sp1_curves
-    fn fn_impl_generic(_p: &[u8], _q: &[u8]) -> Vec<u8> {
-        // TODO: Implement generic curve support
-        // For now, return empty result
-        vec![]
     }
 }

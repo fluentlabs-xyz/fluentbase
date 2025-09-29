@@ -48,7 +48,6 @@ impl<C: MapConfig> SyscallWeierstrassMapAssign<C> {
         if input.len() >= C::INPUT_SIZE {
             let input_array: Vec<u8> = input[..C::INPUT_SIZE].to_vec();
 
-            // Dispatch based on curve type
             match C::CURVE_TYPE {
                 CurveType::Bls12381 => {
                     if C::INPUT_SIZE == PADDED_FP_SIZE && C::OUTPUT_SIZE == G1_UNCOMPRESSED_SIZE {

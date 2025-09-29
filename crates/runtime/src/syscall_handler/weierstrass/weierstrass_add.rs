@@ -38,8 +38,8 @@ impl<C: AddConfig> SyscallWeierstrassAddAssign<C> {
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
         let (p_ptr, q_ptr) = (
-            params[0].i32().unwrap() as u32,
-            params[1].i32().unwrap() as u32,
+            params[0].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
+            params[1].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
         );
 
         // Use config constants for point size
@@ -78,8 +78,14 @@ impl<C: AddConfig> SyscallWeierstrassAddAssign<C> {
             CurveType::Bn254 => Self::fn_impl_bn254(p, q),
             CurveType::Secp256k1 => Ok(Self::fn_impl_secp256k1(p, q)),
             _ => {
-                let p_words = cast_u8_to_u32(p).unwrap();
-                let q_words = cast_u8_to_u32(q).unwrap();
+                let p_words = match cast_u8_to_u32(p) {
+                    Some(words) => words,
+                    None => return Ok(vec![]), // Return empty result on conversion failure
+                };
+                let q_words = match cast_u8_to_u32(q) {
+                    Some(words) => words,
+                    None => return Ok(vec![]), // Return empty result on conversion failure
+                };
 
                 let p_aff = AffinePoint::<C::EllipticCurve>::from_words_le(&p_words);
                 let q_aff = AffinePoint::<C::EllipticCurve>::from_words_le(&q_words);
@@ -93,8 +99,14 @@ impl<C: AddConfig> SyscallWeierstrassAddAssign<C> {
     }
 
     fn fn_impl_secp256k1(p: &[u8], q: &[u8]) -> Vec<u8> {
-        let p_words = cast_u8_to_u32(p).unwrap();
-        let q_words = cast_u8_to_u32(q).unwrap();
+        let p_words = match cast_u8_to_u32(p) {
+            Some(words) => words,
+            None => return vec![], // Return empty result on conversion failure
+        };
+        let q_words = match cast_u8_to_u32(q) {
+            Some(words) => words,
+            None => return vec![], // Return empty result on conversion failure
+        };
 
         let p_aff = AffinePoint::<C::EllipticCurve>::from_words_le(&p_words);
         let q_aff = AffinePoint::<C::EllipticCurve>::from_words_le(&q_words);
@@ -145,52 +157,17 @@ impl<C: AddConfig> SyscallWeierstrassAddAssign<C> {
         // p, q layout: x0||x1||y0||y1, each limb 48 bytes little-endian
         // Convert to blstrs uncompressed big-endian bytes with c0/c1 swapped, add, then convert back.
 
-        println!("DEBUG G2 ADD: Input p (first 32 bytes): {:?}", &p[..32]);
-        println!("DEBUG G2 ADD: Input q (first 32 bytes): {:?}", &q[..32]);
-
         let a_be = g2_le_limbs_to_be_uncompressed(p);
         let b_be = g2_le_limbs_to_be_uncompressed(q);
-
-        println!(
-            "DEBUG G2 ADD: After LE->BE conversion, a_be (first 32 bytes): {:?}",
-            &a_be[..32]
-        );
-        println!(
-            "DEBUG G2 ADD: After LE->BE conversion, b_be (first 32 bytes): {:?}",
-            &b_be[..32]
-        );
 
         let a_aff = parse_affine_g2(&a_be);
         let b_aff = parse_affine_g2(&b_be);
 
-        println!(
-            "DEBUG G2 ADD: a_aff is_identity: {}",
-            a_aff.is_identity().unwrap_u8()
-        );
-        println!(
-            "DEBUG G2 ADD: b_aff is_identity: {}",
-            b_aff.is_identity().unwrap_u8()
-        );
-
         let sum = G2Projective::from(a_aff) + G2Projective::from(b_aff);
         let sum_aff = G2Affine::from(sum);
 
-        println!(
-            "DEBUG G2 ADD: sum_aff is_identity: {}",
-            sum_aff.is_identity().unwrap_u8()
-        );
-
         let be_result = sum_aff.to_uncompressed();
-        println!(
-            "DEBUG G2 ADD: BE result (first 32 bytes): {:?}",
-            &be_result[..32]
-        );
-
         let le_result = g2_be_uncompressed_to_le_limbs(&be_result);
-        println!(
-            "DEBUG G2 ADD: LE result (first 32 bytes): {:?}",
-            &le_result[..32]
-        );
 
         // Serialize to BE uncompressed and convert back to LE limb format
         le_result.to_vec()
@@ -237,7 +214,7 @@ pub fn parse_affine_g2(be: &[u8; G2_UNCOMPRESSED_SIZE]) -> G2Affine {
         if ct.is_none().unwrap_u8() == 1 {
             G2Affine::identity()
         } else {
-            ct.unwrap()
+            ct.unwrap_or(G2Affine::identity())
         }
     }
 }

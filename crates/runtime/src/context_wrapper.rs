@@ -87,7 +87,6 @@ impl NativeAPI for RuntimeContextWrapper {
         out: &mut [u8; G1_UNCOMPRESSED_SIZE],
     ) {
         if pairs.is_empty() {
-            // Return identity point if no pairs
             out.fill(0);
             return;
         }
@@ -122,7 +121,6 @@ impl NativeAPI for RuntimeContextWrapper {
         out: &mut [u8; G2_UNCOMPRESSED_SIZE],
     ) {
         if pairs.is_empty() {
-            // Return identity point if no pairs
             out.fill(0);
             return;
         }
@@ -135,8 +133,6 @@ impl NativeAPI for RuntimeContextWrapper {
 
         // Use the new MSM implementation
         let result = SyscallWeierstrassMsm::<Bls12381G2MulConfig>::fn_impl(&pairs_vec);
-
-        // Copy result to output
         if !result.is_empty() {
             out.copy_from_slice(&result);
         } else {
@@ -188,8 +184,11 @@ impl NativeAPI for RuntimeContextWrapper {
         p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
         q: &[u8; SCALAR_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let result = SyscallBn256Mul::fn_impl(p, q).map_err(|_| ExitCode::PrecompileError)?;
-        Ok(result)
+        let result = SyscallWeierstrassMulAssign::<Bn254G1MulConfig>::fn_impl(p, q)
+            .map_err(|_| ExitCode::PrecompileError)?;
+        let result_array: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] =
+            result.try_into().map_err(|_| ExitCode::PrecompileError)?;
+        Ok(result_array)
     }
 
     fn bn254_multi_pairing(
@@ -198,10 +197,11 @@ impl NativeAPI for RuntimeContextWrapper {
             [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
         )],
     ) -> Result<[u8; SCALAR_SIZE], ExitCode> {
-        let mut pairs = elements.to_vec();
-        let result =
-            SyscallBn256Pairing::fn_impl(&mut pairs).map_err(|_| ExitCode::PrecompileError)?;
-        Ok(result)
+        let result = SyscallWeierstrassPairingAssign::<Bn254>::fn_impl_multi_pairing(elements)
+            .map_err(|_| ExitCode::PrecompileError)?;
+        let result_array: [u8; SCALAR_SIZE] =
+            result.try_into().map_err(|_| ExitCode::PrecompileError)?;
+        Ok(result_array)
     }
 
     fn bn254_g1_compress(

@@ -17,8 +17,6 @@ mod hashing;
 pub use hashing::*;
 mod bigint;
 pub use bigint::*;
-mod bn254;
-pub use bn254::*;
 pub mod weierstrass;
 pub use weierstrass::*;
 
@@ -106,8 +104,8 @@ pub fn invoke_runtime_handler(
 
         // bn254 (0x07)
         SysFuncIdx::BN254_ADD => SyscallWeierstrassAddAssign::<Bn254G1AddConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_MUL => SyscallBn256Mul::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_MULTI_PAIRING => SyscallBn256Pairing::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_MUL => SyscallWeierstrassMulAssign::<Bn254G1MulConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_MULTI_PAIRING => SyscallWeierstrassPairingAssign::<Bn254>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_DOUBLE => SyscallWeierstrassDoubleAssign::<Bn254>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_G1_COMPRESS => SyscallWeierstrassCompressDecompressAssign::<Bn254G1CompressConfig>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_G1_DECOMPRESS => SyscallWeierstrassCompressDecompressAssign::<Bn254G1DecompressConfig>::fn_handler(caller, params, result),

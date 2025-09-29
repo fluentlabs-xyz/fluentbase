@@ -93,8 +93,16 @@ pub fn g2_from_compressed_bytes(bytes: &[u8; BN254_G2_POINT_COMPRESSED_SIZE]) ->
     }
 }
 
+/// Constant-time check for zero point to prevent timing attacks
 pub fn is_zero_point(data: &[u8]) -> bool {
-    data.iter().all(|&b| b == 0)
+    use elliptic_curve::subtle::ConstantTimeEq;
+
+    // Use constant-time comparison to prevent timing attacks
+    let mut result = 0u8;
+    for &byte in data {
+        result |= byte;
+    }
+    result.ct_eq(&0u8).into()
 }
 
 pub fn be_xy_to_le_words64(

@@ -4,9 +4,14 @@
 //! with comprehensive error handling and edge case management.
 
 use crate::{
-    syscall_handler::weierstrass::{
-        bn256_helpers::{read_g1_point, read_g2_point},
-        helpers_bls::{parse_bls12381_g1_point_uncompressed, parse_bls12381_g2_point_uncompressed},
+    syscall_handler::{
+        syscall_process_exit_code,
+        weierstrass::{
+            bn256_helpers::{read_g1_point, read_g2_point},
+            helpers_bls::{
+                parse_bls12381_g1_point_uncompressed, parse_bls12381_g2_point_uncompressed,
+            },
+        },
     },
     RuntimeContext,
 };
@@ -25,48 +30,6 @@ use fluentbase_types::{
 
 use sp1_curves::{CurveType, EllipticCurve};
 
-// ============================================================================
-// BN254 Pairing Implementation
-// ============================================================================
-
-// pub struct SyscallBn256Pairing;
-
-// impl SyscallBn256Pairing {
-//     /// BN254 pairing implementation for context_wrapper
-//     pub fn fn_impl(
-//         pairs: &mut [(
-//             [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-//             [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-//         )],
-//     ) -> Result<[u8; SCALAR_SIZE], ExitCode> {
-//         // Parse points
-//         let mut parsed_pairs = Vec::with_capacity(pairs.len());
-
-//         for (g1_bytes, g2_bytes) in pairs.iter() {
-//             let g1 = read_g1_point(g1_bytes)?;
-//             let g2 = read_g2_point(g2_bytes)?;
-
-//             if g1.is_zero() || g2.is_zero() {
-//                 continue;
-//             }
-
-//             parsed_pairs.push((g1, g2));
-//         }
-
-//         let success = bn254_pairing_check(&parsed_pairs);
-
-//         let mut result = [0u8; SCALAR_SIZE];
-//         if success {
-//             result[SCALAR_SIZE - 1] = 1; // Set the last byte to 1 for true (big-endian)
-//         }
-//         Ok(result)
-//     }
-// }
-
-// ============================================================================
-// Generic Pairing Handler
-// ============================================================================
-
 /// Generic pairing handler that dispatches based on curve type
 pub struct SyscallWeierstrassPairingAssign<E: EllipticCurve> {
     _phantom: std::marker::PhantomData<E>,
@@ -80,9 +43,9 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
         let (pairs_ptr, pairs_count, out_ptr) = (
-            params[0].i32().unwrap() as u32,
-            params[1].i32().unwrap() as u32,
-            params[2].i32().unwrap() as u32,
+            params[0].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
+            params[1].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
+            params[2].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
         );
 
         let pairs_byte_len =
@@ -94,31 +57,31 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
 
         let pairs = pair_elements
             .chunks(BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN)
-            .map(|v| {
-                let g1: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = unsafe {
-                    core::slice::from_raw_parts(v.as_ptr(), BN254_G1_POINT_DECOMPRESSED_SIZE)
+            .filter_map(|v| {
+                if v.len() < BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN {
+                    return None;
                 }
-                .try_into()
-                .unwrap();
-                let g2: [u8; BN254_G2_POINT_DECOMPRESSED_SIZE] = unsafe {
-                    core::slice::from_raw_parts(
-                        v[BN254_G1_POINT_DECOMPRESSED_SIZE..BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN]
-                            .as_ptr(),
-                        BN254_G2_POINT_DECOMPRESSED_SIZE,
-                    )
-                }
-                .try_into()
-                .unwrap();
-                (g1, g2)
+
+                let g1_bytes = &v[0..BN254_G1_POINT_DECOMPRESSED_SIZE];
+                let g2_bytes =
+                    &v[BN254_G1_POINT_DECOMPRESSED_SIZE..BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN];
+
+                let g1: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = g1_bytes.try_into().ok()?;
+                let g2: [u8; BN254_G2_POINT_DECOMPRESSED_SIZE] = g2_bytes.try_into().ok()?;
+
+                Some((g1, g2))
             })
             .collect::<Vec<(
                 [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
                 [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
             )>>();
 
-        // Use the multi-pairing implementation
-        let output = Self::fn_impl_multi_pairing(&pairs);
-        caller.memory_write(out_ptr as usize, &output)?;
+        // Use the multi-pairing implementation with proper error handling
+        let output =
+            Self::fn_impl_multi_pairing(&pairs).map_err(|e| syscall_process_exit_code(caller, e));
+        if let Ok(result_data) = output {
+            caller.memory_write(out_ptr as usize, &result_data)?;
+        }
 
         Ok(())
     }
@@ -204,7 +167,7 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
             [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
             [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
         )],
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, ExitCode> {
         let mut result = vec![0u8; SCALAR_SIZE];
 
         match E::CURVE_TYPE {
@@ -213,16 +176,14 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
                 let mut parsed_pairs = Vec::new();
 
                 for (g1_bytes, g2_bytes) in pairs.iter() {
-                    match (read_g1_point(g1_bytes), read_g2_point(g2_bytes)) {
-                        (Ok(g1_aff), Ok(g2_aff)) => {
-                            // Skip zero points (same logic as original implementation)
-                            if !g1_aff.is_zero() && !g2_aff.is_zero() {
-                                parsed_pairs.push((g1_aff, g2_aff));
-                            }
-                        }
-                        _ => {
-                            // Points failed to parse - leave result as all zeros
-                        }
+                    let g1 =
+                        read_g1_point(g1_bytes).map_err(|_| ExitCode::MalformedBuiltinParams)?;
+                    let g2 =
+                        read_g2_point(g2_bytes).map_err(|_| ExitCode::MalformedBuiltinParams)?;
+
+                    // Skip zero points (same logic as original implementation)
+                    if !g1.is_zero() && !g2.is_zero() {
+                        parsed_pairs.push((g1, g2));
                     }
                 }
 
@@ -236,13 +197,13 @@ impl<E: EllipticCurve> SyscallWeierstrassPairingAssign<E> {
                 if success {
                     result[SCALAR_SIZE - 1] = 1; // Set the last byte to 1 for true (big-endian)
                 }
+                Ok(result)
             }
             _ => {
                 // Unsupported curve type - result remains all zeros
+                Err(ExitCode::MalformedBuiltinParams)
             }
         }
-
-        result
     }
 
     /// Generic implementation for compressed format (used by context_wrapper)

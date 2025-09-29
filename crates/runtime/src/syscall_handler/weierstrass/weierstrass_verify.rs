@@ -100,9 +100,9 @@ impl<C: VerifyConfig> SyscallWeierstrassVerifyAssign<C> {
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {
-        let input_ptr = params[0].i32().unwrap() as usize;
-        let input_len = params[1].i32().unwrap() as usize;
-        let output_ptr = params[2].i32().unwrap() as usize;
+        let input_ptr = params[0].i32().ok_or(TrapCode::UnreachableCodeReached)? as usize;
+        let input_len = params[1].i32().ok_or(TrapCode::UnreachableCodeReached)? as usize;
+        let output_ptr = params[2].i32().ok_or(TrapCode::UnreachableCodeReached)? as usize;
 
         let mut input = vec![0u8; input_len];
         caller.memory_read(input_ptr, &mut input)?;

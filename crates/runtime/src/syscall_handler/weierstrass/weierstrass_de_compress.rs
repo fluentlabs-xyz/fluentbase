@@ -16,6 +16,7 @@ use fluentbase_types::{
     CURVE256R1_POINT_COMPRESSED_SIZE, CURVE256R1_POINT_DECOMPRESSED_SIZE, G1_COMPRESSED_SIZE,
     G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
 };
+use group::prime::PrimeCurveAffine;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::CurveType;
 use std::marker::PhantomData;
@@ -47,8 +48,8 @@ impl<C: CurveConfig> SyscallWeierstrassCompressDecompressAssign<C> {
         result: &mut [Value],
     ) -> Result<(), TrapCode> {
         let (point_ptr, out_ptr) = (
-            params[0].i32().unwrap() as u32,
-            params[1].i32().unwrap() as u32,
+            params[0].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
+            params[1].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
         );
 
         let point_len = C::input_point_len();
@@ -226,7 +227,9 @@ impl<C: CurveConfig> SyscallWeierstrassCompressDecompressAssign<C> {
             return Err(ExitCode::MalformedBuiltinParams);
         }
 
-        let compressed = g1_point.unwrap().to_compressed();
+        let compressed = g1_point
+            .unwrap_or(blstrs::G1Affine::identity())
+            .to_compressed();
         Ok(compressed.to_vec())
     }
 
@@ -246,7 +249,9 @@ impl<C: CurveConfig> SyscallWeierstrassCompressDecompressAssign<C> {
             return Err(ExitCode::MalformedBuiltinParams);
         }
 
-        let uncompressed = g1_point.unwrap().to_uncompressed();
+        let uncompressed = g1_point
+            .unwrap_or(blstrs::G1Affine::identity())
+            .to_uncompressed();
         Ok(uncompressed.to_vec())
     }
 
@@ -266,7 +271,9 @@ impl<C: CurveConfig> SyscallWeierstrassCompressDecompressAssign<C> {
             return Err(ExitCode::MalformedBuiltinParams);
         }
 
-        let compressed = g2_point.unwrap().to_compressed();
+        let compressed = g2_point
+            .unwrap_or(blstrs::G2Affine::identity())
+            .to_compressed();
         Ok(compressed.to_vec())
     }
 
@@ -286,7 +293,9 @@ impl<C: CurveConfig> SyscallWeierstrassCompressDecompressAssign<C> {
             return Err(ExitCode::MalformedBuiltinParams);
         }
 
-        let uncompressed = g2_point.unwrap().to_uncompressed();
+        let uncompressed = g2_point
+            .unwrap_or(blstrs::G2Affine::identity())
+            .to_uncompressed();
         Ok(uncompressed.to_vec())
     }
 
@@ -311,7 +320,9 @@ impl<C: CurveConfig> SyscallWeierstrassCompressDecompressAssign<C> {
             return Err(ExitCode::MalformedBuiltinParams);
         }
 
-        let compressed = secp_point.unwrap().to_encoded_point(true);
+        let compressed = secp_point
+            .unwrap_or(k256::ProjectivePoint::IDENTITY)
+            .to_encoded_point(true);
         Ok(compressed.as_bytes().to_vec())
     }
 
@@ -335,7 +346,9 @@ impl<C: CurveConfig> SyscallWeierstrassCompressDecompressAssign<C> {
             return Err(ExitCode::MalformedBuiltinParams);
         }
 
-        let uncompressed = secp_point.unwrap().to_encoded_point(false);
+        let uncompressed = secp_point
+            .unwrap_or(k256::ProjectivePoint::IDENTITY)
+            .to_encoded_point(false);
         Ok(uncompressed.as_bytes().to_vec())
     }
 }
@@ -354,8 +367,8 @@ impl<E: Config> LegacySyscallWeierstrassCompressDecompressAssign<E> {
         result: &mut [Value],
     ) -> Result<(), TrapCode> {
         let (point_ptr, out_ptr) = (
-            params[0].i32().unwrap() as u32,
-            params[1].i32().unwrap() as u32,
+            params[0].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
+            params[1].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
         );
 
         let point_len = E::input_point_len();
@@ -409,24 +422,34 @@ impl<E: Config> LegacySyscallWeierstrassCompressDecompressAssign<E> {
     fn g1_decompress_fn_impl(
         point_compressed_bytes: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
     ) -> Vec<u8> {
-        let point = g1_from_compressed_bytes(point_compressed_bytes).unwrap();
+        let point = match g1_from_compressed_bytes(point_compressed_bytes) {
+            Ok(point) => point,
+            Err(_) => return vec![0u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+        };
 
         let mut point_uncompressed_bytes = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
 
-        point
+        if point
             .x
             .serialize_with_mode(
                 &mut point_uncompressed_bytes[..BN254_G1_POINT_COMPRESSED_SIZE],
                 Compress::No,
             )
-            .unwrap();
-        point
+            .is_err()
+        {
+            return vec![0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
+        }
+
+        if point
             .y
             .serialize_with_mode(
                 &mut point_uncompressed_bytes[BN254_G1_POINT_COMPRESSED_SIZE..],
                 Compress::No,
             )
-            .unwrap();
+            .is_err()
+        {
+            return vec![0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
+        }
 
         point_uncompressed_bytes.to_vec()
     }
@@ -434,11 +457,16 @@ impl<E: Config> LegacySyscallWeierstrassCompressDecompressAssign<E> {
     fn g1_compress_fn_impl(
         point_decompressed_bytes: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
     ) -> Vec<u8> {
-        let point = g1_from_decompressed_bytes(point_decompressed_bytes).unwrap();
+        let point = match g1_from_decompressed_bytes(point_decompressed_bytes) {
+            Ok(point) => point,
+            Err(_) => return vec![0u8; BN254_G1_POINT_COMPRESSED_SIZE],
+        };
 
         let mut point_compressed_bytes = [0u8; BN254_G1_POINT_COMPRESSED_SIZE];
 
-        G1::serialize_compressed(&point, point_compressed_bytes.as_mut_slice()).unwrap();
+        if G1::serialize_compressed(&point, point_compressed_bytes.as_mut_slice()).is_err() {
+            return vec![0u8; BN254_G1_POINT_COMPRESSED_SIZE];
+        }
 
         point_compressed_bytes.to_vec()
     }
@@ -446,24 +474,34 @@ impl<E: Config> LegacySyscallWeierstrassCompressDecompressAssign<E> {
     fn g2_decompress_fn_impl(
         point_compressed_bytes: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
     ) -> Vec<u8> {
-        let point = g2_from_compressed_bytes(point_compressed_bytes).unwrap();
+        let point = match g2_from_compressed_bytes(point_compressed_bytes) {
+            Ok(point) => point,
+            Err(_) => return vec![0u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+        };
 
         let mut point_uncompressed_bytes = [0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
 
-        point
+        if point
             .x
             .serialize_with_mode(
                 &mut point_uncompressed_bytes[..BN254_G2_POINT_COMPRESSED_SIZE],
                 Compress::No,
             )
-            .unwrap();
-        point
+            .is_err()
+        {
+            return vec![0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
+        }
+
+        if point
             .y
             .serialize_with_mode(
                 &mut point_uncompressed_bytes[BN254_G2_POINT_COMPRESSED_SIZE..],
                 Compress::No,
             )
-            .unwrap();
+            .is_err()
+        {
+            return vec![0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
+        }
 
         point_uncompressed_bytes.to_vec()
     }
@@ -471,11 +509,16 @@ impl<E: Config> LegacySyscallWeierstrassCompressDecompressAssign<E> {
     fn g2_compress_fn_impl(
         point_decompressed_bytes: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
     ) -> Vec<u8> {
-        let point = g2_from_decompressed_bytes(point_decompressed_bytes).unwrap();
+        let point = match g2_from_decompressed_bytes(point_decompressed_bytes) {
+            Ok(point) => point,
+            Err(_) => return vec![0u8; BN254_G2_POINT_COMPRESSED_SIZE],
+        };
 
         let mut point_compressed_bytes = [0u8; BN254_G2_POINT_COMPRESSED_SIZE];
 
-        G2::serialize_compressed(&point, point_compressed_bytes.as_mut_slice()).unwrap();
+        if G2::serialize_compressed(&point, point_compressed_bytes.as_mut_slice()).is_err() {
+            return vec![0u8; BN254_G2_POINT_COMPRESSED_SIZE];
+        }
 
         point_compressed_bytes.to_vec()
     }

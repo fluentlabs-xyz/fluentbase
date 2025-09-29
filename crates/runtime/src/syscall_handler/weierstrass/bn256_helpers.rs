@@ -112,12 +112,14 @@ pub fn encode_g1_point(point: G1Affine) -> [u8; BN254_G1_POINT_DECOMPRESSED_SIZE
     };
 
     let mut x_bytes = [0u8; FQ_SIZE];
-    x.serialize_uncompressed(&mut x_bytes[..])
-        .expect("Failed to serialize x coordinate");
+    if x.serialize_uncompressed(&mut x_bytes[..]).is_err() {
+        return output; // Return zero-filled output on serialization failure
+    }
 
     let mut y_bytes = [0u8; FQ_SIZE];
-    y.serialize_uncompressed(&mut y_bytes[..])
-        .expect("Failed to serialize x coordinate");
+    if y.serialize_uncompressed(&mut y_bytes[..]).is_err() {
+        return output; // Return zero-filled output on serialization failure
+    }
 
     // Convert to big endian by reversing the bytes.
     x_bytes.reverse();
