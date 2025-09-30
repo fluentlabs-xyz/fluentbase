@@ -34,7 +34,7 @@ blake3 = { workspace = true, default-features = false }
 sha2 = { workspace = true, default-features = false }
 solana-poseidon = { workspace = true }
 num = "0.4.3"
-sp1-curves = { version = "5.2.1" }
+sp1-curves = "5.2.1"
 sp1-primitives = { version = "5.2.1" }
 blstrs = { version = "0.7" }
 group = { version = "0.13", default-features = false }

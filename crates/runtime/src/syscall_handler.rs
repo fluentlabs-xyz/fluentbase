@@ -18,6 +18,11 @@ pub use hashing::*;
 mod bigint;
 pub use bigint::*;
 pub mod ecc;
+pub mod fp;
+
+use crate::syscall_handler::fp::{
+    fp2_addsub::SyscallEccFp2AddSub, fp2_mul::SyscallEccFp2Mul, fp_op::SyscallEccFpOp,
+};
 pub use ecc::*;
 
 /// Routes a syscall identified by func_idx to the corresponding runtime instruction handler.
@@ -86,7 +91,7 @@ pub fn invoke_runtime_handler(
 
         // secp256k1 (0x04)
         SysFuncIdx::SECP256K1_RECOVER => SyscallEccRecover::<Secp256k1RecoverConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::SECP256K1_ADD => SyscallEccAdd::<Secp256k1AddConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_ADD => ecc_add::ecc_add_handler::<Secp256k1AddConfig>(caller, params, result),
         SysFuncIdx::SECP256K1_DECOMPRESS => SyscallEccCompressDecompress::<Secp256k1DecompressConfig>::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_DOUBLE => SyscallEccDouble::<Secp256k1>::fn_handler(caller, params, result),
 
@@ -94,16 +99,16 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::SECP256R1_VERIFY => SyscallWeierstrassVerifyAssign::<Secp256r1VerifyConfig>::fn_handler(caller, params, result),
 
         // bls12381 (0x06)
-        SysFuncIdx::BLS12381_G1_ADD => SyscallEccAdd::<Bls12381G1AddConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_G1_ADD => ecc_add::ecc_add_handler::<Bls12381G1AddConfig>(caller, params, result),
         SysFuncIdx::BLS12381_G1_MSM => SyscallEccMsm::<Bls12381G1MulConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_G2_ADD => SyscallEccAdd::<Bls12381G2AddConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_G2_ADD => ecc_add::ecc_add_handler::<Bls12381G2AddConfig>(caller, params, result),
         SysFuncIdx::BLS12381_G2_MSM => SyscallEccMsm::<Bls12381G2MulConfig>::fn_handler(caller, params, result),
         SysFuncIdx::BLS12381_PAIRING => SyscallEccPairing::<Bls12381>::fn_handler(caller, params, result),
         SysFuncIdx::BLS12381_MAP_G1 => SyscallEccMapping::<Bls12381G1MapConfig>:: fn_handler(caller, params, result),
         SysFuncIdx::BLS12381_MAP_G2 => SyscallEccMapping::<Bls12381G2MapConfig>::fn_handler(caller, params, result),
 
         // bn254 (0x07)
-        SysFuncIdx::BN254_ADD => SyscallEccAdd::<Bn254G1AddConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_ADD => ecc_add::ecc_add_handler::<Bn254G1AddConfig>(caller, params, result),
         SysFuncIdx::BN254_MUL => SyscallEccMul::<Bn254G1MulConfig>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_MULTI_PAIRING => SyscallEccPairing::<Bn254>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_DOUBLE => SyscallEccDouble::<Bn254>::fn_handler(caller, params, result),

@@ -1,17 +1,10 @@
 mod ecc_double;
 pub use ecc_double::*;
-mod ecc_add;
-pub use ecc_add::*;
+pub mod ecc_add;
 mod ecc_config;
 pub use ecc_config::*;
 mod ecc_bls12381;
 pub use ecc_bls12381::*;
-mod ecc_fp2_addsub;
-pub use ecc_fp2_addsub::*;
-mod ecc_fp2_mul;
-pub use ecc_fp2_mul::*;
-mod ecc_fp_op;
-pub use ecc_fp_op::*;
 mod ecc_mul;
 pub use ecc_mul::*;
 mod ecc_msm;

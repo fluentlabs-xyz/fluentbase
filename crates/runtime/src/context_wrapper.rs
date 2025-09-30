@@ -2,10 +2,11 @@ use crate::{
     syscall_handler::{
         ecc::{
             Bls12381G1MapConfig, Bls12381G2MapConfig, Bn254G2DecompressConfig, FieldMul,
-            Secp256r1VerifyConfig, SyscallEccAdd, SyscallEccCompressDecompress, SyscallEccDouble,
+            Secp256r1VerifyConfig, SyscallEccCompressDecompress, SyscallEccDouble,
             SyscallEccMapping, SyscallEccMul, SyscallEccPairing, SyscallEccRecover,
             SyscallWeierstrassVerifyAssign,
         },
+        fp::{fp2_mul::SyscallEccFp2Mul, fp_op::SyscallEccFpOp},
         *,
     },
     RuntimeContext,
@@ -71,7 +72,7 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn bls12_381_g1_add(p: &mut [u8; G1_UNCOMPRESSED_SIZE], q: &[u8; G1_UNCOMPRESSED_SIZE]) {
-        if let Ok(result) = SyscallEccAdd::<Bls12381G1AddConfig>::fn_impl(p, q) {
+        if let Ok(result) = ecc_add::ecc_add_impl::<Bls12381G1AddConfig>(p, q) {
             p.copy_from_slice(&result[..G1_UNCOMPRESSED_SIZE]);
         }
     }
@@ -103,7 +104,7 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn bls12_381_g2_add(p: &mut [u8; G2_UNCOMPRESSED_SIZE], q: &[u8; G2_UNCOMPRESSED_SIZE]) {
-        if let Ok(result) = SyscallEccAdd::<Bls12381G2AddConfig>::fn_impl(p, q) {
+        if let Ok(result) = ecc_add::ecc_add_impl::<Bls12381G2AddConfig>(p, q) {
             if !result.is_empty() {
                 p.copy_from_slice(&result[..G2_UNCOMPRESSED_SIZE]);
             }
@@ -167,7 +168,7 @@ impl NativeAPI for RuntimeContextWrapper {
         p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
         q: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        match SyscallEccAdd::<Bn254G1AddConfig>::fn_impl(p, q) {
+        match ecc_add::ecc_add_impl::<Bn254G1AddConfig>(p, q) {
             Ok(result) => {
                 if result.is_empty() {
                     return Err(ExitCode::MalformedBuiltinParams);
