@@ -1,10 +1,10 @@
 use super::ecc_config::AddConfig;
 use crate::{
     syscall_handler::{
-        cast_u8_to_u32,
         ecc::{
-            ecc_bls12381::parse_affine_g2, ecc_bn256, g2_be_uncompressed_to_le_limbs,
-            g2_le_limbs_to_be_uncompressed, parse_bls12381_g1_point_uncompressed,
+            ecc_bls12381::parse_affine_g2, ecc_bn256, ecc_utils::cast_u8_to_u32,
+            g2_be_uncompressed_to_le_limbs, g2_le_limbs_to_be_uncompressed,
+            parse_bls12381_g1_point_uncompressed,
         },
         syscall_process_exit_code,
     },

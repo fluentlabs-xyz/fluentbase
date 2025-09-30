@@ -1,9 +1,10 @@
-use crate::{syscall_handler::cast_u8_to_u32, RuntimeContext};
+use crate::RuntimeContext;
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{params::NumWords, AffinePoint, EllipticCurve};
-use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;
+use sp1_primitives::consts::words_to_bytes_le_vec;
+use crate::syscall_handler::ecc::ecc_utils::cast_u8_to_u32;
 
 pub struct SyscallEccDouble<E: EllipticCurve> {
     _phantom: PhantomData<E>,

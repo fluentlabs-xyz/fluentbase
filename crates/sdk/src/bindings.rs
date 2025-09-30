@@ -139,6 +139,19 @@ extern "C" {
     pub fn _ed25519_decompress(slice_ptr: *mut u8, sign: u32);
     pub fn _ed25519_add(p_ptr: *mut u8, q_ptr: *const u8);
 
+    pub fn _tower_fp1_bn254_add(x_ptr: *mut u8, y_ptr: *const u8);
+    pub fn _tower_fp1_bn254_sub(x_ptr: *mut u8, y_ptr: *const u8);
+    pub fn _tower_fp1_bn254_mul(x_ptr: *mut u8, y_ptr: *const u8);
+    pub fn _tower_fp1_bls12381_add(x_ptr: *mut u8, y_ptr: *const u8);
+    pub fn _tower_fp1_bls12381_sub(x_ptr: *mut u8, y_ptr: *const u8);
+    pub fn _tower_fp1_bls12381_mul(x_ptr: *mut u8, y_ptr: *const u8);
+    pub fn _tower_fp2_bn254_add(x_ptr: *mut u8, y_ptr: *const u8);
+    pub fn _tower_fp2_bn254_sub(x_ptr: *mut u8, y_ptr: *const u8);
+    pub fn _tower_fp2_bn254_mul(x_ptr: *mut u8, y_ptr: *const u8);
+    pub fn _tower_fp2_bls12381_add(x_ptr: *mut u8, y_ptr: *const u8);
+    pub fn _tower_fp2_bls12381_sub(x_ptr: *mut u8, y_ptr: *const u8);
+    pub fn _tower_fp2_bls12381_mul(x_ptr: *mut u8, y_ptr: *const u8);
+
     /// Returns 0 when public key was successfully recovered and 1 in case of error
     pub fn _secp256k1_recover(
         digest32_offset: *const u8,

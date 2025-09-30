@@ -1,22 +1,9 @@
-pub use crate::{
-    bindings::{
-        _big_mod_exp, _blake3, _bls12381_add, _bls12381_decompress, _bls12381_double,
-        _bls12381_fp2_add, _bls12381_fp2_mul, _bls12381_fp2_sub, _bls12381_fp_add,
-        _bls12381_fp_mul, _bls12381_fp_sub, _bls12_381_g1_add, _bls12_381_g1_msm,
-        _bls12_381_g2_add, _bls12_381_g2_msm, _bls12_381_map_fp2_to_g2, _bls12_381_map_fp_to_g1,
-        _bls12_381_pairing, _bn254_add, _bn254_double, _bn254_fp2_mul, _bn254_fp_mul,
-        _bn254_g1_compress, _bn254_g1_decompress, _bn254_g2_compress, _bn254_g2_decompress,
-        _bn254_mul, _bn254_multi_pairing, _charge_fuel, _charge_fuel_manually, _curve256r1_verify,
-        _debug_log, _ed25519_add, _ed25519_decompress, _exec, _exit, _forward_output, _fuel,
-        _input_size, _keccak256, _output_size, _poseidon, _preimage_copy, _preimage_size, _read,
-        _read_output, _resume, _secp256k1_recover, _sha256, _state, _write,
-    },
-    B256,
-};
+pub use crate::{bindings::*, B256};
 use fluentbase_types::{
     BytecodeOrHash, ExitCode, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
+    TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
 };
 
 #[derive(Default)]
@@ -122,6 +109,103 @@ impl NativeAPI for RwasmContext {
     ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
         unsafe { _ed25519_add(p.as_mut_ptr(), q.as_ptr()) };
         p
+    }
+
+    #[inline(always)]
+    fn tower_fp1_bn254_add(
+        mut x: [u8; TOWER_FP_BN256_SIZE],
+        y: [u8; TOWER_FP_BN256_SIZE],
+    ) -> [u8; TOWER_FP_BN256_SIZE] {
+        unsafe { _tower_fp1_bn254_add(x.as_mut_ptr(), y.as_ptr()) };
+        x
+    }
+    #[inline(always)]
+    fn tower_fp1_bn254_sub(
+        x: [u8; TOWER_FP_BN256_SIZE],
+        y: [u8; TOWER_FP_BN256_SIZE],
+    ) -> [u8; TOWER_FP_BN256_SIZE] {
+        unsafe { _tower_fp1_bn254_sub(x.as_mut_ptr(), y.as_ptr()) };
+        x
+    }
+    #[inline(always)]
+    fn tower_fp1_bn254_mul(
+        x: [u8; TOWER_FP_BN256_SIZE],
+        y: [u8; TOWER_FP_BN256_SIZE],
+    ) -> [u8; TOWER_FP_BN256_SIZE] {
+        unsafe { _tower_fp1_bn254_mul(x.as_mut_ptr(), y.as_ptr()) };
+        x
+    }
+    #[inline(always)]
+    fn tower_fp1_bls12381_add(
+        _x: [u8; TOWER_FP_BLS12381_SIZE],
+        _y: [u8; TOWER_FP_BLS12381_SIZE],
+    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
+        unsafe { _tower_fp2_bls12381_add(x.as_mut_ptr(), y.as_ptr()) };
+        x
+    }
+    #[inline(always)]
+    fn tower_fp1_bls12381_sub(
+        _x: [u8; TOWER_FP_BLS12381_SIZE],
+        _y: [u8; TOWER_FP_BLS12381_SIZE],
+    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
+        unsafe { _tower_fp2_bls12381_sub(x.as_mut_ptr(), y.as_ptr()) };
+        x
+    }
+    #[inline(always)]
+    fn tower_fp1_bls12381_mul(
+        _x: [u8; TOWER_FP_BLS12381_SIZE],
+        _y: [u8; TOWER_FP_BLS12381_SIZE],
+    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
+        unsafe { _tower_fp2_bls12381_mul(x.as_mut_ptr(), y.as_ptr()) };
+        x
+    }
+    #[inline(always)]
+    fn tower_fp2_bn254_add(
+        x: [u8; TOWER_FP_BN256_SIZE],
+        y: [u8; TOWER_FP_BN256_SIZE],
+    ) -> [u8; TOWER_FP_BN256_SIZE] {
+        unsafe { _tower_fp2_bn254_add(x.as_mut_ptr(), y.as_ptr()) };
+        x
+    }
+    #[inline(always)]
+    fn tower_fp2_bn254_sub(
+        x: [u8; TOWER_FP_BN256_SIZE],
+        y: [u8; TOWER_FP_BN256_SIZE],
+    ) -> [u8; TOWER_FP_BN256_SIZE] {
+        unsafe { _tower_fp2_bn254_sub(x.as_mut_ptr(), y.as_ptr()) };
+        x
+    }
+    #[inline(always)]
+    fn tower_fp2_bn254_mul(
+        x: [u8; TOWER_FP_BN256_SIZE],
+        y: [u8; TOWER_FP_BN256_SIZE],
+    ) -> [u8; TOWER_FP_BN256_SIZE] {
+        unsafe { _tower_fp2_bn254_mul(x.as_mut_ptr(), y.as_ptr()) };
+        x
+    }
+    #[inline(always)]
+    fn tower_fp2_bls12381_add(
+        _x: [u8; TOWER_FP_BLS12381_SIZE],
+        _y: [u8; TOWER_FP_BLS12381_SIZE],
+    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
+        unsafe { _tower_fp2_bls12381_add(x.as_mut_ptr(), y.as_ptr()) };
+        x
+    }
+    #[inline(always)]
+    fn tower_fp2_bls12381_sub(
+        _x: [u8; TOWER_FP_BLS12381_SIZE],
+        _y: [u8; TOWER_FP_BLS12381_SIZE],
+    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
+        unsafe { _tower_fp2_bls12381_sub(x.as_mut_ptr(), y.as_ptr()) };
+        x
+    }
+    #[inline(always)]
+    fn tower_fp2_bls12381_mul(
+        _x: [u8; TOWER_FP_BLS12381_SIZE],
+        _y: [u8; TOWER_FP_BLS12381_SIZE],
+    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
+        unsafe { _tower_fp2_bls12381_mul(x.as_mut_ptr(), y.as_ptr()) };
+        x
     }
 
     #[inline(always)]

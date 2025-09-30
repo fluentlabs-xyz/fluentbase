@@ -1,13 +1,14 @@
 use crate::{
     BytecodeOrHash, ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE,
-    EDWARDS_DECOMPRESSED_SIZE,
+    EDWARDS_DECOMPRESSED_SIZE, TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
 };
 use alloc::vec;
 use alloy_primitives::{Bytes, B256};
 use core::cell::RefCell;
 
 /// A trait for providing shared API functionality.
+#[rustfmt::skip]
 pub trait NativeAPI {
     fn keccak256(data: &[u8]) -> B256;
     fn sha256(data: &[u8]) -> B256;
@@ -16,14 +17,21 @@ pub trait NativeAPI {
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
     fn curve256r1_verify(input: &[u8]) -> bool;
 
-    fn ed25519_decompress(
-        y: [u8; EDWARDS_COMPRESSED_SIZE],
-        sign: u32,
-    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE];
-    fn ed25519_add(
-        p: [u8; EDWARDS_DECOMPRESSED_SIZE],
-        q: [u8; EDWARDS_DECOMPRESSED_SIZE],
-    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE];
+    fn ed25519_decompress(y: [u8; EDWARDS_COMPRESSED_SIZE], sign: u32) -> [u8; EDWARDS_DECOMPRESSED_SIZE];
+    fn ed25519_add(p: [u8; EDWARDS_DECOMPRESSED_SIZE], q: [u8; EDWARDS_DECOMPRESSED_SIZE]) -> [u8; EDWARDS_DECOMPRESSED_SIZE];
+
+    fn tower_fp1_bn254_add(_x: [u8; TOWER_FP_BN256_SIZE], _y: [u8; TOWER_FP_BN256_SIZE]) -> [u8; TOWER_FP_BN256_SIZE] { unimplemented!() }
+    fn tower_fp1_bn254_sub(_x: [u8; TOWER_FP_BN256_SIZE], _y: [u8; TOWER_FP_BN256_SIZE]) -> [u8; TOWER_FP_BN256_SIZE] { unimplemented!() }
+    fn tower_fp1_bn254_mul(_x: [u8; TOWER_FP_BN256_SIZE], _y: [u8; TOWER_FP_BN256_SIZE]) -> [u8; TOWER_FP_BN256_SIZE] { unimplemented!() }
+    fn tower_fp1_bls12381_add(_x: [u8; TOWER_FP_BLS12381_SIZE], _y: [u8; TOWER_FP_BLS12381_SIZE]) -> [u8; TOWER_FP_BLS12381_SIZE] { unimplemented!() }
+    fn tower_fp1_bls12381_sub(_x: [u8; TOWER_FP_BLS12381_SIZE], _y: [u8; TOWER_FP_BLS12381_SIZE]) -> [u8; TOWER_FP_BLS12381_SIZE] { unimplemented!() }
+    fn tower_fp1_bls12381_mul(_x: [u8; TOWER_FP_BLS12381_SIZE], _y: [u8; TOWER_FP_BLS12381_SIZE]) -> [u8; TOWER_FP_BLS12381_SIZE] { unimplemented!() }
+    fn tower_fp2_bn254_add(_x: [u8; TOWER_FP_BN256_SIZE], _y: [u8; TOWER_FP_BN256_SIZE]) -> [u8; TOWER_FP_BN256_SIZE] { unimplemented!() }
+    fn tower_fp2_bn254_sub(_x: [u8; TOWER_FP_BN256_SIZE], _y: [u8; TOWER_FP_BN256_SIZE]) -> [u8; TOWER_FP_BN256_SIZE] { unimplemented!() }
+    fn tower_fp2_bn254_mul(_x: [u8; TOWER_FP_BN256_SIZE], _y: [u8; TOWER_FP_BN256_SIZE]) -> [u8; TOWER_FP_BN256_SIZE] { unimplemented!() }
+    fn tower_fp2_bls12381_add(_x: [u8; TOWER_FP_BLS12381_SIZE], _y: [u8; TOWER_FP_BLS12381_SIZE]) -> [u8; TOWER_FP_BLS12381_SIZE] { unimplemented!() }
+    fn tower_fp2_bls12381_sub(_x: [u8; TOWER_FP_BLS12381_SIZE], _y: [u8; TOWER_FP_BLS12381_SIZE]) -> [u8; TOWER_FP_BLS12381_SIZE] { unimplemented!() }
+    fn tower_fp2_bls12381_mul(_x: [u8; TOWER_FP_BLS12381_SIZE], _y: [u8; TOWER_FP_BLS12381_SIZE]) -> [u8; TOWER_FP_BLS12381_SIZE] { unimplemented!() }
 
     fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]);
     fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]);

@@ -2,6 +2,7 @@ use crate::{emit_fuel_procedure, SysFuncIdx};
 use alloc::sync::Arc;
 use rwasm::{ImportLinker, ImportName, ValType};
 
+#[rustfmt::skip]
 pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
     let mut import_linker = ImportLinker::default();
     macro_rules! import_function {
@@ -15,15 +16,8 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
             );
         };
     }
-    import_function!("_sha256", SHA256, &[ValType::I32; 3], &[]);
-    import_function!("_keccak256", KECCAK256, &[ValType::I32; 3], &[]);
-    import_function!("_blake3", BLAKE3, &[ValType::I32; 3], &[]);
-    import_function!(
-        "_poseidon",
-        POSEIDON,
-        &[ValType::I32; 5],
-        &[ValType::I32; 1]
-    );
+
+    // input/output & state control (0x00)
     import_function!("_exit", EXIT, &[ValType::I32; 1], &[]);
     import_function!("_state", STATE, &[], &[ValType::I32; 1]);
     import_function!("_read", READ_INPUT, &[ValType::I32; 3], &[]);
@@ -34,22 +28,24 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
     import_function!("_exec", EXEC, &[ValType::I32; 5], &[ValType::I32; 1]);
     import_function!("_resume", RESUME, &[ValType::I32; 5], &[ValType::I32; 1]);
     import_function!("_forward_output", FORWARD_OUTPUT, &[ValType::I32; 2], &[]);
-    import_function!(
-        "_charge_fuel_manually",
-        CHARGE_FUEL_MANUALLY,
-        &[ValType::I64; 2],
-        &[ValType::I64; 1]
-    );
-    import_function!("_charge_fuel", CHARGE_FUEL, &[ValType::I64; 1], &[]);
+    import_function!("_charge_fuel_manually", CHARGE_FUEL_MANUALLY, &[ValType::I64; 2], &[ValType::I64; 1]);
     import_function!("_fuel", FUEL, &[], &[ValType::I64; 1]);
-    import_function!(
-        "_preimage_size",
-        PREIMAGE_SIZE,
-        &[ValType::I32; 1],
-        &[ValType::I32; 1]
-    );
+    import_function!("_preimage_size", PREIMAGE_SIZE, &[ValType::I32; 1], &[ValType::I32; 1]);
     import_function!("_preimage_copy", PREIMAGE_COPY, &[ValType::I32; 2], &[]);
     import_function!("_debug_log", DEBUG_LOG, &[ValType::I32; 2], &[]);
+    import_function!("_charge_fuel", CHARGE_FUEL, &[ValType::I64; 1], &[]);
+
+    // hashing functions (0x01)
+    import_function!("_keccak256", KECCAK256, &[ValType::I32; 3], &[]);
+    // TODO: Missing "_keccak256_permute"
+    import_function!("_poseidon", POSEIDON, &[ValType::I32; 5], &[ValType::I32; 1]);
+    // TODO: Delete "_poseidon_hash"
+    import_function!("_keccak256_permute", KECCAK256_PERMUTE, &[ValType::I32; 1], &[]);
+    import_function!("_sha256_extend", SHA256_EXTEND, &[ValType::I32; 1], &[]);
+    import_function!("_sha256_compress", SHA256_COMPRESS, &[ValType::I32; 2], &[]);
+    import_function!("_blake3", BLAKE3, &[ValType::I32; 3], &[]);
+    import_function!("_sha256", SHA256, &[ValType::I32; 3], &[]);
+
     import_function!(
         "_secp256k1_recover",
         SECP256K1_RECOVER,
@@ -101,8 +97,20 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
         &[ValType::I32; 2],
         &[ValType::I32; 1]
     );
-    import_function!("_bn254_fp_mul", BN254_FP_MUL, &[ValType::I32; 2], &[]);
-    import_function!("_bn254_fp2_mul", BN254_FP2_MUL, &[ValType::I32; 2], &[]);
+
+    // fp1/fp2 tower field (0x03)
+    import_function!("_tower_fp1_bn254_add", TOWER_FP1_BN254_ADD, &[ValType::I32; 2], &[]);
+    import_function!("_tower_fp1_bn254_sub", TOWER_FP1_BN254_SUB, &[ValType::I32; 2], &[]);
+    import_function!("_tower_fp1_bn254_mul", TOWER_FP1_BN254_MUL, &[ValType::I32; 2], &[]);
+    import_function!("_tower_fp1_bls12381_add", TOWER_FP1_BLS12381_ADD, &[ValType::I32; 2], &[]);
+    import_function!("_tower_fp1_bls12381_sub", TOWER_FP1_BLS12381_SUB, &[ValType::I32; 2], &[]);
+    import_function!("_tower_fp1_bls12381_mul", TOWER_FP1_BLS12381_MUL, &[ValType::I32; 2], &[]);
+    import_function!("_tower_fp2_bn254_add", TOWER_FP2_BN254_ADD, &[ValType::I32; 2], &[]);
+    import_function!("_tower_fp2_bn254_sub", TOWER_FP2_BN254_SUB, &[ValType::I32; 2], &[]);
+    import_function!("_tower_fp2_bn254_mul", TOWER_FP2_BN254_MUL, &[ValType::I32; 2], &[]);
+    import_function!("_tower_fp2_bls12381_add", TOWER_FP2_BLS12381_ADD, &[ValType::I32; 2], &[]);
+    import_function!("_tower_fp2_bls12381_sub", TOWER_FP2_BLS12381_SUB, &[ValType::I32; 2], &[]);
+    import_function!("_tower_fp2_bls12381_mul", TOWER_FP2_BLS12381_MUL, &[ValType::I32; 2], &[]);
 
     // BLS12-381 high-level operations
     import_function!(

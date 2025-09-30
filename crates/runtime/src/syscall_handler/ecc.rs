@@ -9,8 +9,6 @@ mod ecc_mul;
 pub use ecc_mul::*;
 mod ecc_msm;
 pub use ecc_msm::*;
-mod ecc_utils;
-pub use ecc_utils::*;
 mod ecc_pairing;
 pub use ecc_pairing::*;
 mod ecc_mapping;
@@ -21,5 +19,7 @@ mod ecc_compress;
 pub use ecc_compress::*;
 mod ecc_recover;
 pub use ecc_recover::*;
+mod ecc_utils;
 mod ecc_verify;
 pub use ecc_verify::*;
+

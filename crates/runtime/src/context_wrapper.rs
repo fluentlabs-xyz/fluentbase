@@ -1,12 +1,11 @@
 use crate::{
     syscall_handler::{
         ecc::{
-            Bls12381G1MapConfig, Bls12381G2MapConfig, Bn254G2DecompressConfig, FieldMul,
+            Bls12381G1MapConfig, Bls12381G2MapConfig, Bn254G2DecompressConfig,
             Secp256r1VerifyConfig, SyscallEccCompressDecompress, SyscallEccDouble,
             SyscallEccMapping, SyscallEccMul, SyscallEccPairing, SyscallEccRecover,
             SyscallWeierstrassVerifyAssign,
         },
-        fp::{fp2_mul::SyscallEccFp2Mul, fp_op::SyscallEccFpOp},
         *,
     },
     RuntimeContext,
@@ -246,15 +245,14 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn bn254_fp_mul(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
-        let result = SyscallEccFpOp::<Bn254BaseField, FieldMul>::fn_impl(p, q);
-        let min = core::cmp::min(p.len(), result.len());
-        p[..min].copy_from_slice(&result[..min]);
+        // let result = SyscallEccFpOp::<Bn254BaseField, FieldMul>::fn_impl(p, q);
+        // let min = core::cmp::min(p.len(), result.len());
+        // p[..min].copy_from_slice(&result[..min]);
+        todo!()
     }
 
     fn bn254_fp2_mul(p: &mut [u8; BN254_G2_POINT_COMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
-        let result = SyscallEccFp2Mul::<Bn254BaseField>::fn_impl(p, q);
-        let min = core::cmp::min(p.len(), result.len());
-        p[..min].copy_from_slice(&result[..min]);
+        todo!()
     }
 
     fn ed25519_decompress(

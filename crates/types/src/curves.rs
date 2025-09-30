@@ -15,6 +15,10 @@ pub const FQ2_SIZE: usize = 2 * FQ_SIZE;
 pub const EDWARDS_COMPRESSED_SIZE: usize = 32;
 pub const EDWARDS_DECOMPRESSED_SIZE: usize = 64;
 
+/// Tower Fp
+pub const TOWER_FP_BN256_SIZE: usize = 32;
+pub const TOWER_FP_BLS12381_SIZE: usize = 32;
+
 /// BN254 Specific Constants
 pub const BN254_G1_POINT_COMPRESSED_SIZE: usize = 32;
 pub const BN254_G1_POINT_DECOMPRESSED_SIZE: usize = 64;

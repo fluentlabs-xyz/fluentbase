@@ -16,11 +16,9 @@ pub use hashing::*;
 mod uint256;
 pub use uint256::*;
 pub mod ecc;
-pub mod fp;
+pub mod tower;
 
-use crate::syscall_handler::fp::{
-    fp2_addsub::SyscallEccFp2AddSub, fp2_mul::SyscallEccFp2Mul, fp_op::SyscallEccFpOp,
-};
+use crate::syscall_handler::tower::{tower_fp1_add_sub_mul, tower_fp2_add_sub_mul};
 pub use ecc::*;
 
 /// Routes a syscall identified by func_idx to the corresponding runtime instruction handler.
@@ -80,12 +78,19 @@ pub fn invoke_runtime_handler(
         // SysFuncIdx::ED25519_MULTISCALAR_MUL => SyscallCurve25519EdwardsMultiscalarMul::fn_handler(caller, params, result),
         // SysFuncIdx::ED25519_MUL => SyscallCurve25519EdwardsMul::fn_handler(caller, params, result),
 
-        // ristretto255 (0x03)
-        // SysFuncIdx::RISTRETTO255_DECOMPRESS => SyscallCurve25519RistrettoDecompressValidate::fn_handler(caller, params, result),
-        // SysFuncIdx::RISTRETTO255_ADD => SyscallCurve25519RistrettoAdd::fn_handler(caller, params, result),
-        // SysFuncIdx::RISTRETTO255_SUB => SyscallCurve25519RistrettoSub::fn_handler(caller, params, result),
-        // SysFuncIdx::RISTRETTO255_MULTISCALAR_MUL => SyscallCurve25519RistrettoMultiscalarMul::fn_handler(caller, params, result),
-        // SysFuncIdx::RISTRETTO255_MUL => SyscallCurve25519RistrettoMul::fn_handler(caller, params, result),
+        // fp1/fp2 tower field (0x03)
+        SysFuncIdx::TOWER_FP1_BN254_ADD => tower_fp1_add_sub_mul::syscall_tower_fp1_bn254_add_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP1_BN254_SUB => tower_fp1_add_sub_mul::syscall_tower_fp1_bn254_sub_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP1_BN254_MUL => tower_fp1_add_sub_mul::syscall_tower_fp1_bn254_mul_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP1_BLS12381_ADD => tower_fp1_add_sub_mul::syscall_tower_fp1_bls12381_add_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP1_BLS12381_SUB => tower_fp1_add_sub_mul::syscall_tower_fp1_bls12381_sub_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP1_BLS12381_MUL => tower_fp1_add_sub_mul::syscall_tower_fp1_bls12381_mul_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP2_BN254_ADD => tower_fp2_add_sub_mul::syscall_tower_fp2_bn254_add_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP2_BN254_SUB => tower_fp2_add_sub_mul::syscall_tower_fp2_bn254_sub_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP2_BN254_MUL => tower_fp2_add_sub_mul::syscall_tower_fp2_bn254_mul_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP2_BLS12381_ADD => tower_fp2_add_sub_mul::syscall_tower_fp2_bls12381_add_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP2_BLS12381_SUB => tower_fp2_add_sub_mul::syscall_tower_fp2_bls12381_sub_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP2_BLS12381_MUL => tower_fp2_add_sub_mul::syscall_tower_fp2_bls12381_mul_handler(caller, params, result),
 
         // secp256k1 (0x04)
         SysFuncIdx::SECP256K1_RECOVER => SyscallEccRecover::<Secp256k1RecoverConfig>::fn_handler(caller, params, result),
@@ -114,12 +119,6 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::BN254_G1_DECOMPRESS => SyscallEccCompressDecompress::<Bn254G1DecompressConfig>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_G2_COMPRESS => SyscallEccCompressDecompress::<Bn254G2CompressConfig>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_G2_DECOMPRESS => SyscallEccCompressDecompress::<Bn254G2DecompressConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_FP_ADD => SyscallEccFpOp::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_FP_SUB => SyscallEccFpOp::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_FP_MUL => SyscallEccFpOp::<Bn254BaseField, FieldMul>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_FP2_ADD => SyscallEccFp2AddSub::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_FP2_SUB => SyscallEccFp2AddSub::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_FP2_MUL => SyscallEccFp2Mul::<Bn254BaseField>::fn_handler(caller, params, result),
 
         // uint256 (0x08)
         SysFuncIdx::UINT256_MUL_MOD => syscall_uint256_mul_mod_handler(caller, params, result),
