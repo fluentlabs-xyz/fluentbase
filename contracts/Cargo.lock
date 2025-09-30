@@ -1572,17 +1572,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dlmalloc"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06cdfe340b16dd990c54cce79743613fa09fbb16774f33a77c9fd196f8f3fa30"
-dependencies = [
- "cfg-if",
- "libc",
- "windows-sys 0.60.2",
-]
-
-[[package]]
 name = "downcast-rs"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2063,7 +2052,6 @@ dependencies = [
  "k256",
  "num",
  "num-bigint 0.4.6",
- "num-traits",
  "p256",
  "paste",
  "rwasm",
@@ -2079,12 +2067,10 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.4.10-dev"
 dependencies = [
- "dlmalloc",
  "fluentbase-codec",
  "fluentbase-sdk-derive",
  "fluentbase-types",
  "hashbrown 0.15.5",
- "revm-bytecode",
 ]
 
 [[package]]

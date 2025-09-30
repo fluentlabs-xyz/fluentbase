@@ -45,8 +45,8 @@ mod tests {
     use super::*;
     use crate::{
         BytecodeOrHash, ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-        BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, ED25519_COMPRESSED_SIZE,
-        ED25519_DECOMPRESSED_SIZE,
+        BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE,
+        EDWARDS_DECOMPRESSED_SIZE,
     };
     use alloy_primitives::{address, b256, keccak256};
 
@@ -78,16 +78,16 @@ mod tests {
         }
 
         fn ed25519_decompress(
-            _y: [u8; ED25519_COMPRESSED_SIZE],
+            _y: [u8; EDWARDS_COMPRESSED_SIZE],
             _sign: u32,
-        ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
+        ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
             todo!()
         }
 
         fn ed25519_add(
-            _p: [u8; ED25519_DECOMPRESSED_SIZE],
-            _q: [u8; ED25519_DECOMPRESSED_SIZE],
-        ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
+            _p: [u8; EDWARDS_DECOMPRESSED_SIZE],
+            _q: [u8; EDWARDS_DECOMPRESSED_SIZE],
+        ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
             todo!()
         }
 
@@ -164,14 +164,6 @@ mod tests {
         }
 
         fn bn254_fp2_mul(_p: &mut [u8; 64], _q: &[u8; 32]) {
-            todo!()
-        }
-
-        fn big_mod_exp(
-            _base: &[u8],
-            _exponent: &[u8],
-            _modulus: &mut [u8],
-        ) -> Result<(), ExitCode> {
             todo!()
         }
 

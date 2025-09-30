@@ -5,8 +5,8 @@ use fluentbase_sdk::{
     IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI,
     SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256,
     BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, ED25519_COMPRESSED_SIZE,
-    ED25519_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE,
+    EDWARDS_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
 use hashbrown::HashMap;
 use std::{mem::take, rc::Rc};
@@ -284,7 +284,7 @@ impl SharedAPI for HostTestingContext {
         self.inner.borrow().shared_context_input_v1.clone()
     }
 
-    fn keccak256(&self, data: &[u8]) -> B256 {
+    fn keccak256(data: &[u8]) -> B256 {
         RuntimeContextWrapper::keccak256(data)
     }
 
@@ -309,15 +309,15 @@ impl SharedAPI for HostTestingContext {
     }
 
     fn ed25519_decompress(
-        y: [u8; ED25519_COMPRESSED_SIZE],
+        y: [u8; EDWARDS_COMPRESSED_SIZE],
         sign: u32,
-    ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
+    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
         RuntimeContextWrapper::ed25519_decompress(y, sign)
     }
     fn ed25519_add(
-        p: [u8; ED25519_DECOMPRESSED_SIZE],
-        q: [u8; ED25519_DECOMPRESSED_SIZE],
-    ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
+        p: [u8; EDWARDS_DECOMPRESSED_SIZE],
+        q: [u8; EDWARDS_DECOMPRESSED_SIZE],
+    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
         RuntimeContextWrapper::ed25519_add(p, q)
     }
 
@@ -379,9 +379,6 @@ impl SharedAPI for HostTestingContext {
     }
     fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
         RuntimeContextWrapper::bn254_fp2_mul(p, q);
-    }
-    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
-        RuntimeContextWrapper::big_mod_exp(base, exponent, modulus)
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {

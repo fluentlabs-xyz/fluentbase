@@ -7,14 +7,14 @@ use sp1_curves::weierstrass::{
     secp256k1::Secp256k1,
 };
 
-mod ed25519;
-pub use ed25519::*;
+mod edwards;
+pub use edwards::*;
 mod host;
 pub use host::*;
 mod hashing;
 pub use hashing::*;
-mod bigint;
-pub use bigint::*;
+mod uint256;
+pub use uint256::*;
 pub mod ecc;
 pub mod fp;
 
@@ -75,7 +75,7 @@ pub fn invoke_runtime_handler(
 
         // ed25519 (0x02)
         SysFuncIdx::ED25519_DECOMPRESS => syscall_ed25519_decompress_handler(caller, params, result),
-        SysFuncIdx::ED25519_ADD => syscall_ed25519_add_handler(caller, params, result),
+        SysFuncIdx::ED25519_ADD => syscall_edwards_add_handler(caller, params, result),
         // SysFuncIdx::ED25519_SUB => SyscallCurve25519EdwardsSub::fn_handler(caller, params, result),
         // SysFuncIdx::ED25519_MULTISCALAR_MUL => SyscallCurve25519EdwardsMultiscalarMul::fn_handler(caller, params, result),
         // SysFuncIdx::ED25519_MUL => SyscallCurve25519EdwardsMul::fn_handler(caller, params, result),
@@ -122,8 +122,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::BN254_FP2_MUL => SyscallEccFp2Mul::<Bn254BaseField>::fn_handler(caller, params, result),
 
         // uint256 (0x08)
-        SysFuncIdx::BIGINT_MOD_EXP => SyscallMathBigModExp::fn_handler(caller, params, result),
-        SysFuncIdx::BIGINT_UINT256_MUL => SyscallUint256Mul::fn_handler(caller, params, result),
+        SysFuncIdx::UINT256_MUL_MOD => syscall_uint256_mul_mod_handler(caller, params, result),
 
         // sp1 (0x51)
         _ => unreachable!("unknown system function ({})", sys_func_idx),

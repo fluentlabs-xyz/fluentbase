@@ -944,8 +944,7 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
         )?.as_slice().to_vec();
 
-        SDK::big_mod_exp(base.as_slice(), exponent.as_slice(), modulus.as_mut_slice())
-            .map_err(|err| {SvmError::ExitCode(err)})?;
+        todo!();
 
         let mut return_value = translate_slice_mut::<u8>(
             memory_mapping,

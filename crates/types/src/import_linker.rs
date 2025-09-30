@@ -103,12 +103,6 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
     );
     import_function!("_bn254_fp_mul", BN254_FP_MUL, &[ValType::I32; 2], &[]);
     import_function!("_bn254_fp2_mul", BN254_FP2_MUL, &[ValType::I32; 2], &[]);
-    import_function!(
-        "_big_mod_exp",
-        BIGINT_MOD_EXP,
-        &[ValType::I32; 6],
-        &[ValType::I32; 1]
-    );
 
     // BLS12-381 high-level operations
     import_function!(

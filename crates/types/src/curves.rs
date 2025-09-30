@@ -11,8 +11,9 @@ pub const FQ_SIZE: usize = 32;
 /// Note: A Fq2 element contains 2 Fq elements.
 pub const FQ2_SIZE: usize = 2 * FQ_SIZE;
 
-pub const ED25519_COMPRESSED_SIZE: usize = 32;
-pub const ED25519_DECOMPRESSED_SIZE: usize = 64;
+/// Edwards Specific Constants
+pub const EDWARDS_COMPRESSED_SIZE: usize = 32;
+pub const EDWARDS_DECOMPRESSED_SIZE: usize = 64;
 
 /// BN254 Specific Constants
 pub const BN254_G1_POINT_COMPRESSED_SIZE: usize = 32;

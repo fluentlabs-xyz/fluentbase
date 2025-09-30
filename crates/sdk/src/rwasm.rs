@@ -16,7 +16,7 @@ pub use crate::{
 use fluentbase_types::{
     BytecodeOrHash, ExitCode, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE, ED25519_COMPRESSED_SIZE, ED25519_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
 };
 
 #[derive(Default)]
@@ -107,19 +107,19 @@ impl NativeAPI for RwasmContext {
     }
     #[inline(always)]
     fn ed25519_decompress(
-        y: [u8; ED25519_COMPRESSED_SIZE],
+        y: [u8; EDWARDS_COMPRESSED_SIZE],
         sign: u32,
-    ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
-        let mut res = [0u8; ED25519_DECOMPRESSED_SIZE];
-        res[ED25519_COMPRESSED_SIZE..].copy_from_slice(&y);
+    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
+        let mut res = [0u8; EDWARDS_DECOMPRESSED_SIZE];
+        res[EDWARDS_COMPRESSED_SIZE..].copy_from_slice(&y);
         unsafe { _ed25519_decompress(res.as_mut_ptr(), sign) };
         res
     }
     #[inline(always)]
     fn ed25519_add(
-        mut p: [u8; ED25519_DECOMPRESSED_SIZE],
-        q: [u8; ED25519_DECOMPRESSED_SIZE],
-    ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
+        mut p: [u8; EDWARDS_DECOMPRESSED_SIZE],
+        q: [u8; EDWARDS_DECOMPRESSED_SIZE],
+    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
         unsafe { _ed25519_add(p.as_mut_ptr(), q.as_ptr()) };
         p
     }
@@ -218,24 +218,6 @@ impl NativeAPI for RwasmContext {
         unsafe {
             _bn254_fp2_mul(p.as_ptr() as u32, q.as_ptr() as u32);
         }
-    }
-
-    #[inline(always)]
-    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
-        unsafe {
-            if _big_mod_exp(
-                base.as_ptr(),
-                base.len() as u32,
-                exponent.as_ptr(),
-                exponent.len() as u32,
-                modulus.as_mut_ptr(),
-                modulus.len() as u32,
-            ) != 0
-            {
-                return Err(ExitCode::MalformedBuiltinParams);
-            };
-        }
-        Ok(())
     }
 
     #[inline(always)]

@@ -7,16 +7,13 @@ use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, Sh
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     // read full input data
-    let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
 
     let input = Bytes::copy_from_slice(input);
     let gas_used = estimate_gas(input.len());
-    if gas_used > gas_limit {
-        sdk.native_exit(ExitCode::OutOfFuel);
-    }
+    sdk.sync_evm_gas(gas_used, 0);
 
     // EVM ecrecover input is 4 words (32 bytes each): hash, v, r, s.
     // Pad/truncate input to 128 bytes as per EVM behavior.
@@ -31,8 +28,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let v_bytes = &data[32..64];
     if !(v_bytes[..31].iter().all(|&b| b == 0) && matches!(v_bytes[31], 27 | 28)) {
         // Invalid v, return empty
-        sdk.sync_evm_gas(gas_used, 0);
-        sdk.write(&[]);
         return;
     }
     let v = v_bytes[31] - 27;
@@ -45,22 +40,15 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     sig[32..].copy_from_slice(s);
 
     // Perform recover using SDK
-    let pubkey = match SDK::secp256k1_recover(&digest, &sig, v) {
-        Some(pk) => pk,
-        None => {
-            sdk.sync_evm_gas(gas_used, 0);
-            sdk.write(&[]);
-            return;
-        }
+    let Some(pubkey) = SDK::secp256k1_recover(&digest, &sig, v) else {
+        return;
     };
 
     // Compute address = last 20 bytes of keccak256(uncompressed_pubkey[1...])
     // SDK returns 65-byte uncompressed pubkey [0x04 || x || y]
-    let hashed = sdk.keccak256(&pubkey[1..65]);
+    let hashed = SDK::keccak256(&pubkey[1..65]);
     let mut out = [0u8; 32];
     out[12..32].copy_from_slice(&hashed[12..32]);
-
-    sdk.sync_evm_gas(gas_used, 0);
     sdk.write(&out);
 }
 

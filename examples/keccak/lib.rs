@@ -3,11 +3,11 @@ extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{alloc_slice, entrypoint, SharedAPI};
 
-pub fn main_entry(mut sdk: impl SharedAPI) {
+pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let input_size = sdk.input_size();
     let input = alloc_slice(input_size as usize);
     sdk.read(input, 0);
-    let hash = sdk.keccak256(input); // calculate the hash via syscall to builtin keccak256
+    let hash = SDK::keccak256(input); // calculate the hash via syscall to builtin keccak256
     sdk.write(&hash.as_slice());
 }
 

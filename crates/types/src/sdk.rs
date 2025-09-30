@@ -3,7 +3,7 @@ use crate::{
     syscall::SyscallResult,
     Address, Bytes, ContextReader, ExitCode, B256, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE, ED25519_COMPRESSED_SIZE, ED25519_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
     FUEL_DENOM_RATE, U256,
 };
 
@@ -39,7 +39,8 @@ pub trait MetadataStorageAPI {
 
 pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     fn context(&self) -> impl ContextReader;
-    fn keccak256(&self, data: &[u8]) -> B256;
+
+    fn keccak256(data: &[u8]) -> B256;
     fn sha256(data: &[u8]) -> B256;
     fn blake3(data: &[u8]) -> B256;
     fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode>;
@@ -47,13 +48,13 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     fn curve256r1_verify(input: &[u8]) -> bool;
 
     fn ed25519_decompress(
-        y: [u8; ED25519_COMPRESSED_SIZE],
+        y: [u8; EDWARDS_COMPRESSED_SIZE],
         sign: u32,
-    ) -> [u8; ED25519_DECOMPRESSED_SIZE];
+    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE];
     fn ed25519_add(
-        p: [u8; ED25519_DECOMPRESSED_SIZE],
-        q: [u8; ED25519_DECOMPRESSED_SIZE],
-    ) -> [u8; ED25519_DECOMPRESSED_SIZE];
+        p: [u8; EDWARDS_DECOMPRESSED_SIZE],
+        q: [u8; EDWARDS_DECOMPRESSED_SIZE],
+    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE];
 
     fn curve25519_edwards_sub(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
         unimplemented!()
@@ -111,8 +112,6 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     fn bn254_double(p: &mut [u8; 64]);
     fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]);
     fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]);
-
-    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode>;
 
     fn read(&self, target: &mut [u8], offset: u32);
     fn input_size(&self) -> u32;

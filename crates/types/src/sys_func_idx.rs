@@ -73,8 +73,8 @@ pub enum SysFuncIdx {
     BN254_FP2_MUL = 0x070e,
 
     // uint256 (0x08)
-    BIGINT_UINT256_MUL = 0x0801,
-    BIGINT_MOD_EXP = 0x0802,
+    UINT256_MUL_MOD = 0x0801,
+    UINT256_X2048_MUL = 0x0802,
 
     // sp1 (0x51)
     WRITE_FD = 0x5101,

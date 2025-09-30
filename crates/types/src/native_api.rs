@@ -1,7 +1,7 @@
 use crate::{
     BytecodeOrHash, ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, ED25519_COMPRESSED_SIZE,
-    ED25519_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE,
+    EDWARDS_DECOMPRESSED_SIZE,
 };
 use alloc::vec;
 use alloy_primitives::{Bytes, B256};
@@ -17,13 +17,13 @@ pub trait NativeAPI {
     fn curve256r1_verify(input: &[u8]) -> bool;
 
     fn ed25519_decompress(
-        y: [u8; ED25519_COMPRESSED_SIZE],
+        y: [u8; EDWARDS_COMPRESSED_SIZE],
         sign: u32,
-    ) -> [u8; ED25519_DECOMPRESSED_SIZE];
+    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE];
     fn ed25519_add(
-        p: [u8; ED25519_DECOMPRESSED_SIZE],
-        q: [u8; ED25519_DECOMPRESSED_SIZE],
-    ) -> [u8; ED25519_DECOMPRESSED_SIZE];
+        p: [u8; EDWARDS_DECOMPRESSED_SIZE],
+        q: [u8; EDWARDS_DECOMPRESSED_SIZE],
+    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE];
 
     fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]);
     fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]);
@@ -50,8 +50,6 @@ pub trait NativeAPI {
     ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode>;
     fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]);
     fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]);
-
-    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode>;
 
     fn debug_log(message: &str);
 
