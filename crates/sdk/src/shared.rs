@@ -10,8 +10,9 @@ use fluentbase_types::{
     IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI, SharedAPI, SharedContextInputV1,
     StorageAPI, SyscallResult, B256, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE, G1_COMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE,
-    G2_UNCOMPRESSED_SIZE, GT_COMPRESSED_SIZE, PADDED_FP2_SIZE, PADDED_FP_SIZE, SCALAR_SIZE, U256,
+    BN254_G2_POINT_DECOMPRESSED_SIZE, ED25519_COMPRESSED_SIZE, ED25519_DECOMPRESSED_SIZE,
+    G1_COMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
+    GT_COMPRESSED_SIZE, PADDED_FP2_SIZE, PADDED_FP_SIZE, SCALAR_SIZE, U256,
 };
 
 pub struct SharedContextImpl<API: NativeAPI> {
@@ -169,50 +170,18 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::curve256r1_verify(input)
     }
 
-    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        API::curve25519_edwards_decompress_validate(p)
+    fn ed25519_decompress(
+        y: [u8; ED25519_COMPRESSED_SIZE],
+        sign: u32,
+    ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
+        API::ed25519_decompress(y, sign)
     }
 
-    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        API::curve25519_edwards_add(p, q)
-    }
-
-    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        API::curve25519_edwards_sub(p, q)
-    }
-
-    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        API::curve25519_edwards_mul(p, q)
-    }
-
-    fn curve25519_edwards_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        API::curve25519_edwards_multiscalar_mul(pairs, out)
-    }
-
-    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
-        API::curve25519_ristretto_decompress_validate(p)
-    }
-
-    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        API::curve25519_ristretto_add(p, q)
-    }
-
-    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        API::curve25519_ristretto_sub(p, q)
-    }
-
-    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        API::curve25519_ristretto_mul(p, q)
-    }
-
-    fn curve25519_ristretto_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        API::curve25519_ristretto_multiscalar_mul(pairs, out)
+    fn ed25519_add(
+        p: [u8; ED25519_DECOMPRESSED_SIZE],
+        q: [u8; ED25519_DECOMPRESSED_SIZE],
+    ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
+        API::ed25519_add(p, q)
     }
 
     fn bls12_381_g1_add(p: &mut [u8; G1_UNCOMPRESSED_SIZE], q: &[u8; G1_UNCOMPRESSED_SIZE]) {

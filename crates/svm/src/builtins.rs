@@ -983,11 +983,12 @@ declare_builtin_function!(
                     false,
                 )?;
 
-                if SDK::curve25519_edwards_decompress_validate(point) {
-                    Ok(0)
-                } else {
-                    Ok(1)
-                }
+                todo!()
+                // if SDK::ed25519_decompress(point) {
+                //     Ok(0)
+                // } else {
+                //     Ok(1)
+                // }
             }
             CURVE25519_RISTRETTO => {
                 let point = translate_type::<[u8; 32]>(
@@ -1049,17 +1050,18 @@ declare_builtin_function!(
                     )?;
 
                     let mut left_point_or_result = left_point.0.clone();
-                    if SDK::curve25519_edwards_add(&mut left_point_or_result, &right_point.0) {
-                        *translate_type_mut::<[u8; 32]>(
-                            memory_mapping,
-                            result_point_addr,
-                            invoke_context.get_check_aligned(),
-                            false,
-                        )? = left_point_or_result;
-                        Ok(0)
-                    } else {
-                        Ok(1)
-                    }
+                    // if SDK::ed25519_add(&mut left_point_or_result, &right_point.0) {
+                    //     *translate_type_mut::<[u8; 32]>(
+                    //         memory_mapping,
+                    //         result_point_addr,
+                    //         invoke_context.get_check_aligned(),
+                    //         false,
+                    //     )? = left_point_or_result;
+                    //     Ok(0)
+                    // } else {
+                    //     Ok(1)
+                    // }
+                    todo!()
                 }
                 SUB => {
                     let left_point = translate_type::<edwards::PodEdwardsPoint>(

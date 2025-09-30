@@ -57,63 +57,15 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
         &[ValType::I32; 1]
     );
     import_function!(
-        "_ed25519_edwards_decompress_validate",
+        "_ed25519_decompress",
         ED25519_DECOMPRESS,
         &[ValType::I32; 1],
         &[ValType::I32; 1]
     );
     import_function!(
-        "_ed25519_edwards_add",
+        "_ed25519_add",
         ED25519_ADD,
         &[ValType::I32; 2],
-        &[ValType::I32; 1]
-    );
-    import_function!(
-        "_ed25519_edwards_sub",
-        ED25519_SUB,
-        &[ValType::I32; 2],
-        &[ValType::I32; 1]
-    );
-    import_function!(
-        "_ed25519_edwards_mul",
-        ED25519_MUL,
-        &[ValType::I32; 2],
-        &[ValType::I32; 1]
-    );
-    import_function!(
-        "_ed25519_edwards_multiscalar_mul",
-        ED25519_MULTISCALAR_MUL,
-        &[ValType::I32; 3],
-        &[ValType::I32; 1]
-    );
-    import_function!(
-        "_ed25519_ristretto_decompress_validate",
-        RISTRETTO255_DECOMPRESS,
-        &[ValType::I32; 1],
-        &[ValType::I32; 1]
-    );
-    import_function!(
-        "_ed25519_ristretto_add",
-        RISTRETTO255_ADD,
-        &[ValType::I32; 2],
-        &[ValType::I32; 1]
-    );
-    import_function!(
-        "_ed25519_ristretto_sub",
-        RISTRETTO255_SUB,
-        &[ValType::I32; 2],
-        &[ValType::I32; 1]
-    );
-    import_function!(
-        "_ed25519_ristretto_mul",
-        RISTRETTO255_MUL,
-        &[ValType::I32; 2],
-        &[ValType::I32; 1]
-    );
-    import_function!(
-        "_ed25519_ristretto_multiscalar_mul",
-        RISTRETTO255_MULTISCALAR_MUL,
-        &[ValType::I32; 3],
         &[ValType::I32; 1]
     );
     import_function!("_bn254_add", BN254_ADD, &[ValType::I32; 2], &[]);

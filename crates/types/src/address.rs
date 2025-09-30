@@ -45,7 +45,8 @@ mod tests {
     use super::*;
     use crate::{
         BytecodeOrHash, ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-        BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
+        BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, ED25519_COMPRESSED_SIZE,
+        ED25519_DECOMPRESSED_SIZE,
     };
     use alloy_primitives::{address, b256, keccak256};
 
@@ -76,49 +77,17 @@ mod tests {
             todo!()
         }
 
-        fn curve25519_edwards_decompress_validate(_p: &[u8; 32]) -> bool {
+        fn ed25519_decompress(
+            _y: [u8; ED25519_COMPRESSED_SIZE],
+            _sign: u32,
+        ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
             todo!()
         }
 
-        fn curve25519_edwards_add(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
-            todo!()
-        }
-
-        fn curve25519_edwards_sub(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
-            todo!()
-        }
-
-        fn curve25519_edwards_mul(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
-            todo!()
-        }
-
-        fn curve25519_edwards_multiscalar_mul(
-            _pairs: &[([u8; 32], [u8; 32])],
-            _out: &mut [u8; 32],
-        ) -> bool {
-            todo!()
-        }
-
-        fn curve25519_ristretto_decompress_validate(_p: &[u8; 32]) -> bool {
-            todo!()
-        }
-
-        fn curve25519_ristretto_add(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
-            todo!()
-        }
-
-        fn curve25519_ristretto_sub(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
-            todo!()
-        }
-
-        fn curve25519_ristretto_mul(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
-            todo!()
-        }
-
-        fn curve25519_ristretto_multiscalar_mul(
-            _pairs: &[([u8; 32], [u8; 32])],
-            _out: &mut [u8; 32],
-        ) -> bool {
+        fn ed25519_add(
+            _p: [u8; ED25519_DECOMPRESSED_SIZE],
+            _q: [u8; ED25519_DECOMPRESSED_SIZE],
+        ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
             todo!()
         }
 

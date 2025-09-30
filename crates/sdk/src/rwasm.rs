@@ -7,19 +7,16 @@ pub use crate::{
         _bls12_381_pairing, _bn254_add, _bn254_double, _bn254_fp2_mul, _bn254_fp_mul,
         _bn254_g1_compress, _bn254_g1_decompress, _bn254_g2_compress, _bn254_g2_decompress,
         _bn254_mul, _bn254_multi_pairing, _charge_fuel, _charge_fuel_manually, _curve256r1_verify,
-        _debug_log, _ed25519_edwards_add, _ed25519_edwards_decompress_validate,
-        _ed25519_edwards_mul, _ed25519_edwards_multiscalar_mul, _ed25519_edwards_sub,
-        _ed25519_ristretto_add, _ed25519_ristretto_decompress_validate, _ed25519_ristretto_mul,
-        _ed25519_ristretto_multiscalar_mul, _ed25519_ristretto_sub, _exec, _exit, _forward_output,
-        _fuel, _input_size, _keccak256, _output_size, _poseidon, _preimage_copy, _preimage_size,
-        _read, _read_output, _resume, _secp256k1_recover, _sha256, _state, _write,
+        _debug_log, _ed25519_add, _ed25519_decompress, _exec, _exit, _forward_output, _fuel,
+        _input_size, _keccak256, _output_size, _poseidon, _preimage_copy, _preimage_size, _read,
+        _read_output, _resume, _secp256k1_recover, _sha256, _state, _write,
     },
     B256,
 };
 use fluentbase_types::{
     BytecodeOrHash, ExitCode, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE, ED25519_COMPRESSED_SIZE, ED25519_DECOMPRESSED_SIZE,
 };
 
 #[derive(Default)]
@@ -109,62 +106,22 @@ impl NativeAPI for RwasmContext {
         }
     }
     #[inline(always)]
-    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        unsafe { _ed25519_edwards_decompress_validate(p.as_ptr()) == 0 }
+    fn ed25519_decompress(
+        y: [u8; ED25519_COMPRESSED_SIZE],
+        sign: u32,
+    ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
+        let mut res = [0u8; ED25519_DECOMPRESSED_SIZE];
+        res[ED25519_COMPRESSED_SIZE..].copy_from_slice(&y);
+        unsafe { _ed25519_decompress(res.as_mut_ptr(), sign) };
+        res
     }
     #[inline(always)]
-    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        unsafe { _ed25519_edwards_add(p.as_mut_ptr(), q.as_ptr()) == 0 }
-    }
-    #[inline(always)]
-    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        unsafe { _ed25519_edwards_sub(p.as_mut_ptr(), q.as_ptr()) == 0 }
-    }
-    #[inline(always)]
-    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        unsafe { _ed25519_edwards_mul(p.as_mut_ptr(), q.as_ptr()) == 0 }
-    }
-    #[inline(always)]
-    fn curve25519_edwards_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        unsafe {
-            _ed25519_edwards_multiscalar_mul(
-                pairs.as_ptr() as *const u8,
-                pairs.len() as u32,
-                out.as_mut_ptr(),
-            ) == 0
-        }
-    }
-    #[inline(always)]
-    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
-        unsafe { _ed25519_ristretto_decompress_validate(p.as_ptr()) == 0 }
-    }
-    #[inline(always)]
-    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        unsafe { _ed25519_ristretto_add(p.as_mut_ptr(), q.as_ptr()) == 0 }
-    }
-    #[inline(always)]
-    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        unsafe { _ed25519_ristretto_sub(p.as_mut_ptr(), q.as_ptr()) == 0 }
-    }
-    #[inline(always)]
-    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        unsafe { _ed25519_ristretto_mul(p.as_mut_ptr(), q.as_ptr()) == 0 }
-    }
-    #[inline(always)]
-    fn curve25519_ristretto_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        unsafe {
-            _ed25519_ristretto_multiscalar_mul(
-                pairs.as_ptr() as *const u8,
-                pairs.len() as u32,
-                out.as_mut_ptr(),
-            ) == 0
-        }
+    fn ed25519_add(
+        mut p: [u8; ED25519_DECOMPRESSED_SIZE],
+        q: [u8; ED25519_DECOMPRESSED_SIZE],
+    ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
+        unsafe { _ed25519_add(p.as_mut_ptr(), q.as_ptr()) };
+        p
     }
 
     #[inline(always)]

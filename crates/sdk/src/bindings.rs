@@ -136,8 +136,8 @@ extern "C" {
         output32_offset: *mut u8,
     ) -> u32;
 
-    pub fn _ed25519_add(p_ptr: *mut u8, q_ptr: *const u8);
     pub fn _ed25519_decompress(slice_ptr: *mut u8, sign: u32);
+    pub fn _ed25519_add(p_ptr: *mut u8, q_ptr: *const u8);
 
     /// Returns 0 when public key was successfully recovered and 1 in case of error
     pub fn _secp256k1_recover(
@@ -171,24 +171,6 @@ extern "C" {
     pub fn _bls12_381_map_fp_to_g1(p_ptr: *const u8, out_ptr: *mut u8);
     pub fn _bls12_381_map_fp2_to_g2(p_ptr: *const u8, out_ptr: *mut u8);
 
-    pub fn _ed25519_edwards_decompress_validate(arg1: *const u8) -> u32;
-    pub fn _ed25519_edwards_add(arg1: *mut u8, arg2: *const u8) -> u32;
-    pub fn _ed25519_edwards_sub(arg1: *mut u8, arg2: *const u8) -> u32;
-    pub fn _ed25519_edwards_mul(arg1: *mut u8, arg2: *const u8) -> u32;
-    pub fn _ed25519_edwards_multiscalar_mul(
-        pairs_ptr: *const u8,
-        pairs_count: u32,
-        out_ptr: *mut u8,
-    ) -> u32;
-    pub fn _ed25519_ristretto_decompress_validate(arg1: *const u8) -> u32;
-    pub fn _ed25519_ristretto_add(arg1: *mut u8, arg2: *const u8) -> u32;
-    pub fn _ed25519_ristretto_sub(arg1: *mut u8, arg2: *const u8) -> u32;
-    pub fn _ed25519_ristretto_mul(arg1: *mut u8, arg2: *const u8) -> u32;
-    pub fn _ed25519_ristretto_multiscalar_mul(
-        pairs_ptr: *const u8,
-        pairs_count: u32,
-        out_ptr: *mut u8,
-    ) -> u32;
     pub fn _g1_add(p_ptr: *mut u8, q_ptr: *const u8);
     pub fn _bn254_add(arg1: u32, arg2: u32);
     pub fn _bn254_double(p_ptr: u32);

@@ -9,8 +9,6 @@ use sp1_curves::weierstrass::{
 
 mod ed25519;
 pub use ed25519::*;
-mod ristretto255;
-pub use ristretto255::*;
 mod host;
 pub use host::*;
 mod hashing;
@@ -76,18 +74,18 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::BLAKE3 => SyscallBlake3::fn_handler(caller, params, result),
 
         // ed25519 (0x02)
-        SysFuncIdx::ED25519_DECOMPRESS => SyscallCurve25519EdwardsDecompressValidate::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_ADD => SyscallCurve25519EdwardsAdd::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_SUB => SyscallCurve25519EdwardsSub::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_MULTISCALAR_MUL => SyscallCurve25519EdwardsMultiscalarMul::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_MUL => SyscallCurve25519EdwardsMul::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_DECOMPRESS => syscall_ed25519_decompress_handler(caller, params, result),
+        SysFuncIdx::ED25519_ADD => syscall_ed25519_add_handler(caller, params, result),
+        // SysFuncIdx::ED25519_SUB => SyscallCurve25519EdwardsSub::fn_handler(caller, params, result),
+        // SysFuncIdx::ED25519_MULTISCALAR_MUL => SyscallCurve25519EdwardsMultiscalarMul::fn_handler(caller, params, result),
+        // SysFuncIdx::ED25519_MUL => SyscallCurve25519EdwardsMul::fn_handler(caller, params, result),
 
         // ristretto255 (0x03)
-        SysFuncIdx::RISTRETTO255_DECOMPRESS => SyscallCurve25519RistrettoDecompressValidate::fn_handler(caller, params, result),
-        SysFuncIdx::RISTRETTO255_ADD => SyscallCurve25519RistrettoAdd::fn_handler(caller, params, result),
-        SysFuncIdx::RISTRETTO255_SUB => SyscallCurve25519RistrettoSub::fn_handler(caller, params, result),
-        SysFuncIdx::RISTRETTO255_MULTISCALAR_MUL => SyscallCurve25519RistrettoMultiscalarMul::fn_handler(caller, params, result),
-        SysFuncIdx::RISTRETTO255_MUL => SyscallCurve25519RistrettoMul::fn_handler(caller, params, result),
+        // SysFuncIdx::RISTRETTO255_DECOMPRESS => SyscallCurve25519RistrettoDecompressValidate::fn_handler(caller, params, result),
+        // SysFuncIdx::RISTRETTO255_ADD => SyscallCurve25519RistrettoAdd::fn_handler(caller, params, result),
+        // SysFuncIdx::RISTRETTO255_SUB => SyscallCurve25519RistrettoSub::fn_handler(caller, params, result),
+        // SysFuncIdx::RISTRETTO255_MULTISCALAR_MUL => SyscallCurve25519RistrettoMultiscalarMul::fn_handler(caller, params, result),
+        // SysFuncIdx::RISTRETTO255_MUL => SyscallCurve25519RistrettoMul::fn_handler(caller, params, result),
 
         // secp256k1 (0x04)
         SysFuncIdx::SECP256K1_RECOVER => SyscallEccRecover::<Secp256k1RecoverConfig>::fn_handler(caller, params, result),
@@ -134,9 +132,9 @@ pub fn invoke_runtime_handler(
 
 /// Stores the exit code in the context and converts it into a halting TrapCode.
 pub(crate) fn syscall_process_exit_code(
-    caller: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl Store<RuntimeContext>,
     exit_code: ExitCode,
 ) -> TrapCode {
-    caller.context_mut(|ctx| ctx.execution_result.exit_code = exit_code.into());
+    ctx.context_mut(|ctx| ctx.execution_result.exit_code = exit_code.into());
     TrapCode::ExecutionHalted
 }

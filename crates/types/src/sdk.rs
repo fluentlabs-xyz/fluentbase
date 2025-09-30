@@ -3,7 +3,8 @@ use crate::{
     syscall::SyscallResult,
     Address, Bytes, ContextReader, ExitCode, B256, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
+    BN254_G2_POINT_DECOMPRESSED_SIZE, ED25519_COMPRESSED_SIZE, ED25519_DECOMPRESSED_SIZE,
+    FUEL_DENOM_RATE, U256,
 };
 
 pub type IsAccountOwnable = bool;
@@ -44,22 +45,47 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode>;
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
     fn curve256r1_verify(input: &[u8]) -> bool;
-    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool;
-    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+
+    fn ed25519_decompress(
+        y: [u8; ED25519_COMPRESSED_SIZE],
+        sign: u32,
+    ) -> [u8; ED25519_DECOMPRESSED_SIZE];
+    fn ed25519_add(
+        p: [u8; ED25519_DECOMPRESSED_SIZE],
+        q: [u8; ED25519_DECOMPRESSED_SIZE],
+    ) -> [u8; ED25519_DECOMPRESSED_SIZE];
+
+    fn curve25519_edwards_sub(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
+        unimplemented!()
+    }
+    fn curve25519_edwards_mul(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
+        unimplemented!()
+    }
     fn curve25519_edwards_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool;
-    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool;
-    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+        _pairs: &[([u8; 32], [u8; 32])],
+        _out: &mut [u8; 32],
+    ) -> bool {
+        unimplemented!()
+    }
+    fn curve25519_ristretto_decompress_validate(_p: &[u8; 32]) -> bool {
+        unimplemented!()
+    }
+    fn curve25519_ristretto_add(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
+        unimplemented!()
+    }
+    fn curve25519_ristretto_sub(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
+        unimplemented!()
+    }
+    fn curve25519_ristretto_mul(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
+        unimplemented!()
+    }
     fn curve25519_ristretto_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool;
+        _pairs: &[([u8; 32], [u8; 32])],
+        _out: &mut [u8; 32],
+    ) -> bool {
+        unimplemented!()
+    }
+
     fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]);
     fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]);
     fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]);

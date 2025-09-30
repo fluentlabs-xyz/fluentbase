@@ -14,9 +14,9 @@ use crate::{
 use fluentbase_types::{
     BytecodeOrHash, Bytes, BytesOrRef, ExitCode, NativeAPI, UnwrapExitCode, B256,
     BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, G1_COMPRESSED_SIZE,
-    G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, GT_COMPRESSED_SIZE,
-    PADDED_FP2_SIZE, PADDED_FP_SIZE, SCALAR_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, ED25519_COMPRESSED_SIZE,
+    ED25519_DECOMPRESSED_SIZE, G1_COMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE,
+    G2_UNCOMPRESSED_SIZE, GT_COMPRESSED_SIZE, PADDED_FP2_SIZE, PADDED_FP_SIZE, SCALAR_SIZE,
 };
 use sp1_curves::weierstrass::{
     bls12_381::Bls12381,
@@ -257,64 +257,18 @@ impl NativeAPI for RuntimeContextWrapper {
         p[..min].copy_from_slice(&result[..min]);
     }
 
-    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
-        SyscallCurve25519RistrettoDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
+    fn ed25519_decompress(
+        y: [u8; ED25519_COMPRESSED_SIZE],
+        sign: u32,
+    ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
+        syscall_ed25519_decompress_impl(y, sign).unwrap_exit_code()
     }
 
-    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519RistrettoAdd::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519RistrettoSub::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519RistrettoMul::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_ristretto_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        let result = SyscallCurve25519RistrettoMultiscalarMul::fn_impl(pairs);
-        match result {
-            Ok(v) => {
-                *out = v.compress().to_bytes();
-            }
-            Err(_) => return false,
-        }
-        true
-    }
-
-    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        SyscallCurve25519EdwardsDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
-    }
-
-    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519EdwardsAdd::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519EdwardsSub::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519EdwardsMul::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_edwards_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        let result = SyscallCurve25519EdwardsMultiscalarMul::fn_impl(pairs);
-        match result {
-            Ok(v) => {
-                *out = v.compress().to_bytes();
-            }
-            Err(_) => return false,
-        }
-        true
+    fn ed25519_add(
+        p: [u8; ED25519_DECOMPRESSED_SIZE],
+        q: [u8; ED25519_DECOMPRESSED_SIZE],
+    ) -> [u8; ED25519_DECOMPRESSED_SIZE] {
+        syscall_ed25519_add_impl(p, q).unwrap()
     }
 
     fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
