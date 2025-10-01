@@ -1887,7 +1887,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -2046,7 +2046,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -2248,7 +2248,7 @@ dependencies = [
  "cfg-if",
  "elliptic-curve",
  "fluentbase-runtime",
- "fluentbase-sdk",
+ "fluentbase-types",
 ]
 
 [[package]]
@@ -2347,7 +2347,7 @@ dependencies = [
  "bytemuck",
  "core_affinity",
  "elliptic-curve",
- "fluentbase-sdk",
+ "fluentbase-types",
  "fs2",
  "group",
  "hex-literal 1.0.0",
@@ -2372,21 +2372,16 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.4.10-dev"
 dependencies = [
- "alloy-primitives",
  "alloy-rlp",
  "auto_impl",
  "bincode 2.0.1",
- "byteorder",
  "fluentbase-codec",
+ "fluentbase-crypto",
  "fluentbase-sdk-derive",
+ "fluentbase-types",
  "hashbrown 0.15.5",
  "hex-literal 1.0.0",
- "paste",
- "revm-precompile",
- "revm-primitives",
  "rwasm",
- "serde",
- "strum_macros 0.27.2",
 ]
 
 [[package]]
@@ -2520,6 +2515,22 @@ dependencies = [
  "hex",
  "revm",
  "rwasm",
+]
+
+[[package]]
+name = "fluentbase-types"
+version = "0.4.10-dev"
+dependencies = [
+ "alloy-primitives",
+ "bincode 2.0.1",
+ "byteorder",
+ "hashbrown 0.15.5",
+ "paste",
+ "revm-precompile",
+ "revm-primitives",
+ "rwasm",
+ "serde",
+ "strum_macros 0.27.2",
 ]
 
 [[package]]
@@ -5277,7 +5288,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -6613,7 +6624,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -7706,7 +7717,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]

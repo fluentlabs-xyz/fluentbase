@@ -1546,6 +1546,7 @@ dependencies = [
  "ff",
  "generic-array 0.14.7",
  "group",
+ "hkdf",
  "pem-rfc7468",
  "pkcs8",
  "rand_core 0.6.4",
@@ -1696,6 +1697,17 @@ dependencies = [
  "quote",
  "serde",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "fluentbase-crypto"
+version = "0.4.10-dev"
+dependencies = [
+ "bytemuck",
+ "cfg-if",
+ "elliptic-curve",
+ "fluentbase-runtime",
+ "fluentbase-types",
 ]
 
 [[package]]
@@ -1889,7 +1901,7 @@ dependencies = [
  "blstrs",
  "bytemuck",
  "elliptic-curve",
- "fluentbase-sdk",
+ "fluentbase-types",
  "group",
  "k256",
  "num",
@@ -1909,20 +1921,16 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.4.10-dev"
 dependencies = [
- "alloy-primitives",
  "alloy-rlp",
  "auto_impl",
  "bincode 2.0.1",
- "byteorder",
  "fluentbase-codec",
+ "fluentbase-crypto",
  "fluentbase-sdk-derive",
+ "fluentbase-types",
  "hashbrown 0.15.5",
  "hex-literal 1.0.0",
- "paste",
- "revm-precompile",
- "revm-primitives",
  "rwasm",
- "strum_macros 0.27.2",
 ]
 
 [[package]]
@@ -1973,6 +1981,21 @@ dependencies = [
  "hex",
  "revm",
  "rwasm",
+]
+
+[[package]]
+name = "fluentbase-types"
+version = "0.4.10-dev"
+dependencies = [
+ "alloy-primitives",
+ "bincode 2.0.1",
+ "byteorder",
+ "hashbrown 0.15.5",
+ "paste",
+ "revm-precompile",
+ "revm-primitives",
+ "rwasm",
+ "strum_macros 0.27.2",
 ]
 
 [[package]]
@@ -2304,6 +2327,15 @@ name = "hex-literal"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bcaaec4551594c969335c98c903c1397853d4198408ea609190f420500f6be71"
+
+[[package]]
+name = "hkdf"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
+dependencies = [
+ "hmac 0.12.1",
+]
 
 [[package]]
 name = "hmac"

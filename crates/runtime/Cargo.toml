@@ -10,8 +10,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-# fluent
-fluentbase-sdk = { workspace = true }
+# fluentbase
+fluentbase-types = { workspace = true }
 rwasm = { workspace = true }
 
 # wasmtime
@@ -60,7 +60,7 @@ hex-literal = { workspace = true }
 default = ["std"]
 std = [
     "rwasm/std",
-    "fluentbase-sdk/std",
+    "fluentbase-types/std",
 ]
 rwasm = []
 debug-print = [

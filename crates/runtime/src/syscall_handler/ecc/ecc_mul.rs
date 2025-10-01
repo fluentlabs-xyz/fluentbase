@@ -13,7 +13,7 @@ use crate::{
 };
 use ark_ec::CurveGroup;
 use blstrs::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
-use fluentbase_sdk::{
+use fluentbase_types::{
     ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
     SCALAR_SIZE,
 };

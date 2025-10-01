@@ -3,7 +3,7 @@
 //! This module provides a comprehensive configuration system for different Weierstrass curves
 //! and their operations, following the pattern established in weierstrass_recover.rs.
 
-use fluentbase_sdk::{
+use fluentbase_types::{
     BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
     CURVE256R1_POINT_COMPRESSED_SIZE, CURVE256R1_POINT_DECOMPRESSED_SIZE,

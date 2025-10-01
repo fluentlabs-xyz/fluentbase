@@ -4,7 +4,7 @@
 /// P.S: Instead of constraint check for `sign<=1` we emit exit code (`MalformedBuiltinParams`),
 ///  that must be represented inside rWasm zkVM.
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
-use fluentbase_sdk::{ExitCode, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE};
+use fluentbase_types::{ExitCode, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE};
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{curve25519_dalek::CompressedEdwardsY, edwards::ed25519::decompress};
 
@@ -51,7 +51,7 @@ pub fn syscall_ed25519_decompress_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::hex;
+    use fluentbase_types::hex;
 
     /// SP1 tests are taken from: sp1/crates/test-artifacts/programs/ed-decompress/src/main.rs
     #[test]

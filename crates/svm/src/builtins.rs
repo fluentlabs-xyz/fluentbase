@@ -19,7 +19,9 @@ use crate::{
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
-use fluentbase_sdk::{helpers::convert_endianness_flexible, SharedAPI, B256};
+use fluentbase_sdk::{
+    crypto::crypto_poseidon, helpers::convert_endianness_flexible, SharedAPI, B256,
+};
 use itertools::Itertools;
 use solana_bn254::{
     compression::prelude::convert_endianness,
@@ -630,24 +632,24 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
         )?;
 
-        let Ok(digest) = B256::try_from(hash.as_slice()) else {
-            return Ok(Secp256k1RecoverError::InvalidHash.into());
-        };
-        let Ok(recovery_id) = recovery_id_val.try_into() else {
-            return Ok(Secp256k1RecoverError::InvalidRecoveryId.into());
-        };
-        let Ok(signature) = signature.as_slice().try_into() else {
-            return Ok(Secp256k1RecoverError::InvalidSignature.into());
-        };
+        // let Ok(digest) = B256::try_from(hash.as_slice()) else {
+        //     return Ok(Secp256k1RecoverError::InvalidHash.into());
+        // };
+        // let Ok(recovery_id) = recovery_id_val.try_into() else {
+        //     return Ok(Secp256k1RecoverError::InvalidRecoveryId.into());
+        // };
+        // let Ok(signature) = signature.as_slice().try_into() else {
+        //     return Ok(Secp256k1RecoverError::InvalidSignature.into());
+        // };
 
-        let public_key = match SDK::secp256k1_recover(&digest, &signature, recovery_id) {
-            Some(key) => key,
-            None => {
-                return Ok(Secp256k1RecoverError::InvalidSignature.into());
-            }
-        };
-
-        result.copy_from_slice(&public_key[1..65]);
+        unimplemented!();
+        // let public_key = match SDK::secp256k1_recover(&digest, &signature, recovery_id) {
+        //     Some(key) => key,
+        //     None => {
+        //         return Ok(Secp256k1RecoverError::InvalidSignature.into());
+        //     }
+        // };
+        // result.copy_from_slice(&public_key[1..65]);
         Ok(SUCCESS)
     }
 );
@@ -750,12 +752,10 @@ declare_builtin_function!(
             inputs.extend_from_slice(v_slice);
         }
 
-        let hash = match SDK::poseidon(parameters as u32, endianness as u32, &inputs) {
-            Ok(hash) => hash,
-            Err(_e) => {
-                return Ok(1);
-            }
-        };
+        let hash = crypto_poseidon(parameters as u32, endianness as u32, &inputs);
+        if hash == B256::ZERO {
+            return Ok(1);
+        }
         hash_result.copy_from_slice(&hash.as_slice());
 
         Ok(SUCCESS)
@@ -996,11 +996,12 @@ declare_builtin_function!(
                     false,
                 )?;
 
-                if SDK::curve25519_ristretto_decompress_validate(point) {
-                    Ok(0)
-                } else {
-                    Ok(1)
-                }
+                unimplemented!()
+                // if SDK::curve25519_ristretto_decompress_validate(point) {
+                //     Ok(0)
+                // } else {
+                //     Ok(1)
+                // }
             }
             _ => {
                 if invoke_context
@@ -1076,18 +1077,18 @@ declare_builtin_function!(
                     )?;
 
                     let mut left_point_or_result = left_point.0.clone();
-
-                    if SDK::curve25519_edwards_sub(&mut left_point_or_result, &right_point.0) {
-                        *translate_type_mut::<[u8; 32]>(
-                            memory_mapping,
-                            result_point_addr,
-                            invoke_context.get_check_aligned(),
-                            false,
-                        )? = left_point_or_result;
-                        Ok(0)
-                    } else {
-                        Ok(1)
-                    }
+                    unimplemented!()
+                    // if SDK::curve25519_edwards_sub(&mut left_point_or_result, &right_point.0) {
+                    //     *translate_type_mut::<[u8; 32]>(
+                    //         memory_mapping,
+                    //         result_point_addr,
+                    //         invoke_context.get_check_aligned(),
+                    //         false,
+                    //     )? = left_point_or_result;
+                    //     Ok(0)
+                    // } else {
+                    //     Ok(1)
+                    // }
                 }
                 MUL => {
                     let scalar = translate_type::<scalar::PodScalar>(
@@ -1104,17 +1105,18 @@ declare_builtin_function!(
                     )?;
 
                     let mut left_point_or_result = input_point.0.clone();
-                    if SDK::curve25519_edwards_mul(&mut left_point_or_result, &scalar.0) {
-                        *translate_type_mut::<[u8; 32]>(
-                            memory_mapping,
-                            result_point_addr,
-                            invoke_context.get_check_aligned(),
-                            false,
-                        )? = left_point_or_result;
-                        Ok(0)
-                    } else {
-                        Ok(1)
-                    }
+                    unimplemented!()
+                    // if SDK::curve25519_edwards_mul(&mut left_point_or_result, &scalar.0) {
+                    //     *translate_type_mut::<[u8; 32]>(
+                    //         memory_mapping,
+                    //         result_point_addr,
+                    //         invoke_context.get_check_aligned(),
+                    //         false,
+                    //     )? = left_point_or_result;
+                    //     Ok(0)
+                    // } else {
+                    //     Ok(1)
+                    // }
                 }
                 _ => {
                     if invoke_context
@@ -1144,17 +1146,18 @@ declare_builtin_function!(
                     )?;
 
                     let mut left_point_or_result = left_point.0.clone();
-                    if SDK::curve25519_ristretto_add(&mut left_point_or_result, &right_point.0) {
-                        *translate_type_mut::<[u8; 32]>(
-                            memory_mapping,
-                            result_point_addr,
-                            invoke_context.get_check_aligned(),
-                            false,
-                        )? = left_point_or_result;
-                        Ok(0)
-                    } else {
-                        Ok(1)
-                    }
+                    unimplemented!()
+                    // if SDK::curve25519_ristretto_add(&mut left_point_or_result, &right_point.0) {
+                    //     *translate_type_mut::<[u8; 32]>(
+                    //         memory_mapping,
+                    //         result_point_addr,
+                    //         invoke_context.get_check_aligned(),
+                    //         false,
+                    //     )? = left_point_or_result;
+                    //     Ok(0)
+                    // } else {
+                    //     Ok(1)
+                    // }
                 }
                 SUB => {
                     let left_point = translate_type::<ristretto::PodRistrettoPoint>(
@@ -1171,17 +1174,18 @@ declare_builtin_function!(
                     )?;
 
                     let mut left_point_or_result = left_point.0.clone();
-                    if SDK::curve25519_ristretto_sub(&mut left_point_or_result, &right_point.0) {
-                        *translate_type_mut::<[u8; 32]>(
-                            memory_mapping,
-                            result_point_addr,
-                            invoke_context.get_check_aligned(),
-                            false,
-                        )? = left_point_or_result;
-                        Ok(0)
-                    } else {
-                        Ok(1)
-                    }
+                    unimplemented!()
+                    // if SDK::curve25519_ristretto_sub(&mut left_point_or_result, &right_point.0) {
+                    //     *translate_type_mut::<[u8; 32]>(
+                    //         memory_mapping,
+                    //         result_point_addr,
+                    //         invoke_context.get_check_aligned(),
+                    //         false,
+                    //     )? = left_point_or_result;
+                    //     Ok(0)
+                    // } else {
+                    //     Ok(1)
+                    // }
                 }
                 MUL => {
                     let scalar = translate_type::<scalar::PodScalar>(
@@ -1198,17 +1202,18 @@ declare_builtin_function!(
                     )?;
 
                     let mut left_point_or_result = input_point.0.clone();
-                    if SDK::curve25519_ristretto_mul(&mut left_point_or_result, &scalar.0) {
-                        *translate_type_mut::<[u8; 32]>(
-                            memory_mapping,
-                            result_point_addr,
-                            invoke_context.get_check_aligned(),
-                            false,
-                        )? = left_point_or_result;
-                        Ok(0)
-                    } else {
-                        Ok(1)
-                    }
+                    unimplemented!()
+                    // if SDK::curve25519_ristretto_mul(&mut left_point_or_result, &scalar.0) {
+                    //     *translate_type_mut::<[u8; 32]>(
+                    //         memory_mapping,
+                    //         result_point_addr,
+                    //         invoke_context.get_check_aligned(),
+                    //         false,
+                    //     )? = left_point_or_result;
+                    //     Ok(0)
+                    // } else {
+                    //     Ok(1)
+                    // }
                 }
                 _ => {
                     if invoke_context
@@ -1311,17 +1316,18 @@ declare_builtin_function!(
                 let pairs = points.as_slice().iter()
                     .zip(scalars.as_slice().iter())
                     .map(|v| (v.0.0, v.1.0)).collect_vec();
-                if SDK::curve25519_edwards_multiscalar_mul(&pairs, &mut result) {
-                    *translate_type_mut::<[u8; 32]>(
-                        memory_mapping,
-                        result_point_addr,
-                        invoke_context.get_check_aligned(),
-                        false,
-                    )? = result;
-                    Ok(0)
-                } else {
-                    Ok(1)
-                }
+                unimplemented!()
+                // if SDK::curve25519_edwards_multiscalar_mul(&pairs, &mut result) {
+                //     *translate_type_mut::<[u8; 32]>(
+                //         memory_mapping,
+                //         result_point_addr,
+                //         invoke_context.get_check_aligned(),
+                //         false,
+                //     )? = result;
+                //     Ok(0)
+                // } else {
+                //     Ok(1)
+                // }
             }
 
             CURVE25519_RISTRETTO => {
@@ -1343,17 +1349,18 @@ declare_builtin_function!(
                 let pairs = points.as_slice().iter()
                     .zip(scalars.as_slice().iter())
                     .map(|v| (v.0.0, v.1.0)).collect_vec();
-                if SDK::curve25519_ristretto_multiscalar_mul(&pairs, &mut result) {
-                    *translate_type_mut::<[u8; 32]>(
-                        memory_mapping,
-                        result_point_addr,
-                        invoke_context.get_check_aligned(),
-                        false,
-                    )? = result;
-                    Ok(0)
-                } else {
-                    Ok(1)
-                }
+                unimplemented!()
+                // if SDK::curve25519_ristretto_multiscalar_mul(&pairs, &mut result) {
+                //     *translate_type_mut::<[u8; 32]>(
+                //         memory_mapping,
+                //         result_point_addr,
+                //         invoke_context.get_check_aligned(),
+                //         false,
+                //     )? = result;
+                //     Ok(0)
+                // } else {
+                //     Ok(1)
+                // }
             }
 
             _ => {
@@ -1421,7 +1428,8 @@ declare_builtin_function!(
 
                 let mut p: [u8; 64] = convert_endianness_flexible::<32>(&input[0..64]).try_into().unwrap();
                 let q: [u8; 64] = convert_endianness_flexible::<32>(&input[64..MAX_LEN]).try_into().unwrap();
-                SDK::bn254_add(&mut p, &q);
+                unimplemented!();
+                // SDK::bn254_add(&mut p, &q);
                 Ok(convert_endianness_flexible::<32>(&p).to_vec())
             },
             ALT_BN128_MUL => |input: &[u8]| -> Result<Vec<u8>, AltBn128Error> {
@@ -1434,7 +1442,8 @@ declare_builtin_function!(
 
                 let mut p: [u8; 64] = convert_endianness_flexible::<32>(&input[0..64]).try_into().unwrap();
                 let q: [u8; 32] = convert_endianness_flexible::<32>(&input[64..MAX_LEN]).try_into().unwrap();
-                SDK::bn254_mul(&mut p, &q);
+                unimplemented!();
+                // SDK::bn254_mul(&mut p, &q);
                 Ok(convert_endianness_flexible::<32>(&p).to_vec())
             },
             ALT_BN128_PAIRING => |input: &[u8]| -> Result<Vec<u8>, AltBn128Error> {
@@ -1461,13 +1470,14 @@ declare_builtin_function!(
                     vec_pairs2.push((g1_vec.clone().try_into().unwrap(), g2_vec.clone().try_into().unwrap()));
                 }
 
-                let output = SDK::bn254_multi_pairing(&vec_pairs2);
-                // handle error
-                if let Err(e) = output {
-                    todo!()
-                    //return Err(e.into());
-                }
-                Ok(convert_endianness_flexible::<32>(&output.unwrap()))
+                unimplemented!()
+                // let output = SDK::bn254_multi_pairing(&vec_pairs2);
+                // // handle error
+                // if let Err(e) = output {
+                //     todo!()
+                //     //return Err(e.into());
+                // }
+                // Ok(convert_endianness_flexible::<32>(&output.unwrap()))
             },
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
@@ -1551,66 +1561,70 @@ declare_builtin_function!(
         match op {
             ALT_BN128_G1_COMPRESS => {
                 let input = convert_endianness::<G1_COMPRESSED, G1>(input.as_slice().try_into().unwrap());
-                let result_point = match SDK::bn254_g1_compress(input.as_slice().try_into().unwrap()) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Err(SvmError::ExitCode(e).into())
-                        };
-                    }
-                };
-                let result_point = convert_endianness::<G1_COMPRESSED, G1_COMPRESSED>(&result_point);
-                call_result.copy_from_slice(&result_point);
+                unimplemented!();
+                // let result_point = match SDK::bn254_g1_compress(input.as_slice().try_into().unwrap()) {
+                //     Ok(result_point) => result_point,
+                //     Err(e) => {
+                //         return if simplify_alt_bn128_syscall_error_codes {
+                //             Ok(1)
+                //         } else {
+                //             Err(SvmError::ExitCode(e).into())
+                //         };
+                //     }
+                // };
+                // let result_point = convert_endianness::<G1_COMPRESSED, G1_COMPRESSED>(&result_point);
+                // call_result.copy_from_slice(&result_point);
                 Ok(SUCCESS)
             }
             ALT_BN128_G1_DECOMPRESS => {
                 let input = convert_endianness::<G1_COMPRESSED, G1_COMPRESSED>(input.as_slice().try_into().unwrap());
-                let result_point = match SDK::bn254_g1_decompress(input.as_slice().try_into().unwrap()) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Err(SvmError::ExitCode(e).into())
-                        };
-                    }
-                };
-                let result_point = convert_endianness::<G1_COMPRESSED, G1>(&result_point);
-                call_result.copy_from_slice(&result_point);
+                unimplemented!();
+                // let result_point = match SDK::bn254_g1_decompress(input.as_slice().try_into().unwrap()) {
+                //     Ok(result_point) => result_point,
+                //     Err(e) => {
+                //         return if simplify_alt_bn128_syscall_error_codes {
+                //             Ok(1)
+                //         } else {
+                //             Err(SvmError::ExitCode(e).into())
+                //         };
+                //     }
+                // };
+                // let result_point = convert_endianness::<G1_COMPRESSED, G1>(&result_point);
+                // call_result.copy_from_slice(&result_point);
                 Ok(SUCCESS)
             }
             ALT_BN128_G2_COMPRESS => {
                 let input = convert_endianness::<G2_COMPRESSED, G2>(input.as_slice().try_into().unwrap());
-                let result_point = match SDK::bn254_g2_compress(input.as_slice().try_into().unwrap()) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Err(SvmError::ExitCode(e).into())
-                        };
-                    }
-                };
-                let result_point = convert_endianness::<G2_COMPRESSED, G2_COMPRESSED>(&result_point);
-                call_result.copy_from_slice(&result_point);
+                unimplemented!();
+                // let result_point = match SDK::bn254_g2_compress(input.as_slice().try_into().unwrap()) {
+                //     Ok(result_point) => result_point,
+                //     Err(e) => {
+                //         return if simplify_alt_bn128_syscall_error_codes {
+                //             Ok(1)
+                //         } else {
+                //             Err(SvmError::ExitCode(e).into())
+                //         };
+                //     }
+                // };
+                // let result_point = convert_endianness::<G2_COMPRESSED, G2_COMPRESSED>(&result_point);
+                // call_result.copy_from_slice(&result_point);
                 Ok(SUCCESS)
             }
             ALT_BN128_G2_DECOMPRESS => {
                 let input = convert_endianness::<G2_COMPRESSED, G2_COMPRESSED>(input.as_slice().try_into().unwrap());
-                let result_point = match SDK::bn254_g2_decompress(input.as_slice().try_into().unwrap()) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Err(SvmError::ExitCode(e).into())
-                        };
-                    }
-                };
-                let result_point = convert_endianness::<G2_COMPRESSED, G2>(&result_point);
-                call_result.copy_from_slice(&result_point);
+                unimplemented!();
+                // let result_point = match SDK::bn254_g2_decompress(input.as_slice().try_into().unwrap()) {
+                //     Ok(result_point) => result_point,
+                //     Err(e) => {
+                //         return if simplify_alt_bn128_syscall_error_codes {
+                //             Ok(1)
+                //         } else {
+                //             Err(SvmError::ExitCode(e).into())
+                //         };
+                //     }
+                // };
+                // let result_point = convert_endianness::<G2_COMPRESSED, G2>(&result_point);
+                // call_result.copy_from_slice(&result_point);
                 Ok(SUCCESS)
             }
             _ => Err(SyscallError::InvalidAttribute.into()),

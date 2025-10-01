@@ -1,7 +1,7 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_sdk::{
-    address, compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256, Address,
-    Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID, U256,
+    address, compile_wasm_to_rwasm_with_config, default_compilation_config, hex, keccak256,
+    Address, Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID, U256,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -90,25 +90,30 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
         .with_consume_fuel(false)
         .with_builtins_consume_fuel(false);
     for (_, contract) in GENESIS_CONTRACTS {
-        if !cache.contains_key(contract.wasm_bytecode) {
-            let start = Instant::now();
-            let rwasm_bytecode =
-                compile_wasm_to_rwasm_with_config(contract.wasm_bytecode, config.clone())
-                    .expect("failed to compile wasm to rwasm");
-            assert_eq!(rwasm_bytecode.constructor_params.len(), 0);
-            let rwasm_bytecode: Bytes = rwasm_bytecode.rwasm_module.serialize().into();
-            let hash = keccak256(rwasm_bytecode.as_ref());
-            let result = (hash, rwasm_bytecode.clone());
-            cache.insert(contract.wasm_bytecode, result.clone());
-            println!(
-                "{} time={: <3}ms | wasm={: <5}KiB | rwasm={: <5}KiB | increased={:.1}x",
-                format!("{: <30}", contract.name), // Pads with dots to 20 chars
-                start.elapsed().as_millis(),
-                contract.wasm_bytecode.len() / 1024,
-                rwasm_bytecode.len() / 1024,
-                rwasm_bytecode.len() as f64 / contract.wasm_bytecode.len() as f64,
-            );
+        if cache.contains_key(contract.wasm_bytecode) {
+            continue;
         }
+        println!("compiling {}", contract.name);
+        if contract.name == "fluentbase_contracts_bls12381" {
+            println!("{}", hex::encode(contract.wasm_bytecode));
+        }
+        let start = Instant::now();
+        let rwasm_bytecode =
+            compile_wasm_to_rwasm_with_config(contract.wasm_bytecode, config.clone())
+                .expect("failed to compile wasm to rwasm");
+        assert_eq!(rwasm_bytecode.constructor_params.len(), 0);
+        let rwasm_bytecode: Bytes = rwasm_bytecode.rwasm_module.serialize().into();
+        let hash = keccak256(rwasm_bytecode.as_ref());
+        let result = (hash, rwasm_bytecode.clone());
+        cache.insert(contract.wasm_bytecode, result.clone());
+        println!(
+            "{} time={: <3}ms | wasm={: <5}KiB | rwasm={: <5}KiB | increased={:.1}x",
+            format!("{: <30}", contract.name), // Pads with dots to 20 chars
+            start.elapsed().as_millis(),
+            contract.wasm_bytecode.len() / 1024,
+            rwasm_bytecode.len() / 1024,
+            rwasm_bytecode.len() as f64 / contract.wasm_bytecode.len() as f64,
+        );
     }
     cache
 }

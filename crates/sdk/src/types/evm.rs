@@ -51,7 +51,7 @@ pub fn write_evm_panic_message<F: FnMut(&[u8])>(panic_message: &str, mut write_f
 #[cfg(test)]
 mod tests {
     use crate::evm::{write_evm_exit_message, write_evm_panic_message};
-    use alloy_primitives::hex;
+    use fluentbase_types::hex;
 
     #[test]
     fn test_evm_exit() {

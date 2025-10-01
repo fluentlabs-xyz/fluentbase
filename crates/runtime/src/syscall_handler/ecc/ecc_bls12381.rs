@@ -1,5 +1,5 @@
 use blstrs::{G1Affine, G2Affine};
-use fluentbase_sdk::{FP_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE};
+use fluentbase_types::{FP_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE};
 use group::prime::PrimeCurveAffine;
 
 pub fn parse_bls12381_g1_point_uncompressed(input: &[u8; G1_UNCOMPRESSED_SIZE]) -> G1Affine {

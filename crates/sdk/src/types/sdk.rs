@@ -1,10 +1,8 @@
 use crate::{
     evm::{write_evm_exit_message, write_evm_panic_message},
-    Address, Bytes, ContextReader, ExitCode, SyscallResult, B256, BN254_G1_POINT_COMPRESSED_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
-    FUEL_DENOM_RATE, U256,
+    Address, Bytes, ContextReader, ExitCode, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
+use fluentbase_types::CryptoAPI;
 
 pub type IsAccountOwnable = bool;
 pub type IsColdAccess = bool;
@@ -38,79 +36,6 @@ pub trait MetadataStorageAPI {
 
 pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     fn context(&self) -> impl ContextReader;
-
-    fn keccak256(data: &[u8]) -> B256;
-    fn sha256(data: &[u8]) -> B256;
-    fn blake3(data: &[u8]) -> B256;
-    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode>;
-    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
-    fn curve256r1_verify(input: &[u8]) -> bool;
-
-    fn ed25519_decompress(
-        y: [u8; EDWARDS_COMPRESSED_SIZE],
-        sign: u32,
-    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE];
-    fn ed25519_add(
-        p: [u8; EDWARDS_DECOMPRESSED_SIZE],
-        q: [u8; EDWARDS_DECOMPRESSED_SIZE],
-    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE];
-
-    fn curve25519_edwards_sub(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
-        unimplemented!()
-    }
-    fn curve25519_edwards_mul(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
-        unimplemented!()
-    }
-    fn curve25519_edwards_multiscalar_mul(
-        _pairs: &[([u8; 32], [u8; 32])],
-        _out: &mut [u8; 32],
-    ) -> bool {
-        unimplemented!()
-    }
-    fn curve25519_ristretto_decompress_validate(_p: &[u8; 32]) -> bool {
-        unimplemented!()
-    }
-    fn curve25519_ristretto_add(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
-        unimplemented!()
-    }
-    fn curve25519_ristretto_sub(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
-        unimplemented!()
-    }
-    fn curve25519_ristretto_mul(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
-        unimplemented!()
-    }
-    fn curve25519_ristretto_multiscalar_mul(
-        _pairs: &[([u8; 32], [u8; 32])],
-        _out: &mut [u8; 32],
-    ) -> bool {
-        unimplemented!()
-    }
-
-    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]);
-    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]);
-    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]);
-    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]);
-    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]);
-    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]);
-    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]);
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> [u8; 64];
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode>;
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode>;
-    fn bn254_g1_compress(
-        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode>;
-    fn bn254_g1_decompress(
-        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode>;
-    fn bn254_g2_compress(
-        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode>;
-    fn bn254_g2_decompress(
-        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode>;
-    fn bn254_double(p: &mut [u8; 64]);
-    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]);
-    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]);
 
     fn read(&self, target: &mut [u8], offset: u32);
     fn input_size(&self) -> u32;

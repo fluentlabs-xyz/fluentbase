@@ -1,5 +1,5 @@
 use crate::{syscall_handler::runtime_syscall_handler, RuntimeContext};
-use fluentbase_sdk::{STATE_DEPLOY, STATE_MAIN};
+use fluentbase_types::{STATE_DEPLOY, STATE_MAIN};
 use rwasm::{FuelConfig, ImportLinker, Store, Strategy, TrapCode, TypedStore, Value};
 use std::sync::Arc;
 

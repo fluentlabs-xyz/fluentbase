@@ -1,9 +1,8 @@
 use crate::{
     utils::{AffinePoint, WeierstrassAffinePoint, WeierstrassPoint},
-    MathRuntime,
+    CryptoRuntime,
 };
-use fluentbase_sdk::CryptoAPI;
-use std::io::ErrorKind;
+use fluentbase_types::CryptoAPI;
 
 /// The number of limbs in [Bls12381AffinePoint].
 pub const N: usize = 24;
@@ -66,7 +65,7 @@ impl AffinePoint<N> for Bls12381Point {
     fn add_assign(&mut self, other: &Self) {
         let a = bytemuck::cast_mut(self.limbs_mut());
         let b = bytemuck::cast_ref(other.limbs_ref());
-        MathRuntime::bls12_381_g1_add(a, b);
+        CryptoRuntime::bls12_381_g1_add(a, b);
     }
 
     fn complete_add_assign(&mut self, other: &Self) {
@@ -80,11 +79,11 @@ impl AffinePoint<N> for Bls12381Point {
 }
 
 /// Decompresses a compressed public key using bls12381_decompress precompile.
-pub fn decompress_pubkey(compressed_key: &[u8; 48]) -> Result<[u8; 96], ErrorKind> {
+pub fn decompress_pubkey(compressed_key: &[u8; 48]) -> Result<[u8; 96], ()> {
     let mut decompressed_key = [0u8; 96];
     decompressed_key[..48].copy_from_slice(compressed_key);
 
-    let sign_bit = ((decompressed_key[0] & 0b_0010_0000) >> 5) == 1;
+    let _sign_bit = ((decompressed_key[0] & 0b_0010_0000) >> 5) == 1;
     decompressed_key[0] &= 0b_0001_1111;
     unimplemented!("where is bls12_381_decompress?");
 

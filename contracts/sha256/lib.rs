@@ -2,7 +2,9 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, entrypoint, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{
+    alloc_slice, crypto::CryptoRuntime, entrypoint, ContextReader, CryptoAPI, ExitCode, SharedAPI,
+};
 
 /// Main entry point for the sha256 wrapper contract.
 /// This contract wraps the sha256 precompile (EIP-210) which computes the SHA-256 hash of a given input.
@@ -24,7 +26,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     if gas_used > gas_limit {
         sdk.native_exit(ExitCode::OutOfFuel);
     }
-    let result = SDK::sha256(&input);
+    let result = CryptoRuntime::sha256(&input);
     sdk.sync_evm_gas(gas_used, 0);
     sdk.write(result.0.as_ref());
 }

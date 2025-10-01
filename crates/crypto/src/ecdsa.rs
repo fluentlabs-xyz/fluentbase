@@ -12,10 +12,10 @@
 //! to be more efficient in the VM, such as `sqrt` or `inverse`.
 
 use crate::utils::AffinePoint as SP1AffinePointTrait;
+use core::{fmt::Debug, ops::Neg};
 use elliptic_curve::{
     ff, generic_array::typenum::consts::U32, subtle::CtOption, CurveArithmetic, FieldBytes,
 };
-use std::{fmt::Debug, ops::Neg};
 
 /// The affine point type for SP1.
 pub mod affine;

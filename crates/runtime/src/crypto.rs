@@ -3,13 +3,14 @@ use crate::{
         ecc_add, syscall_ed25519_decompress_impl, syscall_edwards_add_impl, Bls12381G1AddConfig,
         Bls12381G1MapConfig, Bls12381G1MulConfig, Bls12381G2AddConfig, Bls12381G2MapConfig,
         Bls12381G2MulConfig, Bn254G1AddConfig, Bn254G1MulConfig, Bn254G2DecompressConfig,
-        SyscallEccCompressDecompress, SyscallEccDouble, SyscallEccMapping, SyscallEccMsm,
-        SyscallEccMul, SyscallEccPairing,
+        SyscallBlake3, SyscallEccCompressDecompress, SyscallEccDouble, SyscallEccMapping,
+        SyscallEccMsm, SyscallEccMul, SyscallEccPairing, SyscallKeccak256, SyscallPoseidon,
+        SyscallSha256,
     },
     RuntimeContextWrapper,
 };
-use fluentbase_sdk::{
-    CryptoAPI, ExitCode, UnwrapExitCode, BN254_G1_POINT_COMPRESSED_SIZE,
+use fluentbase_types::{
+    CryptoAPI, ExitCode, UnwrapExitCode, B256, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
     G1_COMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
@@ -19,6 +20,28 @@ use fluentbase_sdk::{
 use sp1_curves::weierstrass::{bls12_381::Bls12381, bn254::Bn254};
 
 impl CryptoAPI for RuntimeContextWrapper {
+    fn keccak256(data: &[u8]) -> B256 {
+        SyscallKeccak256::fn_impl(data)
+    }
+    fn keccak256_permute(_state: &mut [u64; 25]) {
+        unimplemented!()
+    }
+    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> B256 {
+        SyscallPoseidon::fn_impl(parameters as u64, endianness as u64, data).unwrap_exit_code()
+    }
+    fn sha256_extend(_state: &mut [u8]) {
+        unimplemented!()
+    }
+    fn sha256_compress(_state: &mut [u8]) -> B256 {
+        unimplemented!()
+    }
+    fn sha256(data: &[u8]) -> B256 {
+        SyscallSha256::fn_impl(data)
+    }
+    fn blake3(data: &[u8]) -> B256 {
+        SyscallBlake3::fn_impl(data)
+    }
+
     fn ed25519_decompress(
         y: [u8; EDWARDS_COMPRESSED_SIZE],
         sign: u32,
@@ -95,7 +118,6 @@ impl CryptoAPI for RuntimeContextWrapper {
     ) -> [u8; TOWER_FP_BN256_SIZE] {
         todo!()
     }
-
     fn tower_fp2_bls12381_add(
         _x: [u8; TOWER_FP_BLS12381_SIZE],
         _y: [u8; TOWER_FP_BLS12381_SIZE],
@@ -116,6 +138,7 @@ impl CryptoAPI for RuntimeContextWrapper {
     ) -> [u8; TOWER_FP_BLS12381_SIZE] {
         todo!()
     }
+
     fn bls12_381_g1_add(p: &mut [u8; G1_UNCOMPRESSED_SIZE], q: &[u8; G1_UNCOMPRESSED_SIZE]) {
         if let Ok(result) = ecc_add::ecc_add_impl::<Bls12381G1AddConfig>(p, q) {
             p.copy_from_slice(&result[..G1_UNCOMPRESSED_SIZE]);
@@ -199,12 +222,12 @@ impl CryptoAPI for RuntimeContextWrapper {
         }
     }
 
-    fn bls12_381_map_fp_to_g1(p: &[u8; PADDED_FP_SIZE], out: &mut [u8; G1_UNCOMPRESSED_SIZE]) {
+    fn bls12_381_map_g1(p: &[u8; PADDED_FP_SIZE], out: &mut [u8; G1_UNCOMPRESSED_SIZE]) {
         let result = SyscallEccMapping::<Bls12381G1MapConfig>::fn_impl(p.as_slice());
         out.copy_from_slice(&result[..G1_UNCOMPRESSED_SIZE]);
     }
 
-    fn bls12_381_map_fp2_to_g2(p: &[u8; PADDED_FP2_SIZE], out: &mut [u8; G2_UNCOMPRESSED_SIZE]) {
+    fn bls12_381_map_g2(p: &[u8; PADDED_FP2_SIZE], out: &mut [u8; G2_UNCOMPRESSED_SIZE]) {
         let result = SyscallEccMapping::<Bls12381G2MapConfig>::fn_impl(p.as_slice());
         out.copy_from_slice(&result[..G2_UNCOMPRESSED_SIZE]);
     }
@@ -281,16 +304,5 @@ impl CryptoAPI for RuntimeContextWrapper {
     ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
         let result = SyscallEccCompressDecompress::<Bn254G2DecompressConfig>::fn_impl(point)?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
-    }
-
-    fn bn254_fp_mul(_p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE], _q: &[u8; SCALAR_SIZE]) {
-        // let result = SyscallEccFpOp::<Bn254BaseField, FieldMul>::fn_impl(p, q);
-        // let min = core::cmp::min(p.len(), result.len());
-        // p[..min].copy_from_slice(&result[..min]);
-        todo!()
-    }
-
-    fn bn254_fp2_mul(p: &mut [u8; BN254_G2_POINT_COMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
-        todo!()
     }
 }

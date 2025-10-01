@@ -92,9 +92,6 @@ pub(crate) fn emit_fuel_procedure(sys_func_idx: SysFuncIdx) -> InstructionSet {
         SysFuncIdx::FUEL => const_fuel!(LOW_FUEL_COST),
         SysFuncIdx::INPUT_SIZE => const_fuel!(LOW_FUEL_COST),
         SysFuncIdx::OUTPUT_SIZE => const_fuel!(LOW_FUEL_COST),
-        SysFuncIdx::PREIMAGE_COPY => const_fuel!(LOW_FUEL_COST),
-        SysFuncIdx::PREIMAGE_SIZE => const_fuel!(LOW_FUEL_COST),
-        SysFuncIdx::SECP256K1_RECOVER => const_fuel!(SECP256K1_RECOVER_BASE_FUEL_COST),
         SysFuncIdx::STATE => const_fuel!(LOW_FUEL_COST),
 
         // Builtins charging a variable amount of fuel based on a parameter

@@ -1,5 +1,7 @@
-use crate::{SVM_ELF_MAGIC_BYTES, UNIVERSAL_TOKEN_MAGIC_BYTES, WASM_MAGIC_BYTES};
-use alloy_primitives::{address, hex, Address, Bytes, B256};
+use fluentbase_types::{
+    address, hex, Address, Bytes, B256, SVM_ELF_MAGIC_BYTES, UNIVERSAL_TOKEN_MAGIC_BYTES,
+    WASM_MAGIC_BYTES,
+};
 
 /// An address of EVM runtime that is used to execute an EVM program
 pub const PRECOMPILE_EVM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520001");
@@ -20,8 +22,6 @@ pub const PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME: Address =
     address!("0x0000000000000000000000000000000000520008");
 pub const PRECOMPILE_WASM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520009");
 pub const PRECOMPILE_EIP2935: Address = address!("0x0000F90827F1C53a10cb7A02335B175320002935");
-
-pub const SYSTEM_ADDRESS: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
 
 const fn evm_address(value: u8) -> Address {
     Address::with_last_byte(value)

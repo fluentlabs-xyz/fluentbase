@@ -5,26 +5,17 @@ use core::cell::RefCell;
 /// A trait for providing shared API functionality.
 #[rustfmt::skip]
 pub trait NativeAPI {
-    fn keccak256(data: &[u8]) -> B256;
-    fn sha256(data: &[u8]) -> B256;
-    fn blake3(data: &[u8]) -> B256;
-    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode>;
-    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
-    fn curve256r1_verify(input: &[u8]) -> bool;
-
-    fn debug_log(message: &str);
-
+    /// Low-level function that terminates the execution of the program and exits with the specified
+    /// exit code.
+    fn exit(&self, exit_code: ExitCode) -> !;
+    fn state(&self) -> u32;
     fn read(&self, target: &mut [u8], offset: u32);
+    /// Returns the size of the input data provided to the runtime environment.
     fn input_size(&self) -> u32;
     fn write(&self, value: &[u8]);
-    fn forward_output(&self, offset: u32, len: u32);
-    fn exit(&self, exit_code: ExitCode) -> !;
     fn output_size(&self) -> u32;
     fn read_output(&self, target: &mut [u8], offset: u32);
-    fn state(&self) -> u32;
-    fn fuel(&self) -> u64;
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64;
-    fn charge_fuel(&self, fuel_consumed: u64);
+    /// Executes a nested call with specified bytecode poseidon hash.
     fn exec(
         &self,
         code_hash: BytecodeOrHash,
@@ -32,6 +23,7 @@ pub trait NativeAPI {
         fuel_limit: Option<u64>,
         state: u32,
     ) -> (u64, i64, i32);
+    /// Resumes the execution of a previously suspended function call.
     fn resume(
         &self,
         call_id: u32,
@@ -40,11 +32,16 @@ pub trait NativeAPI {
         fuel_consumed: u64,
         fuel_refunded: i64,
     ) -> (u64, i64, i32);
-
-    #[deprecated(note = "don't use")]
-    fn preimage_size(&self, hash: &B256) -> u32;
-    #[deprecated(note = "don't use")]
-    fn preimage_copy(&self, hash: &B256, target: &mut [u8]);
+    fn forward_output(&self, offset: u32, len: u32);
+    /// Charges and refunds a specified amount of fuel.
+    /// Can be called only from trusted code because it can refund any amount of fuel.
+    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64;
+    fn fuel(&self) -> u64;
+    fn debug_log(message: &str);
+    /// Charges specified amount of fuel.
+    /// In contrast to `_charge_fuel_manually`, can be called from untrusted code since it can only
+    /// charge fuel.
+    fn charge_fuel(&self, fuel_consumed: u64);
 
     fn input(&self) -> Bytes {
         let input_size = self.input_size();
@@ -72,7 +69,7 @@ pub trait InterruptAPI {
 }
 
 impl<T: NativeAPI + ?Sized> InterruptAPI for T {
-    // #[inline(always)]
+    #[inline(always)]
     fn interrupt(
         &self,
         code_hash: BytecodeOrHash,

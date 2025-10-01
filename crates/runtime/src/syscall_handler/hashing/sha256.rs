@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_sdk::B256;
+use fluentbase_types::B256;
 use rwasm::{Store, TrapCode, Value};
 use sha2::{Digest, Sha256};
 

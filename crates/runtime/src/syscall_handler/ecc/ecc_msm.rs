@@ -10,7 +10,7 @@ use crate::{
     RuntimeContext,
 };
 use blstrs::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
-use fluentbase_sdk::{G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, SCALAR_SIZE};
+use fluentbase_types::{G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, SCALAR_SIZE};
 use group::Group;
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::CurveType;

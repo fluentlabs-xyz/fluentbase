@@ -15,18 +15,23 @@ categories = ["wasm", "no-std", "virtualization"]
 readme = "README.md"
 
 [workspace.dependencies]
-fluentbase-sdk = { path = "../crates/sdk", default-features = false }
+# fluentbase
+fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
+fluentbase-universal-token = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
+fluentbase-evm = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
+fluentbase-svm = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
+fluentbase-svm-common = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
+fluentbase-testing = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves" }
+# revm
 revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
-#revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
-fluentbase-universal-token = { path = "../crates/universal-token", default-features = false }
-fluentbase-evm = { path = "../crates/evm", default-features = false }
-fluentbase-svm = { path = "../crates/svm", default-features = false }
-fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
+# solana
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-fluentbase-testing = { path = "../crates/testing" }
+# misc
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+ecdsa = { git = "https://github.com/rwasm-patches/signatures.git", default-features = false, features = ["hazmat", "verifying"] }
+k256 = { version = "0.13.4", default-features = false }
 
 [profile.release]
 panic = "abort"
@@ -45,3 +50,12 @@ opt-level = "z"
 debug = false
 strip = "symbols"
 
+[patch.crates-io]
+#revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
+#ecdsa = { path = "../../../signatures/ecdsa", default-features = false, features = ["hazmat", "verifying"] }
+#fluentbase-sdk = { path = "../crates/sdk", default-features = false }
+#fluentbase-universal-token = { path = "../crates/universal-token", default-features = false }
+#fluentbase-evm = { path = "../crates/evm", default-features = false }
+#fluentbase-svm = { path = "../crates/svm", default-features = false }
+#fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
+#fluentbase-testing = { path = "../crates/testing" }

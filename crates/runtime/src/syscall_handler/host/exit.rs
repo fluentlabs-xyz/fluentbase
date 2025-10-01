@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_sdk::ExitCode;
+use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallExit;

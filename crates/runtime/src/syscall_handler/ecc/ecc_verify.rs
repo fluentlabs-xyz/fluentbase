@@ -1,6 +1,6 @@
 use super::ecc_config::VerifyConfig;
 use crate::RuntimeContext;
-use fluentbase_sdk::ExitCode;
+use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::CurveType;
 use std::marker::PhantomData;

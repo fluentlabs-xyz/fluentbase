@@ -9,6 +9,7 @@
 use super::{
     ECDSACurve, ECDSAPoint, Field, FieldElement, SP1AffinePointTrait, FIELD_BYTES_SIZE_USIZE,
 };
+use core::ops::Neg;
 use elliptic_curve::{
     ff::Field as _,
     group::GroupEncoding,
@@ -18,7 +19,6 @@ use elliptic_curve::{
     zeroize::DefaultIsZeroes,
     FieldBytes, PrimeField,
 };
-use std::ops::Neg;
 
 #[derive(Clone, Copy, Debug)]
 pub struct AffinePoint<C: ECDSACurve> {

@@ -20,7 +20,13 @@ macro_rules! current_line_info {
 macro_rules! debug_log {
     ($msg:tt) => {{
         #[cfg(target_arch = "wasm32")]
-        unsafe { $crate::rwasm::_debug_log($msg.as_ptr(), $msg.len() as u32) }
+        {
+            #[link(wasm_import_module = "fluentbase_v1preview")]
+            extern "C" {
+                pub fn _debug_log(msg_ptr: *const u8, msg_len: u32);
+            }
+            unsafe { _debug_log($msg.as_ptr(), $msg.len() as u32) }
+        }
         #[cfg(feature = "std")]
         println!("{}", $msg);
     }};
@@ -39,7 +45,13 @@ macro_rules! debug_log_ext {
         extern crate alloc;
         let msg = alloc::format!("{}: {}", $crate::current_line_info!(), $msg);
         #[cfg(target_arch = "wasm32")]
-        unsafe { $crate::rwasm::_debug_log(msg.as_ptr(), msg.len() as u32) }
+        {
+            #[link(wasm_import_module = "fluentbase_v1preview")]
+            extern "C" {
+                pub fn _debug_log(msg_ptr: *const u8, msg_len: u32);
+            }
+            unsafe { _debug_log(msg.as_ptr(), msg.len() as u32) }
+        }
         #[cfg(feature = "std")]
         println!("{}", msg);
     }};

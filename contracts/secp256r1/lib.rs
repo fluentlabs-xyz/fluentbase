@@ -60,14 +60,15 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         return;
     }
 
-    let verification_result = SDK::curve256r1_verify(&input);
-    if verification_result {
-        let mut result = vec![0u8; 32];
-        result[31] = 1;
-        sdk.write(&result);
-    } else {
-        sdk.write(&[]);
-    }
+    unimplemented!()
+    // let verification_result = SDK::curve256r1_verify(&input);
+    // if verification_result {
+    //     let mut result = vec![0u8; 32];
+    //     result[31] = 1;
+    //     sdk.write(&result);
+    // } else {
+    //     sdk.write(&[]);
+    // }
 }
 
 entrypoint!(main_entry);

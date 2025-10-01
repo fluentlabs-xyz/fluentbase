@@ -11,17 +11,20 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-sdk = { workspace = true }
-fluentbase-runtime = { workspace = true, optional = true }
-elliptic-curve = { workspace = true }
+fluentbase-types = { workspace = true }
 bytemuck = { workspace = true }
-
-# misc
+elliptic-curve = { workspace = true }
+fluentbase-runtime = { workspace = true, optional = true }
 cfg-if = "1.0"
 
 [features]
 default = ["std"]
+serde = [
+    "fluentbase-types/serde",
+]
 std = [
     "dep:fluentbase-runtime",
-    "fluentbase-runtime?/std"
+    "fluentbase-types/std",
+    "fluentbase-runtime/std",
+    "elliptic-curve/std",
 ]

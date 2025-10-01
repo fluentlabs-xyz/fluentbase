@@ -1,5 +1,5 @@
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
-use fluentbase_sdk::{ExitCode, EDWARDS_DECOMPRESSED_SIZE};
+use fluentbase_types::{ExitCode, EDWARDS_DECOMPRESSED_SIZE};
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{edwards::ed25519::Ed25519, AffinePoint};
 

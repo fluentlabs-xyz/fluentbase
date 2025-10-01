@@ -18,7 +18,7 @@ use crate::{
 use ark_bn254::{Bn254, G1Affine as Bn254G1Affine, G2Affine as Bn254G2Affine};
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::One;
-use fluentbase_sdk::{
+use fluentbase_types::{
     ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
     BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, G1_COMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE,
     G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, GT_COMPRESSED_SIZE, SCALAR_SIZE,

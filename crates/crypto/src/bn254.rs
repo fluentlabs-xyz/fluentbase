@@ -1,8 +1,8 @@
 use crate::{
     utils::{AffinePoint, WeierstrassAffinePoint, WeierstrassPoint},
-    MathRuntime,
+    CryptoRuntime,
 };
-use fluentbase_sdk::CryptoAPI;
+use fluentbase_types::CryptoAPI;
 
 /// The number of limbs in [Bn254AffinePoint].
 pub const N: usize = 16;
@@ -60,7 +60,7 @@ impl AffinePoint<N> for Bn254Point {
     fn add_assign(&mut self, other: &Self) {
         let a = bytemuck::cast_mut(self.limbs_mut());
         let b = bytemuck::cast_ref(other.limbs_ref());
-        MathRuntime::bn254_add(a, b);
+        CryptoRuntime::bn254_add(a, b);
     }
 
     fn complete_add_assign(&mut self, other: &Self) {

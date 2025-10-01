@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_sdk::{keccak256, B256};
+use fluentbase_types::{keccak256, B256};
 use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallKeccak256;

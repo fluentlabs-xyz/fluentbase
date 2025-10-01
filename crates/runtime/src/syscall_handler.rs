@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_sdk::{ExitCode, SysFuncIdx};
+use fluentbase_types::{ExitCode, SysFuncIdx};
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::weierstrass::{bls12_381::Bls12381, bn254::Bn254, secp256k1::Secp256k1};
 
@@ -53,8 +53,6 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::FORWARD_OUTPUT => SyscallForwardOutput::fn_handler(caller, params, result),
         SysFuncIdx::CHARGE_FUEL_MANUALLY => SyscallChargeFuelManually::fn_handler(caller, params, result),
         SysFuncIdx::FUEL => SyscallFuel::fn_handler(caller, params, result),
-        SysFuncIdx::PREIMAGE_SIZE => SyscallPreimageSize::fn_handler(caller, params, result),
-        SysFuncIdx::PREIMAGE_COPY => SyscallPreimageCopy::fn_handler(caller, params, result),
         SysFuncIdx::DEBUG_LOG => SyscallDebugLog::fn_handler(caller, params, result),
         SysFuncIdx::CHARGE_FUEL => SyscallChargeFuel::fn_handler(caller, params, result),
 
@@ -89,13 +87,12 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::TOWER_FP2_BLS12381_MUL => tower_fp2_add_sub_mul::syscall_tower_fp2_bls12381_mul_handler(caller, params, result),
 
         // secp256k1 (0x04)
-        SysFuncIdx::SECP256K1_RECOVER => SyscallEccRecover::<Secp256k1RecoverConfig>::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_ADD => ecc_add::ecc_add_handler::<Secp256k1AddConfig>(caller, params, result),
         SysFuncIdx::SECP256K1_DECOMPRESS => SyscallEccCompressDecompress::<Secp256k1DecompressConfig>::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_DOUBLE => SyscallEccDouble::<Secp256k1>::fn_handler(caller, params, result),
 
         // secp256r1 (0x05)
-        SysFuncIdx::SECP256R1_VERIFY => SyscallWeierstrassVerifyAssign::<Secp256r1VerifyConfig>::fn_handler(caller, params, result),
+        // SysFuncIdx::SECP256R1_VERIFY => SyscallWeierstrassVerifyAssign::<Secp256r1VerifyConfig>::fn_handler(caller, params, result),
 
         // bls12381 (0x06)
         SysFuncIdx::BLS12381_G1_ADD => ecc_add::ecc_add_handler::<Bls12381G1AddConfig>(caller, params, result),

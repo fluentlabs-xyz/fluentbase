@@ -1,4 +1,4 @@
-use fluentbase_sdk::B256;
+use fluentbase_types::B256;
 use fs2::FileExt;
 use std::{
     fs::{File, OpenOptions},

@@ -2,7 +2,7 @@ use crate::{
     executor::{default_runtime_executor, RuntimeExecutor},
     RuntimeContext,
 };
-use fluentbase_sdk::{
+use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     ExitCode,
 };

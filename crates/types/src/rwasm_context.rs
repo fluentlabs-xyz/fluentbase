@@ -1,101 +1,26 @@
-pub use crate::{bindings::*, B256};
 use crate::{
-    BytecodeOrHash, CryptoAPI, ExitCode, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
+    BytecodeOrHash, CryptoAPI, ExitCode, NativeAPI, B256, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
     TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
 };
+use core::convert::Into;
+
+pub mod bindings;
+use bindings::*;
 
 #[derive(Default)]
 pub struct RwasmContext;
 
 impl NativeAPI for RwasmContext {
     #[inline(always)]
-    fn keccak256(data: &[u8]) -> B256 {
-        unsafe {
-            let mut res = B256::ZERO;
-            _keccak256(
-                data.as_ptr(),
-                data.len() as u32,
-                res.as_mut_slice().as_mut_ptr(),
-            );
-            res
-        }
+    fn exit(&self, exit_code: ExitCode) -> ! {
+        unsafe { _exit(exit_code.into_i32()) }
     }
 
     #[inline(always)]
-    fn sha256(data: &[u8]) -> B256 {
-        unsafe {
-            let mut res = B256::ZERO;
-            _sha256(
-                data.as_ptr(),
-                data.len() as u32,
-                res.as_mut_slice().as_mut_ptr(),
-            );
-            res
-        }
-    }
-
-    #[inline(always)]
-    fn blake3(data: &[u8]) -> B256 {
-        unsafe {
-            let mut res = B256::ZERO;
-            _blake3(
-                data.as_ptr(),
-                data.len() as u32,
-                res.as_mut_slice().as_mut_ptr(),
-            );
-            res
-        }
-    }
-    #[inline(always)]
-    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
-        unsafe {
-            let mut res = B256::ZERO;
-            if _poseidon(
-                parameters,
-                endianness,
-                data.as_ptr() as *const u8,
-                data.len() as u32,
-                res.as_mut_ptr(),
-            ) != 0
-            {
-                return Err(ExitCode::MalformedBuiltinParams);
-            };
-            Ok(res)
-        }
-    }
-
-    #[inline(always)]
-    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
-        unsafe {
-            let mut res: [u8; 65] = [0u8; 65];
-            let ok = _secp256k1_recover(
-                digest.0.as_ptr(),
-                sig.as_ptr(),
-                res.as_mut_ptr(),
-                rec_id as u32,
-            );
-            if ok == 0 {
-                Some(res)
-            } else {
-                None
-            }
-        }
-    }
-
-    #[inline(always)]
-    fn curve256r1_verify(input: &[u8]) -> bool {
-        unsafe {
-            let mut output = [0u8; 32];
-            let ok = _curve256r1_verify(input.as_ptr(), input.len() as u32, output.as_mut_ptr());
-            ok == 0
-        }
-    }
-
-    #[inline(always)]
-    fn debug_log(message: &str) {
-        unsafe { _debug_log(message.as_ptr(), message.len() as u32) }
+    fn state(&self) -> u32 {
+        unsafe { _state() }
     }
 
     #[inline(always)]
@@ -114,16 +39,6 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn forward_output(&self, offset: u32, len: u32) {
-        unsafe { _forward_output(offset, len) }
-    }
-
-    #[inline(always)]
-    fn exit(&self, exit_code: ExitCode) -> ! {
-        unsafe { _exit(exit_code.into_i32()) }
-    }
-
-    #[inline(always)]
     fn output_size(&self) -> u32 {
         unsafe { _output_size() }
     }
@@ -131,26 +46,6 @@ impl NativeAPI for RwasmContext {
     #[inline(always)]
     fn read_output(&self, target: &mut [u8], offset: u32) {
         unsafe { _read_output(target.as_mut_ptr(), offset, target.len() as u32) }
-    }
-
-    #[inline(always)]
-    fn state(&self) -> u32 {
-        unsafe { _state() }
-    }
-
-    #[inline(always)]
-    fn fuel(&self) -> u64 {
-        unsafe { _fuel() }
-    }
-
-    #[inline(always)]
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
-        unsafe { _charge_fuel_manually(fuel_consumed, fuel_refunded) }
-    }
-
-    #[inline(always)]
-    fn charge_fuel(&self, fuel_consumed: u64) {
-        unsafe { _charge_fuel(fuel_consumed) }
     }
 
     #[inline(always)]
@@ -198,17 +93,93 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn preimage_size(&self, hash: &B256) -> u32 {
-        unsafe { _preimage_size(hash.as_ptr()) }
+    fn forward_output(&self, offset: u32, len: u32) {
+        unsafe { _forward_output(offset, len) }
     }
 
     #[inline(always)]
-    fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
-        unsafe { _preimage_copy(hash.as_ptr(), target.as_mut_ptr()) }
+    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
+        unsafe { _charge_fuel_manually(fuel_consumed, fuel_refunded) }
+    }
+
+    #[inline(always)]
+    fn fuel(&self) -> u64 {
+        unsafe { _fuel() }
+    }
+
+    #[inline(always)]
+    fn debug_log(message: &str) {
+        unsafe { _debug_log(message.as_ptr(), message.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn charge_fuel(&self, fuel_consumed: u64) {
+        unsafe { _charge_fuel(fuel_consumed) }
     }
 }
 
 impl CryptoAPI for RwasmContext {
+    #[inline(always)]
+    fn keccak256(data: &[u8]) -> B256 {
+        unsafe {
+            let mut res = B256::ZERO;
+            _keccak256(
+                data.as_ptr(),
+                data.len() as u32,
+                res.as_mut_slice().as_mut_ptr(),
+            );
+            res
+        }
+    }
+    #[inline(always)]
+    fn keccak256_permute(_state: &mut [u64; 25]) {
+        unimplemented!()
+    }
+    #[inline(always)]
+    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> B256 {
+        unsafe {
+            let mut res = B256::ZERO;
+            _ = _poseidon(
+                parameters,
+                endianness,
+                data.as_ptr(),
+                data.len() as u32,
+                res.as_mut_ptr(),
+            );
+            res
+        }
+    }
+    fn sha256_extend(_state: &mut [u8]) {
+        unimplemented!()
+    }
+    fn sha256_compress(_state: &mut [u8]) -> B256 {
+        unimplemented!()
+    }
+    #[inline(always)]
+    fn sha256(data: &[u8]) -> B256 {
+        unsafe {
+            let mut res = B256::ZERO;
+            _sha256(
+                data.as_ptr(),
+                data.len() as u32,
+                res.as_mut_slice().as_mut_ptr(),
+            );
+            res
+        }
+    }
+    #[inline(always)]
+    fn blake3(data: &[u8]) -> B256 {
+        unsafe {
+            let mut res = B256::ZERO;
+            _blake3(
+                data.as_ptr(),
+                data.len() as u32,
+                res.as_mut_slice().as_mut_ptr(),
+            );
+            res
+        }
+    }
+
     #[inline(always)]
     fn ed25519_decompress(
         y: [u8; EDWARDS_COMPRESSED_SIZE],
@@ -407,30 +378,16 @@ impl CryptoAPI for RwasmContext {
         }
     }
 
-    #[inline(always)]
-    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
-        unsafe {
-            _bn254_fp_mul(p.as_ptr() as u32, q.as_ptr() as u32);
-        }
-    }
-
-    #[inline(always)]
-    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
-        unsafe {
-            _bn254_fp2_mul(p.as_ptr() as u32, q.as_ptr() as u32);
-        }
-    }
-
     // BLS12-381 implementations
     #[inline(always)]
     fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
-        unsafe { _bls12_381_g1_add(p.as_mut_ptr(), q.as_ptr()) }
+        unsafe { _bls12381_g1_add(p.as_mut_ptr(), q.as_ptr()) }
     }
 
     #[inline(always)]
     fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]) {
         unsafe {
-            _bls12_381_g1_msm(
+            _bls12381_g1_msm(
                 pairs.as_ptr() as *const u8,
                 pairs.len() as u32,
                 out.as_mut_ptr(),
@@ -440,13 +397,13 @@ impl CryptoAPI for RwasmContext {
 
     #[inline(always)]
     fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) {
-        unsafe { _bls12_381_g2_add(p.as_mut_ptr(), q.as_ptr()) }
+        unsafe { _bls12381_g2_add(p.as_mut_ptr(), q.as_ptr()) }
     }
 
     #[inline(always)]
     fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]) {
         unsafe {
-            _bls12_381_g2_msm(
+            _bls12381_g2_msm(
                 pairs.as_ptr() as *const u8,
                 pairs.len() as u32,
                 out.as_mut_ptr(),
@@ -457,7 +414,7 @@ impl CryptoAPI for RwasmContext {
     #[inline(always)]
     fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]) {
         unsafe {
-            _bls12_381_pairing(
+            _bls12381_pairing(
                 pairs.as_ptr() as *const u8,
                 pairs.len() as u32,
                 out.as_mut_ptr(),
@@ -466,12 +423,12 @@ impl CryptoAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]) {
-        unsafe { _bls12_381_map_fp_to_g1(p.as_ptr(), out.as_mut_ptr()) }
+    fn bls12_381_map_g1(p: &[u8; 64], out: &mut [u8; 96]) {
+        unsafe { _bls12381_map_g1(p.as_ptr(), out.as_mut_ptr()) }
     }
 
     #[inline(always)]
-    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
-        unsafe { _bls12_381_map_fp2_to_g2(p.as_ptr(), out.as_mut_ptr()) }
+    fn bls12_381_map_g2(p: &[u8; 128], out: &mut [u8; 192]) {
+        unsafe { _bls12381_map_g2(p.as_ptr(), out.as_mut_ptr()) }
     }
 }

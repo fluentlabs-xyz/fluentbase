@@ -1,7 +1,7 @@
 use crate::{
     executor::RuntimeFactoryExecutor, types::ExecutionResult, RuntimeContext, RuntimeExecutor,
 };
-use fluentbase_sdk::{import_linker_v1_preview, Address, BytecodeOrHash, Bytes, B256};
+use fluentbase_types::{import_linker_v1_preview, Address, BytecodeOrHash, Bytes, B256};
 use rwasm::RwasmModule;
 use std::{
     panic,

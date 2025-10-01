@@ -23,12 +23,9 @@ const WAT_TEMPLATE: &str = r#"
         (import "fluentbase_v1preview" "_input_size"          (func $_input_size          (result i32)))
         (import "fluentbase_v1preview" "_keccak256"           (func $_keccak256           (param i32 i32 i32)))
         (import "fluentbase_v1preview" "_output_size"         (func $_output_size         (result i32)))
-        (import "fluentbase_v1preview" "_preimage_copy"       (func $_preimage_copy       (param i32 i32)))
-        (import "fluentbase_v1preview" "_preimage_size"       (func $_preimage_size       (param i32) (result i32)))
         (import "fluentbase_v1preview" "_read"                (func $_read                (param i32 i32 i32)))
         (import "fluentbase_v1preview" "_read_output"         (func $_read_output         (param i32 i32 i32)))
         (import "fluentbase_v1preview" "_resume"              (func $_resume              (param i32 i32 i32 i32 i32) (result i32)))
-        (import "fluentbase_v1preview" "_secp256k1_recover"   (func $_secp256k1_recover   (param i32 i32 i32 i32) (result i32)))
         (import "fluentbase_v1preview" "_state"               (func $_state               (result i32)))
         (import "fluentbase_v1preview" "_write"               (func $_write               (param i32 i32)))
         (func $main
@@ -47,6 +44,7 @@ fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult<R
     let deployer: Address = Address::ZERO;
     let mut builder = TxBuilder::create(&mut ctx, deployer, wasm.into());
     let result = builder.exec();
+    println!("{:?}", result);
     assert!(result.is_success(), "failed to deploy contract");
     let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, 0);
     let result = ctx.call_evm_tx(

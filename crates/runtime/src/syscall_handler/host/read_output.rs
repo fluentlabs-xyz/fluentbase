@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_sdk::ExitCode;
+use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, Value};
 
 /// Builtin to copy a slice of the current return_data into linear memory.

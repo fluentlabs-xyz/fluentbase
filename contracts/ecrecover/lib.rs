@@ -3,7 +3,10 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, SharedAPI, B256};
+use ecdsa::{RecoveryId, Signature, VerifyingKey};
+use fluentbase_sdk::{
+    alloc_slice, crypto::CryptoRuntime, entrypoint, Bytes, CryptoAPI, SharedAPI, B256,
+};
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     // read full input data
@@ -40,13 +43,21 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     sig[32..].copy_from_slice(s);
 
     // Perform recover using SDK
-    let Some(pubkey) = SDK::secp256k1_recover(&digest, &sig, v) else {
+    let Ok(signature) = Signature::<k256::Secp256k1>::from_slice(&sig) else {
         return;
     };
+    let recover_id = RecoveryId::from_byte(v).unwrap();
+    let Ok(public_key) =
+        VerifyingKey::recover_from_prehash_secp256k1(digest.as_slice(), &signature, recover_id)
+    else {
+        return;
+    };
+    let public_key = public_key.to_encoded_point(false);
+    let public_key = public_key.as_bytes();
 
     // Compute address = last 20 bytes of keccak256(uncompressed_pubkey[1...])
     // SDK returns 65-byte uncompressed pubkey [0x04 || x || y]
-    let hashed = SDK::keccak256(&pubkey[1..65]);
+    let hashed = CryptoRuntime::keccak256(&public_key[1..65]);
     let mut out = [0u8; 32];
     out[12..32].copy_from_slice(&hashed[12..32]);
     sdk.write(&out);

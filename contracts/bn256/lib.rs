@@ -4,10 +4,10 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, BN254_ADD_INPUT_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, BN254_MUL_INPUT_SIZE,
-    BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL,
-    PRECOMPILE_BN256_PAIR, SCALAR_SIZE,
+    alloc_slice, crypto::CryptoRuntime, entrypoint, Bytes, ContextReader, CryptoAPI, ExitCode,
+    SharedAPI, BN254_ADD_INPUT_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE, BN254_MUL_INPUT_SIZE, BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN,
+    PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR, SCALAR_SIZE,
 };
 
 /// =============== Constants ==================
@@ -84,7 +84,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 .try_into()
                 .unwrap();
 
-            let result = SDK::bn254_add(&mut p, &q);
+            let result = CryptoRuntime::bn254_add(&mut p, &q);
             sdk.write(&result);
         }
         PRECOMPILE_BN256_MUL => {
@@ -101,7 +101,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 .try_into()
                 .unwrap();
 
-            let result = SDK::bn254_mul(&mut p, &q);
+            let result = CryptoRuntime::bn254_mul(&mut p, &q);
             let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
             // Runtime already returns big-endian output
             sdk.write(&result);
@@ -146,7 +146,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             }
 
             // Use the runtime's REVM-compatible pairing implementation
-            let result = SDK::bn254_multi_pairing(&mut pairs);
+            let result = CryptoRuntime::bn254_multi_pairing(&mut pairs);
             let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
             sdk.sync_evm_gas(gas_used, 0);
             sdk.write(&result);

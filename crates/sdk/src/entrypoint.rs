@@ -4,7 +4,7 @@ macro_rules! basic_entrypoint {
         #[cfg(target_arch = "wasm32")]
         #[no_mangle]
         extern "C" fn deploy() {
-            use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
+            use fluentbase_sdk::{shared::SharedContextImpl, RwasmContext};
             let mut sdk = SharedContextImpl::new(RwasmContext {});
             let mut app = $struct_typ::new(sdk);
             app.deploy();
@@ -12,7 +12,7 @@ macro_rules! basic_entrypoint {
         #[cfg(target_arch = "wasm32")]
         #[no_mangle]
         extern "C" fn main() {
-            use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
+            use fluentbase_sdk::{shared::SharedContextImpl, RwasmContext};
             let mut sdk = SharedContextImpl::new(RwasmContext {});
             let mut app = $struct_typ::new(sdk);
             app.main();
@@ -31,7 +31,7 @@ macro_rules! entrypoint_with_storage {
         #[cfg(target_arch = "wasm32")]
         #[no_mangle]
         extern "C" fn deploy() {
-            use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl, U256};
+            use fluentbase_sdk::{shared::SharedContextImpl, RwasmContext, U256};
             let mut sdk = SharedContextImpl::new(RwasmContext {});
             let mut app = $struct_typ::new(sdk, U256::from(0), 0);
             app.deploy();
@@ -39,7 +39,7 @@ macro_rules! entrypoint_with_storage {
         #[cfg(target_arch = "wasm32")]
         #[no_mangle]
         extern "C" fn main() {
-            use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
+            use fluentbase_sdk::{shared::SharedContextImpl, RwasmContext, U256};
             let mut sdk = SharedContextImpl::new(RwasmContext {});
             let mut app = $struct_typ::new(sdk, U256::from(0), 0);
             app.main();
@@ -69,13 +69,13 @@ macro_rules! func_entrypoint {
             }
             #[no_mangle]
             extern "C" fn main() {
-                use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
+                use fluentbase_sdk::{shared::SharedContextImpl, RwasmContext};
                 let sdk = SharedContextImpl::new(RwasmContext {});
                 __main_entry(sdk);
             }
             #[no_mangle]
             extern "C" fn deploy() {
-                use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
+                use fluentbase_sdk::{shared::SharedContextImpl, RwasmContext};
                 let sdk = SharedContextImpl::new(RwasmContext {});
                 __deploy_entry(sdk);
             }
@@ -93,7 +93,7 @@ macro_rules! func_entrypoint {
             }
             #[no_mangle]
             extern "C" fn main() {
-                use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
+                use fluentbase_sdk::{shared::SharedContextImpl, RwasmContext};
                 let sdk = SharedContextImpl::new(RwasmContext {});
                 __main_entry(sdk);
             }

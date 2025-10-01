@@ -1,5 +1,5 @@
-use alloy_primitives::{Address, Bytes, B256, U256};
 use auto_impl::auto_impl;
+use fluentbase_types::{Address, Bytes, B256, U256};
 
 #[auto_impl(&)]
 pub trait ContextReader {

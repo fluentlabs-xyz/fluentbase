@@ -2,11 +2,12 @@
 extern crate alloc;
 
 use fluentbase_sdk::{
-    alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, FP2_SIZE, FP_PAD_BY,
-    FP_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, PADDED_FP2_SIZE, PADDED_FP_SIZE,
-    PADDED_G1_SIZE, PADDED_G2_SIZE, PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BLS12_381_G1_MSM,
-    PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BLS12_381_MAP_G1,
-    PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING, SCALAR_SIZE,
+    alloc_slice, crypto::CryptoRuntime, entrypoint, Bytes, ContextReader, CryptoAPI, ExitCode,
+    SharedAPI, FP2_SIZE, FP_PAD_BY, FP_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
+    PADDED_FP2_SIZE, PADDED_FP_SIZE, PADDED_G1_SIZE, PADDED_G2_SIZE, PRECOMPILE_BLS12_381_G1_ADD,
+    PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM,
+    PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
+    SCALAR_SIZE,
 };
 
 /**
@@ -276,7 +277,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             // Convert input from EVM format to runtime format
             let (mut p, q) = convert_g1_input_to_runtime(&input);
 
-            SDK::bls12_381_g1_add(&mut p, &q);
+            CryptoRuntime::bls12_381_g1_add(&mut p, &q);
 
             // Convert output from runtime format to EVM format
             let out = convert_g1_output_to_evm(&p);
@@ -296,7 +297,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             let (mut p, q) = convert_g2_input_to_runtime(&input);
 
             // Call the Fluent SDK, syscall bls12_381_g2_add
-            SDK::bls12_381_g2_add(&mut p, &q);
+            CryptoRuntime::bls12_381_g2_add(&mut p, &q);
 
             // Encode output: 256 bytes (x0||x1||y0||y1), each limb is 64-byte BE padded (16 zeros + 48 value)
             let out = encode_g2_output(&p);
@@ -338,7 +339,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             }
             let mut out96 = [0u8; G1_UNCOMPRESSED_SIZE];
 
-            SDK::bls12_381_g1_msm(&pairs, &mut out96);
+            CryptoRuntime::bls12_381_g1_msm(&pairs, &mut out96);
 
             // Detect identity (blstrs sets flag bit for infinity in first byte of uncompressed)
             if out96[0] & 0x40 != 0 {
@@ -406,7 +407,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 pairs.push((p, s));
             }
             let mut out = [0u8; G2_UNCOMPRESSED_SIZE];
-            SDK::bls12_381_g2_msm(&pairs, &mut out);
+            CryptoRuntime::bls12_381_g2_msm(&pairs, &mut out);
             // Encode output to 256B padded BE like G2 add path
             if out.iter().all(|&b| b == 0) {
                 let out_be = [0u8; PADDED_G2_SIZE];
@@ -455,7 +456,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 pairs.push((g1, g2));
             }
             let mut out = [0u8; 288];
-            SDK::bls12_381_pairing(&pairs, &mut out);
+            CryptoRuntime::bls12_381_pairing(&pairs, &mut out);
             // Decode compressed GT and return EIP-197 boolean (32-byte BE 0/1)
             let is_one = {
                 // Compare against compressed identity directly to avoid extra deps
@@ -481,7 +482,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             let mut padded_fp = [0u8; PADDED_FP_SIZE];
             padded_fp.copy_from_slice(&input);
             let mut out96 = [0u8; G1_UNCOMPRESSED_SIZE];
-            SDK::bls12_381_map_fp_to_g1(&padded_fp, &mut out96);
+            CryptoRuntime::bls12_381_map_g1(&padded_fp, &mut out96);
             // Pad result for EVM: 96B -> 128B padded (x||y)
             let out128 = pad_g1_point(&out96);
             sdk.write(&out128);
@@ -500,7 +501,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             padded_fp2.copy_from_slice(&input);
             // Call the Fluent SDK, syscall bls12_381_map_fp2_to_g2
             let mut out192 = [0u8; G2_UNCOMPRESSED_SIZE];
-            SDK::bls12_381_map_fp2_to_g2(&padded_fp2, &mut out192);
+            CryptoRuntime::bls12_381_map_g2(&padded_fp2, &mut out192);
             // Pad result for EVM: 192B -> 256B padded (x||y over Fp2)
             let out256 = pad_g2_point(&out192);
             sdk.write(&out256);

@@ -1,7 +1,7 @@
-use crate::{native_api::NativeAPI, Address, B256, U256};
+use crate::{Address, CryptoAPI, B256, U256};
 
 #[inline(always)]
-pub fn calc_create_address<API: NativeAPI>(deployer: &Address, nonce: u64) -> Address {
+pub fn calc_create_address<API: CryptoAPI>(deployer: &Address, nonce: u64) -> Address {
     use alloy_rlp::{Encodable, EMPTY_LIST_CODE, EMPTY_STRING_CODE};
     const MAX_LEN: usize = 1 + (1 + 20) + 9;
     let len = 22 + nonce.length();
@@ -16,7 +16,7 @@ pub fn calc_create_address<API: NativeAPI>(deployer: &Address, nonce: u64) -> Ad
 }
 
 #[inline(always)]
-pub fn calc_create2_address<API: NativeAPI>(
+pub fn calc_create2_address<API: CryptoAPI>(
     deployer: &Address,
     salt: &U256,
     init_code_hash: &B256,
@@ -38,158 +38,4 @@ pub fn calc_create4_address(owner: &Address, salt: &U256, hash_func: fn(&[u8]) -
     bytes[21..53].copy_from_slice(&salt.to_be_bytes::<32>());
     let hash = hash_func(&bytes);
     Address::from_word(hash)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{address, b256, keccak256, BytecodeOrHash, ExitCode};
-
-    struct TestContext;
-
-    impl NativeAPI for TestContext {
-        fn keccak256(data: &[u8]) -> B256 {
-            keccak256(data)
-        }
-
-        fn sha256(_data: &[u8]) -> B256 {
-            todo!()
-        }
-
-        fn curve256r1_verify(_input: &[u8]) -> bool {
-            todo!()
-        }
-
-        fn blake3(_data: &[u8]) -> B256 {
-            todo!()
-        }
-
-        fn poseidon(_parameters: u32, _endianness: u32, _data: &[u8]) -> Result<B256, ExitCode> {
-            todo!()
-        }
-
-        fn secp256k1_recover(_digest: &B256, _sig: &[u8; 64], _rec_id: u8) -> Option<[u8; 65]> {
-            todo!()
-        }
-
-        fn debug_log(_message: &str) {
-            todo!()
-        }
-
-        fn read(&self, _target: &mut [u8], _offset: u32) {
-            todo!()
-        }
-
-        fn input_size(&self) -> u32 {
-            todo!()
-        }
-
-        fn write(&self, _value: &[u8]) {
-            todo!()
-        }
-
-        fn forward_output(&self, _offset: u32, _len: u32) {
-            todo!()
-        }
-
-        fn exit(&self, _exit_code: ExitCode) -> ! {
-            todo!()
-        }
-
-        fn output_size(&self) -> u32 {
-            todo!()
-        }
-
-        fn read_output(&self, _target: &mut [u8], _offset: u32) {
-            todo!()
-        }
-
-        fn state(&self) -> u32 {
-            todo!()
-        }
-
-        fn fuel(&self) -> u64 {
-            todo!()
-        }
-
-        fn charge_fuel_manually(&self, _fuel_consumed: u64, _fuel_refunded: i64) -> u64 {
-            todo!()
-        }
-
-        fn charge_fuel(&self, _fuel_consumed: u64) {
-            todo!()
-        }
-
-        fn exec(
-            &self,
-            _code_hash: BytecodeOrHash,
-            _input: &[u8],
-            _fuel_limit: Option<u64>,
-            _state: u32,
-        ) -> (u64, i64, i32) {
-            todo!()
-        }
-
-        fn resume(
-            &self,
-            _call_id: u32,
-            _return_data: &[u8],
-            _exit_code: i32,
-            _fuel_consumed: u64,
-            _fuel_refunded: i64,
-        ) -> (u64, i64, i32) {
-            todo!()
-        }
-
-        fn preimage_size(&self, _hash: &B256) -> u32 {
-            todo!()
-        }
-
-        fn preimage_copy(&self, _hash: &B256, _target: &mut [u8]) {
-            todo!()
-        }
-    }
-
-    #[test]
-    fn test_create_address() {
-        for (address, nonce) in [
-            (address!("0000000000000000000000000000000000000000"), 0),
-            (
-                address!("0000000000000000000000000000000000000000"),
-                u32::MIN,
-            ),
-            (
-                address!("0000000000000000000000000000000000000000"),
-                u32::MAX,
-            ),
-            (address!("2340820934820934820934809238402983400000"), 0),
-            (
-                address!("2340820934820934820934809238402983400000"),
-                u32::MIN,
-            ),
-            (
-                address!("2340820934820934820934809238402983400000"),
-                u32::MAX,
-            ),
-        ] {
-            assert_eq!(
-                calc_create_address::<TestContext>(&address, nonce as u64),
-                address.create(nonce as u64)
-            );
-        }
-    }
-
-    #[test]
-    fn test_create2_address() {
-        let address = Address::ZERO;
-        for (salt, hash) in [(
-            b256!("0000000000000000000000000000000000000000000000000000000000000001"),
-            b256!("0000000000000000000000000000000000000000000000000000000000000002"),
-        )] {
-            assert_eq!(
-                calc_create2_address::<TestContext>(&address, &salt.into(), &hash),
-                address.create2(salt, hash)
-            );
-        }
-    }
 }

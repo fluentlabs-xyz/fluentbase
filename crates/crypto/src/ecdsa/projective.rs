@@ -7,6 +7,11 @@
 //! of projective arithmetic for performance.
 
 use super::{AffinePoint, ECDSACurve, SP1AffinePointTrait};
+use alloc::borrow::Borrow;
+use core::{
+    iter::Sum,
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+};
 use elliptic_curve::{
     ff::{Field, PrimeField},
     group::{cofactor::CofactorGroup, prime::PrimeGroup, Curve, Group, GroupEncoding},
@@ -16,11 +21,6 @@ use elliptic_curve::{
     subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption},
     zeroize::DefaultIsZeroes,
     CurveArithmetic, FieldBytes,
-};
-use std::{
-    borrow::Borrow,
-    iter::Sum,
-    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
 /// The SP1 accelerated projective point.

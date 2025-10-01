@@ -1,5 +1,5 @@
 use crate::{syscall_handler::invoke_runtime_handler, RuntimeContext};
-use fluentbase_sdk::{Address, HashMap, SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
+use fluentbase_types::{Address, HashMap, SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
 use rwasm::{
     ImportLinker, RwasmModule, Store, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE,
 };
