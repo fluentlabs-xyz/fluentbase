@@ -1825,7 +1825,6 @@ dependencies = [
  "fluentbase-revm",
  "fluentbase-runtime",
  "fluentbase-sdk",
- "fluentbase-types",
  "hash-db",
  "hashbrown 0.14.5",
  "hex",
@@ -1965,7 +1964,6 @@ dependencies = [
  "fluentbase-evm",
  "fluentbase-sdk",
  "fluentbase-svm",
- "fluentbase-types",
  "fluentbase-universal-token",
  "revm-precompile",
  "serde",
@@ -1991,7 +1989,7 @@ version = "0.4.10-dev"
 dependencies = [
  "alloy-genesis",
  "fluentbase-contracts",
- "fluentbase-types",
+ "fluentbase-sdk",
  "lazy_static",
  "serde",
  "serde_json",
@@ -2025,7 +2023,7 @@ dependencies = [
  "blstrs",
  "bytemuck",
  "elliptic-curve",
- "fluentbase-types",
+ "fluentbase-sdk",
  "group",
  "k256",
  "num",
@@ -2047,10 +2045,20 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.4.10-dev"
 dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "auto_impl",
+ "bincode 2.0.1",
+ "byteorder",
  "fluentbase-codec",
  "fluentbase-sdk-derive",
- "fluentbase-types",
  "hashbrown 0.15.5",
+ "hex-literal 1.0.0",
+ "paste",
+ "revm-precompile",
+ "revm-primitives",
+ "rwasm",
+ "strum_macros 0.27.2",
 ]
 
 [[package]]
@@ -2101,7 +2109,6 @@ dependencies = [
  "byteorder",
  "fluentbase-sdk",
  "fluentbase-svm-common",
- "fluentbase-types",
  "fluentbase-universal-token",
  "hashbrown 0.15.5",
  "itertools 0.14.0",
@@ -2147,26 +2154,9 @@ dependencies = [
 name = "fluentbase-svm-common"
 version = "0.4.10-dev"
 dependencies = [
- "fluentbase-types",
+ "fluentbase-sdk",
  "serde",
  "solana-pubkey",
-]
-
-[[package]]
-name = "fluentbase-types"
-version = "0.4.10-dev"
-dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "auto_impl",
- "bincode 2.0.1",
- "byteorder",
- "hashbrown 0.15.5",
- "paste",
- "revm-precompile",
- "revm-primitives",
- "rwasm",
- "strum_macros 0.27.2",
 ]
 
 [[package]]
@@ -2551,6 +2541,12 @@ name = "hex-literal"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
+
+[[package]]
+name = "hex-literal"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcaaec4551594c969335c98c903c1397853d4198408ea609190f420500f6be71"
 
 [[package]]
 name = "hmac"
@@ -5066,7 +5062,7 @@ dependencies = [
  "curve25519-dalek",
  "five8_const",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
  "keccak-hash",
  "num-traits",
  "serde",

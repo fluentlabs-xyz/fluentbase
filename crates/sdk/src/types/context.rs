@@ -315,7 +315,6 @@ impl SharedContextInputV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::SharedContextInputV1;
     use hex_literal::hex;
 
     #[test]

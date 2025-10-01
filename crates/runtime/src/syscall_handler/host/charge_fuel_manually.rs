@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_types::ExitCode;
+use fluentbase_sdk::ExitCode;
 use rwasm::{Store, TrapCode, Value};
 
 /// Builtin to manually charge and refund fuel when VM metering is disabled.

@@ -2,7 +2,7 @@ pub use ark_bn254::{Fq, Fq2, Fr, G1Affine, G2Affine};
 use ark_ec::AffineRepr;
 use ark_ff::{PrimeField, Zero};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
-use fluentbase_types::{
+use fluentbase_sdk::{
     ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FQ2_SIZE, FQ_SIZE,
     SCALAR_SIZE,

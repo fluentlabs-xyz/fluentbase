@@ -1,5 +1,5 @@
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
-use fluentbase_types::{ExitCode, B256};
+use fluentbase_sdk::{ExitCode, B256};
 use rwasm::{Store, TrapCode, Value};
 use solana_poseidon::HASH_BYTES;
 

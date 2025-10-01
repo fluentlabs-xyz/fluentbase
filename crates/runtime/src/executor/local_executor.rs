@@ -2,7 +2,7 @@ use crate::{
     executor::{ExecutionResult, RuntimeFactoryExecutor},
     RuntimeContext, RuntimeExecutor,
 };
-use fluentbase_types::{import_linker_v1_preview, Address, BytecodeOrHash, B256};
+use fluentbase_sdk::{import_linker_v1_preview, Address, BytecodeOrHash, B256};
 use rwasm::RwasmModule;
 use std::cell::RefCell;
 

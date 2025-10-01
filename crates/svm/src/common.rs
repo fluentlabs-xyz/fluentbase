@@ -8,11 +8,10 @@ use crate::{
 };
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::marker::PhantomData;
-use fluentbase_sdk::{keccak256, Address, SharedAPI, U256};
+use fluentbase_sdk::{keccak256, Address, ExitCode, MetadataStorageAPI, SharedAPI, U256};
 use fluentbase_svm_common::common::{
     evm_balance_from_lamports, lamports_from_evm_balance, pubkey_to_u256,
 };
-use fluentbase_types::{ExitCode, MetadataStorageAPI};
 use solana_instruction::error::InstructionError;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES, SVM_ADDRESS_PREFIX};
 use solana_rbpf::{

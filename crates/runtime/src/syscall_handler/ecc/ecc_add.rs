@@ -12,7 +12,7 @@ use crate::{
 };
 use ark_ec::CurveGroup;
 use blstrs::{G1Affine, G1Projective, G2Affine, G2Projective};
-use fluentbase_types::{
+use fluentbase_sdk::{
     ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
 };
 use rwasm::{Store, TrapCode, Value};
@@ -60,10 +60,10 @@ pub fn ecc_add_impl<C: AddConfig>(p: &[u8], q: &[u8]) -> Result<Vec<u8>, ExitCod
         CurveType::Bn254 => fn_impl_bn254(p, q),
         _ => {
             let Some(p_words) = cast_u8_to_u32(p) else {
-                return Ok(vec![]);
+                return Err(ExitCode::MalformedBuiltinParams);
             };
             let Some(q_words) = cast_u8_to_u32(q) else {
-                return Ok(vec![]);
+                return Err(ExitCode::MalformedBuiltinParams);
             };
 
             let p_aff = AffinePoint::<C::EllipticCurve>::from_words_le(&p_words);

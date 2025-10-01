@@ -1889,7 +1889,7 @@ dependencies = [
  "blstrs",
  "bytemuck",
  "elliptic-curve",
- "fluentbase-types",
+ "fluentbase-sdk",
  "group",
  "k256",
  "num",
@@ -1909,10 +1909,20 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.4.10-dev"
 dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "auto_impl",
+ "bincode 2.0.1",
+ "byteorder",
  "fluentbase-codec",
  "fluentbase-sdk-derive",
- "fluentbase-types",
  "hashbrown 0.15.5",
+ "hex-literal 1.0.0",
+ "paste",
+ "revm-precompile",
+ "revm-primitives",
+ "rwasm",
+ "strum_macros 0.27.2",
 ]
 
 [[package]]
@@ -1963,23 +1973,6 @@ dependencies = [
  "hex",
  "revm",
  "rwasm",
-]
-
-[[package]]
-name = "fluentbase-types"
-version = "0.4.10-dev"
-dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "auto_impl",
- "bincode 2.0.1",
- "byteorder",
- "hashbrown 0.15.5",
- "paste",
- "revm-precompile",
- "revm-primitives",
- "rwasm",
- "strum_macros 0.27.2",
 ]
 
 [[package]]

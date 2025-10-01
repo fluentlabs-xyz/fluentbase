@@ -10,14 +10,14 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-types = { workspace = true }
+fluentbase-sdk = { workspace = true }
 serde = { workspace = true, default-features = false }
 serde_json = { version = "1.0", default-features = false }
 alloy-genesis = { workspace = true, default-features = false }
 lazy_static = { workspace = true }
 
 [build-dependencies]
-fluentbase-types = { workspace = true }
+fluentbase-sdk = { workspace = true }
 alloy-genesis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -32,7 +32,7 @@ debug-print = []
 enable-svm = []
 wasmtime = []
 std = [
-    "fluentbase-types/std",
+    "fluentbase-sdk/std",
     "alloy-genesis/std",
     "serde/std",
     "serde_json/std",

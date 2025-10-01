@@ -106,7 +106,5 @@ mod tests {
             let result = a_big * b_big;
             assert_eq!(result, result_syscall);
         }
-
-        println!("All tests passed successfully!");
     }
 }

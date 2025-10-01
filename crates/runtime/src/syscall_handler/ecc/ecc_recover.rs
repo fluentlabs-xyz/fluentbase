@@ -1,6 +1,6 @@
 use super::ecc_config::{RecoverConfig, Secp256k1RecoverConfig};
 use crate::RuntimeContext;
-use fluentbase_types::B256;
+use fluentbase_sdk::B256;
 use rwasm::{Store, TrapCode, Value};
 use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
@@ -100,7 +100,7 @@ mod secp256k1_tests {
     extern crate alloc;
 
     use super::{super::ecc_config::Secp256k1RecoverConfig, SyscallEccRecover};
-    use fluentbase_types::B256;
+    use fluentbase_sdk::B256;
     use hex_literal::hex;
     use k256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey};
     use sha2::{Digest, Sha256};

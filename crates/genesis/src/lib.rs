@@ -1,5 +1,5 @@
 pub use alloy_genesis::Genesis;
-use fluentbase_types::{Address, Bytes, GenesisContract, B256};
+use fluentbase_sdk::{Address, Bytes, GenesisContract, B256};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 

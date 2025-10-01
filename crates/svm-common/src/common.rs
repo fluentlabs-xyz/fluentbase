@@ -1,6 +1,5 @@
-use core::array::TryFromSliceError;
-use core::mem::transmute;
-use fluentbase_types::{Address, U256};
+use core::{array::TryFromSliceError, mem::transmute};
+use fluentbase_sdk::{Address, U256};
 use solana_pubkey::{Pubkey, PUBKEY_BYTES, SVM_ADDRESS_PREFIX};
 
 pub fn pubkey_from_u256(value: &U256) -> Pubkey {

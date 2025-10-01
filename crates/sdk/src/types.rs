@@ -1,13 +1,3 @@
-#![cfg_attr(not(feature = "std"), no_std)]
-#![allow(dead_code)]
-#![warn(unused_crate_dependencies)]
-
-extern crate alloc;
-extern crate core;
-
-pub extern crate rwasm as rwasm_core;
-
-mod address;
 mod block_fuel;
 mod bytecode;
 mod context;
@@ -18,14 +8,12 @@ pub mod genesis;
 pub mod hashes;
 pub mod helpers;
 mod import_linker;
-mod native_api;
 mod preimage;
 mod rwasm;
 mod sdk;
 mod sys_func_idx;
 mod syscall;
 
-pub use address::*;
 pub use alloy_primitives::*;
 pub use block_fuel::*;
 pub use bytecode::*;
@@ -34,9 +22,7 @@ pub use context::*;
 pub use curves::*;
 pub use exit_code::*;
 pub use genesis::*;
-pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
 pub use import_linker::*;
-pub use native_api::*;
 pub use preimage::*;
 pub use rwasm::*;
 pub use sdk::*;

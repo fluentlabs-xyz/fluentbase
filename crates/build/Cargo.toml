@@ -13,7 +13,7 @@ categories.workspace = true
 fluentbase-sdk-derive-core = { path = "../sdk-derive/derive-core", default-features = false }
 anyhow = { workspace = true }
 cargo_metadata = "0.19.1"
-fluentbase-types = { workspace = true }
+fluentbase-sdk = { workspace = true }
 rwasm = { workspace = true, features = ["std", "wasmtime"] }
 clap = { workspace = true }
 chrono = { version = "0.4.38", default-features = false, features = ["clock"] }
@@ -34,6 +34,6 @@ insta = { version = "1.43.1", features = ["json"] }
 [features]
 default = ["std"]
 std = [
-    "fluentbase-types/std",
+    "fluentbase-sdk/std",
     "rwasm/std",
 ]

@@ -1,17 +1,11 @@
 use crate::{
     keccak256,
     storage::{
-        primitive::StoragePrimitive,
-        PackableCodec,
-        StorageDescriptor,
-        StorageLayout,
-        StorageOps,
+        primitive::StoragePrimitive, PackableCodec, StorageDescriptor, StorageLayout, StorageOps,
     },
-    B256,
-    U256,
+    StorageAPI, B256, U256,
 };
 use core::marker::PhantomData;
-use fluentbase_types::StorageAPI;
 
 /// Dynamic vector in storage.
 /// Length at base slot, elements at keccak256(base_slot).

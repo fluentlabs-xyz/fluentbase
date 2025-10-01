@@ -10,6 +10,7 @@ mod executor;
 mod global_executor;
 #[cfg(all(feature = "wasmtime", feature = "inter-process-lock"))]
 mod inter_process_lock;
+mod math;
 mod module_factory;
 mod runtime;
 pub mod syscall_handler;

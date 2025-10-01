@@ -1,6 +1,6 @@
 pub use crate::{bindings::*, B256};
-use fluentbase_types::{
-    BytecodeOrHash, ExitCode, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
+use crate::{
+    BytecodeOrHash, ExitCode, MathAPI, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
     TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
@@ -92,6 +92,123 @@ impl NativeAPI for RwasmContext {
             ok == 0
         }
     }
+
+    #[inline(always)]
+    fn debug_log(message: &str) {
+        unsafe { _debug_log(message.as_ptr(), message.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn read(&self, target: &mut [u8], offset: u32) {
+        unsafe { _read(target.as_mut_ptr(), offset, target.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn input_size(&self) -> u32 {
+        unsafe { _input_size() }
+    }
+
+    #[inline(always)]
+    fn write(&self, value: &[u8]) {
+        unsafe { _write(value.as_ptr(), value.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn forward_output(&self, offset: u32, len: u32) {
+        unsafe { _forward_output(offset, len) }
+    }
+
+    #[inline(always)]
+    fn exit(&self, exit_code: ExitCode) -> ! {
+        unsafe { _exit(exit_code.into_i32()) }
+    }
+
+    #[inline(always)]
+    fn output_size(&self) -> u32 {
+        unsafe { _output_size() }
+    }
+
+    #[inline(always)]
+    fn read_output(&self, target: &mut [u8], offset: u32) {
+        unsafe { _read_output(target.as_mut_ptr(), offset, target.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn state(&self) -> u32 {
+        unsafe { _state() }
+    }
+
+    #[inline(always)]
+    fn fuel(&self) -> u64 {
+        unsafe { _fuel() }
+    }
+
+    #[inline(always)]
+    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
+        unsafe { _charge_fuel_manually(fuel_consumed, fuel_refunded) }
+    }
+
+    #[inline(always)]
+    fn charge_fuel(&self, fuel_consumed: u64) {
+        unsafe { _charge_fuel(fuel_consumed) }
+    }
+
+    #[inline(always)]
+    fn exec(
+        &self,
+        code_hash: BytecodeOrHash,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32) {
+        let code_hash: BytecodeOrHash = code_hash.into();
+        unsafe {
+            let mut fuel_info: [i64; 2] = [fuel_limit.unwrap_or(u64::MAX) as i64, 0];
+            let exit_code = _exec(
+                code_hash.code_hash().as_ptr(),
+                input.as_ptr(),
+                input.len() as u32,
+                &mut fuel_info as *mut [i64; 2],
+                state,
+            );
+            (fuel_info[0] as u64, fuel_info[1], exit_code)
+        }
+    }
+
+    #[inline(always)]
+    fn resume(
+        &self,
+        call_id: u32,
+        return_data: &[u8],
+        exit_code: i32,
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+    ) -> (u64, i64, i32) {
+        unsafe {
+            let mut fuel_info: [i64; 2] = [fuel_consumed as i64, fuel_refunded];
+            let exit_code = _resume(
+                call_id,
+                return_data.as_ptr(),
+                return_data.len() as u32,
+                exit_code,
+                &mut fuel_info as *mut [i64; 2],
+            );
+            (fuel_info[0] as u64, fuel_info[1], exit_code)
+        }
+    }
+
+    #[inline(always)]
+    fn preimage_size(&self, hash: &B256) -> u32 {
+        unsafe { _preimage_size(hash.as_ptr()) }
+    }
+
+    #[inline(always)]
+    fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
+        unsafe { _preimage_copy(hash.as_ptr(), target.as_mut_ptr()) }
+    }
+}
+
+impl MathAPI for RwasmContext {
     #[inline(always)]
     fn ed25519_decompress(
         y: [u8; EDWARDS_COMPRESSED_SIZE],
@@ -209,11 +326,11 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> [u8; 64] {
         unsafe {
             _bn254_add(p.as_ptr() as u32, q.as_ptr() as u32);
         }
-        Ok(*p)
+        *p
     }
 
     #[inline(always)]
@@ -302,120 +419,6 @@ impl NativeAPI for RwasmContext {
         unsafe {
             _bn254_fp2_mul(p.as_ptr() as u32, q.as_ptr() as u32);
         }
-    }
-
-    #[inline(always)]
-    fn debug_log(message: &str) {
-        unsafe { _debug_log(message.as_ptr(), message.len() as u32) }
-    }
-
-    #[inline(always)]
-    fn read(&self, target: &mut [u8], offset: u32) {
-        unsafe { _read(target.as_mut_ptr(), offset, target.len() as u32) }
-    }
-
-    #[inline(always)]
-    fn input_size(&self) -> u32 {
-        unsafe { _input_size() }
-    }
-
-    #[inline(always)]
-    fn write(&self, value: &[u8]) {
-        unsafe { _write(value.as_ptr(), value.len() as u32) }
-    }
-
-    #[inline(always)]
-    fn forward_output(&self, offset: u32, len: u32) {
-        unsafe { _forward_output(offset, len) }
-    }
-
-    #[inline(always)]
-    fn exit(&self, exit_code: ExitCode) -> ! {
-        unsafe { _exit(exit_code.into_i32()) }
-    }
-
-    #[inline(always)]
-    fn output_size(&self) -> u32 {
-        unsafe { _output_size() }
-    }
-
-    #[inline(always)]
-    fn read_output(&self, target: &mut [u8], offset: u32) {
-        unsafe { _read_output(target.as_mut_ptr(), offset, target.len() as u32) }
-    }
-
-    #[inline(always)]
-    fn state(&self) -> u32 {
-        unsafe { _state() }
-    }
-
-    #[inline(always)]
-    fn fuel(&self) -> u64 {
-        unsafe { _fuel() }
-    }
-
-    #[inline(always)]
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
-        unsafe { _charge_fuel_manually(fuel_consumed, fuel_refunded) }
-    }
-
-    #[inline(always)]
-    fn charge_fuel(&self, fuel_consumed: u64) {
-        unsafe { _charge_fuel(fuel_consumed) }
-    }
-
-    #[inline(always)]
-    fn exec(
-        &self,
-        code_hash: BytecodeOrHash,
-        input: &[u8],
-        fuel_limit: Option<u64>,
-        state: u32,
-    ) -> (u64, i64, i32) {
-        let code_hash: BytecodeOrHash = code_hash.into();
-        unsafe {
-            let mut fuel_info: [i64; 2] = [fuel_limit.unwrap_or(u64::MAX) as i64, 0];
-            let exit_code = _exec(
-                code_hash.code_hash().as_ptr(),
-                input.as_ptr(),
-                input.len() as u32,
-                &mut fuel_info as *mut [i64; 2],
-                state,
-            );
-            (fuel_info[0] as u64, fuel_info[1], exit_code)
-        }
-    }
-
-    #[inline(always)]
-    fn resume(
-        &self,
-        call_id: u32,
-        return_data: &[u8],
-        exit_code: i32,
-        fuel_consumed: u64,
-        fuel_refunded: i64,
-    ) -> (u64, i64, i32) {
-        unsafe {
-            let mut fuel_info: [i64; 2] = [fuel_consumed as i64, fuel_refunded];
-            let exit_code = _resume(
-                call_id,
-                return_data.as_ptr(),
-                return_data.len() as u32,
-                exit_code,
-                &mut fuel_info as *mut [i64; 2],
-            );
-            (fuel_info[0] as u64, fuel_info[1], exit_code)
-        }
-    }
-
-    #[inline(always)]
-    fn preimage_size(&self, hash: &B256) -> u32 {
-        unsafe { _preimage_size(hash.as_ptr()) }
-    }
-
-    #[inline(always)]
-    fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
-        unsafe { _preimage_copy(hash.as_ptr(), target.as_mut_ptr()) }
     }
 
     // BLS12-381 implementations

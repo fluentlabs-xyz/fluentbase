@@ -43,12 +43,7 @@ pub fn calc_create4_address(owner: &Address, salt: &U256, hash_func: fn(&[u8]) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        BytecodeOrHash, ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-        BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE,
-        EDWARDS_DECOMPRESSED_SIZE,
-    };
-    use alloy_primitives::{address, b256, keccak256};
+    use crate::{address, b256, keccak256, BytecodeOrHash, ExitCode};
 
     struct TestContext;
 
@@ -74,96 +69,6 @@ mod tests {
         }
 
         fn secp256k1_recover(_digest: &B256, _sig: &[u8; 64], _rec_id: u8) -> Option<[u8; 65]> {
-            todo!()
-        }
-
-        fn ed25519_decompress(
-            _y: [u8; EDWARDS_COMPRESSED_SIZE],
-            _sign: u32,
-        ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
-            todo!()
-        }
-
-        fn ed25519_add(
-            _p: [u8; EDWARDS_DECOMPRESSED_SIZE],
-            _q: [u8; EDWARDS_DECOMPRESSED_SIZE],
-        ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
-            todo!()
-        }
-
-        fn bls12_381_g1_add(_p: &mut [u8; 96], _q: &[u8; 96]) {
-            todo!()
-        }
-
-        fn bls12_381_g1_msm(_pairs: &[([u8; 96], [u8; 32])], _out: &mut [u8; 96]) {
-            todo!()
-        }
-
-        fn bls12_381_g2_add(_p: &mut [u8; 192], _q: &[u8; 192]) {
-            todo!()
-        }
-
-        fn bls12_381_g2_msm(_pairs: &[([u8; 192], [u8; 32])], _out: &mut [u8; 192]) {
-            todo!()
-        }
-
-        fn bls12_381_pairing(_pairs: &[([u8; 48], [u8; 96])], _out: &mut [u8; 288]) {
-            todo!()
-        }
-
-        fn bls12_381_map_fp_to_g1(_p: &[u8; 64], _out: &mut [u8; 96]) {
-            todo!()
-        }
-
-        fn bls12_381_map_fp2_to_g2(_p: &[u8; 128], _out: &mut [u8; 192]) {
-            todo!()
-        }
-
-        fn bn254_add(_p: &mut [u8; 64], _q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
-            todo!()
-        }
-
-        fn bn254_double(_p: &mut [u8; 64]) {
-            todo!()
-        }
-
-        fn bn254_mul(_p: &mut [u8; 64], _q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
-            todo!()
-        }
-
-        fn bn254_multi_pairing(_elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
-            todo!()
-        }
-
-        fn bn254_g1_compress(
-            _point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-        ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
-            todo!()
-        }
-
-        fn bn254_g1_decompress(
-            _point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
-        ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-            todo!()
-        }
-
-        fn bn254_g2_compress(
-            _point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-        ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
-            todo!()
-        }
-
-        fn bn254_g2_decompress(
-            _point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
-        ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
-            todo!()
-        }
-
-        fn bn254_fp_mul(_p: &mut [u8; 64], _q: &[u8; 32]) {
-            todo!()
-        }
-
-        fn bn254_fp2_mul(_p: &mut [u8; 64], _q: &[u8; 32]) {
             todo!()
         }
 

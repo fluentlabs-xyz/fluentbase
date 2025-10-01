@@ -9,7 +9,7 @@ use blst::{
     blst_p1_affine, blst_p1_affine_serialize, blst_p1_to_affine, blst_p2, blst_p2_affine,
     blst_p2_affine_serialize, blst_p2_to_affine,
 };
-use fluentbase_types::{
+use fluentbase_sdk::{
     FP_PAD_BY, FP_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, PADDED_FP2_SIZE, PADDED_FP_SIZE,
 };
 use rwasm::{Store, TrapCode, Value};

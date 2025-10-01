@@ -1,44 +1,50 @@
-use crate::helpers::{
-    call_with_sig, with_svm_account_info_mut, with_svm_account_mut, with_svm_account_state_mut,
+use crate::{
+    helpers::{
+        call_with_sig, with_svm_account_info_mut, with_svm_account_mut, with_svm_account_state_mut,
+    },
+    EvmTestingContextWithGenesis,
 };
-use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
-use fluentbase_sdk::Address;
-use fluentbase_svm::account::ReadableAccount;
-use fluentbase_svm::error::SvmError;
-use fluentbase_svm::helpers::{
-    serialize_svm_program_params_from_instruction, storage_read_account_data,
+use fluentbase_sdk::{
+    Address, ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, UNIVERSAL_TOKEN_MAGIC_BYTES,
 };
-use fluentbase_svm::pubkey::Pubkey;
-use fluentbase_svm::solana_program::instruction::Instruction;
-use fluentbase_svm::token_2022;
-use fluentbase_svm::token_2022::instruction::initialize_mint;
-use fluentbase_svm::token_2022::instruction::initialize_mint2;
-use fluentbase_svm::token_2022::instruction::mint_to;
 #[allow(deprecated)]
 use fluentbase_svm::token_2022::instruction::transfer;
-use fluentbase_svm::token_2022::instruction::transfer_checked;
-use fluentbase_svm::token_2022::instruction::{initialize_account, AuthorityType};
-use fluentbase_svm::token_2022::state::{Account, AccountState, Mint};
-use fluentbase_svm_common::common::{lamports_try_from_slice, pubkey_from_evm_address};
-use fluentbase_svm_common::universal_token::{
-    AllowanceParams, ApproveCheckedParams, ApproveParams, BurnCheckedParams, BurnParams,
-    CloseAccountParams, FreezeAccountParams, InitializeAccountParams, InitializeMintParams,
-    MintToParams, RevokeParams, SetAuthorityParams, ThawAccountParams, TransferFromParams,
-    TransferParams,
+use fluentbase_svm::{
+    account::ReadableAccount,
+    error::SvmError,
+    helpers::{serialize_svm_program_params_from_instruction, storage_read_account_data},
+    pubkey::Pubkey,
+    solana_program::instruction::Instruction,
+    token_2022,
+    token_2022::{
+        instruction::{
+            initialize_account, initialize_mint, initialize_mint2, mint_to, transfer_checked,
+            AuthorityType,
+        },
+        state::{Account, AccountState, Mint},
+    },
+};
+use fluentbase_svm_common::{
+    common::{lamports_try_from_slice, pubkey_from_evm_address},
+    universal_token::{
+        AllowanceParams, ApproveCheckedParams, ApproveParams, BurnCheckedParams, BurnParams,
+        CloseAccountParams, FreezeAccountParams, InitializeAccountParams, InitializeMintParams,
+        MintToParams, RevokeParams, SetAuthorityParams, ThawAccountParams, TransferFromParams,
+        TransferParams,
+    },
 };
 #[cfg(feature = "enable-error-text-checks")]
 use fluentbase_testing::utf8_to_bytes;
 use fluentbase_testing::EvmTestingContext;
-use fluentbase_types::{
-    ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, UNIVERSAL_TOKEN_MAGIC_BYTES,
-};
-use fluentbase_universal_token::common::sig_to_bytes;
-use fluentbase_universal_token::consts::{
-    SIG_ALLOWANCE, SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE, SIG_BALANCE_OF, SIG_BURN,
-    SIG_BURN_CHECKED, SIG_CLOSE_ACCOUNT, SIG_DECIMALS, SIG_DECIMALS_FOR_MINT, SIG_FREEZE_ACCOUNT,
-    SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE, SIG_SET_AUTHORITY,
-    SIG_THAW_ACCOUNT, SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
+use fluentbase_universal_token::{
+    common::sig_to_bytes,
+    consts::{
+        SIG_ALLOWANCE, SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE, SIG_BALANCE_OF, SIG_BURN,
+        SIG_BURN_CHECKED, SIG_CLOSE_ACCOUNT, SIG_DECIMALS, SIG_DECIMALS_FOR_MINT,
+        SIG_FREEZE_ACCOUNT, SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE,
+        SIG_SET_AUTHORITY, SIG_THAW_ACCOUNT, SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
+    },
 };
 use solana_program_option::COption;
 use solana_program_pack::Pack;

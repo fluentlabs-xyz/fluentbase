@@ -1,11 +1,7 @@
 use crate::RuntimeContext;
-use fluentbase_types::{ExitCode, SysFuncIdx};
+use fluentbase_sdk::{ExitCode, SysFuncIdx};
 use rwasm::{Store, TrapCode, TypedCaller, Value};
-use sp1_curves::weierstrass::{
-    bls12_381::Bls12381,
-    bn254::{Bn254, Bn254BaseField},
-    secp256k1::Secp256k1,
-};
+use sp1_curves::weierstrass::{bls12_381::Bls12381, bn254::Bn254, secp256k1::Secp256k1};
 
 mod edwards;
 pub use edwards::*;

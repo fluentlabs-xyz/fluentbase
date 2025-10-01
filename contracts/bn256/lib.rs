@@ -4,12 +4,10 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BN256_ADD,
-    PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
-};
-use fluentbase_types::{
-    BN254_ADD_INPUT_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
-    BN254_MUL_INPUT_SIZE, BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, SCALAR_SIZE,
+    alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, BN254_ADD_INPUT_SIZE,
+    BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, BN254_MUL_INPUT_SIZE,
+    BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL,
+    PRECOMPILE_BN256_PAIR, SCALAR_SIZE,
 };
 
 /// =============== Constants ==================
@@ -87,7 +85,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 .unwrap();
 
             let result = SDK::bn254_add(&mut p, &q);
-            let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
             sdk.write(&result);
         }
         PRECOMPILE_BN256_MUL => {

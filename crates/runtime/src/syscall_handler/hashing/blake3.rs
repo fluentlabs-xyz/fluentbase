@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_types::B256;
+use fluentbase_sdk::B256;
 use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallBlake3;

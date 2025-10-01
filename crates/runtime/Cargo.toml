@@ -11,7 +11,7 @@ categories.workspace = true
 
 [dependencies]
 # fluent
-fluentbase-types = { workspace = true }
+fluentbase-sdk = { workspace = true }
 rwasm = { workspace = true }
 
 # wasmtime
@@ -46,10 +46,10 @@ ark-bn254 = { workspace = true }
 num-bigint = { workspace = true }
 paste = { workspace = true }
 fs2 = { version = "0.4.3", optional = true }
+bytemuck = { workspace = true }
 
 # global executor
 core_affinity = { version = "0.8.3", optional = true }
-bytemuck.workspace = true
 
 [dev-dependencies]
 sha2 = { workspace = true, default-features = false }
@@ -60,7 +60,7 @@ hex-literal = { workspace = true }
 default = ["std"]
 std = [
     "rwasm/std",
-    "fluentbase-types/std",
+    "fluentbase-sdk/std",
 ]
 rwasm = []
 debug-print = [

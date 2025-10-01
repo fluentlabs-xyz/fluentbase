@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_types::Bytes;
+use fluentbase_sdk::Bytes;
 use rwasm::{Store, TrapCode, Value};
 
 pub struct SyscallPreimageCopy;

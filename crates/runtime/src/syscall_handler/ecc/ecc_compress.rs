@@ -12,7 +12,7 @@ use crate::{
     RuntimeContext,
 };
 use ark_serialize::{CanonicalSerialize, Compress};
-use fluentbase_types::{
+use fluentbase_sdk::{
     ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
     CURVE256R1_POINT_COMPRESSED_SIZE, CURVE256R1_POINT_DECOMPRESSED_SIZE, G1_COMPRESSED_SIZE,

@@ -2,8 +2,8 @@ use core::cell::RefCell;
 use fluentbase_runtime::RuntimeContextWrapper;
 use fluentbase_sdk::{
     bytes::Buf, calc_create4_address, Address, Bytes, ContextReader, ContractContextV1, ExitCode,
-    IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI,
-    SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256,
+    IsAccountEmpty, IsAccountOwnable, IsColdAccess, MathAPI, MetadataAPI, MetadataStorageAPI,
+    NativeAPI, SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256,
     BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE,
     EDWARDS_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
@@ -312,13 +312,13 @@ impl SharedAPI for HostTestingContext {
         y: [u8; EDWARDS_COMPRESSED_SIZE],
         sign: u32,
     ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
-        RuntimeContextWrapper::ed25519_decompress(y, sign)
+        unimplemented!()
     }
     fn ed25519_add(
         p: [u8; EDWARDS_DECOMPRESSED_SIZE],
         q: [u8; EDWARDS_DECOMPRESSED_SIZE],
     ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
-        RuntimeContextWrapper::ed25519_add(p, q)
+        unimplemented!()
     }
 
     fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
@@ -342,7 +342,7 @@ impl SharedAPI for HostTestingContext {
     fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
         RuntimeContextWrapper::bls12_381_map_fp2_to_g2(p, out);
     }
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> [u8; 64] {
         RuntimeContextWrapper::bn254_add(p, q)
     }
     fn bn254_double(p: &mut [u8; 64]) {
