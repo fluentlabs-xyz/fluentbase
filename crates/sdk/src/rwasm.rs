@@ -121,7 +121,7 @@ impl NativeAPI for RwasmContext {
     }
     #[inline(always)]
     fn tower_fp1_bn254_sub(
-        x: [u8; TOWER_FP_BN256_SIZE],
+        mut x: [u8; TOWER_FP_BN256_SIZE],
         y: [u8; TOWER_FP_BN256_SIZE],
     ) -> [u8; TOWER_FP_BN256_SIZE] {
         unsafe { _tower_fp1_bn254_sub(x.as_mut_ptr(), y.as_ptr()) };
@@ -129,7 +129,7 @@ impl NativeAPI for RwasmContext {
     }
     #[inline(always)]
     fn tower_fp1_bn254_mul(
-        x: [u8; TOWER_FP_BN256_SIZE],
+        mut x: [u8; TOWER_FP_BN256_SIZE],
         y: [u8; TOWER_FP_BN256_SIZE],
     ) -> [u8; TOWER_FP_BN256_SIZE] {
         unsafe { _tower_fp1_bn254_mul(x.as_mut_ptr(), y.as_ptr()) };
@@ -137,31 +137,31 @@ impl NativeAPI for RwasmContext {
     }
     #[inline(always)]
     fn tower_fp1_bls12381_add(
-        _x: [u8; TOWER_FP_BLS12381_SIZE],
-        _y: [u8; TOWER_FP_BLS12381_SIZE],
+        mut x: [u8; TOWER_FP_BLS12381_SIZE],
+        y: [u8; TOWER_FP_BLS12381_SIZE],
     ) -> [u8; TOWER_FP_BLS12381_SIZE] {
         unsafe { _tower_fp2_bls12381_add(x.as_mut_ptr(), y.as_ptr()) };
         x
     }
     #[inline(always)]
     fn tower_fp1_bls12381_sub(
-        _x: [u8; TOWER_FP_BLS12381_SIZE],
-        _y: [u8; TOWER_FP_BLS12381_SIZE],
+        mut x: [u8; TOWER_FP_BLS12381_SIZE],
+        y: [u8; TOWER_FP_BLS12381_SIZE],
     ) -> [u8; TOWER_FP_BLS12381_SIZE] {
         unsafe { _tower_fp2_bls12381_sub(x.as_mut_ptr(), y.as_ptr()) };
         x
     }
     #[inline(always)]
     fn tower_fp1_bls12381_mul(
-        _x: [u8; TOWER_FP_BLS12381_SIZE],
-        _y: [u8; TOWER_FP_BLS12381_SIZE],
+        mut x: [u8; TOWER_FP_BLS12381_SIZE],
+        y: [u8; TOWER_FP_BLS12381_SIZE],
     ) -> [u8; TOWER_FP_BLS12381_SIZE] {
         unsafe { _tower_fp2_bls12381_mul(x.as_mut_ptr(), y.as_ptr()) };
         x
     }
     #[inline(always)]
     fn tower_fp2_bn254_add(
-        x: [u8; TOWER_FP_BN256_SIZE],
+        mut x: [u8; TOWER_FP_BN256_SIZE],
         y: [u8; TOWER_FP_BN256_SIZE],
     ) -> [u8; TOWER_FP_BN256_SIZE] {
         unsafe { _tower_fp2_bn254_add(x.as_mut_ptr(), y.as_ptr()) };
@@ -169,7 +169,7 @@ impl NativeAPI for RwasmContext {
     }
     #[inline(always)]
     fn tower_fp2_bn254_sub(
-        x: [u8; TOWER_FP_BN256_SIZE],
+        mut x: [u8; TOWER_FP_BN256_SIZE],
         y: [u8; TOWER_FP_BN256_SIZE],
     ) -> [u8; TOWER_FP_BN256_SIZE] {
         unsafe { _tower_fp2_bn254_sub(x.as_mut_ptr(), y.as_ptr()) };
@@ -177,7 +177,7 @@ impl NativeAPI for RwasmContext {
     }
     #[inline(always)]
     fn tower_fp2_bn254_mul(
-        x: [u8; TOWER_FP_BN256_SIZE],
+        mut x: [u8; TOWER_FP_BN256_SIZE],
         y: [u8; TOWER_FP_BN256_SIZE],
     ) -> [u8; TOWER_FP_BN256_SIZE] {
         unsafe { _tower_fp2_bn254_mul(x.as_mut_ptr(), y.as_ptr()) };
@@ -185,24 +185,24 @@ impl NativeAPI for RwasmContext {
     }
     #[inline(always)]
     fn tower_fp2_bls12381_add(
-        _x: [u8; TOWER_FP_BLS12381_SIZE],
-        _y: [u8; TOWER_FP_BLS12381_SIZE],
+        mut x: [u8; TOWER_FP_BLS12381_SIZE],
+        y: [u8; TOWER_FP_BLS12381_SIZE],
     ) -> [u8; TOWER_FP_BLS12381_SIZE] {
         unsafe { _tower_fp2_bls12381_add(x.as_mut_ptr(), y.as_ptr()) };
         x
     }
     #[inline(always)]
     fn tower_fp2_bls12381_sub(
-        _x: [u8; TOWER_FP_BLS12381_SIZE],
-        _y: [u8; TOWER_FP_BLS12381_SIZE],
+        mut x: [u8; TOWER_FP_BLS12381_SIZE],
+        y: [u8; TOWER_FP_BLS12381_SIZE],
     ) -> [u8; TOWER_FP_BLS12381_SIZE] {
         unsafe { _tower_fp2_bls12381_sub(x.as_mut_ptr(), y.as_ptr()) };
         x
     }
     #[inline(always)]
     fn tower_fp2_bls12381_mul(
-        _x: [u8; TOWER_FP_BLS12381_SIZE],
-        _y: [u8; TOWER_FP_BLS12381_SIZE],
+        mut x: [u8; TOWER_FP_BLS12381_SIZE],
+        y: [u8; TOWER_FP_BLS12381_SIZE],
     ) -> [u8; TOWER_FP_BLS12381_SIZE] {
         unsafe { _tower_fp2_bls12381_mul(x.as_mut_ptr(), y.as_ptr()) };
         x
