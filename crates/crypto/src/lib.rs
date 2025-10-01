@@ -2,19 +2,19 @@
 /// This library is copied from SP1 (sp1/crates/zkvm/lib/Cargo.toml),
 /// but system builtins are replaced with Fluentbase
 ///
-mod bls12381;
-mod bn254;
-mod ecdsa;
-mod ed25519;
-mod secp256k1;
-mod secp256r1;
-mod utils;
+pub mod bls12381;
+pub mod bn254;
+pub mod ecdsa;
+pub mod ed25519;
+pub mod secp256k1;
+pub mod secp256r1;
+pub mod utils;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
-        type MathRuntime = fluentbase_runtime::RuntimeContextWrapper;
+        pub type MathRuntime = fluentbase_runtime::RuntimeContextWrapper;
     } else {
-        type MathRuntime = fluentbase_sdk::rwasm::RwasmContext;
+        pub type MathRuntime = fluentbase_sdk::rwasm::RwasmContext;
     }
 }
 
