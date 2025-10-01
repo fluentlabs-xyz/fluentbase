@@ -1,6 +1,6 @@
 pub use crate::{bindings::*, B256};
 use crate::{
-    BytecodeOrHash, ExitCode, MathAPI, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
+    BytecodeOrHash, CryptoAPI, ExitCode, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
     TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
@@ -208,7 +208,7 @@ impl NativeAPI for RwasmContext {
     }
 }
 
-impl MathAPI for RwasmContext {
+impl CryptoAPI for RwasmContext {
     #[inline(always)]
     fn ed25519_decompress(
         y: [u8; EDWARDS_COMPRESSED_SIZE],

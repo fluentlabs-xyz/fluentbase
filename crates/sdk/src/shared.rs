@@ -3,8 +3,8 @@ mod context;
 use crate::{
     byteorder::{ByteOrder, LittleEndian},
     syscall::*,
-    Address, BytecodeOrHash, Bytes, ContextReader, ExitCode, IsAccountEmpty, IsAccountOwnable,
-    IsColdAccess, MathAPI, MetadataAPI, MetadataStorageAPI, NativeAPI, SharedAPI,
+    Address, BytecodeOrHash, Bytes, ContextReader, CryptoAPI, ExitCode, IsAccountEmpty,
+    IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI, SharedAPI,
     SharedContextInputV1, StorageAPI, SyscallResult, B256, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
@@ -139,7 +139,7 @@ impl<API: NativeAPI> MetadataStorageAPI for SharedContextImpl<API> {
 }
 
 /// SharedContextImpl always created from input
-impl<API: NativeAPI + MathAPI> SharedAPI for SharedContextImpl<API> {
+impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     fn context(&self) -> impl ContextReader {
         self.shared_context_ref()
     }

@@ -5,7 +5,7 @@ use crate::{
 };
 
 #[rustfmt::skip]
-pub trait MathAPI {
+pub trait CryptoAPI {
     fn ed25519_decompress(y: [u8; EDWARDS_COMPRESSED_SIZE], sign: u32) -> [u8; EDWARDS_DECOMPRESSED_SIZE];
     fn ed25519_add(p: [u8; EDWARDS_DECOMPRESSED_SIZE], q: [u8; EDWARDS_DECOMPRESSED_SIZE]) -> [u8; EDWARDS_DECOMPRESSED_SIZE];
 

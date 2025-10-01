@@ -1,8 +1,8 @@
 use core::cell::RefCell;
 use fluentbase_runtime::RuntimeContextWrapper;
 use fluentbase_sdk::{
-    bytes::Buf, calc_create4_address, Address, Bytes, ContextReader, ContractContextV1, ExitCode,
-    IsAccountEmpty, IsAccountOwnable, IsColdAccess, MathAPI, MetadataAPI, MetadataStorageAPI,
+    bytes::Buf, calc_create4_address, Address, Bytes, ContextReader, ContractContextV1, CryptoAPI,
+    ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI,
     NativeAPI, SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256,
     BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE,

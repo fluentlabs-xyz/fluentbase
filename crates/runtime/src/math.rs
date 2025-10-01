@@ -9,7 +9,7 @@ use crate::{
     RuntimeContextWrapper,
 };
 use fluentbase_sdk::{
-    ExitCode, MathAPI, UnwrapExitCode, BN254_G1_POINT_COMPRESSED_SIZE,
+    CryptoAPI, ExitCode, UnwrapExitCode, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
     G1_COMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
@@ -18,7 +18,7 @@ use fluentbase_sdk::{
 };
 use sp1_curves::weierstrass::{bls12_381::Bls12381, bn254::Bn254};
 
-impl MathAPI for RuntimeContextWrapper {
+impl CryptoAPI for RuntimeContextWrapper {
     fn ed25519_decompress(
         y: [u8; EDWARDS_COMPRESSED_SIZE],
         sign: u32,

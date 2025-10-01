@@ -2,7 +2,7 @@ use crate::{
     utils::{AffinePoint, WeierstrassAffinePoint, WeierstrassPoint},
     MathRuntime,
 };
-use fluentbase_sdk::MathAPI;
+use fluentbase_sdk::CryptoAPI;
 use std::io::ErrorKind;
 
 /// The number of limbs in [Bls12381AffinePoint].

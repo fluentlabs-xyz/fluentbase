@@ -10,10 +10,10 @@ mod allocator;
 #[cfg(not(feature = "std"))]
 mod bindings;
 pub mod constructor;
+mod crypto_api;
 pub mod entrypoint;
 pub mod leb128;
 mod macros;
-mod math_api;
 mod native_api;
 pub mod panic;
 #[cfg(not(feature = "std"))]
@@ -28,10 +28,10 @@ mod types;
 pub use address::*;
 pub use allocator::*;
 pub use alloy_primitives::*;
+pub use crypto_api::*;
 pub use fluentbase_codec as codec;
 pub use fluentbase_sdk_derive as derive;
 pub use hashbrown::{self, hash_map, hash_set, HashMap, HashSet};
-pub use math_api::*;
 pub use native_api::*;
 pub use types::*;
 
