@@ -22,4 +22,3 @@ pub use ecc_recover::*;
 mod ecc_utils;
 mod ecc_verify;
 pub use ecc_verify::*;
-
