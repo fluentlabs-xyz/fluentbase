@@ -19,8 +19,8 @@ readme = "README.md"
 fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
 fluentbase-universal-token = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
 fluentbase-evm = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
-fluentbase-svm = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
 fluentbase-svm-common = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
+fluentbase-svm = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
 fluentbase-testing = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves" }
 # revm
 revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
@@ -44,18 +44,18 @@ rpath = false
 codegen-units = 1
 overflow-checks = false
 
-[profile.dev]
 # Optimize WASM for size in debug to avoid massive binaries that slow compilation
+[profile.dev]
 opt-level = "z"
 debug = false
 strip = "symbols"
 
 [patch.crates-io]
+fluentbase-sdk = { path = "../crates/sdk" }
+fluentbase-universal-token = { path = "../crates/universal-token" }
+fluentbase-evm = { path = "../crates/evm" }
+fluentbase-svm-common = { path = "../crates/svm-common" }
+fluentbase-svm = { path = "../crates/svm" }
+fluentbase-testing = { path = "../crates/testing" }
 #revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
 #ecdsa = { path = "../../../signatures/ecdsa", default-features = false, features = ["hazmat", "verifying"] }
-#fluentbase-sdk = { path = "../crates/sdk", default-features = false }
-#fluentbase-universal-token = { path = "../crates/universal-token", default-features = false }
-#fluentbase-evm = { path = "../crates/evm", default-features = false }
-#fluentbase-svm = { path = "../crates/svm", default-features = false }
-#fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
-#fluentbase-testing = { path = "../crates/testing" }

@@ -237,7 +237,6 @@ pub fn storage_read_metadata_params<API: MetadataAPI>(
     let derived_metadata_address = calc_create4_address(
         &alt_precompile_address.unwrap_or(PRECOMPILE_SVM_RUNTIME),
         &pubkey.into(),
-        |v| keccak256(v),
     );
     let metadata_size_result = api.metadata_size(&derived_metadata_address);
     // if !metadata_size_result.status.is_ok() {

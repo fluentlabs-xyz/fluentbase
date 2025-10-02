@@ -7,7 +7,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let input_size = sdk.input_size();
     let input = alloc_slice(input_size as usize);
     sdk.read(input, 0);
-    let hash = crypto_keccak256(input); // calculate the hash via syscall to builtin keccak256
+    let hash = SDK::keccak256(input); // calculate the hash via syscall to builtin keccak256
     sdk.write(&hash.as_slice());
 }
 

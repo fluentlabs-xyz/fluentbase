@@ -5,9 +5,7 @@ use fluentbase_sdk::{
     address, bytes, calc_create_address, constructor::encode_constructor_params, Address,
     PRECOMPILE_BLAKE2F, PRECOMPILE_SECP256K1_RECOVER, U256,
 };
-use fluentbase_testing::{
-    try_print_utf8_error, EvmTestingContext, HostTestingContextNativeAPI, TxBuilder,
-};
+use fluentbase_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use hex_literal::hex;
 use revm::{
     bytecode::opcode, context::result::ExecutionResult::Revert, primitives::hardfork::SpecId,
@@ -131,7 +129,7 @@ fn test_evm_create_and_send() {
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
-    let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
     let tx_cost = U256::from(gas_price) * U256::from(result.gas_used());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18) - tx_cost);
@@ -149,7 +147,7 @@ fn test_evm_revert() {
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
-    let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
     assert!(!result.is_success());
     assert_eq!(result.gas_used(), 53054);
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(2e18));
@@ -161,7 +159,7 @@ fn test_evm_revert() {
         .exec();
     println!("{:?}", result);
     // here nonce must be 1 because we increment nonce for failed txs
-    let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 1);
+    let contract_address = calc_create_address(&SENDER_ADDRESS, 1);
     println!("{}", contract_address);
     assert!(result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
@@ -182,7 +180,7 @@ fn test_evm_self_destruct() {
     .gas_price(gas_price)
     .value(U256::from(1e18))
     .exec();
-    let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
     println!("deployed contract address: {}", contract_address); // 0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5
     assert!(result.is_success());
     assert_eq!(result.gas_used(), 53842);

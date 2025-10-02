@@ -5,7 +5,7 @@ use fluentbase_sdk::{
     COPY_WORD_FUEL_COST, KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST, LOW_FUEL_COST,
     SECP256K1_RECOVER_BASE_FUEL_COST,
 };
-use fluentbase_testing::{EvmTestingContext, HostTestingContextNativeAPI, TxBuilder};
+use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use revm::{
     context::result::ExecutionResult, interpreter::gas::calculate_initial_tx_gas,
     primitives::hardfork::SpecId,
@@ -46,7 +46,7 @@ fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult<R
     let result = builder.exec();
     println!("{:?}", result);
     assert!(result.is_success(), "failed to deploy contract");
-    let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, 0);
+    let contract_address = calc_create_address(&deployer, 0);
     let result = ctx.call_evm_tx(
         deployer,
         contract_address,

@@ -87,5 +87,5 @@ pub fn decompress_pubkey(compressed_key: &[u8; 48]) -> Result<[u8; 96], ()> {
     decompressed_key[0] &= 0b_0001_1111;
     unimplemented!("where is bls12_381_decompress?");
 
-    Ok(decompressed_key)
+    // Ok(decompressed_key)
 }

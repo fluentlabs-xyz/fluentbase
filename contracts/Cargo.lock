@@ -50,7 +50,7 @@ dependencies = [
  "alloy-rlp",
  "crc",
  "serde",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -74,14 +74,14 @@ dependencies = [
  "alloy-rlp",
  "k256",
  "serde",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
 name = "alloy-eips"
-version = "1.0.36"
+version = "1.0.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bfec530782b30151e2564edf3c900f1fa6852128b7a993e458e8e3815d8b915"
+checksum = "ac7f1c9a1ccc7f3e03c36976455751a6166a4f0d2d2c530c3f87dfe7d0cdc836"
 dependencies = [
  "alloy-eip2124",
  "alloy-eip2930",
@@ -96,7 +96,7 @@ dependencies = [
  "serde",
  "serde_with",
  "sha2 0.10.9",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -162,9 +162,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-serde"
-version = "1.0.36"
+version = "1.0.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19c3835bdc128f2f3418f5d6c76aec63a245d72973e0eaacc9720aa0787225c5"
+checksum = "5413814be7a22fbc81e0f04a2401fcc3eb25e56fd53b04683e8acecc6e1fe01b"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -818,9 +818,9 @@ dependencies = [
 
 [[package]]
 name = "c-kzg"
-version = "2.1.4"
+version = "2.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "137a2a2878ed823ef1bd73e5441e245602aae5360022113b8ad259ca4b5b8727"
+checksum = "e00bf4b112b07b505472dbefd19e37e53307e2bfed5a79e0cc161d58ccd0e687"
 dependencies = [
  "blst",
  "cc",
@@ -894,7 +894,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
 dependencies = [
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -1712,7 +1712,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -1831,7 +1831,7 @@ checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 [[package]]
 name = "fluentbase-codec"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1844,7 +1844,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-codec-derive"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -2026,18 +2026,19 @@ dependencies = [
 [[package]]
 name = "fluentbase-crypto"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
  "bytemuck",
  "cfg-if",
  "elliptic-curve",
- "fluentbase-sdk",
+ "fluentbase-runtime",
+ "fluentbase-types",
 ]
 
 [[package]]
 name = "fluentbase-evm"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -2051,7 +2052,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-revm"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
  "fluentbase-evm",
  "fluentbase-runtime",
@@ -2066,7 +2067,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-runtime"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2077,7 +2078,7 @@ dependencies = [
  "blstrs",
  "bytemuck",
  "elliptic-curve",
- "fluentbase-sdk",
+ "fluentbase-types",
  "group",
  "k256",
  "num",
@@ -2096,28 +2097,24 @@ dependencies = [
 [[package]]
 name = "fluentbase-sdk"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
- "alloy-primitives",
  "alloy-rlp",
  "auto_impl",
  "bincode 2.0.1",
- "byteorder",
  "fluentbase-codec",
+ "fluentbase-crypto",
  "fluentbase-sdk-derive",
+ "fluentbase-types",
  "hashbrown 0.15.5",
  "hex-literal 1.0.0",
- "paste",
- "revm-precompile",
- "revm-primitives",
  "rwasm",
- "strum_macros 0.27.2",
 ]
 
 [[package]]
 name = "fluentbase-sdk-derive"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -2131,7 +2128,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-sdk-derive-core"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -2147,14 +2144,14 @@ dependencies = [
  "serde_json",
  "syn 2.0.106",
  "syn-solidity",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
  "tracing",
 ]
 
 [[package]]
 name = "fluentbase-svm"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
  "arrayref",
  "bincode 2.0.1",
@@ -2209,7 +2206,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-svm-common"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
  "fluentbase-sdk",
  "serde",
@@ -2219,7 +2216,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-testing"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
  "bytes",
  "fluentbase-codec",
@@ -2230,6 +2227,22 @@ dependencies = [
  "hex",
  "revm",
  "rwasm",
+]
+
+[[package]]
+name = "fluentbase-types"
+version = "0.4.10-dev"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
+dependencies = [
+ "alloy-primitives",
+ "bincode 2.0.1",
+ "byteorder",
+ "hashbrown 0.15.5",
+ "paste",
+ "revm-precompile",
+ "revm-primitives",
+ "rwasm",
+ "strum_macros 0.27.2",
 ]
 
 [[package]]
@@ -2249,7 +2262,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-universal-token"
 version = "0.4.10-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#37cf5576ffec99a9d1a56e7ac330f2f565675f40"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=feat%2Fweierstrass-curves#1a65c8a94218743ebcc689467def3769fda4daf0"
 dependencies = [
  "bincode 2.0.1",
  "fluentbase-sdk",
@@ -2912,7 +2925,7 @@ dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
  "num-bigint 0.4.6",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -3522,7 +3535,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "21e0a3a33733faeaf8651dfee72dd0f388f0c8e5ad496a3478fa5a922f49cfa8"
 dependencies = [
  "memchr",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
  "ucd-trie",
 ]
 
@@ -3753,9 +3766,9 @@ checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
 name = "quote"
-version = "1.0.40"
+version = "1.0.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
+checksum = "ce25767e7b499d1b604768e7cde645d14cc8584231ea6b295e9c9eb22c02e1d1"
 dependencies = [
  "proc-macro2",
 ]
@@ -3943,18 +3956,18 @@ dependencies = [
 
 [[package]]
 name = "ref-cast"
-version = "1.0.24"
+version = "1.0.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a0ae411dbe946a674d89546582cea4ba2bb8defac896622d6496f14c23ba5cf"
+checksum = "f354300ae66f76f1c85c5f84693f0ce81d747e2c3f21a45fef496d89c960bf7d"
 dependencies = [
  "ref-cast-impl",
 ]
 
 [[package]]
 name = "ref-cast-impl"
-version = "1.0.24"
+version = "1.0.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1165225c21bff1f3bbce98f5a1f889949bc902d3575308cc7b0de30b4f6d27c7"
+checksum = "b7186006dcb21920990093f30e3dea63b7d6e977bf1256be20c3563a5db070da"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4287,7 +4300,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -5443,7 +5456,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -5466,11 +5479,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.16"
+version = "2.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3467d614147380f2e4e374161426ff399c91084acd2363eaf549172b3d5e60c0"
+checksum = "f63587ca0f12b72a0600bcba1d40081f830876000bb46dd2337a3051618f4fc8"
 dependencies = [
- "thiserror-impl 2.0.16",
+ "thiserror-impl 2.0.17",
 ]
 
 [[package]]
@@ -5486,9 +5499,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.16"
+version = "2.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c5e1be1c48b9172ee610da68fd9cd2770e7a4056cb3fc98710ee6906f0c7960"
+checksum = "3ff15c8ecd7de3849db632e14d18d2571fa09dfc5ed93479bc4485c7a517c913"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5684,9 +5697,9 @@ dependencies = [
 
 [[package]]
 name = "typenum"
-version = "1.18.0"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dccffe3ce07af9386bfd29e80c0ab1a8205a2fc34e4bcd40364df902cfa8f3f"
+checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 
 [[package]]
 name = "ucd-trie"
@@ -6128,7 +6141,7 @@ dependencies = [
  "pulley-interpreter",
  "smallvec",
  "target-lexicon",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
  "wasmparser 0.233.0",
  "wasmtime-environ",
  "wasmtime-math",
@@ -6311,7 +6324,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -6332,7 +6345,7 @@ dependencies = [
  "regalloc2",
  "smallvec",
  "target-lexicon",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
  "wasmparser 0.233.0",
  "wasmtime-cranelift",
  "wasmtime-environ",
@@ -6433,6 +6446,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
 dependencies = [
  "windows-targets 0.53.4",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.61.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f109e41dd4a3c848907eb83d5a42ea98b3769495597450cf6d153507b166f0f"
+dependencies = [
+ "windows-link",
 ]
 
 [[package]]
@@ -6639,9 +6661,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.8.1"
+version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"
+checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
 dependencies = [
  "zeroize_derive",
 ]

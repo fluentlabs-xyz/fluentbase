@@ -206,7 +206,6 @@ mod tests {
 
         let add =
             |ac0: &BigUint, ac1: &BigUint, bc0: &BigUint, bc1: &BigUint| -> (BigUint, BigUint) {
-                let bytes = ac0.to_bytes_le();
                 let (res0, res1) = syscall_tower_fp2_bn254_add_impl(
                     big_uint_into_bytes(ac0),
                     big_uint_into_bytes(ac1),
@@ -302,7 +301,6 @@ mod tests {
 
         let add =
             |ac0: &BigUint, ac1: &BigUint, bc0: &BigUint, bc1: &BigUint| -> (BigUint, BigUint) {
-                let bytes = ac0.to_bytes_le();
                 let (res0, res1) = syscall_tower_fp2_bls12381_add_impl(
                     big_uint_into_bytes(ac0),
                     big_uint_into_bytes(ac1),

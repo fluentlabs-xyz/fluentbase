@@ -17,8 +17,10 @@ pub mod utils;
 cfg_if::cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
         pub type CryptoRuntime = fluentbase_types::RwasmContext;
-    } else {
+    } else if #[cfg(feature = "std")] {
         pub type CryptoRuntime = fluentbase_runtime::RuntimeContextWrapper;
+    } else {
+        compile_error!("fluentbase-crypto can't be used in this mode");
     }
 }
 

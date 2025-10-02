@@ -36,8 +36,8 @@ impl AffinePoint<N> for Ed25519AffinePoint {
     }
 
     fn add_assign(&mut self, other: &Self) {
-        let a = self.limbs_mut();
-        let b = other.limbs_ref();
+        let _a = self.limbs_mut();
+        let _b = other.limbs_ref();
         unimplemented!()
     }
 
@@ -47,7 +47,7 @@ impl AffinePoint<N> for Ed25519AffinePoint {
 
     /// In Edwards curves, doubling is the same as adding a point to itself.
     fn double(&mut self) {
-        let a = self.limbs_mut();
+        let _a = self.limbs_mut();
         unimplemented!()
     }
 }

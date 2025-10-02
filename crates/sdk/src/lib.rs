@@ -23,22 +23,6 @@ pub use address::*;
 pub use allocator::*;
 pub use fluentbase_codec as codec;
 pub use fluentbase_crypto as crypto;
-// pub mod crypto {
-//     use fluentbase_types::B256;
-//
-//     pub fn crypto_keccak256(data: &[u8]) -> B256 {
-//         unimplemented!()
-//     }
-//     pub fn crypto_sha256(data: &[u8]) -> B256 {
-//         unimplemented!()
-//     }
-//     pub fn crypto_poseidon(parameters: u32, endianness: u32, data: &[u8]) -> B256 {
-//         unimplemented!()
-//     }
-//     pub fn crypto_blake3(data: &[u8]) -> B256 {
-//         unimplemented!()
-//     }
-// }
 pub use fluentbase_sdk_derive as derive;
 pub use fluentbase_types::*;
 pub use types::*;
@@ -50,3 +34,9 @@ macro_rules! include_this_wasm {
         include_bytes!(env!("FLUENTBASE_WASM_ARTIFACT_PATH"))
     };
 }
+
+#[cfg(all(not(feature = "std"), not(target_arch = "wasm32")))]
+compile_error!("non-std mode is only supported for the wasm32 target");
+
+#[cfg(target_endian = "big")]
+compile_error!("fluentbase-sdk is not implemented for big-endian targets");

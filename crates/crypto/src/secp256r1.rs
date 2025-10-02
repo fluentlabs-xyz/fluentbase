@@ -55,8 +55,8 @@ impl AffinePoint<N> for Secp256r1Point {
     }
 
     fn add_assign(&mut self, other: &Self) {
-        let a = self.limbs_mut();
-        let b = other.limbs_ref();
+        let _a = self.limbs_mut();
+        let _b = other.limbs_ref();
         unimplemented!()
     }
 
@@ -67,7 +67,7 @@ impl AffinePoint<N> for Secp256r1Point {
     fn double(&mut self) {
         match &mut self.0 {
             WeierstrassPoint::Infinity => (),
-            WeierstrassPoint::Affine(limbs) => unsafe { unimplemented!() },
+            WeierstrassPoint::Affine(_limbs) => unimplemented!(),
         }
     }
 }

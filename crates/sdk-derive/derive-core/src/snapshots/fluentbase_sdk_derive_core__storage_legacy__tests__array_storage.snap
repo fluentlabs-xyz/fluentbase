@@ -24,7 +24,7 @@ impl Arr {
         use fluentbase_sdk::NativeAPI;
         let mut key = Self::SLOT;
         let storage_key = {
-            let storage_key = fluentbase_sdk::crypto::crypto_keccak256(&key.to_be_bytes::<32>());
+            let storage_key = SDK::keccak256(&key.to_be_bytes::<32>());
             fluentbase_sdk::U256::from_be_bytes(storage_key.0)
         };
         key = storage_key + arg0;
@@ -66,17 +66,17 @@ impl NestedArr {
         use fluentbase_sdk::NativeAPI;
         let mut key = Self::SLOT;
         let storage_key = {
-            let storage_key = fluentbase_sdk::crypto::crypto_keccak256(&key.to_be_bytes::<32>());
+            let storage_key = SDK::keccak256(&key.to_be_bytes::<32>());
             fluentbase_sdk::U256::from_be_bytes(storage_key.0)
         };
         key = storage_key + arg0;
         let storage_key = {
-            let storage_key = fluentbase_sdk::crypto::crypto_keccak256(&key.to_be_bytes::<32>());
+            let storage_key = SDK::keccak256(&key.to_be_bytes::<32>());
             fluentbase_sdk::U256::from_be_bytes(storage_key.0)
         };
         key = storage_key + arg1;
         let storage_key = {
-            let storage_key = fluentbase_sdk::crypto::crypto_keccak256(&key.to_be_bytes::<32>());
+            let storage_key = SDK::keccak256(&key.to_be_bytes::<32>());
             fluentbase_sdk::U256::from_be_bytes(storage_key.0)
         };
         key = storage_key + arg2;

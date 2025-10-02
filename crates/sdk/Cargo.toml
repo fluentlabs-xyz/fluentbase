@@ -20,19 +20,20 @@ rwasm = { workspace = true }
 hashbrown = { workspace = true }
 auto_impl = { workspace = true }
 bincode = { workspace = true }
+
+[dev-dependencies]
 hex-literal = { workspace = true }
 
 [features]
 default = ["std"]
 serde = [
     "fluentbase-types/serde",
-    "fluentbase-crypto/serde",
 ]
 std = [
     "rwasm/std",
-    "fluentbase-crypto/std",
-    "fluentbase-types/std",
     "fluentbase-codec/std",
+    "fluentbase-types/std",
+    "fluentbase-crypto/std",
     "alloy-rlp/std",
 ]
 debug-print = []

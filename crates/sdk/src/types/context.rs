@@ -31,12 +31,6 @@ pub enum SharedContextInput {
 }
 
 impl SharedContextInput {
-    fn version(&self) -> u8 {
-        match self {
-            SharedContextInput::V1(_) => 0x01,
-        }
-    }
-
     pub fn decode(buf: &[u8]) -> Result<Self, bincode::error::DecodeError> {
         let config = bincode::config::legacy();
         let result = bincode::decode_from_slice(buf, config)?;

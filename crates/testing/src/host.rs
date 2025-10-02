@@ -1,9 +1,9 @@
 use core::cell::RefCell;
 use fluentbase_runtime::RuntimeContextWrapper;
 use fluentbase_sdk::{
-    bytes::Buf, calc_create4_address, Address, Bytes, ContextReader, ContractContextV1, CryptoAPI,
-    ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI,
-    SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256, FUEL_DENOM_RATE, U256,
+    bytes::Buf, calc_create4_address, Address, Bytes, ContextReader, ContractContextV1, ExitCode,
+    IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, SharedAPI,
+    SharedContextInputV1, StorageAPI, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
 use hashbrown::HashMap;
 use std::{mem::take, rc::Rc};
@@ -212,8 +212,7 @@ impl MetadataAPI for HostTestingContext {
         let account_owner = ctx
             .ownable_account_address
             .expect("ownable account address should exist");
-        let derived_metadata_address =
-            calc_create4_address(&account_owner, salt, HostTestingContextNativeAPI::keccak256);
+        let derived_metadata_address = calc_create4_address(&account_owner, salt);
         let target_address = ctx.shared_context_input_v1.contract.address;
         let res = ctx.metadata.insert(
             (target_address, derived_metadata_address),

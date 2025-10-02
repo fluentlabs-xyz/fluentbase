@@ -36,8 +36,7 @@ impl Balance {
         let mut raw_storage_key: [u8; 64] = [0; 64];
         raw_storage_key[0..32].copy_from_slice(&key.to_be_bytes::<32>());
         raw_storage_key[32..64].copy_from_slice(&slot.to_be_bytes::<32>());
-        use fluentbase_sdk::NativeAPI;
-        let storage_key = fluentbase_sdk::crypto::crypto_keccak256(&raw_storage_key[..]);
+        let storage_key = SDK::keccak256(&raw_storage_key[..]);
         fluentbase_sdk::U256::from_be_bytes(storage_key.0)
     }
     fn key<SDK: fluentbase_sdk::SharedAPI>(
@@ -97,8 +96,7 @@ impl ArbitraryData {
         let mut raw_storage_key: [u8; 64] = [0; 64];
         raw_storage_key[0..32].copy_from_slice(&key.to_be_bytes::<32>());
         raw_storage_key[32..64].copy_from_slice(&slot.to_be_bytes::<32>());
-        use fluentbase_sdk::NativeAPI;
-        let storage_key = fluentbase_sdk::crypto::crypto_keccak256(&raw_storage_key[..]);
+        let storage_key = SDK::keccak256(&raw_storage_key[..]);
         fluentbase_sdk::U256::from_be_bytes(storage_key.0)
     }
     fn key<SDK: fluentbase_sdk::SharedAPI>(
@@ -162,8 +160,7 @@ impl Allowance {
         let mut raw_storage_key: [u8; 64] = [0; 64];
         raw_storage_key[0..32].copy_from_slice(&key.to_be_bytes::<32>());
         raw_storage_key[32..64].copy_from_slice(&slot.to_be_bytes::<32>());
-        use fluentbase_sdk::NativeAPI;
-        let storage_key = fluentbase_sdk::crypto::crypto_keccak256(&raw_storage_key[..]);
+        let storage_key = SDK::keccak256(&raw_storage_key[..]);
         fluentbase_sdk::U256::from_be_bytes(storage_key.0)
     }
     fn key<SDK: fluentbase_sdk::SharedAPI>(

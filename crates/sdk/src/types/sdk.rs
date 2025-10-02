@@ -2,7 +2,7 @@ use crate::{
     evm::{write_evm_exit_message, write_evm_panic_message},
     Address, Bytes, ContextReader, ExitCode, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
-use fluentbase_types::CryptoAPI;
+use fluentbase_crypto::crypto_keccak256;
 
 pub type IsAccountOwnable = bool;
 pub type IsColdAccess = bool;
@@ -35,6 +35,12 @@ pub trait MetadataStorageAPI {
 }
 
 pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
+    /// We keep it here only for backward compatibility, but we suggest using crypto library instead.
+    /// This function can be removed in the future.
+    fn keccak256(data: &[u8]) -> B256 {
+        crypto_keccak256(data)
+    }
+
     fn context(&self) -> impl ContextReader;
 
     fn read(&self, target: &mut [u8], offset: u32);

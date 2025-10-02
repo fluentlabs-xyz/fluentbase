@@ -43,7 +43,6 @@ ark-ff = { workspace = true }
 ark-ec = { workspace = true }
 ark-serialize = { workspace = true }
 ark-bn254 = { workspace = true }
-num-bigint = { workspace = true }
 paste = { workspace = true }
 fs2 = { version = "0.4.3", optional = true }
 bytemuck = { workspace = true }

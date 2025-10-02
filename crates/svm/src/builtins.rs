@@ -19,9 +19,7 @@ use crate::{
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
-use fluentbase_sdk::{
-    crypto::crypto_poseidon, helpers::convert_endianness_flexible, SharedAPI, B256,
-};
+use fluentbase_sdk::{helpers::convert_endianness_flexible, SharedAPI, B256};
 use itertools::Itertools;
 use solana_bn254::{
     compression::prelude::convert_endianness,
@@ -752,11 +750,12 @@ declare_builtin_function!(
             inputs.extend_from_slice(v_slice);
         }
 
-        let hash = crypto_poseidon(parameters as u32, endianness as u32, &inputs);
-        if hash == B256::ZERO {
-            return Ok(1);
-        }
-        hash_result.copy_from_slice(&hash.as_slice());
+        unimplemented!();
+        // let hash = crypto_poseidon(parameters as u32, endianness as u32, &inputs);
+        // if hash == B256::ZERO {
+        //     return Ok(1);
+        // }
+        // hash_result.copy_from_slice(&hash.as_slice());
 
         Ok(SUCCESS)
     }
