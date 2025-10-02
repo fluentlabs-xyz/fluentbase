@@ -16,6 +16,7 @@ bytemuck = { workspace = true }
 elliptic-curve = { workspace = true }
 fluentbase-runtime = { workspace = true, optional = true }
 cfg-if = "1.0"
+tiny-keccak = { workspace = true }
 
 [features]
 default = ["std"]

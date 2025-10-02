@@ -35,10 +35,9 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
 
     // hashing functions (0x01)
     import_function!("_keccak256", KECCAK256, &[ValType::I32; 3], &[]);
-    // TODO: Missing "_keccak256_permute"
+    import_function!("_keccak256_permute", KECCAK256_PERMUTE, &[ValType::I32; 1], &[]);
     import_function!("_poseidon", POSEIDON, &[ValType::I32; 5], &[ValType::I32; 1]);
     // TODO: Delete "_poseidon_hash"
-    import_function!("_keccak256_permute", KECCAK256_PERMUTE, &[ValType::I32; 1], &[]);
     import_function!("_sha256_extend", SHA256_EXTEND, &[ValType::I32; 1], &[]);
     import_function!("_sha256_compress", SHA256_COMPRESS, &[ValType::I32; 2], &[]);
     import_function!("_sha256", SHA256, &[ValType::I32; 3], &[]);

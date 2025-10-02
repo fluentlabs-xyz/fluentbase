@@ -1,4 +1,4 @@
-use fluentbase_types::{
+use crate::{
     address, hex, Address, Bytes, B256, SVM_ELF_MAGIC_BYTES, UNIVERSAL_TOKEN_MAGIC_BYTES,
     WASM_MAGIC_BYTES,
 };
@@ -84,6 +84,11 @@ pub fn is_system_precompile(address: &Address) -> bool {
     PRECOMPILE_ADDRESSES.contains(address)
 }
 
+pub fn is_execute_using_aot_compiler(address: &Address) -> bool {
+    // TODO(dmitry123): Add spec check here, once we have first fork
+    PRECOMPILE_ADDRESSES.contains(address)
+}
+
 /// Resolves and returns the account owner `Address` based on the provided input byte slice.
 ///
 /// # Parameters
@@ -146,4 +151,11 @@ pub struct GenesisContract {
     pub rwasm_bytecode: Bytes,
     pub rwasm_bytecode_hash: B256,
     pub address: Address,
+}
+
+pub fn is_delegated_runtime_address(address: &Address) -> bool {
+    address == &PRECOMPILE_EVM_RUNTIME
+        || address == &PRECOMPILE_SVM_RUNTIME
+        || address == &PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
+        || address == &PRECOMPILE_WASM_RUNTIME
 }

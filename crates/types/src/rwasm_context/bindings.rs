@@ -30,10 +30,10 @@ extern "C" {
     pub fn _debug_log(msg_ptr: *const u8, msg_len: u32);
     pub fn _charge_fuel(fuel_consumed: u64);
 
-    // TODO(dmitry123): Delete me
+    #[deprecated(note = "will be removed in fluentbase_v1 schema version")]
     pub fn _keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
     pub fn _keccak256_permute(state_ptr: *mut [u64; 25]);
-    // TODO(dmitry123): Delete me
+    #[deprecated(note = "will be removed in fluentbase_v1 schema version")]
     pub fn _poseidon(
         parameters: u32,
         endianness: u32,
@@ -41,11 +41,11 @@ extern "C" {
         data_len: u32,
         output32_offset: *mut u8,
     ) -> u32;
-    pub fn _sha256_extend(w_ptr: *mut u8);
-    pub fn _sha256_compress(w_ptr: *mut u8, h_ptr: *const u8);
-    // TODO(dmitry123): Delete me
+    pub fn _sha256_extend(w: *mut [u32; 64]);
+    pub fn _sha256_compress(state: *mut [u32; 8], w: *const [u32; 64]);
+    #[deprecated(note = "will be removed in fluentbase_v1 schema version")]
     pub fn _sha256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
-    // TODO(dmitry123): Delete me
+    #[deprecated(note = "will be removed in fluentbase_v1 schema version")]
     pub fn _blake3(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
 
     pub fn _ed25519_decompress(slice_ptr: *mut u8, sign: u32);

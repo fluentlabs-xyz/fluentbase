@@ -1,7 +1,7 @@
 use crate::{
     EvmTestingContextWithGenesis, EXAMPLE_CHECKMATE, EXAMPLE_ERC20, EXAMPLE_GREETING, EXAMPLE_JSON,
-    EXAMPLE_KECCAK256, EXAMPLE_PANIC, EXAMPLE_RWASM, EXAMPLE_SECP256K1, EXAMPLE_SIMPLE_STORAGE,
-    EXAMPLE_TINY_KECCAK256,
+    EXAMPLE_KECCAK256, EXAMPLE_PANIC, EXAMPLE_RWASM, EXAMPLE_SECP256K1, EXAMPLE_SHA256,
+    EXAMPLE_SIMPLE_STORAGE, EXAMPLE_TINY_KECCAK256,
 };
 use core::str::from_utf8;
 use fluentbase_codec::{bytes::BytesMut, SolidityABI};
@@ -46,13 +46,36 @@ fn test_wasm_tiny_keccak256() {
         None,
         None,
     );
-
     println!("{:?}", result);
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default().as_ref();
     println!("bytes: {:?}", hex::encode(&bytes));
     assert_eq!(
         "a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529",
+        hex::encode(&bytes[0..32]),
+    );
+}
+
+#[test]
+fn test_wasm_sha256() {
+    // deploy greeting WASM contract
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_SHA256.into());
+    // call greeting WASM contract
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDRESS,
+        contract_address,
+        "Hello, World".into(),
+        None,
+        None,
+    );
+    println!("{:?}", result);
+    assert!(result.is_success());
+    let bytes = result.output().unwrap_or_default().as_ref();
+    println!("bytes: {:?}", hex::encode(&bytes));
+    assert_eq!(
+        "03675ac53ff9cd1535ccc7dfcdfa2c458c5218371f418dc136f2d19ac1fbe8a5",
         hex::encode(&bytes[0..32]),
     );
 }

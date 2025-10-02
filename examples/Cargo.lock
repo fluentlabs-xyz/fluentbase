@@ -39,7 +39,7 @@ dependencies = [
  "alloy-rlp",
  "crc",
  "serde",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -63,14 +63,14 @@ dependencies = [
  "alloy-rlp",
  "k256",
  "serde",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
 name = "alloy-eips"
-version = "1.0.36"
+version = "1.0.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bfec530782b30151e2564edf3c900f1fa6852128b7a993e458e8e3815d8b915"
+checksum = "ac7f1c9a1ccc7f3e03c36976455751a6166a4f0d2d2c530c3f87dfe7d0cdc836"
 dependencies = [
  "alloy-eip2124",
  "alloy-eip2930",
@@ -85,7 +85,7 @@ dependencies = [
  "serde",
  "serde_with",
  "sha2 0.10.9",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -151,9 +151,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-serde"
-version = "1.0.36"
+version = "1.0.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19c3835bdc128f2f3418f5d6c76aec63a245d72973e0eaacc9720aa0787225c5"
+checksum = "5413814be7a22fbc81e0f04a2401fcc3eb25e56fd53b04683e8acecc6e1fe01b"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -828,9 +828,9 @@ dependencies = [
 
 [[package]]
 name = "c-kzg"
-version = "2.1.4"
+version = "2.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "137a2a2878ed823ef1bd73e5441e245602aae5360022113b8ad259ca4b5b8727"
+checksum = "e00bf4b112b07b505472dbefd19e37e53307e2bfed5a79e0cc161d58ccd0e687"
 dependencies = [
  "blst",
  "cc",
@@ -877,7 +877,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
 dependencies = [
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -1609,7 +1609,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -1708,6 +1708,7 @@ dependencies = [
  "elliptic-curve",
  "fluentbase-runtime",
  "fluentbase-types",
+ "tiny-keccak",
 ]
 
 [[package]]
@@ -1833,6 +1834,14 @@ dependencies = [
  "libsecp256k1",
  "secp256k1-sys 0.10.1",
  "tiny-keccak",
+]
+
+[[package]]
+name = "fluentbase-examples-sha256"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-testing",
 ]
 
 [[package]]
@@ -1962,7 +1971,7 @@ dependencies = [
  "serde_json",
  "syn 2.0.106",
  "syn-solidity",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
  "tracing",
 ]
 
@@ -2655,7 +2664,7 @@ dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
  "num-bigint",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -3233,7 +3242,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "21e0a3a33733faeaf8651dfee72dd0f388f0c8e5ad496a3478fa5a922f49cfa8"
 dependencies = [
  "memchr",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
  "ucd-trie",
 ]
 
@@ -3476,9 +3485,9 @@ checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
 name = "quote"
-version = "1.0.40"
+version = "1.0.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
+checksum = "ce25767e7b499d1b604768e7cde645d14cc8584231ea6b295e9c9eb22c02e1d1"
 dependencies = [
  "proc-macro2",
 ]
@@ -3625,18 +3634,18 @@ dependencies = [
 
 [[package]]
 name = "ref-cast"
-version = "1.0.24"
+version = "1.0.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a0ae411dbe946a674d89546582cea4ba2bb8defac896622d6496f14c23ba5cf"
+checksum = "f354300ae66f76f1c85c5f84693f0ce81d747e2c3f21a45fef496d89c960bf7d"
 dependencies = [
  "ref-cast-impl",
 ]
 
 [[package]]
 name = "ref-cast-impl"
-version = "1.0.24"
+version = "1.0.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1165225c21bff1f3bbce98f5a1f889949bc902d3575308cc7b0de30b4f6d27c7"
+checksum = "b7186006dcb21920990093f30e3dea63b7d6e977bf1256be20c3563a5db070da"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3666,7 +3675,7 @@ checksum = "caf4aa5b0f434c91fe5c7f1ecb6a5ece2130b02ad2a590589dda5146df959001"
 [[package]]
 name = "revm"
 version = "27.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#5e3b54743cc8f1a41735f74445721c065f7f9821"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#c1706284fcdccfe0aeed76d0131663bc66e7f30a"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -3684,7 +3693,7 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "6.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#5e3b54743cc8f1a41735f74445721c065f7f9821"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#c1706284fcdccfe0aeed76d0131663bc66e7f30a"
 dependencies = [
  "bitvec",
  "once_cell",
@@ -3697,7 +3706,7 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "8.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#5e3b54743cc8f1a41735f74445721c065f7f9821"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#c1706284fcdccfe0aeed76d0131663bc66e7f30a"
 dependencies = [
  "cfg-if",
  "derive-where",
@@ -3712,7 +3721,7 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "8.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#5e3b54743cc8f1a41735f74445721c065f7f9821"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#c1706284fcdccfe0aeed76d0131663bc66e7f30a"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -3727,7 +3736,7 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "7.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#5e3b54743cc8f1a41735f74445721c065f7f9821"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#c1706284fcdccfe0aeed76d0131663bc66e7f30a"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -3740,7 +3749,7 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "7.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#5e3b54743cc8f1a41735f74445721c065f7f9821"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#c1706284fcdccfe0aeed76d0131663bc66e7f30a"
 dependencies = [
  "auto_impl",
  "either",
@@ -3752,7 +3761,7 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "8.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#5e3b54743cc8f1a41735f74445721c065f7f9821"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#c1706284fcdccfe0aeed76d0131663bc66e7f30a"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -3770,7 +3779,7 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "8.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#5e3b54743cc8f1a41735f74445721c065f7f9821"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#c1706284fcdccfe0aeed76d0131663bc66e7f30a"
 dependencies = [
  "auto_impl",
  "either",
@@ -3787,7 +3796,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "23.0.2"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#5e3b54743cc8f1a41735f74445721c065f7f9821"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#c1706284fcdccfe0aeed76d0131663bc66e7f30a"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -3798,7 +3807,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "24.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#5e3b54743cc8f1a41735f74445721c065f7f9821"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#c1706284fcdccfe0aeed76d0131663bc66e7f30a"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -3823,7 +3832,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "20.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#5e3b54743cc8f1a41735f74445721c065f7f9821"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#c1706284fcdccfe0aeed76d0131663bc66e7f30a"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -3833,7 +3842,7 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "7.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#5e3b54743cc8f1a41735f74445721c065f7f9821"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#c1706284fcdccfe0aeed76d0131663bc66e7f30a"
 dependencies = [
  "bitflags",
  "revm-bytecode",
@@ -3968,7 +3977,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -4665,7 +4674,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -4688,11 +4697,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.16"
+version = "2.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3467d614147380f2e4e374161426ff399c91084acd2363eaf549172b3d5e60c0"
+checksum = "f63587ca0f12b72a0600bcba1d40081f830876000bb46dd2337a3051618f4fc8"
 dependencies = [
- "thiserror-impl 2.0.16",
+ "thiserror-impl 2.0.17",
 ]
 
 [[package]]
@@ -4708,9 +4717,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.16"
+version = "2.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c5e1be1c48b9172ee610da68fd9cd2770e7a4056cb3fc98710ee6906f0c7960"
+checksum = "3ff15c8ecd7de3849db632e14d18d2571fa09dfc5ed93479bc4485c7a517c913"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4760,9 +4769,9 @@ dependencies = [
 [[package]]
 name = "tiny-keccak"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
+source = "git+https://github.com/rwasm-patches/tiny-keccak.git?branch=rwasm#8cc319a6f53f3275b90871a2037a7a7999940995"
 dependencies = [
+ "cfg-if",
  "crunchy",
 ]
 
@@ -4891,9 +4900,9 @@ dependencies = [
 
 [[package]]
 name = "typenum"
-version = "1.18.0"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dccffe3ce07af9386bfd29e80c0ab1a8205a2fc34e4bcd40364df902cfa8f3f"
+checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 
 [[package]]
 name = "ucd-trie"
@@ -5302,7 +5311,7 @@ dependencies = [
  "pulley-interpreter",
  "smallvec",
  "target-lexicon",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
  "wasmparser 0.233.0",
  "wasmtime-environ",
  "wasmtime-math",
@@ -5475,7 +5484,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -5496,7 +5505,7 @@ dependencies = [
  "regalloc2",
  "smallvec",
  "target-lexicon",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
  "wasmparser 0.233.0",
  "wasmtime-cranelift",
  "wasmtime-environ",
@@ -5597,6 +5606,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
 dependencies = [
  "windows-targets 0.53.4",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.61.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f109e41dd4a3c848907eb83d5a42ea98b3769495597450cf6d153507b166f0f"
+dependencies = [
+ "windows-link",
 ]
 
 [[package]]
@@ -5792,9 +5810,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.8.1"
+version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"
+checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
 dependencies = [
  "zeroize_derive",
 ]

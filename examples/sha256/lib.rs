@@ -1,13 +1,13 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, crypto::crypto_keccak256, entrypoint, SharedAPI};
+use fluentbase_sdk::{alloc_slice, crypto::crypto_sha256, entrypoint, SharedAPI};
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let input_size = sdk.input_size();
     let input = alloc_slice(input_size as usize);
     sdk.read(input, 0);
-    let hash = crypto_keccak256(input);
+    let hash = crypto_sha256(input); // calculate the hash via syscall to builtin keccak256
     sdk.write(&hash.as_slice());
 }
 
@@ -26,7 +26,7 @@ mod tests {
         let output = sdk.take_output();
         assert_eq!(
             &output[0..32],
-            hex!("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529")
+            hex!("03675ac53ff9cd1535ccc7dfcdfa2c458c5218371f418dc136f2d19ac1fbe8a5")
         );
     }
 }

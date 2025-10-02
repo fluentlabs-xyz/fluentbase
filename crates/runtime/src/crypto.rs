@@ -1,16 +1,16 @@
 use crate::{
     syscall_handler::{
-        ecc_add, syscall_ed25519_decompress_impl, syscall_edwards_add_impl, Bls12381G1AddConfig,
-        Bls12381G1MapConfig, Bls12381G1MulConfig, Bls12381G2AddConfig, Bls12381G2MapConfig,
-        Bls12381G2MulConfig, Bn254G1AddConfig, Bn254G1MulConfig, Bn254G2DecompressConfig,
-        SyscallBlake3, SyscallEccCompressDecompress, SyscallEccDouble, SyscallEccMapping,
-        SyscallEccMsm, SyscallEccMul, SyscallEccPairing, SyscallKeccak256, SyscallPoseidon,
-        SyscallSha256,
+        ecc_add, syscall_ed25519_decompress_impl, syscall_edwards_add_impl,
+        syscall_hashing_keccak256_permute_impl, syscall_hashing_sha256_compress_impl,
+        syscall_hashing_sha256_extend_impl, Bls12381G1AddConfig, Bls12381G1MapConfig,
+        Bls12381G1MulConfig, Bls12381G2AddConfig, Bls12381G2MapConfig, Bls12381G2MulConfig,
+        Bn254G1AddConfig, Bn254G1MulConfig, Bn254G2DecompressConfig, SyscallEccCompressDecompress,
+        SyscallEccDouble, SyscallEccMapping, SyscallEccMsm, SyscallEccMul, SyscallEccPairing,
     },
     RuntimeContextWrapper,
 };
 use fluentbase_types::{
-    CryptoAPI, ExitCode, UnwrapExitCode, B256, BN254_G1_POINT_COMPRESSED_SIZE,
+    CryptoAPI, ExitCode, UnwrapExitCode, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
     G1_COMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
@@ -20,26 +20,16 @@ use fluentbase_types::{
 use sp1_curves::weierstrass::{bls12_381::Bls12381, bn254::Bn254};
 
 impl CryptoAPI for RuntimeContextWrapper {
-    fn keccak256(data: &[u8]) -> B256 {
-        SyscallKeccak256::fn_impl(data)
+    fn keccak256_permute(state: &mut [u64; 25]) {
+        syscall_hashing_keccak256_permute_impl(state);
     }
-    fn keccak256_permute(_state: &mut [u64; 25]) {
-        unimplemented!()
+
+    fn sha256_extend(w: &mut [u32; 64]) {
+        syscall_hashing_sha256_extend_impl(w);
     }
-    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> B256 {
-        SyscallPoseidon::fn_impl(parameters as u64, endianness as u64, data).unwrap_exit_code()
-    }
-    fn sha256_extend(_state: &mut [u8]) {
-        unimplemented!()
-    }
-    fn sha256_compress(_state: &mut [u8]) -> B256 {
-        unimplemented!()
-    }
-    fn sha256(data: &[u8]) -> B256 {
-        SyscallSha256::fn_impl(data)
-    }
-    fn blake3(data: &[u8]) -> B256 {
-        SyscallBlake3::fn_impl(data)
+
+    fn sha256_compress(state: &mut [u32; 8], w: &[u32; 64]) {
+        syscall_hashing_sha256_compress_impl(state, w);
     }
 
     fn ed25519_decompress(
@@ -275,9 +265,10 @@ impl CryptoAPI for RuntimeContextWrapper {
     fn bn254_g1_compress(
         point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
-        let result = SyscallEccCompressDecompress::<
-            crate::syscall_handler::ecc::Bn254G1CompressConfig,
-        >::fn_impl(point)?;
+        let result =
+            SyscallEccCompressDecompress::<crate::syscall_handler::Bn254G1CompressConfig>::fn_impl(
+                point,
+            )?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
 
@@ -285,7 +276,7 @@ impl CryptoAPI for RuntimeContextWrapper {
         point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
         let result = SyscallEccCompressDecompress::<
-            crate::syscall_handler::ecc::Bn254G1DecompressConfig,
+            crate::syscall_handler::Bn254G1DecompressConfig,
         >::fn_impl(point)?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
@@ -293,9 +284,10 @@ impl CryptoAPI for RuntimeContextWrapper {
     fn bn254_g2_compress(
         point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
-        let result = SyscallEccCompressDecompress::<
-            crate::syscall_handler::ecc::Bn254G2CompressConfig,
-        >::fn_impl(point)?;
+        let result =
+            SyscallEccCompressDecompress::<crate::syscall_handler::Bn254G2CompressConfig>::fn_impl(
+                point,
+            )?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
     }
 

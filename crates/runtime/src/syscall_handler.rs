@@ -11,11 +11,10 @@ mod hashing;
 pub use hashing::*;
 mod uint256;
 pub use uint256::*;
-pub mod ecc;
-pub mod tower;
-
-use crate::syscall_handler::tower::{tower_fp1_add_sub_mul, tower_fp2_add_sub_mul};
+mod ecc;
 pub use ecc::*;
+mod tower;
+pub use tower::*;
 
 /// Routes a syscall identified by func_idx to the corresponding runtime instruction handler.
 pub(crate) fn runtime_syscall_handler(
@@ -57,13 +56,13 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::CHARGE_FUEL => SyscallChargeFuel::fn_handler(caller, params, result),
 
         // hashing functions (0x01)
-        SysFuncIdx::KECCAK256 => SyscallKeccak256::fn_handler(caller, params, result),
-        SysFuncIdx::KECCAK256_PERMUTE => SyscallKeccak256Permute::fn_handler(caller, params, result),
-        SysFuncIdx::POSEIDON => SyscallPoseidon::fn_handler(caller, params, result),
-        SysFuncIdx::SHA256_EXTEND => SyscallSha256Extend::fn_handler(caller, params, result),
-        SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller, params, result),
-        SysFuncIdx::SHA256 => SyscallSha256::fn_handler(caller, params, result),
-        SysFuncIdx::BLAKE3 => SyscallBlake3::fn_handler(caller, params, result),
+        SysFuncIdx::KECCAK256 => syscall_hashing_keccak256_handler(caller, params, result),
+        SysFuncIdx::KECCAK256_PERMUTE => syscall_hashing_keccak256_permute_handler(caller, params, result),
+        SysFuncIdx::POSEIDON => syscall_hashing_poseidon_handler(caller, params, result),
+        SysFuncIdx::SHA256_EXTEND => syscall_hashing_sha256_extend_handler(caller, params, result),
+        SysFuncIdx::SHA256_COMPRESS => syscall_hashing_sha256_compress_handler(caller, params, result),
+        SysFuncIdx::SHA256 => syscall_hashing_sha256_handler(caller, params, result),
+        SysFuncIdx::BLAKE3 => syscall_hashing_blak3_handler(caller, params, result),
 
         // ed25519 (0x02)
         SysFuncIdx::ED25519_DECOMPRESS => syscall_ed25519_decompress_handler(caller, params, result),
@@ -73,18 +72,18 @@ pub fn invoke_runtime_handler(
         // SysFuncIdx::ED25519_MUL => SyscallCurve25519EdwardsMul::fn_handler(caller, params, result),
 
         // fp1/fp2 tower field (0x03)
-        SysFuncIdx::TOWER_FP1_BN254_ADD => tower_fp1_add_sub_mul::syscall_tower_fp1_bn254_add_handler(caller, params, result),
-        SysFuncIdx::TOWER_FP1_BN254_SUB => tower_fp1_add_sub_mul::syscall_tower_fp1_bn254_sub_handler(caller, params, result),
-        SysFuncIdx::TOWER_FP1_BN254_MUL => tower_fp1_add_sub_mul::syscall_tower_fp1_bn254_mul_handler(caller, params, result),
-        SysFuncIdx::TOWER_FP1_BLS12381_ADD => tower_fp1_add_sub_mul::syscall_tower_fp1_bls12381_add_handler(caller, params, result),
-        SysFuncIdx::TOWER_FP1_BLS12381_SUB => tower_fp1_add_sub_mul::syscall_tower_fp1_bls12381_sub_handler(caller, params, result),
-        SysFuncIdx::TOWER_FP1_BLS12381_MUL => tower_fp1_add_sub_mul::syscall_tower_fp1_bls12381_mul_handler(caller, params, result),
-        SysFuncIdx::TOWER_FP2_BN254_ADD => tower_fp2_add_sub_mul::syscall_tower_fp2_bn254_add_handler(caller, params, result),
-        SysFuncIdx::TOWER_FP2_BN254_SUB => tower_fp2_add_sub_mul::syscall_tower_fp2_bn254_sub_handler(caller, params, result),
-        SysFuncIdx::TOWER_FP2_BN254_MUL => tower_fp2_add_sub_mul::syscall_tower_fp2_bn254_mul_handler(caller, params, result),
-        SysFuncIdx::TOWER_FP2_BLS12381_ADD => tower_fp2_add_sub_mul::syscall_tower_fp2_bls12381_add_handler(caller, params, result),
-        SysFuncIdx::TOWER_FP2_BLS12381_SUB => tower_fp2_add_sub_mul::syscall_tower_fp2_bls12381_sub_handler(caller, params, result),
-        SysFuncIdx::TOWER_FP2_BLS12381_MUL => tower_fp2_add_sub_mul::syscall_tower_fp2_bls12381_mul_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP1_BN254_ADD => syscall_tower_fp1_bn254_add_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP1_BN254_SUB => syscall_tower_fp1_bn254_sub_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP1_BN254_MUL => syscall_tower_fp1_bn254_mul_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP1_BLS12381_ADD => syscall_tower_fp1_bls12381_add_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP1_BLS12381_SUB => syscall_tower_fp1_bls12381_sub_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP1_BLS12381_MUL => syscall_tower_fp1_bls12381_mul_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP2_BN254_ADD => syscall_tower_fp2_bn254_add_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP2_BN254_SUB => syscall_tower_fp2_bn254_sub_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP2_BN254_MUL => syscall_tower_fp2_bn254_mul_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP2_BLS12381_ADD => syscall_tower_fp2_bls12381_add_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP2_BLS12381_SUB => syscall_tower_fp2_bls12381_sub_handler(caller, params, result),
+        SysFuncIdx::TOWER_FP2_BLS12381_MUL => syscall_tower_fp2_bls12381_mul_handler(caller, params, result),
 
         // secp256k1 (0x04)
         SysFuncIdx::SECP256K1_ADD => ecc_add::ecc_add_handler::<Secp256k1AddConfig>(caller, params, result),

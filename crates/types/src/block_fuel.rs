@@ -63,6 +63,7 @@ macro_rules! no_fuel {
 }
 
 /// Values are loosely based on the EVM opcodes in the revm interpreter.
+pub const DEFAULT_FUEL_COST: u32 = 1_000;
 pub const KECCAK_BASE_FUEL_COST: u32 = 30_000;
 pub const KECCAK_WORD_FUEL_COST: u32 = 6_000;
 pub const COPY_WORD_FUEL_COST: u32 = 3_000;

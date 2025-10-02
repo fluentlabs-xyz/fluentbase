@@ -185,6 +185,7 @@ thiserror = "2.0"
 array-bytes = "1.6.0"
 
 [patch.crates-io]
+tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
 #rwasm = { path = "../rwasm", default-features = false }
 
 [workspace.lints]

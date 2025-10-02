@@ -16,12 +16,12 @@ readme = "README.md"
 
 [workspace.dependencies]
 # fluentbase
-fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
-fluentbase-universal-token = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
-fluentbase-evm = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
-fluentbase-svm-common = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
-fluentbase-svm = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves", default-features = false }
-fluentbase-testing = { git = "https://github.com/fluentlabs-xyz/fluentbase.git", branch = "feat/weierstrass-curves" }
+fluentbase-sdk = { path = "../crates/sdk", default-features = false }
+fluentbase-universal-token = { path = "../crates/universal-token", default-features = false }
+fluentbase-evm = { path = "../crates/evm", default-features = false }
+fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
+fluentbase-svm = { path = "../crates/svm", default-features = false }
+fluentbase-testing = { path = "../crates/testing", default-features = false }
 # revm
 revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
 # solana
@@ -51,6 +51,9 @@ debug = false
 strip = "symbols"
 
 [patch.crates-io]
+# patch tiny-keccak
+tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
+# patch fluentbase
 fluentbase-sdk = { path = "../crates/sdk" }
 fluentbase-universal-token = { path = "../crates/universal-token" }
 fluentbase-evm = { path = "../crates/evm" }

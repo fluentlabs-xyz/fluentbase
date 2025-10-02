@@ -7,6 +7,7 @@ mod bytecode;
 mod crypto_api;
 mod curves;
 mod exit_code;
+mod genesis;
 mod import_linker;
 mod native_api;
 #[cfg(target_arch = "wasm32")]
@@ -21,6 +22,7 @@ pub use byteorder;
 pub use crypto_api::*;
 pub use curves::*;
 pub use exit_code::*;
+pub use genesis::*;
 pub use hashbrown::{self, hash_map, hash_set, HashMap, HashSet};
 pub use import_linker::*;
 pub use native_api::*;

@@ -3,7 +3,6 @@ use crate::{
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE,
     EDWARDS_DECOMPRESSED_SIZE, TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
 };
-use alloy_primitives::B256;
 
 /// A low-level API that provides access to crypto-related functions, including:
 /// - hashing (keccak256, sha256)
@@ -12,17 +11,9 @@ use alloy_primitives::B256;
 /// - bls12381
 /// - bn254
 pub trait CryptoAPI {
-    #[deprecated(note = "will be removed")]
-    fn keccak256(data: &[u8]) -> B256;
     fn keccak256_permute(state: &mut [u64; 25]);
-    #[deprecated(note = "will be removed")]
-    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> B256;
-    fn sha256_extend(state: &mut [u8]);
-    fn sha256_compress(state: &mut [u8]) -> B256;
-    #[deprecated(note = "will be removed")]
-    fn sha256(data: &[u8]) -> B256;
-    #[deprecated(note = "will be removed")]
-    fn blake3(data: &[u8]) -> B256;
+    fn sha256_extend(w: &mut [u32; 64]);
+    fn sha256_compress(state: &mut [u32; 8], w: &[u32; 64]);
 
     fn ed25519_decompress(
         y: [u8; EDWARDS_COMPRESSED_SIZE],

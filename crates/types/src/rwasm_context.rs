@@ -1,5 +1,5 @@
 use crate::{
-    BytecodeOrHash, CryptoAPI, ExitCode, NativeAPI, B256, BN254_G1_POINT_COMPRESSED_SIZE,
+    BytecodeOrHash, CryptoAPI, ExitCode, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
     TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
@@ -120,63 +120,24 @@ impl NativeAPI for RwasmContext {
 
 impl CryptoAPI for RwasmContext {
     #[inline(always)]
-    fn keccak256(data: &[u8]) -> B256 {
+    fn keccak256_permute(state: &mut [u64; 25]) {
         unsafe {
-            let mut res = B256::ZERO;
-            _keccak256(
-                data.as_ptr(),
-                data.len() as u32,
-                res.as_mut_slice().as_mut_ptr(),
-            );
-            res
+            _keccak256_permute(state.as_mut_ptr() as *mut [u64; 25]);
         }
     }
     #[inline(always)]
-    fn keccak256_permute(_state: &mut [u64; 25]) {
-        unimplemented!()
-    }
-    #[inline(always)]
-    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> B256 {
+    fn sha256_extend(w: &mut [u32; 64]) {
         unsafe {
-            let mut res = B256::ZERO;
-            _ = _poseidon(
-                parameters,
-                endianness,
-                data.as_ptr(),
-                data.len() as u32,
-                res.as_mut_ptr(),
-            );
-            res
-        }
-    }
-    fn sha256_extend(_state: &mut [u8]) {
-        unimplemented!()
-    }
-    fn sha256_compress(_state: &mut [u8]) -> B256 {
-        unimplemented!()
-    }
-    #[inline(always)]
-    fn sha256(data: &[u8]) -> B256 {
-        unsafe {
-            let mut res = B256::ZERO;
-            _sha256(
-                data.as_ptr(),
-                data.len() as u32,
-                res.as_mut_slice().as_mut_ptr(),
-            );
-            res
+            _sha256_extend(w.as_mut_ptr() as *mut [u32; 64]);
         }
     }
     #[inline(always)]
-    fn blake3(data: &[u8]) -> B256 {
+    fn sha256_compress(state: &mut [u32; 8], w: &[u32; 64]) {
         unsafe {
-            let mut res = B256::ZERO;
-            _blake3(
-                data.as_ptr(),
-                data.len() as u32,
-                res.as_mut_slice().as_mut_ptr(),
+            _sha256_compress(
+                state.as_mut_ptr() as *mut [u32; 8],
+                w.as_ptr() as *mut [u32; 64],
             );
-            res
         }
     }
 

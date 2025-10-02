@@ -100,7 +100,7 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
         let start = Instant::now();
         let rwasm_bytecode =
             compile_wasm_to_rwasm_with_config(contract.wasm_bytecode, config.clone())
-                .expect("failed to compile wasm to rwasm");
+                .expect(format!("failed to compile ({}), because of: ", contract.name).as_str());
         assert_eq!(rwasm_bytecode.constructor_params.len(), 0);
         let rwasm_bytecode: Bytes = rwasm_bytecode.rwasm_module.serialize().into();
         let hash = keccak256(rwasm_bytecode.as_ref());

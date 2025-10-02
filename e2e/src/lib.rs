@@ -66,6 +66,7 @@ pub const EXAMPLE_SIMPLE_STORAGE: &[u8] =
 pub const EXAMPLE_STORAGE: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_STORAGE.wasm_bytecode;
 pub const EXAMPLE_TINY_KECCAK256: &[u8] =
     fluentbase_contracts::FLUENTBASE_EXAMPLES_TINY_KECCAK.wasm_bytecode;
+pub const EXAMPLE_SHA256: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_SHA256.wasm_bytecode;
 
 pub trait EvmTestingContextWithGenesis {
     fn with_full_genesis(self) -> Self;
