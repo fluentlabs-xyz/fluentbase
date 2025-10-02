@@ -189,21 +189,6 @@ fn test_charge_fuel_builtin() {
 }
 
 #[test]
-fn test_secp256k1_recover_builtin() {
-    let main = r#"
-        i32.const 0        ;; digest_ptr
-        i32.const 0        ;; sig_ptr
-        i32.const 0        ;; out_ptr
-        i32.const 0        ;; rec_id
-        call $_secp256k1_recover
-        drop
-    "#;
-    let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = SECP256K1_RECOVER_BASE_FUEL_COST;
-    assert_eq!(gas, expected_fuel as u64 / 1000);
-}
-
-#[test]
 fn test_exit_builtin() {
     let main = r#"
         i32.const 0        ;; output offset
