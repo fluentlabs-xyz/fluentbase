@@ -3,7 +3,6 @@ use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
     calc_create_address, Address, Bytes, CHARGE_FUEL_BASE_COST, COPY_BASE_FUEL_COST,
     COPY_WORD_FUEL_COST, KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST, LOW_FUEL_COST,
-    SECP256K1_RECOVER_BASE_FUEL_COST,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use revm::{

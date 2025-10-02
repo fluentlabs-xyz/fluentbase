@@ -2364,7 +2364,6 @@ dependencies = [
  "sp1-primitives",
  "tiny-keccak",
  "wasmtime",
- "wat",
 ]
 
 [[package]]

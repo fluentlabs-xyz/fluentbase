@@ -2039,7 +2039,6 @@ dependencies = [
  "group",
  "k256",
  "num",
- "num-bigint",
  "p256",
  "paste",
  "rwasm",

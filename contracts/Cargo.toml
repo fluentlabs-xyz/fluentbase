@@ -57,5 +57,5 @@ fluentbase-evm = { path = "../crates/evm" }
 fluentbase-svm-common = { path = "../crates/svm-common" }
 fluentbase-svm = { path = "../crates/svm" }
 fluentbase-testing = { path = "../crates/testing" }
-#revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
-#ecdsa = { path = "../../../signatures/ecdsa", default-features = false, features = ["hazmat", "verifying"] }
+#revm-precompile = { path = "../../revm-rwasm/crates/precompile" }
+#ecdsa = { path = "../../signatures/ecdsa" }

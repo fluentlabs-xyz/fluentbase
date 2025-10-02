@@ -52,7 +52,6 @@ core_affinity = { version = "0.8.3", optional = true }
 
 [dev-dependencies]
 sha2 = { workspace = true, default-features = false }
-wat = { version = "1.0.69" }
 hex-literal = { workspace = true }
 
 [features]
