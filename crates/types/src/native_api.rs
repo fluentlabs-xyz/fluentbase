@@ -42,6 +42,9 @@ pub trait NativeAPI {
     /// In contrast to `_charge_fuel_manually`, can be called from untrusted code since it can only
     /// charge fuel.
     fn charge_fuel(&self, fuel_consumed: u64);
+    fn enter_unconstrained(&self);
+    fn exit_unconstrained(&self);
+    fn write_fd(&self, fd: u32, slice: &[u8]);
 
     fn input(&self) -> Bytes {
         let input_size = self.input_size();

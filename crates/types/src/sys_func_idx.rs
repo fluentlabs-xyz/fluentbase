@@ -21,6 +21,9 @@ pub enum SysFuncIdx {
     // PREIMAGE_COPY = 0x000f,
     DEBUG_LOG = 0x0010,
     CHARGE_FUEL = 0x0011,
+    ENTER_UNCONSTRAINED = 0x0012,
+    EXIT_UNCONSTRAINED = 0x0013,
+    WRITE_FD = 0x0014,
 
     // hashing functions (0x01)
     // #[deprecated(note = "use permute instead")]
@@ -83,16 +86,6 @@ pub enum SysFuncIdx {
     // uint256 (0x08)
     UINT256_MUL_MOD = 0x0801,
     UINT256_X2048_MUL = 0x0802,
-
-    // sp1 (0x51)
-    WRITE_FD = 0x5101,
-    ENTER_UNCONSTRAINED = 0x5102,
-    EXIT_UNCONSTRAINED = 0x5103,
-    COMMIT = 0x5104,
-    COMMIT_DEFERRED_PROOFS = 0x5105,
-    VERIFY_SP1_PROOF = 0x5106,
-    HINT_LEN = 0x5107,
-    HINT_READ = 0x5108,
 }
 
 impl Into<u32> for SysFuncIdx {

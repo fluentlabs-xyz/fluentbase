@@ -103,11 +103,6 @@ pub trait CryptoAPI {
         point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode>;
 
-    // fn _uint256_mul_mod(x32_ptr: *mut u8, y32_ptr: *const u8, m32_ptr: *const u8);
-    // fn _uint256_x2048_mul(
-    //     a32_ptr: *const u8,
-    //     b32_ptr: *const u8,
-    //     lo32_ptr: *mut u8,
-    //     hi32_ptr: *mut u8,
-    // );
+    fn uint256_mul_mod(x: &[u8; 32], y: &[u8; 32], m: &[u8; 32]) -> [u8; 32];
+    fn uint256_x2048_mul(a: &[u8; 32], b: &[u8; 256]) -> ([u8; 256], [u8; 32]);
 }

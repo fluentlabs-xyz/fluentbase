@@ -7,7 +7,7 @@ use crate::{
     ExecutionResult, NextAction,
 };
 use fluentbase_runtime::{
-    syscall_handler::{SyscallExec, SyscallResume},
+    syscall_handler::{syscall_exec_impl, syscall_resume_impl},
     RuntimeContext,
 };
 use fluentbase_sdk::{
@@ -196,7 +196,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     if is_gas_free {
         runtime_context = runtime_context.with_disabled_fuel();
     }
-    let (fuel_consumed, fuel_refunded, exit_code) = SyscallExec::fn_impl(
+    let (fuel_consumed, fuel_refunded, exit_code) = syscall_exec_impl(
         &mut runtime_context,
         bytecode_hash,
         BytesOrRef::Bytes(context_input.into()),
@@ -282,7 +282,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     if inputs.is_gas_free {
         runtime_context = runtime_context.with_disabled_fuel();
     }
-    let (fuel_consumed, fuel_refunded, exit_code) = SyscallResume::fn_impl(
+    let (fuel_consumed, fuel_refunded, exit_code) = syscall_resume_impl(
         &mut runtime_context,
         inputs.call_id,
         result.output.as_ref(),

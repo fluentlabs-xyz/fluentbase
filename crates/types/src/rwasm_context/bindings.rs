@@ -29,6 +29,9 @@ extern "C" {
     pub fn _fuel() -> u64;
     pub fn _debug_log(msg_ptr: *const u8, msg_len: u32);
     pub fn _charge_fuel(fuel_consumed: u64);
+    pub fn _enter_unconstrained();
+    pub fn _exit_unconstrained();
+    pub fn _write_fd(fd: u32, slice_ptr: *const u8, slice_len: u32);
 
     #[deprecated(note = "will be removed in fluentbase_v1 schema version")]
     pub fn _keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);

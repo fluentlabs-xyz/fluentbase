@@ -40,20 +40,23 @@ pub fn invoke_runtime_handler(
 ) -> Result<(), TrapCode> {
     match sys_func_idx {
         // input/output & state control (0x00)
-        SysFuncIdx::EXIT => SyscallExit::fn_handler(caller, params, result),
-        SysFuncIdx::STATE => SyscallState::fn_handler(caller, params, result),
-        SysFuncIdx::READ_INPUT => SyscallRead::fn_handler(caller, params, result),
-        SysFuncIdx::INPUT_SIZE => SyscallInputSize::fn_handler(caller, params, result),
-        SysFuncIdx::WRITE_OUTPUT => SyscallWrite::fn_handler(caller, params, result),
-        SysFuncIdx::OUTPUT_SIZE => SyscallOutputSize::fn_handler(caller, params, result),
-        SysFuncIdx::READ_OUTPUT => SyscallReadOutput::fn_handler(caller, params, result),
-        SysFuncIdx::EXEC => SyscallExec::fn_handler(caller, params, result),
-        SysFuncIdx::RESUME => SyscallResume::fn_handler(caller, params, result),
-        SysFuncIdx::FORWARD_OUTPUT => SyscallForwardOutput::fn_handler(caller, params, result),
-        SysFuncIdx::CHARGE_FUEL_MANUALLY => SyscallChargeFuelManually::fn_handler(caller, params, result),
-        SysFuncIdx::FUEL => SyscallFuel::fn_handler(caller, params, result),
-        SysFuncIdx::DEBUG_LOG => SyscallDebugLog::fn_handler(caller, params, result),
-        SysFuncIdx::CHARGE_FUEL => SyscallChargeFuel::fn_handler(caller, params, result),
+        SysFuncIdx::EXIT => syscall_exit_handler(caller, params, result),
+        SysFuncIdx::STATE => syscall_state_handler(caller, params, result),
+        SysFuncIdx::READ_INPUT => syscall_read_input_handler(caller, params, result),
+        SysFuncIdx::INPUT_SIZE => syscall_input_size_handler(caller, params, result),
+        SysFuncIdx::WRITE_OUTPUT => syscall_write_output_handler(caller, params, result),
+        SysFuncIdx::OUTPUT_SIZE => syscall_output_size_handler(caller, params, result),
+        SysFuncIdx::READ_OUTPUT => syscall_read_output_handler(caller, params, result),
+        SysFuncIdx::EXEC => syscall_exec_handler(caller, params, result),
+        SysFuncIdx::RESUME => syscall_resume_handler(caller, params, result),
+        SysFuncIdx::FORWARD_OUTPUT => syscall_forward_output_handler(caller, params, result),
+        SysFuncIdx::CHARGE_FUEL_MANUALLY => syscall_charge_fuel_manually_handler(caller, params, result),
+        SysFuncIdx::FUEL => syscall_fuel_handler(caller, params, result),
+        SysFuncIdx::DEBUG_LOG => syscall_debug_log_handler(caller, params, result),
+        SysFuncIdx::CHARGE_FUEL => syscall_charge_fuel_handler(caller, params, result),
+        SysFuncIdx::ENTER_UNCONSTRAINED => syscall_enter_leave_unconstrained_handler(caller, params, result),
+        SysFuncIdx::EXIT_UNCONSTRAINED => syscall_enter_leave_unconstrained_handler(caller, params, result),
+        SysFuncIdx::WRITE_FD => syscall_write_fd_handler(caller, params, result),
 
         // hashing functions (0x01)
         SysFuncIdx::KECCAK256 => syscall_hashing_keccak256_handler(caller, params, result),
@@ -114,6 +117,7 @@ pub fn invoke_runtime_handler(
 
         // uint256 (0x08)
         SysFuncIdx::UINT256_MUL_MOD => syscall_uint256_mul_mod_handler(caller, params, result),
+        SysFuncIdx::UINT256_X2048_MUL => syscall_uint256_mul_x2048_handler(caller, params, result),
 
         // sp1 (0x51)
         _ => unreachable!("unknown system function ({})", sys_func_idx),

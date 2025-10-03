@@ -20,15 +20,15 @@ pub fn syscall_uint256_mul_mod_handler(
     let mut m = [0u8; 32];
     caller.memory_read(m_ptr, &mut m)?;
 
-    let result_vec = syscall_uint256_mul_mod_impl(x, y, m);
+    let result_vec = syscall_uint256_mul_mod_impl(&x, &y, &m);
     caller.memory_write(x_ptr, &result_vec)
 }
 
-pub fn syscall_uint256_mul_mod_impl(x: [u8; 32], y: [u8; 32], m: [u8; 32]) -> [u8; 32] {
+pub fn syscall_uint256_mul_mod_impl(x: &[u8; 32], y: &[u8; 32], m: &[u8; 32]) -> [u8; 32] {
     // Get the BigUint values for x, y, and the modulus.
-    let uint256_x = BigUint::from_bytes_le(&x);
-    let uint256_y = BigUint::from_bytes_le(&y);
-    let uint256_m = BigUint::from_bytes_le(&m);
+    let uint256_x = BigUint::from_bytes_le(x);
+    let uint256_y = BigUint::from_bytes_le(y);
+    let uint256_m = BigUint::from_bytes_le(m);
 
     // Perform the multiplication and take the result modulo the modulus.
     let result: BigUint = if uint256_m.is_zero() {
@@ -73,7 +73,7 @@ mod tests {
             let y_big = BigUint::from_bytes_le(&y);
             y = biguint_to_bytes_le(&y_big % &modulus_big);
 
-            let result_bytes = syscall_uint256_mul_mod_impl(x, y, modulus);
+            let result_bytes = syscall_uint256_mul_mod_impl(&x, &y, &modulus);
 
             let result = (x_big * y_big) % modulus_big;
             let result_syscall = BigUint::from_bytes_le(&result_bytes);
@@ -96,7 +96,7 @@ mod tests {
             let y_big = BigUint::from_bytes_le(&y);
             y = biguint_to_bytes_le(&y_big % &modulus_big);
 
-            let result_bytes = syscall_uint256_mul_mod_impl(x, y, modulus);
+            let result_bytes = syscall_uint256_mul_mod_impl(&x, &y, &modulus);
 
             let result = (x_big * y_big) % &modulus_big;
             let result_syscall = BigUint::from_bytes_le(&result_bytes);
@@ -114,7 +114,7 @@ mod tests {
         let mut one: [u8; 32] = [0; 32];
         one[0] = 1; // Least significant byte set to 1, represents the number 1
         let original_x = x; // Copy original x value before multiplication by 1
-        let result_one = syscall_uint256_mul_mod_impl(x, one, modulus);
+        let result_one = syscall_uint256_mul_mod_impl(&x, &one, &modulus);
         assert_eq!(
             result_one, original_x,
             "Multiplying by 1 should yield the same number."
@@ -122,7 +122,7 @@ mod tests {
 
         // Hardcoded edge case: Multiplying by 0
         let zero: [u8; 32] = [0; 32]; // Represents the number 0
-        let result_zero = syscall_uint256_mul_mod_impl(x, zero, modulus);
+        let result_zero = syscall_uint256_mul_mod_impl(&x, &zero, &modulus);
         assert_eq!(result_zero, zero, "Multiplying by 0 should yield 0.");
     }
 }

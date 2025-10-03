@@ -32,6 +32,9 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
     import_function!("_fuel", FUEL, &[], &[ValType::I64; 1]);
     import_function!("_debug_log", DEBUG_LOG, &[ValType::I32; 2], &[]);
     import_function!("_charge_fuel", CHARGE_FUEL, &[ValType::I64; 1], &[]);
+    import_function!("_enter_unconstrained", ENTER_UNCONSTRAINED, &[], &[]);
+    import_function!("_exit_unconstrained", EXIT_UNCONSTRAINED, &[], &[]);
+    import_function!("_write_fd", WRITE_FD, &[ValType::I32; 3], &[]);
 
     // hashing functions (0x01)
     import_function!("_keccak256", KECCAK256, &[ValType::I32; 3], &[]);

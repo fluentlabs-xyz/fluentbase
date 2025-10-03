@@ -2,7 +2,8 @@ use crate::{
     syscall_handler::{
         ecc_add, syscall_ed25519_decompress_impl, syscall_edwards_add_impl,
         syscall_hashing_keccak256_permute_impl, syscall_hashing_sha256_compress_impl,
-        syscall_hashing_sha256_extend_impl, Bls12381G1AddConfig, Bls12381G1MapConfig,
+        syscall_hashing_sha256_extend_impl, syscall_uint256_mul_mod_impl,
+        syscall_uint256_mul_x2048_impl, Bls12381G1AddConfig, Bls12381G1MapConfig,
         Bls12381G1MulConfig, Bls12381G2AddConfig, Bls12381G2MapConfig, Bls12381G2MulConfig,
         Bn254G1AddConfig, Bn254G1MulConfig, Bn254G2DecompressConfig, SyscallEccCompressDecompress,
         SyscallEccDouble, SyscallEccMapping, SyscallEccMsm, SyscallEccMul, SyscallEccPairing,
@@ -296,5 +297,13 @@ impl CryptoAPI for RuntimeContextWrapper {
     ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
         let result = SyscallEccCompressDecompress::<Bn254G2DecompressConfig>::fn_impl(point)?;
         result.try_into().map_err(|_| ExitCode::UnknownError)
+    }
+
+    fn uint256_mul_mod(x: &[u8; 32], y: &[u8; 32], m: &[u8; 32]) -> [u8; 32] {
+        syscall_uint256_mul_mod_impl(x, y, m)
+    }
+
+    fn uint256_x2048_mul(a: &[u8; 32], b: &[u8; 256]) -> ([u8; 256], [u8; 32]) {
+        syscall_uint256_mul_x2048_impl(a, b)
     }
 }

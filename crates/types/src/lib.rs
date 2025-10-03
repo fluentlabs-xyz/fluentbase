@@ -7,6 +7,7 @@ mod bytecode;
 mod crypto_api;
 mod curves;
 mod exit_code;
+pub mod fd;
 mod genesis;
 mod import_linker;
 mod native_api;

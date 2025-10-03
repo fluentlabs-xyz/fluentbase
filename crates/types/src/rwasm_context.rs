@@ -116,6 +116,21 @@ impl NativeAPI for RwasmContext {
     fn charge_fuel(&self, fuel_consumed: u64) {
         unsafe { _charge_fuel(fuel_consumed) }
     }
+
+    #[inline(always)]
+    fn enter_unconstrained(&self) {
+        unsafe { _enter_unconstrained() }
+    }
+
+    #[inline(always)]
+    fn exit_unconstrained(&self) {
+        unsafe { _exit_unconstrained() }
+    }
+
+    #[inline(always)]
+    fn write_fd(&self, fd: u32, slice: &[u8]) {
+        unsafe { _write_fd(fd, slice.as_ptr(), slice.len() as u32) }
+    }
 }
 
 impl CryptoAPI for RwasmContext {
@@ -391,5 +406,17 @@ impl CryptoAPI for RwasmContext {
     #[inline(always)]
     fn bls12_381_map_g2(p: &[u8; 128], out: &mut [u8; 192]) {
         unsafe { _bls12381_map_g2(p.as_ptr(), out.as_mut_ptr()) }
+    }
+
+    fn uint256_mul_mod(x: &[u8; 32], y: &[u8; 32], m: &[u8; 32]) -> [u8; 32] {
+        let mut x = x.clone();
+        unsafe { _uint256_mul_mod(x.as_mut_ptr(), y.as_ptr(), m.as_ptr()) };
+        x
+    }
+
+    fn uint256_x2048_mul(a: &[u8; 32], b: &[u8; 256]) -> ([u8; 256], [u8; 32]) {
+        let (mut lo, mut hi) = ([0u8; 256], [0u8; 32]);
+        unsafe { _uint256_x2048_mul(a.as_ptr(), b.as_ptr(), lo.as_mut_ptr(), hi.as_mut_ptr()) };
+        (lo, hi)
     }
 }
