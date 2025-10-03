@@ -53,6 +53,7 @@ pub const EXAMPLE_CONSTRUCTOR_PARAMS: &[u8] =
 pub const EXAMPLE_ERC20: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_ERC20.wasm_bytecode;
 pub const EXAMPLE_GREETING: &[u8] =
     fluentbase_contracts::FLUENTBASE_EXAMPLES_GREETING.wasm_bytecode;
+pub const EXAMPLE_FIB: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_FIB.wasm_bytecode;
 pub const EXAMPLE_JSON: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_JSON.wasm_bytecode;
 pub const EXAMPLE_KECCAK256: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_KECCAK.wasm_bytecode;
 pub const EXAMPLE_PANIC: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_PANIC.wasm_bytecode;

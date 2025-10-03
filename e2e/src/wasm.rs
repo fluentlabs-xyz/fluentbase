@@ -1,5 +1,5 @@
 use crate::{
-    EvmTestingContextWithGenesis, EXAMPLE_CHECKMATE, EXAMPLE_ERC20, EXAMPLE_GREETING, EXAMPLE_JSON,
+    EvmTestingContextWithGenesis, EXAMPLE_CHECKMATE, EXAMPLE_ERC20, EXAMPLE_GREETING, EXAMPLE_FIB, EXAMPLE_JSON,
     EXAMPLE_KECCAK256, EXAMPLE_PANIC, EXAMPLE_RWASM, EXAMPLE_SECP256K1, EXAMPLE_SIMPLE_STORAGE,
     EXAMPLE_TINY_KECCAK256,
 };
@@ -11,6 +11,7 @@ use hex_literal::hex;
 use revm::bytecode::Bytecode;
 use rwasm::RwasmModule;
 use std::str::from_utf8_unchecked;
+use fluentbase_contracts::FLUENTBASE_EXAMPLES_FIB;
 
 #[test]
 fn test_wasm_greeting() {
@@ -30,6 +31,34 @@ fn test_wasm_greeting() {
     assert!(result.is_success());
     assert_eq!("Hello, World", from_utf8(output.as_ref()).unwrap());
     println!("Result: {:?}", result);
+}
+
+#[test]
+fn test_wasm_fib() {
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_FIB.into());
+
+    println!("contract_address: {:?}", contract_address);
+
+    let fib_payload: Bytes = {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&[0u8; 60]);
+        payload.extend_from_slice(&43i32.to_be_bytes());
+        println!("payload: {:?}", payload.len());
+        payload.into()
+    };
+
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDRESS,
+        contract_address,
+        fib_payload.clone(),
+        None,
+        None,
+    );
+    
+    println!("result: {:?}", result);
+
 }
 
 #[test]

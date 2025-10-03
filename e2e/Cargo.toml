@@ -90,3 +90,7 @@ harness = false
 [[bench]]
 name = "greeting"
 harness = false
+
+[[bench]]
+name = "fib"
+harness = false
