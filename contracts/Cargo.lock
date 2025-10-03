@@ -1856,7 +1856,6 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-precompile",
 ]
 
 [[package]]

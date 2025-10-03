@@ -63,19 +63,12 @@ fn test_wasm_sha256() {
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_SHA256.into());
     // call greeting WASM contract
-    let result = ctx.call_evm_tx(
-        DEPLOYER_ADDRESS,
-        contract_address,
-        "Hello, World".into(),
-        None,
-        None,
-    );
+    let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, "abc".into(), None, None);
     println!("{:?}", result);
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default().as_ref();
-    println!("bytes: {:?}", hex::encode(&bytes));
     assert_eq!(
-        "03675ac53ff9cd1535ccc7dfcdfa2c458c5218371f418dc136f2d19ac1fbe8a5",
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
         hex::encode(&bytes[0..32]),
     );
 }

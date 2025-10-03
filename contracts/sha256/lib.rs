@@ -2,10 +2,7 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{
-    alloc_slice, crypto::crypto_sha256, entrypoint, ContextReader, ExitCode, SharedAPI,
-};
-use revm_precompile::{hash::sha256_run, PrecompileResult};
+use fluentbase_sdk::{alloc_slice, crypto::crypto_sha256, entrypoint, ContextReader, SharedAPI};
 
 /// Main entry point for the sha256 wrapper contract.
 /// This contract wraps the sha256 precompile (EIP-210) which computes the SHA-256 hash of a given input.
@@ -17,15 +14,12 @@ use revm_precompile::{hash::sha256_run, PrecompileResult};
 /// - A 32-byte array representing the SHA-256 hash of the input
 ///
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    // read full input data
-    // let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
     let gas_used = estimate_gas(input.len());
     sdk.sync_evm_gas(gas_used, 0);
-    let result = sha256_run(input, u64::MAX).unwrap().bytes;
-    // let result = crypto_sha256(&input);
+    let result = crypto_sha256(&input);
     sdk.write(result.as_ref());
 }
 

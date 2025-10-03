@@ -14,7 +14,7 @@ pub fn syscall_hashing_sha256_extend_handler(
     let mut block = [0u8; 64];
     ctx.memory_read(w_ptr as usize, &mut block)?;
     for i in 0..16 {
-        w[i] = u32::from_be_bytes([
+        w[i] = u32::from_le_bytes([
             block[i * 4 + 0],
             block[i * 4 + 1],
             block[i * 4 + 2],
@@ -25,7 +25,7 @@ pub fn syscall_hashing_sha256_extend_handler(
     // Write W[0..64] back as big-endian words (256 bytes)
     let mut out = [0u8; 64 * 4];
     for i in 0..64 {
-        out[i * 4..i * 4 + 4].copy_from_slice(&w[i].to_be_bytes());
+        out[i * 4..i * 4 + 4].copy_from_slice(&w[i].to_le_bytes());
     }
     ctx.memory_write(w_ptr as usize, &out)?;
     Ok(())

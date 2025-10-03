@@ -6,19 +6,19 @@ pub fn syscall_hashing_sha256_compress_handler(
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    let state_ptr = params[0].i32().unwrap() as usize; // 32 bytes at state_ptr
+    let h_ptr = params[0].i32().unwrap() as usize; // 32 bytes at state_ptr
     let w_ptr = params[1].i32().unwrap() as usize; // 256 bytes at w_ptr (W[0..63] as BE words)
 
     // --- Read chaining state H[0..7] (32 bytes, BE) ---
-    let mut state_be = [0u8; 32];
-    ctx.memory_read(state_ptr, &mut state_be)?;
+    let mut h_be = [0u8; 32];
+    ctx.memory_read(h_ptr, &mut h_be)?;
     let mut state = [0u32; 8];
     for i in 0..8 {
-        state[i] = u32::from_be_bytes([
-            state_be[i * 4 + 0],
-            state_be[i * 4 + 1],
-            state_be[i * 4 + 2],
-            state_be[i * 4 + 3],
+        state[i] = u32::from_le_bytes([
+            h_be[i * 4 + 0],
+            h_be[i * 4 + 1],
+            h_be[i * 4 + 2],
+            h_be[i * 4 + 3],
         ]);
     }
 
@@ -27,7 +27,7 @@ pub fn syscall_hashing_sha256_compress_handler(
     ctx.memory_read(w_ptr, &mut w_be)?;
     let mut w = [0u32; 64];
     for i in 0..64 {
-        w[i] = u32::from_be_bytes([
+        w[i] = u32::from_le_bytes([
             w_be[i * 4 + 0],
             w_be[i * 4 + 1],
             w_be[i * 4 + 2],
@@ -40,9 +40,9 @@ pub fn syscall_hashing_sha256_compress_handler(
 
     // --- Write back H as 32 bytes, BE ---
     for i in 0..8 {
-        state_be[i * 4..i * 4 + 4].copy_from_slice(&state[i].to_be_bytes());
+        h_be[i * 4..i * 4 + 4].copy_from_slice(&state[i].to_le_bytes());
     }
-    ctx.memory_write(state_ptr, &state_be)?;
+    ctx.memory_write(h_ptr, &h_be)?;
 
     Ok(())
 }

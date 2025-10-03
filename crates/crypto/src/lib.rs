@@ -8,14 +8,14 @@ pub mod bls12381;
 pub mod bn254;
 pub mod ecdsa;
 pub mod ed25519;
-mod hashing;
-pub use hashing::*;
 mod ristretto255;
 pub mod secp256k1;
 pub mod secp256r1;
 mod sha256;
 pub use sha256::*;
 mod blake3;
+mod keccak256;
+pub use keccak256::*;
 pub mod utils;
 
 cfg_if::cfg_if! {
