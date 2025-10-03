@@ -2,7 +2,8 @@ use crate::EvmTestingContextWithGenesis;
 use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
     calc_create_address, Address, Bytes, CHARGE_FUEL_BASE_COST, COPY_BASE_FUEL_COST,
-    COPY_WORD_FUEL_COST, KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST, LOW_FUEL_COST,
+    COPY_WORD_FUEL_COST, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST, KECCAK_BASE_FUEL_COST,
+    KECCAK_WORD_FUEL_COST, LOW_FUEL_COST,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use revm::{
@@ -139,7 +140,7 @@ fn test_debug_log_builtin() {
         call $_debug_log
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * ((123000 + 31) / 32);
+    let expected_fuel = DEBUG_LOG_BASE_FUEL_COST + DEBUG_LOG_WORD_FUEL_COST * ((123000 + 31) / 32);
     assert_eq!(gas, expected_fuel as u64 / 1000);
 }
 

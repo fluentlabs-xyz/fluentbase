@@ -1,5 +1,6 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
+use fluentbase_contracts::FLUENTBASE_EXAMPLES_CONSTRUCTOR_PARAMS;
 use fluentbase_sdk::{constructor::encode_constructor_params, Address, Bytes};
 use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
@@ -8,7 +9,7 @@ use hex_literal::hex;
 fn test_deploy_with_constructor_params() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let bytecode: Vec<u8> = crate::EXAMPLE_CONSTRUCTOR_PARAMS.into();
+    let bytecode: Vec<u8> = FLUENTBASE_EXAMPLES_CONSTRUCTOR_PARAMS.wasm_bytecode.into();
     let constructor_params: Vec<u8> =
         hex!("68656c6c6fffffffffffffffffffffffffffffffffffffffffffffffffffffff").into();
     let encoded_params = encode_constructor_params(&constructor_params);

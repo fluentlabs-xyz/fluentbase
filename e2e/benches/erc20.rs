@@ -1,5 +1,5 @@
 use criterion::{criterion_main, Criterion};
-use fluentbase_e2e::{EvmTestingContextWithGenesis, EXAMPLE_ERC20};
+use fluentbase_e2e::EvmTestingContextWithGenesis;
 use fluentbase_sdk::{address, constructor::encode_constructor_params, Address, Bytes};
 use fluentbase_svm::{
     error::SvmError,
@@ -76,7 +76,9 @@ fn erc20_transfer_benches(c: &mut Criterion) {
     {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         const OWNER_ADDRESS: Address = Address::ZERO;
-        let bytecode: &[u8] = EXAMPLE_ERC20.into();
+        let bytecode: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_ERC20
+            .wasm_bytecode
+            .into();
 
         // constructor params for ERC20:
         //     name: "TestToken"

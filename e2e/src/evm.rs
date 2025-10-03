@@ -1,6 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall};
 use core::str::from_utf8;
+use fluentbase_contracts::{FLUENTBASE_EXAMPLES_ERC20, FLUENTBASE_EXAMPLES_GREETING};
 use fluentbase_sdk::{
     address, bytes, calc_create_address, constructor::encode_constructor_params, Address,
     PRECOMPILE_BLAKE2F, PRECOMPILE_SECP256K1_RECOVER, U256,
@@ -125,10 +126,14 @@ fn test_evm_create_and_send() {
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
     let gas_price = 2e9 as u128;
-    let result = TxBuilder::create(&mut ctx, SENDER_ADDRESS, crate::EXAMPLE_GREETING.into())
-        .gas_price(gas_price)
-        .value(U256::from(1e18))
-        .exec();
+    let result = TxBuilder::create(
+        &mut ctx,
+        SENDER_ADDRESS,
+        FLUENTBASE_EXAMPLES_GREETING.wasm_bytecode.into(),
+    )
+    .gas_price(gas_price)
+    .value(U256::from(1e18))
+    .exec();
     let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
     let tx_cost = U256::from(gas_price) * U256::from(result.gas_used());
@@ -153,10 +158,14 @@ fn test_evm_revert() {
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(2e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(0e18));
     // now send success tx
-    let result = TxBuilder::create(&mut ctx, SENDER_ADDRESS, crate::EXAMPLE_GREETING.into())
-        .gas_price(gas_price)
-        .value(U256::from(1e18))
-        .exec();
+    let result = TxBuilder::create(
+        &mut ctx,
+        SENDER_ADDRESS,
+        FLUENTBASE_EXAMPLES_GREETING.wasm_bytecode.into(),
+    )
+    .gas_price(gas_price)
+    .value(U256::from(1e18))
+    .exec();
     println!("{:?}", result);
     // here nonce must be 1 because we increment nonce for failed txs
     let contract_address = calc_create_address(&SENDER_ADDRESS, 1);
@@ -307,7 +316,7 @@ fn test_evm_balance() {
 fn test_wasm_erc20() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     const OWNER_ADDRESS: Address = Address::ZERO;
-    let bytecode: &[u8] = crate::EXAMPLE_ERC20.into();
+    let bytecode: &[u8] = FLUENTBASE_EXAMPLES_ERC20.wasm_bytecode.into();
 
     // constructor params for ERC20:
     //     name: "TestToken"

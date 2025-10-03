@@ -42,32 +42,6 @@ mod update_account;
 #[cfg(test)]
 mod wasm;
 
-pub const EXAMPLE_ABI_SOLIDITY: &[u8] =
-    fluentbase_contracts::FLUENTBASE_EXAMPLES_ABI_SOLIDITY.wasm_bytecode;
-pub const EXAMPLE_CHECKMATE: &[u8] =
-    fluentbase_contracts::FLUENTBASE_EXAMPLES_CHECKMATE.wasm_bytecode;
-pub const EXAMPLE_CLIENT_SOLIDITY: &[u8] =
-    fluentbase_contracts::FLUENTBASE_EXAMPLES_CLIENT_SOLIDITY.wasm_bytecode;
-pub const EXAMPLE_CONSTRUCTOR_PARAMS: &[u8] =
-    fluentbase_contracts::FLUENTBASE_EXAMPLES_CONSTRUCTOR_PARAMS.wasm_bytecode;
-pub const EXAMPLE_ERC20: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_ERC20.wasm_bytecode;
-pub const EXAMPLE_GREETING: &[u8] =
-    fluentbase_contracts::FLUENTBASE_EXAMPLES_GREETING.wasm_bytecode;
-pub const EXAMPLE_JSON: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_JSON.wasm_bytecode;
-pub const EXAMPLE_KECCAK256: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_KECCAK.wasm_bytecode;
-pub const EXAMPLE_PANIC: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_PANIC.wasm_bytecode;
-pub const EXAMPLE_ROUTER_SOLIDITY: &[u8] =
-    fluentbase_contracts::FLUENTBASE_EXAMPLES_ROUTER_SOLIDITY.wasm_bytecode;
-pub const EXAMPLE_RWASM: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_RWASM.wasm_bytecode;
-pub const EXAMPLE_SECP256K1: &[u8] =
-    fluentbase_contracts::FLUENTBASE_EXAMPLES_SECP256K1.wasm_bytecode;
-pub const EXAMPLE_SIMPLE_STORAGE: &[u8] =
-    fluentbase_contracts::FLUENTBASE_EXAMPLES_SIMPLE_STORAGE.wasm_bytecode;
-pub const EXAMPLE_STORAGE: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_STORAGE.wasm_bytecode;
-pub const EXAMPLE_TINY_KECCAK256: &[u8] =
-    fluentbase_contracts::FLUENTBASE_EXAMPLES_TINY_KECCAK.wasm_bytecode;
-pub const EXAMPLE_SHA256: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_SHA256.wasm_bytecode;
-
 pub trait EvmTestingContextWithGenesis {
     fn with_full_genesis(self) -> Self;
 
