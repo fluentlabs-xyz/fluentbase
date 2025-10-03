@@ -786,8 +786,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let account = ctx
                 .journal_mut()
                 .load_account_code(derived_metadata_address)?;
-            // make sure there is no account create collision
-            if !account.is_empty() {
+            // Verify no deployment collision exists at derived address.
+            // Check only code_hash and nonce - intentionally ignore balance to prevent
+            // frontrunning DoS where attacker funds address before legitimate creation.
+            // This matches Ethereum CREATE2 behavior: accounts can be pre-funded.
+            if account.info.code_hash != KECCAK_EMPTY || account.info.nonce != 0 {
                 return_result!(CreateContractCollision);
             }
             // create a new derived ownable account
@@ -974,5 +977,106 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         _ => return_result!(MalformedBuiltinParams),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{RwasmContext, RwasmSpecId};
+    use fluentbase_sdk::{
+        syscall::SYSCALL_ID_METADATA_CREATE, SyscallInvocationParams, PRECOMPILE_WASM_RUNTIME,
+    };
+    use revm::{
+        context::{BlockEnv, CfgEnv, TxEnv},
+        database::InMemoryDB,
+        inspector::NoOpInspector,
+    };
+
+    #[test]
+    fn test_metadata_create() {
+        // === Setup: Initialize context and database ===
+        let db = InMemoryDB::default();
+        let mut ctx: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+
+        // === Setup: Create frame with owner address ===
+        let owner_address = PRECOMPILE_WASM_RUNTIME;
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.account_owner = Some(owner_address);
+
+        // === Prepare: Calculate derived address and ensure it's not empty ===
+        let salt = U256::from(123456789u64);
+        let metadata = Bytes::from(vec![0x01, 0x02, 0x03]);
+
+        let derived_address = calc_create4_address(&owner_address, &salt, |v| keccak256(v));
+
+        // Pre-load the account to avoid empty account check
+        // (In real scenario, this would be done by previous transactions)
+        {
+            let mut account = ctx
+                .journal_mut()
+                .load_account_code(derived_address)
+                .unwrap();
+            account.info.balance = U256::from(1);
+        }
+
+        // === Execute: Prepare syscall input (salt + metadata) ===
+        let mut syscall_input = Vec::with_capacity(32 + metadata.len());
+        syscall_input.extend_from_slice(&salt.to_be_bytes::<32>());
+        syscall_input.extend_from_slice(&metadata);
+
+        let syscall_params = SyscallInvocationParams {
+            code_hash: SYSCALL_ID_METADATA_CREATE,
+            input: Bytes::from(syscall_input),
+            state: STATE_MAIN,
+            ..Default::default()
+        };
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            is_create: false,
+            syscall_params,
+            is_static: false,
+            is_gas_free: false,
+            gas: Gas::new(1_000_000), // Sufficient gas for the operation
+        };
+
+        // === Execute: Call the syscall ===
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Syscall execution failed: {:?}",
+            result.err()
+        );
+        assert!(
+            matches!(result.unwrap(), NextAction::InterruptionResult),
+            "Expected InterruptionResult"
+        );
+
+        // === Verify: Check the created account ===
+        let created_account = ctx
+            .journal_mut()
+            .load_account_code(derived_address)
+            .expect("Failed to load created account");
+
+        match &created_account.info.code {
+            Some(Bytecode::OwnableAccount(ownable)) => {
+                assert_eq!(
+                    ownable.owner_address, owner_address,
+                    "Owner address mismatch"
+                );
+                assert_eq!(ownable.metadata, metadata, "Metadata mismatch");
+            }
+            other => panic!("Expected OwnableAccount bytecode, got {:?}", other),
+        }
     }
 }
