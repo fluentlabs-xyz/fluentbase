@@ -1,12 +1,13 @@
 use crate::{
     syscall_handler::{
-        ecc_add, syscall_ed25519_decompress_impl, syscall_edwards_add_impl,
+        ecc_add, ecc_double, syscall_ed25519_decompress_impl, syscall_edwards_add_impl,
         syscall_hashing_keccak256_permute_impl, syscall_hashing_sha256_compress_impl,
         syscall_hashing_sha256_extend_impl, syscall_uint256_mul_mod_impl,
         syscall_uint256_mul_x2048_impl, Bls12381G1AddConfig, Bls12381G1MapConfig,
         Bls12381G1MulConfig, Bls12381G2AddConfig, Bls12381G2MapConfig, Bls12381G2MulConfig,
-        Bn254G1AddConfig, Bn254G1MulConfig, Bn254G2DecompressConfig, SyscallEccCompressDecompress,
-        SyscallEccDouble, SyscallEccMapping, SyscallEccMsm, SyscallEccMul, SyscallEccPairing,
+        Bn254G1AddConfig, Bn254G1MulConfig, Bn254G2DecompressConfig, Secp256k1AddConfig,
+        SyscallEccCompressDecompress, SyscallEccMapping, SyscallEccMsm, SyscallEccMul,
+        SyscallEccPairing,
     },
     RuntimeContextWrapper,
 };
@@ -15,10 +16,11 @@ use fluentbase_types::{
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
     G1_COMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
-    GT_COMPRESSED_SIZE, PADDED_FP2_SIZE, PADDED_FP_SIZE, SCALAR_SIZE, TOWER_FP_BLS12381_SIZE,
-    TOWER_FP_BN256_SIZE,
+    GT_COMPRESSED_SIZE, PADDED_FP2_SIZE, PADDED_FP_SIZE, SCALAR_SIZE,
+    SECP256K1_POINT_DECOMPRESSED_SIZE, TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
 };
-use sp1_curves::weierstrass::{bls12_381::Bls12381, bn254::Bn254};
+
+use sp1_curves::weierstrass::{bls12_381::Bls12381, bn254::Bn254, secp256k1::Secp256k1};
 
 impl CryptoAPI for RuntimeContextWrapper {
     fn keccak256_permute(state: &mut [u64; 25]) {
@@ -130,6 +132,19 @@ impl CryptoAPI for RuntimeContextWrapper {
         todo!()
     }
 
+    fn _secp256k1_add(
+        p: &mut [u8; SECP256K1_POINT_DECOMPRESSED_SIZE],
+        q: &[u8; SECP256K1_POINT_DECOMPRESSED_SIZE],
+    ) {
+        if let Ok(result) = ecc_add::ecc_add_impl::<Secp256k1AddConfig>(p, q) {
+            p.copy_from_slice(&result[..SECP256K1_POINT_DECOMPRESSED_SIZE]);
+        }
+    }
+
+    fn _secp256k1_double(p: &mut [u8; SECP256K1_POINT_DECOMPRESSED_SIZE]) {
+        ecc_double::ecc_double_impl::<Secp256k1>(p);
+    }
+
     fn bls12_381_g1_add(p: &mut [u8; G1_UNCOMPRESSED_SIZE], q: &[u8; G1_UNCOMPRESSED_SIZE]) {
         if let Ok(result) = ecc_add::ecc_add_impl::<Bls12381G1AddConfig>(p, q) {
             p.copy_from_slice(&result[..G1_UNCOMPRESSED_SIZE]);
@@ -234,9 +249,7 @@ impl CryptoAPI for RuntimeContextWrapper {
     }
 
     fn bn254_double(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE]) {
-        let result = SyscallEccDouble::<Bn254>::fn_impl(p);
-        let min = core::cmp::min(p.len(), result.len());
-        p[..min].copy_from_slice(&result[..min]);
+        ecc_double::ecc_double_impl::<Bn254>(p);
     }
 
     fn bn254_mul(

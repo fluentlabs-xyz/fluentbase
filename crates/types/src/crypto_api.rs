@@ -1,7 +1,8 @@
 use crate::{
     ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE,
-    EDWARDS_DECOMPRESSED_SIZE, TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
+    EDWARDS_DECOMPRESSED_SIZE, SECP256K1_POINT_DECOMPRESSED_SIZE, TOWER_FP_BLS12381_SIZE,
+    TOWER_FP_BN256_SIZE,
 };
 
 /// A low-level API that provides access to crypto-related functions, including:
@@ -10,6 +11,9 @@ use crate::{
 /// - tower field
 /// - bls12381
 /// - bn254
+/// - secp256k1
+/// - secp256r1
+
 pub trait CryptoAPI {
     fn keccak256_permute(state: &mut [u64; 25]);
     fn sha256_extend(w: &mut [u32; 64]);
@@ -73,9 +77,12 @@ pub trait CryptoAPI {
         y: [u8; TOWER_FP_BLS12381_SIZE],
     ) -> [u8; TOWER_FP_BLS12381_SIZE];
 
-    // fn _secp256k1_add(p_ptr: *mut u8, q_ptr: *const u8);
+    fn _secp256k1_add(
+        p: &mut [u8; SECP256K1_POINT_DECOMPRESSED_SIZE],
+        q: &[u8; SECP256K1_POINT_DECOMPRESSED_SIZE],
+    );
     // fn _secp256k1_decompress(x_ptr: *mut u8, sign: u32);
-    // fn _secp256k1_double(p_ptr: *mut u8);
+    fn _secp256k1_double(p: &mut [u8; SECP256K1_POINT_DECOMPRESSED_SIZE]);
 
     fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]);
     fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]);

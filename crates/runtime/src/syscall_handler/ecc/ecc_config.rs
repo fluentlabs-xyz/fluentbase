@@ -9,7 +9,9 @@ use fluentbase_types::{
     CURVE256R1_POINT_COMPRESSED_SIZE, CURVE256R1_POINT_DECOMPRESSED_SIZE,
 };
 use sp1_curves::{
-    weierstrass::{bls12_381::Bls12381, bn254::Bn254, secp256k1::Secp256k1, SwCurve},
+    weierstrass::{
+        bls12_381::Bls12381, bn254::Bn254, secp256k1::Secp256k1, secp256r1::Secp256r1, SwCurve,
+    },
     CurveType, EllipticCurve,
 };
 
@@ -59,6 +61,18 @@ pub trait AddConfig {
 }
 
 /// Configuration trait for scalar multiplication operations
+pub trait MulScalarConfig {
+    /// The curve type
+    const CURVE_TYPE: CurveType;
+    /// Size of the point in bytes
+    const POINT_SIZE: usize;
+    /// Size of the scalar in bytes
+    const SCALAR_SIZE: usize;
+    /// The elliptic curve implementation type
+    type EllipticCurve: EllipticCurve;
+}
+
+/// Configuration trait for point multiplication operations
 pub trait MulConfig {
     /// The curve type
     const CURVE_TYPE: CurveType;
@@ -66,6 +80,8 @@ pub trait MulConfig {
     const POINT_SIZE: usize;
     /// Size of the scalar in bytes
     const SCALAR_SIZE: usize;
+    /// The elliptic curve implementation type
+    type EllipticCurve: EllipticCurve;
 }
 
 /// Configuration trait for mapping operations (field elements to curve points)
@@ -119,7 +135,7 @@ impl RecoverConfig for Secp256k1RecoverConfig {
 pub struct Secp256k1AddConfig;
 impl AddConfig for Secp256k1AddConfig {
     const CURVE_TYPE: CurveType = CurveType::Secp256k1;
-    const POINT_SIZE: usize = 65; // uncompressed
+    const POINT_SIZE: usize = 64; // uncompressed (x + y coordinates, no prefix)
     type EllipticCurve = SwCurve<Secp256k1>;
 }
 
@@ -137,6 +153,13 @@ impl VerifyConfig for Secp256r1VerifyConfig {
     const PUBLIC_KEY_X_SIZE: usize = 32;
     const PUBLIC_KEY_Y_SIZE: usize = 32;
     const TOTAL_INPUT_SIZE: usize = 160; // 32 + 32 + 32 + 32 + 32
+}
+
+pub struct Secp256r1AddConfig;
+impl AddConfig for Secp256r1AddConfig {
+    const CURVE_TYPE: CurveType = CurveType::Secp256r1;
+    const POINT_SIZE: usize = 64; // uncompressed (x + y coordinates, no prefix)
+    type EllipticCurve = SwCurve<Secp256r1>;
 }
 
 // ============================================================================
@@ -165,6 +188,7 @@ impl MulConfig for Bls12381G1MulConfig {
     const CURVE_TYPE: CurveType = CurveType::Bls12381;
     const POINT_SIZE: usize = 96; // G1_UNCOMPRESSED_SIZE
     const SCALAR_SIZE: usize = 32;
+    type EllipticCurve = SwCurve<Bls12381>;
 }
 
 /// BLS12-381 G2 scalar multiplication configuration
@@ -173,6 +197,7 @@ impl MulConfig for Bls12381G2MulConfig {
     const CURVE_TYPE: CurveType = CurveType::Bls12381;
     const POINT_SIZE: usize = 192; // G2_UNCOMPRESSED_SIZE
     const SCALAR_SIZE: usize = 32;
+    type EllipticCurve = SwCurve<Bls12381>;
 }
 
 /// BLS12-381 G1 mapping configuration (Fp -> G1)
@@ -209,6 +234,7 @@ impl MulConfig for Bn254G1MulConfig {
     const CURVE_TYPE: CurveType = CurveType::Bn254;
     const POINT_SIZE: usize = 64; // uncompressed
     const SCALAR_SIZE: usize = 32;
+    type EllipticCurve = SwCurve<Bn254>;
 }
 
 /// BN254 G2 scalar multiplication configuration
@@ -217,6 +243,7 @@ impl MulConfig for Bn254G2MulConfig {
     const CURVE_TYPE: CurveType = CurveType::Bn254;
     const POINT_SIZE: usize = 128; // uncompressed
     const SCALAR_SIZE: usize = 32;
+    type EllipticCurve = SwCurve<Bn254>;
 }
 
 /// BN254 pairing configuration

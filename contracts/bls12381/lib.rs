@@ -10,6 +10,12 @@ use fluentbase_sdk::{
     SCALAR_SIZE,
 };
 
+// use bls12_381::{
+
+//     bls12_381_g1_add, bls12_381_g1_msm, bls12_381_g2_add, bls12_381_g2_msm, bls12_381_map_g1,
+//     bls12_381_map_g2, bls12_381_pairing,
+// };
+
 /**
  * This is the BLS12-381 precompile contract.
  *
@@ -456,7 +462,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 pairs.push((g1, g2));
             }
             let mut out = [0u8; 288];
-            CryptoRuntime::bls12_381_pairing(&pairs, &mut out);
+            //CryptoRuntime::bls12_381_pairing(&pairs, &mut out);
             // Decode compressed GT and return EIP-197 boolean (32-byte BE 0/1)
             let is_one = {
                 // Compare against compressed identity directly to avoid extra deps

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
+bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm", default-features = false, features = ["groups", "alloc"] }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }

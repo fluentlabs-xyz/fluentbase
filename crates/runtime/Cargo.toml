@@ -40,6 +40,7 @@ sp1-primitives = { version = "5.2.1" }
 blstrs = { version = "0.7" }
 group = { version = "0.13", default-features = false }
 blst = { version = "0.3" }
+bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm", default-features = false, features = ["groups", "alloc"] }
 ark-ff = { workspace = true }
 ark-ec = { workspace = true }
 ark-serialize = { workspace = true }

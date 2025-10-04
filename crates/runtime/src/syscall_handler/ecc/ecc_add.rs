@@ -2,19 +2,15 @@ use super::ecc_config::AddConfig;
 use crate::{
     syscall_handler::{
         ecc::{
-            ecc_bls12381::parse_affine_g2, ecc_bn256, ecc_utils::cast_u8_to_u32,
-            g2_be_uncompressed_to_le_limbs, g2_le_limbs_to_be_uncompressed,
-            parse_bls12381_g1_point_uncompressed,
+            ecc_bn256,
+            ecc_utils::{cast_u8_to_u32, cast_u8_to_u32_aligned},
         },
         syscall_process_exit_code,
     },
     RuntimeContext,
 };
 use ark_ec::CurveGroup;
-use blstrs::{G1Affine, G1Projective, G2Affine, G2Projective};
-use fluentbase_types::{
-    ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
-};
+use fluentbase_types::{ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE};
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{AffinePoint, CurveType, EllipticCurve};
 use sp1_primitives::consts::words_to_bytes_le_vec;
@@ -24,10 +20,13 @@ pub fn ecc_add_handler<C: AddConfig>(
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    let (p_ptr, q_ptr) = (
-        params[0].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
-        params[1].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
-    );
+    // let (p_ptr, q_ptr) = (
+    //     params[0].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
+    //     params[1].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
+    // );
+
+    let p_ptr = params[0].i32().unwrap() as usize;
+    let q_ptr = params[1].i32().unwrap() as usize;
 
     let mut p = vec![0u8; C::POINT_SIZE];
     caller.memory_read(p_ptr as usize, &mut p)?;
@@ -51,29 +50,11 @@ pub fn ecc_add_impl<C: AddConfig>(p: &[u8], q: &[u8]) -> Result<Vec<u8>, ExitCod
                     q.try_into().unwrap_or([0u8; G2_UNCOMPRESSED_SIZE]),
                 ))
             } else {
-                Ok(fn_impl_bls12381_g1(
-                    p.try_into().unwrap_or([0u8; G1_UNCOMPRESSED_SIZE]),
-                    q.try_into().unwrap_or([0u8; G1_UNCOMPRESSED_SIZE]),
-                ))
+                fn_sp1_generic::<C>(p, q)
             }
         }
         CurveType::Bn254 => fn_impl_bn254(p, q),
-        _ => {
-            let Some(p_words) = cast_u8_to_u32(p) else {
-                return Err(ExitCode::MalformedBuiltinParams);
-            };
-            let Some(q_words) = cast_u8_to_u32(q) else {
-                return Err(ExitCode::MalformedBuiltinParams);
-            };
-
-            let p_aff = AffinePoint::<C::EllipticCurve>::from_words_le(&p_words);
-            let q_aff = AffinePoint::<C::EllipticCurve>::from_words_le(&q_words);
-
-            let r_aff = C::EllipticCurve::ec_add(&p_aff, &q_aff);
-
-            let r_words = r_aff.to_words_le();
-            Ok(words_to_bytes_le_vec(r_words.as_slice()))
-        }
+        _ => fn_sp1_generic::<C>(p, q),
     }
 }
 
@@ -95,30 +76,211 @@ fn fn_impl_bn254(p: &[u8], q: &[u8]) -> Result<Vec<u8>, ExitCode> {
     Ok(output.to_vec())
 }
 
-/// BLS12-381 G1 point addition implementation
-fn fn_impl_bls12381_g1(p: [u8; G1_UNCOMPRESSED_SIZE], q: [u8; G1_UNCOMPRESSED_SIZE]) -> Vec<u8> {
-    let p_aff = parse_bls12381_g1_point_uncompressed(&p);
-    let q_aff = parse_bls12381_g1_point_uncompressed(&q);
+/// Generic SP1 curve point addition implementation
+fn fn_sp1_generic<C: AddConfig>(p: &[u8], q: &[u8]) -> Result<Vec<u8>, ExitCode> {
+    // Try the fast aligned version first
+    let p_words = if let Some(words) = cast_u8_to_u32(p) {
+        words
+    } else {
+        // Fall back to the aligned version that handles unaligned data
+        let Some(p_words_vec) = cast_u8_to_u32_aligned(p) else {
+            return Err(ExitCode::MalformedBuiltinParams);
+        };
+        let Some(q_words_vec) = cast_u8_to_u32_aligned(q) else {
+            return Err(ExitCode::MalformedBuiltinParams);
+        };
+        return fn_sp1_generic_with_vec::<C>(&p_words_vec, &q_words_vec);
+    };
 
-    let result_proj = G1Projective::from(p_aff) + G1Projective::from(q_aff);
-    let result_aff = G1Affine::from(result_proj);
-    result_aff.to_uncompressed().to_vec()
+    let q_words = if let Some(words) = cast_u8_to_u32(q) {
+        words
+    } else {
+        // Fall back to the aligned version that handles unaligned data
+        let Some(q_words_vec) = cast_u8_to_u32_aligned(q) else {
+            return Err(ExitCode::MalformedBuiltinParams);
+        };
+        return fn_sp1_generic_with_vec::<C>(p_words, &q_words_vec);
+    };
+
+    let p_aff = AffinePoint::<C::EllipticCurve>::from_words_le(p_words);
+    let q_aff = AffinePoint::<C::EllipticCurve>::from_words_le(q_words);
+
+    let r_aff = C::EllipticCurve::ec_add(&p_aff, &q_aff);
+
+    let r_words = r_aff.to_words_le();
+    Ok(words_to_bytes_le_vec(r_words.as_slice()))
 }
 
+/// Helper function for when we need to use Vec<u32> instead of &[u32]
+fn fn_sp1_generic_with_vec<C: AddConfig>(
+    p_words: &[u32],
+    q_words: &[u32],
+) -> Result<Vec<u8>, ExitCode> {
+    let p_aff = AffinePoint::<C::EllipticCurve>::from_words_le(p_words);
+    let q_aff = AffinePoint::<C::EllipticCurve>::from_words_le(q_words);
+
+    let r_aff = C::EllipticCurve::ec_add(&p_aff, &q_aff);
+
+    let r_words = r_aff.to_words_le();
+    Ok(words_to_bytes_le_vec(r_words.as_slice()))
+}
+
+/// BLS12-381 G2 point addition implementation using sp1 library
 fn fn_impl_bls12381_g2(p: [u8; G2_UNCOMPRESSED_SIZE], q: [u8; G2_UNCOMPRESSED_SIZE]) -> Vec<u8> {
-    // p, q layout: x0||x1||y0||y1, each limb 48 bytes little-endian
-    // Convert to blstrs uncompressed big-endian bytes with c0/c1 swapped, add, then convert back.
-    let a_be = g2_le_limbs_to_be_uncompressed(&p);
-    let b_be = g2_le_limbs_to_be_uncompressed(&q);
+    use crate::syscall_handler::ecc::bls12381_g2_add_sp1;
+    bls12381_g2_add_sp1(&p, &q).to_vec()
+}
 
-    let a_aff = parse_affine_g2(&a_be);
-    let b_aff = parse_affine_g2(&b_be);
+/// TESTs
+///
+/// The tests are taken from:
+/// - sp1/crates/test-artifacts/programs/bls12381-add/src/main.rs
+/// - sp1/crates/test-artifacts/programs/secp256k1-add/src/main.rs
+/// - sp1/crates/test-artifacts/programs/secp256r1-add/src/main.rs
+/// - sp1/crates/test-artifacts/programs/bn254-add/src/main.rs
 
-    let sum = G2Projective::from(a_aff) + G2Projective::from(b_aff);
-    let sum_aff = G2Affine::from(sum);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::syscall_handler::ecc::ecc_config::{
+        Bls12381G1AddConfig, Secp256k1AddConfig, Secp256r1AddConfig,
+    };
 
-    let be_result = sum_aff.to_uncompressed();
-    let le_result = g2_be_uncompressed_to_le_limbs(&be_result);
+    #[test]
+    fn test_bls12381_add() {
+        // generator.
+        // 3685416753713387016781088315183077757961620795782546409894578378688607592378376318836054947676345821548104185464507
+        // 1339506544944476473020471379941921221584933875938349620426543736416511423956333506472724655353366534992391756441569
+        const A: [u8; 96] = [
+            187, 198, 34, 219, 10, 240, 58, 251, 239, 26, 122, 249, 63, 232, 85, 108, 88, 172, 27,
+            23, 63, 58, 78, 161, 5, 185, 116, 151, 79, 140, 104, 195, 15, 172, 169, 79, 140, 99,
+            149, 38, 148, 215, 151, 49, 167, 211, 241, 23, 225, 231, 197, 70, 41, 35, 170, 12, 228,
+            138, 136, 162, 68, 199, 60, 208, 237, 179, 4, 44, 203, 24, 219, 0, 246, 10, 208, 213,
+            149, 224, 245, 252, 228, 138, 29, 116, 237, 48, 158, 160, 241, 160, 170, 227, 129, 244,
+            179, 8,
+        ];
 
-    le_result.to_vec()
+        // 2 * generator.
+        // 838589206289216005799424730305866328161735431124665289961769162861615689790485775997575391185127590486775437397838
+        // 3450209970729243429733164009999191867485184320918914219895632678707687208996709678363578245114137957452475385814312
+        const B: [u8; 96] = [
+            78, 15, 191, 41, 85, 140, 154, 195, 66, 124, 28, 143, 187, 117, 143, 226, 42, 166, 88,
+            195, 10, 45, 144, 67, 37, 1, 40, 145, 48, 219, 33, 151, 12, 69, 169, 80, 235, 200, 8,
+            136, 70, 103, 77, 144, 234, 203, 114, 5, 40, 157, 116, 121, 25, 136, 134, 186, 27, 189,
+            22, 205, 212, 217, 86, 76, 106, 215, 95, 29, 2, 185, 59, 247, 97, 228, 112, 134, 203,
+            62, 186, 34, 56, 142, 157, 119, 115, 166, 253, 34, 163, 115, 198, 171, 140, 157, 106,
+            22,
+        ];
+
+        // 3 * generator.
+        // 1527649530533633684281386512094328299672026648504329745640827351945739272160755686119065091946435084697047221031460
+        // 487897572011753812113448064805964756454529228648704488481988876974355015977479905373670519228592356747638779818193
+        const C: [u8; 96] = [
+            36, 82, 78, 2, 201, 192, 210, 150, 155, 23, 162, 44, 11, 122, 116, 129, 249, 63, 91,
+            51, 81, 10, 120, 243, 241, 165, 233, 155, 31, 214, 18, 177, 151, 150, 169, 236, 45, 33,
+            101, 23, 19, 240, 209, 249, 8, 227, 236, 9, 209, 48, 174, 144, 5, 59, 71, 163, 92, 244,
+            74, 99, 108, 37, 69, 231, 230, 59, 212, 15, 49, 39, 156, 157, 127, 9, 195, 171, 221,
+            12, 154, 166, 12, 248, 197, 137, 51, 98, 132, 138, 159, 176, 245, 166, 211, 128, 43, 3,
+        ];
+        let result = fn_sp1_generic::<Bls12381G1AddConfig>(&A, &B).unwrap();
+        assert_eq!(result, C.to_vec());
+    }
+
+    #[test]
+    fn test_bn254_add() {
+        // generator.
+        // 1
+        // 2
+        const A: [u8; 64] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0,
+        ];
+
+        // 2 * generator.
+        // 1368015179489954701390400359078579693043519447331113978918064868415326638035
+        // 9918110051302171585080402603319702774565515993150576347155970296011118125764
+        const B: [u8; 64] = [
+            211, 207, 135, 109, 193, 8, 194, 211, 168, 28, 135, 22, 169, 22, 120, 217, 133, 21, 24,
+            104, 91, 4, 133, 155, 2, 26, 19, 46, 231, 68, 6, 3, 196, 162, 24, 90, 122, 191, 62,
+            255, 199, 143, 83, 227, 73, 164, 166, 104, 10, 156, 174, 178, 150, 95, 132, 231, 146,
+            124, 10, 14, 140, 115, 237, 21,
+        ];
+
+        // 3 * generator.
+        // 3353031288059533942658390886683067124040920775575537747144343083137631628272
+        // 19321533766552368860946552437480515441416830039777911637913418824951667761761
+        const C: [u8; 64] = [
+            240, 171, 21, 25, 150, 85, 211, 242, 121, 230, 184, 21, 71, 216, 21, 147, 21, 189, 182,
+            177, 188, 50, 2, 244, 63, 234, 107, 197, 154, 191, 105, 7, 97, 34, 254, 217, 61, 255,
+            241, 205, 87, 91, 156, 11, 180, 99, 158, 49, 117, 100, 8, 141, 124, 219, 79, 85, 41,
+            148, 72, 224, 190, 153, 183, 42,
+        ];
+    }
+
+    #[test]
+    fn test_secp256k1_add() {
+        const A: [u8; 64] = [
+            152, 23, 248, 22, 91, 129, 242, 89, 217, 40, 206, 45, 219, 252, 155, 2, 7, 11, 135,
+            206, 149, 98, 160, 85, 172, 187, 220, 249, 126, 102, 190, 121, 184, 212, 16, 251, 143,
+            208, 71, 156, 25, 84, 133, 166, 72, 180, 23, 253, 168, 8, 17, 14, 252, 251, 164, 93,
+            101, 196, 163, 38, 119, 218, 58, 72,
+        ];
+        // 2 * generator.
+        // 89565891926547004231252920425935692360644145829622209833684329913297188986597
+        // 12158399299693830322967808612713398636155367887041628176798871954788371653930
+        const B: [u8; 64] = [
+            229, 158, 112, 92, 185, 9, 172, 171, 167, 60, 239, 140, 75, 142, 119, 92, 216, 124,
+            192, 149, 110, 64, 69, 48, 109, 125, 237, 65, 148, 127, 4, 198, 42, 229, 207, 80, 169,
+            49, 100, 35, 225, 208, 102, 50, 101, 50, 246, 247, 238, 234, 108, 70, 25, 132, 197,
+            163, 57, 195, 61, 166, 254, 104, 225, 26,
+        ];
+        // 3 * generator.
+        // 112711660439710606056748659173929673102114977341539408544630613555209775888121
+        // 25583027980570883691656905877401976406448868254816295069919888960541586679410
+        const C: [u8; 64] = [
+            249, 54, 224, 188, 19, 241, 1, 134, 176, 153, 111, 131, 69, 200, 49, 181, 41, 82, 157,
+            248, 133, 79, 52, 73, 16, 195, 88, 146, 1, 138, 48, 249, 114, 230, 184, 132, 117, 253,
+            185, 108, 27, 35, 194, 52, 153, 169, 0, 101, 86, 243, 55, 42, 230, 55, 227, 15, 20,
+            232, 45, 99, 15, 123, 143, 56,
+        ];
+        let result = fn_sp1_generic::<Secp256k1AddConfig>(&A, &B).unwrap();
+        assert_eq!(result, C.to_vec());
+    }
+
+    #[test]
+    fn test_secp256r1_add() {
+        // generator.
+        // 48439561293906451759052585252797914202762949526041747995844080717082404635286
+        // 36134250956749795798585127919587881956611106672985015071877198253568414405109
+        const A: [u8; 64] = [
+            150, 194, 152, 216, 69, 57, 161, 244, 160, 51, 235, 45, 129, 125, 3, 119, 242, 64, 164,
+            99, 229, 230, 188, 248, 71, 66, 44, 225, 242, 209, 23, 107, 245, 81, 191, 55, 104, 64,
+            182, 203, 206, 94, 49, 107, 87, 51, 206, 43, 22, 158, 15, 124, 74, 235, 231, 142, 155,
+            127, 26, 254, 226, 66, 227, 79,
+        ];
+
+        // 2 * generator.
+        // 56515219790691171413109057904011688695424810155802929973526481321309856242040
+        // 3377031843712258259223711451491452598088675519751548567112458094635497583569
+        const B: [u8; 64] = [
+            120, 153, 102, 71, 252, 72, 11, 166, 53, 27, 242, 119, 226, 105, 137, 192, 195, 26,
+            181, 4, 3, 56, 82, 138, 126, 79, 3, 141, 24, 123, 242, 124, 209, 115, 120, 34, 157,
+            183, 4, 158, 41, 130, 233, 60, 230, 173, 125, 186, 219, 48, 116, 159, 198, 154, 61, 41,
+            64, 208, 142, 219, 16, 85, 119, 7,
+        ];
+
+        // 3 * generator.
+        // 42877656971275811310262564894490210024759287182177196162425349131675946712428
+        // 61154801112014214504178281461992570017247172004704277041681093927569603776562
+        const C: [u8; 64] = [
+            108, 253, 231, 198, 27, 102, 65, 251, 133, 169, 173, 239, 33, 183, 198, 230, 101, 241,
+            75, 29, 149, 239, 247, 200, 68, 10, 51, 166, 209, 228, 203, 94, 50, 80, 125, 162, 39,
+            177, 121, 154, 61, 184, 79, 56, 54, 176, 42, 216, 236, 162, 100, 26, 206, 6, 75, 55,
+            126, 255, 152, 73, 12, 100, 52, 135,
+        ];
+        // Tests A + B == C, sum of points of infinity, A + A == 2 * A, and A + (-A) == infinity.
+        let result = fn_sp1_generic::<Secp256r1AddConfig>(&A, &B).unwrap();
+        assert_eq!(result, C.to_vec());
+    }
 }
