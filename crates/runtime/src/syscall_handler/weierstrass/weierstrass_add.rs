@@ -1,134 +1,107 @@
-use super::ecc_config::AddConfig;
-use crate::{
-    syscall_handler::{
-        ecc::{
-            ecc_bn256,
-            ecc_utils::{cast_u8_to_u32, cast_u8_to_u32_aligned},
-        },
-        syscall_process_exit_code,
-    },
-    RuntimeContext,
+use crate::RuntimeContext;
+use fluentbase_types::{
+    BLS12381_G1_RAW_AFFINE_SIZE, BN254_G1_RAW_AFFINE_SIZE, SECP256K1_G1_RAW_AFFINE_SIZE,
+    SECP256R1_G1_RAW_AFFINE_SIZE,
 };
-use ark_ec::CurveGroup;
-use fluentbase_types::{ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE};
 use rwasm::{Store, TrapCode, Value};
-use sp1_curves::{AffinePoint, CurveType, EllipticCurve};
-use sp1_primitives::consts::words_to_bytes_le_vec;
+use sp1_curves::{
+    weierstrass::{bls12_381::Bls12381, bn254::Bn254, secp256k1::Secp256k1, secp256r1::Secp256r1},
+    AffinePoint, BigUint, EllipticCurve,
+};
 
-pub fn ecc_add_handler<C: AddConfig>(
-    caller: &mut impl Store<RuntimeContext>,
+pub fn syscall_secp256k1_add_handler(
+    ctx: &mut impl Store<RuntimeContext>,
+    params: &[Value],
+    result: &mut [Value],
+) -> Result<(), TrapCode> {
+    syscall_weierstrass_add_handler::<Secp256k1, { SECP256K1_G1_RAW_AFFINE_SIZE }>(
+        ctx, params, result,
+    )
+}
+pub fn syscall_secp256r1_add_handler(
+    ctx: &mut impl Store<RuntimeContext>,
+    params: &[Value],
+    result: &mut [Value],
+) -> Result<(), TrapCode> {
+    syscall_weierstrass_add_handler::<Secp256r1, { SECP256R1_G1_RAW_AFFINE_SIZE }>(
+        ctx, params, result,
+    )
+}
+pub fn syscall_bn254_add_handler(
+    ctx: &mut impl Store<RuntimeContext>,
+    params: &[Value],
+    result: &mut [Value],
+) -> Result<(), TrapCode> {
+    syscall_weierstrass_add_handler::<Bn254, { BN254_G1_RAW_AFFINE_SIZE }>(ctx, params, result)
+}
+pub fn syscall_bls12381_add_handler(
+    ctx: &mut impl Store<RuntimeContext>,
+    params: &[Value],
+    result: &mut [Value],
+) -> Result<(), TrapCode> {
+    syscall_weierstrass_add_handler::<Bls12381, { BLS12381_G1_RAW_AFFINE_SIZE }>(
+        ctx, params, result,
+    )
+}
+
+fn syscall_weierstrass_add_handler<E: EllipticCurve, const POINT_SIZE: usize>(
+    ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    // let (p_ptr, q_ptr) = (
-    //     params[0].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
-    //     params[1].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
-    // );
-
     let p_ptr = params[0].i32().unwrap() as usize;
     let q_ptr = params[1].i32().unwrap() as usize;
 
-    let mut p = vec![0u8; C::POINT_SIZE];
-    caller.memory_read(p_ptr as usize, &mut p)?;
-    let mut q = vec![0u8; C::POINT_SIZE];
-    caller.memory_read(q_ptr as usize, &mut q)?;
+    let mut p = [0u8; POINT_SIZE];
+    ctx.memory_read(p_ptr, &mut p)?;
+    let mut q = [0u8; POINT_SIZE];
+    ctx.memory_read(q_ptr, &mut q)?;
 
-    let result_vec = ecc_add_impl::<C>(&p, &q).map_err(|e| syscall_process_exit_code(caller, e))?;
-    if !result_vec.is_empty() {
-        caller.memory_write(p_ptr as usize, &result_vec)?;
-    }
-
+    let result = syscall_weierstrass_add_impl::<E, POINT_SIZE>(p, q);
+    ctx.memory_write(p_ptr, &result)?;
     Ok(())
 }
 
-pub fn ecc_add_impl<C: AddConfig>(p: &[u8], q: &[u8]) -> Result<Vec<u8>, ExitCode> {
-    match C::CURVE_TYPE {
-        CurveType::Bls12381 => {
-            if C::POINT_SIZE == G2_UNCOMPRESSED_SIZE {
-                Ok(fn_impl_bls12381_g2(
-                    p.try_into().unwrap_or([0u8; G2_UNCOMPRESSED_SIZE]),
-                    q.try_into().unwrap_or([0u8; G2_UNCOMPRESSED_SIZE]),
-                ))
-            } else {
-                fn_sp1_generic::<C>(p, q)
-            }
-        }
-        CurveType::Bn254 => fn_impl_bn254(p, q),
-        _ => fn_sp1_generic::<C>(p, q),
-    }
+pub fn syscall_secp256k1_add_impl(
+    p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE],
+    q: [u8; SECP256K1_G1_RAW_AFFINE_SIZE],
+) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
+    syscall_weierstrass_add_impl::<Secp256k1, { SECP256K1_G1_RAW_AFFINE_SIZE }>(p, q)
 }
-
-fn fn_impl_bn254(p: &[u8], q: &[u8]) -> Result<Vec<u8>, ExitCode> {
-    // Convert input to fixed-size arrays
-    let Ok(p_array) = TryInto::<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE]>::try_into(p) else {
-        return Err(ExitCode::MalformedBuiltinParams);
-    };
-    let Ok(q_array) = TryInto::<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE]>::try_into(q) else {
-        return Err(ExitCode::MalformedBuiltinParams);
-    };
-    let p1 = ecc_bn256::read_g1_point(&p_array)?;
-    let p2 = ecc_bn256::read_g1_point(&q_array)?;
-
-    let p1_jacobian: ark_bn254::G1Projective = p1.into();
-    let p3 = p1_jacobian + p2;
-
-    let output = ecc_bn256::encode_g1_point(p3.into_affine());
-    Ok(output.to_vec())
+pub fn syscall_secp256r1_add_impl(
+    p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE],
+    q: [u8; SECP256R1_G1_RAW_AFFINE_SIZE],
+) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
+    syscall_weierstrass_add_impl::<Secp256r1, { SECP256R1_G1_RAW_AFFINE_SIZE }>(p, q)
+}
+pub fn syscall_bn254_add_impl(
+    p: [u8; BN254_G1_RAW_AFFINE_SIZE],
+    q: [u8; BN254_G1_RAW_AFFINE_SIZE],
+) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
+    syscall_weierstrass_add_impl::<Bn254, { BN254_G1_RAW_AFFINE_SIZE }>(p, q)
+}
+pub fn syscall_bls12381_add_impl(
+    p: [u8; BLS12381_G1_RAW_AFFINE_SIZE],
+    q: [u8; BLS12381_G1_RAW_AFFINE_SIZE],
+) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
+    syscall_weierstrass_add_impl::<Bls12381, { BLS12381_G1_RAW_AFFINE_SIZE }>(p, q)
 }
 
 /// Generic SP1 curve point addition implementation
-fn fn_sp1_generic<C: AddConfig>(p: &[u8], q: &[u8]) -> Result<Vec<u8>, ExitCode> {
-    // Try the fast aligned version first
-    let p_words = if let Some(words) = cast_u8_to_u32(p) {
-        words
-    } else {
-        // Fall back to the aligned version that handles unaligned data
-        let Some(p_words_vec) = cast_u8_to_u32_aligned(p) else {
-            return Err(ExitCode::MalformedBuiltinParams);
-        };
-        let Some(q_words_vec) = cast_u8_to_u32_aligned(q) else {
-            return Err(ExitCode::MalformedBuiltinParams);
-        };
-        return fn_sp1_generic_with_vec::<C>(&p_words_vec, &q_words_vec);
-    };
-
-    let q_words = if let Some(words) = cast_u8_to_u32(q) {
-        words
-    } else {
-        // Fall back to the aligned version that handles unaligned data
-        let Some(q_words_vec) = cast_u8_to_u32_aligned(q) else {
-            return Err(ExitCode::MalformedBuiltinParams);
-        };
-        return fn_sp1_generic_with_vec::<C>(p_words, &q_words_vec);
-    };
-
-    let p_aff = AffinePoint::<C::EllipticCurve>::from_words_le(p_words);
-    let q_aff = AffinePoint::<C::EllipticCurve>::from_words_le(q_words);
-
-    let r_aff = C::EllipticCurve::ec_add(&p_aff, &q_aff);
-
-    let r_words = r_aff.to_words_le();
-    Ok(words_to_bytes_le_vec(r_words.as_slice()))
-}
-
-/// Helper function for when we need to use Vec<u32> instead of &[u32]
-fn fn_sp1_generic_with_vec<C: AddConfig>(
-    p_words: &[u32],
-    q_words: &[u32],
-) -> Result<Vec<u8>, ExitCode> {
-    let p_aff = AffinePoint::<C::EllipticCurve>::from_words_le(p_words);
-    let q_aff = AffinePoint::<C::EllipticCurve>::from_words_le(q_words);
-
-    let r_aff = C::EllipticCurve::ec_add(&p_aff, &q_aff);
-
-    let r_words = r_aff.to_words_le();
-    Ok(words_to_bytes_le_vec(r_words.as_slice()))
-}
-
-/// BLS12-381 G2 point addition implementation using sp1 library
-fn fn_impl_bls12381_g2(p: [u8; G2_UNCOMPRESSED_SIZE], q: [u8; G2_UNCOMPRESSED_SIZE]) -> Vec<u8> {
-    use crate::syscall_handler::ecc::bls12381_g2_add_sp1;
-    bls12381_g2_add_sp1(&p, &q).to_vec()
+fn syscall_weierstrass_add_impl<E: EllipticCurve, const POINT_SIZE: usize>(
+    p: [u8; POINT_SIZE],
+    q: [u8; POINT_SIZE],
+) -> [u8; POINT_SIZE] {
+    let (px, py) = p.split_at(p.len() / 2);
+    let p_affine = AffinePoint::<E>::new(BigUint::from_bytes_le(px), BigUint::from_bytes_le(py));
+    let (qx, qy) = q.split_at(p.len() / 2);
+    let q_affine = AffinePoint::<E>::new(BigUint::from_bytes_le(qx), BigUint::from_bytes_le(qy));
+    let result_affine = p_affine + q_affine;
+    let (rx, ry) = (result_affine.x, result_affine.y);
+    let mut result = [0u8; POINT_SIZE];
+    result[..POINT_SIZE / 2].copy_from_slice(&rx.to_bytes_le());
+    result[POINT_SIZE / 2..].copy_from_slice(&ry.to_bytes_le());
+    result
 }
 
 /// TESTs
@@ -138,13 +111,9 @@ fn fn_impl_bls12381_g2(p: [u8; G2_UNCOMPRESSED_SIZE], q: [u8; G2_UNCOMPRESSED_SI
 /// - sp1/crates/test-artifacts/programs/secp256k1-add/src/main.rs
 /// - sp1/crates/test-artifacts/programs/secp256r1-add/src/main.rs
 /// - sp1/crates/test-artifacts/programs/bn254-add/src/main.rs
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::syscall_handler::ecc::ecc_config::{
-        Bls12381G1AddConfig, Secp256k1AddConfig, Secp256r1AddConfig,
-    };
 
     #[test]
     fn test_bls12381_add() {
@@ -182,8 +151,8 @@ mod tests {
             74, 99, 108, 37, 69, 231, 230, 59, 212, 15, 49, 39, 156, 157, 127, 9, 195, 171, 221,
             12, 154, 166, 12, 248, 197, 137, 51, 98, 132, 138, 159, 176, 245, 166, 211, 128, 43, 3,
         ];
-        let result = fn_sp1_generic::<Bls12381G1AddConfig>(&A, &B).unwrap();
-        assert_eq!(result, C.to_vec());
+        let result = syscall_bls12381_add_impl(A, B);
+        assert_eq!(result, C);
     }
 
     #[test]
@@ -216,6 +185,8 @@ mod tests {
             241, 205, 87, 91, 156, 11, 180, 99, 158, 49, 117, 100, 8, 141, 124, 219, 79, 85, 41,
             148, 72, 224, 190, 153, 183, 42,
         ];
+        let result = syscall_bn254_add_impl(A, B);
+        assert_eq!(result, C);
     }
 
     #[test]
@@ -244,8 +215,8 @@ mod tests {
             185, 108, 27, 35, 194, 52, 153, 169, 0, 101, 86, 243, 55, 42, 230, 55, 227, 15, 20,
             232, 45, 99, 15, 123, 143, 56,
         ];
-        let result = fn_sp1_generic::<Secp256k1AddConfig>(&A, &B).unwrap();
-        assert_eq!(result, C.to_vec());
+        let result = syscall_secp256k1_add_impl(A, B);
+        assert_eq!(result, C);
     }
 
     #[test]
@@ -280,7 +251,7 @@ mod tests {
             126, 255, 152, 73, 12, 100, 52, 135,
         ];
         // Tests A + B == C, sum of points of infinity, A + A == 2 * A, and A + (-A) == infinity.
-        let result = fn_sp1_generic::<Secp256r1AddConfig>(&A, &B).unwrap();
-        assert_eq!(result, C.to_vec());
+        let result = syscall_secp256r1_add_impl(A, B);
+        assert_eq!(result, C);
     }
 }

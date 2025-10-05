@@ -1,8 +1,8 @@
 use crate::{
-    BytecodeOrHash, CryptoAPI, ExitCode, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
-    SECP256K1_POINT_DECOMPRESSED_SIZE, TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
+    BytecodeOrHash, CryptoAPI, ExitCode, NativeAPI, BLS12381_FP_SIZE, BLS12381_G1_COMPRESSED_SIZE,
+    BLS12381_G1_RAW_AFFINE_SIZE, BN254_FP_SIZE, BN254_G1_COMPRESSED_SIZE, BN254_G1_RAW_AFFINE_SIZE,
+    ED25519_POINT_COMPRESSED_SIZE, ED25519_POINT_DECOMPRESSED_SIZE, SECP256K1_G1_COMPRESSED_SIZE,
+    SECP256K1_G1_RAW_AFFINE_SIZE, SECP256R1_G1_COMPRESSED_SIZE, SECP256R1_G1_RAW_AFFINE_SIZE,
 };
 use core::convert::Into;
 
@@ -133,299 +133,174 @@ impl NativeAPI for RwasmContext {
     }
 }
 
+#[rustfmt::skip]
 impl CryptoAPI for RwasmContext {
     #[inline(always)]
     fn keccak256_permute(state: &mut [u64; 25]) {
-        unsafe {
-            _keccak256_permute(state.as_mut_ptr() as *mut [u64; 25]);
-        }
+        unsafe { _keccak256_permute(state.as_mut_ptr() as *mut [u64; 25]) }
     }
     #[inline(always)]
     fn sha256_extend(w: &mut [u32; 64]) {
-        unsafe {
-            _sha256_extend(w.as_mut_ptr() as *mut [u32; 64]);
-        }
+        unsafe { _sha256_extend(w.as_mut_ptr() as *mut [u32; 64]) }
     }
     #[inline(always)]
     fn sha256_compress(state: &mut [u32; 8], w: &[u32; 64]) {
-        unsafe {
-            _sha256_compress(
-                state.as_mut_ptr() as *mut [u32; 8],
-                w.as_ptr() as *mut [u32; 64],
-            );
-        }
+        unsafe { _sha256_compress(state.as_mut_ptr() as *mut [u32; 8], w.as_ptr() as *mut [u32; 64]) }
     }
 
     #[inline(always)]
-    fn ed25519_decompress(
-        y: [u8; EDWARDS_COMPRESSED_SIZE],
-        sign: u32,
-    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
-        let mut res = [0u8; EDWARDS_DECOMPRESSED_SIZE];
-        res[EDWARDS_COMPRESSED_SIZE..].copy_from_slice(&y);
-        unsafe { _ed25519_decompress(res.as_mut_ptr(), sign) };
-        res
+    fn ed25519_decompress(y: [u8; ED25519_POINT_COMPRESSED_SIZE], sign: u32) -> [u8; ED25519_POINT_DECOMPRESSED_SIZE] {
+        let mut result = [0u8; ED25519_POINT_DECOMPRESSED_SIZE];
+        result[..ED25519_POINT_COMPRESSED_SIZE].copy_from_slice(&y);
+        unsafe { _ed25519_decompress(result.as_mut_ptr(), sign) };
+        result
     }
     #[inline(always)]
-    fn ed25519_add(
-        mut p: [u8; EDWARDS_DECOMPRESSED_SIZE],
-        q: [u8; EDWARDS_DECOMPRESSED_SIZE],
-    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
+    fn ed25519_add(mut p: [u8; ED25519_POINT_DECOMPRESSED_SIZE], q: [u8; ED25519_POINT_DECOMPRESSED_SIZE]) -> [u8; ED25519_POINT_DECOMPRESSED_SIZE] {
         unsafe { _ed25519_add(p.as_mut_ptr(), q.as_ptr()) };
         p
     }
 
     #[inline(always)]
-    fn tower_fp1_bn254_add(
-        mut x: [u8; TOWER_FP_BN256_SIZE],
-        y: [u8; TOWER_FP_BN256_SIZE],
-    ) -> [u8; TOWER_FP_BN256_SIZE] {
+    fn tower_fp1_bn254_add(mut x: [u8; BN254_FP_SIZE], y: [u8; BN254_FP_SIZE]) -> [u8; BN254_FP_SIZE] {
         unsafe { _tower_fp1_bn254_add(x.as_mut_ptr(), y.as_ptr()) };
         x
     }
     #[inline(always)]
-    fn tower_fp1_bn254_sub(
-        mut x: [u8; TOWER_FP_BN256_SIZE],
-        y: [u8; TOWER_FP_BN256_SIZE],
-    ) -> [u8; TOWER_FP_BN256_SIZE] {
+    fn tower_fp1_bn254_sub(mut x: [u8; BN254_FP_SIZE], y: [u8; BN254_FP_SIZE]) -> [u8; BN254_FP_SIZE] {
         unsafe { _tower_fp1_bn254_sub(x.as_mut_ptr(), y.as_ptr()) };
         x
     }
     #[inline(always)]
-    fn tower_fp1_bn254_mul(
-        mut x: [u8; TOWER_FP_BN256_SIZE],
-        y: [u8; TOWER_FP_BN256_SIZE],
-    ) -> [u8; TOWER_FP_BN256_SIZE] {
+    fn tower_fp1_bn254_mul(mut x: [u8; BN254_FP_SIZE], y: [u8; BN254_FP_SIZE]) -> [u8; BN254_FP_SIZE] {
         unsafe { _tower_fp1_bn254_mul(x.as_mut_ptr(), y.as_ptr()) };
         x
     }
     #[inline(always)]
-    fn tower_fp1_bls12381_add(
-        mut x: [u8; TOWER_FP_BLS12381_SIZE],
-        y: [u8; TOWER_FP_BLS12381_SIZE],
-    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
-        unsafe { _tower_fp2_bls12381_add(x.as_mut_ptr(), y.as_ptr()) };
+    fn tower_fp1_bls12381_add(mut x: [u8; BLS12381_FP_SIZE], y: [u8; BLS12381_FP_SIZE]) -> [u8; BLS12381_FP_SIZE] {
+        unsafe { _tower_fp1_bls12381_add(x.as_mut_ptr(), y.as_ptr()) };
         x
     }
     #[inline(always)]
-    fn tower_fp1_bls12381_sub(
-        mut x: [u8; TOWER_FP_BLS12381_SIZE],
-        y: [u8; TOWER_FP_BLS12381_SIZE],
-    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
-        unsafe { _tower_fp2_bls12381_sub(x.as_mut_ptr(), y.as_ptr()) };
+    fn tower_fp1_bls12381_sub(mut x: [u8; BLS12381_FP_SIZE], y: [u8; BLS12381_FP_SIZE]) -> [u8; BLS12381_FP_SIZE] {
+        unsafe { _tower_fp1_bls12381_sub(x.as_mut_ptr(), y.as_ptr()) };
         x
     }
     #[inline(always)]
-    fn tower_fp1_bls12381_mul(
-        mut x: [u8; TOWER_FP_BLS12381_SIZE],
-        y: [u8; TOWER_FP_BLS12381_SIZE],
-    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
-        unsafe { _tower_fp2_bls12381_mul(x.as_mut_ptr(), y.as_ptr()) };
+    fn tower_fp1_bls12381_mul(mut x: [u8; BLS12381_FP_SIZE], y: [u8; BLS12381_FP_SIZE]) -> [u8; BLS12381_FP_SIZE] {
+        unsafe { _tower_fp1_bls12381_mul(x.as_mut_ptr(), y.as_ptr()) };
         x
     }
     #[inline(always)]
-    fn tower_fp2_bn254_add(
-        mut x: [u8; TOWER_FP_BN256_SIZE],
-        y: [u8; TOWER_FP_BN256_SIZE],
-    ) -> [u8; TOWER_FP_BN256_SIZE] {
-        unsafe { _tower_fp2_bn254_add(x.as_mut_ptr(), y.as_ptr()) };
-        x
+    fn tower_fp2_bn254_add(mut a_c0: [u8; BN254_FP_SIZE], mut a_c1: [u8; BN254_FP_SIZE], b_c0: [u8; BN254_FP_SIZE], b_c1: [u8; BN254_FP_SIZE]) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {
+        unsafe { _tower_fp2_bn254_add(a_c0.as_mut_ptr(), a_c1.as_mut_ptr(), b_c0.as_ptr(), b_c1.as_ptr()) };
+        (a_c0, a_c1)
     }
     #[inline(always)]
-    fn tower_fp2_bn254_sub(
-        mut x: [u8; TOWER_FP_BN256_SIZE],
-        y: [u8; TOWER_FP_BN256_SIZE],
-    ) -> [u8; TOWER_FP_BN256_SIZE] {
-        unsafe { _tower_fp2_bn254_sub(x.as_mut_ptr(), y.as_ptr()) };
-        x
+    fn tower_fp2_bn254_sub(mut a_c0: [u8; BN254_FP_SIZE], mut a_c1: [u8; BN254_FP_SIZE], b_c0: [u8; BN254_FP_SIZE], b_c1: [u8; BN254_FP_SIZE]) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {
+        unsafe { _tower_fp2_bn254_sub(a_c0.as_mut_ptr(), a_c1.as_mut_ptr(), b_c0.as_ptr(), b_c1.as_ptr()) };
+        (a_c0, a_c1)
     }
     #[inline(always)]
-    fn tower_fp2_bn254_mul(
-        mut x: [u8; TOWER_FP_BN256_SIZE],
-        y: [u8; TOWER_FP_BN256_SIZE],
-    ) -> [u8; TOWER_FP_BN256_SIZE] {
-        unsafe { _tower_fp2_bn254_mul(x.as_mut_ptr(), y.as_ptr()) };
-        x
+    fn tower_fp2_bn254_mul(mut a_c0: [u8; BN254_FP_SIZE], mut a_c1: [u8; BN254_FP_SIZE], b_c0: [u8; BN254_FP_SIZE], b_c1: [u8; BN254_FP_SIZE]) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {
+        unsafe { _tower_fp2_bn254_mul(a_c0.as_mut_ptr(), a_c1.as_mut_ptr(), b_c0.as_ptr(), b_c1.as_ptr()) };
+        (a_c0, a_c1)
     }
     #[inline(always)]
-    fn tower_fp2_bls12381_add(
-        mut x: [u8; TOWER_FP_BLS12381_SIZE],
-        y: [u8; TOWER_FP_BLS12381_SIZE],
-    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
-        unsafe { _tower_fp2_bls12381_add(x.as_mut_ptr(), y.as_ptr()) };
-        x
+    fn tower_fp2_bls12381_add(mut a_c0: [u8; BLS12381_FP_SIZE], mut a_c1: [u8; BLS12381_FP_SIZE], b_c0: [u8; BLS12381_FP_SIZE], b_c1: [u8; BLS12381_FP_SIZE]) -> ([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]) {
+        unsafe { _tower_fp2_bls12381_add(a_c0.as_mut_ptr(), a_c1.as_mut_ptr(), b_c0.as_ptr(), b_c1.as_ptr()) };
+        (a_c0, a_c1)
     }
     #[inline(always)]
-    fn tower_fp2_bls12381_sub(
-        mut x: [u8; TOWER_FP_BLS12381_SIZE],
-        y: [u8; TOWER_FP_BLS12381_SIZE],
-    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
-        unsafe { _tower_fp2_bls12381_sub(x.as_mut_ptr(), y.as_ptr()) };
-        x
+    fn tower_fp2_bls12381_sub(mut a_c0: [u8; BLS12381_FP_SIZE], mut a_c1: [u8; BLS12381_FP_SIZE], b_c0: [u8; BLS12381_FP_SIZE], b_c1: [u8; BLS12381_FP_SIZE]) -> ([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]) {
+        unsafe { _tower_fp2_bls12381_sub(a_c0.as_mut_ptr(), a_c1.as_mut_ptr(), b_c0.as_ptr(), b_c1.as_ptr()) };
+        (a_c0, a_c1)
     }
     #[inline(always)]
-    fn tower_fp2_bls12381_mul(
-        mut x: [u8; TOWER_FP_BLS12381_SIZE],
-        y: [u8; TOWER_FP_BLS12381_SIZE],
-    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
-        unsafe { _tower_fp2_bls12381_mul(x.as_mut_ptr(), y.as_ptr()) };
-        x
+    fn tower_fp2_bls12381_mul(mut a_c0: [u8; BLS12381_FP_SIZE], mut a_c1: [u8; BLS12381_FP_SIZE], b_c0: [u8; BLS12381_FP_SIZE], b_c1: [u8; BLS12381_FP_SIZE]) -> ([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]) {
+        unsafe { _tower_fp2_bls12381_mul(a_c0.as_mut_ptr(), a_c1.as_mut_ptr(), b_c0.as_ptr(), b_c1.as_ptr()) };
+        (a_c0, a_c1)
     }
 
     #[inline(always)]
-    fn _secp256k1_add(
-        p: &mut [u8; SECP256K1_POINT_DECOMPRESSED_SIZE],
-        q: &[u8; SECP256K1_POINT_DECOMPRESSED_SIZE],
-    ) {
-        unsafe { _secp256k1_add(p.as_mut_ptr(), q.as_ptr()) }
+    fn secp256k1_add(mut p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE], q: [u8; SECP256K1_G1_RAW_AFFINE_SIZE]) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
+        unsafe { _secp256k1_add(p.as_mut_ptr(), q.as_ptr()) };
+        p
     }
     #[inline(always)]
-    fn _secp256k1_double(p: &mut [u8; SECP256K1_POINT_DECOMPRESSED_SIZE]) {
-        unsafe { _secp256k1_double(p.as_mut_ptr()) }
+    fn secp256k1_decompress(x: [u8; SECP256K1_G1_COMPRESSED_SIZE], sign: u32) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
+        let mut result = [0u8; SECP256K1_G1_RAW_AFFINE_SIZE];
+        result[SECP256K1_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
+        unsafe { _secp256k1_decompress(result.as_mut_ptr(), sign) };
+        result
+    }
+    #[inline(always)]
+    fn secp256k1_double(mut p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE]) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
+        unsafe { _secp256k1_double(p.as_mut_ptr()) };
+        p
     }
 
     #[inline(always)]
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> [u8; 64] {
-        unsafe {
-            _bn254_add(p.as_ptr() as u32, q.as_ptr() as u32);
-        }
-        *p
+    fn secp256r1_add(mut p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE], q: [u8; SECP256R1_G1_RAW_AFFINE_SIZE]) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
+        unsafe { _secp256r1_add(p.as_mut_ptr(), q.as_ptr()) };
+        p
+    }
+    #[inline(always)]
+    fn secp256r1_decompress(x: [u8; SECP256R1_G1_COMPRESSED_SIZE], sign: u32) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
+        let mut result = [0u8; SECP256R1_G1_RAW_AFFINE_SIZE];
+        result[SECP256R1_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
+        unsafe { _secp256r1_decompress(result.as_mut_ptr(), sign) };
+        result
+    }
+    #[inline(always)]
+    fn secp256r1_double(mut p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE]) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
+        unsafe { _secp256r1_double(p.as_mut_ptr()) };
+        p
     }
 
     #[inline(always)]
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
-        unsafe {
-            _bn254_mul(p.as_ptr() as u32, q.as_ptr() as u32);
-        }
-        Ok(*p)
+    fn bls12381_add(mut p: [u8; BLS12381_G1_RAW_AFFINE_SIZE], q: [u8; BLS12381_G1_RAW_AFFINE_SIZE]) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
+        unsafe { _bls12381_add(p.as_mut_ptr(), q.as_ptr()) };
+        p
+    }
+    #[inline(always)]
+    fn bls12381_decompress(mut x: [u8; BLS12381_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
+        let mut result = [0u8; BLS12381_G1_RAW_AFFINE_SIZE];
+        result[BLS12381_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
+        unsafe { _bls12381_decompress(result.as_mut_ptr(), sign) };
+        result
+    }
+    #[inline(always)]
+    fn bls12381_double(mut p: [u8; BLS12381_G1_RAW_AFFINE_SIZE]) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
+        unsafe { _bls12381_double(p.as_mut_ptr()) };
+        p
     }
 
     #[inline(always)]
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
-        let mut result = [0u8; 32];
-        unsafe {
-            _bn254_multi_pairing(
-                elements.as_ptr() as *const u8,
-                elements.len() as u32,
-                result.as_mut_ptr(),
-            );
-        }
-        Ok(result)
+    fn bn254_add(mut p: [u8; BN254_G1_RAW_AFFINE_SIZE], q: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
+        unsafe { _bn254_add(p.as_mut_ptr(), q.as_ptr()) };
+        p
+    }
+    #[inline(always)]
+    fn bn254_decompress(x: [u8; BN254_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
+        let mut result = [0u8; BN254_G1_RAW_AFFINE_SIZE];
+        result[BN254_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
+        unsafe { _bn254_decompress(result.as_mut_ptr(), sign) };
+        result
+    }
+    #[inline(always)]
+    fn bn254_double(mut p: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
+        unsafe { _bn254_double(p.as_mut_ptr()) };
+        p
     }
 
     #[inline(always)]
-    fn bn254_g1_compress(
-        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
-        let mut result_point = [0u8; BN254_G1_POINT_COMPRESSED_SIZE];
-        unsafe {
-            if _bn254_g1_compress(point.as_ptr() as *const u8, result_point.as_mut_ptr()) != 0 {
-                return Err(ExitCode::MalformedBuiltinParams);
-            };
-        }
-        Ok(result_point)
-    }
-
-    #[inline(always)]
-    fn bn254_g1_decompress(
-        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let mut result_point = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
-        unsafe {
-            _bn254_g1_decompress(point.as_ptr() as *const u8, result_point.as_mut_ptr());
-        }
-        Ok(result_point)
-    }
-
-    #[inline(always)]
-    fn bn254_g2_compress(
-        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
-        let mut result_point = [0u8; BN254_G2_POINT_COMPRESSED_SIZE];
-        unsafe {
-            _bn254_g2_compress(point.as_ptr() as *const u8, result_point.as_mut_ptr());
-        }
-        Ok(result_point)
-    }
-
-    #[inline(always)]
-    fn bn254_g2_decompress(
-        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let mut result_point = [0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
-        unsafe {
-            _bn254_g2_decompress(point.as_ptr() as *const u8, result_point.as_mut_ptr());
-        }
-        Ok(result_point)
-    }
-
-    #[inline(always)]
-    fn bn254_double(p: &mut [u8; 64]) {
-        unsafe {
-            _bn254_double(p.as_ptr() as u32);
-        }
-    }
-
-    // BLS12-381 implementations
-    #[inline(always)]
-    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
-        unsafe { _bls12381_g1_add(p.as_mut_ptr(), q.as_ptr()) }
-    }
-
-    #[inline(always)]
-    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]) {
-        unsafe {
-            _bls12381_g1_msm(
-                pairs.as_ptr() as *const u8,
-                pairs.len() as u32,
-                out.as_mut_ptr(),
-            )
-        }
-    }
-
-    #[inline(always)]
-    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) {
-        unsafe { _bls12381_g2_add(p.as_mut_ptr(), q.as_ptr()) }
-    }
-
-    #[inline(always)]
-    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]) {
-        unsafe {
-            _bls12381_g2_msm(
-                pairs.as_ptr() as *const u8,
-                pairs.len() as u32,
-                out.as_mut_ptr(),
-            )
-        }
-    }
-
-    #[inline(always)]
-    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]) {
-        unsafe {
-            _bls12381_pairing(
-                pairs.as_ptr() as *const u8,
-                pairs.len() as u32,
-                out.as_mut_ptr(),
-            )
-        }
-    }
-
-    #[inline(always)]
-    fn bls12_381_map_g1(p: &[u8; 64], out: &mut [u8; 96]) {
-        unsafe { _bls12381_map_g1(p.as_ptr(), out.as_mut_ptr()) }
-    }
-
-    #[inline(always)]
-    fn bls12_381_map_g2(p: &[u8; 128], out: &mut [u8; 192]) {
-        unsafe { _bls12381_map_g2(p.as_ptr(), out.as_mut_ptr()) }
-    }
-
     fn uint256_mul_mod(x: &[u8; 32], y: &[u8; 32], m: &[u8; 32]) -> [u8; 32] {
         let mut x = x.clone();
         unsafe { _uint256_mul_mod(x.as_mut_ptr(), y.as_ptr(), m.as_ptr()) };
         x
     }
-
+    #[inline(always)]
     fn uint256_x2048_mul(a: &[u8; 32], b: &[u8; 256]) -> ([u8; 256], [u8; 32]) {
         let (mut lo, mut hi) = ([0u8; 256], [0u8; 32]);
         unsafe { _uint256_x2048_mul(a.as_ptr(), b.as_ptr(), lo.as_mut_ptr(), hi.as_mut_ptr()) };

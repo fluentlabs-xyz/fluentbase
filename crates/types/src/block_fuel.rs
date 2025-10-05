@@ -172,21 +172,15 @@ pub(crate) fn emit_fuel_procedure(sys_func_idx: SysFuncIdx) -> InstructionSet {
         SECP256K1_DOUBLE => const_fuel!(SECP256K1_DOUBLE_COST),
 
         // bls12381 (0x06)
-        BLS12381_G1_ADD => const_fuel!(BLS_G1_ADD_COST),
-        BLS12381_G2_ADD => const_fuel!(BLS_G2_ADD_COST),
-        BLS12381_PAIRING => const_fuel!(BLS_PAIRING_COST),
-        BLS12381_MAP_G1 => const_fuel!(BLS_MAP_G1_COST),
-        BLS12381_MAP_G2 => const_fuel!(BLS_MAP_G2_COST),
+        BLS12381_ADD => const_fuel!(BLS_G1_ADD_COST),
+        // BLS12381_G2_ADD => const_fuel!(BLS_G2_ADD_COST),
+        // BLS12381_PAIRING => const_fuel!(BLS_PAIRING_COST),
+        // BLS12381_MAP_G1 => const_fuel!(BLS_MAP_G1_COST),
+        // BLS12381_MAP_G2 => const_fuel!(BLS_MAP_G2_COST),
 
         // bn254 (0x07)
         BN254_ADD => const_fuel!(BN254_ADD_COST),
         BN254_DOUBLE => const_fuel!(BN254_DOUBLE_COST),
-        BN254_MUL => const_fuel!(BN254_MUL_COST),
-        BN254_MULTI_PAIRING => const_fuel!(BN254_PAIRING_COST),
-        BN254_G1_COMPRESS => const_fuel!(BN254_G1_COMPRESS_COST),
-        BN254_G1_DECOMPRESS => const_fuel!(BN254_G1_DECOMPRESS_COST),
-        BN254_G2_COMPRESS => const_fuel!(BN254_G2_COMPRESS_COST),
-        BN254_G2_DECOMPRESS => const_fuel!(BN254_G2_DECOMPRESS_COST),
 
         // uint256 (0x08)
         UINT256_MUL_MOD => const_fuel!(UINT256_MUL_MOD_COST),

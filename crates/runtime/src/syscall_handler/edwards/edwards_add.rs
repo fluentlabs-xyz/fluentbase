@@ -1,5 +1,5 @@
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
-use fluentbase_types::{ExitCode, EDWARDS_DECOMPRESSED_SIZE};
+use fluentbase_types::{ExitCode, ED25519_POINT_DECOMPRESSED_SIZE};
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{edwards::ed25519::Ed25519, AffinePoint};
 
@@ -9,10 +9,10 @@ pub fn syscall_edwards_add_handler(
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
     let p_ptr = params[0].i32().unwrap() as u32;
-    let mut p_bytes = [0u8; EDWARDS_DECOMPRESSED_SIZE];
+    let mut p_bytes = [0u8; ED25519_POINT_DECOMPRESSED_SIZE];
     ctx.memory_read(p_ptr as usize, &mut p_bytes)?;
     let q_ptr = params[1].i32().unwrap() as u32;
-    let mut q_bytes = [0u8; EDWARDS_DECOMPRESSED_SIZE];
+    let mut q_bytes = [0u8; ED25519_POINT_DECOMPRESSED_SIZE];
     ctx.memory_read(q_ptr as usize, &mut q_bytes)?;
     let res = syscall_edwards_add_impl(p_bytes, q_bytes)
         .map_err(|e| syscall_process_exit_code(ctx, e))?;
@@ -24,17 +24,17 @@ pub fn syscall_edwards_add_handler(
 compile_error!("syscall_ed25519_add_impl is not implemented for big-endian targets");
 
 pub fn syscall_edwards_add_impl(
-    p_bytes: [u8; EDWARDS_DECOMPRESSED_SIZE],
-    q_bytes: [u8; EDWARDS_DECOMPRESSED_SIZE],
-) -> Result<[u8; EDWARDS_DECOMPRESSED_SIZE], ExitCode> {
-    let p_words: [u32; EDWARDS_DECOMPRESSED_SIZE / 4] = bytemuck::cast(p_bytes);
-    let q_words: [u32; EDWARDS_DECOMPRESSED_SIZE / 4] = bytemuck::cast(q_bytes);
+    p_bytes: [u8; ED25519_POINT_DECOMPRESSED_SIZE],
+    q_bytes: [u8; ED25519_POINT_DECOMPRESSED_SIZE],
+) -> Result<[u8; ED25519_POINT_DECOMPRESSED_SIZE], ExitCode> {
+    let p_words: [u32; ED25519_POINT_DECOMPRESSED_SIZE / 4] = bytemuck::cast(p_bytes);
+    let q_words: [u32; ED25519_POINT_DECOMPRESSED_SIZE / 4] = bytemuck::cast(q_bytes);
     let p_affine = AffinePoint::<Ed25519>::from_words_le(&p_words);
     let q_affine = AffinePoint::<Ed25519>::from_words_le(&q_words);
     let result_affine = p_affine + q_affine;
-    let r_words: [u32; EDWARDS_DECOMPRESSED_SIZE / 4] =
+    let r_words: [u32; ED25519_POINT_DECOMPRESSED_SIZE / 4] =
         result_affine.to_words_le().try_into().unwrap();
-    let r_bytes: [u8; EDWARDS_DECOMPRESSED_SIZE] = bytemuck::cast(r_words);
+    let r_bytes: [u8; ED25519_POINT_DECOMPRESSED_SIZE] = bytemuck::cast(r_words);
     Ok(r_bytes)
 }
 

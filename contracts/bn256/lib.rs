@@ -5,10 +5,16 @@ extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
     alloc_slice, crypto::CryptoRuntime, entrypoint, Bytes, ContextReader, CryptoAPI, ExitCode,
-    SharedAPI, BN254_ADD_INPUT_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE, BN254_MUL_INPUT_SIZE, BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN,
-    PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR, SCALAR_SIZE,
+    SharedAPI, BN254_G1_RAW_AFFINE_SIZE, BN254_G2_RAW_AFFINE_SIZE, PRECOMPILE_BN256_ADD,
+    PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
 };
+
+/// BN254 Specific Constants
+pub const SCALAR_SIZE: usize = 32;
+pub const BN254_MUL_INPUT_SIZE: usize = BN254_G1_RAW_AFFINE_SIZE + SCALAR_SIZE;
+pub const BN254_ADD_INPUT_SIZE: usize = 2 * BN254_G1_RAW_AFFINE_SIZE;
+pub const BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN: usize =
+    BN254_G1_RAW_AFFINE_SIZE + BN254_G2_RAW_AFFINE_SIZE;
 
 /// =============== Constants ==================
 ///  BN256 precompile constants (EIP-196, EIP-197)
@@ -43,22 +49,22 @@ fn check_gas_and_sync<SDK: SharedAPI>(sdk: &SDK, gas_used: u64, gas_limit: u64) 
 }
 
 #[inline(always)]
-fn read_g1_point(input: &[u8]) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-    if input.len() != BN254_G1_POINT_DECOMPRESSED_SIZE {
+fn read_g1_point(input: &[u8]) -> Result<[u8; BN254_G1_RAW_AFFINE_SIZE], ExitCode> {
+    if input.len() != BN254_G1_RAW_AFFINE_SIZE {
         return Err(ExitCode::InputOutputOutOfBounds);
     }
-    let mut g1 = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
-    g1[..BN254_G1_POINT_DECOMPRESSED_SIZE].copy_from_slice(input);
+    let mut g1 = [0u8; BN254_G1_RAW_AFFINE_SIZE];
+    g1[..BN254_G1_RAW_AFFINE_SIZE].copy_from_slice(input);
     Ok(g1)
 }
 
 #[inline(always)]
-fn read_g2_point(input: &[u8]) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
-    if input.len() != BN254_G2_POINT_DECOMPRESSED_SIZE {
+fn read_g2_point(input: &[u8]) -> Result<[u8; BN254_G2_RAW_AFFINE_SIZE], ExitCode> {
+    if input.len() != BN254_G2_RAW_AFFINE_SIZE {
         return Err(ExitCode::InputOutputOutOfBounds);
     }
-    let mut g2 = [0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
-    g2[..BN254_G2_POINT_DECOMPRESSED_SIZE].copy_from_slice(input);
+    let mut g2 = [0u8; BN254_G2_RAW_AFFINE_SIZE];
+    g2[..BN254_G2_RAW_AFFINE_SIZE].copy_from_slice(input);
     Ok(g2)
 }
 
@@ -75,16 +81,12 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             validate_and_consume_gas(&sdk, ISTANBUL_ADD_GAS_COST, gas_limit);
             let padded_input = right_pad::<BN254_ADD_INPUT_SIZE>(&input);
 
-            let mut p: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = padded_input
-                [..BN254_G1_POINT_DECOMPRESSED_SIZE]
-                .try_into()
-                .unwrap();
-            let q: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = padded_input
-                [BN254_G1_POINT_DECOMPRESSED_SIZE..]
-                .try_into()
-                .unwrap();
+            let p: [u8; BN254_G1_RAW_AFFINE_SIZE] =
+                padded_input[..BN254_G1_RAW_AFFINE_SIZE].try_into().unwrap();
+            let q: [u8; BN254_G1_RAW_AFFINE_SIZE] =
+                padded_input[BN254_G1_RAW_AFFINE_SIZE..].try_into().unwrap();
 
-            let result = CryptoRuntime::bn254_add(&mut p, &q);
+            let result = CryptoRuntime::bn254_add(p, q);
             sdk.write(&result);
         }
         PRECOMPILE_BN256_MUL => {
@@ -92,19 +94,19 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             let padded_input = right_pad::<BN254_MUL_INPUT_SIZE>(&input);
 
             // Pass inputs as big-endian; runtime handles conversions internally
-            let mut p: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = padded_input
-                [0..BN254_G1_POINT_DECOMPRESSED_SIZE]
+            let p: [u8; BN254_G1_RAW_AFFINE_SIZE] = padded_input[0..BN254_G1_RAW_AFFINE_SIZE]
                 .try_into()
                 .unwrap();
             let q: [u8; SCALAR_SIZE] = padded_input
-                [BN254_G1_POINT_DECOMPRESSED_SIZE..BN254_G1_POINT_DECOMPRESSED_SIZE + SCALAR_SIZE]
+                [BN254_G1_RAW_AFFINE_SIZE..BN254_G1_RAW_AFFINE_SIZE + SCALAR_SIZE]
                 .try_into()
                 .unwrap();
 
-            let result = CryptoRuntime::bn254_mul(&mut p, &q);
-            let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
-            // Runtime already returns big-endian output
-            sdk.write(&result);
+            unimplemented!()
+            // let result = CryptoRuntime::bn254_mul(&mut p, &q);
+            // let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
+            // // Runtime already returns big-endian output
+            // sdk.write(&result);
         }
         PRECOMPILE_BN256_PAIR => {
             let gas_used = (input.len() / BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN) as u64
@@ -129,11 +131,10 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 let g1_start = start;
                 // Offset to the start of the G2 element in the pairing element
                 // This is where G1 ends.
-                let g2_start = start + BN254_G1_POINT_DECOMPRESSED_SIZE;
+                let g2_start = start + BN254_G1_RAW_AFFINE_SIZE;
 
                 let encoded_g1_element = &input[g1_start..g2_start];
-                let encoded_g2_element =
-                    &input[g2_start..g2_start + BN254_G2_POINT_DECOMPRESSED_SIZE];
+                let encoded_g2_element = &input[g2_start..g2_start + BN254_G2_RAW_AFFINE_SIZE];
 
                 // Get G1 and G2 points from the input
                 let a = read_g1_point(encoded_g1_element)
@@ -146,10 +147,11 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             }
 
             // Use the runtime's REVM-compatible pairing implementation
-            let result = CryptoRuntime::bn254_multi_pairing(&mut pairs);
-            let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
-            sdk.sync_evm_gas(gas_used, 0);
-            sdk.write(&result);
+            unimplemented!()
+            // let result = CryptoRuntime::bn254_multi_pairing(&mut pairs);
+            // let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
+            // sdk.sync_evm_gas(gas_used, 0);
+            // sdk.write(&result);
         }
         _ => unreachable!("bn128: unsupported contract address"),
     };

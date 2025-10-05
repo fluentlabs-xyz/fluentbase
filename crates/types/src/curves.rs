@@ -1,56 +1,29 @@
-pub const SCALAR_SIZE: usize = 32;
-/// FQ_SIZE specifies the number of bytes needed to represent an
-/// Fq element. This is an element in the base field of BN254.
-///
-/// Note: The base field is used to define G1 and G2 elements.
-pub const FQ_SIZE: usize = 32;
+/// ED25519
+pub const ED25519_POINT_COMPRESSED_SIZE: usize = 32;
+pub const ED25519_POINT_DECOMPRESSED_SIZE: usize = 64;
 
-/// FQ2_SIZE specifies the number of bytes needed to represent a Fq2 element.
-/// This is an element in the quadratic extension field of BN254.
-///
-/// Note: A Fq2 element contains 2 Fq elements.
-pub const FQ2_SIZE: usize = 2 * FQ_SIZE;
+/// SECP256K1
+pub const SECP256K1_FP_SIZE: usize = 32;
+pub const SECP256K1_G1_RAW_AFFINE_SIZE: usize = 64;
+pub const SECP256K1_G1_COMPRESSED_SIZE: usize = 32;
 
-/// Edwards Specific Constants
-pub const EDWARDS_COMPRESSED_SIZE: usize = 32;
-pub const EDWARDS_DECOMPRESSED_SIZE: usize = 64;
+/// SECP256R1
+pub const SECP256R1_FP_SIZE: usize = 32;
+pub const SECP256R1_G1_RAW_AFFINE_SIZE: usize = 64;
+pub const SECP256R1_G1_COMPRESSED_SIZE: usize = 33;
 
-/// Tower Fp
-pub const TOWER_FP_BN256_SIZE: usize = 32;
-pub const TOWER_FP_BLS12381_SIZE: usize = 32;
+/// BN254
+pub const BN254_FP_SIZE: usize = 32;
+pub const BN254_FP2_SIZE: usize = 64;
+pub const BN254_G1_RAW_AFFINE_SIZE: usize = 64;
+pub const BN254_G1_COMPRESSED_SIZE: usize = 32;
+pub const BN254_G2_RAW_AFFINE_SIZE: usize = 128;
+pub const BN254_G2_COMPRESSED_SIZE: usize = 64;
 
-/// Secp256k1 Specific Constants
-pub const SECP256K1_POINT_COMPRESSED_SIZE: usize = 32;
-pub const SECP256K1_POINT_DECOMPRESSED_SIZE: usize = 64;
-
-/// Secp256r1 Specific Constants
-pub const SECP256R1_POINT_COMPRESSED_SIZE: usize = 32;
-pub const SECP256R1_POINT_DECOMPRESSED_SIZE: usize = 64;
-
-/// BN254 Specific Constants
-pub const BN254_G1_POINT_COMPRESSED_SIZE: usize = 32;
-pub const BN254_G1_POINT_DECOMPRESSED_SIZE: usize = 64;
-pub const BN254_G2_POINT_COMPRESSED_SIZE: usize = 64;
-pub const BN254_G2_POINT_DECOMPRESSED_SIZE: usize = 128;
-pub const BN254_MUL_INPUT_SIZE: usize = BN254_G1_POINT_DECOMPRESSED_SIZE + SCALAR_SIZE;
-pub const BN254_ADD_INPUT_SIZE: usize = 2 * BN254_G1_POINT_DECOMPRESSED_SIZE;
-pub const BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN: usize =
-    BN254_G1_POINT_DECOMPRESSED_SIZE + BN254_G2_POINT_DECOMPRESSED_SIZE;
-
-pub const CURVE256R1_POINT_COMPRESSED_SIZE: usize = 32;
-pub const CURVE256R1_POINT_DECOMPRESSED_SIZE: usize = 64;
-
-/// BLS12-381 Specific Constants
-pub const FP_PAD_BY: usize = 16;
-pub const FP_SIZE: usize = 48;
-pub const PADDED_FP_SIZE: usize = 64;
-pub const FP2_SIZE: usize = 2 * FP_SIZE;
-pub const PADDED_FP2_SIZE: usize = 2 * PADDED_FP_SIZE;
-pub const PADDED_G1_SIZE: usize = 2 * PADDED_FP_SIZE;
-pub const PADDED_G2_SIZE: usize = 2 * PADDED_FP2_SIZE;
-
-pub const G1_UNCOMPRESSED_SIZE: usize = 96;
-pub const G1_COMPRESSED_SIZE: usize = 48;
-pub const G2_UNCOMPRESSED_SIZE: usize = 192;
-pub const G2_COMPRESSED_SIZE: usize = 96;
-pub const GT_COMPRESSED_SIZE: usize = 288;
+/// BLS12381
+pub const BLS12381_FP_SIZE: usize = 48;
+pub const BLS12381_FP2_SIZE: usize = 96;
+pub const BLS12381_G1_RAW_AFFINE_SIZE: usize = 96;
+pub const BLS12381_G1_COMPRESSED_SIZE: usize = 48;
+pub const BLS12381_G2_RAW_AFFINE_SIZE: usize = 192;
+pub const BLS12381_G2_COMPRESSED_SIZE: usize = 96;

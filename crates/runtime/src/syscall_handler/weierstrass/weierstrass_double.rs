@@ -1,71 +1,103 @@
-use crate::{
-    syscall_handler::ecc::ecc_utils::{cast_u8_to_u32, cast_u8_to_u32_aligned},
-    RuntimeContext,
+use crate::RuntimeContext;
+use fluentbase_types::{
+    BLS12381_G1_RAW_AFFINE_SIZE, BN254_G1_RAW_AFFINE_SIZE, SECP256K1_G1_RAW_AFFINE_SIZE,
+    SECP256R1_G1_RAW_AFFINE_SIZE,
 };
-use fluentbase_types::ExitCode;
-use k256::elliptic_curve::generic_array::typenum::Unsigned;
+use num::BigUint;
 use rwasm::{Store, TrapCode, Value};
-use sp1_curves::{params::NumWords, AffinePoint, EllipticCurve};
-use sp1_primitives::consts::words_to_bytes_le_vec;
+use sp1_curves::{
+    weierstrass::{bls12_381::Bls12381, bn254::Bn254, secp256k1::Secp256k1, secp256r1::Secp256r1},
+    AffinePoint, EllipticCurve,
+};
 
-pub fn ecc_double_handler<E: EllipticCurve>(
-    caller: &mut impl Store<RuntimeContext>,
+pub fn syscall_secp256k1_double_handler(
+    ctx: &mut impl Store<RuntimeContext>,
+    params: &[Value],
+    result: &mut [Value],
+) -> Result<(), TrapCode> {
+    syscall_weierstrass_double_handler::<Secp256k1, { SECP256K1_G1_RAW_AFFINE_SIZE }>(
+        ctx, params, result,
+    )
+}
+pub fn syscall_secp256r1_double_handler(
+    ctx: &mut impl Store<RuntimeContext>,
+    params: &[Value],
+    result: &mut [Value],
+) -> Result<(), TrapCode> {
+    syscall_weierstrass_double_handler::<Secp256r1, { SECP256R1_G1_RAW_AFFINE_SIZE }>(
+        ctx, params, result,
+    )
+}
+pub fn syscall_bn254_double_handler(
+    ctx: &mut impl Store<RuntimeContext>,
+    params: &[Value],
+    result: &mut [Value],
+) -> Result<(), TrapCode> {
+    syscall_weierstrass_double_handler::<Bn254, { BN254_G1_RAW_AFFINE_SIZE }>(ctx, params, result)
+}
+pub fn syscall_bls12381_double_handler(
+    ctx: &mut impl Store<RuntimeContext>,
+    params: &[Value],
+    result: &mut [Value],
+) -> Result<(), TrapCode> {
+    syscall_weierstrass_double_handler::<Bls12381, { BLS12381_G1_RAW_AFFINE_SIZE }>(
+        ctx, params, result,
+    )
+}
+
+fn syscall_weierstrass_double_handler<E: EllipticCurve, const POINT_SIZE: usize>(
+    ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
     let p_ptr: u32 = params[0].i32().unwrap() as u32;
 
-    let num_words = <E::BaseField as NumWords>::WordsCurvePoint::USIZE;
-    let mut p = vec![0u8; num_words * 4];
-    caller.memory_read(p_ptr as usize, &mut p)?;
+    let mut p = [0u8; POINT_SIZE];
+    ctx.memory_read(p_ptr as usize, &mut p)?;
 
-    ecc_double_impl::<E>(&mut p);
-    caller.memory_write(p_ptr as usize, &p)?;
+    let result = syscall_weierstrass_double_impl::<E, POINT_SIZE>(p);
+    ctx.memory_write(p_ptr as usize, &result)?;
 
     Ok(())
 }
 
-pub fn ecc_double_impl<E: EllipticCurve>(p: &mut [u8]) {
-    // Try the fast aligned version first
-    let p_words = if let Some(words) = cast_u8_to_u32(p) {
-        words
-    } else {
-        // Fall back to the aligned version that handles unaligned data
-        let Some(p_words_vec) = cast_u8_to_u32_aligned(p) else {
-            return;
-        };
-        let result_bytes = match ecc_double_impl_with_vec::<E>(&p_words_vec) {
-            Ok(bytes) => bytes,
-            Err(_) => return,
-        };
-        p.copy_from_slice(&result_bytes);
-        return;
-    };
-
-    let p_affine = AffinePoint::<E>::from_words_le(p_words);
-
-    let result_affine = E::ec_double(&p_affine);
-    let result_words = result_affine.to_words_le();
-    let result_bytes = words_to_bytes_le_vec(result_words.as_slice());
-
-    p.copy_from_slice(&result_bytes);
+pub fn syscall_secp256k1_double_impl(
+    p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE],
+) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
+    syscall_weierstrass_double_impl::<Secp256k1, { SECP256K1_G1_RAW_AFFINE_SIZE }>(p)
+}
+pub fn syscall_secp256r1_double_impl(
+    p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE],
+) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
+    syscall_weierstrass_double_impl::<Secp256r1, { SECP256R1_G1_RAW_AFFINE_SIZE }>(p)
+}
+pub fn syscall_bn254_double_impl(
+    p: [u8; BN254_G1_RAW_AFFINE_SIZE],
+) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
+    syscall_weierstrass_double_impl::<Bn254, { BN254_G1_RAW_AFFINE_SIZE }>(p)
+}
+pub fn syscall_bls12381_double_impl(
+    p: [u8; BLS12381_G1_RAW_AFFINE_SIZE],
+) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
+    syscall_weierstrass_double_impl::<Bls12381, { BLS12381_G1_RAW_AFFINE_SIZE }>(p)
 }
 
-fn ecc_double_impl_with_vec<E: EllipticCurve>(p_words: &[u32]) -> Result<Vec<u8>, ExitCode> {
-    let p_affine = AffinePoint::<E>::from_words_le(p_words);
+fn syscall_weierstrass_double_impl<E: EllipticCurve, const POINT_SIZE: usize>(
+    p: [u8; POINT_SIZE],
+) -> [u8; POINT_SIZE] {
+    let (px, py) = p.split_at(p.len() / 2);
+    let p_affine = AffinePoint::<E>::new(BigUint::from_bytes_le(px), BigUint::from_bytes_le(py));
     let result_affine = E::ec_double(&p_affine);
-    let result_words = result_affine.to_words_le();
-    let result_bytes = words_to_bytes_le_vec(result_words.as_slice());
-    Ok(result_bytes)
+    let (rx, ry) = (result_affine.x, result_affine.y);
+    let mut result = [0u8; POINT_SIZE];
+    result[..POINT_SIZE / 2].copy_from_slice(&rx.to_bytes_le());
+    result[POINT_SIZE / 2..].copy_from_slice(&ry.to_bytes_le());
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sp1_curves::weierstrass::bls12_381::Bls12381 as BLS12381Curve;
-    use sp1_curves::weierstrass::bn254::Bn254;
-    use sp1_curves::weierstrass::secp256k1::Secp256k1;
-    use sp1_curves::weierstrass::secp256r1::Secp256r1;
 
     #[test]
     fn test_bls12381_double() {
@@ -93,9 +125,8 @@ mod tests {
             22,
         ];
 
-        let mut input = generator.to_vec();
-        ecc_double_impl::<BLS12381Curve>(&mut input);
-        assert_eq!(input, expected_doubled.to_vec());
+        let result = syscall_bls12381_double_impl(generator);
+        assert_eq!(result, expected_doubled);
     }
 
     #[test]
@@ -109,10 +140,6 @@ mod tests {
                 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, 0, 0,
             ];
-
-            let mut input = a.to_vec();
-            ecc_double_impl::<Bn254>(&mut input);
-
             // 2 * generator.
             // 1368015179489954701390400359078579693043519447331113978918064868415326638035
             // 9918110051302171585080402603319702774565515993150576347155970296011118125764
@@ -123,7 +150,8 @@ mod tests {
                 231, 146, 124, 10, 14, 140, 115, 237, 21,
             ];
 
-            assert_eq!(input, b.to_vec());
+            let result = syscall_bn254_double_impl(a);
+            assert_eq!(result, b);
         }
     }
 
@@ -133,14 +161,12 @@ mod tests {
             // generator.
             // 55066263022277343669578718895168534326250603453777594175500187360389116729240
             // 32670510020758816978083085130507043184471273380659243275938904335757337482424
-            let mut a: [u8; 64] = [
+            let a: [u8; 64] = [
                 152, 23, 248, 22, 91, 129, 242, 89, 217, 40, 206, 45, 219, 252, 155, 2, 7, 11, 135,
                 206, 149, 98, 160, 85, 172, 187, 220, 249, 126, 102, 190, 121, 184, 212, 16, 251,
                 143, 208, 71, 156, 25, 84, 133, 166, 72, 180, 23, 253, 168, 8, 17, 14, 252, 251,
                 164, 93, 101, 196, 163, 38, 119, 218, 58, 72,
             ];
-
-            ecc_double_impl::<Secp256k1>(&mut a);
 
             // 2 * generator.
             // 89565891926547004231252920425935692360644145829622209833684329913297188986597
@@ -152,7 +178,8 @@ mod tests {
                 197, 163, 57, 195, 61, 166, 254, 104, 225, 26,
             ];
 
-            assert_eq!(a, b);
+            let result = syscall_secp256k1_double_impl(a);
+            assert_eq!(result, b);
         }
     }
 
@@ -161,7 +188,7 @@ mod tests {
         // generator.
         // 48439561293906451759052585252797914202762949526041747995844080717082404635286
         // 36134250956749795798585127919587881956611106672985015071877198253568414405109
-        let mut a: [u8; 64] = [
+        let a: [u8; 64] = [
             150, 194, 152, 216, 69, 57, 161, 244, 160, 51, 235, 45, 129, 125, 3, 119, 242, 64, 164,
             99, 229, 230, 188, 248, 71, 66, 44, 225, 242, 209, 23, 107, 245, 81, 191, 55, 104, 64,
             182, 203, 206, 94, 49, 107, 87, 51, 206, 43, 22, 158, 15, 124, 74, 235, 231, 142, 155,
@@ -178,8 +205,7 @@ mod tests {
             64, 208, 142, 219, 16, 85, 119, 7,
         ];
 
-        ecc_double_impl::<Secp256r1>(&mut a);
-
-        assert_eq!(a, b);
+        let result = syscall_secp256r1_double_impl(a);
+        assert_eq!(result, b);
     }
 }

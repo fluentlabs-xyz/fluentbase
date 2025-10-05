@@ -1,7 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::{ExitCode, SysFuncIdx};
 use rwasm::{Store, TrapCode, TypedCaller, Value};
-use sp1_curves::weierstrass::{bls12_381::Bls12381, bn254::Bn254, secp256k1::Secp256k1};
 
 mod edwards;
 pub use edwards::*;
@@ -11,8 +10,8 @@ mod hashing;
 pub use hashing::*;
 mod uint256;
 pub use uint256::*;
-mod ecc;
-pub use ecc::*;
+mod weierstrass;
+pub use weierstrass::*;
 mod tower;
 pub use tower::*;
 
@@ -70,9 +69,6 @@ pub fn invoke_runtime_handler(
         // ed25519 (0x02)
         SysFuncIdx::ED25519_DECOMPRESS => syscall_ed25519_decompress_handler(caller, params, result),
         SysFuncIdx::ED25519_ADD => syscall_edwards_add_handler(caller, params, result),
-        // SysFuncIdx::ED25519_SUB => SyscallCurve25519EdwardsSub::fn_handler(caller, params, result),
-        // SysFuncIdx::ED25519_MULTISCALAR_MUL => SyscallCurve25519EdwardsMultiscalarMul::fn_handler(caller, params, result),
-        // SysFuncIdx::ED25519_MUL => SyscallCurve25519EdwardsMul::fn_handler(caller, params, result),
 
         // fp1/fp2 tower field (0x03)
         SysFuncIdx::TOWER_FP1_BN254_ADD => syscall_tower_fp1_bn254_add_handler(caller, params, result),
@@ -89,35 +85,28 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::TOWER_FP2_BLS12381_MUL => syscall_tower_fp2_bls12381_mul_handler(caller, params, result),
 
         // secp256k1 (0x04)
-        SysFuncIdx::SECP256K1_ADD => ecc_add::ecc_add_handler::<Secp256k1AddConfig>(caller, params, result),
-        SysFuncIdx::SECP256K1_DECOMPRESS => SyscallEccCompressDecompress::<Secp256k1DecompressConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::SECP256K1_DOUBLE => ecc_double::ecc_double_handler::<Secp256k1>(caller, params, result),
+        SysFuncIdx::SECP256K1_ADD => syscall_secp256k1_add_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_DECOMPRESS => syscall_secp256k1_decompress_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_DOUBLE => syscall_secp256k1_double_handler(caller, params, result),
 
         // secp256r1 (0x05)
-        // SysFuncIdx::SECP256R1_VERIFY => SyscallWeierstrassVerifyAssign::<Secp256r1VerifyConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256R1_ADD => syscall_secp256r1_add_handler(caller, params, result),
+        SysFuncIdx::SECP256R1_DECOMPRESS => syscall_secp256k1_decompress_handler(caller, params, result),
+        SysFuncIdx::SECP256R1_DOUBLE => syscall_secp256r1_double_handler(caller, params, result),
 
         // bls12381 (0x06)
-        SysFuncIdx::BLS12381_G1_ADD => ecc_add::ecc_add_handler::<Bls12381G1AddConfig>(caller, params, result),
-        SysFuncIdx::BLS12381_G1_MSM => SyscallEccMsm::<Bls12381G1MulConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_G2_ADD => ecc_add::ecc_add_handler::<Bls12381G2AddConfig>(caller, params, result),
-        SysFuncIdx::BLS12381_G2_MSM => SyscallEccMsm::<Bls12381G2MulConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_PAIRING => SyscallEccPairing::<Bls12381>::fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_MAP_G1 => SyscallEccMapping::<Bls12381G1MapConfig>:: fn_handler(caller, params, result),
-        SysFuncIdx::BLS12381_MAP_G2 => SyscallEccMapping::<Bls12381G2MapConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_ADD => syscall_bls12381_add_handler(caller, params, result),
+        SysFuncIdx::BLS12381_DECOMPRESS => syscall_bls12381_decompress_handler(caller, params, result),
+        SysFuncIdx::BLS12381_DOUBLE => syscall_bls12381_double_handler(caller, params, result),
 
         // bn254 (0x07)
-        SysFuncIdx::BN254_ADD => ecc_add::ecc_add_handler::<Bn254G1AddConfig>(caller, params, result),
-        SysFuncIdx::BN254_MUL => SyscallEccMul::<Bn254G1MulConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_MULTI_PAIRING => SyscallEccPairing::<Bn254>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_DOUBLE => ecc_double::ecc_double_handler::<Bn254>(caller, params, result),
-        SysFuncIdx::BN254_G1_COMPRESS => SyscallEccCompressDecompress::<Bn254G1CompressConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_G1_DECOMPRESS => SyscallEccCompressDecompress::<Bn254G1DecompressConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_G2_COMPRESS => SyscallEccCompressDecompress::<Bn254G2CompressConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_G2_DECOMPRESS => SyscallEccCompressDecompress::<Bn254G2DecompressConfig>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_ADD => syscall_bn254_add_handler(caller, params, result),
+        SysFuncIdx::BN254_DECOMPRESS => syscall_bn254_decompress_handler(caller, params, result),
+        SysFuncIdx::BN254_DOUBLE => syscall_bn254_double_handler(caller, params, result),
 
         // uint256 (0x08)
         SysFuncIdx::UINT256_MUL_MOD => syscall_uint256_mul_mod_handler(caller, params, result),
-        SysFuncIdx::UINT256_X2048_MUL => syscall_uint256_mul_x2048_handler(caller, params, result),
+        SysFuncIdx::UINT256_X2048_MUL => syscall_uint256_x2048_mul_handler(caller, params, result),
 
         // sp1 (0x51)
         _ => unreachable!("unknown system function ({})", sys_func_idx),

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 fluentbase-sdk = { workspace = true }
 sha2 = { version = "0.10", default-features = false }
+revm-precompile = { workspace = true }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }

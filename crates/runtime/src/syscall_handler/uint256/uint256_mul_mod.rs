@@ -49,7 +49,7 @@ pub fn syscall_uint256_mul_mod_impl(x: &[u8; 32], y: &[u8; 32], m: &[u8; 32]) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use secp256k1::{rand, rand::Rng};
+    use rand::Rng;
 
     fn biguint_to_bytes_le(x: BigUint) -> [u8; 32] {
         let mut bytes = x.to_bytes_le();
@@ -61,10 +61,10 @@ mod tests {
     fn test_u256_mul_mod() {
         for _ in 0..50 {
             // Test with random numbers.
-            let mut rng = rand::thread_rng();
-            let mut x: [u8; 32] = rng.gen();
-            let mut y: [u8; 32] = rng.gen();
-            let modulus: [u8; 32] = rng.gen();
+            let mut rng = rand::rng();
+            let mut x: [u8; 32] = rng.random();
+            let mut y: [u8; 32] = rng.random();
+            let modulus: [u8; 32] = rng.random();
 
             // Convert byte arrays to BigUint
             let modulus_big = BigUint::from_bytes_le(&modulus);
@@ -86,9 +86,9 @@ mod tests {
         let modulus_big: BigUint = BigUint::one() << 256;
         for _ in 0..50 {
             // Test with random numbers.
-            let mut rng = rand::thread_rng();
-            let mut x: [u8; 32] = rng.gen();
-            let mut y: [u8; 32] = rng.gen();
+            let mut rng = rand::rng();
+            let mut x: [u8; 32] = rng.random();
+            let mut y: [u8; 32] = rng.random();
 
             // Convert byte arrays to BigUint
             let x_big = BigUint::from_bytes_le(&x);
@@ -105,8 +105,8 @@ mod tests {
         }
 
         // Test with random numbers.
-        let mut rng = rand::thread_rng();
-        let x: [u8; 32] = rng.gen();
+        let mut rng = rand::rng();
+        let x: [u8; 32] = rng.random();
 
         // Hardcoded edge case: Multiplying by 1
         let modulus = [0u8; 32];

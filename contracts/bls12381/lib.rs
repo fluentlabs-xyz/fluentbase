@@ -3,18 +3,25 @@ extern crate alloc;
 
 use fluentbase_sdk::{
     alloc_slice, crypto::CryptoRuntime, entrypoint, Bytes, ContextReader, CryptoAPI, ExitCode,
-    SharedAPI, FP2_SIZE, FP_PAD_BY, FP_SIZE, G1_UNCOMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
-    PADDED_FP2_SIZE, PADDED_FP_SIZE, PADDED_G1_SIZE, PADDED_G2_SIZE, PRECOMPILE_BLS12_381_G1_ADD,
-    PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM,
-    PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
-    SCALAR_SIZE,
+    SharedAPI, PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BLS12_381_G1_MSM,
+    PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BLS12_381_MAP_G1,
+    PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
 };
 
-// use bls12_381::{
-
-//     bls12_381_g1_add, bls12_381_g1_msm, bls12_381_g2_add, bls12_381_g2_msm, bls12_381_map_g1,
-//     bls12_381_map_g2, bls12_381_pairing,
-// };
+/// BLS12-381 Specific Constants
+pub const SCALAR_SIZE: usize = 32;
+pub const FP_PAD_BY: usize = 16;
+pub const FP_SIZE: usize = 48;
+pub const PADDED_FP_SIZE: usize = 64;
+pub const FP2_SIZE: usize = 2 * FP_SIZE;
+pub const PADDED_FP2_SIZE: usize = 2 * PADDED_FP_SIZE;
+pub const PADDED_G1_SIZE: usize = 2 * PADDED_FP_SIZE;
+pub const PADDED_G2_SIZE: usize = 2 * PADDED_FP2_SIZE;
+pub const G1_UNCOMPRESSED_SIZE: usize = 96;
+pub const G1_COMPRESSED_SIZE: usize = 48;
+pub const G2_UNCOMPRESSED_SIZE: usize = 192;
+pub const G2_COMPRESSED_SIZE: usize = 96;
+pub const GT_COMPRESSED_SIZE: usize = 288;
 
 /**
  * This is the BLS12-381 precompile contract.
@@ -281,12 +288,11 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             );
 
             // Convert input from EVM format to runtime format
-            let (mut p, q) = convert_g1_input_to_runtime(&input);
-
-            CryptoRuntime::bls12_381_g1_add(&mut p, &q);
+            let (p, q) = convert_g1_input_to_runtime(&input);
+            let result = CryptoRuntime::bls12381_add(p, q);
 
             // Convert output from runtime format to EVM format
-            let out = convert_g1_output_to_evm(&p);
+            let out = convert_g1_output_to_evm(&result);
             sdk.write(&out);
         }
         PRECOMPILE_BLS12_381_G2_ADD => {
@@ -303,7 +309,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             let (mut p, q) = convert_g2_input_to_runtime(&input);
 
             // Call the Fluent SDK, syscall bls12_381_g2_add
-            CryptoRuntime::bls12_381_g2_add(&mut p, &q);
+            // CryptoRuntime::bls12_381_g2_add(&mut p, &q);
+            unimplemented!();
 
             // Encode output: 256 bytes (x0||x1||y0||y1), each limb is 64-byte BE padded (16 zeros + 48 value)
             let out = encode_g2_output(&p);
@@ -345,7 +352,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             }
             let mut out96 = [0u8; G1_UNCOMPRESSED_SIZE];
 
-            CryptoRuntime::bls12_381_g1_msm(&pairs, &mut out96);
+            unimplemented!();
+            // CryptoRuntime::bls12_381_g1_msm(&pairs, &mut out96);
 
             // Detect identity (blstrs sets flag bit for infinity in first byte of uncompressed)
             if out96[0] & 0x40 != 0 {
@@ -413,7 +421,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 pairs.push((p, s));
             }
             let mut out = [0u8; G2_UNCOMPRESSED_SIZE];
-            CryptoRuntime::bls12_381_g2_msm(&pairs, &mut out);
+            unimplemented!();
+            // CryptoRuntime::bls12_381_g2_msm(&pairs, &mut out);
             // Encode output to 256B padded BE like G2 add path
             if out.iter().all(|&b| b == 0) {
                 let out_be = [0u8; PADDED_G2_SIZE];
@@ -488,7 +497,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             let mut padded_fp = [0u8; PADDED_FP_SIZE];
             padded_fp.copy_from_slice(&input);
             let mut out96 = [0u8; G1_UNCOMPRESSED_SIZE];
-            CryptoRuntime::bls12_381_map_g1(&padded_fp, &mut out96);
+            unimplemented!();
+            // CryptoRuntime::bls12_381_map_g1(&padded_fp, &mut out96);
             // Pad result for EVM: 96B -> 128B padded (x||y)
             let out128 = pad_g1_point(&out96);
             sdk.write(&out128);
@@ -507,7 +517,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             padded_fp2.copy_from_slice(&input);
             // Call the Fluent SDK, syscall bls12_381_map_fp2_to_g2
             let mut out192 = [0u8; G2_UNCOMPRESSED_SIZE];
-            CryptoRuntime::bls12_381_map_g2(&padded_fp2, &mut out192);
+            unimplemented!();
+            // CryptoRuntime::bls12_381_map_g2(&padded_fp2, &mut out192);
             // Pad result for EVM: 192B -> 256B padded (x||y over Fp2)
             let out256 = pad_g2_point(&out192);
             sdk.write(&out256);

@@ -5,7 +5,7 @@ use rwasm::{Store, TrapCode, Value};
 const U256_NUM_BYTES: usize = 32;
 const U2048_NUM_BYTES: usize = 256;
 
-pub fn syscall_uint256_mul_x2048_handler(
+pub fn syscall_uint256_x2048_mul_handler(
     ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
@@ -22,14 +22,14 @@ pub fn syscall_uint256_mul_x2048_handler(
     let mut b = [0u8; U2048_NUM_BYTES];
     ctx.memory_read(b_ptr, &mut b)?;
 
-    let (lo_bytes, hi_bytes) = syscall_uint256_mul_x2048_impl(&a, &b);
+    let (lo_bytes, hi_bytes) = syscall_uint256_x2048_mul_impl(&a, &b);
 
     ctx.memory_write(lo_ptr, &lo_bytes)?;
     ctx.memory_write(hi_ptr, &hi_bytes)?;
     Ok(())
 }
 
-pub fn syscall_uint256_mul_x2048_impl(
+pub fn syscall_uint256_x2048_mul_impl(
     a: &[u8; U256_NUM_BYTES],
     b: &[u8; U2048_NUM_BYTES],
 ) -> ([u8; U2048_NUM_BYTES], [u8; U256_NUM_BYTES]) {
@@ -51,7 +51,7 @@ pub fn syscall_uint256_mul_x2048_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use secp256k1::{rand, rand::Rng};
+    use rand::Rng;
 
     fn u256_to_bytes_le(x: &BigUint) -> [u8; 32] {
         let mut bytes = x.to_bytes_le();
@@ -75,7 +75,7 @@ mod tests {
         let b_max_big = BigUint::from_bytes_le(&b_max);
         b_max = u2048_to_bytes_le(&b_max_big);
 
-        let (lo_max_bytes, hi_max_bytes) = syscall_uint256_mul_x2048_impl(&a_max, &b_max);
+        let (lo_max_bytes, hi_max_bytes) = syscall_uint256_x2048_mul_impl(&a_max, &b_max);
 
         let lo_max_big = BigUint::from_bytes_le(&lo_max_bytes);
         let hi_max_big = BigUint::from_bytes_le(&hi_max_bytes);
@@ -85,9 +85,9 @@ mod tests {
         assert_eq!(result_max, result_max_syscall);
 
         // Test 10 random pairs of a and b.
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..10 {
-            let a: [u8; 32] = rng.gen();
+            let a: [u8; 32] = rng.random();
             let mut b = [0u8; 256];
             rng.fill(&mut b);
 
@@ -97,7 +97,7 @@ mod tests {
             let a = u256_to_bytes_le(&a_big);
             let b = u2048_to_bytes_le(&b_big);
 
-            let (lo_bytes, hi_bytes) = syscall_uint256_mul_x2048_impl(&a, &b);
+            let (lo_bytes, hi_bytes) = syscall_uint256_x2048_mul_impl(&a, &b);
 
             let lo_big = BigUint::from_bytes_le(&lo_bytes);
             let hi_big = BigUint::from_bytes_le(&hi_bytes);

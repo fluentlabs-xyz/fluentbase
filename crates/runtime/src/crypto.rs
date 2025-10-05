@@ -1,322 +1,142 @@
-use crate::{
-    syscall_handler::{
-        ecc_add, ecc_double, syscall_ed25519_decompress_impl, syscall_edwards_add_impl,
-        syscall_hashing_keccak256_permute_impl, syscall_hashing_sha256_compress_impl,
-        syscall_hashing_sha256_extend_impl, syscall_uint256_mul_mod_impl,
-        syscall_uint256_mul_x2048_impl, Bls12381G1AddConfig, Bls12381G1MapConfig,
-        Bls12381G1MulConfig, Bls12381G2AddConfig, Bls12381G2MapConfig, Bls12381G2MulConfig,
-        Bn254G1AddConfig, Bn254G1MulConfig, Bn254G2DecompressConfig, Secp256k1AddConfig,
-        SyscallEccCompressDecompress, SyscallEccMapping, SyscallEccMsm, SyscallEccMul,
-        SyscallEccPairing,
-    },
-    RuntimeContextWrapper,
-};
+use crate::{syscall_handler::*, RuntimeContextWrapper};
 use fluentbase_types::{
-    CryptoAPI, ExitCode, UnwrapExitCode, BN254_G1_POINT_COMPRESSED_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
-    G1_COMPRESSED_SIZE, G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE,
-    GT_COMPRESSED_SIZE, PADDED_FP2_SIZE, PADDED_FP_SIZE, SCALAR_SIZE,
-    SECP256K1_POINT_DECOMPRESSED_SIZE, TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
+    CryptoAPI, UnwrapExitCode, BLS12381_FP_SIZE, BLS12381_G1_COMPRESSED_SIZE,
+    BLS12381_G1_RAW_AFFINE_SIZE, BN254_FP_SIZE, BN254_G1_COMPRESSED_SIZE, BN254_G1_RAW_AFFINE_SIZE,
+    ED25519_POINT_COMPRESSED_SIZE, ED25519_POINT_DECOMPRESSED_SIZE, SECP256K1_G1_COMPRESSED_SIZE,
+    SECP256K1_G1_RAW_AFFINE_SIZE, SECP256R1_G1_COMPRESSED_SIZE, SECP256R1_G1_RAW_AFFINE_SIZE,
 };
 
-use sp1_curves::weierstrass::{bls12_381::Bls12381, bn254::Bn254, secp256k1::Secp256k1};
-
+#[rustfmt::skip]
 impl CryptoAPI for RuntimeContextWrapper {
+    #[inline(always)]
     fn keccak256_permute(state: &mut [u64; 25]) {
         syscall_hashing_keccak256_permute_impl(state);
     }
-
+    #[inline(always)]
     fn sha256_extend(w: &mut [u32; 64]) {
         syscall_hashing_sha256_extend_impl(w);
     }
-
+    #[inline(always)]
     fn sha256_compress(state: &mut [u32; 8], w: &[u32; 64]) {
         syscall_hashing_sha256_compress_impl(state, w);
     }
 
-    fn ed25519_decompress(
-        y: [u8; EDWARDS_COMPRESSED_SIZE],
-        sign: u32,
-    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
+    #[inline(always)]
+    fn ed25519_decompress(y: [u8; ED25519_POINT_COMPRESSED_SIZE], sign: u32) -> [u8; ED25519_POINT_DECOMPRESSED_SIZE] {
         syscall_ed25519_decompress_impl(y, sign).unwrap_exit_code()
     }
-
-    fn ed25519_add(
-        p: [u8; EDWARDS_DECOMPRESSED_SIZE],
-        q: [u8; EDWARDS_DECOMPRESSED_SIZE],
-    ) -> [u8; EDWARDS_DECOMPRESSED_SIZE] {
+    #[inline(always)]
+    fn ed25519_add(p: [u8; ED25519_POINT_DECOMPRESSED_SIZE], q: [u8; ED25519_POINT_DECOMPRESSED_SIZE]) -> [u8; ED25519_POINT_DECOMPRESSED_SIZE] {
         syscall_edwards_add_impl(p, q).unwrap()
     }
 
-    fn tower_fp1_bn254_add(
-        _x: [u8; TOWER_FP_BN256_SIZE],
-        _y: [u8; TOWER_FP_BN256_SIZE],
-    ) -> [u8; TOWER_FP_BN256_SIZE] {
-        todo!()
+    #[inline(always)]
+    fn tower_fp1_bn254_add(x: [u8; BN254_FP_SIZE], y: [u8; BN254_FP_SIZE]) -> [u8; BN254_FP_SIZE] {
+        syscall_tower_fp1_bn254_add_impl(x, y)
+    }
+    #[inline(always)]
+    fn tower_fp1_bn254_sub(x: [u8; BN254_FP_SIZE], y: [u8; BN254_FP_SIZE]) -> [u8; BN254_FP_SIZE] {
+        syscall_tower_fp1_bn254_sub_impl(x, y)
+    }
+    #[inline(always)]
+    fn tower_fp1_bn254_mul(x: [u8; BN254_FP_SIZE], y: [u8; BN254_FP_SIZE]) -> [u8; BN254_FP_SIZE] {
+        syscall_tower_fp1_bn254_mul_impl(x, y)
+    }
+    #[inline(always)]
+    fn tower_fp1_bls12381_add(x: [u8; BLS12381_FP_SIZE], y: [u8; BLS12381_FP_SIZE]) -> [u8; BLS12381_FP_SIZE] {
+        syscall_tower_fp1_bls12381_add_impl(x, y)
+    }
+    #[inline(always)]
+    fn tower_fp1_bls12381_sub(x: [u8; BLS12381_FP_SIZE], y: [u8; BLS12381_FP_SIZE]) -> [u8; BLS12381_FP_SIZE] {
+        syscall_tower_fp1_bls12381_sub_impl(x, y)
+    }
+    #[inline(always)]
+    fn tower_fp1_bls12381_mul(x: [u8; BLS12381_FP_SIZE], y: [u8; BLS12381_FP_SIZE]) -> [u8; BLS12381_FP_SIZE] {
+        syscall_tower_fp1_bls12381_mul_impl(x, y)
+    }
+    #[inline(always)]
+    fn tower_fp2_bn254_add(a_c0: [u8; BN254_FP_SIZE], a_c1: [u8; BN254_FP_SIZE], b_c0: [u8; BN254_FP_SIZE], b_c1: [u8; BN254_FP_SIZE]) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {
+        syscall_tower_fp2_bn254_add_impl(a_c0, a_c1, b_c0, b_c1)
+    }
+    #[inline(always)]
+    fn tower_fp2_bn254_sub(a_c0: [u8; BN254_FP_SIZE], a_c1: [u8; BN254_FP_SIZE], b_c0: [u8; BN254_FP_SIZE], b_c1: [u8; BN254_FP_SIZE]) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {
+        syscall_tower_fp2_bn254_sub_impl(a_c0, a_c1, b_c0, b_c1)
+    }
+    #[inline(always)]
+    fn tower_fp2_bn254_mul(a_c0: [u8; BN254_FP_SIZE], a_c1: [u8; BN254_FP_SIZE], b_c0: [u8; BN254_FP_SIZE], b_c1: [u8; BN254_FP_SIZE]) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {
+        syscall_tower_fp2_bn254_mul_impl(a_c0, a_c1, b_c0, b_c1)
+    }
+    #[inline(always)]
+    fn tower_fp2_bls12381_add(a_c0: [u8; BLS12381_FP_SIZE], a_c1: [u8; BLS12381_FP_SIZE], b_c0: [u8; BLS12381_FP_SIZE], b_c1: [u8; BLS12381_FP_SIZE]) -> ([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]) {
+        syscall_tower_fp2_bls12381_add_impl(a_c0, a_c1, b_c0, b_c1)
+    }
+    #[inline(always)]
+    fn tower_fp2_bls12381_sub(a_c0: [u8; BLS12381_FP_SIZE], a_c1: [u8; BLS12381_FP_SIZE], b_c0: [u8; BLS12381_FP_SIZE], b_c1: [u8; BLS12381_FP_SIZE]) -> ([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]) {
+        syscall_tower_fp2_bls12381_sub_impl(a_c0, a_c1, b_c0, b_c1)
+    }
+    #[inline(always)]
+    fn tower_fp2_bls12381_mul(a_c0: [u8; BLS12381_FP_SIZE], a_c1: [u8; BLS12381_FP_SIZE], b_c0: [u8; BLS12381_FP_SIZE], b_c1: [u8; BLS12381_FP_SIZE]) -> ([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]) {
+        syscall_tower_fp2_bls12381_mul_impl(a_c0, a_c1, b_c0, b_c1)
     }
 
-    fn tower_fp1_bn254_sub(
-        _x: [u8; TOWER_FP_BN256_SIZE],
-        _y: [u8; TOWER_FP_BN256_SIZE],
-    ) -> [u8; TOWER_FP_BN256_SIZE] {
-        todo!()
+    #[inline(always)]
+    fn secp256k1_add(p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE], q: [u8; SECP256K1_G1_RAW_AFFINE_SIZE]) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
+        syscall_secp256k1_add_impl(p, q)
+    }
+    #[inline(always)]
+    fn secp256k1_decompress(x: [u8; SECP256K1_G1_COMPRESSED_SIZE], sign: u32) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
+        syscall_secp256k1_decompress_impl(x, sign).unwrap_exit_code()
+    }
+    #[inline(always)]
+    fn secp256k1_double(p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE]) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
+        syscall_secp256k1_double_impl(p)
     }
 
-    fn tower_fp1_bn254_mul(
-        _x: [u8; TOWER_FP_BN256_SIZE],
-        _y: [u8; TOWER_FP_BN256_SIZE],
-    ) -> [u8; TOWER_FP_BN256_SIZE] {
-        todo!()
+    #[inline(always)]
+    fn secp256r1_add(p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE], q: [u8; SECP256R1_G1_RAW_AFFINE_SIZE]) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
+        syscall_secp256r1_add_impl(p, q)
+    }
+    #[inline(always)]
+    fn secp256r1_decompress(x: [u8; SECP256R1_G1_COMPRESSED_SIZE], sign: u32) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
+        syscall_secp256r1_decompress_impl(x, sign).unwrap_exit_code()
+    }
+    #[inline(always)]
+    fn secp256r1_double(p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE]) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
+        syscall_secp256r1_double_impl(p)
     }
 
-    fn tower_fp1_bls12381_add(
-        _x: [u8; TOWER_FP_BLS12381_SIZE],
-        _y: [u8; TOWER_FP_BLS12381_SIZE],
-    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
-        todo!()
+    #[inline(always)]
+    fn bls12381_add(p: [u8; BLS12381_G1_RAW_AFFINE_SIZE], q: [u8; BLS12381_G1_RAW_AFFINE_SIZE]) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
+        syscall_bls12381_add_impl(p, q)
+    }
+    #[inline(always)]
+    fn bls12381_decompress(x: [u8; BLS12381_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
+        syscall_bls12381_decompress_impl(x, sign).unwrap_exit_code()
+    }
+    #[inline(always)]
+    fn bls12381_double(p: [u8; BLS12381_G1_RAW_AFFINE_SIZE]) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
+        syscall_bls12381_double_impl(p)
     }
 
-    fn tower_fp1_bls12381_sub(
-        _x: [u8; TOWER_FP_BLS12381_SIZE],
-        _y: [u8; TOWER_FP_BLS12381_SIZE],
-    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
-        todo!()
+    #[inline(always)]
+    fn bn254_add(p: [u8; BN254_G1_RAW_AFFINE_SIZE], q: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
+        syscall_bn254_add_impl(p, q)
+    }
+    #[inline(always)]
+    fn bn254_decompress(x: [u8; BN254_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
+        syscall_bn254_decompress_impl(x, sign).unwrap_exit_code()
+    }
+    #[inline(always)]
+    fn bn254_double(p: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
+        syscall_bn254_double_impl(p)
     }
 
-    fn tower_fp1_bls12381_mul(
-        _x: [u8; TOWER_FP_BLS12381_SIZE],
-        _y: [u8; TOWER_FP_BLS12381_SIZE],
-    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
-        todo!()
-    }
-
-    fn tower_fp2_bn254_add(
-        _x: [u8; TOWER_FP_BN256_SIZE],
-        _y: [u8; TOWER_FP_BN256_SIZE],
-    ) -> [u8; TOWER_FP_BN256_SIZE] {
-        todo!()
-    }
-
-    fn tower_fp2_bn254_sub(
-        _x: [u8; TOWER_FP_BN256_SIZE],
-        _y: [u8; TOWER_FP_BN256_SIZE],
-    ) -> [u8; TOWER_FP_BN256_SIZE] {
-        todo!()
-    }
-
-    fn tower_fp2_bn254_mul(
-        _x: [u8; TOWER_FP_BN256_SIZE],
-        _y: [u8; TOWER_FP_BN256_SIZE],
-    ) -> [u8; TOWER_FP_BN256_SIZE] {
-        todo!()
-    }
-    fn tower_fp2_bls12381_add(
-        _x: [u8; TOWER_FP_BLS12381_SIZE],
-        _y: [u8; TOWER_FP_BLS12381_SIZE],
-    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
-        todo!()
-    }
-
-    fn tower_fp2_bls12381_sub(
-        _x: [u8; TOWER_FP_BLS12381_SIZE],
-        _y: [u8; TOWER_FP_BLS12381_SIZE],
-    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
-        todo!()
-    }
-
-    fn tower_fp2_bls12381_mul(
-        _x: [u8; TOWER_FP_BLS12381_SIZE],
-        _y: [u8; TOWER_FP_BLS12381_SIZE],
-    ) -> [u8; TOWER_FP_BLS12381_SIZE] {
-        todo!()
-    }
-
-    fn _secp256k1_add(
-        p: &mut [u8; SECP256K1_POINT_DECOMPRESSED_SIZE],
-        q: &[u8; SECP256K1_POINT_DECOMPRESSED_SIZE],
-    ) {
-        if let Ok(result) = ecc_add::ecc_add_impl::<Secp256k1AddConfig>(p, q) {
-            p.copy_from_slice(&result[..SECP256K1_POINT_DECOMPRESSED_SIZE]);
-        }
-    }
-
-    fn _secp256k1_double(p: &mut [u8; SECP256K1_POINT_DECOMPRESSED_SIZE]) {
-        ecc_double::ecc_double_impl::<Secp256k1>(p);
-    }
-
-    fn bls12_381_g1_add(p: &mut [u8; G1_UNCOMPRESSED_SIZE], q: &[u8; G1_UNCOMPRESSED_SIZE]) {
-        if let Ok(result) = ecc_add::ecc_add_impl::<Bls12381G1AddConfig>(p, q) {
-            p.copy_from_slice(&result[..G1_UNCOMPRESSED_SIZE]);
-        }
-    }
-
-    fn bls12_381_g1_msm(
-        pairs: &[([u8; G1_UNCOMPRESSED_SIZE], [u8; SCALAR_SIZE])],
-        out: &mut [u8; G1_UNCOMPRESSED_SIZE],
-    ) {
-        if pairs.is_empty() {
-            out.fill(0);
-            return;
-        }
-
-        // Convert pairs to the format expected by the MSM implementation
-        let pairs_vec: Vec<(Vec<u8>, Vec<u8>)> = pairs
-            .iter()
-            .map(|(point, scalar)| (point.to_vec(), scalar.to_vec()))
-            .collect();
-
-        // Use the new MSM implementation
-        let result = SyscallEccMsm::<Bls12381G1MulConfig>::fn_impl(&pairs_vec);
-
-        // Copy result to output
-        if !result.is_empty() {
-            out.copy_from_slice(&result);
-        } else {
-            out.fill(0);
-        }
-    }
-
-    fn bls12_381_g2_add(p: &mut [u8; G2_UNCOMPRESSED_SIZE], q: &[u8; G2_UNCOMPRESSED_SIZE]) {
-        if let Ok(result) = ecc_add::ecc_add_impl::<Bls12381G2AddConfig>(p, q) {
-            if !result.is_empty() {
-                p.copy_from_slice(&result[..G2_UNCOMPRESSED_SIZE]);
-            }
-        }
-    }
-
-    fn bls12_381_g2_msm(
-        pairs: &[([u8; G2_UNCOMPRESSED_SIZE], [u8; SCALAR_SIZE])],
-        out: &mut [u8; G2_UNCOMPRESSED_SIZE],
-    ) {
-        if pairs.is_empty() {
-            out.fill(0);
-            return;
-        }
-
-        // Convert pairs to the format expected by the MSM implementation
-        let pairs_vec: Vec<(Vec<u8>, Vec<u8>)> = pairs
-            .iter()
-            .map(|(point, scalar)| (point.to_vec(), scalar.to_vec()))
-            .collect();
-
-        // Use the new MSM implementation
-        let result = SyscallEccMsm::<Bls12381G2MulConfig>::fn_impl(&pairs_vec);
-        if !result.is_empty() {
-            out.copy_from_slice(&result);
-        } else {
-            out.fill(0);
-        }
-    }
-
-    fn bls12_381_pairing(
-        pairs: &[([u8; G1_COMPRESSED_SIZE], [u8; G2_COMPRESSED_SIZE])],
-        out: &mut [u8; GT_COMPRESSED_SIZE],
-    ) {
-        let result = SyscallEccPairing::<Bls12381>::fn_impl_bls12_381(&pairs);
-        match result {
-            Ok(v) => {
-                let min = core::cmp::min(out.len(), v.len());
-                out[..min].copy_from_slice(&v[..min]);
-                if min < out.len() {
-                    out[min..].fill(0);
-                }
-            }
-            Err(_) => {
-                out.fill(0);
-            }
-        }
-    }
-
-    fn bls12_381_map_g1(p: &[u8; PADDED_FP_SIZE], out: &mut [u8; G1_UNCOMPRESSED_SIZE]) {
-        let result = SyscallEccMapping::<Bls12381G1MapConfig>::fn_impl(p.as_slice());
-        out.copy_from_slice(&result[..G1_UNCOMPRESSED_SIZE]);
-    }
-
-    fn bls12_381_map_g2(p: &[u8; PADDED_FP2_SIZE], out: &mut [u8; G2_UNCOMPRESSED_SIZE]) {
-        let result = SyscallEccMapping::<Bls12381G2MapConfig>::fn_impl(p.as_slice());
-        out.copy_from_slice(&result[..G2_UNCOMPRESSED_SIZE]);
-    }
-
-    fn bn254_add(
-        p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-        q: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-    ) -> [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] {
-        ecc_add::ecc_add_impl::<Bn254G1AddConfig>(p, q)
-            .unwrap_exit_code()
-            .try_into()
-            .unwrap()
-    }
-
-    fn bn254_double(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE]) {
-        ecc_double::ecc_double_impl::<Bn254>(p);
-    }
-
-    fn bn254_mul(
-        p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-        q: &[u8; SCALAR_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let result = SyscallEccMul::<Bn254G1MulConfig>::fn_impl(p, q)
-            .map_err(|_| ExitCode::PrecompileError)?;
-        let result_array: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] =
-            result.try_into().map_err(|_| ExitCode::PrecompileError)?;
-        Ok(result_array)
-    }
-
-    fn bn254_multi_pairing(
-        pairs: &[(
-            [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-            [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-        )],
-    ) -> Result<[u8; SCALAR_SIZE], ExitCode> {
-        let result = SyscallEccPairing::<Bn254>::fn_impl_bn254(&pairs)
-            .map_err(|_| ExitCode::PrecompileError)?;
-        let result_array: [u8; SCALAR_SIZE] =
-            result.try_into().map_err(|_| ExitCode::PrecompileError)?;
-        Ok(result_array)
-    }
-
-    fn bn254_g1_compress(
-        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
-        let result =
-            SyscallEccCompressDecompress::<crate::syscall_handler::Bn254G1CompressConfig>::fn_impl(
-                point,
-            )?;
-        result.try_into().map_err(|_| ExitCode::UnknownError)
-    }
-
-    fn bn254_g1_decompress(
-        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let result = SyscallEccCompressDecompress::<
-            crate::syscall_handler::Bn254G1DecompressConfig,
-        >::fn_impl(point)?;
-        result.try_into().map_err(|_| ExitCode::UnknownError)
-    }
-
-    fn bn254_g2_compress(
-        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
-        let result =
-            SyscallEccCompressDecompress::<crate::syscall_handler::Bn254G2CompressConfig>::fn_impl(
-                point,
-            )?;
-        result.try_into().map_err(|_| ExitCode::UnknownError)
-    }
-
-    fn bn254_g2_decompress(
-        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let result = SyscallEccCompressDecompress::<Bn254G2DecompressConfig>::fn_impl(point)?;
-        result.try_into().map_err(|_| ExitCode::UnknownError)
-    }
-
+    #[inline(always)]
     fn uint256_mul_mod(x: &[u8; 32], y: &[u8; 32], m: &[u8; 32]) -> [u8; 32] {
         syscall_uint256_mul_mod_impl(x, y, m)
     }
-
+    #[inline(always)]
     fn uint256_x2048_mul(a: &[u8; 32], b: &[u8; 256]) -> ([u8; 256], [u8; 32]) {
-        syscall_uint256_mul_x2048_impl(a, b)
+        syscall_uint256_x2048_mul_impl(a, b)
     }
 }

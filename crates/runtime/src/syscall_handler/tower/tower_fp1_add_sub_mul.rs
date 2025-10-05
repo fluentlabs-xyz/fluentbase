@@ -1,4 +1,5 @@
 use crate::RuntimeContext;
+use fluentbase_types::{BLS12381_FP_SIZE, BN254_FP_SIZE};
 use num::BigUint;
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::weierstrass::{bls12_381::Bls12381BaseField, bn254::Bn254BaseField, FpOpField};
@@ -8,28 +9,34 @@ pub fn syscall_tower_fp1_bn254_add_handler(
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_tower_fp1_add_sub_mul_handler::<32, Bn254BaseField, FP_FIELD_ADD>(ctx, params, _result)
+    syscall_tower_fp1_add_sub_mul_handler::<BN254_FP_SIZE, Bn254BaseField, FP_FIELD_ADD>(
+        ctx, params, _result,
+    )
 }
 pub fn syscall_tower_fp1_bn254_sub_handler(
     ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_tower_fp1_add_sub_mul_handler::<32, Bn254BaseField, FP_FIELD_SUB>(ctx, params, _result)
+    syscall_tower_fp1_add_sub_mul_handler::<BN254_FP_SIZE, Bn254BaseField, FP_FIELD_SUB>(
+        ctx, params, _result,
+    )
 }
 pub fn syscall_tower_fp1_bn254_mul_handler(
     ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_tower_fp1_add_sub_mul_handler::<32, Bn254BaseField, FP_FIELD_MUL>(ctx, params, _result)
+    syscall_tower_fp1_add_sub_mul_handler::<BN254_FP_SIZE, Bn254BaseField, FP_FIELD_MUL>(
+        ctx, params, _result,
+    )
 }
 pub fn syscall_tower_fp1_bls12381_add_handler(
     ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_tower_fp1_add_sub_mul_handler::<48, Bls12381BaseField, FP_FIELD_ADD>(
+    syscall_tower_fp1_add_sub_mul_handler::<BLS12381_FP_SIZE, Bls12381BaseField, FP_FIELD_ADD>(
         ctx, params, _result,
     )
 }
@@ -38,7 +45,7 @@ pub fn syscall_tower_fp1_bls12381_sub_handler(
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_tower_fp1_add_sub_mul_handler::<48, Bls12381BaseField, FP_FIELD_SUB>(
+    syscall_tower_fp1_add_sub_mul_handler::<BLS12381_FP_SIZE, Bls12381BaseField, FP_FIELD_SUB>(
         ctx, params, _result,
     )
 }
@@ -47,7 +54,7 @@ pub fn syscall_tower_fp1_bls12381_mul_handler(
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_tower_fp1_add_sub_mul_handler::<48, Bls12381BaseField, FP_FIELD_MUL>(
+    syscall_tower_fp1_add_sub_mul_handler::<BLS12381_FP_SIZE, Bls12381BaseField, FP_FIELD_MUL>(
         ctx, params, _result,
     )
 }
@@ -83,23 +90,41 @@ pub(crate) fn syscall_tower_fp1_add_sub_mul_handler<
     Ok(())
 }
 
-pub fn syscall_tower_fp1_bn254_add_impl(x: [u8; 32], y: [u8; 32]) -> [u8; 32] {
-    syscall_tower_fp1_add_sub_mul_impl::<32, Bn254BaseField, FP_FIELD_ADD>(x, y)
+pub fn syscall_tower_fp1_bn254_add_impl(
+    x: [u8; BN254_FP_SIZE],
+    y: [u8; BN254_FP_SIZE],
+) -> [u8; BN254_FP_SIZE] {
+    syscall_tower_fp1_add_sub_mul_impl::<BN254_FP_SIZE, Bn254BaseField, FP_FIELD_ADD>(x, y)
 }
-pub fn syscall_tower_fp1_bn254_sub_impl(x: [u8; 32], y: [u8; 32]) -> [u8; 32] {
-    syscall_tower_fp1_add_sub_mul_impl::<32, Bn254BaseField, FP_FIELD_SUB>(x, y)
+pub fn syscall_tower_fp1_bn254_sub_impl(
+    x: [u8; BN254_FP_SIZE],
+    y: [u8; BN254_FP_SIZE],
+) -> [u8; BN254_FP_SIZE] {
+    syscall_tower_fp1_add_sub_mul_impl::<BN254_FP_SIZE, Bn254BaseField, FP_FIELD_SUB>(x, y)
 }
-pub fn syscall_tower_fp1_bn254_mul_impl(x: [u8; 32], y: [u8; 32]) -> [u8; 32] {
-    syscall_tower_fp1_add_sub_mul_impl::<32, Bn254BaseField, FP_FIELD_MUL>(x, y)
+pub fn syscall_tower_fp1_bn254_mul_impl(
+    x: [u8; BN254_FP_SIZE],
+    y: [u8; BN254_FP_SIZE],
+) -> [u8; BN254_FP_SIZE] {
+    syscall_tower_fp1_add_sub_mul_impl::<BN254_FP_SIZE, Bn254BaseField, FP_FIELD_MUL>(x, y)
 }
-pub fn syscall_tower_fp1_bls12381_add_impl(x: [u8; 48], y: [u8; 48]) -> [u8; 48] {
-    syscall_tower_fp1_add_sub_mul_impl::<48, Bls12381BaseField, FP_FIELD_ADD>(x, y)
+pub fn syscall_tower_fp1_bls12381_add_impl(
+    x: [u8; BLS12381_FP_SIZE],
+    y: [u8; BLS12381_FP_SIZE],
+) -> [u8; BLS12381_FP_SIZE] {
+    syscall_tower_fp1_add_sub_mul_impl::<BLS12381_FP_SIZE, Bls12381BaseField, FP_FIELD_ADD>(x, y)
 }
-pub fn syscall_tower_fp1_bls12381_sub_impl(x: [u8; 48], y: [u8; 48]) -> [u8; 48] {
-    syscall_tower_fp1_add_sub_mul_impl::<48, Bls12381BaseField, FP_FIELD_SUB>(x, y)
+pub fn syscall_tower_fp1_bls12381_sub_impl(
+    x: [u8; BLS12381_FP_SIZE],
+    y: [u8; BLS12381_FP_SIZE],
+) -> [u8; BLS12381_FP_SIZE] {
+    syscall_tower_fp1_add_sub_mul_impl::<BLS12381_FP_SIZE, Bls12381BaseField, FP_FIELD_SUB>(x, y)
 }
-pub fn syscall_tower_fp1_bls12381_mul_impl(x: [u8; 48], y: [u8; 48]) -> [u8; 48] {
-    syscall_tower_fp1_add_sub_mul_impl::<48, Bls12381BaseField, FP_FIELD_MUL>(x, y)
+pub fn syscall_tower_fp1_bls12381_mul_impl(
+    x: [u8; BLS12381_FP_SIZE],
+    y: [u8; BLS12381_FP_SIZE],
+) -> [u8; BLS12381_FP_SIZE] {
+    syscall_tower_fp1_add_sub_mul_impl::<BLS12381_FP_SIZE, Bls12381BaseField, FP_FIELD_MUL>(x, y)
 }
 
 pub(crate) fn syscall_tower_fp1_add_sub_mul_impl<
@@ -127,14 +152,14 @@ pub(crate) fn syscall_tower_fp1_add_sub_mul_impl<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use secp256k1::{rand, rand::Rng};
+    use rand::Rng;
     use std::str::FromStr;
 
     fn random_bigint<const NUM_BYTES: usize>(modulus: &BigUint) -> BigUint {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut arr = vec![0u8; NUM_BYTES];
         for item in arr.iter_mut() {
-            *item = rng.gen();
+            *item = rng.random();
         }
         BigUint::from_bytes_le(&arr) % modulus
     }

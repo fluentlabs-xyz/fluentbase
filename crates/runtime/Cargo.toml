@@ -23,12 +23,6 @@ smallvec = { version = "1.15.1", optional = true }
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 elliptic-curve = { version = "0.13", default-features = false }
-secp256k1 = { version = "=0.30", default-features = false, features = [
-    "alloc",
-    "recovery",
-    "rand",
-    "global-context",
-] }
 # don't use patched tiny-keccak from workspace
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 blake3 = { workspace = true, default-features = false }
@@ -36,16 +30,6 @@ sha2 = { workspace = true, default-features = false }
 solana-poseidon = { workspace = true }
 num = "0.4.3"
 sp1-curves = "5.2.1"
-sp1-primitives = { version = "5.2.1" }
-blstrs = { version = "0.7" }
-group = { version = "0.13", default-features = false }
-blst = { version = "0.3" }
-bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm", default-features = false, features = ["groups", "alloc"] }
-ark-ff = { workspace = true }
-ark-ec = { workspace = true }
-ark-serialize = { workspace = true }
-ark-bn254 = { workspace = true }
-paste = { workspace = true }
 fs2 = { version = "0.4.3", optional = true }
 bytemuck = { workspace = true }
 
@@ -54,7 +38,8 @@ core_affinity = { version = "0.8.3", optional = true }
 
 [dev-dependencies]
 sha2 = { workspace = true, default-features = false }
-hex-literal = { workspace = true }
+rand = "0.9.2"
+#hex-literal = { workspace = true }
 
 [features]
 default = ["std"]

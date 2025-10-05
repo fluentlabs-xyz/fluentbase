@@ -40,7 +40,6 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
     import_function!("_keccak256", KECCAK256, &[ValType::I32; 3], &[]);
     import_function!("_keccak256_permute", KECCAK256_PERMUTE, &[ValType::I32; 1], &[]);
     import_function!("_poseidon", POSEIDON, &[ValType::I32; 5], &[ValType::I32; 1]);
-    // TODO: Delete "_poseidon_hash"
     import_function!("_sha256_extend", SHA256_EXTEND, &[ValType::I32; 1], &[]);
     import_function!("_sha256_compress", SHA256_COMPRESS, &[ValType::I32; 2], &[]);
     import_function!("_sha256", SHA256, &[ValType::I32; 3], &[]);
@@ -50,7 +49,7 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
     import_function!("_ed25519_decompress", ED25519_DECOMPRESS, &[ValType::I32; 1], &[ValType::I32; 1]);
     import_function!("_ed25519_add", ED25519_ADD, &[ValType::I32; 2], &[ValType::I32; 1]);
 
-        // fp1/fp2 tower field (0x03)
+    // fp1/fp2 tower field (0x03)
     import_function!("_tower_fp1_bn254_add", TOWER_FP1_BN254_ADD, &[ValType::I32; 2], &[]);
     import_function!("_tower_fp1_bn254_sub", TOWER_FP1_BN254_SUB, &[ValType::I32; 2], &[]);
     import_function!("_tower_fp1_bn254_mul", TOWER_FP1_BN254_MUL, &[ValType::I32; 2], &[]);
@@ -69,49 +68,24 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
     import_function!("_secp256k1_decompress", SECP256K1_DECOMPRESS, &[ValType::I32; 2], &[]);
     import_function!("_secp256k1_double", SECP256K1_DOUBLE, &[ValType::I32; 1], &[]);
 
+    // secp256r1 (0x05)
+    import_function!("_secp256r1_add", SECP256R1_ADD, &[ValType::I32; 2], &[]);
+    import_function!("_secp256r1_decompress", SECP256R1_DECOMPRESS, &[ValType::I32; 2], &[]);
+    import_function!("_secp256r1_double", SECP256R1_DOUBLE, &[ValType::I32; 1], &[]);
+
     // bls12381 (0x06)
-    import_function!("_bls12381_g1_add", BLS12381_G1_ADD, &[ValType::I32; 2], &[]);
-    import_function!("_bls12381_g1_msm", BLS12381_G1_MSM, &[ValType::I32; 3], &[]);
-    import_function!("_bls12381_g2_add", BLS12381_G2_ADD, &[ValType::I32; 2], &[]);
-    import_function!("_bls12381_g2_msm", BLS12381_G2_MSM, &[ValType::I32; 3], &[]);
-    import_function!("_bls12381_pairing", BLS12381_PAIRING, &[ValType::I32; 3], &[]);
-    import_function!("_bls12381_map_g1", BLS12381_MAP_G1, &[ValType::I32; 2],&[]);
-    import_function!("_bls12381_map_g2", BLS12381_MAP_G2, &[ValType::I32; 2], &[]);
+    import_function!("_bls12381_add", BLS12381_ADD, &[ValType::I32; 2], &[]);
+    import_function!("_bls12381_decompress", BLS12381_DECOMPRESS, &[ValType::I32; 2], &[]);
+    import_function!("_bls12381_double", BLS12381_DOUBLE, &[ValType::I32; 1], &[]);
 
     // bn254 (0x07)
     import_function!("_bn254_add", BN254_ADD, &[ValType::I32; 2], &[]);
+    import_function!("_bn254_decompress", BN254_DECOMPRESS, &[ValType::I32; 2], &[]);
     import_function!("_bn254_double", BN254_DOUBLE, &[ValType::I32; 1], &[]);
-    import_function!("_bn254_mul", BN254_MUL, &[ValType::I32; 2], &[]);
-    import_function!(
-        "_bn254_multi_pairing",
-        BN254_MULTI_PAIRING,
-        &[ValType::I32; 3],
-        &[]
-    );
-    import_function!(
-        "_bn254_g1_compress",
-        BN254_G1_COMPRESS,
-        &[ValType::I32; 2],
-        &[ValType::I32; 1]
-    );
-    import_function!(
-        "_bn254_g1_decompress",
-        BN254_G1_DECOMPRESS,
-        &[ValType::I32; 2],
-        &[ValType::I32; 1]
-    );
-    import_function!(
-        "_bn254_g2_compress",
-        BN254_G2_COMPRESS,
-        &[ValType::I32; 2],
-        &[ValType::I32; 1]
-    );
-    import_function!(
-        "_bn254_g2_decompress",
-        BN254_G2_DECOMPRESS,
-        &[ValType::I32; 2],
-        &[ValType::I32; 1]
-    );
+
+    // uint256 (0x08)
+    import_function!("_uint256_mul_mod", UINT256_MUL_MOD, &[ValType::I32; 3], &[]);
+    import_function!("_uint256_x2048_mul", UINT256_X2048_MUL, &[ValType::I32; 4], &[]);
 
     Arc::new(import_linker)
 }

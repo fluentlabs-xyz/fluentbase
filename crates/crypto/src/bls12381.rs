@@ -63,9 +63,9 @@ impl AffinePoint<N> for Bls12381Point {
     }
 
     fn add_assign(&mut self, other: &Self) {
-        let a = bytemuck::cast_mut(self.limbs_mut());
-        let b = bytemuck::cast_ref(other.limbs_ref());
-        CryptoRuntime::bls12_381_g1_add(a, b);
+        let a: [u8; 96] = bytemuck::cast(self.limbs_mut().clone());
+        let b: [u8; 96] = bytemuck::cast(other.limbs_ref().clone());
+        CryptoRuntime::bls12381_add(a, b);
     }
 
     fn complete_add_assign(&mut self, other: &Self) {

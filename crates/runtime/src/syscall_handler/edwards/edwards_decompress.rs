@@ -4,7 +4,7 @@
 /// P.S: Instead of constraint check for `sign<=1` we emit exit code (`MalformedBuiltinParams`),
 ///  that must be represented inside rWasm zkVM.
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
-use fluentbase_types::{ExitCode, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE};
+use fluentbase_types::{ExitCode, ED25519_POINT_COMPRESSED_SIZE, ED25519_POINT_DECOMPRESSED_SIZE};
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{curve25519_dalek::CompressedEdwardsY, edwards::ed25519::decompress};
 
@@ -15,9 +15,9 @@ pub fn syscall_ed25519_decompress_handler(
 ) -> Result<(), TrapCode> {
     let slice_ptr = params[0].i32().unwrap() as usize;
     let sign = params[1].i32().unwrap() as u32;
-    let mut compressed_edwards_y = [0u8; EDWARDS_COMPRESSED_SIZE];
+    let mut compressed_edwards_y = [0u8; ED25519_POINT_COMPRESSED_SIZE];
     ctx.memory_read(
-        slice_ptr + EDWARDS_COMPRESSED_SIZE,
+        slice_ptr + ED25519_POINT_COMPRESSED_SIZE,
         &mut compressed_edwards_y,
     )?;
     let decompressed_x_bytes = syscall_ed25519_decompress_impl(compressed_edwards_y, sign)
@@ -27,18 +27,18 @@ pub fn syscall_ed25519_decompress_handler(
 }
 
 pub fn syscall_ed25519_decompress_impl(
-    mut compressed_edwards_y: [u8; EDWARDS_COMPRESSED_SIZE],
+    mut compressed_edwards_y: [u8; ED25519_POINT_COMPRESSED_SIZE],
     sign: u32,
-) -> Result<[u8; EDWARDS_DECOMPRESSED_SIZE], ExitCode> {
+) -> Result<[u8; ED25519_POINT_DECOMPRESSED_SIZE], ExitCode> {
     // TODO(dmitry123): If we don't have this check, then constraint violation might happen inside SP1
     if sign > 1 {
         return Err(ExitCode::MalformedBuiltinParams);
     }
-    let mut result = [0u8; EDWARDS_DECOMPRESSED_SIZE];
+    let mut result = [0u8; ED25519_POINT_DECOMPRESSED_SIZE];
     result[32..64].copy_from_slice(&compressed_edwards_y);
     // Re-insert sign bit into last bit of Y for CompressedEdwardsY format
-    compressed_edwards_y[EDWARDS_COMPRESSED_SIZE - 1] &= 0b0111_1111;
-    compressed_edwards_y[EDWARDS_COMPRESSED_SIZE - 1] |= (sign as u8) << 7;
+    compressed_edwards_y[ED25519_POINT_COMPRESSED_SIZE - 1] &= 0b0111_1111;
+    compressed_edwards_y[ED25519_POINT_COMPRESSED_SIZE - 1] |= (sign as u8) << 7;
     // Compute actual decompressed X
     let compressed_y = CompressedEdwardsY(compressed_edwards_y);
     let decompressed = decompress(&compressed_y).expect("curve25519 Decompression failed");
