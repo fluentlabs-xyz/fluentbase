@@ -1,6 +1,9 @@
 use criterion::{criterion_main, Criterion};
 use fluentbase_e2e::EvmTestingContextWithGenesis;
-use fluentbase_sdk::{address, constructor::encode_constructor_params, Address, Bytes};
+use fluentbase_sdk::{
+    address, constructor::encode_constructor_params, Address, Bytes, ContractContextV1,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, UNIVERSAL_TOKEN_MAGIC_BYTES,
+};
 use fluentbase_svm::{
     error::SvmError,
     helpers::serialize_svm_program_params_from_instruction,
@@ -10,9 +13,6 @@ use fluentbase_svm::{
 };
 use fluentbase_svm_common::common::pubkey_from_evm_address;
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext};
-use fluentbase_types::{
-    ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, UNIVERSAL_TOKEN_MAGIC_BYTES,
-};
 use fluentbase_universal_token::{common::sig_to_bytes, consts::SIG_TOKEN2022};
 use hex_literal::hex;
 use revm::context::result::ExecutionResult;
