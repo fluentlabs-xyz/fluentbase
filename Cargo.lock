@@ -4791,9 +4791,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.17"
+version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5407465600fb0548f1442edf71dd20683c6ed326200ace4b1ef0763521bb3b77"
+checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags",
 ]
@@ -5291,9 +5291,9 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "rusty-fork"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb3dcc6e454c328bb824492db107ab7c0ae8fcffe4ad210136ef014458c1bc4f"
+checksum = "cc6bf79ff24e648f6da1f8d1f011e9cac26491b619e6b9280f2b47f1774e6ee2"
 dependencies = [
  "fnv",
  "quick-error",
@@ -8158,4 +8158,4 @@ dependencies = [
 [[patch.unused]]
 name = "bls12_381"
 version = "0.8.0"
-source = "git+https://github.com/rwasm-patches/bls12_381.git?branch=rwasm#9b9865b01742d230c644b9bb25b552e46c372dec"
+source = "git+https://github.com/rwasm-patches/bls12_381.git?branch=rwasm#eeb1bad4cfd8e2da7d019695fb18352805265eea"

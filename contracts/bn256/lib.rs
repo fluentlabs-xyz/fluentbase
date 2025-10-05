@@ -4,8 +4,8 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    alloc_slice, entrypoint, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BN256_ADD,
-    PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
+    alloc_slice, crypto::CryptoRuntime, entrypoint, ContextReader, CryptoAPI, ExitCode, SharedAPI,
+    BN254_G1_RAW_AFFINE_SIZE, PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
 };
 use revm_precompile::{
     bn128,
@@ -17,8 +17,35 @@ use revm_precompile::{
     },
 };
 
+const BN254_ADD_INPUT_SIZE: usize = BN254_G1_RAW_AFFINE_SIZE * 2;
+const COORDINATE_SIZE: usize = 32;
+
+#[inline]
+fn point_be_to_le(point: &mut [u8; BN254_G1_RAW_AFFINE_SIZE]) {
+    point[..COORDINATE_SIZE].reverse();
+    point[COORDINATE_SIZE..].reverse();
+}
+
+/// Converts a BN254 point from SP1's little-endian format back to Ethereum's big-endian format.
+#[inline]
+fn point_le_to_be(point: &mut [u8; BN254_G1_RAW_AFFINE_SIZE]) {
+    point[..COORDINATE_SIZE].reverse();
+    point[COORDINATE_SIZE..].reverse();
+}
+
+/// Checks if a point is the identity element (point at infinity, represented as (0,0)).
+#[inline]
+fn is_identity(point: &[u8; BN254_G1_RAW_AFFINE_SIZE]) -> bool {
+    *point == [0u8; BN254_G1_RAW_AFFINE_SIZE]
+}
+
+/// Checks if two points are inverses of each other (same x-coordinate, different y-coordinate).
+#[inline]
+fn are_inverses(p: &[u8; BN254_G1_RAW_AFFINE_SIZE], q: &[u8; BN254_G1_RAW_AFFINE_SIZE]) -> bool {
+    p[..COORDINATE_SIZE] == q[..COORDINATE_SIZE] && p[COORDINATE_SIZE..] != q[COORDINATE_SIZE..]
+}
+
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    // read full input data
     let bytecode_address = sdk.context().contract_bytecode_address();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
@@ -27,22 +54,36 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     match bytecode_address {
         PRECOMPILE_BN256_ADD => {
             sdk.sync_evm_gas(ISTANBUL_ADD_GAS_COST, 0);
-            let result = match bn128::run_add(input, ISTANBUL_ADD_GAS_COST, u64::MAX) {
-                Ok(result) => result,
-                Err(_) => sdk.native_exit(ExitCode::PrecompileError),
+
+            // Pad input to 128 bytes (two 64-byte points) with zeros if needed
+            let mut padded_input = [0u8; BN254_ADD_INPUT_SIZE];
+            let copy_len = core::cmp::min(input.len(), BN254_ADD_INPUT_SIZE);
+            padded_input[..copy_len].copy_from_slice(&input[..copy_len]);
+
+            // Extract the two points from input
+            let mut p = padded_input[..BN254_G1_RAW_AFFINE_SIZE].try_into().unwrap();
+            let mut q = padded_input[BN254_G1_RAW_AFFINE_SIZE..].try_into().unwrap();
+
+            // Convert from Ethereum's big-endian to SP1's little-endian format
+            point_be_to_le(&mut p);
+            point_be_to_le(&mut q);
+
+            // Handle special cases for elliptic curve addition
+            let mut result = if is_identity(&p) {
+                q // Identity + Q = Q
+            } else if is_identity(&q) {
+                p // P + Identity = P
+            } else if p == q {
+                CryptoRuntime::bn254_double(p) // P + P = 2P (point doubling)
+            } else if are_inverses(&p, &q) {
+                [0u8; BN254_G1_RAW_AFFINE_SIZE] // P + (-P) = Identity
+            } else {
+                CryptoRuntime::bn254_add(p, q) // General case: P + Q
             };
-            sdk.write(&result.bytes);
-            // let padded_input = right_pad::<BN254_ADD_INPUT_SIZE>(&input);
-            // let p: [u8; BN254_G1_RAW_AFFINE_SIZE] =
-            //     padded_input[..BN254_G1_RAW_AFFINE_SIZE].try_into().unwrap();
-            // let q: [u8; BN254_G1_RAW_AFFINE_SIZE] =
-            //     padded_input[BN254_G1_RAW_AFFINE_SIZE..].try_into().unwrap();
-            // let result = if p == q {
-            //     CryptoRuntime::bn254_double(p)
-            // } else {
-            //     CryptoRuntime::bn254_add(p, q)
-            // };
-            // sdk.write(&result);
+
+            // Convert result back to Ethereum's big-endian format
+            point_le_to_be(&mut result);
+            sdk.write(&result);
         }
         PRECOMPILE_BN256_MUL => {
             sdk.sync_evm_gas(ISTANBUL_MUL_GAS_COST, 0);
