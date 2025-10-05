@@ -56,12 +56,12 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
     import_function!("_tower_fp1_bls12381_add", TOWER_FP1_BLS12381_ADD, &[ValType::I32; 2], &[]);
     import_function!("_tower_fp1_bls12381_sub", TOWER_FP1_BLS12381_SUB, &[ValType::I32; 2], &[]);
     import_function!("_tower_fp1_bls12381_mul", TOWER_FP1_BLS12381_MUL, &[ValType::I32; 2], &[]);
-    import_function!("_tower_fp2_bn254_add", TOWER_FP2_BN254_ADD, &[ValType::I32; 2], &[]);
-    import_function!("_tower_fp2_bn254_sub", TOWER_FP2_BN254_SUB, &[ValType::I32; 2], &[]);
-    import_function!("_tower_fp2_bn254_mul", TOWER_FP2_BN254_MUL, &[ValType::I32; 2], &[]);
-    import_function!("_tower_fp2_bls12381_add", TOWER_FP2_BLS12381_ADD, &[ValType::I32; 2], &[]);
-    import_function!("_tower_fp2_bls12381_sub", TOWER_FP2_BLS12381_SUB, &[ValType::I32; 2], &[]);
-    import_function!("_tower_fp2_bls12381_mul", TOWER_FP2_BLS12381_MUL, &[ValType::I32; 2], &[]);
+    import_function!("_tower_fp2_bn254_add", TOWER_FP2_BN254_ADD, &[ValType::I32; 4], &[]);
+    import_function!("_tower_fp2_bn254_sub", TOWER_FP2_BN254_SUB, &[ValType::I32; 4], &[]);
+    import_function!("_tower_fp2_bn254_mul", TOWER_FP2_BN254_MUL, &[ValType::I32; 4], &[]);
+    import_function!("_tower_fp2_bls12381_add", TOWER_FP2_BLS12381_ADD, &[ValType::I32; 4], &[]);
+    import_function!("_tower_fp2_bls12381_sub", TOWER_FP2_BLS12381_SUB, &[ValType::I32; 4], &[]);
+    import_function!("_tower_fp2_bls12381_mul", TOWER_FP2_BLS12381_MUL, &[ValType::I32; 4], &[]);
 
     // secp256k1 (0x04)
     import_function!("_secp256k1_add", SECP256K1_ADD, &[ValType::I32; 2], &[]);
