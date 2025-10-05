@@ -2,7 +2,7 @@ use crate::{
     BytecodeOrHash, CryptoAPI, ExitCode, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, EDWARDS_COMPRESSED_SIZE, EDWARDS_DECOMPRESSED_SIZE,
-    TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
+    SECP256K1_POINT_DECOMPRESSED_SIZE, TOWER_FP_BLS12381_SIZE, TOWER_FP_BN256_SIZE,
 };
 use core::convert::Into;
 
@@ -270,6 +270,18 @@ impl CryptoAPI for RwasmContext {
     ) -> [u8; TOWER_FP_BLS12381_SIZE] {
         unsafe { _tower_fp2_bls12381_mul(x.as_mut_ptr(), y.as_ptr()) };
         x
+    }
+
+    #[inline(always)]
+    fn _secp256k1_add(
+        p: &mut [u8; SECP256K1_POINT_DECOMPRESSED_SIZE],
+        q: &[u8; SECP256K1_POINT_DECOMPRESSED_SIZE],
+    ) {
+        unsafe { _secp256k1_add(p.as_mut_ptr(), q.as_ptr()) }
+    }
+    #[inline(always)]
+    fn _secp256k1_double(p: &mut [u8; SECP256K1_POINT_DECOMPRESSED_SIZE]) {
+        unsafe { _secp256k1_double(p.as_mut_ptr()) }
     }
 
     #[inline(always)]

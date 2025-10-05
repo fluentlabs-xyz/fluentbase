@@ -19,6 +19,14 @@ pub const EDWARDS_DECOMPRESSED_SIZE: usize = 64;
 pub const TOWER_FP_BN256_SIZE: usize = 32;
 pub const TOWER_FP_BLS12381_SIZE: usize = 32;
 
+/// Secp256k1 Specific Constants
+pub const SECP256K1_POINT_COMPRESSED_SIZE: usize = 32;
+pub const SECP256K1_POINT_DECOMPRESSED_SIZE: usize = 64;
+
+/// Secp256r1 Specific Constants
+pub const SECP256R1_POINT_COMPRESSED_SIZE: usize = 32;
+pub const SECP256R1_POINT_DECOMPRESSED_SIZE: usize = 64;
+
 /// BN254 Specific Constants
 pub const BN254_G1_POINT_COMPRESSED_SIZE: usize = 32;
 pub const BN254_G1_POINT_DECOMPRESSED_SIZE: usize = 64;

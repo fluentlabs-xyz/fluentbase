@@ -91,7 +91,7 @@ pub fn invoke_runtime_handler(
         // secp256k1 (0x04)
         SysFuncIdx::SECP256K1_ADD => ecc_add::ecc_add_handler::<Secp256k1AddConfig>(caller, params, result),
         SysFuncIdx::SECP256K1_DECOMPRESS => SyscallEccCompressDecompress::<Secp256k1DecompressConfig>::fn_handler(caller, params, result),
-        SysFuncIdx::SECP256K1_DOUBLE => SyscallEccDouble::<Secp256k1>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_DOUBLE => ecc_double::ecc_double_handler::<Secp256k1>(caller, params, result),
 
         // secp256r1 (0x05)
         // SysFuncIdx::SECP256R1_VERIFY => SyscallWeierstrassVerifyAssign::<Secp256r1VerifyConfig>::fn_handler(caller, params, result),
@@ -109,7 +109,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::BN254_ADD => ecc_add::ecc_add_handler::<Bn254G1AddConfig>(caller, params, result),
         SysFuncIdx::BN254_MUL => SyscallEccMul::<Bn254G1MulConfig>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_MULTI_PAIRING => SyscallEccPairing::<Bn254>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_DOUBLE => SyscallEccDouble::<Bn254>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_DOUBLE => ecc_double::ecc_double_handler::<Bn254>(caller, params, result),
         SysFuncIdx::BN254_G1_COMPRESS => SyscallEccCompressDecompress::<Bn254G1CompressConfig>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_G1_DECOMPRESS => SyscallEccCompressDecompress::<Bn254G1DecompressConfig>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_G2_COMPRESS => SyscallEccCompressDecompress::<Bn254G2CompressConfig>::fn_handler(caller, params, result),

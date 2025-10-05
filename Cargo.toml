@@ -186,6 +186,7 @@ array-bytes = "1.6.0"
 
 [patch.crates-io]
 tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
+bls12_381 = {git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm" }
 #rwasm = { path = "../rwasm", default-features = false }
 
 [workspace.lints]

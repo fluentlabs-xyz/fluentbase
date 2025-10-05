@@ -5,6 +5,7 @@ use crate::{
     syscall_handler::{
         ecc::{
             ecc_bn256::{encode_g1_point, is_zero_point, read_g1_point, read_scalar},
+            ecc_utils::cast_u8_to_u32,
             parse_bls12381_g1_point_uncompressed, parse_bls12381_g2_point_uncompressed,
         },
         syscall_process_exit_code,
@@ -19,7 +20,8 @@ use fluentbase_types::{
 };
 use group::prime::PrimeCurveAffine;
 use rwasm::{Store, TrapCode, Value};
-use sp1_curves::CurveType;
+use sp1_curves::{AffinePoint, CurveType, EllipticCurve};
+use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;
 
 pub struct SyscallEccMul<C: MulConfig> {
@@ -39,10 +41,8 @@ impl<C: MulConfig> SyscallEccMul<C> {
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
-        let (p_ptr, q_ptr) = (
-            params[0].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
-            params[1].i32().ok_or(TrapCode::UnreachableCodeReached)? as u32,
-        );
+        let p_ptr = params[0].i32().unwrap() as usize;
+        let q_ptr = params[1].i32().unwrap() as usize;
 
         // Read point and scalar from memory using config sizes
         let mut point = vec![0u8; C::POINT_SIZE];
@@ -158,4 +158,22 @@ impl<C: MulConfig> SyscallEccMul<C> {
             G2Projective::from(point_aff) * scalar_scalar.unwrap_or(Scalar::from(0u64));
         G2Affine::from(result_proj).to_uncompressed().to_vec()
     }
+}
+
+/// Generic SP1 curve point multiplication implementation
+fn fn_sp1_generic<C: MulConfig>(p: &[u8], q: &[u8]) -> Result<Vec<u8>, ExitCode> {
+    let Some(p_words) = cast_u8_to_u32(p) else {
+        return Err(ExitCode::MalformedBuiltinParams);
+    };
+    let Some(q_words) = cast_u8_to_u32(q) else {
+        return Err(ExitCode::MalformedBuiltinParams);
+    };
+
+    let p_aff = AffinePoint::<C::EllipticCurve>::from_words_le(&p_words);
+    let q_aff = AffinePoint::<C::EllipticCurve>::from_words_le(&q_words);
+
+    let r_aff = C::EllipticCurve::ec_add(&p_aff, &q_aff);
+
+    let r_words = r_aff.to_words_le();
+    Ok(words_to_bytes_le_vec(r_words.as_slice()))
 }

@@ -1,4 +1,4 @@
-mod ecc_double;
+pub mod ecc_double;
 pub use ecc_double::*;
 pub mod ecc_add;
 mod ecc_config;
