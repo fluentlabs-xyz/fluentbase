@@ -5,7 +5,8 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm", default-features = false, features = ["groups", "alloc"] }
+bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm", default-features = false, features = ["groups", "alloc", "pairings"] }
+revm-precompile = { workspace = true }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }
@@ -16,4 +17,4 @@ path = "lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std"]
+std = ["fluentbase-sdk/std", "revm-precompile/std"]

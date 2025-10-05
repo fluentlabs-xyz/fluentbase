@@ -671,6 +671,7 @@ dependencies = [
  "cfg-if",
  "ff",
  "group",
+ "pairing",
  "rand_core 0.6.4",
  "sp1-lib",
  "subtle",
@@ -1733,6 +1734,7 @@ dependencies = [
  "bls12_381",
  "fluentbase-sdk",
  "fluentbase-testing",
+ "revm-precompile",
 ]
 
 [[package]]
