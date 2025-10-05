@@ -90,8 +90,12 @@ fn syscall_weierstrass_double_impl<E: EllipticCurve, const POINT_SIZE: usize>(
     let result_affine = E::ec_double(&p_affine);
     let (rx, ry) = (result_affine.x, result_affine.y);
     let mut result = [0u8; POINT_SIZE];
-    result[..POINT_SIZE / 2].copy_from_slice(&rx.to_bytes_le());
-    result[POINT_SIZE / 2..].copy_from_slice(&ry.to_bytes_le());
+    let mut rx = rx.to_bytes_le();
+    rx.resize(POINT_SIZE / 2, 0);
+    let mut ry = ry.to_bytes_le();
+    ry.resize(POINT_SIZE / 2, 0);
+    result[..POINT_SIZE / 2].copy_from_slice(&rx);
+    result[POINT_SIZE / 2..].copy_from_slice(&ry);
     result
 }
 

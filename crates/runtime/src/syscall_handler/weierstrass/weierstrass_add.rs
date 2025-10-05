@@ -92,15 +92,19 @@ fn syscall_weierstrass_add_impl<E: EllipticCurve, const POINT_SIZE: usize>(
     p: [u8; POINT_SIZE],
     q: [u8; POINT_SIZE],
 ) -> [u8; POINT_SIZE] {
-    let (px, py) = p.split_at(p.len() / 2);
+    let (px, py) = p.split_at(POINT_SIZE / 2);
     let p_affine = AffinePoint::<E>::new(BigUint::from_bytes_le(px), BigUint::from_bytes_le(py));
-    let (qx, qy) = q.split_at(p.len() / 2);
+    let (qx, qy) = q.split_at(POINT_SIZE / 2);
     let q_affine = AffinePoint::<E>::new(BigUint::from_bytes_le(qx), BigUint::from_bytes_le(qy));
     let result_affine = p_affine + q_affine;
     let (rx, ry) = (result_affine.x, result_affine.y);
     let mut result = [0u8; POINT_SIZE];
-    result[..POINT_SIZE / 2].copy_from_slice(&rx.to_bytes_le());
-    result[POINT_SIZE / 2..].copy_from_slice(&ry.to_bytes_le());
+    let mut rx = rx.to_bytes_le();
+    rx.resize(POINT_SIZE / 2, 0);
+    let mut ry = ry.to_bytes_le();
+    ry.resize(POINT_SIZE / 2, 0);
+    result[..POINT_SIZE / 2].copy_from_slice(&rx);
+    result[POINT_SIZE / 2..].copy_from_slice(&ry);
     result
 }
 
