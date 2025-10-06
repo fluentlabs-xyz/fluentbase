@@ -45,6 +45,41 @@ fn are_inverses(p: &[u8; BN254_G1_RAW_AFFINE_SIZE], q: &[u8; BN254_G1_RAW_AFFINE
     p[..COORDINATE_SIZE] == q[..COORDINATE_SIZE] && p[COORDINATE_SIZE..] != q[COORDINATE_SIZE..]
 }
 
+#[inline]
+fn is_valid_point(point: &[u8; BN254_G1_RAW_AFFINE_SIZE]) -> bool {
+    use ark_bn254::{Fq, G1Affine};
+    use ark_serialize::CanonicalDeserialize;
+
+    // Identity point (0,0) is always valid
+    if is_identity(point) {
+        return true;
+    }
+
+    // Extract x and y coordinates (big-endian, convert to little-endian for arkworks)
+    let mut x_bytes = [0u8; 32];
+    let mut y_bytes = [0u8; 32];
+    x_bytes.copy_from_slice(&point[..32]);
+    y_bytes.copy_from_slice(&point[32..]);
+    x_bytes.reverse(); // Convert to little-endian
+    y_bytes.reverse();
+
+    // Deserialize field elements - this checks they're < field modulus
+    let x = match Fq::deserialize_uncompressed(&x_bytes[..]) {
+        Ok(x) => x,
+        Err(_) => return false,
+    };
+    let y = match Fq::deserialize_uncompressed(&y_bytes[..]) {
+        Ok(y) => y,
+        Err(_) => return false,
+    };
+
+    // Create point without checking (to avoid assert)
+    let point = G1Affine::new_unchecked(x, y);
+
+    // Validate: 1) on curve, 2) in correct subgroup
+    point.is_on_curve() && point.is_in_correct_subgroup_assuming_on_curve()
+}
+
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let bytecode_address = sdk.context().contract_bytecode_address();
     let input_length = sdk.input_size();
@@ -60,11 +95,20 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             let copy_len = core::cmp::min(input.len(), BN254_ADD_INPUT_SIZE);
             padded_input[..copy_len].copy_from_slice(&input[..copy_len]);
 
-            // Extract the two points from input
-            let mut p = padded_input[..BN254_G1_RAW_AFFINE_SIZE].try_into().unwrap();
-            let mut q = padded_input[BN254_G1_RAW_AFFINE_SIZE..].try_into().unwrap();
+            // Extract the two points from input (in big-endian format)
+            let p_be: [u8; BN254_G1_RAW_AFFINE_SIZE] = padded_input[..BN254_G1_RAW_AFFINE_SIZE].try_into().unwrap();
+            let q_be: [u8; BN254_G1_RAW_AFFINE_SIZE] = padded_input[BN254_G1_RAW_AFFINE_SIZE..].try_into().unwrap();
+
+            // Validate both points are either identity or on the curve
+            if !is_valid_point(&p_be) || !is_valid_point(&q_be) {
+                // Invalid point: fail the transaction by exiting with error
+                sdk.native_exit(ExitCode::PrecompileError)
+            }
 
             // Convert from Ethereum's big-endian to SP1's little-endian format
+            let mut p = p_be;
+            let mut q = q_be;
+
             point_be_to_le(&mut p);
             point_be_to_le(&mut q);
 

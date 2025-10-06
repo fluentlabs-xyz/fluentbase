@@ -1741,6 +1741,9 @@ dependencies = [
 name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-serialize 0.5.0",
  "fluentbase-sdk",
  "fluentbase-testing",
  "revm-precompile",
