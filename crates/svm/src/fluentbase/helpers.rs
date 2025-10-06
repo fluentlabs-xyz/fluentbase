@@ -1,5 +1,3 @@
-use crate::helpers::{extract_accounts, storage_read_account_data_or_default};
-use crate::solana_program::rent_collector::RENT_EXEMPT_RENT_EPOCH;
 use crate::{
     account::{
         is_executable_by_account, Account, AccountSharedData, ReadableAccount, WritableAccount,
@@ -11,7 +9,7 @@ use crate::{
     context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
     error::SvmError,
     fluentbase::common::BatchMessage,
-    helpers::storage_read_account_data,
+    helpers::{extract_accounts, storage_read_account_data, storage_read_account_data_or_default},
     loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     loaders::bpf_loader_v4,
     message_processor::MessageProcessor,
@@ -20,6 +18,7 @@ use crate::{
         feature_set::feature_set_default,
         loader_v4,
         message::{legacy, LegacyMessage, SanitizedMessage},
+        rent_collector::RENT_EXEMPT_RENT_EPOCH,
         svm_message::SVMMessage,
         sysvar::instructions::{
             construct_instructions_data, BorrowedAccountMeta, BorrowedInstruction,
@@ -29,9 +28,8 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec::Vec};
-use fluentbase_sdk::{ContextReader, MetadataAPI, SharedAPI};
+use fluentbase_sdk::{ContextReader, MetadataAPI, MetadataStorageAPI, SharedAPI};
 use fluentbase_svm_common::common::pubkey_from_evm_address;
-use fluentbase_types::MetadataStorageAPI;
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;
 use solana_clock::Clock;

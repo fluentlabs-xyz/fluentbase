@@ -1,9 +1,11 @@
-use crate::account::{Account, AccountSharedData, ReadableAccount};
-use crate::error::SvmError;
-use crate::helpers::{storage_read_account_data, storage_write_account_data};
-use crate::token_2022;
+use crate::{
+    account::{Account, AccountSharedData, ReadableAccount},
+    error::SvmError,
+    helpers::{storage_read_account_data, storage_write_account_data},
+    token_2022,
+};
 use alloc::vec::Vec;
-use fluentbase_types::{SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
+use fluentbase_sdk::{SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use hashbrown::{HashMap, HashSet};
 use solana_account_info::{AccountInfo, IntoAccountInfo};
 use solana_instruction::AccountMeta;
@@ -143,8 +145,10 @@ pub fn flush_accounts<SDK: SharedAPI, const SKIP_REPEATS: bool>(
 
 #[cfg(test)]
 mod tests {
-    use crate::account::{Account, AccountSharedData};
-    use crate::token_2022::helpers::reconstruct_account_infos;
+    use crate::{
+        account::{Account, AccountSharedData},
+        token_2022::helpers::reconstruct_account_infos,
+    };
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
 

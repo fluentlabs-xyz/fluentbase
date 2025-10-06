@@ -3,39 +3,8 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use alloc::vec;
-use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
-
-const INPUT_LENGTH: usize = 160;
-const P256_VERIFY_GAS: u64 = 3450;
-
-/// Helper function for common validation and gas checking pattern
-#[inline(always)]
-fn validate_and_consume_gas<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    gas_cost: u64,
-    gas_limit: u64,
-    input: &[u8],
-) -> bool {
-    if !verify_input_length(&input) {
-        sdk.sync_evm_gas(gas_cost, 0);
-        sdk.write(&[]);
-        return false;
-    }
-    if gas_cost > gas_limit {
-        sdk.native_exit(ExitCode::OutOfFuel);
-    }
-    sdk.sync_evm_gas(gas_cost, 0);
-    true
-}
-
-#[inline(always)]
-fn verify_input_length(input: &[u8]) -> bool {
-    if input.len() == INPUT_LENGTH {
-        return true;
-    }
-    false
-}
+use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ExitCode, SharedAPI};
+use revm_precompile::secp256r1::{p256_verify, P256VERIFY_BASE_GAS_FEE};
 
 /// Main entry point for the secp256r1 wrapper contract.
 /// This contract wraps the secp256r1 precompile (EIP-7212) which verifies ECDSA signatures
@@ -50,24 +19,15 @@ fn verify_input_length(input: &[u8]) -> bool {
 /// - Returns a single byte with value 1 if the signature is valid
 /// - Returns an empty byte array if the signature is invalid
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
-    let input = Bytes::copy_from_slice(input);
-
-    if !validate_and_consume_gas(&mut sdk, P256_VERIFY_GAS, gas_limit, &input) {
-        return;
-    }
-
-    let verification_result = SDK::curve256r1_verify(&input);
-    if verification_result {
-        let mut result = vec![0u8; 32];
-        result[31] = 1;
-        sdk.write(&result);
-    } else {
-        sdk.write(&[]);
-    }
+    sdk.sync_evm_gas(P256VERIFY_BASE_GAS_FEE, 0);
+    let result = match p256_verify(input, u64::MAX) {
+        Ok(result) => result,
+        Err(_) => sdk.native_exit(ExitCode::PrecompileError),
+    };
+    sdk.write(&result.bytes);
 }
 
 entrypoint!(main_entry);

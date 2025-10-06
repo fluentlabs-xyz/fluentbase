@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 fluentbase-sdk = { workspace = true }
 revm-precompile = { workspace = true }
+#ecdsa = { workspace = true }
+#k256 = { workspace = true }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }

@@ -2,6 +2,7 @@ use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use core::str::from_utf8;
 use fluentbase_codec::SolidityABI;
+use fluentbase_contracts::{FLUENTBASE_EXAMPLES_GREETING, FLUENTBASE_EXAMPLES_ROUTER_SOLIDITY};
 use fluentbase_sdk::{address, compile_wasm_to_rwasm, Address, Bytes};
 use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
@@ -10,7 +11,7 @@ use hex_literal::hex;
 fn test_multicall_greeting() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     const EXAMPLE_GREETING_ADDRESS: Address = address!("2222222222222222222222222222222222222222");
-    let greeting_rwasm = compile_wasm_to_rwasm(crate::EXAMPLE_GREETING).unwrap();
+    let greeting_rwasm = compile_wasm_to_rwasm(FLUENTBASE_EXAMPLES_GREETING.wasm_bytecode).unwrap();
     ctx.add_bytecode(
         EXAMPLE_GREETING_ADDRESS,
         greeting_rwasm.rwasm_module.serialize().into(),
@@ -39,8 +40,10 @@ fn test_multicall() {
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
 
     // Deploy contract that we'll call through multicall
-    let contract_address =
-        ctx.deploy_evm_tx(DEPLOYER_ADDRESS, crate::EXAMPLE_ROUTER_SOLIDITY.into());
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_ROUTER_SOLIDITY.wasm_bytecode.into(),
+    );
     println!(
         "Solidity router contract deployed at: {:?}",
         contract_address
@@ -116,8 +119,10 @@ fn test_multicall_invalid_method() {
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
 
     // Deploy contract that we'll call through multicall
-    let contract_address =
-        ctx.deploy_evm_tx(DEPLOYER_ADDRESS, crate::EXAMPLE_ROUTER_SOLIDITY.into());
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_ROUTER_SOLIDITY.wasm_bytecode.into(),
+    );
     println!(
         "Solidity router contract deployed at: {:?}",
         contract_address

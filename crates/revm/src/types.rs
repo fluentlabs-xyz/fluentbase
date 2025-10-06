@@ -1,6 +1,7 @@
 use crate::ExecutionResult;
 use fluentbase_sdk::SyscallInvocationParams;
 use revm::interpreter::Gas;
+use std::boxed::Box;
 
 ///
 #[derive(Clone, Debug, PartialEq, Eq)]

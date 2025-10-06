@@ -1,0 +1,31 @@
+[package]
+name = "fluentbase-crypto"
+description = "Fluentbase SDK"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+fluentbase-types = { workspace = true }
+bytemuck = { workspace = true }
+elliptic-curve = { workspace = true }
+fluentbase-runtime = { workspace = true, optional = true }
+cfg-if = "1.0"
+tiny-keccak = { workspace = true }
+
+[features]
+default = ["std"]
+serde = [
+    "fluentbase-types/serde",
+]
+std = [
+    "dep:fluentbase-runtime",
+    "fluentbase-types/std",
+    "fluentbase-runtime/std",
+    "elliptic-curve/std",
+]

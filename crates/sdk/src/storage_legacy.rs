@@ -1,5 +1,5 @@
+use crate::{Address, FixedBytes, SharedAPI, I256, U256};
 use fluentbase_codec::{bytes::BytesMut, CompactABI, FluentEncoder, SolidityABI, SolidityEncoder};
-use fluentbase_types::{Address, FixedBytes, SharedAPI, I256, U256};
 
 // StorageValueSolidity trait with Solidity-specific parameters
 pub trait StorageValueSolidity<SDK: SharedAPI, T>

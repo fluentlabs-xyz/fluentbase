@@ -2,7 +2,7 @@ use crate::EvmTestingContextWithGenesis;
 use core::str::from_utf8;
 use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{address, bytes, calc_create_address, Address, Bytes, U256};
-use fluentbase_testing::{EvmTestingContext, HostTestingContextNativeAPI, TxBuilder};
+use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use hex_literal::hex;
 use revm::context::result::{ExecutionResult, Output};
 
@@ -13,7 +13,7 @@ fn test_bridge_contract() {
     const SENDER_ADDRESS: Address = address!("d9b36c6c8bfcc633bb83372db44d80f352cdfe3f");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
     // now send success tx
-    let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
     let mut tx_builder = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,

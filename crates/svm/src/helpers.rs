@@ -42,24 +42,22 @@ pub fn address_is_aligned<T>(address: u64) -> bool {
         .expect("T to be non-zero aligned")
 }
 
-use crate::account::{ReadableAccount, WritableAccount};
-use crate::common::GlobalLamportsBalance;
-use crate::context::TransactionContext;
-use crate::error::RuntimeError;
-use crate::fluentbase::common::{GlobalBalance, SYSTEM_PROGRAMS_KEYS};
-use crate::native_loader::create_loadable_account_with_fields2;
-use crate::solana_program::loader_v4;
 use crate::{
     account::{
-        to_account, Account, AccountSharedData, InheritableAccountFields,
-        DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+        to_account, Account, AccountSharedData, InheritableAccountFields, ReadableAccount,
+        WritableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
-    context::BpfAllocator,
-    error::SvmError,
-    solana_program::sysvar::Sysvar,
+    common::GlobalLamportsBalance,
+    context::{BpfAllocator, TransactionContext},
+    error::{RuntimeError, SvmError},
+    fluentbase::common::{GlobalBalance, SYSTEM_PROGRAMS_KEYS},
+    native_loader::create_loadable_account_with_fields2,
+    solana_program::{loader_v4, sysvar::Sysvar},
 };
-use fluentbase_sdk::{calc_create4_address, keccak256, Bytes, MetadataAPI, PRECOMPILE_SVM_RUNTIME};
-use fluentbase_types::{Address, MetadataStorageAPI, SharedAPI, StorageAPI, B256};
+use fluentbase_sdk::{
+    calc_create4_address, keccak256, Address, Bytes, MetadataAPI, MetadataStorageAPI, SharedAPI,
+    StorageAPI, B256, PRECOMPILE_SVM_RUNTIME,
+};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
@@ -239,7 +237,6 @@ pub fn storage_read_metadata_params<API: MetadataAPI>(
     let derived_metadata_address = calc_create4_address(
         &alt_precompile_address.unwrap_or(PRECOMPILE_SVM_RUNTIME),
         &pubkey.into(),
-        |v| keccak256(v),
     );
     let metadata_size_result = api.metadata_size(&derived_metadata_address);
     // if !metadata_size_result.status.is_ok() {

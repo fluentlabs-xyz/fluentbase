@@ -1,19 +1,33 @@
 //! Program state processor
 
-use crate::system_program;
-use crate::token_2022::extension::{reallocate, transfer_fee};
-use crate::token_2022::helpers::{next_item, reconstruct_account_infos, reconstruct_accounts};
-use crate::token_2022::pod_instruction::{
-    decode_instruction_data_with_coption_pubkey, AmountCheckedData, AmountData, InitializeMintData,
-    InitializeMultisigData, PodTokenInstruction, SetAuthorityData,
+use crate::{
+    account::AccountSharedData,
+    error::SvmError,
+    helpers::{storage_read_metadata_params, storage_write_account_data},
+    solana_program::sysvar::Sysvar,
+    system_program,
+    token_2022::{
+        extension::{reallocate, transfer_fee},
+        helpers::{next_item, reconstruct_account_infos, reconstruct_accounts},
+        pod_instruction::{
+            decode_instruction_data_with_coption_pubkey, AmountCheckedData, AmountData,
+            InitializeMintData, InitializeMultisigData, PodTokenInstruction, SetAuthorityData,
+        },
+    },
 };
-use alloc::vec::Vec;
-use core::cell::RefCell;
-use core::marker::PhantomData;
-use fluentbase_sdk::{debug_log, debug_log_ext};
-use fluentbase_types::{Address, SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
+use alloc::{vec, vec::Vec};
+use core::{cell::RefCell, marker::PhantomData};
+use fluentbase_sdk::{
+    debug_log, debug_log_ext, Address, ContextReader, SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
+};
+use fluentbase_svm_common::common::evm_address_from_pubkey;
+use fluentbase_universal_token::events::{
+    emit_ut_approve, emit_ut_burn, emit_ut_close_account, emit_ut_freeze_account, emit_ut_mint_to,
+    emit_ut_revoke, emit_ut_set_authority, emit_ut_transfer,
+};
 use itertools::min;
 use solana_account_info::{next_account_info, AccountInfo};
+use solana_clock::Clock;
 use solana_instruction::AccountMeta;
 use solana_program_entrypoint::__msg;
 use solana_program_error::{ProgramError, ProgramResult};
@@ -47,19 +61,6 @@ use {
     // spl_token_metadata_interface::instruction::TokenMetadataInstruction,
     core::convert::{TryFrom, TryInto},
 };
-
-use crate::account::AccountSharedData;
-use crate::error::SvmError;
-use crate::helpers::{storage_read_metadata_params, storage_write_account_data};
-use crate::solana_program::sysvar::Sysvar;
-use alloc::vec;
-use fluentbase_sdk::ContextReader;
-use fluentbase_svm_common::common::evm_address_from_pubkey;
-use fluentbase_universal_token::events::{
-    emit_ut_approve, emit_ut_burn, emit_ut_close_account, emit_ut_freeze_account, emit_ut_mint_to,
-    emit_ut_revoke, emit_ut_set_authority, emit_ut_transfer,
-};
-use solana_clock::Clock;
 
 /// Program state handler.
 pub struct Processor<'a, SDK: SharedAPI> {
@@ -2775,44 +2776,31 @@ mod tests {
         );
     }
 
-    use crate::account::{Account as SolanaAccount, AccountSharedData};
-    use crate::error::TokenError;
-    use crate::helpers::{create_account_for_test, create_is_signer_account_infos};
-    use crate::solana_program::program_error;
-    use crate::solana_program::sysvar::clock;
-    use crate::token_2022::extension::transfer_fee::instruction::initialize_transfer_fee_config;
-    use crate::token_2022::extension::ExtensionType;
-    use crate::token_2022::instruction::approve;
-    use crate::token_2022::instruction::approve_checked;
-    use crate::token_2022::instruction::burn;
-    use crate::token_2022::instruction::burn_checked;
-    use crate::token_2022::instruction::close_account;
-    use crate::token_2022::instruction::freeze_account;
-    use crate::token_2022::instruction::get_account_data_size;
-    use crate::token_2022::instruction::initialize_account;
-    use crate::token_2022::instruction::initialize_account2;
-    use crate::token_2022::instruction::initialize_account3;
-    use crate::token_2022::instruction::initialize_immutable_owner;
-    use crate::token_2022::instruction::initialize_mint;
-    use crate::token_2022::instruction::initialize_mint2;
-    use crate::token_2022::instruction::initialize_multisig;
-    use crate::token_2022::instruction::initialize_non_transferable_mint;
-    use crate::token_2022::instruction::mint_to;
-    use crate::token_2022::instruction::mint_to_checked;
-    use crate::token_2022::instruction::revoke;
-    use crate::token_2022::instruction::set_authority;
-    use crate::token_2022::instruction::thaw_account;
     #[allow(deprecated)]
     use crate::token_2022::instruction::transfer;
-    use crate::token_2022::instruction::transfer_checked;
-    use crate::token_2022::instruction::withdraw_excess_lamports;
-    use crate::token_2022::instruction::AuthorityType;
-    use crate::token_2022::instruction::MAX_SIGNERS;
-    use crate::token_2022::processor::Processor;
-    use crate::token_2022::state::{Account, AccountState, Mint, Multisig};
-    use crate::{solana_program, system_program};
+    use crate::{
+        account::{Account as SolanaAccount, AccountSharedData},
+        error::TokenError,
+        helpers::{create_account_for_test, create_is_signer_account_infos},
+        solana_program,
+        solana_program::{program_error, sysvar::clock},
+        system_program,
+        token_2022::{
+            extension::{transfer_fee::instruction::initialize_transfer_fee_config, ExtensionType},
+            instruction::{
+                approve, approve_checked, burn, burn_checked, close_account, freeze_account,
+                get_account_data_size, initialize_account, initialize_account2,
+                initialize_account3, initialize_immutable_owner, initialize_mint, initialize_mint2,
+                initialize_multisig, initialize_non_transferable_mint, mint_to, mint_to_checked,
+                revoke, set_authority, thaw_account, transfer_checked, withdraw_excess_lamports,
+                AuthorityType, MAX_SIGNERS,
+            },
+            processor::Processor,
+            state::{Account, AccountState, Mint, Multisig},
+        },
+    };
+    use fluentbase_sdk::SharedAPI;
     use fluentbase_testing::EvmTestingContext;
-    use fluentbase_types::SharedAPI;
     use solana_account_info::{AccountInfo, IntoAccountInfo};
     use solana_clock::{Clock, Epoch};
     use solana_instruction::Instruction;

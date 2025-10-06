@@ -2,7 +2,7 @@
 
 use crate::generators::metadata::BuildMetadata;
 use anyhow::{Context, Result};
-use fluentbase_types::hex;
+use fluentbase_sdk::hex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

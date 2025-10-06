@@ -29,6 +29,7 @@ fluentbase-build = { path = "./crates/build", default-features = false }
 fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"] }
 fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false }
 fluentbase-contracts = { path = "./crates/contracts", default-features = false }
+fluentbase-crypto = { path = "./crates/crypto", default-features = false }
 fluentbase-evm = { path = "./crates/evm", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 fluentbase-revm = { path = "./crates/revm", default-features = false }
@@ -36,7 +37,7 @@ fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
 fluentbase-testing = { path = "crates/testing" }
-fluentbase-types = { path = "./crates/types", default-features = false }
+fluentbase-types = { path = "crates/types", default-features = false }
 fluentbase-svm = { path = "./crates/svm", default-features = false }
 fluentbase-svm-shared = { path = "./crates/svm-shared", default-features = false }
 fluentbase-svm-common = { path = "./crates/svm-common", default-features = false }
@@ -142,6 +143,7 @@ bincode = { version = "2.0.1", default-features = false, features = ["alloc", "d
 convert_case = "0.8.0"
 proc-macro2 = { version = "1.0", default-features = false }
 quote = { version = "1.0" }
+elliptic-curve = { version = "0.13.4", features = ["hazmat", "sec1", "ecdh"], default-features = false }
 
 # revm
 revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
@@ -183,6 +185,8 @@ thiserror = "2.0"
 array-bytes = "1.6.0"
 
 [patch.crates-io]
+tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
+bls12_381 = {git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm" }
 #rwasm = { path = "../rwasm", default-features = false }
 
 [workspace.lints]

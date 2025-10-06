@@ -233,7 +233,8 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         #[cfg(feature = "wasmtime")]
         let enable_wasmtime_runtime = match &bytecode_or_hash {
             BytecodeOrHash::Bytecode { address, hash, .. } => {
-                fluentbase_types::is_system_precompile(address).then_some((*address, *hash))
+                fluentbase_types::is_execute_using_aot_compiler(address)
+                    .then_some((*address, *hash))
             }
             BytecodeOrHash::Hash(_) => None,
         };

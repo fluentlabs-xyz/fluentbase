@@ -1,8 +1,10 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
-use fluentbase_sdk::{address, Address, Bytes, U256};
+use fluentbase_sdk::{
+    address, Address, Bytes, ContractContextV1, PRECOMPILE_EIP2935,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
+};
 use fluentbase_testing::EvmTestingContext;
-use fluentbase_types::{ContractContextV1, PRECOMPILE_EIP2935, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use revm::{context::result::ExecutionResult, handler::SYSTEM_ADDRESS};
 
 fn call_success(

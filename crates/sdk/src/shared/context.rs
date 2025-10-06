@@ -1,5 +1,4 @@
-use crate::{Address, B256, U256};
-use fluentbase_types::{ContextReader, SharedContextInputV1};
+use crate::{Address, ContextReader, SharedContextInputV1, B256, U256};
 
 pub struct ContextReaderImpl<'a>(pub &'a SharedContextInputV1);
 

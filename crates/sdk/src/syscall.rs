@@ -1,10 +1,9 @@
 use crate::{
     alloc_slice,
     byteorder::{ByteOrder, LittleEndian},
-    Address, Bytes, B256, U256,
+    Address, BytecodeOrHash, Bytes, InterruptAPI, B256, STATE_MAIN, U256,
 };
 use alloc::vec;
-use fluentbase_types::{BytecodeOrHash, InterruptAPI, STATE_MAIN};
 
 pub const SYSCALL_ID_STORAGE_READ: B256 = B256::with_last_byte(0x01);
 pub const SYSCALL_ID_STORAGE_WRITE: B256 = B256::with_last_byte(0x02);

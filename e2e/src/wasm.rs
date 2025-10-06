@@ -1,10 +1,12 @@
-use crate::{
-    EvmTestingContextWithGenesis, EXAMPLE_CHECKMATE, EXAMPLE_ERC20, EXAMPLE_GREETING, EXAMPLE_JSON,
-    EXAMPLE_KECCAK256, EXAMPLE_PANIC, EXAMPLE_RWASM, EXAMPLE_SECP256K1, EXAMPLE_SIMPLE_STORAGE,
-    EXAMPLE_TINY_KECCAK256,
-};
+use crate::EvmTestingContextWithGenesis;
 use core::str::from_utf8;
 use fluentbase_codec::{bytes::BytesMut, SolidityABI};
+use fluentbase_contracts::{
+    FLUENTBASE_EXAMPLES_CHECKMATE, FLUENTBASE_EXAMPLES_ERC20, FLUENTBASE_EXAMPLES_GREETING,
+    FLUENTBASE_EXAMPLES_JSON, FLUENTBASE_EXAMPLES_KECCAK, FLUENTBASE_EXAMPLES_PANIC,
+    FLUENTBASE_EXAMPLES_RWASM, FLUENTBASE_EXAMPLES_SECP256K1, FLUENTBASE_EXAMPLES_SHA256,
+    FLUENTBASE_EXAMPLES_SIMPLE_STORAGE, FLUENTBASE_EXAMPLES_TINY_KECCAK,
+};
 use fluentbase_sdk::{bytes, constructor::encode_constructor_params, Address, Bytes, U256};
 use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
@@ -17,7 +19,10 @@ fn test_wasm_greeting() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_GREETING.into());
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_GREETING.wasm_bytecode.into(),
+    );
     // call greeting WASM contract
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
@@ -37,7 +42,10 @@ fn test_wasm_tiny_keccak256() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_TINY_KECCAK256.into());
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_TINY_KECCAK.wasm_bytecode.into(),
+    );
     // call greeting WASM contract
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
@@ -46,7 +54,6 @@ fn test_wasm_tiny_keccak256() {
         None,
         None,
     );
-
     println!("{:?}", result);
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default().as_ref();
@@ -58,11 +65,34 @@ fn test_wasm_tiny_keccak256() {
 }
 
 #[test]
+fn test_wasm_sha256() {
+    // deploy greeting WASM contract
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_SHA256.wasm_bytecode.into(),
+    );
+    // call greeting WASM contract
+    let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, "abc".into(), None, None);
+    println!("{:?}", result);
+    assert!(result.is_success());
+    let bytes = result.output().unwrap_or_default().as_ref();
+    assert_eq!(
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        hex::encode(&bytes[0..32]),
+    );
+}
+
+#[test]
 fn test_wasm_secp256k1() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_SECP256K1.into());
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_SECP256K1.wasm_bytecode.into(),
+    );
     // call greeting WASM contract
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
@@ -80,7 +110,10 @@ fn test_wasm_checkmate() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_CHECKMATE.into());
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_CHECKMATE.wasm_bytecode.into(),
+    );
     // call greeting WASM contract
     let mut input = BytesMut::new();
     SolidityABI::<(String, String)>::encode(
@@ -104,7 +137,10 @@ fn test_wasm_json() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_JSON.into());
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_JSON.wasm_bytecode.into(),
+    );
     // call greeting WASM contract
     let input = "{\"message\": \"Hello, World\"}".as_bytes().to_vec();
     let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
@@ -121,7 +157,10 @@ fn test_wasm_panic() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_PANIC.into());
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_PANIC.wasm_bytecode.into(),
+    );
     // call greeting WASM contract
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
@@ -141,7 +180,7 @@ fn test_wasm_erc20() {
     const OWNER_ADDRESS: Address = Address::ZERO;
 
     // Add constructor parameters
-    let bytecode: &[u8] = EXAMPLE_ERC20.into();
+    let bytecode: &[u8] = FLUENTBASE_EXAMPLES_ERC20.wasm_bytecode.into();
     // constructor params for ERC20:
     //     name: "TestToken"
     //     symbol: "TST"
@@ -202,7 +241,10 @@ fn test_wasm_simple_storage() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_SIMPLE_STORAGE.into());
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_SIMPLE_STORAGE.wasm_bytecode.into(),
+    );
     // call greeting WASM contract
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
@@ -220,11 +262,14 @@ fn test_wasm_simple_storage() {
 fn test_wasm_rwasm() {
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_RWASM.into());
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_RWASM.wasm_bytecode.into(),
+    );
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
         contract_address,
-        EXAMPLE_GREETING.into(),
+        FLUENTBASE_EXAMPLES_GREETING.wasm_bytecode.into(),
         None,
         None,
     );
@@ -240,7 +285,10 @@ fn test_wasm_rwasm() {
 #[test]
 fn test_wasm_keccak256_gas_price() {
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
-    let contract_address = ctx.deploy_evm_tx(Address::ZERO, EXAMPLE_KECCAK256.into());
+    let contract_address = ctx.deploy_evm_tx(
+        Address::ZERO,
+        FLUENTBASE_EXAMPLES_KECCAK.wasm_bytecode.into(),
+    );
     let result = ctx.call_evm_tx(
         Address::ZERO,
         contract_address,
@@ -264,7 +312,10 @@ fn deploy_and_load_wasm_contract() {
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let deployer_account = ctx.db.load_account(DEPLOYER_ADDRESS).unwrap();
     assert_eq!(deployer_account.info.nonce, 0);
-    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_GREETING.into());
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_GREETING.wasm_bytecode.into(),
+    );
     let deployer_account = ctx.db.load_account(DEPLOYER_ADDRESS).unwrap();
     assert_eq!(
         deployer_account.info.nonce, 1,

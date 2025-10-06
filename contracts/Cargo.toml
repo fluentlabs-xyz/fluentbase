@@ -15,19 +15,23 @@ categories = ["wasm", "no-std", "virtualization"]
 readme = "README.md"
 
 [workspace.dependencies]
+# fluentbase
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
-fluentbase-types = { path = "../crates/types", default-features = false }
-revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
-#revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
 fluentbase-universal-token = { path = "../crates/universal-token", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
-fluentbase-svm = { path = "../crates/svm", default-features = false }
 fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
+fluentbase-svm = { path = "../crates/svm", default-features = false }
+fluentbase-testing = { path = "../crates/testing", default-features = false }
+# revm
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
+# solana
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-fluentbase-testing = { path = "../crates/testing" }
+# misc
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+ecdsa = { git = "https://github.com/rwasm-patches/signatures.git", default-features = false, features = ["hazmat", "verifying"] }
+k256 = { version = "0.13.4", default-features = false }
 
 [profile.release]
 panic = "abort"
@@ -40,9 +44,22 @@ rpath = false
 codegen-units = 1
 overflow-checks = false
 
-[profile.dev]
 # Optimize WASM for size in debug to avoid massive binaries that slow compilation
+[profile.dev]
 opt-level = "z"
 debug = false
 strip = "symbols"
 
+[patch.crates-io]
+# patch tiny-keccak
+tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
+bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm" }
+# patch fluentbase
+fluentbase-sdk = { path = "../crates/sdk" }
+fluentbase-universal-token = { path = "../crates/universal-token" }
+fluentbase-evm = { path = "../crates/evm" }
+fluentbase-svm-common = { path = "../crates/svm-common" }
+fluentbase-svm = { path = "../crates/svm" }
+fluentbase-testing = { path = "../crates/testing" }
+#revm-precompile = { path = "../../revm-rwasm/crates/precompile" }
+#ecdsa = { path = "../../signatures/ecdsa" }

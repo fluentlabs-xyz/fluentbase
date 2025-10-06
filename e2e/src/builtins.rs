@@ -1,11 +1,11 @@
 use crate::EvmTestingContextWithGenesis;
 use fluentbase_revm::RwasmHaltReason;
-use fluentbase_sdk::{Address, Bytes};
-use fluentbase_testing::{EvmTestingContext, HostTestingContextNativeAPI, TxBuilder};
-use fluentbase_types::{
-    calc_create_address, CHARGE_FUEL_BASE_COST, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST,
-    KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST, LOW_FUEL_COST, SECP256K1_RECOVER_BASE_FUEL_COST,
+use fluentbase_sdk::{
+    calc_create_address, Address, Bytes, CHARGE_FUEL_BASE_COST, COPY_BASE_FUEL_COST,
+    COPY_WORD_FUEL_COST, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST, KECCAK_BASE_FUEL_COST,
+    KECCAK_WORD_FUEL_COST, LOW_FUEL_COST,
 };
+use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use revm::{
     context::result::ExecutionResult, interpreter::gas::calculate_initial_tx_gas,
     primitives::hardfork::SpecId,
@@ -23,12 +23,9 @@ const WAT_TEMPLATE: &str = r#"
         (import "fluentbase_v1preview" "_input_size"          (func $_input_size          (result i32)))
         (import "fluentbase_v1preview" "_keccak256"           (func $_keccak256           (param i32 i32 i32)))
         (import "fluentbase_v1preview" "_output_size"         (func $_output_size         (result i32)))
-        (import "fluentbase_v1preview" "_preimage_copy"       (func $_preimage_copy       (param i32 i32)))
-        (import "fluentbase_v1preview" "_preimage_size"       (func $_preimage_size       (param i32) (result i32)))
         (import "fluentbase_v1preview" "_read"                (func $_read                (param i32 i32 i32)))
         (import "fluentbase_v1preview" "_read_output"         (func $_read_output         (param i32 i32 i32)))
         (import "fluentbase_v1preview" "_resume"              (func $_resume              (param i32 i32 i32 i32 i32) (result i32)))
-        (import "fluentbase_v1preview" "_secp256k1_recover"   (func $_secp256k1_recover   (param i32 i32 i32 i32) (result i32)))
         (import "fluentbase_v1preview" "_state"               (func $_state               (result i32)))
         (import "fluentbase_v1preview" "_write"               (func $_write               (param i32 i32)))
         (func $main
@@ -47,8 +44,9 @@ fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult<R
     let deployer: Address = Address::ZERO;
     let mut builder = TxBuilder::create(&mut ctx, deployer, wasm.into());
     let result = builder.exec();
+    println!("{:?}", result);
     assert!(result.is_success(), "failed to deploy contract");
-    let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, 0);
+    let contract_address = calc_create_address(&deployer, 0);
     let result = ctx.call_evm_tx(
         deployer,
         contract_address,
@@ -142,7 +140,7 @@ fn test_debug_log_builtin() {
         call $_debug_log
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * ((123000 + 31) / 32);
+    let expected_fuel = DEBUG_LOG_BASE_FUEL_COST + DEBUG_LOG_WORD_FUEL_COST * ((123000 + 31) / 32);
     assert_eq!(gas, expected_fuel as u64 / 1000);
 }
 
@@ -187,21 +185,6 @@ fn test_charge_fuel_builtin() {
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
     let expected_fuel = LOW_FUEL_COST;
-    assert_eq!(gas, expected_fuel as u64 / 1000);
-}
-
-#[test]
-fn test_secp256k1_recover_builtin() {
-    let main = r#"
-        i32.const 0        ;; digest_ptr
-        i32.const 0        ;; sig_ptr
-        i32.const 0        ;; out_ptr
-        i32.const 0        ;; rec_id
-        call $_secp256k1_recover
-        drop
-    "#;
-    let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = SECP256K1_RECOVER_BASE_FUEL_COST;
     assert_eq!(gas, expected_fuel as u64 / 1000);
 }
 

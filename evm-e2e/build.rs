@@ -1,5 +1,5 @@
 use fluentbase_contracts::*;
-use fluentbase_types::*;
+use fluentbase_sdk::*;
 use rwasm::{compile_wasmtime_module, CompilationConfig};
 use std::{env, fs, io::Write, path::PathBuf};
 

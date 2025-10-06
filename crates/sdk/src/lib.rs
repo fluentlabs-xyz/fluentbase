@@ -3,27 +3,29 @@
 extern crate alloc;
 extern crate core;
 
+pub extern crate rwasm as rwasm_core;
+
+mod address;
 mod allocator;
-#[cfg(not(feature = "std"))]
-mod bindings;
 pub mod constructor;
 pub mod entrypoint;
 pub mod leb128;
 mod macros;
 pub mod panic;
-#[cfg(not(feature = "std"))]
-pub mod rwasm;
 pub mod shared;
 pub mod storage;
 #[deprecated(note = "Use `fluentbase_sdk::storage` instead", since = "0.4.5-dev")]
 pub mod storage_legacy;
 pub mod syscall;
+mod types;
 
+pub use address::*;
 pub use allocator::*;
 pub use fluentbase_codec as codec;
+pub use fluentbase_crypto as crypto;
 pub use fluentbase_sdk_derive as derive;
 pub use fluentbase_types::*;
-pub use hashbrown;
+pub use types::*;
 
 #[cfg(feature = "std")]
 #[macro_export]
@@ -32,3 +34,9 @@ macro_rules! include_this_wasm {
         include_bytes!(env!("FLUENTBASE_WASM_ARTIFACT_PATH"))
     };
 }
+
+#[cfg(all(not(feature = "std"), not(target_arch = "wasm32")))]
+compile_error!("non-std mode is only supported for the wasm32 target");
+
+#[cfg(target_endian = "big")]
+compile_error!("fluentbase-sdk is not implemented for big-endian targets");

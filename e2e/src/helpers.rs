@@ -1,4 +1,4 @@
-use fluentbase_sdk::{Address, Bytes};
+use fluentbase_sdk::{Address, Bytes, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_svm::{
     account::AccountSharedData,
     account_info::AccountInfo,
@@ -8,7 +8,6 @@ use fluentbase_svm::{
     token_2022::{helpers::account_info_from_meta_and_account, state::Account},
 };
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext};
-use fluentbase_types::PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME;
 use revm::context::result::ExecutionResult;
 use solana_program_pack::Pack;
 

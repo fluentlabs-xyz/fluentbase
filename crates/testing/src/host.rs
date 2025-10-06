@@ -2,10 +2,8 @@ use core::cell::RefCell;
 use fluentbase_runtime::RuntimeContextWrapper;
 use fluentbase_sdk::{
     bytes::Buf, calc_create4_address, Address, Bytes, ContextReader, ContractContextV1, ExitCode,
-    IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI,
-    SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256,
-    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
+    IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, SharedAPI,
+    SharedContextInputV1, StorageAPI, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
 use hashbrown::HashMap;
 use std::{mem::take, rc::Rc};
@@ -214,8 +212,7 @@ impl MetadataAPI for HostTestingContext {
         let account_owner = ctx
             .ownable_account_address
             .expect("ownable account address should exist");
-        let derived_metadata_address =
-            calc_create4_address(&account_owner, salt, HostTestingContextNativeAPI::keccak256);
+        let derived_metadata_address = calc_create4_address(&account_owner, salt);
         let target_address = ctx.shared_context_input_v1.contract.address;
         let res = ctx.metadata.insert(
             (target_address, derived_metadata_address),
@@ -281,129 +278,6 @@ impl MetadataStorageAPI for HostTestingContext {
 impl SharedAPI for HostTestingContext {
     fn context(&self) -> impl ContextReader {
         self.inner.borrow().shared_context_input_v1.clone()
-    }
-
-    fn keccak256(&self, data: &[u8]) -> B256 {
-        RuntimeContextWrapper::keccak256(data)
-    }
-
-    fn sha256(data: &[u8]) -> B256 {
-        RuntimeContextWrapper::sha256(data)
-    }
-
-    fn blake3(data: &[u8]) -> B256 {
-        RuntimeContextWrapper::blake3(data)
-    }
-
-    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
-        RuntimeContextWrapper::poseidon(parameters, endianness, data)
-    }
-
-    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
-        RuntimeContextWrapper::secp256k1_recover(digest, sig, rec_id)
-    }
-
-    fn curve256r1_verify(input: &[u8]) -> bool {
-        RuntimeContextWrapper::curve256r1_verify(input)
-    }
-
-    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::curve25519_edwards_decompress_validate(p)
-    }
-    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::curve25519_edwards_add(p, q)
-    }
-    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::curve25519_edwards_sub(p, q)
-    }
-    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::curve25519_edwards_mul(p, q)
-    }
-    fn curve25519_edwards_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        RuntimeContextWrapper::curve25519_edwards_multiscalar_mul(pairs, out)
-    }
-    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::curve25519_ristretto_decompress_validate(p)
-    }
-    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::curve25519_ristretto_add(p, q)
-    }
-    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::curve25519_ristretto_sub(p, q)
-    }
-    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::curve25519_ristretto_mul(p, q)
-    }
-    fn curve25519_ristretto_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        RuntimeContextWrapper::curve25519_ristretto_multiscalar_mul(pairs, out)
-    }
-    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
-        RuntimeContextWrapper::bls12_381_g1_add(p, q)
-    }
-    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]) {
-        RuntimeContextWrapper::bls12_381_g1_msm(pairs, out);
-    }
-    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) {
-        RuntimeContextWrapper::bls12_381_g2_add(p, q)
-    }
-    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]) {
-        RuntimeContextWrapper::bls12_381_g2_msm(pairs, out);
-    }
-    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]) {
-        RuntimeContextWrapper::bls12_381_pairing(pairs, out);
-    }
-    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]) {
-        RuntimeContextWrapper::bls12_381_map_fp_to_g1(p, out);
-    }
-    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
-        RuntimeContextWrapper::bls12_381_map_fp2_to_g2(p, out);
-    }
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
-        RuntimeContextWrapper::bn254_add(p, q)
-    }
-    fn bn254_double(p: &mut [u8; 64]) {
-        RuntimeContextWrapper::bn254_double(p);
-    }
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
-        RuntimeContextWrapper::bn254_mul(p, q)
-    }
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
-        RuntimeContextWrapper::bn254_multi_pairing(elements)
-    }
-    fn bn254_g1_compress(
-        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
-        RuntimeContextWrapper::bn254_g1_compress(point)
-    }
-    fn bn254_g1_decompress(
-        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        RuntimeContextWrapper::bn254_g1_decompress(point)
-    }
-    fn bn254_g2_compress(
-        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
-        RuntimeContextWrapper::bn254_g2_compress(point)
-    }
-    fn bn254_g2_decompress(
-        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        RuntimeContextWrapper::bn254_g2_decompress(point)
-    }
-    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
-        RuntimeContextWrapper::bn254_fp_mul(p, q);
-    }
-    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
-        RuntimeContextWrapper::bn254_fp2_mul(p, q);
-    }
-    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
-        RuntimeContextWrapper::big_mod_exp(base, exponent, modulus)
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
