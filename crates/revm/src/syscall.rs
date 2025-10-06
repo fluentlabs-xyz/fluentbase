@@ -9,8 +9,8 @@ use fluentbase_evm::EthereumMetadata;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address, is_system_precompile, Address, Bytes, ExitCode, Log, LogData, B256,
-    FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
+    calc_create_metadata_address, is_system_precompile, Address, Bytes, ExitCode, Log, LogData,
+    B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -781,7 +781,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // read an account from its address
             let salt = U256::from_be_slice(&inputs.syscall_params.input[..32]);
             let metadata = inputs.syscall_params.input.slice(32..);
-            let derived_metadata_address = calc_create4_address(&account_owner_address, &salt);
+            let derived_metadata_address =
+                calc_create_metadata_address(&account_owner_address, &salt);
             let account = ctx
                 .journal_mut()
                 .load_account_code(derived_metadata_address)?;

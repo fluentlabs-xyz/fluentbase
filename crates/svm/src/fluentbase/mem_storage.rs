@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use fluentbase_sdk::{
-    calc_create4_address, keccak256, Address, Bytes, ExitCode, IsAccountEmpty, IsAccountOwnable,
+    calc_create_metadata_address, keccak256, Address, Bytes, ExitCode, IsAccountEmpty, IsAccountOwnable,
     IsColdAccess, MetadataAPI, MetadataStorageAPI, SyscallResult, PRECOMPILE_SVM_RUNTIME, U256,
 };
 use hashbrown::HashMap;
@@ -57,7 +57,7 @@ impl MetadataAPI for MemStorage {
 
     fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
         let derived_metadata_address =
-            calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &salt, |v| keccak256(v));
+            calc_create_metadata_address(&PRECOMPILE_SVM_RUNTIME, &salt, |v| keccak256(v));
         self.metadata
             .insert(derived_metadata_address, metadata.to_vec());
         SyscallResult::new((), 0, 0, ExitCode::Ok)

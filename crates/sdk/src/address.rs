@@ -28,7 +28,7 @@ pub fn calc_create2_address(deployer: &Address, salt: &U256, init_code_hash: &B2
 }
 
 #[inline(always)]
-pub fn calc_create4_address(owner: &Address, salt: &U256) -> Address {
+pub fn calc_create_metadata_address(owner: &Address, salt: &U256) -> Address {
     let mut bytes = [0; 53];
     bytes[0] = 0x44;
     bytes[1..21].copy_from_slice(owner.as_slice());
