@@ -46,8 +46,8 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
     import_function!("_blake3", BLAKE3, &[ValType::I32; 3], &[]);
 
     // ed25519 (0x02)
-    import_function!("_ed25519_decompress", ED25519_DECOMPRESS, &[ValType::I32; 1], &[ValType::I32; 1]);
-    import_function!("_ed25519_add", ED25519_ADD, &[ValType::I32; 2], &[ValType::I32; 1]);
+    import_function!("_ed25519_decompress", ED25519_DECOMPRESS, &[ValType::I32; 2], &[]);
+    import_function!("_ed25519_add", ED25519_ADD, &[ValType::I32; 2], &[]);
 
     // fp1/fp2 tower field (0x03)
     import_function!("_tower_fp1_bn254_add", TOWER_FP1_BN254_ADD, &[ValType::I32; 2], &[]);

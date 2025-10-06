@@ -666,7 +666,7 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
-source = "git+https://github.com/rwasm-patches/bls12_381.git?branch=rwasm#eeb1bad4cfd8e2da7d019695fb18352805265eea"
+source = "git+https://github.com/rwasm-patches/bls12_381.git?branch=rwasm#ea07f37fd601969909798b957b5ed942d798a9de"
 dependencies = [
  "cfg-if",
  "ff",
