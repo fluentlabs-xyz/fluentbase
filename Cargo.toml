@@ -148,12 +148,12 @@ elliptic-curve = { version = "0.13.4", features = ["hazmat", "sec1", "ecdh"], de
 cfg-if = { version = "1.0.3", default-features = false }
 
 # revm
-revm = { package="revm-rwasm", version = "27.0.3", default-features = false }
-revm-primitives = { package="revm-rwasm-primitives", version = "20.0.0", default-features = false }
-revm-precompile = { package="revm-rwasm-precompile", version = "24.0.1", default-features = false }
-revm-bytecode = { package="revm-rwasm-bytecode", version = "6.0.1", default-features = false }
-revm-interpreter = { package="revm-rwasm-interpreter", version = "23.0.2", default-features = false }
-revm-context = { package="revm-rwasm-context", version = "8.0.3", default-features = false }
+revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "audit/flu-574", default-features = false }
+revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "audit/flu-574", default-features = false }
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "audit/flu-574", default-features = false }
+revm-bytecode = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "audit/flu-574", default-features = false }
+revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "audit/flu-574", default-features = false }
+revm-context = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "audit/flu-574", default-features = false }
 #revm = { path = "../revm-rwasm/crates/revm", default-features = false }
 #revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false }
 #revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false }
@@ -188,8 +188,8 @@ array-bytes = "1.6.0"
 
 [patch.crates-io]
 tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
-bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm" }
-#rwasm = { path = "../rwasm", default-features = false }
+bls12_381 = {git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm" }
+# rwasm = { path = "../rwasm", default-features = false }
 
 [workspace.lints]
 rust.missing_debug_implementations = "warn"

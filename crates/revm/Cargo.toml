@@ -33,6 +33,8 @@ rwasm = { workspace = true, default-features = false }
 
 tracing = { version = "0.1" }
 
+cfg-if = {workspace = true}
+
 # Optional
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
 

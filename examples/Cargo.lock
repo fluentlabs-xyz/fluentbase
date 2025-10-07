@@ -1900,6 +1900,7 @@ dependencies = [
 name = "fluentbase-revm"
 version = "0.4.11-dev"
 dependencies = [
+ "cfg-if",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -3761,6 +3762,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5b88e9523ecb583e476d2875b5a017573d0787f6f9dacc38010223d12ac12b6"
 dependencies = [
  "auto_impl",
+ "cfg-if",
  "derive-where",
  "revm-rwasm-bytecode",
  "revm-rwasm-context",

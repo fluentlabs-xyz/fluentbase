@@ -71,7 +71,7 @@ macro_rules! no_fuel {
 }
 
 // Common fuel cost constants
-pub const LOW_FUEL_COST: u32 = 20 * FUEL_DENOM_RATE as u32;
+pub const LOW_FUEL_COST: u32 = 1 * FUEL_DENOM_RATE as u32;
 pub const COPY_BASE_FUEL_COST: u32 = 20 * FUEL_DENOM_RATE as u32;
 pub const COPY_WORD_FUEL_COST: u32 = 3 * FUEL_DENOM_RATE as u32;
 pub const DEBUG_LOG_BASE_FUEL_COST: u32 = 50 * FUEL_DENOM_RATE as u32;

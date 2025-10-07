@@ -2,14 +2,15 @@ use crate::EvmTestingContextWithGenesis;
 use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
     calc_create_address, Address, Bytes, CHARGE_FUEL_BASE_COST, COPY_BASE_FUEL_COST,
-    COPY_WORD_FUEL_COST, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST, KECCAK_BASE_FUEL_COST,
-    KECCAK_WORD_FUEL_COST, LOW_FUEL_COST,
+    COPY_WORD_FUEL_COST, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST, FUEL_DENOM_RATE,
+    KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST, LOW_FUEL_COST
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use revm::{
     context::result::ExecutionResult, interpreter::gas::calculate_initial_tx_gas,
     primitives::hardfork::SpecId,
 };
+
 
 const WAT_TEMPLATE: &str = r#"
     (module
@@ -56,6 +57,10 @@ fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult<R
     result
 }
 
+fn fuel_to_gas(fuel: u64) -> u64 {
+    (fuel + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE
+}
+
 /// Calculates how much gas is consumed by the builtins
 fn run_twice_and_find_gas_difference(wat: &str, call_data_size: usize) -> u64 {
     let result1 = run_main(wat, call_data_size);
@@ -75,7 +80,7 @@ fn test_keccak_builtin() {
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
     let expected_fuel = KECCAK_BASE_FUEL_COST + KECCAK_WORD_FUEL_COST * ((123000 + 31) / 32);
-    assert_eq!(gas, expected_fuel as u64 / 1000);
+    assert_eq!(gas, fuel_to_gas(expected_fuel as u64 + 1));
 }
 
 #[test]
@@ -87,7 +92,7 @@ fn test_write_builtin() {
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
     let expected_fuel = COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * ((123000 + 31) / 32);
-    assert_eq!(gas, expected_fuel as u64 / 1000);
+    assert_eq!(gas, fuel_to_gas(expected_fuel as u64 + 1));
 }
 
 #[test]
@@ -97,9 +102,9 @@ fn test_write_builtin_overflow() {
         i32.const 100
         call $_write
     "#;
-    let main_with_overflow = r#" 
+    let main_with_overflow = r#"
         i32.const 0
-        i32.const 300000 
+        i32.const 300000
         call $_write
     "#; // excessively large data size argument
     let result1 = run_main(main_without_overflow, 0);
@@ -125,10 +130,11 @@ fn test_read_builtin() {
         i32.const 800
         call $_read
     "#;
-    let gas = run_twice_and_find_gas_difference(main, 1_000) - 30_000;
+    // 30_000_000 fuel / FUEL_DENOM_RATE = 1_500_000 gas
+    let gas = run_twice_and_find_gas_difference(main, 1_000) - 1_500_000;
     let expected_fuel =
         COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * ((800 + 31) / 32) + CHARGE_FUEL_BASE_COST;
-    assert_eq!(gas, expected_fuel as u64 / 1000);
+    assert_eq!(gas, fuel_to_gas(expected_fuel as u64 + 1));
 }
 
 #[test]
@@ -140,7 +146,7 @@ fn test_debug_log_builtin() {
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
     let expected_fuel = DEBUG_LOG_BASE_FUEL_COST + DEBUG_LOG_WORD_FUEL_COST * ((123000 + 31) / 32);
-    assert_eq!(gas, expected_fuel as u64 / 1000);
+    assert_eq!(gas, fuel_to_gas(expected_fuel as u64 + 1));
 }
 
 #[test]
@@ -150,8 +156,7 @@ fn test_output_size_builtin() {
         drop
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = LOW_FUEL_COST;
-    assert_eq!(gas, expected_fuel as u64 / 1000);
+    assert_eq!(gas, fuel_to_gas(LOW_FUEL_COST as u64 + 1));
 }
 
 #[test]
@@ -161,8 +166,7 @@ fn test_state_builtin() {
         drop
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = LOW_FUEL_COST;
-    assert_eq!(gas, expected_fuel as u64 / 1000);
+    assert_eq!(gas, fuel_to_gas(LOW_FUEL_COST as u64 + 1));
 }
 
 #[test]
@@ -172,8 +176,7 @@ fn test_fuel_builtin() {
         drop
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = LOW_FUEL_COST;
-    assert_eq!(gas, expected_fuel as u64 / 1000);
+    assert_eq!(gas, fuel_to_gas(LOW_FUEL_COST as u64 + 1));
 }
 
 #[test]
@@ -183,8 +186,7 @@ fn test_charge_fuel_builtin() {
         call $_charge_fuel
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = LOW_FUEL_COST;
-    assert_eq!(gas, expected_fuel as u64 / 1000);
+    assert_eq!(gas, fuel_to_gas(CHARGE_FUEL_BASE_COST as u64 + 1));
 }
 
 #[test]
@@ -194,5 +196,5 @@ fn test_exit_builtin() {
         call $_exit
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    assert_eq!(gas, 0); // no gas consumed for exit binding
+    assert_eq!(gas, fuel_to_gas(1));
 }

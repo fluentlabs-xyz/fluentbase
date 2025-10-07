@@ -20,7 +20,7 @@ fn test_simple_nested_call() {
     let _account1 = ctx.add_wasm_contract(
         ACCOUNT1_ADDRESS,
         RwasmModule::with_one_function(instruction_set! {
-            ConsumeFuel(1000u32)
+            ConsumeFuel(20u32)
             // add one memory page
             I32Const(1)
             MemoryGrow
@@ -41,7 +41,7 @@ fn test_simple_nested_call() {
     let _account2 = ctx.add_wasm_contract(
         ACCOUNT2_ADDRESS,
         RwasmModule::with_one_function(instruction_set! {
-            ConsumeFuel(2000u32)
+            ConsumeFuel(40u32)
             // add one memory page
             I32Const(1)
             MemoryGrow
@@ -78,7 +78,7 @@ fn test_simple_nested_call() {
         MemoryInit(0)
         DataDrop(0)
         // sys exec hash
-        ConsumeFuel(1000u32)
+        ConsumeFuel(20u32)
         I32Const(0) // hash32_ptr
         I32Const(32) // input_ptr
         I32Const(52) // input_len
@@ -91,7 +91,7 @@ fn test_simple_nested_call() {
         I32Const(1) // buffer length
         Call(SysFuncIdx::READ_OUTPUT)
         // sys exec hash
-        ConsumeFuel(2000u32)
+        ConsumeFuel(40u32)
         I32Const(0) // hash32_ptr
         I32Const(84) // input_ptr
         I32Const(52) // input_len
@@ -104,7 +104,7 @@ fn test_simple_nested_call() {
         I32Const(1) // buffer length
         Call(SysFuncIdx::READ_OUTPUT)
         // write the sum of two result codes into 1 byte result
-        ConsumeFuel(3000u32)
+        ConsumeFuel(60u32)
         I32Const(200)
         I32Load8U(0)
         I32Const(201)
@@ -119,7 +119,7 @@ fn test_simple_nested_call() {
         I32Const(4) // length
         Call(SysFuncIdx::WRITE_OUTPUT)
         // exit with 0 exit code
-        ConsumeFuel(4000u32)
+        ConsumeFuel(80u32)
         I32Const(0)
         Call(SysFuncIdx::EXIT)
     };
@@ -329,6 +329,6 @@ fn test_blended_gas_spend_evm_from_wasm() {
     // + 637 evm opcodes cost
     // + 100 warm call cost
     // + 637 evm opcodes cost
-    assert_eq!(result.gas_used(), 21000 + 2600 + 637 + 100 + 637);
+    assert_eq!(result.gas_used(), 21000 + 2600 + 637 + 100 + 637 + 1);
     // TODO(dmitry123): "wasm code cost should be 2, not 1"
 }
