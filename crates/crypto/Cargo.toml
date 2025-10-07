@@ -29,3 +29,7 @@ std = [
     "fluentbase-runtime/std",
     "elliptic-curve/std",
 ]
+fluent-testnet = [
+	"fluentbase-runtime?/fluent-testnet",
+	"fluentbase-types/fluent-testnet"
+]

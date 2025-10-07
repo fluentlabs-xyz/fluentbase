@@ -2030,7 +2030,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.1",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5247,7 +5247,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.1",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5304,7 +5304,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#d808ed0eca4e099cbb8ef5e9c4a39ada7dc4c920"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#35acaee318f277dc4b3ece7f4306d6d058ecb520"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -5312,8 +5312,10 @@ dependencies = [
  "bytes",
  "directories",
  "downcast-rs",
+ "fnv",
  "futures",
  "hashbrown 0.15.5",
+ "libc",
  "libm",
  "num-derive",
  "num-traits",
@@ -6562,7 +6564,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.1",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7655,7 +7657,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.1",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

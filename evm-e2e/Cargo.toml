@@ -5,10 +5,10 @@ edition = "2021"
 resolver = "2"
 
 [dependencies]
-fluentbase-runtime = { path = "../crates/runtime" }
-fluentbase-contracts = { path = "../crates/contracts", default-features = false }
-fluentbase-sdk = { path = "../crates/sdk" }
-fluentbase-genesis = { path = "../crates/genesis", default-features = false }
+fluentbase-runtime = { path = "../crates/runtime", features = ["fluent-testnet"]}
+fluentbase-contracts = { path = "../crates/contracts", default-features = false, features = ["fluent-testnet"] }
+fluentbase-sdk = { path = "../crates/sdk", features = ["fluent-testnet"] }
+fluentbase-genesis = { path = "../crates/genesis", default-features = false, features = ["fluent-testnet"] }
 
 revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false, features = ["std", "serde-json", "serde"] }
 #revm = { path = "../../revm-rwasm/crates/revm", default-features = false, features = ["std", "serde-json", "serde"] }

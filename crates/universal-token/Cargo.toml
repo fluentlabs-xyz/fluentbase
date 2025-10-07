@@ -28,3 +28,7 @@ default = [
 ]
 std = []
 debug-print = []
+fluent-testnet = [
+	"fluentbase-sdk/fluent-testnet",
+	"fluentbase-svm-common/fluent-testnet"
+]

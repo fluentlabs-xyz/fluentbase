@@ -27,3 +27,7 @@ sha2 = "0.10"
 [features]
 default = []
 std = ["fluentbase-build/std"]
+fluent-testnet = [
+	"fluentbase-build/fluent-testnet",
+	"fluentbase-sdk/fluent-testnet"
+]
