@@ -51,6 +51,7 @@ ark-serialize = { workspace = true }
 [features]
 default = [
     "std",
+    "fluent-testnet",
     #    "wasmtime",
     #    "debug-print",
     #    "enable-svm",
@@ -81,6 +82,17 @@ debug-print = [
 wasmtime = [
     "fluentbase-runtime/wasmtime",
     "fluentbase-revm/wasmtime",
+]
+fluent-testnet = [
+	"fluentbase-contracts/fluent-testnet",
+	"fluentbase-genesis/fluent-testnet",
+	"fluentbase-revm/fluent-testnet",
+	"fluentbase-runtime/fluent-testnet",
+	"fluentbase-sdk/fluent-testnet",
+	"fluentbase-svm/fluent-testnet",
+	"fluentbase-svm-common/fluent-testnet",
+	"fluentbase-testing/fluent-testnet",
+	"fluentbase-universal-token/fluent-testnet"
 ]
 
 [[bench]]

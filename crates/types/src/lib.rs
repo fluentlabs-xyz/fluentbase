@@ -56,11 +56,14 @@ pub const CALL_DEPTH_ROOT: u32 = 0;
 pub const DEVELOPER_PREVIEW_CHAIN_ID: u64 = 10993;
 
 /// A relation between fuel and gas,
-/// according to our benchmarks, average WebAssembly instruction is ~1000 faster than average EVM
+/// according to our benchmarks, average WebAssembly instruction is ~20 times faster than average EVM
 /// instruction.
 ///
 /// The value can be changed in the future.
+#[cfg(feature = "fluent-testnet")]
 pub const FUEL_DENOM_RATE: u64 = 1000;
+#[cfg(not(feature = "fluent-testnet"))]
+pub const FUEL_DENOM_RATE: u64 = 20;
 
 /// A max rWasm call stack limit
 pub const CALL_STACK_LIMIT: u32 = 1024;
