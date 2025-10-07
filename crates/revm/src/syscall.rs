@@ -648,10 +648,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
         SYSCALL_ID_CODE_COPY => {
             assert_return!(
-        inputs.syscall_params.state == STATE_MAIN
-            && inputs.syscall_params.input.len() == 20 + 8 * 2,
-        MalformedBuiltinParams
-    );
+                inputs.syscall_params.state == STATE_MAIN
+                    && inputs.syscall_params.input.len() == 20 + 8 * 2,
+                MalformedBuiltinParams
+            );
             let address = Address::from_slice(&inputs.syscall_params.input[0..20]);
             let mut reader = inputs.syscall_params.input[20..].reader();
             let code_offset = reader.read_u64::<LittleEndian>().unwrap();
@@ -677,13 +677,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Load bytecode from account
             let mut bytecode = match &account.data.info.code {
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode))
-                if ownable_account_bytecode.owner_address == PRECOMPILE_EVM_RUNTIME =>
-                    {
-                        EthereumMetadata::read_from_bytes(&ownable_account_bytecode.metadata)
-                            .as_ref()
-                            .map(EthereumMetadata::code_copy)
-                            .unwrap_or_default()
-                    }
+                    if ownable_account_bytecode.owner_address == PRECOMPILE_EVM_RUNTIME =>
+                {
+                    EthereumMetadata::read_from_bytes(&ownable_account_bytecode.metadata)
+                        .as_ref()
+                        .map(EthereumMetadata::code_copy)
+                        .unwrap_or_default()
+                }
                 code => code
                     .as_ref()
                     .map(Bytecode::original_bytes)
