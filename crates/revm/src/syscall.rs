@@ -827,23 +827,20 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             // execute a syscall
             match inputs.syscall_params.code_hash {
+                // Full metadata replacement (offset parameter ignored for safety)
                 SYSCALL_ID_METADATA_WRITE => {
                     assert_return!(
                         inputs.syscall_params.input.len() >= 20 + 4,
                         MalformedBuiltinParams
                     );
-                    let offset =
-                        LittleEndian::read_u32(&inputs.syscall_params.input[20..24]) as usize;
-                    let length = inputs.syscall_params.input[24..].len();
-                    // TODO(dmitry123): "figure out a way how to optimize it"
-                    let mut metadata = ownable_account_bytecode.metadata.to_vec();
-                    metadata.resize(offset + length, 0);
-                    metadata[offset..(offset + length)]
-                        .copy_from_slice(&inputs.syscall_params.input[24..]);
-                    // code might change, rewrite it with a new hash
+
+                    // Input format: address(20) + offset(4) + metadata(N)
+                    // Offset is kept for backward compatibility but always skipped
+                    let new_metadata = inputs.syscall_params.input.slice(24..);
+
                     let new_bytecode = Bytecode::OwnableAccount(OwnableAccountBytecode::new(
                         ownable_account_bytecode.owner_address,
-                        metadata.into(),
+                        new_metadata,
                     ));
                     ctx.journal_mut().set_code(address, new_bytecode);
                     return_result!(Bytes::new(), Ok)
@@ -973,5 +970,99 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         _ => return_result!(MalformedBuiltinParams),
+    }
+}
+
+#[cfg(test)]
+mod metadata_write_tests {
+    use super::*;
+    use crate::{RwasmContext, RwasmSpecId};
+    use fluentbase_sdk::{
+        syscall::SYSCALL_ID_METADATA_WRITE, SyscallInvocationParams, PRECOMPILE_WASM_RUNTIME,
+    };
+    use revm::{
+        bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
+        context::{BlockEnv, CfgEnv, TxEnv},
+        database::InMemoryDB,
+        inspector::NoOpInspector,
+    };
+
+    #[test]
+    fn test_metadata_write_truncates_existing_data() {
+        // === Setup: Initialize context and database ===
+        let db = InMemoryDB::default();
+        let mut ctx: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+
+        // === Setup: Create frame with owner address ===
+        let owner_address = PRECOMPILE_WASM_RUNTIME;
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.account_owner = Some(owner_address);
+
+        // === Step 1: Create an account with initial metadata ===
+        let test_address = Address::from_slice(&[0x42; 20]);
+        let initial_metadata = Bytes::from(&[0xFF; 100]);
+
+        let _ = ctx.journal_mut().load_account(test_address);
+
+        // Pre-create the ownable account with initial metadata
+        ctx.journal_mut().set_code(
+            test_address,
+            Bytecode::OwnableAccount(OwnableAccountBytecode::new(
+                owner_address,
+                initial_metadata.clone(),
+            )),
+        );
+
+        let new_data = vec![0x11, 0x22, 0x33, 0x44];
+        let offset = 2u32;
+
+        // Prepare syscall input: address (20 bytes) + offset (4 bytes) + data
+        let mut syscall_input = Vec::new();
+        syscall_input.extend_from_slice(&test_address.0[..]);
+        syscall_input.extend_from_slice(&offset.to_le_bytes());
+        syscall_input.extend_from_slice(&new_data);
+
+        let syscall_params = SyscallInvocationParams {
+            code_hash: SYSCALL_ID_METADATA_WRITE,
+            input: Bytes::from(syscall_input),
+            state: STATE_MAIN,
+            fuel_limit: 1_000_000,
+            ..Default::default()
+        };
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            is_create: false,
+            syscall_params,
+            is_static: false,
+            is_gas_free: false,
+            gas: Gas::new(1_000_000),
+        };
+
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Syscall execution failed: {:?}",
+            result.err()
+        );
+
+
+        let acc = ctx.journal_mut().load_account_code(test_address).unwrap();
+        match &acc.info.code {
+            Some(Bytecode::OwnableAccount(ownable)) => {
+                assert_eq!(ownable.metadata.len(), 4);
+                assert_eq!(ownable.metadata[..], new_data);
+            }
+            _ => panic!("Expected OwnableAccount bytecode"),
+        }
     }
 }
