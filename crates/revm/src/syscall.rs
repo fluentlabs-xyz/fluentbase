@@ -778,6 +778,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Some(account_owner_address) = account_owner_address else {
                 return_result!(MalformedBuiltinParams);
             };
+
+            assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
             // read an account from its address
             let salt = U256::from_be_slice(&inputs.syscall_params.input[..32]);
             let metadata = inputs.syscall_params.input.slice(32..);
@@ -832,6 +834,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                         inputs.syscall_params.input.len() >= 20 + 4,
                         MalformedBuiltinParams
                     );
+                    assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
+
                     let offset =
                         LittleEndian::read_u32(&inputs.syscall_params.input[20..24]) as usize;
                     let length = inputs.syscall_params.input[24..].len();
@@ -911,6 +915,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             else {
                 return_result!(MalformedBuiltinParams)
             };
+
+            assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
+            
             let slot_u256 = U256::from_le_bytes(slot);
             let value_u256 = U256::from_le_bytes(value);
             ctx.journal_mut()
