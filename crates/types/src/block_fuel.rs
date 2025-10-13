@@ -1,5 +1,5 @@
 use crate::{SysFuncIdx, FUEL_DENOM_RATE};
-use rwasm::{instruction_set, InstructionSet, TrapCode};
+use rwasm::{instruction_set, InstructionSet, TrapCode, Value};
 
 /// The maximum allowed value for the `x` parameter used in linear gas cost calculation
 /// of builtins.
@@ -297,5 +297,75 @@ pub(crate) fn emit_fuel_procedure(sys_func_idx: SysFuncIdx) -> InstructionSet {
         // uint256 (0x08)
         UINT256_MUL_MOD => const_fuel!(UINT256_MUL_MOD_COST),
         UINT256_X2048_MUL => const_fuel!(UINT256_X2048_MUL_COST),
+    }
+}
+
+pub(crate) fn calculate_syscall_fuel(sys_func_idx: SysFuncIdx, params: &[Value]) -> u32 {
+    use SysFuncIdx::*;
+    let linear_fuel = |param: u32, base_cost: u32, word_cost: u32| -> u32 {
+        base_cost + word_cost * (param + 31) / 32
+    };
+
+    match sys_func_idx {
+        // input/output & state control (0x00)
+        EXIT => 0,
+        STATE => LOW_FUEL_COST,
+        READ_INPUT => linear_fuel(params.get(1).and_then(|p| p.i32()).unwrap_or_default() as u32, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
+        INPUT_SIZE => LOW_FUEL_COST,
+        WRITE_OUTPUT => linear_fuel(params.get(1).and_then(|p| p.i32()).unwrap_or_default() as u32, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
+        OUTPUT_SIZE => LOW_FUEL_COST,
+        READ_OUTPUT => linear_fuel(params.get(1).and_then(|p| p.i32()).unwrap_or_default() as u32, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
+        EXEC => 0,
+        RESUME => 0,
+        FORWARD_OUTPUT => linear_fuel(params.get(1).and_then(|p| p.i32()).unwrap_or_default() as u32, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
+        CHARGE_FUEL_MANUALLY => 0,
+        FUEL => LOW_FUEL_COST,
+        DEBUG_LOG => linear_fuel(params.get(1).and_then(|p| p.i32()).unwrap_or_default() as u32, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST),
+        CHARGE_FUEL => CHARGE_FUEL_BASE_COST,
+
+        // hashing functions (0x01)
+        KECCAK256 => linear_fuel(params.get(2).and_then(|p| p.i32()).unwrap_or_default() as u32, KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST),
+        KECCAK256_PERMUTE => KECCAK_BASE_FUEL_COST,
+        POSEIDON => linear_fuel(params.get(2).and_then(|p| p.i32()).unwrap_or_default() as u32, 100, 20),
+        SHA256_EXTEND => SHA256_BASE_FUEL_COST,
+        SHA256_COMPRESS => SHA256_BASE_FUEL_COST,
+        SHA256 => linear_fuel(params.get(2).and_then(|p| p.i32()).unwrap_or_default() as u32, SHA256_BASE_FUEL_COST, SHA256_WORD_FUEL_COST),
+        BLAKE3 => linear_fuel(params.get(2).and_then(|p| p.i32()).unwrap_or_default() as u32, BLAKE3_BASE_FUEL_COST, BLAKE3_WORD_FUEL_COST),
+
+        // ed25519 (0x02)
+        ED25519_DECOMPRESS => ED25519_DECOMPRESS_COST,
+        ED25519_ADD => ED25519_ADD_COST,
+
+        // fp1/fp2 tower field (0x03)
+        TOWER_FP1_BN254_ADD | TOWER_FP1_BN254_SUB => FP1_ADD_COST,
+        TOWER_FP1_BN254_MUL => FP1_MUL_COST,
+        TOWER_FP1_BLS12381_ADD | TOWER_FP1_BLS12381_SUB => FP1_BLS_ADD_COST,
+        TOWER_FP1_BLS12381_MUL => FP1_BLS_MUL_COST,
+        TOWER_FP2_BN254_ADD | TOWER_FP2_BN254_SUB => FP2_ADD_COST,
+        TOWER_FP2_BN254_MUL => FP2_MUL_COST,
+        TOWER_FP2_BLS12381_ADD | TOWER_FP2_BLS12381_SUB => FP2_BLS_ADD_COST,
+        TOWER_FP2_BLS12381_MUL => FP2_BLS_MUL_COST,
+
+        // secp256k1 (0x04)
+        SECP256K1_ADD => SECP256K1_ADD_COST,
+        SECP256K1_DECOMPRESS => SECP256K1_DECOMPRESS_COST,
+        SECP256K1_DOUBLE => SECP256K1_DOUBLE_COST,
+
+        // bls12381 (0x06)
+        BLS12381_ADD => BLS_G1_ADD_COST,
+        // BLS12381_G2_ADD => BLS_G2_ADD_COST,
+        // BLS12381_PAIRING => BLS_PAIRING_COST,
+        // BLS12381_MAP_G1 => BLS_MAP_G1_COST,
+        // BLS12381_MAP_G2 => BLS_MAP_G2_COST,
+
+        // bn254 (0x07)
+        BN254_ADD => BN254_ADD_COST,
+        BN254_DOUBLE => BN254_DOUBLE_COST,
+
+        // uint256 (0x08)
+        UINT256_MUL_MOD => UINT256_MUL_MOD_COST,
+        UINT256_X2048_MUL => UINT256_X2048_MUL_COST,
+
+        _ => 0,
     }
 }
