@@ -8,6 +8,7 @@ use fluentbase_types::{ExitCode, ED25519_POINT_COMPRESSED_SIZE, ED25519_POINT_DE
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{curve25519_dalek::CompressedEdwardsY, edwards::ed25519::decompress};
 
+
 pub fn syscall_ed25519_decompress_handler(
     ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
@@ -41,7 +42,10 @@ pub fn syscall_ed25519_decompress_impl(
     compressed_edwards_y[ED25519_POINT_COMPRESSED_SIZE - 1] |= (sign as u8) << 7;
     // Compute actual decompressed X
     let compressed_y = CompressedEdwardsY(compressed_edwards_y);
-    let decompressed = decompress(&compressed_y).expect("curve25519 Decompression failed");
+    let decompressed = match decompress(&compressed_y) {
+        Some(decompressed) => decompressed,
+        None => return Err(ExitCode::MalformedBuiltinParams),
+    };
     let mut decompressed_x_bytes = decompressed.x.to_bytes_le();
     decompressed_x_bytes.resize(32, 0u8);
     result[0..32].copy_from_slice(decompressed_x_bytes.as_slice());
@@ -68,5 +72,22 @@ mod tests {
             235, 248, 25, 104, 52, 103, 226, 63,
         ];
         assert_eq!(hex::encode(decompressed), hex::encode(expected));
+    }
+
+    /// Verifies that invalid Y coordinates return an error instead of panicking (DoS prevention).
+    ///
+    /// Uses Y=2 which is not on the Ed25519 curve (u/v is not a quadratic residue).
+    /// This ensures `decompress()` returns `None` and the syscall handles it gracefully
+    /// with `ExitCode::MalformedBuiltinParams` rather than crashing the VM.
+    #[test]
+    fn test_ed25519_decompress_invalid_input_returns_error() {
+        let sign = 0;
+        // Y=2: mathematically proven to not satisfy Ed25519 curve equation
+        let invalid_y: [u8; 32] = hex!("0200000000000000000000000000000000000000000000000000000000000000");
+
+        let result = syscall_ed25519_decompress_impl(invalid_y, sign);
+
+        assert!(result.is_err(), "Expected error for invalid point, got: {:?}", result);
+        assert_eq!(result.unwrap_err(), ExitCode::MalformedBuiltinParams);
     }
 }
