@@ -15,10 +15,7 @@ use local_executor::LocalExecutor;
 use rwasm::{ExecutionEngine, FuelConfig, ImportLinker, RwasmModule, Strategy, TrapCode};
 use std::{
     mem::take,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 
 /// Finalized outcome of a single runtime invocation.
@@ -118,7 +115,7 @@ pub struct RuntimeFactoryExecutor {
     /// An import linker
     pub import_linker: Arc<ImportLinker>,
     /// Monotonically increasing counter for assigning call identifiers.
-    pub transaction_call_id_counter: AtomicU32,
+    pub transaction_call_id_counter: u32,
 }
 
 impl RuntimeFactoryExecutor {
@@ -127,7 +124,7 @@ impl RuntimeFactoryExecutor {
             module_factory: ModuleFactory::new(),
             recoverable_runtimes: HashMap::new(),
             import_linker,
-            transaction_call_id_counter: AtomicU32::new(1),
+            transaction_call_id_counter: 1,
         }
     }
 
@@ -144,12 +141,26 @@ impl RuntimeFactoryExecutor {
             }
             RuntimeResult::Interruption(interruption) => interruption,
         };
-        // Calculate new `call_id` counter (a runtime recover identifier)
-        let call_id = self
-            .transaction_call_id_counter
-            .fetch_add(1, Ordering::Relaxed);
-        // Remember the runtime
-        self.recoverable_runtimes.insert(call_id, runtime);
+
+        // Get current call_id before incrementing
+        let call_id = self.transaction_call_id_counter;
+
+        // Check if call_id would overflow i32 when cast (positive exit codes are reserved for call_id)
+        if call_id > i32::MAX as u32 {
+            return ExecutionResult {
+                exit_code: ExitCode::UnknownError.into_i32(),
+                fuel_consumed: interruption.fuel_consumed,
+                fuel_refunded: interruption.fuel_refunded,
+                output: vec![],
+                return_data: vec![],
+            };
+        }
+
+        // Increment counter for next call (safe since call_id <= i32::MAX < u32::MAX)
+        self.transaction_call_id_counter += 1;
+        let prev = self.recoverable_runtimes.insert(call_id, runtime);
+        debug_assert!(prev.is_none());
+
         ExecutionResult {
             // We return `call_id` as exit code (it's safe, because exit code can't be positive)
             exit_code: call_id as i32,
@@ -360,6 +371,54 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     }
 
     fn reset_call_id_counter(&mut self) {
-        self.transaction_call_id_counter.store(1, Ordering::Relaxed);
+        self.transaction_call_id_counter = 1;
+        self.recoverable_runtimes.clear();
     }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crate::executor::{ExecutionInterruption, RuntimeFactoryExecutor, RuntimeResult};
+    use crate::runtime::ExecutionMode;
+    use crate::RuntimeContext;
+    use fluentbase_types::{import_linker_v1_preview, ExitCode};
+    use rwasm::{ExecutionEngine, FuelConfig, RwasmModule, Strategy};
+
+    #[test]
+    fn call_id_overflow() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+
+        // Set counter to i32::MAX to trigger overflow on next allocation
+        executor.transaction_call_id_counter = i32::MAX as u32 + 1;
+
+        let interruption = RuntimeResult::Interruption(ExecutionInterruption {
+            fuel_consumed: 100,
+            fuel_refunded: 0,
+            output: vec![1, 2, 3],
+        });
+
+        let engine = ExecutionEngine::acquire_shared();
+        let module = RwasmModule::default();
+        let ctx = RuntimeContext::default();
+        let fuel_config = FuelConfig::default();
+
+        let strategy_runtime = crate::runtime::StrategyRuntime::new(
+            Strategy::Rwasm { module, engine },
+            executor.import_linker.clone(),
+            ctx,
+            fuel_config,
+        );
+        let runtime = ExecutionMode::Strategy(strategy_runtime);
+
+        // Try to allocate call_id - should fail with overflow
+        let result = executor.try_remember_runtime(interruption, runtime);
+
+        // Verify overflow error
+        assert_eq!(result.exit_code, ExitCode::UnknownError.into_i32());
+        assert_eq!(result.fuel_consumed, 100);
+        assert_eq!(result.fuel_refunded, 0);
+        assert!(result.output.is_empty());
+    }
+
 }
