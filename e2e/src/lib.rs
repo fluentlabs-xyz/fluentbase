@@ -41,6 +41,7 @@ mod universal_token;
 mod update_account;
 #[cfg(test)]
 mod wasm;
+mod ddos;
 
 pub trait EvmTestingContextWithGenesis {
     fn with_full_genesis(self) -> Self;

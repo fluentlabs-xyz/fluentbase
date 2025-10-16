@@ -135,7 +135,7 @@ pub(crate) fn emit_fuel_procedure(sys_func_idx: SysFuncIdx) -> InstructionSet {
         WRITE_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
         OUTPUT_SIZE => const_fuel!(LOW_FUEL_COST),
         READ_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
-        EXEC => no_fuel!(),
+        EXEC => linear_fuel!(3, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
         RESUME => no_fuel!(),
         FORWARD_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
         CHARGE_FUEL_MANUALLY => no_fuel!(),
