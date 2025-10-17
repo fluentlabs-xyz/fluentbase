@@ -81,12 +81,15 @@ pub trait RuntimeExecutor {
     fn resume(
         &mut self,
         call_id: u32,
-        return_data: Vec<u8>,
+        return_data: &[u8],
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
         exit_code: i32,
     ) -> ExecutionResult;
+
+    /// Drop a runtime we don't need to resume anymore
+    fn forget_runtime(&mut self, call_id: u32);
 
     /// Warmup the bytecode
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address);
@@ -243,11 +246,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let module = self.module_factory.get_module_or_init(bytecode_or_hash);
 
         // If there is no cached store, then construct a new one (slow)
-        let fuel_remaining = if !ctx.disable_fuel {
-            Some(ctx.fuel_limit)
-        } else {
-            None
-        };
+        let fuel_remaining = Some(ctx.fuel_limit);
         let fuel_config = FuelConfig::default().with_fuel_limit(ctx.fuel_limit);
 
         #[cfg(feature = "wasmtime")]
@@ -282,7 +281,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     fn resume(
         &mut self,
         call_id: u32,
-        return_data: Vec<u8>,
+        return_data: &[u8],
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
@@ -292,28 +291,15 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             .recoverable_runtimes
             .remove(&call_id)
             .expect("runtime: can't resolve runtime by id, it should never happen");
-        let disable_fuel = runtime.context(RuntimeContext::is_fuel_disabled);
         let mut fuel_remaining = runtime.remaining_fuel();
-        if disable_fuel {
-            fuel_remaining = None;
-        }
         let resume_inner = |runtime: &mut ExecutionMode| {
-            let charge_fuel = runtime.context_mut(|ctx| {
-                // When fuel is disabled, we only pass consumed fuel amount into the contract back,
-                // and it can decide on charging
-                let charge_fuel = if !ctx.is_fuel_disabled() && fuel_consumed > 0 {
-                    // Charge fuel that was spent during the interruption
-                    // to make sure our fuel calculations are aligned
-                    Some(fuel_consumed)
-                } else {
-                    None
-                };
-                // Copy return data into return data
-                ctx.execution_result.return_data = return_data;
-                Ok(charge_fuel)
-            })?;
-            if let Some(charge_fuel) = charge_fuel {
-                runtime.try_consume_fuel(charge_fuel)?;
+            // Copy return data into return data
+            runtime.context_mut(|ctx| {
+                ctx.execution_result.return_data = return_data.to_vec();
+            });
+            // If we have fuel consumed greater than 0 then record it
+            if fuel_consumed > 0 {
+                runtime.try_consume_fuel(fuel_consumed)?;
             }
             if fuel16_ptr > 0 {
                 let mut buffer = [0u8; 16];
@@ -325,8 +311,10 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         };
         let result = resume_inner(&mut runtime);
         // We need to adjust the fuel limit because `fuel_consumed` should not be included into spent.
-        // We can safely unwrap here, because `OutOfFuel` check we did in `resume_inner`.
-        let fuel_remaining = fuel_remaining.map(|v| v.checked_sub(fuel_consumed).unwrap());
+        if result != Err(TrapCode::OutOfFuel) {
+            // SAFETY: We can safely unwrap here, because `OutOfFuel` check we did in `resume_inner` and the result is ok.
+            fuel_remaining = fuel_remaining.map(|v| v.checked_sub(fuel_consumed).unwrap());
+        }
         let fuel_consumed = runtime
             .remaining_fuel()
             .and_then(|remaining_fuel| Some(fuel_remaining? - remaining_fuel));
@@ -334,6 +322,10 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             runtime.context_mut(|ctx| self.handle_execution_result(result, fuel_consumed, ctx));
         let result = self.try_remember_runtime(runtime_result, runtime);
         result
+    }
+
+    fn forget_runtime(&mut self, call_id: u32) {
+        _ = self.recoverable_runtimes.remove(&call_id);
     }
 
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {

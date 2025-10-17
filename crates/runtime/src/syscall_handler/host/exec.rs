@@ -41,7 +41,6 @@ pub fn syscall_exec_handler(
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
     let remaining_fuel = caller.remaining_fuel().unwrap_or(u64::MAX);
-    let disable_fuel = caller.context(|ctx| ctx.is_fuel_disabled());
     let (hash32_ptr, input_ptr, input_len, fuel16_ptr, state) = (
         params[0].i32().unwrap() as usize,
         params[1].i32().unwrap() as usize,
@@ -56,9 +55,6 @@ pub fn syscall_exec_handler(
         let fuel_limit = LittleEndian::read_i64(&fuel_buffer[..8]) as u64;
         let _fuel_refund = LittleEndian::read_i64(&fuel_buffer[8..]);
         if fuel_limit > 0 {
-            if fuel_limit != u64::MAX && fuel_limit > remaining_fuel && !disable_fuel {
-                return Err(TrapCode::OutOfFuel);
-            }
             min(fuel_limit, remaining_fuel)
         } else {
             0
@@ -116,14 +112,11 @@ pub fn syscall_exec_impl<I: Into<BytecodeOrHash>>(
         return (fuel_limit, 0, ExitCode::CallDepthOverflow.into_i32());
     }
     // create a new runtime instance with the context
-    let mut ctx2 = RuntimeContext::default()
+    let ctx2 = RuntimeContext::default()
         .with_fuel_limit(fuel_limit)
         .with_input(input.into_bytes())
         .with_state(state)
         .with_call_depth(ctx.call_depth + 1);
-    if ctx.is_fuel_disabled() {
-        ctx2 = ctx2.with_disabled_fuel();
-    }
 
     let result = default_runtime_executor().execute(code_hash.into(), ctx2);
     ctx.execution_result.return_data = result.output;

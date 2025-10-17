@@ -31,7 +31,7 @@ impl RuntimeExecutor for LocalExecutor {
     fn resume(
         &mut self,
         call_id: u32,
-        return_data: Vec<u8>,
+        return_data: &[u8],
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
@@ -47,6 +47,11 @@ impl RuntimeExecutor for LocalExecutor {
                 exit_code,
             )
         })
+    }
+
+    fn forget_runtime(&mut self, call_id: u32) {
+        LOCAL_RUNTIME_EXECUTOR
+            .with_borrow_mut(|runtime_executor| runtime_executor.forget_runtime(call_id))
     }
 
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {

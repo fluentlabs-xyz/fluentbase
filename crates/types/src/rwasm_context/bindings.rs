@@ -26,7 +26,6 @@ extern "C" {
         fuel16_ptr: *mut [i64; 2],
     ) -> i32;
     pub fn _forward_output(offset: u32, len: u32);
-    pub fn _charge_fuel_manually(fuel_consumed: u64, fuel_refunded: i64) -> u64;
     pub fn _fuel() -> u64;
     pub fn _debug_log(msg_ptr: *const u8, msg_len: u32);
     pub fn _charge_fuel(fuel_consumed: u64);

@@ -66,17 +66,13 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
 
     fn read_context(&self, target: &mut [u8], offset: u32);
 
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64);
+    fn charge_fuel(&self, fuel_consumed: u64);
 
-    fn sync_evm_gas(&self, gas_consumed: u64, gas_refunded: i64) {
-        self.charge_fuel_manually(
-            gas_consumed
-                .checked_mul(FUEL_DENOM_RATE)
-                .unwrap_or(u64::MAX),
-            gas_refunded
-                .checked_mul(FUEL_DENOM_RATE as i64)
-                .unwrap_or(i64::MAX),
-        );
+    fn sync_evm_gas(&self, gas_consumed: u64) {
+        let fuel_consumed = gas_consumed
+            .checked_mul(FUEL_DENOM_RATE)
+            .unwrap_or(u64::MAX);
+        self.charge_fuel(fuel_consumed);
     }
 
     fn fuel(&self) -> u64;

@@ -121,7 +121,6 @@ struct TestingContextInner {
     exit_code: i32,
     consumed_fuel: u64,
     fuel_limit: Option<u64>,
-    refunded_fuel: i64,
 }
 
 impl Default for HostTestingContext {
@@ -140,7 +139,6 @@ impl Default for HostTestingContext {
                 exit_code: 0,
                 consumed_fuel: 0,
                 fuel_limit: None,
-                refunded_fuel: 0,
             })),
         }
     }
@@ -307,10 +305,9 @@ impl SharedAPI for HostTestingContext {
             .copy_to_slice(target);
     }
 
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) {
+    fn charge_fuel(&self, fuel_consumed: u64) {
         let mut ctx = self.inner.borrow_mut();
         ctx.consumed_fuel += fuel_consumed;
-        ctx.refunded_fuel += fuel_refunded;
     }
 
     fn fuel(&self) -> u64 {
