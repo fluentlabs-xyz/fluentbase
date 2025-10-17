@@ -147,15 +147,6 @@ impl EthVM {
             // TODO(dmitry123): How safe to mul here? Shouldn't overwrap. Checked?
             remaining_diff * FUEL_DENOM_RATE,
         );
-        // let remaining_fuel = sdk.fuel();
-        // if remaining_fuel / FUEL_DENOM_RATE != gas.remaining() {
-        //     debug_log!(
-        //         "FAILED syncing evm gas: host_remaining={}, evm_remaining={}",
-        //         remaining_fuel / FUEL_DENOM_RATE,
-        //         gas.remaining()
-        //     );
-        //     sdk.native_exit(ExitCode::BadConversionToInteger);
-        // }
         // Remember new committed gas
         *committed_gas = *gas;
     }
