@@ -30,6 +30,8 @@ mod multicall;
 // #[cfg(test)]
 // mod nitro;
 #[cfg(test)]
+mod fluent_id;
+#[cfg(test)]
 mod router;
 #[cfg(test)]
 mod stateless;

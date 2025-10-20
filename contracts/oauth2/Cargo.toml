@@ -6,8 +6,22 @@ edition = "2021"
 [dependencies]
 fluentbase-sdk = { workspace = true }
 
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+bytes = { version = "1.5", default-features = false }
+
+sha2 = { version = "0.10", default-features = false }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "arithmetic"] }
+revm-precompile = { workspace = true }
+num-bigint = { version = "0.4", default-features = false, features = ["rand"] }
+
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+
 [dev-dependencies]
 fluentbase-testing = { workspace = true }
+hex = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]
@@ -15,4 +29,14 @@ path = "lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std"]
+std = [
+    "fluentbase-sdk/std",
+    "serde/std",
+    "serde_json/std",
+    "base64/std",
+    "sha2/std",
+    "hex/std",
+    "bytes/std",
+    "revm-precompile/std",
+    "num-bigint/std",
+]

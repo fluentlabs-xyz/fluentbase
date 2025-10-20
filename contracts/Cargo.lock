@@ -1829,8 +1829,17 @@ dependencies = [
 name = "fluentbase-contracts-oauth2"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "bytes",
  "fluentbase-sdk",
  "fluentbase-testing",
+ "hex",
+ "num-bigint 0.4.6",
+ "p256",
+ "revm-precompile",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -2865,6 +2874,7 @@ checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
 dependencies = [
  "num-integer",
  "num-traits",
+ "rand 0.8.5",
 ]
 
 [[package]]

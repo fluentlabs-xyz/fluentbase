@@ -1,0 +1,99 @@
+{
+  "providers": [
+    {
+      "name": "google",
+      "issuer": "https://accounts.google.com",
+      "jwks_endpoint": "https://www.googleapis.com/oauth2/v3/certs",
+      "algorithms": ["RS256"],
+      "uses_jwt": true,
+      "api_verify_endpoint": null,
+      "token_type": "Bearer",
+      "extra": {
+        "jwks_cache_ttl": 3600,
+        "require_email_verified": true,
+        "claim_mapping": {
+          "user_id": "sub",
+          "email": "email",
+          "name": "name",
+          "picture": "picture"
+        }
+      }
+    },
+    {
+      "name": "github",
+      "issuer": "https://github.com",
+      "jwks_endpoint": null,
+      "algorithms": [],
+      "uses_jwt": false,
+      "api_verify_endpoint": "https://api.github.com/user",
+      "token_type": "token",
+      "extra": {
+        "jwks_cache_ttl": 0,
+        "require_email_verified": false,
+        "claim_mapping": {
+          "user_id": "id",
+          "email": "email",
+          "name": "login",
+          "picture": "avatar_url"
+        }
+      }
+    },
+    {
+      "name": "discord",
+      "issuer": "https://discord.com",
+      "jwks_endpoint": null,
+      "algorithms": ["RS256"],
+      "uses_jwt": true,
+      "api_verify_endpoint": "https://discord.com/api/users/@me",
+      "token_type": "Bearer",
+      "extra": {
+        "jwks_cache_ttl": 3600,
+        "require_email_verified": false,
+        "claim_mapping": {
+          "user_id": "id",
+          "email": "email",
+          "name": "username",
+          "picture": "avatar"
+        }
+      }
+    },
+    {
+      "name": "apple",
+      "issuer": "https://appleid.apple.com",
+      "jwks_endpoint": "https://appleid.apple.com/auth/keys",
+      "algorithms": ["RS256"],
+      "uses_jwt": true,
+      "api_verify_endpoint": null,
+      "token_type": "Bearer",
+      "extra": {
+        "jwks_cache_ttl": 86400,
+        "require_email_verified": true,
+        "claim_mapping": {
+          "user_id": "sub",
+          "email": "email",
+          "name": "name",
+          "picture": "picture"
+        }
+      }
+    },
+    {
+      "name": "microsoft",
+      "issuer": "https://login.microsoftonline.com",
+      "jwks_endpoint": "https://login.microsoftonline.com/common/discovery/v2.0/keys",
+      "algorithms": ["RS256"],
+      "uses_jwt": true,
+      "api_verify_endpoint": null,
+      "token_type": "Bearer",
+      "extra": {
+        "jwks_cache_ttl": 3600,
+        "require_email_verified": false,
+        "claim_mapping": {
+          "user_id": "oid",
+          "email": "email",
+          "name": "name",
+          "picture": "picture"
+        }
+      }
+    }
+  ]
+}
