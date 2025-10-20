@@ -38,6 +38,18 @@ pub struct ExecutionResult {
     pub return_data: Vec<u8>,
 }
 
+impl ExecutionResult {
+    pub fn take_and_continue(&mut self, is_interrupted: bool) -> Self {
+        let mut result = take(self);
+        // We don't propagate output into intermediary state
+        if is_interrupted {
+            self.output = take(&mut result.output);
+            self.return_data = take(&mut result.return_data);
+        }
+        result
+    }
+}
+
 /// Captures an intentional execution interruption that must be resumed by the root context.
 #[derive(Debug, Default, Clone)]
 pub struct ExecutionInterruption {
@@ -175,7 +187,9 @@ impl RuntimeFactoryExecutor {
         fuel_consumed: Option<u64>,
         ctx: &mut RuntimeContext,
     ) -> RuntimeResult {
-        let mut execution_result = take(&mut ctx.execution_result);
+        let mut execution_result = ctx
+            .execution_result
+            .take_and_continue(ctx.resumable_context.is_some());
         // There are two counters for fuel: opcode fuel counter; manually charged.
         // It's applied for execution runtimes where we don't know the final fuel consumed,
         // till it's committed by Wasm runtime.
