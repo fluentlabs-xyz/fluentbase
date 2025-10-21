@@ -4,8 +4,8 @@ use crate::{
     api::RwasmFrame,
     executor::run_rwasm_loop,
     precompiles::RwasmPrecompiles,
-    types::SystemInterruptionOutcome,
     upgrade::{upgrade_runtime_hook_v1, upgrade_runtime_hook_v2},
+    ExecutionResult,
 };
 use core::ops::Deref;
 use fluentbase_sdk::{
@@ -27,7 +27,7 @@ use revm::{
     },
     interpreter::{
         interpreter::{EthInterpreter, ExtBytecode},
-        return_ok, return_revert, CallInput, FrameInput, InstructionResult, InterpreterResult,
+        return_ok, return_revert, CallInput, FrameInput, Gas, InstructionResult, InterpreterResult,
     },
     Database, Inspector,
 };
@@ -330,57 +330,73 @@ where
         // if call is interrupted then we need to remember the interrupted state;
         // the execution can be continued
         // since the state is updated already
-        Self::insert_interrupted_result(frame.interrupted_outcome.as_mut().unwrap(), result);
+        Self::insert_interrupted_result(frame, result);
         Ok(None)
     }
 }
 
 impl<CTX, INSP, I, P> RwasmEvm<CTX, INSP, I, P> {
     ///
-    pub fn insert_interrupted_result(
-        interrupted_outcome: &mut SystemInterruptionOutcome,
-        result: FrameResult,
-    ) {
-        let created_address = if let FrameResult::Create(create_outcome) = &result {
-            create_outcome.address.or_else(|| {
-                // I don't know why EVM returns empty address and ok status in case of nonce
-                // overflow, I think nobody knows...
-                let is_nonce_overflow = create_outcome.result.result == InstructionResult::Return
-                    && create_outcome.address.is_none();
-                if is_nonce_overflow {
-                    Some(Address::ZERO)
-                } else {
-                    None
-                }
-            })
-        } else {
-            None
+    fn result_created_address(result: &FrameResult) -> Option<Address> {
+        let create_outcome = match &result {
+            FrameResult::Create(create_outcome) => create_outcome,
+            FrameResult::Call(_) => return None,
         };
-        let mut result = result.into_interpreter_result();
-        // for the frame result we take gas from the result field
+        create_outcome.address.or_else(|| {
+            // I don't know why EVM returns empty address and ok status in case of nonce
+            // overflow, I think nobody knows...
+            let is_nonce_overflow = create_outcome.result.result == InstructionResult::Return
+                && create_outcome.address.is_none();
+            if is_nonce_overflow {
+                Some(Address::ZERO)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Apply gas changes to the interpreter gas based on the execution result.
+    /// In the result, we store info about total gas consumed for the entire interruption,
+    /// including pre-execution checks (like call stipend, etc.).
+    pub fn insert_interrupted_result(frame: &mut RwasmFrame, result: FrameResult) {
+        let created_address = Self::result_created_address(&result);
+        // For the frame result we take gas from the result field,
         // because it stores information about gas consumed before the call as well
-        let mut gas = interrupted_outcome.remaining_gas;
+        let mut result = result.into_interpreter_result();
         match result.result {
             return_ok!() => {
                 let remaining = result.gas.remaining();
-                gas.erase_cost(remaining);
+                frame.interpreter.gas.erase_cost(remaining);
                 let refunded = result.gas.refunded();
-                gas.record_refund(refunded);
+                frame.interpreter.gas.record_refund(refunded);
                 // for CREATE/CREATE2 calls, we need to write the created address into output
                 if let Some(created_address) = created_address {
                     result.output = created_address.into_array().into();
                 }
             }
             return_revert!() => {
-                gas.erase_cost(result.gas.remaining());
+                frame.interpreter.gas.erase_cost(result.gas.remaining());
             }
             InstructionResult::FatalExternalError => {
                 panic!("revm: fatal external error");
             }
             _ => {}
         }
-        // we can rewrite here gas since it's adjusted with the consumed value
-        result.gas = gas;
-        interrupted_outcome.result = Some(result);
+        let interrupted_outcome = frame.interrupted_outcome.as_mut().unwrap();
+        // Call how much gas we consumed.
+        // For the final gas calculation, we must know that amount of gas we had before the call.
+        // It's important because we must have all call related spends to be included.
+        let mut total_gas_consumed = Gas::new_spent(
+            interrupted_outcome.inputs.gas.remaining() - frame.interpreter.gas.remaining(),
+        );
+        total_gas_consumed.record_refund(
+            interrupted_outcome.inputs.gas.refunded() - frame.interpreter.gas.refunded(),
+        );
+        let int_result = ExecutionResult {
+            result: result.result,
+            output: result.output,
+            gas: total_gas_consumed,
+        };
+        interrupted_outcome.result = Some(int_result);
     }
 }

@@ -26,8 +26,8 @@ fluentbase-types = { path = "../crates/types", default-features = false }
 fluentbase-codec = { path = "../crates/codec", default-features = false }
 fluentbase-codec-derive = { path = "../crates/codec-derive", default-features = false }
 # revm
-#revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
-revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
+#revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
 #revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
 revm-interpreter = { path = "../../revm-rwasm/crates/interpreter", default-features = false }
 # solana
@@ -67,5 +67,4 @@ fluentbase-evm = { path = "../crates/evm" }
 fluentbase-svm-common = { path = "../crates/svm-common" }
 fluentbase-svm = { path = "../crates/svm" }
 fluentbase-testing = { path = "../crates/testing" }
-#revm-precompile = { path = "../../revm-rwasm/crates/precompile" }
 #ecdsa = { path = "../../signatures/ecdsa" }

@@ -33,9 +33,6 @@ pub trait NativeAPI {
         fuel_refunded: i64,
     ) -> (u64, i64, i32);
     fn forward_output(&self, offset: u32, len: u32);
-    /// Charges and refunds a specified amount of fuel.
-    /// Can be called only from trusted code because it can refund any amount of fuel.
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64;
     fn fuel(&self) -> u64;
     fn debug_log(message: &str);
     /// Charges specified amount of fuel.

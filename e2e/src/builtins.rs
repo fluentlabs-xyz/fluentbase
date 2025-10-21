@@ -14,7 +14,6 @@ use revm::{
 const WAT_TEMPLATE: &str = r#"
     (module
         (import "fluentbase_v1preview" "_charge_fuel"         (func $_charge_fuel         (param i64)))
-        (import "fluentbase_v1preview" "_charge_fuel_manually"(func $_charge_fuel_manually(param i64 i64) (result i64)))
         (import "fluentbase_v1preview" "_debug_log"           (func $_debug_log           (param i32 i32)))
         (import "fluentbase_v1preview" "_exec"                (func $_exec                (param i32 i32 i32 i32 i32) (result i32)))
         (import "fluentbase_v1preview" "_exit"                (func $_exit                (param i32)))
