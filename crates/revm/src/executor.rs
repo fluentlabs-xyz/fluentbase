@@ -304,12 +304,6 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         let old_input = return_data.clone();
         let mut int_state: IntState = bincode_try_decode(&[], &old_input).unwrap();
 
-        // TODO get syscall result
-        debug_log_ext!(
-            "old_input.len={} int_state.syscall_params.len={}",
-            old_input.len(),
-            int_state.syscall_params.len(),
-        );
         let stack = frame.interpreter.stack.data();
         debug_log_ext!(
             "(before) return_data = {:x?} stack = {:?}",
@@ -348,14 +342,18 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
             stack
         );
         let pc = frame.interpreter.bytecode.pc();
-        debug_log_ext!("pc={}", pc,);
-        debug_log_ext!();
+        debug_log_ext!(
+            "pc={} frame.interpreter.gas.spent={}",
+            pc,
+            frame.interpreter.gas.spent()
+        );
         int_state.outcome = IntOutcomeState {
             output: interrupt_return_data,
             interpreter_stack: stack.iter().map(|v| v.to_be_bytes()).collect(),
             bytecode_pc: pc,
             exit_code,
-            gas_spent: frame.interpreter.gas.spent(),
+            gas_spent: 0,
+            // gas_spent: frame.interpreter.gas.spent(),
         };
         let int_state_prefixed = bincode_encode::<IntState>(INT_PREFIX, &int_state);
         // debug_log_ext!("int_state {:x?}", int_state);
