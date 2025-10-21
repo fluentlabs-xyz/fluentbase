@@ -7,8 +7,6 @@ edition = "2021"
 fluentbase-sdk = { workspace = true, default-features = false, features = ["debug-print"] }
 fluentbase-evm = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, default-features = false }
-fluentbase-codec = { workspace = true, default-features = false }
-fluentbase-codec-derive = { workspace = true, default-features = false }
 revm-interpreter = { workspace = true, default-features = false }
 spin = { version = "0.10.0", default-features = false, features = ["mutex", ] }
 
