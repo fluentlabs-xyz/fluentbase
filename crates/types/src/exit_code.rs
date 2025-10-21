@@ -80,6 +80,8 @@ pub enum ExitCode {
     Panic = -1,
     /// An internal error (mapped from the errors below for nested EVM calls)
     Err = -2,
+    /// An interruption
+    InterruptionCalled = -3,
 
     /* Fluentbase Runtime Error Codes */
     /// Function can only be invoked as the root entry call
@@ -193,6 +195,7 @@ impl From<&TrapCode> for ExitCode {
             TrapCode::BadSignature => ExitCode::BadSignature,
             TrapCode::OutOfFuel => ExitCode::OutOfFuel,
             TrapCode::UnknownExternalFunction => ExitCode::UnknownExternalFunction,
+            TrapCode::InterruptionCalled => ExitCode::InterruptionCalled,
             _ => ExitCode::UnknownError,
         }
     }

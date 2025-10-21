@@ -40,6 +40,8 @@ serde = { workspace = true, features = ["derive", "rc"], optional = true }
 fluentbase-evm = { workspace = true }
 fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
+fluentbase-codec = { workspace = true }
+fluentbase-codec-derive = { workspace = true }
 
 [dev-dependencies]
 alloy-sol-types.workspace = true

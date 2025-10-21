@@ -34,6 +34,7 @@ test:
 	cargo test --manifest-path=./contracts/Cargo.toml
 	cargo test --manifest-path=./examples/Cargo.toml
 	cargo test #--no-fail-fast #-q
+	#cargo test --manifest-path=./evm-e2e/Cargo.toml
 
 .PHONY: svm_tests
 svm_tests:

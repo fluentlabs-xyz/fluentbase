@@ -7,10 +7,10 @@ extern crate core;
 pub mod bytecode;
 
 mod evm;
-mod host;
+pub mod host;
 mod metadata;
-mod opcodes;
-mod types;
+pub mod opcodes;
+pub mod types;
 mod utils;
 
 pub use bytecode::AnalyzedBytecode;

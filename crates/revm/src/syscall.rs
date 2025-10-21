@@ -33,7 +33,7 @@ use std::{boxed::Box, vec::Vec};
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
-    mut inspector: Option<&mut INSP>,
+    inspector: &mut Option<&mut INSP>,
     ctx: &mut CTX,
     inputs: SystemInterruptionInputs,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {

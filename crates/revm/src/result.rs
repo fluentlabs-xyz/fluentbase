@@ -34,6 +34,7 @@ pub fn instruction_result_from_exit_code(
         }
         ExitCode::Panic => InstructionResult::Revert,
         ExitCode::Err => InstructionResult::UnknownError,
+        ExitCode::InterruptionCalled => InstructionResult::Stop,
         /* Fluentbase Runtime Error Codes */
         ExitCode::RootCallOnly => InstructionResult::RootCallOnly,
         ExitCode::MalformedBuiltinParams => InstructionResult::MalformedBuiltinParams,

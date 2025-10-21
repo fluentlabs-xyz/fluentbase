@@ -10,8 +10,8 @@ fluentbase-contracts = { path = "../crates/contracts", default-features = false 
 fluentbase-sdk = { path = "../crates/sdk" }
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 
-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false, features = ["std", "serde-json", "serde"] }
-#revm = { path = "../../revm-rwasm/crates/revm", default-features = false, features = ["std", "serde-json", "serde"] }
+#revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false, features = ["std", "serde-json", "serde"] }
+revm = { path = "../../revm-rwasm/crates/revm", default-features = false, features = ["std", "serde-json", "serde"] }
 fluentbase-revm = { path = "../crates/revm" }
 
 hash-db = "=0.15"
@@ -36,7 +36,8 @@ ctor = "0.5.0"
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
 fluentbase-contracts = { path = "../crates/contracts", default-features = false }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false, features = ["wasmtime"] }
+#rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false, features = ["wasmtime"] }
+rwasm = { path = "../../rwasm", default-features = false, features = ["wasmtime"] }
 
 [features]
 default = [

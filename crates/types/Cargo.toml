@@ -11,7 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-serde = { workspace = true, optional = true }
+serde = { workspace = true }
 byteorder = { workspace = true, default-features = false }
 rwasm = { workspace = true }
 alloy-primitives = { workspace = true }
@@ -19,13 +19,15 @@ strum_macros = { workspace = true }
 revm-primitives = { workspace = true }
 revm-precompile = { workspace = true }
 hashbrown = { workspace = true }
-bincode = { workspace = true }
+bincode = { workspace = true, features = ["alloc", "serde", "derive"] }
 paste = { workspace = true }
+fluentbase-codec = { workspace = true }
+fluentbase-codec-derive = { workspace = true }
 
 [features]
 default = ["std"]
 serde = [
-    "dep:serde", "alloy-primitives/serde",
+    "alloy-primitives/serde",
 ]
 std = [
     "rwasm/std",

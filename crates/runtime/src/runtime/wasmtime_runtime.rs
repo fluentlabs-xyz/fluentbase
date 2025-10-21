@@ -312,7 +312,7 @@ fn map_anyhow_error(err: anyhow::Error) -> TrapCode {
             Trap::IntegerDivisionByZero => TrapCode::IntegerDivisionByZero,
             Trap::BadConversionToInteger => TrapCode::BadConversionToInteger,
             Trap::UnreachableCodeReached => TrapCode::UnreachableCodeReached,
-            Trap::Interrupt => unreachable!("interrupt is not supported"),
+            Trap::Interrupt => TrapCode::InterruptionCalled,
             Trap::AlwaysTrapAdapter => unreachable!("component-model is not supported"),
             Trap::OutOfFuel => TrapCode::OutOfFuel,
             Trap::AtomicWaitNonSharedMemory => {

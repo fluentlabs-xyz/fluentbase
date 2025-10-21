@@ -9,17 +9,18 @@ use crate::{
     opcodes::interruptable_instruction_table,
     types::{ExecutionResult, InterruptingInterpreter, InterruptionExtension, InterruptionOutcome},
 };
-use fluentbase_sdk::{Bytes, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
+use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
 use revm_bytecode::{Bytecode, LegacyAnalyzedBytecode};
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},
-    CallInput, Gas, InputsImpl, Interpreter, InterpreterAction, SharedMemory, Stack,
+    CallInput, Gas, InputsImpl, InstructionTable, Interpreter, InterpreterAction, InterpreterTypes,
+    SharedMemory, Stack,
 };
 use revm_primitives::hardfork::SpecId;
 
 /// EVM interpreter wrapper running with an interruption extension.
 pub struct EthVM {
-    interpreter: Interpreter<InterruptingInterpreter>,
+    pub interpreter: Interpreter<InterruptingInterpreter>,
 }
 
 impl EthVM {
@@ -70,6 +71,22 @@ impl EthVM {
         Self { interpreter }
     }
 
+    /// Executes 1 step of the interpreter run.
+    /// Returns EVM result plus precise gas/fuel accounting.
+    #[inline]
+    pub fn run_step<'a, SDK>(
+        &mut self,
+        instruction_table: &InstructionTable<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>,
+        sdk: &'a mut SDK,
+    ) -> InterpreterAction
+    where
+        SDK: SharedAPI,
+    {
+        // let instruction_table = interruptable_instruction_table();
+        let mut sdk = HostWrapperImpl::wrap(sdk);
+        self.interpreter.run_plain(&instruction_table, &mut sdk)
+    }
+
     /// Execute until completion, delegating host-bound ops via interruptions.
     /// Returns EVM result plus precise gas/fuel accounting.
     pub fn run_the_loop<SDK: SharedAPI>(mut self, sdk: &mut SDK) -> ExecutionResult {
@@ -79,6 +96,7 @@ impl EthVM {
             match self.interpreter.run_plain(&instruction_table, &mut sdk) {
                 InterpreterAction::Return(result) => {
                     let committed_gas = self.interpreter.extend.committed_gas;
+                    debug_log_ext!("");
                     break ExecutionResult {
                         result: result.result,
                         output: result.output,
@@ -92,10 +110,12 @@ impl EthVM {
                     fuel_limit,
                     state,
                 } => {
+                    debug_log_ext!("");
                     let (fuel_consumed, fuel_refunded, exit_code) =
                         sdk.native_exec(code_hash, input.as_ref(), fuel_limit, state);
                     let mut gas = Gas::new_spent(fuel_consumed / FUEL_DENOM_RATE);
                     gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
+                    debug_log_ext!("gas {:?}", gas,);
                     let output = sdk.return_data();
                     let exit_code = ExitCode::from(exit_code);
                     self.interpreter

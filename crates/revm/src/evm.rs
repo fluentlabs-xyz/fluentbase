@@ -7,6 +7,7 @@ use crate::{
     types::SystemInterruptionOutcome,
     upgrade::{upgrade_runtime_hook_v1, upgrade_runtime_hook_v2},
 };
+use core::ops::Deref;
 use fluentbase_sdk::{
     resolve_precompiled_runtime_from_input, try_resolve_precompile_account_from_input, Address,
     Bytes, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX_V1, UPDATE_GENESIS_PREFIX_V2,
@@ -152,7 +153,8 @@ where
     ) -> Result<FrameInitOrResult<Self::Frame>, ContextDbError<Self::Context>> {
         let (context, inspector, frame, _) = self.ctx_inspector_frame_instructions();
 
-        let action = run_rwasm_loop(frame, context, Some(inspector))?.into_interpreter_action();
+        let action =
+            run_rwasm_loop(frame, context, &mut Some(inspector))?.into_interpreter_action();
         let mut result = frame.process_next_action(context, action);
 
         if let Ok(ItemOrResult::Result(frame_result)) = &mut result {
@@ -297,7 +299,7 @@ where
     > {
         let frame = self.0.frame_stack.get();
         let context = &mut self.0.ctx;
-        let action = run_rwasm_loop::<Self::Context, NoOpInspector>(frame, context, None)?
+        let action = run_rwasm_loop::<Self::Context, NoOpInspector>(frame, context, &mut None)?
             .into_interpreter_action();
         frame.process_next_action(context, action).inspect(|i| {
             if i.is_result() {

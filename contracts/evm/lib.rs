@@ -3,10 +3,32 @@
 extern crate alloc;
 extern crate core;
 
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cell::RefCell;
+use core::convert::AsRef;
+use fluentbase_codec::{CompactABI, Encoder};
+use fluentbase_codec_derive::Codec;
+use fluentbase_evm::gas::Gas;
+use fluentbase_evm::host::HostWrapperImpl;
+use fluentbase_evm::types::{InterruptingInterpreter, InterruptionExtension, InterruptionOutcome};
 use fluentbase_evm::{bytecode::AnalyzedBytecode, gas, EthVM, EthereumMetadata, ExecutionResult};
+use fluentbase_sdk::bytes::BytesMut;
 use fluentbase_sdk::{
-    entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256, EVM_MAX_CODE_SIZE,
+    debug_log, debug_log_ext, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI,
+    B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE, U256,
 };
+use fluentbase_types::int_state::{
+    bincode_encode, bincode_try_decode, IntInitState, IntOutcomeState, IntState, INT_PREFIX,
+};
+use fluentbase_types::SyscallInvocationParams;
+use revm_interpreter::instructions::control::ret;
+use revm_interpreter::interpreter::EthInterpreter;
+use revm_interpreter::interpreter_types::Jumps;
+use revm_interpreter::{
+    CallInput, Instruction, Interpreter, InterpreterAction, InterpreterTypes, Stack,
+};
+use spin::{Mutex, MutexGuard};
 
 /// Store EVM bytecode and its keccak256 hash in contract metadata.
 /// Hash is written at offset 0, raw bytecode at offset 32.
@@ -53,6 +75,12 @@ fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: ExecutionResult) {
         ExitCode::Err
     });
 }
+fn handle_interruption<SDK: SharedAPI>(sdk: &mut SDK, output: &[u8]) -> ! {
+    // let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();
+    // sdk.charge_fuel_manually(consumed_diff, refund_diff);
+    sdk.write(output);
+    sdk.native_exit(ExitCode::InterruptionCalled);
+}
 
 /// Deploy entry for EVM contracts.
 /// Runs init bytecode, enforces EIP-3541 and EIP-170, charges CODEDEPOSIT gas,
@@ -61,6 +89,52 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let input: Bytes = sdk.input().into();
     let analyzed_bytecode = AnalyzedBytecode::new(input, B256::ZERO);
 
+    // let mut vm = EthVM::new(sdk.context(), Bytes::default(), analyzed_bytecode);
+    // // TODO make it global inside contract?
+    // let instruction_table = fluentbase_evm::opcodes::interruptable_instruction_table();
+    // let mut result = match vm.run_step(&instruction_table, &mut sdk) {
+    //     InterpreterAction::Return(result) => {
+    //         let committed_gas = vm.interpreter.extend.committed_gas;
+    //         ExecutionResult {
+    //             result: result.result,
+    //             output: result.output,
+    //             committed_gas,
+    //             gas: result.gas,
+    //         }
+    //     }
+    //     InterpreterAction::SystemInterruption {
+    //         code_hash,
+    //         input,
+    //         fuel_limit,
+    //         state,
+    //     } => {
+    //         // if let Some(gas) = GAS
+    //         //     .borrow_mut()
+    //         //     .unwrap_or_else(|v| Gas::new_spent(fuel_consumed / FUEL_DENOM_RATE))
+    //         // {
+    //         //     gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
+    //         // } else {
+    //         //     panic!("impossible situation")
+    //         // }
+    //         // let output = sdk.return_data();
+    //         // let exit_code = ExitCode::from(exit_code);
+    //         // TODO save some memory to recover state later
+    //
+    //         panic!("interruption in deploy not yet supported");
+    //
+    //         // handle_interruption(&mut sdk);
+    //         // return;
+    //         // vm.interpreter
+    //         //     .extend
+    //         //     .interruption_outcome
+    //         //     .replace(InterruptionOutcome {
+    //         //         output,
+    //         //         gas,
+    //         //         exit_code,
+    //         //     })
+    //     }
+    //     InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
+    // };
     let mut result =
         EthVM::new(sdk.context(), Bytes::default(), analyzed_bytecode).run_the_loop(&mut sdk);
     if !result.result.is_ok() {
@@ -90,11 +164,131 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
 /// Loads analyzed code from metadata, runs EthVM with call input, settles fuel,
 /// and writes the returned data.
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
+    debug_log_ext!();
     let Some(analyzed_bytecode) = load_evm_bytecode(&sdk) else {
         return;
     };
-    let result =
-        EthVM::new(sdk.context(), sdk.bytes_input(), analyzed_bytecode).run_the_loop(&mut sdk);
+    let program_input = sdk.input();
+    debug_log_ext!("program_input.len {}", program_input.len());
+    let int_state = bincode_try_decode::<IntState>(INT_PREFIX, program_input);
+    debug_log_ext!();
+    // TODO make it global inside contract?
+    let instruction_table = fluentbase_evm::opcodes::interruptable_instruction_table();
+    let mut vm = EthVM::new(sdk.context(), sdk.bytes_input(), analyzed_bytecode);
+    if let Ok(int_state) = int_state {
+        debug_log_ext!();
+        // TODO reconstruct some interpreter fields
+        let interpreter = &mut vm.interpreter;
+        interpreter.input.input = CallInput::Bytes(int_state.init.input.into());
+        debug_log_ext!(
+            "int_state.init.bytecode_pc={} int_state.outcome.output={:x?}",
+            int_state.init.bytecode_pc,
+            int_state.outcome.output
+        );
+        interpreter
+            .bytecode
+            .relative_jump(int_state.init.bytecode_pc as isize);
+        assert_eq!(
+            int_state.outcome.output.len() / U256::BYTES * U256::BYTES,
+            int_state.outcome.output.len()
+        );
+        debug_log_ext!(
+            "int_state.outcome.gas_spent={}",
+            int_state.outcome.gas_spent
+        );
+        assert!(interpreter.gas.record_cost(int_state.outcome.gas_spent));
+        for chunk in int_state.outcome.output.chunks(U256::BYTES) {
+            let outcome_value = U256::from_le_slice(chunk);
+            debug_log_ext!("outcome_value={}", outcome_value);
+            interpreter.stack.data_mut().push(outcome_value);
+        }
+        // interpreter.extend.interruption_outcome = Some(InterruptionOutcome {
+        //     output: int_state.outcome.output.into(),
+        //     // output: Default::default(),
+        //     gas: Default::default(),
+        //     // exit_code: int_state.outcome.exit_code.into(),
+        //     exit_code: Default::default(),
+        // });
+        // TODO process interruption right here and then we can continue to execute as usual but with interruption results or
+        //  do we need to 'return from interruption' and then recover interruption result?
+        // panic!("int_state is not None")
+    }
+    let result = match vm.run_step(&instruction_table, &mut sdk) {
+        InterpreterAction::Return(result) => {
+            let committed_gas = vm.interpreter.extend.committed_gas;
+            ExecutionResult {
+                result: result.result,
+                output: result.output,
+                committed_gas,
+                gas: result.gas,
+            }
+        }
+        InterpreterAction::SystemInterruption {
+            code_hash,
+            input,
+            fuel_limit,
+            state,
+        } => {
+            // let (fuel_consumed, fuel_refunded, exit_code) =
+            //     sdk.native_exec(code_hash, input.as_ref(), fuel_limit, state);
+            // if let Some(gas) = GAS
+            //     .borrow_mut()
+            //     .unwrap_or_else(|v| Gas::new_spent(fuel_consumed / FUEL_DENOM_RATE))
+            // {
+            //     // gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
+            // } else {
+            //     panic!("impossible situation")
+            // }
+            // let output = sdk.return_data();
+            // let exit_code = ExitCode::from(exit_code);
+            // TODO save some memory to recover state later
+            debug_log_ext!("interruption in main: called");
+
+            let syscall_params = SyscallInvocationParams {
+                code_hash,
+                input: input.clone(),
+                fuel_limit: fuel_limit.unwrap_or(u64::MAX),
+                state,
+                fuel16_ptr: 0,
+            };
+            let syscall_params_encoded = syscall_params.encode();
+            let syscall_params_len = syscall_params_encoded.len();
+            let pc = vm.interpreter.bytecode.pc() + 1; // for int opcode
+            let stack = vm.interpreter.stack.data();
+            debug_log_ext!("pc {} stack {:?}", pc, stack);
+            let int_state = bincode_encode(
+                &[],
+                &IntState {
+                    syscall_params: syscall_params_encoded,
+                    init: IntInitState {
+                        input: program_input.to_vec(),
+                        bytecode_pc: pc,
+                        interpreter_stack: stack.iter().map(|v| v.to_be_bytes()).collect(),
+                    },
+                    outcome: Default::default(),
+                },
+            );
+            debug_log_ext!(
+                "int_state.len={} cap={} syscall_params.len={}",
+                int_state.len(),
+                int_state.capacity(),
+                syscall_params_len
+            );
+            handle_interruption(&mut sdk, &int_state);
+            // return;
+            // vm.interpreter
+            //     .extend
+            //     .interruption_outcome
+            //     .replace(InterruptionOutcome {
+            //         output,
+            //         gas,
+            //         exit_code,
+            //     })
+        }
+        InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
+    };
+    // let input = sdk.bytes_input();
+    // let result = EthVM::new(sdk.context(), input, analyzed_bytecode).run_the_loop(&mut sdk);
     if !result.result.is_ok() {
         return handle_not_ok_result(sdk, result);
     }

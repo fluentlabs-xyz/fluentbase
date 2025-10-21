@@ -22,8 +22,14 @@ fluentbase-evm = { path = "../crates/evm", default-features = false }
 fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
 fluentbase-svm = { path = "../crates/svm", default-features = false }
 fluentbase-testing = { path = "../crates/testing", default-features = false }
+fluentbase-types = { path = "../crates/types", default-features = false }
+fluentbase-codec = { path = "../crates/codec", default-features = false }
+fluentbase-codec-derive = { path = "../crates/codec-derive", default-features = false }
 # revm
-revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
+#revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
+revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
+#revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
+revm-interpreter = { path = "../../revm-rwasm/crates/interpreter", default-features = false }
 # solana
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }

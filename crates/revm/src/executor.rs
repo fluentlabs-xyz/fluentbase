@@ -6,16 +6,21 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
+use core::ops::Deref;
 use fluentbase_runtime::{
     syscall_handler::{syscall_exec_impl, syscall_resume_impl},
     RuntimeContext,
 };
-use fluentbase_sdk::{
-    is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule, BlockContextV1,
-    BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode, SharedContextInput,
-    SharedContextInputV1, SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY,
-    STATE_MAIN, U256,
+use fluentbase_sdk::int_state::{
+    bincode_encode, bincode_try_decode, IntOutcomeState, IntState, INT_PREFIX,
 };
+use fluentbase_sdk::{
+    debug_log_ext, is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule,
+    BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode,
+    SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
+    FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
+};
+use revm::interpreter::interpreter_types::Jumps;
 use revm::{
     bytecode::{opcode, Bytecode},
     context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
@@ -32,13 +37,13 @@ use revm::{
 pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
-    mut inspector: Option<&mut INSP>,
+    inspector: &mut Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let next_action = loop {
         let next_action = if let Some(interruption_outcome) = frame.take_interrupted_outcome() {
-            execute_rwasm_resume(frame, ctx, interruption_outcome, inspector.as_mut())
+            execute_rwasm_resume(frame, ctx, interruption_outcome, inspector)
         } else {
-            execute_rwasm_frame(frame, ctx, inspector.as_mut())
+            execute_rwasm_frame(frame, ctx, inspector)
         }?;
         match next_action {
             NextAction::InterruptionResult => continue,
@@ -107,7 +112,7 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
 fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
-    inspector: Option<&mut INSP>,
+    inspector: &mut Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let interpreter = &mut frame.interpreter;
     let is_create: bool = matches!(frame.input, FrameInput::Create(..));
@@ -237,7 +242,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
     interruption_outcome: SystemInterruptionOutcome,
-    inspector: Option<&mut INSP>,
+    inspector: &mut Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let SystemInterruptionOutcome {
         inputs,
@@ -277,9 +282,15 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         // don't map other error codes
         _ => ExitCode::UnknownError,
     };
+    debug_log_ext!(
+        "interruption_outcome.remaining_gas {:?} exit_code {:?}",
+        interruption_outcome.remaining_gas,
+        exit_code.into_i32(),
+    );
 
     let mut runtime_context = RuntimeContext::default();
     if inputs.is_gas_free {
+        debug_log_ext!();
         runtime_context = runtime_context.with_disabled_fuel();
     }
     let (fuel_consumed, fuel_refunded, exit_code) = syscall_resume_impl(
@@ -312,6 +323,90 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     // accumulate refunds (can be forwarded from an interrupted call)
     gas.record_denominated_refund(fuel_refunded);
 
+    if exit_code == ExitCode::InterruptionCalled.into_i32() {
+        debug_log_ext!(
+            "fuel_consumed {} fuel_refunded {}",
+            fuel_consumed,
+            fuel_refunded
+        );
+        let old_input = return_data.clone();
+        let mut int_state: IntState = bincode_try_decode(&[], &old_input).unwrap();
+
+        // TODO get syscall result
+        debug_log_ext!(
+            "old_input.len={} int_state.syscall_params.len={}",
+            old_input.len(),
+            int_state.syscall_params.len(),
+        );
+        let stack = frame.interpreter.stack.data();
+        debug_log_ext!(
+            "(before) return_data = {:x?} stack = {:?}",
+            return_data,
+            stack
+        );
+        let syscall_next_action = process_exec_result(
+            frame,
+            ctx,
+            inspector,
+            inputs.call_id as i32,
+            gas,
+            int_state.syscall_params.clone().into(),
+            inputs.is_create,
+            inputs.is_static,
+            inputs.is_gas_free,
+        )?;
+        match syscall_next_action {
+            NextAction::NewFrame(_) | NextAction::Return(_) => {
+                unreachable!("frames or return cannot be produced by interruptions")
+            }
+            NextAction::InterruptionResult => {}
+        };
+
+        let interrupt_return_data = frame
+            .interrupted_outcome
+            .take()
+            .unwrap()
+            .result
+            .unwrap()
+            .output
+            .to_vec();
+        let stack = frame.interpreter.stack.data();
+        // TODO continue executing frame with syscall outcome
+        debug_log_ext!(
+            "(after) return_data = {:x?} stack = {:?}",
+            interrupt_return_data,
+            stack
+        );
+        let pc = frame.interpreter.bytecode.pc();
+        debug_log_ext!("pc={}", pc,);
+        debug_log_ext!();
+        int_state.outcome = IntOutcomeState {
+            output: interrupt_return_data,
+            interpreter_stack: stack.iter().map(|v| v.to_be_bytes()).collect(),
+            bytecode_pc: pc,
+            exit_code,
+            gas_spent: gas.spent(),
+        };
+        let int_state_prefixed = bincode_encode::<IntState>(INT_PREFIX, &int_state);
+        // debug_log_ext!("int_state {:x?}", int_state);
+        debug_log_ext!(
+            "int_state_prefixed.len={} cap={} gas={:?}",
+            int_state_prefixed.len(),
+            int_state_prefixed.capacity(),
+            gas.spent()
+        );
+        frame.interpreter.input.input = CallInput::Bytes(int_state_prefixed.to_vec().into());
+        let result = execute_rwasm_frame(frame, ctx, inspector);
+        let pc = frame.interpreter.bytecode.pc();
+        debug_log_ext!(
+            "pc={} frame.interpreter.gas.spent {}",
+            pc,
+            frame.interpreter.gas.spent()
+        );
+
+        return result;
+    }
+
     process_exec_result::<CTX, INSP>(
         frame,
         ctx,
@@ -329,7 +424,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
 fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
-    inspector: Option<&mut INSP>,
+    inspector: &mut Option<&mut INSP>,
     exit_code: i32,
     gas: Gas,
     return_data: Bytes,
@@ -371,6 +466,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         is_gas_free,
     };
 
+    debug_log_ext!();
     execute_rwasm_interruption::<CTX, INSP>(frame, inspector, ctx, inputs)
 }
 
@@ -378,7 +474,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
 fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
-    inspector: Option<&mut INSP>,
+    inspector: &mut Option<&mut INSP>,
     exit_code: i32,
     return_data: Bytes,
     gas: Gas,

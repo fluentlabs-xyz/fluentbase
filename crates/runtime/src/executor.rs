@@ -268,7 +268,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let runtime = StrategyRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
         let mut runtime = ExecutionMode::Strategy(runtime);
 
-        // Execute rWasm program
+        // Execute program
         let result = runtime.execute();
         let fuel_consumed = runtime
             .remaining_fuel()
