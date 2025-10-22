@@ -3,142 +3,87 @@
 ARG RUST_TOOLCHAIN=1.88
 ARG PLATFORM=linux/amd64
 ARG SDK_VERSION=0.4.10-dev
-ARG BINARYEN_VERSION=120
-ARG WABT_VERSION=1.0.36
-ARG WABT_OS=ubuntu-20.04
 
 #######################################
-# Stage 1: Base (Rust)                #
+# Stage 1: Build Fluentbase CLI
 #######################################
-FROM --platform=${PLATFORM} debian:bookworm-slim AS base
-ARG RUST_TOOLCHAIN
+FROM --platform=${PLATFORM} rust:${RUST_TOOLCHAIN}-slim AS builder
 
+WORKDIR /build
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates build-essential pkg-config libssl-dev git \
-    mold clang \
+    pkg-config libssl-dev git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /root/.cargo && \
-    printf '[build]\nrustflags = ["-C","link-arg=-fuse-ld=mold"]\n\
-[target.x86_64-unknown-linux-gnu]\nlinker = "clang"\n' \
-    > /root/.cargo/config.toml
-
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo
-
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path --default-toolchain ${RUST_TOOLCHAIN} \
-    && ${CARGO_HOME}/bin/rustup target add wasm32-unknown-unknown \
-    && ${CARGO_HOME}/bin/rustup component add rust-src \
-    && ${CARGO_HOME}/bin/cargo install sccache --locked
-
-ENV PATH="${CARGO_HOME}/bin:${PATH}" \
-    CARGO_NET_RETRY=3 \
-    CARGO_NET_GIT_FETCH_WITH_CLI=true \
-    CARGO_INCREMENTAL=0 \
-    RUST_BACKTRACE=1
+COPY . ./
+RUN cargo build --bin fluentbase --release --locked
 
 #######################################
-# Stage 2: External WebAssembly Tools #
+# Stage 2: Cache Warmer
 #######################################
-FROM alpine:3.19 AS tools
+FROM --platform=${PLATFORM} rust:${RUST_TOOLCHAIN}-slim AS cache-warmer
+ARG SDK_VERSION
 
-ARG BINARYEN_VERSION
-ARG WABT_VERSION
-ARG WABT_OS
+WORKDIR /warmup
+ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apk add --no-cache curl tar
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN curl -L https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz \
-    | tar xz -C /tmp
+RUN rustup target add wasm32-unknown-unknown && \
+    cargo install sccache --locked
 
-RUN curl -L https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_OS}.tar.gz \
-    | tar xz -C /tmp
-
-#######################################
-# Stage 3: CLI Builder                #
-#######################################
-FROM base AS cli-builder
-ARG RUST_TOOLCHAIN
-
-WORKDIR /build
-
-COPY Cargo.toml Cargo.lock ./
-COPY crates/ ./crates/
-COPY bins/cli ./bins/cli/
-COPY e2e/ ./e2e/
-
-# Simple build without cache mount
-RUN cargo build --bin fluentbase --release
-
-#######################################
-# Stage 4: Contract Builder           #
-#######################################
-FROM base AS contract-builder
-ARG RUST_TOOLCHAIN
-
-WORKDIR /build
-
-COPY Cargo.toml Cargo.lock ./
-COPY crates/ ./crates/
-COPY e2e/ ./e2e/
-COPY bins/ ./bins/
-COPY docker/contract ./docker/contract
-
-WORKDIR /build/docker/contract
-
-# Enable sccache for cache warming
 ENV RUSTC_WRAPPER=sccache \
-    SCCACHE_DIR=/usr/local/cargo/sccache
+    SCCACHE_DIR=/sccache-cache \
+    SCCACHE_CACHE_SIZE="5G"
 
-# Simple build without cache mount
+# Create minimal dummy contract
+RUN printf '[package]\nname = "warmer"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\nfluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v%s", default-features = false }\n\n[lib]\ncrate-type = ["cdylib"]\npath = "lib.rs"' "${SDK_VERSION}" > Cargo.toml
+
+RUN printf '#![cfg_attr(target_arch = "wasm32", no_std, no_main)]\nextern crate fluentbase_sdk;\nuse fluentbase_sdk::{entrypoint, SharedAPI};\npub fn main_entry(_: impl SharedAPI) {}\nentrypoint!(main_entry);' > lib.rs
+
 RUN cargo build --release --target wasm32-unknown-unknown --no-default-features
 
 #######################################
-# Stage 5: Final SDK                  #
+# Stage 3: Final SDK
 #######################################
-FROM base AS final
-
+FROM --platform=${PLATFORM} rust:${RUST_TOOLCHAIN}-slim AS final
 ARG SDK_VERSION
 ARG RUST_TOOLCHAIN
-ARG BINARYEN_VERSION
-ARG WABT_VERSION
-
-# Copy WASM tools
-COPY --from=tools /tmp/binaryen-version_*/bin/* /usr/local/bin/
-COPY --from=tools /tmp/wabt-*/bin/* /usr/local/bin/
-
-# Copy CLI binary - now this simply works!
-COPY --from=cli-builder /build/target/release/fluentbase /usr/local/bin/
-
-# Copy sccache binary
-COPY --from=contract-builder /usr/local/cargo/bin/sccache /usr/local/bin/sccache
-
-# Copy pre-warmed sccache cache
-COPY --from=contract-builder /usr/local/cargo/sccache /usr/local/cargo/sccache
-
-# Copy cargo registry and git (for faster user builds)
-COPY --from=contract-builder /usr/local/cargo/registry /usr/local/cargo/registry
-COPY --from=contract-builder /usr/local/cargo/git /usr/local/cargo/git
-
-# Copy pre-built target directory
-COPY --from=contract-builder /build/docker/contract/target /target
-
-# Enable sccache for user builds
-ENV RUSTC_WRAPPER=sccache \
-    SCCACHE_DIR=/usr/local/cargo/sccache
 
 WORKDIR /workspace
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add wasm32-unknown-unknown
+
+RUN git config --global fetch.depth 1 && \
+    git config --global submodule.fetchDepth 1 && \
+    git config --global submodule.fetchJobs 8 && \
+    git config --global fetch.parallel 8
+
+COPY --from=builder /build/target/release/fluentbase /usr/local/bin/fluentbase
+COPY --from=cache-warmer /usr/local/cargo/bin/sccache /usr/local/bin/sccache
+COPY --from=cache-warmer /usr/local/cargo/git/db /usr/local/cargo/git/db
+COPY --from=cache-warmer /usr/local/cargo/registry/cache /usr/local/cargo/registry/cache
+COPY --from=cache-warmer /usr/local/cargo/registry/index /usr/local/cargo/registry/index
+COPY --from=cache-warmer /sccache-cache /sccache-cache
+
+ENV RUSTC_WRAPPER=sccache \
+    SCCACHE_DIR=/sccache-cache \
+    SCCACHE_CACHE_SIZE="5G" \
+    CARGO_NET_GIT_FETCH_WITH_CLI=true
+
 LABEL maintainer="Fluent Labs" \
-      org.opencontainers.image.title="Fluentbase SDK (Optimized)" \
-      org.opencontainers.image.description="Fluentbase CLI, Rust toolchain, and pre-compiled contract caches for rapid project builds." \
+      org.opencontainers.image.title="Fluentbase SDK" \
+      org.opencontainers.image.description="Fluentbase CLI with cached dependencies for v${SDK_VERSION}" \
       org.opencontainers.image.source="https://github.com/fluentlabs-xyz/fluentbase" \
       org.opencontainers.image.version="${SDK_VERSION}" \
       io.fluentbase.sdk.version="${SDK_VERSION}" \
-      io.fluentbase.rust.toolchain="${RUST_TOOLCHAIN}" \
-      io.fluentbase.binaryen.version="${BINARYEN_VERSION}" \
-      io.fluentbase.wabt.version="${WABT_VERSION}"
+      io.fluentbase.rust.toolchain="${RUST_TOOLCHAIN}"
 
 CMD ["/bin/bash"]

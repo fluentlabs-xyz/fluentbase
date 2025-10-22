@@ -1,5 +1,5 @@
 use crate::utils::parse_rustc_version;
-use crate::DOCKER_PLATFORM;
+use crate::{DOCKER_PLATFORM, CARGO_CACHE_VOLUME};
 use anyhow::{bail, Context, Result};
 use std::{path::Path, process::Command};
 
@@ -34,6 +34,8 @@ pub fn run_in_docker(
         "--rm",
         "--platform",
         DOCKER_PLATFORM,
+        "-v",
+        &format!("{}:/usr/local/cargo", CARGO_CACHE_VOLUME),
         "-v",
         &format!("{}:/workspace", mount_dir.display()),
         "-w",
