@@ -22,7 +22,6 @@ smallvec = { version = "1.15.1", optional = true }
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
-elliptic-curve = { version = "0.13", default-features = false }
 # don't use patched tiny-keccak from workspace
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 blake3 = { workspace = true, default-features = false }
@@ -32,6 +31,9 @@ num = "0.4.3"
 sp1-curves = "5.2.1"
 fs2 = { version = "0.4.3", optional = true }
 bytemuck = { workspace = true }
+amcl = { package = "snowbridge-amcl", version = "1.0.2", default-features = false, features = [
+    "bls381",
+] }
 
 # global executor
 core_affinity = { version = "0.8.3", optional = true }

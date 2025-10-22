@@ -1,4 +1,4 @@
-all: build
+all: build test
 
 .PHONY: build
 build:
@@ -31,9 +31,10 @@ clean:
 
 .PHONY: test
 test:
-	cargo test --manifest-path=./contracts/Cargo.toml
-	cargo test --manifest-path=./examples/Cargo.toml
-	cargo test #--no-fail-fast #-q
+	cargo test --manifest-path=./contracts/Cargo.toml --release
+	cargo test --manifest-path=./examples/Cargo.toml --release
+	cargo test --release
+	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e short_tests::good_coverage_tests --release
 
 .PHONY: svm_tests
 svm_tests:

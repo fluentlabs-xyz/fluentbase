@@ -101,7 +101,6 @@ pub fn invoke_runtime_handler(
 
         // bn254 (0x07)
         SysFuncIdx::BN254_ADD => syscall_bn254_add_handler(caller, params, result),
-        SysFuncIdx::BN254_DECOMPRESS => syscall_bn254_decompress_handler(caller, params, result),
         SysFuncIdx::BN254_DOUBLE => syscall_bn254_double_handler(caller, params, result),
 
         // uint256 (0x08)
