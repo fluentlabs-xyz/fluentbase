@@ -175,10 +175,14 @@ pub(crate) fn syscall_tower_fp2_add_sub_mul_impl<
     let modulus = &BigUint::from_bytes_le(P::MODULUS);
     let (c0, c1) = match FIELD_OP {
         FP_FIELD_ADD => ((ac0 + bc0) % modulus, (ac1 + bc1) % modulus),
-        FP_FIELD_SUB => (
-            (ac0 + modulus - bc0) % modulus,
-            (ac1 + modulus - bc1) % modulus,
-        ),
+        FP_FIELD_SUB => {
+            // TODO(dmitry123): Due to the SP1 limitations, we can't support b that is greater than a + modulus.
+            //  But what's the best workaround here? To return an error or to wrap b?
+            (
+                (ac0 + modulus - bc0 % modulus) % modulus,
+                (ac1 + modulus - bc1 % modulus) % modulus,
+            )
+        }
         FP_FIELD_MUL => {
             let c0 = match (ac0 * bc0) % modulus < (ac1 * bc1) % modulus {
                 true => ((modulus + (ac0 * bc0) % modulus) - (ac1 * bc1) % modulus) % modulus,

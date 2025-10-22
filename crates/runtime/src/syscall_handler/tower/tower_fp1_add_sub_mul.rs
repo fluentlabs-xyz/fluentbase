@@ -140,7 +140,11 @@ pub(crate) fn syscall_tower_fp1_add_sub_mul_impl<
     let b = BigUint::from_bytes_le(&y) % modulus;
     let result = match FIELD_OP {
         FP_FIELD_ADD => (a + b) % modulus,
-        FP_FIELD_SUB => ((a + modulus) - b) % modulus,
+        FP_FIELD_SUB => {
+            // TODO(dmitry123): Due to the SP1 limitations, we can't support b that is greater than a + modulus.
+            //  But what's the best workaround here? To return an error or to wrap b?
+            ((a + modulus) - b % modulus) % modulus
+        }
         FP_FIELD_MUL => (a * b) % modulus,
         _ => unreachable!(),
     };
@@ -295,5 +299,20 @@ mod tests {
             let result = &mul(&a, &zero) % &modulus;
             assert_eq!((&a * &zero) % &modulus, result,);
         }
+    }
+
+    #[test]
+    fn test_bls12381_overflow_cant_happen() {
+        let m = BigUint::from_str("4002409555221667393417789825735904156556882819939007885332058136124031650490837864442687629129015664037894272559787").unwrap();
+        let a = BigUint::from_str("3001807166416250545063342369301928117417662114954255913999043602093023737868128398332015721846761748028420704419841").unwrap();
+        let b = BigUint::from_str("12007228665665002180253369477207712469670648459817023655996174408372094951472513593328062887387046992113682817679361").unwrap();
+        assert!(a < m && b > m);
+
+        let result =
+            syscall_tower_fp1_bls12381_sub_impl(big_uint_into_bytes(&a), big_uint_into_bytes(&b));
+        let result = BigUint::from_bytes_le(&result);
+
+        let expected_sub = ((&a + &m) - &b % &m) % &m;
+        assert_eq!(expected_sub, result);
     }
 }
