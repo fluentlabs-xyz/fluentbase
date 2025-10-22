@@ -43,7 +43,7 @@ rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "fix/engine-
 default = [
     "std",
     # "debug-print",
-    "wasmtime",
+    # "wasmtime",
 ]
 std = [
     "fluentbase-genesis/std",
