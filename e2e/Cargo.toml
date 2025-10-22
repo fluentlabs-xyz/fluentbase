@@ -41,7 +41,7 @@ solana-curve25519 = { workspace = true, default-features = false }
 solana-bn254 = { workspace = true, default-features = false }
 solana-poseidon = { workspace = true, default-features = false }
 solana-program-pack = { workspace = true, default-features = false }
-solana-program-option = { workspace = true, default-features = false }
+#solana-program-option = { workspace = true, default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 array-bytes = { workspace = true }

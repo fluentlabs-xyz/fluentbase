@@ -2268,7 +2268,6 @@ dependencies = [
  "solana-bn254",
  "solana-curve25519",
  "solana-poseidon",
- "solana-program-option",
  "solana-program-pack",
  "wat",
 ]

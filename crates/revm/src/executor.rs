@@ -296,20 +296,9 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         .record_denominated_refund(fuel_refunded);
 
     if exit_code == ExitCode::InterruptionCalled.into_i32() {
-        debug_log_ext!(
-            "fuel_consumed {} fuel_refunded {}",
-            fuel_consumed,
-            fuel_refunded
-        );
         let old_input = return_data.clone();
         let mut int_state: IntState = bincode_try_decode(&[], &old_input).unwrap();
 
-        let stack = frame.interpreter.stack.data();
-        debug_log_ext!(
-            "(before) return_data = {:x?} stack = {:?}",
-            return_data,
-            stack
-        );
         let syscall_next_action = process_exec_result(
             frame,
             ctx,
@@ -335,42 +324,18 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
             .output
             .to_vec();
         let stack = frame.interpreter.stack.data();
-        // TODO continue executing frame with syscall outcome
-        debug_log_ext!(
-            "(after) return_data = {:x?} stack = {:?}",
-            interrupt_return_data,
-            stack
-        );
         let pc = frame.interpreter.bytecode.pc();
-        debug_log_ext!(
-            "pc={} frame.interpreter.gas.spent={}",
-            pc,
-            frame.interpreter.gas.spent()
-        );
+        assert!(stack.is_empty());
         int_state.outcome = IntOutcomeState {
             output: interrupt_return_data,
-            interpreter_stack: stack.iter().map(|v| v.to_be_bytes()).collect(),
+            interpreter_stack: stack.iter().map(|v| v.to_le_bytes()).collect(),
             bytecode_pc: pc,
             exit_code,
             gas_spent: 0,
-            // gas_spent: frame.interpreter.gas.spent(),
         };
         let int_state_prefixed = bincode_encode::<IntState>(INT_PREFIX, &int_state);
-        // debug_log_ext!("int_state {:x?}", int_state);
-        debug_log_ext!(
-            "int_state_prefixed.len={} cap={} gas={:?}",
-            int_state_prefixed.len(),
-            int_state_prefixed.capacity(),
-            frame.interpreter.gas.spent()
-        );
         frame.interpreter.input.input = CallInput::Bytes(int_state_prefixed.to_vec().into());
         let result = execute_rwasm_frame(frame, ctx, inspector);
-        let pc = frame.interpreter.bytecode.pc();
-        debug_log_ext!(
-            "pc={} frame.interpreter.gas.spent {}",
-            pc,
-            frame.interpreter.gas.spent()
-        );
 
         return result;
     }
@@ -427,7 +392,6 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         is_static,
     };
 
-    debug_log_ext!();
     execute_rwasm_interruption::<CTX, INSP>(frame, inspector, ctx, inputs)
 }
 

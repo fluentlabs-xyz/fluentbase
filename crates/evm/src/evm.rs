@@ -11,6 +11,7 @@ use crate::{
 };
 use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
 use revm_bytecode::{Bytecode, LegacyAnalyzedBytecode};
+use revm_interpreter::interpreter_types::Jumps;
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},
     CallInput, Gas, InputsImpl, InstructionTable, Interpreter, InterpreterAction, InterpreterTypes,
@@ -94,8 +95,17 @@ impl EthVM {
         loop {
             match self.interpreter.run_plain(&instruction_table, &mut sdk) {
                 InterpreterAction::Return(result) => {
+                    let bytecode = &self.interpreter.bytecode;
+                    let (len, opcode, pc) = (bytecode.len(), bytecode.opcode(), bytecode.pc());
+                    let stack = self.interpreter.stack.data();
+                    debug_log_ext!(
+                        "len={} opcode={:x?} pc={} stack={:?}",
+                        len,
+                        opcode,
+                        pc,
+                        stack
+                    );
                     let committed_gas = self.interpreter.extend.committed_gas;
-                    debug_log_ext!("");
                     break ExecutionResult {
                         result: result.result,
                         output: result.output,
@@ -109,13 +119,21 @@ impl EthVM {
                     fuel_limit,
                     state,
                 } => {
-                    debug_log_ext!("");
+                    let bytecode = &self.interpreter.bytecode;
+                    let (len, opcode, pc) = (bytecode.len(), bytecode.opcode(), bytecode.pc());
+                    let stack = self.interpreter.stack.data();
+                    debug_log_ext!(
+                        "len={} opcode={:x?} pc={} stack={:?}",
+                        len,
+                        opcode,
+                        pc,
+                        stack
+                    );
                     self.sync_evm_gas(sdk.sdk_mut());
                     let (fuel_consumed, fuel_refunded, exit_code) =
                         sdk.native_exec(code_hash, input.as_ref(), fuel_limit, state);
                     let mut gas = Gas::new_spent(fuel_consumed / FUEL_DENOM_RATE);
                     gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
-                    debug_log_ext!("gas {:?}", gas,);
                     // Since the gas here is already synced,
                     // because it's been charged inside the call, we should put into committed
                     {
@@ -145,7 +163,7 @@ impl EthVM {
     }
 
     /// Commit interpreter gas deltas to the host (fuel) and snapshot the state.
-    pub(crate) fn sync_evm_gas<SDK: SharedAPI>(&mut self, sdk: &mut SDK) {
+    pub fn sync_evm_gas<SDK: SharedAPI>(&mut self, sdk: &mut SDK) {
         let (gas, committed_gas) = (
             &self.interpreter.gas,
             &mut self.interpreter.extend.committed_gas,
