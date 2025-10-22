@@ -38,6 +38,7 @@ impl Cmd {
     /// Run statetest command.
     pub fn run(&self) -> Result<(), TestError> {
         for path in &self.path {
+            #[cfg(feature = "debug-print")]
             println!("\nRunning tests in {}...", path.display());
             let test_files = find_all_json_tests(path);
             run(

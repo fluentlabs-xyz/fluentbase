@@ -637,7 +637,9 @@ pub fn execute_test_suite(
         return Ok(());
     }
 
-    println!("Running test: {:?}", path);
+    if cfg!(feature = "debug-print") {
+        println!("Running test: {:?}", path);
+    }
 
     let s = std::fs::read_to_string(path).unwrap();
     let suite: TestSuite = serde_json::from_str(&s).map_err(|e| TestError {
@@ -652,12 +654,16 @@ pub fn execute_test_suite(
         if selected_test_cases.len() > 0 && !selected_test_cases.contains(&name.as_str()) {
             continue;
         }
-        println!("test case: {}", &name);
+        if cfg!(feature = "debug-print") {
+            println!("test case: {}", &name);
+        }
         // Create database and insert cache
         let mut cache_state = CacheState::new(false);
         let mut cache_state2 = CacheState::new(false);
 
-        println!("\nloading genesis accounts:");
+        if cfg!(feature = "debug-print") {
+            println!("\nloading genesis accounts:");
+        }
         let start = Instant::now();
         for (address, code_hash, bytecode) in genesis_contracts.iter() {
             let acc_info = AccountInfo {
@@ -668,9 +674,13 @@ pub fn execute_test_suite(
             };
             cache_state2.insert_account(*address, acc_info);
         }
-        println!("loaded genesis accounts in: {:?}", start.elapsed());
+        if cfg!(feature = "debug-print") {
+            println!("loaded genesis accounts in: {:?}", start.elapsed());
+        }
 
-        println!("\nloading EVM accounts:");
+        if cfg!(feature = "debug-print") {
+            println!("\nloading EVM accounts:");
+        }
         let start = Instant::now();
         for (address, info) in &unit.pre {
             let acc_info = AccountInfo {
@@ -724,7 +734,9 @@ pub fn execute_test_suite(
             // write evm account into state
             cache_state2.insert_account_with_storage(address, acc_info, info.storage);
         }
-        println!("loaded evm accounts in: {:?}", start.elapsed());
+        if cfg!(feature = "debug-print") {
+            println!("loaded evm accounts in: {:?}", start.elapsed());
+        }
 
         let mut cfg_env = CfgEnv::default();
         let mut block_env = BlockEnv::default();
@@ -814,11 +826,13 @@ pub fn execute_test_suite(
             cfg_env.spec = spec_id;
 
             for (index, test) in tests.into_iter().enumerate() {
-                println!(
-                    "\n\n\n\n\nRunning test with txdata: ({}) {}",
-                    index,
-                    hex::encode(test.txbytes.clone().unwrap_or_default().as_ref())
-                );
+                if cfg!(feature = "debug-print") {
+                    println!(
+                        "\n\n\n\n\nRunning test with txdata: ({}) {}",
+                        index,
+                        hex::encode(test.txbytes.clone().unwrap_or_default().as_ref())
+                    );
+                }
                 tx_env.gas_limit = unit.transaction.gas_limit[test.indexes.gas].saturating_to();
 
                 tx_env.data = unit
@@ -866,26 +880,36 @@ pub fn execute_test_suite(
                     .build();
                 let output = if trace {
                     let timer = Instant::now();
-                    print!("\n\nrunning original EVM tests... ");
+                    if cfg!(feature = "debug-print") {
+                        print!("\n\nrunning original EVM tests... ");
+                    }
                     let mut evm = MainnetContext::new(state, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
                         .build_mainnet_with_inspector(TraceInspector::new());
                     let start = Instant::now();
                     let result_native = evm.inspect_tx_commit(tx_env.clone());
-                    println!("{:?}", start.elapsed());
+                    if cfg!(feature = "debug-print") {
+                        println!("{:?}", start.elapsed());
+                    }
                     let start = Instant::now();
-                    print!("\n\nrunning RWASM tests... ");
+                    if cfg!(feature = "debug-print") {
+                        print!("\n\nrunning RWASM tests... ");
+                    }
                     let mut evm2 = RwasmContext::new(state2, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
                         .build_rwasm_with_inspector(TraceInspector::new());
                     let result_fluent = evm2.inspect_tx_commit(tx_env.clone());
-                    println!("{:?}", start.elapsed());
+                    if cfg!(feature = "debug-print") {
+                        println!("{:?}", start.elapsed());
+                    }
                     *elapsed.lock().unwrap() += timer.elapsed();
                     // dump state and traces if the test failed
                     let start = Instant::now();
-                    print!("\n\ncomparing EVM<>RWASM state... ");
+                    if cfg!(feature = "debug-print") {
+                        print!("\n\ncomparing EVM<>RWASM state... ");
+                    }
                     let output = check_evm_execution(
                         &test,
                         unit.out.as_ref(),
@@ -897,30 +921,40 @@ pub fn execute_test_suite(
                         print_json_outcome,
                     );
                     // check_evm_trace(evm.inspector(), evm2.inspector())?;
-                    println!("{:?}", start.elapsed());
+                    if cfg!(feature = "debug-print") {
+                        println!("{:?}", start.elapsed());
+                    }
                     output
                 } else {
                     let timer = Instant::now();
-                    print!("\n\nrunning original EVM tests... ");
+                    if cfg!(feature = "debug-print") {
+                        print!("\n\nrunning original EVM tests... ");
+                    }
                     let mut evm = MainnetContext::new(state, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
                         .build_mainnet();
                     let start = Instant::now();
                     let result_native = evm.transact_commit(tx_env.clone());
-                    println!("{:?}", start.elapsed());
-                    print!("\n\nrunning RWASM tests... ");
+                    if cfg!(feature = "debug-print") {
+                        println!("{:?}", start.elapsed());
+                        print!("\n\nrunning RWASM tests... ");
+                    }
                     let mut evm2 = RwasmContext::new(state2, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
                         .build_rwasm();
                     let start = Instant::now();
                     let result_fluent = evm2.transact_commit(tx_env.clone());
-                    println!("{:?}", start.elapsed());
+                    if cfg!(feature = "debug-print") {
+                        println!("{:?}", start.elapsed());
+                    }
                     *elapsed.lock().unwrap() += timer.elapsed();
                     // dump state and traces if the test failed
                     let start = Instant::now();
-                    print!("\n\ncomparing EVM<>RWASM state... ");
+                    if cfg!(feature = "debug-print") {
+                        print!("\n\ncomparing EVM<>RWASM state... ");
+                    }
                     let output = check_evm_execution(
                         &test,
                         unit.out.as_ref(),
@@ -931,7 +965,9 @@ pub fn execute_test_suite(
                         &mut evm2,
                         print_json_outcome,
                     );
-                    println!("{:?}", start.elapsed());
+                    if cfg!(feature = "debug-print") {
+                        println!("{:?}", start.elapsed());
+                    }
                     output
                 };
 
@@ -948,8 +984,6 @@ pub fn execute_test_suite(
                 return Err(e);
             }
         }
-
-        println!("FINISHED!!!!!!!!!!!\n\n")
     }
     Ok(())
 }
