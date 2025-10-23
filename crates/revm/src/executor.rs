@@ -326,7 +326,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         let interrupt_return_data = interrupted_outcome.result.unwrap().output.to_vec();
         int_state.outcome = IntOutcomeState {
             output: interrupt_return_data,
-            exit_code,
+            exit_code: ExitCode::Ok.into_i32(),
             fuel_consumed,
             fuel_refunded,
         };

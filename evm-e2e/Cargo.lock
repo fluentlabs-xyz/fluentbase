@@ -1995,6 +1995,8 @@ dependencies = [
 name = "fluentbase-revm"
 version = "0.4.10-dev"
 dependencies = [
+ "fluentbase-codec",
+ "fluentbase-codec-derive",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -2013,6 +2015,8 @@ dependencies = [
  "blake3",
  "bytemuck",
  "elliptic-curve",
+ "fluentbase-codec",
+ "fluentbase-codec-derive",
  "fluentbase-types",
  "k256",
  "num",
@@ -2146,11 +2150,14 @@ dependencies = [
  "alloy-primitives",
  "bincode 2.0.1",
  "byteorder",
+ "fluentbase-codec",
+ "fluentbase-codec-derive",
  "hashbrown 0.15.5",
  "paste",
  "revm-precompile",
  "revm-primitives",
  "rwasm",
+ "serde",
  "strum_macros 0.27.2",
 ]
 

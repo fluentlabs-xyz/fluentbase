@@ -179,23 +179,26 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             int_state.outcome.output.len() / U256::BYTES * U256::BYTES,
             int_state.outcome.output.len()
         );
-        // assert!(interpreter.gas.record_cost(int_state.outcome.gas_spent));
         for stack_item_bytes in int_state.init.interpreter_stack {
             let stack_item = U256::from_le_slice(&stack_item_bytes);
             interpreter.stack.data_mut().push(stack_item);
         }
-        interpreter.extend.interruption_outcome = Option::from(InterruptionOutcome {
-            output: int_state.outcome.output.clone().into(),
-            gas: Default::default(),
-            exit_code: Default::default(),
-        });
         let mut gas = Gas::new_spent(int_state.outcome.fuel_consumed / FUEL_DENOM_RATE);
         gas.record_refund(int_state.outcome.fuel_refunded / FUEL_DENOM_RATE as i64);
-        interpreter.extend.committed_gas = gas;
-        // for stack_item_bytes in int_state.outcome.output.chunks(U256::BYTES) {
-        //     let stack_item = U256::from_le_slice(stack_item_bytes);
-        //     interpreter.stack.data_mut().push(stack_item);
-        // }
+        {
+            let dirty_gas = &mut interpreter.gas;
+            if !dirty_gas.record_cost(gas.spent()) {
+                unreachable!(
+                    "evm: a fatal gas mis-sync between runtimes, this should never happen"
+                );
+            }
+            interpreter.extend.committed_gas = *dirty_gas;
+        }
+        interpreter.extend.interruption_outcome = Option::from(InterruptionOutcome {
+            output: int_state.outcome.output.clone().into(),
+            gas,
+            exit_code: ExitCode::from(int_state.outcome.exit_code),
+        });
         vm
     } else {
         EthVM::new(sdk.context(), sdk.bytes_input(), analyzed_bytecode)
@@ -224,6 +227,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 gas: result.gas,
             };
             debug_log_ext!("result={:?}", result);
+            let consumed_diff = result.chargeable_fuel();
+            sdk.charge_fuel(consumed_diff);
             result
         }
         InterpreterAction::SystemInterruption {
@@ -257,7 +262,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                     syscall_params: syscall_params.encode(),
                     init: IntInitState {
                         input: sdk.input().to_vec(),
-                        bytecode_pc: pc + 1, // +1 for next opcode
+                        bytecode_pc: pc, // +1 for next opcode
                         interpreter_stack: stack.iter().map(|v| v.to_le_bytes()).collect(),
                     },
                     outcome: Default::default(),
@@ -275,8 +280,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     if !result.result.is_ok() {
         return handle_not_ok_result(sdk, result);
     }
-    let consumed_diff = result.chargeable_fuel();
-    sdk.charge_fuel(consumed_diff);
     sdk.write(result.output.as_ref());
 }
 
