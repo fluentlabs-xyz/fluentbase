@@ -166,13 +166,12 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let Some(analyzed_bytecode) = load_evm_bytecode(&sdk) else {
         return;
     };
-    let mut vm = EthVM::new(sdk.context(), sdk.bytes_input(), analyzed_bytecode);
     let int_state = bincode_try_decode::<IntState>(INT_PREFIX, sdk.input());
-    if let Ok(int_state) = int_state {
-        debug_log_ext!();
+    let mut vm = if let Ok(int_state) = int_state {
+        let input_bytes: Bytes = int_state.init.input.into();
+        let mut vm = EthVM::new(sdk.context(), input_bytes.clone(), analyzed_bytecode);
         let interpreter = &mut vm.interpreter;
-        // debug_log_ext!("int_state: {:?}", int_state);
-        interpreter.input.input = CallInput::Bytes(int_state.init.input.into());
+        interpreter.input.input = CallInput::Bytes(input_bytes);
         interpreter
             .bytecode
             .absolute_jump(int_state.init.bytecode_pc);
@@ -180,17 +179,28 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             int_state.outcome.output.len() / U256::BYTES * U256::BYTES,
             int_state.outcome.output.len()
         );
-        assert!(interpreter.gas.record_cost(int_state.outcome.gas_spent));
+        // assert!(interpreter.gas.record_cost(int_state.outcome.gas_spent));
         for stack_item_bytes in int_state.init.interpreter_stack {
             let stack_item = U256::from_le_slice(&stack_item_bytes);
-            debug_log_ext!("stack_item={}", stack_item);
             interpreter.stack.data_mut().push(stack_item);
         }
+        interpreter.extend.interruption_outcome = Option::from(InterruptionOutcome {
+            output: int_state.outcome.output.clone().into(),
+            gas: Default::default(),
+            exit_code: Default::default(),
+        });
+        let mut gas = Gas::new_spent(int_state.outcome.fuel_consumed / FUEL_DENOM_RATE);
+        gas.record_refund(int_state.outcome.fuel_refunded / FUEL_DENOM_RATE as i64);
+        interpreter.extend.committed_gas = gas;
         // for stack_item_bytes in int_state.outcome.output.chunks(U256::BYTES) {
         //     let stack_item = U256::from_le_slice(stack_item_bytes);
         //     interpreter.stack.data_mut().push(stack_item);
         // }
-    }
+        vm
+    } else {
+        EthVM::new(sdk.context(), sdk.bytes_input(), analyzed_bytecode)
+    };
+    debug_log_ext!("vm.interpreter.stack.len={}", vm.interpreter.stack.len());
     let result = match vm.run_step(
         &fluentbase_evm::opcodes::interruptable_instruction_table(),
         &mut sdk,
@@ -230,8 +240,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 state,
                 fuel16_ptr: 0,
             };
-            let syscall_params_encoded = syscall_params.encode();
-            let syscall_params_len = syscall_params_encoded.len();
             let bytecode = &vm.interpreter.bytecode;
             let (len, opcode, pc) = (bytecode.len(), bytecode.opcode(), bytecode.pc());
             let stack = vm.interpreter.stack.data();
@@ -243,25 +251,20 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 stack
             );
             let stack = vm.interpreter.stack.data();
-            let int_state = bincode_encode(
+            let int_state_encoded = bincode_encode(
                 &[],
                 &IntState {
-                    syscall_params: syscall_params_encoded,
+                    syscall_params: syscall_params.encode(),
                     init: IntInitState {
                         input: sdk.input().to_vec(),
-                        bytecode_pc: pc + 1, // +1 to jump onto next opcode
+                        bytecode_pc: pc + 1, // +1 for next opcode
                         interpreter_stack: stack.iter().map(|v| v.to_le_bytes()).collect(),
                     },
                     outcome: Default::default(),
                 },
             );
-            debug_log_ext!(
-                "int_state.len={} cap={} syscall_params.len={}",
-                int_state.len(),
-                int_state.capacity(),
-                syscall_params_len
-            );
-            handle_interruption(&mut sdk, &int_state);
+            debug_log_ext!("interruption exit");
+            handle_interruption(&mut sdk, &int_state_encoded);
         }
         InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
     };

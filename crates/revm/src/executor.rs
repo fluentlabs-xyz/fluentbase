@@ -6,7 +6,6 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
-use core::ops::Deref;
 use fluentbase_runtime::{
     default_runtime_executor,
     syscall_handler::{syscall_exec_impl, syscall_resume_impl},
@@ -21,6 +20,7 @@ use fluentbase_sdk::{
     SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
     FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
 };
+use revm::inspector::InspectorFrame;
 use revm::interpreter::interpreter_types::Jumps;
 use revm::{
     bytecode::{opcode, Bytecode},
@@ -38,14 +38,18 @@ use revm::{
 pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
-    mut inspector: &mut Option<&mut INSP>,
+    inspector: &mut Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let next_action = loop {
+        debug_log_ext!();
         let next_action = if let Some(interruption_outcome) = frame.take_interrupted_outcome() {
+            debug_log_ext!();
             execute_rwasm_resume(frame, ctx, interruption_outcome, inspector)
         } else {
+            debug_log_ext!();
             execute_rwasm_frame(frame, ctx, inspector)
         }?;
+        debug_log_ext!();
         match next_action {
             NextAction::InterruptionResult => continue,
             _ => break next_action,
@@ -271,6 +275,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     };
 
     let mut runtime_context = RuntimeContext::default();
+    debug_log_ext!();
     let (fuel_consumed, fuel_refunded, exit_code) = syscall_resume_impl(
         &mut runtime_context,
         inputs.call_id,
@@ -280,6 +285,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         fuel_refunded,
         inputs.syscall_params.fuel16_ptr,
     );
+    debug_log_ext!();
     let return_data: Bytes = runtime_context.execution_result.return_data.into();
 
     // make sure we have enough gas to charge from the call
@@ -296,9 +302,10 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         .record_denominated_refund(fuel_refunded);
 
     if exit_code == ExitCode::InterruptionCalled.into_i32() {
-        let old_input = return_data.clone();
-        let mut int_state: IntState = bincode_try_decode(&[], &old_input).unwrap();
+        let syscall_return_data = return_data.clone();
+        let mut int_state: IntState = bincode_try_decode(&[], &syscall_return_data).unwrap();
 
+        debug_log_ext!();
         let syscall_next_action = process_exec_result(
             frame,
             ctx,
@@ -315,29 +322,18 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
             NextAction::InterruptionResult => {}
         };
 
-        let interrupt_return_data = frame
-            .interrupted_outcome
-            .take()
-            .unwrap()
-            .result
-            .unwrap()
-            .output
-            .to_vec();
-        let stack = frame.interpreter.stack.data();
-        let pc = frame.interpreter.bytecode.pc();
-        assert!(stack.is_empty());
+        let interrupted_outcome = frame.interrupted_outcome.take().unwrap();
+        let interrupt_return_data = interrupted_outcome.result.unwrap().output.to_vec();
         int_state.outcome = IntOutcomeState {
             output: interrupt_return_data,
-            interpreter_stack: stack.iter().map(|v| v.to_le_bytes()).collect(),
-            bytecode_pc: pc,
             exit_code,
-            gas_spent: 0,
+            fuel_consumed,
+            fuel_refunded,
         };
-        let int_state_prefixed = bincode_encode::<IntState>(INT_PREFIX, &int_state);
-        frame.interpreter.input.input = CallInput::Bytes(int_state_prefixed.to_vec().into());
-        let result = execute_rwasm_frame(frame, ctx, inspector);
+        let int_state_encoded = bincode_encode::<IntState>(INT_PREFIX, &int_state);
+        frame.interpreter.input.input = CallInput::Bytes(int_state_encoded.to_vec().into());
 
-        return result;
+        return Ok(syscall_next_action);
     }
 
     let result = process_exec_result::<CTX, INSP>(
@@ -372,6 +368,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     is_static: bool,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     // if we have success or failed exit code
+    debug_log_ext!("exit_code={}", exit_code);
     if exit_code <= 0 {
         return Ok(process_halt(frame, ctx, inspector, exit_code, return_data));
     }

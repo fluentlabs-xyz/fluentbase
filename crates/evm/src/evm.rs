@@ -93,6 +93,7 @@ impl EthVM {
         let instruction_table = interruptable_instruction_table();
         let mut sdk = HostWrapperImpl::wrap(sdk);
         loop {
+            debug_log_ext!();
             match self.interpreter.run_plain(&instruction_table, &mut sdk) {
                 InterpreterAction::Return(result) => {
                     let bytecode = &self.interpreter.bytecode;

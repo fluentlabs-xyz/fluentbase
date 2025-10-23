@@ -16,10 +16,11 @@ pub struct IntInitState {
 #[derive(Default, Serialize, Deserialize, Debug, PartialEq)]
 pub struct IntOutcomeState {
     pub output: Vec<u8>,
-    pub interpreter_stack: Vec<[u8; 32]>,
-    pub bytecode_pc: usize,
+    // pub bytecode_pc: usize,
     pub exit_code: i32,
-    pub gas_spent: u64,
+    pub fuel_consumed: u64,
+    pub fuel_refunded: i64,
+    // pub gas_spent: u64,
 }
 
 #[derive(Default, Serialize, Deserialize, Debug, PartialEq)]
@@ -66,10 +67,9 @@ mod tests {
             },
             outcome: IntOutcomeState {
                 output: vec![7, 8, 9],
-                interpreter_stack: vec![],
-                bytecode_pc: 12,
                 exit_code: 4,
-                gas_spent: 222,
+                fuel_consumed: 1,
+                fuel_refunded: 2,
             },
         };
         let obj1_enc = bincode_encode(&[], &obj1);
