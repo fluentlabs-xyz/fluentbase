@@ -1,4 +1,3 @@
-use crate::bytes::{Buf, BufMut};
 use alloc::vec::Vec;
 use bincode::error;
 use bincode::serde::Compat;
@@ -30,10 +29,10 @@ pub struct IntState {
     pub outcome: IntOutcomeState,
 }
 
-pub fn bincode_encode<T: serde::ser::Serialize>(prefix: &[u8], int_state: &T) -> Vec<u8> {
+pub fn bincode_encode<T: serde::ser::Serialize>(prefix: &[u8], obj: &T) -> Vec<u8> {
     let mut buf: Vec<u8> = prefix.to_vec();
     let bincode_config = bincode::config::legacy();
-    buf.extend(bincode::encode_to_vec(Compat(int_state), bincode_config).unwrap());
+    buf.extend(bincode::encode_to_vec(Compat(obj), bincode_config).unwrap());
     buf
 }
 pub fn bincode_try_decode<T: serde::de::DeserializeOwned>(

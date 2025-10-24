@@ -18,8 +18,8 @@ path = "lib.rs"
 [build-dependencies]
 fluentbase-sdk = { workspace = true }
 alloy-genesis = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
+serde = { workspace = true, default-features = false }
+serde_json = { workspace = true, default-features = false }
 cargo_metadata = "0.19.1"
 
 # The following dependencies are not used directly but listed here to trigger execution of build.rs whenever they are changed

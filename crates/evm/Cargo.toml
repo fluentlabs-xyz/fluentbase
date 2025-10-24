@@ -19,6 +19,7 @@ revm-primitives = { workspace = true }
 revm-bytecode = { workspace = true }
 revm-interpreter = { workspace = true }
 revm-context = { workspace = true }
+serde = { version = "1.0.228", default-features = false, features = ["derive"] }
 
 [features]
 default = ["std"]
@@ -28,4 +29,8 @@ std = [
     "revm-bytecode/std",
     "revm-interpreter/std",
     "revm-context/std",
+]
+serde = [
+    "revm-interpreter/serde",
+    "fluentbase-sdk/serde"
 ]

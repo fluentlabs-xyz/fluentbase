@@ -20,13 +20,15 @@ use fluentbase_types::int_state::{
     bincode_encode, bincode_try_decode, IntInitState, IntOutcomeState, IntState, INT_PREFIX,
 };
 use fluentbase_types::SyscallInvocationParams;
+use hashbrown::HashMap;
+use lazy_static::lazy_static;
 use revm_interpreter::instructions::control::ret;
 use revm_interpreter::interpreter::EthInterpreter;
 use revm_interpreter::interpreter_types::Jumps;
 use revm_interpreter::{
     CallInput, Instruction, Interpreter, InterpreterAction, InterpreterTypes, Stack,
 };
-use spin::{Mutex, MutexGuard};
+use spin::lock_api::Mutex;
 
 /// Store EVM bytecode and its keccak256 hash in contract metadata.
 /// Hash is written at offset 0, raw bytecode at offset 32.
@@ -158,6 +160,13 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     commit_evm_bytecode(&mut sdk, result.output);
 }
 
+lazy_static! {
+    pub static ref STATE: Mutex<HashMap<usize, Vec<u8>>> = Mutex::new(HashMap::new()); // Interpreter<InterruptingInterpreter>
+}
+// lazy_static! {
+static DEPTH: Mutex<usize> = Mutex::new(0);
+// }
+
 /// Main entry for executing deployed EVM bytecode.
 /// Loads analyzed code from metadata, runs EthVM with call input, settles fuel,
 /// and writes the returned data.
@@ -168,6 +177,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     };
     let int_state = bincode_try_decode::<IntState>(INT_PREFIX, sdk.input());
     let mut vm = if let Ok(int_state) = int_state {
+        let depth: usize = DEPTH.lock().clone();
+        debug_log_ext!("depth={}", depth);
         let input_bytes: Bytes = int_state.init.input.into();
         let mut vm = EthVM::new(sdk.context(), input_bytes.clone(), analyzed_bytecode);
         let interpreter = &mut vm.interpreter;
@@ -245,9 +256,10 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 state,
                 fuel16_ptr: 0,
             };
-            let bytecode = &vm.interpreter.bytecode;
+            let interpreter = vm.interpreter;
+            let bytecode = &interpreter.bytecode;
             let (len, opcode, pc) = (bytecode.len(), bytecode.opcode(), bytecode.pc());
-            let stack = vm.interpreter.stack.data();
+            let stack = interpreter.stack.data();
             debug_log_ext!(
                 "len={} opcode={:x?} pc={} stack={:?}",
                 len,
@@ -255,7 +267,11 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 pc,
                 stack
             );
-            let stack = vm.interpreter.stack.data();
+            let stack = interpreter.stack.data();
+            let depth: usize = DEPTH.lock().clone();
+            debug_log_ext!("depth={}", depth);
+            *DEPTH.lock() = depth + 1;
+            STATE.lock().insert(depth, bincode_encode(&[], &[1, 2, 3]));
             let int_state_encoded = bincode_encode(
                 &[],
                 &IntState {

@@ -11,7 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-serde = { workspace = true }
+serde = { workspace = true, default-features = false }
 byteorder = { workspace = true, default-features = false }
 rwasm = { workspace = true }
 alloy-primitives = { workspace = true }

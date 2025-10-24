@@ -121,7 +121,7 @@ proptest = { version = "1.5.0" }
 num-derive = { version = "0.4" }
 num-traits = { version = "0.2", features = ["i128"], default-features = false }
 
-hashbrown = { version = "0.15.0", default-features = false, features = ["default-hasher", "inline-more"] }
+hashbrown = { version = "0.16.0", default-features = false, features = ["default-hasher", "inline-more"] }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false }
 serde_bytes = { version = "0.11.15", default-features = false }
@@ -147,18 +147,18 @@ quote = { version = "1.0" }
 elliptic-curve = { version = "0.13.4", features = ["hazmat", "sec1", "ecdh"], default-features = false }
 
 # revm
-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
-revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
-revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
-revm-bytecode = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
-revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
-revm-context = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
-#revm = { path = "../revm-rwasm/crates/revm", default-features = false }
-#revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false }
-#revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false }
-#revm-bytecode = { path = "../revm-rwasm/crates/bytecode", default-features = false }
-#revm-interpreter = { path = "../revm-rwasm/crates/interpreter", default-features = false }
-#revm-context = { path = "../revm-rwasm/crates/context", default-features = false }
+#revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
+#revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
+#revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
+#revm-bytecode = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
+#revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
+#revm-context = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
+revm = { path = "../revm-rwasm/crates/revm", default-features = false }
+revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false }
+revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false }
+revm-bytecode = { path = "../revm-rwasm/crates/bytecode", default-features = false }
+revm-interpreter = { path = "../revm-rwasm/crates/interpreter", default-features = false }
+revm-context = { path = "../revm-rwasm/crates/context", default-features = false }
 
 # precompiles
 ark-bn254 = { version = "0.5", default-features = false }

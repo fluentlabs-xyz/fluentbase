@@ -5,9 +5,11 @@
 //! summarizes final outcome with gas/fuel accounting.
 use fluentbase_sdk::{Bytes, ExitCode, B256, FUEL_DENOM_RATE, U256};
 use revm_interpreter::{interpreter::EthInterpreter, Gas, InstructionResult, InterpreterResult};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 /// Result of a host interruption (output, gas delta, and exit code).
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InterruptionOutcome {
     pub output: Bytes,
     pub gas: Gas,
@@ -48,6 +50,7 @@ impl InterruptionOutcome {
 
 /// Extra per-interpreter state used during interruptions.
 #[derive(Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InterruptionExtension {
     pub interruption_outcome: Option<InterruptionOutcome>,
     pub committed_gas: Gas,

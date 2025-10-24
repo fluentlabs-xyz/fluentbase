@@ -34,7 +34,7 @@ rwasm = { workspace = true, default-features = false }
 tracing = { version = "0.1" }
 
 # Optional
-serde = { workspace = true, features = ["derive", "rc"], optional = true }
+serde = { workspace = true, default-features = false, features = ["derive", "rc"], optional = true }
 
 # fluentbase
 fluentbase-evm = { workspace = true }
@@ -46,7 +46,7 @@ fluentbase-codec-derive = { workspace = true }
 [dev-dependencies]
 alloy-sol-types.workspace = true
 sha2.workspace = true
-serde_json = { workspace = true, features = ["alloc"] }
+serde_json = { workspace = true, default-features = false, features = ["alloc"] }
 alloy-primitives.workspace = true
 
 [features]

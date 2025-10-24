@@ -10,8 +10,8 @@ fluentbase-contracts = { path = "../crates/contracts", default-features = false 
 fluentbase-sdk = { path = "../crates/sdk" }
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 
-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false, features = ["std", "serde-json", "serde"] }
-#revm = { path = "../../revm-rwasm/crates/revm", default-features = false, features = ["std", "serde-json", "serde"] }
+#revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false, features = ["std", "serde-json", "serde"] }
+revm = { path = "../../revm-rwasm/crates/revm", default-features = false, features = ["std", "serde-json", "serde"] }
 fluentbase-revm = { path = "../crates/revm" }
 
 hash-db = "=0.15"
