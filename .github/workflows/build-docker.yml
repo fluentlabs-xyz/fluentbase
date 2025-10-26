@@ -50,40 +50,42 @@ jobs:
               shell: bash
               run: |
                   set -euo pipefail
+
                   SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+                  IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+                  EVENT="${{ github.event_name }}"
+                  REF_TYPE="${{ github.ref_type }}"
+                  REF_NAME="${{ github.ref_name }}"
 
                   # --- Determine version and SDK version ---
-                  case "${{ github.event_name }}" in
-                    workflow_dispatch)
-                      VERSION="${{ inputs.docker_tag }}"
-                      SDK_VERSION="${{ inputs.sdk_version }}"
-                      ;;
-                    push)
-                      if [[ "${{ github.ref_type }}" == "tag" ]]; then
-                        VERSION="${GITHUB_REF#refs/tags/}"
-                        SDK_VERSION="tag = \"${VERSION}\""
-                      else
-                        VERSION="dev-${SHA_SHORT}"
-                        BRANCH_NAME="${GITHUB_REF#refs/heads/}"
-                        SDK_VERSION="branch = \"${BRANCH_NAME}\""
-                      fi
-                      ;;
-                    *)
-                      VERSION="dev-${SHA_SHORT}"
-                      SDK_VERSION="branch = \"unknown\""
-                      ;;
-                  esac
-
-                  # --- Determine Docker tags ---
-                  TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
-                  if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.push_latest }}" == "true" ]] || \
-                     [[ "${{ github.ref_type }}" == "tag" ]]; then
-                    TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+                  if [[ "$EVENT" == "workflow_dispatch" ]]; then
+                  VERSION="${{ inputs.docker_tag }}"
+                  SDK_VERSION="${{ inputs.sdk_version }}"
+                  elif [[ "$REF_TYPE" == "tag" ]]; then
+                  VERSION="$REF_NAME"
+                  SDK_VERSION="tag = \"${VERSION}\""
+                  else
+                  VERSION="dev-${SHA_SHORT}"
+                  SDK_VERSION="branch = \"${REF_NAME}\""
                   fi
 
-                  echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
-                  echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-                  echo "sdk_version=${SDK_VERSION}" >> "$GITHUB_OUTPUT"
+                  # --- Determine Docker tags ---
+                  TAGS="${IMAGE}:${VERSION}"
+                  if [[ ("$EVENT" == "workflow_dispatch" && "${{ inputs.push_latest }}" == "true") || "$REF_TYPE" == "tag" ]]; then
+                  TAGS+=",${IMAGE}:latest"
+                  fi
+
+                  # --- Outputs ---
+                  {
+                  echo "tags=${TAGS}"
+                  echo "version=${VERSION}"
+                  echo "sdk_version=${SDK_VERSION}"
+                  } >> "$GITHUB_OUTPUT"
+
+                  echo "Resolved metadata:"
+                  echo "  VERSION=${VERSION}"
+                  echo "  SDK_VERSION=${SDK_VERSION}"
+                  echo "  TAGS=${TAGS}"
 
             - name: Build and push
               uses: docker/build-push-action@v6
