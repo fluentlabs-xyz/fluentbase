@@ -33,7 +33,6 @@ impl RwasmRuntime {
     pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {
         self.engine.resume(
             &mut self.store,
-            &self.module,
             &[Value::I32(exit_code)],
             &mut [],
         )
