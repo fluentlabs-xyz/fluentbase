@@ -1,59 +1,62 @@
 # syntax=docker/dockerfile:1.7-labs
-
 ARG RUST_TOOLCHAIN=1.88
-ARG PLATFORM=linux/amd64
-ARG SDK_VERSION=0.4.10-dev
+ARG SDK_VERSION='tag = "v0.4.10-dev"'
+
+#######################################
+# Stage 0: Base with common dependencies
+#######################################
+FROM rust:${RUST_TOOLCHAIN}-slim AS base
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev git ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add wasm32-unknown-unknown
+
+RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz \
+    | tar xz --strip-components=1 -C /usr/local/bin sccache-v0.12.0-x86_64-unknown-linux-musl/sccache && \
+    chmod +x /usr/local/bin/sccache
+
+ENV RUSTC_WRAPPER=sccache \
+    SCCACHE_DIR=/sccache-cache \
+    SCCACHE_CACHE_SIZE="5G"
+
 
 #######################################
 # Stage 1: Build Fluentbase CLI
 #######################################
-FROM --platform=${PLATFORM} rust:${RUST_TOOLCHAIN}-slim AS builder
-
+FROM base AS builder
 WORKDIR /build
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config libssl-dev git ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY . ./
 RUN cargo build --bin fluentbase --release --locked
 
 #######################################
 # Stage 2: Cache Warmer
 #######################################
-FROM --platform=${PLATFORM} rust:${RUST_TOOLCHAIN}-slim AS cache-warmer
+FROM base AS cache-warmer
 ARG SDK_VERSION
-
 WORKDIR /warmup
-ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config libssl-dev git ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/local/cargo/git/db /usr/local/cargo/git/db
+COPY --from=builder /usr/local/cargo/registry /usr/local/cargo/registry
+COPY --from=builder /sccache-cache /sccache-cache
 
-RUN rustup target add wasm32-unknown-unknown && \
-    cargo install sccache --locked
+# Cargo.toml
+RUN printf '[package]\nname = "warmer"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\ncrate-type = ["cdylib"]\npath = "lib.rs"\n\n[dependencies]\nfluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", %s, default-features = false }\n\n[features]\ndefault = []\nstd = ["fluentbase-sdk/std"]\n\n[profile.release]\nopt-level = "z"\nlto = true\npanic = "abort"\ncodegen-units = 1\n' "${SDK_VERSION}" > Cargo.toml
 
-ENV RUSTC_WRAPPER=sccache \
-    SCCACHE_DIR=/sccache-cache \
-    SCCACHE_CACHE_SIZE="5G"
+# lib.rs
+RUN printf '#![cfg_attr(not(feature = "std"), no_std, no_main)]\n\nextern crate alloc;\nextern crate fluentbase_sdk;\n\nuse fluentbase_sdk::{\n    basic_entrypoint,\n    derive::{router, Contract},\n    SharedAPI,\n    U256,\n};\n\n#[derive(Contract, Default)]\nstruct Warmer<SDK> {\n    sdk: SDK,\n}\n\npub trait WarmerAPI {\n    fn warm(&self) -> U256;\n}\n\n#[router(mode = "solidity")]\nimpl<SDK: SharedAPI> WarmerAPI for Warmer<SDK> {\n    fn warm(&self) -> U256 {\n        U256::from(2)\n    }\n}\n\nimpl<SDK: SharedAPI> Warmer<SDK> {\n    pub fn deploy(&self) {}\n}\n\nbasic_entrypoint!(Warmer);\n' > lib.rs
 
-# Create minimal dummy contract
-RUN printf '[package]\nname = "warmer"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\nfluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v%s", default-features = false }\n\n[lib]\ncrate-type = ["cdylib"]\npath = "lib.rs"' "${SDK_VERSION}" > Cargo.toml
-
-RUN printf '#![cfg_attr(target_arch = "wasm32", no_std, no_main)]\nextern crate fluentbase_sdk;\nuse fluentbase_sdk::{entrypoint, SharedAPI};\npub fn main_entry(_: impl SharedAPI) {}\nentrypoint!(main_entry);' > lib.rs
-
-RUN cargo build --release --target wasm32-unknown-unknown --no-default-features
+RUN cargo fetch --target wasm32-unknown-unknown && \
+    cargo build --release --target wasm32-unknown-unknown --lib
 
 #######################################
 # Stage 3: Final SDK
 #######################################
-FROM --platform=${PLATFORM} rust:${RUST_TOOLCHAIN}-slim AS final
-ARG SDK_VERSION
-ARG RUST_TOOLCHAIN
-
+FROM rust:${RUST_TOOLCHAIN}-slim AS final
 WORKDIR /workspace
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -61,13 +64,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN rustup target add wasm32-unknown-unknown
 
-RUN git config --global fetch.depth 1 && \
-    git config --global submodule.fetchDepth 1 && \
-    git config --global submodule.fetchJobs 8 && \
+RUN git config --global submodule.fetchJobs 8 && \
     git config --global fetch.parallel 8
 
 COPY --from=builder /build/target/release/fluentbase /usr/local/bin/fluentbase
-COPY --from=cache-warmer /usr/local/cargo/bin/sccache /usr/local/bin/sccache
+COPY --from=cache-warmer /usr/local/bin/sccache /usr/local/bin/sccache
 COPY --from=cache-warmer /usr/local/cargo/git/db /usr/local/cargo/git/db
 COPY --from=cache-warmer /usr/local/cargo/registry/cache /usr/local/cargo/registry/cache
 COPY --from=cache-warmer /usr/local/cargo/registry/index /usr/local/cargo/registry/index
@@ -77,13 +78,5 @@ ENV RUSTC_WRAPPER=sccache \
     SCCACHE_DIR=/sccache-cache \
     SCCACHE_CACHE_SIZE="5G" \
     CARGO_NET_GIT_FETCH_WITH_CLI=true
-
-LABEL maintainer="Fluent Labs" \
-      org.opencontainers.image.title="Fluentbase SDK" \
-      org.opencontainers.image.description="Fluentbase CLI with cached dependencies for v${SDK_VERSION}" \
-      org.opencontainers.image.source="https://github.com/fluentlabs-xyz/fluentbase" \
-      org.opencontainers.image.version="${SDK_VERSION}" \
-      io.fluentbase.sdk.version="${SDK_VERSION}" \
-      io.fluentbase.rust.toolchain="${RUST_TOOLCHAIN}"
 
 CMD ["/bin/bash"]
