@@ -47,28 +47,43 @@ jobs:
 
             - name: Extract metadata
               id: meta
+              shell: bash
               run: |
-                  SHA_SHORT=$(echo ${{ github.sha }} | cut -c1-7)
-                  SDK_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
+                  set -euo pipefail
+                  SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
 
-                  if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+                  # --- Determine version and SDK version ---
+                  case "${{ github.event_name }}" in
+                    workflow_dispatch)
                       VERSION="${{ inputs.docker_tag }}"
-                      TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
-                      if [[ "${{ inputs.push_latest }}" == "true" ]]; then
-                          TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+                      SDK_VERSION="${{ inputs.sdk_version }}"
+                      ;;
+                    push)
+                      if [[ "${{ github.ref_type }}" == "tag" ]]; then
+                        VERSION="${GITHUB_REF#refs/tags/}"
+                        SDK_VERSION="tag = \"${VERSION}\""
+                      else
+                        VERSION="dev-${SHA_SHORT}"
+                        BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+                        SDK_VERSION="branch = \"${BRANCH_NAME}\""
                       fi
-                  elif [[ "${{ github.ref_type }}" == "tag" ]]; then
-                      VERSION="${GITHUB_REF#refs/tags/}"
-                      SDK_VERSION="${VERSION#v}"
-                      TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
-                  else
-                      VERSION="dev-$SHA_SHORT"
-                      TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION"
+                      ;;
+                    *)
+                      VERSION="dev-${SHA_SHORT}"
+                      SDK_VERSION="branch = \"unknown\""
+                      ;;
+                  esac
+
+                  # --- Determine Docker tags ---
+                  TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
+                  if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.push_latest }}" == "true" ]] || \
+                     [[ "${{ github.ref_type }}" == "tag" ]]; then
+                    TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
                   fi
 
-                  echo "tags=${TAGS}" >> $GITHUB_OUTPUT
-                  echo "version=${VERSION}" >> $GITHUB_OUTPUT
-                  echo "sdk_version=${SDK_VERSION}" >> $GITHUB_OUTPUT
+                  echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+                  echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+                  echo "sdk_version=${SDK_VERSION}" >> "$GITHUB_OUTPUT"
 
             - name: Build and push
               uses: docker/build-push-action@v6
