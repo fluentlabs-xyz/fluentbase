@@ -90,8 +90,8 @@ jobs:
                   build-args: |
                       RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
                       SDK_VERSION="${{ steps.meta.outputs.sdk_version }}"
-                  cache-from: type=gha
-                  cache-to: type=gha,mode=max
+                  cache-from: none
+                  cache-to: none
 
             - name: Inspect image
               run: |
