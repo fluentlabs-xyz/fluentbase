@@ -116,8 +116,7 @@ jobs:
                       RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
                       SDK_VERSION_BRANCH=${{ steps.meta.outputs.sdk_version_branch }}
                       SDK_VERSION_TAG=${{ steps.meta.outputs.sdk_version_tag }}
-                  cache-from: none
-                  cache-to: none
+                  no-cache: true
 
             - name: Inspect image
               run: |
