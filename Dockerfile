@@ -36,7 +36,8 @@ RUN cargo build --bin fluentbase --release --locked
 # Stage 2: Cache Warmer
 #######################################
 FROM base AS cache-warmer
-ARG SDK_VERSION
+ARG SDK_VERSION_BRANCH
+ARG SDK_VERSION_TAG
 WORKDIR /warmup
 
 COPY --from=builder /usr/local/cargo/git/db /usr/local/cargo/git/db
