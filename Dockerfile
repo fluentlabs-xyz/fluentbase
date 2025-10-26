@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7-labs
 ARG RUST_TOOLCHAIN=1.88
-ARG SDK_VERSION='tag = "v0.4.10-dev"'
+ARG SDK_VERSION_BRANCH=""
+ARG SDK_VERSION_TAG=""
 
 #######################################
 # Stage 0: Base with common dependencies
@@ -43,7 +44,14 @@ COPY --from=builder /usr/local/cargo/registry /usr/local/cargo/registry
 COPY --from=builder /sccache-cache /sccache-cache
 
 # Cargo.toml
-RUN printf '[package]\nname = "warmer"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\ncrate-type = ["cdylib"]\npath = "lib.rs"\n\n[dependencies]\nfluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", %s, default-features = false }\n\n[features]\ndefault = []\nstd = ["fluentbase-sdk/std"]\n\n[profile.release]\nopt-level = "z"\nlto = true\npanic = "abort"\ncodegen-units = 1\n' "${SDK_VERSION}" > Cargo.toml
+RUN if [ -n "$SDK_VERSION_BRANCH" ]; then \
+      SDK_VERSION="branch = \"$SDK_VERSION_BRANCH\""; \
+    elif [ -n "$SDK_VERSION_TAG" ]; then \
+      SDK_VERSION="tag = \"$SDK_VERSION_TAG\""; \
+    else \
+      echo "❌ Either SDK_VERSION_BRANCH or SDK_VERSION_TAG must be provided" && exit 1; \
+    fi && \
+    printf '[package]\nname = "warmer"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\ncrate-type = ["cdylib"]\npath = "lib.rs"\n\n[dependencies]\nfluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", %s, default-features = false }\n\n[features]\ndefault = []\nstd = ["fluentbase-sdk/std"]\n\n[profile.release]\nopt-level = "z"\nlto = true\npanic = "abort"\ncodegen-units = 1\n' "$SDK_VERSION" > Cargo.toml
 
 # lib.rs
 RUN printf '#![cfg_attr(not(feature = "std"), no_std, no_main)]\n\nextern crate alloc;\nextern crate fluentbase_sdk;\n\nuse fluentbase_sdk::{\n    basic_entrypoint,\n    derive::{router, Contract},\n    SharedAPI,\n    U256,\n};\n\n#[derive(Contract, Default)]\nstruct Warmer<SDK> {\n    sdk: SDK,\n}\n\npub trait WarmerAPI {\n    fn warm(&self) -> U256;\n}\n\n#[router(mode = "solidity")]\nimpl<SDK: SharedAPI> WarmerAPI for Warmer<SDK> {\n    fn warm(&self) -> U256 {\n        U256::from(2)\n    }\n}\n\nimpl<SDK: SharedAPI> Warmer<SDK> {\n    pub fn deploy(&self) {}\n}\n\nbasic_entrypoint!(Warmer);\n' > lib.rs

@@ -9,9 +9,9 @@ on:
             docker_tag:
                 description: "Custom Docker image tag (e.g., v0.3.7-dev)"
                 required: true
-            sdk_version:
-                description: "SDK version for Cargo.toml (e.g., `tag = v0.3.7-dev` or `branch = feat/xyz`, etc)"
-                required: true
+            branch:
+                description: "Branch to use for SDK build (optional if tag is used)"
+                required: false
             push_latest:
                 description: "Also tag as latest"
                 required: false
@@ -57,34 +57,42 @@ jobs:
                   REF_TYPE="${{ github.ref_type }}"
                   REF_NAME="${{ github.ref_name }}"
 
-                  # --- Determine version and SDK version ---
+                  # --- Determine version and SDK args ---
                   if [[ "$EVENT" == "workflow_dispatch" ]]; then
                   VERSION="${{ inputs.docker_tag }}"
-                  SDK_VERSION="${{ inputs.sdk_version }}"
+                  if [[ -n "${{ inputs.branch }}" ]]; then
+                      SDK_VERSION_BRANCH="${{ inputs.branch }}"
+                      SDK_VERSION_TAG=""
+                  else
+                      SDK_VERSION_BRANCH=""
+                      SDK_VERSION_TAG="${VERSION}"
+                  fi
                   elif [[ "$REF_TYPE" == "tag" ]]; then
                   VERSION="$REF_NAME"
-                  SDK_VERSION="tag = \"${VERSION}\""
+                  SDK_VERSION_BRANCH=""
+                  SDK_VERSION_TAG="${VERSION}"
                   else
                   VERSION="dev-${SHA_SHORT}"
-                  SDK_VERSION="branch = \"${REF_NAME}\""
+                  SDK_VERSION_BRANCH="${REF_NAME}"
+                  SDK_VERSION_TAG=""
                   fi
 
-                  # --- Determine Docker tags ---
                   TAGS="${IMAGE}:${VERSION}"
                   if [[ ("$EVENT" == "workflow_dispatch" && "${{ inputs.push_latest }}" == "true") || "$REF_TYPE" == "tag" ]]; then
                   TAGS+=",${IMAGE}:latest"
                   fi
 
-                  # --- Outputs ---
                   {
                   echo "tags=${TAGS}"
                   echo "version=${VERSION}"
-                  echo "sdk_version=${SDK_VERSION}"
+                  echo "sdk_version_branch=${SDK_VERSION_BRANCH}"
+                  echo "sdk_version_tag=${SDK_VERSION_TAG}"
                   } >> "$GITHUB_OUTPUT"
 
                   echo "Resolved metadata:"
                   echo "  VERSION=${VERSION}"
-                  echo "  SDK_VERSION=${SDK_VERSION}"
+                  echo "  BRANCH=${SDK_VERSION_BRANCH}"
+                  echo "  TAG=${SDK_VERSION_TAG}"
                   echo "  TAGS=${TAGS}"
 
             - name: Build and push
@@ -106,7 +114,8 @@ jobs:
                       xyz.fluent.rust.toolchain=${{ env.RUST_TOOLCHAIN }}
                   build-args: |
                       RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
-                      SDK_VERSION="${{ steps.meta.outputs.sdk_version }}"
+                      SDK_VERSION_BRANCH=${{ steps.meta.outputs.sdk_version_branch }}
+                      SDK_VERSION_TAG=${{ steps.meta.outputs.sdk_version_tag }}
                   cache-from: none
                   cache-to: none
 
