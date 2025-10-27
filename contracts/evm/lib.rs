@@ -7,11 +7,14 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::convert::AsRef;
+use core::sync::atomic;
+use core::sync::atomic::Ordering;
 use fluentbase_evm::gas::Gas;
 use fluentbase_evm::host::HostWrapperImpl;
 use fluentbase_evm::types::{InterruptingInterpreter, InterruptionExtension, InterruptionOutcome};
 use fluentbase_evm::{bytecode::AnalyzedBytecode, gas, EthVM, EthereumMetadata, ExecutionResult};
 use fluentbase_sdk::bytes::BytesMut;
+use fluentbase_sdk::rwasm_core::N_MAX_RECURSION_DEPTH;
 use fluentbase_sdk::{
     debug_log, debug_log_ext, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI,
     B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE, U256,
@@ -47,8 +50,11 @@ pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<AnalyzedByt
     // We use bytecode address because contract can be called using DELEGATECALL
     let bytecode_address = sdk.context().contract_bytecode_address();
     // Read metadata size, if it's zero, then an account is not assigned to the EVM runtime
+    debug_log_ext!();
     let (metadata_size, is_account_ownable, _, _) = sdk.metadata_size(&bytecode_address).unwrap();
+    debug_log_ext!();
     if !is_account_ownable {
+        debug_log_ext!();
         return None;
     }
     let metadata = sdk
@@ -160,12 +166,9 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     commit_evm_bytecode(&mut sdk, result.output);
 }
 
-lazy_static! {
-    pub static ref STATE: Mutex<HashMap<usize, Vec<u8>>> = Mutex::new(HashMap::new()); // Interpreter<InterruptingInterpreter>
-}
-// lazy_static! {
-static DEPTH: Mutex<usize> = Mutex::new(0);
-// }
+static ETH_VMS: spin::Once<spin::Mutex<[Vec<u8>; N_MAX_RECURSION_DEPTH]>> = spin::Once::new();
+// static ETH_VMS: spin::Once<spin::Mutex<[Option<EthVM>; N_MAX_RECURSION_DEPTH]>> = spin::Once::new();
+static DEPTH_LEVEL: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
 
 /// Main entry for executing deployed EVM bytecode.
 /// Loads analyzed code from metadata, runs EthVM with call input, settles fuel,
@@ -173,11 +176,13 @@ static DEPTH: Mutex<usize> = Mutex::new(0);
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log_ext!();
     let Some(analyzed_bytecode) = load_evm_bytecode(&sdk) else {
+        debug_log_ext!();
         return;
     };
+    debug_log_ext!();
     let int_state = bincode_try_decode::<IntState>(INT_PREFIX, sdk.input());
     let mut vm = if let Ok(int_state) = int_state {
-        let depth: usize = DEPTH.lock().clone();
+        let depth = DEPTH_LEVEL.load(Ordering::Relaxed);
         debug_log_ext!("depth={}", depth);
         let input_bytes: Bytes = int_state.init.input.into();
         let mut vm = EthVM::new(sdk.context(), input_bytes.clone(), analyzed_bytecode);
@@ -268,10 +273,10 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 stack
             );
             let stack = interpreter.stack.data();
-            let depth: usize = DEPTH.lock().clone();
+            let depth = DEPTH_LEVEL.load(Ordering::Relaxed);
             debug_log_ext!("depth={}", depth);
-            *DEPTH.lock() = depth + 1;
-            STATE.lock().insert(depth, bincode_encode(&[], &[1, 2, 3]));
+            DEPTH_LEVEL.store(depth + 1, Ordering::Relaxed);
+            ETH_VMS.get().unwrap().lock()[depth] = vec![1, 2, 3];
             let int_state_encoded = bincode_encode(
                 &[],
                 &IntState {

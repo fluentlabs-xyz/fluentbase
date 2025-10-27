@@ -2,6 +2,8 @@
 mod global_executor;
 mod local_executor;
 
+#[cfg(feature = "wasmtime")]
+use crate::runtime::WasmtimeRuntime;
 use crate::{
     module_factory::ModuleFactory,
     runtime::{ExecutionMode, StrategyRuntime},
@@ -9,7 +11,7 @@ use crate::{
 };
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    Address, BytecodeOrHash, ExitCode, HashMap, B256,
+    Address, BytecodeOrHash, ExitCode, HashMap, B256, PRECOMPILE_EVM_RUNTIME, STATE_MAIN,
 };
 use local_executor::LocalExecutor;
 use rwasm::{ExecutionEngine, FuelConfig, ImportLinker, RwasmModule, Strategy, TrapCode};
@@ -242,6 +244,13 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             BytecodeOrHash::Hash(_) => None,
         };
 
+        #[cfg(feature = "wasmtime")]
+        let runtime_address = if let BytecodeOrHash::Bytecode { address, .. } = &bytecode_or_hash {
+            Some(address.clone())
+        } else {
+            None
+        };
+
         // If we have a cached module, then use it, otherwise create a new one and cache
         let module = self.module_factory.get_module_or_init(bytecode_or_hash);
 
@@ -250,32 +259,51 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let fuel_config = FuelConfig::default().with_fuel_limit(ctx.fuel_limit);
 
         #[cfg(feature = "wasmtime")]
-        let strategy = if let Some((address, code_hash)) = enable_wasmtime_runtime {
-            let module = self
-                .module_factory
-                .get_wasmtime_module_or_compile(code_hash, address);
-            Strategy::Wasmtime { module }
+        let mut exec_mode = if runtime_address.is_some_and(|v| v == PRECOMPILE_EVM_RUNTIME)
+            // TODO 4tests, remove
+            && ctx.state == STATE_MAIN
+        {
+            let runtime = WasmtimeRuntime::new(
+                module,
+                self.import_linker.clone(),
+                runtime_address.unwrap(),
+                ctx,
+            );
+            ExecutionMode::Wasmtime(runtime)
         } else {
-            let engine = ExecutionEngine::acquire_shared();
-            Strategy::Rwasm { module, engine }
+            let strategy = if let Some((address, code_hash)) = enable_wasmtime_runtime {
+                let module = self
+                    .module_factory
+                    .get_wasmtime_module_or_compile(code_hash, address);
+                Strategy::Wasmtime { module }
+            } else {
+                let engine = ExecutionEngine::acquire_shared();
+                Strategy::Rwasm { module, engine }
+            };
+            let runtime =
+                StrategyRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
+            ExecutionMode::Strategy(runtime)
         };
         #[cfg(not(feature = "wasmtime"))]
-        let strategy = {
-            let engine = ExecutionEngine::acquire_shared();
-            Strategy::Rwasm { module, engine }
+        let mut exec_mode = {
+            let strategy = {
+                let engine = ExecutionEngine::acquire_shared();
+                Strategy::Rwasm { module, engine }
+            };
+            let runtime =
+                StrategyRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
+            ExecutionMode::Strategy(runtime)
         };
-        let runtime = StrategyRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
-        let mut runtime = ExecutionMode::Strategy(runtime);
 
         // Execute program
-        let result = runtime.execute();
-        let fuel_consumed = runtime
+        let result = exec_mode.execute();
+        let fuel_consumed = exec_mode
             .remaining_fuel()
             .zip(fuel_remaining)
             .map(|(remaining_fuel, store_fuel)| store_fuel - remaining_fuel);
         let runtime_result =
-            runtime.context_mut(|ctx| self.handle_execution_result(result, fuel_consumed, ctx));
-        self.try_remember_runtime(runtime_result, runtime)
+            exec_mode.context_mut(|ctx| self.handle_execution_result(result, fuel_consumed, ctx));
+        self.try_remember_runtime(runtime_result, exec_mode)
     }
 
     fn resume(

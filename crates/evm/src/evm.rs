@@ -24,6 +24,9 @@ pub struct EthVM {
     pub interpreter: Interpreter<InterruptingInterpreter>,
 }
 
+unsafe impl Sync for EthVM {}
+unsafe impl Send for EthVM {}
+
 impl EthVM {
     /// Create a new VM instance bound to the given context and input.
     /// The bytecode must be pre-analyzed (jump table + hash preserved).

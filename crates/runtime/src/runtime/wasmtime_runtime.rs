@@ -1,5 +1,7 @@
+use crate::syscall_handler::InterruptionHolder;
 use crate::{syscall_handler::invoke_runtime_handler, RuntimeContext};
-use fluentbase_types::{Address, HashMap, SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
+use fluentbase_types::{log_ext, Address, ExitCode, HashMap, SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
+use num::ToPrimitive;
 use rwasm::{
     ImportLinker, RwasmModule, Store, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE,
 };
@@ -249,7 +251,7 @@ fn wasmtime_syscall_handler<'a>(
         Val::F64(value) => Value::F64(F64::from_bits(*value)),
         _ => unreachable!("wasmtime: not supported type: {:?}", x),
     }));
-    buffer.extend(std::iter::repeat(Value::I32(0)).take(result.len()));
+    buffer.extend(core::iter::repeat(Value::I32(0)).take(result.len()));
     let (mapped_params, mapped_result) = buffer.split_at_mut(params.len());
     // caller adapter is required to provide operations for accessing memory and context
     let mut caller_adapter = CallerAdapter::<'a> {
@@ -258,18 +260,53 @@ fn wasmtime_syscall_handler<'a>(
     };
     let sys_func_idx =
         SysFuncIdx::from_repr(sys_func_idx).ok_or(TrapCode::UnknownExternalFunction)?;
+    log_ext!("sys_func_idx: {:?}", sys_func_idx);
+    if sys_func_idx == SysFuncIdx::EXIT {
+        if let Some(resumable_context) = caller_adapter
+            .caller
+            .as_context_mut()
+            .data_mut()
+            .resumable_context
+            .take()
+        {
+            match &resumable_context {
+                InterruptionHolder { params, is_root } => {
+                    log_ext!("resumable context params {:?} is_root {}", params, is_root);
+                }
+            }
+            log_ext!("resumable context: {:?}", resumable_context);
+        };
+        let exit_code =
+            caller_adapter.context_mut(|caller| caller.execution_result.exit_code.to_i32());
+        log_ext!("exit_code: {:?}", exit_code);
+        if exit_code.is_some_and(|v| v == ExitCode::InterruptionCalled.into_i32()) {
+            log_ext!();
+        };
+    }
     let syscall_result = invoke_runtime_handler(
         &mut caller_adapter,
         sys_func_idx,
         mapped_params,
         mapped_result,
     );
-    match syscall_result {
+    let syscall_result = match syscall_result {
         Err(TrapCode::InterruptionCalled) => {
-            unreachable!("interruptions are not allowed")
+            log_ext!();
+            let syscall_result = invoke_runtime_handler(
+                &mut caller_adapter,
+                SysFuncIdx::RESUME,
+                mapped_params,
+                mapped_result,
+            );
+            syscall_result
         }
-        _ => {}
-    }
+        Err(_) => {
+            log_ext!("sys_func_idx: {:?}", sys_func_idx);
+            panic!("unexpected trap code for syscall");
+        }
+        Err(TrapCode::ExecutionHalted) => syscall_result,
+        _ => syscall_result,
+    };
     // make sure a syscall result is successful
     let should_terminate = syscall_result.map(|_| false).or_else(|trap_code| {
         // if syscall returns execution halted,

@@ -11,6 +11,7 @@ pub mod fd;
 mod genesis;
 mod import_linker;
 pub mod int_state;
+mod log;
 mod native_api;
 #[cfg(target_arch = "wasm32")]
 mod rwasm_context;
