@@ -154,6 +154,9 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             value: interpreter.input.call_value,
             gas_limit: interpreter.gas.remaining(),
         },
+        meta: Some(interpreter.bytecode.bytecode().clone()),
+        // meta: None,
+        is_ownable: false,
     });
     let mut context_input = context_input
         .encode()

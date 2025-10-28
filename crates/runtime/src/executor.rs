@@ -259,7 +259,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let fuel_config = FuelConfig::default().with_fuel_limit(ctx.fuel_limit);
 
         #[cfg(feature = "wasmtime")]
-        let mut exec_mode = if runtime_address.is_some_and(|v| v == PRECOMPILE_EVM_RUNTIME)
+        let mut exec_mode = if false && runtime_address.is_some_and(|v| v == PRECOMPILE_EVM_RUNTIME)
             // TODO 4tests, remove
             && ctx.state == STATE_MAIN
         {

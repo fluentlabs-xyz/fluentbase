@@ -7,6 +7,7 @@ use crate::{
     IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI, SharedAPI,
     SharedContextInputV1, StorageAPI, SyscallResult, B256, U256,
 };
+use alloc::vec;
 use core::cell::OnceCell;
 
 pub struct SharedContextImpl<API: NativeAPI> {
@@ -33,8 +34,7 @@ impl<API: NativeAPI> SharedContextImpl<API> {
                 input_size >= SharedContextInputV1::SIZE,
                 "malformed input header"
             );
-            let mut header_input: [u8; SharedContextInputV1::SIZE] =
-                [0u8; SharedContextInputV1::SIZE];
+            let mut header_input = vec![0u8; input_size];
             self.native_sdk.read(&mut header_input, 0);
             let result = SharedContextInputV1::decode_from_slice(&header_input)
                 .unwrap_or_else(|_| unreachable!("fluentbase: malformed input header"));
@@ -44,6 +44,19 @@ impl<API: NativeAPI> SharedContextImpl<API> {
 
     pub fn commit_changes_and_exit(&mut self) -> ! {
         self.native_sdk.exit(ExitCode::Ok);
+    }
+
+    pub fn meta_bytes_encoded_size(&self) -> u32 {
+        let Ok(meta_bytes_len) =
+            SharedContextInputV1::try_decode_meta_bytes_only(self.native_sdk.input())
+        else {
+            unsafe {
+                core::hint::unreachable_unchecked();
+            }
+        };
+        let meta_bytes_encoded_size =
+            SharedContextInputV1::compute_meta_bytes_encoded_size(meta_bytes_len);
+        meta_bytes_encoded_size
     }
 }
 
@@ -141,22 +154,31 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
-        self.native_sdk
-            .read(target, SharedContextInputV1::SIZE as u32 + offset)
+        let meta_bytes_encoded_size = self.meta_bytes_encoded_size();
+        self.native_sdk.read(
+            target,
+            SharedContextInputV1::SIZE as u32 + meta_bytes_encoded_size + offset,
+        )
     }
 
     fn input_size(&self) -> u32 {
         let input_size = self.native_sdk.input_size();
-        if input_size < SharedContextInputV1::SIZE as u32 {
+        let meta_bytes_encoded_size = self.meta_bytes_encoded_size();
+        if input_size < SharedContextInputV1::SIZE as u32 + meta_bytes_encoded_size {
             unsafe {
                 core::hint::unreachable_unchecked();
             }
         }
-        unsafe { input_size.unchecked_sub(SharedContextInputV1::SIZE as u32) }
+        unsafe {
+            input_size.unchecked_sub(SharedContextInputV1::SIZE as u32 + meta_bytes_encoded_size)
+        }
     }
 
     fn bytes_input(&self) -> Bytes {
-        self.native_sdk.input().slice(SharedContextInputV1::SIZE..)
+        let meta_bytes_encoded_size = self.meta_bytes_encoded_size();
+        self.native_sdk
+            .input()
+            .slice(SharedContextInputV1::SIZE + meta_bytes_encoded_size as usize..)
     }
 
     fn read_context(&self, target: &mut [u8], offset: u32) {

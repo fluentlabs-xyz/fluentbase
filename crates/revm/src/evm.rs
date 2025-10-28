@@ -12,6 +12,7 @@ use fluentbase_sdk::{
     resolve_precompiled_runtime_from_input, try_resolve_precompile_account_from_input, Address,
     Bytes, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX_V1, UPDATE_GENESIS_PREFIX_V2,
 };
+use revm::interpreter::Host;
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
     context::{ContextError, ContextSetters, Evm, FrameStack, JournalTr},

@@ -434,6 +434,8 @@ pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec
             block: Default::default(),
             tx: Default::default(),
             contract: Default::default(),
+            meta: Default::default(),
+            is_ownable: Default::default(),
         };
         let mut buf = BytesMut::new();
         buf.extend(shared_ctx.encode_to_vec().unwrap());
