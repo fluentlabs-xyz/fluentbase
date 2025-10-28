@@ -15,10 +15,10 @@ use fluentbase_sdk::int_state::{
     bincode_encode, bincode_try_decode, IntOutcomeState, IntState, INT_PREFIX,
 };
 use fluentbase_sdk::{
-    is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule, BlockContextV1,
-    BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode, SharedContextInput,
-    SharedContextInputV1, SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY,
-    STATE_MAIN, U256,
+    debug_log_ext, is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule,
+    BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode,
+    SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
+    FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, Bytecode},
@@ -125,6 +125,17 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .input
         .account_owner
         .unwrap_or_else(|| bytecode_address);
+    let meta_account = ctx.journal_mut().load_account_code(bytecode_address)?;
+    let meta_bytecode = meta_account.info.code.clone().unwrap_or_default();
+    let ownable_account_bytecode = match meta_bytecode {
+        Bytecode::OwnableAccount(v) => Some(v),
+        _ => None,
+    };
+    let ownable_account_bytecode_metadata = ownable_account_bytecode.map(|v| v.metadata);
+    debug_log_ext!(
+        "ownable_account_bytecode_metadata.len={}",
+        ownable_account_bytecode_metadata.as_ref().unwrap().len()
+    );
 
     // encode input with all related context info
     let context_input = SharedContextInput::V1(SharedContextInputV1 {
@@ -154,14 +165,15 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             value: interpreter.input.call_value,
             gas_limit: interpreter.gas.remaining(),
         },
-        meta: Some(interpreter.bytecode.bytecode().clone()),
-        // meta: None,
+        meta: ownable_account_bytecode_metadata,
+        // TODO delete or fill?
         is_ownable: false,
     });
     let mut context_input = context_input
         .encode()
         .expect("revm: unable to encode shared context input")
         .to_vec();
+    debug_log_ext!("context_input.len={:?}", context_input.len());
     let inputs_bytes = interpreter.input.input.bytes(ctx);
     context_input.extend_from_slice(&inputs_bytes);
 

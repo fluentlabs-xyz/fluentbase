@@ -1,5 +1,6 @@
 use alloc::vec;
 use auto_impl::auto_impl;
+use bincode::config::{Configuration, Fixint, LittleEndian};
 use fluentbase_types::{Address, Bytes, B256, U256};
 
 #[auto_impl(&)]
@@ -27,6 +28,8 @@ pub trait ContextReader {
     fn contract_gas_limit(&self) -> u64;
 }
 
+const BINCODE_CONFIG_DEFAULT: Configuration<LittleEndian, Fixint> = bincode::config::legacy();
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum SharedContextInput {
     V1(SharedContextInputV1),
@@ -34,16 +37,14 @@ pub enum SharedContextInput {
 
 impl SharedContextInput {
     pub fn decode(buf: &[u8]) -> Result<Self, bincode::error::DecodeError> {
-        let config = bincode::config::legacy();
-        let result = bincode::decode_from_slice(buf, config)?;
+        let result = bincode::decode_from_slice(buf, BINCODE_CONFIG_DEFAULT)?;
         Ok(Self::V1(result.0))
     }
 
     pub fn encode(&self) -> Result<Bytes, bincode::error::EncodeError> {
         match self {
             SharedContextInput::V1(value) => {
-                let config = bincode::config::legacy();
-                let result: Bytes = bincode::encode_to_vec(value, config)?.into();
+                let result: Bytes = bincode::encode_to_vec(value, BINCODE_CONFIG_DEFAULT)?.into();
                 Ok(result)
             }
         }
@@ -240,9 +241,10 @@ impl bincode::Encode for SharedContextInputV1 {
         let reserved = [0u8; Self::SIZE_RESERVED];
         bincode::Encode::encode(&reserved, e)?;
 
-        if self.meta.is_some() {
-            let meta_bytes = self.meta.as_ref().unwrap_or_default();
-            bincode::Encode::encode(meta_bytes.as_ref(), e)?;
+        if let Some(meta_bytes) = self.meta.as_ref() {
+            if meta_bytes.len() > 0 {
+                bincode::Encode::encode(meta_bytes.as_ref(), e)?;
+            }
         }
 
         Ok(())
@@ -331,7 +333,7 @@ impl SharedContextInputV1 {
     pub fn decode_type_from_slice<T: bincode::de::Decode<()>>(
         buf: &[u8],
     ) -> Result<T, bincode::error::DecodeError> {
-        let (result, _) = bincode::decode_from_slice(buf, bincode::config::legacy())?;
+        let (result, _) = bincode::decode_from_slice(buf, BINCODE_CONFIG_DEFAULT)?;
         Ok(result)
     }
 
@@ -341,7 +343,7 @@ impl SharedContextInputV1 {
     }
 
     pub fn encode_to_vec(&self) -> Result<Bytes, bincode::error::EncodeError> {
-        let result: Bytes = bincode::encode_to_vec(self, bincode::config::legacy())?.into();
+        let result: Bytes = bincode::encode_to_vec(self, BINCODE_CONFIG_DEFAULT)?.into();
         Ok(result)
     }
     pub fn meta_bytes_len_position() -> usize {
@@ -352,7 +354,7 @@ impl SharedContextInputV1 {
     ) -> Result<u32, bincode::error::DecodeError> {
         Self::decode_type_from_slice(buf.as_ref())
     }
-    pub fn try_decode_meta_bytes_only<BUF: AsRef<[u8]>>(
+    pub fn meta_bytes_len_only_try_decode<BUF: AsRef<[u8]>>(
         buf: BUF,
     ) -> Result<u32, bincode::error::DecodeError> {
         Self::decode_type_from_slice(&buf.as_ref()[Self::meta_bytes_len_position()..])
@@ -414,7 +416,8 @@ mod tests {
             is_ownable: true,
         };
         let encoded = context.encode_to_vec().unwrap();
-        let meta_bytes_len = SharedContextInputV1::try_decode_meta_bytes_only(&encoded).unwrap();
+        let meta_bytes_len =
+            SharedContextInputV1::meta_bytes_len_only_try_decode(&encoded).unwrap();
         assert_eq!(meta_bytes_len, context.meta.as_ref().unwrap().len() as u32);
         let decoded = SharedContextInputV1::decode_from_slice(&encoded).unwrap();
         assert_eq!(context, decoded);

@@ -2,6 +2,7 @@ mod context;
 
 use crate::{
     byteorder::{ByteOrder, LittleEndian},
+    debug_log_ext,
     syscall::*,
     Address, BytecodeOrHash, Bytes, ContextReader, CryptoAPI, ExitCode, IsAccountEmpty,
     IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI, SharedAPI,
@@ -48,7 +49,7 @@ impl<API: NativeAPI> SharedContextImpl<API> {
 
     pub fn meta_bytes_encoded_size(&self) -> u32 {
         let Ok(meta_bytes_len) =
-            SharedContextInputV1::try_decode_meta_bytes_only(self.native_sdk.input())
+            SharedContextInputV1::meta_bytes_len_only_try_decode(self.native_sdk.input())
         else {
             unsafe {
                 core::hint::unreachable_unchecked();

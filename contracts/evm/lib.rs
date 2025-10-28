@@ -49,6 +49,7 @@ pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: B
 pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<AnalyzedBytecode> {
     // We use bytecode address because contract can be called using DELEGATECALL
     let bytecode_address = sdk.context().contract_bytecode_address();
+    debug_log_ext!("bytecode_address: {:?}", bytecode_address);
     // Read metadata size, if it's zero, then an account is not assigned to the EVM runtime
     debug_log_ext!();
     let (metadata_size, is_account_ownable, _, _) = sdk.metadata_size(&bytecode_address).unwrap();
@@ -61,7 +62,13 @@ pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<AnalyzedByt
         .metadata_copy(&bytecode_address, 0, metadata_size)
         .unwrap();
     // Get EVM bytecode from metadata
-    Some(match EthereumMetadata::read_from_bytes(&metadata)? {
+    bytecode_from_metadata(&metadata)
+}
+
+pub(crate) fn bytecode_from_metadata(metadata: &Bytes) -> Option<AnalyzedBytecode> {
+    // Get EVM bytecode from metadata
+    debug_log_ext!("metadata({})={:?}", metadata.len(), metadata);
+    Some(match EthereumMetadata::read_from_bytes(metadata)? {
         EthereumMetadata::Legacy(bytecode) => {
             AnalyzedBytecode::new(bytecode.bytecode, bytecode.hash)
         }
@@ -174,12 +181,28 @@ static DEPTH_LEVEL: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
 /// Loads analyzed code from metadata, runs EthVM with call input, settles fuel,
 /// and writes the returned data.
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    debug_log_ext!("meta.len={}", sdk.context().meta().len());
-    let Some(analyzed_bytecode) = load_evm_bytecode(&sdk) else {
+    let ctx = sdk.context();
+    let meta = ctx.meta();
+    // debug_log_ext!("meta.len={}", sdk.context().meta().len());
+    // let Some(analyzed_bytecode) = load_evm_bytecode(&sdk) else {
+    //     debug_log_ext!();
+    //     return;
+    // };
+    // debug_log_ext!(
+    //     "analyzed_bytecode.len={} {:x?}",
+    //     analyzed_bytecode.len,
+    //     analyzed_bytecode.bytecode
+    // );
+    let Some(analyzed_bytecode) = bytecode_from_metadata(meta) else {
         debug_log_ext!();
         return;
     };
-    debug_log_ext!("analyzed_bytecode.len={}", analyzed_bytecode.len);
+    debug_log_ext!(
+        "analyzed_bytecode2.len={} {:x?}",
+        analyzed_bytecode.len,
+        analyzed_bytecode.bytecode
+    );
+    drop(ctx);
     // let int_state = bincode_try_decode::<IntState>(INT_PREFIX, sdk.input());
     // let mut vm = if let Ok(int_state) = int_state {
     //     let depth = DEPTH_LEVEL.load(Ordering::Relaxed);
