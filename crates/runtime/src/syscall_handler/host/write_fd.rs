@@ -32,7 +32,7 @@ pub fn syscall_write_fd_handler(
     let (fd, slice_ptr, slice_len) = (
         params[0].i32().unwrap() as u32,
         params[1].i32().unwrap() as u32,
-        params[1].i32().unwrap() as u32,
+        params[2].i32().unwrap() as u32,
     );
     let mut input = vec![0u8; slice_len as usize];
     caller.memory_read(slice_ptr as usize, &mut input)?;
