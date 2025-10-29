@@ -1902,6 +1902,7 @@ dependencies = [
  "fluentbase-codec-derive",
  "fluentbase-types",
  "k256",
+ "log",
  "num",
  "p256",
  "rwasm",

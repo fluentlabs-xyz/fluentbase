@@ -12,7 +12,7 @@ use fluentbase_runtime::{
     RuntimeContext,
 };
 use fluentbase_sdk::int_state::{
-    bincode_encode, bincode_try_decode, IntOutcomeState, IntState, INT_PREFIX,
+    bincode_encode_prefixed, bincode_try_decode_prefixed, IntOutcomeState, IntState, INT_PREFIX,
 };
 use fluentbase_sdk::{
     debug_log_ext, is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule,
@@ -132,10 +132,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         _ => None,
     };
     let ownable_account_bytecode_metadata = ownable_account_bytecode.map(|v| v.metadata);
-    debug_log_ext!(
-        "ownable_account_bytecode_metadata.len={}",
-        ownable_account_bytecode_metadata.as_ref().unwrap().len()
-    );
 
     // encode input with all related context info
     let context_input = SharedContextInput::V1(SharedContextInputV1 {
@@ -310,7 +306,8 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     if exit_code == ExitCode::InterruptionCalled.into_i32() {
         let syscall_return_data = return_data.clone();
-        let mut int_state: IntState = bincode_try_decode(&[], &syscall_return_data).unwrap();
+        let mut int_state: IntState =
+            bincode_try_decode_prefixed(&[], &syscall_return_data).unwrap();
 
         let syscall_next_action = process_exec_result(
             frame,
@@ -336,7 +333,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
             fuel_consumed,
             fuel_refunded,
         };
-        let int_state_encoded = bincode_encode::<IntState>(INT_PREFIX, &int_state);
+        let int_state_encoded = bincode_encode_prefixed::<IntState>(INT_PREFIX, &int_state);
         frame.interpreter.input.input = CallInput::Bytes(int_state_encoded.to_vec().into());
 
         return Ok(syscall_next_action);

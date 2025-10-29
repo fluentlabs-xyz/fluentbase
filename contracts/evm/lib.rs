@@ -20,7 +20,8 @@ use fluentbase_sdk::{
     B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE, U256,
 };
 use fluentbase_types::int_state::{
-    bincode_encode, bincode_try_decode, IntInitState, IntOutcomeState, IntState, INT_PREFIX,
+    bincode_encode_prefixed, bincode_try_decode_prefixed, IntInitState, IntOutcomeState, IntState,
+    INT_PREFIX,
 };
 use fluentbase_types::SyscallInvocationParams;
 use hashbrown::HashMap;
@@ -44,30 +45,30 @@ pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: B
         .unwrap();
 }
 
-/// Load analyzed EVM bytecode from contract metadata.
-/// Returns None if metadata is empty or code hash is zero/KECCAK_EMPTY.
-pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<AnalyzedBytecode> {
-    // We use bytecode address because contract can be called using DELEGATECALL
-    let bytecode_address = sdk.context().contract_bytecode_address();
-    debug_log_ext!("bytecode_address: {:?}", bytecode_address);
-    // Read metadata size, if it's zero, then an account is not assigned to the EVM runtime
-    debug_log_ext!();
-    let (metadata_size, is_account_ownable, _, _) = sdk.metadata_size(&bytecode_address).unwrap();
-    debug_log_ext!();
-    if !is_account_ownable {
-        debug_log_ext!();
-        return None;
-    }
-    let metadata = sdk
-        .metadata_copy(&bytecode_address, 0, metadata_size)
-        .unwrap();
-    // Get EVM bytecode from metadata
-    bytecode_from_metadata(&metadata)
-}
+// /// Load analyzed EVM bytecode from contract metadata.
+// /// Returns None if metadata is empty or code hash is zero/KECCAK_EMPTY.
+// pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<AnalyzedBytecode> {
+//     // We use bytecode address because contract can be called using DELEGATECALL
+//     let bytecode_address = sdk.context().contract_bytecode_address();
+//     debug_log_ext!("bytecode_address: {:?}", bytecode_address);
+//     // Read metadata size, if it's zero, then an account is not assigned to the EVM runtime
+//     debug_log_ext!();
+//     let (metadata_size, is_account_ownable, _, _) = sdk.metadata_size(&bytecode_address).unwrap();
+//     debug_log_ext!();
+//     if !is_account_ownable {
+//         debug_log_ext!();
+//         return None;
+//     }
+//     let metadata = sdk
+//         .metadata_copy(&bytecode_address, 0, metadata_size)
+//         .unwrap();
+//     // Get EVM bytecode from metadata
+//     bytecode_from_metadata(&metadata)
+// }
 
+/// Transforms metadata into analyzed EVM bytecode when possible.
 pub(crate) fn bytecode_from_metadata(metadata: &Bytes) -> Option<AnalyzedBytecode> {
     // Get EVM bytecode from metadata
-    debug_log_ext!("metadata({})={:?}", metadata.len(), metadata);
     Some(match EthereumMetadata::read_from_bytes(metadata)? {
         EthereumMetadata::Legacy(bytecode) => {
             AnalyzedBytecode::new(bytecode.bytecode, bytecode.hash)
@@ -181,146 +182,109 @@ static DEPTH_LEVEL: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
 /// Loads analyzed code from metadata, runs EthVM with call input, settles fuel,
 /// and writes the returned data.
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
+    debug_log_ext!();
+    debug_log_ext!("sdk.input_size()={}", sdk.input_size());
     let ctx = sdk.context();
-    let meta = ctx.meta();
-    // debug_log_ext!("meta.len={}", sdk.context().meta().len());
-    // let Some(analyzed_bytecode) = load_evm_bytecode(&sdk) else {
-    //     debug_log_ext!();
-    //     return;
-    // };
-    // debug_log_ext!(
-    //     "analyzed_bytecode.len={} {:x?}",
-    //     analyzed_bytecode.len,
-    //     analyzed_bytecode.bytecode
-    // );
-    let Some(analyzed_bytecode) = bytecode_from_metadata(meta) else {
+    let metadata = ctx.meta();
+    let Some(analyzed_bytecode) = bytecode_from_metadata(metadata) else {
         debug_log_ext!();
         return;
     };
-    debug_log_ext!(
-        "analyzed_bytecode2.len={} {:x?}",
-        analyzed_bytecode.len,
-        analyzed_bytecode.bytecode
-    );
-    drop(ctx);
-    // let int_state = bincode_try_decode::<IntState>(INT_PREFIX, sdk.input());
-    // let mut vm = if let Ok(int_state) = int_state {
-    //     let depth = DEPTH_LEVEL.load(Ordering::Relaxed);
-    //     debug_log_ext!("depth={}", depth);
-    //     let input_bytes: Bytes = int_state.init.input.into();
-    //     let mut vm = EthVM::new(sdk.context(), input_bytes.clone(), analyzed_bytecode);
-    //     let interpreter = &mut vm.interpreter;
-    //     interpreter.input.input = CallInput::Bytes(input_bytes);
-    //     interpreter
-    //         .bytecode
-    //         .absolute_jump(int_state.init.bytecode_pc);
-    //     assert_eq!(
-    //         int_state.outcome.output.len() / U256::BYTES * U256::BYTES,
-    //         int_state.outcome.output.len()
-    //     );
-    //     for stack_item_bytes in int_state.init.interpreter_stack {
-    //         let stack_item = U256::from_le_slice(&stack_item_bytes);
-    //         interpreter.stack.data_mut().push(stack_item);
-    //     }
-    //     let mut gas = Gas::new_spent(int_state.outcome.fuel_consumed / FUEL_DENOM_RATE);
-    //     gas.record_refund(int_state.outcome.fuel_refunded / FUEL_DENOM_RATE as i64);
-    //     {
-    //         let dirty_gas = &mut interpreter.gas;
-    //         if !dirty_gas.record_cost(gas.spent()) {
-    //             unreachable!(
-    //                 "evm: a fatal gas mis-sync between runtimes, this should never happen"
-    //             );
-    //         }
-    //         interpreter.extend.committed_gas = *dirty_gas;
-    //     }
-    //     interpreter.extend.interruption_outcome = Option::from(InterruptionOutcome {
-    //         output: int_state.outcome.output.clone().into(),
-    //         gas,
-    //         exit_code: ExitCode::from(int_state.outcome.exit_code),
-    //     });
-    //     vm
-    // } else {
-    //     EthVM::new(sdk.context(), sdk.bytes_input(), analyzed_bytecode)
-    // };
-    // debug_log_ext!("vm.interpreter.stack.len={}", vm.interpreter.stack.len());
-    // let result = match vm.run_step(
-    //     &fluentbase_evm::opcodes::interruptable_instruction_table(),
-    //     &mut sdk,
-    // ) {
-    //     InterpreterAction::Return(result) => {
-    //         let committed_gas = vm.interpreter.extend.committed_gas;
-    //         let bytecode = &vm.interpreter.bytecode;
-    //         let (len, opcode, pc) = (bytecode.len(), bytecode.opcode(), bytecode.pc());
-    //         let stack = vm.interpreter.stack.data();
-    //         debug_log_ext!(
-    //             "len={} opcode={:x?} pc={} stack={:?}",
-    //             len,
-    //             opcode,
-    //             pc,
-    //             stack
-    //         );
-    //         let result = ExecutionResult {
-    //             result: result.result,
-    //             output: result.output,
-    //             committed_gas,
-    //             gas: result.gas,
-    //         };
-    //         debug_log_ext!("result={:?}", result);
-    //         let consumed_diff = result.chargeable_fuel();
-    //         sdk.charge_fuel(consumed_diff);
-    //         result
-    //     }
-    //     InterpreterAction::SystemInterruption {
-    //         code_hash,
-    //         input,
-    //         fuel_limit,
-    //         state,
-    //     } => {
-    //         vm.sync_evm_gas(&mut sdk);
-    //         let syscall_params = SyscallInvocationParams {
-    //             code_hash,
-    //             input: input.clone(),
-    //             fuel_limit: fuel_limit.unwrap_or(u64::MAX),
-    //             state,
-    //             fuel16_ptr: 0,
-    //         };
-    //         let interpreter = vm.interpreter;
-    //         let bytecode = &interpreter.bytecode;
-    //         let (len, opcode, pc) = (bytecode.len(), bytecode.opcode(), bytecode.pc());
-    //         let stack = interpreter.stack.data();
-    //         debug_log_ext!(
-    //             "len={} opcode={:x?} pc={} stack={:?}",
-    //             len,
-    //             opcode,
-    //             pc,
-    //             stack
-    //         );
-    //         let stack = interpreter.stack.data();
-    //         let depth = DEPTH_LEVEL.load(Ordering::Relaxed);
-    //         debug_log_ext!("depth={}", depth);
-    //         DEPTH_LEVEL.store(depth + 1, Ordering::Relaxed);
-    //         ETH_VMS.get().unwrap().lock()[depth] = vec![1, 2, 3];
-    //         let int_state_encoded = bincode_encode(
-    //             &[],
-    //             &IntState {
-    //                 syscall_params: syscall_params.encode(),
-    //                 init: IntInitState {
-    //                     input: sdk.input().to_vec(),
-    //                     bytecode_pc: pc, // +1 for next opcode
-    //                     interpreter_stack: stack.iter().map(|v| v.to_le_bytes()).collect(),
-    //                 },
-    //                 outcome: Default::default(),
-    //             },
-    //         );
-    //         debug_log_ext!("interruption exit");
-    //         handle_interruption(&mut sdk, &int_state_encoded);
-    //     }
-    //     InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
-    // };
-    let result = {
-        let input = sdk.bytes_input();
-        EthVM::new(sdk.context(), input, analyzed_bytecode).run_the_loop(&mut sdk)
+    let int_state = bincode_try_decode_prefixed::<IntState>(INT_PREFIX, sdk.input());
+    let mut vm = if let Ok(int_state) = int_state {
+        let depth = DEPTH_LEVEL.load(Ordering::Relaxed);
+        debug_log_ext!("depth={}", depth);
+        let input_bytes: Bytes = int_state.init.input.into();
+        let mut vm = EthVM::new(ctx, input_bytes.clone(), analyzed_bytecode);
+        let interpreter = &mut vm.interpreter;
+        interpreter.input.input = CallInput::Bytes(input_bytes);
+        interpreter
+            .bytecode
+            .absolute_jump(int_state.init.bytecode_pc);
+        assert_eq!(
+            int_state.outcome.output.len() / U256::BYTES * U256::BYTES,
+            int_state.outcome.output.len()
+        );
+        let mut gas = Gas::new_spent(int_state.outcome.fuel_consumed / FUEL_DENOM_RATE);
+        gas.record_refund(int_state.outcome.fuel_refunded / FUEL_DENOM_RATE as i64);
+        {
+            let dirty_gas = &mut interpreter.gas;
+            if !dirty_gas.record_cost(gas.spent()) {
+                unreachable!(
+                    "evm: a fatal gas mis-sync between runtimes, this should never happen"
+                );
+            }
+            interpreter.extend.committed_gas = *dirty_gas;
+        }
+        interpreter.extend.interruption_outcome = Option::from(InterruptionOutcome {
+            output: int_state.outcome.output.clone().into(),
+            gas,
+            exit_code: ExitCode::from(int_state.outcome.exit_code),
+        });
+        vm
+    } else {
+        EthVM::new(ctx, sdk.bytes_input(), analyzed_bytecode)
     };
+    let result = match vm.run_step(
+        &fluentbase_evm::opcodes::interruptable_instruction_table(),
+        &mut sdk,
+    ) {
+        InterpreterAction::Return(result) => {
+            let committed_gas = vm.interpreter.extend.committed_gas;
+            let result = ExecutionResult {
+                result: result.result,
+                output: result.output,
+                committed_gas,
+                gas: result.gas,
+            };
+            let consumed_diff = result.chargeable_fuel();
+            sdk.charge_fuel(consumed_diff);
+            result
+        }
+        InterpreterAction::SystemInterruption {
+            code_hash,
+            input,
+            fuel_limit,
+            state,
+        } => {
+            vm.sync_evm_gas(&mut sdk);
+            let syscall_params = SyscallInvocationParams {
+                code_hash,
+                input: input.clone(),
+                fuel_limit: fuel_limit.unwrap_or(u64::MAX),
+                state,
+                fuel16_ptr: 0,
+            };
+            let interpreter = vm.interpreter;
+            let bytecode = &interpreter.bytecode;
+            let pc = bytecode.pc();
+            let depth = DEPTH_LEVEL.load(Ordering::Relaxed);
+            debug_log_ext!("depth={}", depth);
+            DEPTH_LEVEL.store(depth + 1, Ordering::Relaxed);
+            // ETH_VMS.get().unwrap().lock()[depth] = vec![1, 2, 3];
+            let int_state_encoded = bincode_encode_prefixed(
+                &[],
+                &IntState {
+                    syscall_params: syscall_params.encode(),
+                    init: IntInitState {
+                        input: sdk.input().to_vec(),
+                        bytecode_pc: pc,
+                    },
+                    outcome: Default::default(),
+                },
+            );
+            debug_log_ext!(
+                "interruption exit. int_state_encoded.len={}",
+                int_state_encoded.len()
+            );
+            handle_interruption(&mut sdk, &int_state_encoded);
+        }
+        InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
+    };
+    // let result = {
+    //     let input = sdk.bytes_input();
+    //     EthVM::new(sdk.context(), input, analyzed_bytecode).run_the_loop(&mut sdk)
+    // };
     if !result.result.is_ok() {
         return handle_not_ok_result(sdk, result);
     }

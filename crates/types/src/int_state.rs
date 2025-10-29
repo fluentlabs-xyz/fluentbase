@@ -1,18 +1,19 @@
+use alloc::vec;
 use alloc::vec::Vec;
+use bincode::config::{Configuration, Fixint, LittleEndian};
 use bincode::error;
 use bincode::serde::Compat;
 use serde::{Deserialize, Serialize};
 
 pub const INT_PREFIX: &[u8] = b"int_prefix";
 
-#[derive(Default, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Default, Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct IntInitState {
     pub input: Vec<u8>,
-    pub interpreter_stack: Vec<[u8; 32]>,
     pub bytecode_pc: usize,
 }
 
-#[derive(Default, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Default, Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct IntOutcomeState {
     pub output: Vec<u8>,
     // pub bytecode_pc: usize,
@@ -22,20 +23,34 @@ pub struct IntOutcomeState {
     // pub gas_spent: u64,
 }
 
-#[derive(Default, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Default, Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct IntState {
     pub syscall_params: Vec<u8>,
     pub init: IntInitState,
     pub outcome: IntOutcomeState,
 }
 
-pub fn bincode_encode<T: serde::ser::Serialize>(prefix: &[u8], obj: &T) -> Vec<u8> {
-    let mut buf: Vec<u8> = prefix.to_vec();
-    let bincode_config = bincode::config::legacy();
-    buf.extend(bincode::encode_to_vec(Compat(obj), bincode_config).unwrap());
+const BINCODE_CONFIG_DEFAULT: Configuration<LittleEndian, Fixint> = bincode::config::legacy();
+
+pub fn bincode_encode<T: serde::ser::Serialize>(obj: &T) -> Vec<u8> {
+    let mut buf = vec![];
+    buf.extend(bincode::encode_to_vec(Compat(obj), BINCODE_CONFIG_DEFAULT).unwrap());
     buf
 }
+pub fn bincode_encode_prefixed<T: serde::ser::Serialize>(prefix: &[u8], obj: &T) -> Vec<u8> {
+    let mut buf = prefix.to_vec();
+    buf.extend(bincode_encode(obj));
+    buf
+}
+
 pub fn bincode_try_decode<T: serde::de::DeserializeOwned>(
+    buf: &[u8],
+) -> Result<T, error::DecodeError> {
+    let bincode_config = bincode::config::legacy();
+    let result: Compat<T> = bincode::decode_from_slice(buf, bincode_config)?.0;
+    Ok(result.0)
+}
+pub fn bincode_try_decode_prefixed<T: serde::de::DeserializeOwned>(
     prefix: &[u8],
     buf: &[u8],
 ) -> Result<T, error::DecodeError> {
@@ -44,15 +59,14 @@ pub fn bincode_try_decode<T: serde::de::DeserializeOwned>(
         return Err(error::DecodeError::Other("incorrect prefix"));
     }
     data = &buf[prefix.len()..];
-    let bincode_config = bincode::config::legacy();
-    let result: Compat<T> = bincode::decode_from_slice(data, bincode_config)?.0;
-    Ok(result.0)
+    bincode_try_decode(data)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::int_state::{
-        bincode_encode, bincode_try_decode, IntInitState, IntOutcomeState, IntState,
+        bincode_encode_prefixed, bincode_try_decode_prefixed, IntInitState, IntOutcomeState,
+        IntState,
     };
 
     #[test]
@@ -62,7 +76,6 @@ mod tests {
             init: IntInitState {
                 input: vec![4, 5, 6],
                 bytecode_pc: 1,
-                interpreter_stack: vec![],
             },
             outcome: IntOutcomeState {
                 output: vec![7, 8, 9],
@@ -71,8 +84,8 @@ mod tests {
                 fuel_refunded: 2,
             },
         };
-        let obj1_enc = bincode_encode(&[], &obj1);
-        let obj1_dec: IntState = bincode_try_decode(&[], &obj1_enc).unwrap();
+        let obj1_enc = bincode_encode_prefixed(&[], &obj1);
+        let obj1_dec: IntState = bincode_try_decode_prefixed(&[], &obj1_enc).unwrap();
         assert_eq!(obj1, obj1_dec);
     }
 }

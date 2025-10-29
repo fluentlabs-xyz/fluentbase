@@ -91,6 +91,7 @@ pub struct SharedContextInputV1 {
     pub tx: TxContextV1,
     pub contract: ContractContextV1,
     pub meta: Option<Bytes>,
+    // TODO do we need it?
     pub is_ownable: bool,
 }
 
@@ -361,7 +362,7 @@ impl SharedContextInputV1 {
     }
     pub fn compute_meta_bytes_encoded_size(len: u32) -> u32 {
         if len > 0 {
-            return len + 8; // bincode encoding for metadata of Bytes or Vec<u8>
+            return len + size_of::<usize>() as u32 * 2; // bincode encoding for metadata of Bytes or Vec<u8>
         }
         0
     }

@@ -1,6 +1,11 @@
 use crate::syscall_handler::InterruptionHolder;
 use crate::{syscall_handler::invoke_runtime_handler, RuntimeContext};
+use fluentbase_types::int_state::{
+    bincode_encode, bincode_encode_prefixed, bincode_try_decode, bincode_try_decode_prefixed,
+    IntState, INT_PREFIX,
+};
 use fluentbase_types::{log_ext, Address, ExitCode, HashMap, SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
+use log::log;
 use num::ToPrimitive;
 use rwasm::{
     ImportLinker, RwasmModule, Store, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE,
@@ -11,7 +16,8 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use wasmtime::{
-    AsContextMut, Config, Engine, Func, Instance, Linker, Module, OptLevel, Strategy, Trap, Val,
+    AsContext, AsContextMut, Config, Engine, Func, Instance, Linker, Module, OptLevel, Strategy,
+    Trap, Val,
 };
 
 pub struct WasmtimeRuntime {
@@ -97,8 +103,28 @@ impl WasmtimeRuntime {
             _ => unreachable!(),
         };
         *compiled_runtime.store.data_mut() = ctx;
-        // Call the function based on the passed state
-        let result = entrypoint.call(compiled_runtime.store.as_context_mut(), &[], &mut []);
+        let mut int_state: Option<IntState> = None;
+        let result = loop {
+            if let Some(int_state) = int_state {
+                log_ext!();
+                let int_state_encoded = bincode_encode_prefixed(INT_PREFIX, &int_state);
+                log_ext!("int_state_encoded.len={}", int_state_encoded.len());
+                compiled_runtime.store.as_context_mut().data_mut().input = int_state_encoded.into();
+            }
+            // Call the function based on the passed state
+            let result = entrypoint.call(compiled_runtime.store.as_context_mut(), &[], &mut []);
+            let mut runtime_ctx = compiled_runtime.store.as_context_mut();
+            if runtime_ctx.data().execution_result.exit_code
+                == ExitCode::InterruptionCalled.into_i32()
+            {
+                runtime_ctx.data_mut().execution_result.exit_code = ExitCode::Ok.into_i32();
+                int_state =
+                    Some(bincode_try_decode(&runtime_ctx.data().execution_result.output).unwrap());
+                continue;
+            }
+            // TODO handle recovery after interruption
+            break result;
+        };
         result.map_err(map_anyhow_error).or_else(|trap_code| {
             if trap_code == TrapCode::ExecutionHalted {
                 Ok(())
@@ -261,52 +287,33 @@ fn wasmtime_syscall_handler<'a>(
     let sys_func_idx =
         SysFuncIdx::from_repr(sys_func_idx).ok_or(TrapCode::UnknownExternalFunction)?;
     log_ext!("sys_func_idx: {:?}", sys_func_idx);
-    if sys_func_idx == SysFuncIdx::EXIT {
-        if let Some(resumable_context) = caller_adapter
-            .caller
-            .as_context_mut()
-            .data_mut()
-            .resumable_context
-            .take()
-        {
-            match &resumable_context {
-                InterruptionHolder { params, is_root } => {
-                    log_ext!("resumable context params {:?} is_root {}", params, is_root);
-                }
-            }
-            log_ext!("resumable context: {:?}", resumable_context);
-        };
-        let exit_code =
-            caller_adapter.context_mut(|caller| caller.execution_result.exit_code.to_i32());
-        log_ext!("exit_code: {:?}", exit_code);
-        if exit_code.is_some_and(|v| v == ExitCode::InterruptionCalled.into_i32()) {
-            log_ext!();
-        };
-    }
     let syscall_result = invoke_runtime_handler(
         &mut caller_adapter,
         sys_func_idx,
         mapped_params,
         mapped_result,
     );
-    let syscall_result = match syscall_result {
-        Err(TrapCode::InterruptionCalled) => {
-            log_ext!();
-            let syscall_result = invoke_runtime_handler(
-                &mut caller_adapter,
-                SysFuncIdx::RESUME,
-                mapped_params,
-                mapped_result,
-            );
-            syscall_result
-        }
-        Err(_) => {
-            log_ext!("sys_func_idx: {:?}", sys_func_idx);
-            panic!("unexpected trap code for syscall");
-        }
-        Err(TrapCode::ExecutionHalted) => syscall_result,
-        _ => syscall_result,
-    };
+    let execution_result = &mut caller_adapter.caller.data_mut().execution_result;
+    log_ext!(
+        "caller_adapter.caller.data_mut().execution_result.output({})={:x?} exit_code={:?} mapped_params={:?} mapped_result={:?}",
+        execution_result.output.len(),
+        execution_result.output,
+        execution_result.exit_code,
+        mapped_params,
+        mapped_result,
+    );
+    if execution_result.exit_code == ExitCode::InterruptionCalled.into_i32() {
+        return Ok(());
+        // let int_state = bincode_try_decode::<IntState>(&execution_result.output);
+        // if let Ok(int_state) = int_state {
+        //     execution_result.output.clear();
+        //     execution_result.exit_code = ExitCode::Ok.into_i32();
+        //     caller_adapter.caller.data_mut().execution_result.int_state = Some(int_state);
+        //     log_ext!();
+        //     return Ok(());
+        // }
+        // unreachable!("must contain interruption state")
+    }
     // make sure a syscall result is successful
     let should_terminate = syscall_result.map(|_| false).or_else(|trap_code| {
         // if syscall returns execution halted,
@@ -317,6 +324,7 @@ fn wasmtime_syscall_handler<'a>(
             Err(trap_code)
         }
     })?;
+    log_ext!();
     // after call map all values back to wasmtime format
     for (i, value) in mapped_result.iter().enumerate() {
         result[i] = match value {
@@ -329,8 +337,10 @@ fn wasmtime_syscall_handler<'a>(
     }
     // terminate execution if required
     if should_terminate {
+        log_ext!();
         return Err(TrapCode::ExecutionHalted.into());
     }
+    log_ext!();
     Ok(())
 }
 
