@@ -27,6 +27,7 @@ pub struct WasmtimeRuntime {
     compiled_runtime: Option<CompiledRuntime>,
     ctx: Option<RuntimeContext>,
     address: Address,
+    int_state: Option<IntState>,
 }
 
 struct CompiledRuntime {
@@ -88,6 +89,7 @@ impl WasmtimeRuntime {
             compiled_runtime: Some(compiled_runtime),
             ctx: Some(ctx),
             address,
+            int_state: None,
         }
     }
 
@@ -121,19 +123,15 @@ impl WasmtimeRuntime {
         // log_ext!("depth={}", depth);
         if runtime_ctx.data().execution_result.exit_code == ExitCode::InterruptionCalled.into_i32()
         {
-            // runtime_ctx.data_mut().execution_result.exit_code = ExitCode::Ok.into_i32();
-            let int_state_decoded: IntState =
-                bincode_try_decode(&runtime_ctx.data().execution_result.output).unwrap();
-            // depth += 1;
-            // continue;
-            let syscall_params =
-                SyscallInvocationParams::decode(&int_state_decoded.syscall_params).unwrap();
-            runtime_ctx.data_mut().resumable_context = Some(InterruptionHolder {
-                params: syscall_params,
-                is_root: false,
-            });
-            // int_state = Some(int_state_decoded);
-            runtime_ctx.data_mut().execution_result.int_state = Some(int_state_decoded);
+            // let int_state_decoded: IntState =
+            //     bincode_try_decode(&runtime_ctx.data().execution_result.output).unwrap();
+            // let syscall_params =
+            //     SyscallInvocationParams::decode(&int_state_decoded.syscall_params).unwrap();
+            // runtime_ctx.data_mut().resumable_context = Some(InterruptionHolder {
+            //     params: syscall_params,
+            //     is_root: false,
+            // });
+            // runtime_ctx.data_mut().execution_result.int_state = Some(int_state_decoded);
             return Err(TrapCode::InterruptionCalled);
         } // else if depth > 0 {
           //     depth -= 1;
@@ -178,7 +176,8 @@ impl WasmtimeRuntime {
 
     pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {
         log_ext!("exit code={}", exit_code);
-        unreachable!()
+        // unreachable!()
+        Ok(())
     }
 }
 
@@ -322,16 +321,15 @@ fn wasmtime_syscall_handler<'a>(
         mapped_result,
     );
     if execution_result.exit_code == ExitCode::InterruptionCalled.into_i32() {
+        let int_state = bincode_try_decode::<IntState>(&execution_result.output)
+            .expect("output contains interruption state");
+        let syscall_params = SyscallInvocationParams::decode(&int_state.syscall_params).unwrap();
+        caller_adapter.caller.data_mut().resumable_context = Some(InterruptionHolder {
+            params: syscall_params,
+            is_root: false,
+        });
+        caller_adapter.caller.data_mut().execution_result.int_state = Some(int_state);
         return Ok(());
-        // let int_state = bincode_try_decode::<IntState>(&execution_result.output);
-        // if let Ok(int_state) = int_state {
-        //     execution_result.output.clear();
-        //     execution_result.exit_code = ExitCode::Ok.into_i32();
-        //     caller_adapter.caller.data_mut().execution_result.int_state = Some(int_state);
-        //     log_ext!();
-        //     return Ok(());
-        // }
-        // unreachable!("must contain interruption state")
     }
     // make sure a syscall result is successful
     let should_terminate = syscall_result.map(|_| false).or_else(|trap_code| {
