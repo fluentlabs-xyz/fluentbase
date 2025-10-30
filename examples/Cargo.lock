@@ -1876,6 +1876,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-examples-unwiped-output"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-testing",
+]
+
+[[package]]
 name = "fluentbase-revm"
 version = "0.4.10-dev"
 dependencies = [
