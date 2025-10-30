@@ -1,12 +1,11 @@
 use crate::syscall_handler::InterruptionHolder;
 use crate::{syscall_handler::invoke_runtime_handler, RuntimeContext};
 use fluentbase_types::int_state::{
-    bincode_encode, bincode_encode_prefixed, bincode_try_decode, bincode_try_decode_prefixed,
-    IntState, INT_PREFIX,
+    bincode_encode_prefixed, bincode_try_decode, IntState, INT_PREFIX,
 };
 use fluentbase_types::{
-    log_ext, Address, ExitCode, HashMap, SysFuncIdx, SyscallInvocationParams, STATE_DEPLOY,
-    STATE_MAIN,
+    log_ext, Address, ExitCode, HashMap, RuntimeInputOutputV1, RuntimeInterruptionOutcomeV1,
+    SysFuncIdx, SyscallInvocationParams, STATE_DEPLOY, STATE_MAIN,
 };
 use rwasm::{
     ImportLinker, RwasmModule, Store, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE,
@@ -18,15 +17,14 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use wasmtime::{
-    AsContext, AsContextMut, Config, Engine, Func, Instance, Linker, Module, OptLevel, Strategy,
-    Trap, Val,
+    AsContextMut, Config, Engine, Func, Instance, Linker, Module, OptLevel, Strategy, Trap, Val,
 };
 
 pub struct WasmtimeRuntime {
     compiled_runtime: Option<CompiledRuntime>,
     ctx: Option<RuntimeContext>,
     address: Address,
-    int_state: Option<IntState>,
+    state: Option<RuntimeInterruptionOutcomeV1>,
 }
 
 struct CompiledRuntime {
@@ -88,7 +86,7 @@ impl WasmtimeRuntime {
             compiled_runtime: Some(compiled_runtime),
             ctx: Some(ctx),
             address,
-            int_state: None,
+            state: None,
         }
     }
 
@@ -97,10 +95,10 @@ impl WasmtimeRuntime {
         // Rewrite runtime context before each call
         if self.ctx.is_some() {
             // Rewrite heap base on every execution to release already used memory
-            compiled_runtime
-                .heap_reset_func
-                .call(compiled_runtime.store.as_context_mut(), &[], &mut [])
-                .unwrap();
+            // compiled_runtime
+            //     .heap_reset_func
+            //     .call(compiled_runtime.store.as_context_mut(), &[], &mut [])
+            //     .unwrap();
             let ctx = self.ctx.take().unwrap();
             *compiled_runtime.store.data_mut() = ctx;
         }
@@ -133,7 +131,7 @@ impl WasmtimeRuntime {
             //     is_root: false,
             // });
             // runtime_ctx.data_mut().execution_result.int_state = Some(int_state_decoded);
-            self.int_state = runtime_ctx.data_mut().execution_result.int_state.take();
+            self.state = Some(RuntimeInterruptionOutcomeV1::default());
             return Err(TrapCode::InterruptionCalled);
         } // else if depth > 0 {
           //     depth -= 1;
@@ -154,27 +152,24 @@ impl WasmtimeRuntime {
 
     pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {
         log_ext!("exit code={}", exit_code);
-        if let Some(int_state) = self.int_state.take() {
-            let mut store_mut = self
-                .compiled_runtime
-                .as_mut()
-                .unwrap()
-                .store
-                .as_context_mut();
-            let data_mut = store_mut.data_mut();
-            let return_data = take(&mut data_mut.execution_result.return_data);
-            data_mut.input = bincode_encode_prefixed(INT_PREFIX, &int_state).into();
-            data_mut.execution_result = Default::default();
-            data_mut.execution_result.return_data = return_data;
-            let result = self.execute();
-            return result;
-        }
-        // unreachable!()
-        Ok(())
+        let mut outcome = self.state.take().unwrap();
+        let mut store_mut = self
+            .compiled_runtime
+            .as_mut()
+            .unwrap()
+            .store
+            .as_context_mut();
+        let data_mut = store_mut.data_mut();
+        outcome.output = take(&mut data_mut.execution_result.return_data).into();
+        outcome.exit_code = exit_code;
+        let outcome = RuntimeInputOutputV1::RuntimeInterruptionOutcomeV1(outcome);
+        data_mut.execution_result.return_data = outcome.encode();
+        data_mut.clear_output();
+        self.execute()
     }
 
-    pub fn try_consume_fuel(&mut self, _fuel: u64) -> Result<(), TrapCode> {
-        // We don't support fuel for this runtime
+    pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), TrapCode> {
+        self.state.as_mut().unwrap().fuel_consumed += fuel;
         Ok(())
     }
 
@@ -321,7 +316,7 @@ fn wasmtime_syscall_handler<'a>(
     };
     let sys_func_idx =
         SysFuncIdx::from_repr(sys_func_idx).ok_or(TrapCode::UnknownExternalFunction)?;
-    log_ext!("sys_func_idx: {:?}", sys_func_idx);
+    // log_ext!("sys_func_idx: {:?}", sys_func_idx);
     let syscall_result = invoke_runtime_handler(
         &mut caller_adapter,
         sys_func_idx,
@@ -329,14 +324,14 @@ fn wasmtime_syscall_handler<'a>(
         mapped_result,
     );
     let execution_result = &mut caller_adapter.caller.data_mut().execution_result;
-    log_ext!(
-        "caller_adapter.caller.data_mut().execution_result.output({})={:x?} exit_code={:?} mapped_params={:?} mapped_result={:?}",
-        execution_result.output.len(),
-        execution_result.output,
-        execution_result.exit_code,
-        mapped_params,
-        mapped_result,
-    );
+    // log_ext!(
+    //     "caller_adapter.caller.data_mut().execution_result.output({})={:x?} exit_code={:?} mapped_params={:?} mapped_result={:?}",
+    //     execution_result.output.len(),
+    //     execution_result.output,
+    //     execution_result.exit_code,
+    //     mapped_params,
+    //     mapped_result,
+    // );
     if execution_result.exit_code == ExitCode::InterruptionCalled.into_i32() {
         let int_state = bincode_try_decode::<IntState>(&execution_result.output)
             .expect("output contains interruption state");
@@ -358,7 +353,7 @@ fn wasmtime_syscall_handler<'a>(
             Err(trap_code)
         }
     })?;
-    log_ext!();
+    // log_ext!();
     // after call map all values back to wasmtime format
     for (i, value) in mapped_result.iter().enumerate() {
         result[i] = match value {
@@ -371,10 +366,10 @@ fn wasmtime_syscall_handler<'a>(
     }
     // terminate execution if required
     if should_terminate {
-        log_ext!();
+        // log_ext!();
         return Err(TrapCode::ExecutionHalted.into());
     }
-    log_ext!();
+    // log_ext!();
     Ok(())
 }
 

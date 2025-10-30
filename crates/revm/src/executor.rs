@@ -11,14 +11,11 @@ use fluentbase_runtime::{
     syscall_handler::{syscall_exec_impl, syscall_resume_impl},
     RuntimeContext,
 };
-use fluentbase_sdk::int_state::{
-    bincode_encode_prefixed, bincode_try_decode_prefixed, IntOutcomeState, IntState, INT_PREFIX,
-};
 use fluentbase_sdk::{
     debug_log_ext, is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule,
     BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode,
-    SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
-    FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
+    RuntimeInputOutputV1, RuntimeNewFrameInputV1, SharedContextInput, SharedContextInputV1,
+    SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, Bytecode},
@@ -127,11 +124,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .unwrap_or_else(|| bytecode_address);
     let meta_account = ctx.journal_mut().load_account_code(bytecode_address)?;
     let meta_bytecode = meta_account.info.code.clone().unwrap_or_default();
-    let ownable_account_bytecode = match meta_bytecode {
-        Bytecode::OwnableAccount(v) => Some(v),
-        _ => None,
-    };
-    let ownable_account_bytecode_metadata = ownable_account_bytecode.map(|v| v.metadata);
 
     // encode input with all related context info
     let context_input = SharedContextInput::V1(SharedContextInputV1 {
@@ -161,9 +153,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             value: interpreter.input.call_value,
             gas_limit: interpreter.gas.remaining(),
         },
-        meta: ownable_account_bytecode_metadata,
-        // TODO delete or fill?
-        is_ownable: false,
     });
     let mut context_input = context_input
         .encode()
@@ -171,7 +160,22 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .to_vec();
     debug_log_ext!("context_input.len={:?}", context_input.len());
     let inputs_bytes = interpreter.input.input.bytes(ctx);
-    context_input.extend_from_slice(&inputs_bytes);
+
+    match meta_bytecode {
+        Bytecode::OwnableAccount(v) if !is_create => {
+            // TODO(dmitry123): Remove `is_create` check
+            let runtime_input =
+                RuntimeInputOutputV1::RuntimeNewFrameInputV1(RuntimeNewFrameInputV1 {
+                    metadata: v.metadata,
+                    input: inputs_bytes,
+                })
+                .encode();
+            context_input.extend(runtime_input);
+        }
+        _ => {
+            context_input.extend_from_slice(&inputs_bytes);
+        }
+    };
 
     let rwasm_code_hash = interpreter.bytecode.hash().unwrap();
 
@@ -303,41 +307,6 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         .interpreter
         .gas
         .record_denominated_refund(fuel_refunded);
-
-    if exit_code == ExitCode::InterruptionCalled.into_i32() {
-        let syscall_return_data = return_data.clone();
-        let mut int_state: IntState =
-            bincode_try_decode_prefixed(&[], &syscall_return_data).unwrap();
-
-        let syscall_next_action = process_exec_result(
-            frame,
-            ctx,
-            inspector,
-            inputs.call_id as i32,
-            int_state.syscall_params.clone().into(),
-            inputs.is_create,
-            inputs.is_static,
-        )?;
-        match syscall_next_action {
-            NextAction::NewFrame(_) | NextAction::Return(_) => {
-                unreachable!("frames or return cannot be produced by interruptions")
-            }
-            NextAction::InterruptionResult => {}
-        };
-
-        let interrupted_outcome = frame.interrupted_outcome.take().unwrap();
-        let interrupt_return_data = interrupted_outcome.result.unwrap().output.to_vec();
-        int_state.outcome = IntOutcomeState {
-            output: interrupt_return_data,
-            exit_code: ExitCode::Ok.into_i32(),
-            fuel_consumed,
-            fuel_refunded,
-        };
-        let int_state_encoded = bincode_encode_prefixed::<IntState>(INT_PREFIX, &int_state);
-        frame.interpreter.input.input = CallInput::Bytes(int_state_encoded.to_vec().into());
-
-        return Ok(syscall_next_action);
-    }
 
     let result = process_exec_result::<CTX, INSP>(
         frame,

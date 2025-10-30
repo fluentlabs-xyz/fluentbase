@@ -2,7 +2,6 @@ mod context;
 
 use crate::{
     byteorder::{ByteOrder, LittleEndian},
-    debug_log_ext,
     syscall::*,
     Address, BytecodeOrHash, Bytes, ContextReader, CryptoAPI, ExitCode, IsAccountEmpty,
     IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI, SharedAPI,
@@ -45,19 +44,6 @@ impl<API: NativeAPI> SharedContextImpl<API> {
 
     pub fn commit_changes_and_exit(&mut self) -> ! {
         self.native_sdk.exit(ExitCode::Ok);
-    }
-
-    pub fn meta_bytes_encoded_size(&self) -> u32 {
-        let Ok(meta_bytes_len) =
-            SharedContextInputV1::meta_bytes_len_only_try_decode(self.native_sdk.input())
-        else {
-            unsafe {
-                core::hint::unreachable_unchecked();
-            }
-        };
-        let meta_bytes_encoded_size =
-            SharedContextInputV1::compute_meta_bytes_encoded_size(meta_bytes_len);
-        meta_bytes_encoded_size
     }
 }
 
@@ -155,31 +141,22 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
-        let meta_bytes_encoded_size = self.meta_bytes_encoded_size();
-        self.native_sdk.read(
-            target,
-            SharedContextInputV1::SIZE as u32 + meta_bytes_encoded_size + offset,
-        )
+        self.native_sdk
+            .read(target, SharedContextInputV1::SIZE as u32 + offset)
     }
 
     fn input_size(&self) -> u32 {
         let input_size = self.native_sdk.input_size();
-        let meta_bytes_encoded_size = self.meta_bytes_encoded_size();
-        if input_size < SharedContextInputV1::SIZE as u32 + meta_bytes_encoded_size {
+        if input_size < SharedContextInputV1::SIZE as u32 {
             unsafe {
                 core::hint::unreachable_unchecked();
             }
         }
-        unsafe {
-            input_size.unchecked_sub(SharedContextInputV1::SIZE as u32 + meta_bytes_encoded_size)
-        }
+        unsafe { input_size.unchecked_sub(SharedContextInputV1::SIZE as u32) }
     }
 
     fn bytes_input(&self) -> Bytes {
-        let meta_bytes_encoded_size = self.meta_bytes_encoded_size();
-        self.native_sdk
-            .input()
-            .slice(SharedContextInputV1::SIZE + meta_bytes_encoded_size as usize..)
+        self.native_sdk.input().slice(SharedContextInputV1::SIZE..)
     }
 
     fn read_context(&self, target: &mut [u8], offset: u32) {

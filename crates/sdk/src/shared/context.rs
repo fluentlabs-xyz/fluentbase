@@ -1,4 +1,4 @@
-use crate::{Address, Bytes, ContextReader, SharedContextInputV1, B256, U256};
+use crate::{Address, ContextReader, SharedContextInputV1, B256, U256};
 
 pub struct ContextReaderImpl<'a>(pub &'a SharedContextInputV1);
 
@@ -65,10 +65,6 @@ impl<'a> ContextReader for ContextReaderImpl<'a> {
 
     fn contract_bytecode_address(&self) -> Address {
         self.0.contract.bytecode_address
-    }
-
-    fn meta(&self) -> &Bytes {
-        self.0.meta.as_ref().unwrap_or_default()
     }
 
     fn contract_caller(&self) -> Address {

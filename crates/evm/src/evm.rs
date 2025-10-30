@@ -14,14 +14,22 @@ use revm_bytecode::{Bytecode, LegacyAnalyzedBytecode};
 use revm_interpreter::interpreter_types::Jumps;
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},
-    CallInput, Gas, InputsImpl, InstructionTable, Interpreter, InterpreterAction, InterpreterTypes,
-    SharedMemory, Stack,
+    CallInput, Gas, InputsImpl, InstructionTable, Interpreter, InterpreterAction, SharedMemory,
+    Stack,
 };
 use revm_primitives::hardfork::SpecId;
 
 /// EVM interpreter wrapper running with an interruption extension.
 pub struct EthVM {
     pub interpreter: Interpreter<InterruptingInterpreter>,
+}
+
+impl Default for EthVM {
+    fn default() -> Self {
+        Self {
+            interpreter: Interpreter::<InterruptingInterpreter>::default_ext(),
+        }
+    }
 }
 
 unsafe impl Sync for EthVM {}

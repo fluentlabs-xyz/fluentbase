@@ -1,4 +1,3 @@
-use alloc::vec;
 use auto_impl::auto_impl;
 use bincode::config::{Configuration, Fixint, LittleEndian};
 use fluentbase_types::{Address, Bytes, B256, U256};
@@ -21,7 +20,6 @@ pub trait ContextReader {
     fn tx_value(&self) -> U256;
     fn contract_address(&self) -> Address;
     fn contract_bytecode_address(&self) -> Address;
-    fn meta(&self) -> &Bytes;
     fn contract_caller(&self) -> Address;
     fn contract_is_static(&self) -> bool;
     fn contract_value(&self) -> U256;
@@ -90,9 +88,6 @@ pub struct SharedContextInputV1 {
     pub block: BlockContextV1,
     pub tx: TxContextV1,
     pub contract: ContractContextV1,
-    pub meta: Option<Bytes>,
-    // TODO do we need it?
-    pub is_ownable: bool,
 }
 
 impl ContextReader for SharedContextInputV1 {
@@ -158,10 +153,6 @@ impl ContextReader for SharedContextInputV1 {
 
     fn contract_bytecode_address(&self) -> Address {
         self.contract.bytecode_address
-    }
-
-    fn meta(&self) -> &Bytes {
-        self.meta.as_ref().unwrap_or_default()
     }
 
     fn contract_caller(&self) -> Address {
@@ -236,17 +227,8 @@ impl bincode::Encode for SharedContextInputV1 {
         bincode::Encode::encode(&contract_value, e)?;
         bincode::Encode::encode(&contract_gas_limit, e)?;
 
-        bincode::Encode::encode(&(self.meta.as_ref().unwrap_or_default().len() as u32), e)?;
-        bincode::Encode::encode(&self.is_ownable, e)?;
-
         let reserved = [0u8; Self::SIZE_RESERVED];
         bincode::Encode::encode(&reserved, e)?;
-
-        if let Some(meta_bytes) = self.meta.as_ref() {
-            if meta_bytes.len() > 0 {
-                bincode::Encode::encode(meta_bytes.as_ref(), e)?;
-            }
-        }
 
         Ok(())
     }
@@ -280,18 +262,8 @@ impl<C> bincode::Decode<C> for SharedContextInputV1 {
         let contract_value: [u8; 32] = bincode::Decode::decode(d)?;
         let contract_gas_limit = bincode::Decode::decode(d)?;
 
-        let meta_byte_size: u32 = bincode::Decode::decode(d)?;
-        let is_ownable: bool = bincode::Decode::decode(d)?;
-
+        // Skip reserved, since we have metadata right after the reserved context input
         let _reserved: [u8; Self::SIZE_RESERVED] = bincode::Decode::decode(d)?;
-
-        let meta: Option<Bytes> = if meta_byte_size > 0 {
-            let mut meta_bytes = vec![];
-            meta_bytes = bincode::Decode::decode(d)?;
-            Some(meta_bytes.into())
-        } else {
-            None
-        };
 
         Ok(Self {
             block: BlockContextV1 {
@@ -321,15 +293,13 @@ impl<C> bincode::Decode<C> for SharedContextInputV1 {
                 value: U256::from_be_bytes(contract_value),
                 gas_limit: contract_gas_limit,
             },
-            meta,
-            is_ownable,
         })
     }
 }
 
 impl SharedContextInputV1 {
     pub const SIZE: usize = 1024; // total size of encoded struct
-    pub const SIZE_RESERVED: usize = 637; // size reserved for new fields
+    pub const SIZE_RESERVED: usize = 642; // size reserved for new fields
 
     pub fn decode_type_from_slice<T: bincode::de::Decode<()>>(
         buf: &[u8],
@@ -347,28 +317,6 @@ impl SharedContextInputV1 {
         let result: Bytes = bincode::encode_to_vec(self, BINCODE_CONFIG_DEFAULT)?.into();
         Ok(result)
     }
-    pub fn meta_bytes_len_position() -> usize {
-        382
-    }
-    pub fn meta_bytes_len_try_decode<BUF: AsRef<[u8]>>(
-        buf: BUF,
-    ) -> Result<u32, bincode::error::DecodeError> {
-        Self::decode_type_from_slice(buf.as_ref())
-    }
-    pub fn meta_bytes_len_only_try_decode<BUF: AsRef<[u8]>>(
-        buf: BUF,
-    ) -> Result<u32, bincode::error::DecodeError> {
-        Self::decode_type_from_slice(&buf.as_ref()[Self::meta_bytes_len_position()..])
-    }
-    pub fn compute_meta_bytes_encoded_size(len: u32) -> u32 {
-        if len > 0 {
-            return len + size_of::<usize>() as u32 * 2; // bincode encoding for metadata of Bytes or Vec<u8>
-        }
-        0
-    }
-    pub fn meta_bytes_encoded_size(&self) -> u32 {
-        Self::compute_meta_bytes_encoded_size(self.meta.as_ref().unwrap_or_default().len() as u32)
-    }
 }
 
 #[cfg(test)]
@@ -379,12 +327,11 @@ mod tests {
     #[test]
     fn test_size_is_correct() {
         assert_eq!(SharedContextInputV1::SIZE, 1024);
-        assert_eq!(SharedContextInputV1::SIZE_RESERVED, 637);
+        assert_eq!(SharedContextInputV1::SIZE_RESERVED, 642);
     }
 
-    #[test]
-    fn test_serialize_context() {
-        let context = SharedContextInputV1 {
+    fn example_context() -> SharedContextInputV1 {
+        SharedContextInputV1 {
             block: BlockContextV1 {
                 chain_id: 1,
                 coinbase: Address::from(hex!("1000000000000000000000000000000000000001")),
@@ -413,27 +360,24 @@ mod tests {
                 value: U256::from(0),
                 gas_limit: 100_000,
             },
-            meta: Some(vec![1, 2, 3, 4].into()),
-            is_ownable: true,
-        };
+        }
+    }
+
+    #[test]
+    fn test_simple_context_serialize() {
+        let context = example_context();
         let encoded = context.encode_to_vec().unwrap();
-        let meta_bytes_len =
-            SharedContextInputV1::meta_bytes_len_only_try_decode(&encoded).unwrap();
-        assert_eq!(meta_bytes_len, context.meta.as_ref().unwrap().len() as u32);
+        assert_eq!(encoded.len(), SharedContextInputV1::SIZE);
         let decoded = SharedContextInputV1::decode_from_slice(&encoded).unwrap();
         assert_eq!(context, decoded);
-        assert_eq!(
-            encoded.len(),
-            SharedContextInputV1::SIZE + context.meta_bytes_encoded_size() as usize
-        );
     }
 
     #[test]
     fn test_serialize_default_context() {
         let context = SharedContextInputV1::default();
         let encoded = context.encode_to_vec().unwrap();
+        assert_eq!(encoded.len(), SharedContextInputV1::SIZE);
         let decoded = SharedContextInputV1::decode_from_slice(&encoded).unwrap();
         assert_eq!(context, decoded);
-        assert_eq!(encoded.len(), SharedContextInputV1::SIZE);
     }
 }

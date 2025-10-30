@@ -12,7 +12,7 @@ use crate::{
 use fluentbase_types::int_state::IntState;
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    Address, BytecodeOrHash, ExitCode, HashMap, B256, PRECOMPILE_EVM_RUNTIME, STATE_MAIN,
+    Address, BytecodeOrHash, ExitCode, HashMap, B256,
 };
 use local_executor::LocalExecutor;
 use rwasm::{ExecutionEngine, FuelConfig, ImportLinker, RwasmModule, Strategy, TrapCode};
@@ -277,9 +277,9 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let fuel_config = FuelConfig::default().with_fuel_limit(ctx.fuel_limit);
 
         #[cfg(feature = "wasmtime")]
-        let mut exec_mode = if runtime_address.is_some_and(|v| v == PRECOMPILE_EVM_RUNTIME)
+        let mut exec_mode = if runtime_address.is_some_and(|v| v == fluentbase_types::PRECOMPILE_EVM_RUNTIME)
             // TODO 4tests, remove
-            && ctx.state == STATE_MAIN
+            && ctx.state == fluentbase_types::STATE_MAIN
         {
             let runtime = WasmtimeRuntime::new(
                 module,

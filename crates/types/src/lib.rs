@@ -13,6 +13,7 @@ mod import_linker;
 pub mod int_state;
 mod log;
 mod native_api;
+mod runtime;
 #[cfg(target_arch = "wasm32")]
 mod rwasm_context;
 mod sys_func_idx;
@@ -29,6 +30,7 @@ pub use genesis::*;
 pub use hashbrown::{self, hash_map, hash_set, HashMap, HashSet};
 pub use import_linker::*;
 pub use native_api::*;
+pub use runtime::*;
 #[cfg(target_arch = "wasm32")]
 pub use rwasm_context::{bindings, RwasmContext};
 pub use sys_func_idx::*;
