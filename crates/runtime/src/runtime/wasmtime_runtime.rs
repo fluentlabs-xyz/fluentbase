@@ -8,12 +8,11 @@ use fluentbase_types::{
     log_ext, Address, ExitCode, HashMap, SysFuncIdx, SyscallInvocationParams, STATE_DEPLOY,
     STATE_MAIN,
 };
-use log::log;
-use num::ToPrimitive;
 use rwasm::{
     ImportLinker, RwasmModule, Store, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE,
 };
 use smallvec::SmallVec;
+use std::mem::take;
 use std::{
     cell::RefCell,
     sync::{Arc, OnceLock},
@@ -95,19 +94,21 @@ impl WasmtimeRuntime {
 
     pub fn execute(&mut self) -> Result<(), TrapCode> {
         let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
-        // Rewrite heap base on every execution to release already used memory
-        compiled_runtime
-            .heap_reset_func
-            .call(compiled_runtime.store.as_context_mut(), &[], &mut [])
-            .unwrap();
         // Rewrite runtime context before each call
-        let ctx = self.ctx.take().unwrap();
-        let entrypoint = match ctx.state {
+        if self.ctx.is_some() {
+            // Rewrite heap base on every execution to release already used memory
+            compiled_runtime
+                .heap_reset_func
+                .call(compiled_runtime.store.as_context_mut(), &[], &mut [])
+                .unwrap();
+            let ctx = self.ctx.take().unwrap();
+            *compiled_runtime.store.data_mut() = ctx;
+        }
+        let entrypoint = match compiled_runtime.store.data().state {
             STATE_MAIN => compiled_runtime.main_func,
             STATE_DEPLOY => compiled_runtime.deploy_func,
             _ => unreachable!(),
         };
-        *compiled_runtime.store.data_mut() = ctx;
         // let mut int_state: Option<IntState> = None;
         // let mut depth = 0;
         // let result = loop {
@@ -132,6 +133,7 @@ impl WasmtimeRuntime {
             //     is_root: false,
             // });
             // runtime_ctx.data_mut().execution_result.int_state = Some(int_state_decoded);
+            self.int_state = runtime_ctx.data_mut().execution_result.int_state.take();
             return Err(TrapCode::InterruptionCalled);
         } // else if depth > 0 {
           //     depth -= 1;
@@ -148,6 +150,27 @@ impl WasmtimeRuntime {
                 Err(trap_code)
             }
         })
+    }
+
+    pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {
+        log_ext!("exit code={}", exit_code);
+        if let Some(int_state) = self.int_state.take() {
+            let mut store_mut = self
+                .compiled_runtime
+                .as_mut()
+                .unwrap()
+                .store
+                .as_context_mut();
+            let data_mut = store_mut.data_mut();
+            let return_data = take(&mut data_mut.execution_result.return_data);
+            data_mut.input = bincode_encode_prefixed(INT_PREFIX, &int_state).into();
+            data_mut.execution_result = Default::default();
+            data_mut.execution_result.return_data = return_data;
+            let result = self.execute();
+            return result;
+        }
+        // unreachable!()
+        Ok(())
     }
 
     pub fn try_consume_fuel(&mut self, _fuel: u64) -> Result<(), TrapCode> {
@@ -172,12 +195,6 @@ impl WasmtimeRuntime {
     pub fn context<R, F: FnOnce(&RuntimeContext) -> R>(&self, func: F) -> R {
         let compiled_runtime = self.compiled_runtime.as_ref().unwrap();
         func(compiled_runtime.store.data())
-    }
-
-    pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {
-        log_ext!("exit code={}", exit_code);
-        // unreachable!()
-        Ok(())
     }
 }
 
