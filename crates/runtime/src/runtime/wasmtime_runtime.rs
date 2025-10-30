@@ -4,7 +4,10 @@ use fluentbase_types::int_state::{
     bincode_encode, bincode_encode_prefixed, bincode_try_decode, bincode_try_decode_prefixed,
     IntState, INT_PREFIX,
 };
-use fluentbase_types::{log_ext, Address, ExitCode, HashMap, SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
+use fluentbase_types::{
+    log_ext, Address, ExitCode, HashMap, SysFuncIdx, SyscallInvocationParams, STATE_DEPLOY,
+    STATE_MAIN,
+};
 use log::log;
 use num::ToPrimitive;
 use rwasm::{
@@ -103,32 +106,47 @@ impl WasmtimeRuntime {
             _ => unreachable!(),
         };
         *compiled_runtime.store.data_mut() = ctx;
-        let mut int_state: Option<IntState> = None;
-        let result = loop {
-            if let Some(int_state) = int_state {
-                log_ext!();
-                let int_state_encoded = bincode_encode_prefixed(INT_PREFIX, &int_state);
-                log_ext!("int_state_encoded.len={}", int_state_encoded.len());
-                compiled_runtime.store.as_context_mut().data_mut().input = int_state_encoded.into();
-            }
-            // Call the function based on the passed state
-            let result = entrypoint.call(compiled_runtime.store.as_context_mut(), &[], &mut []);
-            let mut runtime_ctx = compiled_runtime.store.as_context_mut();
-            if runtime_ctx.data().execution_result.exit_code
-                == ExitCode::InterruptionCalled.into_i32()
-            {
-                runtime_ctx.data_mut().execution_result.exit_code = ExitCode::Ok.into_i32();
-                int_state =
-                    Some(bincode_try_decode(&runtime_ctx.data().execution_result.output).unwrap());
-                continue;
-            }
-            // TODO handle recovery after interruption
-            break result;
-        };
+        // let mut int_state: Option<IntState> = None;
+        // let mut depth = 0;
+        // let result = loop {
+        // if let Some(int_state) = int_state.take() {
+        //     log_ext!();
+        //     let int_state_encoded = bincode_encode_prefixed(INT_PREFIX, &int_state);
+        //     log_ext!("int_state_encoded.len={}", int_state_encoded.len());
+        //     compiled_runtime.store.as_context_mut().data_mut().input = int_state_encoded.into();
+        // }
+        // Call the function based on the passed state
+        let result = entrypoint.call(compiled_runtime.store.as_context_mut(), &[], &mut []);
+        let mut runtime_ctx = compiled_runtime.store.as_context_mut();
+        // log_ext!("depth={}", depth);
+        if runtime_ctx.data().execution_result.exit_code == ExitCode::InterruptionCalled.into_i32()
+        {
+            // runtime_ctx.data_mut().execution_result.exit_code = ExitCode::Ok.into_i32();
+            let int_state_decoded: IntState =
+                bincode_try_decode(&runtime_ctx.data().execution_result.output).unwrap();
+            // depth += 1;
+            // continue;
+            let syscall_params =
+                SyscallInvocationParams::decode(&int_state_decoded.syscall_params).unwrap();
+            runtime_ctx.data_mut().resumable_context = Some(InterruptionHolder {
+                params: syscall_params,
+                is_root: false,
+            });
+            // int_state = Some(int_state_decoded);
+            runtime_ctx.data_mut().execution_result.int_state = Some(int_state_decoded);
+            return Err(TrapCode::InterruptionCalled);
+        } // else if depth > 0 {
+          //     depth -= 1;
+          //     // TODO handle recovery after interruption
+          //     continue;
+          // }
+          // break result;
+          // };
         result.map_err(map_anyhow_error).or_else(|trap_code| {
             if trap_code == TrapCode::ExecutionHalted {
                 Ok(())
             } else {
+                log_ext!("trap_code={}", trap_code);
                 Err(trap_code)
             }
         })
@@ -158,7 +176,8 @@ impl WasmtimeRuntime {
         func(compiled_runtime.store.data())
     }
 
-    pub fn resume(&mut self, _exit_code: i32) -> Result<(), TrapCode> {
+    pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {
+        log_ext!("exit code={}", exit_code);
         unreachable!()
     }
 }

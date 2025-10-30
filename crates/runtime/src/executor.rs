@@ -39,8 +39,8 @@ pub struct ExecutionResult {
     pub output: Vec<u8>,
     /// Return data propagated back to the parent on success paths of nested calls.
     pub return_data: Vec<u8>,
-    // /// Interruption state for propagation purposes.
-    // pub int_state: Option<IntState>,
+    /// Interruption state for propagation purposes.
+    pub int_state: Option<IntState>,
 }
 
 impl ExecutionResult {
@@ -179,6 +179,7 @@ impl RuntimeFactoryExecutor {
             // The output we map into return data
             output: interruption.output,
             return_data: vec![],
+            int_state: None,
         }
     }
 
