@@ -25,24 +25,12 @@ ENV RUSTC_WRAPPER=sccache \
 
 
 #######################################
-# Stage 1: Build Fluentbase CLI
-#######################################
-FROM base AS builder
-WORKDIR /build
-COPY . ./
-RUN cargo build --bin fluentbase --release --locked
-
-#######################################
-# Stage 2: Cache Warmer
+# Cache Warmer
 #######################################
 FROM base AS cache-warmer
 ARG SDK_VERSION_BRANCH
 ARG SDK_VERSION_TAG
 WORKDIR /warmup
-
-COPY --from=builder /usr/local/cargo/git/db /usr/local/cargo/git/db
-COPY --from=builder /usr/local/cargo/registry /usr/local/cargo/registry
-COPY --from=builder /sccache-cache /sccache-cache
 
 # Cargo.toml
 RUN if [ -n "$SDK_VERSION_BRANCH" ]; then \
@@ -61,7 +49,7 @@ RUN cargo fetch --target wasm32-unknown-unknown && \
     cargo build --release --target wasm32-unknown-unknown --lib
 
 #######################################
-# Stage 3: Final SDK
+# Final SDK
 #######################################
 FROM rust:${RUST_TOOLCHAIN}-slim AS final
 WORKDIR /workspace
@@ -76,7 +64,6 @@ RUN rustup target add wasm32-unknown-unknown
 RUN git config --global submodule.fetchJobs 8 && \
     git config --global fetch.parallel 8
 
-COPY --from=builder /build/target/release/fluentbase /usr/local/bin/fluentbase
 COPY --from=cache-warmer /usr/local/bin/sccache /usr/local/bin/sccache
 COPY --from=cache-warmer /usr/local/cargo/git/db /usr/local/cargo/git/db
 COPY --from=cache-warmer /usr/local/cargo/registry/cache /usr/local/cargo/registry/cache
