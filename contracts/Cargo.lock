@@ -1927,8 +1927,6 @@ dependencies = [
 name = "fluentbase-revm"
 version = "0.4.10-dev"
 dependencies = [
- "fluentbase-codec",
- "fluentbase-codec-derive",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -1945,11 +1943,8 @@ dependencies = [
  "blake3",
  "bytemuck",
  "elliptic-curve",
- "fluentbase-codec",
- "fluentbase-codec-derive",
  "fluentbase-types",
  "k256",
- "log",
  "num",
  "p256",
  "rwasm",

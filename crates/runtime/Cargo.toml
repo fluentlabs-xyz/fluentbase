@@ -12,8 +12,6 @@ categories.workspace = true
 [dependencies]
 # fluentbase
 fluentbase-types = { workspace = true }
-fluentbase-codec = { workspace = true, default-features = false }
-fluentbase-codec-derive = { workspace = true, default-features = false }
 rwasm = { workspace = true }
 
 # wasmtime
@@ -37,7 +35,6 @@ bytemuck = { workspace = true }
 
 # global executor
 core_affinity = { version = "0.8.3", optional = true }
-log = "0.4.28"
 
 [dev-dependencies]
 sha2 = { workspace = true, default-features = false }

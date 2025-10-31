@@ -9,7 +9,6 @@ use crate::{
     runtime::{ExecutionMode, StrategyRuntime},
     RuntimeContext,
 };
-use fluentbase_types::int_state::IntState;
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     Address, BytecodeOrHash, ExitCode, HashMap, B256,
@@ -39,8 +38,6 @@ pub struct ExecutionResult {
     pub output: Vec<u8>,
     /// Return data propagated back to the parent on success paths of nested calls.
     pub return_data: Vec<u8>,
-    /// Interruption state for propagation purposes.
-    pub int_state: Option<IntState>,
 }
 
 impl ExecutionResult {
@@ -179,7 +176,6 @@ impl RuntimeFactoryExecutor {
             // The output we map into return data
             output: interruption.output,
             return_data: vec![],
-            int_state: None,
         }
     }
 
@@ -277,31 +273,29 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let fuel_config = FuelConfig::default().with_fuel_limit(ctx.fuel_limit);
 
         #[cfg(feature = "wasmtime")]
-        let mut exec_mode = if runtime_address.is_some_and(|v| v == fluentbase_types::PRECOMPILE_EVM_RUNTIME)
-            // TODO 4tests, remove
-            && ctx.state == fluentbase_types::STATE_MAIN
-        {
-            let runtime = WasmtimeRuntime::new(
-                module,
-                self.import_linker.clone(),
-                runtime_address.unwrap(),
-                ctx,
-            );
-            ExecutionMode::Wasmtime(runtime)
-        } else {
-            let strategy = if let Some((address, code_hash)) = enable_wasmtime_runtime {
-                let module = self
-                    .module_factory
-                    .get_wasmtime_module_or_compile(code_hash, address);
-                Strategy::Wasmtime { module }
+        let mut exec_mode =
+            if runtime_address.is_some_and(|v| v == fluentbase_types::PRECOMPILE_EVM_RUNTIME) {
+                let runtime = WasmtimeRuntime::new(
+                    module,
+                    self.import_linker.clone(),
+                    runtime_address.unwrap(),
+                    ctx,
+                );
+                ExecutionMode::Wasmtime(runtime)
             } else {
-                let engine = ExecutionEngine::acquire_shared();
-                Strategy::Rwasm { module, engine }
+                let strategy = if let Some((address, code_hash)) = enable_wasmtime_runtime {
+                    let module = self
+                        .module_factory
+                        .get_wasmtime_module_or_compile(code_hash, address);
+                    Strategy::Wasmtime { module }
+                } else {
+                    let engine = ExecutionEngine::acquire_shared();
+                    Strategy::Rwasm { module, engine }
+                };
+                let runtime =
+                    StrategyRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
+                ExecutionMode::Strategy(runtime)
             };
-            let runtime =
-                StrategyRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
-            ExecutionMode::Strategy(runtime)
-        };
         #[cfg(not(feature = "wasmtime"))]
         let mut exec_mode = {
             let strategy = {

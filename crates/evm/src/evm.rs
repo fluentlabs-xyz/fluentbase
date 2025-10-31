@@ -9,9 +9,8 @@ use crate::{
     opcodes::interruptable_instruction_table,
     types::{ExecutionResult, InterruptingInterpreter, InterruptionExtension, InterruptionOutcome},
 };
-use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
+use fluentbase_sdk::{Bytes, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
 use revm_bytecode::{Bytecode, LegacyAnalyzedBytecode};
-use revm_interpreter::interpreter_types::Jumps;
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},
     CallInput, Gas, InputsImpl, InstructionTable, Interpreter, InterpreterAction, SharedMemory,
@@ -22,14 +21,6 @@ use revm_primitives::hardfork::SpecId;
 /// EVM interpreter wrapper running with an interruption extension.
 pub struct EthVM {
     pub interpreter: Interpreter<InterruptingInterpreter>,
-}
-
-impl Default for EthVM {
-    fn default() -> Self {
-        Self {
-            interpreter: Interpreter::<InterruptingInterpreter>::default_ext(),
-        }
-    }
 }
 
 unsafe impl Sync for EthVM {}
@@ -83,40 +74,14 @@ impl EthVM {
         Self { interpreter }
     }
 
-    /// Executes 1 step of the interpreter run.
-    /// Returns EVM result plus precise gas/fuel accounting.
-    #[inline]
-    pub fn run_step<'a, SDK>(
-        &mut self,
-        instruction_table: &InstructionTable<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>,
-        sdk: &'a mut SDK,
-    ) -> InterpreterAction
-    where
-        SDK: SharedAPI,
-    {
-        let mut sdk = HostWrapperImpl::wrap(sdk);
-        self.interpreter.run_plain(&instruction_table, &mut sdk)
-    }
-
     /// Execute until completion, delegating host-bound ops via interruptions.
     /// Returns EVM result plus precise gas/fuel accounting.
     pub fn run_the_loop<SDK: SharedAPI>(mut self, sdk: &mut SDK) -> ExecutionResult {
         let instruction_table = interruptable_instruction_table();
         let mut sdk = HostWrapperImpl::wrap(sdk);
         loop {
-            debug_log_ext!();
             match self.interpreter.run_plain(&instruction_table, &mut sdk) {
                 InterpreterAction::Return(result) => {
-                    let bytecode = &self.interpreter.bytecode;
-                    let (len, opcode, pc) = (bytecode.len(), bytecode.opcode(), bytecode.pc());
-                    let stack = self.interpreter.stack.data();
-                    debug_log_ext!(
-                        "len={} opcode={:x?} pc={} stack={:?}",
-                        len,
-                        opcode,
-                        pc,
-                        stack
-                    );
                     let committed_gas = self.interpreter.extend.committed_gas;
                     break ExecutionResult {
                         result: result.result,
@@ -131,16 +96,6 @@ impl EthVM {
                     fuel_limit,
                     state,
                 } => {
-                    let bytecode = &self.interpreter.bytecode;
-                    let (len, opcode, pc) = (bytecode.len(), bytecode.opcode(), bytecode.pc());
-                    let stack = self.interpreter.stack.data();
-                    debug_log_ext!(
-                        "len={} opcode={:x?} pc={} stack={:?}",
-                        len,
-                        opcode,
-                        pc,
-                        stack
-                    );
                     self.sync_evm_gas(sdk.sdk_mut());
                     let (fuel_consumed, fuel_refunded, exit_code) =
                         sdk.native_exec(code_hash, input.as_ref(), fuel_limit, state);
@@ -172,6 +127,21 @@ impl EthVM {
                 InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
             }
         }
+    }
+
+    /// Executes 1 step of the interpreter run.
+    /// Returns EVM result plus precise gas/fuel accounting.
+    #[inline]
+    pub fn run_step<'a, SDK>(
+        &mut self,
+        instruction_table: &InstructionTable<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>,
+        sdk: &'a mut SDK,
+    ) -> InterpreterAction
+    where
+        SDK: SharedAPI,
+    {
+        let mut sdk = HostWrapperImpl::wrap(sdk);
+        self.interpreter.run_plain(&instruction_table, &mut sdk)
     }
 
     /// Commit interpreter gas deltas to the host (fuel) and snapshot the state.

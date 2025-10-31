@@ -10,7 +10,6 @@ mod exit_code;
 pub mod fd;
 mod genesis;
 mod import_linker;
-pub mod int_state;
 mod log;
 mod native_api;
 mod runtime;
@@ -20,6 +19,7 @@ mod sys_func_idx;
 mod syscall;
 
 pub use alloy_primitives::*;
+pub use bincode;
 pub use block_fuel::*;
 pub use bytecode::*;
 pub use byteorder;

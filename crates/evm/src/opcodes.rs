@@ -5,7 +5,6 @@
 //! provides a result.
 use crate::{
     host::{HostWrapper, HostWrapperImpl},
-    opcodes,
     types::{InterruptingInterpreter, InterruptionExtension, InterruptionOutcome},
     utils::{global_memory_from_shared_buffer, interrupt_into_action},
 };
@@ -537,27 +536,27 @@ pub const fn interruptable_instruction_table<'a, SDK: SharedAPI>(
 ) -> [Instruction<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>; 256] {
     let mut table = instruction_table::<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>();
     use revm_bytecode::opcode::*;
-    table[BALANCE as usize] = opcodes::balance;
-    table[EXTCODESIZE as usize] = opcodes::extcodesize;
-    table[EXTCODECOPY as usize] = opcodes::extcodecopy;
-    table[EXTCODEHASH as usize] = opcodes::extcodehash;
-    table[BLOCKHASH as usize] = opcodes::blockhash;
-    table[SELFBALANCE as usize] = opcodes::selfbalance;
-    table[SLOAD as usize] = opcodes::sload;
-    table[SSTORE as usize] = opcodes::sstore;
-    table[TLOAD as usize] = opcodes::tload;
-    table[TSTORE as usize] = opcodes::tstore;
-    table[LOG0 as usize] = opcodes::log::<0, _>;
-    table[LOG1 as usize] = opcodes::log::<1, _>;
-    table[LOG2 as usize] = opcodes::log::<2, _>;
-    table[LOG3 as usize] = opcodes::log::<3, _>;
-    table[LOG4 as usize] = opcodes::log::<4, _>;
-    table[CREATE as usize] = opcodes::create::<_, false, _>;
-    table[CALL as usize] = opcodes::call;
-    table[CALLCODE as usize] = opcodes::call_code;
-    table[DELEGATECALL as usize] = opcodes::delegate_call;
-    table[CREATE2 as usize] = opcodes::create::<_, true, _>;
-    table[STATICCALL as usize] = opcodes::static_call;
-    table[SELFDESTRUCT as usize] = opcodes::selfdestruct;
+    table[BALANCE as usize] = balance;
+    table[EXTCODESIZE as usize] = extcodesize;
+    table[EXTCODECOPY as usize] = extcodecopy;
+    table[EXTCODEHASH as usize] = extcodehash;
+    table[BLOCKHASH as usize] = blockhash;
+    table[SELFBALANCE as usize] = selfbalance;
+    table[SLOAD as usize] = sload;
+    table[SSTORE as usize] = sstore;
+    table[TLOAD as usize] = tload;
+    table[TSTORE as usize] = tstore;
+    table[LOG0 as usize] = log::<0, _>;
+    table[LOG1 as usize] = log::<1, _>;
+    table[LOG2 as usize] = log::<2, _>;
+    table[LOG3 as usize] = log::<3, _>;
+    table[LOG4 as usize] = log::<4, _>;
+    table[CREATE as usize] = create::<_, false, _>;
+    table[CALL as usize] = call;
+    table[CALLCODE as usize] = call_code;
+    table[DELEGATECALL as usize] = delegate_call;
+    table[CREATE2 as usize] = create::<_, true, _>;
+    table[STATICCALL as usize] = static_call;
+    table[SELFDESTRUCT as usize] = selfdestruct;
     table
 }

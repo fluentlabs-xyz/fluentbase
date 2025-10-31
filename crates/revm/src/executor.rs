@@ -12,10 +12,10 @@ use fluentbase_runtime::{
     RuntimeContext,
 };
 use fluentbase_sdk::{
-    debug_log_ext, is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule,
-    BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode,
-    RuntimeInputOutputV1, RuntimeNewFrameInputV1, SharedContextInput, SharedContextInputV1,
-    SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
+    bincode, is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule, BlockContextV1,
+    BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode, RuntimeNewFrameInputV1,
+    SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
+    FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, Bytecode},
@@ -158,22 +158,20 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .encode()
         .expect("revm: unable to encode shared context input")
         .to_vec();
-    debug_log_ext!("context_input.len={:?}", context_input.len());
-    let inputs_bytes = interpreter.input.input.bytes(ctx);
+    let input = interpreter.input.input.bytes(ctx);
 
     match meta_bytecode {
         Bytecode::OwnableAccount(v) if !is_create => {
-            // TODO(dmitry123): Remove `is_create` check
-            let runtime_input =
-                RuntimeInputOutputV1::RuntimeNewFrameInputV1(RuntimeNewFrameInputV1 {
-                    metadata: v.metadata,
-                    input: inputs_bytes,
-                })
-                .encode();
-            context_input.extend(runtime_input);
+            let new_frame_input = RuntimeNewFrameInputV1 {
+                metadata: v.metadata,
+                input,
+            };
+            let new_frame_input =
+                bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
+            context_input.extend(new_frame_input);
         }
         _ => {
-            context_input.extend_from_slice(&inputs_bytes);
+            context_input.extend_from_slice(&input);
         }
     };
 
