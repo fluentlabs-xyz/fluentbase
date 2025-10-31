@@ -6,16 +6,17 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
+use core::mem::{replace, take};
 use fluentbase_runtime::{
     default_runtime_executor,
     syscall_handler::{syscall_exec_impl, syscall_resume_impl},
     RuntimeContext,
 };
 use fluentbase_sdk::{
-    bincode, is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule, BlockContextV1,
-    BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode, RuntimeNewFrameInputV1,
-    SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
-    FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
+    bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
+    rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
+    ExitCode, RuntimeNewFrameInputV1, SharedContextInput, SharedContextInputV1,
+    SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, Bytecode},
@@ -161,7 +162,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     let input = interpreter.input.input.bytes(ctx);
 
     match meta_bytecode {
-        Bytecode::OwnableAccount(v) if !is_create => {
+        Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
             let new_frame_input = RuntimeNewFrameInputV1 {
                 metadata: v.metadata,
                 input,
@@ -170,12 +171,8 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                 bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
             context_input.extend(new_frame_input);
         }
-        _ => {
-            context_input.extend_from_slice(&input);
-        }
-    };
-
-    let rwasm_code_hash = interpreter.bytecode.hash().unwrap();
+        _ => context_input.extend_from_slice(&input),
+    }
 
     let rwasm_bytecode = match &*interpreter.bytecode {
         Bytecode::Rwasm(bytecode) => bytecode.clone(),
@@ -191,10 +188,11 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             ));
         }
     };
+
     let bytecode_hash = BytecodeOrHash::Bytecode {
         address: effective_bytecode_address,
         bytecode: rwasm_bytecode.module,
-        hash: rwasm_code_hash,
+        hash: interpreter.bytecode.hash().unwrap(),
     };
 
     // Fuel limit we denominate later to gas
@@ -333,12 +331,36 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     ctx: &mut CTX,
     inspector: &mut Option<&mut INSP>,
     exit_code: i32,
-    return_data: Bytes,
+    mut return_data: Bytes,
     is_create: bool,
     is_static: bool,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     // if we have success or failed exit code
     if exit_code <= 0 {
+        if is_create {
+            let bytecode_address = frame
+                .interpreter
+                .input
+                .bytecode_address()
+                .cloned()
+                .unwrap_or_else(|| frame.interpreter.input.target_address());
+            let meta_account = ctx.journal_mut().load_account_code(bytecode_address)?;
+            let mut bytecode = meta_account.info.code.clone().unwrap_or_default();
+            let rewrite_metadata = match &mut bytecode {
+                Bytecode::OwnableAccount(account)
+                    if is_execute_using_system_runtime(&account.owner_address) =>
+                {
+                    let metadata = take(&mut return_data);
+                    account.metadata = metadata;
+                    true
+                }
+                _ => false,
+            };
+            if rewrite_metadata {
+                ctx.journal_mut()
+                    .set_code(frame.interpreter.input.target_address(), bytecode);
+            }
+        }
         return Ok(process_halt(frame, ctx, inspector, exit_code, return_data));
     }
 

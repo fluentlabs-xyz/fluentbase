@@ -10,7 +10,7 @@ use fluentbase_evm::{
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult,
 };
 use fluentbase_sdk::{
-    bincode, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256,
+    bincode, debug_log, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256,
     EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
 };
 use fluentbase_types::{
@@ -52,29 +52,35 @@ fn lock_evm_context<'a>() -> MutexGuard<'a, Vec<EthVM>> {
     cached_state.lock()
 }
 
-fn restore_evm_context_or_create<'a, SDK: SharedAPI>(
+fn restore_evm_context_or_create<'a>(
     cached_state: &'a mut MutexGuard<Vec<EthVM>>,
     context: impl ContextReader,
     input: Bytes,
     return_data: Bytes,
-    analyzed_bytecode: Option<AnalyzedBytecode>,
 ) -> &'a mut EthVM {
     // If return data is empty, then we create new EVM frame
     if return_data.is_empty() {
-        let (analyzed_bytecode, contract_input) = analyzed_bytecode
-            .map(|v| (v, input.clone()))
-            .unwrap_or_else(|| {
-                let (input, _) = bincode::decode_from_slice::<RuntimeNewFrameInputV1, _>(
-                    input.as_ref(),
-                    bincode::config::legacy(),
-                )
-                .unwrap();
-                let Some(analyzed_bytecode) = evm_bytecode_from_metadata(&input.metadata) else {
-                    unreachable!("evm: a valid metadata must be provided")
-                };
-                (analyzed_bytecode, input.input)
-            });
+        // Decode new frame input
+        let (new_frame_input, _) = bincode::decode_from_slice::<RuntimeNewFrameInputV1, _>(
+            input.as_ref(),
+            bincode::config::legacy(),
+        )
+        .unwrap();
+        // If analyzed, bytecode is not presented then extract it from the input
+        // (contract deployment stage)
+        let (analyzed_bytecode, contract_input) = if !new_frame_input.metadata.is_empty() {
+            let Some(analyzed_bytecode) = evm_bytecode_from_metadata(&new_frame_input.metadata)
+            else {
+                unreachable!("evm: a valid metadata must be provided")
+            };
+            (analyzed_bytecode, new_frame_input.input)
+        } else {
+            let analyzed_bytecode =
+                AnalyzedBytecode::new(new_frame_input.input.clone(), B256::ZERO);
+            (analyzed_bytecode, Bytes::new())
+        };
         let eth_vm = EthVM::new(context, contract_input, analyzed_bytecode);
+        // Push new EthVM frame (new frame is created)
         cached_state.push(eth_vm);
         cached_state.last_mut().unwrap()
     } else {
@@ -119,16 +125,11 @@ fn deploy_inner<SDK: SharedAPI>(
     sdk: &mut SDK,
     mut cached_state: MutexGuard<Vec<EthVM>>,
 ) -> ExitCode {
-    let input: Bytes = sdk.input().into();
-    let analyzed_bytecode = AnalyzedBytecode::new(input, B256::ZERO);
-
-    let evm = restore_evm_context_or_create::<SDK>(
+    let evm = restore_evm_context_or_create(
         &mut cached_state,
         sdk.context(),
-        // We don't pass any input for EVM contract deployment
-        Bytes::new(),
+        sdk.bytes_input(),
         sdk.return_data(),
-        Some(analyzed_bytecode),
     );
     let instruction_table = interruptable_instruction_table::<SDK>();
 
@@ -201,12 +202,17 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 }
 
 fn main_inner<SDK: SharedAPI>(sdk: &mut SDK, mut cached_state: MutexGuard<Vec<EthVM>>) -> ExitCode {
-    let evm = restore_evm_context_or_create::<SDK>(
+    let evm = restore_evm_context_or_create(
         &mut cached_state,
+        // Pass information about execution context (contract address, caller) into the EthVM,
+        // but it's used only if EthVM is not created (aka first call, not resume)
         sdk.context(),
+        // Input of the smart contract
         sdk.bytes_input(),
+        // Return data indicates the existence of interrupted state,
+        // if we have return data not empty,
+        // then we've executed this frame before and need to resume
         sdk.return_data(),
-        None,
     );
     let instruction_table = interruptable_instruction_table::<SDK>();
     match evm.run_step(&instruction_table, sdk) {

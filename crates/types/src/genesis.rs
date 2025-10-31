@@ -84,9 +84,14 @@ pub fn is_system_precompile(address: &Address) -> bool {
     PRECOMPILE_ADDRESSES.contains(address)
 }
 
-pub fn is_execute_using_aot_compiler(address: &Address) -> bool {
-    // TODO(dmitry123): Add spec check here, once we have first fork
+pub fn is_execute_using_wasmtime_strategy(address: &Address) -> bool {
     PRECOMPILE_ADDRESSES.contains(address)
+}
+
+pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[PRECOMPILE_EVM_RUNTIME];
+
+pub fn is_execute_using_system_runtime(address: &Address) -> bool {
+    EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES.contains(address)
 }
 
 /// Resolves and returns the account owner `Address` based on the provided input byte slice.
