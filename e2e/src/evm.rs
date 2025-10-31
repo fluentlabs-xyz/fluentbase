@@ -31,7 +31,7 @@ fn test_evm_greeting() {
     assert!(!bytes.is_empty());
     let bytes = &bytes[64..75];
     assert_eq!("Hello World", from_utf8(bytes.as_ref()).unwrap());
-    assert_eq!(result.gas_used(), 21160);
+    assert_eq!(result.gas_used(), 21_792);
 }
 
 #[test]

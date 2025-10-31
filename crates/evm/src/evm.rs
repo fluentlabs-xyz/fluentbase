@@ -9,7 +9,7 @@ use crate::{
     opcodes::interruptable_instruction_table,
     types::{ExecutionResult, InterruptingInterpreter, InterruptionExtension, InterruptionOutcome},
 };
-use fluentbase_sdk::{Bytes, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
+use fluentbase_sdk::{debug_log, Bytes, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
 use revm_bytecode::{Bytecode, LegacyAnalyzedBytecode};
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},
@@ -151,6 +151,9 @@ impl EthVM {
             &mut self.interpreter.extend.committed_gas,
         );
         let remaining_diff = committed_gas.remaining() - gas.remaining();
+        debug_log!("committed gas: {:?}", committed_gas);
+        debug_log!("gas: {:?}", gas);
+        debug_log!("syncing gas remaining: {}", remaining_diff);
         // If there is nothing to commit/charge then just ignore it
         if remaining_diff == 0 {
             return;

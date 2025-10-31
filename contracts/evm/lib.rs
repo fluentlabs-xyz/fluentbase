@@ -10,7 +10,7 @@ use fluentbase_evm::{
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult,
 };
 use fluentbase_sdk::{
-    bincode, debug_log, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256,
+    bincode, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256,
     EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
 };
 use fluentbase_types::{
@@ -85,7 +85,15 @@ fn restore_evm_context_or_create<'a>(
         cached_state.last_mut().unwrap()
     } else {
         drop(context);
-        let (outcome, _) = bincode::decode_from_slice::<RuntimeInterruptionOutcomeV1, _>(
+        let (
+            RuntimeInterruptionOutcomeV1 {
+                output,
+                fuel_consumed,
+                fuel_refunded,
+                exit_code,
+            },
+            _,
+        ) = bincode::decode_from_slice::<RuntimeInterruptionOutcomeV1, _>(
             return_data.as_ref(),
             bincode::config::legacy(),
         )
@@ -93,8 +101,8 @@ fn restore_evm_context_or_create<'a>(
         let Some(eth_vm) = cached_state.last_mut() else {
             unreachable!("evm: missing cached evm state, can't resume execution")
         };
-        let mut gas = Gas::new_spent(outcome.fuel_consumed / FUEL_DENOM_RATE);
-        gas.record_refund(outcome.fuel_refunded / FUEL_DENOM_RATE as i64);
+        let mut gas = Gas::new_spent(fuel_consumed / FUEL_DENOM_RATE);
+        gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
         {
             let dirty_gas = &mut eth_vm.interpreter.gas;
             if !dirty_gas.record_cost(gas.spent()) {
@@ -104,10 +112,11 @@ fn restore_evm_context_or_create<'a>(
             }
             eth_vm.interpreter.extend.committed_gas = *dirty_gas;
         }
+        let exit_code = ExitCode::from(exit_code);
         eth_vm.interpreter.extend.interruption_outcome = Option::from(InterruptionOutcome {
-            output: outcome.output.clone().into(),
+            output,
             gas,
-            exit_code: ExitCode::from(outcome.exit_code),
+            exit_code,
         });
         eth_vm
     }
@@ -217,16 +226,8 @@ fn main_inner<SDK: SharedAPI>(sdk: &mut SDK, mut cached_state: MutexGuard<Vec<Et
     let instruction_table = interruptable_instruction_table::<SDK>();
     match evm.run_step(&instruction_table, sdk) {
         InterpreterAction::Return(result) => {
-            let committed_gas = evm.interpreter.extend.committed_gas;
+            evm.sync_evm_gas(sdk);
             _ = cached_state.pop();
-            let result = ExecutionResult {
-                result: result.result,
-                output: result.output,
-                committed_gas,
-                gas: result.gas,
-            };
-            let consumed_diff = result.chargeable_fuel();
-            sdk.charge_fuel(consumed_diff);
             sdk.write(result.output.as_ref());
             if result.result.is_ok() {
                 ExitCode::Ok

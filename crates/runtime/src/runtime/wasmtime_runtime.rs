@@ -187,7 +187,6 @@ fn wasmtime_engine() -> &'static Engine {
 
 struct CallerAdapter<'a> {
     caller: wasmtime::Caller<'a, RuntimeContext>,
-    fuel_consumed: u64,
 }
 
 impl<'a> Store<RuntimeContext> for CallerAdapter<'a> {
@@ -223,13 +222,13 @@ impl<'a> Store<RuntimeContext> for CallerAdapter<'a> {
         func(self.caller.data())
     }
 
-    fn try_consume_fuel(&mut self, delta: u64) -> Result<(), TrapCode> {
-        self.fuel_consumed += delta;
+    fn try_consume_fuel(&mut self, _delta: u64) -> Result<(), TrapCode> {
+        // There is no need to count this, we already have this counted inside the context
         Ok(())
     }
 
     fn remaining_fuel(&self) -> Option<u64> {
-        None
+        unimplemented!()
     }
 }
 
@@ -284,10 +283,7 @@ fn wasmtime_syscall_handler<'a>(
     buffer.extend(core::iter::repeat(Value::I32(0)).take(result.len()));
     let (mapped_params, mapped_result) = buffer.split_at_mut(params.len());
     // caller adapter is required to provide operations for accessing memory and context
-    let mut caller_adapter = CallerAdapter::<'a> {
-        caller,
-        fuel_consumed: 0,
-    };
+    let mut caller_adapter = CallerAdapter::<'a> { caller };
     let sys_func_idx =
         SysFuncIdx::from_repr(sys_func_idx).ok_or(TrapCode::UnknownExternalFunction)?;
     let syscall_result = invoke_runtime_handler(
