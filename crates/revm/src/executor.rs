@@ -13,9 +13,9 @@ use fluentbase_runtime::{
     RuntimeContext,
 };
 use fluentbase_sdk::{
-    bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
-    rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
-    ExitCode, RuntimeNewFrameInputV1, SharedContextInput, SharedContextInputV1,
+    bincode, debug_log_ext, is_delegated_runtime_address, is_execute_using_system_runtime,
+    keccak256, rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef,
+    ContractContextV1, ExitCode, RuntimeNewFrameInputV1, SharedContextInput, SharedContextInputV1,
     SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
 };
 use revm::{
@@ -163,6 +163,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     match meta_bytecode {
         Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
+            debug_log_ext!("v.metadata.len={}", v.metadata.len());
             let new_frame_input = RuntimeNewFrameInputV1 {
                 metadata: v.metadata,
                 input,
