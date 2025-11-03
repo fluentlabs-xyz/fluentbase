@@ -2,11 +2,9 @@
 mod global_executor;
 mod local_executor;
 
-#[cfg(feature = "wasmtime")]
-use crate::runtime::WasmtimeRuntime;
 use crate::{
     module_factory::ModuleFactory,
-    runtime::{ExecutionMode, StrategyRuntime},
+    runtime::{ExecutionMode, RwasmRuntime, SystemRuntime},
     RuntimeContext,
 };
 use fluentbase_types::{
@@ -249,22 +247,14 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         bytecode_or_hash: BytecodeOrHash,
         ctx: RuntimeContext,
     ) -> ExecutionResult {
-        #[cfg(feature = "wasmtime")]
-        let enable_wasmtime_runtime = match &bytecode_or_hash {
-            BytecodeOrHash::Bytecode { address, hash, .. } => {
+        let (enable_wasmtime_runtime, enable_system_runtime) = match &bytecode_or_hash {
+            BytecodeOrHash::Bytecode { address, hash, .. } => (
                 fluentbase_types::is_execute_using_wasmtime_strategy(address)
-                    .then_some((*address, *hash))
-            }
-            BytecodeOrHash::Hash(_) => None,
+                    .then_some((*address, *hash)),
+                fluentbase_types::is_execute_using_system_runtime(address).then_some(*hash),
+            ),
+            BytecodeOrHash::Hash(_) => (None, None),
         };
-
-        #[cfg(feature = "wasmtime")]
-        let runtime_address =
-            if let BytecodeOrHash::Bytecode { address, hash, .. } = &bytecode_or_hash {
-                Some((*address, *hash))
-            } else {
-                None
-            };
 
         // If we have a cached module, then use it, otherwise create a new one and cache
         let module = self.module_factory.get_module_or_init(bytecode_or_hash);
@@ -273,17 +263,11 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let fuel_remaining = Some(ctx.fuel_limit);
         let fuel_config = FuelConfig::default().with_fuel_limit(ctx.fuel_limit);
 
-        #[cfg(feature = "wasmtime")]
-        let mut exec_mode = if runtime_address
-            .as_ref()
-            .map(|v| &v.0)
-            .is_some_and(fluentbase_types::is_execute_using_system_runtime)
-        {
-            let (_runtime_address, runtime_code_hash) = runtime_address.unwrap();
-            let runtime =
-                WasmtimeRuntime::new(module, self.import_linker.clone(), runtime_code_hash, ctx);
+        let mut exec_mode = if let Some(code_hash) = enable_system_runtime {
+            let runtime = SystemRuntime::new(module, self.import_linker.clone(), code_hash, ctx);
             ExecutionMode::Wasmtime(runtime)
         } else {
+            #[cfg(feature = "wasmtime")]
             let strategy = if let Some((address, code_hash)) = enable_wasmtime_runtime {
                 let module = self
                     .module_factory
@@ -293,18 +277,12 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
                 let engine = ExecutionEngine::acquire_shared();
                 Strategy::Rwasm { module, engine }
             };
-            let runtime =
-                StrategyRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
-            ExecutionMode::Strategy(runtime)
-        };
-        #[cfg(not(feature = "wasmtime"))]
-        let mut exec_mode = {
+            #[cfg(not(feature = "wasmtime"))]
             let strategy = {
                 let engine = ExecutionEngine::acquire_shared();
                 Strategy::Rwasm { module, engine }
             };
-            let runtime =
-                StrategyRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
+            let runtime = RwasmRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
             ExecutionMode::Strategy(runtime)
         };
 

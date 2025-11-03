@@ -669,7 +669,6 @@ declare_builtin_function!(
 //         let endianness: solana_poseidon::Endianness = endianness.try_into().map_err(|_| RuntimeError::InvalidConversion)?;
 //
 //         if vals_len > 12 {
-//             debug_log_ext!("Poseidon hashing {} sequences is not supported", vals_len);
 //             return Err(SyscallError::InvalidLength.into());
 //         }
 //

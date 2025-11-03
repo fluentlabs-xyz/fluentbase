@@ -3,8 +3,8 @@ use crate::{
     RuntimeContext,
 };
 use fluentbase_types::{
-    bincode, ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx,
-    SyscallInvocationParams, B256, STATE_DEPLOY, STATE_MAIN,
+    bincode, ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, SyscallInvocationParams,
+    B256, STATE_DEPLOY, STATE_MAIN,
 };
 use rwasm::{
     ImportLinker, RwasmModule, Store, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE,
@@ -20,7 +20,7 @@ use wasmtime::{
     Val,
 };
 
-pub struct WasmtimeRuntime {
+pub struct SystemRuntime {
     compiled_runtime: Option<CompiledRuntime>,
     ctx: Option<RuntimeContext>,
     code_hash: B256,
@@ -40,7 +40,7 @@ thread_local! {
     pub static COMPILED_RUNTIMES: RefCell<HashMap<B256, CompiledRuntime>> = RefCell::new(HashMap::new());
 }
 
-impl Drop for WasmtimeRuntime {
+impl Drop for SystemRuntime {
     fn drop(&mut self) {
         COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
             compiled_runtimes.insert(self.code_hash, self.compiled_runtime.take().unwrap());
@@ -48,7 +48,7 @@ impl Drop for WasmtimeRuntime {
     }
 }
 
-impl WasmtimeRuntime {
+impl SystemRuntime {
     pub fn compile_module(rwasm_module: RwasmModule) -> Module {
         Module::new(wasmtime_engine(), &rwasm_module.hint_section).unwrap()
     }

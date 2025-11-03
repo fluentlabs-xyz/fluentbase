@@ -45,7 +45,6 @@ fn lock_evm_context<'a>() -> MutexGuard<'a, Vec<EthVM>> {
         let result = Vec::new();
         spin::Mutex::new(result)
     });
-    debug_log_ext!("cached_state.len={}", cached_state.lock().len());
     debug_assert!(
         !cached_state.is_locked(),
         "evm: spin mutex is locked, looks like memory corruption"
@@ -59,7 +58,6 @@ fn restore_evm_context_or_create<'a>(
     input: Bytes,
     return_data: Bytes,
 ) -> &'a mut EthVM {
-    debug_log_ext!();
     // If return data is empty, then we create new EVM frame
     if return_data.is_empty() {
         // Decode new frame input
@@ -71,17 +69,12 @@ fn restore_evm_context_or_create<'a>(
         // If analyzed, bytecode is not presented then extract it from the input
         // (contract deployment stage)
         let (analyzed_bytecode, contract_input) = if !new_frame_input.metadata.is_empty() {
-            debug_log_ext!(
-                "new_frame_input.metadata.len={}",
-                new_frame_input.metadata.len(),
-            );
             let Some(analyzed_bytecode) = evm_bytecode_from_metadata(&new_frame_input.metadata)
             else {
                 unreachable!("evm: a valid metadata must be provided")
             };
             (analyzed_bytecode, new_frame_input.input)
         } else {
-            debug_log_ext!();
             let analyzed_bytecode =
                 AnalyzedBytecode::new(new_frame_input.input.clone(), B256::ZERO);
             (analyzed_bytecode, Bytes::new())
@@ -92,7 +85,6 @@ fn restore_evm_context_or_create<'a>(
         cached_state.last_mut().unwrap()
     } else {
         drop(context);
-        debug_log_ext!();
         let (
             RuntimeInterruptionOutcomeV1 {
                 output,
@@ -232,11 +224,6 @@ fn main_inner<SDK: SharedAPI>(sdk: &mut SDK, mut cached_state: MutexGuard<Vec<Et
         sdk.return_data(),
     );
     let instruction_table = interruptable_instruction_table::<SDK>();
-    debug_log_ext!(
-        "evm.interpreter.bytecode.bytecode({})={:x?}",
-        evm.interpreter.bytecode.bytecode().len(),
-        evm.interpreter.bytecode.bytecode(),
-    );
     match evm.run_step(&instruction_table, sdk) {
         InterpreterAction::Return(result) => {
             evm.sync_evm_gas(sdk);
@@ -256,7 +243,6 @@ fn main_inner<SDK: SharedAPI>(sdk: &mut SDK, mut cached_state: MutexGuard<Vec<Et
             fuel_limit,
             state,
         } => {
-            debug_log_ext!();
             evm.sync_evm_gas(sdk);
             let syscall_params = SyscallInvocationParams {
                 code_hash,

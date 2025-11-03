@@ -163,7 +163,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     match meta_bytecode {
         Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
-            debug_log_ext!("v.metadata.len={}", v.metadata.len());
             let new_frame_input = RuntimeNewFrameInputV1 {
                 metadata: v.metadata,
                 input,

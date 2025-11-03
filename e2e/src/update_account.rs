@@ -55,7 +55,6 @@ fn test_update_account_code_by_auth_v1() {
     )
     .unwrap();
     let new_bytecode = rwasm_module.rwasm_module.serialize();
-    debug_log_ext!("new_bytecode({}): {:?}", new_bytecode.len(), new_bytecode);
 
     let mut upgrade_input = UPDATE_GENESIS_PREFIX_V1.to_vec();
     upgrade_input.extend_from_slice(new_bytecode.as_ref());
@@ -71,8 +70,6 @@ fn test_update_account_code_by_auth_v1() {
 
     let new_code = ctx.get_code(PRECOMPILE_EVM_RUNTIME).unwrap();
     assert_eq!(new_code.original_bytes().as_ref(), &new_bytecode);
-
-    debug_log_ext!();
 
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
