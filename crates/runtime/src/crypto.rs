@@ -27,32 +27,32 @@ impl CryptoAPI for RuntimeContextWrapper {
     }
     #[inline(always)]
     fn ed25519_add(p: [u8; ED25519_POINT_DECOMPRESSED_SIZE], q: [u8; ED25519_POINT_DECOMPRESSED_SIZE]) -> [u8; ED25519_POINT_DECOMPRESSED_SIZE] {
-        syscall_edwards_add_impl(p, q).unwrap()
+        syscall_edwards_add_impl(p, q).unwrap_exit_code()
     }
 
     #[inline(always)]
     fn tower_fp1_bn254_add(x: [u8; BN254_FP_SIZE], y: [u8; BN254_FP_SIZE]) -> [u8; BN254_FP_SIZE] {
-        syscall_tower_fp1_bn254_add_impl(x, y)
+        syscall_tower_fp1_bn254_add_impl(x, y).unwrap_exit_code()
     }
     #[inline(always)]
     fn tower_fp1_bn254_sub(x: [u8; BN254_FP_SIZE], y: [u8; BN254_FP_SIZE]) -> [u8; BN254_FP_SIZE] {
-        syscall_tower_fp1_bn254_sub_impl(x, y)
+        syscall_tower_fp1_bn254_sub_impl(x, y).unwrap_exit_code()
     }
     #[inline(always)]
     fn tower_fp1_bn254_mul(x: [u8; BN254_FP_SIZE], y: [u8; BN254_FP_SIZE]) -> [u8; BN254_FP_SIZE] {
-        syscall_tower_fp1_bn254_mul_impl(x, y)
+        syscall_tower_fp1_bn254_mul_impl(x, y).unwrap_exit_code()
     }
     #[inline(always)]
     fn tower_fp1_bls12381_add(x: [u8; BLS12381_FP_SIZE], y: [u8; BLS12381_FP_SIZE]) -> [u8; BLS12381_FP_SIZE] {
-        syscall_tower_fp1_bls12381_add_impl(x, y)
+        syscall_tower_fp1_bls12381_add_impl(x, y).unwrap_exit_code()
     }
     #[inline(always)]
     fn tower_fp1_bls12381_sub(x: [u8; BLS12381_FP_SIZE], y: [u8; BLS12381_FP_SIZE]) -> [u8; BLS12381_FP_SIZE] {
-        syscall_tower_fp1_bls12381_sub_impl(x, y)
+        syscall_tower_fp1_bls12381_sub_impl(x, y).unwrap_exit_code()
     }
     #[inline(always)]
     fn tower_fp1_bls12381_mul(x: [u8; BLS12381_FP_SIZE], y: [u8; BLS12381_FP_SIZE]) -> [u8; BLS12381_FP_SIZE] {
-        syscall_tower_fp1_bls12381_mul_impl(x, y)
+        syscall_tower_fp1_bls12381_mul_impl(x, y).unwrap_exit_code()
     }
     #[inline(always)]
     fn tower_fp2_bn254_add(a_c0: [u8; BN254_FP_SIZE], a_c1: [u8; BN254_FP_SIZE], b_c0: [u8; BN254_FP_SIZE], b_c1: [u8; BN254_FP_SIZE]) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {

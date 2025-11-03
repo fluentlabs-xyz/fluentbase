@@ -1,5 +1,5 @@
-use crate::RuntimeContext;
-use fluentbase_types::{BLS12381_FP_SIZE, BN254_FP_SIZE};
+use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
+use fluentbase_types::{ExitCode, BLS12381_FP_SIZE, BN254_FP_SIZE};
 use num::BigUint;
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::weierstrass::{bls12_381::Bls12381BaseField, bn254::Bn254BaseField, FpOpField};
@@ -84,7 +84,8 @@ pub(crate) fn syscall_tower_fp1_add_sub_mul_handler<
     let result = syscall_tower_fp1_add_sub_mul_impl::<NUM_BYTES, P, FIELD_OP>(
         x.try_into().unwrap(),
         y.try_into().unwrap(),
-    );
+    )
+    .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
 
     ctx.memory_write(x_ptr as usize, &result)?;
     Ok(())
@@ -93,37 +94,37 @@ pub(crate) fn syscall_tower_fp1_add_sub_mul_handler<
 pub fn syscall_tower_fp1_bn254_add_impl(
     x: [u8; BN254_FP_SIZE],
     y: [u8; BN254_FP_SIZE],
-) -> [u8; BN254_FP_SIZE] {
+) -> Result<[u8; BN254_FP_SIZE], ExitCode> {
     syscall_tower_fp1_add_sub_mul_impl::<BN254_FP_SIZE, Bn254BaseField, FP_FIELD_ADD>(x, y)
 }
 pub fn syscall_tower_fp1_bn254_sub_impl(
     x: [u8; BN254_FP_SIZE],
     y: [u8; BN254_FP_SIZE],
-) -> [u8; BN254_FP_SIZE] {
+) -> Result<[u8; BN254_FP_SIZE], ExitCode> {
     syscall_tower_fp1_add_sub_mul_impl::<BN254_FP_SIZE, Bn254BaseField, FP_FIELD_SUB>(x, y)
 }
 pub fn syscall_tower_fp1_bn254_mul_impl(
     x: [u8; BN254_FP_SIZE],
     y: [u8; BN254_FP_SIZE],
-) -> [u8; BN254_FP_SIZE] {
+) -> Result<[u8; BN254_FP_SIZE], ExitCode> {
     syscall_tower_fp1_add_sub_mul_impl::<BN254_FP_SIZE, Bn254BaseField, FP_FIELD_MUL>(x, y)
 }
 pub fn syscall_tower_fp1_bls12381_add_impl(
     x: [u8; BLS12381_FP_SIZE],
     y: [u8; BLS12381_FP_SIZE],
-) -> [u8; BLS12381_FP_SIZE] {
+) -> Result<[u8; BLS12381_FP_SIZE], ExitCode> {
     syscall_tower_fp1_add_sub_mul_impl::<BLS12381_FP_SIZE, Bls12381BaseField, FP_FIELD_ADD>(x, y)
 }
 pub fn syscall_tower_fp1_bls12381_sub_impl(
     x: [u8; BLS12381_FP_SIZE],
     y: [u8; BLS12381_FP_SIZE],
-) -> [u8; BLS12381_FP_SIZE] {
+) -> Result<[u8; BLS12381_FP_SIZE], ExitCode> {
     syscall_tower_fp1_add_sub_mul_impl::<BLS12381_FP_SIZE, Bls12381BaseField, FP_FIELD_SUB>(x, y)
 }
 pub fn syscall_tower_fp1_bls12381_mul_impl(
     x: [u8; BLS12381_FP_SIZE],
     y: [u8; BLS12381_FP_SIZE],
-) -> [u8; BLS12381_FP_SIZE] {
+) -> Result<[u8; BLS12381_FP_SIZE], ExitCode> {
     syscall_tower_fp1_add_sub_mul_impl::<BLS12381_FP_SIZE, Bls12381BaseField, FP_FIELD_MUL>(x, y)
 }
 
@@ -134,23 +135,27 @@ pub(crate) fn syscall_tower_fp1_add_sub_mul_impl<
 >(
     x: [u8; NUM_BYTES],
     y: [u8; NUM_BYTES],
-) -> [u8; NUM_BYTES] {
+) -> Result<[u8; NUM_BYTES], ExitCode> {
     let modulus = &BigUint::from_bytes_le(P::MODULUS);
-    let a = BigUint::from_bytes_le(&x) % modulus;
-    let b = BigUint::from_bytes_le(&y) % modulus;
+    let a = BigUint::from_bytes_le(&x);
+    let b = BigUint::from_bytes_le(&y);
     let result = match FIELD_OP {
         FP_FIELD_ADD => (a + b) % modulus,
         FP_FIELD_SUB => {
             // TODO(dmitry123): Due to the SP1 limitations, we can't support b that is greater than a + modulus.
             //  But what's the best workaround here? To return an error or to wrap b?
-            ((a + modulus) - b % modulus) % modulus
+            if &a + modulus < b {
+                return Err(ExitCode::MalformedBuiltinParams);
+            }
+            ((a + modulus) - b) % modulus
         }
         FP_FIELD_MUL => (a * b) % modulus,
         _ => unreachable!(),
     };
     let mut result = result.to_bytes_le();
     result.resize(NUM_BYTES, 0);
-    result.try_into().unwrap()
+    let result: [u8; NUM_BYTES] = result.try_into().unwrap();
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -186,17 +191,20 @@ mod tests {
 
         let add = |a: &BigUint, b: &BigUint| -> BigUint {
             let result =
-                syscall_tower_fp1_bn254_add_impl(big_uint_into_bytes(a), big_uint_into_bytes(b));
+                syscall_tower_fp1_bn254_add_impl(big_uint_into_bytes(a), big_uint_into_bytes(b))
+                    .unwrap();
             BigUint::from_bytes_le(&result)
         };
         let sub = |a: &BigUint, b: &BigUint| -> BigUint {
             let result =
-                syscall_tower_fp1_bn254_sub_impl(big_uint_into_bytes(a), big_uint_into_bytes(b));
+                syscall_tower_fp1_bn254_sub_impl(big_uint_into_bytes(a), big_uint_into_bytes(b))
+                    .unwrap();
             BigUint::from_bytes_le(&result)
         };
         let mul = |a: &BigUint, b: &BigUint| -> BigUint {
             let result =
-                syscall_tower_fp1_bn254_mul_impl(big_uint_into_bytes(a), big_uint_into_bytes(b));
+                syscall_tower_fp1_bn254_mul_impl(big_uint_into_bytes(a), big_uint_into_bytes(b))
+                    .unwrap();
             BigUint::from_bytes_le(&result)
         };
 
@@ -248,17 +256,20 @@ mod tests {
 
         let add = |a: &BigUint, b: &BigUint| -> BigUint {
             let result =
-                syscall_tower_fp1_bls12381_add_impl(big_uint_into_bytes(a), big_uint_into_bytes(b));
+                syscall_tower_fp1_bls12381_add_impl(big_uint_into_bytes(a), big_uint_into_bytes(b))
+                    .unwrap();
             BigUint::from_bytes_le(&result)
         };
         let sub = |a: &BigUint, b: &BigUint| -> BigUint {
             let result =
-                syscall_tower_fp1_bls12381_sub_impl(big_uint_into_bytes(a), big_uint_into_bytes(b));
+                syscall_tower_fp1_bls12381_sub_impl(big_uint_into_bytes(a), big_uint_into_bytes(b))
+                    .unwrap();
             BigUint::from_bytes_le(&result)
         };
         let mul = |a: &BigUint, b: &BigUint| -> BigUint {
             let result =
-                syscall_tower_fp1_bls12381_mul_impl(big_uint_into_bytes(a), big_uint_into_bytes(b));
+                syscall_tower_fp1_bls12381_mul_impl(big_uint_into_bytes(a), big_uint_into_bytes(b))
+                    .unwrap();
             BigUint::from_bytes_le(&result)
         };
 
@@ -302,6 +313,9 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: MalformedBuiltinParams"
+    )]
     fn test_bls12381_overflow_cant_happen() {
         let m = BigUint::from_str("4002409555221667393417789825735904156556882819939007885332058136124031650490837864442687629129015664037894272559787").unwrap();
         let a = BigUint::from_str("3001807166416250545063342369301928117417662114954255913999043602093023737868128398332015721846761748028420704419841").unwrap();
@@ -309,7 +323,8 @@ mod tests {
         assert!(a < m && b > m);
 
         let result =
-            syscall_tower_fp1_bls12381_sub_impl(big_uint_into_bytes(&a), big_uint_into_bytes(&b));
+            syscall_tower_fp1_bls12381_sub_impl(big_uint_into_bytes(&a), big_uint_into_bytes(&b))
+                .unwrap();
         let result = BigUint::from_bytes_le(&result);
 
         let expected_sub = ((&a + &m) - &b % &m) % &m;
