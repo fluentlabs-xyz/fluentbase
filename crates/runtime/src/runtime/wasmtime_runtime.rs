@@ -3,8 +3,8 @@ use crate::{
     RuntimeContext,
 };
 use fluentbase_types::{
-    bincode, Address, ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx,
-    SyscallInvocationParams, STATE_DEPLOY, STATE_MAIN,
+    bincode, ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx,
+    SyscallInvocationParams, B256, STATE_DEPLOY, STATE_MAIN,
 };
 use rwasm::{
     ImportLinker, RwasmModule, Store, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE,
@@ -23,7 +23,7 @@ use wasmtime::{
 pub struct WasmtimeRuntime {
     compiled_runtime: Option<CompiledRuntime>,
     ctx: Option<RuntimeContext>,
-    address: Address,
+    code_hash: B256,
     state: Option<RuntimeInterruptionOutcomeV1>,
 }
 
@@ -37,13 +37,13 @@ struct CompiledRuntime {
 }
 
 thread_local! {
-    pub static COMPILED_RUNTIMES: RefCell<HashMap<Address, CompiledRuntime>> = RefCell::new(HashMap::new());
+    pub static COMPILED_RUNTIMES: RefCell<HashMap<B256, CompiledRuntime>> = RefCell::new(HashMap::new());
 }
 
 impl Drop for WasmtimeRuntime {
     fn drop(&mut self) {
         COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            compiled_runtimes.insert(self.address, self.compiled_runtime.take().unwrap());
+            compiled_runtimes.insert(self.code_hash, self.compiled_runtime.take().unwrap());
         });
     }
 }
@@ -56,11 +56,11 @@ impl WasmtimeRuntime {
     pub fn new(
         module: RwasmModule,
         import_linker: Arc<ImportLinker>,
-        address: Address,
+        code_hash: B256,
         ctx: RuntimeContext,
     ) -> Self {
         let compiled_runtime = COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            if let Some(compiled_runtime) = compiled_runtimes.remove(&address) {
+            if let Some(compiled_runtime) = compiled_runtimes.remove(&code_hash) {
                 return compiled_runtime;
             }
             let module = Self::compile_module(module);
@@ -85,7 +85,7 @@ impl WasmtimeRuntime {
         Self {
             compiled_runtime: Some(compiled_runtime),
             ctx: Some(ctx),
-            address,
+            code_hash,
             state: None,
         }
     }

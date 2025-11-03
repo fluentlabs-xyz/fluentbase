@@ -259,11 +259,12 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         };
 
         #[cfg(feature = "wasmtime")]
-        let runtime_address = if let BytecodeOrHash::Bytecode { address, .. } = &bytecode_or_hash {
-            Some(address.clone())
-        } else {
-            None
-        };
+        let runtime_address =
+            if let BytecodeOrHash::Bytecode { address, hash, .. } = &bytecode_or_hash {
+                Some((*address, *hash))
+            } else {
+                None
+            };
 
         // If we have a cached module, then use it, otherwise create a new one and cache
         let module = self.module_factory.get_module_or_init(bytecode_or_hash);
@@ -275,14 +276,12 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         #[cfg(feature = "wasmtime")]
         let mut exec_mode = if runtime_address
             .as_ref()
+            .map(|v| &v.0)
             .is_some_and(fluentbase_types::is_execute_using_system_runtime)
         {
-            let runtime = WasmtimeRuntime::new(
-                module,
-                self.import_linker.clone(),
-                runtime_address.unwrap(),
-                ctx,
-            );
+            let (_runtime_address, runtime_code_hash) = runtime_address.unwrap();
+            let runtime =
+                WasmtimeRuntime::new(module, self.import_linker.clone(), runtime_code_hash, ctx);
             ExecutionMode::Wasmtime(runtime)
         } else {
             let strategy = if let Some((address, code_hash)) = enable_wasmtime_runtime {

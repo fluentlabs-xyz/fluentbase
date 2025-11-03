@@ -45,6 +45,9 @@ fn test_update_account_code_by_auth_v1() {
   (func (export "main")
     unreachable
   )
+  (func (export "deploy")
+    unreachable
+  )
 )
     "#,
         )
@@ -113,6 +116,9 @@ fn test_update_account_code_by_auth_v2() {
 (module
   (memory (export "memory") 1)
   (func (export "main")
+    unreachable
+  )
+  (func (export "deploy")
     unreachable
   )
 )
