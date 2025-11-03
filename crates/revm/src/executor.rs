@@ -337,7 +337,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     // if we have success or failed exit code
     if exit_code <= 0 {
-        if is_create {
+        if is_create && exit_code == ExitCode::Ok.into_i32() {
             let bytecode_address = frame
                 .interpreter
                 .input
