@@ -23,7 +23,7 @@ use revm::{
     handler::FrameData,
     interpreter::{
         interpreter::ExtBytecode,
-        interpreter_types::{InputsTr, RuntimeFlag},
+        interpreter_types::{InputsTr, ReturnData, RuntimeFlag, StackTr},
         return_ok, return_revert, CallInput, FrameInput, InstructionResult,
     },
     Database, Inspector,
@@ -98,6 +98,11 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
         frame.interpreter.input.account_owner = None;
         frame.interpreter.bytecode = ExtBytecode::new_with_hash(bytecode, bytecode_hash);
         frame.interpreter.gas = interpreter_result.gas;
+        // Make sure the execution context is clear
+        frame.interpreter.input.bytecode_address = None;
+        frame.interpreter.stack.clear();
+        frame.interpreter.return_data.clear();
+        frame.interpreter.memory.free_child_context();
         // Re-run deploy function using rWasm
         return run_rwasm_loop(frame, ctx, inspector);
     }
