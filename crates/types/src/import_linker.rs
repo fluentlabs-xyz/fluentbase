@@ -79,7 +79,6 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
 
     // bn254 (0x07)
     import_function!("_bn254_add", BN254_ADD, &[ValType::I32; 2], &[]);
-    import_function!("_bn254_decompress", BN254_DECOMPRESS, &[ValType::I32; 2], &[]);
     import_function!("_bn254_double", BN254_DOUBLE, &[ValType::I32; 1], &[]);
 
     // uint256 (0x08)

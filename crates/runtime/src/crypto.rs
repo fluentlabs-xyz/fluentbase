@@ -1,7 +1,7 @@
 use crate::{syscall_handler::*, RuntimeContextWrapper};
 use fluentbase_types::{
     CryptoAPI, UnwrapExitCode, BLS12381_FP_SIZE, BLS12381_G1_COMPRESSED_SIZE,
-    BLS12381_G1_RAW_AFFINE_SIZE, BN254_FP_SIZE, BN254_G1_COMPRESSED_SIZE, BN254_G1_RAW_AFFINE_SIZE,
+    BLS12381_G1_RAW_AFFINE_SIZE, BN254_FP_SIZE, BN254_G1_RAW_AFFINE_SIZE,
     ED25519_POINT_COMPRESSED_SIZE, ED25519_POINT_DECOMPRESSED_SIZE, SECP256K1_G1_COMPRESSED_SIZE,
     SECP256K1_G1_RAW_AFFINE_SIZE, SECP256R1_G1_COMPRESSED_SIZE, SECP256R1_G1_RAW_AFFINE_SIZE,
 };
@@ -121,10 +121,6 @@ impl CryptoAPI for RuntimeContextWrapper {
     #[inline(always)]
     fn bn254_add(p: [u8; BN254_G1_RAW_AFFINE_SIZE], q: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
         syscall_bn254_add_impl(p, q)
-    }
-    #[inline(always)]
-    fn bn254_decompress(x: [u8; BN254_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
-        syscall_bn254_decompress_impl(x, sign).unwrap_exit_code()
     }
     #[inline(always)]
     fn bn254_double(p: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {

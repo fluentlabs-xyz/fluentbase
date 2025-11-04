@@ -72,8 +72,7 @@ pub enum SysFuncIdx {
 
     // bn254 (0x07)
     BN254_ADD = 0x0701,
-    BN254_DECOMPRESS = 0x0702,
-    BN254_DOUBLE = 0x0703,
+    BN254_DOUBLE = 0x0702,
 
     // uint256 (0x08)
     UINT256_MUL_MOD = 0x0801,

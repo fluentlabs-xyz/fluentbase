@@ -91,7 +91,7 @@ pub fn invoke_runtime_handler(
 
         // secp256r1 (0x05)
         SysFuncIdx::SECP256R1_ADD => syscall_secp256r1_add_handler(caller, params, result),
-        SysFuncIdx::SECP256R1_DECOMPRESS => syscall_secp256k1_decompress_handler(caller, params, result),
+        SysFuncIdx::SECP256R1_DECOMPRESS => syscall_secp256r1_decompress_handler(caller, params, result),
         SysFuncIdx::SECP256R1_DOUBLE => syscall_secp256r1_double_handler(caller, params, result),
 
         // bls12381 (0x06)
@@ -101,7 +101,6 @@ pub fn invoke_runtime_handler(
 
         // bn254 (0x07)
         SysFuncIdx::BN254_ADD => syscall_bn254_add_handler(caller, params, result),
-        SysFuncIdx::BN254_DECOMPRESS => syscall_bn254_decompress_handler(caller, params, result),
         SysFuncIdx::BN254_DOUBLE => syscall_bn254_double_handler(caller, params, result),
 
         // uint256 (0x08)

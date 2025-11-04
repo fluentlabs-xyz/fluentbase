@@ -277,13 +277,6 @@ impl CryptoAPI for RwasmContext {
         p
     }
     #[inline(always)]
-    fn bn254_decompress(x: [u8; BN254_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
-        let mut result = [0u8; BN254_G1_RAW_AFFINE_SIZE];
-        result[BN254_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
-        unsafe { _bn254_decompress(result.as_mut_ptr(), sign) };
-        result
-    }
-    #[inline(always)]
     fn bn254_double(mut p: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
         unsafe { _bn254_double(p.as_mut_ptr()) };
         p
