@@ -666,11 +666,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
             let address = Address::from_slice(&inputs.syscall_params.input[0..20]);
             let mut reader = inputs.syscall_params.input[20..].reader();
-            let _code_offset = reader.read_u64::<LittleEndian>().unwrap();
+            let code_offset = reader.read_u64::<LittleEndian>().unwrap();
             let code_length = reader.read_u64::<LittleEndian>().unwrap();
 
-            // Load account with bytecode and charge gas for the call
+            // Load account with bytecode and charge gas
             let account = ctx.journal_mut().load_account_code(address)?;
+
+            // CRITICAL: Gas is charged for REQUESTED length, not actual returned length
+            // This prevents gas abuse where attacker requests small length but expects full bytecode
             let Some(gas_cost) =
                 gas::extcodecopy_cost(spec_id, code_length as usize, account.is_cold)
             else {
@@ -678,11 +681,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             charge_gas!(gas_cost);
 
-            // If requested code length is zero, then there is no need to proceed
+            // Early return for zero-length request
             if code_length == 0 {
                 return_result!(Bytes::new(), Ok);
             }
 
+            // Load bytecode from account
             let mut bytecode = match &account.data.info.code {
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode))
                     if ownable_account_bytecode.owner_address == PRECOMPILE_EVM_RUNTIME =>
@@ -698,14 +702,38 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     .unwrap_or_default(),
             };
 
-            // we store system precompile bytecode in the state trie,
-            // according to evm requirements, we should return empty code
+            // System precompiles return empty code per EVM requirements
             if is_system_precompile(&address) {
                 bytecode = Bytes::new();
             }
 
-            // TODO(dmitry123): Add offset/length checks, otherwise gas can be abused!
-            return_result!(bytecode, Ok);
+            let bytecode_len = bytecode.len();
+            let code_offset_usize = code_offset as usize;
+            let code_length_usize = code_length as usize;
+
+            // If offset is beyond bytecode, return all zeros
+            if code_offset_usize >= bytecode_len {
+                let mut zeros = Vec::with_capacity(code_length_usize);
+                zeros.resize(code_length_usize, 0u8);
+                return_result!(Bytes::from(zeros), Ok);
+            }
+
+            let start = code_offset_usize;
+            let available = bytecode_len - start;
+            let to_copy = core::cmp::min(code_length_usize, available);
+
+            // Fast path: If no padding needed, return zero-copy slice
+            if to_copy == code_length_usize {
+                let result = bytecode.slice(start..start + to_copy);
+                return_result!(result, Ok);
+            }
+
+            // Slow path: Padding required to reach requested length
+            let mut result = Vec::with_capacity(code_length_usize);
+            result.resize(code_length_usize, 0u8);
+            result[..to_copy].copy_from_slice(&bytecode[start..start + to_copy]);
+
+            return_result!(Bytes::from(result), Ok);
         }
 
         SYSCALL_ID_METADATA_SIZE => {
@@ -983,5 +1011,188 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         _ => return_halt!(MalformedBuiltinParams),
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{RwasmContext, RwasmSpecId};
+    use fluentbase_sdk::{syscall::SYSCALL_ID_CODE_COPY, SyscallInvocationParams, STATE_MAIN};
+    use revm::{
+        context::{BlockEnv, CfgEnv, TxEnv},
+        database::InMemoryDB,
+        inspector::NoOpInspector,
+        primitives::{Address, Bytes},
+    };
+
+    /// Helper function to test code_copy syscall
+    /// Returns (output_data, gas_used)
+    fn test_code_copy_helper(
+        bytecode: Bytes,
+        code_offset: u64,
+        code_length: u64,
+        initial_gas: u64,
+    ) -> (Bytes, u64) {
+        // === Setup: Initialize context and database ===
+        let db = InMemoryDB::default();
+        let mut ctx: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+
+        let mut frame = RwasmFrame::default();
+
+        // === Setup: Create target account with known bytecode ===
+        let target_address = Address::from([0x42; 20]);
+
+        {
+            let mut account = ctx.journal_mut().load_account(target_address).unwrap();
+            account.info.code = Some(Bytecode::new_raw(bytecode.clone()));
+            account.info.balance = U256::from(1); // Non-empty account
+        }
+
+        // === Prepare syscall input ===
+        let mut syscall_input = vec![0u8; 20 + 8 + 8];
+        syscall_input[0..20].copy_from_slice(target_address.as_slice());
+        syscall_input[20..28].copy_from_slice(&code_offset.to_le_bytes());
+        syscall_input[28..36].copy_from_slice(&code_length.to_le_bytes());
+
+        let syscall_params = SyscallInvocationParams {
+            code_hash: SYSCALL_ID_CODE_COPY,
+            input: Bytes::from(syscall_input),
+            state: STATE_MAIN,
+            ..Default::default()
+        };
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            is_create: false,
+            syscall_params,
+            is_static: false,
+            is_gas_free: false,
+            gas: Gas::new(initial_gas),
+        };
+
+        // === Execute: Call the syscall ===
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Syscall execution failed: {:?}",
+            result.err()
+        );
+
+        // === Extract results ===
+        let returned_data = frame.interrupted_outcome.as_ref().unwrap();
+        let output_data = returned_data.result.as_ref().unwrap().output.clone();
+
+        // Get gas_used from the interruption result directly
+        let gas_used = initial_gas - returned_data.result.as_ref().unwrap().gas.remaining();
+
+        (output_data, gas_used)
+    }
+
+    fn expected_gas(length: usize, is_cold: bool) -> u64 {
+        // Base cost depends on warm/cold access
+        // After EIP-2929 (BERLIN fork):
+        // - Cold access: 2600 gas (first access to account)
+        // - Warm access: 100 gas (subsequent accesses)
+        let base_gas = if is_cold {
+            2600 // COLD_ACCOUNT_ACCESS_COST
+        } else {
+            100 // WARM_STORAGE_READ_COST
+        };
+
+        // Copy cost: 3 gas per 32-byte word
+        // Formula: 3 * ceil(length / 32)
+        let words = (length + 31) / 32; // ceil(length / 32)
+        let copy_gas = words as u64 * 3;
+
+        base_gas + copy_gas
+    }
+
+    #[test]
+    fn test_code_copy_basic_slice() {
+        // Test: Basic slice from middle of bytecode
+        let bytecode = Bytes::from(vec![
+            0x60, 0x80, 0x60, 0x40, 0x52, 0x33, 0x90, 0x81, 0x01, 0x02,
+        ]); // 10 bytes
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 3, 4, 10_000_000);
+
+        assert_eq!(output.len(), 4, "Should return 4 bytes");
+        assert_eq!(
+            &output[..],
+            &bytecode[3..7],
+            "Should return bytes at offset 3-6"
+        );
+        assert_eq!(gas, expected_gas(4, false));
+    }
+
+    #[test]
+    fn test_code_copy_request_more_than_available() {
+        // Test: Request more bytes than available (no padding in WASM)
+        let bytecode = Bytes::from(vec![0xAA, 0xBB, 0xCC]); // Only 3 bytes
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 1, 10, 10_000_000);
+
+        assert_eq!(output.len(), 10, "Should return only 2 available bytes");
+        assert_eq!(
+            &output[..],
+            &[0xBB, 0xCC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(gas, expected_gas(10, false));
+    }
+
+    #[test]
+    fn test_code_copy_offset_beyond_bytecode() {
+        // Test: Offset completely beyond bytecode length
+        let bytecode = Bytes::from(vec![0xAA, 0xBB, 0xCC]); // 3 bytes
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 100, 5, 10_000_000);
+        // Should return empty bytes
+        assert_eq!(
+            output.len(),
+            5,
+            "Should return empty bytes when offset > bytecode.len()"
+        );
+        assert_eq!(gas, expected_gas(5, false));
+    }
+
+    #[test]
+    fn test_code_copy_empty_bytecode() {
+        // Test: Copy from account with empty/no bytecode
+        let bytecode = Bytes::new();
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 0, 10, 10_000_000);
+
+        assert_eq!(
+            output.len(),
+            10,
+            "Should return empty bytes for empty bytecode"
+        );
+        assert_eq!(
+            &output[..],
+            &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+
+        assert_eq!(gas, expected_gas(10, false));
+    }
+
+    #[test]
+    fn test_code_copy_gas_calculation() {
+        // Test: Verify gas is calculated correctly according to EVM rules
+        let bytecode = Bytes::from(vec![0xFF; 200]); // 100 bytes
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 0, 200, 10_000_000);
+
+        assert_eq!(output.len(), 200);
+        assert_eq!(output[..], bytecode);
+        assert_eq!(gas, expected_gas(200, false));
     }
 }
