@@ -142,8 +142,6 @@ pub(crate) fn syscall_tower_fp1_add_sub_mul_impl<
     let result = match FIELD_OP {
         FP_FIELD_ADD => (a + b) % modulus,
         FP_FIELD_SUB => {
-            // TODO(dmitry123): Due to the SP1 limitations, we can't support b that is greater than a + modulus.
-            //  But what's the best workaround here? To return an error or to wrap b?
             if &a + modulus < b {
                 return Err(ExitCode::MalformedBuiltinParams);
             }
