@@ -88,7 +88,7 @@ impl RuntimeExecutor for GlobalExecutor {
     fn resume(
         &mut self,
         call_id: u32,
-        return_data: Vec<u8>,
+        return_data: &[u8],
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
@@ -98,7 +98,7 @@ impl RuntimeExecutor for GlobalExecutor {
         self.tx
             .send(ExecutorCommand::Resume {
                 call_id,
-                return_data,
+                return_data: return_data.to_vec(),
                 fuel16_ptr,
                 fuel_consumed,
                 fuel_refunded,
@@ -110,6 +110,10 @@ impl RuntimeExecutor for GlobalExecutor {
             Ok(result) => result,
             Err(panic_payload) => panic::resume_unwind(panic_payload),
         }
+    }
+
+    fn forget_runtime(&mut self, call_id: u32) {
+        unimplemented!()
     }
 
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {

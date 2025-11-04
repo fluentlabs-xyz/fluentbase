@@ -34,7 +34,7 @@ impl Store<RuntimeContext> for TestingStore {
     }
 
     fn try_consume_fuel(&mut self, delta: u64) -> Result<(), TrapCode> {
-        if !self.ctx.disable_fuel && self.fuel_consumed + delta > self.ctx.fuel_limit {
+        if self.fuel_consumed + delta > self.ctx.fuel_limit {
             return Err(TrapCode::OutOfFuel);
         }
         self.fuel_consumed += delta;
@@ -42,10 +42,6 @@ impl Store<RuntimeContext> for TestingStore {
     }
 
     fn remaining_fuel(&self) -> Option<u64> {
-        if !self.ctx.disable_fuel {
-            Some(self.ctx.fuel_limit - self.fuel_consumed)
-        } else {
-            None
-        }
+        Some(self.ctx.fuel_limit - self.fuel_consumed)
     }
 }

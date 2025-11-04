@@ -28,7 +28,6 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
     import_function!("_exec", EXEC, &[ValType::I32; 5], &[ValType::I32; 1]);
     import_function!("_resume", RESUME, &[ValType::I32; 5], &[ValType::I32; 1]);
     import_function!("_forward_output", FORWARD_OUTPUT, &[ValType::I32; 2], &[]);
-    import_function!("_charge_fuel_manually", CHARGE_FUEL_MANUALLY, &[ValType::I64; 2], &[ValType::I64; 1]);
     import_function!("_fuel", FUEL, &[], &[ValType::I64; 1]);
     import_function!("_debug_log", DEBUG_LOG, &[ValType::I32; 2], &[]);
     import_function!("_charge_fuel", CHARGE_FUEL, &[ValType::I64; 1], &[]);
@@ -80,7 +79,6 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
 
     // bn254 (0x07)
     import_function!("_bn254_add", BN254_ADD, &[ValType::I32; 2], &[]);
-    import_function!("_bn254_decompress", BN254_DECOMPRESS, &[ValType::I32; 2], &[]);
     import_function!("_bn254_double", BN254_DOUBLE, &[ValType::I32; 1], &[]);
 
     // uint256 (0x08)

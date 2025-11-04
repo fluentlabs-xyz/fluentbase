@@ -98,11 +98,6 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
-        unsafe { _charge_fuel_manually(fuel_consumed, fuel_refunded) }
-    }
-
-    #[inline(always)]
     fn fuel(&self) -> u64 {
         unsafe { _fuel() }
     }
@@ -280,13 +275,6 @@ impl CryptoAPI for RwasmContext {
     fn bn254_add(mut p: [u8; BN254_G1_RAW_AFFINE_SIZE], q: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
         unsafe { _bn254_add(p.as_mut_ptr(), q.as_ptr()) };
         p
-    }
-    #[inline(always)]
-    fn bn254_decompress(x: [u8; BN254_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
-        let mut result = [0u8; BN254_G1_RAW_AFFINE_SIZE];
-        result[BN254_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
-        unsafe { _bn254_decompress(result.as_mut_ptr(), sign) };
-        result
     }
     #[inline(always)]
     fn bn254_double(mut p: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {

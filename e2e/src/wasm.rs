@@ -2,12 +2,15 @@ use crate::EvmTestingContextWithGenesis;
 use core::str::from_utf8;
 use fluentbase_codec::{bytes::BytesMut, SolidityABI};
 use fluentbase_contracts::{
-    FLUENTBASE_EXAMPLES_CHECKMATE, FLUENTBASE_EXAMPLES_ERC20, FLUENTBASE_EXAMPLES_GREETING,
-    FLUENTBASE_EXAMPLES_JSON, FLUENTBASE_EXAMPLES_KECCAK, FLUENTBASE_EXAMPLES_PANIC,
-    FLUENTBASE_EXAMPLES_RWASM, FLUENTBASE_EXAMPLES_SECP256K1, FLUENTBASE_EXAMPLES_SHA256,
-    FLUENTBASE_EXAMPLES_SIMPLE_STORAGE, FLUENTBASE_EXAMPLES_TINY_KECCAK,
+    FLUENTBASE_EXAMPLES_BALANCE, FLUENTBASE_EXAMPLES_CHECKMATE, FLUENTBASE_EXAMPLES_ERC20,
+    FLUENTBASE_EXAMPLES_GREETING, FLUENTBASE_EXAMPLES_JSON, FLUENTBASE_EXAMPLES_KECCAK,
+    FLUENTBASE_EXAMPLES_PANIC, FLUENTBASE_EXAMPLES_RWASM, FLUENTBASE_EXAMPLES_SECP256K1,
+    FLUENTBASE_EXAMPLES_SHA256, FLUENTBASE_EXAMPLES_SIMPLE_STORAGE,
+    FLUENTBASE_EXAMPLES_TINY_KECCAK, FLUENTBASE_EXAMPLES_UNWIPED_OUTPUT,
 };
-use fluentbase_sdk::{bytes, constructor::encode_constructor_params, Address, Bytes, U256};
+use fluentbase_sdk::{
+    address, bytes, constructor::encode_constructor_params, Address, Bytes, U256,
+};
 use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
 use revm::bytecode::Bytecode;
@@ -141,7 +144,6 @@ fn test_wasm_json() {
         DEPLOYER_ADDRESS,
         FLUENTBASE_EXAMPLES_JSON.wasm_bytecode.into(),
     );
-    // call greeting WASM contract
     let input = "{\"message\": \"Hello, World\"}".as_bytes().to_vec();
     let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
     println!("{:?}", result);
@@ -307,7 +309,7 @@ fn test_wasm_keccak256_gas_price() {
 }
 
 #[test]
-fn deploy_and_load_wasm_contract() {
+fn test_wasm_deploy_and_load_wasm_contract() {
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let deployer_account = ctx.db.load_account(DEPLOYER_ADDRESS).unwrap();
@@ -335,18 +337,74 @@ fn deploy_and_load_wasm_contract() {
     }
 }
 
-// #[test]
-// fn test_reduce_binary() {
-//     use rwasm::{instruction_set, RwasmModule};
-//     use std::fs;
-//     let raw_input = include_str!("./input.hex");
-//     let input = hex::decode(raw_input).unwrap();
-//     let (mut module, _) = RwasmModule::new(&input);
-//     module.code_section = instruction_set! {
-//         Unreachable
-//     };
-//     module.data_section = vec![];
-//     module.elem_section = vec![];
-//     let module = module.serialize();
-//     fs::write("./input-fixed.hex", hex::encode(&module)).unwrap();
-// }
+#[test]
+fn test_wasm_balance_should_fail_on_oog() {
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
+    ctx.add_balance(
+        address!("0x0000000000000000000000000000000000000001"),
+        U256::from(123),
+    );
+    const DEPLOYER_ADDRESS: Address = address!("0x1111111111111111111111111111111111111111");
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_BALANCE.wasm_bytecode.into(),
+    );
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::new(),
+        // 21k tx + 100 balance
+        Some(21_090),
+        None,
+    );
+    // all gas must be charged
+    assert_eq!(result.gas_used(), 21_090);
+    // it should halt, not revert or ok
+    assert!(result.is_halt());
+}
+
+#[test]
+fn test_wasm_balance_charge() {
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
+    ctx.add_balance(
+        address!("0x0000000000000000000000000000000000000001"),
+        U256::from(123),
+    );
+    const DEPLOYER_ADDRESS: Address = address!("0x1111111111111111111111111111111111111111");
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_BALANCE.wasm_bytecode.into(),
+    );
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::new(),
+        Some(22_000),
+        None,
+    );
+    let balance = U256::from_le_slice(result.output().unwrap_or_default().as_ref());
+    assert_eq!(balance, U256::from(123));
+    assert_eq!(result.gas_used(), 21146);
+}
+
+#[test]
+fn test_wasm_output_remains_unwiped_after_interruption() {
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
+    ctx.add_balance(
+        address!("0x0000000000000000000000000000000000000001"),
+        U256::from(123),
+    );
+    const DEPLOYER_ADDRESS: Address = address!("0x1111111111111111111111111111111111111111");
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_UNWIPED_OUTPUT.wasm_bytecode.into(),
+    );
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::new(),
+        Some(22_000),
+        None,
+    );
+    assert_eq!(result.output().unwrap_or_default().as_ref(), &[0x1]);
+}

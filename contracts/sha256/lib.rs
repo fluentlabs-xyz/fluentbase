@@ -18,7 +18,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
     let gas_used = estimate_gas(input.len());
-    sdk.sync_evm_gas(gas_used, 0);
+    sdk.sync_evm_gas(gas_used);
     let result = crypto_sha256(&input);
     sdk.write(result.as_ref());
 }

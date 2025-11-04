@@ -15,10 +15,7 @@ use local_executor::LocalExecutor;
 use rwasm::{ExecutionEngine, FuelConfig, ImportLinker, RwasmModule, Strategy, TrapCode};
 use std::{
     mem::take,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 
 /// Finalized outcome of a single runtime invocation.
@@ -36,6 +33,18 @@ pub struct ExecutionResult {
     pub output: Vec<u8>,
     /// Return data propagated back to the parent on success paths of nested calls.
     pub return_data: Vec<u8>,
+}
+
+impl ExecutionResult {
+    pub fn take_and_continue(&mut self, is_interrupted: bool) -> Self {
+        let mut result = take(self);
+        // We don't propagate output into intermediary state
+        if is_interrupted {
+            self.output = take(&mut result.output);
+            self.return_data = take(&mut result.return_data);
+        }
+        result
+    }
 }
 
 /// Captures an intentional execution interruption that must be resumed by the root context.
@@ -81,12 +90,15 @@ pub trait RuntimeExecutor {
     fn resume(
         &mut self,
         call_id: u32,
-        return_data: Vec<u8>,
+        return_data: &[u8],
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
         exit_code: i32,
     ) -> ExecutionResult;
+
+    /// Drop a runtime we don't need to resume anymore
+    fn forget_runtime(&mut self, call_id: u32);
 
     /// Warmup the bytecode
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address);
@@ -118,7 +130,7 @@ pub struct RuntimeFactoryExecutor {
     /// An import linker
     pub import_linker: Arc<ImportLinker>,
     /// Monotonically increasing counter for assigning call identifiers.
-    pub transaction_call_id_counter: AtomicU32,
+    pub transaction_call_id_counter: u32,
 }
 
 impl RuntimeFactoryExecutor {
@@ -127,7 +139,7 @@ impl RuntimeFactoryExecutor {
             module_factory: ModuleFactory::new(),
             recoverable_runtimes: HashMap::new(),
             import_linker,
-            transaction_call_id_counter: AtomicU32::new(1),
+            transaction_call_id_counter: 1,
         }
     }
 
@@ -144,12 +156,26 @@ impl RuntimeFactoryExecutor {
             }
             RuntimeResult::Interruption(interruption) => interruption,
         };
-        // Calculate new `call_id` counter (a runtime recover identifier)
-        let call_id = self
-            .transaction_call_id_counter
-            .fetch_add(1, Ordering::Relaxed);
-        // Remember the runtime
-        self.recoverable_runtimes.insert(call_id, runtime);
+
+        // Get current call_id before incrementing
+        let call_id = self.transaction_call_id_counter;
+
+        // Check if call_id would overflow i32 when cast (positive exit codes are reserved for call_id)
+        if call_id > i32::MAX as u32 {
+            return ExecutionResult {
+                exit_code: ExitCode::UnknownError.into_i32(),
+                fuel_consumed: interruption.fuel_consumed,
+                fuel_refunded: interruption.fuel_refunded,
+                output: vec![],
+                return_data: vec![],
+            };
+        }
+
+        // Increment counter for next call (safe since call_id <= i32::MAX < u32::MAX)
+        self.transaction_call_id_counter += 1;
+        let prev = self.recoverable_runtimes.insert(call_id, runtime);
+        debug_assert!(prev.is_none());
+
         ExecutionResult {
             // We return `call_id` as exit code (it's safe, because exit code can't be positive)
             exit_code: call_id as i32,
@@ -172,7 +198,9 @@ impl RuntimeFactoryExecutor {
         fuel_consumed: Option<u64>,
         ctx: &mut RuntimeContext,
     ) -> RuntimeResult {
-        let mut execution_result = take(&mut ctx.execution_result);
+        let mut execution_result = ctx
+            .execution_result
+            .take_and_continue(ctx.resumable_context.is_some());
         // There are two counters for fuel: opcode fuel counter; manually charged.
         // It's applied for execution runtimes where we don't know the final fuel consumed,
         // till it's committed by Wasm runtime.
@@ -243,11 +271,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let module = self.module_factory.get_module_or_init(bytecode_or_hash);
 
         // If there is no cached store, then construct a new one (slow)
-        let fuel_remaining = if !ctx.disable_fuel {
-            Some(ctx.fuel_limit)
-        } else {
-            None
-        };
+        let fuel_remaining = Some(ctx.fuel_limit);
         let fuel_config = FuelConfig::default().with_fuel_limit(ctx.fuel_limit);
 
         #[cfg(feature = "wasmtime")]
@@ -282,7 +306,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     fn resume(
         &mut self,
         call_id: u32,
-        return_data: Vec<u8>,
+        return_data: &[u8],
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
@@ -292,28 +316,15 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             .recoverable_runtimes
             .remove(&call_id)
             .expect("runtime: can't resolve runtime by id, it should never happen");
-        let disable_fuel = runtime.context(RuntimeContext::is_fuel_disabled);
         let mut fuel_remaining = runtime.remaining_fuel();
-        if disable_fuel {
-            fuel_remaining = None;
-        }
         let resume_inner = |runtime: &mut ExecutionMode| {
-            let charge_fuel = runtime.context_mut(|ctx| {
-                // When fuel is disabled, we only pass consumed fuel amount into the contract back,
-                // and it can decide on charging
-                let charge_fuel = if !ctx.is_fuel_disabled() && fuel_consumed > 0 {
-                    // Charge fuel that was spent during the interruption
-                    // to make sure our fuel calculations are aligned
-                    Some(fuel_consumed)
-                } else {
-                    None
-                };
-                // Copy return data into return data
-                ctx.execution_result.return_data = return_data;
-                Ok(charge_fuel)
-            })?;
-            if let Some(charge_fuel) = charge_fuel {
-                runtime.try_consume_fuel(charge_fuel)?;
+            // Copy return data into return data
+            runtime.context_mut(|ctx| {
+                ctx.execution_result.return_data = return_data.to_vec();
+            });
+            // If we have fuel consumed greater than 0 then record it
+            if fuel_consumed > 0 {
+                runtime.try_consume_fuel(fuel_consumed)?;
             }
             if fuel16_ptr > 0 {
                 let mut buffer = [0u8; 16];
@@ -325,8 +336,10 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         };
         let result = resume_inner(&mut runtime);
         // We need to adjust the fuel limit because `fuel_consumed` should not be included into spent.
-        // We can safely unwrap here, because `OutOfFuel` check we did in `resume_inner`.
-        let fuel_remaining = fuel_remaining.map(|v| v.checked_sub(fuel_consumed).unwrap());
+        if result != Err(TrapCode::OutOfFuel) {
+            // SAFETY: We can safely unwrap here, because `OutOfFuel` check we did in `resume_inner` and the result is ok.
+            fuel_remaining = fuel_remaining.map(|v| v.checked_sub(fuel_consumed).unwrap());
+        }
         let fuel_consumed = runtime
             .remaining_fuel()
             .and_then(|remaining_fuel| Some(fuel_remaining? - remaining_fuel));
@@ -334,6 +347,10 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             runtime.context_mut(|ctx| self.handle_execution_result(result, fuel_consumed, ctx));
         let result = self.try_remember_runtime(runtime_result, runtime);
         result
+    }
+
+    fn forget_runtime(&mut self, call_id: u32) {
+        _ = self.recoverable_runtimes.remove(&call_id);
     }
 
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {
@@ -360,6 +377,54 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     }
 
     fn reset_call_id_counter(&mut self) {
-        self.transaction_call_id_counter.store(1, Ordering::Relaxed);
+        self.transaction_call_id_counter = 1;
+        self.recoverable_runtimes.clear();
     }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crate::executor::{ExecutionInterruption, RuntimeFactoryExecutor, RuntimeResult};
+    use crate::runtime::ExecutionMode;
+    use crate::RuntimeContext;
+    use fluentbase_types::{import_linker_v1_preview, ExitCode};
+    use rwasm::{ExecutionEngine, FuelConfig, RwasmModule, Strategy};
+
+    #[test]
+    fn call_id_overflow() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+
+        // Set counter to i32::MAX to trigger overflow on next allocation
+        executor.transaction_call_id_counter = i32::MAX as u32 + 1;
+
+        let interruption = RuntimeResult::Interruption(ExecutionInterruption {
+            fuel_consumed: 100,
+            fuel_refunded: 0,
+            output: vec![1, 2, 3],
+        });
+
+        let engine = ExecutionEngine::acquire_shared();
+        let module = RwasmModule::default();
+        let ctx = RuntimeContext::default();
+        let fuel_config = FuelConfig::default();
+
+        let strategy_runtime = crate::runtime::StrategyRuntime::new(
+            Strategy::Rwasm { module, engine },
+            executor.import_linker.clone(),
+            ctx,
+            fuel_config,
+        );
+        let runtime = ExecutionMode::Strategy(strategy_runtime);
+
+        // Try to allocate call_id - should fail with overflow
+        let result = executor.try_remember_runtime(interruption, runtime);
+
+        // Verify overflow error
+        assert_eq!(result.exit_code, ExitCode::UnknownError.into_i32());
+        assert_eq!(result.fuel_consumed, 100);
+        assert_eq!(result.fuel_refunded, 0);
+        assert!(result.output.is_empty());
+    }
+
 }

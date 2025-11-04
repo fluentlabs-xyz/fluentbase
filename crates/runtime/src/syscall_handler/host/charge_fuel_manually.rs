@@ -1,6 +1,7 @@
 /// Builtin to manually charge and refund fuel when VM metering is disabled.
+///
+/// TODO(dmitry123): Remove this method for the finalized builtin scheme.
 use crate::RuntimeContext;
-use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, Value};
 
 /// Validates that fuel metering is disabled, applies manual charge/refund, and returns remaining fuel.
@@ -9,14 +10,6 @@ pub fn syscall_charge_fuel_manually_handler(
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    // Only allowed when engine metering is disabled (manual fuel mode).
-    caller.context_mut(|ctx| {
-        if ctx.is_fuel_disabled() {
-            return Ok(());
-        }
-        ctx.execution_result.exit_code = ExitCode::MalformedBuiltinParams.into_i32();
-        Err(TrapCode::ExecutionHalted)
-    })?;
     let (fuel_consumed, fuel_refunded) =
         (params[0].i64().unwrap() as u64, params[1].i64().unwrap());
     caller.try_consume_fuel(fuel_consumed)?;
