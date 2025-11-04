@@ -18,6 +18,7 @@ use std::{
 pub const DEFAULT_DOCKER_IMAGE: &str = "ghcr.io/fluentlabs-xyz/fluentbase-build";
 pub const DEFAULT_DOCKER_TAG: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 pub const DOCKER_PLATFORM: &str = "linux/amd64";
+pub const CARGO_CACHE_VOLUME: &str = "fluentbase-cargo-cache";
 
 pub const DEFAULT_STACK_SIZE: u32 = 128 * 1024; // 128 KB
 pub const BUILD_TARGET: &str = "wasm32-unknown-unknown";

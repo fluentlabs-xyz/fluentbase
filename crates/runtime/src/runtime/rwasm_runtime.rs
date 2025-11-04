@@ -31,8 +31,11 @@ impl RwasmRuntime {
     }
 
     pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {
-        self.engine
-            .resume(&mut self.store, &[Value::I32(exit_code)], &mut [])
+        self.engine.resume(
+            &mut self.store,
+            &[Value::I32(exit_code)],
+            &mut [],
+        )
     }
 
     pub fn memory_write(&mut self, offset: usize, data: &[u8]) -> Result<(), TrapCode> {

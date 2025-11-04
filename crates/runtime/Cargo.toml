@@ -15,7 +15,7 @@ fluentbase-types = { workspace = true }
 rwasm = { workspace = true }
 
 # wasmtime
-wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", optional = true, features = ["disable-fpu", "cache"] }
+wasmtime = { version = "34.0.1", package = "wasmtime-rwasm", optional = true, features = ["disable-fpu", "cache"] }
 anyhow = { version = "1.0.98", default-features = false, optional = true }
 smallvec = { version = "1.15.1", optional = true }
 
