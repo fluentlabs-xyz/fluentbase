@@ -10,20 +10,19 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-types = { workspace = true }
+fluentbase-sdk = { workspace = true }
 
 [lib]
 path = "lib.rs"
 
 [build-dependencies]
-fluentbase-types = { workspace = true }
+fluentbase-sdk = { workspace = true }
 alloy-genesis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 cargo_metadata = "0.19.1"
 
 # The following dependencies are not used directly but listed here to trigger execution of build.rs whenever they are changed
-fluentbase-sdk = { workspace = true }
 revm-precompile = { workspace = true }
 fluentbase-universal-token = { workspace = true }
 fluentbase-evm = { workspace = true }
@@ -37,7 +36,7 @@ default = [
 enable-svm = []
 wasmtime = []
 std = [
-    "fluentbase-types/std",
+    "fluentbase-sdk/std",
     "alloy-genesis/std",
     "serde/std",
     "serde_json/std",

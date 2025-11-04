@@ -1,11 +1,10 @@
 use crate::{
     keccak256,
     storage::{StorageDescriptor, StorageLayout, StorageOps},
-    B256, U256,
+    StorageAPI, B256, U256,
 };
 use alloc::{string::String, vec::Vec};
 use core::marker::PhantomData;
-use fluentbase_types::StorageAPI;
 
 /// Dynamic byte array in storage.
 /// Optimized for Solidity compatibility:

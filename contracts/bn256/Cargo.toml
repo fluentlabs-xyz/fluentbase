@@ -5,7 +5,10 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-fluentbase-types = { workspace = true }
+revm-precompile = { workspace = true }
+ark-bn254 = { version = "0.5.0", default-features = false }
+ark-ec = { version = "0.5.0", default-features = false }
+ark-serialize = { version = "0.5.0", default-features = false }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }

@@ -1,13 +1,8 @@
 use crate::{
     storage::{PackableCodec, StorageDescriptor, StorageLayout, StorageOps},
-    Address,
-    FixedBytes,
-    Signed,
-    Uint,
-    U256,
+    Address, FixedBytes, Signed, StorageAPI, Uint, U256,
 };
 use core::marker::PhantomData;
-use fluentbase_types::StorageAPI;
 
 /// Storage descriptor and accessor for single packable values.
 #[derive(Debug, PartialEq, Eq)]

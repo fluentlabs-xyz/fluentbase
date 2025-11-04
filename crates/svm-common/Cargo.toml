@@ -11,11 +11,8 @@ categories.workspace = true
 
 [dependencies]
 serde = { workspace = true, default-features = false, features = ["derive"] }
-
 solana-pubkey = { workspace = true, default-features = false }
-
-fluentbase-types = { workspace = true, default-features = false }
-
+fluentbase-sdk = { workspace = true, default-features = false }
 
 [features]
 default = []

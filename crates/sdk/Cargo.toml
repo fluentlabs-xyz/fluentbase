@@ -12,13 +12,17 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-codec = { workspace = true }
-fluentbase-types = { workspace = true }
 fluentbase-sdk-derive = { workspace = true }
+fluentbase-types = { workspace = true }
+fluentbase-crypto = { workspace = true }
+alloy-rlp = { workspace = true }
+rwasm = { workspace = true }
 hashbrown = { workspace = true }
-revm-bytecode = { workspace = true }
-dlmalloc = "0.2.11"
+auto_impl = { workspace = true }
+bincode = { workspace = true }
 
 [dev-dependencies]
+hex-literal = { workspace = true }
 
 [features]
 default = ["std"]
@@ -26,8 +30,11 @@ serde = [
     "fluentbase-types/serde",
 ]
 std = [
-    "fluentbase-types/std",
+    "rwasm/std",
     "fluentbase-codec/std",
+    "fluentbase-types/std",
+    "fluentbase-crypto/std",
+    "alloy-rlp/std",
 ]
 debug-print = []
 fast-panic = []

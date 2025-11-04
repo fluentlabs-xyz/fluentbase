@@ -41,3 +41,6 @@ opt-level = "z"
 debug = false
 strip = "symbols"
 
+[patch.crates-io]
+# patch tiny-keccak
+tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }

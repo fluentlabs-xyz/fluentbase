@@ -4,152 +4,152 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BN256_ADD,
-    PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
+    alloc_slice, crypto::CryptoRuntime, entrypoint, ContextReader, CryptoAPI, ExitCode, SharedAPI,
+    BN254_G1_RAW_AFFINE_SIZE, PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
 };
-use fluentbase_types::{
-    BN254_ADD_INPUT_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
-    BN254_MUL_INPUT_SIZE, BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, SCALAR_SIZE,
+use revm_precompile::{
+    bn128,
+    bn128::{
+        add::ISTANBUL_ADD_GAS_COST,
+        mul::ISTANBUL_MUL_GAS_COST,
+        pair::{ISTANBUL_PAIR_BASE, ISTANBUL_PAIR_PER_POINT},
+        PAIR_ELEMENT_LEN,
+    },
 };
 
-/// BN256 precompile constants (EIP-196, EIP-197)
-const ISTANBUL_ADD_GAS_COST: u64 = 150;
-const ISTANBUL_MUL_GAS_COST: u64 = 6000;
-const ISTANBUL_PAIR_BASE: u64 = 45000;
-const ISTANBUL_PAIR_PER_POINT: u64 = 34000;
+const BN254_ADD_INPUT_SIZE: usize = BN254_G1_RAW_AFFINE_SIZE * 2;
+const COORDINATE_SIZE: usize = 32;
 
-/// Right-pad input to a specified length with zeros
-#[inline(always)]
-fn right_pad<const N: usize>(input: &[u8]) -> [u8; N] {
-    let mut result = [0u8; N];
-    let to_copy = core::cmp::min(N, input.len());
-    result[..to_copy].copy_from_slice(&input[..to_copy]);
-    result
+#[inline]
+fn point_be_to_le(point: &mut [u8; BN254_G1_RAW_AFFINE_SIZE]) {
+    point[..COORDINATE_SIZE].reverse();
+    point[COORDINATE_SIZE..].reverse();
 }
 
-/// Helper function for common validation and gas checking pattern
-#[inline(always)]
-fn validate_and_consume_gas<SDK: SharedAPI>(sdk: &SDK, gas_cost: u64, gas_limit: u64) {
-    check_gas_and_sync(sdk, gas_cost, gas_limit);
+/// Converts a BN254 point from SP1's little-endian format back to Ethereum's big-endian format.
+#[inline]
+fn point_le_to_be(point: &mut [u8; BN254_G1_RAW_AFFINE_SIZE]) {
+    point[..COORDINATE_SIZE].reverse();
+    point[COORDINATE_SIZE..].reverse();
 }
 
-#[inline(always)]
-fn check_gas_and_sync<SDK: SharedAPI>(sdk: &SDK, gas_used: u64, gas_limit: u64) {
-    if gas_used > gas_limit {
-        sdk.native_exit(ExitCode::OutOfFuel);
+/// Checks if a point is the identity element (point at infinity, represented as (0,0)).
+#[inline]
+fn is_identity(point: &[u8; BN254_G1_RAW_AFFINE_SIZE]) -> bool {
+    *point == [0u8; BN254_G1_RAW_AFFINE_SIZE]
+}
+
+/// Checks if two points are inverses of each other (same x-coordinate, different y-coordinate).
+#[inline]
+fn are_inverses(p: &[u8; BN254_G1_RAW_AFFINE_SIZE], q: &[u8; BN254_G1_RAW_AFFINE_SIZE]) -> bool {
+    p[..COORDINATE_SIZE] == q[..COORDINATE_SIZE] && p[COORDINATE_SIZE..] != q[COORDINATE_SIZE..]
+}
+
+#[inline]
+fn is_valid_point(point: &[u8; BN254_G1_RAW_AFFINE_SIZE]) -> bool {
+    use ark_bn254::{Fq, G1Affine};
+    use ark_serialize::CanonicalDeserialize;
+
+    // Identity point (0,0) is always valid
+    if is_identity(point) {
+        return true;
     }
-    sdk.sync_evm_gas(gas_used, 0);
-}
 
-#[inline(always)]
-fn read_g1_point(input: &[u8]) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-    if input.len() != BN254_G1_POINT_DECOMPRESSED_SIZE {
-        return Err(ExitCode::InputOutputOutOfBounds);
-    }
-    let mut g1 = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
-    g1[..BN254_G1_POINT_DECOMPRESSED_SIZE].copy_from_slice(input);
-    Ok(g1)
-}
+    // Extract x and y coordinates (big-endian, convert to little-endian for arkworks)
+    let mut x_bytes = [0u8; 32];
+    let mut y_bytes = [0u8; 32];
+    x_bytes.copy_from_slice(&point[..32]);
+    y_bytes.copy_from_slice(&point[32..]);
+    x_bytes.reverse(); // Convert to little-endian
+    y_bytes.reverse();
 
-#[inline(always)]
-fn read_g2_point(input: &[u8]) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
-    if input.len() != BN254_G2_POINT_DECOMPRESSED_SIZE {
-        return Err(ExitCode::InputOutputOutOfBounds);
-    }
-    let mut g2 = [0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
-    g2[..BN254_G2_POINT_DECOMPRESSED_SIZE].copy_from_slice(input);
-    Ok(g2)
+    // Deserialize field elements - this checks they're < field modulus
+    let x = match Fq::deserialize_uncompressed(&x_bytes[..]) {
+        Ok(x) => x,
+        Err(_) => return false,
+    };
+    let y = match Fq::deserialize_uncompressed(&y_bytes[..]) {
+        Ok(y) => y,
+        Err(_) => return false,
+    };
+
+    // Create point without checking (to avoid assert)
+    let point = G1Affine::new_unchecked(x, y);
+
+    // Validate: 1) on curve, 2) in correct subgroup
+    point.is_on_curve() && point.is_in_correct_subgroup_assuming_on_curve()
 }
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    // read full input data
     let bytecode_address = sdk.context().contract_bytecode_address();
-    let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
-    let input = Bytes::copy_from_slice(input);
+
     match bytecode_address {
         PRECOMPILE_BN256_ADD => {
-            validate_and_consume_gas(&sdk, ISTANBUL_ADD_GAS_COST, gas_limit);
-            let padded_input = right_pad::<BN254_ADD_INPUT_SIZE>(&input);
+            sdk.sync_evm_gas(ISTANBUL_ADD_GAS_COST);
 
-            let mut p: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = padded_input
-                [..BN254_G1_POINT_DECOMPRESSED_SIZE]
-                .try_into()
-                .unwrap();
-            let q: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = padded_input
-                [BN254_G1_POINT_DECOMPRESSED_SIZE..]
-                .try_into()
-                .unwrap();
+            // Pad input to 128 bytes (two 64-byte points) with zeros if needed
+            let mut padded_input = [0u8; BN254_ADD_INPUT_SIZE];
+            let copy_len = core::cmp::min(input.len(), BN254_ADD_INPUT_SIZE);
+            padded_input[..copy_len].copy_from_slice(&input[..copy_len]);
 
-            let result = SDK::bn254_add(&mut p, &q);
-            let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
+            // Extract the two points from input (in big-endian format)
+            let p_be: [u8; BN254_G1_RAW_AFFINE_SIZE] =
+                padded_input[..BN254_G1_RAW_AFFINE_SIZE].try_into().unwrap();
+            let q_be: [u8; BN254_G1_RAW_AFFINE_SIZE] =
+                padded_input[BN254_G1_RAW_AFFINE_SIZE..].try_into().unwrap();
+
+            // Validate both points are either identity or on the curve
+            if !is_valid_point(&p_be) || !is_valid_point(&q_be) {
+                // Invalid point: fail the transaction by exiting with error
+                sdk.native_exit(ExitCode::PrecompileError)
+            }
+
+            // Convert from Ethereum's big-endian to SP1's little-endian format
+            let mut p = p_be;
+            let mut q = q_be;
+
+            point_be_to_le(&mut p);
+            point_be_to_le(&mut q);
+
+            // Handle special cases for elliptic curve addition
+            let mut result = if is_identity(&p) {
+                q // Identity + Q = Q
+            } else if is_identity(&q) {
+                p // P + Identity = P
+            } else if p == q {
+                CryptoRuntime::bn254_double(p) // P + P = 2P (point doubling)
+            } else if are_inverses(&p, &q) {
+                [0u8; BN254_G1_RAW_AFFINE_SIZE] // P + (-P) = Identity
+            } else {
+                CryptoRuntime::bn254_add(p, q) // General case: P + Q
+            };
+
+            // Convert result back to Ethereum's big-endian format
+            point_le_to_be(&mut result);
             sdk.write(&result);
         }
         PRECOMPILE_BN256_MUL => {
-            validate_and_consume_gas(&sdk, ISTANBUL_MUL_GAS_COST, gas_limit);
-            let padded_input = right_pad::<BN254_MUL_INPUT_SIZE>(&input);
-
-            // Pass inputs as big-endian; runtime handles conversions internally
-            let mut p: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = padded_input
-                [0..BN254_G1_POINT_DECOMPRESSED_SIZE]
-                .try_into()
-                .unwrap();
-            let q: [u8; SCALAR_SIZE] = padded_input
-                [BN254_G1_POINT_DECOMPRESSED_SIZE..BN254_G1_POINT_DECOMPRESSED_SIZE + SCALAR_SIZE]
-                .try_into()
-                .unwrap();
-
-            let result = SDK::bn254_mul(&mut p, &q);
-            let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
-            // Runtime already returns big-endian output
-            sdk.write(&result);
+            sdk.sync_evm_gas(ISTANBUL_MUL_GAS_COST);
+            let result = match bn128::run_mul(input, ISTANBUL_MUL_GAS_COST, u64::MAX) {
+                Ok(result) => result,
+                Err(_) => sdk.native_exit(ExitCode::PrecompileError),
+            };
+            sdk.write(&result.bytes);
         }
         PRECOMPILE_BN256_PAIR => {
-            let gas_used = (input.len() / BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN) as u64
-                * ISTANBUL_PAIR_PER_POINT
+            let gas_used = (input.len() / PAIR_ELEMENT_LEN) as u64 * ISTANBUL_PAIR_PER_POINT
                 + ISTANBUL_PAIR_BASE;
-            if gas_used > gas_limit {
-                sdk.native_exit(ExitCode::OutOfFuel);
-            }
-            // validate_and_consume_gas(&sdk, gas_used, gas_limit);
-            // let gas_used = required_gas;
-
-            if input.len() % BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN != 0 {
-                sdk.native_exit(ExitCode::InputOutputOutOfBounds);
-            }
-
-            let elements = input.len() / BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN;
-            let mut pairs = alloc::vec::Vec::with_capacity(elements);
-
-            for idx in 0..elements {
-                // Offset to the start of the pairing element at index `idx` in the byte slice
-                let start = idx * BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN;
-                let g1_start = start;
-                // Offset to the start of the G2 element in the pairing element
-                // This is where G1 ends.
-                let g2_start = start + BN254_G1_POINT_DECOMPRESSED_SIZE;
-
-                let encoded_g1_element = &input[g1_start..g2_start];
-                let encoded_g2_element =
-                    &input[g2_start..g2_start + BN254_G2_POINT_DECOMPRESSED_SIZE];
-
-                // Get G1 and G2 points from the input
-                let a = read_g1_point(encoded_g1_element)
-                    .unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
-                let b = read_g2_point(encoded_g2_element)
-                    .unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
-
-                // Always pass pairs to runtime; it will validate and skip zero pairs
-                pairs.push((a, b));
-            }
-
-            // Use the runtime's REVM-compatible pairing implementation
-            let result = SDK::bn254_multi_pairing(&mut pairs);
-            let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
-            sdk.sync_evm_gas(gas_used, 0);
-            sdk.write(&result);
+            sdk.sync_evm_gas(gas_used);
+            let result =
+                match bn128::run_pair(input, ISTANBUL_PAIR_PER_POINT, ISTANBUL_PAIR_BASE, u64::MAX)
+                {
+                    Ok(result) => result,
+                    Err(_) => sdk.native_exit(ExitCode::PrecompileError),
+                };
+            sdk.write(&result.bytes);
         }
         _ => unreachable!("bn128: unsupported contract address"),
     };

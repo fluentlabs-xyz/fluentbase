@@ -1,14 +1,20 @@
-use crate::error::TokenError;
-use crate::token_2022::extension::default_account_state::instruction::{
-    decode_instruction, DefaultAccountStateInstruction,
+use crate::{
+    error::TokenError,
+    token_2022::{
+        extension::{
+            default_account_state::{
+                instruction::{decode_instruction, DefaultAccountStateInstruction},
+                DefaultAccountState,
+            },
+            BaseStateWithExtensionsMut, PodStateWithExtensionsMut,
+        },
+        lib::check_program_account,
+        pod::{PodCOption, PodMint},
+        processor::Processor,
+        state::AccountState,
+    },
 };
-use crate::token_2022::extension::default_account_state::DefaultAccountState;
-use crate::token_2022::extension::{BaseStateWithExtensionsMut, PodStateWithExtensionsMut};
-use crate::token_2022::lib::check_program_account;
-use crate::token_2022::pod::{PodCOption, PodMint};
-use crate::token_2022::processor::Processor;
-use crate::token_2022::state::AccountState;
-use fluentbase_types::SharedAPI;
+use fluentbase_sdk::SharedAPI;
 use solana_account_info::{next_account_info, AccountInfo};
 use solana_program_error::ProgramResult;
 use solana_pubkey::Pubkey;

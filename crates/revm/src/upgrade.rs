@@ -9,6 +9,7 @@ use revm::{
     interpreter::{CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult},
     Database,
 };
+use std::boxed::Box;
 
 macro_rules! upgrade_panic {
     ($inputs:expr, $message:literal) => {{}

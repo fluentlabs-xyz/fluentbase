@@ -2,7 +2,7 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, entrypoint, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{alloc_slice, crypto::crypto_sha256, entrypoint, SharedAPI};
 
 /// Main entry point for the sha256 wrapper contract.
 /// This contract wraps the sha256 precompile (EIP-210) which computes the SHA-256 hash of a given input.
@@ -14,19 +14,13 @@ use fluentbase_sdk::{alloc_slice, entrypoint, ContextReader, ExitCode, SharedAPI
 /// - A 32-byte array representing the SHA-256 hash of the input
 ///
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    // read full input data
-    let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
-
     let gas_used = estimate_gas(input.len());
-    if gas_used > gas_limit {
-        sdk.native_exit(ExitCode::OutOfFuel);
-    }
-    let result = SDK::sha256(&input);
-    sdk.sync_evm_gas(gas_used, 0);
-    sdk.write(result.0.as_ref());
+    sdk.sync_evm_gas(gas_used);
+    let result = crypto_sha256(&input);
+    sdk.write(result.as_ref());
 }
 
 /// Gas estimation for SHA-256 (based on an EVM gas model)

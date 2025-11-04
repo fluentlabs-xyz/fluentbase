@@ -127,7 +127,7 @@ use fluentbase_sdk::{ContextReader, SharedAPI, Bytes};
 // Persist code and hash (host‑specific; example from this repo)
 pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: Bytes) {
     let contract_address = sdk.context().contract_address();
-    let evm_code_hash = fluentbase_sdk::keccak256(evm_bytecode.as_ref());
+    let evm_code_hash = fluentbase_fluentbase_sdk::crypto::crypto_keccak256(evm_bytecode.as_ref());
     sdk.metadata_write(&contract_address, 0, evm_code_hash.into()).unwrap();
     sdk.metadata_write(&contract_address, 32, evm_bytecode.into()).unwrap();
 }

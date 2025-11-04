@@ -2,7 +2,7 @@
 //! This module is not intended for external use.
 
 use cargo_metadata::{CrateType, Metadata, MetadataCommand, TargetKind};
-use fluentbase_types::{compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256};
+use fluentbase_sdk::{compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256};
 use rwasm::{compile_wasmtime_module, CompilationConfig};
 use std::{env, fs, path::PathBuf, process::Command, str::from_utf8};
 

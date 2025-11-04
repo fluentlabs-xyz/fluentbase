@@ -3,71 +3,53 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, B256};
+use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, SharedAPI, B256, B512};
+use revm_precompile::{secp256k1::ecrecover, utilities::right_pad};
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     // read full input data
-    let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
-
     let input = Bytes::copy_from_slice(input);
-    let gas_used = estimate_gas(input.len());
-    if gas_used > gas_limit {
-        sdk.native_exit(ExitCode::OutOfFuel);
-    }
 
-    // EVM ecrecover input is 4 words (32 bytes each): hash, v, r, s.
-    // Pad/truncate input to 128 bytes as per EVM behavior.
-    let mut data = [0u8; 128];
-    let to_copy = core::cmp::min(128, input.len());
-    data[..to_copy].copy_from_slice(&input[..to_copy]);
+    // Make sure we have enough gas for execution
+    const ECRECOVER_BASE: u64 = 3_000;
+    sdk.sync_evm_gas(ECRECOVER_BASE);
 
-    // Parse fields
-    let digest = B256::from_slice(&data[0..32]);
+    let input = right_pad::<128>(input.as_ref());
 
-    // v is 32-byte big-endian integer; require top 31 bytes to be zero, AND v must be 27 or 28
-    let v_bytes = &data[32..64];
-    if !(v_bytes[..31].iter().all(|&b| b == 0) && matches!(v_bytes[31], 27 | 28)) {
-        // Invalid v, return empty
-        sdk.sync_evm_gas(gas_used, 0);
-        sdk.write(&[]);
+    // `v` must be a 32-byte big-endian integer equal to 27 or 28.
+    if !(input[32..63].iter().all(|&b| b == 0) && matches!(input[63], 27 | 28)) {
         return;
     }
-    let v = v_bytes[31] - 27;
 
-    // r and s
-    let r = &data[64..96];
-    let s = &data[96..128];
-    let mut sig = [0u8; 64];
-    sig[..32].copy_from_slice(r);
-    sig[32..].copy_from_slice(s);
+    let msg = <&B256>::try_from(&input[0..32]).unwrap();
+    let rec_id = input[63] - 27;
+    let sig = <&B512>::try_from(&input[64..128]).unwrap();
 
-    // Perform recover using SDK
-    let pubkey = match SDK::secp256k1_recover(&digest, &sig, v) {
-        Some(pk) => pk,
-        None => {
-            sdk.sync_evm_gas(gas_used, 0);
-            sdk.write(&[]);
-            return;
-        }
-    };
+    if let Ok(result) = ecrecover(sig, rec_id, msg) {
+        sdk.write(result.as_slice());
+    }
 
+    // TODO(dmitry123): Recover signature using ecdsa library once we have unconstrainted mode
+    // let Ok(signature) = Signature::<k256::Secp256k1>::from_slice(&sig) else {
+    //     return;
+    // };
+    // let recover_id = RecoveryId::from_byte(v).unwrap();
+    // let Ok(public_key) =
+    //     VerifyingKey::recover_from_prehash_secp256k1(digest.as_slice(), &signature, recover_id)
+    // else {
+    //     return;
+    // };
+    // let public_key = public_key.to_encoded_point(false);
+    // let public_key = public_key.as_bytes();
     // Compute address = last 20 bytes of keccak256(uncompressed_pubkey[1...])
     // SDK returns 65-byte uncompressed pubkey [0x04 || x || y]
-    let hashed = sdk.keccak256(&pubkey[1..65]);
-    let mut out = [0u8; 32];
-    out[12..32].copy_from_slice(&hashed[12..32]);
-
-    sdk.sync_evm_gas(gas_used, 0);
-    sdk.write(&out);
-}
-
-// Gas estimation for ECRECOVER (based on EVM gas model)
-fn estimate_gas(_input_len: usize) -> u64 {
-    // ECRECOVER precompile has a fixed cost of 3000 gas(const ECRECOVER_BASE: u64 = 3_000;)
-    3000
+    // let hashed = CryptoRuntime::keccak256(&public_key[1..65]);
+    // let mut out = [0u8; 32];
+    // out[12..32].copy_from_slice(&hashed[12..32]);
+    // sdk.write(&out);
 }
 
 entrypoint!(main_entry);

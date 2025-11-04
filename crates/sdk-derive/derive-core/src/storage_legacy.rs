@@ -252,8 +252,7 @@ impl StorageKind {
                 raw_storage_key[0..32].copy_from_slice(&key.to_be_bytes::<32>());
                 raw_storage_key[32..64].copy_from_slice(&slot.to_be_bytes::<32>());
 
-                use fluentbase_sdk::NativeAPI;
-                let storage_key = sdk.keccak256(&raw_storage_key[..]);
+                let storage_key = SDK::keccak256(&raw_storage_key[..]);
                 fluentbase_sdk::U256::from_be_bytes(storage_key.0)
             }
         };
@@ -297,7 +296,7 @@ impl StorageKind {
 
                 #(
                     let storage_key = {
-                        let storage_key = sdk.keccak256(&key.to_be_bytes::<32>());
+                        let storage_key = SDK::keccak256(&key.to_be_bytes::<32>());
                         fluentbase_sdk::U256::from_be_bytes(storage_key.0)
                     };
                     key = storage_key + #arg_names;

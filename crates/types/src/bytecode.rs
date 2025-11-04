@@ -1,6 +1,6 @@
 use crate::{Address, Bytes, B256, RWASM_SIG, RWASM_SIG_LEN, WASM_SIG, WASM_SIG_LEN};
 use core::fmt::Formatter;
-use rwasm_core::RwasmModule;
+use rwasm::RwasmModule;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(non_camel_case_types)]

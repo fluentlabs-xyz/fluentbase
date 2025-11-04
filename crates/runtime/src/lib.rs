@@ -5,6 +5,7 @@ extern crate core;
 mod context;
 #[cfg(feature = "std")]
 mod context_wrapper;
+mod crypto;
 mod executor;
 #[cfg(feature = "global-executor")]
 mod global_executor;

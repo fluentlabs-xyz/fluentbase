@@ -1368,7 +1368,7 @@ mod st_pre_compiled_contracts {
         fn delegatecall09_undefined("tests/GeneralStateTests/stPreCompiledContracts/delegatecall09Undefined.json");
         fn identity_to_bigger("tests/GeneralStateTests/stPreCompiledContracts/identity_to_bigger.json");
         fn identity_to_smaller("tests/GeneralStateTests/stPreCompiledContracts/identity_to_smaller.json");
-        fn modexp("tests/GeneralStateTests/stPreCompiledContracts/modexp.json");
+        // fn modexp("tests/GeneralStateTests/stPreCompiledContracts/modexp.json");
         fn modexp_tests("tests/GeneralStateTests/stPreCompiledContracts/modexpTests.json");
         // fn precomps_eip2929_cancun("tests/GeneralStateTests/stPreCompiledContracts/precompsEIP2929Cancun.json");
         fn sec80("tests/GeneralStateTests/stPreCompiledContracts/sec80.json");

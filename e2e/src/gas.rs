@@ -1,6 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
 use core::str::from_utf8;
 use fluentbase_codec::byteorder::LittleEndian;
+use fluentbase_contracts::FLUENTBASE_EXAMPLES_GREETING;
 use fluentbase_sdk::{
     address, byteorder::ByteOrder, bytes, syscall::SYSCALL_ID_CALL, Address, SysFuncIdx,
     STATE_MAIN, U256,
@@ -159,8 +160,12 @@ fn test_deploy_gas_spend() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
 
-    let result =
-        TxBuilder::create(&mut ctx, DEPLOYER_ADDRESS, crate::EXAMPLE_GREETING.into()).exec();
+    let result = TxBuilder::create(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_GREETING.wasm_bytecode.into(),
+    )
+    .exec();
     if !result.is_success() {
         println!("{:?}", result);
         println!(

@@ -14,7 +14,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     // call ripemd160 function
     let result = revm_precompile::hash::ripemd160_run(&input, gas_limit)
         .unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
-    sdk.sync_evm_gas(result.gas_used, 0);
+    sdk.sync_evm_gas(result.gas_used);
     // write output
     sdk.write(result.bytes.as_ref());
 }

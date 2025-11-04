@@ -1,7 +1,6 @@
 //! Storage abstraction layer for Ethereum smart contracts.
 
-use crate::{B256, U256};
-use fluentbase_types::StorageAPI;
+use crate::{StorageAPI, B256, U256};
 
 mod array;
 mod bytes;

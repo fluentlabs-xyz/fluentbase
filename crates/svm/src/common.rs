@@ -8,11 +8,10 @@ use crate::{
 };
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::marker::PhantomData;
-use fluentbase_sdk::{keccak256, Address, SharedAPI, U256};
+use fluentbase_sdk::{keccak256, Address, ExitCode, MetadataStorageAPI, SharedAPI, U256};
 use fluentbase_svm_common::common::{
     evm_balance_from_lamports, lamports_from_evm_balance, pubkey_to_u256,
 };
-use fluentbase_types::{ExitCode, MetadataStorageAPI};
 use solana_instruction::error::InstructionError;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES, SVM_ADDRESS_PREFIX};
 use solana_rbpf::{
@@ -71,9 +70,10 @@ impl<SDK: SharedAPI> HasherImpl for Sha256Hasher<SDK> {
         if let Some(hash) = self.hash {
             return hash;
         }
-        let hash: Hash = SDK::sha256(&self.data).0.into();
-        self.hash = Some(hash);
-        hash
+        unimplemented!();
+        // let hash: Hash = crypto_sha256(&self.data).0.into();
+        // self.hash = Some(hash);
+        // hash
     }
 }
 
@@ -134,9 +134,10 @@ impl<SDK: SharedAPI> HasherImpl for Blake3Hasher<SDK> {
         if let Some(hash) = self.hash {
             return hash;
         }
-        let hash = SDK::blake3(&self.data).0;
-        self.hash = Some(hash);
-        hash
+        unimplemented!();
+        // let hash = crypto_blake3(&self.data).0;
+        // self.hash = Some(hash);
+        // hash
     }
 }
 

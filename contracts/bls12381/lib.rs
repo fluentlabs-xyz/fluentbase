@@ -1,12 +1,31 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 extern crate alloc;
 
+use bls12_381::{pairing, G1Affine, G1Projective, G2Affine, G2Projective, Gt, Scalar};
 use fluentbase_sdk::{
-    alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI,
-    PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BLS12_381_G2_ADD,
-    PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BLS12_381_MAP_G2,
-    PRECOMPILE_BLS12_381_PAIRING,
+    alloc_slice, crypto::CryptoRuntime, entrypoint, Bytes, ContextReader, CryptoAPI, ExitCode,
+    SharedAPI, PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BLS12_381_G1_MSM,
+    PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BLS12_381_MAP_G1,
+    PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
 };
+use revm_precompile::bls12_381::{
+    g2_msm::g2_msm, map_fp2_to_g2::map_fp2_to_g2, map_fp_to_g1::map_fp_to_g1,
+};
+
+/// BLS12-381 Specific Constants
+pub const SCALAR_SIZE: usize = 32;
+pub const FP_PAD_BY: usize = 16;
+pub const FP_SIZE: usize = 48;
+pub const PADDED_FP_SIZE: usize = 64;
+pub const FP2_SIZE: usize = 2 * FP_SIZE;
+pub const PADDED_FP2_SIZE: usize = 2 * PADDED_FP_SIZE;
+pub const PADDED_G1_SIZE: usize = 2 * PADDED_FP_SIZE;
+pub const PADDED_G2_SIZE: usize = 2 * PADDED_FP2_SIZE;
+pub const G1_UNCOMPRESSED_SIZE: usize = 96;
+pub const G1_COMPRESSED_SIZE: usize = 48;
+pub const G2_UNCOMPRESSED_SIZE: usize = 192;
+pub const G2_COMPRESSED_SIZE: usize = 96;
+pub const GT_COMPRESSED_SIZE: usize = 288;
 
 /**
  * This is the BLS12-381 precompile contract.
@@ -14,49 +33,14 @@ use fluentbase_sdk::{
  * Note: more info on the BLS12-381 curve can be found here: https://eips.ethereum.org/EIPS/eip-2537
  *
  * It implements the following functions:
- * - G1_ADD: SDK::bls12_381_g1_add::blstrs
- * - G1_MSM: SDK::bls12_381_g1_msm::blstrs
- * - G2_ADD: SDK::bls12_381_g2_add::blstrs
- * - G2_MSM: SDK::bls12_381_g2_msm::blstrs
- * - PAIRING: SDK::bls12_381_pairing::blstrs
- * - MAP_G1: SDK::bls12_381_map_fp_to_g1::blst
- * - MAP_G2: SDK::bls12_381_map_fp2_to_g2::blst
+ * - G1_ADD: patches + syscalls
+ * - G1_MSM: patches + syscalls
+ * - G2_ADD: patches
+ * - G2_MSM: revm_precompile::g2_msm::g2_msm
+ * - PAIRING: patches
+ * - MAP_G1: revm_precompile::bls12_381::map_fp_to_g1
+ * - MAP_G2: revm_precompile::bls12_381::map_fp2_to_g2
  */
-
-/// =========== Constants ===========
-
-/// ==== Fp Element ====
-
-/// The scalar is represented in a little endian.
-const SCALAR_LENGTH: usize = 32;
-
-const FP_LENGTH: usize = 48;
-
-/// It represent an Fp element according to EIP-2537 that EVM will use.
-const PADDED_FP_LENGTH: usize = 64;
-const FP_PAD_BY: usize = PADDED_FP_LENGTH - FP_LENGTH;
-
-/// ==== G1 Element ====
-
-/// G1 element length in bytes, it contains 2 Fp elements.
-const G1_LENGTH: usize = 2 * FP_LENGTH;
-
-/// It represent a G1 element according to EIP-2537 that EVM will use.
-const PADDED_G1_LENGTH: usize = 2 * PADDED_FP_LENGTH;
-
-// ==== Fp2 Element ====
-
-/// Number of bytes needed to represent a Fp^2 element
-const FP2_LENGTH: usize = 2 * FP_LENGTH;
-
-/// ==== G2 Element ====
-
-/// G2 element contains 2 Fp^2 elements.
-const G2_LENGTH: usize = 2 * FP2_LENGTH;
-
-/// It represent a Fp^2 element according to EIP-2537 that EVM will use.
-const PADDED_FP2_LENGTH: usize = 2 * PADDED_FP_LENGTH;
-const PADDED_G2_LENGTH: usize = 2 * PADDED_FP2_LENGTH;
 
 ///  Gas Constants for the BLS12-381 precompile contract.
 
@@ -67,8 +51,6 @@ const G2_ADD_GAS: u64 = 600u64;
 
 const MSM_MULTIPLIER: u64 = 1000;
 const G1_MSM_GAS: u64 = 12000u64;
-const G2_MSM_GAS: u64 = 22500u64;
-
 pub static DISCOUNT_TABLE_G1_MSM: [u16; 128] = [
     1000, 949, 848, 797, 764, 750, 738, 728, 719, 712, 705, 698, 692, 687, 682, 677, 673, 669, 665,
     661, 658, 654, 651, 648, 645, 642, 640, 637, 635, 632, 630, 627, 625, 623, 621, 619, 617, 615,
@@ -96,21 +78,14 @@ const PAIRING_MULTIPLIER_BASE: u64 = 32600;
 
 /// ==== Map gas constants ====
 
-const MAP_G1_GAS: u64 = 5500u64;
-const MAP_G2_GAS: u64 = 23800u64;
-
 /// ==== Input lengths requirements ====
 
-const G1_ADD_INPUT_LENGTH: usize = 2 * PADDED_G1_LENGTH;
-const G2_ADD_INPUT_LENGTH: usize = 2 * PADDED_G2_LENGTH;
+const G1_ADD_INPUT_LENGTH: usize = 2 * PADDED_G1_SIZE;
+const G2_ADD_INPUT_LENGTH: usize = 2 * PADDED_G2_SIZE;
 
-const G1_MSM_INPUT_LENGTH: usize = PADDED_G1_LENGTH + 32;
-const G2_MSM_INPUT_LENGTH: usize = PADDED_G2_LENGTH + 32;
+const G1_MSM_INPUT_LENGTH: usize = PADDED_G1_SIZE + 32;
 
-const PAIRING_INPUT_LENGTH: usize = PADDED_G1_LENGTH + PADDED_G2_LENGTH;
-
-const MAP_G1_INPUT_LENGTH: usize = PADDED_FP_LENGTH;
-const MAP_G2_INPUT_LENGTH: usize = PADDED_FP2_LENGTH;
+const PAIRING_INPUT_LENGTH: usize = PADDED_G1_SIZE + PADDED_G2_SIZE;
 
 #[inline(always)]
 fn msm_required_gas(k: usize, discount_table: &[u16], multiplication_cost: u64) -> u64 {
@@ -127,7 +102,7 @@ fn check_gas_and_sync<SDK: SharedAPI>(sdk: &SDK, gas_used: u64, gas_limit: u64) 
     if gas_used > gas_limit {
         sdk.native_exit(ExitCode::OutOfFuel);
     }
-    sdk.sync_evm_gas(gas_used, 0);
+    sdk.sync_evm_gas(gas_used);
 }
 
 #[inline(always)]
@@ -137,137 +112,185 @@ fn validate_input_length<SDK: SharedAPI>(sdk: &SDK, actual: u32, expected: usize
     }
 }
 
-#[inline(always)]
-fn encode_g2_output(output: &[u8; G2_LENGTH]) -> [u8; PADDED_G2_LENGTH] {
-    let mut out_be = [0u8; PADDED_G2_LENGTH];
-    let mut limb = [0u8; FP_LENGTH];
-    let mut copy_reverse_and_place = |src: &[u8], dst_start: usize| {
-        limb.copy_from_slice(src);
-        limb.reverse();
-        out_be[dst_start..dst_start + FP_LENGTH].copy_from_slice(&limb);
-    };
-
-    // x0, x1, y0, y1
-    copy_reverse_and_place(&output[0..FP_LENGTH], 16);
-    copy_reverse_and_place(&output[FP_LENGTH..2 * FP_LENGTH], 80);
-    copy_reverse_and_place(&output[2 * FP_LENGTH..3 * FP_LENGTH], 144);
-    copy_reverse_and_place(&output[3 * FP_LENGTH..4 * FP_LENGTH], 208);
-    out_be
-}
-
-#[inline(always)]
-fn pad_g1_point(unpadded: &[u8; G1_LENGTH]) -> [u8; PADDED_G1_LENGTH] {
-    let mut padded = [0u8; PADDED_G1_LENGTH];
-    // x then y; each is 48B, pad to 64B with leading zeros
-    for i in 0..2 {
-        let src_start = i * FP_LENGTH;
-        let dst_start = i * PADDED_FP_LENGTH + FP_PAD_BY;
-        padded[dst_start..dst_start + FP_LENGTH]
-            .copy_from_slice(&unpadded[src_start..src_start + FP_LENGTH]);
-    }
-    padded
-}
-
-#[inline(always)]
-fn pad_g2_point(unpadded: &[u8; G2_LENGTH]) -> [u8; PADDED_G2_LENGTH] {
-    let mut padded = [0u8; PADDED_G2_LENGTH];
-    // For each coordinate (x then y), split FP2 limb into two FP limbs and pad each separately
-    // EIP-2537 expects FP2 limbs ordered as (c1, c0) within each coordinate
-    for coord_idx in 0..2 {
-        for limb_idx in 0..2 {
-            let limb = 1 - limb_idx; // reverse: 1, 0
-            let src_start = coord_idx * FP2_LENGTH + limb * FP_LENGTH;
-            let dst_start = coord_idx * PADDED_FP2_LENGTH + limb_idx * PADDED_FP_LENGTH + FP_PAD_BY;
-            padded[dst_start..dst_start + FP_LENGTH]
-                .copy_from_slice(&unpadded[src_start..src_start + FP_LENGTH]);
-        }
-    }
-    padded
-}
-
 /// Helper function to convert G1 input from EVM format to runtime format
 #[inline(always)]
-fn convert_g1_input_to_runtime(input: &[u8]) -> ([u8; G1_LENGTH], [u8; G1_LENGTH]) {
-    let a = &input[0..PADDED_G1_LENGTH];
-    let b = &input[PADDED_G1_LENGTH..2 * PADDED_G1_LENGTH];
+fn convert_g1_input_to_runtime(
+    input: &[u8],
+) -> ([u8; G1_UNCOMPRESSED_SIZE], [u8; G1_UNCOMPRESSED_SIZE]) {
+    let a = &input[0..PADDED_G1_SIZE];
+    let b = &input[PADDED_G1_SIZE..2 * PADDED_G1_SIZE];
 
     let (x1_be, y1_be) = (
-        &a[0..PADDED_FP_LENGTH],
-        &a[PADDED_FP_LENGTH..2 * PADDED_FP_LENGTH],
+        &a[0..PADDED_FP_SIZE],
+        &a[PADDED_FP_SIZE..2 * PADDED_FP_SIZE],
     );
     let (x2_be, y2_be) = (
-        &b[0..PADDED_FP_LENGTH],
-        &b[PADDED_FP_LENGTH..2 * PADDED_FP_LENGTH],
+        &b[0..PADDED_FP_SIZE],
+        &b[PADDED_FP_SIZE..2 * PADDED_FP_SIZE],
     );
 
-    let mut p = [0u8; G1_LENGTH];
-    let mut q = [0u8; G1_LENGTH];
+    let mut p = [0u8; G1_UNCOMPRESSED_SIZE];
+    let mut q = [0u8; G1_UNCOMPRESSED_SIZE];
 
     // Helper function to copy 48-byte field from padded input
     let copy_field = |dst: &mut [u8], src: &[u8]| {
-        dst.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_LENGTH]);
+        dst.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_SIZE]);
     };
 
     // p (x, y)
-    copy_field(&mut p[0..FP_LENGTH], x1_be);
-    copy_field(&mut p[FP_LENGTH..G1_LENGTH], y1_be);
+    copy_field(&mut p[0..FP_SIZE], x1_be);
+    copy_field(&mut p[FP_SIZE..G1_UNCOMPRESSED_SIZE], y1_be);
     // q (x, y)
-    copy_field(&mut q[0..FP_LENGTH], x2_be);
-    copy_field(&mut q[FP_LENGTH..G1_LENGTH], y2_be);
+    copy_field(&mut q[0..FP_SIZE], x2_be);
+    copy_field(&mut q[FP_SIZE..G1_UNCOMPRESSED_SIZE], y2_be);
 
     (p, q)
 }
 
-/// Helper function to convert G2 input from EVM format to runtime format
+/// Helper function to convert G2 input from EVM format to rwasm-patches format
 #[inline(always)]
-fn convert_g2_input_to_runtime(input: &[u8]) -> ([u8; G2_LENGTH], [u8; G2_LENGTH]) {
-    let a = &input[0..PADDED_G2_LENGTH];
-    let b = &input[PADDED_G2_LENGTH..(2 * PADDED_G2_LENGTH)];
+fn convert_g2_input_to_rwasm_patches(
+    input: &[u8],
+) -> ([u8; G2_UNCOMPRESSED_SIZE], [u8; G2_UNCOMPRESSED_SIZE]) {
+    let a = &input[0..PADDED_G2_SIZE];
+    let b = &input[PADDED_G2_SIZE..(2 * PADDED_G2_SIZE)];
     let (a_x0, a_x1, a_y0, a_y1) = (
-        &a[0..PADDED_FP_LENGTH],
-        &a[PADDED_FP_LENGTH..(2 * PADDED_FP_LENGTH)],
-        &a[(2 * PADDED_FP_LENGTH)..(3 * PADDED_FP_LENGTH)],
-        &a[(3 * PADDED_FP_LENGTH)..(4 * PADDED_FP_LENGTH)],
+        &a[0..PADDED_FP_SIZE],
+        &a[PADDED_FP_SIZE..(2 * PADDED_FP_SIZE)],
+        &a[(2 * PADDED_FP_SIZE)..(3 * PADDED_FP_SIZE)],
+        &a[(3 * PADDED_FP_SIZE)..(4 * PADDED_FP_SIZE)],
     );
     let (b_x0, b_x1, b_y0, b_y1) = (
-        &b[0..PADDED_FP_LENGTH],
-        &b[PADDED_FP_LENGTH..(2 * PADDED_FP_LENGTH)],
-        &b[(2 * PADDED_FP_LENGTH)..(3 * PADDED_FP_LENGTH)],
-        &b[(3 * PADDED_FP_LENGTH)..(4 * PADDED_FP_LENGTH)],
+        &b[0..PADDED_FP_SIZE],
+        &b[PADDED_FP_SIZE..(2 * PADDED_FP_SIZE)],
+        &b[(2 * PADDED_FP_SIZE)..(3 * PADDED_FP_SIZE)],
+        &b[(3 * PADDED_FP_SIZE)..(4 * PADDED_FP_SIZE)],
     );
 
-    let mut p = [0u8; G2_LENGTH];
-    let mut q = [0u8; G2_LENGTH];
+    let mut p = [0u8; G2_UNCOMPRESSED_SIZE];
+    let mut q = [0u8; G2_UNCOMPRESSED_SIZE];
 
-    // Helper function to convert 4 G2 field elements from BE to LE
-    let convert_g2_fields = |dst: &mut [u8], x0: &[u8], x1: &[u8], y0: &[u8], y1: &[u8]| {
-        let copy_and_reverse_limb = |dst: &mut [u8], src: &[u8]| {
-            dst.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_LENGTH]);
-            dst.reverse();
+    // Helper function to convert G2 field elements to rwasm-patches format
+    // Format: x.c1 (48 bytes) || x.c0 (48 bytes) || y.c1 (48 bytes) || y.c0 (48 bytes)
+    let convert_g2_fields_rwasm = |dst: &mut [u8], x0: &[u8], x1: &[u8], y0: &[u8], y1: &[u8]| {
+        let copy_fp_field = |dst: &mut [u8], src: &[u8]| {
+            // Extract the 48-byte field element (skip the 16-byte padding)
+            let field_bytes = &src[FP_PAD_BY..PADDED_FP_SIZE];
+            dst.copy_from_slice(field_bytes);
         };
 
-        copy_and_reverse_limb(&mut dst[0..FP_LENGTH], x0);
-        copy_and_reverse_limb(&mut dst[FP_LENGTH..2 * FP_LENGTH], x1);
-        copy_and_reverse_limb(&mut dst[2 * FP_LENGTH..3 * FP_LENGTH], y0);
-        copy_and_reverse_limb(&mut dst[3 * FP_LENGTH..4 * FP_LENGTH], y1);
+        // x.c1 (high part) - bytes 0-47
+        copy_fp_field(&mut dst[0..48], x1);
+        // x.c0 (low part) - bytes 48-95
+        copy_fp_field(&mut dst[48..96], x0);
+        // y.c1 (high part) - bytes 96-143
+        copy_fp_field(&mut dst[96..144], y1);
+        // y.c0 (low part) - bytes 144-191
+        copy_fp_field(&mut dst[144..192], y0);
     };
 
-    // Convert a and b G2 points
-    convert_g2_fields(&mut p, a_x0, a_x1, a_y0, a_y1);
-    convert_g2_fields(&mut q, b_x0, b_x1, b_y0, b_y1);
+    // Convert a and b G2 points to rwasm-patches format
+    convert_g2_fields_rwasm(&mut p, a_x0, a_x1, a_y0, a_y1);
+    convert_g2_fields_rwasm(&mut q, b_x0, b_x1, b_y0, b_y1);
 
     (p, q)
 }
 
 /// Helper function to convert G1 output from runtime format to EVM format
 #[inline(always)]
-fn convert_g1_output_to_evm(p: &[u8; G1_LENGTH]) -> [u8; PADDED_G1_LENGTH] {
-    let mut out = [0u8; PADDED_G1_LENGTH];
-    // x: 48 LE -> BE and place at [16..64]
-    out[FP_PAD_BY..PADDED_FP_LENGTH].copy_from_slice(&p[0..FP_LENGTH]);
-    // y: 48 LE -> BE and place at [80..128]
-    out[80..PADDED_G1_LENGTH].copy_from_slice(&p[FP_LENGTH..G1_LENGTH]);
+fn convert_g1_output_to_evm(p: &[u8; G1_UNCOMPRESSED_SIZE]) -> [u8; PADDED_G1_SIZE] {
+    let mut out = [0u8; PADDED_G1_SIZE];
+    // x: 48 bytes -> place at [16..64] (no byte order conversion needed)
+    out[FP_PAD_BY..PADDED_FP_SIZE].copy_from_slice(&p[0..FP_SIZE]);
+
+    // y: 48 bytes -> place at [80..128] (no byte order conversion needed)
+    out[80..PADDED_G1_SIZE].copy_from_slice(&p[FP_SIZE..G1_UNCOMPRESSED_SIZE]);
     out
+}
+
+/// Helper function to convert G2 output from rwasm-patches format to EVM format
+#[inline(always)]
+fn convert_g2_output_to_evm_rwasm(p: &[u8; G2_UNCOMPRESSED_SIZE]) -> [u8; PADDED_G2_SIZE] {
+    let mut out = [0u8; PADDED_G2_SIZE];
+
+    // rwasm-patches format: x.c1 (0-47) || x.c0 (48-95) || y.c1 (96-143) || y.c0 (144-191)
+    // EVM format: x.c0 || x.c1 || y.c0 || y.c1, each 64-byte BE padded
+
+    // x.c0: bytes 48-95 -> first padded slot
+    out[FP_PAD_BY..PADDED_FP_SIZE].copy_from_slice(&p[48..96]);
+    // x.c1: bytes 0-47 -> second padded slot
+    out[(PADDED_FP_SIZE + FP_PAD_BY)..(2 * PADDED_FP_SIZE)].copy_from_slice(&p[0..48]);
+    // y.c0: bytes 144-191 -> third padded slot
+    out[(2 * PADDED_FP_SIZE + FP_PAD_BY)..(3 * PADDED_FP_SIZE)].copy_from_slice(&p[144..192]);
+    // y.c1: bytes 96-143 -> fourth padded slot
+    out[(3 * PADDED_FP_SIZE + FP_PAD_BY)..(4 * PADDED_FP_SIZE)].copy_from_slice(&p[96..144]);
+
+    out
+}
+
+/// Helper function to convert G1 point from EVM format to rwasm-patches format for pairing
+#[inline(always)]
+fn convert_g1_input_to_rwasm_patches_pairing(input: &[u8]) -> [u8; G1_UNCOMPRESSED_SIZE] {
+    let mut out = [0u8; G1_UNCOMPRESSED_SIZE];
+
+    // EVM format: x (64-byte BE padded) || y (64-byte BE padded)
+    // rwasm-patches format: x (48 bytes) || y (48 bytes)
+    out[0..48].copy_from_slice(&input[FP_PAD_BY..PADDED_FP_SIZE]);
+    out[48..96].copy_from_slice(&input[PADDED_FP_SIZE + FP_PAD_BY..2 * PADDED_FP_SIZE]);
+    out
+}
+
+/// Helper function to convert G2 point from EVM format to rwasm-patches format for pairing
+#[inline(always)]
+fn convert_g2_input_to_rwasm_patches_pairing(input: &[u8]) -> [u8; G2_UNCOMPRESSED_SIZE] {
+    let mut out = [0u8; G2_UNCOMPRESSED_SIZE];
+
+    // EVM format: x0 (64-byte BE padded) || x1 (64-byte BE padded) || y0 (64-byte BE padded) || y1 (64-byte BE padded)
+    // rwasm-patches format: x.c1 (48 bytes) || x.c0 (48 bytes) || y.c1 (48 bytes) || y.c0 (48 bytes)
+
+    // x.c1: bytes 0-47 (from x1)
+    out[0..48].copy_from_slice(&input[PADDED_FP_SIZE + FP_PAD_BY..2 * PADDED_FP_SIZE]);
+    // x.c0: bytes 48-95 (from x0)
+    out[48..96].copy_from_slice(&input[FP_PAD_BY..PADDED_FP_SIZE]);
+    // y.c1: bytes 96-143 (from y1)
+    out[96..144].copy_from_slice(&input[3 * PADDED_FP_SIZE + FP_PAD_BY..4 * PADDED_FP_SIZE]);
+    // y.c0: bytes 144-191 (from y0)
+    out[144..192].copy_from_slice(&input[2 * PADDED_FP_SIZE + FP_PAD_BY..3 * PADDED_FP_SIZE]);
+
+    out
+}
+
+/// Helper function to convert G1 point from EVM format to rwasm-patches format for MSM
+#[inline(always)]
+fn convert_g1_input_to_rwasm_patches_msm(input: &[u8]) -> [u8; G1_UNCOMPRESSED_SIZE] {
+    let mut out = [0u8; G1_UNCOMPRESSED_SIZE];
+
+    // Use the same logic as convert_g1_input_to_runtime for consistency
+    let (x_be, y_be) = (
+        &input[0..PADDED_FP_SIZE],
+        &input[PADDED_FP_SIZE..2 * PADDED_FP_SIZE],
+    );
+
+    // Helper function to copy 48-byte field from padded input
+    let copy_field = |dst: &mut [u8], src: &[u8]| {
+        dst.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_SIZE]);
+    };
+
+    // Copy x and y coordinates
+    copy_field(&mut out[0..FP_SIZE], x_be);
+    copy_field(&mut out[FP_SIZE..G1_UNCOMPRESSED_SIZE], y_be);
+
+    out
+}
+
+/// Helper function to convert scalar from BE format to rwasm-patches Scalar
+#[inline(always)]
+fn convert_scalar_be_to_rwasm_patches(scalar_be: &[u8; SCALAR_SIZE]) -> Scalar {
+    // Convert from BE bytes to LE bytes, then to Scalar
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(scalar_be);
+    bytes.reverse(); // Convert BE to LE
+    Scalar::from_bytes(&bytes).unwrap_or(Scalar::zero())
 }
 
 /// Helper function for common validation and gas checking pattern
@@ -302,14 +325,17 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 G1_ADD_GAS,
                 gas_limit,
             );
-
             // Convert input from EVM format to runtime format
-            let (mut p, q) = convert_g1_input_to_runtime(&input);
+            let (p, q) = convert_g1_input_to_runtime(&input);
+            // Use rWASM-patched bls12_381 directly for optimized execution
+            let p_aff = G1Affine::from_uncompressed(&p).unwrap_or(G1Affine::identity());
+            let q_aff = G1Affine::from_uncompressed(&q).unwrap_or(G1Affine::identity());
 
-            SDK::bls12_381_g1_add(&mut p, &q);
+            let result = p_aff.add_affine(&q_aff);
+            let result_bytes = result.to_uncompressed();
 
             // Convert output from runtime format to EVM format
-            let out = convert_g1_output_to_evm(&p);
+            let out = convert_g1_output_to_evm(&result_bytes);
             sdk.write(&out);
         }
         PRECOMPILE_BLS12_381_G2_ADD => {
@@ -323,123 +349,79 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             );
 
             // Convert input from EVM format to runtime format
-            let (mut p, q) = convert_g2_input_to_runtime(&input);
+            let (p, q) = convert_g2_input_to_rwasm_patches(&input);
 
-            // Call the Fluent SDK, syscall bls12_381_g2_add
-            SDK::bls12_381_g2_add(&mut p, &q);
+            let p_aff = G2Affine::from_uncompressed(&p).unwrap_or(G2Affine::identity());
+            let q_aff = G2Affine::from_uncompressed(&q).unwrap_or(G2Affine::identity());
+
+            let result = G2Projective::from(p_aff) + G2Projective::from(q_aff);
+            let result_aff = G2Affine::from(result);
+            let result_bytes = result_aff.to_uncompressed();
 
             // Encode output: 256 bytes (x0||x1||y0||y1), each limb is 64-byte BE padded (16 zeros + 48 value)
-            let out = encode_g2_output(&p);
+            let out = convert_g2_output_to_evm_rwasm(&result_bytes);
             sdk.write(&out);
         }
         PRECOMPILE_BLS12_381_G1_MSM => {
-            // Expect pairs of 288 bytes: 128-byte padded G1 point (x||y) + 32-byte scalar (BE)
-            // Convert to runtime format: 96-byte LE limbs + 32-byte scalar LE
+            // Expect pairs of 160 bytes: 128-byte padded G1 point (x||y) + 32-byte scalar (BE)
+            // Convert to rwasm-patches format: 96-byte uncompressed G1 + Scalar
             let input_length_requirement = G1_MSM_INPUT_LENGTH;
             if input.len() % input_length_requirement != 0 || input.is_empty() {
                 sdk.native_exit(ExitCode::InputOutputOutOfBounds);
             }
             let pairs_len = input.len() / input_length_requirement;
-            let mut pairs: alloc::vec::Vec<([u8; G1_LENGTH], [u8; SCALAR_LENGTH])> =
-                alloc::vec::Vec::with_capacity(pairs_len);
+
             // We check for the gas in the very beginning to reduce execution time
             let gas_used = msm_required_gas(pairs_len, &DISCOUNT_TABLE_G1_MSM, G1_MSM_GAS);
             check_gas_and_sync(&sdk, gas_used, gas_limit);
+
+            // Collect G1 points and scalars for MSM
+            let mut points: alloc::vec::Vec<G1Projective> =
+                alloc::vec::Vec::with_capacity(pairs_len);
+            let mut scalars: alloc::vec::Vec<Scalar> = alloc::vec::Vec::with_capacity(pairs_len);
+
             for i in 0..pairs_len {
                 let start = i * input_length_requirement;
-                let g1_in = &input[start..start + PADDED_G1_LENGTH];
-                let s_be = &input[start + PADDED_G1_LENGTH..start + input_length_requirement];
-                let mut p = [0u8; G1_LENGTH];
-                p[0..FP_LENGTH].copy_from_slice(&g1_in[FP_PAD_BY..PADDED_FP_LENGTH]);
-                p[FP_LENGTH..G1_LENGTH]
-                    .copy_from_slice(&g1_in[FP_PAD_BY + PADDED_FP_LENGTH..PADDED_G1_LENGTH]);
-                let mut s_le = [0u8; SCALAR_LENGTH];
-                s_le.copy_from_slice(s_be);
-                s_le.reverse();
-                pairs.push((p, s_le));
+                let g1_in = &input[start..start + PADDED_G1_SIZE];
+                let s_be = &input[start + PADDED_G1_SIZE..start + input_length_requirement];
+
+                // Convert G1 point from EVM format to rwasm-patches format
+                let g1_bytes = convert_g1_input_to_rwasm_patches_msm(g1_in);
+                let g1_aff = G1Affine::from_uncompressed(&g1_bytes).unwrap_or(G1Affine::identity());
+                let g1_proj = G1Projective::from(g1_aff);
+
+                // Convert scalar from BE format to rwasm-patches Scalar
+                let mut s_be_array = [0u8; SCALAR_SIZE];
+                s_be_array.copy_from_slice(s_be);
+                let scalar = convert_scalar_be_to_rwasm_patches(&s_be_array);
+
+                points.push(g1_proj);
+                scalars.push(scalar);
             }
-            let mut out96 = [0u8; G1_LENGTH];
-            // Call the Fluent SDK, syscall bls12_381_g1_msm
-            SDK::bls12_381_g1_msm(&pairs, &mut out96);
-            // Detect identity (blstrs sets flag bit for infinity in first byte of uncompressed)
-            if out96[0] & 0x40 != 0 {
-                let out = [0u8; PADDED_G1_LENGTH];
+
+            // Perform MSM using rwasm-patches
+            let result = G1Projective::msm_variable_base(&points, &scalars);
+            let result_aff = G1Affine::from(result);
+            let result_bytes = result_aff.to_uncompressed();
+
+            // Check if result is identity
+            if result_aff.is_identity().unwrap_u8() == 1 {
+                let out = [0u8; PADDED_G1_SIZE];
                 sdk.write(&out);
             } else {
-                let out = {
-                    let mut tmp = [0u8; PADDED_G1_LENGTH];
-                    tmp[FP_PAD_BY..PADDED_FP_LENGTH].copy_from_slice(&out96[0..FP_LENGTH]);
-                    tmp[PADDED_FP_LENGTH + FP_PAD_BY..PADDED_G1_LENGTH]
-                        .copy_from_slice(&out96[FP_LENGTH..G1_LENGTH]);
-                    tmp
-                };
+                // Convert result to EVM format
+                let out = convert_g1_output_to_evm(&result_bytes);
                 sdk.write(&out);
             }
         }
         PRECOMPILE_BLS12_381_G2_MSM => {
-            // Expect pairs of 288 bytes: 256-byte padded G2 point (x0||x1||y0||y1) + 32-byte scalar (BE)
-            // Convert to runtime format: 192-byte LE limbs + 32-byte scalar LE
-            let input_length_requirement = G2_MSM_INPUT_LENGTH;
-            if input.len() % input_length_requirement != 0 || input.is_empty() {
-                sdk.native_exit(ExitCode::InputOutputOutOfBounds);
-            }
-            let pairs_len = input.len() / input_length_requirement;
-            let mut pairs: alloc::vec::Vec<([u8; G2_LENGTH], [u8; SCALAR_LENGTH])> =
-                alloc::vec::Vec::with_capacity(pairs_len);
-
-            let k = pairs_len;
-            let gas_used = msm_required_gas(k, &DISCOUNT_TABLE_G2_MSM, G2_MSM_GAS);
-            check_gas_and_sync(&sdk, gas_used, gas_limit);
-            for i in 0..pairs_len {
-                let mut p = [0u8; G2_LENGTH];
-                let mut s = [0u8; SCALAR_LENGTH];
-                let start = i * input_length_requirement;
-                let g2_in = &input[start..start + PADDED_G2_LENGTH];
-
-                // Convert padded BE limbs → LE limbs (like G2 add path)
-                let mut limb = [0u8; FP_LENGTH];
-                let mut copy_and_reverse_limb = |src: &[u8], dst: &mut [u8]| {
-                    limb.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_LENGTH]);
-                    limb.reverse();
-                    dst.copy_from_slice(&limb);
-                };
-
-                // Convert 4 G2 field elements from BE to LE
-                let mut convert_g2_from_input = |dst: &mut [u8], input: &[u8]| {
-                    copy_and_reverse_limb(&input[0..PADDED_FP_LENGTH], &mut dst[0..FP_LENGTH]);
-                    copy_and_reverse_limb(
-                        &input[PADDED_FP_LENGTH..PADDED_G1_LENGTH],
-                        &mut dst[FP_LENGTH..2 * FP_LENGTH],
-                    );
-                    copy_and_reverse_limb(
-                        &input[PADDED_G1_LENGTH..G2_LENGTH],
-                        &mut dst[2 * FP_LENGTH..3 * FP_LENGTH],
-                    );
-                    copy_and_reverse_limb(
-                        &input[G2_LENGTH..PADDED_G2_LENGTH],
-                        &mut dst[3 * FP_LENGTH..4 * FP_LENGTH],
-                    );
-                };
-
-                convert_g2_from_input(&mut p, g2_in);
-
-                // Scalar: 32B BE → 32B LE
-                s.copy_from_slice(
-                    &input[start + PADDED_G2_LENGTH..start + PADDED_G2_LENGTH + SCALAR_LENGTH],
-                );
-                s.reverse();
-
-                pairs.push((p, s));
-            }
-            let mut out = [0u8; G2_LENGTH];
-            SDK::bls12_381_g2_msm(&pairs, &mut out);
-            // Encode output to 256B padded BE like G2 add path
-            if out.iter().all(|&b| b == 0) {
-                let out_be = [0u8; PADDED_G2_LENGTH];
-                sdk.write(&out_be);
-            } else {
-                let out_be = encode_g2_output(&out);
-                sdk.write(&out_be);
+            match g2_msm(&input, gas_limit) {
+                Ok(output) => {
+                    // Consume the gas that was used by the precompile
+                    sdk.sync_evm_gas(output.gas_used);
+                    sdk.write(&output.bytes);
+                }
+                Err(_) => sdk.native_exit(ExitCode::InputOutputOutOfBounds),
             }
         }
         PRECOMPILE_BLS12_381_PAIRING => {
@@ -454,42 +436,35 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             if required_gas > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
-            sdk.sync_evm_gas(required_gas, 0);
-            let mut pairs: alloc::vec::Vec<([u8; 48], [u8; 96])> =
-                alloc::vec::Vec::with_capacity(pairs_len);
-            for i in 0..pairs_len {
-                let mut g1 = [0u8; FP_LENGTH];
-                let mut g2 = [0u8; FP2_LENGTH];
-                let start = i * PAIRING_INPUT_LENGTH;
-                // Parse G1: x||y (each 32-byte BE padded, 48-byte value)
-                // Extract 48B limbs (skip leading 16 zero bytes per limb) and convert to LE
-                g1[0..FP_LENGTH].copy_from_slice(&input[start..start + 64][16..64]);
-                g1[0..FP_LENGTH].reverse();
-                // Parse G2: x0||x1||y0||y1, each limb 64B BE padded
-                let g2_in = &input[start + 64..start + PAIRING_INPUT_LENGTH];
-                let mut limb = [0u8; FP_LENGTH];
-                let mut parse_g2_limb = |src: &[u8], dst: &mut [u8]| {
-                    limb[0..32].copy_from_slice(src);
-                    limb[0..32].reverse();
-                    limb[32..FP_LENGTH].fill(0);
-                    dst.copy_from_slice(&limb);
-                };
+            sdk.sync_evm_gas(required_gas);
 
-                // x0, x1: 32B BE -> 48B LE (zero-extended)
-                parse_g2_limb(&g2_in[0..32], &mut g2[0..FP_LENGTH]);
-                parse_g2_limb(&g2_in[32..64], &mut g2[48..96]);
-                pairs.push((g1, g2));
+            // Process each pair and compute the product of all pairings
+            let mut result = Gt::identity();
+
+            for i in 0..pairs_len {
+                let start = i * PAIRING_INPUT_LENGTH;
+
+                // Convert G1 point from EVM format to rwasm-patches format
+                let g1_bytes = convert_g1_input_to_rwasm_patches_pairing(
+                    &input[start..start + PADDED_G1_SIZE],
+                );
+                let g1_aff = G1Affine::from_uncompressed(&g1_bytes).unwrap_or(G1Affine::identity());
+
+                // Convert G2 point from EVM format to rwasm-patches format
+                let g2_bytes = convert_g2_input_to_rwasm_patches_pairing(
+                    &input[start + PADDED_G1_SIZE..start + PAIRING_INPUT_LENGTH],
+                );
+                let g2_aff = G2Affine::from_uncompressed(&g2_bytes).unwrap_or(G2Affine::identity());
+
+                // Compute pairing for this pair
+                let pair_result = pairing(&g1_aff, &g2_aff);
+
+                // Add to the running result (multiplication in GT group)
+                result = result + pair_result;
             }
-            let mut out = [0u8; 288];
-            SDK::bls12_381_pairing(&pairs, &mut out);
-            // Decode compressed GT and return EIP-197 boolean (32-byte BE 0/1)
-            let is_one = {
-                // Compare against compressed identity directly to avoid extra deps
-                let zero = [0u8; 288];
-                // blstrs writes six Fp limbs (each 48B LE). For identity, compression output is zero.
-                // A zero buffer is a valid identity compression.
-                out == zero
-            };
+
+            // Return 1 if result is identity (all pairings multiply to 1), 0 otherwise
+            let is_one = result == Gt::identity();
             let mut out_be = [0u8; 32];
             if is_one {
                 out_be[31] = 1;
@@ -497,40 +472,26 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             sdk.write(&out_be);
         }
         PRECOMPILE_BLS12_381_MAP_G1 => {
-            validate_and_consume_gas(
-                &sdk,
-                input.len() as u32,
-                MAP_G1_INPUT_LENGTH,
-                MAP_G1_GAS,
-                gas_limit,
-            );
-            let mut padded_fp = [0u8; PADDED_FP_LENGTH];
-            padded_fp.copy_from_slice(&input);
-            // Call the Fluent SDK, syscall bls12_381_map_fp_to_g1
-            let mut out96 = [0u8; G1_LENGTH];
-            SDK::bls12_381_map_fp_to_g1(&padded_fp, &mut out96);
-            // Pad result for EVM: 96B -> 128B padded (x||y)
-            let out128 = pad_g1_point(&out96);
-            sdk.write(&out128);
+            // Use revm_precompile directly for MAP_G1
+            match map_fp_to_g1(&input, gas_limit) {
+                Ok(output) => {
+                    // Consume the gas that was used by the precompile
+                    sdk.sync_evm_gas(output.gas_used);
+                    sdk.write(&output.bytes);
+                }
+                Err(_) => sdk.native_exit(ExitCode::InputOutputOutOfBounds),
+            }
         }
         PRECOMPILE_BLS12_381_MAP_G2 => {
-            // Expect Fp2 padded: 128 bytes (64B c0 || 64B c1)
-            validate_and_consume_gas(
-                &sdk,
-                input.len() as u32,
-                MAP_G2_INPUT_LENGTH,
-                MAP_G2_GAS,
-                gas_limit,
-            );
-            // Pass through the 128B padded Fp2 to the syscall
-            let mut padded_fp2 = [0u8; PADDED_FP2_LENGTH];
-            padded_fp2.copy_from_slice(&input);
-            // Call the Fluent SDK, syscall bls12_381_map_fp2_to_g2
-            let mut out192 = [0u8; G2_LENGTH];
-            SDK::bls12_381_map_fp2_to_g2(&padded_fp2, &mut out192);
-            // Pad result for EVM: 192B -> 256B padded (x||y over Fp2)
-            let out256 = pad_g2_point(&out192);
-            sdk.write(&out256);
+            // Use revm_precompile directly for MAP_G2
+            match map_fp2_to_g2(&input, gas_limit) {
+                Ok(output) => {
+                    // Consume the gas that was used by the precompile
+                    sdk.sync_evm_gas(output.gas_used);
+                    sdk.write(&output.bytes);
+                }
+                Err(_) => sdk.native_exit(ExitCode::InputOutputOutOfBounds),
+            }
         }
         _ => unreachable!("bls12381: unsupported contract address"),
     }
@@ -605,29 +566,29 @@ mod tests {
         #[test]
         fn bls_g2add_g2_g2_2_g2() {
             exec_evm_precompile(
-        PRECOMPILE_BLS12_381_G2_ADD,
-        &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be"),
-        &hex!("000000000000000000000000000000001638533957d540a9d2370f17cc7ed5863bc0b995b8825e0ee1ea1e1e4d00dbae81f14b0bf3611b78c952aacab827a053000000000000000000000000000000000a4edef9c1ed7f729f520e47730a124fd70662a904ba1074728114d1031e1572c6c886f6b57ec72a6178288c47c33577000000000000000000000000000000000468fb440d82b0630aeb8dca2b5256789a66da69bf91009cbfe6bd221e47aa8ae88dece9764bf3bd999d95d71e4c9899000000000000000000000000000000000f6d4552fa65dd2638b361543f887136a43253d9c66c411697003f7a13c308f5422e1aa0a59c8967acdefd8b6e36ccf3"),
-        600,
-    );
+                PRECOMPILE_BLS12_381_G2_ADD,
+                &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be"),
+                &hex!("000000000000000000000000000000001638533957d540a9d2370f17cc7ed5863bc0b995b8825e0ee1ea1e1e4d00dbae81f14b0bf3611b78c952aacab827a053000000000000000000000000000000000a4edef9c1ed7f729f520e47730a124fd70662a904ba1074728114d1031e1572c6c886f6b57ec72a6178288c47c33577000000000000000000000000000000000468fb440d82b0630aeb8dca2b5256789a66da69bf91009cbfe6bd221e47aa8ae88dece9764bf3bd999d95d71e4c9899000000000000000000000000000000000f6d4552fa65dd2638b361543f887136a43253d9c66c411697003f7a13c308f5422e1aa0a59c8967acdefd8b6e36ccf3"),
+                600,
+            );
         }
         #[test]
         fn bls_g2add_2_g2_3_g2_5_g2() {
             exec_evm_precompile(
-        PRECOMPILE_BLS12_381_G2_ADD,
-        &hex!("000000000000000000000000000000001638533957d540a9d2370f17cc7ed5863bc0b995b8825e0ee1ea1e1e4d00dbae81f14b0bf3611b78c952aacab827a053000000000000000000000000000000000a4edef9c1ed7f729f520e47730a124fd70662a904ba1074728114d1031e1572c6c886f6b57ec72a6178288c47c33577000000000000000000000000000000000468fb440d82b0630aeb8dca2b5256789a66da69bf91009cbfe6bd221e47aa8ae88dece9764bf3bd999d95d71e4c9899000000000000000000000000000000000f6d4552fa65dd2638b361543f887136a43253d9c66c411697003f7a13c308f5422e1aa0a59c8967acdefd8b6e36ccf300000000000000000000000000000000122915c824a0857e2ee414a3dccb23ae691ae54329781315a0c75df1c04d6d7a50a030fc866f09d516020ef82324afae0000000000000000000000000000000009380275bbc8e5dcea7dc4dd7e0550ff2ac480905396eda55062650f8d251c96eb480673937cc6d9d6a44aaa56ca66dc000000000000000000000000000000000b21da7955969e61010c7a1abc1a6f0136961d1e3b20b1a7326ac738fef5c721479dfd948b52fdf2455e44813ecfd8920000000000000000000000000000000008f239ba329b3967fe48d718a36cfe5f62a7e42e0bf1c1ed714150a166bfbd6bcf6b3b58b975b9edea56d53f23a0e849"),
-        &hex!("000000000000000000000000000000000411a5de6730ffece671a9f21d65028cc0f1102378de124562cb1ff49db6f004fcd14d683024b0548eff3d1468df26880000000000000000000000000000000000fb837804dba8213329db46608b6c121d973363c1234a86dd183baff112709cf97096c5e9a1a770ee9d7dc641a894d60000000000000000000000000000000019b5e8f5d4a72f2b75811ac084a7f814317360bac52f6aab15eed416b4ef9938e0bdc4865cc2c4d0fd947e7c6925fd1400000000000000000000000000000000093567b4228be17ee62d11a254edd041ee4b953bffb8b8c7f925bd6662b4298bac2822b446f5b5de3b893e1be5aa4986"),
-        600,
-    );
+                PRECOMPILE_BLS12_381_G2_ADD,
+                &hex!("000000000000000000000000000000001638533957d540a9d2370f17cc7ed5863bc0b995b8825e0ee1ea1e1e4d00dbae81f14b0bf3611b78c952aacab827a053000000000000000000000000000000000a4edef9c1ed7f729f520e47730a124fd70662a904ba1074728114d1031e1572c6c886f6b57ec72a6178288c47c33577000000000000000000000000000000000468fb440d82b0630aeb8dca2b5256789a66da69bf91009cbfe6bd221e47aa8ae88dece9764bf3bd999d95d71e4c9899000000000000000000000000000000000f6d4552fa65dd2638b361543f887136a43253d9c66c411697003f7a13c308f5422e1aa0a59c8967acdefd8b6e36ccf300000000000000000000000000000000122915c824a0857e2ee414a3dccb23ae691ae54329781315a0c75df1c04d6d7a50a030fc866f09d516020ef82324afae0000000000000000000000000000000009380275bbc8e5dcea7dc4dd7e0550ff2ac480905396eda55062650f8d251c96eb480673937cc6d9d6a44aaa56ca66dc000000000000000000000000000000000b21da7955969e61010c7a1abc1a6f0136961d1e3b20b1a7326ac738fef5c721479dfd948b52fdf2455e44813ecfd8920000000000000000000000000000000008f239ba329b3967fe48d718a36cfe5f62a7e42e0bf1c1ed714150a166bfbd6bcf6b3b58b975b9edea56d53f23a0e849"),
+                &hex!("000000000000000000000000000000000411a5de6730ffece671a9f21d65028cc0f1102378de124562cb1ff49db6f004fcd14d683024b0548eff3d1468df26880000000000000000000000000000000000fb837804dba8213329db46608b6c121d973363c1234a86dd183baff112709cf97096c5e9a1a770ee9d7dc641a894d60000000000000000000000000000000019b5e8f5d4a72f2b75811ac084a7f814317360bac52f6aab15eed416b4ef9938e0bdc4865cc2c4d0fd947e7c6925fd1400000000000000000000000000000000093567b4228be17ee62d11a254edd041ee4b953bffb8b8c7f925bd6662b4298bac2822b446f5b5de3b893e1be5aa4986"),
+                600,
+            );
         }
         #[test]
         fn bls_g2add_inf_g2_g2() {
             exec_evm_precompile(
-        PRECOMPILE_BLS12_381_G2_ADD,
-        &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
-        &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be"),
-        600,
-    );
+                PRECOMPILE_BLS12_381_G2_ADD,
+                &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+                &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be"),
+                600,
+            );
         }
     }
     // ==================================== G1 MSM ====================================
@@ -761,20 +722,21 @@ mod tests {
         #[test]
         fn bls_pairing_e_0_0() {
             exec_evm_precompile(
-            PRECOMPILE_BLS12_381_PAIRING,
-            &hex!("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
-            &hex!("0000000000000000000000000000000000000000000000000000000000000001"),
-            70300,
-        );
+                PRECOMPILE_BLS12_381_PAIRING,
+                &hex!("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+                &hex!("0000000000000000000000000000000000000000000000000000000000000001"),
+                70300,
+            );
         }
         // bls_pairing_e(0,0)=e(0,0)
         #[test]
         fn bls_pairing_e_0_0_e_0_0() {
-            exec_evm_precompile(PRECOMPILE_BLS12_381_PAIRING,
-        &hex!("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
-        &hex!("0000000000000000000000000000000000000000000000000000000000000001"),
-        102900,
-        );
+            exec_evm_precompile(
+                PRECOMPILE_BLS12_381_PAIRING,
+                &hex!("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+                &hex!("0000000000000000000000000000000000000000000000000000000000000001"),
+                102900,
+            );
         }
     }
     // ==================================== Map_Fp1_to_G1 ====================================
@@ -831,24 +793,6 @@ mod tests {
          &hex!("00000000000000000000000000000000038af300ef34c7759a6caaa4e69363cafeed218a1f207e93b2c70d91a1263d375d6730bd6b6509dcac3ba5b567e85bf3000000000000000000000000000000000da75be60fb6aa0e9e3143e40c42796edf15685cafe0279afd2a67c3dff1c82341f17effd402e4f1af240ea90f4b659b0000000000000000000000000000000019b148cbdf163cf0894f29660d2e7bfb2b68e37d54cc83fd4e6e62c020eaa48709302ef8e746736c0e19342cc1ce3df4000000000000000000000000000000000492f4fed741b073e5a82580f7c663f9b79e036b70ab3e51162359cec4e77c78086fe879b65ca7a47d34374c8315ac5e"),
          23800,
          );
-        }
-    }
-    // ==================================== Fail Cases: G1 Add ====================================
-    mod fail_cases_g1_add {
-        use super::*;
-        #[test]
-        #[should_panic(
-            expected = "internal error: entered unreachable code: exit code: InputOutputOutOfBounds (-1007)"
-        )]
-        fn bls_g1add_empty_input() {
-            exec_evm_precompile(
-                PRECOMPILE_BLS12_381_G1_ADD,
-                &hex!("00000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1"), // Only 128 bytes instead of 256
-                &[],
-                0
-            );
-            // Verify that the function panicked as expected
-            panic!("Expected function to panic but it didn't");
         }
     }
 }

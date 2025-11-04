@@ -1,7 +1,7 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
-use fluentbase_types::{
-    address, compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256, Address,
-    Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID, U256,
+use fluentbase_sdk::{
+    address, compile_wasm_to_rwasm_with_config, default_compilation_config, hex, keccak256,
+    Address, Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID, U256,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -12,34 +12,34 @@ use std::{
 
 #[rustfmt::skip]
 const GENESIS_CONTRACTS: &[(Address, fluentbase_contracts::BuildOutput)] = &[
-    (fluentbase_types::PRECOMPILE_BIG_MODEXP, fluentbase_contracts::FLUENTBASE_CONTRACTS_MODEXP),
-    (fluentbase_types::PRECOMPILE_BLAKE2F, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLAKE2F),
-    (fluentbase_types::PRECOMPILE_BN256_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
-    (fluentbase_types::PRECOMPILE_BN256_MUL, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
-    (fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
-    (fluentbase_types::PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, fluentbase_contracts::FLUENTBASE_UNIVERSAL_TOKEN),
-    (fluentbase_types::PRECOMPILE_EIP2935, fluentbase_contracts::FLUENTBASE_CONTRACTS_EIP2935),
-    (fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_EVM),
+    (fluentbase_sdk::PRECOMPILE_BIG_MODEXP, fluentbase_contracts::FLUENTBASE_CONTRACTS_MODEXP),
+    (fluentbase_sdk::PRECOMPILE_BLAKE2F, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLAKE2F),
+    (fluentbase_sdk::PRECOMPILE_BN256_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
+    (fluentbase_sdk::PRECOMPILE_BN256_MUL, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
+    (fluentbase_sdk::PRECOMPILE_BN256_PAIR, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
+    (fluentbase_sdk::PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, fluentbase_contracts::FLUENTBASE_UNIVERSAL_TOKEN),
+    (fluentbase_sdk::PRECOMPILE_EIP2935, fluentbase_contracts::FLUENTBASE_CONTRACTS_EIP2935),
+    (fluentbase_sdk::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_EVM),
     #[cfg(feature="enable-svm")]
-    (fluentbase_types::PRECOMPILE_SVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_SVM),
-    (fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_FAIRBLOCK),
-    (fluentbase_types::PRECOMPILE_IDENTITY, fluentbase_contracts::FLUENTBASE_CONTRACTS_IDENTITY),
-    (fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts::FLUENTBASE_CONTRACTS_KZG),
-    (fluentbase_types::PRECOMPILE_BLS12_381_G1_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_types::PRECOMPILE_BLS12_381_G1_MSM, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_types::PRECOMPILE_BLS12_381_G2_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_types::PRECOMPILE_BLS12_381_G2_MSM, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_types::PRECOMPILE_BLS12_381_PAIRING, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G1, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G2, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts::FLUENTBASE_CONTRACTS_MULTICALL),
-    (fluentbase_types::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_NITRO),
-    (fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_OAUTH2),
-    (fluentbase_types::PRECOMPILE_RIPEMD160, fluentbase_contracts::FLUENTBASE_CONTRACTS_RIPEMD160),
-    (fluentbase_types::PRECOMPILE_WASM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_WASM),
-    (fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts::FLUENTBASE_CONTRACTS_ECRECOVER),
-    (fluentbase_types::PRECOMPILE_SHA256, fluentbase_contracts::FLUENTBASE_CONTRACTS_SHA256),
-    (fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_WEBAUTHN),
+    (fluentbase_sdk::PRECOMPILE_SVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_SVM),
+    (fluentbase_sdk::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_FAIRBLOCK),
+    (fluentbase_sdk::PRECOMPILE_IDENTITY, fluentbase_contracts::FLUENTBASE_CONTRACTS_IDENTITY),
+    (fluentbase_sdk::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts::FLUENTBASE_CONTRACTS_KZG),
+    (fluentbase_sdk::PRECOMPILE_BLS12_381_G1_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_sdk::PRECOMPILE_BLS12_381_G1_MSM, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_sdk::PRECOMPILE_BLS12_381_G2_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_sdk::PRECOMPILE_BLS12_381_G2_MSM, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_sdk::PRECOMPILE_BLS12_381_PAIRING, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_sdk::PRECOMPILE_BLS12_381_MAP_G1, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_sdk::PRECOMPILE_BLS12_381_MAP_G2, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_sdk::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts::FLUENTBASE_CONTRACTS_MULTICALL),
+    (fluentbase_sdk::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_NITRO),
+    (fluentbase_sdk::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_OAUTH2),
+    (fluentbase_sdk::PRECOMPILE_RIPEMD160, fluentbase_contracts::FLUENTBASE_CONTRACTS_RIPEMD160),
+    (fluentbase_sdk::PRECOMPILE_WASM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_WASM),
+    (fluentbase_sdk::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts::FLUENTBASE_CONTRACTS_ECRECOVER),
+    (fluentbase_sdk::PRECOMPILE_SHA256, fluentbase_contracts::FLUENTBASE_CONTRACTS_SHA256),
+    (fluentbase_sdk::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_WEBAUTHN),
 ];
 
 fn devnet_chain_config() -> ChainConfig {
@@ -90,25 +90,30 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
         .with_consume_fuel(false)
         .with_builtins_consume_fuel(false);
     for (_, contract) in GENESIS_CONTRACTS {
-        if !cache.contains_key(contract.wasm_bytecode) {
-            let start = Instant::now();
-            let rwasm_bytecode =
-                compile_wasm_to_rwasm_with_config(contract.wasm_bytecode, config.clone())
-                    .expect("failed to compile wasm to rwasm");
-            assert_eq!(rwasm_bytecode.constructor_params.len(), 0);
-            let rwasm_bytecode: Bytes = rwasm_bytecode.rwasm_module.serialize().into();
-            let hash = keccak256(rwasm_bytecode.as_ref());
-            let result = (hash, rwasm_bytecode.clone());
-            cache.insert(contract.wasm_bytecode, result.clone());
-            println!(
-                "{} time={: <3}ms | wasm={: <5}KiB | rwasm={: <5}KiB | increased={:.1}x",
-                format!("{: <30}", contract.name), // Pads with dots to 20 chars
-                start.elapsed().as_millis(),
-                contract.wasm_bytecode.len() / 1024,
-                rwasm_bytecode.len() / 1024,
-                rwasm_bytecode.len() as f64 / contract.wasm_bytecode.len() as f64,
-            );
+        if cache.contains_key(contract.wasm_bytecode) {
+            continue;
         }
+        println!("compiling {}", contract.name);
+        if contract.name == "fluentbase_contracts_bls12381" {
+            println!("{}", hex::encode(contract.wasm_bytecode));
+        }
+        let start = Instant::now();
+        let rwasm_bytecode =
+            compile_wasm_to_rwasm_with_config(contract.wasm_bytecode, config.clone())
+                .expect(format!("failed to compile ({}), because of: ", contract.name).as_str());
+        assert_eq!(rwasm_bytecode.constructor_params.len(), 0);
+        let rwasm_bytecode: Bytes = rwasm_bytecode.rwasm_module.serialize().into();
+        let hash = keccak256(rwasm_bytecode.as_ref());
+        let result = (hash, rwasm_bytecode.clone());
+        cache.insert(contract.wasm_bytecode, result.clone());
+        println!(
+            "{} time={: <3}ms | wasm={: <5}KiB | rwasm={: <5}KiB | increased={:.1}x",
+            format!("{: <30}", contract.name), // Pads with dots to 20 chars
+            start.elapsed().as_millis(),
+            contract.wasm_bytecode.len() / 1024,
+            rwasm_bytecode.len() / 1024,
+            rwasm_bytecode.len() as f64 / contract.wasm_bytecode.len() as f64,
+        );
     }
     cache
 }

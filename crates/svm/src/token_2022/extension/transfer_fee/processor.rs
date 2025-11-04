@@ -1,19 +1,22 @@
-use crate::error::TokenError;
-use crate::solana_program::sysvar::Sysvar;
-use crate::token_2022::extension::transfer_fee::instruction::TransferFeeInstruction;
-use crate::token_2022::extension::transfer_fee::{
-    TransferFee, TransferFeeAmount, TransferFeeConfig, MAX_FEE_BASIS_POINTS,
+use crate::{
+    error::TokenError,
+    solana_program::sysvar::Sysvar,
+    token_2022::{
+        extension::{
+            transfer_fee::{
+                instruction::TransferFeeInstruction, TransferFee, TransferFeeAmount,
+                TransferFeeConfig, MAX_FEE_BASIS_POINTS,
+            },
+            BaseStateWithExtensions, BaseStateWithExtensionsMut, PodStateWithExtensions,
+            PodStateWithExtensionsMut,
+        },
+        lib::check_program_account,
+        pod::{PodAccount, PodMint},
+        processor::Processor,
+    },
 };
-use crate::token_2022::extension::{
-    BaseStateWithExtensions, BaseStateWithExtensionsMut, PodStateWithExtensions,
-    PodStateWithExtensionsMut,
-};
-use crate::token_2022::lib::check_program_account;
-use crate::token_2022::pod::{PodAccount, PodMint};
-use crate::token_2022::processor::Processor;
 use core::convert::TryInto;
-use fluentbase_sdk::debug_log;
-use fluentbase_types::SharedAPI;
+use fluentbase_sdk::{debug_log, SharedAPI};
 use solana_account_info::{next_account_info, AccountInfo};
 use solana_clock::Clock;
 use solana_program_error::ProgramResult;

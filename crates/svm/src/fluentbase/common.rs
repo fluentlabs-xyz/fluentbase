@@ -8,11 +8,10 @@ use crate::{
 };
 use alloc::{string::String, vec::Vec};
 use core::marker::PhantomData;
-use fluentbase_sdk::{Address, MetadataAPI, SharedAPI, U256};
+use fluentbase_sdk::{Address, ExitCode, MetadataAPI, MetadataStorageAPI, SharedAPI, U256};
 use fluentbase_svm_common::common::{
     evm_balance_from_lamports, is_evm_pubkey, lamports_from_evm_balance, pubkey_to_u256,
 };
-use fluentbase_types::{ExitCode, MetadataStorageAPI};
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};

@@ -15,7 +15,6 @@ fluentbase-genesis = { workspace = true }
 fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
 fluentbase-testing = { workspace = true }
-fluentbase-types = { workspace = true }
 fluentbase-svm = { workspace = true }
 fluentbase-svm-common = { workspace = true }
 fluentbase-svm-shared = { workspace = true }
@@ -36,7 +35,7 @@ sha2 = { workspace = true }
 
 [dev-dependencies]
 fluentbase-svm = { workspace = true }
-fluentbase-types = { workspace = true }
+fluentbase-sdk = { workspace = true }
 criterion = "0.7.0"
 solana-curve25519 = { workspace = true, default-features = false }
 solana-bn254 = { workspace = true, default-features = false }
@@ -73,8 +72,9 @@ std = [
 debug-print = [
     "fluentbase-runtime/debug-print",
     "fluentbase-sdk/debug-print",
-    #    "revm/debug-print",
-    #    "fluentbase-revm/debug-print",
+    "fluentbase-genesis/debug-print",
+    "revm/debug-print",
+    "fluentbase-revm/debug-print",
     "fluentbase-svm/debug-print",
     #    "rwasm/debug-print",
 ]

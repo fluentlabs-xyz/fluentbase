@@ -44,8 +44,8 @@ pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<AnalyzedByt
 /// Propagate a non-successful interpreter result to the host:
 /// charge final fuel delta, write output, and exit with Err/Panic.
 fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: ExecutionResult) {
-    let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();
-    sdk.charge_fuel_manually(consumed_diff, refund_diff);
+    let consumed_diff = result.chargeable_fuel();
+    sdk.charge_fuel(consumed_diff);
     sdk.write(result.output.as_ref());
     sdk.native_exit(if result.result.is_revert() {
         ExitCode::Panic
@@ -78,8 +78,8 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
         sdk.native_exit(ExitCode::OutOfFuel);
     }
 
-    let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();
-    sdk.charge_fuel_manually(consumed_diff, refund_diff);
+    let consumed_diff = result.chargeable_fuel();
+    sdk.charge_fuel(consumed_diff);
 
     // We intentionally don't charge gas for these opcodes
     // to keep full compatibility with an EVM deployment process
@@ -98,8 +98,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     if !result.result.is_ok() {
         return handle_not_ok_result(sdk, result);
     }
-    let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();
-    sdk.charge_fuel_manually(consumed_diff, refund_diff);
+    let consumed_diff = result.chargeable_fuel();
+    sdk.charge_fuel(consumed_diff);
     sdk.write(result.output.as_ref());
 }
 

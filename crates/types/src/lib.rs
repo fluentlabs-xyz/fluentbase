@@ -1,46 +1,35 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![allow(dead_code)]
-#![warn(unused_crate_dependencies)]
 
 extern crate alloc;
-extern crate core;
 
-pub extern crate rwasm as rwasm_core;
-
-mod address;
 mod block_fuel;
 mod bytecode;
-mod context;
+mod crypto_api;
 mod curves;
-pub mod evm;
 mod exit_code;
-pub mod genesis;
-pub mod hashes;
-pub mod helpers;
+pub mod fd;
+mod genesis;
 mod import_linker;
 mod native_api;
-mod preimage;
-mod rwasm;
-mod sdk;
+#[cfg(target_arch = "wasm32")]
+mod rwasm_context;
 mod sys_func_idx;
 mod syscall;
 
-pub use address::*;
 pub use alloy_primitives::*;
 pub use block_fuel::*;
 pub use bytecode::*;
 pub use byteorder;
-pub use context::*;
+pub use crypto_api::*;
 pub use curves::*;
 pub use exit_code::*;
 pub use genesis::*;
-pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
+pub use hashbrown::{self, hash_map, hash_set, HashMap, HashSet};
 pub use import_linker::*;
 pub use native_api::*;
-pub use preimage::*;
-pub use rwasm::*;
-pub use sdk::*;
-pub use sys_func_idx::SysFuncIdx;
+#[cfg(target_arch = "wasm32")]
+pub use rwasm_context::{bindings, RwasmContext};
+pub use sys_func_idx::*;
 pub use syscall::*;
 
 pub const KECCAK_EMPTY: B256 =
@@ -75,13 +64,6 @@ pub const FUEL_DENOM_RATE: u64 = 1000;
 
 /// A max rWasm call stack limit
 pub const CALL_STACK_LIMIT: u32 = 1024;
-
-pub fn is_delegated_runtime_address(address: &Address) -> bool {
-    address == &PRECOMPILE_EVM_RUNTIME
-        || address == &PRECOMPILE_SVM_RUNTIME
-        || address == &PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
-        || address == &PRECOMPILE_WASM_RUNTIME
-}
 
 /// WASM max code size
 ///
@@ -124,21 +106,3 @@ pub const RWASM_SIG_LEN: usize = 2;
 /// - 0xef 0x00 - EIP-3540 compatible prefix
 /// - 0x52 - rWASM version number (equal to 'R')
 pub const RWASM_SIG: [u8; RWASM_SIG_LEN] = [0xef, 0x52];
-
-#[macro_export]
-macro_rules! bn254_add_common_impl {
-    ($p: ident, $q: ident, $action_p_eq_q: block, $action_rest: block) => {
-        if *$p == [0u8; 64] {
-            if *$q != [0u8; 64] {
-                *$p = *$q;
-            }
-            return;
-        } else if *$q == [0u8; 64] {
-            return;
-        } else if *$p == *$q {
-            $action_p_eq_q
-        } else {
-            $action_rest
-        }
-    };
-}

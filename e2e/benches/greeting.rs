@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use fluentbase_e2e::{EvmTestingContextWithGenesis, EXAMPLE_GREETING};
+use fluentbase_contracts::FLUENTBASE_EXAMPLES_GREETING;
+use fluentbase_e2e::EvmTestingContextWithGenesis;
 use fluentbase_sdk::{Address, Bytes};
 use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
@@ -63,7 +64,10 @@ fn greeting_benches(c: &mut Criterion) {
     {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         const OWNER_ADDRESS: Address = Address::ZERO;
-        let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_GREETING.into());
+        let contract_address = ctx.deploy_evm_tx(
+            OWNER_ADDRESS,
+            FLUENTBASE_EXAMPLES_GREETING.wasm_bytecode.into(),
+        );
 
         group.bench_function("WASM_Greeting", |b| {
             b.iter(|| {

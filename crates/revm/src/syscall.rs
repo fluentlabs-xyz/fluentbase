@@ -9,8 +9,8 @@ use fluentbase_evm::EthereumMetadata;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address, is_system_precompile, keccak256, Address, Bytes, ExitCode, Log, LogData,
-    B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
+    calc_create4_address, is_system_precompile, Address, Bytes, ExitCode, Log, LogData, B256,
+    FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -37,7 +37,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     ctx: &mut CTX,
     inputs: SystemInterruptionInputs,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
-    let mut local_gas = Gas::new(inputs.gas.remaining());
     let spec_id: SpecId = ctx.cfg().spec().into();
 
     let current_target_address = frame.interpreter.input.target_address();
@@ -49,11 +48,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let result = ExecutionResult {
                 result: instruction_result_from_exit_code(ExitCode::$result, output.is_empty()),
                 output,
-                gas: local_gas,
+                gas: Gas::new_spent(frame.interpreter.gas.spent() - inputs.gas.spent()),
             };
             frame.insert_interrupted_outcome(SystemInterruptionOutcome {
                 inputs: Box::new(inputs),
-                remaining_gas: local_gas,
                 result: Some(result),
                 is_frame: false,
             });
@@ -63,28 +61,37 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             return_result!(Bytes::default(), $result)
         }};
     }
+    macro_rules! return_halt {
+        ($result:ident) => {{
+            let result = ExecutionResult {
+                result: instruction_result_from_exit_code(ExitCode::$result, true),
+                output: Bytes::new(),
+                gas: Gas::new_spent(frame.interpreter.gas.spent() - inputs.gas.spent()),
+            };
+            return Ok(NextAction::Return(result));
+        }};
+    }
     macro_rules! return_frame {
         ($action:expr) => {{
             frame.insert_interrupted_outcome(SystemInterruptionOutcome {
                 inputs: Box::new(inputs),
-                remaining_gas: local_gas,
                 result: None,
                 is_frame: true,
             });
             return Ok($action);
         }};
     }
-    macro_rules! assert_return {
+    macro_rules! assert_halt {
         ($cond:expr, $error:ident) => {
             if !($cond) {
-                return_result!($error);
+                return_halt!($error);
             }
         };
     }
     macro_rules! charge_gas {
         ($value:expr) => {{
-            if !local_gas.record_cost($value) {
-                return_result!(OutOfFuel);
+            if !frame.interpreter.gas.record_cost($value) {
+                return_halt!(OutOfFuel);
             }
         }};
     }
@@ -99,11 +106,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     use fluentbase_sdk::syscall::*;
     match inputs.syscall_params.code_hash {
         SYSCALL_ID_STORAGE_READ => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() == 32
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
+
             let slot = U256::from_le_slice(&inputs.syscall_params.input[0..32]);
             // execute sload
             let value = ctx.journal_mut().sload(current_target_address, slot)?;
@@ -114,31 +122,35 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_STORAGE_WRITE => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() == 32 + 32
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             // don't allow for static context
-            assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
+            assert_halt!(!inputs.is_static, StateChangeDuringStaticCall);
             let slot = U256::from_le_slice(&inputs.syscall_params.input[0..32]);
             let new_value = U256::from_le_slice(&inputs.syscall_params.input[32..64]);
             // execute sstore
             let value = ctx
                 .journal_mut()
                 .sstore(current_target_address, slot, new_value)?;
-            if local_gas.remaining() <= gas::CALL_STIPEND {
-                return_result!(OutOfFuel);
-            }
+            assert_halt!(
+                frame.interpreter.gas.remaining() > gas::CALL_STIPEND,
+                OutOfFuel
+            );
             let gas_cost = sstore_cost(spec_id.clone(), &value.data, value.is_cold);
             charge_gas!(gas_cost);
-            local_gas.record_refund(sstore_refund(spec_id, &value.data));
+            frame
+                .interpreter
+                .gas
+                .record_refund(sstore_refund(spec_id, &value.data));
             inspect!(opcode::SSTORE, [slot, new_value], []);
             return_result!(Ok)
         }
 
         SYSCALL_ID_CALL => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() >= 20 + 32
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
@@ -149,7 +161,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // for static calls with value greater than 0 - revert
             let has_transfer = !value.is_zero();
             if inputs.is_static && has_transfer {
-                return_result!(StateChangeDuringStaticCall);
+                return_halt!(StateChangeDuringStaticCall);
             }
             let mut account_load = ctx.journal_mut().load_account_delegated(target_address)?;
             // In EVM, there exists an issue with precompiled contracts.
@@ -172,7 +184,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // EIP-150: gas cost changes for IO-heavy operations
             charge_gas!(gas::call_cost(spec_id, has_transfer, account_load));
             let mut gas_limit = min(
-                local_gas.remaining_63_of_64_parts(),
+                frame.interpreter.gas.remaining_63_of_64_parts(),
                 inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
             );
             charge_gas!(gas_limit);
@@ -208,7 +220,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_STATIC_CALL => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() >= 20
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
@@ -222,7 +234,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             charge_gas!(gas::call_cost(spec_id.clone(), false, account_load));
             let gas_limit = if spec_id.is_enabled_in(TANGERINE) {
                 min(
-                    local_gas.remaining_63_of_64_parts(),
+                    frame.interpreter.gas.remaining_63_of_64_parts(),
                     inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
                 )
             } else {
@@ -257,7 +269,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_CALL_CODE => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() >= 20 + 32
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
@@ -272,7 +284,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             charge_gas!(gas::call_cost(spec_id, !value.is_zero(), account_load));
             let mut gas_limit = if spec_id.is_enabled_in(TANGERINE) {
                 min(
-                    local_gas.remaining_63_of_64_parts(),
+                    frame.interpreter.gas.remaining_63_of_64_parts(),
                     inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
                 )
             } else {
@@ -312,7 +324,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_DELEGATE_CALL => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() >= 20
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
@@ -326,7 +338,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             charge_gas!(gas::call_cost(spec_id, false, account_load));
             let gas_limit = if spec_id.is_enabled_in(TANGERINE) {
                 min(
-                    local_gas.remaining_63_of_64_parts(),
+                    frame.interpreter.gas.remaining_63_of_64_parts(),
                     inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
                 )
             } else {
@@ -361,16 +373,16 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_CREATE | SYSCALL_ID_CREATE2 => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             // not allowed for static calls
-            assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
+            assert_halt!(!inputs.is_static, StateChangeDuringStaticCall);
             // make sure we have enough bytes inside input params
             let is_create2 = inputs.syscall_params.code_hash == SYSCALL_ID_CREATE2;
             let (scheme, value, init_code) = if is_create2 {
-                assert_return!(
+                assert_halt!(
                     inputs.syscall_params.input.len() >= 32 + 32,
                     MalformedBuiltinParams
                 );
@@ -379,7 +391,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 let init_code = inputs.syscall_params.input.slice(64..);
                 (CreateScheme::Create2 { salt }, value, init_code)
             } else {
-                assert_return!(
+                assert_halt!(
                     inputs.syscall_params.input.len() >= 32,
                     MalformedBuiltinParams
                 );
@@ -390,7 +402,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // make sure we don't exceed max possible init code
             // TODO(khasan): take into consideration evm.ctx().cfg().max_init_code
             let max_initcode_size = wasm_max_code_size(&init_code).unwrap_or(MAX_INITCODE_SIZE);
-            assert_return!(
+            assert_halt!(
                 init_code.len() <= max_initcode_size,
                 CreateContractSizeLimit
             );
@@ -399,13 +411,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             }
             if is_create2 {
                 let Some(gas) = gas::create2_cost(init_code.len().try_into().unwrap()) else {
-                    return_result!(OutOfFuel);
+                    return_halt!(OutOfFuel);
                 };
                 charge_gas!(gas);
             } else {
                 charge_gas!(gas::CREATE);
             };
-            let mut gas_limit = local_gas.remaining();
+            let mut gas_limit = frame.interpreter.gas.remaining();
             gas_limit -= gas_limit / 64;
             charge_gas!(gas_limit);
             // create inputs
@@ -429,17 +441,17 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_EMIT_LOG => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() >= 1 && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             // not allowed for static calls
-            assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
+            assert_halt!(!inputs.is_static, StateChangeDuringStaticCall);
             // read topics from input
             let topics_len = inputs.syscall_params.input[0] as usize;
-            assert_return!(topics_len <= 4, MalformedBuiltinParams);
+            assert_halt!(topics_len <= 4, MalformedBuiltinParams);
             let mut topics = Vec::with_capacity(topics_len);
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() >= 1 + topics_len * B256::len_bytes(),
                 MalformedBuiltinParams
             );
@@ -456,7 +468,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 .slice((1 + topics_len * B256::len_bytes())..);
             // make sure we have enough gas to cover this operation
             let Some(gas_cost) = gas::log_cost(topics_len as u8, data.len() as u64) else {
-                return_result!(OutOfFuel);
+                return_halt!(OutOfFuel);
             };
             charge_gas!(gas_cost);
             match topics_len {
@@ -502,13 +514,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_DESTROY_ACCOUNT => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() == 20
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             // not allowed for static calls
-            assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
+            assert_halt!(!inputs.is_static, StateChangeDuringStaticCall);
             // destroy an account
             let target = Address::from_slice(&inputs.syscall_params.input[0..20]);
             let mut result = ctx
@@ -525,7 +537,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_BALANCE => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() == 20
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
@@ -551,7 +563,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_SELF_BALANCE => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
@@ -565,7 +577,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_CODE_SIZE => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.state == STATE_MAIN
                     && inputs.syscall_params.input.len() == 20,
                 MalformedBuiltinParams
@@ -604,7 +616,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_CODE_HASH => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.state == STATE_MAIN
                     && inputs.syscall_params.input.len() == 20,
                 MalformedBuiltinParams
@@ -647,30 +659,34 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_CODE_COPY => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.state == STATE_MAIN
                     && inputs.syscall_params.input.len() == 20 + 8 * 2,
                 MalformedBuiltinParams
             );
             let address = Address::from_slice(&inputs.syscall_params.input[0..20]);
             let mut reader = inputs.syscall_params.input[20..].reader();
-            let _code_offset = reader.read_u64::<LittleEndian>().unwrap();
+            let code_offset = reader.read_u64::<LittleEndian>().unwrap();
             let code_length = reader.read_u64::<LittleEndian>().unwrap();
 
-            // Load account with bytecode and charge gas for the call
+            // Load account with bytecode and charge gas
             let account = ctx.journal_mut().load_account_code(address)?;
+
+            // CRITICAL: Gas is charged for REQUESTED length, not actual returned length
+            // This prevents gas abuse where attacker requests small length but expects full bytecode
             let Some(gas_cost) =
                 gas::extcodecopy_cost(spec_id, code_length as usize, account.is_cold)
             else {
-                return_result!(OutOfFuel);
+                return_halt!(OutOfFuel);
             };
             charge_gas!(gas_cost);
 
-            // If requested code length is zero, then there is no need to proceed
+            // Early return for zero-length request
             if code_length == 0 {
                 return_result!(Bytes::new(), Ok);
             }
 
+            // Load bytecode from account
             let mut bytecode = match &account.data.info.code {
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode))
                     if ownable_account_bytecode.owner_address == PRECOMPILE_EVM_RUNTIME =>
@@ -686,25 +702,49 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     .unwrap_or_default(),
             };
 
-            // we store system precompile bytecode in the state trie,
-            // according to evm requirements, we should return empty code
+            // System precompiles return empty code per EVM requirements
             if is_system_precompile(&address) {
                 bytecode = Bytes::new();
             }
 
-            // TODO(dmitry123): Add offset/length checks, otherwise gas can be abused!
-            return_result!(bytecode, Ok);
+            let bytecode_len = bytecode.len();
+            let code_offset_usize = code_offset as usize;
+            let code_length_usize = code_length as usize;
+
+            // If offset is beyond bytecode, return all zeros
+            if code_offset_usize >= bytecode_len {
+                let mut zeros = Vec::with_capacity(code_length_usize);
+                zeros.resize(code_length_usize, 0u8);
+                return_result!(Bytes::from(zeros), Ok);
+            }
+
+            let start = code_offset_usize;
+            let available = bytecode_len - start;
+            let to_copy = core::cmp::min(code_length_usize, available);
+
+            // Fast path: If no padding needed, return zero-copy slice
+            if to_copy == code_length_usize {
+                let result = bytecode.slice(start..start + to_copy);
+                return_result!(result, Ok);
+            }
+
+            // Slow path: Padding required to reach requested length
+            let mut result = Vec::with_capacity(code_length_usize);
+            result.resize(code_length_usize, 0u8);
+            result[..to_copy].copy_from_slice(&bytecode[start..start + to_copy]);
+
+            return_result!(Bytes::from(result), Ok);
         }
 
         SYSCALL_ID_METADATA_SIZE => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() >= 20
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             // syscall is allowed only for accounts that are owned by somebody
             let Some(account_owner_address) = account_owner_address else {
-                return_result!(MalformedBuiltinParams);
+                return_halt!(MalformedBuiltinParams);
             };
             // read an account from its address
             let address = Address::from_slice(&inputs.syscall_params.input[..20]);
@@ -736,7 +776,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 return_result!(output, Ok);
             };
             // execute a syscall
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() == 20,
                 MalformedBuiltinParams
             );
@@ -749,14 +789,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_METADATA_ACCOUNT_OWNER => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() >= 20
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             // syscall is allowed only for accounts that are owned by somebody
             let Some(_account_owner_address) = account_owner_address else {
-                return_result!(MalformedBuiltinParams);
+                return_halt!(MalformedBuiltinParams);
             };
             let address = Address::from_slice(&inputs.syscall_params.input[..Address::len_bytes()]);
             let account = ctx.journal_mut().load_account_code(address)?;
@@ -769,20 +809,21 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             return_result!(Address::ZERO.0, Ok)
         }
         SYSCALL_ID_METADATA_CREATE => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() >= 32
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             // syscall is allowed only for accounts that are owned by somebody
             let Some(account_owner_address) = account_owner_address else {
-                return_result!(MalformedBuiltinParams);
+                return_halt!(MalformedBuiltinParams);
             };
+
+            assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
             // read an account from its address
             let salt = U256::from_be_slice(&inputs.syscall_params.input[..32]);
             let metadata = inputs.syscall_params.input.slice(32..);
-            let derived_metadata_address =
-                calc_create4_address(&account_owner_address, &salt, |v| keccak256(v));
+            let derived_metadata_address = calc_create4_address(&account_owner_address, &salt);
             let account = ctx
                 .journal_mut()
                 .load_account_code(derived_metadata_address)?;
@@ -805,14 +846,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_METADATA_WRITE | SYSCALL_ID_METADATA_COPY => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() >= 20
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             // syscall is allowed only for accounts that are owned by somebody
             let Some(account_owner_address) = account_owner_address else {
-                return_result!(MalformedBuiltinParams);
+                return_halt!(MalformedBuiltinParams);
             };
             // read an account from its address
             let address = Address::from_slice(&inputs.syscall_params.input[..20]);
@@ -826,16 +867,21 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     ownable_account_bytecode
                 }
                 _ => {
-                    return_result!(Bytes::new(), MalformedBuiltinParams)
+                    return_halt!(MalformedBuiltinParams)
                 }
             };
             // execute a syscall
             match inputs.syscall_params.code_hash {
+                // Full metadata replacement (offset parameter ignored for safety)
                 SYSCALL_ID_METADATA_WRITE => {
-                    assert_return!(
+                    assert_halt!(
                         inputs.syscall_params.input.len() >= 20 + 4,
                         MalformedBuiltinParams
                     );
+                    assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
+                    // Input format: address(20) + offset(4) + metadata(N)
+                    // Offset is kept for backward compatibility but always skipped
+                    let new_metadata = inputs.syscall_params.input.slice(24..);
                     let offset =
                         LittleEndian::read_u32(&inputs.syscall_params.input[20..24]) as usize;
                     let length = inputs.syscall_params.input[24..].len();
@@ -847,13 +893,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     // code might change, rewrite it with a new hash
                     let new_bytecode = Bytecode::OwnableAccount(OwnableAccountBytecode::new(
                         ownable_account_bytecode.owner_address,
-                        metadata.into(),
+                        new_metadata,
                     ));
                     ctx.journal_mut().set_code(address, new_bytecode);
                     return_result!(Bytes::new(), Ok)
                 }
                 SYSCALL_ID_METADATA_COPY => {
-                    assert_return!(
+                    assert_halt!(
                         inputs.syscall_params.input.len() == 28,
                         MalformedBuiltinParams
                     );
@@ -873,11 +919,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_METADATA_STORAGE_READ => {
             // input: slot
             let Some(account_owner_address) = account_owner_address else {
-                return_result!(MalformedBuiltinParams);
+                return_halt!(MalformedBuiltinParams);
             };
             const INPUT_LEN: usize = U256::BYTES;
             let syscall_params = &inputs.syscall_params;
-            assert_return!(
+            assert_halt!(
                 syscall_params.input.len() == INPUT_LEN && syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
@@ -885,7 +931,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Ok(slot): Result<[u8; U256::BYTES], _> =
                 syscall_params.input.as_ref()[..U256::BYTES].try_into()
             else {
-                return_result!(MalformedBuiltinParams)
+                return_halt!(MalformedBuiltinParams)
             };
             let slot_u256 = U256::from_le_bytes(slot);
             let value = ctx.journal_mut().sload(account_owner_address, slot_u256)?;
@@ -895,12 +941,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
         SYSCALL_ID_METADATA_STORAGE_WRITE => {
             let Some(account_owner_address) = account_owner_address else {
-                return_result!(MalformedBuiltinParams);
+                return_halt!(MalformedBuiltinParams);
             };
             // input: slot + value
             const INPUT_LEN: usize = U256::BYTES + U256::BYTES;
             let syscall_params = &inputs.syscall_params;
-            assert_return!(
+            assert_halt!(
                 syscall_params.input.len() == INPUT_LEN && syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
@@ -908,13 +954,16 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Ok(slot): Result<[u8; U256::BYTES], _> =
                 syscall_params.input.as_ref()[..U256::BYTES].try_into()
             else {
-                return_result!(MalformedBuiltinParams)
+                return_halt!(MalformedBuiltinParams)
             };
             let Ok(value): Result<[u8; U256::BYTES], _> =
                 syscall_params.input.as_ref()[U256::BYTES..].try_into()
             else {
-                return_result!(MalformedBuiltinParams)
+                return_halt!(MalformedBuiltinParams)
             };
+
+            assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
+            
             let slot_u256 = U256::from_le_bytes(slot);
             let value_u256 = U256::from_le_bytes(value);
             ctx.journal_mut()
@@ -925,7 +974,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_TRANSIENT_READ => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() == 32
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
@@ -941,12 +990,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_TRANSIENT_WRITE => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() == 64
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
-            assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
+            assert_halt!(!inputs.is_static, StateChangeDuringStaticCall);
             // read input
             let slot = U256::from_le_slice(&inputs.syscall_params.input[0..32]);
             let value = U256::from_le_slice(&inputs.syscall_params.input[32..64]);
@@ -957,9 +1006,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // empty result
             return_result!(Bytes::new(), Ok);
         }
-
+        //
         SYSCALL_ID_BLOCK_HASH => {
-            assert_return!(
+            assert_halt!(
                 inputs.syscall_params.input.len() == 8 && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
@@ -976,7 +1025,284 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             return_result!(hash, Ok);
         }
 
-        _ => return_result!(MalformedBuiltinParams),
+        _ => return_halt!(MalformedBuiltinParams),
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{RwasmContext, RwasmSpecId};
+    use fluentbase_sdk::{syscall::SYSCALL_ID_CODE_COPY, SyscallInvocationParams, STATE_MAIN};
+    use revm::{
+        context::{BlockEnv, CfgEnv, TxEnv},
+        database::InMemoryDB,
+        inspector::NoOpInspector,
+        primitives::{Address, Bytes},
+    };
+
+    /// Helper function to test code_copy syscall
+    /// Returns (output_data, gas_used)
+    fn test_code_copy_helper(
+        bytecode: Bytes,
+        code_offset: u64,
+        code_length: u64,
+        initial_gas: u64,
+    ) -> (Bytes, u64) {
+        // === Setup: Initialize context and database ===
+        let db = InMemoryDB::default();
+        let mut ctx: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+
+        let mut frame = RwasmFrame::default();
+
+        // === Setup: Create target account with known bytecode ===
+        let target_address = Address::from([0x42; 20]);
+
+        {
+            let mut account = ctx.journal_mut().load_account(target_address).unwrap();
+            account.info.code = Some(Bytecode::new_raw(bytecode.clone()));
+            account.info.balance = U256::from(1); // Non-empty account
+        }
+
+        // === Prepare syscall input ===
+        let mut syscall_input = vec![0u8; 20 + 8 + 8];
+        syscall_input[0..20].copy_from_slice(target_address.as_slice());
+        syscall_input[20..28].copy_from_slice(&code_offset.to_le_bytes());
+        syscall_input[28..36].copy_from_slice(&code_length.to_le_bytes());
+
+        let syscall_params = SyscallInvocationParams {
+            code_hash: SYSCALL_ID_CODE_COPY,
+            input: Bytes::from(syscall_input),
+            state: STATE_MAIN,
+            ..Default::default()
+        };
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            is_create: false,
+            syscall_params,
+            is_static: false,
+            is_gas_free: false,
+            gas: Gas::new(initial_gas),
+        };
+
+        // === Execute: Call the syscall ===
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Syscall execution failed: {:?}",
+            result.err()
+        );
+
+        // === Extract results ===
+        let returned_data = frame.interrupted_outcome.as_ref().unwrap();
+        let output_data = returned_data.result.as_ref().unwrap().output.clone();
+
+        // Get gas_used from the interruption result directly
+        let gas_used = initial_gas - returned_data.result.as_ref().unwrap().gas.remaining();
+
+        (output_data, gas_used)
+    }
+
+    fn expected_gas(length: usize, is_cold: bool) -> u64 {
+        // Base cost depends on warm/cold access
+        // After EIP-2929 (BERLIN fork):
+        // - Cold access: 2600 gas (first access to account)
+        // - Warm access: 100 gas (subsequent accesses)
+        let base_gas = if is_cold {
+            2600 // COLD_ACCOUNT_ACCESS_COST
+        } else {
+            100 // WARM_STORAGE_READ_COST
+        };
+
+        // Copy cost: 3 gas per 32-byte word
+        // Formula: 3 * ceil(length / 32)
+        let words = (length + 31) / 32; // ceil(length / 32)
+        let copy_gas = words as u64 * 3;
+
+        base_gas + copy_gas
+    }
+
+    #[test]
+    fn test_code_copy_basic_slice() {
+        // Test: Basic slice from middle of bytecode
+        let bytecode = Bytes::from(vec![
+            0x60, 0x80, 0x60, 0x40, 0x52, 0x33, 0x90, 0x81, 0x01, 0x02,
+        ]); // 10 bytes
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 3, 4, 10_000_000);
+
+        assert_eq!(output.len(), 4, "Should return 4 bytes");
+        assert_eq!(
+            &output[..],
+            &bytecode[3..7],
+            "Should return bytes at offset 3-6"
+        );
+        assert_eq!(gas, expected_gas(4, false));
+    }
+
+    #[test]
+    fn test_code_copy_request_more_than_available() {
+        // Test: Request more bytes than available (no padding in WASM)
+        let bytecode = Bytes::from(vec![0xAA, 0xBB, 0xCC]); // Only 3 bytes
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 1, 10, 10_000_000);
+
+        assert_eq!(output.len(), 10, "Should return only 2 available bytes");
+        assert_eq!(
+            &output[..],
+            &[0xBB, 0xCC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(gas, expected_gas(10, false));
+    }
+
+    #[test]
+    fn test_code_copy_offset_beyond_bytecode() {
+        // Test: Offset completely beyond bytecode length
+        let bytecode = Bytes::from(vec![0xAA, 0xBB, 0xCC]); // 3 bytes
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 100, 5, 10_000_000);
+        // Should return empty bytes
+        assert_eq!(
+            output.len(),
+            5,
+            "Should return empty bytes when offset > bytecode.len()"
+        );
+        assert_eq!(gas, expected_gas(5, false));
+    }
+
+    #[test]
+    fn test_code_copy_empty_bytecode() {
+        // Test: Copy from account with empty/no bytecode
+        let bytecode = Bytes::new();
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 0, 10, 10_000_000);
+
+        assert_eq!(
+            output.len(),
+            10,
+            "Should return empty bytes for empty bytecode"
+        );
+        assert_eq!(
+            &output[..],
+            &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+
+        assert_eq!(gas, expected_gas(10, false));
+    }
+
+    #[test]
+    fn test_code_copy_gas_calculation() {
+        // Test: Verify gas is calculated correctly according to EVM rules
+        let bytecode = Bytes::from(vec![0xFF; 200]); // 100 bytes
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 0, 200, 10_000_000);
+
+        assert_eq!(output.len(), 200);
+        assert_eq!(output[..], bytecode);
+        assert_eq!(gas, expected_gas(200, false));
+    }
+}
+
+#[cfg(test)]
+mod metadata_write_tests {
+    use super::*;
+    use crate::{RwasmContext, RwasmSpecId};
+    use fluentbase_sdk::{
+        syscall::SYSCALL_ID_METADATA_WRITE, SyscallInvocationParams, PRECOMPILE_WASM_RUNTIME,
+    };
+    use revm::{
+        bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
+        context::{BlockEnv, CfgEnv, TxEnv},
+        database::InMemoryDB,
+        inspector::NoOpInspector,
+    };
+
+    #[test]
+    fn test_metadata_write_truncates_existing_data() {
+        // === Setup: Initialize context and database ===
+        let db = InMemoryDB::default();
+        let mut ctx: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+
+        // === Setup: Create frame with owner address ===
+        let owner_address = PRECOMPILE_WASM_RUNTIME;
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.account_owner = Some(owner_address);
+
+        // === Step 1: Create an account with initial metadata ===
+        let test_address = Address::from_slice(&[0x42; 20]);
+        let initial_metadata = Bytes::from(&[0xFF; 100]);
+
+        let _ = ctx.journal_mut().load_account(test_address);
+
+        // Pre-create the ownable account with initial metadata
+        ctx.journal_mut().set_code(
+            test_address,
+            Bytecode::OwnableAccount(OwnableAccountBytecode::new(
+                owner_address,
+                initial_metadata.clone(),
+            )),
+        );
+
+        let new_data = vec![0x11, 0x22, 0x33, 0x44];
+        let offset = 2u32;
+
+        // Prepare syscall input: address (20 bytes) + offset (4 bytes) + data
+        let mut syscall_input = Vec::new();
+        syscall_input.extend_from_slice(&test_address.0[..]);
+        syscall_input.extend_from_slice(&offset.to_le_bytes());
+        syscall_input.extend_from_slice(&new_data);
+
+        let syscall_params = SyscallInvocationParams {
+            code_hash: SYSCALL_ID_METADATA_WRITE,
+            input: Bytes::from(syscall_input),
+            state: STATE_MAIN,
+            fuel_limit: 1_000_000,
+            ..Default::default()
+        };
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            is_create: false,
+            syscall_params,
+            is_static: false,
+            is_gas_free: false,
+            gas: Gas::new(1_000_000),
+        };
+
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Syscall execution failed: {:?}",
+            result.err()
+        );
+
+
+        let acc = ctx.journal_mut().load_account_code(test_address).unwrap();
+        match &acc.info.code {
+            Some(Bytecode::OwnableAccount(ownable)) => {
+                assert_eq!(ownable.metadata.len(), 4);
+                assert_eq!(ownable.metadata[..], new_data);
+            }
+            _ => panic!("Expected OwnableAccount bytecode"),
+        }
     }
 }
 

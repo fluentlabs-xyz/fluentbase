@@ -3,15 +3,11 @@ mod context;
 use crate::{
     byteorder::{ByteOrder, LittleEndian},
     syscall::*,
+    Address, BytecodeOrHash, Bytes, ContextReader, CryptoAPI, ExitCode, IsAccountEmpty,
+    IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI, SharedAPI,
+    SharedContextInputV1, StorageAPI, SyscallResult, B256, U256,
 };
 use core::cell::OnceCell;
-use fluentbase_types::{
-    Address, BytecodeOrHash, Bytes, ContextReader, ExitCode, IsAccountEmpty, IsAccountOwnable,
-    IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI, SharedAPI, SharedContextInputV1,
-    StorageAPI, SyscallResult, B256, BN254_G1_POINT_COMPRESSED_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE, U256,
-};
 
 pub struct SharedContextImpl<API: NativeAPI> {
     native_sdk: API,
@@ -139,159 +135,9 @@ impl<API: NativeAPI> MetadataStorageAPI for SharedContextImpl<API> {
 }
 
 /// SharedContextImpl always created from input
-impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
+impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     fn context(&self) -> impl ContextReader {
         self.shared_context_ref()
-    }
-
-    fn keccak256(&self, data: &[u8]) -> B256 {
-        API::keccak256(data)
-    }
-
-    fn sha256(data: &[u8]) -> B256 {
-        API::sha256(data)
-    }
-
-    fn blake3(data: &[u8]) -> B256 {
-        API::blake3(data)
-    }
-
-    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
-        API::poseidon(parameters, endianness, data)
-    }
-
-    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
-        API::secp256k1_recover(digest, sig, rec_id)
-    }
-
-    fn curve256r1_verify(input: &[u8]) -> bool {
-        API::curve256r1_verify(input)
-    }
-
-    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        API::curve25519_edwards_decompress_validate(p)
-    }
-
-    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        API::curve25519_edwards_add(p, q)
-    }
-
-    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        API::curve25519_edwards_sub(p, q)
-    }
-
-    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        API::curve25519_edwards_mul(p, q)
-    }
-
-    fn curve25519_edwards_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        API::curve25519_edwards_multiscalar_mul(pairs, out)
-    }
-
-    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
-        API::curve25519_ristretto_decompress_validate(p)
-    }
-
-    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        API::curve25519_ristretto_add(p, q)
-    }
-
-    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        API::curve25519_ristretto_sub(p, q)
-    }
-
-    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        API::curve25519_ristretto_mul(p, q)
-    }
-
-    fn curve25519_ristretto_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        API::curve25519_ristretto_multiscalar_mul(pairs, out)
-    }
-
-    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
-        API::bls12_381_g1_add(p, q)
-    }
-
-    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]) {
-        API::bls12_381_g1_msm(pairs, out)
-    }
-
-    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) {
-        API::bls12_381_g2_add(p, q)
-    }
-
-    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]) {
-        API::bls12_381_g2_msm(pairs, out)
-    }
-
-    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]) {
-        API::bls12_381_pairing(pairs, out)
-    }
-
-    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]) {
-        API::bls12_381_map_fp_to_g1(p, out)
-    }
-
-    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
-        API::bls12_381_map_fp2_to_g2(p, out)
-    }
-
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
-        API::bn254_add(p, q)
-    }
-
-    fn bn254_double(p: &mut [u8; 64]) {
-        API::bn254_double(p)
-    }
-
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
-        API::bn254_mul(p, q)
-    }
-
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
-        API::bn254_multi_pairing(elements)
-    }
-
-    fn bn254_g1_compress(
-        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
-        API::bn254_g1_compress(point)
-    }
-
-    fn bn254_g1_decompress(
-        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        API::bn254_g1_decompress(point)
-    }
-
-    fn bn254_g2_compress(
-        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
-        API::bn254_g2_compress(point)
-    }
-
-    fn bn254_g2_decompress(
-        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        API::bn254_g2_decompress(point)
-    }
-
-    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
-        API::bn254_fp_mul(p, q)
-    }
-
-    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
-        API::bn254_fp2_mul(p, q)
-    }
-
-    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
-        API::big_mod_exp(base, exponent, modulus)
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
@@ -317,9 +163,8 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         self.native_sdk.read(target, offset)
     }
 
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) {
-        self.native_sdk
-            .charge_fuel_manually(fuel_consumed, fuel_refunded);
+    fn charge_fuel(&self, fuel_consumed: u64) {
+        self.native_sdk.charge_fuel(fuel_consumed);
     }
 
     fn fuel(&self) -> u64 {
@@ -453,10 +298,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         address: Address,
         value: U256,
         input: &[u8],
-        fuel_limit: Option<u64>,
+        gas_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
         let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.call(address, value, input, fuel_limit);
+            self.native_sdk.call(address, value, input, gas_limit);
         let value = self.native_sdk.return_data();
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }

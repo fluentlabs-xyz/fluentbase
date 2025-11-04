@@ -442,7 +442,7 @@ fn generate_artifacts(
                 let data = wasm_data
                     .get_or_insert_with(|| fs::read(wasm_path).expect("Failed to read WASM file"));
 
-                let rwasm_result = fluentbase_types::compile_wasm_to_rwasm(data)
+                let rwasm_result = fluentbase_sdk::compile_wasm_to_rwasm(data)
                     .map_err(|e| anyhow::anyhow!("rWASM compilation failed: {:?}", e))?;
 
                 let rwasm_path = output_dir.join("lib.rwasm");

@@ -1,12 +1,5 @@
 use crate::{syscall_handler::*, RuntimeContext};
-use fluentbase_types::{
-    BytecodeOrHash, Bytes, BytesOrRef, ExitCode, NativeAPI, UnwrapExitCode, B256,
-    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, G1_COMPRESSED_SIZE,
-    G1_UNCOMPRESSED_SIZE, G2_COMPRESSED_SIZE, G2_UNCOMPRESSED_SIZE, GT_COMPRESSED_SIZE,
-    PADDED_FP2_SIZE, PADDED_FP_SIZE, SCALAR_SIZE,
-};
-use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
+use fluentbase_types::{BytecodeOrHash, Bytes, BytesOrRef, ExitCode, NativeAPI, UnwrapExitCode};
 use std::cell::RefCell;
 
 #[derive(Default)]
@@ -26,263 +19,39 @@ impl RuntimeContextWrapper {
 }
 
 impl NativeAPI for RuntimeContextWrapper {
-    fn keccak256(data: &[u8]) -> B256 {
-        SyscallKeccak256::fn_impl(data)
+    fn exit(&self, exit_code: ExitCode) -> ! {
+        syscall_exit_impl(&mut self.ctx.borrow_mut(), exit_code).unwrap_exit_code();
+        unreachable!("exit code: {}", exit_code)
     }
 
-    fn sha256(data: &[u8]) -> B256 {
-        SyscallSha256::fn_impl(data)
-    }
-
-    fn blake3(data: &[u8]) -> B256 {
-        SyscallBlake3::fn_impl(data)
-    }
-    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
-        SyscallPoseidon::fn_impl(parameters as u64, endianness as u64, data)
-    }
-
-    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
-        SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)
-    }
-
-    fn curve256r1_verify(input: &[u8]) -> bool {
-        SyscallCurve256r1Verify::fn_impl(input)
-    }
-
-    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        SyscallCurve25519EdwardsDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
-    }
-
-    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519EdwardsAdd::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519EdwardsSub::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519EdwardsMul::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_edwards_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        let result = SyscallCurve25519EdwardsMultiscalarMul::fn_impl(pairs);
-        match result {
-            Ok(v) => {
-                *out = v.compress().to_bytes();
-            }
-            Err(_) => return false,
-        }
-        true
-    }
-
-    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
-        SyscallCurve25519RistrettoDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
-    }
-
-    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519RistrettoAdd::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519RistrettoSub::fn_impl(p, q).is_ok()
-    }
-
-    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallCurve25519RistrettoMul::fn_impl(p, q).is_ok()
-    }
-    fn curve25519_ristretto_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool {
-        let result = SyscallCurve25519RistrettoMultiscalarMul::fn_impl(pairs);
-        match result {
-            Ok(v) => {
-                *out = v.compress().to_bytes();
-            }
-            Err(_) => return false,
-        }
-        true
-    }
-
-    fn bls12_381_g1_add(p: &mut [u8; G1_UNCOMPRESSED_SIZE], q: &[u8; G1_UNCOMPRESSED_SIZE]) {
-        SyscallBls12381G1Add::fn_impl(p, q);
-    }
-
-    fn bls12_381_g1_msm(
-        pairs: &[([u8; G1_UNCOMPRESSED_SIZE], [u8; SCALAR_SIZE])],
-        out: &mut [u8; G1_UNCOMPRESSED_SIZE],
-    ) {
-        SyscallBls12381G1Msm::fn_impl(pairs, out)
-    }
-
-    fn bls12_381_g2_add(p: &mut [u8; G2_UNCOMPRESSED_SIZE], q: &[u8; G2_UNCOMPRESSED_SIZE]) {
-        SyscallBls12381G2Add::fn_impl(p, q)
-    }
-
-    fn bls12_381_g2_msm(
-        pairs: &[([u8; G2_UNCOMPRESSED_SIZE], [u8; SCALAR_SIZE])],
-        out: &mut [u8; G2_UNCOMPRESSED_SIZE],
-    ) {
-        SyscallBls12381G2Msm::fn_impl(pairs, out)
-    }
-
-    fn bls12_381_pairing(
-        pairs: &[([u8; G1_COMPRESSED_SIZE], [u8; G2_COMPRESSED_SIZE])],
-        out: &mut [u8; GT_COMPRESSED_SIZE],
-    ) {
-        SyscallBls12381Pairing::fn_impl(pairs, out)
-    }
-
-    fn bls12_381_map_fp_to_g1(p: &[u8; PADDED_FP_SIZE], out: &mut [u8; G1_UNCOMPRESSED_SIZE]) {
-        let mut tmp_out = [0u8; G1_UNCOMPRESSED_SIZE];
-        SyscallBls12381MapFpToG1::fn_impl(p, &mut tmp_out);
-        out.copy_from_slice(&tmp_out);
-    }
-
-    fn bls12_381_map_fp2_to_g2(p: &[u8; PADDED_FP2_SIZE], out: &mut [u8; G2_UNCOMPRESSED_SIZE]) {
-        SyscallBls12381MapFp2ToG2::fn_impl(p, out)
-    }
-
-    fn bn254_add(
-        p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-        q: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        SyscallBn256Add::fn_impl(p, q).map_err(|_| ExitCode::PrecompileError)?;
-        Ok(*p)
-    }
-
-    fn bn254_double(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE]) {
-        let result = SyscallWeierstrassDoubleAssign::<Bn254>::fn_impl(p);
-        let min = core::cmp::min(p.len(), result.len());
-        p[..min].copy_from_slice(&result[..min]);
-    }
-
-    fn bn254_mul(
-        p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-        q: &[u8; SCALAR_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let result = SyscallBn256Mul::fn_impl(p, q).map_err(|_| ExitCode::PrecompileError)?;
-        Ok(result)
-    }
-
-    fn bn254_multi_pairing(
-        elements: &[(
-            [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-            [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-        )],
-    ) -> Result<[u8; SCALAR_SIZE], ExitCode> {
-        let mut pairs = elements.to_vec();
-        let result =
-            SyscallBn256Pairing::fn_impl(&mut pairs).map_err(|_| ExitCode::PrecompileError)?;
-        Ok(result)
-    }
-
-    fn bn254_g1_compress(
-        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
-        let result =
-            SyscallWeierstrassCompressDecompressAssign::<ConfigG1Compress>::fn_impl(point)?;
-        result.try_into().map_err(|_| ExitCode::UnknownError)
-    }
-
-    fn bn254_g1_decompress(
-        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let result =
-            SyscallWeierstrassCompressDecompressAssign::<ConfigG1Decompress>::fn_impl(point)?;
-        result.try_into().map_err(|_| ExitCode::UnknownError)
-    }
-
-    fn bn254_g2_compress(
-        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
-        let result =
-            SyscallWeierstrassCompressDecompressAssign::<ConfigG2Compress>::fn_impl(point)?;
-        result.try_into().map_err(|_| ExitCode::UnknownError)
-    }
-
-    fn bn254_g2_decompress(
-        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
-        let result =
-            SyscallWeierstrassCompressDecompressAssign::<ConfigG2Decompress>::fn_impl(point)?;
-        result.try_into().map_err(|_| ExitCode::UnknownError)
-    }
-
-    fn bn254_fp_mul(p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
-        let result = SyscallFpOp::<Bn254BaseField, FieldMul>::fn_impl(p, q);
-        let min = core::cmp::min(p.len(), result.len());
-        p[..min].copy_from_slice(&result[..min]);
-    }
-
-    fn bn254_fp2_mul(p: &mut [u8; BN254_G2_POINT_COMPRESSED_SIZE], q: &[u8; SCALAR_SIZE]) {
-        let result = SyscallFp2Mul::<Bn254BaseField>::fn_impl(p, q);
-        let min = core::cmp::min(p.len(), result.len());
-        p[..min].copy_from_slice(&result[..min]);
-    }
-
-    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
-        SyscallMathBigModExp::fn_impl(base, exponent, modulus)
-    }
-
-    fn debug_log(message: &str) {
-        SyscallDebugLog::fn_impl(message.as_bytes())
+    fn state(&self) -> u32 {
+        syscall_state_impl(&self.ctx.borrow())
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
         let result =
-            SyscallRead::fn_impl(&mut self.ctx.borrow_mut(), offset, target.len() as u32).unwrap();
-        target.copy_from_slice(&result);
-    }
-
-    fn input_size(&self) -> u32 {
-        SyscallInputSize::fn_impl(&self.ctx.borrow())
-    }
-
-    fn write(&self, value: &[u8]) {
-        SyscallWrite::fn_impl(&mut self.ctx.borrow_mut(), value)
-    }
-
-    fn forward_output(&self, offset: u32, len: u32) {
-        SyscallForwardOutput::fn_impl(&mut self.ctx.borrow_mut(), offset, len).unwrap_exit_code()
-    }
-
-    fn exit(&self, exit_code: ExitCode) -> ! {
-        SyscallExit::fn_impl(&mut self.ctx.borrow_mut(), exit_code).unwrap_exit_code();
-        unreachable!("exit code: {}", exit_code)
-    }
-
-    fn output_size(&self) -> u32 {
-        SyscallOutputSize::fn_impl(&self.ctx.borrow())
-    }
-
-    fn read_output(&self, target: &mut [u8], offset: u32) {
-        let result =
-            SyscallReadOutput::fn_impl(&mut self.ctx.borrow_mut(), offset, target.len() as u32)
+            syscall_read_input_impl(&mut self.ctx.borrow_mut(), offset, target.len() as u32)
                 .unwrap();
         target.copy_from_slice(&result);
     }
 
-    fn state(&self) -> u32 {
-        SyscallState::fn_impl(&self.ctx.borrow())
+    fn input_size(&self) -> u32 {
+        syscall_input_size_impl(&self.ctx.borrow())
     }
 
-    #[inline(always)]
-    fn fuel(&self) -> u64 {
-        SyscallFuel::fn_impl(&self.ctx.borrow())
+    fn write(&self, value: &[u8]) {
+        syscall_write_output_impl(&mut self.ctx.borrow_mut(), value)
     }
 
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
-        SyscallChargeFuelManually::fn_impl(&mut self.ctx.borrow_mut(), fuel_consumed, fuel_refunded)
-            .unwrap()
+    fn output_size(&self) -> u32 {
+        syscall_output_size_impl(&self.ctx.borrow())
     }
 
-    fn charge_fuel(&self, fuel_consumed: u64) {
-        SyscallChargeFuel::fn_impl(&mut self.ctx.borrow_mut(), fuel_consumed).unwrap();
+    fn read_output(&self, target: &mut [u8], offset: u32) {
+        let result =
+            syscall_read_output_impl(&mut self.ctx.borrow_mut(), offset, target.len() as u32)
+                .unwrap();
+        target.copy_from_slice(&result);
     }
 
     fn exec(
@@ -292,7 +61,7 @@ impl NativeAPI for RuntimeContextWrapper {
         fuel_limit: Option<u64>,
         state: u32,
     ) -> (u64, i64, i32) {
-        let (fuel_consumed, fuel_refunded, exit_code) = SyscallExec::fn_impl(
+        let (fuel_consumed, fuel_refunded, exit_code) = syscall_exec_impl(
             &mut self.ctx.borrow_mut(),
             code_hash,
             BytesOrRef::Ref(input),
@@ -310,7 +79,7 @@ impl NativeAPI for RuntimeContextWrapper {
         fuel_consumed: u64,
         fuel_refunded: i64,
     ) -> (u64, i64, i32) {
-        let (fuel_consumed, fuel_refunded, exit_code) = SyscallResume::fn_impl(
+        let (fuel_consumed, fuel_refunded, exit_code) = syscall_resume_impl(
             &mut self.ctx.borrow_mut(),
             call_id,
             return_data,
@@ -322,13 +91,33 @@ impl NativeAPI for RuntimeContextWrapper {
         (fuel_consumed, fuel_refunded, exit_code)
     }
 
-    fn preimage_size(&self, hash: &B256) -> u32 {
-        SyscallPreimageSize::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap()
+    fn forward_output(&self, offset: u32, len: u32) {
+        syscall_forward_output_impl(&mut self.ctx.borrow_mut(), offset, len).unwrap_exit_code()
     }
 
-    fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
-        let preimage = SyscallPreimageCopy::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap();
-        target.copy_from_slice(&preimage);
+    #[inline(always)]
+    fn fuel(&self) -> u64 {
+        syscall_fuel_impl(&self.ctx.borrow())
+    }
+
+    fn debug_log(message: &str) {
+        syscall_debug_log_impl(message.as_bytes())
+    }
+
+    fn charge_fuel(&self, fuel_consumed: u64) {
+        syscall_charge_fuel_impl(&mut self.ctx.borrow_mut(), fuel_consumed).unwrap();
+    }
+
+    fn enter_unconstrained(&self) {
+        syscall_enter_leave_unconstrained_impl(&mut self.ctx.borrow_mut());
+    }
+
+    fn exit_unconstrained(&self) {
+        syscall_enter_leave_unconstrained_impl(&mut self.ctx.borrow_mut());
+    }
+
+    fn write_fd(&self, fd: u32, slice: &[u8]) {
+        syscall_write_fd_impl(&mut self.ctx.borrow_mut(), fd, slice).unwrap_exit_code();
     }
 
     fn return_data(&self) -> Bytes {

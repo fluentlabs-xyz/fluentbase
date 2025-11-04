@@ -1,76 +1,21 @@
-use crate::{
-    BytecodeOrHash, ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
-};
+use crate::{BytecodeOrHash, Bytes, ExitCode, B256};
 use alloc::vec;
-use alloy_primitives::{Bytes, B256};
 use core::cell::RefCell;
 
 /// A trait for providing shared API functionality.
+#[rustfmt::skip]
 pub trait NativeAPI {
-    fn keccak256(data: &[u8]) -> B256;
-    fn sha256(data: &[u8]) -> B256;
-    fn blake3(data: &[u8]) -> B256;
-    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode>;
-    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
-    fn curve256r1_verify(input: &[u8]) -> bool;
-    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool;
-    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn curve25519_edwards_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool;
-    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool;
-    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn curve25519_ristretto_multiscalar_mul(
-        pairs: &[([u8; 32], [u8; 32])],
-        out: &mut [u8; 32],
-    ) -> bool;
-    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]);
-    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]);
-    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]);
-    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]);
-    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]);
-    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]);
-    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]);
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode>;
-    fn bn254_double(p: &mut [u8; 64]);
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode>;
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode>;
-    fn bn254_g1_compress(
-        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode>;
-    fn bn254_g1_decompress(
-        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode>;
-    fn bn254_g2_compress(
-        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode>;
-    fn bn254_g2_decompress(
-        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
-    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode>;
-    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]);
-    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]);
-
-    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode>;
-
-    fn debug_log(message: &str);
-
+    /// Low-level function that terminates the execution of the program and exits with the specified
+    /// exit code.
+    fn exit(&self, exit_code: ExitCode) -> !;
+    fn state(&self) -> u32;
     fn read(&self, target: &mut [u8], offset: u32);
+    /// Returns the size of the input data provided to the runtime environment.
     fn input_size(&self) -> u32;
     fn write(&self, value: &[u8]);
-    fn forward_output(&self, offset: u32, len: u32);
-    fn exit(&self, exit_code: ExitCode) -> !;
     fn output_size(&self) -> u32;
     fn read_output(&self, target: &mut [u8], offset: u32);
-    fn state(&self) -> u32;
-    fn fuel(&self) -> u64;
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64;
-    fn charge_fuel(&self, fuel_consumed: u64);
+    /// Executes a nested call with specified bytecode poseidon hash.
     fn exec(
         &self,
         code_hash: BytecodeOrHash,
@@ -78,6 +23,7 @@ pub trait NativeAPI {
         fuel_limit: Option<u64>,
         state: u32,
     ) -> (u64, i64, i32);
+    /// Resumes the execution of a previously suspended function call.
     fn resume(
         &self,
         call_id: u32,
@@ -86,11 +32,16 @@ pub trait NativeAPI {
         fuel_consumed: u64,
         fuel_refunded: i64,
     ) -> (u64, i64, i32);
-
-    #[deprecated(note = "don't use")]
-    fn preimage_size(&self, hash: &B256) -> u32;
-    #[deprecated(note = "don't use")]
-    fn preimage_copy(&self, hash: &B256, target: &mut [u8]);
+    fn forward_output(&self, offset: u32, len: u32);
+    fn fuel(&self) -> u64;
+    fn debug_log(message: &str);
+    /// Charges specified amount of fuel.
+    /// In contrast to `_charge_fuel_manually`, can be called from untrusted code since it can only
+    /// charge fuel.
+    fn charge_fuel(&self, fuel_consumed: u64);
+    fn enter_unconstrained(&self);
+    fn exit_unconstrained(&self);
+    fn write_fd(&self, fd: u32, slice: &[u8]);
 
     fn input(&self) -> Bytes {
         let input_size = self.input_size();
@@ -118,7 +69,7 @@ pub trait InterruptAPI {
 }
 
 impl<T: NativeAPI + ?Sized> InterruptAPI for T {
-    // #[inline(always)]
+    #[inline(always)]
     fn interrupt(
         &self,
         code_hash: BytecodeOrHash,

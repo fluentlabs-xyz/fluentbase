@@ -1,4 +1,4 @@
-use crate::{HostTestingContext, HostTestingContextNativeAPI};
+use crate::HostTestingContext;
 use core::{borrow::Borrow, mem::take, str::from_utf8};
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
 use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecutor};
@@ -225,7 +225,7 @@ impl EvmTestingContext {
         #[cfg(feature = "debug-print")]
         println!("deployment gas used: {}", result.gas_used());
         assert!(result.is_success());
-        let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, nonce);
+        let contract_address = calc_create_address(&deployer, nonce);
         assert_eq!(contract_address, deployer.create(nonce));
 
         assert!(
@@ -258,7 +258,7 @@ impl EvmTestingContext {
         }
         #[cfg(feature = "debug-print")]
         println!("deployment gas used: {}", result.gas_used());
-        let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, nonce);
+        let contract_address = calc_create_address(&deployer, nonce);
         assert_eq!(contract_address, deployer.create(nonce));
 
         assert!(
