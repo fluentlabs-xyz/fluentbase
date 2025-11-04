@@ -965,7 +965,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Why do we return in big-endian here? :facepalm:
             let hash = match current_block.checked_sub(requested_block) {
                 Some(diff) if diff > 0 && diff <= 256 => {
-                    ctx.block_hash(requested_block).unwrap_or(B256::ZERO)
+                    ctx.db_mut().block_hash(requested_block)?
                 }
                 _ => B256::ZERO,
             };
@@ -973,5 +973,209 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         _ => return_result!(MalformedBuiltinParams),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{RwasmContext, RwasmFrame, RwasmSpecId};
+    use alloy_primitives::{Address, StorageValue, B256};
+    use core::error::Error;
+    use fluentbase_sdk::{
+        syscall::SYSCALL_ID_BLOCK_HASH, Bytes, SyscallInvocationParams, STATE_MAIN, U256,
+    };
+    use revm::{
+        bytecode::Bytecode,
+        context::{BlockEnv, CfgEnv, TxEnv},
+        database::{DBErrorMarker, InMemoryDB},
+        inspector::NoOpInspector,
+        interpreter::Gas,
+        state::AccountInfo,
+        Database,
+    };
+    use std::fmt;
+
+    #[derive(Debug, Clone)]
+    pub struct MockDbError(pub String);
+
+    impl fmt::Display for MockDbError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    impl Error for MockDbError {}
+    impl DBErrorMarker for MockDbError {}
+
+    pub struct FailingMockDatabase;
+
+    impl Database for FailingMockDatabase {
+        type Error = MockDbError;
+
+        fn basic(&mut self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+            Ok(None)
+        }
+
+        fn code_by_hash(&mut self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+            Ok(Bytecode::default())
+        }
+
+        fn storage(
+            &mut self,
+            _address: Address,
+            _index: U256,
+        ) -> Result<StorageValue, Self::Error> {
+            Ok(StorageValue::default())
+        }
+
+        fn block_hash(&mut self, _number: u64) -> Result<B256, Self::Error> {
+            Err(MockDbError("Database I/O error".to_string()))
+        }
+    }
+
+    /// Helper function to test block_hash syscall
+    fn test_block_hash_helper<DB: Database>(
+        db: DB,
+        current_block: u64,
+        requested_block: u64,
+    ) -> Result<Bytes, ContextError<DB::Error>> {
+        let mut ctx: RwasmContext<DB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        ctx.block.number = U256::from(current_block);
+
+        let mut frame = RwasmFrame::default();
+
+        let mut syscall_input = vec![0u8; 8];
+        syscall_input[0..8].copy_from_slice(&requested_block.to_le_bytes());
+
+        let syscall_params = SyscallInvocationParams {
+            code_hash: SYSCALL_ID_BLOCK_HASH,
+            input: Bytes::from(syscall_input),
+            state: STATE_MAIN,
+            ..Default::default()
+        };
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            syscall_params,
+            is_static: false,
+            gas: Gas::new(10_000_000),
+            is_create: false,
+            is_gas_free: false,
+        };
+
+        execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+        )?;
+
+        Ok(frame
+            .interrupted_outcome
+            .as_ref()
+            .unwrap()
+            .result
+            .as_ref()
+            .unwrap()
+            .output
+            .clone())
+    }
+
+    #[test]
+    fn test_block_hash_database_error_is_propagated() {
+        // This test verifies that database errors are propagated through execute_rwasm_interruption
+        // instead of being silently converted to zero hash
+
+        let db = FailingMockDatabase;
+        let mut ctx: RwasmContext<FailingMockDatabase> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        ctx.block.number = U256::from(1000);
+
+        let mut frame = RwasmFrame::default();
+
+        // Request a valid block (within the last 256 blocks)
+        let requested_block: u64 = 900;
+        let mut syscall_input = vec![0u8; 8];
+        syscall_input[0..8].copy_from_slice(&requested_block.to_le_bytes());
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            syscall_params: SyscallInvocationParams {
+                code_hash: SYSCALL_ID_BLOCK_HASH,
+                input: Bytes::from(syscall_input),
+                state: STATE_MAIN,
+                ..Default::default()
+            },
+            is_static: false,
+            gas: Gas::new(10_000_000),
+            is_create: false,
+            is_gas_free: false,
+        };
+
+        // Execute the syscall - should return Err, not Ok
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+        );
+
+        // Assert that database error was propagated
+        assert!(
+            result.is_err(),
+            "Database error must be propagated, not hidden"
+        );
+        println!("result: {:?}", result);
+    }
+
+    #[test]
+    fn test_block_hash_database_error_propagation() {
+        let db = FailingMockDatabase;
+        let result = test_block_hash_helper(db, 1000, 900);
+
+        assert!(
+            result.is_err(),
+            "Expected database error to be propagated, but got Ok"
+        );
+
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            error_msg.contains("Database I/O error") || error_msg.contains("MockDbError"),
+            "Error should contain database error message, got: {}",
+            error_msg
+        );
+    }
+
+    #[test]
+    fn test_block_hash_out_of_range_returns_zero() {
+        let db = InMemoryDB::default();
+        let output =
+            test_block_hash_helper(db, 1000, 1001).expect("Should succeed for out of range block");
+
+        assert_eq!(output.len(), 32, "Should return 32 bytes");
+        assert_eq!(
+            &output[..],
+            B256::ZERO.as_slice(),
+            "Should return zero hash for future block"
+        );
+    }
+
+    #[test]
+    fn test_block_hash_too_old_returns_zero() {
+        let db = InMemoryDB::default();
+        let output =
+            test_block_hash_helper(db, 1000, 743).expect("Should succeed for too old block");
+
+        assert_eq!(
+            &output[..],
+            B256::ZERO.as_slice(),
+            "Should return zero hash for block older than 256"
+        );
     }
 }
