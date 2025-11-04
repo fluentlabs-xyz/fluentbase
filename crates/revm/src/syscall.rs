@@ -1321,7 +1321,7 @@ mod metadata_write_tests {
         let salt = U256::from(123456789u64);
         let metadata = Bytes::from(vec![0x01, 0x02, 0x03]);
 
-        let derived_address = calc_create4_address(&owner_address, &salt);
+        let derived_address = calc_create_metadata_address(&owner_address, &salt);
 
         // Pre-load the account to avoid empty account check
         // (In real scenario, this would be done by previous transactions)
