@@ -159,8 +159,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     let inputs_bytes = interpreter.input.input.bytes(ctx);
     context_input.extend_from_slice(&inputs_bytes);
 
-    let rwasm_code_hash = interpreter.bytecode.hash().unwrap();
-
     let rwasm_bytecode = match &*interpreter.bytecode {
         Bytecode::Rwasm(bytecode) => bytecode.clone(),
         _ => {
@@ -178,7 +176,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     let bytecode_hash = BytecodeOrHash::Bytecode {
         address: effective_bytecode_address,
         bytecode: rwasm_bytecode.module,
-        hash: rwasm_code_hash,
+        hash: interpreter.bytecode.hash().unwrap(),
     };
 
     // Fuel limit we denominate later to gas
