@@ -42,8 +42,10 @@ thread_local! {
 
 impl Drop for SystemRuntime {
     fn drop(&mut self) {
-        COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            compiled_runtimes.insert(self.code_hash, self.compiled_runtime.take().unwrap());
+        let _ = COMPILED_RUNTIMES.try_with(|compiled_runtimes| {
+            compiled_runtimes
+                .borrow_mut()
+                .insert(self.code_hash, self.compiled_runtime.take().unwrap());
         });
     }
 }

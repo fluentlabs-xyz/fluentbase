@@ -11,6 +11,12 @@ macro_rules! define_tests {
     };
 }
 
+mod single_test {
+    define_tests! {
+        fn transaction_create_auto_suicide_contract("tests/GeneralStateTests/stInitCodeTest/TransactionCreateAutoSuicideContract.json");
+    }
+}
+
 mod good_coverage_tests {
     define_tests! {
         fn st_e_i_p3860_limitmeterinitcode_create_init_code_size_limit("tests/GeneralStateTests/Shanghai/stEIP3860-limitmeterinitcode/createInitCodeSizeLimit.json");

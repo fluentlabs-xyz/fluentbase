@@ -1,8 +1,8 @@
 use crate::EvmTestingContextWithGenesis;
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_sdk::{
-    address, bytes, compile_wasm_to_rwasm, debug_log_ext, Address, PRECOMPILE_EVM_RUNTIME,
-    UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX_V1, UPDATE_GENESIS_PREFIX_V2,
+    address, bytes, compile_wasm_to_rwasm, Address, PRECOMPILE_EVM_RUNTIME, UPDATE_GENESIS_AUTH,
+    UPDATE_GENESIS_PREFIX_V1, UPDATE_GENESIS_PREFIX_V2,
 };
 use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
