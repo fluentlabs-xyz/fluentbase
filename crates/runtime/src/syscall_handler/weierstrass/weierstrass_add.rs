@@ -5,7 +5,13 @@ use fluentbase_types::{
 };
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{
-    weierstrass::{bls12_381::Bls12381, bn254::Bn254, secp256k1::Secp256k1, secp256r1::Secp256r1},
+    params::FieldParameters,
+    weierstrass::{
+        bls12_381::{Bls12381, Bls12381BaseField},
+        bn254::{Bn254, Bn254BaseField},
+        secp256k1::{Secp256k1, Secp256k1BaseField},
+        secp256r1::{Secp256r1, Secp256r1BaseField},
+    },
     AffinePoint, BigUint, EllipticCurve,
 };
 
@@ -14,7 +20,7 @@ pub fn syscall_secp256k1_add_handler(
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_weierstrass_add_handler::<Secp256k1, { SECP256K1_G1_RAW_AFFINE_SIZE }>(
+    syscall_weierstrass_add_handler::<Secp256k1, Secp256k1BaseField, { SECP256K1_G1_RAW_AFFINE_SIZE }>(
         ctx, params, result,
     )
 }
@@ -23,7 +29,7 @@ pub fn syscall_secp256r1_add_handler(
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_weierstrass_add_handler::<Secp256r1, { SECP256R1_G1_RAW_AFFINE_SIZE }>(
+    syscall_weierstrass_add_handler::<Secp256r1, Secp256r1BaseField, { SECP256R1_G1_RAW_AFFINE_SIZE }>(
         ctx, params, result,
     )
 }
@@ -32,19 +38,25 @@ pub fn syscall_bn254_add_handler(
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_weierstrass_add_handler::<Bn254, { BN254_G1_RAW_AFFINE_SIZE }>(ctx, params, result)
+    syscall_weierstrass_add_handler::<Bn254, Bn254BaseField, { BN254_G1_RAW_AFFINE_SIZE }>(
+        ctx, params, result,
+    )
 }
 pub fn syscall_bls12381_add_handler(
     ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_weierstrass_add_handler::<Bls12381, { BLS12381_G1_RAW_AFFINE_SIZE }>(
+    syscall_weierstrass_add_handler::<Bls12381, Bls12381BaseField, { BLS12381_G1_RAW_AFFINE_SIZE }>(
         ctx, params, result,
     )
 }
 
-fn syscall_weierstrass_add_handler<E: EllipticCurve, const POINT_SIZE: usize>(
+fn syscall_weierstrass_add_handler<
+    E: EllipticCurve,
+    P: FieldParameters,
+    const POINT_SIZE: usize,
+>(
     ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
@@ -57,7 +69,7 @@ fn syscall_weierstrass_add_handler<E: EllipticCurve, const POINT_SIZE: usize>(
     let mut q = [0u8; POINT_SIZE];
     ctx.memory_read(q_ptr, &mut q)?;
 
-    let result = syscall_weierstrass_add_impl::<E, POINT_SIZE>(p, q)
+    let result = syscall_weierstrass_add_impl::<E, P, POINT_SIZE>(p, q)
         .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
     ctx.memory_write(p_ptr, &result)?;
     Ok(())
@@ -67,29 +79,35 @@ pub fn syscall_secp256k1_add_impl(
     p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE],
     q: [u8; SECP256K1_G1_RAW_AFFINE_SIZE],
 ) -> Result<[u8; SECP256K1_G1_RAW_AFFINE_SIZE], ExitCode> {
-    syscall_weierstrass_add_impl::<Secp256k1, { SECP256K1_G1_RAW_AFFINE_SIZE }>(p, q)
+    syscall_weierstrass_add_impl::<Secp256k1, Secp256k1BaseField, { SECP256K1_G1_RAW_AFFINE_SIZE }>(
+        p, q,
+    )
 }
 pub fn syscall_secp256r1_add_impl(
     p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE],
     q: [u8; SECP256R1_G1_RAW_AFFINE_SIZE],
 ) -> Result<[u8; SECP256R1_G1_RAW_AFFINE_SIZE], ExitCode> {
-    syscall_weierstrass_add_impl::<Secp256r1, { SECP256R1_G1_RAW_AFFINE_SIZE }>(p, q)
+    syscall_weierstrass_add_impl::<Secp256r1, Secp256r1BaseField, { SECP256R1_G1_RAW_AFFINE_SIZE }>(
+        p, q,
+    )
 }
 pub fn syscall_bn254_add_impl(
     p: [u8; BN254_G1_RAW_AFFINE_SIZE],
     q: [u8; BN254_G1_RAW_AFFINE_SIZE],
 ) -> Result<[u8; BN254_G1_RAW_AFFINE_SIZE], ExitCode> {
-    syscall_weierstrass_add_impl::<Bn254, { BN254_G1_RAW_AFFINE_SIZE }>(p, q)
+    syscall_weierstrass_add_impl::<Bn254, Bn254BaseField, { BN254_G1_RAW_AFFINE_SIZE }>(p, q)
 }
 pub fn syscall_bls12381_add_impl(
     p: [u8; BLS12381_G1_RAW_AFFINE_SIZE],
     q: [u8; BLS12381_G1_RAW_AFFINE_SIZE],
 ) -> Result<[u8; BLS12381_G1_RAW_AFFINE_SIZE], ExitCode> {
-    syscall_weierstrass_add_impl::<Bls12381, { BLS12381_G1_RAW_AFFINE_SIZE }>(p, q)
+    syscall_weierstrass_add_impl::<Bls12381, Bls12381BaseField, { BLS12381_G1_RAW_AFFINE_SIZE }>(
+        p, q,
+    )
 }
 
 /// Generic SP1 curve point addition implementation
-fn syscall_weierstrass_add_impl<E: EllipticCurve, const POINT_SIZE: usize>(
+fn syscall_weierstrass_add_impl<E: EllipticCurve, P: FieldParameters, const POINT_SIZE: usize>(
     p: [u8; POINT_SIZE],
     q: [u8; POINT_SIZE],
 ) -> Result<[u8; POINT_SIZE], ExitCode> {
@@ -99,6 +117,15 @@ fn syscall_weierstrass_add_impl<E: EllipticCurve, const POINT_SIZE: usize>(
     let q_affine = AffinePoint::<E>::new(BigUint::from_bytes_le(qx), BigUint::from_bytes_le(qy));
     // SP1 doesn't support add of two points, that's why we have to return an error here
     if p_affine.x == q_affine.x && p_affine.y == q_affine.y {
+        return Err(ExitCode::MalformedBuiltinParams);
+    }
+    // Make sure p/q are always less than modulus (to avoid neg underflow)
+    let modulus = P::modulus();
+    if p_affine.x >= modulus
+        || p_affine.y >= modulus
+        || q_affine.x >= modulus
+        || q_affine.y >= modulus
+    {
         return Err(ExitCode::MalformedBuiltinParams);
     }
     let result_affine = p_affine + q_affine;
@@ -123,6 +150,7 @@ fn syscall_weierstrass_add_impl<E: EllipticCurve, const POINT_SIZE: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sp1_curves::{params::FieldParameters, weierstrass::secp256k1::Secp256k1BaseField};
 
     #[test]
     fn test_bls12381_add() {
@@ -273,6 +301,30 @@ mod tests {
             127, 26, 254, 226, 66, 227, 79,
         ];
         let exit_code = syscall_secp256r1_add_impl(A, A).unwrap_err();
+        assert_eq!(exit_code, ExitCode::MalformedBuiltinParams);
+    }
+
+    #[test]
+    fn test_secp256k1_unreduced_coordinates_trigger_panic() {
+        // Build two distinct affine points whose x/y coordinates are deliberately larger than the
+        // base-field modulus (all bytes set to 0xff). This mirrors the “unreduced input” scenario.
+        let p = [0xffu8; 64];
+        let mut q = [0xffu8; 64];
+        // Ensure q != p so we do not trip the already-known “points are equal” panic path.
+        q[32] = 0xfe;
+
+        let modulus = Secp256k1BaseField::modulus();
+        let px = BigUint::from_bytes_le(&p[..32]);
+        let py = BigUint::from_bytes_le(&p[32..]);
+        let qx = BigUint::from_bytes_le(&q[..32]);
+        let qy = BigUint::from_bytes_le(&q[32..]);
+
+        assert!(
+            px >= modulus && py >= modulus && qx >= modulus && qy >= modulus,
+            "constructed points must have unreduced coordinates"
+        );
+
+        let exit_code = syscall_secp256k1_add_impl(p, q).unwrap_err();
         assert_eq!(exit_code, ExitCode::MalformedBuiltinParams);
     }
 }
