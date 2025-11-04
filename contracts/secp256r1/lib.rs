@@ -22,7 +22,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
-    sdk.sync_evm_gas(P256VERIFY_BASE_GAS_FEE, 0);
+    sdk.sync_evm_gas(P256VERIFY_BASE_GAS_FEE);
     let result = match p256_verify(input, u64::MAX) {
         Ok(result) => result,
         Err(_) => sdk.native_exit(ExitCode::PrecompileError),

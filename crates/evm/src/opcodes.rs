@@ -1,13 +1,13 @@
 //! Opcode shims that turn host-bound instructions into interruptions.
 //!
 //! The instruction table mirrors EVM semantics. For opcodes that require
-//! host interaction we emit a SystemInterruption and resume after the host
+//! host interaction, we emit a SystemInterruption and resume after the host
 //! provides a result.
 use crate::{
     host::{HostWrapper, HostWrapperImpl},
     opcodes,
     types::{InterruptingInterpreter, InterruptionExtension, InterruptionOutcome},
-    utils::{global_memory_from_shared_buffer, interrupt_into_action, sync_evm_gas},
+    utils::{global_memory_from_shared_buffer, interrupt_into_action},
 };
 use alloc::vec::Vec;
 use core::{cmp::min, mem::take, ops::Range};
@@ -42,11 +42,6 @@ macro_rules! unpack_interruption {
         if let Some(interruption_outcome) =
             take(&mut $context.interpreter.extend.interruption_outcome)
         {
-            gas!($context.interpreter, interruption_outcome.gas.spent());
-            $context
-                .interpreter
-                .gas
-                .record_refund(interruption_outcome.gas.refunded());
             if !interruption_outcome.exit_code.is_ok() {
                 let result = interruption_outcome.into_interpreter_result();
                 $context
@@ -104,19 +99,17 @@ fn extcodecopy<
 ) {
     if let Some(interruption_outcome) = unpack_interruption!(context) {
         popn!(
-            [_address, memory_offset, code_offset, len_u256],
+            [_address, memory_offset, _code_offset, len_u256],
             context.interpreter
         );
         let code = interruption_outcome.output;
         let len = as_usize_or_fail!(context.interpreter, len_u256);
         let memory_offset = as_usize_or_fail!(context.interpreter, memory_offset);
-        let code_offset = min(as_usize_saturated!(code_offset), code.len());
         resize_memory!(context.interpreter, memory_offset, len);
-        // Note: This can't panic because we resized memory to fit.
         context
             .interpreter
             .memory
-            .set_data(memory_offset, code_offset, len, &code);
+            .set_data(memory_offset, 0, len, &code);
         return;
     }
     peekn!(
@@ -160,19 +153,14 @@ fn blockhash<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?
     };
     let diff = as_u64_saturated!(diff);
     // blockhash should push zero if number is same as current block number.
-    if diff == 0 {
+    if diff == 0 || diff > BLOCK_HASH_HISTORY {
         *number = U256::ZERO;
         gas!(context.interpreter, gas::BLOCKHASH);
         return;
     }
-    if diff <= BLOCK_HASH_HISTORY {
-        interrupt_into_action(context, |_context, sdk| {
-            sdk.block_hash(as_u64_saturated!(requested_number))
-        });
-    } else {
-        gas!(context.interpreter, gas::BLOCKHASH);
-        *number = U256::ZERO;
-    }
+    interrupt_into_action(context, |_context, sdk| {
+        sdk.block_hash(as_u64_saturated!(requested_number))
+    });
 }
 
 fn sload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Sized>(
@@ -191,16 +179,13 @@ fn sstore<
     WIRE: InterpreterTypes<Extend = InterruptionExtension>,
     H: Host + HostWrapper + ?Sized,
 >(
-    mut context: InstructionContext<'_, H, WIRE>,
+    context: InstructionContext<'_, H, WIRE>,
 ) {
     if let Some(_interruption_outcome) = unpack_interruption!(context) {
         return;
     }
     require_non_staticcall!(context.interpreter);
     popn!([index, value], context.interpreter);
-    // TODO(dmitry123): Is there a better way to satisfy EIP-1706 (stipend check)? We need to sync gas before calling
-    //  store interruption because gas might be mis-synced and it affects amount less then stipend
-    sync_evm_gas(&mut context);
     interrupt_into_action(context, |_context, sdk| sdk.write_storage(index, value));
 }
 
@@ -265,14 +250,9 @@ fn create<
     const IS_CREATE2: bool,
     H: Host + HostWrapper + ?Sized,
 >(
-    mut context: InstructionContext<'_, H, WIRE>,
+    context: InstructionContext<'_, H, WIRE>,
 ) {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
-        gas!(context.interpreter, interruption_outcome.gas.spent());
-        context
-            .interpreter
-            .gas
-            .record_refund(interruption_outcome.gas.refunded());
         context.interpreter.return_data.clear();
         match interruption_outcome.exit_code {
             ExitCode::Ok => {
@@ -287,16 +267,8 @@ fn create<
                     .set_buffer(interruption_outcome.output);
                 push!(context.interpreter, U256::ZERO);
             }
-            ExitCode::Err => {
-                push!(context.interpreter, U256::ZERO);
-            }
             _ => {
-                // In case if exit code is not determined,
-                // then we should terminate the execution,
-                // because it can be OutOfGas or any of call instantiation error
-                context
-                    .interpreter
-                    .halt(interruption_outcome.instruction_result())
+                push!(context.interpreter, U256::ZERO);
             }
         }
         return;
@@ -360,8 +332,6 @@ fn create<
     } else {
         None
     };
-    // We should sync gas before doing call to make sure gas is synchronized between different runtimes
-    sync_evm_gas(&mut context);
     interrupt_into_action(context, |_context, sdk| {
         sdk.create(salt, &value, init_code.as_ref())
     });
@@ -386,11 +356,6 @@ fn insert_call_outcome<
     let target_len = min(out_len, interruption_outcome.output.len());
     match interruption_outcome.exit_code {
         ExitCode::Ok => {
-            gas!(context.interpreter, interruption_outcome.gas.spent());
-            context
-                .interpreter
-                .gas
-                .record_refund(interruption_outcome.gas.refunded());
             context
                 .interpreter
                 .memory
@@ -398,24 +363,14 @@ fn insert_call_outcome<
             push!(context.interpreter, U256::from(1));
         }
         ExitCode::Panic => {
-            gas!(context.interpreter, interruption_outcome.gas.spent());
             context
                 .interpreter
                 .memory
                 .set(out_offset, &interruption_outcome.output[..target_len]);
             push!(context.interpreter, U256::ZERO);
         }
-        ExitCode::Err => {
-            gas!(context.interpreter, interruption_outcome.gas.spent());
-            push!(context.interpreter, U256::ZERO);
-        }
         _ => {
-            // In case if exit code is not determined,
-            // then we should terminate the execution,
-            // because it can be OutOfGas or any of create instantiation error
-            context
-                .interpreter
-                .halt(interruption_outcome.instruction_result())
+            push!(context.interpreter, U256::ZERO);
         }
     }
 }
@@ -456,7 +411,7 @@ fn call<
     WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>,
     H: Host + HostWrapper + ?Sized,
 >(
-    mut context: InstructionContext<'_, H, WIRE>,
+    context: InstructionContext<'_, H, WIRE>,
 ) {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
         insert_call_outcome(context, interruption_outcome);
@@ -476,8 +431,6 @@ fn call<
     let Some(in_range) = get_memory_input_range(context.interpreter) else {
         return;
     };
-    // We should sync gas before doing call to make sure gas is synchronized between different runtimes
-    sync_evm_gas(&mut context);
     interrupt_into_action(context, |context, sdk| {
         let input = global_memory_from_shared_buffer(&context, in_range);
         // TODO(dmitry123): I know that wrapping mul works here, but why?
@@ -490,7 +443,7 @@ fn call_code<
     WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>,
     H: Host + HostWrapper + ?Sized,
 >(
-    mut context: InstructionContext<'_, H, WIRE>,
+    context: InstructionContext<'_, H, WIRE>,
 ) {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
         insert_call_outcome(context, interruption_outcome);
@@ -503,8 +456,6 @@ fn call_code<
     let Some(in_range) = get_memory_input_range(context.interpreter) else {
         return;
     };
-    // We should sync gas before doing call to make sure gas is synchronized between different runtimes
-    sync_evm_gas(&mut context);
     interrupt_into_action(context, |context, sdk| {
         let input = global_memory_from_shared_buffer(&context, in_range);
         // TODO(dmitry123): I know that wrapping mul works here, but why?
@@ -517,7 +468,7 @@ fn delegate_call<
     WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>,
     H: Host + HostWrapper + ?Sized,
 >(
-    mut context: InstructionContext<'_, H, WIRE>,
+    context: InstructionContext<'_, H, WIRE>,
 ) {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
         insert_call_outcome(context, interruption_outcome);
@@ -530,8 +481,6 @@ fn delegate_call<
     let Some(in_range) = get_memory_input_range(context.interpreter) else {
         return;
     };
-    // We should sync gas before doing call to make sure gas is synchronized between different runtimes
-    sync_evm_gas(&mut context);
     interrupt_into_action(context, |context, sdk| {
         let input = global_memory_from_shared_buffer(&context, in_range);
         // TODO(dmitry123): I know that wrapping mul works here, but why?
@@ -544,7 +493,7 @@ fn static_call<
     WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>,
     H: Host + HostWrapper + ?Sized,
 >(
-    mut context: InstructionContext<'_, H, WIRE>,
+    context: InstructionContext<'_, H, WIRE>,
 ) {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
         insert_call_outcome(context, interruption_outcome);
@@ -557,8 +506,6 @@ fn static_call<
     let Some(in_range) = get_memory_input_range(context.interpreter) else {
         return;
     };
-    // We should sync gas before doing call to make sure gas is synchronized between different runtimes
-    sync_evm_gas(&mut context);
     interrupt_into_action(context, |context, sdk| {
         let input = global_memory_from_shared_buffer(&context, in_range);
         // TODO(dmitry123): I know that wrapping mul works here, but why?

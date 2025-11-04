@@ -6,8 +6,6 @@ use fluentbase_types::{Bytes, CALL_DEPTH_ROOT, STATE_MAIN};
 pub struct RuntimeContext {
     /// Maximum fuel available to this invocation.
     pub fuel_limit: u64,
-    /// If true, the engine does not enforce fuel; fuel is managed explicitly by builtins.
-    pub disable_fuel: bool,
     /// Entry selector for the module (e.g., STATE_MAIN or STATE_DEPLOY).
     pub state: u32,
     /// Current call depth; root is zero.
@@ -24,7 +22,6 @@ impl Default for RuntimeContext {
     fn default() -> Self {
         Self {
             fuel_limit: 0,
-            disable_fuel: false,
             state: STATE_MAIN,
             call_depth: CALL_DEPTH_ROOT,
             input: Bytes::default(),
@@ -59,19 +56,8 @@ impl RuntimeContext {
         self
     }
 
-    /// Marks the context to run with fuel metering disabled.
-    pub fn with_disabled_fuel(mut self) -> Self {
-        self.disable_fuel = true;
-        self
-    }
-
     /// Clears the accumulated output buffer.
     pub fn clear_output(&mut self) {
         self.execution_result.output.clear();
-    }
-
-    /// Returns true if fuel metering is disabled for this context.
-    pub fn is_fuel_disabled(&self) -> bool {
-        self.disable_fuel
     }
 }

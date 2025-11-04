@@ -1,7 +1,7 @@
 //! Small helpers for building the interruption protocol and keeping gas in sync.
 use crate::{host::HostWrapper, types::InterruptionExtension};
 use core::{cell::Ref, ops::Range};
-use fluentbase_sdk::{InterruptionExtractingAdapter, SharedAPI, FUEL_DENOM_RATE};
+use fluentbase_sdk::InterruptionExtractingAdapter;
 use revm_interpreter::{
     interpreter_types::{Jumps, LoopControl, MemoryTr},
     Host, InstructionContext, InterpreterAction, InterpreterTypes,
@@ -34,33 +34,6 @@ pub(crate) fn interrupt_into_action<
     // To achieve this, we jump back to this opcode PC.
     context.interpreter.bytecode.relative_jump(-1);
     context.interpreter.bytecode.set_action(action);
-}
-
-/// Commit interpreter gas deltas to the host (fuel) and snapshot the state.
-pub(crate) fn sync_evm_gas<
-    WIRE: InterpreterTypes<Extend = InterruptionExtension>,
-    H: Host + HostWrapper + ?Sized,
->(
-    context: &mut InstructionContext<'_, H, WIRE>,
-) {
-    let (gas, committed_gas) = (
-        &context.interpreter.gas,
-        &mut context.interpreter.extend.committed_gas,
-    );
-    let remaining_diff = committed_gas.remaining() - gas.remaining();
-    let refunded_diff = gas.refunded() - committed_gas.refunded();
-    // If there is nothing to commit/charge then just ignore it
-    if remaining_diff == 0 && refunded_diff == 0 {
-        return;
-    }
-    // Charge gas from the runtime
-    context.host.sdk_mut().charge_fuel_manually(
-        // TODO(dmitry123): How safe to mul here? Shouldn't overwrap. Checked?
-        remaining_diff * FUEL_DENOM_RATE,
-        refunded_diff * FUEL_DENOM_RATE as i64,
-    );
-    // Remember new committed gas
-    *committed_gas = *gas;
 }
 
 /// View a range of the interpreter’s shared memory as a global slice.

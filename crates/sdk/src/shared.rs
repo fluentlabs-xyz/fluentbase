@@ -163,9 +163,8 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         self.native_sdk.read(target, offset)
     }
 
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) {
-        self.native_sdk
-            .charge_fuel_manually(fuel_consumed, fuel_refunded);
+    fn charge_fuel(&self, fuel_consumed: u64) {
+        self.native_sdk.charge_fuel(fuel_consumed);
     }
 
     fn fuel(&self) -> u64 {
@@ -299,10 +298,10 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         address: Address,
         value: U256,
         input: &[u8],
-        fuel_limit: Option<u64>,
+        gas_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
         let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.call(address, value, input, fuel_limit);
+            self.native_sdk.call(address, value, input, gas_limit);
         let value = self.native_sdk.return_data();
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }

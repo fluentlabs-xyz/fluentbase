@@ -68,7 +68,7 @@ pub fn syscall_resume_impl(
     }
     let result = default_runtime_executor().resume(
         call_id,
-        return_data.to_vec(),
+        return_data,
         fuel16_ptr,
         fuel_consumed,
         fuel_refunded,

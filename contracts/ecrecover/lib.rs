@@ -15,7 +15,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     // Make sure we have enough gas for execution
     const ECRECOVER_BASE: u64 = 3_000;
-    sdk.sync_evm_gas(ECRECOVER_BASE, 0);
+    sdk.sync_evm_gas(ECRECOVER_BASE);
 
     let input = right_pad::<128>(input.as_ref());
 

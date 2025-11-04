@@ -95,11 +95,6 @@ impl NativeAPI for RuntimeContextWrapper {
         syscall_forward_output_impl(&mut self.ctx.borrow_mut(), offset, len).unwrap_exit_code()
     }
 
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
-        syscall_charge_fuel_manually_impl(&mut self.ctx.borrow_mut(), fuel_consumed, fuel_refunded)
-            .unwrap()
-    }
-
     #[inline(always)]
     fn fuel(&self) -> u64 {
         syscall_fuel_impl(&self.ctx.borrow())
