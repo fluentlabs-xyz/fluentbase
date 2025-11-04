@@ -56,27 +56,27 @@ impl CryptoAPI for RuntimeContextWrapper {
     }
     #[inline(always)]
     fn tower_fp2_bn254_add(a_c0: [u8; BN254_FP_SIZE], a_c1: [u8; BN254_FP_SIZE], b_c0: [u8; BN254_FP_SIZE], b_c1: [u8; BN254_FP_SIZE]) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {
-        syscall_tower_fp2_bn254_add_impl(a_c0, a_c1, b_c0, b_c1)
+        syscall_tower_fp2_bn254_add_impl(a_c0, a_c1, b_c0, b_c1).unwrap_exit_code()
     }
     #[inline(always)]
     fn tower_fp2_bn254_sub(a_c0: [u8; BN254_FP_SIZE], a_c1: [u8; BN254_FP_SIZE], b_c0: [u8; BN254_FP_SIZE], b_c1: [u8; BN254_FP_SIZE]) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {
-        syscall_tower_fp2_bn254_sub_impl(a_c0, a_c1, b_c0, b_c1)
+        syscall_tower_fp2_bn254_sub_impl(a_c0, a_c1, b_c0, b_c1).unwrap_exit_code()
     }
     #[inline(always)]
     fn tower_fp2_bn254_mul(a_c0: [u8; BN254_FP_SIZE], a_c1: [u8; BN254_FP_SIZE], b_c0: [u8; BN254_FP_SIZE], b_c1: [u8; BN254_FP_SIZE]) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {
-        syscall_tower_fp2_bn254_mul_impl(a_c0, a_c1, b_c0, b_c1)
+        syscall_tower_fp2_bn254_mul_impl(a_c0, a_c1, b_c0, b_c1).unwrap_exit_code()
     }
     #[inline(always)]
     fn tower_fp2_bls12381_add(a_c0: [u8; BLS12381_FP_SIZE], a_c1: [u8; BLS12381_FP_SIZE], b_c0: [u8; BLS12381_FP_SIZE], b_c1: [u8; BLS12381_FP_SIZE]) -> ([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]) {
-        syscall_tower_fp2_bls12381_add_impl(a_c0, a_c1, b_c0, b_c1)
+        syscall_tower_fp2_bls12381_add_impl(a_c0, a_c1, b_c0, b_c1).unwrap_exit_code()
     }
     #[inline(always)]
     fn tower_fp2_bls12381_sub(a_c0: [u8; BLS12381_FP_SIZE], a_c1: [u8; BLS12381_FP_SIZE], b_c0: [u8; BLS12381_FP_SIZE], b_c1: [u8; BLS12381_FP_SIZE]) -> ([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]) {
-        syscall_tower_fp2_bls12381_sub_impl(a_c0, a_c1, b_c0, b_c1)
+        syscall_tower_fp2_bls12381_sub_impl(a_c0, a_c1, b_c0, b_c1).unwrap_exit_code()
     }
     #[inline(always)]
     fn tower_fp2_bls12381_mul(a_c0: [u8; BLS12381_FP_SIZE], a_c1: [u8; BLS12381_FP_SIZE], b_c0: [u8; BLS12381_FP_SIZE], b_c1: [u8; BLS12381_FP_SIZE]) -> ([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]) {
-        syscall_tower_fp2_bls12381_mul_impl(a_c0, a_c1, b_c0, b_c1)
+        syscall_tower_fp2_bls12381_mul_impl(a_c0, a_c1, b_c0, b_c1).unwrap_exit_code()
     }
 
     #[inline(always)]
