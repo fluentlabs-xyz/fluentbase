@@ -55,8 +55,8 @@ use crate::{
     solana_program::{loader_v4, sysvar::Sysvar},
 };
 use fluentbase_sdk::{
-    calc_create4_address, keccak256, Address, Bytes, MetadataAPI, MetadataStorageAPI, SharedAPI,
-    StorageAPI, B256, PRECOMPILE_SVM_RUNTIME,
+    calc_create_metadata_address, keccak256, Address, Bytes, MetadataAPI, MetadataStorageAPI,
+    SharedAPI, StorageAPI, B256, PRECOMPILE_SVM_RUNTIME,
 };
 use solana_rbpf::ebpf::MM_HEAP_START;
 
@@ -234,7 +234,7 @@ pub fn storage_read_metadata_params<API: MetadataAPI>(
 ) -> Result<(B256, Address, u32), SvmError> {
     // let pubkey_hash = keccak256(pubkey.as_ref());
     let pubkey: B256 = pubkey.to_bytes().into();
-    let derived_metadata_address = calc_create4_address(
+    let derived_metadata_address = calc_create_metadata_address(
         &alt_precompile_address.unwrap_or(PRECOMPILE_SVM_RUNTIME),
         &pubkey.into(),
     );
