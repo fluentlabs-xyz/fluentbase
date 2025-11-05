@@ -3,10 +3,10 @@ extern crate alloc;
 
 use bls12_381::{pairing, G1Affine, G1Projective, G2Affine, G2Projective, Gt, Scalar};
 use fluentbase_sdk::{
-    alloc_slice, crypto::CryptoRuntime, entrypoint, Bytes, ContextReader, CryptoAPI, ExitCode,
-    SharedAPI, PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BLS12_381_G1_MSM,
-    PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BLS12_381_MAP_G1,
-    PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
+    alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI,
+    PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BLS12_381_G2_ADD,
+    PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BLS12_381_MAP_G2,
+    PRECOMPILE_BLS12_381_PAIRING,
 };
 use revm_precompile::bls12_381::{
     g2_msm::g2_msm, map_fp2_to_g2::map_fp2_to_g2, map_fp_to_g1::map_fp_to_g1,
