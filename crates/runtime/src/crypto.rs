@@ -84,8 +84,11 @@ impl CryptoAPI for RuntimeContextWrapper {
         syscall_secp256k1_add_impl(p, q)
     }
     #[inline(always)]
-    fn secp256k1_decompress(x: [u8; SECP256K1_G1_COMPRESSED_SIZE], sign: u32) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
-        syscall_secp256k1_decompress_impl(x, sign).unwrap_exit_code()
+    fn secp256k1_decompress(mut x: [u8; SECP256K1_G1_COMPRESSED_SIZE], sign: u32) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
+        x.reverse();
+        let mut result = syscall_secp256k1_decompress_impl(x, sign).unwrap_exit_code();
+        result.reverse();
+        result
     }
     #[inline(always)]
     fn secp256k1_double(p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE]) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
@@ -97,8 +100,11 @@ impl CryptoAPI for RuntimeContextWrapper {
         syscall_secp256r1_add_impl(p, q)
     }
     #[inline(always)]
-    fn secp256r1_decompress(x: [u8; SECP256R1_G1_COMPRESSED_SIZE], sign: u32) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
-        syscall_secp256r1_decompress_impl(x, sign).unwrap_exit_code()
+    fn secp256r1_decompress(mut x: [u8; SECP256R1_G1_COMPRESSED_SIZE], sign: u32) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
+        x.reverse();
+        let mut result = syscall_secp256r1_decompress_impl(x, sign).unwrap_exit_code();
+        result.reverse();
+        result
     }
     #[inline(always)]
     fn secp256r1_double(p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE]) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
@@ -110,8 +116,11 @@ impl CryptoAPI for RuntimeContextWrapper {
         syscall_bls12381_add_impl(p, q)
     }
     #[inline(always)]
-    fn bls12381_decompress(x: [u8; BLS12381_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
-        syscall_bls12381_decompress_impl(x, sign).unwrap_exit_code()
+    fn bls12381_decompress(mut x: [u8; BLS12381_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
+        x.reverse();
+        let mut result = syscall_bls12381_decompress_impl(x, sign).unwrap_exit_code();
+        result.reverse();
+        result
     }
     #[inline(always)]
     fn bls12381_double(p: [u8; BLS12381_G1_RAW_AFFINE_SIZE]) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
