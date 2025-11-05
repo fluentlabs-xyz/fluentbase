@@ -55,7 +55,9 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::CHARGE_FUEL => syscall_charge_fuel_handler(caller, params, result),
         SysFuncIdx::ENTER_UNCONSTRAINED => syscall_enter_leave_unconstrained_handler(caller, params, result),
         SysFuncIdx::EXIT_UNCONSTRAINED => syscall_enter_leave_unconstrained_handler(caller, params, result),
-        SysFuncIdx::WRITE_FD => syscall_write_fd_handler(caller, params, result),
+        // TODO(dmitry123): This syscall is disabled since it can cause panic, we should refine it
+        //  by introducing new system contracts where the same functionality is achieved.
+        // SysFuncIdx::WRITE_FD => syscall_write_fd_handler(caller, params, result),
 
         // hashing functions (0x01)
         SysFuncIdx::KECCAK256 => syscall_hashing_keccak256_handler(caller, params, result),
