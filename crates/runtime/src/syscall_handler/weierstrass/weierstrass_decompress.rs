@@ -58,53 +58,52 @@ fn syscall_weierstrass_decompress_handler<
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    let (slice_ptr, sign_bit) = (
+    let (yx_ptr, sign_bit) = (
         params[0].i32().unwrap() as usize,
         params[1].i32().unwrap() as u32,
     );
 
-    let mut x_bytes = [0u8; COMPRESSED_SIZE];
-    ctx.memory_read(slice_ptr + COMPRESSED_SIZE, &mut x_bytes)?;
+    let mut x_bytes_le = [0u8; COMPRESSED_SIZE];
+    ctx.memory_read(yx_ptr + COMPRESSED_SIZE, &mut x_bytes_le)?;
 
-    let decompressed_y_bytes =
-        syscall_weierstrass_decompress_impl::<E, COMPRESSED_SIZE, DECOMPRESSED_SIZE>(
-            x_bytes, sign_bit,
-        )
-        .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
+    let yx_bytes_le = syscall_weierstrass_decompress_impl::<E, COMPRESSED_SIZE, DECOMPRESSED_SIZE>(
+        x_bytes_le, sign_bit,
+    )
+    .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
 
-    ctx.memory_write(slice_ptr, &decompressed_y_bytes)?;
+    ctx.memory_write(yx_ptr, &yx_bytes_le)?;
     Ok(())
 }
 
 pub fn syscall_secp256k1_decompress_impl(
-    x_bytes: [u8; SECP256K1_G1_COMPRESSED_SIZE],
+    x_bytes_le: [u8; SECP256K1_G1_COMPRESSED_SIZE],
     sign_bit: u32,
 ) -> Result<[u8; SECP256K1_G1_RAW_AFFINE_SIZE], ExitCode> {
     syscall_weierstrass_decompress_impl::<
         Secp256k1,
         { SECP256K1_G1_COMPRESSED_SIZE },
         { SECP256K1_G1_RAW_AFFINE_SIZE },
-    >(x_bytes, sign_bit)
+    >(x_bytes_le, sign_bit)
 }
 pub fn syscall_secp256r1_decompress_impl(
-    x_bytes: [u8; SECP256R1_G1_COMPRESSED_SIZE],
+    x_bytes_le: [u8; SECP256R1_G1_COMPRESSED_SIZE],
     sign_bit: u32,
 ) -> Result<[u8; SECP256R1_G1_RAW_AFFINE_SIZE], ExitCode> {
     syscall_weierstrass_decompress_impl::<
         Secp256r1,
         { SECP256R1_G1_COMPRESSED_SIZE },
         { SECP256R1_G1_RAW_AFFINE_SIZE },
-    >(x_bytes, sign_bit)
+    >(x_bytes_le, sign_bit)
 }
 pub fn syscall_bls12381_decompress_impl(
-    x_bytes: [u8; BLS12381_G1_COMPRESSED_SIZE],
+    x_bytes_le: [u8; BLS12381_G1_COMPRESSED_SIZE],
     sign_bit: u32,
 ) -> Result<[u8; BLS12381_G1_RAW_AFFINE_SIZE], ExitCode> {
     syscall_weierstrass_decompress_impl::<
         Bls12381,
         { BLS12381_G1_COMPRESSED_SIZE },
         { BLS12381_G1_RAW_AFFINE_SIZE },
-    >(x_bytes, sign_bit)
+    >(x_bytes_le, sign_bit)
 }
 
 fn syscall_weierstrass_decompress_impl<
@@ -112,16 +111,20 @@ fn syscall_weierstrass_decompress_impl<
     const COMPRESSED_SIZE: usize,
     const DECOMPRESSED_SIZE: usize,
 >(
-    x_bytes: [u8; COMPRESSED_SIZE],
+    x_bytes_le: [u8; COMPRESSED_SIZE],
     sign_bit: u32,
 ) -> Result<[u8; DECOMPRESSED_SIZE], ExitCode> {
     if sign_bit > 1 {
         return Err(ExitCode::MalformedBuiltinParams);
     }
 
+    // Note: the code bellow is copied from SP1 repository as-is,
+    //  where we replaced panics with error codes to avoid node crashes.
+    //
+    // https://github.com/succinctlabs/sp1/tree/dev/crates/curves/src/weierstrass
     let computed_point = match E::CURVE_TYPE {
         CurveType::Secp256k1 => {
-            let mut x_bytes_be = x_bytes.clone();
+            let mut x_bytes_be = x_bytes_le.clone();
             x_bytes_be.reverse();
             let computed_point = k256::AffinePoint::decompress(
                 x_bytes_be.as_slice().into(),
@@ -136,7 +139,7 @@ fn syscall_weierstrass_decompress_impl<
             AffinePoint::<E>::new(x, y)
         }
         CurveType::Secp256r1 => {
-            let mut x_bytes_be = x_bytes.clone();
+            let mut x_bytes_be = x_bytes_le.clone();
             x_bytes_be.reverse();
             let computed_point = p256::AffinePoint::decompress(
                 x_bytes_be.as_slice().into(),
@@ -151,7 +154,7 @@ fn syscall_weierstrass_decompress_impl<
             AffinePoint::<E>::new(x, y)
         }
         CurveType::Bls12381 => {
-            let mut g1_bytes_be = x_bytes.clone();
+            let mut g1_bytes_be = x_bytes_le.clone();
             g1_bytes_be.reverse();
 
             const COMPRESSION_FLAG: u8 = 0b_1000_0000;
@@ -179,13 +182,13 @@ fn syscall_weierstrass_decompress_impl<
         _ => panic!("unsupported curve: {}", E::CURVE_TYPE),
     };
 
-    let y_bytes = computed_point.y.to_bytes_le();
+    let y_bytes_le = computed_point.y.to_bytes_le();
 
-    let mut result = [0u8; DECOMPRESSED_SIZE];
-    let (result_y, result_x) = result.split_at_mut(DECOMPRESSED_SIZE / 2);
-    result_y[..y_bytes.len()].clone_from_slice(&y_bytes);
-    result_x[..x_bytes.len()].clone_from_slice(&x_bytes);
-    Ok(result)
+    let mut result_bytes_le = [0u8; DECOMPRESSED_SIZE];
+    let (result_y, result_x) = result_bytes_le.split_at_mut(DECOMPRESSED_SIZE / 2);
+    result_y[..y_bytes_le.len()].clone_from_slice(&y_bytes_le);
+    result_x[..x_bytes_le.len()].clone_from_slice(&x_bytes_le);
+    Ok(result_bytes_le)
 }
 
 #[cfg(test)]

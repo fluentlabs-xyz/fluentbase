@@ -225,8 +225,12 @@ impl CryptoAPI for RwasmContext {
     #[inline(always)]
     fn secp256k1_decompress(x: [u8; SECP256K1_G1_COMPRESSED_SIZE], sign: u32) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
         let mut result = [0u8; SECP256K1_G1_RAW_AFFINE_SIZE];
-        result[SECP256K1_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
+        result[..SECP256K1_G1_COMPRESSED_SIZE].copy_from_slice(x.as_slice());
+        result.reverse();
+        // The input is YX (LE)
         unsafe { _secp256k1_decompress(result.as_mut_ptr(), sign) };
+        result.reverse();
+        // The output result is XY (BE)
         result
     }
     #[inline(always)]
@@ -243,8 +247,12 @@ impl CryptoAPI for RwasmContext {
     #[inline(always)]
     fn secp256r1_decompress(x: [u8; SECP256R1_G1_COMPRESSED_SIZE], sign: u32) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
         let mut result = [0u8; SECP256R1_G1_RAW_AFFINE_SIZE];
-        result[SECP256R1_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
+        result[..SECP256R1_G1_COMPRESSED_SIZE].copy_from_slice(x.as_slice());
+        result.reverse();
+        // The input is YX (LE)
         unsafe { _secp256r1_decompress(result.as_mut_ptr(), sign) };
+        result.reverse();
+        // The output result is XY (BE)
         result
     }
     #[inline(always)]
@@ -259,10 +267,14 @@ impl CryptoAPI for RwasmContext {
         p
     }
     #[inline(always)]
-    fn bls12381_decompress(mut x: [u8; BLS12381_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
+    fn bls12381_decompress(x: [u8; BLS12381_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
         let mut result = [0u8; BLS12381_G1_RAW_AFFINE_SIZE];
-        result[BLS12381_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
+        result[..BLS12381_G1_COMPRESSED_SIZE].copy_from_slice(x.as_slice());
+        result.reverse();
+        // The input is YX (LE)
         unsafe { _bls12381_decompress(result.as_mut_ptr(), sign) };
+        result.reverse();
+        // The output result is XY (BE)
         result
     }
     #[inline(always)]
