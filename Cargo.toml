@@ -2,7 +2,6 @@
 members = [
     "crates/*",
     "e2e",
-    "bins/cli"
 ]
 exclude = [
     "examples/svm",
