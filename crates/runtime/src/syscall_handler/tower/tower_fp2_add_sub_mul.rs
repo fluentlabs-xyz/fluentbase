@@ -1,5 +1,5 @@
-use crate::RuntimeContext;
-use fluentbase_types::{BLS12381_FP_SIZE, BN254_FP_SIZE};
+use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
+use fluentbase_types::{ExitCode, BLS12381_FP_SIZE, BN254_FP_SIZE};
 use num::BigUint;
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::weierstrass::{bls12_381::Bls12381BaseField, bn254::Bn254BaseField, FpOpField};
@@ -90,7 +90,8 @@ pub(crate) fn syscall_tower_fp2_add_sub_mul_handler<
         ac1.try_into().unwrap(),
         bc0.try_into().unwrap(),
         bc1.try_into().unwrap(),
-    );
+    )
+    .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
 
     ctx.memory_write(x_ptr as usize, &res0)?;
     ctx.memory_write(x_ptr as usize + NUM_BYTES, &res1)?;
@@ -102,7 +103,7 @@ pub fn syscall_tower_fp2_bn254_add_impl(
     ac1: [u8; BN254_FP_SIZE],
     bc0: [u8; BN254_FP_SIZE],
     bc1: [u8; BN254_FP_SIZE],
-) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {
+) -> Result<([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]), ExitCode> {
     syscall_tower_fp2_add_sub_mul_impl::<BN254_FP_SIZE, Bn254BaseField, FP_FIELD_ADD>(
         ac0, ac1, bc0, bc1,
     )
@@ -112,7 +113,7 @@ pub fn syscall_tower_fp2_bn254_sub_impl(
     ac1: [u8; BN254_FP_SIZE],
     bc0: [u8; BN254_FP_SIZE],
     bc1: [u8; BN254_FP_SIZE],
-) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {
+) -> Result<([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]), ExitCode> {
     syscall_tower_fp2_add_sub_mul_impl::<BN254_FP_SIZE, Bn254BaseField, FP_FIELD_SUB>(
         ac0, ac1, bc0, bc1,
     )
@@ -122,7 +123,7 @@ pub fn syscall_tower_fp2_bn254_mul_impl(
     ac1: [u8; BN254_FP_SIZE],
     bc0: [u8; BN254_FP_SIZE],
     bc1: [u8; BN254_FP_SIZE],
-) -> ([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]) {
+) -> Result<([u8; BN254_FP_SIZE], [u8; BN254_FP_SIZE]), ExitCode> {
     syscall_tower_fp2_add_sub_mul_impl::<BN254_FP_SIZE, Bn254BaseField, FP_FIELD_MUL>(
         ac0, ac1, bc0, bc1,
     )
@@ -132,7 +133,7 @@ pub fn syscall_tower_fp2_bls12381_add_impl(
     ac1: [u8; BLS12381_FP_SIZE],
     bc0: [u8; BLS12381_FP_SIZE],
     bc1: [u8; BLS12381_FP_SIZE],
-) -> ([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]) {
+) -> Result<([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]), ExitCode> {
     syscall_tower_fp2_add_sub_mul_impl::<BLS12381_FP_SIZE, Bls12381BaseField, FP_FIELD_ADD>(
         ac0, ac1, bc0, bc1,
     )
@@ -142,7 +143,7 @@ pub fn syscall_tower_fp2_bls12381_sub_impl(
     ac1: [u8; BLS12381_FP_SIZE],
     bc0: [u8; BLS12381_FP_SIZE],
     bc1: [u8; BLS12381_FP_SIZE],
-) -> ([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]) {
+) -> Result<([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]), ExitCode> {
     syscall_tower_fp2_add_sub_mul_impl::<BLS12381_FP_SIZE, Bls12381BaseField, FP_FIELD_SUB>(
         ac0, ac1, bc0, bc1,
     )
@@ -152,7 +153,7 @@ pub fn syscall_tower_fp2_bls12381_mul_impl(
     ac1: [u8; BLS12381_FP_SIZE],
     bc0: [u8; BLS12381_FP_SIZE],
     bc1: [u8; BLS12381_FP_SIZE],
-) -> ([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]) {
+) -> Result<([u8; BLS12381_FP_SIZE], [u8; BLS12381_FP_SIZE]), ExitCode> {
     syscall_tower_fp2_add_sub_mul_impl::<BLS12381_FP_SIZE, Bls12381BaseField, FP_FIELD_MUL>(
         ac0, ac1, bc0, bc1,
     )
@@ -167,7 +168,7 @@ pub(crate) fn syscall_tower_fp2_add_sub_mul_impl<
     ac1: [u8; NUM_BYTES],
     bc0: [u8; NUM_BYTES],
     bc1: [u8; NUM_BYTES],
-) -> ([u8; NUM_BYTES], [u8; NUM_BYTES]) {
+) -> Result<([u8; NUM_BYTES], [u8; NUM_BYTES]), ExitCode> {
     let ac0 = &BigUint::from_bytes_le(&ac0);
     let ac1 = &BigUint::from_bytes_le(&ac1);
     let bc0 = &BigUint::from_bytes_le(&bc0);
@@ -175,10 +176,15 @@ pub(crate) fn syscall_tower_fp2_add_sub_mul_impl<
     let modulus = &BigUint::from_bytes_le(P::MODULUS);
     let (c0, c1) = match FIELD_OP {
         FP_FIELD_ADD => ((ac0 + bc0) % modulus, (ac1 + bc1) % modulus),
-        FP_FIELD_SUB => (
-            (ac0 + modulus - bc0) % modulus,
-            (ac1 + modulus - bc1) % modulus,
-        ),
+        FP_FIELD_SUB => {
+            if ac0 + modulus < *bc0 || ac1 + modulus < *bc1 {
+                return Err(ExitCode::MalformedBuiltinParams);
+            }
+            (
+                (ac0 + modulus - bc0) % modulus,
+                (ac1 + modulus - bc1) % modulus,
+            )
+        }
         FP_FIELD_MUL => {
             let c0 = match (ac0 * bc0) % modulus < (ac1 * bc1) % modulus {
                 true => ((modulus + (ac0 * bc0) % modulus) - (ac1 * bc1) % modulus) % modulus,
@@ -193,7 +199,9 @@ pub(crate) fn syscall_tower_fp2_add_sub_mul_impl<
     res0.resize(NUM_BYTES, 0);
     let mut res1 = c1.to_bytes_le();
     res1.resize(NUM_BYTES, 0);
-    (res0.try_into().unwrap(), res1.try_into().unwrap())
+    let result: ([u8; NUM_BYTES], [u8; NUM_BYTES]) =
+        (res0.try_into().unwrap(), res1.try_into().unwrap());
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -230,7 +238,8 @@ mod tests {
                     big_uint_into_bytes(ac1),
                     big_uint_into_bytes(bc0),
                     big_uint_into_bytes(bc1),
-                );
+                )
+                .unwrap();
                 (BigUint::from_bytes_le(&res0), BigUint::from_bytes_le(&res1))
             };
         let sub =
@@ -240,7 +249,8 @@ mod tests {
                     big_uint_into_bytes(ac1),
                     big_uint_into_bytes(bc0),
                     big_uint_into_bytes(bc1),
-                );
+                )
+                .unwrap();
                 (BigUint::from_bytes_le(&res0), BigUint::from_bytes_le(&res1))
             };
         let mul =
@@ -250,7 +260,8 @@ mod tests {
                     big_uint_into_bytes(ac1),
                     big_uint_into_bytes(bc0),
                     big_uint_into_bytes(bc1),
-                );
+                )
+                .unwrap();
                 (BigUint::from_bytes_le(&res0), BigUint::from_bytes_le(&res1))
             };
 
@@ -325,7 +336,8 @@ mod tests {
                     big_uint_into_bytes(ac1),
                     big_uint_into_bytes(bc0),
                     big_uint_into_bytes(bc1),
-                );
+                )
+                .unwrap();
                 (BigUint::from_bytes_le(&res0), BigUint::from_bytes_le(&res1))
             };
         let sub =
@@ -335,7 +347,8 @@ mod tests {
                     big_uint_into_bytes(ac1),
                     big_uint_into_bytes(bc0),
                     big_uint_into_bytes(bc1),
-                );
+                )
+                .unwrap();
                 (BigUint::from_bytes_le(&res0), BigUint::from_bytes_le(&res1))
             };
         let mul =
@@ -345,7 +358,8 @@ mod tests {
                     big_uint_into_bytes(ac1),
                     big_uint_into_bytes(bc0),
                     big_uint_into_bytes(bc1),
-                );
+                )
+                .unwrap();
                 (BigUint::from_bytes_le(&res0), BigUint::from_bytes_le(&res1))
             };
 
@@ -405,5 +419,24 @@ mod tests {
             assert_eq!(c0, &res_c0 % &modulus);
             assert_eq!(c1, &res_c1 % &modulus);
         }
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: MalformedBuiltinParams"
+    )]
+    fn test_tower_fp2_bn254_sub_panics_on_non_canonical_bc1() {
+        const MODULUS: &str =
+            "21888242871839275222246405745257275088696311157297823662689037894645226208583";
+        let modulus = BigUint::from_str(MODULUS).unwrap();
+        let non_canonical = modulus.clone() + BigUint::from(1u32);
+
+        let _ = syscall_tower_fp2_bn254_sub_impl(
+            big_uint_into_bytes(&BigUint::ZERO),
+            big_uint_into_bytes(&BigUint::ZERO),
+            big_uint_into_bytes(&BigUint::ZERO),
+            big_uint_into_bytes(&non_canonical),
+        )
+        .unwrap();
     }
 }

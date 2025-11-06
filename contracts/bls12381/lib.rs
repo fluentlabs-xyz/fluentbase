@@ -3,13 +3,14 @@ extern crate alloc;
 
 use bls12_381::{pairing, G1Affine, G1Projective, G2Affine, G2Projective, Gt, Scalar};
 use fluentbase_sdk::{
-    alloc_slice, crypto::CryptoRuntime, entrypoint, Bytes, ContextReader, CryptoAPI, ExitCode,
-    SharedAPI, PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BLS12_381_G1_MSM,
-    PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BLS12_381_MAP_G1,
-    PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
+    alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI,
+    PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BLS12_381_G2_ADD,
+    PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BLS12_381_MAP_G2,
+    PRECOMPILE_BLS12_381_PAIRING,
 };
-
-use revm_precompile::bls12_381::{g2_msm::g2_msm, map_fp_to_g1::map_fp_to_g1, map_fp2_to_g2::map_fp2_to_g2};
+use revm_precompile::bls12_381::{
+    g2_msm::g2_msm, map_fp2_to_g2::map_fp2_to_g2, map_fp_to_g1::map_fp_to_g1,
+};
 
 /// BLS12-381 Specific Constants
 pub const SCALAR_SIZE: usize = 32;
@@ -101,7 +102,7 @@ fn check_gas_and_sync<SDK: SharedAPI>(sdk: &SDK, gas_used: u64, gas_limit: u64) 
     if gas_used > gas_limit {
         sdk.native_exit(ExitCode::OutOfFuel);
     }
-    sdk.sync_evm_gas(gas_used, 0);
+    sdk.sync_evm_gas(gas_used);
 }
 
 #[inline(always)]
@@ -417,7 +418,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             match g2_msm(&input, gas_limit) {
                 Ok(output) => {
                     // Consume the gas that was used by the precompile
-                    sdk.sync_evm_gas(output.gas_used, 0);
+                    sdk.sync_evm_gas(output.gas_used);
                     sdk.write(&output.bytes);
                 }
                 Err(_) => sdk.native_exit(ExitCode::InputOutputOutOfBounds),
@@ -435,7 +436,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             if required_gas > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
-            sdk.sync_evm_gas(required_gas, 0);
+            sdk.sync_evm_gas(required_gas);
 
             // Process each pair and compute the product of all pairings
             let mut result = Gt::identity();
@@ -475,7 +476,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             match map_fp_to_g1(&input, gas_limit) {
                 Ok(output) => {
                     // Consume the gas that was used by the precompile
-                    sdk.sync_evm_gas(output.gas_used, 0);
+                    sdk.sync_evm_gas(output.gas_used);
                     sdk.write(&output.bytes);
                 }
                 Err(_) => sdk.native_exit(ExitCode::InputOutputOutOfBounds),
@@ -486,7 +487,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             match map_fp2_to_g2(&input, gas_limit) {
                 Ok(output) => {
                     // Consume the gas that was used by the precompile
-                    sdk.sync_evm_gas(output.gas_used, 0);
+                    sdk.sync_evm_gas(output.gas_used);
                     sdk.write(&output.bytes);
                 }
                 Err(_) => sdk.native_exit(ExitCode::InputOutputOutOfBounds),

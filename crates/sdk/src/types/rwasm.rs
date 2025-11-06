@@ -1,6 +1,8 @@
 use crate::{import_linker_v1_preview, SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
-use alloc::{boxed::Box, vec::Vec};
-use rwasm::{CompilationConfig, CompilationError, Opcode, RwasmModule, StateRouterConfig};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use rwasm::{
+    CompilationConfig, CompilationError, ImportLinker, Opcode, RwasmModule, StateRouterConfig,
+};
 
 pub struct RwasmCompilationResult {
     pub rwasm_module: RwasmModule,
@@ -9,12 +11,18 @@ pub struct RwasmCompilationResult {
 
 pub fn default_compilation_config() -> CompilationConfig {
     let linker = import_linker_v1_preview();
+    default_compilation_config_with_linker(linker)
+}
+
+pub fn default_compilation_config_with_linker(
+    import_linker: Arc<ImportLinker>,
+) -> CompilationConfig {
     CompilationConfig::default()
         .with_state_router(StateRouterConfig {
             states: Box::new([("deploy".into(), STATE_DEPLOY), ("main".into(), STATE_MAIN)]),
             opcode: Some(Opcode::Call(SysFuncIdx::STATE as u32)),
         })
-        .with_import_linker(linker)
+        .with_import_linker(import_linker)
         .with_allow_malformed_entrypoint_func_type(false)
         .with_builtins_consume_fuel(true)
 }

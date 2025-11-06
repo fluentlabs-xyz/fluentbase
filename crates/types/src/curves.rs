@@ -5,12 +5,14 @@ pub const ED25519_POINT_DECOMPRESSED_SIZE: usize = 64;
 /// SECP256K1
 pub const SECP256K1_FP_SIZE: usize = 32;
 pub const SECP256K1_G1_RAW_AFFINE_SIZE: usize = 64;
+pub const SECP256K1_G1_SEC1_SIZE: usize = 33;
 pub const SECP256K1_G1_COMPRESSED_SIZE: usize = 32;
 
 /// SECP256R1
 pub const SECP256R1_FP_SIZE: usize = 32;
 pub const SECP256R1_G1_RAW_AFFINE_SIZE: usize = 64;
-pub const SECP256R1_G1_COMPRESSED_SIZE: usize = 33;
+pub const SECP256R1_G1_SEC1_SIZE: usize = 33;
+pub const SECP256R1_G1_COMPRESSED_SIZE: usize = 32;
 
 /// BN254
 pub const BN254_FP_SIZE: usize = 32;

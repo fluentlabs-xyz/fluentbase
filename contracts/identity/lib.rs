@@ -17,7 +17,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     if gas_used > gas_limit {
         sdk.native_exit(ExitCode::OutOfFuel);
     }
-    sdk.sync_evm_gas(gas_used, 0);
+    sdk.sync_evm_gas(gas_used);
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
     // write an identical output

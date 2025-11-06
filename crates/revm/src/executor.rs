@@ -7,6 +7,7 @@ use crate::{
     ExecutionResult, NextAction,
 };
 use fluentbase_runtime::{
+    default_runtime_executor,
     syscall_handler::{syscall_exec_impl, syscall_resume_impl},
     RuntimeContext,
 };
@@ -22,8 +23,8 @@ use revm::{
     handler::FrameData,
     interpreter::{
         interpreter::ExtBytecode,
-        interpreter_types::{InputsTr, RuntimeFlag},
-        return_ok, return_revert, CallInput, FrameInput, Gas, InstructionResult,
+        interpreter_types::{InputsTr, ReturnData, RuntimeFlag, StackTr},
+        return_ok, return_revert, CallInput, FrameInput, InstructionResult,
     },
     Database, Inspector,
 };
@@ -97,6 +98,11 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
         frame.interpreter.input.account_owner = None;
         frame.interpreter.bytecode = ExtBytecode::new_with_hash(bytecode, bytecode_hash);
         frame.interpreter.gas = interpreter_result.gas;
+        // Make sure the execution context is clear
+        frame.interpreter.input.bytecode_address = None;
+        frame.interpreter.stack.clear();
+        frame.interpreter.return_data.clear();
+        frame.interpreter.memory.free_child_context();
         // Re-run deploy function using rWasm
         return run_rwasm_loop(frame, ctx, inspector);
     }
@@ -158,9 +164,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     let inputs_bytes = interpreter.input.input.bytes(ctx);
     context_input.extend_from_slice(&inputs_bytes);
 
-    let rwasm_code_hash = interpreter.bytecode.hash().unwrap();
-
-    let rwasm_bytecode = match &interpreter.bytecode.clone() {
+    let rwasm_bytecode = match &*interpreter.bytecode {
         Bytecode::Rwasm(bytecode) => bytecode.clone(),
         _ => {
             #[cfg(feature = "std")]
@@ -177,7 +181,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     let bytecode_hash = BytecodeOrHash::Bytecode {
         address: effective_bytecode_address,
         bytecode: rwasm_bytecode.module,
-        hash: rwasm_code_hash,
+        hash: interpreter.bytecode.hash().unwrap(),
     };
 
     // Fuel limit we denominate later to gas
@@ -187,15 +191,8 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .checked_mul(FUEL_DENOM_RATE)
         .unwrap_or(u64::MAX);
 
-    // Check whenever bytecode has self-managed gas,
-    // it's possible only for system precompiled contracts, like EVM, WASM, etc.
-    let is_gas_free = fluentbase_sdk::is_system_precompile(&effective_bytecode_address);
-
     // Execute function
     let mut runtime_context = RuntimeContext::default();
-    if is_gas_free {
-        runtime_context = runtime_context.with_disabled_fuel();
-    }
     let (fuel_consumed, fuel_refunded, exit_code) = syscall_exec_impl(
         &mut runtime_context,
         bytecode_hash,
@@ -217,18 +214,15 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     // extract return data from the execution context
     let return_data: Bytes;
     return_data = runtime_context.execution_result.return_data.into();
-    let gas = interpreter.gas;
 
     process_exec_result(
         frame,
         ctx,
         inspector,
         exit_code,
-        gas,
         return_data,
         is_create,
         is_static,
-        is_gas_free,
     )
 }
 
@@ -239,13 +233,9 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     interruption_outcome: SystemInterruptionOutcome,
     inspector: Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
-    let SystemInterruptionOutcome {
-        inputs,
-        result,
-        is_frame,
-        ..
-    } = interruption_outcome;
+    let SystemInterruptionOutcome { inputs, result, .. } = interruption_outcome;
     let result = result.unwrap();
+    let call_id = inputs.call_id;
 
     let fuel_consumed = result
         .gas
@@ -265,7 +255,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         return_ok!() => ExitCode::Ok,
         return_revert!() => ExitCode::Panic,
         // a special case for frame execution where we always return `Err` as a failed call/create
-        _ if is_frame => ExitCode::Err,
+        // _ if is_frame => ExitCode::Err,
         // out of gas error codes
         InstructionResult::OutOfGas
         | InstructionResult::OutOfFuel
@@ -279,9 +269,6 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     };
 
     let mut runtime_context = RuntimeContext::default();
-    if inputs.is_gas_free {
-        runtime_context = runtime_context.with_disabled_fuel();
-    }
     let (fuel_consumed, fuel_refunded, exit_code) = syscall_resume_impl(
         &mut runtime_context,
         inputs.call_id,
@@ -293,36 +280,38 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     );
     let return_data: Bytes = runtime_context.execution_result.return_data.into();
 
-    // if we're free from paying gas,
-    // then just take the previous gas value and don't charge anything
-    let mut gas = if inputs.is_gas_free {
-        inputs.gas
-    } else {
-        result.gas
-    };
-
     // make sure we have enough gas to charge from the call
-    // assert_eq!(
-    //     (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE,
-    //     fuel_consumed / FUEL_DENOM_RATE
-    // );
-    if !gas.record_denominated_cost(fuel_consumed) {
-        return Ok(NextAction::error(ExitCode::OutOfFuel, gas));
+    if !frame.interpreter.gas.record_denominated_cost(fuel_consumed) {
+        return Ok(NextAction::error(
+            ExitCode::OutOfFuel,
+            frame.interpreter.gas,
+        ));
     }
     // accumulate refunds (can be forwarded from an interrupted call)
-    gas.record_denominated_refund(fuel_refunded);
+    frame
+        .interpreter
+        .gas
+        .record_denominated_refund(fuel_refunded);
 
-    process_exec_result::<CTX, INSP>(
+    let result = process_exec_result::<CTX, INSP>(
         frame,
         ctx,
         inspector,
         exit_code,
-        gas,
         return_data,
         inputs.is_create,
         inputs.is_static,
-        inputs.is_gas_free,
-    )
+    )?;
+    // If interruption ends with return,
+    // then we should forget saved runtime, because otherwise it can cause memory leak
+    match &result {
+        NextAction::Return(_) => {
+            use fluentbase_runtime::RuntimeExecutor;
+            default_runtime_executor().forget_runtime(call_id);
+        }
+        _ => {}
+    }
+    Ok(result)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -331,22 +320,13 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     ctx: &mut CTX,
     inspector: Option<&mut INSP>,
     exit_code: i32,
-    gas: Gas,
     return_data: Bytes,
     is_create: bool,
     is_static: bool,
-    is_gas_free: bool,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     // if we have success or failed exit code
     if exit_code <= 0 {
-        return Ok(process_halt(
-            frame,
-            ctx,
-            inspector,
-            exit_code,
-            return_data.clone(),
-            gas,
-        ));
+        return Ok(process_halt(frame, ctx, inspector, exit_code, return_data));
     }
 
     // otherwise, exit code is a "call_id" that identifies saved context
@@ -357,18 +337,12 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         unreachable!("can't decode invocation params");
     };
 
-    // if there is no enough gas for execution, then fail fast
-    if !is_gas_free && syscall_params.fuel_limit / FUEL_DENOM_RATE > gas.remaining() {
-        return Ok(NextAction::error(ExitCode::OutOfFuel, gas));
-    }
-
     let inputs = SystemInterruptionInputs {
         call_id,
         is_create,
         syscall_params,
-        gas,
+        gas: frame.interpreter.gas,
         is_static,
-        is_gas_free,
     };
 
     execute_rwasm_interruption::<CTX, INSP>(frame, inspector, ctx, inputs)
@@ -381,7 +355,6 @@ fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
     inspector: Option<&mut INSP>,
     exit_code: i32,
     return_data: Bytes,
-    gas: Gas,
 ) -> NextAction {
     let exit_code = ExitCode::from(exit_code);
     let result = instruction_result_from_exit_code(exit_code, return_data.is_empty());
@@ -402,6 +375,6 @@ fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
     NextAction::Return(ExecutionResult {
         result,
         output: return_data,
-        gas,
+        gas: frame.interpreter.gas,
     })
 }

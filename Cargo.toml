@@ -99,6 +99,7 @@ solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/s
 
 # rwasm
 rwasm = { version = "0.3.2", default-features = false }
+#rwasm = { path = "../rwasm", default-features = false }
 
 # alloy
 alloy-primitives = { version = "1.2.0", default-features = false, features = ["sha3-keccak"] }
@@ -120,6 +121,7 @@ num-derive = { version = "0.4" }
 num-traits = { version = "0.2", features = ["i128"], default-features = false }
 
 hashbrown = { version = "0.15.0", default-features = false, features = ["default-hasher", "inline-more"] }
+schnellru = { version = "0.2" }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false }
 serde_bytes = { version = "0.11.15", default-features = false }
@@ -185,7 +187,7 @@ array-bytes = "1.6.0"
 
 [patch.crates-io]
 tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
-bls12_381 = {git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm" }
+bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm" }
 #rwasm = { path = "../rwasm", default-features = false }
 
 [workspace.lints]

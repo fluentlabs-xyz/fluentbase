@@ -5,7 +5,7 @@
 //! operation and the VM resumes with identical EVM semantics and gas.
 use crate::{
     bytecode::AnalyzedBytecode,
-    host::HostWrapperImpl,
+    host::{HostWrapper, HostWrapperImpl},
     opcodes::interruptable_instruction_table,
     types::{ExecutionResult, InterruptingInterpreter, InterruptionExtension, InterruptionOutcome},
 };
@@ -92,10 +92,23 @@ impl EthVM {
                     fuel_limit,
                     state,
                 } => {
+                    self.sync_evm_gas(sdk.sdk_mut());
                     let (fuel_consumed, fuel_refunded, exit_code) =
                         sdk.native_exec(code_hash, input.as_ref(), fuel_limit, state);
                     let mut gas = Gas::new_spent(fuel_consumed / FUEL_DENOM_RATE);
                     gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
+                    // Since the gas here is already synced,
+                    // because it's been charged inside the call, we should put into committed
+                    {
+                        let dirty_gas = &mut self.interpreter.gas;
+                        if !dirty_gas.record_cost(gas.spent()) {
+                            unreachable!("evm: a fatal gas mis-sync between runtimes, this should never happen");
+                        }
+                        let committed_gas = &mut self.interpreter.extend.committed_gas;
+                        if !committed_gas.record_cost(gas.spent()) {
+                            unreachable!("evm: a fatal gas mis-sync between runtimes, this should never happen");
+                        }
+                    }
                     let output = sdk.return_data();
                     let exit_code = ExitCode::from(exit_code);
                     self.interpreter
@@ -110,5 +123,31 @@ impl EthVM {
                 InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
             }
         }
+    }
+
+    pub fn run_step<SDK: SharedAPI>(mut self, sdk: &mut SDK) -> InterpreterAction {
+        let instruction_table = interruptable_instruction_table();
+        let mut sdk = HostWrapperImpl::wrap(sdk);
+        self.interpreter.run_plain(&instruction_table, &mut sdk)
+    }
+
+    /// Commit interpreter gas deltas to the host (fuel) and snapshot the state.
+    pub(crate) fn sync_evm_gas<SDK: SharedAPI>(&mut self, sdk: &mut SDK) {
+        let (gas, committed_gas) = (
+            &self.interpreter.gas,
+            &mut self.interpreter.extend.committed_gas,
+        );
+        let remaining_diff = committed_gas.remaining() - gas.remaining();
+        // If there is nothing to commit/charge then just ignore it
+        if remaining_diff == 0 {
+            return;
+        }
+        // Charge gas from the runtime
+        sdk.charge_fuel(
+            // TODO(dmitry123): How safe to mul here? Shouldn't overwrap. Checked?
+            remaining_diff * FUEL_DENOM_RATE,
+        );
+        // Remember new committed gas
+        *committed_gas = *gas;
     }
 }

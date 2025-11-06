@@ -37,6 +37,7 @@ fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
 fluentbase-contracts = { path = "../crates/contracts", default-features = false }
 rwasm = { version = "0.3.2", default-features = false, features = ["wasmtime"] }
+#rwasm = { path = "../../rwasm", default-features = false, features = ["wasmtime"] }
 
 [features]
 default = [
@@ -51,7 +52,7 @@ std = [
 debug-print = [
     "revm/debug-print",
     "fluentbase-revm/debug-print",
-    #    "rwasm/debug-print",
+    # "rwasm/debug-print",
 ]
 wasmtime = [
     "fluentbase-revm/wasmtime",

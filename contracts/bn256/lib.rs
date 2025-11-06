@@ -88,7 +88,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     match bytecode_address {
         PRECOMPILE_BN256_ADD => {
-            sdk.sync_evm_gas(ISTANBUL_ADD_GAS_COST, 0);
+            sdk.sync_evm_gas(ISTANBUL_ADD_GAS_COST);
 
             // Pad input to 128 bytes (two 64-byte points) with zeros if needed
             let mut padded_input = [0u8; BN254_ADD_INPUT_SIZE];
@@ -96,8 +96,10 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             padded_input[..copy_len].copy_from_slice(&input[..copy_len]);
 
             // Extract the two points from input (in big-endian format)
-            let p_be: [u8; BN254_G1_RAW_AFFINE_SIZE] = padded_input[..BN254_G1_RAW_AFFINE_SIZE].try_into().unwrap();
-            let q_be: [u8; BN254_G1_RAW_AFFINE_SIZE] = padded_input[BN254_G1_RAW_AFFINE_SIZE..].try_into().unwrap();
+            let p_be: [u8; BN254_G1_RAW_AFFINE_SIZE] =
+                padded_input[..BN254_G1_RAW_AFFINE_SIZE].try_into().unwrap();
+            let q_be: [u8; BN254_G1_RAW_AFFINE_SIZE] =
+                padded_input[BN254_G1_RAW_AFFINE_SIZE..].try_into().unwrap();
 
             // Validate both points are either identity or on the curve
             if !is_valid_point(&p_be) || !is_valid_point(&q_be) {
@@ -130,7 +132,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             sdk.write(&result);
         }
         PRECOMPILE_BN256_MUL => {
-            sdk.sync_evm_gas(ISTANBUL_MUL_GAS_COST, 0);
+            sdk.sync_evm_gas(ISTANBUL_MUL_GAS_COST);
             let result = match bn128::run_mul(input, ISTANBUL_MUL_GAS_COST, u64::MAX) {
                 Ok(result) => result,
                 Err(_) => sdk.native_exit(ExitCode::PrecompileError),
@@ -140,7 +142,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         PRECOMPILE_BN256_PAIR => {
             let gas_used = (input.len() / PAIR_ELEMENT_LEN) as u64 * ISTANBUL_PAIR_PER_POINT
                 + ISTANBUL_PAIR_BASE;
-            sdk.sync_evm_gas(gas_used, 0);
+            sdk.sync_evm_gas(gas_used);
             let result =
                 match bn128::run_pair(input, ISTANBUL_PAIR_PER_POINT, ISTANBUL_PAIR_BASE, u64::MAX)
                 {

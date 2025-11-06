@@ -1,7 +1,7 @@
 use core::cell::RefCell;
 use fluentbase_runtime::RuntimeContextWrapper;
 use fluentbase_sdk::{
-    bytes::Buf, calc_create4_address, Address, Bytes, ContextReader, ContractContextV1, ExitCode,
+    bytes::Buf, calc_create_metadata_address, Address, Bytes, ContextReader, ContractContextV1, ExitCode,
     IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, SharedAPI,
     SharedContextInputV1, StorageAPI, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
@@ -121,7 +121,6 @@ struct TestingContextInner {
     exit_code: i32,
     consumed_fuel: u64,
     fuel_limit: Option<u64>,
-    refunded_fuel: i64,
 }
 
 impl Default for HostTestingContext {
@@ -140,7 +139,6 @@ impl Default for HostTestingContext {
                 exit_code: 0,
                 consumed_fuel: 0,
                 fuel_limit: None,
-                refunded_fuel: 0,
             })),
         }
     }
@@ -212,7 +210,7 @@ impl MetadataAPI for HostTestingContext {
         let account_owner = ctx
             .ownable_account_address
             .expect("ownable account address should exist");
-        let derived_metadata_address = calc_create4_address(&account_owner, salt);
+        let derived_metadata_address = calc_create_metadata_address(&account_owner, salt);
         let target_address = ctx.shared_context_input_v1.contract.address;
         let res = ctx.metadata.insert(
             (target_address, derived_metadata_address),
@@ -307,10 +305,9 @@ impl SharedAPI for HostTestingContext {
             .copy_to_slice(target);
     }
 
-    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) {
+    fn charge_fuel(&self, fuel_consumed: u64) {
         let mut ctx = self.inner.borrow_mut();
         ctx.consumed_fuel += fuel_consumed;
-        ctx.refunded_fuel += fuel_refunded;
     }
 
     fn fuel(&self) -> u64 {

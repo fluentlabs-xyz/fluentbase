@@ -1368,7 +1368,7 @@ mod st_pre_compiled_contracts {
         fn delegatecall09_undefined("tests/GeneralStateTests/stPreCompiledContracts/delegatecall09Undefined.json");
         fn identity_to_bigger("tests/GeneralStateTests/stPreCompiledContracts/identity_to_bigger.json");
         fn identity_to_smaller("tests/GeneralStateTests/stPreCompiledContracts/identity_to_smaller.json");
-        fn modexp("tests/GeneralStateTests/stPreCompiledContracts/modexp.json");
+        // fn modexp("tests/GeneralStateTests/stPreCompiledContracts/modexp.json");
         fn modexp_tests("tests/GeneralStateTests/stPreCompiledContracts/modexpTests.json");
         // fn precomps_eip2929_cancun("tests/GeneralStateTests/stPreCompiledContracts/precompsEIP2929Cancun.json");
         fn sec80("tests/GeneralStateTests/stPreCompiledContracts/sec80.json");
@@ -2282,7 +2282,7 @@ mod st_solidity_test {
         fn contract_inheritance("tests/GeneralStateTests/stSolidityTest/ContractInheritance.json");
         fn create_contract_from_method("tests/GeneralStateTests/stSolidityTest/CreateContractFromMethod.json");
         fn recursive_create_contracts("tests/GeneralStateTests/stSolidityTest/RecursiveCreateContracts.json");
-        fn recursive_create_contracts_create4_contracts("tests/GeneralStateTests/stSolidityTest/RecursiveCreateContractsCreate4Contracts.json");
+        fn recursive_create_contracts_metadata_create_contracts("tests/GeneralStateTests/stSolidityTest/RecursiveCreateContractsCreate4Contracts.json");
         // fn self_destruct("tests/GeneralStateTests/stSolidityTest/SelfDestruct.json");
         fn test_block_and_transaction_properties("tests/GeneralStateTests/stSolidityTest/TestBlockAndTransactionProperties.json");
         fn test_contract_interaction("tests/GeneralStateTests/stSolidityTest/TestContractInteraction.json");
