@@ -3,7 +3,7 @@ use crate::{
     RuntimeContext, RuntimeExecutor,
 };
 use fluentbase_types::{import_linker_v1_preview, Address, BytecodeOrHash, B256};
-use rwasm::RwasmModule;
+use rwasm::{RwasmModule, TrapCode};
 use std::cell::RefCell;
 
 pub struct LocalExecutor;
@@ -74,5 +74,16 @@ impl RuntimeExecutor for LocalExecutor {
     fn reset_call_id_counter(&mut self) {
         LOCAL_RUNTIME_EXECUTOR
             .with_borrow_mut(|runtime_executor| runtime_executor.reset_call_id_counter())
+    }
+
+    fn memory_read(
+        &mut self,
+        call_id: u32,
+        offset: usize,
+        buffer: &mut [u8],
+    ) -> Result<(), TrapCode> {
+        LOCAL_RUNTIME_EXECUTOR.with_borrow_mut(|runtime_executor| {
+            runtime_executor.memory_read(call_id, offset, buffer)
+        })
     }
 }

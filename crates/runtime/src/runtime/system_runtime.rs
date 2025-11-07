@@ -1,14 +1,9 @@
-use crate::{
-    syscall_handler::{invoke_runtime_handler, InterruptionHolder},
-    RuntimeContext,
-};
+use crate::{syscall_handler::invoke_runtime_handler, RuntimeContext};
 use fluentbase_types::{
-    bincode, ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, SyscallInvocationParams,
-    B256, STATE_DEPLOY, STATE_MAIN,
+    bincode, ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, B256, STATE_DEPLOY,
+    STATE_MAIN,
 };
-use rwasm::{
-    ImportLinker, RwasmModule, Store, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE,
-};
+use rwasm::{ImportLinker, RwasmModule, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE};
 use smallvec::SmallVec;
 use std::{
     cell::RefCell,
@@ -16,11 +11,13 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use wasmtime::{
-    AsContextMut, Config, Engine, Func, Instance, Linker, Memory, Module, OptLevel, Strategy, Trap,
-    Val,
+    AsContextMut, Config, Engine, Func, Instance, Linker, Memory, Module, OptLevel, Store,
+    Strategy, Trap, Val,
 };
 
 pub struct SystemRuntime {
+    // TODO(dmitry123): We can't have compiled runtime because it makes the runtime no `no_std` complaint,
+    //  it should be fixed once we have optimized wasmtime inside rwasm repository.
     compiled_runtime: Option<CompiledRuntime>,
     ctx: Option<RuntimeContext>,
     code_hash: B256,
@@ -29,7 +26,7 @@ pub struct SystemRuntime {
 
 struct CompiledRuntime {
     module: Module,
-    store: wasmtime::Store<RuntimeContext>,
+    store: Store<RuntimeContext>,
     instance: Instance,
     memory: Memory,
     deploy_func: Func,
@@ -68,7 +65,7 @@ impl SystemRuntime {
             let module = Self::compile_module(module);
             let engine = wasmtime_engine();
             let linker = wasmtime_import_linker(engine, import_linker);
-            let mut store = wasmtime::Store::new(engine, RuntimeContext::default());
+            let mut store = Store::new(engine, RuntimeContext::default());
             let instance = linker.instantiate(store.as_context_mut(), &module).unwrap();
             let deploy_func = instance.get_func(store.as_context_mut(), "deploy").unwrap();
             let main_func = instance.get_func(store.as_context_mut(), "main").unwrap();
@@ -94,25 +91,47 @@ impl SystemRuntime {
 
     pub fn execute(&mut self) -> Result<(), TrapCode> {
         let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
-        // Rewrite runtime context before each call
-        if self.ctx.is_some() {
-            let ctx = self.ctx.take().unwrap();
+
+        // Rewrite runtime context before each call, since we reuse the same store and runtime for
+        // all EVM/SVM contract calls, then we should replace an existing context.
+        //
+        // SAFETY: We always call execute/resume in "right" order (w/o call overlying) that makes
+        //  calls sequential and apps can't access non-their context.
+        if let Some(ctx) = self.ctx.take() {
             *compiled_runtime.store.data_mut() = ctx;
         }
+
+        // Call the function based on the passed state
         let entrypoint = match compiled_runtime.store.data().state {
             STATE_MAIN => compiled_runtime.main_func,
             STATE_DEPLOY => compiled_runtime.deploy_func,
             _ => unreachable!(),
         };
-        // Call the function based on the passed state
         let result = entrypoint.call(compiled_runtime.store.as_context_mut(), &[], &mut []);
-        let runtime_ctx = compiled_runtime.store.as_context_mut();
-        if runtime_ctx.data().execution_result.exit_code == ExitCode::InterruptionCalled.into_i32()
+
+        // If the execution result is `InterruptionCalled`, then interruption is called, we should re-map
+        // trap code into an interruption.
+        //
+        // SAFETY: Exit code `InterruptionCalled` can only be passed by our system runtimes, trustless
+        //  applications can use this error code, but it won't be handled anyhow (only punishment).
+        if compiled_runtime.store.data().execution_result.exit_code
+            == ExitCode::InterruptionCalled.into_i32()
         {
+            // We need to move output into return data, because in our common case, interruptions
+            // store syscall params inside return data,
+            // but we can't suppose this for system runtime contracts because we don't expose such
+            // functions, that's why we should move data from output into return data
+            let ctx = compiled_runtime.store.data_mut();
+            ctx.execution_result.return_data = take(&mut ctx.execution_result.output);
+            // Initialize resumable context with empty parameters, these values are passed into
+            // the resume function once we're ready to resume
             self.state = Some(RuntimeInterruptionOutcomeV1::default());
             return Err(TrapCode::InterruptionCalled);
         }
+
         result.map_err(map_anyhow_error).or_else(|trap_code| {
+            // Trap code `ExecutionHalted` is used to unwind the execution and terminate, that's
+            // why we map it into `Ok()`
             if trap_code == TrapCode::ExecutionHalted {
                 Ok(())
             } else {
@@ -153,6 +172,14 @@ impl SystemRuntime {
             .map_err(|_| TrapCode::MemoryOutOfBounds)
     }
 
+    pub fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
+        let compiled_runtime = self.compiled_runtime.as_ref().unwrap();
+        compiled_runtime
+            .memory
+            .read(&compiled_runtime.store, offset, buffer)
+            .map_err(|_| TrapCode::MemoryOutOfBounds)
+    }
+
     pub fn remaining_fuel(&self) -> Option<u64> {
         // We don't support fuel for this runtime
         None
@@ -179,7 +206,7 @@ fn wasmtime_engine() -> &'static Engine {
         cfg.async_support(false);
         cfg.wasm_memory64(false);
         cfg.memory_init_cow(false);
-        cfg.cranelift_opt_level(OptLevel::SpeedAndSize);
+        cfg.cranelift_opt_level(OptLevel::Speed);
         cfg.parallel_compilation(true);
         cfg.consume_fuel(false);
         let engine = Engine::new(&cfg).unwrap();
@@ -191,7 +218,7 @@ struct CallerAdapter<'a> {
     caller: wasmtime::Caller<'a, RuntimeContext>,
 }
 
-impl<'a> Store<RuntimeContext> for CallerAdapter<'a> {
+impl<'a> rwasm::Store<RuntimeContext> for CallerAdapter<'a> {
     fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
         let memory = self
             .caller
@@ -294,15 +321,6 @@ fn wasmtime_syscall_handler<'a>(
         mapped_params,
         mapped_result,
     );
-    let execution_result = &mut caller_adapter.caller.data_mut().execution_result;
-    if execution_result.exit_code == ExitCode::InterruptionCalled.into_i32() {
-        let syscall_params = SyscallInvocationParams::decode(&execution_result.output).unwrap();
-        caller_adapter.caller.data_mut().resumable_context = Some(InterruptionHolder {
-            params: syscall_params,
-            is_root: false,
-        });
-        return Ok(());
-    }
     // make sure a syscall result is successful
     let should_terminate = syscall_result.map(|_| false).or_else(|trap_code| {
         // if syscall returns execution halted,
@@ -364,7 +382,7 @@ fn map_anyhow_error(err: anyhow::Error) -> TrapCode {
         // if our trap code is initiated, then just return the trap code
         *trap
     } else {
-        eprintln!("wasmtime unknown trap: {:?}", err);
+        eprintln!("wasmtime: unknown trap: {:?}", err);
         // TODO(dmitry123): "what type of error to use here in case of unknown error?"
         TrapCode::IllegalOpcode
     }

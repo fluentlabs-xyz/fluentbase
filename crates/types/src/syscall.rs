@@ -1,11 +1,12 @@
-use crate::{Bytes, ExitCode, B256};
+use crate::{ExitCode, B256};
 use alloc::{string::String, vec::Vec};
+use core::ops::Range;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SyscallInvocationParams {
     pub code_hash: B256,
-    pub input: Bytes,
+    pub input: Range<usize>,
     pub fuel_limit: u64,
     pub state: u32,
     pub fuel16_ptr: u32,
@@ -18,7 +19,7 @@ impl SyscallInvocationParams {
 
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         let (result, _bytes_read) =
-            bincode::decode_from_slice(bytes, bincode::config::legacy()).unwrap();
+            bincode::decode_from_slice(bytes, bincode::config::legacy()).ok()?;
         Some(result)
     }
 }
@@ -32,7 +33,7 @@ impl ::bincode::Encode for SyscallInvocationParams {
         ::bincode::Encode::encode(&self.fuel_limit, encoder)?;
         ::bincode::Encode::encode(&self.state, encoder)?;
         ::bincode::Encode::encode(&self.fuel16_ptr, encoder)?;
-        ::bincode::Encode::encode(&self.input[..], encoder)?;
+        ::bincode::Encode::encode(&self.input, encoder)?;
         Ok(())
     }
 }
@@ -41,12 +42,11 @@ impl<__Context> ::bincode::Decode<__Context> for SyscallInvocationParams {
     fn decode<__D: ::bincode::de::Decoder<Context = __Context>>(
         decoder: &mut __D,
     ) -> Result<Self, bincode::error::DecodeError> {
-        use alloc::vec::Vec;
         let code_hash: [u8; 32] = bincode::Decode::decode(decoder)?;
         let fuel_limit: u64 = bincode::Decode::decode(decoder)?;
         let state: u32 = bincode::Decode::decode(decoder)?;
         let fuel16_ptr: u32 = bincode::Decode::decode(decoder)?;
-        let input: Vec<u8> = bincode::Decode::decode(decoder)?;
+        let input: Range<usize> = bincode::Decode::decode(decoder)?;
         Ok(Self {
             code_hash: B256::from(code_hash),
             input: input.into(),

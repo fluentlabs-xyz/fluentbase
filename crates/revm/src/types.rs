@@ -13,10 +13,6 @@ pub struct SystemInterruptionInputs {
     /// A gas snapshot assigned before the interruption.
     /// We need this to calculate the final amount of gas charged for the entire interruption.
     pub gas: Gas,
-    /// Indicates is interruption happen inside contact deployment.
-    pub is_create: bool,
-    /// Indicates is interruption happen inside static call.
-    pub is_static: bool,
 }
 
 /// An interruption outcome.

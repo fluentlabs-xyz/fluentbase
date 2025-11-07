@@ -58,7 +58,7 @@ pub struct ExecutionInterruption {
     /// Fuel to refund to the caller at the interruption point.
     pub fuel_refunded: i64,
     /// Encoded interruption payload (e.g., delegated call parameters).
-    pub output: Vec<u8>,
+    pub return_data: Vec<u8>,
 }
 
 /// Result of running or resuming a runtime.
@@ -118,6 +118,13 @@ pub trait RuntimeExecutor {
     ///
     /// Intended to be invoked at the beginning of a new transaction.
     fn reset_call_id_counter(&mut self);
+
+    fn memory_read(
+        &mut self,
+        call_id: u32,
+        offset: usize,
+        buffer: &mut [u8],
+    ) -> Result<(), TrapCode>;
 }
 
 /// Returns a default runtime executor.
@@ -172,7 +179,7 @@ impl RuntimeFactoryExecutor {
             fuel_consumed: interruption.fuel_consumed,
             fuel_refunded: interruption.fuel_refunded,
             // The output we map into return data
-            output: interruption.output,
+            output: interruption.return_data,
             return_data: vec![],
         }
     }
@@ -190,6 +197,7 @@ impl RuntimeFactoryExecutor {
         let mut execution_result = ctx
             .execution_result
             .take_and_continue(ctx.resumable_context.is_some());
+
         // There are two counters for fuel: opcode fuel counter; manually charged.
         // It's applied for execution runtimes where we don't know the final fuel consumed,
         // till it's committed by Wasm runtime.
@@ -197,47 +205,48 @@ impl RuntimeFactoryExecutor {
         if let Some(store_fuel_consumed) = fuel_consumed {
             execution_result.fuel_consumed = store_fuel_consumed;
         }
+
+        // Fill the exit code in the execution result based on the next result:
+        // - Ok - execution passed, exit code is 0 (Ok)
+        // - InterruptionCalled - we don't know exit code since it's just an interruption
+        // - Err - an execution trap code (halts execution)
         match next_result {
-            Ok(_) => {}
+            Ok(_) => {
+                // Don't write exit code here, because it's managed by host functions
+            }
             Err(TrapCode::InterruptionCalled) => {
-                return self.handle_resumable_state(execution_result, ctx);
+                // We don't set exit code here,
+                // because exit code is used to represent identifier of call id
             }
             Err(err) => {
                 execution_result.exit_code = ExitCode::from(err).into_i32();
             }
         }
-        RuntimeResult::Result(execution_result)
-    }
 
-    /// Converts an in-flight interruption into a RuntimeResult::Interruption and prepares payload.
-    ///
-    /// Clears transient buffers, encodes the delegated invocation parameters, and packages the
-    /// suspended runtime for recovery by the root context.
-    fn handle_resumable_state(
-        &mut self,
-        execution_result: ExecutionResult,
-        ctx: &mut RuntimeContext,
-    ) -> RuntimeResult {
-        let ExecutionResult {
-            fuel_consumed,
-            fuel_refunded,
-            ..
-        } = execution_result;
-        // Take resumable context from execution context
-        let resumable_context = ctx.resumable_context.take().unwrap();
-        if resumable_context.is_root {
-            unimplemented!("validate this logic, might not be ok in STF mode");
+        // If the next result is interruption
+        if next_result == Err(TrapCode::InterruptionCalled) {
+            let ExecutionResult {
+                fuel_consumed,
+                fuel_refunded,
+                mut return_data,
+                ..
+            } = execution_result;
+            // A case for normal interruption (not system runtime interruption), where we should
+            // serialize the context we remembered inside `exec.rs`
+            // handler to pass into parent runtime.
+            //
+            // SAFETY: For system runtimes we don't save this
+            if let Some(resumable_return_data) = ctx.take_resumable_context_serialized() {
+                return_data = resumable_return_data;
+            }
+            return RuntimeResult::Interruption(ExecutionInterruption {
+                fuel_consumed,
+                fuel_refunded,
+                return_data,
+            });
         }
-        // serialize the delegated execution state,
-        // but we don't serialize registers and stack state,
-        // instead we remember it inside the internal structure
-        // and assign a special identifier for recovery
-        let output = resumable_context.params.encode();
-        RuntimeResult::Interruption(ExecutionInterruption {
-            fuel_consumed,
-            fuel_refunded,
-            output,
-        })
+
+        RuntimeResult::Result(execution_result)
     }
 }
 
@@ -247,7 +256,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         bytecode_or_hash: BytecodeOrHash,
         ctx: RuntimeContext,
     ) -> ExecutionResult {
-        let (_enable_wasmtime_runtime, enable_system_runtime) = match &bytecode_or_hash {
+        let (enable_wasmtime_runtime, enable_system_runtime) = match &bytecode_or_hash {
             BytecodeOrHash::Bytecode { address, hash, .. } => (
                 fluentbase_types::is_execute_using_wasmtime_strategy(address)
                     .then_some((*address, *hash)),
@@ -265,7 +274,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
 
         let mut exec_mode = if let Some(code_hash) = enable_system_runtime {
             let runtime = SystemRuntime::new(module, self.import_linker.clone(), code_hash, ctx);
-            ExecutionMode::Wasmtime(runtime)
+            ExecutionMode::System(runtime)
         } else {
             #[cfg(feature = "wasmtime")]
             let strategy = if let Some((address, code_hash)) = enable_wasmtime_runtime {
@@ -283,7 +292,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
                 Strategy::Rwasm { module, engine }
             };
             let runtime = RwasmRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
-            ExecutionMode::Strategy(runtime)
+            ExecutionMode::Rwasm(runtime)
         };
 
         // Execute program
@@ -292,6 +301,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             .remaining_fuel()
             .zip(fuel_remaining)
             .map(|(remaining_fuel, store_fuel)| store_fuel - remaining_fuel);
+
         let runtime_result =
             exec_mode.context_mut(|ctx| self.handle_execution_result(result, fuel_consumed, ctx));
         self.try_remember_runtime(runtime_result, exec_mode)
@@ -372,5 +382,17 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
 
     fn reset_call_id_counter(&mut self) {
         self.transaction_call_id_counter.store(1, Ordering::Relaxed);
+    }
+
+    fn memory_read(
+        &mut self,
+        call_id: u32,
+        offset: usize,
+        buffer: &mut [u8],
+    ) -> Result<(), TrapCode> {
+        let runtime_ref = self.recoverable_runtimes.get_mut(&call_id).expect(
+            "runtime: missing recoverable runtime for memory read, this should never happen",
+        );
+        runtime_ref.memory_read(offset, buffer)
     }
 }

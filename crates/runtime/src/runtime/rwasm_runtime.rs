@@ -43,6 +43,10 @@ impl RwasmRuntime {
         self.store.memory_write(offset, data)
     }
 
+    pub fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
+        self.store.memory_read(offset, buffer)
+    }
+
     pub fn try_consume_fuel(&mut self, delta: u64) -> Result<(), TrapCode> {
         self.store.try_consume_fuel(delta)
     }

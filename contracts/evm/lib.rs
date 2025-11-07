@@ -10,7 +10,7 @@ use fluentbase_evm::{
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult,
 };
 use fluentbase_sdk::{
-    bincode, debug_log_ext, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256,
+    bincode, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256,
     EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
 };
 use fluentbase_types::{
@@ -186,10 +186,11 @@ fn deploy_inner<SDK: SharedAPI>(
             fuel_limit,
             state,
         } => {
+            let input_offset = input.as_ptr() as usize;
             evm.sync_evm_gas(sdk);
             let syscall_params = SyscallInvocationParams {
                 code_hash,
-                input,
+                input: input_offset..(input_offset + input.len()),
                 fuel_limit: fuel_limit.unwrap_or(u64::MAX),
                 state,
                 fuel16_ptr: 0,
@@ -243,10 +244,11 @@ fn main_inner<SDK: SharedAPI>(sdk: &mut SDK, mut cached_state: MutexGuard<Vec<Et
             fuel_limit,
             state,
         } => {
+            let input_offset = input.as_ptr() as usize;
             evm.sync_evm_gas(sdk);
             let syscall_params = SyscallInvocationParams {
                 code_hash,
-                input,
+                input: input_offset..(input_offset + input.len()),
                 fuel_limit: fuel_limit.unwrap_or(u64::MAX),
                 state,
                 fuel16_ptr: 0,

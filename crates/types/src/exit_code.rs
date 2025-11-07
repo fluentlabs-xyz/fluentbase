@@ -80,7 +80,7 @@ pub enum ExitCode {
     Panic = -1,
     /// An internal error (mapped from the errors below for nested EVM calls)
     Err = -2,
-    /// An interruption
+    /// An interruption created by runtime (only for system contracts)
     InterruptionCalled = -3,
 
     /* Fluentbase Runtime Error Codes */
@@ -100,8 +100,11 @@ pub enum ExitCode {
     PrecompileError = -1008,
     /// Passed bytecode into executor is not supported
     NotSupportedBytecode = -1009,
+    /// State changed inside immutable call (static=true)
     StateChangeDuringStaticCall = -1010,
+    /// Create contract size limit reached (limit depends on the application type)
     CreateContractSizeLimit = -1011,
+    /// There is a collision on the contract creation (same address is derived)
     CreateContractCollision = -1012,
 
     /* Trap Error Codes */
