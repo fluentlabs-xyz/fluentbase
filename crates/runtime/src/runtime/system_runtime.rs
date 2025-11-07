@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 use std::{
     cell::RefCell,
     mem::take,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, RwLock},
 };
 use wasmtime::{
     AsContextMut, Config, Engine, Func, Instance, Linker, Memory, Module, OptLevel, Store,
@@ -48,8 +48,22 @@ impl Drop for SystemRuntime {
 }
 
 impl SystemRuntime {
-    pub fn compile_module(rwasm_module: RwasmModule) -> Module {
-        Module::new(wasmtime_engine(), &rwasm_module.hint_section).unwrap()
+    pub fn compiled_module(code_hash: B256, rwasm_module: RwasmModule) -> Module {
+        pub static COMPILED_MODULES: OnceLock<RwLock<HashMap<B256, Module>>> = OnceLock::new();
+        let compiled_modules = COMPILED_MODULES.get_or_init(|| RwLock::new(HashMap::new()));
+        {
+            let guard = compiled_modules.read().unwrap();
+            if let Some(module) = guard.get(&code_hash) {
+                return module.clone();
+            }
+        }
+        let mut guard = compiled_modules.write().unwrap();
+        if let Some(module) = guard.get(&code_hash) {
+            return module.clone();
+        }
+        let module = Module::new(wasmtime_engine(), &rwasm_module.hint_section).unwrap();
+        guard.insert(code_hash, module.clone());
+        module
     }
 
     pub fn new(
@@ -62,7 +76,7 @@ impl SystemRuntime {
             if let Some(compiled_runtime) = compiled_runtimes.remove(&code_hash) {
                 return compiled_runtime;
             }
-            let module = Self::compile_module(module);
+            let module = Self::compiled_module(code_hash, module);
             let engine = wasmtime_engine();
             let linker = wasmtime_import_linker(engine, import_linker);
             let mut store = Store::new(engine, RuntimeContext::default());
