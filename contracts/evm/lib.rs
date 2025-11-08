@@ -42,7 +42,7 @@ static SAVED_EVM_CONTEXT: spin::Once<spin::Mutex<Vec<EthVM>>> = spin::Once::new(
 
 fn lock_evm_context<'a>() -> MutexGuard<'a, Vec<EthVM>> {
     let cached_state = SAVED_EVM_CONTEXT.call_once(|| {
-        let result = Vec::new();
+        let result = Vec::with_capacity(1);
         spin::Mutex::new(result)
     });
     debug_assert!(

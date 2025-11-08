@@ -36,12 +36,14 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
     ctx: &mut CTX,
     inspector: &mut Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
+    let mut first_iteration = true;
     let next_action = loop {
         let next_action = if let Some(interruption_outcome) = frame.take_interrupted_outcome() {
             execute_rwasm_resume(frame, ctx, interruption_outcome, inspector)
         } else {
             execute_rwasm_frame(frame, ctx, inspector)
         }?;
+        first_iteration = false;
         match next_action {
             NextAction::InterruptionResult => continue,
             _ => break next_action,

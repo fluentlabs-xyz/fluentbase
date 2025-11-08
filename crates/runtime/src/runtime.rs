@@ -16,7 +16,7 @@ impl ExecutionMode {
     pub fn execute(&mut self) -> Result<(), TrapCode> {
         match self {
             ExecutionMode::Rwasm(runtime) => runtime.execute(),
-            ExecutionMode::System(runtime) => runtime.execute(),
+            ExecutionMode::System(runtime) => runtime.execute(false),
         }
     }
 

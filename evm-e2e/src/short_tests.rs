@@ -11,9 +11,15 @@ macro_rules! define_tests {
     };
 }
 
-mod single_test {
+mod single_problem_test {
     define_tests! {
-        fn transaction_create_auto_suicide_contract("tests/GeneralStateTests/stInitCodeTest/TransactionCreateAutoSuicideContract.json");
+        fn _21_tstore_cannot_be_dosd_ooo("tests/GeneralStateTests/Cancun/stEIP1153-transientStorage/21_tstoreCannotBeDosdOOO.json");
+        // fn create_address_warm_after_fail("tests/GeneralStateTests/stCreateTest/CreateAddressWarmAfterFail.json");
+        // fn _15_tstore_cannot_be_dosd("tests/GeneralStateTests/Cancun/stEIP1153-transientStorage/15_tstoreCannotBeDosd.json");
+        // fn all_opcodes("tests/GeneralStateTests/Pyspecs/frontier/opcodes/all_opcodes.json");
+        // fn operation_diff_gas("tests/GeneralStateTests/stBadOpcode/operationDiffGas.json");
+        // fn invalid_addr("tests/GeneralStateTests/stBadOpcode/invalidAddr.json");
+        // fn modexp("tests/GeneralStateTests/stPreCompiledContracts/modexp.json");
     }
 }
 

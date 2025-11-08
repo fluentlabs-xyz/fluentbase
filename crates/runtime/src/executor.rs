@@ -9,7 +9,7 @@ use crate::{
 };
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    Address, BytecodeOrHash, ExitCode, HashMap, B256,
+    log_ext, Address, BytecodeOrHash, ExitCode, HashMap, B256,
 };
 use local_executor::LocalExecutor;
 use rwasm::{ExecutionEngine, FuelConfig, ImportLinker, RwasmModule, Strategy, TrapCode};

@@ -1,18 +1,20 @@
 use crate::{syscall_handler::invoke_runtime_handler, RuntimeContext};
 use fluentbase_types::{
-    bincode, ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, B256, STATE_DEPLOY,
-    STATE_MAIN,
+    bincode, log_ext, ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, B256,
+    STATE_DEPLOY, STATE_MAIN,
 };
+use num::ToPrimitive;
 use rwasm::{ImportLinker, RwasmModule, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE};
 use smallvec::SmallVec;
+use std::time::Instant;
 use std::{
     cell::RefCell,
     mem::take,
     sync::{Arc, OnceLock, RwLock},
 };
 use wasmtime::{
-    AsContextMut, Config, Engine, Func, Instance, Linker, Memory, Module, OptLevel, Store,
-    Strategy, Trap, Val,
+    AsContext, AsContextMut, Config, Engine, Func, Instance, Linker, Memory, Module, OptLevel,
+    Store, Strategy, Trap, Val,
 };
 
 pub struct SystemRuntime {
@@ -22,15 +24,133 @@ pub struct SystemRuntime {
     ctx: Option<RuntimeContext>,
     code_hash: B256,
     state: Option<RuntimeInterruptionOutcomeV1>,
+    depth: i32,
+    exec_count: i32,
+    import_linker: Arc<ImportLinker>,
 }
 
-struct CompiledRuntime {
+pub struct CompiledRuntime {
     module: Module,
     store: Store<RuntimeContext>,
     instance: Instance,
     memory: Memory,
     deploy_func: Func,
     main_func: Func,
+    heap_pos_func: Func,
+    heap_pos_set_func: Func,
+    heap_checkpoint_idx_func: Func,
+    heap_checkpoint_save_func: Func,
+    heap_checkpoint_pop_func: Func,
+    heap_reset_func: Func,
+    heap_base_offset_func: Func,
+    alloc_count_func: Func,
+    alloc_bytes_func: Func,
+    dealloc_try_count_func: Func,
+    dealloc_try_bytes_func: Func,
+    dealloc_count_func: Func,
+    dealloc_bytes_func: Func,
+}
+
+impl CompiledRuntime {
+    pub fn heap_base_offset(&mut self) -> Option<u32> {
+        log_ext!();
+        let result = &mut [Val::I32(0)];
+        self.heap_base_offset_func
+            .call(self.store.as_context_mut(), &[], result)
+            .unwrap();
+        Some(result[0].i32().unwrap().to_u32().unwrap())
+    }
+
+    pub fn checkpoint_save(&mut self) {
+        log_ext!();
+        self.heap_checkpoint_save_func
+            .call(self.store.as_context_mut(), &[], &mut [])
+            .unwrap();
+    }
+
+    pub fn checkpoint_pop(&mut self) -> u32 {
+        log_ext!();
+        let result = &mut [Val::I32(0)];
+        self.heap_checkpoint_pop_func
+            .call(self.store.as_context_mut(), &[], result)
+            .unwrap();
+        result[0].i32().unwrap().to_u32().unwrap()
+    }
+
+    pub fn alloc_stats(&mut self) -> (u32, u32, u32, u32, u32, u32) {
+        log_ext!();
+        let result = &mut [Val::I32(0)];
+        self.alloc_count_func
+            .call(self.store.as_context_mut(), &[], result)
+            .unwrap();
+        let alloc_count = result[0].i32().unwrap().to_u32().unwrap();
+        self.alloc_bytes_func
+            .call(self.store.as_context_mut(), &[], result)
+            .unwrap();
+        let alloc_bytes = result[0].i32().unwrap().to_u32().unwrap();
+        self.dealloc_try_count_func
+            .call(self.store.as_context_mut(), &[], result)
+            .unwrap();
+        let count_try = result[0].i32().unwrap().to_u32().unwrap();
+        self.dealloc_try_bytes_func
+            .call(self.store.as_context_mut(), &[], result)
+            .unwrap();
+        let bytes_try = result[0].i32().unwrap().to_u32().unwrap();
+        self.dealloc_count_func
+            .call(self.store.as_context_mut(), &[], result)
+            .unwrap();
+        let dealloc_count = result[0].i32().unwrap().to_u32().unwrap();
+        self.dealloc_bytes_func
+            .call(self.store.as_context_mut(), &[], result)
+            .unwrap();
+        let dealloc_bytes = result[0].i32().unwrap().to_u32().unwrap();
+        (
+            alloc_count,
+            alloc_bytes,
+            count_try,
+            bytes_try,
+            dealloc_count,
+            dealloc_bytes,
+        )
+    }
+
+    pub fn heap_pos(&mut self) -> u32 {
+        log_ext!();
+        let result = &mut [Val::I32(0)];
+        self.heap_pos_func
+            .call(self.store.as_context_mut(), &[], result)
+            .unwrap();
+        result[0].i32().unwrap().to_u32().unwrap()
+    }
+
+    pub fn heap_pos_set(&mut self, value: u32) {
+        log_ext!();
+        let params = &[Val::I32(value as i32)];
+        let results = &mut [];
+        self.heap_pos_func
+            .call(self.store.as_context_mut(), params, results)
+            .unwrap();
+    }
+
+    pub fn heap_reset(&mut self) {
+        log_ext!();
+        log_ext!("heap pos before reset {:?}", self.heap_pos());
+        let result = &mut [Val::I32(0)];
+        self.heap_reset_func
+            .call(self.store.as_context_mut(), &[], result)
+            .unwrap();
+        log_ext!(
+            "heap pos after reset {} ({:?})",
+            result[0].i32().unwrap().to_i32().unwrap(),
+            self.heap_pos()
+        );
+
+        // let memory: Memory = self
+        //     .instance
+        //     .get_memory(self.store.as_context_mut(), "memory")
+        //     .unwrap();
+        // self.memory = memory;
+    }
 }
 
 thread_local! {
@@ -40,9 +160,14 @@ thread_local! {
 impl Drop for SystemRuntime {
     fn drop(&mut self) {
         let _ = COMPILED_RUNTIMES.try_with(|compiled_runtimes| {
+            log_ext!();
+            let mut compiled_runtime: CompiledRuntime = self.compiled_runtime.take().unwrap();
+            let start = Instant::now();
+            // Self::reset_compiled_runtime(&mut compiled_runtime, self.import_linker.clone());
+            log_ext!("elapsed {:?}", start.elapsed());
             compiled_runtimes
                 .borrow_mut()
-                .insert(self.code_hash, self.compiled_runtime.take().unwrap());
+                .insert(self.code_hash, compiled_runtime);
         });
     }
 }
@@ -73,12 +198,12 @@ impl SystemRuntime {
         ctx: RuntimeContext,
     ) -> Self {
         let compiled_runtime = COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            if let Some(compiled_runtime) = compiled_runtimes.remove(&code_hash) {
+            if let Some(mut compiled_runtime) = compiled_runtimes.remove(&code_hash) {
                 return compiled_runtime;
             }
             let module = Self::compiled_module(code_hash, module);
             let engine = wasmtime_engine();
-            let linker = wasmtime_import_linker(engine, import_linker);
+            let linker = wasmtime_import_linker(engine, import_linker.clone());
             let mut store = Store::new(engine, RuntimeContext::default());
             let instance = linker.instantiate(store.as_context_mut(), &module).unwrap();
             let deploy_func = instance.get_func(store.as_context_mut(), "deploy").unwrap();
@@ -86,6 +211,62 @@ impl SystemRuntime {
             let memory = instance
                 .get_memory(store.as_context_mut(), "memory")
                 .unwrap();
+
+            // // TODO for debug log
+            // let mem_base_ptr = memory.data_ptr(store.as_context()) as usize;
+            // let mem_data = memory.data(store.as_context());
+            // let non_null_count = mem_data
+            //     .iter()
+            //     .fold(0usize, |acc, v| acc + (*v != 0) as usize);
+            // let mem_data_first_non_null_offset = mem_data.iter().find(|v| **v != 0);
+            // log_ext!(
+            //     "mem_data.len={} non_null_count={} mem_base_ptr={} mem_data_first_non_null_offset={:?}",
+            //     mem_data.len(),
+            //     non_null_count,
+            //     mem_base_ptr,
+            //     mem_data_first_non_null_offset
+            // );
+
+            let heap_pos_func = instance
+                .get_func(store.as_context_mut(), "__heap_pos")
+                .unwrap();
+            let heap_pos_set_func = instance
+                .get_func(store.as_context_mut(), "__heap_pos_set")
+                .unwrap();
+            let heap_checkpoint_idx_func = instance
+                .get_func(store.as_context_mut(), "__heap_checkpoint_idx")
+                .unwrap();
+            let heap_checkpoint_save_func = instance
+                .get_func(store.as_context_mut(), "__heap_checkpoint_save")
+                .unwrap();
+            let heap_checkpoint_pop_func = instance
+                .get_func(store.as_context_mut(), "__heap_checkpoint_pop")
+                .unwrap();
+            let heap_reset_func = instance
+                .get_func(store.as_context_mut(), "__heap_reset")
+                .unwrap();
+            let heap_base_offset_func = instance
+                .get_func(store.as_context_mut(), "__heap_base_offset")
+                .unwrap();
+            let alloc_count_func = instance
+                .get_func(store.as_context_mut(), "__alloc_count")
+                .unwrap();
+            let alloc_bytes_func = instance
+                .get_func(store.as_context_mut(), "__alloc_bytes")
+                .unwrap();
+            let dealloc_try_count_func = instance
+                .get_func(store.as_context_mut(), "__dealloc_try_count")
+                .unwrap();
+            let dealloc_try_bytes_func = instance
+                .get_func(store.as_context_mut(), "__dealloc_try_bytes")
+                .unwrap();
+            let dealloc_count_func = instance
+                .get_func(store.as_context_mut(), "__dealloc_count")
+                .unwrap();
+            let dealloc_bytes_func = instance
+                .get_func(store.as_context_mut(), "__dealloc_bytes")
+                .unwrap();
+
             CompiledRuntime {
                 module,
                 store,
@@ -93,6 +274,19 @@ impl SystemRuntime {
                 memory,
                 deploy_func,
                 main_func,
+                heap_pos_func,
+                heap_pos_set_func,
+                heap_checkpoint_idx_func,
+                heap_checkpoint_save_func,
+                heap_checkpoint_pop_func,
+                heap_reset_func,
+                heap_base_offset_func,
+                alloc_count_func,
+                alloc_bytes_func,
+                dealloc_try_count_func,
+                dealloc_try_bytes_func,
+                dealloc_count_func,
+                dealloc_bytes_func,
             }
         });
         Self {
@@ -100,10 +294,112 @@ impl SystemRuntime {
             ctx: Some(ctx),
             code_hash,
             state: None,
+            depth: 0,
+            exec_count: 0,
+            import_linker: import_linker.clone(),
         }
     }
 
-    pub fn execute(&mut self) -> Result<(), TrapCode> {
+    fn reset_compiled_runtime(
+        compiled_runtime: &mut CompiledRuntime,
+        import_linker: Arc<ImportLinker>,
+    ) {
+        compiled_runtime.heap_reset();
+        let engine = wasmtime_engine();
+        let linker = wasmtime_import_linker(engine, import_linker);
+        let instance = linker
+            .instantiate(
+                compiled_runtime.store.as_context_mut(),
+                &compiled_runtime.module,
+            )
+            .unwrap();
+        let deploy_func = instance
+            .get_func(compiled_runtime.store.as_context_mut(), "deploy")
+            .unwrap();
+        let main_func = instance
+            .get_func(compiled_runtime.store.as_context_mut(), "main")
+            .unwrap();
+        // let memory = instance
+        //     .get_memory(store.as_context_mut(), "memory")
+        //     .unwrap();
+
+        // TODO for debug log
+        // let mem_base_ptr = memory.data_ptr(store.as_context()) as usize;
+        // let mem_data = memory.data(store.as_context());
+        // let non_null_count = mem_data
+        //     .iter()
+        //     .fold(0usize, |acc, v| acc + (*v != 0) as usize);
+        // let mem_data_first_non_null_offset = mem_data.iter().find(|v| **v != 0);
+        // log_ext!(
+        //     "mem_data.len={} non_null_count={} mem_base_ptr={} mem_data_first_non_null_offset={:?}",
+        //     mem_data.len(),
+        //     non_null_count,
+        //     mem_base_ptr,
+        //     mem_data_first_non_null_offset
+        // );
+
+        let heap_pos_func = instance
+            .get_func(compiled_runtime.store.as_context_mut(), "__heap_pos")
+            .unwrap();
+        let heap_pos_set_func = instance
+            .get_func(compiled_runtime.store.as_context_mut(), "__heap_pos_set")
+            .unwrap();
+        let heap_checkpoint_idx_func = instance
+            .get_func(
+                compiled_runtime.store.as_context_mut(),
+                "__heap_checkpoint_idx",
+            )
+            .unwrap();
+        let heap_checkpoint_save_func = instance
+            .get_func(
+                compiled_runtime.store.as_context_mut(),
+                "__heap_checkpoint_save",
+            )
+            .unwrap();
+        let heap_checkpoint_pop_func = instance
+            .get_func(
+                compiled_runtime.store.as_context_mut(),
+                "__heap_checkpoint_pop",
+            )
+            .unwrap();
+        let heap_reset_func = instance
+            .get_func(compiled_runtime.store.as_context_mut(), "__heap_reset")
+            .unwrap();
+        let heap_base_offset_func = instance
+            .get_func(
+                compiled_runtime.store.as_context_mut(),
+                "__heap_base_offset",
+            )
+            .unwrap();
+
+        // compiled_runtime.module = module;
+        // compiled_runtime.store = store;
+        compiled_runtime.instance = instance;
+        // compiled_runtime.memory = memory;
+
+        compiled_runtime.deploy_func = deploy_func;
+        compiled_runtime.main_func = main_func;
+
+        compiled_runtime.heap_pos_func = heap_pos_func;
+        compiled_runtime.heap_pos_set_func = heap_pos_set_func;
+        compiled_runtime.heap_checkpoint_idx_func = heap_checkpoint_idx_func;
+        compiled_runtime.heap_checkpoint_save_func = heap_checkpoint_save_func;
+        compiled_runtime.heap_checkpoint_pop_func = heap_checkpoint_pop_func;
+        compiled_runtime.heap_reset_func = heap_reset_func;
+        compiled_runtime.heap_base_offset_func = heap_base_offset_func;
+    }
+
+    pub fn execute(&mut self, is_resume: bool) -> Result<(), TrapCode> {
+        self.exec_count += 1;
+        if !is_resume {
+            self.depth += 1;
+            log_ext!("self.depth+=1");
+        }
+        log_ext!(
+            "self.exec_count={} self.depth={}",
+            self.exec_count,
+            self.depth
+        );
         let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
 
         // Rewrite runtime context before each call, since we reuse the same store and runtime for
@@ -116,11 +412,19 @@ impl SystemRuntime {
         }
 
         // Call the function based on the passed state
-        let entrypoint = match compiled_runtime.store.data().state {
+        let state = compiled_runtime.store.data().state;
+        let entrypoint = match state {
             STATE_MAIN => compiled_runtime.main_func,
             STATE_DEPLOY => compiled_runtime.deploy_func,
             _ => unreachable!(),
         };
+        // Call the function based on the passed state
+        log_ext!("state={:?}", state);
+        let store_context_mut = compiled_runtime.store.as_context_mut();
+        let result = entrypoint.call(store_context_mut, &[], &mut []);
+        if result.is_err() {
+            log_ext!();
+        }
         let result = entrypoint.call(compiled_runtime.store.as_context_mut(), &[], &mut []);
 
         // If the execution result is `InterruptionCalled`, then interruption is called, we should re-map
@@ -140,12 +444,29 @@ impl SystemRuntime {
             // Initialize resumable context with empty parameters, these values are passed into
             // the resume function once we're ready to resume
             self.state = Some(RuntimeInterruptionOutcomeV1::default());
+            let heap_pos = compiled_runtime.heap_pos();
+            log_ext!("heap_pos={}", heap_pos);
+            let memory_data = compiled_runtime
+                .memory
+                .data(compiled_runtime.store.as_context_mut());
+            let memory_data_chunk = &memory_data[heap_pos as usize - 100..];
+            log_ext!(
+                "alloc_stats {:?}",
+                self.compiled_runtime_mut().alloc_stats()
+            );
             return Err(TrapCode::InterruptionCalled);
         }
 
+        log_ext!();
+        self.depth -= 1;
+        log_ext!("self.depth={}", self.depth);
+        if self.depth == 0 {
+            // self.with_compiled_runtime_mut(|v| v.heap_reset());
+        }
         result.map_err(map_anyhow_error).or_else(|trap_code| {
             // Trap code `ExecutionHalted` is used to unwind the execution and terminate, that's
             // why we map it into `Ok()`
+            log_ext!("trap_code={:?}", trap_code);
             if trap_code == TrapCode::ExecutionHalted {
                 Ok(())
             } else {
@@ -170,7 +491,7 @@ impl SystemRuntime {
         let outcome = bincode::encode_to_vec(&outcome, bincode::config::legacy()).unwrap();
         data_mut.execution_result.return_data = outcome;
         data_mut.clear_output();
-        self.execute()
+        self.execute(true)
     }
 
     pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), TrapCode> {
@@ -180,6 +501,7 @@ impl SystemRuntime {
 
     pub fn memory_write(&mut self, offset: usize, data: &[u8]) -> Result<(), TrapCode> {
         let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
+        log_ext!("offset {} data.len {}", offset, data.len());
         compiled_runtime
             .memory
             .write(compiled_runtime.store.as_context_mut(), offset, data)
@@ -197,6 +519,18 @@ impl SystemRuntime {
     pub fn remaining_fuel(&self) -> Option<u64> {
         // We don't support fuel for this runtime
         None
+    }
+
+    pub fn with_compiled_runtime_mut<R, F: FnOnce(&mut CompiledRuntime) -> R>(
+        &mut self,
+        func: F,
+    ) -> R {
+        let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
+        func(compiled_runtime)
+    }
+
+    pub fn compiled_runtime_mut(&mut self) -> &mut CompiledRuntime {
+        self.compiled_runtime.as_mut().unwrap()
     }
 
     pub fn context_mut<R, F: FnOnce(&mut RuntimeContext) -> R>(&mut self, func: F) -> R {
@@ -234,24 +568,44 @@ struct CallerAdapter<'a> {
 
 impl<'a> rwasm::Store<RuntimeContext> for CallerAdapter<'a> {
     fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
+        if buffer.is_empty() {
+            log_ext!();
+            return Ok(());
+        }
         let memory = self
             .caller
             .get_export("memory")
             .unwrap()
             .into_memory()
             .unwrap();
+        log_ext!(
+            "offset {} buffer.len {} max mem len {}",
+            offset,
+            buffer.len(),
+            memory.data(self.caller.as_context()).len()
+        );
         memory
             .read(self.caller.as_context_mut(), offset, buffer)
             .map_err(|_| TrapCode::MemoryOutOfBounds)
     }
 
     fn memory_write(&mut self, offset: usize, buffer: &[u8]) -> Result<(), TrapCode> {
+        if buffer.is_empty() {
+            log_ext!();
+            return Ok(());
+        }
         let memory = self
             .caller
             .get_export("memory")
             .unwrap()
             .into_memory()
             .unwrap();
+        log_ext!(
+            "offset {} buffer.len {} max mem len {}",
+            offset,
+            buffer.len(),
+            memory.data(self.caller.as_context()).len()
+        );
         memory
             .write(self.caller.as_context_mut(), offset, buffer)
             .map_err(|_| TrapCode::MemoryOutOfBounds)
@@ -393,6 +747,7 @@ fn map_anyhow_error(err: anyhow::Error) -> TrapCode {
             _ => unreachable!("unknown trap wasmtime code"),
         }
     } else if let Some(trap) = err.downcast_ref::<TrapCode>() {
+        log_ext!();
         // if our trap code is initiated, then just return the trap code
         *trap
     } else {

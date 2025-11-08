@@ -23,8 +23,7 @@ macro_rules! log_ext {
     ($msg:tt) => {{
         extern crate alloc;
         let msg = alloc::format!("{}: {}", $crate::current_line_info!(), $msg);
-        #[cfg(feature = "std")]
-        println!("{}", msg);
+        #[cfg(feature = "std")] println!("{}", msg);
     }};
     ($($arg:tt)*) => {{
         extern crate alloc;

@@ -6,7 +6,7 @@ use super::{
 use crate::inspector::{InspectorEvent, TraceInspector};
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm};
-use fluentbase_sdk::{Address, PRECOMPILE_EVM_RUNTIME};
+use fluentbase_sdk::{debug_log_ext, Address, PRECOMPILE_EVM_RUNTIME};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -467,6 +467,9 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone, INSP>(
         }
         let v2 = evm2.0.journaled_state.database.cache.accounts.get(address);
         if let Some(a1) = v1.account.as_ref().map(|v| &v.info) {
+            if v2.is_none() {
+                debug_log_ext!("missing account for address {:?}", address)
+            }
             let a2 = v2
                 .expect("missing FLUENT account")
                 .account
@@ -815,9 +818,10 @@ pub fn execute_test_suite(
 
             for (index, test) in tests.into_iter().enumerate() {
                 println!(
-                    "\n\n\n\n\nRunning test with txdata: ({}) {}",
+                    "\n\n\n\n\nRunning test with txdata: (index {} hash {}) {}",
                     index,
-                    hex::encode(test.txbytes.clone().unwrap_or_default().as_ref())
+                    test.hash,
+                    hex::encode(test.txbytes.clone().unwrap_or_default().as_ref()),
                 );
                 tx_env.gas_limit = unit.transaction.gas_limit[test.indexes.gas].saturating_to();
 
@@ -875,7 +879,7 @@ pub fn execute_test_suite(
                     let result_native = evm.inspect_tx_commit(tx_env.clone());
                     println!("{:?}", start.elapsed());
                     let start = Instant::now();
-                    print!("\n\nrunning RWASM tests... ");
+                    println!("\n\nrunning RWASM tests... ");
                     let mut evm2 = RwasmContext::new(state2, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
@@ -909,7 +913,7 @@ pub fn execute_test_suite(
                     let start = Instant::now();
                     let result_native = evm.transact_commit(tx_env.clone());
                     println!("{:?}", start.elapsed());
-                    print!("\n\nrunning RWASM tests... ");
+                    println!("\n\nrunning RWASM tests... ");
                     let mut evm2 = RwasmContext::new(state2, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
