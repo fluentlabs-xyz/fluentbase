@@ -163,7 +163,7 @@ impl Drop for SystemRuntime {
             log_ext!();
             let mut compiled_runtime: CompiledRuntime = self.compiled_runtime.take().unwrap();
             let start = Instant::now();
-            // Self::reset_compiled_runtime(&mut compiled_runtime, self.import_linker.clone());
+            Self::reset_compiled_runtime(&mut compiled_runtime, self.import_linker.clone());
             log_ext!("elapsed {:?}", start.elapsed());
             compiled_runtimes
                 .borrow_mut()
@@ -425,7 +425,6 @@ impl SystemRuntime {
         if result.is_err() {
             log_ext!();
         }
-        let result = entrypoint.call(compiled_runtime.store.as_context_mut(), &[], &mut []);
 
         // If the execution result is `InterruptionCalled`, then interruption is called, we should re-map
         // trap code into an interruption.
@@ -568,10 +567,10 @@ struct CallerAdapter<'a> {
 
 impl<'a> rwasm::Store<RuntimeContext> for CallerAdapter<'a> {
     fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
-        if buffer.is_empty() {
-            log_ext!();
-            return Ok(());
-        }
+        // if buffer.is_empty() {
+        //     log_ext!();
+        //     return Ok(());
+        // }
         let memory = self
             .caller
             .get_export("memory")
@@ -590,10 +589,10 @@ impl<'a> rwasm::Store<RuntimeContext> for CallerAdapter<'a> {
     }
 
     fn memory_write(&mut self, offset: usize, buffer: &[u8]) -> Result<(), TrapCode> {
-        if buffer.is_empty() {
-            log_ext!();
-            return Ok(());
-        }
+        // if buffer.is_empty() {
+        //     log_ext!();
+        //     return Ok(());
+        // }
         let memory = self
             .caller
             .get_export("memory")
