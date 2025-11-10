@@ -2,6 +2,7 @@
 //!
 //! We do not execute Host methods directly; host-bound opcodes are routed
 //! via interruptions. The unreachable!() bodies here document that path.
+use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 use fluentbase_sdk::{Address, Bytes, ContextReader, Log, SharedAPI, B256, U256};
 use revm_context::journaled_state::{AccountLoad, StateLoad};
@@ -145,7 +146,7 @@ impl<'a, SDK: SharedAPI> Host for HostWrapperImpl<'a, SDK> {
         unreachable!()
     }
 
-    fn load_account_code(&mut self, _address: Address) -> Option<StateLoad<Bytes>> {
+    fn load_account_code(&mut self, _address: Address) -> Option<StateLoad<Vec<u8>>> {
         unreachable!()
     }
 

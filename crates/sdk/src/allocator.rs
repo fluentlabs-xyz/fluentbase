@@ -71,6 +71,9 @@ static ENABLE_SIMPLE_DEALLOC: bool = false;
 static mut HEAP_CHECKPOINTS: [usize; 1024] = [0usize; 1024];
 
 #[cfg(target_arch = "wasm32")]
+static HEAP_FILL_WITH_0_ON_RESET: bool = true;
+
+#[cfg(target_arch = "wasm32")]
 static mut HEAP_POS_PREV_IDX: usize = 0;
 
 #[cfg(target_arch = "wasm32")]
@@ -231,13 +234,15 @@ pub extern "C" fn __heap_reset() -> usize {
     }
     let heap_pos_current = unsafe { HEAP_POS };
     let heap_pos_base = unsafe { (&__heap_base) as *const u8 as usize };
-    let data = unsafe {
-        core::slice::from_raw_parts_mut(
-            (&mut __heap_base) as *mut u8,
-            heap_pos_current - heap_pos_base,
-        )
-        // .fill(0)
-    };
+    if HEAP_FILL_WITH_0_ON_RESET {
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                (&mut __heap_base) as *mut u8,
+                heap_pos_current - heap_pos_base,
+            )
+            .fill(0);
+        }
+    }
     unsafe {
         HEAP_POS = (&__heap_base) as *const u8 as usize;
         HEAP_POS

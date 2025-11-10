@@ -86,7 +86,7 @@ impl NextAction {
     pub fn error(exit_code: ExitCode, gas: Gas) -> Self {
         NextAction::Return(ExecutionResult {
             result: instruction_result_from_exit_code(exit_code, true),
-            output: Bytes::default(),
+            output: Vec::new(),
             gas,
         })
     }

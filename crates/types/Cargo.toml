@@ -18,11 +18,13 @@ alloy-primitives = { workspace = true }
 strum_macros = { workspace = true }
 revm-primitives = { workspace = true }
 revm-precompile = { workspace = true }
+revm-helpers = { workspace = true }
 hashbrown = { workspace = true }
 bincode = { workspace = true, features = ["alloc", "serde", "derive"] }
 paste = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-codec-derive = { workspace = true }
+spin = { version = "0.10.0", default-features = false, features = ["mutex"] }
 
 [features]
 default = ["std"]

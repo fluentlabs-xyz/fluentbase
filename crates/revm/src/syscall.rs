@@ -47,7 +47,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     macro_rules! return_result {
         ($output:expr, $result:ident) => {{
-            let output: Bytes = $output.into();
+            let output: Vec<u8> = $output.into();
             let result = ExecutionResult {
                 result: instruction_result_from_exit_code(ExitCode::$result, output.is_empty()),
                 output,
@@ -61,14 +61,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             return Ok(NextAction::InterruptionResult);
         }};
         ($result:ident) => {{
-            return_result!(Bytes::default(), $result)
+            return_result!(Vec::default(), $result)
         }};
     }
     macro_rules! return_halt {
         ($result:ident) => {{
             let result = ExecutionResult {
                 result: instruction_result_from_exit_code(ExitCode::$result, true),
-                output: Bytes::new(),
+                output: Vec::new(),
                 gas: Gas::new_spent(frame.interpreter.gas.spent() - inputs.gas.spent()),
             };
             return Ok(NextAction::Return(result));
@@ -221,7 +221,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
             // create call inputs
             let call_inputs = Box::new(CallInputs {
-                input: CallInput::Bytes(Bytes::copy_from_slice(contract_input)),
+                input: CallInput::Bytes(
+                    revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from(
+                        &contract_input,
+                    )
+                    .expect("contract input exceeded reusable pool cap"),
+                ),
                 gas_limit,
                 target_address,
                 caller: current_target_address,
@@ -266,7 +271,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
             // create call inputs
             let call_inputs = Box::new(CallInputs {
-                input: CallInput::Bytes(Bytes::copy_from_slice(contract_input)),
+                input: CallInput::Bytes(
+                    revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from(
+                        &contract_input,
+                    )
+                    .expect("contract input exceeded reusable pool cap"),
+                ),
                 gas_limit,
                 target_address,
                 caller: current_target_address,
@@ -317,7 +327,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 []
             );
             let call_inputs = Box::new(CallInputs {
-                input: CallInput::Bytes(Bytes::copy_from_slice(contract_input)),
+                input: CallInput::Bytes(
+                    revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from(
+                        &contract_input,
+                    )
+                    .expect("contract input exceeded reusable pool cap"),
+                ),
                 gas_limit,
                 target_address: current_target_address,
                 caller: current_target_address,
@@ -362,7 +377,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
             // create call inputs
             let call_inputs = Box::new(CallInputs {
-                input: CallInput::Bytes(Bytes::copy_from_slice(contract_input)),
+                input: CallInput::Bytes(
+                    revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from(
+                        &contract_input,
+                    )
+                    .expect("contract input exceeded reusable pool cap"),
+                ),
                 gas_limit,
                 target_address: current_target_address,
                 caller: frame.interpreter.input.caller_address(),
@@ -639,7 +659,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 code_hash = KECCAK_EMPTY;
             }
 
-            return_result!(code_hash, Ok);
+            return_result!(code_hash.0, Ok);
         }
 
         SYSCALL_ID_CODE_COPY => {
@@ -660,7 +680,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
             // If requested code length is zero, then there is no need to proceed
             if code_length == 0 {
-                return_result!(Bytes::new(), Ok);
+                return_result!(Vec::new(), Ok);
             }
 
             let mut bytecode = match &account.data.info.code {
@@ -681,7 +701,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // we store system precompile bytecode in the state trie,
             // according to evm requirements, we should return empty code
             if is_system_precompile(&address) {
-                bytecode = Bytes::new();
+                bytecode = Vec::new();
             }
 
             // TODO(dmitry123): Add offset/length checks, otherwise gas can be abused!
@@ -743,11 +763,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let account = ctx.journal_mut().load_account_code(address)?;
             match account.info.code.as_ref() {
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode)) => {
-                    return_result!(ownable_account_bytecode.owner_address.0, Ok)
+                    return_result!(ownable_account_bytecode.owner_address.0 .0, Ok)
                 }
                 _ => {}
             };
-            return_result!(Address::ZERO.0, Ok)
+            return_result!(Address::ZERO.0 .0, Ok)
         }
         SYSCALL_ID_METADATA_CREATE => {
             let input = get_input_validated!(inputs.syscall_params.input.len() >= 32);
@@ -769,7 +789,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 derived_metadata_address,
                 Bytecode::OwnableAccount(OwnableAccountBytecode::new(
                     account_owner_address,
-                    Bytes::copy_from_slice(metadata),
+                    metadata.into(),
                 )),
             );
             return_result!(Bytes::new(), Ok)
@@ -820,9 +840,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     let length = LittleEndian::read_u32(&input[24..28]);
                     // take min
                     let length = length.min(ownable_account_bytecode.metadata.len() as u32);
-                    let metadata = ownable_account_bytecode
-                        .metadata
-                        .slice(offset as usize..(offset + length) as usize);
+                    let metadata = &ownable_account_bytecode.metadata
+                        [offset as usize..(offset + length) as usize];
                     return_result!(metadata, Ok)
                 }
                 _ => unreachable!(),
@@ -868,7 +887,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 .sstore(account_owner_address, slot_u256, value_u256)?;
             ctx.journal_mut().touch_account(account_owner_address);
 
-            return_result!(Bytes::default(), Ok);
+            return_result!(Vec::default(), Ok);
         }
 
         SYSCALL_ID_TRANSIENT_READ => {
@@ -909,7 +928,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 }
                 _ => B256::ZERO,
             };
-            return_result!(hash, Ok);
+            return_result!(hash.0, Ok);
         }
 
         _ => return_halt!(MalformedBuiltinParams),

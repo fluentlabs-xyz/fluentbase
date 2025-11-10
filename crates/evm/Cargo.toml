@@ -11,6 +11,7 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
+fluentbase-types = { workspace = true }
 bitvec = { workspace = true }
 bincode = { workspace = true }
 
@@ -19,6 +20,7 @@ revm-primitives = { workspace = true }
 revm-bytecode = { workspace = true }
 revm-interpreter = { workspace = true }
 revm-context = { workspace = true }
+revm-helpers = { workspace = true }
 serde = { version = "1.0.228", default-features = false, features = ["derive"] }
 
 [features]

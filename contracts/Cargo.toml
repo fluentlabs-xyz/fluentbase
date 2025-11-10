@@ -28,6 +28,7 @@ fluentbase-types = { path = "../crates/types", default-features = false }
 revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
 #revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false }
 revm-interpreter = { path = "../../revm-rwasm/crates/interpreter", default-features = false }
+revm-helpers = { path = "../../revm-rwasm/crates/helpers", default-features = false }
 # solana
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }

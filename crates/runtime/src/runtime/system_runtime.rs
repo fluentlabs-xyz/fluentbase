@@ -198,7 +198,7 @@ impl SystemRuntime {
         ctx: RuntimeContext,
     ) -> Self {
         let compiled_runtime = COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            if let Some(mut compiled_runtime) = compiled_runtimes.remove(&code_hash) {
+            if let Some(compiled_runtime) = compiled_runtimes.remove(&code_hash) {
                 return compiled_runtime;
             }
             let module = Self::compiled_module(code_hash, module);
@@ -304,7 +304,7 @@ impl SystemRuntime {
         compiled_runtime: &mut CompiledRuntime,
         import_linker: Arc<ImportLinker>,
     ) {
-        compiled_runtime.heap_reset();
+        // compiled_runtime.heap_reset();
         let engine = wasmtime_engine();
         let linker = wasmtime_import_linker(engine, import_linker);
         let instance = linker
@@ -319,9 +319,9 @@ impl SystemRuntime {
         let main_func = instance
             .get_func(compiled_runtime.store.as_context_mut(), "main")
             .unwrap();
-        // let memory = instance
-        //     .get_memory(store.as_context_mut(), "memory")
-        //     .unwrap();
+        let memory = instance
+            .get_memory(compiled_runtime.store.as_context_mut(), "memory")
+            .unwrap();
 
         // TODO for debug log
         // let mem_base_ptr = memory.data_ptr(store.as_context()) as usize;
@@ -375,7 +375,7 @@ impl SystemRuntime {
         // compiled_runtime.module = module;
         // compiled_runtime.store = store;
         compiled_runtime.instance = instance;
-        // compiled_runtime.memory = memory;
+        compiled_runtime.memory = memory;
 
         compiled_runtime.deploy_func = deploy_func;
         compiled_runtime.main_func = main_func;
@@ -445,12 +445,13 @@ impl SystemRuntime {
             self.state = Some(RuntimeInterruptionOutcomeV1::default());
             let heap_pos = compiled_runtime.heap_pos();
             log_ext!("heap_pos={}", heap_pos);
-            let memory_data = compiled_runtime
-                .memory
-                .data(compiled_runtime.store.as_context_mut());
-            let memory_data_chunk = &memory_data[heap_pos as usize - 100..];
+            // let memory_data = compiled_runtime
+            //     .memory
+            //     .data(compiled_runtime.store.as_context_mut());
+            // let memory_data_chunk = &memory_data[heap_pos as usize - 100..];
             log_ext!(
-                "alloc_stats {:?}",
+                "alloc_stats (state:{}) {:?}",
+                state,
                 self.compiled_runtime_mut().alloc_stats()
             );
             return Err(TrapCode::InterruptionCalled);

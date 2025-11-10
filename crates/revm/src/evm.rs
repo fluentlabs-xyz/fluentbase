@@ -257,15 +257,19 @@ where
                             resolve_precompiled_runtime_from_input(inputs.init_code.as_ref());
                         // create a new EIP-7702 account that points to the EVM runtime system precompile
                         let ownable_account_bytecode =
-                            OwnableAccountBytecode::new(precompile_runtime, Bytes::new());
+                            OwnableAccountBytecode::new(precompile_runtime, Default::default());
                         new_frame.interpreter.input.account_owner = Some(precompile_runtime);
                         let bytecode = Bytecode::OwnableAccount(ownable_account_bytecode);
                         ctx.journal_mut()
                             .set_code(new_frame.interpreter.input.target_address, bytecode);
                         // an original init code we pass as an input inside the runtime
                         // to execute deployment logic
-                        let input_bytecode = inputs.init_code.clone();
-                        new_frame.interpreter.input.input = CallInput::Bytes(input_bytecode);
+                        new_frame.interpreter.input.input = CallInput::Bytes(
+                            revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from(
+                                &inputs.init_code,
+                            )
+                            .expect("init code exceeded reusable pool cap"),
+                        );
                         // we should reload bytecode here since it's an EIP-7702 account
                         let bytecode = ctx.journal_mut().code(precompile_runtime)?;
                         assert!(

@@ -18,6 +18,7 @@ use fluentbase_sdk::{
     ExitCode, RuntimeNewFrameInputV1, SharedContextInput, SharedContextInputV1,
     SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
 };
+use revm::interpreter::InterpreterResult;
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
     context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
@@ -36,24 +37,23 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
     ctx: &mut CTX,
     inspector: &mut Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
-    let mut first_iteration = true;
     let next_action = loop {
-        let next_action = if let Some(interruption_outcome) = frame.take_interrupted_outcome() {
-            execute_rwasm_resume(frame, ctx, interruption_outcome, inspector)
-        } else {
-            execute_rwasm_frame(frame, ctx, inspector)
-        }?;
-        first_iteration = false;
+        let next_action: NextAction =
+            if let Some(interruption_outcome) = frame.take_interrupted_outcome() {
+                execute_rwasm_resume(frame, ctx, interruption_outcome, inspector)
+            } else {
+                execute_rwasm_frame(frame, ctx, inspector)
+            }?;
         match next_action {
             NextAction::InterruptionResult => continue,
             _ => break next_action,
         }
     };
-    let interpreter_result = match &next_action {
+    let interpreter_result: InterpreterResult = match &next_action {
         NextAction::NewFrame(_) => {
             return Ok(next_action);
         }
-        NextAction::Return(result) => result,
+        NextAction::Return(result) => result.clone(),
         NextAction::InterruptionResult => unreachable!(),
     };
     let create_frame = match &frame.data {
@@ -88,16 +88,21 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
         // TODO(dmitry123): "optimize me, store RwasmModule inside Bytecode"
         let (_, bytes_read) = RwasmModule::new(interpreter_result.output.as_ref());
         let (rwasm_module_raw, constructor_params_raw) = (
-            interpreter_result.output.slice(..bytes_read),
-            interpreter_result.output.slice(bytes_read..),
+            &interpreter_result.output[..bytes_read],
+            &interpreter_result.output[bytes_read..],
         );
-        let bytecode_hash = keccak256(rwasm_module_raw.as_ref());
+        let bytecode_hash = keccak256(rwasm_module_raw);
         // Rewrite overridden rWasm bytecode
-        let bytecode = Bytecode::new_rwasm(rwasm_module_raw);
+        let bytecode = Bytecode::new_rwasm(Bytes::from(rwasm_module_raw));
         ctx.journal_mut()
             .set_code(create_frame.created_address, bytecode.clone());
         // Change input params
-        frame.interpreter.input.input = CallInput::Bytes(constructor_params_raw);
+        frame.interpreter.input.input = CallInput::Bytes(
+            revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from(
+                &constructor_params_raw,
+            )
+            .expect("constructor params exceeded reusable pool cap"),
+        );
         frame.interpreter.input.account_owner = None;
         frame.interpreter.bytecode = ExtBytecode::new_with_hash(bytecode, bytecode_hash);
         frame.interpreter.gas = interpreter_result.gas;
@@ -224,7 +229,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     interpreter.gas.record_denominated_refund(fuel_refunded);
 
     // extract return data from the execution context
-    let return_data: Bytes;
+    let return_data: Vec<u8>;
     return_data = runtime_context.execution_result.return_data.into();
 
     process_exec_result(frame, ctx, inspector, exit_code, return_data)
@@ -282,7 +287,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         fuel_refunded,
         inputs.syscall_params.fuel16_ptr,
     );
-    let return_data: Bytes = runtime_context.execution_result.return_data.into();
+    let return_data: Vec<u8> = runtime_context.execution_result.return_data.into();
 
     // make sure we have enough gas to charge from the call
     if !frame.interpreter.gas.record_denominated_cost(fuel_consumed) {
@@ -337,7 +342,7 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     inspector: &mut Option<&mut INSP>,
     mut ownable_account: OwnableAccountBytecode,
     exit_code: i32,
-    mut return_data: Bytes,
+    mut return_data: Vec<u8>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let is_create: bool = matches!(frame.input, FrameInput::Create(..));
     match exit_code {
@@ -367,7 +372,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     ctx: &mut CTX,
     inspector: &mut Option<&mut INSP>,
     exit_code: i32,
-    return_data: Bytes,
+    return_data: Vec<u8>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     // if we have success or failed exit code
     if exit_code <= 0 {
@@ -411,7 +416,7 @@ fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
     ctx: &mut CTX,
     inspector: &mut Option<&mut INSP>,
     exit_code: ExitCode,
-    return_data: Bytes,
+    return_data: Vec<u8>,
 ) -> NextAction {
     let result = instruction_result_from_exit_code(exit_code, return_data.is_empty());
     if let Some(inspector) = inspector {

@@ -1969,8 +1969,10 @@ dependencies = [
  "bincode 2.0.1",
  "bitvec",
  "fluentbase-sdk",
+ "fluentbase-types",
  "revm-bytecode",
  "revm-context",
+ "revm-helpers",
  "revm-interpreter",
  "revm-primitives",
  "serde",
@@ -1997,6 +1999,7 @@ dependencies = [
  "fluentbase-sdk",
  "once_cell",
  "revm",
+ "revm-helpers",
  "rwasm",
  "serde",
  "tracing",
@@ -2147,10 +2150,12 @@ dependencies = [
  "fluentbase-codec-derive",
  "hashbrown 0.16.0",
  "paste",
+ "revm-helpers",
  "revm-precompile",
  "revm-primitives",
  "rwasm",
  "serde",
+ "spin 0.10.0",
  "strum_macros 0.27.2",
 ]
 
@@ -4029,6 +4034,7 @@ dependencies = [
  "bitvec",
  "once_cell",
  "phf",
+ "revm-helpers",
  "revm-primitives",
  "rwasm",
  "serde",
@@ -4057,6 +4063,7 @@ dependencies = [
  "auto_impl",
  "either",
  "revm-database-interface",
+ "revm-helpers",
  "revm-primitives",
  "revm-state",
  "serde",
@@ -4095,11 +4102,21 @@ dependencies = [
  "revm-context",
  "revm-context-interface",
  "revm-database-interface",
+ "revm-helpers",
  "revm-interpreter",
  "revm-precompile",
  "revm-primitives",
  "revm-state",
  "serde",
+]
+
+[[package]]
+name = "revm-helpers"
+version = "1.0.0"
+dependencies = [
+ "alloy-primitives",
+ "num_enum",
+ "spin 0.10.0",
 ]
 
 [[package]]
@@ -4124,6 +4141,7 @@ version = "23.0.2"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
+ "revm-helpers",
  "revm-primitives",
  "serde",
 ]
@@ -4146,6 +4164,7 @@ dependencies = [
  "libsecp256k1 0.7.2",
  "once_cell",
  "p256",
+ "revm-helpers",
  "revm-primitives",
  "ripemd",
  "rug",

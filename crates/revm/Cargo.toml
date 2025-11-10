@@ -24,6 +24,7 @@ all = "warn"
 [dependencies]
 # revm
 revm = { workspace = true }
+revm-helpers = { workspace = true }
 
 # static precompile sets.
 once_cell = { workspace = true, features = ["alloc"] }

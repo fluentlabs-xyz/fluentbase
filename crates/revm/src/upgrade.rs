@@ -16,7 +16,7 @@ macro_rules! upgrade_panic {
     return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
         result: InterpreterResult {
             result: InstructionResult::Revert,
-            output: Bytes::from($message),
+            output: Vec::from($message),
             gas: Gas::new(0),
         },
         memory_offset: $inputs.return_memory_offset.clone(),
@@ -37,7 +37,7 @@ pub(crate) fn upgrade_runtime_hook_v1<
     debug_assert_eq!(inputs.caller, UPDATE_GENESIS_AUTH);
     let bytecode = inputs.input.bytes(ctx);
     debug_assert!(bytecode.starts_with(&UPDATE_GENESIS_PREFIX_V1));
-    let Ok(bytecode) = Bytecode::new_raw_checked(bytecode.slice(UPDATE_GENESIS_PREFIX_V1.len()..))
+    let Ok(bytecode) = Bytecode::new_raw_checked(bytecode[UPDATE_GENESIS_PREFIX_V1.len()..].into())
     else {
         upgrade_panic!(inputs, "malformed bytecode");
     };
@@ -66,7 +66,7 @@ pub(crate) fn upgrade_runtime_hook_v2<
     debug_assert_eq!(inputs.caller, UPDATE_GENESIS_AUTH);
     let bytecode = inputs.input.bytes(ctx);
     debug_assert!(bytecode.starts_with(&UPDATE_GENESIS_PREFIX_V2));
-    let wasm_bytecode = bytecode.slice(UPDATE_GENESIS_PREFIX_V2.len()..);
+    let wasm_bytecode = &bytecode[UPDATE_GENESIS_PREFIX_V2.len()..];
     let Ok(RwasmCompilationResult { rwasm_module, .. }) = compile_wasm_to_rwasm(&wasm_bytecode)
     else {
         upgrade_panic!(inputs, "malformed wasm bytecode");

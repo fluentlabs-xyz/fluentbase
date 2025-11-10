@@ -33,6 +33,7 @@ pub use native_api::*;
 pub use runtime::*;
 #[cfg(target_arch = "wasm32")]
 pub use rwasm_context::{bindings, RwasmContext};
+pub use spin;
 pub use sys_func_idx::*;
 pub use syscall::*;
 

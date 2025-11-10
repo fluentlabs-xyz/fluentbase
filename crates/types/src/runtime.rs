@@ -3,8 +3,15 @@ use alloy_primitives::Bytes;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RuntimeNewFrameInputV1 {
-    pub metadata: Bytes,
-    pub input: Bytes,
+    pub metadata: Vec<u8>,
+    pub input: Vec<u8>,
+}
+
+impl Drop for RuntimeNewFrameInputV1 {
+    fn drop(&mut self) {
+        revm_helpers::reusable_pool::global::vec_u8_reusable_pool::take_recycle(&mut self.metadata);
+        revm_helpers::reusable_pool::global::vec_u8_reusable_pool::take_recycle(&mut self.input);
+    }
 }
 
 impl bincode::Encode for RuntimeNewFrameInputV1 {
@@ -12,8 +19,8 @@ impl bincode::Encode for RuntimeNewFrameInputV1 {
         &self,
         e: &mut E,
     ) -> Result<(), bincode::error::EncodeError> {
-        bincode::Encode::encode(self.metadata.as_ref(), e)?;
-        bincode::Encode::encode(&self.input.as_ref(), e)?;
+        bincode::Encode::encode(&self.metadata, e)?;
+        bincode::Encode::encode(&self.input, e)?;
         Ok(())
     }
 }

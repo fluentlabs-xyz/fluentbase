@@ -10,26 +10,27 @@ use fluentbase_evm::{
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult,
 };
 use fluentbase_sdk::{
-    bincode, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256,
+    bincode, debug_log_ext, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256,
     EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
 };
 use fluentbase_types::{
     RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SyscallInvocationParams,
 };
+use revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from;
 use revm_interpreter::InterpreterAction;
 use spin::MutexGuard;
 
 /// Store EVM bytecode and its keccak256 hash in contract metadata.
 /// Hash is written at offset 0, raw bytecode at offset 32.
-pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: Bytes) {
-    let evm_code_hash = keccak256(evm_bytecode.as_ref());
+pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: Vec<u8>) {
+    let evm_code_hash = keccak256(&evm_bytecode);
     let analyzed_bytecode = AnalyzedBytecode::new(evm_bytecode, evm_code_hash);
     let raw_metadata = EthereumMetadata::Analyzed(analyzed_bytecode).write_to_bytes();
     sdk.write(raw_metadata.as_ref());
 }
 
 /// Transforms metadata into analyzed EVM bytecode when possible.
-pub(crate) fn evm_bytecode_from_metadata(metadata: &Bytes) -> Option<AnalyzedBytecode> {
+pub(crate) fn evm_bytecode_from_metadata(metadata: &Vec<u8>) -> Option<AnalyzedBytecode> {
     Some(match EthereumMetadata::read_from_bytes(metadata)? {
         EthereumMetadata::Legacy(bytecode) => {
             AnalyzedBytecode::new(bytecode.bytecode, bytecode.hash)
@@ -42,7 +43,7 @@ static SAVED_EVM_CONTEXT: spin::Once<spin::Mutex<Vec<EthVM>>> = spin::Once::new(
 
 fn lock_evm_context<'a>() -> MutexGuard<'a, Vec<EthVM>> {
     let cached_state = SAVED_EVM_CONTEXT.call_once(|| {
-        let result = Vec::new();
+        let result = Vec::with_capacity(1);
         spin::Mutex::new(result)
     });
     debug_assert!(
@@ -73,13 +74,23 @@ fn restore_evm_context_or_create<'a>(
             else {
                 unreachable!("evm: a valid metadata must be provided")
             };
-            (analyzed_bytecode, new_frame_input.input)
+            (
+                analyzed_bytecode,
+                vec_u8_try_reuse_and_copy_from(&new_frame_input.input).expect("enough cap"),
+            )
         } else {
-            let analyzed_bytecode =
-                AnalyzedBytecode::new(new_frame_input.input.clone(), B256::ZERO);
-            (analyzed_bytecode, Bytes::new())
+            let analyzed_bytecode = AnalyzedBytecode::new(
+                vec_u8_try_reuse_and_copy_from(&new_frame_input.input).expect("enough cap"),
+                B256::ZERO,
+            );
+            (analyzed_bytecode, Vec::new())
         };
-        let eth_vm = EthVM::new(context, contract_input, analyzed_bytecode);
+        let eth_vm = EthVM::new(
+            context,
+            revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from(&contract_input)
+                .expect("reused existing vector"),
+            analyzed_bytecode,
+        );
         // Push new EthVM frame (new frame is created)
         cached_state.push(eth_vm);
         cached_state.last_mut().unwrap()
@@ -114,7 +125,7 @@ fn restore_evm_context_or_create<'a>(
         }
         let exit_code = ExitCode::from(exit_code);
         eth_vm.interpreter.extend.interruption_outcome = Option::from(InterruptionOutcome {
-            output,
+            output: vec_u8_try_reuse_and_copy_from(&output).expect("enough cap"),
             gas,
             exit_code,
         });

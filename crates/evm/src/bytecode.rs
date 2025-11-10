@@ -2,6 +2,7 @@
 //!
 //! Stores padded bytecode, original length, jump table and code hash for
 //! fast interpreter setup and cheap serialization.
+use alloc::vec::Vec;
 use bincode::{de::read::SliceReader, enc::write::SliceWriter, error};
 use bitvec::vec::BitVec;
 use fluentbase_sdk::{alloc_slice, Bytes, B256};
@@ -11,14 +12,14 @@ use revm_bytecode::{legacy::analyze_legacy, JumpTable};
 /// A legacy bytecode
 pub struct LegacyBytecode {
     pub hash: B256,
-    pub bytecode: Bytes,
+    pub bytecode: Vec<u8>,
 }
 
 #[derive(Debug)]
 /// Bytecode plus metadata required by the interpreter.
 pub struct AnalyzedBytecode {
     /// A padded bytecode (length might be different)
-    pub bytecode: Bytes,
+    pub bytecode: Vec<u8>,
     /// An original bytecode len (w/o padding)
     pub len: usize,
     /// Jump table for JUMPDEST checks
@@ -29,13 +30,13 @@ pub struct AnalyzedBytecode {
 
 impl Default for AnalyzedBytecode {
     fn default() -> Self {
-        Self::new(Bytes::default(), B256::ZERO)
+        Self::new(Default::default(), B256::ZERO)
     }
 }
 
 impl AnalyzedBytecode {
     /// Analyze legacy bytecode, compute jump table, and keep original length and hash.
-    pub fn new(bytecode: Bytes, hash: B256) -> Self {
+    pub fn new(bytecode: Vec<u8>, hash: B256) -> Self {
         let len = bytecode.len();
         let (jump_table, bytecode) = analyze_legacy(bytecode);
         Self {
