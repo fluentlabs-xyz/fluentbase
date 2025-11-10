@@ -37,6 +37,7 @@ mod stateless;
 pub mod svm;
 // #[cfg(test)]
 // mod universal_token;
+#[cfg(test)]
 mod ddos;
 #[cfg(test)]
 mod update_account;
