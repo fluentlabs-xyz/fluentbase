@@ -10,8 +10,8 @@ use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address, is_system_precompile, Address, Bytes, ExitCode, Log, LogData,
-    B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
+    calc_create4_address, is_system_precompile, Address, Bytes, ExitCode, Log, LogData, B256,
+    FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -415,6 +415,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_CREATE | SYSCALL_ID_CREATE2 => {
+            assert_halt!(!is_static, StateChangeDuringStaticCall);
+
             // Make sure input doesn't exceed hard cap at least
             const HARD_CAP: usize = WASM_MAX_CODE_SIZE + U256::BYTES + U256::BYTES;
             assert_halt!(
@@ -425,38 +427,37 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // We have different derivation scheme and gas calculation for CREATE2
             let is_create2 = inputs.syscall_params.code_hash == SYSCALL_ID_CREATE2;
 
-            // Not allowed for static calls
-            assert_halt!(!is_static, StateChangeDuringStaticCall);
-            let input = if is_create2 {
-                get_input_validated!(== U256::BYTES + U256::BYTES).to_vec()
+            let (input, lazy_init_code) = get_input_validated!(>= if is_create2 {
+                U256::BYTES + U256::BYTES
             } else {
-                get_input_validated!(== U256::BYTES).to_vec()
-            };
+                U256::BYTES
+            });
 
             // Make sure we have enough bytes inside input params
-            let (scheme, value, init_code) = if is_create2 {
+            let (scheme, value) = if is_create2 {
                 let value = U256::from_le_slice(&input[0..32]);
                 let salt = U256::from_le_slice(&input[32..64]);
-                let init_code = &input[64..];
-                (CreateScheme::Create2 { salt }, value, init_code)
+                (CreateScheme::Create2 { salt }, value)
             } else {
                 let value = U256::from_le_slice(&input[0..32]);
-                let init_code = &input[32..];
-                (CreateScheme::Create, value, init_code)
+                (CreateScheme::Create, value)
             };
 
             // Make sure we don't exceed max possible init code
+            let init_code_length = inputs.syscall_params.input.len() - input.len();
+            if init_code_length > 0 {
+                charge_gas!(gas::initcode_cost(init_code_length));
+            }
+            let Ok(init_code) = lazy_init_code() else {
+                return_halt!(MemoryOutOfBounds);
+            };
             let max_initcode_size = wasm_max_code_size(&init_code).unwrap_or(MAX_INITCODE_SIZE);
             assert_halt!(
-                init_code.len() <= max_initcode_size,
+                init_code_length <= max_initcode_size,
                 CreateContractSizeLimit
             );
-
-            if !init_code.is_empty() {
-                charge_gas!(gas::initcode_cost(init_code.len()));
-            }
             if is_create2 {
-                let Some(gas) = gas::create2_cost(init_code.len().try_into().unwrap()) else {
+                let Some(gas) = gas::create2_cost(init_code_length) else {
                     return_halt!(OutOfFuel);
                 };
                 charge_gas!(gas);
@@ -482,7 +483,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 caller: current_target_address,
                 scheme,
                 value,
-                init_code: Bytes::copy_from_slice(init_code),
+                init_code: init_code.into(),
                 gas_limit,
             });
             return_frame!(NextAction::NewFrame(FrameInput::Create(create_inputs)));
