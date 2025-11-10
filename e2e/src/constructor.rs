@@ -27,6 +27,6 @@ fn test_deploy_with_constructor_params() {
     );
     println!("gas used: {:?}", result.gas_used());
     assert!(result.is_success());
-    let bytes = result.output().unwrap_or_default();
+    let bytes = result.output().cloned().unwrap_or_default();
     assert_eq!(constructor_params, bytes.to_vec());
 }

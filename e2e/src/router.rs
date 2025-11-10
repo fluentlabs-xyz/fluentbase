@@ -3,6 +3,7 @@ use fluentbase_codec::SolidityABI;
 use fluentbase_contracts::{
     FLUENTBASE_EXAMPLES_CLIENT_SOLIDITY, FLUENTBASE_EXAMPLES_ROUTER_SOLIDITY,
 };
+use fluentbase_sdk::bytes::Bytes;
 use fluentbase_sdk::{address, Address, U256};
 use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
@@ -38,7 +39,7 @@ fn test_client_solidity() {
 
     println!("result: {:?}", result);
     assert_eq!(result.is_success(), true);
-    let msg_b = result.output().unwrap();
-    let msg: String = SolidityABI::decode(msg_b, 0).unwrap();
+    let msg_b = result.output().cloned().unwrap();
+    let msg: String = SolidityABI::decode(&Bytes::from(msg_b), 0).unwrap();
     assert_eq!(msg, "Hello World");
 }

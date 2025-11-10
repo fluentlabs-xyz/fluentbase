@@ -16,8 +16,9 @@ use fluentbase_sdk::{
 use fluentbase_types::{
     RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SyscallInvocationParams,
 };
-use revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from;
-use revm_interpreter::InterpreterAction;
+use revm_helpers;
+use revm_helpers::reusable_pool::global::{vec_u8_try_reuse_and_copy_from, VecU8};
+use revm_interpreter::{CallInput, InputsImpl, InterpreterAction};
 use spin::MutexGuard;
 
 /// Store EVM bytecode and its keccak256 hash in contract metadata.
@@ -199,15 +200,16 @@ fn deploy_inner<SDK: SharedAPI>(
         } => {
             let input_offset = input.as_ptr() as usize;
             evm.sync_evm_gas(sdk);
-            let syscall_params = SyscallInvocationParams {
+            let mut syscall_params = VecU8::default_for_reuse();
+            SyscallInvocationParams {
                 code_hash,
                 input: input_offset..(input_offset + input.len()),
                 fuel_limit: fuel_limit.unwrap_or(u64::MAX),
                 state,
                 fuel16_ptr: 0,
             }
-            .encode();
-            sdk.write(&syscall_params);
+            .encode_into(&mut syscall_params);
+            sdk.write(syscall_params.inner_mut());
             ExitCode::InterruptionCalled
         }
         InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
@@ -219,6 +221,16 @@ fn deploy_inner<SDK: SharedAPI>(
 /// and writes the returned data.
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let exit_code = main_inner(&mut sdk, lock_evm_context());
+    debug_log_ext!(
+        "vec_u8_reusable_pool.len={} {} {} {}",
+        revm_helpers::reusable_pool::global::vec_u8_reusable_pool::len(),
+        revm_helpers::reusable_pool::global::vec_u8_reusable_pool::CREATED
+            .load(core::sync::atomic::Ordering::Relaxed),
+        revm_helpers::reusable_pool::global::vec_u8_reusable_pool::RECYCLED
+            .load(core::sync::atomic::Ordering::Relaxed),
+        revm_helpers::reusable_pool::global::vec_u8_reusable_pool::REUSED
+            .load(core::sync::atomic::Ordering::Relaxed),
+    );
     sdk.native_exit(exit_code);
 }
 
@@ -257,15 +269,16 @@ fn main_inner<SDK: SharedAPI>(sdk: &mut SDK, mut cached_state: MutexGuard<Vec<Et
         } => {
             let input_offset = input.as_ptr() as usize;
             evm.sync_evm_gas(sdk);
-            let syscall_params = SyscallInvocationParams {
+            let mut syscall_params = VecU8::default_for_reuse();
+            SyscallInvocationParams {
                 code_hash,
                 input: input_offset..(input_offset + input.len()),
                 fuel_limit: fuel_limit.unwrap_or(u64::MAX),
                 state,
                 fuel16_ptr: 0,
             }
-            .encode();
-            sdk.write(&syscall_params);
+            .encode_into(&mut syscall_params);
+            sdk.write(syscall_params.inner_mut());
             ExitCode::InterruptionCalled
         }
         InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),

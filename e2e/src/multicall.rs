@@ -26,7 +26,7 @@ fn test_multicall_greeting() {
         None,
     );
     assert!(result.is_success(), "failed to call evm ({:?})", result);
-    let output = result.output().unwrap_or_default();
+    let output = result.output().cloned().unwrap_or_default();
     println!("Decoded output: {:?}", from_utf8(&output[68..]));
     assert!(result.is_success());
     let expected_output = hex!(
@@ -65,7 +65,9 @@ fn test_multicall() {
     );
 
     if !result.is_success() {
-        if let Ok(output_str) = from_utf8(&result.output().unwrap_or_default().to_vec()[68..]) {
+        if let Ok(output_str) =
+            from_utf8(&result.output().cloned().unwrap_or_default().to_vec()[68..])
+        {
             println!("Decoded output: {}", output_str);
         }
         panic!("Multicall failed: {:?}", result);
@@ -144,7 +146,9 @@ fn test_multicall_invalid_method() {
     );
 
     if !result.is_success() {
-        if let Ok(output_str) = String::from_utf8(result.output().unwrap_or_default().to_vec()) {
+        if let Ok(output_str) =
+            String::from_utf8(result.output().cloned().unwrap_or_default().to_vec())
+        {
             println!("Decoded output: {}", output_str);
         }
         panic!("Multicall failed: {:?}", result);

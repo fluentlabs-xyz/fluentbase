@@ -63,7 +63,7 @@ impl EvmTestingContext {
                 balance: U256::ZERO,
                 nonce: 0,
                 code_hash: contract.rwasm_bytecode_hash,
-                code: Some(Bytecode::new_raw(contract.rwasm_bytecode.clone())),
+                code: Some(Bytecode::new_raw(contract.rwasm_bytecode.clone().into())),
             };
             db.insert_account_info(contract.address, info);
         }
@@ -124,7 +124,7 @@ impl EvmTestingContext {
                 match code {
                     Bytecode::OwnableAccount(account) => {
                         self.sdk
-                            .metadata_write(address, 0, account.metadata.clone());
+                            .metadata_write(address, 0, account.metadata.clone().into());
                     }
                     _ => {}
                 }
@@ -154,11 +154,11 @@ impl EvmTestingContext {
         info
     }
 
-    pub fn add_bytecode(&mut self, address: Address, bytecode: Bytes) -> AccountInfo {
+    pub fn add_bytecode(&mut self, address: Address, bytecode: Vec<u8>) -> AccountInfo {
         let mut info: AccountInfo = AccountInfo {
             balance: U256::ZERO,
             nonce: 0,
-            code_hash: keccak256(bytecode.as_ref()),
+            code_hash: keccak256(&bytecode),
             code: None,
         };
         info.code = Some(Bytecode::new_raw(bytecode));

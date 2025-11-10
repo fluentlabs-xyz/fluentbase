@@ -1,6 +1,9 @@
+use crate::bincode_helpers::VecWriter;
 use crate::{ExitCode, B256};
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::ops::Range;
+use revm_helpers::reusable_pool::global::{VecU8, VEC_U8_REUSABLE_POOL_CAPACITY};
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -15,6 +18,18 @@ pub struct SyscallInvocationParams {
 impl SyscallInvocationParams {
     pub fn encode(&self) -> Vec<u8> {
         bincode::encode_to_vec(self, bincode::config::legacy()).unwrap()
+    }
+
+    pub fn encode_into(&self, dst: &mut VecU8) {
+        bincode::encode_into_writer(
+            self,
+            VecWriter::new(dst.inner_mut()),
+            bincode::config::legacy(),
+        )
+        .unwrap();
+        if dst.inner_ref().capacity() > VEC_U8_REUSABLE_POOL_CAPACITY {
+            panic!("reallocation occur")
+        }
     }
 
     pub fn decode(bytes: &[u8]) -> Option<Self> {

@@ -2209,6 +2209,7 @@ dependencies = [
  "ark-bn254",
  "ark-serialize 0.5.0",
  "array-bytes",
+ "bytes",
  "criterion",
  "curve25519-dalek",
  "fluentbase-codec",

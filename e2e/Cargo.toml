@@ -32,6 +32,7 @@ wat = { version = "1.223.0" }
 paste = { workspace = true }
 rand = { version = "0.9.1" }
 sha2 = { workspace = true }
+bytes = "1.10.1"
 
 [dev-dependencies]
 fluentbase-svm = { workspace = true }

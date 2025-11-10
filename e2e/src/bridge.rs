@@ -158,8 +158,8 @@ fn test_bridge_contract_with_call() {
     let result = transfer_ownership_tx_builder.exec();
     match result {
         ExecutionResult::Success { output, .. } => match output {
-            Output::Call(bytes) => {
-                assert_eq!(Bytes::new(), bytes);
+            Output::Call(ref bytes) => {
+                assert!(bytes.is_empty());
             }
             _ => panic!("expected 'call'"),
         },
@@ -245,7 +245,7 @@ fn print_result_error(result: &ExecutionResult<RwasmHaltReason>) {
     }
     let output = result.output().cloned().unwrap_or_default();
     println!("result: {:?}", result);
-    println!("hex: 0x{}", hex::encode(output.as_ref()));
+    println!("hex: 0x{}", hex::encode(&output));
     let mut good_bytes = vec![];
     for b in output.iter() {
         if *b <= 0x7f {

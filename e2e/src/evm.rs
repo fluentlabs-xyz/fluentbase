@@ -27,7 +27,7 @@ fn test_evm_greeting() {
         .exec();
     println!("{:?}", result);
     assert!(result.is_success());
-    let bytes = result.output().unwrap_or_default();
+    let bytes = result.output().cloned().unwrap_or_default();
     assert!(!bytes.is_empty());
     let bytes = &bytes[64..75];
     assert_eq!("Hello World", from_utf8(bytes.as_ref()).unwrap());
@@ -53,7 +53,7 @@ fn test_evm_storage() {
     );
     assert!(result.is_success());
     assert_eq!(result.gas_used(), 28179);
-    let bytes = result.output().unwrap_or_default();
+    let bytes = result.output().cloned().unwrap_or_default();
     assert_eq!(
         "0000000000000000000000000000000000000000000000000000000000000064",
         hex::encode(bytes)
@@ -68,7 +68,8 @@ fn test_evm_storage() {
     );
     assert!(result.is_success());
     assert_eq!(result.gas_used(), 28179);
-    let bytes = result.output().unwrap_or_default().iter().as_slice();
+    let out = result.output().cloned().unwrap_or_default();
+    let bytes = out.iter().as_slice();
     assert_eq!(
         "0000000000000000000000000000000000000000000000000000000000000064",
         hex::encode(bytes)
@@ -93,7 +94,8 @@ fn test_evm_storage() {
     );
     assert!(result.is_success());
     assert_eq!(result.gas_used(), 28179);
-    let bytes = result.output().unwrap_or_default().iter().as_slice();
+    let out = result.output().cloned().unwrap_or_default();
+    let bytes = out.iter().as_slice();
     assert_eq!(
         "0000000000000000000000000000000000000000000000000000000000000070",
         hex::encode(bytes)
@@ -267,8 +269,8 @@ fn test_evm_erc20() {
         assert!(result.is_success());
         assert_eq!(result.gas_used(), 24282);
         // check balance
-        let output = result.output().unwrap_or_default().clone();
-        assert_eq!(&expected.to_be_bytes::<32>(), output.as_ref());
+        let output = result.output().cloned().unwrap_or_default().clone();
+        assert_eq!(expected.to_be_bytes::<32>().as_ref(), &output);
     };
     // transfer 1 coin
     transfer_coin(&mut ctx);
@@ -406,7 +408,7 @@ fn test_evm_blake2f() {
 
     println!("{:?}", result);
     assert!(result.is_success());
-    let output = result.output().unwrap_or_default();
+    let output = result.output().cloned().unwrap_or_default();
     assert!(!output.is_empty());
     let blake2f_output = &output[64..]; // skip 2 32-byte words (offset and length)
     assert_eq!(blake2f_output.len(), 64);
@@ -443,7 +445,7 @@ fn test_evm_greeting_using_sol_macro() {
     assert!(result.is_success(), "call to sayHelloWorld() failed");
 
     // Decode result
-    let output = result.output().unwrap_or_default();
+    let output = result.output().cloned().unwrap_or_default();
     let decoded = sayHelloWorldCall::abi_decode_returns_validate(&output).unwrap();
     assert_eq!(decoded, "Hello, World");
 }
@@ -492,7 +494,7 @@ fn test_evm_caller() {
     assert!(result.is_success(), "call failed: {:?}", result);
 
     // Step 6: Decode return value
-    let output = result.output().unwrap_or_default();
+    let output = result.output().cloned().unwrap_or_default();
     try_print_utf8_error(&output);
 
     let return_data = callExternalCall::abi_decode_returns_validate(&output).unwrap();

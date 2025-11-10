@@ -137,7 +137,7 @@ fn test_simple_nested_call() {
         .exec();
     println!("{:?}", result);
     assert!(result.is_success());
-    let output = result.output().unwrap_or_default();
+    let output = result.output().cloned().unwrap_or_default();
     assert!(output.len() >= 4);
     let value = LittleEndian::read_i32(output.as_ref());
     assert_eq!(value, 120);

@@ -69,7 +69,7 @@ fn test_update_account_code_by_auth_v1() {
     assert!(result.is_success());
 
     let new_code = ctx.get_code(PRECOMPILE_EVM_RUNTIME).unwrap();
-    assert_eq!(new_code.original_bytes().as_ref(), &new_bytecode);
+    assert_eq!(&new_code.original_bytes(), &new_bytecode);
 
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
@@ -144,10 +144,7 @@ fn test_update_account_code_by_auth_v2() {
         .unwrap()
         .rwasm_module
         .serialize();
-    assert_eq!(
-        new_code.original_bytes().as_ref(),
-        &rwasm_bytecode_should_be
-    );
+    assert_eq!(&new_code.original_bytes(), &rwasm_bytecode_should_be);
 
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,

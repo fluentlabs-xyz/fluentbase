@@ -34,7 +34,7 @@ fn test_wasm_greeting() {
         None,
         None,
     );
-    let output = result.output().unwrap_or_default();
+    let output = result.output().cloned().unwrap_or_default();
     assert!(result.is_success());
     assert_eq!("Hello, World", from_utf8(output.as_ref()).unwrap());
     println!("Result: {:?}", result);
@@ -59,7 +59,7 @@ fn test_wasm_tiny_keccak256() {
     );
     println!("{:?}", result);
     assert!(result.is_success());
-    let bytes = result.output().unwrap_or_default().as_ref();
+    let bytes = result.output().cloned().unwrap_or_default();
     println!("bytes: {:?}", hex::encode(&bytes));
     assert_eq!(
         "a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529",
@@ -80,7 +80,7 @@ fn test_wasm_sha256() {
     let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, "abc".into(), None, None);
     println!("{:?}", result);
     assert!(result.is_success());
-    let bytes = result.output().unwrap_or_default().as_ref();
+    let bytes = result.output().cloned().unwrap_or_default();
     assert_eq!(
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
         hex::encode(&bytes[0..32]),
@@ -149,7 +149,7 @@ fn test_wasm_json() {
     println!("{:?}", result);
     assert!(result.is_success());
     assert_eq!(
-        result.output().unwrap_or_default().as_ref(),
+        result.output().cloned().unwrap_or_default(),
         "Hello, World".as_bytes()
     );
 }
@@ -172,7 +172,7 @@ fn test_wasm_panic() {
         None,
     );
     assert!(!result.is_success());
-    let bytes = result.output().unwrap_or_default();
+    let bytes = result.output().cloned().unwrap_or_default();
     assert_eq!("it's panic time", from_utf8(&bytes[..]).unwrap());
 }
 
@@ -228,8 +228,8 @@ fn test_wasm_erc20() {
         println!("{:?}", result);
         assert!(result.is_success());
         // check balance
-        let output = result.output().unwrap_or_default().clone();
-        assert_eq!(&expected.to_be_bytes::<32>(), output.as_ref());
+        let output = result.output().cloned().unwrap_or_default().clone();
+        assert_eq!(expected.to_be_bytes::<32>().as_slice(), &output);
     };
     // transfer 1 coin
     transfer_coin(&mut ctx);
@@ -278,7 +278,7 @@ fn test_wasm_rwasm() {
     println!("{:?}", result);
     assert!(result.is_success());
 
-    let output = result.output().unwrap_or_default();
+    let output = result.output().cloned().unwrap_or_default();
     let (module, _) = RwasmModule::new(&output);
     assert!(module.code_section.len() > 0);
     assert!(unsafe { from_utf8_unchecked(&module.data_section).contains("Hello, World") })
@@ -300,7 +300,7 @@ fn test_wasm_keccak256_gas_price() {
     );
     println!("{:?}", result);
     assert!(result.is_success());
-    let bytes = result.output().unwrap_or_default().as_ref();
+    let bytes = result.output().cloned().unwrap_or_default();
     println!("bytes: {:?}", hex::encode(&bytes));
     assert_eq!(
         "a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529",
@@ -382,7 +382,7 @@ fn test_wasm_balance_charge() {
         Some(22_000),
         None,
     );
-    let balance = U256::from_le_slice(result.output().unwrap_or_default().as_ref());
+    let balance = U256::from_le_slice(result.output().cloned().unwrap_or_default().as_ref());
     assert_eq!(balance, U256::from(123));
     assert_eq!(result.gas_used(), 21146);
 }
@@ -406,5 +406,5 @@ fn test_wasm_output_remains_unwiped_after_interruption() {
         Some(22_000),
         None,
     );
-    assert_eq!(result.output().unwrap_or_default().as_ref(), &[0x1]);
+    assert_eq!(result.output().cloned().unwrap_or_default(), &[0x1]);
 }
