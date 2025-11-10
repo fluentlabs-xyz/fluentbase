@@ -30,6 +30,7 @@ use revm::{
     },
     Database, Inspector,
 };
+use revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from;
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
@@ -88,12 +89,13 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
         // TODO(dmitry123): "optimize me, store RwasmModule inside Bytecode"
         let (_, bytes_read) = RwasmModule::new(interpreter_result.output.as_ref());
         let (rwasm_module_raw, constructor_params_raw) = (
-            &interpreter_result.output[..bytes_read],
+            vec_u8_try_reuse_and_copy_from(&interpreter_result.output[..bytes_read])
+                .expect("enough cap"),
             &interpreter_result.output[bytes_read..],
         );
-        let bytecode_hash = keccak256(rwasm_module_raw);
+        let bytecode_hash = keccak256(&rwasm_module_raw);
         // Rewrite overridden rWasm bytecode
-        let bytecode = Bytecode::new_rwasm(Bytes::from(rwasm_module_raw));
+        let bytecode = Bytecode::new_rwasm(Bytes::from(rwasm_module_raw).clone());
         ctx.journal_mut()
             .set_code(create_frame.created_address, bytecode.clone());
         // Change input params

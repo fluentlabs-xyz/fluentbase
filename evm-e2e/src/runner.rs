@@ -330,7 +330,7 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone, INSP>(
                 if expected_output != output {
                     let kind = TestErrorKind::UnexpectedOutput {
                         expected_output: Some(expected_output.clone()),
-                        got_output: result.output().cloned(),
+                        got_output: result.output().cloned().map(|v| v.into()),
                     };
                     print_json_output(Some(kind.to_string()));
                     return Err(TestError {
@@ -623,7 +623,7 @@ thread_local! {
     pub static GENESIS_CONTRACTS: Arc<Vec<(Address, B256, Bytecode)>> = {
         let mut genesis_contracts = vec![];
         for (address, genesis_account) in GENESIS_CONTRACTS_BY_ADDRESS.iter() {
-            let bytecode = Bytecode::new_raw(genesis_account.rwasm_bytecode.clone());
+            let bytecode = Bytecode::new_raw(genesis_account.rwasm_bytecode.clone().into());
             genesis_contracts.push((*address, genesis_account.rwasm_bytecode_hash, bytecode));
         }
         Arc::new(genesis_contracts)
@@ -680,7 +680,7 @@ pub fn execute_test_suite(
                 balance: info.balance,
                 code_hash: keccak256(&info.code),
                 nonce: info.nonce,
-                code: Some(Bytecode::new_raw(info.code.clone())),
+                code: Some(Bytecode::new_raw(info.code.clone().into())),
                 ..Default::default()
             };
             cache_state.insert_account_with_storage(*address, acc_info, info.storage.clone());
