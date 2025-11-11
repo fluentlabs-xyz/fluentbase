@@ -3,15 +3,15 @@
 //! InterruptionOutcome carries host call results back into the VM;
 //! InterruptionExtension stores per-interpreter state; ExecutionResult
 //! summarizes final outcome with gas/fuel accounting.
-use alloc::vec::Vec;
-use fluentbase_sdk::{Bytes, ExitCode, B256, FUEL_DENOM_RATE, U256};
+use fluentbase_sdk::{ExitCode, B256, FUEL_DENOM_RATE, U256};
+use revm_helpers::reusable_pool::global::VecU8;
 use revm_interpreter::{interpreter::EthInterpreter, Gas, InstructionResult, InterpreterResult};
 
 #[derive(Default, Debug, Clone)]
 /// Result of a host interruption (output, gas delta, and exit code).
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InterruptionOutcome {
-    pub output: Vec<u8>,
+    pub output: VecU8,
     pub gas: Gas,
     pub exit_code: ExitCode,
 }
@@ -64,7 +64,7 @@ pub struct ExecutionResult {
     /// The result of the instruction execution.
     pub result: InstructionResult,
     /// The output of the instruction execution.
-    pub output: Vec<u8>,
+    pub output: VecU8,
     /// The gas already committed to the runtime (aka charged).
     pub committed_gas: Gas,
     /// The gas usage information.

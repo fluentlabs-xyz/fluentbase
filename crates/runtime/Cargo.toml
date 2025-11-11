@@ -13,6 +13,7 @@ categories.workspace = true
 # fluentbase
 fluentbase-types = { workspace = true }
 rwasm = { workspace = true }
+revm-helpers = { workspace = true }
 
 # wasmtime
 #wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", optional = true, features = ["disable-fpu", "cache"] }

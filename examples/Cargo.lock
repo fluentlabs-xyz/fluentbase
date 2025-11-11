@@ -1908,6 +1908,7 @@ dependencies = [
  "k256",
  "num",
  "p256",
+ "revm-helpers",
  "rwasm",
  "sha2 0.10.9",
  "smallvec",
@@ -3760,6 +3761,7 @@ version = "1.0.0"
 dependencies = [
  "alloy-primitives",
  "num_enum",
+ "serde",
  "spin 0.10.0",
 ]
 

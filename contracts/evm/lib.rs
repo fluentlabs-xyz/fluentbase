@@ -18,12 +18,13 @@ use fluentbase_types::{
 };
 use revm_helpers;
 use revm_helpers::reusable_pool::global::{vec_u8_try_reuse_and_copy_from, VecU8};
-use revm_interpreter::{CallInput, InputsImpl, InterpreterAction};
+use revm_interpreter::interpreter::ExtBytecode;
+use revm_interpreter::InterpreterAction;
 use spin::MutexGuard;
 
 /// Store EVM bytecode and its keccak256 hash in contract metadata.
 /// Hash is written at offset 0, raw bytecode at offset 32.
-pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: Vec<u8>) {
+pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: Bytes) {
     let evm_code_hash = keccak256(&evm_bytecode);
     let analyzed_bytecode = AnalyzedBytecode::new(evm_bytecode, evm_code_hash);
     let raw_metadata = EthereumMetadata::Analyzed(analyzed_bytecode).write_to_bytes();
@@ -31,10 +32,10 @@ pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: V
 }
 
 /// Transforms metadata into analyzed EVM bytecode when possible.
-pub(crate) fn evm_bytecode_from_metadata(metadata: &Vec<u8>) -> Option<AnalyzedBytecode> {
+pub(crate) fn evm_bytecode_from_metadata(metadata: &[u8]) -> Option<AnalyzedBytecode> {
     Some(match EthereumMetadata::read_from_bytes(metadata)? {
         EthereumMetadata::Legacy(bytecode) => {
-            AnalyzedBytecode::new(bytecode.bytecode, bytecode.hash)
+            AnalyzedBytecode::new(bytecode.bytecode.bytes(), bytecode.hash)
         }
         EthereumMetadata::Analyzed(bytecode) => bytecode,
     })
@@ -80,16 +81,13 @@ fn restore_evm_context_or_create<'a>(
                 vec_u8_try_reuse_and_copy_from(&new_frame_input.input).expect("enough cap"),
             )
         } else {
-            let analyzed_bytecode = AnalyzedBytecode::new(
-                vec_u8_try_reuse_and_copy_from(&new_frame_input.input).expect("enough cap"),
-                B256::ZERO,
-            );
+            let analyzed_bytecode =
+                AnalyzedBytecode::new(new_frame_input.input.bytes(), B256::ZERO);
             (analyzed_bytecode, Vec::new())
         };
         let eth_vm = EthVM::new(
             context,
-            revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from(&contract_input)
-                .expect("reused existing vector"),
+            VecU8::try_from_slice(&contract_input).expect("enough cap"),
             analyzed_bytecode,
         );
         // Push new EthVM frame (new frame is created)
@@ -126,7 +124,7 @@ fn restore_evm_context_or_create<'a>(
         }
         let exit_code = ExitCode::from(exit_code);
         eth_vm.interpreter.extend.interruption_outcome = Option::from(InterruptionOutcome {
-            output: vec_u8_try_reuse_and_copy_from(&output).expect("enough cap"),
+            output: VecU8::try_from_slice(&output).expect("enough cap"),
             gas,
             exit_code,
         });
@@ -179,7 +177,7 @@ fn deploy_inner<SDK: SharedAPI>(
                 sdk.charge_fuel(consumed_diff);
                 // We intentionally don't charge gas for these opcodes
                 // to keep full compatibility with an EVM deployment process
-                commit_evm_bytecode(sdk, result.output);
+                commit_evm_bytecode(sdk, result.output.bytes());
                 ExitCode::Ok
             } else {
                 let consumed_diff = result.chargeable_fuel();
@@ -209,7 +207,7 @@ fn deploy_inner<SDK: SharedAPI>(
                 fuel16_ptr: 0,
             }
             .encode_into(&mut syscall_params);
-            sdk.write(syscall_params.inner_mut());
+            sdk.write(&syscall_params);
             ExitCode::InterruptionCalled
         }
         InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
@@ -278,7 +276,7 @@ fn main_inner<SDK: SharedAPI>(sdk: &mut SDK, mut cached_state: MutexGuard<Vec<Et
                 fuel16_ptr: 0,
             }
             .encode_into(&mut syscall_params);
-            sdk.write(syscall_params.inner_mut());
+            sdk.write(&syscall_params);
             ExitCode::InterruptionCalled
         }
         InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),

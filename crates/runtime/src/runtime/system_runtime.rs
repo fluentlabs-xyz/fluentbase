@@ -4,6 +4,7 @@ use fluentbase_types::{
     STATE_DEPLOY, STATE_MAIN,
 };
 use num::ToPrimitive;
+use revm_helpers::reusable_pool::global::VecU8;
 use rwasm::{ImportLinker, RwasmModule, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE};
 use smallvec::SmallVec;
 use std::time::Instant;
@@ -304,7 +305,7 @@ impl SystemRuntime {
         compiled_runtime: &mut CompiledRuntime,
         import_linker: Arc<ImportLinker>,
     ) {
-        // compiled_runtime.heap_reset();
+        compiled_runtime.heap_reset();
         let engine = wasmtime_engine();
         let linker = wasmtime_import_linker(engine, import_linker);
         let instance = linker
@@ -485,12 +486,27 @@ impl SystemRuntime {
             .unwrap()
             .store
             .as_context_mut();
+
+        // Here we need to remap interruption result into the custom struct because we need to
+        // pass information about fuel consumed and exit code into the runtime.
+        // That is why we move return data into the output and serialize output into the return data.
         let data_mut = store_mut.data_mut();
-        outcome.output = take(&mut data_mut.execution_result.return_data).into();
+        outcome.output = VecU8::try_from_slice(&take(&mut data_mut.execution_result.return_data))
+            .expect("enough cap");
         outcome.exit_code = exit_code;
         let outcome = bincode::encode_to_vec(&outcome, bincode::config::legacy()).unwrap();
         data_mut.execution_result.return_data = outcome;
+
+        // Make sure the runtime is always clear before resuming the call, because output is used
+        // to pass interruption params in case of interruption
         data_mut.clear_output();
+
+        // Since we don't suppose native interruptions inside system runtimes then we just re-call
+        // execute, but with passed return data with interruption outcome.
+        //
+        // Possible scenarios:
+        // 1. w/ return data - new frame call
+        // 2. w/o return data - current frame interruption outcome
         self.execute(true)
     }
 

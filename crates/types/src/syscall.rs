@@ -21,13 +21,8 @@ impl SyscallInvocationParams {
     }
 
     pub fn encode_into(&self, dst: &mut VecU8) {
-        bincode::encode_into_writer(
-            self,
-            VecWriter::new(dst.inner_mut()),
-            bincode::config::legacy(),
-        )
-        .unwrap();
-        if dst.inner_ref().capacity() > VEC_U8_REUSABLE_POOL_CAPACITY {
+        bincode::encode_into_writer(self, VecWriter::new(dst), bincode::config::legacy()).unwrap();
+        if dst.capacity() > VEC_U8_REUSABLE_POOL_CAPACITY {
             panic!("reallocation occur")
         }
     }

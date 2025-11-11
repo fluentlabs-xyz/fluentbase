@@ -2,7 +2,7 @@ use crate::bytecode::{AnalyzedBytecode, LegacyBytecode};
 use alloc::vec;
 use alloc::vec::Vec;
 use fluentbase_sdk::{Bytes, B256};
-use revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from;
+use revm_helpers::reusable_pool::global::{vec_u8_try_reuse_and_copy_from, VecU8};
 
 pub enum EthereumMetadata {
     Legacy(LegacyBytecode),
@@ -12,7 +12,7 @@ pub enum EthereumMetadata {
 pub const ETHEREUM_METADATA_VERSION_ANALYZED: B256 = B256::with_last_byte(0x01);
 
 impl EthereumMetadata {
-    pub fn read_from_bytes(metadata: &Vec<u8>) -> Option<Self> {
+    pub fn read_from_bytes(metadata: &[u8]) -> Option<Self> {
         if metadata.len() < 32 {
             return None;
         }
@@ -22,7 +22,7 @@ impl EthereumMetadata {
                     .unwrap_or_else(|_| unreachable!("failed to deserialize analyzed bytecode")),
             ),
             hash => {
-                let bytecode = vec_u8_try_reuse_and_copy_from(&metadata[32..]).expect("enough cap");
+                let bytecode = VecU8::try_from_slice(&metadata[32..]).expect("enough cap");
                 Self::Legacy(LegacyBytecode { hash, bytecode })
             }
         })
@@ -62,14 +62,13 @@ impl EthereumMetadata {
         }
     }
 
-    pub fn code_copy(&self) -> Vec<u8> {
+    pub fn code_copy(&self) -> VecU8 {
         match self {
             EthereumMetadata::Legacy(bytecode) => {
-                vec_u8_try_reuse_and_copy_from(&bytecode.bytecode).expect("enough cap")
+                VecU8::try_from_slice(&bytecode.bytecode).expect("enough cap")
             }
             EthereumMetadata::Analyzed(bytecode) => {
-                vec_u8_try_reuse_and_copy_from(&bytecode.bytecode[0..bytecode.len])
-                    .expect("enough cap")
+                VecU8::try_from_slice(&bytecode.bytecode[0..bytecode.len]).expect("enough cap")
             }
         }
     }

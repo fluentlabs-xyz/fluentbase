@@ -12,6 +12,7 @@ fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 
 #revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "chore/new-version-of-rwasm", default-features = false, features = ["std", "serde-json", "serde"] }
 revm = { path = "../../revm-rwasm/crates/revm", default-features = false, features = ["std", "serde-json", "serde"] }
+revm-helpers = { path = "../../revm-rwasm/crates/helpers", default-features = false }
 fluentbase-revm = { path = "../crates/revm" }
 
 hash-db = "=0.15"

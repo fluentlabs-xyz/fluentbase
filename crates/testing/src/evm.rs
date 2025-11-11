@@ -154,7 +154,7 @@ impl EvmTestingContext {
         info
     }
 
-    pub fn add_bytecode(&mut self, address: Address, bytecode: Vec<u8>) -> AccountInfo {
+    pub fn add_bytecode(&mut self, address: Address, bytecode: Bytes) -> AccountInfo {
         let mut info: AccountInfo = AccountInfo {
             balance: U256::ZERO,
             nonce: 0,

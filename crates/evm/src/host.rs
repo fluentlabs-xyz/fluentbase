@@ -146,7 +146,7 @@ impl<'a, SDK: SharedAPI> Host for HostWrapperImpl<'a, SDK> {
         unreachable!()
     }
 
-    fn load_account_code(&mut self, _address: Address) -> Option<StateLoad<Vec<u8>>> {
+    fn load_account_code(&mut self, _address: Address) -> Option<StateLoad<Bytes>> {
         unreachable!()
     }
 

@@ -25,6 +25,7 @@ use revm::{
     state::AccountInfo,
     ExecuteCommitEvm, InspectCommitEvm, MainBuilder, MainnetEvm,
 };
+use revm_helpers::reusable_pool::global::VecU8;
 use serde_json::json;
 use std::{
     fmt::Debug,
@@ -623,7 +624,7 @@ thread_local! {
     pub static GENESIS_CONTRACTS: Arc<Vec<(Address, B256, Bytecode)>> = {
         let mut genesis_contracts = vec![];
         for (address, genesis_account) in GENESIS_CONTRACTS_BY_ADDRESS.iter() {
-            let bytecode = Bytecode::new_raw(genesis_account.rwasm_bytecode.clone().into());
+            let bytecode = Bytecode::new_raw(genesis_account.rwasm_bytecode.clone());
             genesis_contracts.push((*address, genesis_account.rwasm_bytecode_hash, bytecode));
         }
         Arc::new(genesis_contracts)
@@ -680,7 +681,7 @@ pub fn execute_test_suite(
                 balance: info.balance,
                 code_hash: keccak256(&info.code),
                 nonce: info.nonce,
-                code: Some(Bytecode::new_raw(info.code.clone().into())),
+                code: Some(Bytecode::new_raw(info.code.clone())),
                 ..Default::default()
             };
             cache_state.insert_account_with_storage(*address, acc_info, info.storage.clone());

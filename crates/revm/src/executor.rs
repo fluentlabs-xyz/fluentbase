@@ -30,7 +30,8 @@ use revm::{
     },
     Database, Inspector,
 };
-use revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from;
+use revm_helpers::reusable_pool::global::{vec_u8_try_reuse_and_copy_from, VecU8};
+use std::vec::Vec;
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
@@ -99,12 +100,8 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
         ctx.journal_mut()
             .set_code(create_frame.created_address, bytecode.clone());
         // Change input params
-        frame.interpreter.input.input = CallInput::Bytes(
-            revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from(
-                &constructor_params_raw,
-            )
-            .expect("constructor params exceeded reusable pool cap"),
-        );
+        frame.interpreter.input.input =
+            CallInput::Bytes(VecU8::try_from_slice(&constructor_params_raw).expect("enough cap"));
         frame.interpreter.input.account_owner = None;
         frame.interpreter.bytecode = ExtBytecode::new_with_hash(bytecode, bytecode_hash);
         frame.interpreter.gas = interpreter_result.gas;
@@ -167,13 +164,13 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .encode()
         .expect("revm: unable to encode shared context input")
         .to_vec();
-    let input = interpreter.input.input.bytes(ctx);
+    let input = interpreter.input.input.bytes(ctx).bytes();
 
     match meta_bytecode {
         Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
             let new_frame_input = RuntimeNewFrameInputV1 {
-                metadata: v.metadata,
-                input,
+                metadata: VecU8::try_from_slice(&v.metadata).expect("enough cap"),
+                input: VecU8::try_from_slice(&input).expect("enough cap"),
             };
             let new_frame_input =
                 bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
@@ -351,7 +348,7 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         // If we return `Ok` in deployment mode, then we assume we store new metadata in the output,
         // it's used to rewrite the existing metadata to store custom bytecode.
         0 if is_create => {
-            ownable_account.metadata = take(&mut return_data);
+            ownable_account.metadata = take(&mut return_data).into();
             let bytecode = Bytecode::OwnableAccount(ownable_account);
             ctx.journal_mut()
                 .set_code(frame.interpreter.input.target_address(), bytecode);
@@ -437,7 +434,7 @@ fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
     }
     NextAction::Return(ExecutionResult {
         result,
-        output: return_data,
+        output: VecU8::try_from_slice_unwrap(&return_data),
         gas: frame.interpreter.gas,
     })
 }

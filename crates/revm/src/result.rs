@@ -4,7 +4,7 @@ use revm::{
     context_interface::result::HaltReason,
     interpreter::{FrameInput, Gas, InstructionResult, InterpreterAction, InterpreterResult},
 };
-
+use revm_helpers::reusable_pool::global::VecU8;
 // /// The result of an execution operation.
 // #[derive(Clone, Debug, PartialEq, Eq)]
 // #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
@@ -86,7 +86,7 @@ impl NextAction {
     pub fn error(exit_code: ExitCode, gas: Gas) -> Self {
         NextAction::Return(ExecutionResult {
             result: instruction_result_from_exit_code(exit_code, true),
-            output: Vec::new(),
+            output: VecU8::default_for_reuse(),
             gas,
         })
     }

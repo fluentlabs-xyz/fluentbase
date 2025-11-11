@@ -12,7 +12,7 @@ use crate::{
 use alloc::vec::Vec;
 use fluentbase_sdk::{debug_log, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
 use revm_bytecode::{Bytecode, LegacyAnalyzedBytecode};
-use revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from;
+use revm_helpers::reusable_pool::global::{vec_u8_try_reuse_and_copy_from, VecU8};
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},
     CallInput, Gas, InputsImpl, InstructionTable, Interpreter, InterpreterAction, SharedMemory,
@@ -33,7 +33,7 @@ impl EthVM {
     /// The bytecode must be pre-analyzed (jump table + hash preserved).
     pub fn new(
         context_input: impl ContextReader,
-        input: Vec<u8>,
+        input: VecU8,
         analyzed_bytecode: AnalyzedBytecode,
     ) -> Self {
         // Initialize context params and inputs
@@ -121,7 +121,7 @@ impl EthVM {
                         .extend
                         .interruption_outcome
                         .replace(InterruptionOutcome {
-                            output: vec_u8_try_reuse_and_copy_from(&output).expect("enough cap"),
+                            output: VecU8::try_from_slice(&output).expect("enough cap"),
                             gas,
                             exit_code,
                         });
@@ -153,9 +153,6 @@ impl EthVM {
             &mut self.interpreter.extend.committed_gas,
         );
         let remaining_diff = committed_gas.remaining() - gas.remaining();
-        debug_log!("committed gas: {:?}", committed_gas);
-        debug_log!("gas: {:?}", gas);
-        debug_log!("syncing gas remaining: {}", remaining_diff);
         // If there is nothing to commit/charge then just ignore it
         if remaining_diff == 0 {
             return;

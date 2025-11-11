@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use bincode::enc::Encoder;
 use bincode::error::EncodeError;
 
 pub struct VecWriter<'a, T>(pub &'a mut Vec<T>);
@@ -13,3 +14,23 @@ impl<'a> bincode::enc::write::Writer for VecWriter<'a, u8> {
         Ok(())
     }
 }
+
+pub struct VecEncoder<'a, T>(pub &'a mut Vec<T>);
+
+impl<'a, T> VecEncoder<'a, T> {
+    pub fn new(buf: &mut Vec<T>) -> VecEncoder<'_, T> {
+        VecEncoder(buf)
+    }
+}
+// impl<'a> Encoder for VecEncoder<'a, Vec<u8>> {
+//     type W = VecWriter<'a, u8>;
+//     type C = bincode::config::Configuration;
+//
+//     fn writer(&mut self) -> &mut Self::W {
+//         todo!()
+//     }
+//
+//     fn config(&self) -> &Self::C {
+//         todo!()
+//     }
+// }

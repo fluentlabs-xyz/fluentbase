@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-mod bincode_helpers;
+pub mod bincode_helpers;
 mod block_fuel;
 mod bytecode;
 mod crypto_api;

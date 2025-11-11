@@ -1,17 +1,45 @@
 use alloc::vec::Vec;
 use alloy_primitives::Bytes;
+use bincode::de::read::Reader;
+use bincode::de::Decoder;
+use revm_helpers::reusable_pool::global::VecU8;
+
+// #[derive(Default, Clone, Debug, PartialEq)]
+// pub struct RuntimeNewFrameInputV1 {
+//     pub metadata: Bytes,
+//     pub input: Bytes,
+// }
+//
+// impl bincode::Encode for RuntimeNewFrameInputV1 {
+//     fn encode<E: bincode::enc::Encoder>(
+//         &self,
+//         e: &mut E,
+//     ) -> Result<(), bincode::error::EncodeError> {
+//         bincode::Encode::encode(self.metadata.as_ref(), e)?;
+//         bincode::Encode::encode(&self.input.as_ref(), e)?;
+//         Ok(())
+//     }
+// }
+//
+// impl<C> bincode::Decode<C> for RuntimeNewFrameInputV1 {
+//     fn decode<D: bincode::de::Decoder<Context = C>>(
+//         d: &mut D,
+//     ) -> Result<Self, bincode::error::DecodeError> {
+//         // TODO decode into reusable vec
+//         let metadata: Vec<u8> = bincode::Decode::decode(d)?;
+//         // TODO decode into reusable vec
+//         let input: Vec<u8> = bincode::Decode::decode(d)?;
+//         Ok(Self {
+//             metadata: metadata.into(),
+//             input: input.into(),
+//         })
+//     }
+// }
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RuntimeNewFrameInputV1 {
-    pub metadata: Vec<u8>,
-    pub input: Vec<u8>,
-}
-
-impl Drop for RuntimeNewFrameInputV1 {
-    fn drop(&mut self) {
-        revm_helpers::reusable_pool::global::vec_u8_reusable_pool::take_recycle(&mut self.metadata);
-        revm_helpers::reusable_pool::global::vec_u8_reusable_pool::take_recycle(&mut self.input);
-    }
+    pub metadata: VecU8,
+    pub input: VecU8,
 }
 
 impl bincode::Encode for RuntimeNewFrameInputV1 {
@@ -19,28 +47,50 @@ impl bincode::Encode for RuntimeNewFrameInputV1 {
         &self,
         e: &mut E,
     ) -> Result<(), bincode::error::EncodeError> {
-        bincode::Encode::encode(&self.metadata, e)?;
-        bincode::Encode::encode(&self.input, e)?;
+        bincode::Encode::encode(&self.metadata.as_ref(), e)?;
+        bincode::Encode::encode(&self.input.as_ref(), e)?;
         Ok(())
     }
+}
+
+fn try_decode_slice<C, D: bincode::de::Decoder<Context = C>>(
+    d: &mut D,
+) -> Result<VecU8, bincode::error::DecodeError> {
+    let mut result = VecU8::default_for_reuse();
+
+    let mut len_or_cap_buf = [0u8; 4];
+
+    d.reader().read(&mut len_or_cap_buf)?;
+    let len = u32::from_le_bytes(len_or_cap_buf) as usize;
+    // skip cap
+    d.reader().read(&mut len_or_cap_buf)?;
+    if len > 0 {
+        let data_slice = d.reader().peek_read(len).unwrap();
+        result.extend_from_slice(&data_slice);
+        d.reader().consume(len);
+    }
+
+    Ok(result)
 }
 
 impl<C> bincode::Decode<C> for RuntimeNewFrameInputV1 {
     fn decode<D: bincode::de::Decoder<Context = C>>(
         d: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
-        let metadata: Vec<u8> = bincode::Decode::decode(d)?;
-        let input: Vec<u8> = bincode::Decode::decode(d)?;
+        let metadata = try_decode_slice(d)?;
+
+        let input = try_decode_slice(d)?;
+
         Ok(Self {
-            metadata: metadata.into(),
-            input: input.into(),
+            metadata: VecU8::try_from_slice_unwrap(&metadata),
+            input: VecU8::try_from_slice_unwrap(&input),
         })
     }
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RuntimeInterruptionOutcomeV1 {
-    pub output: Bytes,
+    pub output: VecU8,
     pub fuel_consumed: u64,
     pub fuel_refunded: i64,
     pub exit_code: i32,
@@ -63,15 +113,53 @@ impl<C> bincode::Decode<C> for RuntimeInterruptionOutcomeV1 {
     fn decode<D: bincode::de::Decoder<Context = C>>(
         d: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
-        let output: Vec<u8> = bincode::Decode::decode(d)?;
+        let output = try_decode_slice(d)?;
+
         let fuel_consumed: u64 = bincode::Decode::decode(d)?;
         let fuel_refunded: i64 = bincode::Decode::decode(d)?;
         let exit_code: i32 = bincode::Decode::decode(d)?;
         Ok(Self {
-            output: output.into(),
+            output,
             fuel_consumed,
             fuel_refunded,
             exit_code,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::bincode_helpers::VecWriter;
+    use crate::{RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1};
+    use revm_helpers::reusable_pool::global::VecU8;
+
+    #[test]
+    fn enc_dec_runtime_new_frame_input_v1() {
+        let original = RuntimeNewFrameInputV1 {
+            metadata: VecU8::try_from_slice_unwrap(&[1, 2, 3]),
+            input: VecU8::try_from_slice_unwrap(&[4, 5, 6, 7, 8, 9]),
+        };
+        let mut buffer = VecU8::default_for_reuse();
+        let writer = VecWriter::new(&mut buffer);
+        bincode::encode_into_writer(&original, writer, bincode::config::legacy()).unwrap();
+        let (v2_decoded, _): (RuntimeNewFrameInputV1, _) =
+            bincode::decode_from_slice(&buffer, bincode::config::legacy()).unwrap();
+        assert_eq!(original, v2_decoded);
+    }
+
+    #[test]
+    fn enc_dec_runtime_interruption_outcome_v1() {
+        let original = RuntimeInterruptionOutcomeV1 {
+            output: VecU8::try_from_slice_unwrap(&[1, 2, 3, 4, 5]),
+            fuel_consumed: 1,
+            fuel_refunded: 2,
+            exit_code: 3,
+        };
+        let mut buffer = VecU8::default_for_reuse();
+        let writer = VecWriter::new(&mut buffer);
+        bincode::encode_into_writer(&original, writer, bincode::config::legacy()).unwrap();
+        let (decoded, _): (RuntimeInterruptionOutcomeV1, _) =
+            bincode::decode_from_slice(&buffer, bincode::config::legacy()).unwrap();
+        assert_eq!(original, decoded);
     }
 }

@@ -30,6 +30,7 @@ use revm::{
     },
     Database, Inspector,
 };
+use revm_helpers::reusable_pool::global::VecU8;
 
 /// Rwasm EVM extends the [`Evm`] type with Rwasm specific types and logic.
 #[derive(Debug, Clone)]
@@ -265,10 +266,7 @@ where
                         // an original init code we pass as an input inside the runtime
                         // to execute deployment logic
                         new_frame.interpreter.input.input = CallInput::Bytes(
-                            revm_helpers::reusable_pool::global::vec_u8_try_reuse_and_copy_from(
-                                &inputs.init_code,
-                            )
-                            .expect("init code exceeded reusable pool cap"),
+                            VecU8::try_from_slice(&inputs.init_code).expect("enough cap"),
                         );
                         // we should reload bytecode here since it's an EIP-7702 account
                         let bytecode = ctx.journal_mut().code(precompile_runtime)?;

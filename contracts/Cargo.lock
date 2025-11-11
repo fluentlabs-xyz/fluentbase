@@ -1948,6 +1948,7 @@ dependencies = [
  "k256",
  "num",
  "p256",
+ "revm-helpers",
  "rwasm",
  "sha2 0.10.9",
  "smallvec",

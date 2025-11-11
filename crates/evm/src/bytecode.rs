@@ -7,19 +7,20 @@ use bincode::{de::read::SliceReader, enc::write::SliceWriter, error};
 use bitvec::vec::BitVec;
 use fluentbase_sdk::{alloc_slice, Bytes, B256};
 use revm_bytecode::{legacy::analyze_legacy, JumpTable};
+use revm_helpers::reusable_pool::global::VecU8;
 
 #[derive(Debug)]
 /// A legacy bytecode
 pub struct LegacyBytecode {
     pub hash: B256,
-    pub bytecode: Vec<u8>,
+    pub bytecode: VecU8,
 }
 
 #[derive(Debug)]
 /// Bytecode plus metadata required by the interpreter.
 pub struct AnalyzedBytecode {
     /// A padded bytecode (length might be different)
-    pub bytecode: Vec<u8>,
+    pub bytecode: Bytes,
     /// An original bytecode len (w/o padding)
     pub len: usize,
     /// Jump table for JUMPDEST checks
@@ -36,7 +37,7 @@ impl Default for AnalyzedBytecode {
 
 impl AnalyzedBytecode {
     /// Analyze legacy bytecode, compute jump table, and keep original length and hash.
-    pub fn new(bytecode: Vec<u8>, hash: B256) -> Self {
+    pub fn new(bytecode: Bytes, hash: B256) -> Self {
         let len = bytecode.len();
         let (jump_table, bytecode) = analyze_legacy(bytecode);
         Self {
@@ -48,8 +49,8 @@ impl AnalyzedBytecode {
     }
 
     /// Serialize into a contiguous buffer suitable for metadata storage.
-    pub fn serialize<'a>(&self) -> Result<&'a [u8], error::EncodeError> {
-        let mut buffer = alloc_slice(
+    pub fn serialize<'a>(&self) -> Result<VecU8, error::EncodeError> {
+        let mut buffer = VecU8::try_with_capacity_unwrap(
             32 // code hash
                 + size_of::<usize>() // original bytecode len
                 + 8 // padded bytecode len
@@ -58,7 +59,7 @@ impl AnalyzedBytecode {
                 + self.jump_table.as_slice().len() // jump table
                 + 8,
         );
-        let mut writer = SliceWriter::new(&mut buffer);
+        let mut writer = fluentbase_types::bincode_helpers::VecWriter::new(&mut buffer);
         let config = bincode::config::legacy();
         bincode::encode_into_writer(&self.hash.0, &mut writer, config)?;
         bincode::encode_into_writer(self.len, &mut writer, config)?;
@@ -74,6 +75,7 @@ impl AnalyzedBytecode {
         let mut reader = SliceReader::new(&bytes);
         let hash: [u8; 32] = bincode::decode_from_reader(&mut reader, config)?;
         let len: usize = bincode::decode_from_reader(&mut reader, config)?;
+        // TODO use existing buffer (or reusable version) for decoding
         let bytecode: Vec<u8> = bincode::decode_from_reader(&mut reader, config)?;
         let jump_table: Vec<u8> = bincode::decode_from_reader(&mut reader, config)?;
         Ok(Self {
@@ -111,7 +113,7 @@ mod tests {
         ];
         let original_bytecode = AnalyzedBytecode::new(bytecode.into(), B256::ZERO);
         let raw = original_bytecode.serialize().unwrap();
-        let new_bytecode = AnalyzedBytecode::deserialize(raw).unwrap();
+        let new_bytecode = AnalyzedBytecode::deserialize(&raw).unwrap();
         assert_eq!(original_bytecode.bytecode, new_bytecode.bytecode);
         assert_eq!(original_bytecode.len, new_bytecode.len);
         assert_eq!(
@@ -132,7 +134,7 @@ mod tests {
         let original_bytecode = AnalyzedBytecode::new(bytecode.into(), B256::ZERO);
         assert!(original_bytecode.jump_table.is_valid(0x039a));
         let raw = original_bytecode.serialize().unwrap();
-        let new_bytecode = AnalyzedBytecode::deserialize(raw).unwrap();
+        let new_bytecode = AnalyzedBytecode::deserialize(&raw).unwrap();
         assert!(new_bytecode.jump_table.is_valid(0x039a));
     }
 }
