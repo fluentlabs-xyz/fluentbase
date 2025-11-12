@@ -1795,7 +1795,6 @@ dependencies = [
  "fluentbase-evm",
  "fluentbase-sdk",
  "fluentbase-testing",
- "fluentbase-types",
  "hashbrown 0.16.0",
  "lazy_static",
  "revm-interpreter",

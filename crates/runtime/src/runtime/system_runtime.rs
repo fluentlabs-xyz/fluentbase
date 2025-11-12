@@ -104,9 +104,6 @@ impl SystemRuntime {
     }
 
     pub fn execute(&mut self) -> Result<(), TrapCode> {
-        let id = std::thread::current().id();
-        println!("current thread: {:?}", id);
-
         let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
 
         // Rewrite runtime context before each call, since we reuse the same store and runtime for
@@ -126,19 +123,33 @@ impl SystemRuntime {
         };
         let result = entrypoint.call(compiled_runtime.store.as_context_mut(), &[], &mut []);
 
+        // System runtime returns output with exit code (as first four bytes).
+        // It doesn't halt, because halt or trap doesn't unwind the stack properly.
+        let ctx = compiled_runtime.store.data_mut();
+        let output = take(&mut ctx.execution_result.output);
+        if output.len() < 4 {
+            eprintln!(
+                "runtime: an unexpected output size returned from system runtime: {}, falling back to the unreachable code, this should be investigated",
+                output.len()
+            );
+            return Err(TrapCode::UnreachableCodeReached);
+        }
+        let (exit_code_le, output) = output.split_at(4);
+        ctx.execution_result.output = output.to_vec();
+        let exit_code = i32::from_le_bytes(exit_code_le.try_into().unwrap());
+        ctx.execution_result.exit_code = exit_code;
+
         // If the execution result is `InterruptionCalled`, then interruption is called, we should re-map
         // trap code into an interruption.
         //
         // SAFETY: Exit code `InterruptionCalled` can only be passed by our system runtimes, trustless
-        //  applications can use this error code, but it won't be handled anyhow (only punishment).
-        if compiled_runtime.store.data().execution_result.exit_code
-            == ExitCode::InterruptionCalled.into_i32()
-        {
+        //  applications can use this error code, but it won't be handled because of different
+        //  runtime (only punishment for halt exit code).
+        if ExitCode::from_repr(exit_code) == Some(ExitCode::InterruptionCalled) {
             // We need to move output into return data, because in our common case, interruptions
             // store syscall params inside return data,
             // but we can't suppose this for system runtime contracts because we don't expose such
             // functions, that's why we should move data from output into return data
-            let ctx = compiled_runtime.store.data_mut();
             ctx.execution_result.return_data = take(&mut ctx.execution_result.output);
             // Initialize resumable context with empty parameters, these values are passed into
             // the resume function once we're ready to resume
@@ -146,7 +157,7 @@ impl SystemRuntime {
             return Err(TrapCode::InterruptionCalled);
         }
 
-        result.map_err(map_anyhow_error).or_else(|trap_code| {
+        let result = result.map_err(map_anyhow_error).or_else(|trap_code| {
             // Trap code `ExecutionHalted` is used to unwind the execution and terminate, that's
             // why we map it into `Ok()`
             if trap_code == TrapCode::ExecutionHalted {
@@ -154,7 +165,17 @@ impl SystemRuntime {
             } else {
                 Err(trap_code)
             }
-        })
+        });
+
+        if let Err(trap_code) = &result {
+            eprintln!(
+                "runtime: an unexpected trap code happened inside system runtime: {}, falling back to the unreachable code, this should be investigated",
+                trap_code
+            );
+            return Err(TrapCode::UnreachableCodeReached);
+        }
+
+        result
     }
 
     pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {

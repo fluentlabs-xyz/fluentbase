@@ -367,12 +367,6 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     exit_code: i32,
     return_data: Bytes,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
-    #[cfg(feature = "std")]
-    // println!(
-    //     "execution result: exit_code: {} ({})",
-    //     exit_code,
-    //     ExitCode::from(exit_code)
-    // );
     // if we have success or failed exit code
     if exit_code <= 0 {
         // If the result is produced by system runtime (like EVM, SVM, etc.) then use custom handler
@@ -396,7 +390,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     // try to parse execution params, if it's not possible, then return an error
     let Some(syscall_params) = SyscallInvocationParams::decode(&return_data) else {
-        unreachable!("can't decode invocation params");
+        unreachable!("revm: can't decode invocation params");
     };
 
     let gas = frame.interpreter.gas;
@@ -406,13 +400,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         gas,
     };
 
-    // println!("interruption inputs: {:?}", inputs);
-    let result = execute_rwasm_interruption::<CTX, INSP>(frame, inspector, ctx, inputs);
-    // println!(
-    //     "interruption result: {:?}, outcome={:?}",
-    //     result, frame.interrupted_outcome
-    // );
-    result
+    execute_rwasm_interruption::<CTX, INSP>(frame, inspector, ctx, inputs)
 }
 
 #[tracing::instrument(level = "info", skip_all)]

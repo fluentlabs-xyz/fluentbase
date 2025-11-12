@@ -79,13 +79,6 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
         let pages_needed = calc_pages_needed(pages_allocated, heap_pos + bytes);
         if pages_needed > 0 {
             let new_pages = core::arch::wasm32::memory_grow::<0>(pages_needed);
-            // crate::debug_log!(
-            //     "alloc, need={}: new={}, bytes={}, heap_pos={}",
-            //     pages_needed,
-            //     new_pages,
-            //     bytes,
-            //     unsafe { HEAP_POS }
-            // );
             if new_pages == usize::MAX {
                 // TODO(dmitry123): "how to use trap code here?"
                 unsafe {
