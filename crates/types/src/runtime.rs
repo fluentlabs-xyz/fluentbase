@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 use alloy_primitives::Bytes;
 use bincode::de::read::Reader;
 use bincode::de::Decoder;
+#[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
 
 // #[derive(Default, Clone, Debug, PartialEq)]
@@ -25,9 +26,7 @@ use revm_helpers::reusable_pool::global::VecU8;
 //     fn decode<D: bincode::de::Decoder<Context = C>>(
 //         d: &mut D,
 //     ) -> Result<Self, bincode::error::DecodeError> {
-//         // TODO decode into reusable vec
 //         let metadata: Vec<u8> = bincode::Decode::decode(d)?;
-//         // TODO decode into reusable vec
 //         let input: Vec<u8> = bincode::Decode::decode(d)?;
 //         Ok(Self {
 //             metadata: metadata.into(),
@@ -38,7 +37,13 @@ use revm_helpers::reusable_pool::global::VecU8;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RuntimeNewFrameInputV1 {
+    #[cfg(feature = "std")]
+    pub metadata: Bytes,
+    #[cfg(not(feature = "std"))]
     pub metadata: VecU8,
+    #[cfg(feature = "std")]
+    pub input: Bytes,
+    #[cfg(not(feature = "std"))]
     pub input: VecU8,
 }
 
@@ -53,6 +58,28 @@ impl bincode::Encode for RuntimeNewFrameInputV1 {
     }
 }
 
+#[cfg(feature = "std")]
+fn try_decode_slice<C, D: bincode::de::Decoder<Context = C>>(
+    d: &mut D,
+) -> Result<Bytes, bincode::error::DecodeError> {
+    let mut result = Vec::new();
+
+    let mut len_or_cap_buf = [0u8; 4];
+
+    d.reader().read(&mut len_or_cap_buf)?;
+    let len = u32::from_le_bytes(len_or_cap_buf) as usize;
+    // skip cap
+    d.reader().read(&mut len_or_cap_buf)?;
+    if len > 0 {
+        let data_slice = d.reader().peek_read(len).unwrap();
+        result.extend_from_slice(&data_slice);
+        d.reader().consume(len);
+    }
+
+    Ok(result.into())
+}
+
+#[cfg(not(feature = "std"))]
 fn try_decode_slice<C, D: bincode::de::Decoder<Context = C>>(
     d: &mut D,
 ) -> Result<VecU8, bincode::error::DecodeError> {
@@ -78,18 +105,17 @@ impl<C> bincode::Decode<C> for RuntimeNewFrameInputV1 {
         d: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         let metadata = try_decode_slice(d)?;
-
         let input = try_decode_slice(d)?;
 
-        Ok(Self {
-            metadata: VecU8::try_from_slice_unwrap(&metadata),
-            input: VecU8::try_from_slice_unwrap(&input),
-        })
+        Ok(Self { metadata, input })
     }
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RuntimeInterruptionOutcomeV1 {
+    #[cfg(feature = "std")]
+    pub output: Bytes,
+    #[cfg(not(feature = "std"))]
     pub output: VecU8,
     pub fuel_consumed: u64,
     pub fuel_refunded: i64,
@@ -131,13 +157,14 @@ impl<C> bincode::Decode<C> for RuntimeInterruptionOutcomeV1 {
 mod tests {
     use crate::bincode_helpers::VecWriter;
     use crate::{RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1};
+    use alloy_primitives::Bytes;
     use revm_helpers::reusable_pool::global::VecU8;
 
     #[test]
     fn enc_dec_runtime_new_frame_input_v1() {
         let original = RuntimeNewFrameInputV1 {
-            metadata: VecU8::try_from_slice_unwrap(&[1, 2, 3]),
-            input: VecU8::try_from_slice_unwrap(&[4, 5, 6, 7, 8, 9]),
+            metadata: [1, 2, 3].into(),
+            input: [4, 5, 6, 7, 8, 9].into(),
         };
         let mut buffer = VecU8::default_for_reuse();
         let writer = VecWriter::new(&mut buffer);
@@ -150,7 +177,7 @@ mod tests {
     #[test]
     fn enc_dec_runtime_interruption_outcome_v1() {
         let original = RuntimeInterruptionOutcomeV1 {
-            output: VecU8::try_from_slice_unwrap(&[1, 2, 3, 4, 5]),
+            output: [1, 2, 3, 4, 5].into(),
             fuel_consumed: 1,
             fuel_refunded: 2,
             exit_code: 3,

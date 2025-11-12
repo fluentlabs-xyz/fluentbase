@@ -30,7 +30,8 @@ use revm::{
     },
     Database, Inspector,
 };
-use revm_helpers::reusable_pool::global::{vec_u8_try_reuse_and_copy_from, VecU8};
+#[cfg(not(feature = "std"))]
+use revm_helpers::reusable_pool::global::VecU8;
 use std::vec::Vec;
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -90,18 +91,37 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
         // TODO(dmitry123): "optimize me, store RwasmModule inside Bytecode"
         let (_, bytes_read) = RwasmModule::new(interpreter_result.output.as_ref());
         let (rwasm_module_raw, constructor_params_raw) = (
+            #[cfg(feature = "std")]
+            interpreter_result.output.slice(..bytes_read),
+            #[cfg(not(feature = "std"))]
             vec_u8_try_reuse_and_copy_from(&interpreter_result.output[..bytes_read])
                 .expect("enough cap"),
+            #[cfg(feature = "std")]
+            interpreter_result.output.slice(bytes_read..),
+            #[cfg(not(feature = "std"))]
             &interpreter_result.output[bytes_read..],
         );
         let bytecode_hash = keccak256(&rwasm_module_raw);
         // Rewrite overridden rWasm bytecode
-        let bytecode = Bytecode::new_rwasm(Bytes::from(rwasm_module_raw).clone());
+        let bytecode = {
+            #[cfg(feature = "std")]
+            {
+                Bytecode::new_rwasm(rwasm_module_raw)
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                Bytecode::new_rwasm(Bytes::from(rwasm_module_raw).clone())
+            }
+        };
         ctx.journal_mut()
             .set_code(create_frame.created_address, bytecode.clone());
         // Change input params
-        frame.interpreter.input.input =
-            CallInput::Bytes(VecU8::try_from_slice(&constructor_params_raw).expect("enough cap"));
+        frame.interpreter.input.input = CallInput::Bytes(
+            #[cfg(feature = "std")]
+            constructor_params_raw,
+            #[cfg(not(feature = "std"))]
+            VecU8::try_from_slice(&constructor_params_raw).expect("enough cap"),
+        );
         frame.interpreter.input.account_owner = None;
         frame.interpreter.bytecode = ExtBytecode::new_with_hash(bytecode, bytecode_hash);
         frame.interpreter.gas = interpreter_result.gas;
@@ -164,13 +184,34 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .encode()
         .expect("revm: unable to encode shared context input")
         .to_vec();
-    let input = interpreter.input.input.bytes(ctx).bytes();
+    let input = {
+        #[cfg(feature = "std")]
+        {
+            interpreter.input.input.bytes(ctx)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            interpreter.input.input.bytes(ctx).bytes()
+        }
+    };
 
     match meta_bytecode {
         Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
-            let new_frame_input = RuntimeNewFrameInputV1 {
-                metadata: VecU8::try_from_slice(&v.metadata).expect("enough cap"),
-                input: VecU8::try_from_slice(&input).expect("enough cap"),
+            let new_frame_input = {
+                #[cfg(feature = "std")]
+                {
+                    RuntimeNewFrameInputV1 {
+                        metadata: v.metadata,
+                        input,
+                    }
+                }
+                #[cfg(not(feature = "std"))]
+                {
+                    RuntimeNewFrameInputV1 {
+                        metadata: VecU8::try_from_slice(&v.metadata).expect("enough cap"),
+                        input: VecU8::try_from_slice(&input).expect("enough cap"),
+                    }
+                }
             };
             let new_frame_input =
                 bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
@@ -228,8 +269,16 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     interpreter.gas.record_denominated_refund(fuel_refunded);
 
     // extract return data from the execution context
-    let return_data: Vec<u8>;
-    return_data = runtime_context.execution_result.return_data.into();
+    let return_data = {
+        #[cfg(feature = "std")]
+        {
+            From::<Vec<u8>>::from(runtime_context.execution_result.return_data)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            From::<Vec<u8>>::from(runtime_context.execution_result.return_data)
+        }
+    };
 
     process_exec_result(frame, ctx, inspector, exit_code, return_data)
 }
@@ -286,7 +335,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         fuel_refunded,
         inputs.syscall_params.fuel16_ptr,
     );
-    let return_data: Vec<u8> = runtime_context.execution_result.return_data.into();
+    let return_data = { From::<Vec<u8>>::from(runtime_context.execution_result.return_data) };
 
     // make sure we have enough gas to charge from the call
     if !frame.interpreter.gas.record_denominated_cost(fuel_consumed) {
@@ -341,7 +390,8 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     inspector: &mut Option<&mut INSP>,
     mut ownable_account: OwnableAccountBytecode,
     exit_code: i32,
-    mut return_data: Vec<u8>,
+    #[cfg(feature = "std")] mut return_data: Bytes,
+    #[cfg(not(feature = "std"))] mut return_data: Vec<u8>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let is_create: bool = matches!(frame.input, FrameInput::Create(..));
     match exit_code {
@@ -371,7 +421,8 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     ctx: &mut CTX,
     inspector: &mut Option<&mut INSP>,
     exit_code: i32,
-    return_data: Vec<u8>,
+    #[cfg(feature = "std")] return_data: Bytes,
+    #[cfg(not(feature = "std"))] return_data: Vec<u8>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     // if we have success or failed exit code
     if exit_code <= 0 {
@@ -415,7 +466,8 @@ fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
     ctx: &mut CTX,
     inspector: &mut Option<&mut INSP>,
     exit_code: ExitCode,
-    return_data: Vec<u8>,
+    #[cfg(feature = "std")] return_data: Bytes,
+    #[cfg(not(feature = "std"))] return_data: Vec<u8>,
 ) -> NextAction {
     let result = instruction_result_from_exit_code(exit_code, return_data.is_empty());
     if let Some(inspector) = inspector {
@@ -434,6 +486,9 @@ fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
     }
     NextAction::Return(ExecutionResult {
         result,
+        #[cfg(feature = "std")]
+        output: return_data,
+        #[cfg(not(feature = "std"))]
         output: VecU8::try_from_slice_unwrap(&return_data),
         gas: frame.interpreter.gas,
     })

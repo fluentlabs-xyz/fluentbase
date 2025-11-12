@@ -17,7 +17,8 @@ use fluentbase_types::{
     RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SyscallInvocationParams,
 };
 use revm_helpers;
-use revm_helpers::reusable_pool::global::{vec_u8_try_reuse_and_copy_from, VecU8};
+#[cfg(not(feature = "std"))]
+use revm_helpers::reusable_pool::global::VecU8;
 use revm_interpreter::interpreter::ExtBytecode;
 use revm_interpreter::InterpreterAction;
 use spin::MutexGuard;
@@ -35,7 +36,14 @@ pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: B
 pub(crate) fn evm_bytecode_from_metadata(metadata: &[u8]) -> Option<AnalyzedBytecode> {
     Some(match EthereumMetadata::read_from_bytes(metadata)? {
         EthereumMetadata::Legacy(bytecode) => {
-            AnalyzedBytecode::new(bytecode.bytecode.bytes(), bytecode.hash)
+            #[cfg(feature = "std")]
+            {
+                AnalyzedBytecode::new(bytecode.bytecode, bytecode.hash)
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                AnalyzedBytecode::new(bytecode.bytecode.bytes(), bytecode.hash)
+            }
         }
         EthereumMetadata::Analyzed(bytecode) => bytecode,
     })
@@ -76,20 +84,42 @@ fn restore_evm_context_or_create<'a>(
             else {
                 unreachable!("evm: a valid metadata must be provided")
             };
-            (
-                analyzed_bytecode,
-                vec_u8_try_reuse_and_copy_from(&new_frame_input.input).expect("enough cap"),
-            )
+            #[cfg(feature = "std")]
+            {
+                (analyzed_bytecode, new_frame_input.input)
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                (analyzed_bytecode, new_frame_input.input.clone())
+            }
         } else {
-            let analyzed_bytecode =
-                AnalyzedBytecode::new(new_frame_input.input.bytes(), B256::ZERO);
-            (analyzed_bytecode, Vec::new())
+            #[cfg(feature = "std")]
+            {
+                let analyzed_bytecode =
+                    AnalyzedBytecode::new(new_frame_input.input.clone(), B256::ZERO);
+                (analyzed_bytecode, Bytes::new())
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                let analyzed_bytecode =
+                    AnalyzedBytecode::new(new_frame_input.input.bytes(), B256::ZERO);
+                (analyzed_bytecode, VecU8::default_for_reuse())
+            }
         };
-        let eth_vm = EthVM::new(
-            context,
-            VecU8::try_from_slice(&contract_input).expect("enough cap"),
-            analyzed_bytecode,
-        );
+        let eth_vm = {
+            #[cfg(feature = "std")]
+            {
+                EthVM::new(context, contract_input, analyzed_bytecode)
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                EthVM::new(
+                    context,
+                    VecU8::try_from_slice(&contract_input).expect("enough cap"),
+                    analyzed_bytecode,
+                )
+            }
+        };
         // Push new EthVM frame (new frame is created)
         cached_state.push(eth_vm);
         cached_state.last_mut().unwrap()
@@ -123,11 +153,26 @@ fn restore_evm_context_or_create<'a>(
             eth_vm.interpreter.extend.committed_gas = *dirty_gas;
         }
         let exit_code = ExitCode::from(exit_code);
-        eth_vm.interpreter.extend.interruption_outcome = Option::from(InterruptionOutcome {
-            output: VecU8::try_from_slice(&output).expect("enough cap"),
-            gas,
-            exit_code,
-        });
+        eth_vm.interpreter.extend.interruption_outcome = {
+            #[cfg(feature = "std")]
+            {
+                Option::from(InterruptionOutcome {
+                    output,
+                    #[cfg(not(feature = "std"))]
+                    output: VecU8::try_from_slice(&output).expect("enough cap"),
+                    gas,
+                    exit_code,
+                })
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                Option::from(InterruptionOutcome {
+                    output: VecU8::try_from_slice(&output).expect("enough cap"),
+                    gas,
+                    exit_code,
+                })
+            }
+        };
         eth_vm
     }
 }
@@ -177,7 +222,13 @@ fn deploy_inner<SDK: SharedAPI>(
                 sdk.charge_fuel(consumed_diff);
                 // We intentionally don't charge gas for these opcodes
                 // to keep full compatibility with an EVM deployment process
-                commit_evm_bytecode(sdk, result.output.bytes());
+                commit_evm_bytecode(
+                    sdk,
+                    #[cfg(feature = "std")]
+                    result.output,
+                    #[cfg(not(feature = "std"))]
+                    result.output.bytes(),
+                );
                 ExitCode::Ok
             } else {
                 let consumed_diff = result.chargeable_fuel();
@@ -198,15 +249,25 @@ fn deploy_inner<SDK: SharedAPI>(
         } => {
             let input_offset = input.as_ptr() as usize;
             evm.sync_evm_gas(sdk);
-            let mut syscall_params = VecU8::default_for_reuse();
-            SyscallInvocationParams {
+            let syscall_invocation_params = SyscallInvocationParams {
                 code_hash,
                 input: input_offset..(input_offset + input.len()),
                 fuel_limit: fuel_limit.unwrap_or(u64::MAX),
                 state,
                 fuel16_ptr: 0,
-            }
-            .encode_into(&mut syscall_params);
+            };
+            let syscall_params = {
+                #[cfg(feature = "std")]
+                {
+                    syscall_invocation_params.encode()
+                }
+                #[cfg(not(feature = "std"))]
+                {
+                    let mut syscall_params = VecU8::default_for_reuse();
+                    syscall_invocation_params.encode_into(&mut syscall_params);
+                    syscall_params
+                }
+            };
             sdk.write(&syscall_params);
             ExitCode::InterruptionCalled
         }
@@ -267,15 +328,25 @@ fn main_inner<SDK: SharedAPI>(sdk: &mut SDK, mut cached_state: MutexGuard<Vec<Et
         } => {
             let input_offset = input.as_ptr() as usize;
             evm.sync_evm_gas(sdk);
-            let mut syscall_params = VecU8::default_for_reuse();
-            SyscallInvocationParams {
+            let syscall_invocation_params = SyscallInvocationParams {
                 code_hash,
                 input: input_offset..(input_offset + input.len()),
                 fuel_limit: fuel_limit.unwrap_or(u64::MAX),
                 state,
                 fuel16_ptr: 0,
-            }
-            .encode_into(&mut syscall_params);
+            };
+            let syscall_params = {
+                #[cfg(feature = "std")]
+                {
+                    syscall_invocation_params.encode()
+                }
+                #[cfg(not(feature = "std"))]
+                {
+                    let mut syscall_params = VecU8::default_for_reuse();
+                    syscall_invocation_params.encode_into(&mut syscall_params);
+                    syscall_params
+                }
+            };
             sdk.write(&syscall_params);
             ExitCode::InterruptionCalled
         }

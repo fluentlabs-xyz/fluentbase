@@ -4,6 +4,7 @@ use revm::{
     context_interface::result::HaltReason,
     interpreter::{FrameInput, Gas, InstructionResult, InterpreterAction, InterpreterResult},
 };
+#[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
 // /// The result of an execution operation.
 // #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,6 +87,9 @@ impl NextAction {
     pub fn error(exit_code: ExitCode, gas: Gas) -> Self {
         NextAction::Return(ExecutionResult {
             result: instruction_result_from_exit_code(exit_code, true),
+            #[cfg(feature = "std")]
+            output: Bytes::new(),
+            #[cfg(not(feature = "std"))]
             output: VecU8::default_for_reuse(),
             gas,
         })

@@ -36,6 +36,7 @@ std = [
     "alloy-primitives/std",
     "byteorder/std",
     "revm-precompile/std"
+    , "revm-helpers/std"
 ]
 debug-print = []
 fast-panic = []

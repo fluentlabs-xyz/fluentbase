@@ -3,7 +3,8 @@
 //! InterruptionOutcome carries host call results back into the VM;
 //! InterruptionExtension stores per-interpreter state; ExecutionResult
 //! summarizes final outcome with gas/fuel accounting.
-use fluentbase_sdk::{ExitCode, B256, FUEL_DENOM_RATE, U256};
+use fluentbase_sdk::{Bytes, ExitCode, B256, FUEL_DENOM_RATE, U256};
+#[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
 use revm_interpreter::{interpreter::EthInterpreter, Gas, InstructionResult, InterpreterResult};
 
@@ -11,6 +12,9 @@ use revm_interpreter::{interpreter::EthInterpreter, Gas, InstructionResult, Inte
 /// Result of a host interruption (output, gas delta, and exit code).
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InterruptionOutcome {
+    #[cfg(feature = "std")]
+    pub output: Bytes,
+    #[cfg(not(feature = "std"))]
     pub output: VecU8,
     pub gas: Gas,
     pub exit_code: ExitCode,
@@ -64,6 +68,9 @@ pub struct ExecutionResult {
     /// The result of the instruction execution.
     pub result: InstructionResult,
     /// The output of the instruction execution.
+    #[cfg(feature = "std")]
+    pub output: Bytes,
+    #[cfg(not(feature = "std"))]
     pub output: VecU8,
     /// The gas already committed to the runtime (aka charged).
     pub committed_gas: Gas,

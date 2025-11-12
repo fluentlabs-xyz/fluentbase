@@ -29,6 +29,7 @@ use revm::{
     },
     Database, Inspector,
 };
+#[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
 use rwasm::TrapCode;
 use std::{boxed::Box, vec, vec::Vec};
@@ -49,7 +50,18 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     macro_rules! return_result {
         ($output:expr, $result:ident) => {{
-            let output: VecU8 = $output.into();
+            let output = {
+                #[cfg(feature = "std")]
+                {
+                    let output: Bytes = $output.into();
+                    output
+                }
+                #[cfg(not(feature = "std"))]
+                {
+                    let output: VecU8 = $output.into();
+                    output
+                }
+            };
             let result = ExecutionResult {
                 result: instruction_result_from_exit_code(ExitCode::$result, output.is_empty()),
                 output,
@@ -63,13 +75,23 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             return Ok(NextAction::InterruptionResult);
         }};
         ($result:ident) => {{
-            return_result!(VecU8::default_for_reuse(), $result)
+            #[cfg(feature = "std")]
+            {
+                return_result!(Bytes::default(), $result)
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                return_result!(VecU8::default_for_reuse(), $result)
+            }
         }};
     }
     macro_rules! return_halt {
         ($result:ident) => {{
             let result = ExecutionResult {
                 result: instruction_result_from_exit_code(ExitCode::$result, true),
+                #[cfg(feature = "std")]
+                output: Bytes::default(),
+                #[cfg(not(feature = "std"))]
                 output: VecU8::default_for_reuse(),
                 gas: Gas::new_spent(frame.interpreter.gas.spent() - inputs.gas.spent()),
             };
@@ -252,6 +274,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             // Create call inputs
             let call_inputs = Box::new(CallInputs {
+                #[cfg(feature = "std")]
+                input: CallInput::Bytes(contract_input.into()),
+                #[cfg(not(feature = "std"))]
                 input: CallInput::Bytes(
                     VecU8::try_from_slice(&contract_input).expect("enough cap"),
                 ),
@@ -302,6 +327,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             // Create call inputs
             let call_inputs = Box::new(CallInputs {
+                #[cfg(feature = "std")]
+                input: CallInput::Bytes(contract_input.into()),
+                #[cfg(not(feature = "std"))]
                 input: CallInput::Bytes(
                     VecU8::try_from_slice(&contract_input).expect("enough cap"),
                 ),
@@ -358,6 +386,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             // Create call inputs
             let call_inputs = Box::new(CallInputs {
+                #[cfg(feature = "std")]
+                input: CallInput::Bytes(contract_input.into()),
+                #[cfg(not(feature = "std"))]
                 input: CallInput::Bytes(
                     VecU8::try_from_slice(&contract_input).expect("enough cap"),
                 ),
@@ -408,6 +439,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             // Create call inputs
             let call_inputs = Box::new(CallInputs {
+                #[cfg(feature = "std")]
+                input: CallInput::Bytes(contract_input.into()),
+                #[cfg(not(feature = "std"))]
                 input: CallInput::Bytes(
                     VecU8::try_from_slice(&contract_input).expect("enough cap"),
                 ),
@@ -712,7 +746,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
             // If requested code length is zero, then there is no need to proceed
             if code_length == 0 {
-                return_result!(VecU8::default_for_reuse(), Ok);
+                #[cfg(feature = "std")]
+                {
+                    return_result!(Bytes::new(), Ok);
+                }
+                #[cfg(not(feature = "std"))]
+                {
+                    return_result!(VecU8::default_for_reuse(), Ok);
+                }
             }
 
             let mut bytecode = match &account.data.info.code {
@@ -724,6 +765,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                         .map(EthereumMetadata::code_copy)
                         .unwrap_or_default()
                 }
+                #[cfg(feature = "std")]
+                code => code
+                    .as_ref()
+                    .map(Bytecode::original_bytes)
+                    .unwrap_or_default(),
+                #[cfg(not(feature = "std"))]
                 code => code
                     .as_ref()
                     .map(Bytecode::original_bytes)
@@ -734,7 +781,16 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // we store system precompile bytecode in the state trie,
             // according to evm requirements, we should return empty code
             if is_system_precompile(&address) {
-                bytecode = VecU8::default_for_reuse();
+                bytecode = {
+                    #[cfg(feature = "std")]
+                    {
+                        Bytes::new()
+                    }
+                    #[cfg(not(feature = "std"))]
+                    {
+                        VecU8::default_for_reuse()
+                    }
+                };
             }
 
             // TODO(dmitry123): Add offset/length checks, otherwise gas can be abused!
@@ -762,17 +818,27 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 }
                 _ => None,
             }) else {
-                let output = VecU8::try_from_slice_unwrap(&[
-                    // metadata length is 0 in this case
-                    0x00,
-                    0x00,
-                    0x00,
-                    0x00,
-                    // pass info about an account (is_account_ownable, is_cold, is_empty)
-                    0x00u8,
-                    account.is_cold as u8,
-                    account.is_empty() as u8,
-                ]);
+                let output = {
+                    let v = [
+                        // metadata length is 0 in this case
+                        0x00,
+                        0x00,
+                        0x00,
+                        0x00,
+                        // pass info about an account (is_account_ownable, is_cold, is_empty)
+                        0x00u8,
+                        account.is_cold as u8,
+                        account.is_empty() as u8,
+                    ];
+                    #[cfg(feature = "std")]
+                    {
+                        Bytes::from(v)
+                    }
+                    #[cfg(not(feature = "std"))]
+                    {
+                        VecU8::from(v)
+                    }
+                };
                 return_result!(output, Ok);
             };
             // execute a syscall
@@ -825,7 +891,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     metadata_input.into(),
                 )),
             );
-            return_result!(VecU8::default_for_reuse(), Ok)
+            #[cfg(feature = "std")]
+            {
+                return_result!(Bytes::new(), Ok)
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                return_result!(VecU8::default_for_reuse(), Ok)
+            }
         }
 
         SYSCALL_ID_METADATA_WRITE => {
@@ -861,7 +934,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 new_metadata.into(),
             ));
             ctx.journal_mut().set_code(address, new_bytecode);
-            return_result!(VecU8::default_for_reuse(), Ok)
+            #[cfg(feature = "std")]
+            {
+                return_result!(Bytes::new(), Ok)
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                return_result!(VecU8::default_for_reuse(), Ok)
+            }
         }
 
         SYSCALL_ID_METADATA_COPY => {
@@ -892,7 +972,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let metadata = ownable_account_bytecode
                 .metadata
                 .slice(offset as usize..(offset + length) as usize);
-            return_result!(metadata.as_ref(), Ok)
+            #[cfg(feature = "std")]
+            {
+                return_result!(metadata, Ok)
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                return_result!(metadata.as_ref(), Ok)
+            }
         }
 
         SYSCALL_ID_METADATA_STORAGE_READ => {
@@ -929,7 +1016,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 .sstore(account_owner_address, slot_u256, value_u256)?;
             ctx.journal_mut().touch_account(account_owner_address);
 
-            return_result!(VecU8::default_for_reuse(), Ok);
+            #[cfg(feature = "std")]
+            {
+                return_result!(Bytes::new(), Ok)
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                return_result!(VecU8::default_for_reuse(), Ok)
+            }
         }
 
         SYSCALL_ID_TRANSIENT_READ => {
@@ -955,7 +1049,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             ctx.journal_mut()
                 .tstore(current_target_address, slot, value);
             // empty result
-            return_result!(VecU8::default_for_reuse(), Ok);
+            #[cfg(feature = "std")]
+            {
+                return_result!(Bytes::new(), Ok)
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                return_result!(VecU8::default_for_reuse(), Ok)
+            }
         }
 
         SYSCALL_ID_BLOCK_HASH => {

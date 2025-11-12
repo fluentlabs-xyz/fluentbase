@@ -9,10 +9,11 @@ use crate::{
     opcodes::interruptable_instruction_table,
     types::{ExecutionResult, InterruptingInterpreter, InterruptionExtension, InterruptionOutcome},
 };
-use alloc::vec::Vec;
-use fluentbase_sdk::{debug_log, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
+use fluentbase_sdk::Bytes;
+use fluentbase_sdk::{ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
 use revm_bytecode::{Bytecode, LegacyAnalyzedBytecode};
-use revm_helpers::reusable_pool::global::{vec_u8_try_reuse_and_copy_from, VecU8};
+#[cfg(not(feature = "std"))]
+use revm_helpers::reusable_pool::global::VecU8;
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},
     CallInput, Gas, InputsImpl, InstructionTable, Interpreter, InterpreterAction, SharedMemory,
@@ -33,7 +34,8 @@ impl EthVM {
     /// The bytecode must be pre-analyzed (jump table + hash preserved).
     pub fn new(
         context_input: impl ContextReader,
-        input: VecU8,
+        #[cfg(feature = "std")] input: Bytes,
+        #[cfg(not(feature = "std"))] input: VecU8,
         analyzed_bytecode: AnalyzedBytecode,
     ) -> Self {
         // Initialize context params and inputs
@@ -121,6 +123,9 @@ impl EthVM {
                         .extend
                         .interruption_outcome
                         .replace(InterruptionOutcome {
+                            #[cfg(feature = "std")]
+                            output,
+                            #[cfg(not(feature = "std"))]
                             output: VecU8::try_from_slice(&output).expect("enough cap"),
                             gas,
                             exit_code,

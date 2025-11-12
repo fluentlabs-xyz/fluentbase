@@ -63,6 +63,7 @@ std = [
     "rwasm/std",
     "fluentbase-runtime/std",
     "fluentbase-evm/std",
+    "revm-helpers/std",
 ]
 hashbrown = ["revm/hashbrown"]
 serde = [

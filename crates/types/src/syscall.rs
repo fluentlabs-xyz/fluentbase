@@ -1,8 +1,8 @@
-use crate::bincode_helpers::VecWriter;
 use crate::{ExitCode, B256};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::ops::Range;
+#[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::{VecU8, VEC_U8_REUSABLE_POOL_CAPACITY};
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -20,9 +20,11 @@ impl SyscallInvocationParams {
         bincode::encode_to_vec(self, bincode::config::legacy()).unwrap()
     }
 
+    #[cfg(not(feature = "std"))]
     pub fn encode_into(&self, dst: &mut VecU8) {
+        use crate::bincode_helpers::VecWriter;
         bincode::encode_into_writer(self, VecWriter::new(dst), bincode::config::legacy()).unwrap();
-        if dst.capacity() > VEC_U8_REUSABLE_POOL_CAPACITY {
+        if !dst.is_reusable() {
             panic!("reallocation occur")
         }
     }

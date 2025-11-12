@@ -3884,6 +3884,7 @@ version = "1.0.0"
 dependencies = [
  "alloy-primitives",
  "num_enum",
+ "serde",
  "spin 0.10.0",
 ]
 

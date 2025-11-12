@@ -30,6 +30,7 @@ use revm::{
     },
     Database, Inspector,
 };
+#[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
 
 /// Rwasm EVM extends the [`Evm`] type with Rwasm specific types and logic.
@@ -266,6 +267,9 @@ where
                         // an original init code we pass as an input inside the runtime
                         // to execute deployment logic
                         new_frame.interpreter.input.input = CallInput::Bytes(
+                            #[cfg(feature = "std")]
+                            inputs.init_code.clone(),
+                            #[cfg(not(feature = "std"))]
                             VecU8::try_from_slice(&inputs.init_code).expect("enough cap"),
                         );
                         // we should reload bytecode here since it's an EIP-7702 account

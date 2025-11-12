@@ -2,7 +2,8 @@ use crate::bytecode::{AnalyzedBytecode, LegacyBytecode};
 use alloc::vec;
 use alloc::vec::Vec;
 use fluentbase_sdk::{Bytes, B256};
-use revm_helpers::reusable_pool::global::{vec_u8_try_reuse_and_copy_from, VecU8};
+#[cfg(not(feature = "std"))]
+use revm_helpers::reusable_pool::global::VecU8;
 
 pub enum EthereumMetadata {
     Legacy(LegacyBytecode),
@@ -22,8 +23,20 @@ impl EthereumMetadata {
                     .unwrap_or_else(|_| unreachable!("failed to deserialize analyzed bytecode")),
             ),
             hash => {
-                let bytecode = VecU8::try_from_slice(&metadata[32..]).expect("enough cap");
-                Self::Legacy(LegacyBytecode { hash, bytecode })
+                let bytecode = {
+                    #[cfg(feature = "std")]
+                    {
+                        metadata[32..].to_vec()
+                    }
+                    #[cfg(not(feature = "std"))]
+                    {
+                        VecU8::try_from_slice(&metadata[32..]).expect("enough cap")
+                    }
+                };
+                Self::Legacy(LegacyBytecode {
+                    hash,
+                    bytecode: bytecode.into(),
+                })
             }
         })
     }
@@ -62,6 +75,15 @@ impl EthereumMetadata {
         }
     }
 
+    #[cfg(feature = "std")]
+    pub fn code_copy(&self) -> Bytes {
+        match self {
+            EthereumMetadata::Legacy(bytecode) => bytecode.bytecode.clone(),
+            EthereumMetadata::Analyzed(bytecode) => bytecode.bytecode.slice(0..bytecode.len),
+        }
+    }
+
+    #[cfg(not(feature = "std"))]
     pub fn code_copy(&self) -> VecU8 {
         match self {
             EthereumMetadata::Legacy(bytecode) => {

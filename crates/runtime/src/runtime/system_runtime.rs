@@ -4,6 +4,8 @@ use fluentbase_types::{
     STATE_DEPLOY, STATE_MAIN,
 };
 use num::ToPrimitive;
+#[cfg(not(feature = "std"))]
+use revm_helpers::reusable_pool::global::VecU8;
 use revm_helpers::reusable_pool::global::VecU8;
 use rwasm::{ImportLinker, RwasmModule, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE};
 use smallvec::SmallVec;
@@ -491,8 +493,16 @@ impl SystemRuntime {
         // pass information about fuel consumed and exit code into the runtime.
         // That is why we move return data into the output and serialize output into the return data.
         let data_mut = store_mut.data_mut();
-        outcome.output = VecU8::try_from_slice(&take(&mut data_mut.execution_result.return_data))
-            .expect("enough cap");
+        #[cfg(feature = "std")]
+        {
+            outcome.output = take(&mut data_mut.execution_result.return_data).into();
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            outcome.output =
+                VecU8::try_from_slice(&take(&mut data_mut.execution_result.return_data))
+                    .expect("enough cap");
+        }
         outcome.exit_code = exit_code;
         let outcome = bincode::encode_to_vec(&outcome, bincode::config::legacy()).unwrap();
         data_mut.execution_result.return_data = outcome;

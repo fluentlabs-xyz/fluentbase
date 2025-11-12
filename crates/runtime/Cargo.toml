@@ -49,6 +49,7 @@ default = ["std"]
 std = [
     "rwasm/std",
     "fluentbase-types/std",
+    "revm-helpers/std",
 ]
 rwasm = []
 debug-print = [

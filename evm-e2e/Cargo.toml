@@ -49,6 +49,7 @@ default = [
 std = [
     "fluentbase-genesis/std",
     "fluentbase-sdk/std",
+    "revm-helpers/std",
 ]
 debug-print = [
     "revm/debug-print",

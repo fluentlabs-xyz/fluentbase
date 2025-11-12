@@ -3,16 +3,21 @@
 //! Stores padded bytecode, original length, jump table and code hash for
 //! fast interpreter setup and cheap serialization.
 use alloc::vec::Vec;
-use bincode::{de::read::SliceReader, enc::write::SliceWriter, error};
+use bincode::{de::read::SliceReader, error};
 use bitvec::vec::BitVec;
-use fluentbase_sdk::{alloc_slice, Bytes, B256};
+use core::ops::DerefMut;
+use fluentbase_sdk::{Bytes, B256};
 use revm_bytecode::{legacy::analyze_legacy, JumpTable};
+#[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
 
 #[derive(Debug)]
 /// A legacy bytecode
 pub struct LegacyBytecode {
     pub hash: B256,
+    #[cfg(feature = "std")]
+    pub bytecode: Bytes,
+    #[cfg(not(feature = "std"))]
     pub bytecode: VecU8,
 }
 
@@ -48,23 +53,52 @@ impl AnalyzedBytecode {
         }
     }
 
-    /// Serialize into a contiguous buffer suitable for metadata storage.
-    pub fn serialize<'a>(&self) -> Result<VecU8, error::EncodeError> {
-        let mut buffer = VecU8::try_with_capacity_unwrap(
-            32 // code hash
-                + size_of::<usize>() // original bytecode len
-                + 8 // padded bytecode len
-                + self.bytecode.len() // padded bytecode
-                + 8 // jump table len
-                + self.jump_table.as_slice().len() // jump table
-                + 8,
-        );
-        let mut writer = fluentbase_types::bincode_helpers::VecWriter::new(&mut buffer);
+    pub fn serialize_common<'a>(&self, buffer: &mut Vec<u8>) -> Result<(), error::EncodeError> {
+        let mut writer = fluentbase_types::bincode_helpers::VecWriter::new(buffer);
         let config = bincode::config::legacy();
         bincode::encode_into_writer(&self.hash.0, &mut writer, config)?;
         bincode::encode_into_writer(self.len, &mut writer, config)?;
         bincode::encode_into_writer(&self.bytecode[..], &mut writer, config)?;
         bincode::encode_into_writer(self.jump_table.as_slice(), &mut writer, config)?;
+        Ok(())
+    }
+
+    /// Serialize into a contiguous buffer suitable for metadata storage.
+    #[cfg(feature = "std")]
+    pub fn serialize<'a>(&self) -> Result<Vec<u8>, error::EncodeError> {
+        let mut buffer = {
+            let cap = 32 // code hash
+                + size_of::<usize>() // original bytecode len
+                + 8 // padded bytecode len
+                + self.bytecode.len() // padded bytecode
+                + 8 // jump table len
+                + self.jump_table.as_slice().len() // jump table
+                + 8;
+            Vec::with_capacity(cap)
+        };
+        self.serialize_common(&mut buffer)?;
+        Ok(buffer)
+    }
+    #[cfg(not(feature = "std"))]
+    pub fn serialize<'a>(&self) -> Result<VecU8, error::EncodeError> {
+        let mut buffer = {
+            let cap = 32 // code hash
+                + size_of::<usize>() // original bytecode len
+                + 8 // padded bytecode len
+                + self.bytecode.len() // padded bytecode
+                + 8 // jump table len
+                + self.jump_table.as_slice().len() // jump table
+                + 8;
+            #[cfg(feature = "std")]
+            {
+                Vec::with_capacity(cap)
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                VecU8::try_with_capacity(cap).expect("enough cap")
+            }
+        };
+        self.serialize_common(&mut buffer)?;
         Ok(buffer)
     }
 

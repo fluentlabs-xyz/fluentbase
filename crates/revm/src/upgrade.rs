@@ -9,6 +9,7 @@ use revm::{
     interpreter::{CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult},
     Database,
 };
+#[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
 use std::boxed::Box;
 
@@ -17,6 +18,9 @@ macro_rules! upgrade_panic {
     return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
         result: InterpreterResult {
             result: InstructionResult::Revert,
+            #[cfg(feature = "std")]
+            output: Bytes::from($message),
+            #[cfg(not(feature = "std"))]
             output: VecU8::try_from_slice($message).expect("enough cap"),
             gas: Gas::new(0),
         },
@@ -36,7 +40,16 @@ pub(crate) fn upgrade_runtime_hook_v1<
     ContextError<<<CTX as ContextTr>::Db as Database>::Error>,
 > {
     debug_assert_eq!(inputs.caller, UPDATE_GENESIS_AUTH);
-    let bytecode = inputs.input.bytes(ctx).bytes();
+    let bytecode = {
+        #[cfg(feature = "std")]
+        {
+            inputs.input.bytes(ctx)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            inputs.input.bytes(ctx).bytes()
+        }
+    };
     debug_assert!(bytecode.starts_with(&UPDATE_GENESIS_PREFIX_V1));
     let bt = Bytes::copy_from_slice(&bytecode[UPDATE_GENESIS_PREFIX_V1.len()..]);
     let Ok(bytecode) = Bytecode::new_raw_checked(bt) else {
