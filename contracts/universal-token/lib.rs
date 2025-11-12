@@ -3,9 +3,7 @@ extern crate alloc;
 extern crate core;
 
 use alloc::vec::Vec;
-use fluentbase_sdk::{
-    debug_log_ext, entrypoint, Address, ContextReader, SharedAPI, UNIVERSAL_TOKEN_MAGIC_BYTES,
-};
+use fluentbase_sdk::{entrypoint, Address, ContextReader, SharedAPI, UNIVERSAL_TOKEN_MAGIC_BYTES};
 use fluentbase_svm::{
     fluentbase::token2022::{token2022_process, token2022_process_raw},
     pubkey::{Pubkey, PUBKEY_BYTES},

@@ -39,12 +39,13 @@ fn main() {
     let is_debug_profile = env::var("PROFILE").unwrap() == "debug";
 
     for contracts_manifest_path in packages_resolver.manifest_dirs {
+        let contracts_manifest_path = contracts_manifest_path.to_str().unwrap().to_string();
         let mut args = vec![
             "build".to_string(),
             "--target".to_string(),
             "wasm32-unknown-unknown".to_string(),
             "--manifest-path".to_string(),
-            contracts_manifest_path.to_str().unwrap().to_string(),
+            contracts_manifest_path.clone(),
             "--target-dir".to_string(),
             target2_dir.to_str().unwrap().to_string(),
             "--color=always".to_string(),
@@ -55,11 +56,13 @@ fn main() {
         }
         let flags = vec![
             "-C".to_string(),
-            format!("link-arg=-zstack-size={}", 128 * 1024),
+            format!("link-arg=-zstack-size={}", 60 * 1024 * 1024),
             "-C".to_string(),
             "panic=abort".to_string(),
             "-C".to_string(),
             "target-feature=+bulk-memory".to_string(),
+            "-C".to_string(),
+            "target-feature=+tail-call".to_string(),
         ];
         let encoded_flags = flags.join("\x1f");
         let status = Command::new("cargo")

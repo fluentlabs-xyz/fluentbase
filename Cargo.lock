@@ -2346,6 +2346,7 @@ dependencies = [
  "hashbrown 0.16.0",
  "hex-literal 1.1.0",
  "rwasm",
+ "spin 0.10.0",
 ]
 
 [[package]]

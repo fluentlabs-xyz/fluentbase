@@ -159,7 +159,7 @@ macro_rules! log_str_common {
                 #[cfg(not(feature = "use-extended-debug-log"))]
                 use fluentbase_sdk::debug_log as log_macro;
                 #[cfg(feature = "use-extended-debug-log")]
-                use fluentbase_sdk::debug_log_ext as log_macro;
+                use fluentbase_sdk::debug_log as log_macro;
                 log_macro!("svm_log: {}", $value);
             }
         }

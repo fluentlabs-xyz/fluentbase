@@ -948,8 +948,6 @@ pub fn execute_test_suite(
                 return Err(e);
             }
         }
-
-        println!("FINISHED!!!!!!!!!!!\n\n")
     }
     Ok(())
 }

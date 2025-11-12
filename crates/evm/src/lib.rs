@@ -17,4 +17,4 @@ pub use bytecode::AnalyzedBytecode;
 pub use evm::EthVM;
 pub use metadata::EthereumMetadata;
 pub use revm_interpreter::gas;
-pub use types::ExecutionResult;
+pub use types::{ExecutionResult, InterruptingInterpreter};

@@ -42,7 +42,7 @@ rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", def
 [features]
 default = [
     "std",
-    #     "debug-print",
+    "debug-print",
     #     "wasmtime",
 ]
 std = [
@@ -53,9 +53,9 @@ debug-print = [
     "revm/debug-print",
     "fluentbase-revm/debug-print",
     "fluentbase-sdk/debug-print",
-    # "rwasm/debug-print",
+    "fluentbase-runtime/debug-print",
+    #    "rwasm/debug-print",
 ]
 wasmtime = [
     "fluentbase-revm/wasmtime",
 ]
-

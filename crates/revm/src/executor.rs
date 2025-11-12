@@ -367,6 +367,12 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     exit_code: i32,
     return_data: Bytes,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
+    #[cfg(feature = "std")]
+    // println!(
+    //     "execution result: exit_code: {} ({})",
+    //     exit_code,
+    //     ExitCode::from(exit_code)
+    // );
     // if we have success or failed exit code
     if exit_code <= 0 {
         // If the result is produced by system runtime (like EVM, SVM, etc.) then use custom handler
@@ -400,7 +406,13 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         gas,
     };
 
-    execute_rwasm_interruption::<CTX, INSP>(frame, inspector, ctx, inputs)
+    // println!("interruption inputs: {:?}", inputs);
+    let result = execute_rwasm_interruption::<CTX, INSP>(frame, inspector, ctx, inputs);
+    // println!(
+    //     "interruption result: {:?}, outcome={:?}",
+    //     result, frame.interrupted_outcome
+    // );
+    result
 }
 
 #[tracing::instrument(level = "info", skip_all)]

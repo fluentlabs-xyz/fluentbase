@@ -8,6 +8,7 @@ pub extern crate rwasm as rwasm_core;
 mod address;
 mod allocator;
 pub mod constructor;
+pub mod debug;
 pub mod entrypoint;
 pub mod leb128;
 mod macros;

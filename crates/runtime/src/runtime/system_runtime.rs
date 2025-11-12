@@ -104,6 +104,9 @@ impl SystemRuntime {
     }
 
     pub fn execute(&mut self) -> Result<(), TrapCode> {
+        let id = std::thread::current().id();
+        println!("current thread: {:?}", id);
+
         let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
 
         // Rewrite runtime context before each call, since we reuse the same store and runtime for
@@ -378,6 +381,7 @@ fn wasmtime_syscall_handler<'a>(
 
 fn map_anyhow_error(err: anyhow::Error) -> TrapCode {
     if let Some(trap) = err.downcast_ref::<Trap>() {
+        eprintln!("wasmtime trap code: {:?}", trap);
         // map wasmtime trap codes into our trap codes
         use wasmtime::Trap;
         match trap {

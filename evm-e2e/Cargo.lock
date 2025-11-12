@@ -2062,6 +2062,7 @@ dependencies = [
  "fluentbase-types",
  "hashbrown 0.16.0",
  "rwasm",
+ "spin 0.10.0",
 ]
 
 [[package]]

@@ -3,8 +3,8 @@
 A minimal contract wrapper that embeds the fluentbase-evm interpreter into a smart-contract friendly entrypoint. It
 handles two flows:
 
-- deploy_entry: runs EVM init code and commits the resulting runtime bytecode to metadata.
-- main_entry: executes previously deployed bytecode with the provided call data.
+- `deploy_entry`: runs EVM init code and commits the resulting runtime bytecode to metadata.
+- `main_entry`: executes previously deployed bytecode with the provided call data.
 
 This crate does not implement EVM itself — it wires the host (SharedAPI) to the interpreter from crates/evm and applies
 basic network rules relevant to deployment.
@@ -18,9 +18,11 @@ basic network rules relevant to deployment.
 
 ## Entrypoints
 
-- deploy_entry: executes init bytecode, enforces EIP-3541 (no 0xEF prefix) and EIP-170 (code size), charges CODEDEPOSIT,
+- `deploy_entry`: executes init bytecode, enforces EIP-3541 (no 0xEF prefix) and EIP-170 (code size), charges
+  CODEDEPOSIT,
   then stores code hash (offset 0) and raw bytecode (offset 32) in metadata.
-- main_entry: loads analyzed bytecode from metadata, runs the interpreter with call data, settles fuel delta, and writes
+- `main_entry`: loads analyzed bytecode from metadata, runs the interpreter with call data, settles fuel delta, and
+  writes
   return data.
 
 Relevant functions in lib.rs:

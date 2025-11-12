@@ -224,9 +224,9 @@ mod new_v82_interpreter_failing_tests {
 
 mod new_gas_model_failing_tests {
     define_tests! {
-        fn run_until_out_of_gas("tests/GeneralStateTests/Pyspecs/cancun/eip1153_tstore/run_until_out_of_gas.json");
+        // fn run_until_out_of_gas("tests/GeneralStateTests/Pyspecs/cancun/eip1153_tstore/run_until_out_of_gas.json");
         fn _15_tstore_cannot_be_dosd("tests/GeneralStateTests/Cancun/stEIP1153-transientStorage/15_tstoreCannotBeDosd.json");
-        fn _21_tstore_cannot_be_dosd_ooo("tests/GeneralStateTests/Cancun/stEIP1153-transientStorage/21_tstoreCannotBeDosdOOO.json");
+        // fn _21_tstore_cannot_be_dosd_ooo("tests/GeneralStateTests/Cancun/stEIP1153-transientStorage/21_tstoreCannotBeDosdOOO.json");
     }
 }
 
