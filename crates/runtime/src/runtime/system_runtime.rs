@@ -9,15 +9,14 @@ use revm_helpers::reusable_pool::global::VecU8;
 use revm_helpers::reusable_pool::global::VecU8;
 use rwasm::{ImportLinker, RwasmModule, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE};
 use smallvec::SmallVec;
-use std::time::Instant;
 use std::{
     cell::RefCell,
     mem::take,
     sync::{Arc, OnceLock, RwLock},
 };
 use wasmtime::{
-    AsContext, AsContextMut, Config, Engine, Func, Instance, Linker, Memory, Module, OptLevel,
-    Store, Strategy, Trap, Val,
+    AsContextMut, Config, Engine, Func, Instance, Linker, Memory, Module, OptLevel, Store,
+    Strategy, Trap, Val,
 };
 
 pub struct SystemRuntime {
@@ -145,10 +144,7 @@ impl Drop for SystemRuntime {
     fn drop(&mut self) {
         let _ = COMPILED_RUNTIMES.try_with(|compiled_runtimes| {
             log_ext!();
-            let mut compiled_runtime: CompiledRuntime = self.compiled_runtime.take().unwrap();
-            // let start = Instant::now();
-            // Self::reset_compiled_runtime(&mut compiled_runtime, self.import_linker.clone());
-            // log_ext!("elapsed {:?}", start.elapsed());
+            let compiled_runtime: CompiledRuntime = self.compiled_runtime.take().unwrap();
             compiled_runtimes
                 .borrow_mut()
                 .insert(self.code_hash, compiled_runtime);
@@ -310,7 +306,7 @@ impl SystemRuntime {
         compiled_runtime.heap_base_offset_func = heap_base_offset_func;
     }
 
-    pub fn execute(&mut self, is_resume: bool) -> Result<(), TrapCode> {
+    pub fn execute(&mut self) -> Result<(), TrapCode> {
         let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
 
         // Rewrite runtime context before each call, since we reuse the same store and runtime for
@@ -417,7 +413,7 @@ impl SystemRuntime {
         // Possible scenarios:
         // 1. w/ return data - new frame call
         // 2. w/o return data - current frame interruption outcome
-        self.execute(true)
+        self.execute()
     }
 
     pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), TrapCode> {
@@ -623,6 +619,7 @@ fn wasmtime_syscall_handler<'a>(
 
 fn map_anyhow_error(err: anyhow::Error) -> TrapCode {
     if let Some(trap) = err.downcast_ref::<Trap>() {
+        eprintln!("wasmtime trap code: {:?}", trap);
         // map wasmtime trap codes into our trap codes
         use wasmtime::Trap;
         match trap {

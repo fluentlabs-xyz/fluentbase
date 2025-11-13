@@ -5,36 +5,6 @@ use bincode::de::Decoder;
 #[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
 
-// #[derive(Default, Clone, Debug, PartialEq)]
-// pub struct RuntimeNewFrameInputV1 {
-//     pub metadata: Bytes,
-//     pub input: Bytes,
-// }
-//
-// impl bincode::Encode for RuntimeNewFrameInputV1 {
-//     fn encode<E: bincode::enc::Encoder>(
-//         &self,
-//         e: &mut E,
-//     ) -> Result<(), bincode::error::EncodeError> {
-//         bincode::Encode::encode(self.metadata.as_ref(), e)?;
-//         bincode::Encode::encode(&self.input.as_ref(), e)?;
-//         Ok(())
-//     }
-// }
-//
-// impl<C> bincode::Decode<C> for RuntimeNewFrameInputV1 {
-//     fn decode<D: bincode::de::Decoder<Context = C>>(
-//         d: &mut D,
-//     ) -> Result<Self, bincode::error::DecodeError> {
-//         let metadata: Vec<u8> = bincode::Decode::decode(d)?;
-//         let input: Vec<u8> = bincode::Decode::decode(d)?;
-//         Ok(Self {
-//             metadata: metadata.into(),
-//             input: input.into(),
-//         })
-//     }
-// }
-
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RuntimeNewFrameInputV1 {
     #[cfg(feature = "std")]
@@ -158,6 +128,7 @@ mod tests {
     use crate::bincode_helpers::VecWriter;
     use crate::{RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1};
     use alloy_primitives::Bytes;
+    #[cfg(not(feature = "std"))]
     use revm_helpers::reusable_pool::global::VecU8;
 
     #[test]
@@ -166,7 +137,7 @@ mod tests {
             metadata: [1, 2, 3].into(),
             input: [4, 5, 6, 7, 8, 9].into(),
         };
-        let mut buffer = VecU8::default_for_reuse();
+        let mut buffer = Vec::new();
         let writer = VecWriter::new(&mut buffer);
         bincode::encode_into_writer(&original, writer, bincode::config::legacy()).unwrap();
         let (v2_decoded, _): (RuntimeNewFrameInputV1, _) =
@@ -182,7 +153,7 @@ mod tests {
             fuel_refunded: 2,
             exit_code: 3,
         };
-        let mut buffer = VecU8::default_for_reuse();
+        let mut buffer = Vec::new();
         let writer = VecWriter::new(&mut buffer);
         bincode::encode_into_writer(&original, writer, bincode::config::legacy()).unwrap();
         let (decoded, _): (RuntimeInterruptionOutcomeV1, _) =

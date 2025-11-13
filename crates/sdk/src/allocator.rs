@@ -152,6 +152,7 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
         // return allocated pointer
         let ptr = heap_pos as *mut u8;
         heap_pos += bytes;
+        unsafe { HEAP_POS = heap_pos };
         ptr
     }
 

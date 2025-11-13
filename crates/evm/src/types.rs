@@ -6,6 +6,7 @@
 use fluentbase_sdk::{Bytes, ExitCode, B256, FUEL_DENOM_RATE, U256};
 #[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
+use revm_helpers::reusable_pool::global_types::vec_u8_or_vecu8;
 use revm_interpreter::{interpreter::EthInterpreter, Gas, InstructionResult, InterpreterResult};
 
 #[derive(Default, Debug, Clone)]

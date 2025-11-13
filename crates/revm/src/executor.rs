@@ -6,7 +6,7 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
-use core::mem::take;
+use core::mem::{replace, swap, take};
 use fluentbase_runtime::{
     default_runtime_executor,
     syscall_handler::{syscall_exec_impl, syscall_resume_impl},
@@ -18,7 +18,6 @@ use fluentbase_sdk::{
     ExitCode, RuntimeNewFrameInputV1, SharedContextInput, SharedContextInputV1,
     SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
 };
-use revm::interpreter::InterpreterResult;
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
     context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
@@ -32,7 +31,7 @@ use revm::{
 };
 #[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
-use std::vec::Vec;
+use revm_helpers::reusable_pool::global_types::bytes_or_vecu8;
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
@@ -41,22 +40,21 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
     inspector: &mut Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let next_action = loop {
-        let next_action: NextAction =
-            if let Some(interruption_outcome) = frame.take_interrupted_outcome() {
-                execute_rwasm_resume(frame, ctx, interruption_outcome, inspector)
-            } else {
-                execute_rwasm_frame(frame, ctx, inspector)
-            }?;
+        let next_action = if let Some(interruption_outcome) = frame.take_interrupted_outcome() {
+            execute_rwasm_resume(frame, ctx, interruption_outcome, inspector)
+        } else {
+            execute_rwasm_frame(frame, ctx, inspector)
+        }?;
         match next_action {
             NextAction::InterruptionResult => continue,
             _ => break next_action,
         }
     };
-    let interpreter_result: InterpreterResult = match &next_action {
+    let interpreter_result = match &next_action {
         NextAction::NewFrame(_) => {
             return Ok(next_action);
         }
-        NextAction::Return(result) => result.clone(),
+        NextAction::Return(result) => result,
         NextAction::InterruptionResult => unreachable!(),
     };
     let create_frame = match &frame.data {
@@ -94,8 +92,7 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
             #[cfg(feature = "std")]
             interpreter_result.output.slice(..bytes_read),
             #[cfg(not(feature = "std"))]
-            vec_u8_try_reuse_and_copy_from(&interpreter_result.output[..bytes_read])
-                .expect("enough cap"),
+            VecU8::try_from_slice(&interpreter_result.output[..bytes_read]).expect("enough cap"),
             #[cfg(feature = "std")]
             interpreter_result.output.slice(bytes_read..),
             #[cfg(not(feature = "std"))]
@@ -335,7 +332,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         fuel_refunded,
         inputs.syscall_params.fuel16_ptr,
     );
-    let return_data = { From::<Vec<u8>>::from(runtime_context.execution_result.return_data) };
+    let return_data = { From::<_>::from(runtime_context.execution_result.return_data) };
 
     // make sure we have enough gas to charge from the call
     if !frame.interpreter.gas.record_denominated_cost(fuel_consumed) {
@@ -391,14 +388,16 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     mut ownable_account: OwnableAccountBytecode,
     exit_code: i32,
     #[cfg(feature = "std")] mut return_data: Bytes,
-    #[cfg(not(feature = "std"))] mut return_data: Vec<u8>,
+    #[cfg(not(feature = "std"))] mut return_data: VecU8,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let is_create: bool = matches!(frame.input, FrameInput::Create(..));
     match exit_code {
         // If we return `Ok` in deployment mode, then we assume we store new metadata in the output,
         // it's used to rewrite the existing metadata to store custom bytecode.
         0 if is_create => {
-            ownable_account.metadata = take(&mut return_data).into();
+            let mut return_data_tmp = bytes_or_vecu8::new();
+            swap(&mut return_data, &mut return_data_tmp);
+            ownable_account.metadata = return_data_tmp.into();
             let bytecode = Bytecode::OwnableAccount(ownable_account);
             ctx.journal_mut()
                 .set_code(frame.interpreter.input.target_address(), bytecode);

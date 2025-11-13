@@ -10,6 +10,7 @@ use fluentbase_sdk::{Bytes, B256};
 use revm_bytecode::{legacy::analyze_legacy, JumpTable};
 #[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
+use revm_helpers::reusable_pool::global_types::{bytes_or_vecu8, vec_u8_or_vecu8};
 
 #[derive(Debug)]
 /// A legacy bytecode
@@ -36,7 +37,7 @@ pub struct AnalyzedBytecode {
 
 impl Default for AnalyzedBytecode {
     fn default() -> Self {
-        Self::new(Default::default(), B256::ZERO)
+        Self::new(Bytes::default(), B256::ZERO)
     }
 }
 
@@ -53,7 +54,7 @@ impl AnalyzedBytecode {
         }
     }
 
-    pub fn serialize_common<'a>(&self, buffer: &mut Vec<u8>) -> Result<(), error::EncodeError> {
+    pub fn serialize_into<'a>(&self, buffer: &mut Vec<u8>) -> Result<(), error::EncodeError> {
         let mut writer = fluentbase_types::bincode_helpers::VecWriter::new(buffer);
         let config = bincode::config::legacy();
         bincode::encode_into_writer(&self.hash.0, &mut writer, config)?;
@@ -74,9 +75,9 @@ impl AnalyzedBytecode {
                 + 8 // jump table len
                 + self.jump_table.as_slice().len() // jump table
                 + 8;
-            Vec::with_capacity(cap)
+            vec_u8_or_vecu8::with_capacity(cap)
         };
-        self.serialize_common(&mut buffer)?;
+        self.serialize_into(&mut buffer)?;
         Ok(buffer)
     }
     #[cfg(not(feature = "std"))]
@@ -98,7 +99,7 @@ impl AnalyzedBytecode {
                 VecU8::try_with_capacity(cap).expect("enough cap")
             }
         };
-        self.serialize_common(&mut buffer)?;
+        self.serialize_into(&mut buffer)?;
         Ok(buffer)
     }
 

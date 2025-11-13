@@ -25,6 +25,7 @@ use revm::{
     state::AccountInfo,
     ExecuteCommitEvm, InspectCommitEvm, MainBuilder, MainnetEvm,
 };
+#[cfg(feature = "std")]
 use revm_helpers::reusable_pool::global::VecU8;
 use serde_json::json;
 use std::{

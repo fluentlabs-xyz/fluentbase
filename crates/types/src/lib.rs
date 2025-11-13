@@ -2,7 +2,6 @@
 
 extern crate alloc;
 
-// pub mod auto_vec_u8;
 pub mod bincode_helpers;
 mod block_fuel;
 mod bytecode;

@@ -2,7 +2,6 @@
 //!
 //! We do not execute Host methods directly; host-bound opcodes are routed
 //! via interruptions. The unreachable!() bodies here document that path.
-use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 use fluentbase_sdk::{Address, Bytes, ContextReader, Log, SharedAPI, B256, U256};
 use revm_context::journaled_state::{AccountLoad, StateLoad};

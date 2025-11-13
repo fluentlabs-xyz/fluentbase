@@ -272,7 +272,6 @@ fn deploy_inner<SDK: SharedAPI>(
                     syscall_params
                 }
             };
-            sdk.write(&syscall_params);
             (ExitCode::InterruptionCalled, syscall_params.into())
         }
         InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
@@ -288,16 +287,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let mut exit_code_le: [u8; 4] = [0u8; 4];
     byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
     sdk.write(&exit_code_le);
-    debug_log!(
-        "vec_u8_reusable_pool.len={} {} {} {}",
-        revm_helpers::reusable_pool::global::vec_u8_reusable_pool::len(),
-        revm_helpers::reusable_pool::global::vec_u8_reusable_pool::CREATED
-            .load(core::sync::atomic::Ordering::Relaxed),
-        revm_helpers::reusable_pool::global::vec_u8_reusable_pool::RECYCLED
-            .load(core::sync::atomic::Ordering::Relaxed),
-        revm_helpers::reusable_pool::global::vec_u8_reusable_pool::REUSED
-            .load(core::sync::atomic::Ordering::Relaxed),
-    );
     if !output.is_empty() {
         sdk.write(output.as_ref());
     }
@@ -325,7 +314,6 @@ fn main_inner<SDK: SharedAPI>(
         InterpreterAction::Return(result) => {
             evm.sync_evm_gas(sdk);
             _ = cached_state.pop();
-            sdk.write(result.output.as_ref());
             let exit_code = if result.result.is_ok() {
                 ExitCode::Ok
             } else if result.result.is_revert() {
@@ -369,7 +357,6 @@ fn main_inner<SDK: SharedAPI>(
                     syscall_params
                 }
             };
-            sdk.write(&syscall_params);
             (ExitCode::InterruptionCalled, syscall_params.into())
         }
         InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),

@@ -14,6 +14,7 @@ use fluentbase_sdk::{ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
 use revm_bytecode::{Bytecode, LegacyAnalyzedBytecode};
 #[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
+use revm_helpers::reusable_pool::global_types::bytes_or_vecu8;
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},
     CallInput, Gas, InputsImpl, InstructionTable, Interpreter, InterpreterAction, SharedMemory,
@@ -89,6 +90,9 @@ impl EthVM {
                     let committed_gas = self.interpreter.extend.committed_gas;
                     break ExecutionResult {
                         result: result.result,
+                        #[cfg(feature = "std")]
+                        output: result.output,
+                        #[cfg(not(feature = "std"))]
                         output: result.output,
                         committed_gas,
                         gas: result.gas,
