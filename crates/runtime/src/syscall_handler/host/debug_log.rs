@@ -35,9 +35,9 @@ pub fn syscall_debug_log_impl(msg: &[u8]) {
         0
     };
     LAST_LOG_TIME.set(curr_time);
-    const MSG_LIMIT: usize = 256000;
-    let msg = if msg.len() > MSG_LIMIT {
-        &msg[..MSG_LIMIT]
+    const DEBUG_LOG_MAXIMUM_LEN: usize = 1_000;
+    let msg = if msg.len() > DEBUG_LOG_MAXIMUM_LEN {
+        &msg[..DEBUG_LOG_MAXIMUM_LEN]
     } else {
         &msg[..]
     };

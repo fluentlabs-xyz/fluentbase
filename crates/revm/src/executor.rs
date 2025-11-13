@@ -447,7 +447,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     // try to parse execution params, if it's not possible, then return an error
     let Some(syscall_params) = SyscallInvocationParams::decode(&return_data) else {
-        unreachable!("can't decode invocation params");
+        unreachable!("revm: can't decode invocation params");
     };
 
     let gas = frame.interpreter.gas;

@@ -106,6 +106,8 @@ pub enum ExitCode {
     CreateContractSizeLimit = -1011,
     /// There is a collision on the contract creation (same address is derived)
     CreateContractCollision = -1012,
+    /// Created contract starts with invalid bytes (`0xEF`).
+    CreateContractStartingWithEF = -1013,
 
     /* Trap Error Codes */
     /// Execution reached a code path marked as unreachable

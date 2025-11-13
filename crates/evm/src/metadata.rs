@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use fluentbase_sdk::{Bytes, B256};
 #[cfg(not(feature = "std"))]
 use revm_helpers::reusable_pool::global::VecU8;
+use revm_helpers::reusable_pool::global_types::{bytes_or_vec_u8, bytes_or_vecu8};
 
 pub enum EthereumMetadata {
     Legacy(LegacyBytecode),
@@ -41,16 +42,16 @@ impl EthereumMetadata {
         })
     }
 
-    pub fn write_to_bytes(&self) -> Bytes {
+    pub fn write_to_bytes(&self) -> bytes_or_vecu8::Typ {
         match self {
             EthereumMetadata::Legacy(legacy_bytecode) => {
-                let mut result = vec![];
+                let mut result = bytes_or_vec_u8::new();
                 result.extend_from_slice(&legacy_bytecode.hash[..]);
                 result.extend_from_slice(&legacy_bytecode.bytecode[..]);
                 result.into()
             }
             EthereumMetadata::Analyzed(analyzed_bytecode) => {
-                let mut result = vec![];
+                let mut result = bytes_or_vec_u8::new();
                 result.extend_from_slice(&ETHEREUM_METADATA_VERSION_ANALYZED[..]);
                 let raw_analyzed_bytecode = analyzed_bytecode
                     .serialize()

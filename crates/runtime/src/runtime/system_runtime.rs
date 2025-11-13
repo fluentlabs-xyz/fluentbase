@@ -41,9 +41,6 @@ pub struct CompiledRuntime {
     main_func: Func,
     heap_pos_func: Func,
     heap_pos_set_func: Func,
-    heap_checkpoint_idx_func: Func,
-    heap_checkpoint_save_func: Func,
-    heap_checkpoint_pop_func: Func,
     heap_reset_func: Func,
     heap_base_offset_func: Func,
     alloc_count_func: Func,
@@ -62,22 +59,6 @@ impl CompiledRuntime {
             .call(self.store.as_context_mut(), &[], result)
             .unwrap();
         Some(result[0].i32().unwrap().to_u32().unwrap())
-    }
-
-    pub fn checkpoint_save(&mut self) {
-        log_ext!();
-        self.heap_checkpoint_save_func
-            .call(self.store.as_context_mut(), &[], &mut [])
-            .unwrap();
-    }
-
-    pub fn checkpoint_pop(&mut self) -> u32 {
-        log_ext!();
-        let result = &mut [Val::I32(0)];
-        self.heap_checkpoint_pop_func
-            .call(self.store.as_context_mut(), &[], result)
-            .unwrap();
-        result[0].i32().unwrap().to_u32().unwrap()
     }
 
     pub fn alloc_stats(&mut self) -> (u32, u32, u32, u32, u32, u32) {
@@ -165,9 +146,9 @@ impl Drop for SystemRuntime {
         let _ = COMPILED_RUNTIMES.try_with(|compiled_runtimes| {
             log_ext!();
             let mut compiled_runtime: CompiledRuntime = self.compiled_runtime.take().unwrap();
-            let start = Instant::now();
-            Self::reset_compiled_runtime(&mut compiled_runtime, self.import_linker.clone());
-            log_ext!("elapsed {:?}", start.elapsed());
+            // let start = Instant::now();
+            // Self::reset_compiled_runtime(&mut compiled_runtime, self.import_linker.clone());
+            // log_ext!("elapsed {:?}", start.elapsed());
             compiled_runtimes
                 .borrow_mut()
                 .insert(self.code_hash, compiled_runtime);
@@ -215,35 +196,11 @@ impl SystemRuntime {
                 .get_memory(store.as_context_mut(), "memory")
                 .unwrap();
 
-            // // TODO for debug log
-            // let mem_base_ptr = memory.data_ptr(store.as_context()) as usize;
-            // let mem_data = memory.data(store.as_context());
-            // let non_null_count = mem_data
-            //     .iter()
-            //     .fold(0usize, |acc, v| acc + (*v != 0) as usize);
-            // let mem_data_first_non_null_offset = mem_data.iter().find(|v| **v != 0);
-            // log_ext!(
-            //     "mem_data.len={} non_null_count={} mem_base_ptr={} mem_data_first_non_null_offset={:?}",
-            //     mem_data.len(),
-            //     non_null_count,
-            //     mem_base_ptr,
-            //     mem_data_first_non_null_offset
-            // );
-
             let heap_pos_func = instance
                 .get_func(store.as_context_mut(), "__heap_pos")
                 .unwrap();
             let heap_pos_set_func = instance
                 .get_func(store.as_context_mut(), "__heap_pos_set")
-                .unwrap();
-            let heap_checkpoint_idx_func = instance
-                .get_func(store.as_context_mut(), "__heap_checkpoint_idx")
-                .unwrap();
-            let heap_checkpoint_save_func = instance
-                .get_func(store.as_context_mut(), "__heap_checkpoint_save")
-                .unwrap();
-            let heap_checkpoint_pop_func = instance
-                .get_func(store.as_context_mut(), "__heap_checkpoint_pop")
                 .unwrap();
             let heap_reset_func = instance
                 .get_func(store.as_context_mut(), "__heap_reset")
@@ -279,9 +236,6 @@ impl SystemRuntime {
                 main_func,
                 heap_pos_func,
                 heap_pos_set_func,
-                heap_checkpoint_idx_func,
-                heap_checkpoint_save_func,
-                heap_checkpoint_pop_func,
                 heap_reset_func,
                 heap_base_offset_func,
                 alloc_count_func,
@@ -326,44 +280,11 @@ impl SystemRuntime {
             .get_memory(compiled_runtime.store.as_context_mut(), "memory")
             .unwrap();
 
-        // TODO for debug log
-        // let mem_base_ptr = memory.data_ptr(store.as_context()) as usize;
-        // let mem_data = memory.data(store.as_context());
-        // let non_null_count = mem_data
-        //     .iter()
-        //     .fold(0usize, |acc, v| acc + (*v != 0) as usize);
-        // let mem_data_first_non_null_offset = mem_data.iter().find(|v| **v != 0);
-        // log_ext!(
-        //     "mem_data.len={} non_null_count={} mem_base_ptr={} mem_data_first_non_null_offset={:?}",
-        //     mem_data.len(),
-        //     non_null_count,
-        //     mem_base_ptr,
-        //     mem_data_first_non_null_offset
-        // );
-
         let heap_pos_func = instance
             .get_func(compiled_runtime.store.as_context_mut(), "__heap_pos")
             .unwrap();
         let heap_pos_set_func = instance
             .get_func(compiled_runtime.store.as_context_mut(), "__heap_pos_set")
-            .unwrap();
-        let heap_checkpoint_idx_func = instance
-            .get_func(
-                compiled_runtime.store.as_context_mut(),
-                "__heap_checkpoint_idx",
-            )
-            .unwrap();
-        let heap_checkpoint_save_func = instance
-            .get_func(
-                compiled_runtime.store.as_context_mut(),
-                "__heap_checkpoint_save",
-            )
-            .unwrap();
-        let heap_checkpoint_pop_func = instance
-            .get_func(
-                compiled_runtime.store.as_context_mut(),
-                "__heap_checkpoint_pop",
-            )
             .unwrap();
         let heap_reset_func = instance
             .get_func(compiled_runtime.store.as_context_mut(), "__heap_reset")
@@ -385,24 +306,11 @@ impl SystemRuntime {
 
         compiled_runtime.heap_pos_func = heap_pos_func;
         compiled_runtime.heap_pos_set_func = heap_pos_set_func;
-        compiled_runtime.heap_checkpoint_idx_func = heap_checkpoint_idx_func;
-        compiled_runtime.heap_checkpoint_save_func = heap_checkpoint_save_func;
-        compiled_runtime.heap_checkpoint_pop_func = heap_checkpoint_pop_func;
         compiled_runtime.heap_reset_func = heap_reset_func;
         compiled_runtime.heap_base_offset_func = heap_base_offset_func;
     }
 
     pub fn execute(&mut self, is_resume: bool) -> Result<(), TrapCode> {
-        self.exec_count += 1;
-        if !is_resume {
-            self.depth += 1;
-            log_ext!("self.depth+=1");
-        }
-        log_ext!(
-            "self.exec_count={} self.depth={}",
-            self.exec_count,
-            self.depth
-        );
         let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
 
         // Rewrite runtime context before each call, since we reuse the same store and runtime for
@@ -421,52 +329,43 @@ impl SystemRuntime {
             STATE_DEPLOY => compiled_runtime.deploy_func,
             _ => unreachable!(),
         };
-        // Call the function based on the passed state
-        log_ext!("state={:?}", state);
-        let store_context_mut = compiled_runtime.store.as_context_mut();
-        let result = entrypoint.call(store_context_mut, &[], &mut []);
-        if result.is_err() {
-            log_ext!();
+        let result = entrypoint.call(compiled_runtime.store.as_context_mut(), &[], &mut []);
+
+        // System runtime returns output with exit code (as first four bytes).
+        // It doesn't halt, because halt or trap doesn't unwind the stack properly.
+        let ctx = compiled_runtime.store.data_mut();
+        let output = take(&mut ctx.execution_result.output);
+        if output.len() < 4 {
+            eprintln!(
+                "runtime: an unexpected output size returned from system runtime: {}, falling back to the unreachable code, this should be investigated",
+                output.len()
+            );
+            return Err(TrapCode::UnreachableCodeReached);
         }
+        let (exit_code_le, output) = output.split_at(4);
+        ctx.execution_result.output = output.to_vec();
+        let exit_code = i32::from_le_bytes(exit_code_le.try_into().unwrap());
+        ctx.execution_result.exit_code = exit_code;
 
         // If the execution result is `InterruptionCalled`, then interruption is called, we should re-map
         // trap code into an interruption.
         //
         // SAFETY: Exit code `InterruptionCalled` can only be passed by our system runtimes, trustless
-        //  applications can use this error code, but it won't be handled anyhow (only punishment).
-        if compiled_runtime.store.data().execution_result.exit_code
-            == ExitCode::InterruptionCalled.into_i32()
-        {
+        //  applications can use this error code, but it won't be handled because of different
+        //  runtime (only punishment for halt exit code).
+        if ExitCode::from_repr(exit_code) == Some(ExitCode::InterruptionCalled) {
             // We need to move output into return data, because in our common case, interruptions
             // store syscall params inside return data,
             // but we can't suppose this for system runtime contracts because we don't expose such
             // functions, that's why we should move data from output into return data
-            let ctx = compiled_runtime.store.data_mut();
             ctx.execution_result.return_data = take(&mut ctx.execution_result.output);
             // Initialize resumable context with empty parameters, these values are passed into
             // the resume function once we're ready to resume
             self.state = Some(RuntimeInterruptionOutcomeV1::default());
-            let heap_pos = compiled_runtime.heap_pos();
-            log_ext!("heap_pos={}", heap_pos);
-            // let memory_data = compiled_runtime
-            //     .memory
-            //     .data(compiled_runtime.store.as_context_mut());
-            // let memory_data_chunk = &memory_data[heap_pos as usize - 100..];
-            log_ext!(
-                "alloc_stats (state:{}) {:?}",
-                state,
-                self.compiled_runtime_mut().alloc_stats()
-            );
             return Err(TrapCode::InterruptionCalled);
         }
 
-        log_ext!();
-        self.depth -= 1;
-        log_ext!("self.depth={}", self.depth);
-        if self.depth == 0 {
-            // self.with_compiled_runtime_mut(|v| v.heap_reset());
-        }
-        result.map_err(map_anyhow_error).or_else(|trap_code| {
+        let result = result.map_err(map_anyhow_error).or_else(|trap_code| {
             // Trap code `ExecutionHalted` is used to unwind the execution and terminate, that's
             // why we map it into `Ok()`
             log_ext!("trap_code={:?}", trap_code);
@@ -475,7 +374,17 @@ impl SystemRuntime {
             } else {
                 Err(trap_code)
             }
-        })
+        });
+
+        if let Err(trap_code) = &result {
+            eprintln!(
+                "runtime: an unexpected trap code happened inside system runtime: {}, falling back to the unreachable code, this should be investigated",
+                trap_code
+            );
+            return Err(TrapCode::UnreachableCodeReached);
+        }
+
+        result
     }
 
     pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {
@@ -493,16 +402,7 @@ impl SystemRuntime {
         // pass information about fuel consumed and exit code into the runtime.
         // That is why we move return data into the output and serialize output into the return data.
         let data_mut = store_mut.data_mut();
-        #[cfg(feature = "std")]
-        {
-            outcome.output = take(&mut data_mut.execution_result.return_data).into();
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            outcome.output =
-                VecU8::try_from_slice(&take(&mut data_mut.execution_result.return_data))
-                    .expect("enough cap");
-        }
+        outcome.output = take(&mut data_mut.execution_result.return_data).into();
         outcome.exit_code = exit_code;
         let outcome = bincode::encode_to_vec(&outcome, bincode::config::legacy()).unwrap();
         data_mut.execution_result.return_data = outcome;
@@ -527,7 +427,6 @@ impl SystemRuntime {
 
     pub fn memory_write(&mut self, offset: usize, data: &[u8]) -> Result<(), TrapCode> {
         let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
-        log_ext!("offset {} data.len {}", offset, data.len());
         compiled_runtime
             .memory
             .write(compiled_runtime.store.as_context_mut(), offset, data)
@@ -594,44 +493,24 @@ struct CallerAdapter<'a> {
 
 impl<'a> rwasm::Store<RuntimeContext> for CallerAdapter<'a> {
     fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
-        // if buffer.is_empty() {
-        //     log_ext!();
-        //     return Ok(());
-        // }
         let memory = self
             .caller
             .get_export("memory")
             .unwrap()
             .into_memory()
             .unwrap();
-        log_ext!(
-            "offset {} buffer.len {} max mem len {}",
-            offset,
-            buffer.len(),
-            memory.data(self.caller.as_context()).len()
-        );
         memory
             .read(self.caller.as_context_mut(), offset, buffer)
             .map_err(|_| TrapCode::MemoryOutOfBounds)
     }
 
     fn memory_write(&mut self, offset: usize, buffer: &[u8]) -> Result<(), TrapCode> {
-        // if buffer.is_empty() {
-        //     log_ext!();
-        //     return Ok(());
-        // }
         let memory = self
             .caller
             .get_export("memory")
             .unwrap()
             .into_memory()
             .unwrap();
-        log_ext!(
-            "offset {} buffer.len {} max mem len {}",
-            offset,
-            buffer.len(),
-            memory.data(self.caller.as_context()).len()
-        );
         memory
             .write(self.caller.as_context_mut(), offset, buffer)
             .map_err(|_| TrapCode::MemoryOutOfBounds)
@@ -773,7 +652,6 @@ fn map_anyhow_error(err: anyhow::Error) -> TrapCode {
             _ => unreachable!("unknown trap wasmtime code"),
         }
     } else if let Some(trap) = err.downcast_ref::<TrapCode>() {
-        log_ext!();
         // if our trap code is initiated, then just return the trap code
         *trap
     } else {

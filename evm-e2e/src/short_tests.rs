@@ -236,8 +236,19 @@ mod new_gas_model_failing_tests {
     }
 }
 
-mod rwasm_stuck_tests {
+mod rwasm_stuck_failing_tests {
     define_tests! {
         fn modexp("tests/GeneralStateTests/stPreCompiledContracts/modexp.json");
+    }
+}
+
+mod new_system_runtime_failing_tests {
+    define_tests! {
+        fn run_until_out_of_gas("tests/GeneralStateTests/Pyspecs/cancun/eip1153_tstore/run_until_out_of_gas.json");
+        fn contract_creation_spam("tests/GeneralStateTests/stAttackTest/ContractCreationSpam.json");
+        fn opc_d9_diff_places("tests/GeneralStateTests/stBadOpcode/opcD9DiffPlaces.json");
+        fn call50000("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000.json");
+        fn callcode50000("tests/GeneralStateTests/stQuadraticComplexityTest/Callcode50000.json");
+        fn static_call50000_identity("tests/GeneralStateTests/stStaticCall/static_Call50000_identity.json");
     }
 }

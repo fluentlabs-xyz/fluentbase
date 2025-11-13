@@ -2,14 +2,13 @@ use alloc::vec::Vec;
 
 const WASM_PAGE_SIZE_IN_BYTES: usize = 65536;
 
-#[allow(dead_code)]
-fn calc_pages_needed(pages_allocated: usize, ptr: usize) -> usize {
-    let current_memory = pages_allocated * WASM_PAGE_SIZE_IN_BYTES;
-    if ptr >= current_memory {
-        (current_memory + ptr + 1 + WASM_PAGE_SIZE_IN_BYTES - 1) / WASM_PAGE_SIZE_IN_BYTES
-            - pages_allocated
-    } else {
+fn calc_pages_needed(pages_allocated: usize, required_bytes: usize) -> usize {
+    let have = pages_allocated * WASM_PAGE_SIZE_IN_BYTES;
+    if required_bytes <= have {
         0
+    } else {
+        let missing = required_bytes - have;
+        (missing + WASM_PAGE_SIZE_IN_BYTES - 1) / WASM_PAGE_SIZE_IN_BYTES
     }
 }
 
@@ -17,16 +16,16 @@ fn calc_pages_needed(pages_allocated: usize, ptr: usize) -> usize {
 fn test_pages_needed() {
     assert_eq!(calc_pages_needed(0, 1), 1);
     assert_eq!(calc_pages_needed(0, 65535), 1);
-    assert_eq!(calc_pages_needed(0, 65536), 2);
-    assert_eq!(calc_pages_needed(1, 65536), 2);
+    assert_eq!(calc_pages_needed(0, 65536), 1);
+    assert_eq!(calc_pages_needed(1, 65536), 0);
     assert_eq!(calc_pages_needed(1, 65535), 0);
-    assert_eq!(calc_pages_needed(1, 65536 * 2), 3);
-    assert_eq!(calc_pages_needed(5, 327680), 6);
+    assert_eq!(calc_pages_needed(1, 65536 + 65536), 1);
+    assert_eq!(calc_pages_needed(5, 327680), 0);
 }
 
 #[inline(always)]
 pub fn alloc_ptr(len: usize) -> *mut u8 {
-    unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align_unchecked(len, 8)) }
+    unsafe { alloc::alloc::alloc_zeroed(core::alloc::Layout::from_size_align_unchecked(len, 8)) }
 }
 
 #[inline(always)]
@@ -42,9 +41,6 @@ pub fn alloc_vec(len: usize) -> Vec<u8> {
 
 #[cfg(target_arch = "wasm32")]
 pub struct HeapBaseAllocator {}
-
-#[cfg(target_arch = "wasm32")]
-static mut HEAP_CHECKPOINT_IDX: usize = 0;
 
 #[cfg(target_arch = "wasm32")]
 static mut ALLOC_COUNT: usize = 0;
@@ -68,25 +64,13 @@ static mut DEALLOC_BYTES: usize = 0;
 static ENABLE_SIMPLE_DEALLOC: bool = false;
 
 #[cfg(target_arch = "wasm32")]
-static mut HEAP_CHECKPOINTS: [usize; 1024] = [0usize; 1024];
-
-#[cfg(target_arch = "wasm32")]
 static HEAP_FILL_WITH_0_ON_RESET: bool = true;
 
 #[cfg(target_arch = "wasm32")]
 static mut HEAP_POS_PREV_IDX: usize = 0;
 
 #[cfg(target_arch = "wasm32")]
-static mut HEAP_POS_PREV_CHECKPOINTS: [usize; 1024 * 8] = [0usize; 1024 * 8];
-
-#[cfg(target_arch = "wasm32")]
 static mut HEAP_POS: usize = 0;
-
-#[cfg(target_arch = "wasm32")]
-#[no_mangle]
-pub fn __heap_checkpoint_idx() -> usize {
-    unsafe { HEAP_CHECKPOINT_IDX }
-}
 
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
@@ -124,42 +108,16 @@ pub fn __dealloc_bytes() -> usize {
     unsafe { DEALLOC_BYTES }
 }
 
-#[cfg(target_arch = "wasm32")]
-#[no_mangle]
-pub fn __heap_checkpoint_save() {
+#[inline(always)]
+pub fn heap_pos() -> usize {
+    #[cfg(target_arch = "wasm32")]
     unsafe {
-        HEAP_CHECKPOINTS[HEAP_CHECKPOINT_IDX] = HEAP_POS;
-        HEAP_CHECKPOINT_IDX += 1;
+        HEAP_POS
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[no_mangle]
-pub fn __heap_checkpoint_pop() -> usize {
-    unsafe {
-        HEAP_CHECKPOINT_IDX -= 1;
-        let heap_pos = HEAP_CHECKPOINTS[HEAP_CHECKPOINT_IDX];
-        HEAP_POS = heap_pos;
-        heap_pos
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        usize::MAX
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[no_mangle]
-pub fn __heap_checkpoint_peek_last() -> usize {
-    unsafe { HEAP_CHECKPOINTS[HEAP_CHECKPOINT_IDX - 1] }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[no_mangle]
-pub fn __heap_pos() -> usize {
-    unsafe { HEAP_POS }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[no_mangle]
-pub fn __heap_pos_set(value: usize) {
-    unsafe { HEAP_POS = value };
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -168,10 +126,6 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
         let bytes: usize = layout.size();
         let align: usize = layout.align();
-        unsafe {
-            ALLOC_COUNT += 1;
-            ALLOC_BYTES += bytes;
-        }
         extern "C" {
             static __heap_base: u8;
         }
@@ -181,7 +135,7 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
         }
         let offset = heap_pos & (align - 1);
         if offset != 0 {
-            heap_pos += align - offset;
+            heap_pos = heap_pos.wrapping_add(align - offset);
         }
         // allocate memory pages if needed
         let pages_allocated = core::arch::wasm32::memory_size::<0>();
@@ -198,11 +152,6 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
         // return allocated pointer
         let ptr = heap_pos as *mut u8;
         heap_pos += bytes;
-        unsafe {
-            HEAP_POS_PREV_CHECKPOINTS[HEAP_POS_PREV_IDX] = HEAP_POS;
-            HEAP_POS_PREV_IDX += 1;
-            HEAP_POS = heap_pos;
-        };
         ptr
     }
 
@@ -212,16 +161,6 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
         unsafe {
             DEALLOC_TRY_COUNT += 1;
             DEALLOC_TRY_BYTES += layout.size();
-            let dealloc_chunk_base_ptr = ptr as usize;
-            if ENABLE_SIMPLE_DEALLOC
-                && HEAP_POS_PREV_IDX > 0
-                && dealloc_chunk_base_ptr >= HEAP_POS_PREV_CHECKPOINTS[HEAP_POS_PREV_IDX - 1]
-            {
-                DEALLOC_COUNT += 1;
-                DEALLOC_BYTES += layout.size();
-                HEAP_POS_PREV_IDX -= 1;
-                __heap_pos_set(HEAP_POS_PREV_CHECKPOINTS[HEAP_POS_PREV_IDX]);
-            }
         };
     }
 }
@@ -247,6 +186,23 @@ pub extern "C" fn __heap_reset() -> usize {
         HEAP_POS = (&__heap_base) as *const u8 as usize;
         HEAP_POS
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub fn __heap_pos_set(value: usize) {
+    unsafe { HEAP_POS = value };
+}
+
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __heap_pos() -> usize {
+    extern "C" {
+        static __heap_base: u8;
+    }
+    let mut heap_pos = unsafe { HEAP_POS };
+    heap_pos = unsafe { (&__heap_base) as *const u8 as usize };
+    heap_pos
 }
 
 #[cfg(target_arch = "wasm32")]

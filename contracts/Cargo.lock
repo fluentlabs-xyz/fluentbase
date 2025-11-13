@@ -1769,7 +1769,6 @@ dependencies = [
  "fluentbase-evm",
  "fluentbase-sdk",
  "fluentbase-testing",
- "fluentbase-types",
  "hashbrown 0.16.0",
  "lazy_static",
  "revm-helpers",
@@ -1801,6 +1800,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
+ "revm-helpers",
  "revm-precompile",
 ]
 
@@ -1971,6 +1971,7 @@ dependencies = [
  "fluentbase-types",
  "hashbrown 0.16.0",
  "rwasm",
+ "spin 0.10.0",
 ]
 
 [[package]]
