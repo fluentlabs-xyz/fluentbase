@@ -8,6 +8,7 @@ use smallvec::SmallVec;
 use std::{
     cell::RefCell,
     mem::take,
+    rc::Rc,
     sync::{Arc, OnceLock, RwLock},
 };
 use wasmtime::{
@@ -18,7 +19,7 @@ use wasmtime::{
 pub struct SystemRuntime {
     // TODO(dmitry123): We can't have compiled runtime because it makes the runtime no `no_std` complaint,
     //  it should be fixed once we have optimized wasmtime inside rwasm repository.
-    compiled_runtime: Option<CompiledRuntime>,
+    compiled_runtime: Rc<RefCell<CompiledRuntime>>,
     ctx: Option<RuntimeContext>,
     code_hash: B256,
     state: Option<RuntimeInterruptionOutcomeV1>,
@@ -34,17 +35,7 @@ struct CompiledRuntime {
 }
 
 thread_local! {
-    pub static COMPILED_RUNTIMES: RefCell<HashMap<B256, CompiledRuntime>> = RefCell::new(HashMap::new());
-}
-
-impl Drop for SystemRuntime {
-    fn drop(&mut self) {
-        let _ = COMPILED_RUNTIMES.try_with(|compiled_runtimes| {
-            compiled_runtimes
-                .borrow_mut()
-                .insert(self.code_hash, self.compiled_runtime.take().unwrap());
-        });
-    }
+    pub static COMPILED_RUNTIMES: RefCell<HashMap<B256, Rc<RefCell<CompiledRuntime>>>> = RefCell::new(HashMap::new());
 }
 
 impl SystemRuntime {
@@ -66,6 +57,12 @@ impl SystemRuntime {
         module
     }
 
+    pub fn reset_cached_runtimes() {
+        COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
+            compiled_runtimes.clear();
+        });
+    }
+
     pub fn new(
         module: RwasmModule,
         import_linker: Arc<ImportLinker>,
@@ -73,7 +70,7 @@ impl SystemRuntime {
         ctx: RuntimeContext,
     ) -> Self {
         let compiled_runtime = COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            if let Some(compiled_runtime) = compiled_runtimes.remove(&code_hash) {
+            if let Some(compiled_runtime) = compiled_runtimes.get(&code_hash).cloned() {
                 return compiled_runtime;
             }
             let module = Self::compiled_module(code_hash, module);
@@ -86,17 +83,18 @@ impl SystemRuntime {
             let memory = instance
                 .get_memory(store.as_context_mut(), "memory")
                 .unwrap();
-            CompiledRuntime {
+            let compiled_runtime = CompiledRuntime {
                 module,
                 store,
                 instance,
                 memory,
                 deploy_func,
                 main_func,
-            }
+            };
+            Rc::new(RefCell::new(compiled_runtime))
         });
         Self {
-            compiled_runtime: Some(compiled_runtime),
+            compiled_runtime,
             ctx: Some(ctx),
             code_hash,
             state: None,
@@ -104,7 +102,7 @@ impl SystemRuntime {
     }
 
     pub fn execute(&mut self) -> Result<(), TrapCode> {
-        let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
+        let mut compiled_runtime = self.compiled_runtime.borrow_mut();
 
         // Rewrite runtime context before each call, since we reuse the same store and runtime for
         // all EVM/SVM contract calls, then we should replace an existing context.
@@ -182,12 +180,8 @@ impl SystemRuntime {
         let Some(mut outcome) = self.state.take() else {
             unreachable!("missing interrupted state, interruption should never happen inside system contracts");
         };
-        let mut store_mut = self
-            .compiled_runtime
-            .as_mut()
-            .unwrap()
-            .store
-            .as_context_mut();
+        let mut compiled_runtime = self.compiled_runtime.borrow_mut();
+        let mut store_mut = compiled_runtime.store.as_context_mut();
 
         // Here we need to remap interruption result into the custom struct because we need to
         // pass information about fuel consumed and exit code into the runtime.
@@ -208,6 +202,7 @@ impl SystemRuntime {
         // Possible scenarios:
         // 1. w/ return data - new frame call
         // 2. w/o return data - current frame interruption outcome
+        drop(compiled_runtime);
         self.execute()
     }
 
@@ -217,15 +212,15 @@ impl SystemRuntime {
     }
 
     pub fn memory_write(&mut self, offset: usize, data: &[u8]) -> Result<(), TrapCode> {
-        let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
-        compiled_runtime
-            .memory
-            .write(compiled_runtime.store.as_context_mut(), offset, data)
+        let mut compiled_runtime = self.compiled_runtime.borrow_mut();
+        let memory = compiled_runtime.memory;
+        memory
+            .write(&mut compiled_runtime.store, offset, data)
             .map_err(|_| TrapCode::MemoryOutOfBounds)
     }
 
     pub fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
-        let compiled_runtime = self.compiled_runtime.as_ref().unwrap();
+        let compiled_runtime = self.compiled_runtime.borrow();
         compiled_runtime
             .memory
             .read(&compiled_runtime.store, offset, buffer)
@@ -238,12 +233,12 @@ impl SystemRuntime {
     }
 
     pub fn context_mut<R, F: FnOnce(&mut RuntimeContext) -> R>(&mut self, func: F) -> R {
-        let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
+        let mut compiled_runtime = self.compiled_runtime.borrow_mut();
         func(compiled_runtime.store.data_mut())
     }
 
     pub fn context<R, F: FnOnce(&RuntimeContext) -> R>(&self, func: F) -> R {
-        let compiled_runtime = self.compiled_runtime.as_ref().unwrap();
+        let compiled_runtime = self.compiled_runtime.borrow();
         func(compiled_runtime.store.data())
     }
 }
