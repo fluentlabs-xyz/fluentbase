@@ -19,7 +19,7 @@ use wasmtime::{
 pub struct SystemRuntime {
     // TODO(dmitry123): We can't have compiled runtime because it makes the runtime no `no_std` complaint,
     //  it should be fixed once we have optimized wasmtime inside rwasm repository.
-    compiled_runtime: Rc<RefCell<CompiledRuntime>>,
+    compiled_runtime: Option<CompiledRuntime>,
     ctx: Option<RuntimeContext>,
     code_hash: B256,
     state: Option<RuntimeInterruptionOutcomeV1>,
@@ -35,7 +35,7 @@ struct CompiledRuntime {
 }
 
 thread_local! {
-    pub static COMPILED_RUNTIMES: RefCell<HashMap<B256, Rc<RefCell<CompiledRuntime>>>> = RefCell::new(HashMap::new());
+    pub static COMPILED_RUNTIMES: RefCell<HashMap<B256, CompiledRuntime>> = RefCell::new(HashMap::new());
 }
 
 impl SystemRuntime {
@@ -70,7 +70,7 @@ impl SystemRuntime {
         ctx: RuntimeContext,
     ) -> Self {
         let compiled_runtime = COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            if let Some(compiled_runtime) = compiled_runtimes.get(&code_hash).cloned() {
+            if let Some(compiled_runtime) = compiled_runtimes.remove(&code_hash) {
                 return compiled_runtime;
             }
             let module = Self::compiled_module(code_hash, module);
@@ -91,10 +91,10 @@ impl SystemRuntime {
                 deploy_func,
                 main_func,
             };
-            Rc::new(RefCell::new(compiled_runtime))
+            compiled_runtime
         });
         Self {
-            compiled_runtime,
+            compiled_runtime: Some(compiled_runtime),
             ctx: Some(ctx),
             code_hash,
             state: None,
@@ -102,7 +102,7 @@ impl SystemRuntime {
     }
 
     pub fn execute(&mut self) -> Result<(), TrapCode> {
-        let mut compiled_runtime = self.compiled_runtime.borrow_mut();
+        let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
 
         // Rewrite runtime context before each call, since we reuse the same store and runtime for
         // all EVM/SVM contract calls, then we should replace an existing context.
@@ -180,7 +180,7 @@ impl SystemRuntime {
         let Some(mut outcome) = self.state.take() else {
             unreachable!("missing interrupted state, interruption should never happen inside system contracts");
         };
-        let mut compiled_runtime = self.compiled_runtime.borrow_mut();
+        let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
         let mut store_mut = compiled_runtime.store.as_context_mut();
 
         // Here we need to remap interruption result into the custom struct because we need to
@@ -202,7 +202,6 @@ impl SystemRuntime {
         // Possible scenarios:
         // 1. w/ return data - new frame call
         // 2. w/o return data - current frame interruption outcome
-        drop(compiled_runtime);
         self.execute()
     }
 
@@ -212,7 +211,7 @@ impl SystemRuntime {
     }
 
     pub fn memory_write(&mut self, offset: usize, data: &[u8]) -> Result<(), TrapCode> {
-        let mut compiled_runtime = self.compiled_runtime.borrow_mut();
+        let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
         let memory = compiled_runtime.memory;
         memory
             .write(&mut compiled_runtime.store, offset, data)
@@ -220,7 +219,7 @@ impl SystemRuntime {
     }
 
     pub fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
-        let compiled_runtime = self.compiled_runtime.borrow();
+        let compiled_runtime = self.compiled_runtime.as_ref().unwrap();
         compiled_runtime
             .memory
             .read(&compiled_runtime.store, offset, buffer)
@@ -233,12 +232,12 @@ impl SystemRuntime {
     }
 
     pub fn context_mut<R, F: FnOnce(&mut RuntimeContext) -> R>(&mut self, func: F) -> R {
-        let mut compiled_runtime = self.compiled_runtime.borrow_mut();
+        let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
         func(compiled_runtime.store.data_mut())
     }
 
     pub fn context<R, F: FnOnce(&RuntimeContext) -> R>(&self, func: F) -> R {
-        let compiled_runtime = self.compiled_runtime.borrow();
+        let compiled_runtime = self.compiled_runtime.as_ref().unwrap();
         func(compiled_runtime.store.data())
     }
 }
