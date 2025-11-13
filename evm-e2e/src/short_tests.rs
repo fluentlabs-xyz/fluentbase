@@ -13,13 +13,10 @@ macro_rules! define_tests {
 
 mod single_problem_test {
     define_tests! {
-        fn create_address_warm_after_fail("tests/GeneralStateTests/stCreateTest/CreateAddressWarmAfterFail.json"); // success
-        fn _21_tstore_cannot_be_dosd_ooo("tests/GeneralStateTests/Cancun/stEIP1153-transientStorage/21_tstoreCannotBeDosdOOO.json");
-        fn _15_tstore_cannot_be_dosd("tests/GeneralStateTests/Cancun/stEIP1153-transientStorage/15_tstoreCannotBeDosd.json");
-        fn all_opcodes("tests/GeneralStateTests/Pyspecs/frontier/opcodes/all_opcodes.json");
-        fn operation_diff_gas("tests/GeneralStateTests/stBadOpcode/operationDiffGas.json");
-        fn invalid_addr("tests/GeneralStateTests/stBadOpcode/invalidAddr.json");
-        fn modexp("tests/GeneralStateTests/stPreCompiledContracts/modexp.json");
+        fn random_statetest53("tests/GeneralStateTests/stRandom/randomStatetest53.json");
+        fn random_statetest341("tests/GeneralStateTests/stRandom/randomStatetest341.json");
+        fn random_statetest448("tests/GeneralStateTests/stRandom2/randomStatetest448.json");
+        fn random_statetest589("tests/GeneralStateTests/stRandom2/randomStatetest589.json");
     }
 }
 

@@ -34,7 +34,7 @@ fn test_block_hash() {
     assert!(result.is_success());
     let output = result.output().unwrap();
     assert_eq!(
-        output.as_ref(),
+        output,
         &B256::ZERO.0,
         "blockhash() should return zero for current block (diff = 0)"
     );
@@ -56,8 +56,7 @@ fn test_block_hash() {
     assert!(result.is_success());
     let output = result.output().unwrap();
     assert_eq!(
-        output.as_ref(),
-        &block_hash_0.0,
+        output, &block_hash_0.0,
         "blockhash(0) should return valid hash when diff <= 256 (current block = 100)"
     );
 
@@ -78,7 +77,7 @@ fn test_block_hash() {
     assert!(result.is_success());
     let output = result.output().unwrap();
     assert_eq!(
-        output.as_ref(),
+        output,
         &B256::ZERO.0,
         "blockhash(0) should return zero when diff > 256 (current block = 300)"
     );

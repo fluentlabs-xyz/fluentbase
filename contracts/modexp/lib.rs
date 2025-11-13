@@ -53,7 +53,7 @@ mod tests {
             })
             .with_gas_limit(gas_limit);
         main_entry(sdk.clone());
-        let output = sdk.take_output();
+        let output = &sdk.take_output()[4..];
         assert_eq!(output, expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
