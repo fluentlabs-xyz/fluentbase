@@ -60,3 +60,8 @@ wasmtime = [
     "fluentbase-revm/wasmtime",
 ]
 
+[patch.crates-io]
+#rwasm = { path = "../rwasm", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/sync-strategies", default-features = false }
+wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "feat/sync-strategies", features = ["cache"] }
+#rwasm = { path = "../../rwasm", default-features = false, features = ["serde"] }
