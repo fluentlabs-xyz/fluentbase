@@ -3,14 +3,14 @@ use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
     calc_create_address, Address, Bytes, CHARGE_FUEL_BASE_COST, COPY_BASE_FUEL_COST,
     COPY_WORD_FUEL_COST, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST, FUEL_DENOM_RATE,
-    KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST, LOW_FUEL_COST
+    KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST, LOW_FUEL_COST,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use revm::{
     context::result::ExecutionResult, interpreter::gas::calculate_initial_tx_gas,
     primitives::hardfork::SpecId,
 };
-
+use rwasm::CALL_FUEL_COST;
 
 const WAT_TEMPLATE: &str = r#"
     (module
@@ -57,8 +57,8 @@ fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult<R
     result
 }
 
-fn fuel_to_gas(fuel: u64) -> u64 {
-    (fuel + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE
+fn fuel_to_gas(fuel: u32) -> u64 {
+    (fuel as u64 + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE
 }
 
 /// Calculates how much gas is consumed by the builtins
@@ -79,8 +79,9 @@ fn test_keccak_builtin() {
         call $_keccak256
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = KECCAK_BASE_FUEL_COST + KECCAK_WORD_FUEL_COST * ((123000 + 31) / 32);
-    assert_eq!(gas, fuel_to_gas(expected_fuel as u64 + 1));
+    let words = (123000 + 31) / 32;
+    let expected_fuel = KECCAK_BASE_FUEL_COST + KECCAK_WORD_FUEL_COST * words + CALL_FUEL_COST;
+    assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
 #[test]
@@ -91,8 +92,9 @@ fn test_write_builtin() {
         call $_write
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * ((123000 + 31) / 32);
-    assert_eq!(gas, fuel_to_gas(expected_fuel as u64 + 1));
+    let words = (123000 + 31) / 32;
+    let expected_fuel = COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * words + CALL_FUEL_COST;
+    assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
 #[test]
@@ -132,9 +134,10 @@ fn test_read_builtin() {
     "#;
     // 30_000_000 fuel / FUEL_DENOM_RATE = 1_500_000 gas
     let gas = run_twice_and_find_gas_difference(main, 1_000) - 1_500_000;
+    let words = (800 + 31) / 32;
     let expected_fuel =
-        COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * ((800 + 31) / 32) + CHARGE_FUEL_BASE_COST;
-    assert_eq!(gas, fuel_to_gas(expected_fuel as u64 + 1));
+        COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * words + CHARGE_FUEL_BASE_COST + CALL_FUEL_COST;
+    assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
 #[test]
@@ -145,8 +148,10 @@ fn test_debug_log_builtin() {
         call $_debug_log
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = DEBUG_LOG_BASE_FUEL_COST + DEBUG_LOG_WORD_FUEL_COST * ((123000 + 31) / 32);
-    assert_eq!(gas, fuel_to_gas(expected_fuel as u64 + 1));
+    let words = (123000 + 31) / 32;
+    let expected_fuel =
+        DEBUG_LOG_BASE_FUEL_COST + DEBUG_LOG_WORD_FUEL_COST * words + CALL_FUEL_COST;
+    assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
 #[test]
@@ -156,7 +161,10 @@ fn test_output_size_builtin() {
         drop
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    assert_eq!(gas, fuel_to_gas(LOW_FUEL_COST as u64 + 1));
+
+    // OUTPUT_SIZE syscall uses LOW_FUEL_COST
+    let expected_fuel = CALL_FUEL_COST + LOW_FUEL_COST;
+    assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
 #[test]
@@ -166,7 +174,9 @@ fn test_state_builtin() {
         drop
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    assert_eq!(gas, fuel_to_gas(LOW_FUEL_COST as u64 + 1));
+    // STATE syscall uses LOW_FUEL_COST
+    let expected_fuel = CALL_FUEL_COST + LOW_FUEL_COST;
+    assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
 #[test]
@@ -176,17 +186,39 @@ fn test_fuel_builtin() {
         drop
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    assert_eq!(gas, fuel_to_gas(LOW_FUEL_COST as u64 + 1));
+    // FUEL syscall uses LOW_FUEL_COST
+    let expected_fuel = CALL_FUEL_COST + LOW_FUEL_COST;
+    assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
 #[test]
 fn test_charge_fuel_builtin() {
+    // Every WASM 'call' instruction costs CALL_FUEL_COST (1 fuel), added by the rwasm translator.
+    // So _charge_fuel total cost = CALL_FUEL_COST (for the 'call' instruction itself)
+    //                             + CHARGE_FUEL_BASE_COST (builtin's base cost)
+    //                             + argument (amount of fuel to charge)
+
+    // Multiple calls with zero argument - shows base costs accumulate per call
     let main = r#"
-        i64.const 0        ;; amount
+        i64.const 0
+        call $_charge_fuel
+        i64.const 0
+        call $_charge_fuel
+        i64.const 0
         call $_charge_fuel
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    assert_eq!(gas, fuel_to_gas(CHARGE_FUEL_BASE_COST as u64 + 1));
+    let expected_fuel = 3 * (CALL_FUEL_COST + CHARGE_FUEL_BASE_COST);
+    assert_eq!(gas, fuel_to_gas(expected_fuel));
+
+    // Call with argument - shows that argument adds to the base costs
+    let main = r#"
+        i64.const 500
+        call $_charge_fuel
+    "#;
+    let gas = run_twice_and_find_gas_difference(main, 0);
+    let expected_fuel = CALL_FUEL_COST + CHARGE_FUEL_BASE_COST + 500;
+    assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
 #[test]
@@ -196,5 +228,6 @@ fn test_exit_builtin() {
         call $_exit
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    assert_eq!(gas, fuel_to_gas(1));
+    // Exit doesn't consume fuel, only the call instruction
+    assert_eq!(gas, fuel_to_gas(CALL_FUEL_COST));
 }
