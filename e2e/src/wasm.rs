@@ -378,13 +378,13 @@ fn test_wasm_balance_charge() {
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
         contract_address,
-        Bytes::new(),
+        Bytes::new(), // 0x01 -> 21237 0x0102 -> 21269
         Some(22_000),
         None,
     );
     let balance = U256::from_le_slice(result.output().unwrap_or_default().as_ref());
     assert_eq!(balance, U256::from(123));
-    assert_eq!(result.gas_used(), 21146);
+    assert_eq!(result.gas_used(), 21159);
 }
 
 #[test]
