@@ -204,13 +204,13 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     cfg_if! {
         if #[cfg(feature = "fluent-testnet")] {
-            let gas_cost = fuel_consumed / FUEL_DENOM_RATE;
+            let gas_consumed = fuel_consumed / FUEL_DENOM_RATE;
         } else {
-            let gas_cost = (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE;
+            let gas_consumed = (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE;
         }
     }
 
-    if !interpreter.gas.record_cost(gas_cost) {
+    if !interpreter.gas.record_cost(gas_consumed) {
         return Ok(NextAction::error(ExitCode::OutOfFuel, interpreter.gas));
     }
 
@@ -287,25 +287,26 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     );
     let return_data: Bytes = runtime_context.execution_result.return_data.into();
 
-    // if we're free from paying gas,
-    // then just take the previous gas value and don't charge anything
-    let mut gas = if inputs.is_gas_free {
-        inputs.gas
-    } else {
-        result.gas
-    };
-
     cfg_if! {
         if #[cfg(feature = "fluent-testnet")] {
-            let gas_cost = fuel_consumed / FUEL_DENOM_RATE;
+            let gas_consumed = fuel_consumed / FUEL_DENOM_RATE;
         } else {
-            let gas_cost = (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE;
+            let gas_consumed = (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE;
         }
     }
-    if !gas.record_cost(gas_cost) {
-        return Ok(NextAction::error(ExitCode::OutOfFuel, gas));
+
+    // make sure we have enough gas to charge from the call
+    if !frame.interpreter.gas.record_cost(gas_consumed) {
+        return Ok(NextAction::error(
+            ExitCode::OutOfFuel,
+            frame.interpreter.gas,
+        ));
     }
-    gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
+    // accumulate refunds (can be forwarded from an interrupted call)
+    frame
+        .interpreter
+        .gas
+        .record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
 
     let result = process_exec_result::<CTX, INSP>(
         frame,

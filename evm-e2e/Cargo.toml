@@ -5,12 +5,12 @@ edition = "2021"
 resolver = "2"
 
 [dependencies]
-fluentbase-runtime = { path = "../crates/runtime"}
+fluentbase-runtime = { path = "../crates/runtime" }
 fluentbase-contracts = { path = "../crates/contracts", default-features = false }
 fluentbase-sdk = { path = "../crates/sdk" }
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 
-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "audit/flu-574", default-features = false, features = ["std", "serde-json", "serde"] }
+revm = { version = "27.0.3", package = "revm-rwasm", default-features = false, features = ["std", "serde-json", "serde"] }
 #revm = { path = "../../revm-rwasm/crates/revm", default-features = false, features = ["std", "serde-json", "serde"] }
 fluentbase-revm = { path = "../crates/revm" }
 

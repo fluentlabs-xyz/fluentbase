@@ -1839,7 +1839,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.1",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1987,7 +1987,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4418,7 +4418,8 @@ checksum = "caf4aa5b0f434c91fe5c7f1ecb6a5ece2130b02ad2a590589dda5146df959001"
 [[package]]
 name = "revm-rwasm"
 version = "27.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#239c402997a23a37ee05051475e8d63079f2c2bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d220da88cd900161c84af260873d0318e90ff8841f11b5099d47bd972fb48d35"
 dependencies = [
  "revm-rwasm-bytecode",
  "revm-rwasm-context",
@@ -4436,7 +4437,8 @@ dependencies = [
 [[package]]
 name = "revm-rwasm-bytecode"
 version = "6.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#239c402997a23a37ee05051475e8d63079f2c2bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecd626103e7f8a7281fef422a419c01d7e8a04dc525c26ecab2a9e19efbd1d6b"
 dependencies = [
  "bitvec",
  "once_cell",
@@ -4449,7 +4451,8 @@ dependencies = [
 [[package]]
 name = "revm-rwasm-context"
 version = "8.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#239c402997a23a37ee05051475e8d63079f2c2bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68604002a0ffaf3b63da5226fbb672e0e312a54e9169e4ffafe40df6d36627c6"
 dependencies = [
  "cfg-if",
  "derive-where",
@@ -4464,7 +4467,8 @@ dependencies = [
 [[package]]
 name = "revm-rwasm-context-interface"
 version = "8.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#239c402997a23a37ee05051475e8d63079f2c2bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c027dee8051888cb2960b1f51a446c71fcc64e6df6d58bb6acd62d92bdf57949"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -4479,7 +4483,8 @@ dependencies = [
 [[package]]
 name = "revm-rwasm-database"
 version = "7.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#239c402997a23a37ee05051475e8d63079f2c2bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "059a4a7ed60cfedb3a8ec4d686261c6c33fa04583e2234d20ca5a0d329c30470"
 dependencies = [
  "alloy-eips",
  "revm-rwasm-bytecode",
@@ -4492,7 +4497,8 @@ dependencies = [
 [[package]]
 name = "revm-rwasm-database-interface"
 version = "7.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#239c402997a23a37ee05051475e8d63079f2c2bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "786e345db975798e9b927d807d64804ecc59c6a11a6560ea8d1693d716ef20b0"
 dependencies = [
  "auto_impl",
  "either",
@@ -4504,10 +4510,10 @@ dependencies = [
 [[package]]
 name = "revm-rwasm-handler"
 version = "8.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#239c402997a23a37ee05051475e8d63079f2c2bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5b88e9523ecb583e476d2875b5a017573d0787f6f9dacc38010223d12ac12b6"
 dependencies = [
  "auto_impl",
- "cfg-if",
  "derive-where",
  "revm-rwasm-bytecode",
  "revm-rwasm-context",
@@ -4523,7 +4529,8 @@ dependencies = [
 [[package]]
 name = "revm-rwasm-inspector"
 version = "8.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#239c402997a23a37ee05051475e8d63079f2c2bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd558f52b25f1eb8d19f5a7225f5af83f2e77b0fc88d7817028b0d1b477df10e"
 dependencies = [
  "auto_impl",
  "either",
@@ -4540,7 +4547,8 @@ dependencies = [
 [[package]]
 name = "revm-rwasm-interpreter"
 version = "23.0.2"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#239c402997a23a37ee05051475e8d63079f2c2bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbe4e56510777e610d207fcd8948e5bd3d27316682f88e5fc34b47887a9308a2"
 dependencies = [
  "revm-rwasm-bytecode",
  "revm-rwasm-context-interface",
@@ -4551,7 +4559,8 @@ dependencies = [
 [[package]]
 name = "revm-rwasm-precompile"
 version = "24.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#239c402997a23a37ee05051475e8d63079f2c2bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f42fa2affd94fadf67eb2c740f35607e8e2dc1c4d9b5c4068d4eb38f8ff162e0"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -4579,7 +4588,8 @@ dependencies = [
 [[package]]
 name = "revm-rwasm-primitives"
 version = "20.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#239c402997a23a37ee05051475e8d63079f2c2bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41ab2c264030a0351d15a5ca907a5774351cf3d099d7e2b2d6c44a1cf9017cbe"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -4589,7 +4599,8 @@ dependencies = [
 [[package]]
 name = "revm-rwasm-state"
 version = "7.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#239c402997a23a37ee05051475e8d63079f2c2bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2000ab9530cec61fce184fcea6362dfe69395fad0a46c79e0cfb686bd29111a4"
 dependencies = [
  "bitflags",
  "revm-rwasm-bytecode",
@@ -4724,7 +4735,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4747,8 +4758,9 @@ dependencies = [
 
 [[package]]
 name = "rwasm"
-version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#35acaee318f277dc4b3ece7f4306d6d058ecb520"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b36169175e8ed473a54baf2a23ff6cf3391c12abf12c339a18d18e4990ee3c8"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -4756,10 +4768,8 @@ dependencies = [
  "bytes",
  "directories",
  "downcast-rs",
- "fnv",
  "futures",
  "hashbrown 0.15.5",
- "libc",
  "libm",
  "num-derive",
  "num-traits",
@@ -5924,7 +5934,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6895,7 +6905,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7018,15 +7028,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
 dependencies = [
  "windows-targets 0.53.4",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.61.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f109e41dd4a3c848907eb83d5a42ea98b3769495597450cf6d153507b166f0f"
-dependencies = [
- "windows-link",
 ]
 
 [[package]]
