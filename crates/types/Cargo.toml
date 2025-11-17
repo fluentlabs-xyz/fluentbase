@@ -37,3 +37,6 @@ std = [
 ]
 debug-print = []
 fast-panic = []
+svm = [
+    "revm-primitives/svm",
+]

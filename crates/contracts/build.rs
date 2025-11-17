@@ -77,6 +77,9 @@ fn main() {
             continue;
         }
         for target in &package.targets {
+            if !cfg!(feature = "svm") && target.name.contains("svm") {
+                continue;
+            }
             // Check for binary targets
             let is_bin = target.kind.contains(&TargetKind::Bin)
                 && target.crate_types.contains(&CrateType::Bin);

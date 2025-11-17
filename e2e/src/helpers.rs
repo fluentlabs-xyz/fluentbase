@@ -44,7 +44,7 @@ pub fn call_with_sig(
     }
 }
 
-#[cfg(feature = "enable-svm")]
+#[cfg(feature = "svm")]
 pub fn svm_deploy(
     ctx: &mut EvmTestingContext,
     deployer_address: &Address,
@@ -78,7 +78,7 @@ pub fn svm_deploy(
     (pk_deployer1, pk_contract, pk_new, contract_address)
 }
 
-#[cfg(feature = "enable-svm")]
+#[cfg(feature = "svm")]
 pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
     let mut file = File::open(path).expect("file open failed");
     let mut elf = Vec::new();

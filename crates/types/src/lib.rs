@@ -73,6 +73,7 @@ pub const CALL_STACK_LIMIT: u32 = 1024;
 /// This value is temporary for testing purposes, requires recalculation.
 /// The limit is equal to 2Mb.
 pub const WASM_MAX_CODE_SIZE: usize = revm_primitives::wasm::WASM_MAX_CODE_SIZE;
+#[cfg(feature = "svm")]
 pub const SVM_MAX_CODE_SIZE: usize = revm_primitives::wasm::SVM_MAX_CODE_SIZE;
 
 /// WebAssembly magic bytes
@@ -80,6 +81,7 @@ pub const SVM_MAX_CODE_SIZE: usize = revm_primitives::wasm::SVM_MAX_CODE_SIZE;
 /// These values are equal to \0ASM
 pub const WASM_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::WASM_MAGIC_BYTES;
 /// Solana magic bytes
+#[cfg(feature = "svm")]
 pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::SVM_ELF_MAGIC_BYTES;
 /// ERC20 magic bytes: as char codes for "ERC" and the number 0x20
 pub const UNIVERSAL_TOKEN_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::ERC20_MAGIC_BYTES;
