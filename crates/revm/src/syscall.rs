@@ -10,8 +10,9 @@ use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address, is_system_precompile, Address, Bytes, ExitCode, Log, LogData, B256,
-    FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
+    calc_create4_address, is_execute_using_system_runtime, is_system_precompile, Address, Bytes,
+    ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME,
+    STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -45,6 +46,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     let account_owner_address = frame.interpreter.input.account_owner_address();
 
     let is_static = frame.interpreter.runtime_flag.is_static;
+    let is_system_runtime = account_owner_address
+        .filter(is_execute_using_system_runtime)
+        .is_some();
 
     macro_rules! return_result {
         ($output:expr, $result:ident) => {{
@@ -55,9 +59,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 gas: Gas::new_spent(frame.interpreter.gas.spent() - inputs.gas.spent()),
             };
             frame.insert_interrupted_outcome(SystemInterruptionOutcome {
-                inputs: Box::new(inputs),
+                inputs,
                 result: Some(result),
-                is_frame: false,
+                halted_frame: false,
             });
             return Ok(NextAction::InterruptionResult);
         }};
@@ -67,6 +71,21 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     }
     macro_rules! return_halt {
         ($result:ident) => {{
+            // For system runtime contracts, we always forward execution result to synchronize
+            // frames, otherwise it can cause memory corruption
+            if is_system_runtime {
+                let result = ExecutionResult {
+                    result: instruction_result_from_exit_code(ExitCode::$result, true),
+                    output: Bytes::new(),
+                    gas: Gas::new_spent(frame.interpreter.gas.spent() - inputs.gas.spent()),
+                };
+                frame.insert_interrupted_outcome(SystemInterruptionOutcome {
+                    inputs,
+                    result: Some(result),
+                    halted_frame: true,
+                });
+                return Ok(NextAction::InterruptionResult);
+            }
             let result = ExecutionResult {
                 result: instruction_result_from_exit_code(ExitCode::$result, true),
                 output: Bytes::new(),
@@ -78,9 +97,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     macro_rules! return_frame {
         ($action:expr) => {{
             frame.insert_interrupted_outcome(SystemInterruptionOutcome {
-                inputs: Box::new(inputs),
+                inputs,
                 result: None,
-                is_frame: true,
+                halted_frame: false,
             });
             return Ok($action);
         }};

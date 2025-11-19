@@ -15,8 +15,9 @@ use fluentbase_runtime::{
 use fluentbase_sdk::{
     bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
     rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
-    ExitCode, RuntimeNewFrameInputV1, SharedContextInput, SharedContextInputV1,
-    SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
+    ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SharedContextInput,
+    SharedContextInputV1, SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY,
+    STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -235,7 +236,12 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     interruption_outcome: SystemInterruptionOutcome,
     inspector: &mut Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
-    let SystemInterruptionOutcome { inputs, result, .. } = interruption_outcome;
+    let SystemInterruptionOutcome {
+        inputs,
+        result,
+        halted_frame,
+        ..
+    } = interruption_outcome;
     let result = result.unwrap();
     let call_id = inputs.call_id;
 
@@ -270,11 +276,35 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         _ => ExitCode::UnknownError,
     };
 
+    let bytecode_address = frame
+        .interpreter
+        .input
+        .bytecode_address()
+        .cloned()
+        .unwrap_or_else(|| frame.interpreter.input.target_address());
+    let meta_account = ctx.journal_mut().load_account_code(bytecode_address)?;
+    let meta_bytecode = meta_account.info.code.clone().unwrap_or_default();
+    let outcome: Bytes = match meta_bytecode {
+        Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
+            let outcome = RuntimeInterruptionOutcomeV1 {
+                halted_frame,
+                output: result.output,
+                fuel_consumed,
+                fuel_refunded,
+                exit_code,
+            };
+            bincode::encode_to_vec(&outcome, bincode::config::legacy())
+                .unwrap()
+                .into()
+        }
+        _ => result.output,
+    };
+
     let mut runtime_context = RuntimeContext::default();
     let (fuel_consumed, fuel_refunded, exit_code) = syscall_resume_impl(
         &mut runtime_context,
         inputs.call_id,
-        result.output.as_ref(),
+        outcome.as_ref(),
         exit_code.into_i32(),
         fuel_consumed,
         fuel_refunded,

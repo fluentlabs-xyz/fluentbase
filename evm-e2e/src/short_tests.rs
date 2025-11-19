@@ -244,5 +244,10 @@ mod new_system_runtime_failing_tests {
         fn call50000("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000.json");
         fn callcode50000("tests/GeneralStateTests/stQuadraticComplexityTest/Callcode50000.json");
         fn static_call50000_identity("tests/GeneralStateTests/stStaticCall/static_Call50000_identity.json");
+        fn abacalls2("tests/GeneralStateTests/stSystemOperationsTest/ABAcalls2.json");
+        fn sstore_gas_left("tests/GeneralStateTests/stSStoreTest/sstore_gasLeft.json");
+        fn call_oog_additional_gas_costs2("tests/GeneralStateTests/stCallCodes/call_OOG_additionalGasCosts2.json");
+        fn static_call1_mb1024_calldepth("tests/GeneralStateTests/stStaticCall/static_Call1MB1024Calldepth.json");
+        fn static_loop_calls_then_revert("tests/GeneralStateTests/stStaticCall/static_LoopCallsThenRevert.json");
     }
 }

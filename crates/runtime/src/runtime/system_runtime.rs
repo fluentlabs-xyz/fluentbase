@@ -19,8 +19,8 @@ use wasmtime::{
 pub struct SystemRuntime {
     // TODO(dmitry123): We can't have compiled runtime because it makes the runtime no `no_std` complaint,
     //  it should be fixed once we have optimized wasmtime inside rwasm repository.
-    compiled_runtime: Option<CompiledRuntime>,
-    ctx: Option<RuntimeContext>,
+    compiled_runtime: Rc<RefCell<CompiledRuntime>>,
+    ctx: RuntimeContext,
     code_hash: B256,
     state: Option<RuntimeInterruptionOutcomeV1>,
 }
@@ -35,7 +35,7 @@ struct CompiledRuntime {
 }
 
 thread_local! {
-    pub static COMPILED_RUNTIMES: RefCell<HashMap<B256, CompiledRuntime>> = RefCell::new(HashMap::new());
+    pub static COMPILED_RUNTIMES: RefCell<HashMap<B256, Rc<RefCell<CompiledRuntime>>>> = RefCell::new(HashMap::new());
 }
 
 impl SystemRuntime {
@@ -70,7 +70,7 @@ impl SystemRuntime {
         ctx: RuntimeContext,
     ) -> Self {
         let compiled_runtime = COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            if let Some(compiled_runtime) = compiled_runtimes.remove(&code_hash) {
+            if let Some(compiled_runtime) = compiled_runtimes.get(&code_hash).cloned() {
                 return compiled_runtime;
             }
             let module = Self::compiled_module(code_hash, module);
@@ -91,27 +91,27 @@ impl SystemRuntime {
                 deploy_func,
                 main_func,
             };
+            let compiled_runtime = Rc::new(RefCell::new(compiled_runtime));
+            compiled_runtimes.insert(code_hash, compiled_runtime.clone());
             compiled_runtime
         });
         Self {
-            compiled_runtime: Some(compiled_runtime),
-            ctx: Some(ctx),
+            compiled_runtime,
+            ctx,
             code_hash,
             state: None,
         }
     }
 
     pub fn execute(&mut self) -> Result<(), TrapCode> {
-        let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
+        let mut compiled_runtime = self.compiled_runtime.borrow_mut();
 
         // Rewrite runtime context before each call, since we reuse the same store and runtime for
         // all EVM/SVM contract calls, then we should replace an existing context.
         //
         // SAFETY: We always call execute/resume in "right" order (w/o call overlying) that makes
         //  calls sequential and apps can't access non-their context.
-        if let Some(ctx) = self.ctx.take() {
-            *compiled_runtime.store.data_mut() = ctx;
-        }
+        core::mem::swap(compiled_runtime.store.data_mut(), &mut self.ctx);
 
         // Call the function based on the passed state
         let entrypoint = match compiled_runtime.store.data().state {
@@ -119,12 +119,42 @@ impl SystemRuntime {
             STATE_DEPLOY => compiled_runtime.deploy_func,
             _ => unreachable!(),
         };
-        let result = entrypoint.call(compiled_runtime.store.as_context_mut(), &[], &mut []);
+        let result = entrypoint
+            .call(compiled_runtime.store.as_context_mut(), &[], &mut [])
+            .map_err(map_anyhow_error);
+
+        // Always swap back right after the call
+        core::mem::swap(compiled_runtime.store.data_mut(), &mut self.ctx);
+
+        if let Err(trap_code) = result.as_ref() {
+            let exit_code = ExitCode::from(self.ctx.execution_result.exit_code);
+            if exit_code == ExitCode::Panic {
+                eprintln!(
+                    "runtime: system execution failed with panic: {}, this should be investigated",
+                    core::str::from_utf8(&self.ctx.execution_result.output)
+                        .unwrap_or("can't decode utf-8 panic message")
+                )
+            } else if exit_code != ExitCode::Ok {
+                eprintln!(
+                    "runtime: system execution failed with exit code: {} ({}), this should be investigated",
+                    exit_code, self.ctx.execution_result.exit_code
+                )
+            }
+            #[cfg(debug_assertions)]
+            unreachable!(
+                "runtime: an unexpected trap code happened inside system runtime: {}, falling back to the unreachable code, this should be investigated",
+                trap_code
+            );
+            eprintln!(
+                "runtime: an unexpected trap code happened inside system runtime: {}, falling back to the unreachable code, this should be investigated",
+                trap_code
+            );
+            return Err(TrapCode::UnreachableCodeReached);
+        }
 
         // System runtime returns output with exit code (as first four bytes).
         // It doesn't halt, because halt or trap doesn't unwind the stack properly.
-        let ctx = compiled_runtime.store.data_mut();
-        let output = take(&mut ctx.execution_result.output);
+        let output = take(&mut self.ctx.execution_result.output);
         if output.len() < 4 {
             eprintln!(
                 "runtime: an unexpected output size returned from system runtime: {}, falling back to the unreachable code, this should be investigated",
@@ -133,9 +163,9 @@ impl SystemRuntime {
             return Err(TrapCode::UnreachableCodeReached);
         }
         let (exit_code_le, output) = output.split_at(4);
-        ctx.execution_result.output = output.to_vec();
+        self.ctx.execution_result.output = output.to_vec();
         let exit_code = i32::from_le_bytes(exit_code_le.try_into().unwrap());
-        ctx.execution_result.exit_code = exit_code;
+        self.ctx.execution_result.exit_code = exit_code;
 
         // If the execution result is `InterruptionCalled`, then interruption is called, we should re-map
         // trap code into an interruption.
@@ -144,57 +174,47 @@ impl SystemRuntime {
         //  applications can use this error code, but it won't be handled because of different
         //  runtime (only punishment for halt exit code).
         if ExitCode::from_repr(exit_code) == Some(ExitCode::InterruptionCalled) {
+            // It's not allowed to have trap code with this output
+            // (even ExecutionHalted is not allowed)
+            assert!(
+                result.is_ok(),
+                "runtime: a trap code can't happen during system interruption"
+            );
             // We need to move output into return data, because in our common case, interruptions
             // store syscall params inside return data,
             // but we can't suppose this for system runtime contracts because we don't expose such
             // functions, that's why we should move data from output into return data
-            ctx.execution_result.return_data = take(&mut ctx.execution_result.output);
+            self.ctx.execution_result.return_data = take(&mut self.ctx.execution_result.output);
+            assert!(
+                !self.ctx.execution_result.return_data.is_empty(),
+                "runtime: output can't be empty for interrupted call"
+            );
             // Initialize resumable context with empty parameters, these values are passed into
             // the resume function once we're ready to resume
             self.state = Some(RuntimeInterruptionOutcomeV1::default());
             return Err(TrapCode::InterruptionCalled);
         }
 
-        let result = result.map_err(map_anyhow_error).or_else(|trap_code| {
-            // Trap code `ExecutionHalted` is used to unwind the execution and terminate, that's
-            // why we map it into `Ok()`
-            if trap_code == TrapCode::ExecutionHalted {
-                Ok(())
-            } else {
-                Err(trap_code)
-            }
-        });
-
-        if let Err(trap_code) = &result {
-            eprintln!(
-                "runtime: an unexpected trap code happened inside system runtime: {}, falling back to the unreachable code, this should be investigated",
-                trap_code
-            );
-            return Err(TrapCode::UnreachableCodeReached);
-        }
-
         result
     }
 
-    pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {
-        let Some(mut outcome) = self.state.take() else {
-            unreachable!("missing interrupted state, interruption should never happen inside system contracts");
-        };
-        let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
-        let mut store_mut = compiled_runtime.store.as_context_mut();
+    pub fn resume(&mut self, _exit_code: i32, _fuel_consumed: u64) -> Result<(), TrapCode> {
+        // let Some(mut outcome) = self.state.take() else {
+        //     unreachable!("missing interrupted state, interruption should never happen inside system contracts");
+        // };
+        // outcome.fuel_consumed += fuel_consumed;
 
         // Here we need to remap interruption result into the custom struct because we need to
         // pass information about fuel consumed and exit code into the runtime.
         // That is why we move return data into the output and serialize output into the return data.
-        let data_mut = store_mut.data_mut();
-        outcome.output = take(&mut data_mut.execution_result.return_data).into();
-        outcome.exit_code = exit_code;
-        let outcome = bincode::encode_to_vec(&outcome, bincode::config::legacy()).unwrap();
-        data_mut.execution_result.return_data = outcome;
+        // outcome.output = take(&mut self.ctx.execution_result.return_data).into();
+        // outcome.exit_code = exit_code;
+        // let outcome = bincode::encode_to_vec(&outcome, bincode::config::legacy()).unwrap();
+        // self.ctx.execution_result.return_data = outcome;
 
         // Make sure the runtime is always clear before resuming the call, because output is used
         // to pass interruption params in case of interruption
-        data_mut.clear_output();
+        self.ctx.clear_output();
 
         // Since we don't suppose native interruptions inside system runtimes then we just re-call
         // execute, but with passed return data with interruption outcome.
@@ -205,13 +225,8 @@ impl SystemRuntime {
         self.execute()
     }
 
-    pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), TrapCode> {
-        self.state.as_mut().unwrap().fuel_consumed += fuel;
-        Ok(())
-    }
-
     pub fn memory_write(&mut self, offset: usize, data: &[u8]) -> Result<(), TrapCode> {
-        let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
+        let mut compiled_runtime = self.compiled_runtime.borrow_mut();
         let memory = compiled_runtime.memory;
         memory
             .write(&mut compiled_runtime.store, offset, data)
@@ -219,7 +234,7 @@ impl SystemRuntime {
     }
 
     pub fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
-        let compiled_runtime = self.compiled_runtime.as_ref().unwrap();
+        let compiled_runtime = self.compiled_runtime.borrow();
         compiled_runtime
             .memory
             .read(&compiled_runtime.store, offset, buffer)
@@ -232,13 +247,11 @@ impl SystemRuntime {
     }
 
     pub fn context_mut<R, F: FnOnce(&mut RuntimeContext) -> R>(&mut self, func: F) -> R {
-        let compiled_runtime = self.compiled_runtime.as_mut().unwrap();
-        func(compiled_runtime.store.data_mut())
+        func(&mut self.ctx)
     }
 
     pub fn context<R, F: FnOnce(&RuntimeContext) -> R>(&self, func: F) -> R {
-        let compiled_runtime = self.compiled_runtime.as_ref().unwrap();
-        func(compiled_runtime.store.data())
+        func(&self.ctx)
     }
 }
 

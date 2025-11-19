@@ -34,7 +34,8 @@ impl RwasmRuntime {
             .execute(&mut self.store, self.entrypoint, &[], &mut [])
     }
 
-    pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {
+    pub fn resume(&mut self, exit_code: i32, fuel_consumed: u64) -> Result<(), TrapCode> {
+        self.store.try_consume_fuel(fuel_consumed)?;
         self.strategy
             .resume(&mut self.store, &[Value::I32(exit_code)], &mut [])
     }
@@ -45,10 +46,6 @@ impl RwasmRuntime {
 
     pub fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
         self.store.memory_read(offset, buffer)
-    }
-
-    pub fn try_consume_fuel(&mut self, delta: u64) -> Result<(), TrapCode> {
-        self.store.try_consume_fuel(delta)
     }
 
     pub fn remaining_fuel(&self) -> Option<u64> {

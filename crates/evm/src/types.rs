@@ -13,6 +13,7 @@ pub struct InterruptionOutcome {
     pub output: Bytes,
     pub gas: Gas,
     pub exit_code: ExitCode,
+    pub halted_frame: bool,
 }
 
 impl InterruptionOutcome {

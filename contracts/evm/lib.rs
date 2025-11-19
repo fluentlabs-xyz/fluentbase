@@ -10,9 +10,10 @@ use fluentbase_evm::{
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult,
 };
 use fluentbase_sdk::{
-    bincode, byteorder, byteorder::ByteOrder, entrypoint, keccak256, Bytes, ContextReader,
-    ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SharedAPI,
-    SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
+    bincode, byteorder, byteorder::ByteOrder, crypto::crypto_keccak256, debug_log,
+    define_entrypoint, define_panic_handler, entrypoint, keccak256, Bytes, ContextReader, ExitCode,
+    RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SharedAPI, SyscallInvocationParams, B256,
+    EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
 };
 use revm_interpreter::InterpreterAction;
 use spin::MutexGuard;
@@ -46,6 +47,7 @@ fn restore_evm_context_or_create<'a>(
 ) -> &'a mut EthVM {
     // If return data is empty, then we create new EVM frame
     if return_data.is_empty() {
+        debug_log!("creating new frame: len={}", cached_state.len());
         // Decode new frame input
         let (new_frame_input, _) = bincode::decode_from_slice::<RuntimeNewFrameInputV1, _>(
             input.as_ref(),
@@ -73,6 +75,7 @@ fn restore_evm_context_or_create<'a>(
         drop(context);
         let (
             RuntimeInterruptionOutcomeV1 {
+                halted_frame,
                 output,
                 fuel_consumed,
                 fuel_refunded,
@@ -84,6 +87,12 @@ fn restore_evm_context_or_create<'a>(
             bincode::config::legacy(),
         )
         .unwrap();
+        debug_log!(
+            "restoring frame halted_frame={} exit_code={} fuel_consumed={}",
+            halted_frame,
+            exit_code,
+            fuel_consumed
+        );
         let Some(eth_vm) = cached_state.last_mut() else {
             unreachable!("evm: missing cached evm state, can't resume execution")
         };
@@ -91,6 +100,7 @@ fn restore_evm_context_or_create<'a>(
         gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
         {
             let dirty_gas = &mut eth_vm.interpreter.gas;
+            debug_log!("the gas state after interruption: {:?}", dirty_gas);
             if !dirty_gas.record_cost(gas.spent()) {
                 unreachable!(
                     "evm: a fatal gas mis-sync between runtimes, this should never happen"
@@ -99,11 +109,16 @@ fn restore_evm_context_or_create<'a>(
             eth_vm.interpreter.extend.committed_gas = *dirty_gas;
         }
         let exit_code = ExitCode::from(exit_code);
-        eth_vm.interpreter.extend.interruption_outcome = Option::from(InterruptionOutcome {
-            output,
-            gas,
-            exit_code,
-        });
+        _ = eth_vm
+            .interpreter
+            .extend
+            .interruption_outcome
+            .insert(InterruptionOutcome {
+                output,
+                gas,
+                exit_code,
+                halted_frame,
+            });
         eth_vm
     }
 }
@@ -115,10 +130,10 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let (exit_code, output) = deploy_inner(&mut sdk, lock_evm_context());
     let mut exit_code_le: [u8; 4] = [0u8; 4];
     byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
-    sdk.write(&exit_code_le);
-    if !output.is_empty() {
-        sdk.write(output.as_ref());
-    }
+    let mut result = Vec::with_capacity(4 + output.len());
+    result.extend_from_slice(&exit_code_le);
+    result.extend_from_slice(&output);
+    sdk.write(&result);
 }
 
 fn deploy_inner<SDK: SharedAPI>(
@@ -157,7 +172,7 @@ fn deploy_inner<SDK: SharedAPI>(
                 sdk.charge_fuel(consumed_diff);
                 // We intentionally don't charge gas for these opcodes
                 // to keep full compatibility with an EVM deployment process
-                let evm_code_hash = keccak256(result.output.as_ref());
+                let evm_code_hash = crypto_keccak256(result.output.as_ref());
                 let analyzed_bytecode = AnalyzedBytecode::new(result.output, evm_code_hash);
                 let evm_bytecode = EthereumMetadata::Analyzed(analyzed_bytecode).write_to_bytes();
                 (ExitCode::Ok, evm_bytecode)
@@ -202,10 +217,10 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let (exit_code, output) = main_inner(&mut sdk, lock_evm_context());
     let mut exit_code_le: [u8; 4] = [0u8; 4];
     byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
-    sdk.write(&exit_code_le);
-    if !output.is_empty() {
-        sdk.write(output.as_ref());
-    }
+    let mut result = Vec::with_capacity(4 + output.len());
+    result.extend_from_slice(&exit_code_le);
+    result.extend_from_slice(&output);
+    sdk.write(&result);
 }
 
 #[inline(never)]
@@ -245,6 +260,7 @@ fn main_inner<SDK: SharedAPI>(
             fuel_limit,
             state,
         } => {
+            debug_log!("system interruption code_hash={}", code_hash);
             let input_offset = input.as_ptr() as usize;
             evm.sync_evm_gas(sdk);
             let syscall_params = SyscallInvocationParams {
@@ -257,11 +273,25 @@ fn main_inner<SDK: SharedAPI>(
             .encode();
             (ExitCode::InterruptionCalled, syscall_params.into())
         }
-        InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
+        InterpreterAction::NewFrame(_) => unreachable!("evm: frames can't be produced"),
     }
 }
 
 entrypoint!(main_entry, deploy_entry);
+
+// define_entrypoint!(main_entry, deploy_entry);
+// define_panic_handler!();
+//
+// #[cfg(target_arch = "wasm32")]
+// mod _global_alloc {
+//     use talc::TalckWasm;
+//
+//     #[global_allocator]
+//     static ALLOCATOR: TalckWasm = unsafe { TalckWasm::new_global() };
+// }
+//
+// #[cfg(not(target_arch = "wasm32"))]
+// fn main() {}
 
 #[cfg(test)]
 mod tests {

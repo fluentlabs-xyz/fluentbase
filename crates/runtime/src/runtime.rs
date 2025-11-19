@@ -20,17 +20,10 @@ impl ExecutionMode {
         }
     }
 
-    pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {
+    pub fn resume(&mut self, exit_code: i32, fuel_consumed: u64) -> Result<(), TrapCode> {
         match self {
-            ExecutionMode::Rwasm(runtime) => runtime.resume(exit_code),
-            ExecutionMode::System(runtime) => runtime.resume(exit_code),
-        }
-    }
-
-    pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), TrapCode> {
-        match self {
-            ExecutionMode::Rwasm(runtime) => runtime.try_consume_fuel(fuel),
-            ExecutionMode::System(runtime) => runtime.try_consume_fuel(fuel),
+            ExecutionMode::Rwasm(runtime) => runtime.resume(exit_code, fuel_consumed),
+            ExecutionMode::System(runtime) => runtime.resume(exit_code, fuel_consumed),
         }
     }
 

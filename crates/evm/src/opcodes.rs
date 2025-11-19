@@ -32,6 +32,14 @@ macro_rules! unpack_interruption {
         if let Some(interruption_outcome) =
             take(&mut $context.interpreter.extend.interruption_outcome)
         {
+            if interruption_outcome.halted_frame {
+                let result = interruption_outcome.into_interpreter_result();
+                $context
+                    .interpreter
+                    .bytecode
+                    .set_action(InterpreterAction::Return(result));
+                return;
+            }
             Some(interruption_outcome)
         } else {
             None

@@ -326,17 +326,13 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             runtime.context_mut(|ctx| {
                 ctx.execution_result.return_data = return_data.to_vec();
             });
-            // If we have fuel consumed greater than 0 then record it
-            if fuel_consumed > 0 {
-                runtime.try_consume_fuel(fuel_consumed)?;
-            }
             if fuel16_ptr > 0 {
                 let mut buffer = [0u8; 16];
                 LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
                 LittleEndian::write_i64(&mut buffer[8..], fuel_refunded);
                 runtime.memory_write(fuel16_ptr as usize, &buffer)?;
             }
-            runtime.resume(exit_code)
+            runtime.resume(exit_code, fuel_consumed)
         };
         let result = resume_inner(&mut runtime);
         // We need to adjust the fuel limit because `fuel_consumed` should not be included into spent.

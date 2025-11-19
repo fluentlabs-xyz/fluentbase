@@ -122,6 +122,7 @@ impl EthVM {
                             output,
                             gas,
                             exit_code,
+                            halted_frame: false,
                         });
                 }
                 InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
