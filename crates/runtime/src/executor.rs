@@ -381,7 +381,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         self.recoverable_runtimes.clear();
         // Note: Ideally this shouldn't be required if there is no memory leaks, but supporting a
         // memory allocator inside virtual runtime brings overhead.
-        // Instead, we can just re-create the store to make sure all data is prunes.
+        // Instead, we can just re-create the store to make sure all data is pruned.
         SystemRuntime::reset_cached_runtimes();
     }
 

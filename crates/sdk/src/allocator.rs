@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 
 const WASM_PAGE_SIZE_IN_BYTES: usize = 65536;
 
+#[allow(dead_code)]
 fn calc_pages_needed(pages_allocated: usize, required_bytes: usize) -> usize {
     let have = pages_allocated * WASM_PAGE_SIZE_IN_BYTES;
     if required_bytes <= have {
@@ -46,7 +47,7 @@ pub struct HeapBaseAllocator {}
 static mut HEAP_POS: usize = 0;
 
 #[inline(always)]
-pub fn heap_pos() -> usize {
+pub fn alloc_heap_pos() -> usize {
     #[cfg(target_arch = "wasm32")]
     unsafe {
         HEAP_POS
@@ -54,6 +55,14 @@ pub fn heap_pos() -> usize {
     #[cfg(not(target_arch = "wasm32"))]
     {
         usize::MAX
+    }
+}
+
+#[inline(always)]
+pub fn rollback_heap_pos(new_heap_pos: usize) {
+    #[cfg(target_arch = "wasm32")]
+    unsafe {
+        HEAP_POS = new_heap_pos
     }
 }
 

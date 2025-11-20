@@ -39,6 +39,10 @@ pub mod svm;
 // mod universal_token;
 #[cfg(test)]
 mod ddos;
+// #[cfg(test)]
+// mod erc20;
+#[cfg(test)]
+mod bench;
 #[cfg(test)]
 mod update_account;
 #[cfg(test)]

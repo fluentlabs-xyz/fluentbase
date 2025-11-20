@@ -5,7 +5,7 @@ use crate::{
 };
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    BytecodeOrHash, Bytes, BytesOrRef, ExitCode, SyscallInvocationParams, B256, CALL_STACK_LIMIT,
+    BytecodeOrHash, BytesOrRef, ExitCode, SyscallInvocationParams, B256, CALL_STACK_LIMIT,
 };
 use rwasm::{Store, TrapCode, Value};
 use std::{
