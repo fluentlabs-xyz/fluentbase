@@ -46,7 +46,6 @@ fn restore_evm_context_or_create<'a>(
 ) -> &'a mut EthVM {
     // If return data is empty, then we create new EVM frame
     if return_data.is_empty() {
-        debug_log!("creating new frame: len={}", cached_state.len());
         // Decode new frame input
         let (new_frame_input, _) = bincode::decode_from_slice::<RuntimeNewFrameInputV1, _>(
             input.as_ref(),
@@ -86,12 +85,6 @@ fn restore_evm_context_or_create<'a>(
             bincode::config::legacy(),
         )
         .unwrap();
-        debug_log!(
-            "restoring frame halted_frame={} exit_code={} fuel_consumed={}",
-            halted_frame,
-            exit_code,
-            fuel_consumed
-        );
         let Some(eth_vm) = cached_state.last_mut() else {
             unreachable!("evm: missing cached evm state, can't resume execution")
         };
@@ -99,7 +92,6 @@ fn restore_evm_context_or_create<'a>(
         gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
         {
             let dirty_gas = &mut eth_vm.interpreter.gas;
-            debug_log!("the gas state after interruption: {:?}", dirty_gas);
             if !dirty_gas.record_cost(gas.spent()) {
                 unreachable!(
                     "evm: a fatal gas mis-sync between runtimes, this should never happen"
@@ -259,7 +251,6 @@ fn main_inner<SDK: SharedAPI>(
             fuel_limit,
             state,
         } => {
-            debug_log!("system interruption code_hash={}", code_hash);
             let input_offset = input.as_ptr() as usize;
             evm.sync_evm_gas(sdk);
             let syscall_params = SyscallInvocationParams {

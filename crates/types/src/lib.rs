@@ -10,7 +10,6 @@ mod exit_code;
 pub mod fd;
 mod genesis;
 mod import_linker;
-mod log;
 mod native_api;
 mod runtime;
 #[cfg(target_arch = "wasm32")]

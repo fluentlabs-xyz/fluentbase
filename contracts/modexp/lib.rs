@@ -3,6 +3,7 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
+use alloc::vec::Vec;
 use fluentbase_sdk::{
     alloc_slice, byteorder, byteorder::ByteOrder, entrypoint, Bytes, ContextReader, ExitCode,
     SharedAPI,
@@ -12,10 +13,10 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     let (exit_code, output) = main_inner(&mut sdk);
     let mut exit_code_le: [u8; 4] = [0u8; 4];
     byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
-    sdk.write(&exit_code_le);
-    if !output.is_empty() {
-        sdk.write(output.as_ref());
-    }
+    let mut result = Vec::with_capacity(4 + output.len());
+    result.extend_from_slice(&exit_code_le);
+    result.extend_from_slice(&output);
+    sdk.write(&result);
 }
 
 fn main_inner(sdk: &mut impl SharedAPI) -> (ExitCode, Bytes) {

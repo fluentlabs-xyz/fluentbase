@@ -10,16 +10,17 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+# fluentbase
 fluentbase-sdk = { workspace = true }
+# misc
 bitvec = { workspace = true }
 bincode = { workspace = true }
-
+serde = { workspace = true }
 # revm
 revm-primitives = { workspace = true }
 revm-bytecode = { workspace = true }
 revm-interpreter = { workspace = true }
 revm-context = { workspace = true }
-serde = { version = "1.0.228", default-features = false, features = ["derive"] }
 
 [features]
 default = ["std"]
