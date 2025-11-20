@@ -6,12 +6,14 @@
 use fluentbase_sdk::{Bytes, ExitCode, B256, FUEL_DENOM_RATE, U256};
 use revm_interpreter::{interpreter::EthInterpreter, Gas, InstructionResult, InterpreterResult};
 
-#[derive(Debug)]
+#[derive(Default, Debug, Clone)]
 /// Result of a host interruption (output, gas delta, and exit code).
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InterruptionOutcome {
     pub output: Bytes,
     pub gas: Gas,
     pub exit_code: ExitCode,
+    pub halted_frame: bool,
 }
 
 impl InterruptionOutcome {
@@ -47,7 +49,8 @@ impl InterruptionOutcome {
 }
 
 /// Extra per-interpreter state used during interruptions.
-#[derive(Default)]
+#[derive(Default, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InterruptionExtension {
     pub interruption_outcome: Option<InterruptionOutcome>,
     pub committed_gas: Gas,

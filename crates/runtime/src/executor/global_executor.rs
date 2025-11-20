@@ -2,8 +2,9 @@ use crate::{
     executor::RuntimeFactoryExecutor, types::ExecutionResult, RuntimeContext, RuntimeExecutor,
 };
 use fluentbase_types::{import_linker_v1_preview, Address, BytecodeOrHash, Bytes, B256};
-use rwasm::RwasmModule;
+use rwasm::{RwasmModule, TrapCode};
 use std::{
+    ops::Range,
     panic,
     sync::{
         mpsc::{sync_channel, Receiver, SyncSender},
@@ -153,6 +154,15 @@ impl RuntimeExecutor for GlobalExecutor {
             Ok(result) => result,
             Err(panic_payload) => panic::resume_unwind(panic_payload),
         }
+    }
+
+    fn memory_read(
+        &mut self,
+        call_id: u32,
+        offset: usize,
+        buffer: &mut [u8],
+    ) -> Result<(), TrapCode> {
+        unimplemented!();
     }
 }
 

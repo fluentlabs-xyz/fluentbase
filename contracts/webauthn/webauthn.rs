@@ -199,7 +199,8 @@ fn verify_signature(
     let input_bytes = Bytes::copy_from_slice(&input);
 
     // Call the secp256r1 precompile
-    let result = revm_precompile::secp256r1::p256_verify(&input_bytes, gas_limit).map_err(|_| ExitCode::PrecompileError)?;
+    let result = revm_precompile::secp256r1::p256_verify(&input_bytes, gas_limit)
+        .map_err(|_| ExitCode::PrecompileError)?;
 
     // Check the result: if the last byte is 1, the signature is valid
     Ok(!result.bytes.is_empty() && result.bytes[result.bytes.len() - 1] == 1)

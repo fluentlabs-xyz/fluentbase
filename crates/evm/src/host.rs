@@ -15,7 +15,7 @@ pub(crate) trait HostWrapper {
 
 /// Wrapper that implements revm::Host for our SDK, but actual effects
 /// are performed through the interruption protocol.
-pub(crate) struct HostWrapperImpl<'a, SDK: SharedAPI> {
+pub struct HostWrapperImpl<'a, SDK: SharedAPI> {
     sdk: &'a mut SDK,
 }
 

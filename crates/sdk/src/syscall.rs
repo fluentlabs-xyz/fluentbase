@@ -242,7 +242,7 @@ impl<T: InterruptAPI + ?Sized> SyscallInterruptExecutor for T {
     fn self_balance(&self) -> (u64, i64, i32) {
         self.interrupt(
             BytecodeOrHash::Hash(SYSCALL_ID_SELF_BALANCE),
-            Default::default(),
+            &[],
             None,
             STATE_MAIN,
         )

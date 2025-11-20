@@ -18,7 +18,7 @@ use crate::{
 use alloc::{vec, vec::Vec};
 use core::{cell::RefCell, marker::PhantomData};
 use fluentbase_sdk::{
-    debug_log, debug_log_ext, Address, ContextReader, SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
+    debug_log, Address, ContextReader, SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
 };
 use fluentbase_svm_common::common::evm_address_from_pubkey;
 use fluentbase_universal_token::events::{

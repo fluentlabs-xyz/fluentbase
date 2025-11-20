@@ -3,23 +3,21 @@ extern crate alloc;
 extern crate core;
 
 use alloc::vec::Vec;
-use fluentbase_sdk::{
-    debug_log_ext, entrypoint, Address, ContextReader, SharedAPI, UNIVERSAL_TOKEN_MAGIC_BYTES,
+use fluentbase_sdk::{entrypoint, Address, ContextReader, SharedAPI, UNIVERSAL_TOKEN_MAGIC_BYTES};
+use fluentbase_svm::{
+    fluentbase::token2022::{token2022_process, token2022_process_raw},
+    pubkey::{Pubkey, PUBKEY_BYTES},
+    token_2022,
+    token_2022::{extension::ExtensionType, instruction::AuthorityType, processor::Processor},
 };
-use fluentbase_svm::fluentbase::token2022::{token2022_process, token2022_process_raw};
-use fluentbase_svm::pubkey::{Pubkey, PUBKEY_BYTES};
-use fluentbase_svm::token_2022;
-use fluentbase_svm::token_2022::extension::ExtensionType;
-use fluentbase_svm::token_2022::instruction::AuthorityType;
-use fluentbase_svm::token_2022::processor::Processor;
-use fluentbase_svm_common::common::{
-    lamports_to_bytes, pubkey_from_evm_address, pubkey_try_from_slice,
-};
-use fluentbase_svm_common::universal_token::{
-    AllowanceParams, ApproveCheckedParams, ApproveParams, BurnCheckedParams, BurnParams,
-    CloseAccountParams, FreezeAccountParams, GetAccountDataSizeParams, InitializeAccountParams,
-    InitializeMintParams, MintToParams, RevokeParams, SetAuthorityParams, ThawAccountParams,
-    TransferFromParams, TransferParams,
+use fluentbase_svm_common::{
+    common::{lamports_to_bytes, pubkey_from_evm_address, pubkey_try_from_slice},
+    universal_token::{
+        AllowanceParams, ApproveCheckedParams, ApproveParams, BurnCheckedParams, BurnParams,
+        CloseAccountParams, FreezeAccountParams, GetAccountDataSizeParams, InitializeAccountParams,
+        InitializeMintParams, MintToParams, RevokeParams, SetAuthorityParams, ThawAccountParams,
+        TransferFromParams, TransferParams,
+    },
 };
 use fluentbase_universal_token::{
     common::bytes_to_sig,
@@ -146,7 +144,6 @@ fn transfer_from<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn initialize_mint<SDK: SharedAPI, const IS_DEPLOY: bool>(sdk: &mut SDK, input: &[u8]) {
-    debug_log_ext!("IS_DEPLOY={}", IS_DEPLOY);
     let Ok(p) = InitializeMintParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
@@ -249,7 +246,6 @@ fn approve<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 
 fn approve_checked<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     let Ok(p) = ApproveCheckedParams::try_parse(input) else {
-        debug_log_ext!();
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let instruction = token_2022::instruction::approve_checked(

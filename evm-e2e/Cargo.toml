@@ -52,6 +52,8 @@ std = [
 debug-print = [
     "revm/debug-print",
     "fluentbase-revm/debug-print",
+    "fluentbase-sdk/debug-print",
+    "fluentbase-runtime/debug-print",
     # "rwasm/debug-print",
 ]
 wasmtime = [

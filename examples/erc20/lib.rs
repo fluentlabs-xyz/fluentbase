@@ -8,11 +8,10 @@ use alloc::{string::String, vec::Vec};
 use alloy_sol_types::{sol, SolEvent};
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{constructor, router, Storage},
+    derive::{constructor, router, Contract},
     storage::{StorageMap, StorageString, StorageU256},
     Address, ContextReader, SharedAPI, B256, U256,
 };
-use fluentbase_sdk::derive::Contract;
 
 // Define the Transfer and Approval events
 sol! {
@@ -200,7 +199,7 @@ basic_entrypoint!(ERC20);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{address, codec::Encoder, ContractContextV1, U256};
+    use fluentbase_sdk::{address, ContractContextV1, U256};
     use fluentbase_testing::HostTestingContext;
 
     #[test]

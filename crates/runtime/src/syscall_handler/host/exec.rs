@@ -5,7 +5,7 @@ use crate::{
 };
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    BytecodeOrHash, Bytes, BytesOrRef, ExitCode, SyscallInvocationParams, B256, CALL_STACK_LIMIT,
+    BytecodeOrHash, BytesOrRef, ExitCode, SyscallInvocationParams, B256, CALL_STACK_LIMIT,
 };
 use rwasm::{Store, TrapCode, Value};
 use std::{
@@ -65,13 +65,10 @@ pub fn syscall_exec_handler(
     let mut code_hash = [0u8; 32];
     caller.memory_read(hash32_ptr, &mut code_hash)?;
     let code_hash = B256::from(code_hash);
-    let mut input = vec![0u8; input_len];
-    caller.memory_read(input_ptr, &mut input)?;
-    let input = Bytes::from(input);
     let is_root = caller.context(|ctx| ctx.call_depth) == 0;
     let params = SyscallInvocationParams {
         code_hash,
-        input,
+        input: input_ptr..(input_ptr + input_len),
         fuel_limit,
         state,
         fuel16_ptr: fuel16_ptr as u32,
@@ -83,20 +80,21 @@ pub fn syscall_exec_handler(
 
 /// Continues an exec after an interruption, executing the delegated call.
 pub fn syscall_exec_continue(
-    caller: &mut impl Store<RuntimeContext>,
-    context: &InterruptionHolder,
+    _caller: &mut impl Store<RuntimeContext>,
+    _context: &InterruptionHolder,
 ) -> (u64, i64, i32) {
-    let fuel_limit = context.params.fuel_limit;
-    let (fuel_consumed, fuel_refunded, exit_code) = caller.context_mut(|ctx| {
-        syscall_exec_impl(
-            ctx,
-            context.params.code_hash,
-            BytesOrRef::Ref(context.params.input.as_ref()),
-            fuel_limit,
-            context.params.state,
-        )
-    });
-    (fuel_consumed, fuel_refunded, exit_code)
+    unimplemented!("runtime: not supported until we finish zkVM");
+    // let fuel_limit = context.params.fuel_limit;
+    // let (fuel_consumed, fuel_refunded, exit_code) = caller.context_mut(|ctx| {
+    //     syscall_exec_impl(
+    //         ctx,
+    //         context.params.code_hash,
+    //         BytesOrRef::Ref(context.params.input.as_ref()),
+    //         fuel_limit,
+    //         context.params.state,
+    //     )
+    // });
+    // (fuel_consumed, fuel_refunded, exit_code)
 }
 
 /// Executes a nested runtime with the given parameters and merges the result into ctx.

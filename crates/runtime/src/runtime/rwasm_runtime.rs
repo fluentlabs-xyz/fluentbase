@@ -1,49 +1,51 @@
-use crate::context::RuntimeContext;
-use rwasm::{ExecutionEngine, RwasmModule, RwasmStore, Store, TrapCode, Value};
+use crate::{syscall_handler::runtime_syscall_handler, RuntimeContext};
+use fluentbase_types::{STATE_DEPLOY, STATE_MAIN};
+use rwasm::{FuelConfig, ImportLinker, Store, Strategy, TrapCode, TypedStore, Value};
+use std::sync::Arc;
 
-/// A compiled, executable runtime instance with its store and engine strategy.
 pub struct RwasmRuntime {
-    /// An engine for executing rWasm apps
-    pub engine: ExecutionEngine,
-    /// Underlying execution module.
-    pub module: RwasmModule,
-    /// Engine store carrying linear memory and the RuntimeContext.
-    pub store: RwasmStore<RuntimeContext>,
+    strategy: Strategy,
+    store: TypedStore<RuntimeContext>,
+    entrypoint: &'static str,
 }
 
 impl RwasmRuntime {
-    /// Creates a runtime from bytecode or code hash and initializes its store with the provided context.
     pub fn new(
-        engine: ExecutionEngine,
-        module: RwasmModule,
-        store: RwasmStore<RuntimeContext>,
+        strategy: Strategy,
+        import_linker: Arc<ImportLinker>,
+        ctx: RuntimeContext,
+        fuel_config: FuelConfig,
     ) -> Self {
+        let entrypoint = match ctx.state {
+            STATE_MAIN => "main",
+            STATE_DEPLOY => "deploy",
+            _ => unreachable!(),
+        };
+        let store = strategy.create_store(import_linker, ctx, runtime_syscall_handler, fuel_config);
         Self {
-            engine,
-            module,
+            strategy,
             store,
+            entrypoint,
         }
     }
 
     pub fn execute(&mut self) -> Result<(), TrapCode> {
-        self.engine
-            .execute(&mut self.store, &self.module, &[], &mut [])
+        self.strategy
+            .execute(&mut self.store, self.entrypoint, &[], &mut [])
     }
 
-    pub fn resume(&mut self, exit_code: i32) -> Result<(), TrapCode> {
-        self.engine.resume(
-            &mut self.store,
-            &[Value::I32(exit_code)],
-            &mut [],
-        )
+    pub fn resume(&mut self, exit_code: i32, fuel_consumed: u64) -> Result<(), TrapCode> {
+        self.store.try_consume_fuel(fuel_consumed)?;
+        self.strategy
+            .resume(&mut self.store, &[Value::I32(exit_code)], &mut [])
     }
 
     pub fn memory_write(&mut self, offset: usize, data: &[u8]) -> Result<(), TrapCode> {
         self.store.memory_write(offset, data)
     }
 
-    pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), TrapCode> {
-        self.store.try_consume_fuel(fuel)
+    pub fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
+        self.store.memory_read(offset, buffer)
     }
 
     pub fn remaining_fuel(&self) -> Option<u64> {

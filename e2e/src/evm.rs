@@ -200,10 +200,7 @@ fn test_evm_self_destruct() {
         .gas_price(gas_price)
         .exec();
     if !result.is_success() {
-        println!(
-            "{}",
-            from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
-        );
+        try_print_utf8_error(result.output().cloned().unwrap_or_default().as_ref());
     }
     assert!(result.is_success());
     assert_eq!(result.gas_used(), 51003);
@@ -282,7 +279,7 @@ fn test_evm_erc20() {
 
 #[test]
 fn test_evm_balance() {
-    const OWNER_ADDRESS: Address = address!("1111111111111111111111111111111111111111");
+    const OWNER_ADDRESS: Address = Address::repeat_byte(0x11);
     let mut bytecode = Vec::new();
     bytecode.push(opcode::PUSH20);
     bytecode.extend_from_slice(OWNER_ADDRESS.as_slice());
@@ -301,15 +298,16 @@ fn test_evm_balance() {
     );
     let result = ctx.call_evm_tx(OWNER_ADDRESS, contract_address, hex!("").into(), None, None);
     println!("{:?}", result);
+    if !result.is_success() {
+        try_print_utf8_error(result.output().cloned().unwrap_or_default().as_ref());
+    }
     assert!(result.is_success());
     let output = result.into_output().unwrap_or_default();
     assert_eq!(output.len(), 32);
     // assert_eq!(result.gas_used(), 21116);
     let balance = U256::from_be_slice(output.as_ref());
-    assert_eq!(
-        balance,
-        U256::from_str_radix("999999999997000000", 10).unwrap()
-    );
+    let expected_balance = U256::from_str_radix("999999999997000000", 10).unwrap();
+    assert_eq!(balance, expected_balance);
 }
 
 #[test]

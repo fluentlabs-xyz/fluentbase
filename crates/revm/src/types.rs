@@ -1,7 +1,6 @@
 use crate::ExecutionResult;
 use fluentbase_sdk::SyscallInvocationParams;
 use revm::interpreter::Gas;
-use std::boxed::Box;
 
 /// A system interruption input params
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,21 +12,20 @@ pub struct SystemInterruptionInputs {
     /// A gas snapshot assigned before the interruption.
     /// We need this to calculate the final amount of gas charged for the entire interruption.
     pub gas: Gas,
-    /// Indicates is interruption happen inside contact deployment.
-    pub is_create: bool,
-    /// Indicates is interruption happen inside static call.
-    pub is_static: bool,
 }
 
 /// An interruption outcome.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SystemInterruptionOutcome {
     /// Original inputs.
-    pub inputs: Box<SystemInterruptionInputs>,
+    pub inputs: SystemInterruptionInputs,
     /// An interruption execution result.
     /// It can be empty for frame creation,
     /// where we don't know the result until the frame is executed.
     pub result: Option<ExecutionResult>,
-    /// Indicated is it a nested frame call or not.
-    pub is_frame: bool,
+    /// Indicates was the frame halted before execution.
+    /// When we do CALL-like op we can halt execution during the frame creation, we
+    /// should handle this to forward inside the system runtime to make sure all frames
+    /// are terminated gracefully.
+    pub halted_frame: bool,
 }

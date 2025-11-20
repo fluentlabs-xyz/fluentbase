@@ -54,7 +54,7 @@ macro_rules! entrypoint_with_storage {
 }
 
 #[macro_export]
-macro_rules! func_entrypoint {
+macro_rules! define_entrypoint {
     ($main_func:ident, $deploy_func:ident) => {
         #[cfg(target_arch = "wasm32")]
         mod _fluentbase_entrypoint {
@@ -79,8 +79,6 @@ macro_rules! func_entrypoint {
                 let sdk = SharedContextImpl::new(RwasmContext {});
                 __deploy_entry(sdk);
             }
-            $crate::define_panic_handler!();
-            $crate::define_allocator!();
         }
     };
     ($main_func:ident) => {
@@ -99,9 +97,21 @@ macro_rules! func_entrypoint {
             }
             #[no_mangle]
             extern "C" fn deploy() {}
-            $crate::define_panic_handler!();
-            $crate::define_allocator!();
         }
+    };
+}
+
+#[macro_export]
+macro_rules! func_entrypoint {
+    ($main_func:ident, $deploy_func:ident) => {
+        $crate::define_entrypoint!($main_func, $deploy_func);
+        $crate::define_panic_handler!();
+        $crate::define_allocator!();
+    };
+    ($main_func:ident) => {
+        $crate::define_entrypoint!($main_func);
+        $crate::define_panic_handler!();
+        $crate::define_allocator!();
     };
 }
 

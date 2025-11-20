@@ -100,6 +100,7 @@ solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/s
 # rwasm
 rwasm = { version = "0.3.2", default-features = false }
 #rwasm = { path = "../rwasm", default-features = false }
+#rwasm = { path = "../rwasm", default-features = false }
 
 # alloy
 alloy-primitives = { version = "1.2.0", default-features = false, features = ["sha3-keccak"] }
@@ -120,7 +121,7 @@ proptest = { version = "1.5.0" }
 num-derive = { version = "0.4" }
 num-traits = { version = "0.2", features = ["i128"], default-features = false }
 
-hashbrown = { version = "0.15.0", default-features = false, features = ["default-hasher", "inline-more"] }
+hashbrown = { version = "0.16.0", default-features = false, features = ["default-hasher", "inline-more"] }
 schnellru = { version = "0.2" }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false }
@@ -147,12 +148,12 @@ quote = { version = "1.0" }
 elliptic-curve = { version = "0.13.4", features = ["hazmat", "sec1", "ecdh"], default-features = false }
 
 # revm
-revm = { package="revm-rwasm", version = "27.0.3", default-features = false }
-revm-primitives = { package="revm-rwasm-primitives", version = "20.0.0", default-features = false }
-revm-precompile = { package="revm-rwasm-precompile", version = "24.0.1", default-features = false }
-revm-bytecode = { package="revm-rwasm-bytecode", version = "6.0.1", default-features = false }
-revm-interpreter = { package="revm-rwasm-interpreter", version = "23.0.2", default-features = false }
-revm-context = { package="revm-rwasm-context", version = "8.0.3", default-features = false }
+revm = { package = "revm-rwasm", version = "27.0.3", default-features = false }
+revm-primitives = { package = "revm-rwasm-primitives", version = "20.0.0", default-features = false }
+revm-precompile = { package = "revm-rwasm-precompile", version = "24.0.1", default-features = false }
+revm-bytecode = { package = "revm-rwasm-bytecode", version = "6.0.1", default-features = false }
+revm-interpreter = { package = "revm-rwasm-interpreter", version = "23.0.2", default-features = false }
+revm-context = { package = "revm-rwasm-context", version = "8.0.3", default-features = false }
 #revm = { path = "../revm-rwasm/crates/revm", default-features = false }
 #revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false }
 #revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false }
