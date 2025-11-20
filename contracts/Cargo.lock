@@ -29,6 +29,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
 dependencies = [
  "cfg-if",
+ "getrandom 0.3.4",
  "once_cell",
  "version_check",
  "zerocopy",
@@ -1718,7 +1719,7 @@ checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1730,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -1746,7 +1747,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-precompile",
+ "revm-rwasm-precompile",
 ]
 
 [[package]]
@@ -1756,7 +1757,7 @@ dependencies = [
  "bls12_381",
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-precompile",
+ "revm-rwasm-precompile",
 ]
 
 [[package]]
@@ -1768,7 +1769,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-precompile",
+ "revm-rwasm-precompile",
 ]
 
 [[package]]
@@ -1777,7 +1778,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-precompile",
+ "revm-rwasm-precompile",
 ]
 
 [[package]]
@@ -1797,7 +1798,7 @@ dependencies = [
  "fluentbase-testing",
  "hashbrown 0.16.0",
  "lazy_static",
- "revm-interpreter",
+ "revm-rwasm-interpreter",
  "spin 0.10.0",
 ]
 
@@ -1807,7 +1808,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-precompile",
+ "revm-rwasm-precompile",
 ]
 
 [[package]]
@@ -1816,7 +1817,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-precompile",
+ "revm-rwasm-precompile",
 ]
 
 [[package]]
@@ -1825,7 +1826,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-precompile",
+ "revm-rwasm-precompile",
 ]
 
 [[package]]
@@ -1865,7 +1866,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-precompile",
+ "revm-rwasm-precompile",
 ]
 
 [[package]]
@@ -1876,7 +1877,7 @@ dependencies = [
  "fluentbase-testing",
  "hex",
  "p256",
- "revm-precompile",
+ "revm-rwasm-precompile",
  "sha2 0.10.9",
 ]
 
@@ -1914,13 +1915,13 @@ dependencies = [
  "fluentbase-testing",
  "hex",
  "p256",
- "revm-precompile",
+ "revm-rwasm-precompile",
  "sha2 0.10.9",
 ]
 
 [[package]]
 name = "fluentbase-crypto"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -1932,46 +1933,47 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
  "fluentbase-sdk",
- "revm-bytecode",
- "revm-context",
- "revm-interpreter",
- "revm-primitives",
+ "revm-rwasm-bytecode",
+ "revm-rwasm-context",
+ "revm-rwasm-interpreter",
+ "revm-rwasm-primitives",
  "serde",
 ]
 
 [[package]]
 name = "fluentbase-revm"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
  "once_cell",
- "revm",
+ "revm-rwasm",
  "rwasm",
  "tracing",
 ]
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "anyhow",
  "blake3",
  "bytemuck",
- "elliptic-curve",
  "fluentbase-types",
  "k256",
  "num",
  "p256",
  "rwasm",
+ "schnellru",
  "sha2 0.10.9",
  "smallvec",
+ "snowbridge-amcl",
  "solana-poseidon",
  "sp1-curves",
  "tiny-keccak",
@@ -1980,7 +1982,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "alloy-rlp",
  "auto_impl",
@@ -1996,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -2009,7 +2011,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -2031,7 +2033,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "arrayref",
  "bincode 2.0.1",
@@ -2042,7 +2044,7 @@ dependencies = [
  "byteorder",
  "fluentbase-sdk",
  "fluentbase-svm-common",
- "fluentbase-universal-token 0.4.10-dev",
+ "fluentbase-universal-token 0.4.11-dev",
  "hashbrown 0.16.0",
  "itertools 0.14.0",
  "lazy_static",
@@ -2085,7 +2087,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm-common"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "fluentbase-sdk",
  "serde",
@@ -2094,7 +2096,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-testing"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "bytes",
  "fluentbase-codec",
@@ -2103,13 +2105,13 @@ dependencies = [
  "fluentbase-sdk",
  "hashbrown 0.16.0",
  "hex",
- "revm",
+ "revm-rwasm",
  "rwasm",
 ]
 
 [[package]]
 name = "fluentbase-types"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "alloy-primitives",
  "bincode 2.0.1",
@@ -2118,8 +2120,8 @@ dependencies = [
  "fluentbase-codec-derive",
  "hashbrown 0.16.0",
  "paste",
- "revm-precompile",
- "revm-primitives",
+ "revm-rwasm-precompile",
+ "revm-rwasm-primitives",
  "rwasm",
  "serde",
  "strum_macros 0.27.2",
@@ -2133,7 +2135,7 @@ dependencies = [
  "fluentbase-svm",
  "fluentbase-svm-common",
  "fluentbase-testing",
- "fluentbase-universal-token 0.4.10-dev",
+ "fluentbase-universal-token 0.4.11-dev",
  "solana-bincode",
  "solana-program-error",
  "solana-program-option",
@@ -2141,7 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-universal-token"
-version = "0.4.10-dev"
+version = "0.4.11-dev"
 dependencies = [
  "bincode 2.0.1",
  "fluentbase-sdk",
@@ -2344,6 +2346,12 @@ checksum = "b0c35f58762feb77d74ebe43bdbc3210f09be9fe6742234d573bacc26ed92b67"
 dependencies = [
  "byteorder",
 ]
+
+[[package]]
+name = "hashbrown"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43a3c133739dddd0d2990f9a4bdf8eb4b21ef50e4851ca85ab661199821d510e"
 
 [[package]]
 name = "hashbrown"
@@ -3805,126 +3813,146 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
-name = "revm"
+name = "revm-rwasm"
 version = "27.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d220da88cd900161c84af260873d0318e90ff8841f11b5099d47bd972fb48d35"
 dependencies = [
- "revm-bytecode",
- "revm-context",
- "revm-context-interface",
- "revm-database",
- "revm-database-interface",
- "revm-handler",
- "revm-inspector",
- "revm-interpreter",
- "revm-precompile",
- "revm-primitives",
- "revm-state",
+ "revm-rwasm-bytecode",
+ "revm-rwasm-context",
+ "revm-rwasm-context-interface",
+ "revm-rwasm-database",
+ "revm-rwasm-database-interface",
+ "revm-rwasm-handler",
+ "revm-rwasm-inspector",
+ "revm-rwasm-interpreter",
+ "revm-rwasm-precompile",
+ "revm-rwasm-primitives",
+ "revm-rwasm-state",
 ]
 
 [[package]]
-name = "revm-bytecode"
+name = "revm-rwasm-bytecode"
 version = "6.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecd626103e7f8a7281fef422a419c01d7e8a04dc525c26ecab2a9e19efbd1d6b"
 dependencies = [
  "bitvec",
  "once_cell",
  "phf",
- "revm-primitives",
+ "revm-rwasm-primitives",
  "rwasm",
  "serde",
 ]
 
 [[package]]
-name = "revm-context"
+name = "revm-rwasm-context"
 version = "8.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68604002a0ffaf3b63da5226fbb672e0e312a54e9169e4ffafe40df6d36627c6"
 dependencies = [
  "cfg-if",
  "derive-where",
- "revm-bytecode",
- "revm-context-interface",
- "revm-database-interface",
- "revm-primitives",
- "revm-state",
+ "revm-rwasm-bytecode",
+ "revm-rwasm-context-interface",
+ "revm-rwasm-database-interface",
+ "revm-rwasm-primitives",
+ "revm-rwasm-state",
  "serde",
 ]
 
 [[package]]
-name = "revm-context-interface"
+name = "revm-rwasm-context-interface"
 version = "8.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c027dee8051888cb2960b1f51a446c71fcc64e6df6d58bb6acd62d92bdf57949"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
  "auto_impl",
  "either",
- "revm-database-interface",
- "revm-primitives",
- "revm-state",
+ "revm-rwasm-database-interface",
+ "revm-rwasm-primitives",
+ "revm-rwasm-state",
  "serde",
 ]
 
 [[package]]
-name = "revm-database"
+name = "revm-rwasm-database"
 version = "7.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "059a4a7ed60cfedb3a8ec4d686261c6c33fa04583e2234d20ca5a0d329c30470"
 dependencies = [
- "revm-bytecode",
- "revm-database-interface",
- "revm-primitives",
- "revm-state",
+ "revm-rwasm-bytecode",
+ "revm-rwasm-database-interface",
+ "revm-rwasm-primitives",
+ "revm-rwasm-state",
 ]
 
 [[package]]
-name = "revm-database-interface"
+name = "revm-rwasm-database-interface"
 version = "7.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "786e345db975798e9b927d807d64804ecc59c6a11a6560ea8d1693d716ef20b0"
 dependencies = [
  "auto_impl",
  "either",
- "revm-primitives",
- "revm-state",
+ "revm-rwasm-primitives",
+ "revm-rwasm-state",
  "serde",
 ]
 
 [[package]]
-name = "revm-handler"
+name = "revm-rwasm-handler"
 version = "8.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5b88e9523ecb583e476d2875b5a017573d0787f6f9dacc38010223d12ac12b6"
 dependencies = [
  "auto_impl",
  "derive-where",
- "revm-bytecode",
- "revm-context",
- "revm-context-interface",
- "revm-database-interface",
- "revm-interpreter",
- "revm-precompile",
- "revm-primitives",
- "revm-state",
+ "revm-rwasm-bytecode",
+ "revm-rwasm-context",
+ "revm-rwasm-context-interface",
+ "revm-rwasm-database-interface",
+ "revm-rwasm-interpreter",
+ "revm-rwasm-precompile",
+ "revm-rwasm-primitives",
+ "revm-rwasm-state",
 ]
 
 [[package]]
-name = "revm-inspector"
+name = "revm-rwasm-inspector"
 version = "8.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd558f52b25f1eb8d19f5a7225f5af83f2e77b0fc88d7817028b0d1b477df10e"
 dependencies = [
  "auto_impl",
  "either",
- "revm-context",
- "revm-database-interface",
- "revm-handler",
- "revm-interpreter",
- "revm-primitives",
- "revm-state",
+ "revm-rwasm-context",
+ "revm-rwasm-database-interface",
+ "revm-rwasm-handler",
+ "revm-rwasm-interpreter",
+ "revm-rwasm-primitives",
+ "revm-rwasm-state",
 ]
 
 [[package]]
-name = "revm-interpreter"
+name = "revm-rwasm-interpreter"
 version = "23.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbe4e56510777e610d207fcd8948e5bd3d27316682f88e5fc34b47887a9308a2"
 dependencies = [
- "revm-bytecode",
- "revm-context-interface",
- "revm-primitives",
+ "revm-rwasm-bytecode",
+ "revm-rwasm-context-interface",
+ "revm-rwasm-primitives",
  "serde",
 ]
 
 [[package]]
-name = "revm-precompile"
+name = "revm-rwasm-precompile"
 version = "24.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f42fa2affd94fadf67eb2c740f35607e8e2dc1c4d9b5c4068d4eb38f8ff162e0"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -3940,7 +3968,7 @@ dependencies = [
  "libsecp256k1 0.7.2",
  "once_cell",
  "p256",
- "revm-primitives",
+ "revm-rwasm-primitives",
  "ripemd",
  "rug",
  "secp256k1",
@@ -3948,8 +3976,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "revm-primitives"
+name = "revm-rwasm-primitives"
 version = "20.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41ab2c264030a0351d15a5ca907a5774351cf3d099d7e2b2d6c44a1cf9017cbe"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -3957,12 +3987,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "revm-state"
+name = "revm-rwasm-state"
 version = "7.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2000ab9530cec61fce184fcea6362dfe69395fad0a46c79e0cfb686bd29111a4"
 dependencies = [
  "bitflags",
- "revm-bytecode",
- "revm-primitives",
+ "revm-rwasm-bytecode",
+ "revm-rwasm-primitives",
  "serde",
 ]
 
@@ -4117,7 +4149,8 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.3.2"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#61894b725fb6a9f31ccb237328a74e29e7b9002d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b36169175e8ed473a54baf2a23ff6cf3391c12abf12c339a18d18e4990ee3c8"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -4164,6 +4197,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.108",
+]
+
+[[package]]
+name = "schnellru"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "356285bbf17bea63d9e52e96bd18f039672ac92b55b8cb997d6162a2a37d1649"
+dependencies = [
+ "ahash",
+ "cfg-if",
+ "hashbrown 0.13.2",
 ]
 
 [[package]]

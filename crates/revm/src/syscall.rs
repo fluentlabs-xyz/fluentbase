@@ -10,8 +10,8 @@ use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address, is_execute_using_system_runtime, is_system_precompile, Address, Bytes,
-    ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME,
+    calc_create_metadata_address, is_execute_using_system_runtime, is_system_precompile, Address,
+    Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME,
     STATE_MAIN, U256,
 };
 use revm::{
@@ -33,12 +33,37 @@ use revm::{
 use rwasm::TrapCode;
 use std::{boxed::Box, vec, vec::Vec};
 
+pub(crate) trait MemoryReaderTr {
+    fn memory_read(&self, call_id: u32, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode>;
+}
+
+pub(crate) struct DefaultRuntimeExecutorMemoryReader;
+#[cfg(test)]
+pub(crate) struct ForwardInputMemoryReader(Bytes);
+
+impl MemoryReaderTr for DefaultRuntimeExecutorMemoryReader {
+    fn memory_read(&self, call_id: u32, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
+        default_runtime_executor().memory_read(call_id, offset, buffer)
+    }
+}
+#[cfg(test)]
+impl MemoryReaderTr for ForwardInputMemoryReader {
+    fn memory_read(&self, _call_id: u32, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
+        self.0
+            .get(offset..offset + buffer.len())
+            .ok_or(TrapCode::MemoryOutOfBounds)?
+            .copy_to_slice(buffer);
+        Ok(())
+    }
+}
+
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     inspector: &mut Option<&mut INSP>,
     ctx: &mut CTX,
     inputs: SystemInterruptionInputs,
+    mr: impl MemoryReaderTr,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let spec_id: SpecId = ctx.cfg().spec().into();
 
@@ -134,7 +159,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 MalformedBuiltinParams
             );
             let mut input = [0u8; $length];
-            if default_runtime_executor()
+            if mr
                 .memory_read(
                     inputs.call_id,
                     inputs.syscall_params.input.start,
@@ -153,7 +178,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 MalformedBuiltinParams
             );
             let mut input = vec![0u8; $length];
-            if default_runtime_executor()
+            if mr
                 .memory_read(
                     inputs.call_id,
                     inputs.syscall_params.input.start,
@@ -169,11 +194,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 inputs.syscall_params.input.end - inputs.syscall_params.input.start - $length;
             let lazy_contract_input = move || -> Result<Vec<u8>, TrapCode> {
                 let mut variable_input = vec![0u8; remaining_length];
-                default_runtime_executor().memory_read(
-                    call_id,
-                    remaining_offset,
-                    &mut variable_input,
-                )?;
+                mr.memory_read(call_id, remaining_offset, &mut variable_input)?;
                 Ok(variable_input)
             };
             (input, lazy_contract_input)
@@ -512,7 +533,21 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             assert_halt!(!is_static, StateChangeDuringStaticCall);
             // Read the number of topics from the input and make sure the total numbers of
             // topics don't exceed 4 elements
-            let (input, _) = get_input_validated!(>= 1);
+            assert_halt!(
+                inputs.syscall_params.input.len() >= 1 && inputs.syscall_params.state == STATE_MAIN,
+                MalformedBuiltinParams
+            );
+            let mut input = [0u8; 1];
+            if mr
+                .memory_read(
+                    inputs.call_id,
+                    inputs.syscall_params.input.start,
+                    &mut input,
+                )
+                .is_err()
+            {
+                return_result!(MemoryOutOfBounds)
+            }
             let topics_len = input[0] as usize;
             assert_halt!(topics_len <= 4, MalformedBuiltinParams);
             // Read topics from the input w/o data to make sure gas is charged for data len
@@ -708,11 +743,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let input = get_input_validated!(== 20 + 8 * 2);
             let address = Address::from_slice(&input[0..20]);
             let mut reader = input[20..].reader();
-            let _code_offset = reader.read_u64::<LittleEndian>().unwrap();
+            let code_offset = reader.read_u64::<LittleEndian>().unwrap();
             let code_length = reader.read_u64::<LittleEndian>().unwrap();
 
-            // Load account with bytecode and charge gas for the call
+            // Load account with bytecode and charge gas
             let account = ctx.journal_mut().load_account_code(address)?;
+
+            // CRITICAL: Gas is charged for REQUESTED length, not actual returned length
+            // This prevents gas abuse where attacker requests small length but expects full bytecode
             let Some(gas_cost) =
                 gas::extcodecopy_cost(spec_id, code_length as usize, account.is_cold)
             else {
@@ -720,11 +758,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             charge_gas!(gas_cost);
 
-            // If requested code length is zero, then there is no need to proceed
+            // Early return for zero-length request
             if code_length == 0 {
                 return_result!(Bytes::new(), Ok);
             }
 
+            // Load bytecode from account
             let mut bytecode = match &account.data.info.code {
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode))
                     if ownable_account_bytecode.owner_address == PRECOMPILE_EVM_RUNTIME =>
@@ -740,14 +779,38 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     .unwrap_or_default(),
             };
 
-            // we store system precompile bytecode in the state trie,
-            // according to evm requirements, we should return empty code
+            // System precompiles return empty code per EVM requirements
             if is_system_precompile(&address) {
                 bytecode = Bytes::new();
             }
 
-            // TODO(dmitry123): Add offset/length checks, otherwise gas can be abused!
-            return_result!(bytecode, Ok);
+            let bytecode_len = bytecode.len();
+            let code_offset_usize = code_offset as usize;
+            let code_length_usize = code_length as usize;
+
+            // If offset is beyond bytecode, return all zeros
+            if code_offset_usize >= bytecode_len {
+                let mut zeros = Vec::with_capacity(code_length_usize);
+                zeros.resize(code_length_usize, 0u8);
+                return_result!(Bytes::from(zeros), Ok);
+            }
+
+            let start = code_offset_usize;
+            let available = bytecode_len - start;
+            let to_copy = core::cmp::min(code_length_usize, available);
+
+            // Fast path: If no padding needed, return zero-copy slice
+            if to_copy == code_length_usize {
+                let result = bytecode.slice(start..start + to_copy);
+                return_result!(result, Ok);
+            }
+
+            // Slow path: Padding required to reach requested length
+            let mut result = Vec::with_capacity(code_length_usize);
+            result.resize(code_length_usize, 0u8);
+            result[..to_copy].copy_from_slice(&bytecode[start..start + to_copy]);
+
+            return_result!(Bytes::from(result), Ok);
         }
 
         SYSCALL_ID_METADATA_SIZE => {
@@ -817,12 +880,18 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             let (input, lazy_metadata_input) = get_input_validated!(>= 32);
             let salt = U256::from_be_slice(&input);
-            let derived_metadata_address = calc_create4_address(&account_owner_address, &salt);
+            let derived_metadata_address =
+                calc_create_metadata_address(&account_owner_address, &salt);
             let account = ctx
                 .journal_mut()
                 .load_account_code(derived_metadata_address)?;
-            // make sure there is no account create collision
-            assert_halt!(account.is_empty(), CreateContractCollision);
+            // Verify no deployment collision exists at derived address.
+            // Check only code_hash and nonce - intentionally ignore balance to prevent
+            // front-running DoS where attacker funds address before legitimate creation.
+            // This matches Ethereum CREATE2 behavior: accounts can be pre-funded.
+            if account.info.code_hash != KECCAK_EMPTY || account.info.nonce != 0 {
+                return_result!(CreateContractCollision);
+            }
             // create a new derived ownable account
             let Ok(metadata_input) = lazy_metadata_input() else {
                 return_halt!(MemoryOutOfBounds);
@@ -844,10 +913,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let (input, lazy_metadata_input) = get_input_validated!(>= 20 + 4);
             // read an account from its address
             let address = Address::from_slice(&input[..20]);
-            let offset = LittleEndian::read_u32(&input[20..24]) as usize;
-            if offset != 0 {
-                return_halt!(MalformedBuiltinParams);
-            }
+            let _offset = LittleEndian::read_u32(&input[20..24]) as usize;
             let mut account = ctx.journal_mut().load_account_code(address)?;
             // to make sure this account is ownable and owner by the same runtime, that allows
             // a runtime to modify any account it owns
@@ -932,6 +998,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Ok(value): Result<[u8; U256::BYTES], _> = input[U256::BYTES..].try_into() else {
                 return_halt!(MalformedBuiltinParams)
             };
+
+            assert_halt!(!is_static, StateChangeDuringStaticCall);
+
             let slot_u256 = U256::from_le_bytes(slot);
             let value_u256 = U256::from_le_bytes(value);
             ctx.journal_mut()
@@ -966,7 +1035,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // empty result
             return_result!(Bytes::new(), Ok);
         }
-
+        //
         SYSCALL_ID_BLOCK_HASH => {
             let input = get_input_validated!(== 8);
             charge_gas!(gas::BLOCKHASH);
@@ -975,7 +1044,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Why do we return in big-endian here? :facepalm:
             let hash = match current_block.checked_sub(requested_block) {
                 Some(diff) if diff > 0 && diff <= 256 => {
-                    ctx.block_hash(requested_block).unwrap_or(B256::ZERO)
+                    ctx.db_mut().block_hash(requested_block)?
                 }
                 _ => B256::ZERO,
             };
@@ -983,5 +1052,568 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         _ => return_halt!(MalformedBuiltinParams),
+    }
+}
+#[cfg(test)]
+mod code_copy_tests {
+    use super::*;
+    use crate::{RwasmContext, RwasmSpecId};
+    use fluentbase_sdk::{syscall::SYSCALL_ID_CODE_COPY, SyscallInvocationParams, STATE_MAIN};
+    use revm::{
+        context::{BlockEnv, CfgEnv, TxEnv},
+        database::InMemoryDB,
+        inspector::NoOpInspector,
+        primitives::{Address, Bytes},
+    };
+
+    /// Helper function to test code_copy syscall
+    /// Returns (output_data, gas_used)
+    fn test_code_copy_helper(
+        bytecode: Bytes,
+        code_offset: u64,
+        code_length: u64,
+        initial_gas: u64,
+    ) -> (Bytes, u64) {
+        // === Setup: Initialize context and database ===
+        let db = InMemoryDB::default();
+        let mut ctx: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+
+        let mut frame = RwasmFrame::default();
+
+        // === Setup: Create target account with known bytecode ===
+        let target_address = Address::from([0x42; 20]);
+
+        {
+            let mut account = ctx.journal_mut().load_account(target_address).unwrap();
+            account.info.code = Some(Bytecode::new_raw(bytecode.clone()));
+            account.info.balance = U256::from(1); // Non-empty account
+        }
+
+        // === Prepare syscall input ===
+        let mut syscall_input = vec![0u8; 20 + 8 + 8];
+        syscall_input[0..20].copy_from_slice(target_address.as_slice());
+        syscall_input[20..28].copy_from_slice(&code_offset.to_le_bytes());
+        syscall_input[28..36].copy_from_slice(&code_length.to_le_bytes());
+        let mr = ForwardInputMemoryReader(syscall_input.into());
+
+        let syscall_params = SyscallInvocationParams {
+            code_hash: SYSCALL_ID_CODE_COPY,
+            input: 0..mr.0.len(),
+            state: STATE_MAIN,
+            ..Default::default()
+        };
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            syscall_params,
+            gas: Gas::new(initial_gas),
+        };
+
+        // === Execute: Call the syscall ===
+        let mut inspector = Some(NoOpInspector {});
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            &mut inspector.as_mut(),
+            &mut ctx,
+            interruption_inputs,
+            mr,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Syscall execution failed: {:?}",
+            result.err()
+        );
+
+        // === Extract results ===
+        let returned_data = frame.interrupted_outcome.as_ref().unwrap();
+        let output_data = returned_data.result.as_ref().unwrap().output.clone();
+
+        // Get gas_used from the interruption result directly
+        let gas_used = returned_data.result.as_ref().unwrap().gas.spent();
+
+        (output_data, gas_used)
+    }
+
+    fn expected_gas(length: usize, is_cold: bool) -> u64 {
+        // Base cost depends on warm/cold access
+        // After EIP-2929 (BERLIN fork):
+        // - Cold access: 2600 gas (first access to account)
+        // - Warm access: 100 gas (subsequent accesses)
+        let base_gas = if is_cold {
+            2600 // COLD_ACCOUNT_ACCESS_COST
+        } else {
+            100 // WARM_STORAGE_READ_COST
+        };
+
+        // Copy cost: 3 gas per 32-byte word
+        // Formula: 3 * ceil(length / 32)
+        let words = (length + 31) / 32; // ceil(length / 32)
+        let copy_gas = words as u64 * 3;
+
+        base_gas + copy_gas
+    }
+
+    #[test]
+    fn test_code_copy_basic_slice() {
+        // Test: Basic slice from middle of bytecode
+        let bytecode = Bytes::from(vec![
+            0x60, 0x80, 0x60, 0x40, 0x52, 0x33, 0x90, 0x81, 0x01, 0x02,
+        ]); // 10 bytes
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 3, 4, 10_000_000);
+
+        assert_eq!(output.len(), 4, "Should return 4 bytes");
+        assert_eq!(
+            &output[..],
+            &bytecode[3..7],
+            "Should return bytes at offset 3-6"
+        );
+        assert_eq!(gas, expected_gas(4, false));
+    }
+
+    #[test]
+    fn test_code_copy_request_more_than_available() {
+        // Test: Request more bytes than available (no padding in WASM)
+        let bytecode = Bytes::from(vec![0xAA, 0xBB, 0xCC]); // Only 3 bytes
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 1, 10, 10_000_000);
+
+        assert_eq!(output.len(), 10, "Should return only 2 available bytes");
+        assert_eq!(
+            &output[..],
+            &[0xBB, 0xCC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(gas, expected_gas(10, false));
+    }
+
+    #[test]
+    fn test_code_copy_offset_beyond_bytecode() {
+        // Test: Offset completely beyond bytecode length
+        let bytecode = Bytes::from(vec![0xAA, 0xBB, 0xCC]); // 3 bytes
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 100, 5, 10_000_000);
+        // Should return empty bytes
+        assert_eq!(
+            output.len(),
+            5,
+            "Should return empty bytes when offset > bytecode.len()"
+        );
+        assert_eq!(gas, expected_gas(5, false));
+    }
+
+    #[test]
+    fn test_code_copy_empty_bytecode() {
+        // Test: Copy from account with empty/no bytecode
+        let bytecode = Bytes::new();
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 0, 10, 10_000_000);
+
+        assert_eq!(
+            output.len(),
+            10,
+            "Should return empty bytes for empty bytecode"
+        );
+        assert_eq!(
+            &output[..],
+            &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+
+        assert_eq!(gas, expected_gas(10, false));
+    }
+
+    #[test]
+    fn test_code_copy_gas_calculation() {
+        // Test: Verify gas is calculated correctly according to EVM rules
+        let bytecode = Bytes::from(vec![0xFF; 200]); // 100 bytes
+
+        let (output, gas) = test_code_copy_helper(bytecode.clone(), 0, 200, 10_000_000);
+
+        assert_eq!(output.len(), 200);
+        assert_eq!(output[..], bytecode);
+        assert_eq!(gas, expected_gas(200, false));
+    }
+}
+
+#[cfg(test)]
+mod metadata_write_tests {
+    use super::*;
+    use crate::{RwasmContext, RwasmSpecId};
+    use fluentbase_sdk::{
+        syscall::{SYSCALL_ID_METADATA_CREATE, SYSCALL_ID_METADATA_WRITE},
+        SyscallInvocationParams, PRECOMPILE_WASM_RUNTIME,
+    };
+    use revm::{
+        bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
+        context::{BlockEnv, CfgEnv, TxEnv},
+        database::InMemoryDB,
+        inspector::NoOpInspector,
+    };
+
+    #[test]
+    fn test_metadata_write_truncates_existing_data() {
+        // === Setup: Initialize context and database ===
+        let db = InMemoryDB::default();
+        let mut ctx: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+
+        // === Setup: Create frame with owner address ===
+        let owner_address = PRECOMPILE_WASM_RUNTIME;
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.account_owner = Some(owner_address);
+
+        // === Step 1: Create an account with initial metadata ===
+        let test_address = Address::from_slice(&[0x42; 20]);
+        let initial_metadata = Bytes::from(&[0xFF; 100]);
+
+        let _ = ctx.journal_mut().load_account(test_address);
+
+        // Pre-create the ownable account with initial metadata
+        ctx.journal_mut().set_code(
+            test_address,
+            Bytecode::OwnableAccount(OwnableAccountBytecode::new(
+                owner_address,
+                initial_metadata.clone(),
+            )),
+        );
+
+        let new_data = vec![0x11, 0x22, 0x33, 0x44];
+        let offset = 2u32;
+
+        // Prepare syscall input: address (20 bytes) + offset (4 bytes) + data
+        let mut syscall_input = Vec::new();
+        syscall_input.extend_from_slice(&test_address.0[..]);
+        syscall_input.extend_from_slice(&offset.to_le_bytes());
+        syscall_input.extend_from_slice(&new_data);
+        let mr = ForwardInputMemoryReader(syscall_input.into());
+
+        let syscall_params = SyscallInvocationParams {
+            code_hash: SYSCALL_ID_METADATA_WRITE,
+            input: 0..mr.0.len(),
+            state: STATE_MAIN,
+            fuel_limit: 1_000_000,
+            ..Default::default()
+        };
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            syscall_params,
+            gas: Gas::new(1_000_000),
+        };
+
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            &mut None,
+            &mut ctx,
+            interruption_inputs,
+            mr,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Syscall execution failed: {:?}",
+            result.err()
+        );
+
+        let acc = ctx.journal_mut().load_account_code(test_address).unwrap();
+        match &acc.info.code {
+            Some(Bytecode::OwnableAccount(ownable)) => {
+                assert_eq!(ownable.metadata[..], new_data);
+            }
+            _ => panic!("Expected OwnableAccount bytecode"),
+        }
+    }
+
+    #[test]
+    fn test_metadata_create() {
+        // === Setup: Initialize context and database ===
+        let db = InMemoryDB::default();
+        let mut ctx: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+
+        // === Setup: Create frame with owner address ===
+        let owner_address = PRECOMPILE_WASM_RUNTIME;
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.account_owner = Some(owner_address);
+
+        // === Prepare: Calculate derived address and ensure it's not empty ===
+        let salt = U256::from(123456789u64);
+        let metadata = Bytes::from(vec![0x01, 0x02, 0x03]);
+
+        let derived_address = calc_create_metadata_address(&owner_address, &salt);
+
+        // Pre-load the account to avoid empty account check
+        // (In real scenario, this would be done by previous transactions)
+        {
+            let mut account = ctx
+                .journal_mut()
+                .load_account_code(derived_address)
+                .unwrap();
+            account.info.balance = U256::from(1);
+        }
+
+        // === Execute: Prepare syscall input (salt + metadata) ===
+        let mut syscall_input = Vec::with_capacity(32 + metadata.len());
+        syscall_input.extend_from_slice(&salt.to_be_bytes::<32>());
+        syscall_input.extend_from_slice(&metadata);
+        let mr = ForwardInputMemoryReader(syscall_input.into());
+
+        let syscall_params = SyscallInvocationParams {
+            code_hash: SYSCALL_ID_METADATA_CREATE,
+            input: 0..mr.0.len(),
+            state: STATE_MAIN,
+            ..Default::default()
+        };
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            syscall_params,
+            gas: Gas::new(1_000_000), // Sufficient gas for the operation
+        };
+
+        // === Execute: Call the syscall ===
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            &mut None,
+            &mut ctx,
+            interruption_inputs,
+            mr,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Syscall execution failed: {:?}",
+            result.err()
+        );
+        assert!(
+            matches!(result.unwrap(), NextAction::InterruptionResult),
+            "Expected InterruptionResult"
+        );
+
+        // === Verify: Check the created account ===
+        let created_account = ctx
+            .journal_mut()
+            .load_account_code(derived_address)
+            .expect("Failed to load created account");
+
+        match &created_account.info.code {
+            Some(Bytecode::OwnableAccount(ownable)) => {
+                assert_eq!(
+                    ownable.owner_address, owner_address,
+                    "Owner address mismatch"
+                );
+                assert_eq!(ownable.metadata, metadata, "Metadata mismatch");
+            }
+            other => panic!("Expected OwnableAccount bytecode, got {:?}", other),
+        }
+    }
+}
+
+#[cfg(test)]
+mod block_hash_tests {
+    use super::*;
+    use crate::{RwasmContext, RwasmFrame, RwasmSpecId};
+    use alloy_primitives::{Address, StorageValue, B256};
+    use core::error::Error;
+    use fluentbase_sdk::{
+        syscall::SYSCALL_ID_BLOCK_HASH, Bytes, SyscallInvocationParams, STATE_MAIN, U256,
+    };
+    use revm::{
+        bytecode::Bytecode,
+        context::{BlockEnv, CfgEnv, TxEnv},
+        database::{DBErrorMarker, InMemoryDB},
+        inspector::NoOpInspector,
+        interpreter::Gas,
+        state::AccountInfo,
+        Database,
+    };
+    use std::fmt;
+
+    #[derive(Debug, Clone)]
+    pub(super) struct MockDbError(pub String);
+
+    impl fmt::Display for MockDbError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    impl Error for MockDbError {}
+    impl DBErrorMarker for MockDbError {}
+
+    struct FailingMockDatabase;
+
+    impl Database for FailingMockDatabase {
+        type Error = MockDbError;
+
+        fn basic(&mut self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+            Ok(None)
+        }
+
+        fn code_by_hash(&mut self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+            Ok(Bytecode::default())
+        }
+
+        fn storage(
+            &mut self,
+            _address: Address,
+            _index: U256,
+        ) -> Result<StorageValue, Self::Error> {
+            Ok(StorageValue::default())
+        }
+
+        fn block_hash(&mut self, _number: u64) -> Result<B256, Self::Error> {
+            Err(MockDbError("Database I/O error".to_string()))
+        }
+    }
+
+    /// Helper function to test block_hash syscall
+    fn test_block_hash_helper<DB: Database>(
+        db: DB,
+        current_block: u64,
+        requested_block: u64,
+    ) -> Result<Bytes, ContextError<DB::Error>> {
+        let mut ctx: RwasmContext<DB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        ctx.block.number = U256::from(current_block);
+
+        let mut frame = RwasmFrame::default();
+
+        let mut syscall_input = vec![0u8; 8];
+        syscall_input[0..8].copy_from_slice(&requested_block.to_le_bytes());
+        let mr = ForwardInputMemoryReader(syscall_input.into());
+
+        let syscall_params = SyscallInvocationParams {
+            code_hash: SYSCALL_ID_BLOCK_HASH,
+            input: 0..mr.0.len(),
+            state: STATE_MAIN,
+            ..Default::default()
+        };
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            syscall_params,
+            gas: Gas::new(10_000_000),
+        };
+
+        execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            &mut None,
+            &mut ctx,
+            interruption_inputs,
+            mr,
+        )?;
+
+        Ok(frame
+            .interrupted_outcome
+            .as_ref()
+            .unwrap()
+            .result
+            .as_ref()
+            .unwrap()
+            .output
+            .clone())
+    }
+
+    #[test]
+    fn test_block_hash_database_error_is_propagated() {
+        // This test verifies that database errors are propagated through execute_rwasm_interruption
+        // instead of being silently converted to zero hash
+
+        let db = FailingMockDatabase;
+        let mut ctx: RwasmContext<FailingMockDatabase> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        ctx.block.number = U256::from(1000);
+
+        let mut frame = RwasmFrame::default();
+
+        // Request a valid block (within the last 256 blocks)
+        let requested_block: u64 = 900;
+        let mut syscall_input = vec![0u8; 8];
+        syscall_input[0..8].copy_from_slice(&requested_block.to_le_bytes());
+        let mr = ForwardInputMemoryReader(syscall_input.into());
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            syscall_params: SyscallInvocationParams {
+                code_hash: SYSCALL_ID_BLOCK_HASH,
+                input: 0..mr.0.len(),
+                state: STATE_MAIN,
+                ..Default::default()
+            },
+            gas: Gas::new(10_000_000),
+        };
+
+        // Execute the syscall - should return Err, not Ok
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            &mut None,
+            &mut ctx,
+            interruption_inputs,
+            mr,
+        );
+
+        // Assert that database error was propagated
+        assert!(
+            result.is_err(),
+            "Database error must be propagated, not hidden"
+        );
+        println!("result: {:?}", result);
+    }
+
+    #[test]
+    fn test_block_hash_database_error_propagation() {
+        let db = FailingMockDatabase;
+        let result = test_block_hash_helper(db, 1000, 900);
+
+        assert!(
+            result.is_err(),
+            "Expected database error to be propagated, but got Ok"
+        );
+
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            error_msg.contains("Database I/O error") || error_msg.contains("MockDbError"),
+            "Error should contain database error message, got: {}",
+            error_msg
+        );
+    }
+
+    #[test]
+    fn test_block_hash_out_of_range_returns_zero() {
+        let db = InMemoryDB::default();
+        let output =
+            test_block_hash_helper(db, 1000, 1001).expect("Should succeed for out of range block");
+
+        assert_eq!(output.len(), 32, "Should return 32 bytes");
+        assert_eq!(
+            &output[..],
+            B256::ZERO.as_slice(),
+            "Should return zero hash for future block"
+        );
+    }
+
+    #[test]
+    fn test_block_hash_too_old_returns_zero() {
+        let db = InMemoryDB::default();
+        let output =
+            test_block_hash_helper(db, 1000, 743).expect("Should succeed for too old block");
+
+        assert_eq!(
+            &output[..],
+            B256::ZERO.as_slice(),
+            "Should return zero hash for block older than 256"
+        );
     }
 }

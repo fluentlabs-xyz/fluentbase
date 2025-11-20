@@ -225,8 +225,12 @@ impl CryptoAPI for RwasmContext {
     #[inline(always)]
     fn secp256k1_decompress(x: [u8; SECP256K1_G1_COMPRESSED_SIZE], sign: u32) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
         let mut result = [0u8; SECP256K1_G1_RAW_AFFINE_SIZE];
-        result[SECP256K1_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
+        result[..SECP256K1_G1_COMPRESSED_SIZE].copy_from_slice(x.as_slice());
+        result.reverse();
+        // The input is YX (LE)
         unsafe { _secp256k1_decompress(result.as_mut_ptr(), sign) };
+        result.reverse();
+        // The output result is XY (BE)
         result
     }
     #[inline(always)]
@@ -243,8 +247,12 @@ impl CryptoAPI for RwasmContext {
     #[inline(always)]
     fn secp256r1_decompress(x: [u8; SECP256R1_G1_COMPRESSED_SIZE], sign: u32) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
         let mut result = [0u8; SECP256R1_G1_RAW_AFFINE_SIZE];
-        result[SECP256R1_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
+        result[..SECP256R1_G1_COMPRESSED_SIZE].copy_from_slice(x.as_slice());
+        result.reverse();
+        // The input is YX (LE)
         unsafe { _secp256r1_decompress(result.as_mut_ptr(), sign) };
+        result.reverse();
+        // The output result is XY (BE)
         result
     }
     #[inline(always)]
@@ -261,8 +269,12 @@ impl CryptoAPI for RwasmContext {
     #[inline(always)]
     fn bls12381_decompress(x: [u8; BLS12381_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
         let mut result = [0u8; BLS12381_G1_RAW_AFFINE_SIZE];
-        result[BLS12381_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
+        result[..BLS12381_G1_COMPRESSED_SIZE].copy_from_slice(x.as_slice());
+        result.reverse();
+        // The input is YX (LE)
         unsafe { _bls12381_decompress(result.as_mut_ptr(), sign) };
+        result.reverse();
+        // The output result is XY (BE)
         result
     }
     #[inline(always)]
@@ -275,13 +287,6 @@ impl CryptoAPI for RwasmContext {
     fn bn254_add(mut p: [u8; BN254_G1_RAW_AFFINE_SIZE], q: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
         unsafe { _bn254_add(p.as_mut_ptr(), q.as_ptr()) };
         p
-    }
-    #[inline(always)]
-    fn bn254_decompress(x: [u8; BN254_G1_COMPRESSED_SIZE], sign: u32) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
-        let mut result = [0u8; BN254_G1_RAW_AFFINE_SIZE];
-        result[BN254_G1_COMPRESSED_SIZE..].copy_from_slice(x.as_slice());
-        unsafe { _bn254_decompress(result.as_mut_ptr(), sign) };
-        result
     }
     #[inline(always)]
     fn bn254_double(mut p: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {

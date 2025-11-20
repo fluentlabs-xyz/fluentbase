@@ -10,10 +10,9 @@ use fluentbase_evm::{
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult,
 };
 use fluentbase_sdk::{
-    bincode, byteorder, byteorder::ByteOrder, crypto::crypto_keccak256, debug_log,
-    define_entrypoint, define_panic_handler, entrypoint, keccak256, Bytes, ContextReader, ExitCode,
-    RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SharedAPI, SyscallInvocationParams, B256,
-    EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
+    bincode, byteorder, byteorder::ByteOrder, crypto::crypto_keccak256, debug_log, entrypoint,
+    Bytes, ContextReader, ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
+    SharedAPI, SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
 };
 use revm_interpreter::InterpreterAction;
 use spin::MutexGuard;

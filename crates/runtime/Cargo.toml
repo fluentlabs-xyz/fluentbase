@@ -15,7 +15,7 @@ fluentbase-types = { workspace = true }
 rwasm = { workspace = true }
 
 # wasmtime
-#wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", features = ["disable-fpu", "cache"] }
+#wasmtime = { version = "34.0.1", package = "wasmtime-rwasm", features = ["disable-fpu", "cache"] }
 wasmtime = { version = "34.0.1", package = "wasmtime-rwasm", features = ["disable-fpu", "cache"] }
 #wasmtime = { path = "../../../wasmtime/crates/wasmtime", package = "wasmtime-rwasm", features = ["disable-fpu", "cache"] }
 anyhow = { version = "1.0.98", default-features = false }
@@ -24,7 +24,6 @@ smallvec = { version = "1.15.1" }
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
-elliptic-curve = { version = "0.13", default-features = false }
 # don't use patched tiny-keccak from workspace
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 blake3 = { workspace = true, default-features = false }
@@ -34,6 +33,10 @@ num = "0.4.3"
 sp1-curves = "5.2.1"
 fs2 = { version = "0.4.3", optional = true }
 bytemuck = { workspace = true }
+schnellru = { workspace = true }
+amcl = { package = "snowbridge-amcl", version = "1.0.2", default-features = false, features = [
+    "bls381",
+] }
 
 # global executor
 core_affinity = { version = "0.8.3", optional = true }
@@ -41,7 +44,6 @@ core_affinity = { version = "0.8.3", optional = true }
 [dev-dependencies]
 sha2 = { workspace = true, default-features = false }
 rand = "0.9.2"
-#hex-literal = { workspace = true }
 
 [features]
 default = ["std"]

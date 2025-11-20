@@ -141,12 +141,12 @@ impl SystemRuntime {
             }
             #[cfg(debug_assertions)]
             unreachable!(
-                "runtime: an unexpected trap code happened inside system runtime: {}, falling back to the unreachable code, this should be investigated",
-                trap_code
+                "runtime: an unexpected trap code happened inside system runtime: {:?} ({}), falling back to the unreachable code, this should be investigated",
+                trap_code, trap_code,
             );
             eprintln!(
-                "runtime: an unexpected trap code happened inside system runtime: {}, falling back to the unreachable code, this should be investigated",
-                trap_code
+                "runtime: an unexpected trap code happened inside system runtime: {:?} ({}), falling back to the unreachable code, this should be investigated",
+                trap_code, trap_code,
             );
             return Err(TrapCode::UnreachableCodeReached);
         }

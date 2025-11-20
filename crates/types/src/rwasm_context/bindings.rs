@@ -117,7 +117,6 @@ extern "C" {
 
     // bn254 (0x07)
     pub fn _bn254_add(p_ptr: *mut u8, q_ptr: *const u8);
-    pub fn _bn254_decompress(x_ptr: *mut u8, sign: u32);
     pub fn _bn254_double(p_ptr: *mut u8);
 
     // uint256 (0x08)

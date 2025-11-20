@@ -106,19 +106,17 @@ fn extcodecopy<
 ) {
     if let Some(interruption_outcome) = unpack_interruption!(context) {
         popn!(
-            [_address, memory_offset, code_offset, len_u256],
+            [_address, memory_offset, _code_offset, len_u256],
             context.interpreter
         );
         let code = interruption_outcome.output;
         let len = as_usize_or_fail!(context.interpreter, len_u256);
         let memory_offset = as_usize_or_fail!(context.interpreter, memory_offset);
-        let code_offset = min(as_usize_saturated!(code_offset), code.len());
         resize_memory!(context.interpreter, memory_offset, len);
-        // Note: This can't panic because we resized memory to fit.
         context
             .interpreter
             .memory
-            .set_data(memory_offset, code_offset, len, &code);
+            .set_data(memory_offset, 0, len, &code);
         return;
     }
     peekn!(

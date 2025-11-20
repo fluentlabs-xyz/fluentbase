@@ -59,10 +59,10 @@ pub fn alloc_heap_pos() -> usize {
 }
 
 #[inline(always)]
-pub fn rollback_heap_pos(new_heap_pos: usize) {
+pub fn rollback_heap_pos(_new_heap_pos: usize) {
     #[cfg(target_arch = "wasm32")]
     unsafe {
-        HEAP_POS = new_heap_pos
+        HEAP_POS = _new_heap_pos
     }
 }
 

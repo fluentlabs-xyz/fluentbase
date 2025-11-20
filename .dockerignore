@@ -47,12 +47,12 @@ logs/
 
 
 # Testing and benchmarking
-tests/
-test_*
-*_test.rs
-coverage/
-**/*_tests.rs
-**/*test*.rs
+# tests/
+# test_*
+# *_test.rs
+# coverage/
+# **/*_tests.rs
+# **/*test*.rs
 
 # Temporary files
 tmp/
@@ -78,3 +78,5 @@ assets/
 *.sol
 *.hex
 *.pem
+
+Dockerfile

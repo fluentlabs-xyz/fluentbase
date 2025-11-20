@@ -12,7 +12,7 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-amd64-8core
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run Criterion (save baseline "devel")
@@ -25,7 +25,7 @@ jobs:
           rustup target add wasm32-unknown-unknown
           cd e2e && cargo bench -- --save-baseline devel
       - name: Upload baseline artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: criterion-baseline-devel
           path: target/criterion
@@ -39,14 +39,14 @@ jobs:
       contents: read
       pull-requests: write  # needed to comment on PRs (won’t work for forks; see note below)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
       # Try to fetch the latest successful baseline from devel
       - name: Download baseline from devel
         id: dl
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v11
         continue-on-error: true            # allow first PRs without a baseline
         with:
           workflow: bench.yml
@@ -66,7 +66,7 @@ jobs:
           cd e2e && cargo bench | grep -v ignored | tee bench_output.txt
 
       - name: Upload full report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: criterion-report-${{ github.sha }}
           path: target/criterion
