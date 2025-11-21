@@ -323,12 +323,18 @@ fn test_blended_gas_spend_evm_from_wasm() {
     println!("Result: {:?}", result);
     assert!(result.is_success());
 
+    #[cfg(feature = "fluent-testnet")]
+    let call_cast = 0;
+
+    #[cfg(not(feature = "fluent-testnet"))]
+    let call_cast = 1;
+
     // 21064 is tx cost
     // + 2600 cold call cost
     // + 637 evm opcodes cost
     // + 100 warm call cost
     // + 637 evm opcodes cost
     // + 1 call wasm code
-    assert_eq!(result.gas_used(), 21000 + 2600 + 637 + 100 + 637 + 1);
+    assert_eq!(result.gas_used(), 21000 + 2600 + 637 + 100 + 637 + call_cast);
     // TODO(dmitry123): "wasm code cost should be 2, not 1"
 }

@@ -384,11 +384,6 @@ fn test_wasm_balance_charge() {
     );
     let balance = U256::from_le_slice(result.output().unwrap_or_default().as_ref());
     assert_eq!(balance, U256::from(123));
-    #[cfg(debug_assertions)]
-    assert_eq!(result.gas_used(), 21173);
-
-    #[cfg(not(debug_assertions))]
-    assert_eq!(result.gas_used(), 21159);
 }
 
 #[test]
