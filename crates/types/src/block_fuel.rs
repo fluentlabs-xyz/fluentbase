@@ -9,6 +9,25 @@ use rwasm::{instruction_set, InstructionSet, TrapCode};
 /// - `base_cost` is assumed to be at most `2_147_483_647` (i.e. `2^31-1`)
 const FUEL_MAX_LINEAR_X: u32 = 262_143; // 2^18 - 1
 
+/// The maximum allowed value for the `x` parameter used in quadratic gas cost calculation
+/// of builtins.
+/// This limit ensures:
+/// 1. Runtime: words × words does not overflow i32 (WASM constraint)
+/// 2. Compile-time: final fuel value fits in u32
+///
+/// Formula:
+/// words = (x + 31) / 32
+/// fuel = (word_cost × words + words² / divisor) × FUEL_DENOM_RATE
+///
+/// Derivation:
+/// words × words must not overflow i32:
+/// words² ≤ i32::MAX (2,147,483,647)
+/// words ≤ 46,340
+/// x ≤ 46,340 × 32 = 1,482,880 bytes (~1.4 MB)
+///
+/// We use 1.25 MB as a safe limit within the theoretical maximum:
+const FUEL_MAX_QUADRATIC_X: u32 = 1_310_720; // 1.25 MB (2^20 + 2^18)
+
 /// In this file, we define the fuel procedures that will be inserted by the rwasm translator
 /// before the builtin calls. Each fuel procedure is a set of rwasm Opcodes that will be
 /// executed. Fuel procedures can potentially access the variables of the function they are
@@ -49,6 +68,72 @@ macro_rules! linear_fuel {
             I32Const($base_cost)
             I32Add
             I32Const(0) // Push two 32-bit values, which are interpreted as a single 64-bit value inside the builtin.
+            Call(SysFuncIdx::CHARGE_FUEL)
+        }
+    }};
+}
+
+/// Formula: fuel = (word_cost × words + words² / divisor) × FUEL_DENOM_RATE
+/// where words = (x + 31) / 32
+///
+/// The result is in fuel units, which are then charged via CHARGE_FUEL syscall.
+/// FUEL_DENOM_RATE converts from gas units (EVM) to fuel units (runtime).
+macro_rules! quadratic_fuel {
+    ($local_depth:expr, $word_cost:expr, $divisor:expr) => {{
+        // Compile-time overflow check
+        const _: () = {
+            const MAX_WORDS: u128 = ((FUEL_MAX_QUADRATIC_X as u128 + 31) / 32);
+            const LINEAR: u128 = ($word_cost as u128) * MAX_WORDS;
+            const QUADRATIC: u128 = (MAX_WORDS * MAX_WORDS) / ($divisor as u128);
+            const TOTAL: u128 = (LINEAR + QUADRATIC) * (FUEL_DENOM_RATE as u128);
+            assert!(
+                TOTAL <= (u32::MAX as u128),
+                "fuel cost after FUEL_DENOM_RATE conversion must fit into u32"
+            );
+        };
+
+        instruction_set! {
+             // Runtime overflow check
+            LocalGet($local_depth)
+            I32Const(FUEL_MAX_QUADRATIC_X)
+            I32GtU
+            BrIfEqz(2)
+            Trap(TrapCode::IntegerOverflow)
+
+            // Linear part: word_cost × words
+            LocalGet($local_depth)
+            I32Const(31)
+            I32Add
+            I32Const(32)
+            I32DivU
+            I32Const($word_cost)
+            I32Mul
+
+            // Quadratic part: words² / divisor
+            LocalGet($local_depth + 1) // linear part left words on stack
+            I32Const(31)
+            I32Add
+            I32Const(32)
+            I32DivU
+
+            LocalGet($local_depth + 2) // linear and first words on stack
+            I32Const(31)
+            I32Add
+            I32Const(32)
+            I32DivU
+
+            I32Mul
+            I32Const($divisor)
+            I32DivU
+
+            // Sum: linear + quadratic
+            I32Add
+
+            // Convert gas -> fuel
+            I32Const(FUEL_DENOM_RATE as u32)
+            I32Mul
+
+            I32Const(0)
             Call(SysFuncIdx::CHARGE_FUEL)
         }
     }};
@@ -124,6 +209,10 @@ pub const BLS_MAP_G2_COST: u32 = 80_000 * FUEL_DENOM_RATE as u32;
 pub const UINT256_MUL_MOD_COST: u32 = 8 * FUEL_DENOM_RATE as u32;
 pub const UINT256_X2048_MUL_COST: u32 = 5_000 * FUEL_DENOM_RATE as u32;
 
+// Quadratic fuel constants (EVM memory expansion formula)
+pub const QUADRATIC_WORD_FUEL_COST: u32 = 3;
+pub const QUADRATIC_DIVISOR: u32 = 512;
+
 pub(crate) fn emit_fuel_procedure(sys_func_idx: SysFuncIdx) -> InstructionSet {
     use SysFuncIdx::*;
     match sys_func_idx {
@@ -135,7 +224,7 @@ pub(crate) fn emit_fuel_procedure(sys_func_idx: SysFuncIdx) -> InstructionSet {
         WRITE_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
         OUTPUT_SIZE => const_fuel!(LOW_FUEL_COST),
         READ_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
-        EXEC => no_fuel!(),
+        EXEC => quadratic_fuel!(3, QUADRATIC_WORD_FUEL_COST, QUADRATIC_DIVISOR),
         RESUME => no_fuel!(),
         FORWARD_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
         CHARGE_FUEL_MANUALLY => no_fuel!(),
