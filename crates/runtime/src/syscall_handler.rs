@@ -57,7 +57,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::EXIT_UNCONSTRAINED => syscall_enter_leave_unconstrained_handler(caller, params, result),
         // TODO(dmitry123): This syscall is disabled since it can cause panic, we should refine it
         //  by introducing new system contracts where the same functionality is achieved.
-        // SysFuncIdx::WRITE_FD => syscall_write_fd_handler(caller, params, result),
+        SysFuncIdx::WRITE_FD => Err(TrapCode::UnreachableCodeReached),
 
         // hashing functions (0x01)
         SysFuncIdx::KECCAK256 => syscall_hashing_keccak256_handler(caller, params, result),
@@ -110,7 +110,6 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::UINT256_X2048_MUL => syscall_uint256_x2048_mul_handler(caller, params, result),
 
         // sp1 (0x51)
-        _ => unreachable!("unknown system function ({})", sys_func_idx),
     }
 }
 
