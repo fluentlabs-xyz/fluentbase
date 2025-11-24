@@ -66,7 +66,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::SHA256_EXTEND => syscall_hashing_sha256_extend_handler(caller, params, result),
         SysFuncIdx::SHA256_COMPRESS => syscall_hashing_sha256_compress_handler(caller, params, result),
         SysFuncIdx::SHA256 => syscall_hashing_sha256_handler(caller, params, result),
-        SysFuncIdx::BLAKE3 => syscall_hashing_blak3_handler(caller, params, result),
+        SysFuncIdx::BLAKE3 => syscall_hashing_blake3_handler(caller, params, result),
 
         // ed25519 (0x02)
         SysFuncIdx::ED25519_DECOMPRESS => syscall_ed25519_decompress_handler(caller, params, result),
