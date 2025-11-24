@@ -43,6 +43,7 @@ impl StrategyRuntime {
         self.store.memory_write(offset, data)
     }
 
+    #[must_use]
     pub fn try_consume_fuel(&mut self, delta: u64) -> Result<(), TrapCode> {
         self.store.try_consume_fuel(delta)
     }
