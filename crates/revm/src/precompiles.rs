@@ -34,7 +34,7 @@ impl RwasmPrecompiles {
         Self {
             inner: EthPrecompiles {
                 precompiles,
-                spec: SpecId::default(),
+                spec,
             },
             spec,
         }
