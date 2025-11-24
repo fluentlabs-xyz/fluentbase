@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    alloc_slice, crypto::crypto_sha256, system_runtime_entrypoint, Bytes, ExitCode, SharedAPI,
+    alloc_slice, crypto::crypto_sha256, system_entrypoint, Bytes, ExitCode, SharedAPI,
 };
 
 /// Main entry point for the sha256 wrapper contract.
@@ -15,14 +15,13 @@ use fluentbase_sdk::{
 /// Output:
 /// - A 32-byte array representing the SHA-256 hash of the input
 ///
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
     let input_length = sdk.input_size();
-    let mut input = alloc_slice(input_length as usize);
-    sdk.read(&mut input, 0);
-    let gas_used = estimate_gas(input.len());
-    sdk.sync_evm_gas(gas_used);
-    let result = crypto_sha256(&input);
-    (result.into(), ExitCode::Ok)
+    let gas_used = estimate_gas(input_length as usize);
+    sdk.sync_evm_gas(gas_used)?;
+    let input = sdk.input();
+    let result = crypto_sha256(input);
+    Ok(result.into())
 }
 
 /// Gas estimation for SHA-256 (based on an EVM gas model)
@@ -34,7 +33,7 @@ fn estimate_gas(input_len: usize) -> u64 {
     60 + (words as u64 * 12)
 }
 
-system_runtime_entrypoint!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -51,8 +50,7 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        let (output, exit_code) = main_entry(&mut sdk);
-        assert_eq!(exit_code, ExitCode::Ok);
+        let output = main_entry(&mut sdk).unwrap();
         assert_eq!(output.as_ref(), expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);

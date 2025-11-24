@@ -3,11 +3,9 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{
-    alloc_slice, system_runtime_entrypoint, Bytes, ContextReader, ExitCode, SharedAPI,
-};
+use fluentbase_sdk::{alloc_slice, system_entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
 
-pub fn main_entry(sdk: &mut impl SharedAPI) -> (Bytes, ExitCode) {
+pub fn main_entry(sdk: &mut impl SharedAPI) -> Result<Bytes, ExitCode> {
     // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
@@ -15,15 +13,14 @@ pub fn main_entry(sdk: &mut impl SharedAPI) -> (Bytes, ExitCode) {
     sdk.read(&mut input, 0);
     let input = Bytes::copy_from_slice(input);
     // call identity function
-    let Ok(result) = revm_precompile::modexp::berlin_run(&input, gas_limit) else {
-        return (Bytes::new(), ExitCode::PrecompileError);
-    };
-    sdk.sync_evm_gas(result.gas_used);
+    let result = revm_precompile::modexp::berlin_run(&input, gas_limit)
+        .map_err(|_| ExitCode::PrecompileError)?;
+    sdk.sync_evm_gas(result.gas_used)?;
     // write output
-    (result.bytes, ExitCode::Ok)
+    Ok(result.bytes)
 }
 
-system_runtime_entrypoint!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -40,8 +37,7 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        let (output, exit_code) = main_entry(&mut sdk);
-        assert_eq!(exit_code, ExitCode::Ok);
+        let output = main_entry(&mut sdk).unwrap();
         assert_eq!(&output, expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);

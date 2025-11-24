@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, system_runtime_entrypoint, Bytes, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint, Bytes, ExitCode, SharedAPI};
 use revm_precompile::secp256r1::{p256_verify, P256VERIFY_BASE_GAS_FEE};
 
 /// Main entry point for the secp256r1 wrapper contract.
@@ -18,18 +18,14 @@ use revm_precompile::secp256r1::{p256_verify, P256VERIFY_BASE_GAS_FEE};
 /// Output:
 /// - Returns a single byte with value 1 if the signature is valid
 /// - Returns an empty byte array if the signature is invalid
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
-    let input_length = sdk.input_size();
-    let mut input = alloc_slice(input_length as usize);
-    sdk.read(&mut input, 0);
-    sdk.sync_evm_gas(P256VERIFY_BASE_GAS_FEE);
-    let Ok(result) = p256_verify(input, u64::MAX) else {
-        return (Bytes::new(), ExitCode::PrecompileError);
-    };
-    (result.bytes, ExitCode::Ok)
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
+    let input = sdk.input();
+    sdk.sync_evm_gas(P256VERIFY_BASE_GAS_FEE)?;
+    let result = p256_verify(input, u64::MAX).map_err(|_| ExitCode::PrecompileError)?;
+    Ok(result.bytes)
 }
 
-system_runtime_entrypoint!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -50,8 +46,7 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        let (output, exit_code) = main_entry(&mut sdk);
-        assert_eq!(exit_code, ExitCode::Ok);
+        let output = main_entry(&mut sdk).unwrap();
         assert_eq!(output.as_ref(), expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);

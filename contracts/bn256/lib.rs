@@ -4,7 +4,7 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    alloc_slice, crypto::CryptoRuntime, system_runtime_entrypoint, Bytes, ContextReader, CryptoAPI,
+    alloc_slice, crypto::CryptoRuntime, system_entrypoint, Bytes, ContextReader, CryptoAPI,
     ExitCode, SharedAPI, BN254_G1_RAW_AFFINE_SIZE, PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL,
     PRECOMPILE_BN256_PAIR,
 };
@@ -81,7 +81,7 @@ fn is_valid_point(point: &[u8; BN254_G1_RAW_AFFINE_SIZE]) -> bool {
     point.is_on_curve() && point.is_in_correct_subgroup_assuming_on_curve()
 }
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
     let bytecode_address = sdk.context().contract_bytecode_address();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
@@ -89,7 +89,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
 
     match bytecode_address {
         PRECOMPILE_BN256_ADD => {
-            sdk.sync_evm_gas(ISTANBUL_ADD_GAS_COST);
+            sdk.sync_evm_gas(ISTANBUL_ADD_GAS_COST)?;
 
             // Pad input to 128 bytes (two 64-byte points) with zeros if needed
             let mut padded_input = [0u8; BN254_ADD_INPUT_SIZE];
@@ -105,7 +105,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
             // Validate both points are either identity or on the curve
             if !is_valid_point(&p_be) || !is_valid_point(&q_be) {
                 // Invalid point: fail the transaction by exiting with error
-                return (Bytes::new(), ExitCode::PrecompileError);
+                return Err(ExitCode::PrecompileError);
             }
 
             // Convert from Ethereum's big-endian to SP1's little-endian format
@@ -130,33 +130,28 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
 
             // Convert result back to Ethereum's big-endian format
             point_le_to_be(&mut result);
-            (result.into(), ExitCode::Ok)
+            Ok(result.into())
         }
         PRECOMPILE_BN256_MUL => {
-            sdk.sync_evm_gas(ISTANBUL_MUL_GAS_COST);
-            let result = match bn128::run_mul(input, ISTANBUL_MUL_GAS_COST, u64::MAX) {
-                Ok(result) => result,
-                Err(_) => return (Bytes::new(), ExitCode::PrecompileError),
-            };
-            (result.bytes, ExitCode::Ok)
+            sdk.sync_evm_gas(ISTANBUL_MUL_GAS_COST)?;
+            let result = bn128::run_mul(input, ISTANBUL_MUL_GAS_COST, u64::MAX)
+                .map_err(|_| ExitCode::PrecompileError)?;
+            Ok(result.bytes)
         }
         PRECOMPILE_BN256_PAIR => {
             let gas_used = (input.len() / PAIR_ELEMENT_LEN) as u64 * ISTANBUL_PAIR_PER_POINT
                 + ISTANBUL_PAIR_BASE;
-            sdk.sync_evm_gas(gas_used);
+            sdk.sync_evm_gas(gas_used)?;
             let result =
-                match bn128::run_pair(input, ISTANBUL_PAIR_PER_POINT, ISTANBUL_PAIR_BASE, u64::MAX)
-                {
-                    Ok(result) => result,
-                    Err(_) => return (Bytes::new(), ExitCode::PrecompileError),
-                };
-            (result.bytes, ExitCode::Ok)
+                bn128::run_pair(input, ISTANBUL_PAIR_PER_POINT, ISTANBUL_PAIR_BASE, u64::MAX)
+                    .map_err(|_| ExitCode::PrecompileError)?;
+            Ok(result.bytes)
         }
         _ => unreachable!("bn128: unsupported contract address"),
     }
 }
 
-system_runtime_entrypoint!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -175,8 +170,7 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        let (output, exit_code) = main_entry(&mut sdk);
-        assert_eq!(exit_code, ExitCode::Ok);
+        let output = main_entry(&mut sdk).unwrap();
         assert_eq!(output.as_ref(), expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);

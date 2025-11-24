@@ -223,7 +223,8 @@ impl SystemRuntime {
     }
 
     pub fn remaining_fuel(&self) -> Option<u64> {
-        // We don't support fuel for this runtime
+        // We don't return the remaining fuel here because we don't know the remaining fuel,
+        // also system runtime only used for trusted smart contracts with self gas management
         None
     }
 
@@ -297,7 +298,8 @@ impl<'a> rwasm::Store<RuntimeContext> for CallerAdapter<'a> {
     }
 
     fn remaining_fuel(&self) -> Option<u64> {
-        unimplemented!()
+        let ctx = self.caller.data();
+        Some(ctx.fuel_limit - ctx.execution_result.fuel_consumed)
     }
 }
 

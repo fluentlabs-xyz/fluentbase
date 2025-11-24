@@ -130,7 +130,7 @@ macro_rules! entrypoint {
 }
 
 #[macro_export]
-macro_rules! system_runtime_entrypoint {
+macro_rules! system_entrypoint {
     ($main_func:ident, $deploy_func:ident) => {
         #[cfg(target_arch = "wasm32")]
         mod _fluentbase_entrypoint {
@@ -138,7 +138,10 @@ macro_rules! system_runtime_entrypoint {
             use $crate::{byteorder, byteorder::ByteOrder, Bytes, ExitCode, SharedAPI};
             #[inline(always)]
             fn __main_entry(mut sdk: impl SharedAPI) {
-                let (output, exit_code) = super::$main_func(&mut sdk);
+                let (output, exit_code) = match super::$main_func(&mut sdk) {
+                    Ok(output) => (output, ExitCode::Ok),
+                    Err(exit_code) => (Bytes::new(), exit_code),
+                };
                 let mut exit_code_le: [u8; 4] = [0u8; 4];
                 byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
                 let mut result = Vec::with_capacity(4 + output.len());
@@ -148,7 +151,10 @@ macro_rules! system_runtime_entrypoint {
             }
             #[inline(always)]
             fn __deploy_entry(mut sdk: impl SharedAPI) {
-                let (output, exit_code) = super::$deploy_func(&mut sdk);
+                let (output, exit_code) = match super::$deploy_func(&mut sdk) {
+                    Ok(output) => (output, ExitCode::Ok),
+                    Err(exit_code) => (Bytes::new(), exit_code),
+                };
                 let mut exit_code_le: [u8; 4] = [0u8; 4];
                 byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
                 let mut result = Vec::with_capacity(4 + output.len());
@@ -181,7 +187,10 @@ macro_rules! system_runtime_entrypoint {
             use $crate::{byteorder, byteorder::ByteOrder, Bytes, ExitCode, SharedAPI};
             #[inline(always)]
             fn __main_entry(mut sdk: impl SharedAPI) {
-                let (output, exit_code) = super::$main_func(&mut sdk);
+                let (output, exit_code) = match super::$main_func(&mut sdk) {
+                    Ok(output) => (output, ExitCode::Ok),
+                    Err(exit_code) => (Bytes::new(), exit_code),
+                };
                 let mut exit_code_le: [u8; 4] = [0u8; 4];
                 byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
                 let mut result = Vec::with_capacity(4 + output.len());

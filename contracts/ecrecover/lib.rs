@@ -3,12 +3,10 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{
-    alloc_slice, system_runtime_entrypoint, Bytes, ExitCode, SharedAPI, B256, B512,
-};
+use fluentbase_sdk::{alloc_slice, system_entrypoint, Bytes, ExitCode, SharedAPI, B256, B512};
 use revm_precompile::{secp256k1::ecrecover, utilities::right_pad};
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
     // read full input data
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
@@ -17,13 +15,13 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
 
     // Make sure we have enough gas for execution
     const ECRECOVER_BASE: u64 = 3_000;
-    sdk.sync_evm_gas(ECRECOVER_BASE);
+    sdk.sync_evm_gas(ECRECOVER_BASE)?;
 
     let input = right_pad::<128>(input.as_ref());
 
     // `v` must be a 32-byte big-endian integer equal to 27 or 28.
     if !(input[32..63].iter().all(|&b| b == 0) && matches!(input[63], 27 | 28)) {
-        return (Bytes::new(), ExitCode::Ok);
+        return Ok(Bytes::new());
     }
 
     let msg = <&B256>::try_from(&input[0..32]).unwrap();
@@ -31,9 +29,9 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
     let sig = <&B512>::try_from(&input[64..128]).unwrap();
 
     if let Ok(result) = ecrecover(sig, rec_id, msg) {
-        (result.into(), ExitCode::Ok)
+        Ok(result.into())
     } else {
-        (Bytes::new(), ExitCode::Ok)
+        Ok(Bytes::new())
     }
 
     // TODO(dmitry123): Recover signature using ecdsa library once we have unconstrainted mode
@@ -56,7 +54,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
     // sdk.write(&out);
 }
 
-system_runtime_entrypoint!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -73,8 +71,7 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        let (output, exit_code) = main_entry(&mut sdk);
-        assert_eq!(exit_code, ExitCode::Ok);
+        let output = main_entry(&mut sdk).unwrap();
         assert_eq!(output.as_ref(), expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
