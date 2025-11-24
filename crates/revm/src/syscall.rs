@@ -790,7 +790,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
         SYSCALL_ID_METADATA_ACCOUNT_OWNER => {
             assert_halt!(
-                inputs.syscall_params.input.len() >= 20
+                inputs.syscall_params.input.len() == 20
                     && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
