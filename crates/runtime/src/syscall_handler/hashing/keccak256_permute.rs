@@ -15,6 +15,8 @@ impl Aligned200 {
     pub fn into_lanes_le(self) -> [u64; 25] {
         // Compile-time sanity checks
         const _: () = assert!(size_of::<[u8; 200]>() == size_of::<[u64; 25]>());
+        #[cfg(not(target_endian = "little"))]
+        const _: () = panic!("into_lanes_le requires little-endian platform");
         // All bit patterns are valid u64, and sizes match.
         // Endianness: this does NOT swap bytes; your bytes must already be LE per lane.
         unsafe { core::mem::transmute::<[u8; 200], [u64; 25]>(self.0) }
@@ -23,6 +25,9 @@ impl Aligned200 {
     /// Produce a wrapper from lanes (inverse of above).
     #[inline]
     pub fn from_lanes_le(lanes: [u64; 25]) -> Self {
+        #[cfg(not(target_endian = "little"))]
+        const _: () = panic!("from_lanes_le requires little-endian platform");
+
         let bytes: [u8; 200] = unsafe { core::mem::transmute(lanes) };
         Self(bytes)
     }
