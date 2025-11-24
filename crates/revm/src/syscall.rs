@@ -1054,6 +1054,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         _ => return_halt!(MalformedBuiltinParams),
     }
 }
+
 #[cfg(test)]
 mod code_copy_tests {
     use super::*;

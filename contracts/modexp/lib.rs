@@ -3,23 +3,11 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use alloc::vec::Vec;
 use fluentbase_sdk::{
-    alloc_slice, byteorder, byteorder::ByteOrder, entrypoint, Bytes, ContextReader, ExitCode,
-    SharedAPI,
+    alloc_slice, system_runtime_entrypoint, Bytes, ContextReader, ExitCode, SharedAPI,
 };
 
-pub fn main_entry(mut sdk: impl SharedAPI) {
-    let (exit_code, output) = main_inner(&mut sdk);
-    let mut exit_code_le: [u8; 4] = [0u8; 4];
-    byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
-    let mut result = Vec::with_capacity(4 + output.len());
-    result.extend_from_slice(&exit_code_le);
-    result.extend_from_slice(&output);
-    sdk.write(&result);
-}
-
-fn main_inner(sdk: &mut impl SharedAPI) -> (ExitCode, Bytes) {
+pub fn main_entry(sdk: &mut impl SharedAPI) -> (Bytes, ExitCode) {
     // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
@@ -28,14 +16,14 @@ fn main_inner(sdk: &mut impl SharedAPI) -> (ExitCode, Bytes) {
     let input = Bytes::copy_from_slice(input);
     // call identity function
     let Ok(result) = revm_precompile::modexp::berlin_run(&input, gas_limit) else {
-        return (ExitCode::PrecompileError, Bytes::new());
+        return (Bytes::new(), ExitCode::PrecompileError);
     };
     sdk.sync_evm_gas(result.gas_used);
     // write output
-    (ExitCode::Ok, result.bytes)
+    (result.bytes, ExitCode::Ok)
 }
 
-entrypoint!(main_entry);
+system_runtime_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -45,16 +33,16 @@ mod tests {
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 100_000;
-        let sdk = HostTestingContext::default()
+        let mut sdk = HostTestingContext::default()
             .with_input(Bytes::copy_from_slice(inputs))
             .with_contract_context(ContractContextV1 {
                 gas_limit,
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        main_entry(sdk.clone());
-        let output = &sdk.take_output()[4..];
-        assert_eq!(output, expected);
+        let (output, exit_code) = main_entry(&mut sdk);
+        assert_eq!(exit_code, ExitCode::Ok);
+        assert_eq!(&output, expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
     }

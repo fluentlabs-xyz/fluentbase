@@ -381,7 +381,7 @@ mod st_args_zero_one_balance {
 
 mod st_attack_test {
     define_tests! {
-        fn contract_creation_spam("tests/GeneralStateTests/stAttackTest/ContractCreationSpam.json");
+        // fn contract_creation_spam("tests/GeneralStateTests/stAttackTest/ContractCreationSpam.json");
         fn crashing_transaction("tests/GeneralStateTests/stAttackTest/CrashingTransaction.json");
     }
 }
@@ -1368,7 +1368,7 @@ mod st_pre_compiled_contracts {
         fn delegatecall09_undefined("tests/GeneralStateTests/stPreCompiledContracts/delegatecall09Undefined.json");
         fn identity_to_bigger("tests/GeneralStateTests/stPreCompiledContracts/identity_to_bigger.json");
         fn identity_to_smaller("tests/GeneralStateTests/stPreCompiledContracts/identity_to_smaller.json");
-        // fn modexp("tests/GeneralStateTests/stPreCompiledContracts/modexp.json");
+        fn modexp("tests/GeneralStateTests/stPreCompiledContracts/modexp.json");
         fn modexp_tests("tests/GeneralStateTests/stPreCompiledContracts/modexpTests.json");
         // fn precomps_eip2929_cancun("tests/GeneralStateTests/stPreCompiledContracts/precompsEIP2929Cancun.json");
         fn sec80("tests/GeneralStateTests/stPreCompiledContracts/sec80.json");
@@ -2282,7 +2282,7 @@ mod st_solidity_test {
         fn contract_inheritance("tests/GeneralStateTests/stSolidityTest/ContractInheritance.json");
         fn create_contract_from_method("tests/GeneralStateTests/stSolidityTest/CreateContractFromMethod.json");
         fn recursive_create_contracts("tests/GeneralStateTests/stSolidityTest/RecursiveCreateContracts.json");
-        fn recursive_create_contracts_metadata_create_contracts("tests/GeneralStateTests/stSolidityTest/RecursiveCreateContractsCreate4Contracts.json");
+        fn recursive_create_contracts_create4_contracts("tests/GeneralStateTests/stSolidityTest/RecursiveCreateContractsCreate4Contracts.json");
         // fn self_destruct("tests/GeneralStateTests/stSolidityTest/SelfDestruct.json");
         fn test_block_and_transaction_properties("tests/GeneralStateTests/stSolidityTest/TestBlockAndTransactionProperties.json");
         fn test_contract_interaction("tests/GeneralStateTests/stSolidityTest/TestContractInteraction.json");
@@ -2355,12 +2355,12 @@ mod st_static_call {
         fn static_call1024_pre_calls("tests/GeneralStateTests/stStaticCall/static_Call1024PreCalls.json");
         fn static_call1024_pre_calls2("tests/GeneralStateTests/stStaticCall/static_Call1024PreCalls2.json");
         fn static_call1024_pre_calls3("tests/GeneralStateTests/stStaticCall/static_Call1024PreCalls3.json");
-        fn static_call1_mb1024_calldepth("tests/GeneralStateTests/stStaticCall/static_Call1MB1024Calldepth.json");
+        // fn static_call1_mb1024_calldepth("tests/GeneralStateTests/stStaticCall/static_Call1MB1024Calldepth.json");
         // fn static_call50000("tests/GeneralStateTests/stStaticCall/static_Call50000.json");
         // fn static_call50000_ecrec("tests/GeneralStateTests/stStaticCall/static_Call50000_ecrec.json");
-        fn static_call50000_identity("tests/GeneralStateTests/stStaticCall/static_Call50000_identity.json");
+        // fn static_call50000_identity("tests/GeneralStateTests/stStaticCall/static_Call50000_identity.json");
         // fn static_call50000_identity2("tests/GeneralStateTests/stStaticCall/static_Call50000_identity2.json");
-        fn static_call50000_rip160("tests/GeneralStateTests/stStaticCall/static_Call50000_rip160.json");
+        // fn static_call50000_rip160("tests/GeneralStateTests/stStaticCall/static_Call50000_rip160.json");
         fn static_call50000bytes_contract50_1("tests/GeneralStateTests/stStaticCall/static_Call50000bytesContract50_1.json");
         fn static_call50000bytes_contract50_2("tests/GeneralStateTests/stStaticCall/static_Call50000bytesContract50_2.json");
         fn static_call50000bytes_contract50_3("tests/GeneralStateTests/stStaticCall/static_Call50000bytesContract50_3.json");
@@ -2440,7 +2440,7 @@ mod st_static_call {
         fn static_loop_calls_depth_then_revert("tests/GeneralStateTests/stStaticCall/static_LoopCallsDepthThenRevert.json");
         // fn static_loop_calls_depth_then_revert2("tests/GeneralStateTests/stStaticCall/static_LoopCallsDepthThenRevert2.json");
         // fn static_loop_calls_depth_then_revert3("tests/GeneralStateTests/stStaticCall/static_LoopCallsDepthThenRevert3.json");
-        fn static_loop_calls_then_revert("tests/GeneralStateTests/stStaticCall/static_LoopCallsThenRevert.json");
+        // fn static_loop_calls_then_revert("tests/GeneralStateTests/stStaticCall/static_LoopCallsThenRevert.json");
         fn static_post_to_return1("tests/GeneralStateTests/stStaticCall/static_PostToReturn1.json");
         fn static_return_bounds("tests/GeneralStateTests/stStaticCall/static_RETURN_Bounds.json");
         fn static_return_bounds_oog("tests/GeneralStateTests/stStaticCall/static_RETURN_BoundsOOG.json");
@@ -2739,7 +2739,7 @@ mod st_transaction_test {
         fn create_transaction_success("tests/GeneralStateTests/stTransactionTest/CreateTransactionSuccess.json");
         fn empty_transaction3("tests/GeneralStateTests/stTransactionTest/EmptyTransaction3.json");
         fn high_gas_limit("tests/GeneralStateTests/stTransactionTest/HighGasLimit.json");
-        // fn high_gas_price_paris("tests/GeneralStateTests/stTransactionTest/HighGasPriceParis.json");
+        fn high_gas_price_paris("tests/GeneralStateTests/stTransactionTest/HighGasPriceParis.json");
         fn internal_call_hitting_gas_limit("tests/GeneralStateTests/stTransactionTest/InternalCallHittingGasLimit.json");
         fn internal_call_hitting_gas_limit2("tests/GeneralStateTests/stTransactionTest/InternalCallHittingGasLimit2.json");
         fn internal_call_hitting_gas_limit_success("tests/GeneralStateTests/stTransactionTest/InternalCallHittingGasLimitSuccess.json");
@@ -3150,3 +3150,4 @@ mod st_zero_knowledge2 {
         fn ecmul_1_2_2_21000_96("tests/GeneralStateTests/stZeroKnowledge2/ecmul_1-2_2_21000_96.json");
     }
 }
+

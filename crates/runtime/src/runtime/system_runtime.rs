@@ -139,11 +139,6 @@ impl SystemRuntime {
                     exit_code, self.ctx.execution_result.exit_code
                 )
             }
-            #[cfg(debug_assertions)]
-            unreachable!(
-                "runtime: an unexpected trap code happened inside system runtime: {:?} ({}), falling back to the unreachable code, this should be investigated",
-                trap_code, trap_code,
-            );
             eprintln!(
                 "runtime: an unexpected trap code happened inside system runtime: {:?} ({}), falling back to the unreachable code, this should be investigated",
                 trap_code, trap_code,
@@ -198,19 +193,6 @@ impl SystemRuntime {
     }
 
     pub fn resume(&mut self, _exit_code: i32, _fuel_consumed: u64) -> Result<(), TrapCode> {
-        // let Some(mut outcome) = self.state.take() else {
-        //     unreachable!("missing interrupted state, interruption should never happen inside system contracts");
-        // };
-        // outcome.fuel_consumed += fuel_consumed;
-
-        // Here we need to remap interruption result into the custom struct because we need to
-        // pass information about fuel consumed and exit code into the runtime.
-        // That is why we move return data into the output and serialize output into the return data.
-        // outcome.output = take(&mut self.ctx.execution_result.return_data).into();
-        // outcome.exit_code = exit_code;
-        // let outcome = bincode::encode_to_vec(&outcome, bincode::config::legacy()).unwrap();
-        // self.ctx.execution_result.return_data = outcome;
-
         // Make sure the runtime is always clear before resuming the call, because output is used
         // to pass interruption params in case of interruption
         self.ctx.clear_output();

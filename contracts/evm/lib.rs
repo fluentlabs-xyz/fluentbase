@@ -10,9 +10,9 @@ use fluentbase_evm::{
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
 };
 use fluentbase_sdk::{
-    bincode, byteorder, byteorder::ByteOrder, crypto::crypto_keccak256, entrypoint, Bytes,
-    ContextReader, ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SharedAPI,
-    SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
+    bincode, crypto::crypto_keccak256, system_runtime_entrypoint, Bytes, ContextReader, ExitCode,
+    RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SharedAPI, SyscallInvocationParams, B256,
+    EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
 };
 use spin::MutexGuard;
 
@@ -116,20 +116,14 @@ fn restore_evm_context_or_create<'a>(
 /// Deploy entry for EVM contracts.
 /// Runs init bytecode, enforces EIP-3541 and EIP-170, charges CODEDEPOSIT gas,
 /// then commits the resulting runtime bytecode to metadata.
-pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    let (exit_code, output) = deploy_inner(&mut sdk, lock_evm_context());
-    let mut exit_code_le: [u8; 4] = [0u8; 4];
-    byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
-    let mut result = Vec::with_capacity(4 + output.len());
-    result.extend_from_slice(&exit_code_le);
-    result.extend_from_slice(&output);
-    sdk.write(&result);
+pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
+    deploy_inner(sdk, lock_evm_context())
 }
 
 fn deploy_inner<SDK: SharedAPI>(
     sdk: &mut SDK,
     mut cached_state: MutexGuard<Vec<EthVM>>,
-) -> (ExitCode, Bytes) {
+) -> (Bytes, ExitCode) {
     let evm = restore_evm_context_or_create(
         &mut cached_state,
         sdk.context(),
@@ -150,13 +144,13 @@ fn deploy_inner<SDK: SharedAPI>(
             if result.result.is_ok() {
                 // EIP-3541 and EIP-170 checks
                 if result.output.first() == Some(&0xEF) {
-                    return (ExitCode::CreateContractStartingWithEF, Bytes::new());
+                    return (Bytes::new(), ExitCode::CreateContractStartingWithEF);
                 } else if result.output.len() > EVM_MAX_CODE_SIZE {
-                    return (ExitCode::CreateContractSizeLimit, Bytes::new());
+                    return (Bytes::new(), ExitCode::CreateContractSizeLimit);
                 }
                 let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
                 if !result.gas.record_cost(gas_for_code) {
-                    return (ExitCode::OutOfFuel, Bytes::new());
+                    return (Bytes::new(), ExitCode::OutOfFuel);
                 }
                 let consumed_diff = result.chargeable_fuel();
                 sdk.charge_fuel(consumed_diff);
@@ -165,7 +159,7 @@ fn deploy_inner<SDK: SharedAPI>(
                 let evm_code_hash = crypto_keccak256(result.output.as_ref());
                 let analyzed_bytecode = AnalyzedBytecode::new(result.output, evm_code_hash);
                 let evm_bytecode = EthereumMetadata::Analyzed(analyzed_bytecode).write_to_bytes();
-                (ExitCode::Ok, evm_bytecode)
+                (evm_bytecode, ExitCode::Ok)
             } else {
                 let consumed_diff = result.chargeable_fuel();
                 sdk.charge_fuel(consumed_diff);
@@ -174,7 +168,7 @@ fn deploy_inner<SDK: SharedAPI>(
                 } else {
                     ExitCode::Err
                 };
-                (exit_code, result.output)
+                (result.output, exit_code)
             }
         }
         InterpreterAction::SystemInterruption {
@@ -193,7 +187,7 @@ fn deploy_inner<SDK: SharedAPI>(
                 fuel16_ptr: 0,
             }
             .encode();
-            (ExitCode::InterruptionCalled, syscall_params.into())
+            (syscall_params.into(), ExitCode::InterruptionCalled)
         }
         InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
     }
@@ -203,21 +197,15 @@ fn deploy_inner<SDK: SharedAPI>(
 /// Loads analyzed code from metadata, runs EthVM with call input, settles fuel,
 /// and writes the returned data.
 #[inline(never)]
-pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    let (exit_code, output) = main_inner(&mut sdk, lock_evm_context());
-    let mut exit_code_le: [u8; 4] = [0u8; 4];
-    byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
-    let mut result = Vec::with_capacity(4 + output.len());
-    result.extend_from_slice(&exit_code_le);
-    result.extend_from_slice(&output);
-    sdk.write(&result);
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
+    main_inner(sdk, lock_evm_context())
 }
 
 #[inline(never)]
 fn main_inner<SDK: SharedAPI>(
     sdk: &mut SDK,
     mut cached_state: MutexGuard<Vec<EthVM>>,
-) -> (ExitCode, Bytes) {
+) -> (Bytes, ExitCode) {
     let evm = restore_evm_context_or_create(
         &mut cached_state,
         // Pass information about execution context (contract address, caller) into the EthVM,
@@ -242,7 +230,7 @@ fn main_inner<SDK: SharedAPI>(
             } else {
                 ExitCode::Err
             };
-            (exit_code, result.output)
+            (result.output, exit_code)
         }
         InterpreterAction::SystemInterruption {
             code_hash,
@@ -260,33 +248,19 @@ fn main_inner<SDK: SharedAPI>(
                 fuel16_ptr: 0,
             }
             .encode();
-            (ExitCode::InterruptionCalled, syscall_params.into())
+            (syscall_params.into(), ExitCode::InterruptionCalled)
         }
         InterpreterAction::NewFrame(_) => unreachable!("evm: frames can't be produced"),
     }
 }
 
-entrypoint!(main_entry, deploy_entry);
-
-// define_entrypoint!(main_entry, deploy_entry);
-// define_panic_handler!();
-//
-// #[cfg(target_arch = "wasm32")]
-// mod _global_alloc {
-//     use talc::TalckWasm;
-//
-//     #[global_allocator]
-//     static ALLOCATOR: TalckWasm = unsafe { TalckWasm::new_global() };
-// }
-//
-// #[cfg(not(target_arch = "wasm32"))]
-// fn main() {}
+system_runtime_entrypoint!(main_entry, deploy_entry);
 
 #[cfg(test)]
 mod tests {
     use crate::{deploy_entry, main_entry};
     use core::str::from_utf8;
-    use fluentbase_sdk::{hex, Address, ContractContextV1, PRECOMPILE_EVM_RUNTIME, U256};
+    use fluentbase_sdk::{hex, Address, ContractContextV1, ExitCode, PRECOMPILE_EVM_RUNTIME, U256};
     use fluentbase_testing::HostTestingContext;
 
     #[ignore]
@@ -310,14 +284,15 @@ mod tests {
         // deploy
         {
             sdk = sdk.with_input(hex!("60806040526105ae806100115f395ff3fe608060405234801561000f575f80fd5b506004361061003f575f3560e01c80633b2e97481461004357806345773e4e1461007357806348b8bcc314610091575b5f80fd5b61005d600480360381019061005891906102e5565b6100af565b60405161006a919061039a565b60405180910390f35b61007b6100dd565b604051610088919061039a565b60405180910390f35b61009961011a565b6040516100a6919061039a565b60405180910390f35b60605f8273ffffffffffffffffffffffffffffffffffffffff163190506100d58161012f565b915050919050565b60606040518060400160405280600b81526020017f48656c6c6f20576f726c64000000000000000000000000000000000000000000815250905090565b60605f4790506101298161012f565b91505090565b60605f8203610175576040518060400160405280600181526020017f30000000000000000000000000000000000000000000000000000000000000008152509050610282565b5f8290505f5b5f82146101a457808061018d906103f0565b915050600a8261019d9190610464565b915061017b565b5f8167ffffffffffffffff8111156101bf576101be610494565b5b6040519080825280601f01601f1916602001820160405280156101f15781602001600182028036833780820191505090505b5090505b5f851461027b578180610207906104c1565b925050600a8561021791906104e8565b60306102239190610518565b60f81b8183815181106102395761023861054b565b5b60200101907effffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff191690815f1a905350600a856102749190610464565b94506101f5565b8093505050505b919050565b5f80fd5b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f6102b48261028b565b9050919050565b6102c4816102aa565b81146102ce575f80fd5b50565b5f813590506102df816102bb565b92915050565b5f602082840312156102fa576102f9610287565b5b5f610307848285016102d1565b91505092915050565b5f81519050919050565b5f82825260208201905092915050565b5f5b8381101561034757808201518184015260208101905061032c565b5f8484015250505050565b5f601f19601f8301169050919050565b5f61036c82610310565b610376818561031a565b935061038681856020860161032a565b61038f81610352565b840191505092915050565b5f6020820190508181035f8301526103b28184610362565b905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f819050919050565b5f6103fa826103e7565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff820361042c5761042b6103ba565b5b600182019050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601260045260245ffd5b5f61046e826103e7565b9150610479836103e7565b92508261048957610488610437565b5b828204905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52604160045260245ffd5b5f6104cb826103e7565b91505f82036104dd576104dc6103ba565b5b600182039050919050565b5f6104f2826103e7565b91506104fd836103e7565b92508261050d5761050c610437565b5b828206905092915050565b5f610522826103e7565b915061052d836103e7565b9250828201905080821115610545576105446103ba565b5b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffdfea2646970667358221220feebf5ace29c3c3146cb63bf7ca9009c2005f349075639d267cfbd817adde3e564736f6c63430008180033"));
-            deploy_entry(sdk.clone());
+            deploy_entry(&mut sdk);
         }
         // main
         {
-            let sdk = sdk.with_input(hex!("45773e4e"));
-            main_entry(sdk.clone());
-            let bytes = &sdk.take_output()[64..75];
-            assert_eq!("Hello World", from_utf8(bytes.as_ref()).unwrap());
+            let mut sdk = sdk.with_input(hex!("45773e4e"));
+            let (output, exit_code) = main_entry(&mut sdk);
+            assert_eq!(exit_code, ExitCode::Ok);
+            let bytes = &output[64..75];
+            assert_eq!("Hello World", from_utf8(bytes).unwrap());
         }
     }
 }

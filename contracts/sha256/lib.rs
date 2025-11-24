@@ -2,7 +2,9 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, crypto::crypto_sha256, entrypoint, SharedAPI};
+use fluentbase_sdk::{
+    alloc_slice, crypto::crypto_sha256, system_runtime_entrypoint, Bytes, ExitCode, SharedAPI,
+};
 
 /// Main entry point for the sha256 wrapper contract.
 /// This contract wraps the sha256 precompile (EIP-210) which computes the SHA-256 hash of a given input.
@@ -13,14 +15,14 @@ use fluentbase_sdk::{alloc_slice, crypto::crypto_sha256, entrypoint, SharedAPI};
 /// Output:
 /// - A 32-byte array representing the SHA-256 hash of the input
 ///
-pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
     let gas_used = estimate_gas(input.len());
     sdk.sync_evm_gas(gas_used);
     let result = crypto_sha256(&input);
-    sdk.write(result.as_ref());
+    (result.into(), ExitCode::Ok)
 }
 
 /// Gas estimation for SHA-256 (based on an EVM gas model)
@@ -32,7 +34,7 @@ fn estimate_gas(input_len: usize) -> u64 {
     60 + (words as u64 * 12)
 }
 
-entrypoint!(main_entry);
+system_runtime_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -42,16 +44,16 @@ mod tests {
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 100_000;
-        let sdk = HostTestingContext::default()
+        let mut sdk = HostTestingContext::default()
             .with_input(Bytes::copy_from_slice(inputs))
             .with_contract_context(ContractContextV1 {
                 gas_limit,
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        main_entry(sdk.clone());
-        let output = sdk.take_output();
-        assert_eq!(output, expected);
+        let (output, exit_code) = main_entry(&mut sdk);
+        assert_eq!(exit_code, ExitCode::Ok);
+        assert_eq!(output.as_ref(), expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
     }

@@ -4,8 +4,9 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    alloc_slice, crypto::CryptoRuntime, entrypoint, ContextReader, CryptoAPI, ExitCode, SharedAPI,
-    BN254_G1_RAW_AFFINE_SIZE, PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
+    alloc_slice, crypto::CryptoRuntime, system_runtime_entrypoint, Bytes, ContextReader, CryptoAPI,
+    ExitCode, SharedAPI, BN254_G1_RAW_AFFINE_SIZE, PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL,
+    PRECOMPILE_BN256_PAIR,
 };
 use revm_precompile::{
     bn128,
@@ -80,7 +81,7 @@ fn is_valid_point(point: &[u8; BN254_G1_RAW_AFFINE_SIZE]) -> bool {
     point.is_on_curve() && point.is_in_correct_subgroup_assuming_on_curve()
 }
 
-pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
     let bytecode_address = sdk.context().contract_bytecode_address();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
@@ -104,7 +105,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             // Validate both points are either identity or on the curve
             if !is_valid_point(&p_be) || !is_valid_point(&q_be) {
                 // Invalid point: fail the transaction by exiting with error
-                sdk.native_exit(ExitCode::PrecompileError)
+                return (Bytes::new(), ExitCode::PrecompileError);
             }
 
             // Convert from Ethereum's big-endian to SP1's little-endian format
@@ -129,15 +130,15 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
             // Convert result back to Ethereum's big-endian format
             point_le_to_be(&mut result);
-            sdk.write(&result);
+            (result.into(), ExitCode::Ok)
         }
         PRECOMPILE_BN256_MUL => {
             sdk.sync_evm_gas(ISTANBUL_MUL_GAS_COST);
             let result = match bn128::run_mul(input, ISTANBUL_MUL_GAS_COST, u64::MAX) {
                 Ok(result) => result,
-                Err(_) => sdk.native_exit(ExitCode::PrecompileError),
+                Err(_) => return (Bytes::new(), ExitCode::PrecompileError),
             };
-            sdk.write(&result.bytes);
+            (result.bytes, ExitCode::Ok)
         }
         PRECOMPILE_BN256_PAIR => {
             let gas_used = (input.len() / PAIR_ELEMENT_LEN) as u64 * ISTANBUL_PAIR_PER_POINT
@@ -147,15 +148,15 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 match bn128::run_pair(input, ISTANBUL_PAIR_PER_POINT, ISTANBUL_PAIR_BASE, u64::MAX)
                 {
                     Ok(result) => result,
-                    Err(_) => sdk.native_exit(ExitCode::PrecompileError),
+                    Err(_) => return (Bytes::new(), ExitCode::PrecompileError),
                 };
-            sdk.write(&result.bytes);
+            (result.bytes, ExitCode::Ok)
         }
         _ => unreachable!("bn128: unsupported contract address"),
-    };
+    }
 }
 
-entrypoint!(main_entry);
+system_runtime_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -165,7 +166,7 @@ mod tests {
 
     fn exec_evm_precompile(address: Address, inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 200_000;
-        let sdk = HostTestingContext::default()
+        let mut sdk = HostTestingContext::default()
             .with_input(Bytes::copy_from_slice(inputs))
             .with_contract_context(ContractContextV1 {
                 address,
@@ -174,9 +175,9 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        main_entry(sdk.clone());
-        let output = sdk.take_output();
-        assert_eq!(output, expected);
+        let (output, exit_code) = main_entry(&mut sdk);
+        assert_eq!(exit_code, ExitCode::Ok);
+        assert_eq!(output.as_ref(), expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
     }

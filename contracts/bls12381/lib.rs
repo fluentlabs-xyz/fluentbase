@@ -1,9 +1,10 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 extern crate alloc;
 
+use alloc::vec::Vec;
 use bls12_381::{pairing, G1Affine, G1Projective, G2Affine, G2Projective, Gt, Scalar};
 use fluentbase_sdk::{
-    alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI,
+    alloc_slice, system_runtime_entrypoint, Bytes, ContextReader, ExitCode, SharedAPI,
     PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BLS12_381_G2_ADD,
     PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BLS12_381_MAP_G2,
     PRECOMPILE_BLS12_381_PAIRING,
@@ -98,17 +99,24 @@ fn msm_required_gas(k: usize, discount_table: &[u16], multiplication_cost: u64) 
 }
 
 #[inline(always)]
-fn check_gas_and_sync<SDK: SharedAPI>(sdk: &SDK, gas_used: u64, gas_limit: u64) {
+fn check_gas_and_sync<SDK: SharedAPI>(
+    sdk: &SDK,
+    gas_used: u64,
+    gas_limit: u64,
+) -> Result<(), ExitCode> {
     if gas_used > gas_limit {
-        sdk.native_exit(ExitCode::OutOfFuel);
+        return Err(ExitCode::OutOfFuel);
     }
     sdk.sync_evm_gas(gas_used);
+    Ok(())
 }
 
 #[inline(always)]
-fn validate_input_length<SDK: SharedAPI>(sdk: &SDK, actual: u32, expected: usize) {
+fn validate_input_length(actual: u32, expected: usize) -> Result<(), ExitCode> {
     if actual != expected as u32 {
-        sdk.native_exit(ExitCode::InputOutputOutOfBounds);
+        Err(ExitCode::InputOutputOutOfBounds)
+    } else {
+        Ok(())
     }
 }
 
@@ -301,12 +309,13 @@ fn validate_and_consume_gas<SDK: SharedAPI>(
     expected_length: usize,
     gas_cost: u64,
     gas_limit: u64,
-) {
-    validate_input_length(sdk, input_length, expected_length);
-    check_gas_and_sync(sdk, gas_cost, gas_limit);
+) -> Result<(), ExitCode> {
+    validate_input_length(input_length, expected_length)?;
+    check_gas_and_sync(sdk, gas_cost, gas_limit)?;
+    Ok(())
 }
 
-pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> (Bytes, ExitCode) {
     // read full input data
     let bytecode_address = sdk.context().contract_bytecode_address();
     let gas_limit = sdk.context().contract_gas_limit();
@@ -318,13 +327,15 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     match bytecode_address {
         PRECOMPILE_BLS12_381_G1_ADD => {
             // Expect two G1 points (x1||y1||x2||y2), each coord 64 bytes BE padded
-            validate_and_consume_gas(
-                &sdk,
+            if let Err(exit_code) = validate_and_consume_gas(
+                sdk,
                 input_length,
                 G1_ADD_INPUT_LENGTH,
                 G1_ADD_GAS,
                 gas_limit,
-            );
+            ) {
+                return (Bytes::new(), exit_code);
+            };
             // Convert input from EVM format to runtime format
             let (p, q) = convert_g1_input_to_runtime(&input);
             // Use rWASM-patched bls12_381 directly for optimized execution
@@ -336,17 +347,19 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
             // Convert output from runtime format to EVM format
             let out = convert_g1_output_to_evm(&result_bytes);
-            sdk.write(&out);
+            (out.into(), ExitCode::Ok)
         }
         PRECOMPILE_BLS12_381_G2_ADD => {
             // EIP-2537: input must be 512 bytes (two G2 elements, each 256 bytes padded)
-            validate_and_consume_gas(
-                &sdk,
+            if let Err(exit_code) = validate_and_consume_gas(
+                sdk,
                 input_length,
                 G2_ADD_INPUT_LENGTH,
                 G2_ADD_GAS,
                 gas_limit,
-            );
+            ) {
+                return (Bytes::new(), exit_code);
+            };
 
             // Convert input from EVM format to runtime format
             let (p, q) = convert_g2_input_to_rwasm_patches(&input);
@@ -360,25 +373,26 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
             // Encode output: 256 bytes (x0||x1||y0||y1), each limb is 64-byte BE padded (16 zeros + 48 value)
             let out = convert_g2_output_to_evm_rwasm(&result_bytes);
-            sdk.write(&out);
+            (out.into(), ExitCode::Ok)
         }
         PRECOMPILE_BLS12_381_G1_MSM => {
             // Expect pairs of 160 bytes: 128-byte padded G1 point (x||y) + 32-byte scalar (BE)
             // Convert to rwasm-patches format: 96-byte uncompressed G1 + Scalar
             let input_length_requirement = G1_MSM_INPUT_LENGTH;
             if input.len() % input_length_requirement != 0 || input.is_empty() {
-                sdk.native_exit(ExitCode::InputOutputOutOfBounds);
+                return (Bytes::new(), ExitCode::InputOutputOutOfBounds);
             }
             let pairs_len = input.len() / input_length_requirement;
 
             // We check for the gas in the very beginning to reduce execution time
             let gas_used = msm_required_gas(pairs_len, &DISCOUNT_TABLE_G1_MSM, G1_MSM_GAS);
-            check_gas_and_sync(&sdk, gas_used, gas_limit);
+            if let Err(exit_code) = check_gas_and_sync(sdk, gas_used, gas_limit) {
+                return (Bytes::new(), exit_code);
+            };
 
             // Collect G1 points and scalars for MSM
-            let mut points: alloc::vec::Vec<G1Projective> =
-                alloc::vec::Vec::with_capacity(pairs_len);
-            let mut scalars: alloc::vec::Vec<Scalar> = alloc::vec::Vec::with_capacity(pairs_len);
+            let mut points: Vec<G1Projective> = Vec::with_capacity(pairs_len);
+            let mut scalars: Vec<Scalar> = Vec::with_capacity(pairs_len);
 
             for i in 0..pairs_len {
                 let start = i * input_length_requirement;
@@ -404,29 +418,27 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             let result_aff = G1Affine::from(result);
             let result_bytes = result_aff.to_uncompressed();
 
-            // Check if result is identity
-            if result_aff.is_identity().unwrap_u8() == 1 {
-                let out = [0u8; PADDED_G1_SIZE];
-                sdk.write(&out);
+            // Check if the result is identity
+            let out = if result_aff.is_identity().unwrap_u8() == 1 {
+                [0u8; PADDED_G1_SIZE]
             } else {
-                // Convert result to EVM format
-                let out = convert_g1_output_to_evm(&result_bytes);
-                sdk.write(&out);
-            }
+                convert_g1_output_to_evm(&result_bytes)
+            };
+            (out.into(), ExitCode::Ok)
         }
         PRECOMPILE_BLS12_381_G2_MSM => {
             match g2_msm(&input, gas_limit) {
                 Ok(output) => {
-                    // Consume the gas that was used by the precompile
+                    // Consume the gas that was used by to precompile
                     sdk.sync_evm_gas(output.gas_used);
-                    sdk.write(&output.bytes);
+                    (output.bytes, ExitCode::Ok)
                 }
-                Err(_) => sdk.native_exit(ExitCode::InputOutputOutOfBounds),
+                Err(_) => (Bytes::new(), ExitCode::InputOutputOutOfBounds),
             }
         }
         PRECOMPILE_BLS12_381_PAIRING => {
             if input.is_empty() || input.len() % PAIRING_INPUT_LENGTH != 0 {
-                sdk.native_exit(ExitCode::InputOutputOutOfBounds);
+                return (Bytes::new(), ExitCode::InputOutputOutOfBounds);
             }
             let pairs_len = input.len() / PAIRING_INPUT_LENGTH;
             // Gas: PAIRING_MULTIPLIER_BASE * pairs + PAIRING_OFFSET_BASE
@@ -434,7 +446,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                 .saturating_mul(pairs_len as u64)
                 .saturating_add(PAIRING_OFFSET_BASE);
             if required_gas > gas_limit {
-                sdk.native_exit(ExitCode::OutOfFuel);
+                return (Bytes::new(), ExitCode::OutOfFuel);
             }
             sdk.sync_evm_gas(required_gas);
 
@@ -469,35 +481,35 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             if is_one {
                 out_be[31] = 1;
             }
-            sdk.write(&out_be);
+            (out_be.into(), ExitCode::Ok)
         }
         PRECOMPILE_BLS12_381_MAP_G1 => {
             // Use revm_precompile directly for MAP_G1
             match map_fp_to_g1(&input, gas_limit) {
                 Ok(output) => {
-                    // Consume the gas that was used by the precompile
+                    // Consume the gas that was used by to precompile
                     sdk.sync_evm_gas(output.gas_used);
-                    sdk.write(&output.bytes);
+                    (output.bytes, ExitCode::Ok)
                 }
-                Err(_) => sdk.native_exit(ExitCode::InputOutputOutOfBounds),
+                Err(_) => (Bytes::new(), ExitCode::InputOutputOutOfBounds),
             }
         }
         PRECOMPILE_BLS12_381_MAP_G2 => {
             // Use revm_precompile directly for MAP_G2
             match map_fp2_to_g2(&input, gas_limit) {
                 Ok(output) => {
-                    // Consume the gas that was used by the precompile
+                    // Consume the gas that was used by to precompile
                     sdk.sync_evm_gas(output.gas_used);
-                    sdk.write(&output.bytes);
+                    (output.bytes, ExitCode::Ok)
                 }
-                Err(_) => sdk.native_exit(ExitCode::InputOutputOutOfBounds),
+                Err(_) => (Bytes::new(), ExitCode::InputOutputOutOfBounds),
             }
         }
         _ => unreachable!("bls12381: unsupported contract address"),
     }
 }
 
-entrypoint!(main_entry);
+system_runtime_entrypoint!(main_entry);
 
 /**
  * The following are the tests for the BLS12-381 precompile contract.
@@ -513,7 +525,7 @@ mod tests {
 
     fn exec_evm_precompile(address: Address, inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 120_000;
-        let sdk = HostTestingContext::default()
+        let mut sdk = HostTestingContext::default()
             .with_input(Bytes::copy_from_slice(inputs))
             .with_contract_context(ContractContextV1 {
                 address,
@@ -522,9 +534,9 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        main_entry(sdk.clone());
-        let output = sdk.take_output();
-        assert_eq!(output, expected);
+        let (output, exit_code) = main_entry(&mut sdk);
+        assert_eq!(exit_code, ExitCode::Ok);
+        assert_eq!(output.as_ref(), expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
     }
