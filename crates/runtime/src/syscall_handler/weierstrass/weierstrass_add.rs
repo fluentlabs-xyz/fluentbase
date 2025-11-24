@@ -75,6 +75,16 @@ fn syscall_weierstrass_add_handler<
     Ok(())
 }
 
+/// Secp256k1 curve point addition.
+///
+/// # Input format
+/// Both `p` and `q` must be affine points encoded as `[x || y]` in little-endian,
+/// where each coordinate is 32 bytes.
+///
+/// # Validation
+/// Returns `ExitCode::MalformedBuiltinParams` if:
+/// - `p == q` (use doubling instead — SP1 doesn't support adding equal points)
+/// - Any coordinate >= field modulus
 pub fn syscall_secp256k1_add_impl(
     p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE],
     q: [u8; SECP256K1_G1_RAW_AFFINE_SIZE],
@@ -83,6 +93,17 @@ pub fn syscall_secp256k1_add_impl(
         p, q,
     )
 }
+
+/// Secp256r1 curve point addition.
+///
+/// # Input format
+/// Both `p` and `q` must be affine points encoded as `[x || y]` in little-endian,
+/// where each coordinate is 32 bytes.
+///
+/// # Validation
+/// Returns `ExitCode::MalformedBuiltinParams` if:
+/// - `p == q` (use doubling instead — SP1 doesn't support adding equal points)
+/// - Any coordinate >= field modulus
 pub fn syscall_secp256r1_add_impl(
     p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE],
     q: [u8; SECP256R1_G1_RAW_AFFINE_SIZE],
@@ -91,12 +112,34 @@ pub fn syscall_secp256r1_add_impl(
         p, q,
     )
 }
+
+/// BN254 curve point addition.
+///
+/// # Input format
+/// Both `p` and `q` must be affine points encoded as `[x || y]` in little-endian,
+/// where each coordinate is 32 bytes.
+///
+/// # Validation
+/// Returns `ExitCode::MalformedBuiltinParams` if:
+/// - `p == q` (use doubling instead — SP1 doesn't support adding equal points)
+/// - Any coordinate >= field modulus
 pub fn syscall_bn254_add_impl(
     p: [u8; BN254_G1_RAW_AFFINE_SIZE],
     q: [u8; BN254_G1_RAW_AFFINE_SIZE],
 ) -> Result<[u8; BN254_G1_RAW_AFFINE_SIZE], ExitCode> {
     syscall_weierstrass_add_impl::<Bn254, Bn254BaseField, { BN254_G1_RAW_AFFINE_SIZE }>(p, q)
 }
+
+/// BLS12-381 curve point addition.
+///
+/// # Input format
+/// Both `p` and `q` must be affine points encoded as `[x || y]` in little-endian,
+/// where each coordinate is 48 bytes.
+///
+/// # Validation
+/// Returns `ExitCode::MalformedBuiltinParams` if:
+/// - `p == q` (use doubling instead — SP1 doesn't support adding equal points)
+/// - Any coordinate >= field modulus
 pub fn syscall_bls12381_add_impl(
     p: [u8; BLS12381_G1_RAW_AFFINE_SIZE],
     q: [u8; BLS12381_G1_RAW_AFFINE_SIZE],
@@ -106,7 +149,16 @@ pub fn syscall_bls12381_add_impl(
     )
 }
 
-/// Generic SP1 curve point addition implementation
+/// Generic SP1 curve point addition implementation.
+///
+/// # Input format
+/// Both `p` and `q` must be affine points encoded as `[x || y]` in little-endian,
+/// where each coordinate is `POINT_SIZE / 2` bytes.
+///
+/// # Validation
+/// Returns `ExitCode::MalformedBuiltinParams` if:
+/// - `p == q` (use doubling instead — SP1 doesn't support adding equal points)
+/// - Any coordinate >= field modulus
 fn syscall_weierstrass_add_impl<E: EllipticCurve, P: FieldParameters, const POINT_SIZE: usize>(
     p: [u8; POINT_SIZE],
     q: [u8; POINT_SIZE],
