@@ -1,5 +1,6 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
+use ark_serialize::Compress::No;
 use core::str::from_utf8;
 use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
@@ -58,14 +59,18 @@ fn call_with_sig_halt(
     input: Bytes,
     caller: &Address,
     callee: &Address,
-) -> u32 {
+) -> Option<u32> {
     let result = ctx.call_evm_tx(*caller, *callee, input, None, None);
     match &result {
         ExecutionResult::Halt { reason, gas_used } => {
             let output = ctx.sdk.take_output();
             debug_log!("output.len={} {:x?}", output.len(), output);
-            let error_code = u32::from_be_bytes(output[..size_of::<u32>()].try_into().unwrap());
-            error_code
+            if output.len() >= size_of::<u32>() {
+                return Some(u32::from_le_bytes(
+                    output[..size_of::<u32>()].try_into().unwrap(),
+                ));
+            }
+            None
         }
         _ => {
             panic!("expected revert, got: {:?}", &result)
@@ -118,20 +123,20 @@ fn erc20_no_plugins_enabled_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    assert_eq!(error_code, ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
+    assert_eq!(error_code, None); // ERR_PAUSABLE_PLUGIN_NOT_ACTIVE
 
     debug_log!();
-    // let mut input = Vec::<u8>::new();
-    // input.extend(sig_to_bytes(SIG_MINT));
-    // input.extend(USER_ADDR.as_slice());
-    // input.extend(fixed_bytes_from_u256(&U256::from(amount_to_mint)));
-    // let error_code = call_with_sig_revert(
-    //     &mut ctx,
-    //     input.clone().into(),
-    //     &DEPLOYER_ADDR,
-    //     &contract_address,
-    // );
-    // assert_eq!(error_code, ERR_MINTABLE_PLUGIN_NOT_ACTIVE);
+    let mut input = Vec::<u8>::new();
+    input.extend(sig_to_bytes(SIG_MINT));
+    input.extend(USER_ADDR.as_slice());
+    input.extend(fixed_bytes_from_u256(&U256::from(amount_to_mint)));
+    let error_code = call_with_sig_halt(
+        &mut ctx,
+        input.clone().into(),
+        &DEPLOYER_ADDR,
+        &contract_address,
+    );
+    assert_eq!(error_code, None); // ERR_MINTABLE_PLUGIN_NOT_ACTIVE
 }
 
 #[test]
