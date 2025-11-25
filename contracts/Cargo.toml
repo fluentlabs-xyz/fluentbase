@@ -33,6 +33,9 @@ solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "fe
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 ecdsa = { git = "https://github.com/rwasm-patches/signatures.git", default-features = false, features = ["hazmat", "verifying"] }
 k256 = { version = "0.13.4", default-features = false }
+hashbrown = { version = "0.16.0", default-features = false, features = ["default-hasher", "inline-more"] }
+lazy_static = { version = "1.5.0", default-features = false, features = ["spin_no_std"] }
+spin = { version = "0.10.0", default-features = false, features = ["mutex"] }
 
 [profile.release]
 panic = "abort"

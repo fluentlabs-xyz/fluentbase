@@ -54,10 +54,7 @@ use crate::{
     native_loader::create_loadable_account_with_fields2,
     solana_program::{loader_v4, sysvar::Sysvar},
 };
-use fluentbase_sdk::{
-    calc_create_metadata_address, keccak256, Address, Bytes, MetadataAPI, MetadataStorageAPI,
-    SharedAPI, StorageAPI, B256, PRECOMPILE_SVM_RUNTIME,
-};
+use fluentbase_sdk::{calc_create_metadata_address, debug_log, keccak256, Address, Bytes, MetadataAPI, MetadataStorageAPI, SharedAPI, StorageAPI, B256, PRECOMPILE_SVM_RUNTIME, U256};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
@@ -227,23 +224,33 @@ macro_rules! with_mock_invoke_context {
     };
 }
 
+pub fn derive_metadata_addr(pk: &Pubkey, alt_precompile_address: Option<Address>) -> Address {
+    debug_log!();
+    let pk_bytes = pk.to_bytes();
+    let derived_addr = calc_create_metadata_address(
+        &alt_precompile_address.unwrap_or(PRECOMPILE_SVM_RUNTIME),
+        &U256::from_be_bytes(pk_bytes),
+    );
+    debug_log!();
+    derived_addr
+}
+
 pub fn storage_read_metadata_params<API: MetadataAPI>(
     api: &API,
-    pubkey: &Pubkey,
+    pk: &Pubkey,
     alt_precompile_address: Option<Address>,
-) -> Result<(B256, Address, u32), SvmError> {
+) -> Result<(Address, u32), SvmError> {
     // let pubkey_hash = keccak256(pubkey.as_ref());
-    let pubkey: B256 = pubkey.to_bytes().into();
-    let derived_metadata_address = calc_create_metadata_address(
-        &alt_precompile_address.unwrap_or(PRECOMPILE_SVM_RUNTIME),
-        &pubkey.into(),
-    );
+    debug_log!();
+    let derived_metadata_address = derive_metadata_addr(pk, alt_precompile_address);
+    debug_log!();
     let metadata_size_result = api.metadata_size(&derived_metadata_address);
     // if !metadata_size_result.status.is_ok() {
     //     return Err(metadata_size_result.status.into());
     // }
+    debug_log!();
     let metadata_len = metadata_size_result.data.0;
-    Ok((pubkey, derived_metadata_address, metadata_len))
+    Ok((derived_metadata_address, metadata_len))
 }
 
 pub fn is_program_exists<API: MetadataAPI>(
@@ -256,7 +263,7 @@ pub fn is_program_exists<API: MetadataAPI>(
     } else {
         let account_metadata =
             storage_read_metadata_params(api, program_id, alt_precompile_address);
-        account_metadata.is_ok() && account_metadata?.2 > 0
+        account_metadata.is_ok() && account_metadata?.1 > 0
     };
     Ok(is_exists)
 }
@@ -266,7 +273,7 @@ pub fn storage_read_metadata<API: MetadataAPI>(
     pubkey: &Pubkey,
     alt_precompile_address: Option<Address>,
 ) -> Result<Bytes, SvmError> {
-    let ((_, derived_metadata_address, metadata_len)) =
+    let ((derived_metadata_address, metadata_len)) =
         storage_read_metadata_params(api, pubkey, alt_precompile_address)?;
     let metadata_copy = api.metadata_copy(&derived_metadata_address, 0, metadata_len);
     if !metadata_copy.status.is_ok() {
@@ -282,16 +289,54 @@ pub fn storage_write_metadata<MAPI: MetadataAPI>(
     metadata: Bytes,
     alt_precompile_address: Option<Address>,
 ) -> Result<(), SvmError> {
-    let ((pubkey_hash, derived_metadata_address, metadata_len)) =
+    let ((derived_metadata_address, metadata_len)) =
         storage_read_metadata_params(api, pubkey, alt_precompile_address)?;
     if metadata_len == 0 {
-        api.metadata_create(&pubkey_hash.into(), metadata)
+        api.metadata_create(&U256::from_be_bytes(pubkey.to_bytes()), metadata)
             .expect("metadata creation failed");
     } else {
         api.metadata_write(&derived_metadata_address, 0, metadata)
             .expect("metadata write failed");
     }
     Ok(())
+}
+
+pub fn account_data_encode_into(account_data: &AccountSharedData, out: &mut Vec<u8>) {
+    let need = 1 + size_of::<Pubkey>() + account_data.data().len();
+    out.reserve_exact(need);
+    let mut offset = out.len();
+    out.push(account_data.executable() as u8);
+    offset += 1;
+    out.extend_from_slice(account_data.owner().as_ref());
+    offset += size_of::<Pubkey>();
+    out.extend_from_slice(account_data.data());
+}
+
+pub fn account_data_encode_to_vec(account_data: &AccountSharedData) -> Vec<u8> {
+    let mut out = vec![];
+    account_data_encode_into(account_data, &mut out);
+    out
+}
+
+pub fn account_data_try_decode(buffer: &[u8]) -> Result<AccountSharedData, SvmError> {
+    const MIN_LEN: usize = 1 + size_of::<Pubkey>();
+    if buffer.len() < MIN_LEN {
+        return Err(SvmError::RuntimeError(RuntimeError::InvalidLength));
+    }
+    let executable = buffer[0] > 0;
+    let owner = Pubkey::new_from_array(buffer[1..1 + size_of::<Pubkey>()].try_into().unwrap());
+    let data = &buffer[1 + size_of::<Pubkey>()..];
+    // let lamports = GlobalLamportsBalance::get(api, &pk);
+    // TODO
+    let lamports = 111;
+    let account_data = AccountSharedData::create(
+        lamports,
+        data.to_vec(),
+        owner,
+        executable,
+        Default::default(),
+    );
+    Ok(account_data)
 }
 
 pub fn storage_read_account_data<API: MetadataAPI + MetadataStorageAPI>(
@@ -334,11 +379,11 @@ pub fn storage_write_account_data<API: MetadataAPI + MetadataStorageAPI>(
     account_data: &AccountSharedData,
     alt_precompile_address: Option<Address>,
 ) -> Result<(), SvmError> {
-    let mut buffer = vec![0u8; 1 + size_of::<Pubkey>() + account_data.data().len()];
-    buffer[0] = account_data.executable() as u8;
-    buffer[1..1 + size_of::<Pubkey>()].copy_from_slice(account_data.owner().as_ref());
-    buffer[1 + size_of::<Pubkey>()..].copy_from_slice(account_data.data());
+    debug_log!();
+    let mut buffer = vec![];
+    account_data_encode_into(account_data, &mut buffer);
     storage_write_metadata(api, pk, buffer.into(), alt_precompile_address)?;
+    debug_log!();
     GlobalLamportsBalance::set(api, &pk, account_data.lamports());
     Ok(())
 }

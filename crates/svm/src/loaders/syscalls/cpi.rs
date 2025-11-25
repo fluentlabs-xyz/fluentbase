@@ -14,8 +14,7 @@ use crate::{
     mem_ops::{
         translate, translate_slice, translate_slice_mut, translate_type, translate_type_mut,
     },
-    native_loader, token_2022,
-    token_2022::{instruction::decode_instruction_type, pod_instruction::PodTokenInstruction},
+    native_loader,
     word_size::{
         addr_type::AddrType,
         common::{MemoryMappingHelper, STABLE_VEC_FAT_PTR64_BYTE_SIZE},

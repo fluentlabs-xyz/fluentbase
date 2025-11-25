@@ -9,8 +9,6 @@ use fluentbase_svm::{
     error::SvmError,
     helpers::serialize_svm_program_params_from_instruction,
     solana_program::instruction::Instruction,
-    token_2022,
-    token_2022::instruction::{initialize_account, initialize_mint, mint_to},
 };
 use fluentbase_svm_common::common::pubkey_from_evm_address;
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext};

@@ -44,6 +44,8 @@ mod ddos;
 #[cfg(test)]
 mod bench;
 #[cfg(test)]
+mod universal_token;
+#[cfg(test)]
 mod update_account;
 #[cfg(test)]
 mod wasm;

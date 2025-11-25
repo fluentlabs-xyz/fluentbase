@@ -2019,6 +2019,7 @@ dependencies = [
 name = "fluentbase-revm"
 version = "0.4.11-dev"
 dependencies = [
+ "alloy-primitives",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -2188,9 +2189,17 @@ name = "fluentbase-universal-token"
 version = "0.4.11-dev"
 dependencies = [
  "bincode 2.0.1",
+ "bytemuck",
+ "bytemuck_derive",
  "fluentbase-sdk",
- "fluentbase-svm-common",
- "solana-pubkey",
+ "hashbrown 0.16.0",
+ "num-derive",
+ "num-traits",
+ "num_enum",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "spin 0.10.0",
 ]
 
 [[package]]

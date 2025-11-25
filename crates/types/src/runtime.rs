@@ -74,3 +74,29 @@ impl<C> bincode::Decode<C> for RuntimeInterruptionOutcomeV1 {
         })
     }
 }
+
+#[derive(Default, Clone, Debug, PartialEq, bincode::Encode, bincode::Decode)]
+pub struct RuntimeUniversalTokenDeployOutputV1 {
+    pub storage: Vec<([u8; 32], [u8; 32])>,
+}
+
+#[derive(Default, Clone, Debug, PartialEq, bincode::Encode, bincode::Decode)]
+pub struct RuntimeUniversalTokenInterruptionV1 {
+    // 1 byte-representation of corresponding interruption
+    pub interruption_code: u8,
+    pub output: Vec<u8>,
+    pub fuel_consumed: u64,
+    pub fuel_refunded: i64,
+    pub exit_code: i32,
+}
+
+#[derive(Default, Clone, Debug, PartialEq, bincode::Encode, bincode::Decode)]
+pub struct RuntimeUniversalTokenStorageReadBatchInterruptionV1 {
+    pub query_batch_ptr: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, bincode::Encode, bincode::Decode)]
+pub enum RuntimeUniversalTokenInterruption {
+    InterruptionV1(RuntimeUniversalTokenInterruptionV1),
+    StorageReadBatchInterruptionV1(RuntimeUniversalTokenStorageReadBatchInterruptionV1),
+}

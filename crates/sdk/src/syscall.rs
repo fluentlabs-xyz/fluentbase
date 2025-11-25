@@ -27,7 +27,8 @@ pub const SYSCALL_ID_BLOCK_HASH: B256 = B256::with_last_byte(0x13);
 pub const SYSCALL_ID_METADATA_WRITE: B256 = B256::with_last_byte(0x40);
 pub const SYSCALL_ID_METADATA_SIZE: B256 = B256::with_last_byte(0x41);
 pub const SYSCALL_ID_METADATA_CREATE: B256 = B256::with_last_byte(0x42);
-pub const SYSCALL_ID_METADATA_COPY: B256 = B256::with_last_byte(0x43);
+pub const SYSCALL_ID_METADATA_COPY_BYTE: u8 = 0x43;
+pub const SYSCALL_ID_METADATA_COPY: B256 = B256::with_last_byte(SYSCALL_ID_METADATA_COPY_BYTE);
 
 pub const SYSCALL_ID_METADATA_STORAGE_READ: B256 = B256::with_last_byte(0x44);
 pub const SYSCALL_ID_METADATA_STORAGE_WRITE: B256 = B256::with_last_byte(0x45);

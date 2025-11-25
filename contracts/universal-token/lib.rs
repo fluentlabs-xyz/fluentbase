@@ -3,544 +3,452 @@ extern crate alloc;
 extern crate core;
 
 use alloc::vec::Vec;
-use fluentbase_sdk::{entrypoint, Address, ContextReader, SharedAPI, UNIVERSAL_TOKEN_MAGIC_BYTES};
-use fluentbase_svm::{
-    fluentbase::token2022::{token2022_process, token2022_process_raw},
-    pubkey::{Pubkey, PUBKEY_BYTES},
-    token_2022,
-    token_2022::{extension::ExtensionType, instruction::AuthorityType, processor::Processor},
+use fluentbase_sdk::bincode::Encode;
+use fluentbase_sdk::syscall::SYSCALL_ID_STORAGE_READ;
+use fluentbase_sdk::{
+    bincode, debug_log, entrypoint, Address, Bytes, ContextReader, ExitCode,
+    RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, RuntimeUniversalTokenDeployOutputV1,
+    RuntimeUniversalTokenInterruption, RuntimeUniversalTokenInterruptionV1,
+    RuntimeUniversalTokenStorageReadBatchInterruptionV1, SharedAPI, SyscallInvocationParams,
+    STATE_DEPLOY, STATE_MAIN, U256,
 };
-use fluentbase_svm_common::{
-    common::{lamports_to_bytes, pubkey_from_evm_address, pubkey_try_from_slice},
-    universal_token::{
-        AllowanceParams, ApproveCheckedParams, ApproveParams, BurnCheckedParams, BurnParams,
-        CloseAccountParams, FreezeAccountParams, GetAccountDataSizeParams, InitializeAccountParams,
-        InitializeMintParams, MintToParams, RevokeParams, SetAuthorityParams, ThawAccountParams,
-        TransferFromParams, TransferParams,
-    },
+use fluentbase_universal_token::consts::{ERR_INSUFFICIENT_BALANCE, ERR_UNKNOWN};
+use fluentbase_universal_token::helpers::bincode::{decode, encode};
+use fluentbase_universal_token::services::storage_global::{
+    get_slot_key_at, prepare_query_batch, print_stats, storage_service,
 };
+use fluentbase_universal_token::storage::{
+    allowance_service, balance_service, init_services, settings_service,
+};
+use fluentbase_universal_token::types::result_or_interruption::ResultOrInt;
+use fluentbase_universal_token::types::result_or_interruption::ResultOrInterruption;
 use fluentbase_universal_token::{
-    common::bytes_to_sig,
-    consts::{
-        ERR_MALFORMED_INPUT, SIG_ALLOWANCE, SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE,
-        SIG_BALANCE_OF, SIG_BURN, SIG_BURN_CHECKED, SIG_CLOSE_ACCOUNT, SIG_DECIMALS,
-        SIG_DECIMALS_FOR_MINT, SIG_FREEZE_ACCOUNT, SIG_GET_ACCOUNT_DATA_SIZE,
-        SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE, SIG_SET_AUTHORITY,
-        SIG_THAW_ACCOUNT, SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
+    common::{
+        bytes_to_sig, fixed_bytes_from_u256, u256_from_bytes_slice_try, u256_from_fixed_bytes,
     },
-    storage::SIG_LEN_BYTES,
+    consts::{
+        emit_approval_event, emit_pause_event, emit_transfer_event, emit_unpause_event,
+        ERR_ALREADY_PAUSED, ERR_ALREADY_UNPAUSED, ERR_DECODE, ERR_INSUFFICIENT_ALLOWANCE,
+        ERR_INVALID_META_NAME, ERR_INVALID_META_SYMBOL, ERR_INVALID_MINTER, ERR_INVALID_PAUSER,
+        ERR_INVALID_RECIPIENT, ERR_MALFORMED_INPUT, ERR_MINTABLE_PLUGIN_NOT_ACTIVE, ERR_OVERFLOW,
+        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, ERR_VALIDATION, SIG_ALLOWANCE, SIG_APPROVE, SIG_BALANCE_OF,
+        SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE, SIG_SYMBOL, SIG_TOTAL_SUPPLY, SIG_TRANSFER,
+        SIG_TRANSFER_FROM, SIG_UNPAUSE,
+    },
+    storage::{Config, Feature, InitialSettings, ADDRESS_LEN_BYTES, SIG_LEN_BYTES, U256_LEN_BYTES},
+    unwrap,
 };
-use solana_program_error::ProgramError;
 
-fn decimals_for_mint_pubkey<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    pk: &Pubkey,
-) -> Result<u8, ProgramError> {
-    let mut processor = Processor::new(sdk);
-    let decimals = processor.decimals_for_mint(&pk)?;
-    Ok(decimals)
-}
-
-fn decimals_for_account_pubkey<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    pk: &Pubkey,
-) -> Result<u8, ProgramError> {
-    let mut processor = Processor::new(sdk);
-    let decimals = processor.decimals_for_account(&pk)?;
-    Ok(decimals)
-}
-
-fn decimals_for_mint<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(pk) = pubkey_try_from_slice(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let decimals = decimals_for_mint_pubkey(sdk, &pk).expect("failed to get decimals");
-    sdk.write(&[decimals]);
-}
-
-fn decimals_for_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(pk) = pubkey_try_from_slice(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let decimals = decimals_for_account_pubkey(sdk, &pk).expect("failed to get decimals");
-    sdk.write(&[decimals]);
-}
-
-fn allowance_for<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    delegate: &Pubkey,
-    account: &Pubkey,
-) -> Result<u64, ProgramError> {
-    let mut processor = Processor::new(sdk);
-    let allowance = processor.allowance(delegate, account)?;
-    Ok(allowance)
-}
-
-fn allowance<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = AllowanceParams::try_parse(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(allowance) = allowance_for(sdk, p.delegate, p.source) else {
-        sdk.write(&lamports_to_bytes(0));
+macro_rules! evm_exit {
+    ($sdk:ident, $err:ident) => {{
+        $sdk.write(&$err.to_le_bytes());
         return;
-    };
-    sdk.write(&lamports_to_bytes(allowance));
+    }};
 }
 
-fn transfer<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let from = &pubkey_from_evm_address::<true>(&sdk.context().contract_caller());
-    let Ok(p) = TransferParams::try_parse(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-
-    let instruction = token_2022::instruction::transfer_checked(
-        &token_2022::lib::id(),
-        &from,
-        &p.mint,
-        &p.to,
-        &p.authority,
-        &[],
-        p.amount,
-        p.decimals,
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-    sdk.write(&[1]);
+fn symbol(_input: &[u8]) -> ResultOrInt<Bytes> {
+    let symbol: Bytes = unwrap!(settings_service(false).symbol()).into();
+    symbol.into()
+}
+fn name(_input: &[u8]) -> ResultOrInt<Bytes> {
+    let name: Bytes = unwrap!(settings_service(false).name()).into();
+    name.into()
+}
+fn decimals(_input: &[u8]) -> ResultOrInt<Bytes> {
+    let output: Bytes =
+        fixed_bytes_from_u256(&unwrap!(settings_service(false).decimals_get())).into();
+    output.into()
 }
 
-fn transfer_from<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = TransferFromParams::try_parse(input) else {
+fn transfer(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
+    let from = sdk.context().contract_caller();
+    const TO_OFFSET: usize = 0;
+    const AMOUNT_OFFSET: usize = TO_OFFSET + ADDRESS_LEN_BYTES;
+    let Ok(to) = Address::try_from(&input[TO_OFFSET..TO_OFFSET + ADDRESS_LEN_BYTES]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-
-    #[allow(deprecated)]
-    let instruction = token_2022::instruction::transfer_checked(
-        &token_2022::lib::id(),
-        &p.from,
-        &p.mint,
-        &p.to,
-        &p.authority,
-        &[],
-        *p.amount,
-        p.decimals,
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-    sdk.write(&[1]);
+    let Some(amount) =
+        u256_from_bytes_slice_try(&input[AMOUNT_OFFSET..AMOUNT_OFFSET + U256_LEN_BYTES])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    if !unwrap!(balance_service(false).send(&from, &to, &amount)) {
+        sdk.evm_exit(ERR_INSUFFICIENT_BALANCE);
+    };
+    emit_transfer_event(sdk, &from, &to, &amount);
+    let result: Bytes = fixed_bytes_from_u256(&U256::from(1)).into();
+    result.into()
 }
 
-fn initialize_mint<SDK: SharedAPI, const IS_DEPLOY: bool>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = InitializeMintParams::try_parse(input) else {
+fn transfer_from(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
+    let spender = sdk.context().contract_caller();
+    const FROM_OFFSET: usize = 0;
+    const TO_OFFSET: usize = FROM_OFFSET + ADDRESS_LEN_BYTES;
+    const AMOUNT_OFFSET: usize = TO_OFFSET + ADDRESS_LEN_BYTES;
+    let Ok(to) = Address::try_from(&input[TO_OFFSET..TO_OFFSET + ADDRESS_LEN_BYTES]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
+    let Some(amount) =
+        u256_from_bytes_slice_try(&input[AMOUNT_OFFSET..AMOUNT_OFFSET + U256_LEN_BYTES])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let from = {
+        let Ok(from) = Address::try_from(&input[FROM_OFFSET..FROM_OFFSET + ADDRESS_LEN_BYTES])
+        else {
+            sdk.evm_exit(ERR_MALFORMED_INPUT);
+        };
+        if !unwrap!(allowance_service(false).subtract(&from, &spender, &amount)) {
+            sdk.evm_exit(ERR_INSUFFICIENT_ALLOWANCE);
+        }
+        from
+    };
+    if !unwrap!(balance_service(false).send(&from, &to, &amount)) {
+        sdk.evm_exit(ERR_INSUFFICIENT_BALANCE);
+    };
+    emit_transfer_event(sdk, &from, &to, &amount);
+    let result: Bytes = fixed_bytes_from_u256(&U256::from(1)).into();
+    result.into()
+}
 
-    let instruction = token_2022::instruction::initialize_mint(
-        &token_2022::lib::id(),
-        &p.mint,
-        &p.mint_authority,
-        p.freeze_opt,
-        p.decimals,
-    )
-    .unwrap();
+fn approve(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
+    const OWNER_OFFSET: usize = 0;
+    const SPENDER_OFFSET: usize = OWNER_OFFSET + ADDRESS_LEN_BYTES;
+    const AMOUNT_OFFSET: usize = SPENDER_OFFSET + ADDRESS_LEN_BYTES;
+    let Ok(owner) = Address::try_from(&input[OWNER_OFFSET..OWNER_OFFSET + ADDRESS_LEN_BYTES])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(spender) = Address::try_from(&input[SPENDER_OFFSET..SPENDER_OFFSET + ADDRESS_LEN_BYTES])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Some(amount) =
+        u256_from_bytes_slice_try(&input[AMOUNT_OFFSET..AMOUNT_OFFSET + size_of::<U256>()])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    allowance_service(false).update(&owner, &spender, &amount);
+    emit_approval_event(sdk, &owner, &spender, &amount);
+    let result: Bytes = fixed_bytes_from_u256(&U256::from(1)).into();
+    result.into()
+}
 
-    token2022_process::<IS_DEPLOY, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
+fn allow(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
+    const OWNER_OFFSET: usize = 0;
+    const SPENDER_OFFSET: usize = OWNER_OFFSET + ADDRESS_LEN_BYTES;
+    let Ok(owner) = Address::try_from(&input[OWNER_OFFSET..OWNER_OFFSET + ADDRESS_LEN_BYTES])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(spender) = Address::try_from(&input[SPENDER_OFFSET..SPENDER_OFFSET + ADDRESS_LEN_BYTES])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let amount = unwrap!(allowance_service(false).get_current(&owner, &spender));
+    let result: Bytes = fixed_bytes_from_u256(&amount).into();
+    result.into()
+}
 
-    if !IS_DEPLOY {
-        sdk.write(&[1]);
+fn total_supply(_input: &[u8]) -> ResultOrInt<Bytes> {
+    let result = unwrap!(settings_service(false).total_supply_get());
+    debug_log!("result {}", result);
+    let result: Bytes = fixed_bytes_from_u256(&result).into();
+    result.into()
+}
+
+fn balance_of(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
+    let Ok(owner) = Address::try_from(&input[..ADDRESS_LEN_BYTES]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let result = unwrap!(balance_service(false).get(&owner));
+    let result: Bytes = fixed_bytes_from_u256(&result).into();
+    result.into()
+}
+
+fn mint(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
+    let mut config = Config::new(false);
+    if !unwrap!(config.mintable_plugin_enabled()) {
+        sdk.evm_exit(ERR_MINTABLE_PLUGIN_NOT_ACTIVE);
     }
-}
-
-fn initialize_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = InitializeAccountParams::try_parse(input) else {
+    let minter = sdk.context().contract_caller();
+    if minter != unwrap!(settings_service(false).minter_get()) {
+        sdk.evm_exit(ERR_INVALID_MINTER);
+    }
+    if unwrap!(config.pausable_plugin_enabled()) && unwrap!(config.paused()) {
+        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
+    }
+    let Ok(to) = Address::try_from(&input[..ADDRESS_LEN_BYTES]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-
-    let instruction = token_2022::instruction::initialize_account(
-        &token_2022::lib::id(),
-        &p.account,
-        &p.mint,
-        &p.owner,
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-
-    sdk.write(&[1]);
-}
-
-fn mint_to<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = MintToParams::try_parse(input) else {
+    let zero_address = Address::ZERO;
+    if to == zero_address {
+        sdk.evm_exit(ERR_INVALID_RECIPIENT);
+    }
+    let Some(amount) =
+        u256_from_bytes_slice_try(&input[ADDRESS_LEN_BYTES..ADDRESS_LEN_BYTES + U256_LEN_BYTES])
+    else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-
-    let instruction = token_2022::instruction::mint_to(
-        &token_2022::lib::id(),
-        &p.mint,
-        &p.account,
-        &p.owner,
-        &[],
-        *p.amount,
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-
-    sdk.write(&[1]);
+    let total_supply: U256 = unwrap!(settings_service(false).total_supply_get());
+    let (total_supply, overflow) = total_supply.overflowing_add(amount);
+    if overflow {
+        sdk.evm_exit(ERR_OVERFLOW);
+    }
+    settings_service(false).total_supply_set(&total_supply);
+    balance_service(false).add(&to, &amount);
+    emit_transfer_event(sdk, &zero_address, &to, &amount);
+    let result: Bytes = fixed_bytes_from_u256(&U256::from(1)).into();
+    result.into()
 }
 
-fn approve<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = ApproveParams::try_parse(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let instruction = token_2022::instruction::approve(
-        &token_2022::lib::id(),
-        &p.source,
-        &p.delegate,
-        &p.owner,
-        &[],
-        *p.amount,
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-    sdk.write(&[1]);
+fn pause(sdk: &mut impl SharedAPI, _input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
+    debug_log!();
+    let mut config = Config::new(false);
+    if !unwrap!(config.pausable_plugin_enabled().map_err(|e| ERR_UNKNOWN)) {
+        debug_log!();
+        return ERR_PAUSABLE_PLUGIN_NOT_ACTIVE.into();
+    }
+    debug_log!();
+    let pauser = sdk.context().contract_caller();
+    debug_log!();
+    let current_pauser: Address = unwrap!(settings_service(false)
+        .pauser_get()
+        .map_err(|e| ERR_UNKNOWN));
+    debug_log!();
+    if pauser != current_pauser {
+        sdk.evm_exit(ERR_INVALID_PAUSER);
+    }
+    debug_log!();
+    if unwrap!(config.paused().map_err(|e| ERR_UNKNOWN)) {
+        sdk.evm_exit(ERR_ALREADY_PAUSED);
+    }
+    config.pause();
+    config.save_flags();
+    emit_pause_event(sdk, &pauser);
+    let result: Bytes = fixed_bytes_from_u256(&U256::from(1)).into();
+    result.into()
 }
 
-fn approve_checked<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = ApproveCheckedParams::try_parse(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let instruction = token_2022::instruction::approve_checked(
-        &token_2022::lib::id(),
-        &p.source,
-        &p.mint,
-        &p.delegate,
-        &p.owner,
-        &[],
-        *p.amount,
-        p.decimals,
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-    sdk.write(&[1]);
+fn unpause(sdk: &mut impl SharedAPI, _input: &[u8]) -> ResultOrInt<Bytes> {
+    let mut config = Config::new(false);
+    if !unwrap!(config.pausable_plugin_enabled()) {
+        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
+    }
+    let pauser = sdk.context().contract_caller();
+    let current_pauser: Address = unwrap!(settings_service(false).pauser_get());
+    if pauser != current_pauser {
+        sdk.evm_exit(ERR_INVALID_PAUSER);
+    }
+    if !unwrap!(config.paused()) {
+        sdk.evm_exit(ERR_ALREADY_UNPAUSED);
+    }
+    config.unpause();
+    config.save_flags();
+    emit_unpause_event(sdk, &pauser);
+    let result: Bytes = fixed_bytes_from_u256(&U256::from(1)).into();
+    result.into()
 }
 
-fn revoke<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = RevokeParams::try_parse(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let instruction =
-        token_2022::instruction::revoke(&token_2022::lib::id(), &p.source, &p.owner, &[]).unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-    sdk.write(&[1]);
-}
-
-fn set_authority<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = SetAuthorityParams::try_parse(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let instruction = token_2022::instruction::set_authority(
-        &token_2022::lib::id(),
-        &p.owned,
-        p.new_authority,
-        AuthorityType::from(p.authority_type).expect("invalid AuthorityType"),
-        &p.owner,
-        &[],
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-    sdk.write(&[1]);
-}
-
-fn burn<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = BurnParams::try_parse(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let instruction = token_2022::instruction::burn(
-        &token_2022::lib::id(),
-        &p.account,
-        &p.mint,
-        &p.authority,
-        &[],
-        *p.amount,
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-    sdk.write(&[1]);
-}
-
-fn burn_checked<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = BurnCheckedParams::try_parse(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let instruction = token_2022::instruction::burn_checked(
-        &token_2022::lib::id(),
-        p.account,
-        p.mint,
-        p.authority,
-        &[],
-        *p.amount,
-        p.decimals,
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-    sdk.write(&[1]);
-}
-
-fn close_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = CloseAccountParams::try_parse(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let instruction = token_2022::instruction::close_account(
-        &token_2022::lib::id(),
-        p.account,
-        p.destination,
-        p.owner,
-        &[],
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-    sdk.write(&[1]);
-}
-
-fn freeze_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = FreezeAccountParams::try_parse(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let instruction = token_2022::instruction::freeze_account(
-        &token_2022::lib::id(),
-        p.account,
-        p.mint,
-        p.owner,
-        &[],
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-    sdk.write(&[1]);
-}
-
-fn thaw_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = ThawAccountParams::try_parse(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let instruction = token_2022::instruction::thaw_account(
-        &token_2022::lib::id(),
-        &p.account,
-        &p.mint,
-        &p.owner,
-        &[],
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-    sdk.write(&[1]);
-}
-
-fn get_account_data_size<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(p) = GetAccountDataSizeParams::try_parse(input) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let extension_types: Result<Vec<ExtensionType>, _> = p
-        .extension_types
-        .iter()
-        .map(|v| ExtensionType::try_from(*v))
-        .collect();
-    let extension_types = extension_types.expect("valid extension types");
-    let instruction = token_2022::instruction::get_account_data_size(
-        &token_2022::lib::id(),
-        p.mint,
-        &extension_types,
-    )
-    .unwrap();
-
-    token2022_process::<false, _>(
-        sdk,
-        &instruction.program_id,
-        &instruction.accounts,
-        &instruction.data,
-    )
-    .expect("failed to process");
-    sdk.write(&[1]);
-}
-
-fn total_supply<SDK: SharedAPI>(sdk: &mut SDK) {
-    // let result = get_total_supply(sdk);
-    sdk.write(&[0])
-}
-
-fn balance_for_pubkey<SDK: SharedAPI>(sdk: &mut SDK, pubkey: &Pubkey) {
-    let mut processor = Processor::new(sdk);
-    let balance = processor
-        .balance_of(&pubkey)
-        .expect("failed to get balance");
-    sdk.write(&lamports_to_bytes(balance))
-}
-
-fn balance_for_address<SDK: SharedAPI>(sdk: &mut SDK, address: &Address) {
-    let pubkey = pubkey_from_evm_address::<true>(&address);
-    balance_for_pubkey(sdk, &pubkey);
-}
-
-fn balance<SDK: SharedAPI>(sdk: &mut SDK) {
-    let contract_caller = sdk.context().contract_caller();
-    balance_for_address(sdk, &contract_caller);
-}
-
-fn balance_of<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let Ok(pubkey) = Pubkey::try_from(&input[..PUBKEY_BYTES]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    balance_for_pubkey(sdk, &pubkey);
+fn try_process_read_query_batch<const READ: bool, const DEFAULT_ON_READ: bool>(
+    sdk: &mut impl SharedAPI,
+) -> bool {
+    debug_log!("try_process_read_query_batch");
+    let query_batch_ptr = prepare_query_batch::<READ, DEFAULT_ON_READ>();
+    if let Some(params) = query_batch_ptr {
+        let output = encode(&params).unwrap();
+        debug_log!("params {:?}", params);
+        sdk.write(&ExitCode::InterruptionCalled.into_i32().to_le_bytes());
+        sdk.write(&output);
+        return true;
+    }
+    false
 }
 
 pub fn deploy_entry(mut sdk: impl SharedAPI) {
+    debug_log!();
+    init_services(true);
+
+    let input = sdk.bytes_input();
     let input_size = sdk.input_size();
     if input_size < SIG_LEN_BYTES as u32 {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     }
-    let (sig1_bytes, input1) = sdk.input().split_at(SIG_LEN_BYTES);
-    if sig1_bytes != UNIVERSAL_TOKEN_MAGIC_BYTES {
-        panic!("invalid input signature");
+    debug_log!("input.len={}", input_size);
+    let (new_frame_input, _) = decode::<RuntimeNewFrameInputV1>(&input).unwrap();
+    debug_log!();
+    let (_sig, input) = new_frame_input.input.split_at(SIG_LEN_BYTES);
+    let initial_settings = InitialSettings::try_decode_from_slice(&input);
+    let (initial_settings, _) = if let Ok(v) = initial_settings {
+        v
+    } else {
+        sdk.evm_exit(ERR_DECODE);
+    };
+    if !initial_settings.is_valid() {
+        sdk.evm_exit(ERR_VALIDATION);
     }
-    let (sig2_bytes, input2) = &input1.split_at(SIG_LEN_BYTES);
-    let sig2 = bytes_to_sig(sig2_bytes);
-    match sig2 {
-        SIG_INITIALIZE_MINT => {
-            initialize_mint::<_, true>(&mut sdk, &input2);
-            return;
+    let mut config = Config::new(true);
+    for feature in initial_settings.features() {
+        let result: ResultOrInt<()> = match feature {
+            Feature::Meta { name, symbol } => {
+                if !settings_service(true).name_set(name) {
+                    sdk.evm_exit(ERR_INVALID_META_NAME);
+                }
+                if !settings_service(true).symbol_set(symbol) {
+                    sdk.evm_exit(ERR_INVALID_META_SYMBOL);
+                }
+                ().into()
+            }
+            Feature::InitialSupply {
+                amount,
+                owner,
+                decimals,
+            } => {
+                let amount = u256_from_fixed_bytes(amount);
+                debug_log!("amount {}", amount);
+                let owner = owner.into();
+                settings_service(true).decimals_set(*decimals);
+                settings_service(true).total_supply_set(&amount);
+                balance_service(true).add(&owner, &amount)
+            }
+            Feature::Mintable { minter } => {
+                config.enable_mintable_plugin();
+                settings_service(true).minter_set(&Address::from(minter));
+                ().into()
+            }
+            Feature::Pausable { pauser } => {
+                config.enable_pausable_plugin();
+                settings_service(true).pauser_set(&Address::from(pauser));
+                ().into()
+            }
+        };
+        match result {
+            ResultOrInt::Result(r) => match r {
+                Ok(_) => {}
+                Err(_) => {
+                    debug_log!("error");
+                    panic!("failed to deploy: unknown error")
+                }
+            },
+            ResultOrInt::Interruption() => {
+                // TODO process int
+                debug_log!("not allowed in deploy");
+                panic!("int not allowed in deploy");
+            }
         }
-        _ => {}
     }
-    token2022_process_raw::<true, _>(&mut sdk, input1).expect("failed to process token deploy");
+    config.save_flags();
+    // TODO process accumulated result if presented
+    print_stats();
+    let query_batch_ptr = prepare_query_batch::<false, false>();
+    if let Some(params) = query_batch_ptr {
+        let output = encode(&params).unwrap();
+        sdk.write(&ExitCode::InterruptionCalled.into_i32().to_le_bytes());
+        sdk.write(&output);
+    } else {
+        sdk.write(&ExitCode::Ok.into_i32().to_le_bytes());
+        let mut storage =
+            Vec::<([u8; 32], [u8; 32])>::with_capacity(storage_service(true).values_new().len());
+        for v in storage_service(true).values_new() {
+            storage.push((v.0.to_le_bytes(), v.1.to_le_bytes()))
+        }
+        let output = encode(&RuntimeUniversalTokenDeployOutputV1 { storage }).unwrap();
+        sdk.write(&output);
+        storage_service(true).clear();
+    }
+    debug_log!();
 }
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
-    let input_size = sdk.input_size();
+    debug_log!(
+        "storage_service(false).default_on_read={} sdk.context().contract_address()={}",
+        storage_service(false).default_on_read(),
+        sdk.context().contract_address(),
+    );
+    debug_log!();
+    print_stats();
+    init_services(false);
+
+    let return_data = sdk.return_data();
+    if !return_data.is_empty() {
+        debug_log!();
+        let (out, _) = decode::<RuntimeInterruptionOutcomeV1>(&return_data).unwrap();
+        debug_log!("out.output.len={}", out.output.len());
+        assert_eq!(out.output.len(), 32);
+        debug_log!();
+        let slot = get_slot_key_at(0);
+        let value = U256::from_le_slice(&out.output);
+        storage_service(false).set_existing(&slot, &value);
+        debug_log!("slot {} value {}", slot, value);
+        if try_process_read_query_batch::<true, false>(&mut sdk) {
+            debug_log!();
+            return;
+        };
+        debug_log!();
+    }
+
     let input = sdk.input();
+    let (new_frame_input, _) = decode::<RuntimeNewFrameInputV1>(input).unwrap();
+
+    let input_size = new_frame_input.input.len() as u32;
     if input_size < SIG_LEN_BYTES as u32 {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     }
-    let (sig, input) = input.split_at(SIG_LEN_BYTES);
+    let (sig, input) = new_frame_input.input.split_at(SIG_LEN_BYTES);
     let signature = bytes_to_sig(sig);
-    match signature {
-        SIG_BALANCE => balance(&mut sdk),
-        SIG_BALANCE_OF => balance_of(&mut sdk, input),
-        SIG_INITIALIZE_MINT => initialize_mint::<_, false>(&mut sdk, input),
+    debug_log!();
+    let result: ResultOrInt<Bytes> = match signature {
+        SIG_SYMBOL => symbol(input),
+        SIG_NAME => name(input),
         SIG_TRANSFER => transfer(&mut sdk, input),
         SIG_TRANSFER_FROM => transfer_from(&mut sdk, input),
-        SIG_INITIALIZE_ACCOUNT => initialize_account(&mut sdk, input),
-        SIG_MINT_TO => mint_to(&mut sdk, input),
-        SIG_DECIMALS_FOR_MINT => decimals_for_mint(&mut sdk, input),
-        SIG_DECIMALS => decimals_for_account(&mut sdk, input),
-        SIG_ALLOWANCE => allowance(&mut sdk, input),
         SIG_APPROVE => approve(&mut sdk, input),
-        SIG_APPROVE_CHECKED => approve_checked(&mut sdk, input),
-        SIG_REVOKE => revoke(&mut sdk, input),
-        SIG_SET_AUTHORITY => set_authority(&mut sdk, input),
-        SIG_BURN => burn(&mut sdk, input),
-        SIG_BURN_CHECKED => burn_checked(&mut sdk, input),
-        SIG_FREEZE_ACCOUNT => freeze_account(&mut sdk, input),
-        SIG_THAW_ACCOUNT => thaw_account(&mut sdk, input),
-        SIG_CLOSE_ACCOUNT => close_account(&mut sdk, input),
-        SIG_GET_ACCOUNT_DATA_SIZE => get_account_data_size(&mut sdk, input),
-        SIG_TOKEN2022 => {
-            token2022_process_raw::<false, _>(&mut sdk, input).expect("failed to process")
+        SIG_DECIMALS => decimals(input),
+        SIG_ALLOWANCE => allow(&mut sdk, input),
+        SIG_TOTAL_SUPPLY => total_supply(input),
+        SIG_BALANCE_OF => balance_of(&mut sdk, input),
+        SIG_MINT => mint(&mut sdk, input),
+        SIG_PAUSE => {
+            let result = pause(&mut sdk, input);
+            match result {
+                ResultOrInterruption::Result(r) => match r {
+                    Ok(v) => v.into(),
+                    Err(e) => {
+                        debug_log!("e {}", e);
+                        evm_exit!(sdk, e)
+                    }
+                },
+                ResultOrInterruption::Interruption() => ResultOrInterruption::Interruption(),
+            }
         }
+        SIG_UNPAUSE => unpause(&mut sdk, input),
         _ => {
-            sdk.evm_exit(ERR_MALFORMED_INPUT);
+            debug_log!();
+            evm_exit!(sdk, ERR_MALFORMED_INPUT);
+        }
+    };
+    debug_log!();
+    match result {
+        ResultOrInt::Result(r) => match r {
+            Ok(v) => {
+                sdk.write(&ExitCode::Ok.into_i32().to_le_bytes());
+                debug_log!("v: {:x?}", &v);
+                sdk.write(&v);
+                return;
+            }
+            Err(_) => {
+                debug_log!("failed to exec: unknown error");
+                panic!("failed to exec: unknown error")
+            }
+        },
+        ResultOrInt::Interruption() => {
+            debug_log!("interruption");
+            print_stats();
+            if try_process_read_query_batch::<true, false>(&mut sdk) {
+                debug_log!();
+                return;
+            };
+            debug_log!();
         }
     }
 }
