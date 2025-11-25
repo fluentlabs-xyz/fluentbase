@@ -89,6 +89,18 @@ macro_rules! impl_common {
             }
         }
     };
+    (& mut $r:ty, $l:lifetime, $e:ty) => {
+        impl<$l> From<& $l mut $r> for ResultOrInterruption<& $l mut $r, $e> {
+            fn from(v: & $l mut $r) -> Self {
+                ResultOrInterruption::from_result(v)
+            }
+        }
+        impl<$l> From<$e> for ResultOrInterruption<& $l mut $r, $e> {
+            fn from(v: $e) -> Self {
+                ResultOrInterruption::from_error(v)
+            }
+        }
+    };
     ($r:ty, $e:ty) => {
         impl From<$r> for ResultOrInterruption<$r, $e> {
             fn from(v: $r) -> Self {
@@ -104,11 +116,17 @@ macro_rules! impl_common {
 }
 
 impl_common!(());
+impl_common!((), u32);
 impl_common!(Vec<u8>);
+impl_common!(Vec<u8>, u32);
 impl_common!(Bytes);
 impl_common!(Bytes, u32);
 impl_common!(U256);
+impl_common!(U256, u32);
 impl_common!(Address);
+impl_common!(Address, u32);
 impl_common!(&U256, 'a);
 impl_common!(&mut U256, 'a);
+impl_common!(&mut U256, 'a, u32);
 impl_common!(bool);
+impl_common!(bool, u32);

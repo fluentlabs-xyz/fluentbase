@@ -1,8 +1,8 @@
 use crate::common::{b256_from_address_try, u256_from_address, u256_from_bytes_slice_try};
+use crate::consts::{ERR_INDEX_OUT_OF_BOUNDS, ERR_MALFORMED_INPUT};
 use crate::helpers::bincode::{decode, encode};
 use crate::services::storage_global::storage_service;
 use crate::types::derived_key::{IKeyDeriver, KeyDeriver};
-use crate::types::result_or_interruption::ResultOrInt;
 use crate::types::result_or_interruption::ResultOrInterruption;
 use crate::{
     common::{address_from_u256, fixed_bytes_from_u256},
@@ -169,7 +169,7 @@ impl Settings {
         debug_log!("s {}", s);
         storage_service(self.default_on_read).try_set(&s, value);
     }
-    pub fn total_supply_get(&mut self) -> ResultOrInt<U256> {
+    pub fn total_supply_get(&mut self) -> ResultOrInterruption<U256, u32> {
         let s = self.total_supply_slot();
         debug_log!("s {}", s);
         unwrap_opt!(storage_service(self.default_on_read).try_get(&s).cloned()).into()
@@ -179,7 +179,7 @@ impl Settings {
         let v = u256_from_address(&value);
         storage_service(self.default_on_read).try_set(&s, &v);
     }
-    pub fn minter_get(&mut self) -> ResultOrInt<Address> {
+    pub fn minter_get(&mut self) -> ResultOrInterruption<Address, u32> {
         let s = self.minter_slot();
         unwrap_opt!(storage_service(self.default_on_read)
             .try_get(&s)
@@ -191,7 +191,7 @@ impl Settings {
         let v = u256_from_address(value);
         storage_service(self.default_on_read).try_set(&s, &v);
     }
-    pub fn pauser_get(&mut self) -> ResultOrInt<Address> {
+    pub fn pauser_get(&mut self) -> ResultOrInterruption<Address, u32> {
         let s = self.pauser_slot();
         unwrap_opt!(storage_service(self.default_on_read)
             .try_get(&s)
@@ -199,10 +199,10 @@ impl Settings {
         .into()
     }
     #[inline(always)]
-    fn short_str_to_u256_repr(&self, short_str: &[u8]) -> Result<U256, ()> {
+    fn short_str_to_u256_repr(&self, short_str: &[u8]) -> Result<U256, u32> {
         let len = short_str.len();
         if len < Self::SHORT_STR_LEN_MIN || len > Self::SHORT_STR_LEN_MAX {
-            return Err(());
+            return Err(ERR_MALFORMED_INPUT);
         }
         let mut byte_repr = [0u8; U256_LEN_BYTES];
         byte_repr[0] = len as u8;
@@ -231,7 +231,7 @@ impl Settings {
         true
     }
     #[inline(always)]
-    fn short_str<'a>(&self, slot: &U256) -> ResultOrInt<Vec<u8>> {
+    fn short_str<'a>(&self, slot: &U256) -> ResultOrInterruption<Vec<u8>, u32> {
         let repr = unwrap_opt!(storage_service(self.default_on_read).try_get(slot).cloned());
         self.short_str_from_u256_repr(&repr).into()
     }
@@ -239,7 +239,7 @@ impl Settings {
         let s = self.symbol_slot();
         self.short_str_set(&s, symbol)
     }
-    pub fn symbol<'a>(&mut self) -> ResultOrInt<Vec<u8>> {
+    pub fn symbol<'a>(&mut self) -> ResultOrInterruption<Vec<u8>, u32> {
         let v = self.symbol_slot();
         self.short_str(&v)
     }
@@ -247,7 +247,7 @@ impl Settings {
         let s = self.name_slot();
         self.short_str_set(&s, symbol)
     }
-    pub fn name<'a>(&mut self) -> ResultOrInt<Vec<u8>> {
+    pub fn name<'a>(&mut self) -> ResultOrInterruption<Vec<u8>, u32> {
         let s = self.name_slot();
         self.short_str(&s)
     }
@@ -259,11 +259,11 @@ impl Settings {
         storage_service(self.default_on_read).try_set(&s, &U256::from(decimals));
         true
     }
-    pub fn decimals_get(&mut self) -> ResultOrInt<U256> {
+    pub fn decimals_get(&mut self) -> ResultOrInterruption<U256, u32> {
         let s = self.decimals_slot();
         unwrap_opt!(storage_service(self.default_on_read).try_get(&s).cloned()).into()
     }
-    pub fn flags_get(&mut self) -> ResultOrInt<U256> {
+    pub fn flags_get(&mut self) -> ResultOrInterruption<U256, u32> {
         let s = self.flags_slot();
         unwrap_opt!(storage_service(self.default_on_read).try_get(&s).cloned()).into()
     }
@@ -287,7 +287,7 @@ impl Config {
         }
     }
 
-    pub fn get_or_init_flags(&mut self) -> ResultOrInt<U256> {
+    pub fn get_or_init_flags(&mut self) -> ResultOrInterruption<U256, u32> {
         if None == self.flags {
             self.flags = Some(unwrap!(settings_service(self.default_on_read).flags_get()));
         }
@@ -297,7 +297,7 @@ impl Config {
         unreachable!();
     }
 
-    fn get_or_init_flags_mut(&mut self) -> ResultOrInt<&mut U256> {
+    fn get_or_init_flags_mut(&mut self) -> ResultOrInterruption<&mut U256, u32> {
         if None == self.flags {
             self.flags = Some(unwrap!(settings_service(self.default_on_read).flags_get()));
         }
@@ -307,9 +307,9 @@ impl Config {
         unreachable!();
     }
 
-    pub fn set_flag(&mut self, idx: usize, value: bool) -> ResultOrInt<()> {
+    pub fn set_flag(&mut self, idx: usize, value: bool) -> ResultOrInterruption<(), u32> {
         if idx >= U256_LEN_BITS {
-            return ResultOrInt::from_error(());
+            return ERR_INDEX_OUT_OF_BOUNDS.into();
         }
         let flags: &mut U256 = unwrap!(self.get_or_init_flags_mut());
         flags.set_bit(idx, value);
@@ -324,9 +324,9 @@ impl Config {
         false
     }
 
-    fn flag_value(&mut self, idx: usize) -> ResultOrInt<bool> {
+    fn flag_value(&mut self, idx: usize) -> ResultOrInterruption<bool, u32> {
         if idx >= U256_LEN_BITS {
-            return ResultOrInt::from_error(());
+            return ERR_INDEX_OUT_OF_BOUNDS.into();
         }
         debug_log!();
         let flags: U256 = unwrap!(self.get_or_init_flags());
@@ -344,7 +344,7 @@ impl Config {
     }
 
     #[inline(always)]
-    pub fn mintable_plugin_enabled(&mut self) -> ResultOrInt<bool> {
+    pub fn mintable_plugin_enabled(&mut self) -> ResultOrInterruption<bool, u32> {
         self.flag_value(Self::MINTABLE_PLUGIN_FLAG_IDX)
     }
 
@@ -354,12 +354,12 @@ impl Config {
     }
 
     #[inline(always)]
-    pub fn pausable_plugin_enabled(&mut self) -> ResultOrInt<bool> {
+    pub fn pausable_plugin_enabled(&mut self) -> ResultOrInterruption<bool, u32> {
         self.flag_value(Self::PAUSABLE_PLUGIN_FLAG_IDX)
     }
 
     #[inline(always)]
-    pub fn paused(&mut self) -> ResultOrInt<bool> {
+    pub fn paused(&mut self) -> ResultOrInterruption<bool, u32> {
         self.flag_value(Self::PAUSED_FLAG_IDX)
     }
 
@@ -395,19 +395,19 @@ impl Balance {
     }
 
     #[inline(always)]
-    pub fn get(&self, address: &Address) -> ResultOrInt<U256> {
+    pub fn get(&self, address: &Address) -> ResultOrInterruption<U256, u32> {
         let key = self.kd.b256(&b256_from_address_try(address));
         unwrap_opt!(storage_service(self.default_on_read).try_get(&key).cloned()).into()
     }
 
-    pub fn add(&self, address: &Address, amount: &U256) -> ResultOrInt<()> {
+    pub fn add(&self, address: &Address, amount: &U256) -> ResultOrInterruption<(), u32> {
         let current_balance: U256 = unwrap!(self.get(address));
         let new_balance = current_balance + amount;
         self.set(address, &new_balance);
         ().into()
     }
 
-    pub fn subtract(&self, address: &Address, amount: &U256) -> ResultOrInt<bool> {
+    pub fn subtract(&self, address: &Address, amount: &U256) -> ResultOrInterruption<bool, u32> {
         let current_balance: U256 = unwrap!(self.get(address));
         if &current_balance < amount {
             return false.into();
@@ -417,7 +417,12 @@ impl Balance {
         true.into()
     }
 
-    pub fn send(&self, from: &Address, to: &Address, amount: &U256) -> ResultOrInt<bool> {
+    pub fn send(
+        &self,
+        from: &Address,
+        to: &Address,
+        amount: &U256,
+    ) -> ResultOrInterruption<bool, u32> {
         if !unwrap!(self.subtract(from, amount)) {
             return false.into();
         }
@@ -458,16 +463,25 @@ impl Allowance {
     }
 
     #[inline(always)]
-    pub fn get(&self, owner: &Address, spender: &Address) -> ResultOrInt<U256> {
+    pub fn get(&self, owner: &Address, spender: &Address) -> ResultOrInterruption<U256, u32> {
         let key = self.key(owner, spender);
         unwrap_opt!(storage_service(self.default_on_read).try_get(&key).cloned()).into()
     }
 
     #[inline(always)]
-    pub fn get_current(&self, owner: &Address, spender: &Address) -> ResultOrInt<U256> {
+    pub fn get_current(
+        &self,
+        owner: &Address,
+        spender: &Address,
+    ) -> ResultOrInterruption<U256, u32> {
         self.get(owner, spender)
     }
-    pub fn subtract(&self, owner: &Address, spender: &Address, amount: &U256) -> ResultOrInt<bool> {
+    pub fn subtract(
+        &self,
+        owner: &Address,
+        spender: &Address,
+        amount: &U256,
+    ) -> ResultOrInterruption<bool, u32> {
         let current_allowance: U256 = unwrap!(self.get(owner, spender));
         if current_allowance < *amount {
             return false.into();

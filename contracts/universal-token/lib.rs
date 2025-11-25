@@ -20,7 +20,6 @@ use fluentbase_universal_token::services::storage_global::{
 use fluentbase_universal_token::storage::{
     allowance_service, balance_service, init_services, settings_service,
 };
-use fluentbase_universal_token::types::result_or_interruption::ResultOrInt;
 use fluentbase_universal_token::types::result_or_interruption::ResultOrInterruption;
 use fluentbase_universal_token::{
     common::{
@@ -39,21 +38,36 @@ use fluentbase_universal_token::{
     unwrap,
 };
 
-fn symbol(_input: &[u8]) -> ResultOrInt<Bytes> {
+macro_rules! return_custom_err {
+    ($e:ident) => {
+        return Err(($e.to_le_bytes().into(), ExitCode::Panic));
+    };
+}
+
+macro_rules! return_interruption {
+    ($params:expr) => {
+        return Err(($params, ExitCode::InterruptionCalled));
+    };
+    () => {
+        return_interruption!(Bytes::new())
+    };
+}
+
+fn symbol(_input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let symbol: Bytes = unwrap!(settings_service(false).symbol()).into();
     symbol.into()
 }
-fn name(_input: &[u8]) -> ResultOrInt<Bytes> {
+fn name(_input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let name: Bytes = unwrap!(settings_service(false).name()).into();
     name.into()
 }
-fn decimals(_input: &[u8]) -> ResultOrInt<Bytes> {
+fn decimals(_input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let output: Bytes =
         fixed_bytes_from_u256(&unwrap!(settings_service(false).decimals_get())).into();
     output.into()
 }
 
-fn transfer(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
+fn transfer(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let from = sdk.context().contract_caller();
     const TO_OFFSET: usize = 0;
     const AMOUNT_OFFSET: usize = TO_OFFSET + ADDRESS_LEN_BYTES;
@@ -73,7 +87,7 @@ fn transfer(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
     result.into()
 }
 
-fn transfer_from(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
+fn transfer_from(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let spender = sdk.context().contract_caller();
     const FROM_OFFSET: usize = 0;
     const TO_OFFSET: usize = FROM_OFFSET + ADDRESS_LEN_BYTES;
@@ -104,7 +118,7 @@ fn transfer_from(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
     result.into()
 }
 
-fn approve(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
+fn approve(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     const OWNER_OFFSET: usize = 0;
     const SPENDER_OFFSET: usize = OWNER_OFFSET + ADDRESS_LEN_BYTES;
     const AMOUNT_OFFSET: usize = SPENDER_OFFSET + ADDRESS_LEN_BYTES;
@@ -127,7 +141,7 @@ fn approve(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
     result.into()
 }
 
-fn allow(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
+fn allow(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     const OWNER_OFFSET: usize = 0;
     const SPENDER_OFFSET: usize = OWNER_OFFSET + ADDRESS_LEN_BYTES;
     let Ok(owner) = Address::try_from(&input[OWNER_OFFSET..OWNER_OFFSET + ADDRESS_LEN_BYTES])
@@ -143,14 +157,14 @@ fn allow(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
     result.into()
 }
 
-fn total_supply(_input: &[u8]) -> ResultOrInt<Bytes> {
+fn total_supply(_input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let result = unwrap!(settings_service(false).total_supply_get());
     debug_log!("result {}", result);
     let result: Bytes = fixed_bytes_from_u256(&result).into();
     result.into()
 }
 
-fn balance_of(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
+fn balance_of(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let Ok(owner) = Address::try_from(&input[..ADDRESS_LEN_BYTES]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
@@ -159,34 +173,34 @@ fn balance_of(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
     result.into()
 }
 
-fn mint(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInt<Bytes> {
+fn mint(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let mut config = Config::new(false);
     if !unwrap!(config.mintable_plugin_enabled()) {
-        sdk.evm_exit(ERR_MINTABLE_PLUGIN_NOT_ACTIVE);
+        return ERR_MINTABLE_PLUGIN_NOT_ACTIVE.into();
     }
     let minter = sdk.context().contract_caller();
     if minter != unwrap!(settings_service(false).minter_get()) {
-        sdk.evm_exit(ERR_INVALID_MINTER);
+        return ERR_INVALID_MINTER.into();
     }
     if unwrap!(config.pausable_plugin_enabled()) && unwrap!(config.paused()) {
-        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
+        return ERR_PAUSABLE_PLUGIN_NOT_ACTIVE.into();
     }
     let Ok(to) = Address::try_from(&input[..ADDRESS_LEN_BYTES]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
+        return ERR_MALFORMED_INPUT.into();
     };
     let zero_address = Address::ZERO;
     if to == zero_address {
-        sdk.evm_exit(ERR_INVALID_RECIPIENT);
+        return ERR_INVALID_RECIPIENT.into();
     }
     let Some(amount) =
         u256_from_bytes_slice_try(&input[ADDRESS_LEN_BYTES..ADDRESS_LEN_BYTES + U256_LEN_BYTES])
     else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
+        return ERR_MALFORMED_INPUT.into();
     };
     let total_supply: U256 = unwrap!(settings_service(false).total_supply_get());
     let (total_supply, overflow) = total_supply.overflowing_add(amount);
     if overflow {
-        sdk.evm_exit(ERR_OVERFLOW);
+        return ERR_OVERFLOW.into();
     }
     settings_service(false).total_supply_set(&total_supply);
     balance_service(false).add(&to, &amount);
@@ -210,11 +224,11 @@ fn pause(sdk: &mut impl SharedAPI, _input: &[u8]) -> ResultOrInterruption<Bytes,
         .map_err(|e| ERR_UNKNOWN));
     debug_log!();
     if pauser != current_pauser {
-        sdk.evm_exit(ERR_INVALID_PAUSER);
+        return ERR_INVALID_PAUSER.into();
     }
     debug_log!();
     if unwrap!(config.paused().map_err(|e| ERR_UNKNOWN)) {
-        sdk.evm_exit(ERR_ALREADY_PAUSED);
+        return ERR_ALREADY_PAUSED.into();
     }
     config.pause();
     config.save_flags();
@@ -223,18 +237,18 @@ fn pause(sdk: &mut impl SharedAPI, _input: &[u8]) -> ResultOrInterruption<Bytes,
     result.into()
 }
 
-fn unpause(sdk: &mut impl SharedAPI, _input: &[u8]) -> ResultOrInt<Bytes> {
+fn unpause(sdk: &mut impl SharedAPI, _input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let mut config = Config::new(false);
     if !unwrap!(config.pausable_plugin_enabled()) {
-        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
+        return ERR_PAUSABLE_PLUGIN_NOT_ACTIVE.into();
     }
     let pauser = sdk.context().contract_caller();
     let current_pauser: Address = unwrap!(settings_service(false).pauser_get());
     if pauser != current_pauser {
-        sdk.evm_exit(ERR_INVALID_PAUSER);
+        return ERR_INVALID_PAUSER.into();
     }
     if !unwrap!(config.paused()) {
-        sdk.evm_exit(ERR_ALREADY_UNPAUSED);
+        return ERR_ALREADY_UNPAUSED.into();
     }
     config.unpause();
     config.save_flags();
@@ -266,7 +280,7 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
     let input = sdk.bytes_input();
     let input_size = sdk.input_size();
     if input_size < SIG_LEN_BYTES as u32 {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
+        return_custom_err!(ERR_MALFORMED_INPUT)
     }
     debug_log!("input.len={}", input_size);
     let (new_frame_input, _) = decode::<RuntimeNewFrameInputV1>(&input).unwrap();
@@ -276,20 +290,20 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
     let (initial_settings, _) = if let Ok(v) = initial_settings {
         v
     } else {
-        sdk.evm_exit(ERR_DECODE);
+        return_custom_err!(ERR_DECODE);
     };
     if !initial_settings.is_valid() {
-        sdk.evm_exit(ERR_VALIDATION);
+        return_custom_err!(ERR_VALIDATION);
     }
     let mut config = Config::new(true);
     for feature in initial_settings.features() {
-        let result: ResultOrInt<()> = match feature {
+        let result: ResultOrInterruption<(), u32> = match feature {
             Feature::Meta { name, symbol } => {
                 if !settings_service(true).name_set(name) {
-                    sdk.evm_exit(ERR_INVALID_META_NAME);
+                    return_custom_err!(ERR_INVALID_META_NAME);
                 }
                 if !settings_service(true).symbol_set(symbol) {
-                    sdk.evm_exit(ERR_INVALID_META_SYMBOL);
+                    return_custom_err!(ERR_INVALID_META_SYMBOL);
                 }
                 ().into()
             }
@@ -317,14 +331,14 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
             }
         };
         match result {
-            ResultOrInt::Result(r) => match r {
+            ResultOrInterruption::Result(r) => match r {
                 Ok(_) => {}
                 Err(_) => {
                     debug_log!("error");
                     panic!("failed to deploy: unknown error")
                 }
             },
-            ResultOrInt::Interruption() => {
+            ResultOrInterruption::Interruption() => {
                 // TODO process int
                 debug_log!("not allowed in deploy");
                 panic!("int not allowed in deploy");
@@ -378,7 +392,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
         debug_log!("slot {} value {}", slot, value);
         if try_process_read_query_batch::<true, false>(sdk) {
             debug_log!();
-            return Err((Bytes::new(), ExitCode::InterruptionCalled));
+            return_interruption!()
         };
         debug_log!();
     }
@@ -388,12 +402,12 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
 
     let input_size = new_frame_input.input.len() as u32;
     if input_size < SIG_LEN_BYTES as u32 {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
+        return_custom_err!(ERR_MALFORMED_INPUT);
     }
     let (sig, input) = new_frame_input.input.split_at(SIG_LEN_BYTES);
     let signature = bytes_to_sig(sig);
     debug_log!();
-    let result: ResultOrInt<Bytes> = match signature {
+    let result: ResultOrInterruption<Bytes, u32> = match signature {
         SIG_SYMBOL => symbol(input),
         SIG_NAME => name(input),
         SIG_TRANSFER => transfer(sdk, input),
@@ -404,46 +418,30 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
         SIG_TOTAL_SUPPLY => total_supply(input),
         SIG_BALANCE_OF => balance_of(sdk, input),
         SIG_MINT => mint(sdk, input),
-        SIG_PAUSE => {
-            let result = pause(sdk, input);
-            match result {
-                ResultOrInterruption::Result(r) => match r {
-                    Ok(v) => v.into(),
-                    Err(e) => {
-                        debug_log!("error {}", e);
-                        // sdk.write(&e.to_le_bytes());
-                        return Err((e.to_le_bytes().into(), ExitCode::Panic));
-                    }
-                },
-                ResultOrInterruption::Interruption() => ResultOrInterruption::Interruption(),
-            }
-        }
+        SIG_PAUSE => pause(sdk, input),
         SIG_UNPAUSE => unpause(sdk, input),
         _ => {
             debug_log!();
-            return Err((ERR_MALFORMED_INPUT.to_le_bytes().into(), ExitCode::Panic));
+            return_custom_err!(ERR_MALFORMED_INPUT)
         }
     };
     debug_log!();
     match result {
-        ResultOrInt::Result(r) => match r {
+        ResultOrInterruption::Result(r) => match r {
             Ok(v) => {
-                // sdk.write(&ExitCode::Ok.into_i32().to_le_bytes());
                 debug_log!("v: {:x?}", &v);
-                // sdk.write(&v);
                 return Ok(v);
             }
-            Err(_) => {
-                debug_log!("failed to exec: unknown error");
-                panic!("failed to exec: unknown error")
+            Err(e) => {
+                return_custom_err!(e)
             }
         },
-        ResultOrInt::Interruption() => {
+        ResultOrInterruption::Interruption() => {
             debug_log!("interruption");
             print_stats();
             if try_process_read_query_batch::<true, false>(sdk) {
                 debug_log!();
-                return Err((Bytes::new(), ExitCode::Panic));
+                return_interruption!()
             };
             debug_log!();
         }
