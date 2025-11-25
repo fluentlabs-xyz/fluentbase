@@ -4,7 +4,8 @@ use ark_serialize::Compress::No;
 use core::str::from_utf8;
 use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
-    address, debug_log, Address, Bytes, ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
+    address, debug_log, Address, Bytes, ContractContextV1, SharedAPI,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::EvmTestingContext;
 use fluentbase_universal_token::{
@@ -59,15 +60,16 @@ fn call_with_sig_halt(
     input: Bytes,
     caller: &Address,
     callee: &Address,
-) -> Option<u32> {
+) -> Option<(RwasmHaltReason, u32)> {
     let result = ctx.call_evm_tx(*caller, *callee, input, None, None);
     match &result {
-        ExecutionResult::Halt { reason, gas_used } => {
+        ExecutionResult::Halt { reason, .. } => {
             let output = ctx.sdk.take_output();
             debug_log!("output.len={} {:x?}", output.len(), output);
             if output.len() >= size_of::<u32>() {
-                return Some(u32::from_le_bytes(
-                    output[..size_of::<u32>()].try_into().unwrap(),
+                return Some((
+                    reason.clone(),
+                    u32::from_le_bytes(output[..size_of::<u32>()].try_into().unwrap()),
                 ));
             }
             None

@@ -2019,7 +2019,6 @@ dependencies = [
 name = "fluentbase-revm"
 version = "0.4.11-dev"
 dependencies = [
- "alloy-primitives",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",

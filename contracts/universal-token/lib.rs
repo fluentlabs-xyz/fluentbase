@@ -6,11 +6,11 @@ use alloc::vec::Vec;
 use fluentbase_sdk::bincode::Encode;
 use fluentbase_sdk::syscall::SYSCALL_ID_STORAGE_READ;
 use fluentbase_sdk::{
-    bincode, debug_log, entrypoint, system_entrypoint, Address, Bytes, ContextReader, ExitCode,
-    RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, RuntimeUniversalTokenDeployOutputV1,
-    RuntimeUniversalTokenInterruption, RuntimeUniversalTokenInterruptionV1,
-    RuntimeUniversalTokenStorageReadBatchInterruptionV1, SharedAPI, SyscallInvocationParams,
-    STATE_DEPLOY, STATE_MAIN, U256,
+    bincode, debug_log, entrypoint, system_entrypoint, system_entrypoint2, Address, Bytes,
+    ContextReader, ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
+    RuntimeUniversalTokenDeployOutputV1, RuntimeUniversalTokenInterruption,
+    RuntimeUniversalTokenInterruptionV1, RuntimeUniversalTokenStorageReadBatchInterruptionV1,
+    SharedAPI, SyscallInvocationParams, STATE_DEPLOY, STATE_MAIN, U256,
 };
 use fluentbase_universal_token::consts::{ERR_INSUFFICIENT_BALANCE, ERR_UNKNOWN};
 use fluentbase_universal_token::helpers::bincode::{decode, encode};
@@ -259,7 +259,7 @@ fn try_process_read_query_batch<const READ: bool, const DEFAULT_ON_READ: bool>(
 }
 
 #[inline(never)]
-pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
+pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCode)> {
     debug_log!();
     init_services(true);
 
@@ -355,7 +355,7 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
 }
 
 #[inline(never)]
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCode)> {
     debug_log!(
         "storage_service(false).default_on_read={} sdk.context().contract_address()={}",
         storage_service(false).default_on_read(),
@@ -378,7 +378,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
         debug_log!("slot {} value {}", slot, value);
         if try_process_read_query_batch::<true, false>(sdk) {
             debug_log!();
-            return Err(ExitCode::InterruptionCalled);
+            return Err((Bytes::new(), ExitCode::InterruptionCalled));
         };
         debug_log!();
     }
@@ -411,8 +411,8 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
                     Ok(v) => v.into(),
                     Err(e) => {
                         debug_log!("error {}", e);
-                        sdk.write(&e.to_le_bytes());
-                        return Err(ExitCode::PrecompileError);
+                        // sdk.write(&e.to_le_bytes());
+                        return Err((e.to_le_bytes().into(), ExitCode::PrecompileError));
                     }
                 },
                 ResultOrInterruption::Interruption() => ResultOrInterruption::Interruption(),
@@ -421,7 +421,10 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
         SIG_UNPAUSE => unpause(sdk, input),
         _ => {
             debug_log!();
-            return Err(ExitCode::Err);
+            return Err((
+                ERR_MALFORMED_INPUT.to_le_bytes().into(),
+                ExitCode::PrecompileError,
+            ));
         }
     };
     debug_log!();
@@ -443,7 +446,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
             print_stats();
             if try_process_read_query_batch::<true, false>(sdk) {
                 debug_log!();
-                return Err(ExitCode::InterruptionCalled);
+                return Err((Bytes::new(), ExitCode::InterruptionCalled));
             };
             debug_log!();
         }
@@ -451,4 +454,4 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
     Ok(Bytes::new())
 }
 
-system_entrypoint!(main_entry, deploy_entry);
+system_entrypoint2!(main_entry, deploy_entry);
