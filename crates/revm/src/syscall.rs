@@ -943,7 +943,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Some(account_owner_address) = account_owner_address else {
                 return_halt!(MalformedBuiltinParams);
             };
-            let input = get_input_validated!(== 20);
+            let input = get_input_validated!(== 28);
             // read an account from its address
             let address = Address::from_slice(&input[..20]);
             let mut account = ctx.journal_mut().load_account_code(address)?;
@@ -959,7 +959,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     return_halt!(MalformedBuiltinParams)
                 }
             };
-            assert_halt!(input.len() == 28, MalformedBuiltinParams);
             let offset = LittleEndian::read_u32(&input[20..24]);
             let length = LittleEndian::read_u32(&input[24..28]);
             // take min
