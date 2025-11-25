@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use fluentbase_sdk::bincode::Encode;
 use fluentbase_sdk::syscall::SYSCALL_ID_STORAGE_READ;
 use fluentbase_sdk::{
-    bincode, debug_log, entrypoint, Address, Bytes, ContextReader, ExitCode,
+    bincode, debug_log, entrypoint, system_entrypoint, Address, Bytes, ContextReader, ExitCode,
     RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, RuntimeUniversalTokenDeployOutputV1,
     RuntimeUniversalTokenInterruption, RuntimeUniversalTokenInterruptionV1,
     RuntimeUniversalTokenStorageReadBatchInterruptionV1, SharedAPI, SyscallInvocationParams,
@@ -38,13 +38,6 @@ use fluentbase_universal_token::{
     storage::{Config, Feature, InitialSettings, ADDRESS_LEN_BYTES, SIG_LEN_BYTES, U256_LEN_BYTES},
     unwrap,
 };
-
-macro_rules! evm_exit {
-    ($sdk:ident, $err:ident) => {{
-        $sdk.write(&$err.to_le_bytes());
-        return;
-    }};
-}
 
 fn symbol(_input: &[u8]) -> ResultOrInt<Bytes> {
     let symbol: Bytes = unwrap!(settings_service(false).symbol()).into();
@@ -265,7 +258,8 @@ fn try_process_read_query_batch<const READ: bool, const DEFAULT_ON_READ: bool>(
     false
 }
 
-pub fn deploy_entry(mut sdk: impl SharedAPI) {
+#[inline(never)]
+pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
     debug_log!();
     init_services(true);
 
@@ -357,9 +351,11 @@ pub fn deploy_entry(mut sdk: impl SharedAPI) {
         storage_service(true).clear();
     }
     debug_log!();
+    Ok(Bytes::new())
 }
 
-pub fn main_entry(mut sdk: impl SharedAPI) {
+#[inline(never)]
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
     debug_log!(
         "storage_service(false).default_on_read={} sdk.context().contract_address()={}",
         storage_service(false).default_on_read(),
@@ -380,9 +376,9 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         let value = U256::from_le_slice(&out.output);
         storage_service(false).set_existing(&slot, &value);
         debug_log!("slot {} value {}", slot, value);
-        if try_process_read_query_batch::<true, false>(&mut sdk) {
+        if try_process_read_query_batch::<true, false>(sdk) {
             debug_log!();
-            return;
+            return Err(ExitCode::InterruptionCalled);
         };
         debug_log!();
     }
@@ -400,41 +396,42 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     let result: ResultOrInt<Bytes> = match signature {
         SIG_SYMBOL => symbol(input),
         SIG_NAME => name(input),
-        SIG_TRANSFER => transfer(&mut sdk, input),
-        SIG_TRANSFER_FROM => transfer_from(&mut sdk, input),
-        SIG_APPROVE => approve(&mut sdk, input),
+        SIG_TRANSFER => transfer(sdk, input),
+        SIG_TRANSFER_FROM => transfer_from(sdk, input),
+        SIG_APPROVE => approve(sdk, input),
         SIG_DECIMALS => decimals(input),
-        SIG_ALLOWANCE => allow(&mut sdk, input),
+        SIG_ALLOWANCE => allow(sdk, input),
         SIG_TOTAL_SUPPLY => total_supply(input),
-        SIG_BALANCE_OF => balance_of(&mut sdk, input),
-        SIG_MINT => mint(&mut sdk, input),
+        SIG_BALANCE_OF => balance_of(sdk, input),
+        SIG_MINT => mint(sdk, input),
         SIG_PAUSE => {
-            let result = pause(&mut sdk, input);
+            let result = pause(sdk, input);
             match result {
                 ResultOrInterruption::Result(r) => match r {
                     Ok(v) => v.into(),
                     Err(e) => {
-                        debug_log!("e {}", e);
-                        evm_exit!(sdk, e)
+                        debug_log!("error {}", e);
+                        sdk.write(&e.to_le_bytes());
+                        return Err(ExitCode::PrecompileError);
                     }
                 },
                 ResultOrInterruption::Interruption() => ResultOrInterruption::Interruption(),
             }
         }
-        SIG_UNPAUSE => unpause(&mut sdk, input),
+        SIG_UNPAUSE => unpause(sdk, input),
         _ => {
             debug_log!();
-            evm_exit!(sdk, ERR_MALFORMED_INPUT);
+            return Err(ExitCode::Err);
         }
     };
     debug_log!();
     match result {
         ResultOrInt::Result(r) => match r {
             Ok(v) => {
-                sdk.write(&ExitCode::Ok.into_i32().to_le_bytes());
+                // sdk.write(&ExitCode::Ok.into_i32().to_le_bytes());
                 debug_log!("v: {:x?}", &v);
-                sdk.write(&v);
-                return;
+                // sdk.write(&v);
+                return Ok(v);
             }
             Err(_) => {
                 debug_log!("failed to exec: unknown error");
@@ -444,13 +441,14 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         ResultOrInt::Interruption() => {
             debug_log!("interruption");
             print_stats();
-            if try_process_read_query_batch::<true, false>(&mut sdk) {
+            if try_process_read_query_batch::<true, false>(sdk) {
                 debug_log!();
-                return;
+                return Err(ExitCode::InterruptionCalled);
             };
             debug_log!();
         }
     }
+    Ok(Bytes::new())
 }
 
-entrypoint!(main_entry, deploy_entry);
+system_entrypoint!(main_entry, deploy_entry);

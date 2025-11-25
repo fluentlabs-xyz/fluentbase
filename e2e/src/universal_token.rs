@@ -1,6 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use core::str::from_utf8;
+use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
     address, debug_log, Address, Bytes, ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
@@ -52,6 +53,26 @@ fn call_with_sig_revert(
     }
 }
 
+fn call_with_sig_halt(
+    ctx: &mut EvmTestingContext,
+    input: Bytes,
+    caller: &Address,
+    callee: &Address,
+) -> u32 {
+    let result = ctx.call_evm_tx(*caller, *callee, input, None, None);
+    match &result {
+        ExecutionResult::Halt { reason, gas_used } => {
+            let output = ctx.sdk.take_output();
+            debug_log!("output.len={} {:x?}", output.len(), output);
+            let error_code = u32::from_be_bytes(output[..size_of::<u32>()].try_into().unwrap());
+            error_code
+        }
+        _ => {
+            panic!("expected revert, got: {:?}", &result)
+        }
+    }
+}
+
 #[test]
 fn erc20_no_plugins_enabled_test() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -91,7 +112,7 @@ fn erc20_no_plugins_enabled_test() {
     debug_log!();
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_PAUSE));
-    let error_code = call_with_sig_revert(
+    let error_code = call_with_sig_halt(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
