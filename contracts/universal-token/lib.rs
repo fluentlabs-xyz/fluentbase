@@ -412,7 +412,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
                     Err(e) => {
                         debug_log!("error {}", e);
                         // sdk.write(&e.to_le_bytes());
-                        return Err((e.to_le_bytes().into(), ExitCode::PrecompileError));
+                        return Err((e.to_le_bytes().into(), ExitCode::Panic));
                     }
                 },
                 ResultOrInterruption::Interruption() => ResultOrInterruption::Interruption(),
@@ -421,10 +421,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
         SIG_UNPAUSE => unpause(sdk, input),
         _ => {
             debug_log!();
-            return Err((
-                ERR_MALFORMED_INPUT.to_le_bytes().into(),
-                ExitCode::PrecompileError,
-            ));
+            return Err((ERR_MALFORMED_INPUT.to_le_bytes().into(), ExitCode::Panic));
         }
     };
     debug_log!();
@@ -446,7 +443,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
             print_stats();
             if try_process_read_query_batch::<true, false>(sdk) {
                 debug_log!();
-                return Err((Bytes::new(), ExitCode::InterruptionCalled));
+                return Err((Bytes::new(), ExitCode::Panic));
             };
             debug_log!();
         }

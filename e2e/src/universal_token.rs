@@ -46,7 +46,7 @@ fn call_with_sig_revert(
             gas_used: _,
             output,
         } => {
-            let error_code = u32::from_be_bytes(output[32..].try_into().unwrap());
+            let error_code = u32::from_le_bytes(output[..size_of::<u32>()].try_into().unwrap());
             error_code
         }
         _ => {
@@ -119,26 +119,26 @@ fn erc20_no_plugins_enabled_test() {
     debug_log!();
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_PAUSE));
-    let error_code = call_with_sig_halt(
+    let error_code = call_with_sig_revert(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    assert_eq!(error_code, None); // ERR_PAUSABLE_PLUGIN_NOT_ACTIVE
+    assert_eq!(error_code, ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
 
     debug_log!();
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_MINT));
     input.extend(USER_ADDR.as_slice());
     input.extend(fixed_bytes_from_u256(&U256::from(amount_to_mint)));
-    let error_code = call_with_sig_halt(
+    let error_code = call_with_sig_revert(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    assert_eq!(error_code, None); // ERR_MINTABLE_PLUGIN_NOT_ACTIVE
+    assert_eq!(error_code, ERR_MINTABLE_PLUGIN_NOT_ACTIVE);
 }
 
 #[test]
