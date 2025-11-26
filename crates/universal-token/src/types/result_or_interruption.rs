@@ -36,17 +36,6 @@ impl<R, E> ResultOrInterruption<R, E> {
 }
 
 #[macro_export]
-macro_rules! unwrap_opt {
-    ($opt:expr) => {{
-        if let Some(v) = $opt {
-            v
-        } else {
-            return ResultOrInterruption::Interruption();
-        }
-    }};
-}
-
-#[macro_export]
 macro_rules! unwrap {
     ($roi:expr) => {{
         if let ResultOrInterruption::Result(v) = $roi {
@@ -60,11 +49,25 @@ macro_rules! unwrap {
     }};
 }
 
-pub fn value_or_interruption<R, E>(v: Option<R>) -> ResultOrInterruption<R, E> {
-    if let Some(v) = v {
-        return ResultOrInterruption::from_result(v);
-    }
-    ResultOrInterruption::Interruption()
+#[macro_export]
+macro_rules! unwrap_opt {
+    ($opt:expr) => {{
+        if let Some(v) = $opt {
+            v
+        } else {
+            return ResultOrInterruption::Interruption();
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! unwrap_result {
+    ($r:expr) => {{
+        match $r {
+            Ok(v) => v,
+            Err(e) => return ResultOrInterruption::from_error(e),
+        }
+    }};
 }
 
 macro_rules! impl_common {

@@ -1,14 +1,20 @@
 use crate::storage::{ADDRESS_LEN_BYTES, U256_LEN_BYTES};
+use core::mem::transmute;
 use fluentbase_sdk::{Address, SharedAPI, B256, U256};
 
 #[inline(always)]
-pub fn u256_from_bytes_slice_try(value: &[u8]) -> Option<U256> {
+pub fn u256_from_slice_try(value: &[u8]) -> Option<U256> {
     U256::try_from_be_slice(value)
 }
 
 #[inline(always)]
 pub fn u256_from_fixed_bytes(value: &[u8; U256_LEN_BYTES]) -> U256 {
-    u256_from_bytes_slice_try(value).unwrap()
+    u256_from_slice_try(value).unwrap()
+}
+
+#[inline(always)]
+pub fn u256_ref_from_fixed_bytes(value: &[u8; U256_LEN_BYTES]) -> &U256 {
+    unsafe { transmute(value) }
 }
 #[inline(always)]
 pub fn fixed_bytes_from_u256(value: &U256) -> [u8; U256_LEN_BYTES] {

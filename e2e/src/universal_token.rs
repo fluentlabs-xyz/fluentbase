@@ -1,20 +1,21 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
-use ark_serialize::Compress::No;
 use core::str::from_utf8;
-use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
-    address, debug_log, Address, Bytes, ContractContextV1, SharedAPI,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
+    debug_log, Address, Bytes, ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::EvmTestingContext;
+use fluentbase_universal_token::types::input_commands::{
+    AllowanceCommand, ApproveCommand, BalanceOfCommand, Encodable, MintCommand, TransferCommand,
+    TransferFromCommand,
+};
 use fluentbase_universal_token::{
-    common::{fixed_bytes_from_u256, sig_to_bytes, u256_from_bytes_slice_try},
+    common::{fixed_bytes_from_u256, sig_to_bytes, u256_from_slice_try},
     consts::{
         ERR_ALREADY_PAUSED, ERR_ALREADY_UNPAUSED, ERR_INSUFFICIENT_ALLOWANCE,
         ERR_MINTABLE_PLUGIN_NOT_ACTIVE, ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, SIG_ALLOWANCE, SIG_APPROVE,
         SIG_BALANCE_OF, SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE, SIG_SYMBOL, SIG_TOTAL_SUPPLY,
-        SIG_TRANSFER, SIG_TRANSFER_FROM, SIG_UNPAUSE,
+        SIG_TRANSFER, SIG_UNPAUSE,
     },
     storage::{Feature, InitialSettings, DECIMALS_DEFAULT},
 };
@@ -74,10 +75,7 @@ fn no_plugins_enabled_test() {
         decimals: DECIMALS_DEFAULT,
     });
 
-    let init_bytecode: Bytes = initial_settings
-        .try_encode_for_deploy()
-        .expect("failed to encode settings for deployment")
-        .into();
+    let init_bytecode: Bytes = initial_settings.encode_for_deploy().into();
     debug_log!("init_bytecode.len={}", init_bytecode.len());
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDR, init_bytecode);
 
@@ -89,7 +87,7 @@ fn no_plugins_enabled_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    let total_supply_recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
+    let total_supply_recovered = u256_from_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(total_supply, total_supply_recovered);
 
     let mut input = Vec::<u8>::new();
@@ -103,9 +101,11 @@ fn no_plugins_enabled_test() {
     assert_eq!(error_code, ERR_PAUSABLE_PLUGIN_NOT_ACTIVE); // ERR_PAUSABLE_PLUGIN_NOT_ACTIVE
 
     let mut input = Vec::<u8>::new();
-    input.extend(sig_to_bytes(SIG_MINT));
-    input.extend(USER_ADDR.as_slice());
-    input.extend(fixed_bytes_from_u256(&U256::from(amount_to_mint)));
+    MintCommand {
+        to: USER_ADDR,
+        amount: U256::from(amount_to_mint),
+    }
+    .encode_for_send(&mut input);
     let error_code = call_with_sig_revert(
         &mut ctx,
         input.clone().into(),
@@ -147,10 +147,7 @@ fn mixed_test() {
         minter: DEPLOYER_ADDR.into(),
     });
 
-    let init_bytecode = initial_settings
-        .try_encode_for_deploy()
-        .expect("failed to encode settings for deploy")
-        .into();
+    let init_bytecode = initial_settings.encode_for_deploy().into();
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDR, init_bytecode);
 
     let mut input = Vec::<u8>::new();
@@ -161,37 +158,35 @@ fn mixed_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    let total_supply_recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
+    let total_supply_recovered = u256_from_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(total_supply, total_supply_recovered);
 
     let mut input = Vec::<u8>::new();
-    input.extend(sig_to_bytes(SIG_TRANSFER));
-    input.extend(USER_ADDR);
-    input.extend(&fixed_bytes_from_u256(&U256::from(deployer_1_2_transfer)));
-    println!("SIG_TRANSFER input hex: {}", hex::encode(&input));
+    TransferCommand {
+        to: USER_ADDR,
+        amount: U256::from(deployer_1_2_transfer),
+    }
+    .encode_for_send(&mut input);
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
     let expected = U256::from(1);
-    let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
+    let recovered = u256_from_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
 
     let mut input = Vec::<u8>::new();
-    input.extend(sig_to_bytes(SIG_BALANCE_OF));
-    input.extend(USER_ADDR.as_slice());
+    BalanceOfCommand { owner: USER_ADDR }.encode_for_send(&mut input);
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
     let expected = U256::from(deployer_1_2_transfer);
-    let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
+    let recovered = u256_from_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
 
     let mut input = Vec::<u8>::new();
@@ -202,7 +197,6 @@ fn mixed_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
     let recovered = from_utf8(output_data.as_ref()).expect("output_data should be utf8");
     assert_eq!(token_name, recovered);
 
@@ -215,7 +209,6 @@ fn mixed_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
     let recovered = from_utf8(output_data.as_ref()).expect("output_data should be utf8");
     assert_eq!(token_symbol, recovered);
 
@@ -227,9 +220,7 @@ fn mixed_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
-    let recovered =
-        u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
+    let recovered = u256_from_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(decimals, recovered);
 
     let mut input = Vec::<u8>::new();
@@ -240,19 +231,17 @@ fn mixed_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
-    let recovered =
-        u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
+    let recovered = u256_from_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(total_supply, recovered);
 
     // before approve
     let mut input = Vec::<u8>::new();
-    input.extend(sig_to_bytes(SIG_TRANSFER_FROM));
-    input.extend(USER_ADDR);
-    input.extend(DEPLOYER_ADDR);
-    input.extend(fixed_bytes_from_u256(&U256::from(
-        deployer_2_1_transfer_from,
-    )));
+    TransferFromCommand {
+        from: USER_ADDR,
+        to: DEPLOYER_ADDR,
+        amount: U256::from(deployer_2_1_transfer_from),
+    }
+    .encode_for_send(&mut input);
     let error_code = call_with_sig_revert(
         &mut ctx,
         input.clone().into(),
@@ -263,83 +252,82 @@ fn mixed_test() {
 
     // before approve
     let mut input = Vec::<u8>::new();
-    input.extend(sig_to_bytes(SIG_ALLOWANCE));
-    input.extend(USER_ADDR);
-    input.extend(DEPLOYER_ADDR);
+    AllowanceCommand {
+        owner: USER_ADDR,
+        spender: DEPLOYER_ADDR,
+    }
+    .encode_for_send(&mut input);
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
-    let recovered =
-        u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
+    let recovered = u256_from_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(U256::from(0), recovered);
 
     let mut input = Vec::<u8>::new();
-    input.extend(sig_to_bytes(SIG_APPROVE));
-    input.extend(USER_ADDR);
-    input.extend(DEPLOYER_ADDR);
-    input.extend(&fixed_bytes_from_u256(&U256::from(deployer_2_1_allowance)));
+    ApproveCommand {
+        owner: USER_ADDR,
+        spender: DEPLOYER_ADDR,
+        amount: U256::from(deployer_2_1_allowance),
+    }
+    .encode_for_send(&mut input);
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
-    let recovered =
-        u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
+    let recovered = u256_from_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(U256::from(1), recovered);
 
     // after approve
     let mut input = Vec::<u8>::new();
-    input.extend(sig_to_bytes(SIG_ALLOWANCE));
-    input.extend(USER_ADDR);
-    input.extend(DEPLOYER_ADDR);
+    AllowanceCommand {
+        owner: USER_ADDR,
+        spender: DEPLOYER_ADDR,
+    }
+    .encode_for_send(&mut input);
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
-    let recovered = u256_from_bytes_slice_try(output_data.as_ref()).expect("output is a u256 repr");
+    let recovered = u256_from_slice_try(output_data.as_ref()).expect("output is a u256 repr");
     assert_eq!(U256::from(deployer_2_1_allowance), recovered);
 
     let mut input = Vec::<u8>::new();
-    input.extend(sig_to_bytes(SIG_TRANSFER_FROM));
-    input.extend(USER_ADDR);
-    input.extend(DEPLOYER_ADDR);
-    input.extend(fixed_bytes_from_u256(&U256::from(
-        deployer_2_1_transfer_from,
-    )));
+    TransferFromCommand {
+        from: USER_ADDR,
+        to: DEPLOYER_ADDR,
+        amount: U256::from(deployer_2_1_transfer_from),
+    }
+    .encode_for_send(&mut input);
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
-    let recovered =
-        u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
+    let recovered = u256_from_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(U256::from(1), recovered);
 
     // after transfer from
     let mut input = Vec::<u8>::new();
-    input.extend(sig_to_bytes(SIG_ALLOWANCE));
-    input.extend(USER_ADDR);
-    input.extend(DEPLOYER_ADDR);
+    AllowanceCommand {
+        owner: USER_ADDR,
+        spender: DEPLOYER_ADDR,
+    }
+    .encode_for_send(&mut input);
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
-    let recovered =
-        u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
+    let recovered = u256_from_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(
         U256::from(deployer_2_1_allowance - deployer_2_1_transfer_from),
         recovered
@@ -347,17 +335,15 @@ fn mixed_test() {
 
     // after transfer from
     let mut input = Vec::<u8>::new();
-    input.extend(sig_to_bytes(SIG_BALANCE_OF));
-    input.extend(USER_ADDR.as_slice());
+    BalanceOfCommand { owner: USER_ADDR }.encode_for_send(&mut input);
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
     let expected = U256::from(deployer_1_2_transfer - deployer_2_1_transfer_from);
-    let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
+    let recovered = u256_from_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
 
     let mut input = Vec::<u8>::new();
@@ -368,9 +354,8 @@ fn mixed_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
     let expected = U256::from(1);
-    let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
+    let recovered = u256_from_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
 
     // 2nd time
@@ -392,9 +377,8 @@ fn mixed_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
     let expected = U256::from(1);
-    let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
+    let recovered = u256_from_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
 
     // 2nd time
@@ -410,33 +394,32 @@ fn mixed_test() {
 
     // SIG_MINT
     let mut input = Vec::<u8>::new();
-    input.extend(sig_to_bytes(SIG_MINT));
-    input.extend(USER_ADDR.as_slice());
-    input.extend(fixed_bytes_from_u256(&U256::from(amount_to_mint)));
+    MintCommand {
+        to: USER_ADDR,
+        amount: U256::from(amount_to_mint),
+    }
+    .encode_for_send(&mut input);
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
     let expected = U256::from(1);
-    let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
+    let recovered = u256_from_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
 
     // after mint
     let mut input = Vec::<u8>::new();
-    input.extend(sig_to_bytes(SIG_BALANCE_OF));
-    input.extend(USER_ADDR.as_slice());
+    BalanceOfCommand { owner: USER_ADDR }.encode_for_send(&mut input);
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
     let expected = U256::from(deployer_1_2_transfer - deployer_2_1_transfer_from + amount_to_mint);
-    let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
+    let recovered = u256_from_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
 
     // after mint
@@ -448,8 +431,6 @@ fn mixed_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    println!("output_data: {:?}", output_data);
-    let recovered =
-        u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
+    let recovered = u256_from_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(total_supply.add(U256::from(amount_to_mint)), recovered);
 }

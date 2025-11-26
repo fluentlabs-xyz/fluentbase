@@ -1,4 +1,4 @@
-use crate::common::{b256_from_address_try, u256_from_address, u256_from_bytes_slice_try};
+use crate::common::{b256_from_address_try, u256_from_address, u256_from_slice_try};
 use crate::consts::{ERR_INDEX_OUT_OF_BOUNDS, ERR_MALFORMED_INPUT};
 use crate::helpers::bincode::{decode, encode};
 use crate::services::storage_global::storage_service;
@@ -46,7 +46,7 @@ pub struct InitialSettings {
 impl InitialSettings {
     pub fn new() -> Self {
         Self {
-            features: Vec::default(),
+            features: Default::default(),
         }
     }
     pub fn try_decode_from_slice(
@@ -54,13 +54,10 @@ impl InitialSettings {
     ) -> Result<(Self, usize), bincode::error::DecodeError> {
         decode(value)
     }
-    pub fn try_encode(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
-        encode(self)
-    }
-    pub fn try_encode_for_deploy(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    pub fn encode_for_deploy(&self) -> Vec<u8> {
         let mut init_bytecode: Vec<u8> = UNIVERSAL_TOKEN_MAGIC_BYTES.to_vec();
-        init_bytecode.extend(encode(self)?);
-        Ok(init_bytecode)
+        init_bytecode.extend(encode(self).unwrap());
+        init_bytecode
     }
     pub fn add_feature(&mut self, feature: Feature) {
         self.features.push(feature);
@@ -205,7 +202,7 @@ impl Settings {
         let mut byte_repr = [0u8; U256_LEN_BYTES];
         byte_repr[0] = len as u8;
         byte_repr[1..1 + len].copy_from_slice(short_str);
-        let u256_repr = u256_from_bytes_slice_try(&byte_repr).unwrap();
+        let u256_repr = u256_from_slice_try(&byte_repr).unwrap();
         Ok(u256_repr)
     }
     #[inline(always)]
