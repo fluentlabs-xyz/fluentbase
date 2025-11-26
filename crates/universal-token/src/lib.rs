@@ -4,6 +4,7 @@ extern crate alloc;
 
 pub mod common;
 pub mod consts;
+pub mod events;
 pub mod helpers;
 pub mod services;
 pub mod storage;

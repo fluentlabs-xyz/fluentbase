@@ -1,2 +1,2 @@
-pub mod storage;
-pub mod storage_global;
+pub mod global;
+pub mod global_service;

@@ -9,9 +9,12 @@ use fluentbase_sdk::{
     RuntimeNewFrameInputV1, RuntimeUniversalTokenOutputV1, SharedAPI, U256,
 };
 use fluentbase_universal_token::consts::{ERR_INSUFFICIENT_BALANCE, ERR_UNKNOWN};
+use fluentbase_universal_token::events::{
+    emit_approval_event, emit_pause_event, emit_transfer_event, emit_unpause_event,
+};
 use fluentbase_universal_token::helpers::bincode::{decode, encode};
-use fluentbase_universal_token::services::storage_global::{
-    get_slot_key_at, prepare_query_batch, print_stats, storage_service,
+use fluentbase_universal_token::services::global_service::{
+    get_slot_key_at, global_service, prepare_query_batch,
 };
 use fluentbase_universal_token::storage::{
     allowance_service, balance_service, init_services, settings_service,
@@ -22,17 +25,16 @@ use fluentbase_universal_token::types::input_commands::{
 };
 use fluentbase_universal_token::types::result_or_interruption::ResultOrInterruption;
 use fluentbase_universal_token::{
-    common::{bytes_to_sig, fixed_bytes_from_u256, u256_from_fixed_bytes, u256_from_slice_try},
+    common::{bytes_to_sig, fixed_bytes_from_u256, u256_from_fixed_bytes},
     consts::{
-        emit_approval_event, emit_pause_event, emit_transfer_event, emit_unpause_event,
         ERR_ALREADY_PAUSED, ERR_ALREADY_UNPAUSED, ERR_DECODE, ERR_INSUFFICIENT_ALLOWANCE,
         ERR_INVALID_META_NAME, ERR_INVALID_META_SYMBOL, ERR_INVALID_MINTER, ERR_INVALID_PAUSER,
-        ERR_INVALID_RECIPIENT, ERR_MALFORMED_INPUT, ERR_MINTABLE_PLUGIN_NOT_ACTIVE, ERR_OVERFLOW,
+        ERR_MALFORMED_INPUT, ERR_MINTABLE_PLUGIN_NOT_ACTIVE, ERR_OVERFLOW,
         ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, ERR_VALIDATION, SIG_ALLOWANCE, SIG_APPROVE, SIG_BALANCE_OF,
         SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE, SIG_SYMBOL, SIG_TOTAL_SUPPLY, SIG_TRANSFER,
         SIG_TRANSFER_FROM, SIG_UNPAUSE,
     },
-    storage::{Config, Feature, InitialSettings, ADDRESS_LEN_BYTES, SIG_LEN_BYTES, U256_LEN_BYTES},
+    storage::{Config, Feature, InitialSettings, SIG_LEN_BYTES},
     unwrap, unwrap_result,
 };
 
@@ -71,13 +73,12 @@ fn transfer(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInterruption<Byte
     if !unwrap!(balance_service(false).send(&from, &c.to, &c.amount)) {
         return ERR_INSUFFICIENT_BALANCE.into();
     };
-    print_stats();
-    emit_transfer_event(sdk, &from, &c.to, &c.amount);
+    emit_transfer_event(&from, &c.to, &c.amount);
     let result: Bytes = fixed_bytes_from_u256(&U256::from(1)).into();
     result.into()
 }
 
-fn transfer_from(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
+fn transfer_from(input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let c = unwrap_result!(TransferFromCommand::try_decode(input));
     if !unwrap!(allowance_service(false).subtract(&c.from, &c.to, &c.amount)) {
         return ERR_INSUFFICIENT_ALLOWANCE.into();
@@ -85,15 +86,15 @@ fn transfer_from(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInterruption
     if !unwrap!(balance_service(false).send(&c.from, &c.to, &c.amount)) {
         return ERR_INSUFFICIENT_BALANCE.into();
     };
-    emit_transfer_event(sdk, &c.from, &c.to, &c.amount);
+    emit_transfer_event(&c.from, &c.to, &c.amount);
     let result: Bytes = fixed_bytes_from_u256(&U256::from(1)).into();
     result.into()
 }
 
-fn approve(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
+fn approve(input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let c = unwrap_result!(ApproveCommand::try_decode(input));
     allowance_service(false).update(&c.owner, &c.spender, &c.amount);
-    emit_approval_event(sdk, &c.owner, &c.spender, &c.amount);
+    emit_approval_event(&c.owner, &c.spender, &c.amount);
     let result: Bytes = fixed_bytes_from_u256(&U256::from(1)).into();
     result.into()
 }
@@ -138,7 +139,7 @@ fn mint(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInterruption<Bytes, u
     }
     settings_service(false).total_supply_set(&total_supply);
     unwrap!(balance_service(false).add(&c.to, &c.amount));
-    emit_transfer_event(sdk, &Address::ZERO, &c.to, &c.amount);
+    emit_transfer_event(&Address::ZERO, &c.to, &c.amount);
     let result: Bytes = fixed_bytes_from_u256(&U256::from(1)).into();
     result.into()
 }
@@ -160,7 +161,7 @@ fn pause(sdk: &mut impl SharedAPI, _input: &[u8]) -> ResultOrInterruption<Bytes,
     }
     config.pause();
     config.save_flags();
-    emit_pause_event(sdk, &pauser);
+    emit_pause_event(&pauser);
     let result: Bytes = fixed_bytes_from_u256(&U256::from(1)).into();
     result.into()
 }
@@ -180,7 +181,7 @@ fn unpause(sdk: &mut impl SharedAPI, _input: &[u8]) -> ResultOrInterruption<Byte
     }
     config.unpause();
     config.save_flags();
-    emit_unpause_event(sdk, &pauser);
+    emit_unpause_event(&pauser);
     let result: Bytes = fixed_bytes_from_u256(&U256::from(1)).into();
     result.into()
 }
@@ -266,7 +267,6 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
     }
     config.save_flags();
     // TODO process accumulated result if presented
-    print_stats();
     let query_batch_ptr = prepare_query_batch::<false, false>();
     if let Some(params) = query_batch_ptr {
         let output = encode(&params).unwrap();
@@ -275,24 +275,23 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
     } else {
         sdk.write(&ExitCode::Ok.into_i32().to_le_bytes());
         let mut storage =
-            Vec::<([u8; 32], [u8; 32])>::with_capacity(storage_service(true).values_new().len());
-        for v in storage_service(true).values_new() {
+            Vec::<([u8; 32], [u8; 32])>::with_capacity(global_service(true).values_new().len());
+        for v in global_service(true).values_new() {
             storage.push((v.0.to_le_bytes(), v.1.to_le_bytes()))
         }
         let output = encode(&RuntimeUniversalTokenOutputV1 {
-            output: Vec::new(),
             storage,
+            ..Default::default()
         })
         .unwrap();
         sdk.write(&output);
-        storage_service(true).clear();
+        global_service(true).clear();
     }
     Ok(Bytes::new())
 }
 
 #[inline(never)]
 pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCode)> {
-    print_stats();
     init_services(false);
 
     let return_data = sdk.return_data();
@@ -301,7 +300,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
         assert_eq!(out.output.len(), 32);
         let slot = get_slot_key_at(0);
         let value = U256::from_le_slice(&out.output);
-        storage_service(false).set_existing(&slot, &value);
+        global_service(false).set_existing(&slot, &value);
         if try_process_read_query_batch::<true, false>(sdk) {
             return_interruption!()
         };
@@ -320,8 +319,8 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
         SIG_SYMBOL => symbol(input),
         SIG_NAME => name(input),
         SIG_TRANSFER => transfer(sdk, input),
-        SIG_TRANSFER_FROM => transfer_from(sdk, input),
-        SIG_APPROVE => approve(sdk, input),
+        SIG_TRANSFER_FROM => transfer_from(input),
+        SIG_APPROVE => approve(input),
         SIG_DECIMALS => decimals(input),
         SIG_ALLOWANCE => allowance(input),
         SIG_TOTAL_SUPPLY => total_supply(input),
@@ -336,11 +335,10 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
     match result {
         ResultOrInterruption::Result(r) => match r {
             Ok(v) => {
-                print_stats();
                 let output = encode(&RuntimeUniversalTokenOutputV1 {
                     output: v.into(),
                     storage: {
-                        let mut s = storage_service(false);
+                        let mut s = global_service(false);
                         let result = s
                             .values_new()
                             .iter()
@@ -349,23 +347,22 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
                         s.clear();
                         result
                     },
+                    events: global_service(false).events_take(),
                 })
                 .unwrap();
                 return Ok(output.into());
             }
             Err(e) => {
-                storage_service(false).clear();
+                global_service(false).clear();
                 return_custom_err!(e)
             }
         },
         ResultOrInterruption::Interruption() => {
-            print_stats();
             if try_process_read_query_batch::<true, false>(sdk) {
                 return_interruption!()
             };
         }
     }
-    print_stats();
     Ok(Bytes::new())
 }
 

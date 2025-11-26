@@ -1,13 +1,13 @@
-use crate::services::storage::{StorageService, STORAGE_SERVICE_QUERY_CAP};
+use crate::services::global::{GlobalService, GLOBAL_SERVICE_QUERY_CAP};
 use fluentbase_sdk::syscall::{SYSCALL_ID_STORAGE_READ, SYSCALL_ID_STORAGE_WRITE};
 use fluentbase_sdk::{debug_log, SyscallInvocationParams, B256, STATE_MAIN, U256};
 use spin::{Mutex, MutexGuard};
 
-pub static STORAGE_SERVICE: spin::Once<Mutex<StorageService>> = spin::Once::new();
+pub static STORAGE_SERVICE: spin::Once<Mutex<GlobalService>> = spin::Once::new();
 
-pub fn storage_service<'a>(default_on_read: bool) -> MutexGuard<'a, StorageService> {
+pub fn global_service<'a>(default_on_read: bool) -> MutexGuard<'a, GlobalService> {
     let v = STORAGE_SERVICE.call_once(|| {
-        let service = StorageService::new(default_on_read);
+        let service = GlobalService::new(default_on_read);
         Mutex::new(service)
     });
     v.lock()
@@ -15,8 +15,8 @@ pub fn storage_service<'a>(default_on_read: bool) -> MutexGuard<'a, StorageServi
 
 pub const SLOT_QUERY_ELEM_LEN: usize = B256::len_bytes() + U256::BYTES;
 pub const QUERY_BATCH_SPAN_LEN: usize = {
-    assert!(STORAGE_SERVICE_QUERY_CAP > 0 && STORAGE_SERVICE_QUERY_CAP <= u8::MAX as usize);
-    const V: usize = 1 + STORAGE_SERVICE_QUERY_CAP * SLOT_QUERY_ELEM_LEN; // +1 is for elements count
+    assert!(GLOBAL_SERVICE_QUERY_CAP > 0 && GLOBAL_SERVICE_QUERY_CAP <= u8::MAX as usize);
+    const V: usize = 1 + GLOBAL_SERVICE_QUERY_CAP * SLOT_QUERY_ELEM_LEN; // +1 is for elements count
     V
 };
 static QUERY_BATCH_SPAN: spin::Once<Mutex<[u8; QUERY_BATCH_SPAN_LEN]>> = spin::Once::new();
@@ -40,7 +40,7 @@ pub fn query_batch_span_ptr() -> usize {
 /// return query span memory offset
 pub fn prepare_query_batch<const READ: bool, const DEFAULT_ON_READ: bool>(
 ) -> Option<SyscallInvocationParams> {
-    let mut service = storage_service(DEFAULT_ON_READ);
+    let mut service = global_service(DEFAULT_ON_READ);
     let count = if READ {
         service.values_new_clear();
         service.keys_to_query().len()
@@ -96,7 +96,7 @@ pub fn get_slot_key_at(idx: usize) -> U256 {
 }
 
 pub fn print_stats() {
-    let s = storage_service(false);
+    let s = global_service(false);
     debug_log!(
         "storage_service stats: {} {} {}",
         s.keys_to_query().len(),

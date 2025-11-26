@@ -6,6 +6,7 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
+use alloy_primitives::{Log, LogData, B256};
 use core::mem::take;
 use fluentbase_runtime::{
     default_runtime_executor,
@@ -369,18 +370,27 @@ fn process_universal_token_output<CTX: ContextTr>(
     ctx: &mut CTX,
     return_data: &mut Bytes,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
-    let (deploy_out, _) = bincode::decode_from_slice::<RuntimeUniversalTokenOutputV1, _>(
+    let (runtime_output, _) = bincode::decode_from_slice::<RuntimeUniversalTokenOutputV1, _>(
         return_data,
         bincode::config::legacy(),
     )
     .expect("universal token output");
-    *return_data = deploy_out.output.into();
-    for (k, v) in &deploy_out.storage {
+    *return_data = runtime_output.output.into();
+    for (k, v) in &runtime_output.storage {
         ctx.journal_mut().sstore(
             target_address.into(),
             U256::from_le_slice(k),
             U256::from_le_slice(v),
         )?;
+    }
+    for (topics, data) in runtime_output.events {
+        ctx.journal_mut().log(Log {
+            address: target_address.into(),
+            data: LogData::new_unchecked(
+                topics.iter().map(|v| B256::from_slice(v)).collect(),
+                data.into(),
+            ),
+        });
     }
     Ok(())
 }

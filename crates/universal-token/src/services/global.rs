@@ -1,30 +1,31 @@
-use fluentbase_sdk::U256;
+use alloc::vec::Vec;
+use core::mem::take;
+use fluentbase_sdk::{B256, U256};
 use hashbrown::hash_map::Entry;
 use hashbrown::{HashMap, HashSet};
 
-pub const STORAGE_SERVICE_VALUES_CAP: usize = 32;
-pub const STORAGE_SERVICE_QUERY_CAP: usize = 32;
+pub const GLOBAL_SERVICE_VALUES_CAP: usize = 32;
+pub const GLOBAL_SERVICE_QUERY_CAP: usize = 8;
+pub const GLOBAL_SERVICE_EVENT_CAP: usize = 32;
 
 #[derive(Debug)]
-pub struct StorageService {
-    default_on_read: bool,
+pub struct GlobalService {
+    default_storage_on_read: bool,
     values_existing: HashMap<U256, U256>,
     values_new: HashMap<U256, U256>,
     keys_to_query: HashSet<U256>,
+    events: Vec<(Vec<[u8; 32]>, Vec<u8>)>,
 }
 
-impl StorageService {
-    pub fn new(default_on_read: bool) -> Self {
+impl GlobalService {
+    pub fn new(default_storage_on_read: bool) -> Self {
         Self {
-            default_on_read,
-            values_existing: HashMap::with_capacity(STORAGE_SERVICE_VALUES_CAP),
-            values_new: HashMap::with_capacity(STORAGE_SERVICE_VALUES_CAP),
-            keys_to_query: HashSet::with_capacity(STORAGE_SERVICE_QUERY_CAP),
+            default_storage_on_read,
+            values_existing: HashMap::with_capacity(GLOBAL_SERVICE_VALUES_CAP),
+            values_new: HashMap::with_capacity(GLOBAL_SERVICE_VALUES_CAP),
+            keys_to_query: HashSet::with_capacity(GLOBAL_SERVICE_QUERY_CAP),
+            events: Vec::with_capacity(GLOBAL_SERVICE_EVENT_CAP),
         }
-    }
-
-    pub fn default_on_read(&self) -> bool {
-        self.default_on_read
     }
 
     pub fn try_set(&mut self, key: &U256, value: &U256) -> Option<U256> {
@@ -37,21 +38,21 @@ impl StorageService {
             }
             Entry::Vacant(_) => {}
         }
-        if self.values_new.len() >= STORAGE_SERVICE_VALUES_CAP {
+        if self.values_new.len() >= GLOBAL_SERVICE_VALUES_CAP {
             panic!("new values full");
         }
         self.values_new.insert(key.clone(), value.clone())
     }
 
     pub fn set_existing(&mut self, key: &U256, value: &U256) -> Option<U256> {
-        if self.values_existing.len() >= STORAGE_SERVICE_VALUES_CAP {
+        if self.values_existing.len() >= GLOBAL_SERVICE_VALUES_CAP {
             panic!("existing values full");
         }
         self.values_existing.insert(key.clone(), value.clone())
     }
 
     pub fn try_get(&mut self, slot: &U256) -> Option<&U256> {
-        if self.default_on_read {
+        if self.default_storage_on_read {
             return Some(&U256::ZERO);
         }
         if let Some(v) = self.values_new.get(slot) {
@@ -60,7 +61,7 @@ impl StorageService {
         if let Some(v) = self.values_existing.get(slot) {
             return Some(v);
         }
-        if self.keys_to_query.len() >= STORAGE_SERVICE_QUERY_CAP {
+        if self.keys_to_query.len() >= GLOBAL_SERVICE_QUERY_CAP {
             panic!("query stack full");
         }
         self.keys_to_query.insert(*slot);
@@ -125,9 +126,30 @@ impl StorageService {
         has_some
     }
 
+    pub fn events(&self) -> &Vec<(Vec<[u8; 32]>, Vec<u8>)> {
+        &self.events
+    }
+
+    pub fn events_take(&mut self) -> Vec<(Vec<[u8; 32]>, Vec<u8>)> {
+        take(&mut self.events)
+    }
+
+    pub fn events_add(&mut self, topics: Vec<[u8; 32]>, data: Vec<u8>) {
+        self.events.push((topics, data));
+    }
+
+    pub fn events_clear(&mut self) -> bool {
+        let has_some = self.events.len() > 0;
+        if has_some {
+            self.events.clear();
+        }
+        has_some
+    }
+
     pub fn clear(&mut self) {
         self.values_existing.clear();
         self.values_new.clear();
         self.keys_to_query.clear();
+        self.events.clear();
     }
 }

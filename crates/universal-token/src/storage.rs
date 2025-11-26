@@ -1,7 +1,7 @@
 use crate::common::{b256_from_address_try, u256_from_address, u256_from_slice_try};
 use crate::consts::{ERR_INDEX_OUT_OF_BOUNDS, ERR_MALFORMED_INPUT};
 use crate::helpers::bincode::{decode, encode};
-use crate::services::storage_global::storage_service;
+use crate::services::global_service::global_service;
 use crate::types::derived_key::{IKeyDeriver, KeyDeriver};
 use crate::types::result_or_interruption::ResultOrInterruption;
 use crate::{
@@ -163,20 +163,20 @@ impl Settings {
 
     pub fn total_supply_set(&mut self, value: &U256) {
         let s = self.total_supply_slot();
-        storage_service(self.default_on_read).try_set(&s, value);
+        global_service(self.default_on_read).try_set(&s, value);
     }
     pub fn total_supply_get(&mut self) -> ResultOrInterruption<U256, u32> {
         let s = self.total_supply_slot();
-        unwrap_opt!(storage_service(self.default_on_read).try_get(&s).cloned()).into()
+        unwrap_opt!(global_service(self.default_on_read).try_get(&s).cloned()).into()
     }
     pub fn minter_set(&mut self, value: &Address) {
         let s = self.minter_slot();
         let v = u256_from_address(&value);
-        storage_service(self.default_on_read).try_set(&s, &v);
+        global_service(self.default_on_read).try_set(&s, &v);
     }
     pub fn minter_get(&mut self) -> ResultOrInterruption<Address, u32> {
         let s = self.minter_slot();
-        unwrap_opt!(storage_service(self.default_on_read)
+        unwrap_opt!(global_service(self.default_on_read)
             .try_get(&s)
             .map(|v| address_from_u256(v)))
         .into()
@@ -184,11 +184,11 @@ impl Settings {
     pub fn pauser_set(&mut self, value: &Address) {
         let s = self.pauser_slot();
         let v = u256_from_address(value);
-        storage_service(self.default_on_read).try_set(&s, &v);
+        global_service(self.default_on_read).try_set(&s, &v);
     }
     pub fn pauser_get(&mut self) -> ResultOrInterruption<Address, u32> {
         let s = self.pauser_slot();
-        unwrap_opt!(storage_service(self.default_on_read)
+        unwrap_opt!(global_service(self.default_on_read)
             .try_get(&s)
             .map(|v| address_from_u256(v)))
         .into()
@@ -219,7 +219,7 @@ impl Settings {
     #[inline(always)]
     fn short_str_set(&self, slot: &U256, short_str: &[u8]) -> bool {
         if let Ok(u256_repr) = self.short_str_to_u256_repr(&short_str) {
-            storage_service(self.default_on_read).try_set(&slot, &u256_repr);
+            global_service(self.default_on_read).try_set(&slot, &u256_repr);
         } else {
             return false;
         };
@@ -227,7 +227,7 @@ impl Settings {
     }
     #[inline(always)]
     fn short_str<'a>(&self, slot: &U256) -> ResultOrInterruption<Vec<u8>, u32> {
-        let repr = unwrap_opt!(storage_service(self.default_on_read).try_get(slot).cloned());
+        let repr = unwrap_opt!(global_service(self.default_on_read).try_get(slot).cloned());
         self.short_str_from_u256_repr(&repr).into()
     }
     pub fn symbol_set(&mut self, symbol: &[u8]) -> bool {
@@ -251,20 +251,20 @@ impl Settings {
             return false;
         }
         let s = self.decimals_slot();
-        storage_service(self.default_on_read).try_set(&s, &U256::from(decimals));
+        global_service(self.default_on_read).try_set(&s, &U256::from(decimals));
         true
     }
     pub fn decimals_get(&mut self) -> ResultOrInterruption<U256, u32> {
         let s = self.decimals_slot();
-        unwrap_opt!(storage_service(self.default_on_read).try_get(&s).cloned()).into()
+        unwrap_opt!(global_service(self.default_on_read).try_get(&s).cloned()).into()
     }
     pub fn flags_get(&mut self) -> ResultOrInterruption<U256, u32> {
         let s = self.flags_slot();
-        unwrap_opt!(storage_service(self.default_on_read).try_get(&s).cloned()).into()
+        unwrap_opt!(global_service(self.default_on_read).try_get(&s).cloned()).into()
     }
     pub fn flags_set(&mut self, flags: U256) {
         let s = self.flags_slot();
-        storage_service(self.default_on_read).try_set(&s, &flags);
+        global_service(self.default_on_read).try_set(&s, &flags);
     }
 }
 
@@ -384,13 +384,13 @@ impl Balance {
     #[inline(always)]
     pub fn set(&self, address: &Address, value: &U256) {
         let key = self.kd.b256(&b256_from_address_try(address));
-        storage_service(self.default_on_read).try_set(&key, value);
+        global_service(self.default_on_read).try_set(&key, value);
     }
 
     #[inline(always)]
     pub fn get(&self, address: &Address) -> ResultOrInterruption<U256, u32> {
         let key = self.kd.b256(&b256_from_address_try(address));
-        unwrap_opt!(storage_service(self.default_on_read).try_get(&key).cloned()).into()
+        unwrap_opt!(global_service(self.default_on_read).try_get(&key).cloned()).into()
     }
 
     pub fn add(&self, address: &Address, amount: &U256) -> ResultOrInterruption<(), u32> {
@@ -446,7 +446,7 @@ impl Allowance {
 
     #[inline(always)]
     pub fn set(&self, owner: &Address, spender: &Address, value: &U256) {
-        storage_service(self.default_on_read).try_set(&self.key(owner, spender), value);
+        global_service(self.default_on_read).try_set(&self.key(owner, spender), value);
     }
 
     #[inline(always)]
@@ -456,7 +456,7 @@ impl Allowance {
 
     #[inline(always)]
     pub fn get(&self, owner: &Address, spender: &Address) -> ResultOrInterruption<U256, u32> {
-        unwrap_opt!(storage_service(self.default_on_read)
+        unwrap_opt!(global_service(self.default_on_read)
             .try_get(&self.key(owner, spender))
             .cloned())
         .into()
