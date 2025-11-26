@@ -15,6 +15,7 @@ mod result;
 mod spec;
 mod syscall;
 mod types;
+#[cfg(feature = "fluent-testnet")]
 mod upgrade;
 
 pub use api::*;

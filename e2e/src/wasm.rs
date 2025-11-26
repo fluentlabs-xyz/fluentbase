@@ -386,7 +386,6 @@ fn test_wasm_balance_charge() {
     assert_eq!(balance, U256::from(123));
     #[cfg(debug_assertions)]
     assert_eq!(result.gas_used(), 21176);
-
     #[cfg(not(debug_assertions))]
     assert_eq!(result.gas_used(), 21162);
 }

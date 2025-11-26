@@ -57,8 +57,18 @@ fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult<R
     result
 }
 
+/// Converts fuel to gas, accounting for testnet vs mainnet behavior
 fn fuel_to_gas(fuel: u32) -> u64 {
-    (fuel as u64 + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE
+    #[cfg(feature = "fluent-testnet")]
+    {
+        // Testnet: floor division (allows free operations below threshold)
+        fuel as u64 / FUEL_DENOM_RATE
+    }
+    #[cfg(not(feature = "fluent-testnet"))]
+    {
+        // Mainnet: ceiling division (no free operations)
+        (fuel as u64 + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE
+    }
 }
 
 /// Calculates how much gas is consumed by the builtins
@@ -133,7 +143,8 @@ fn test_read_builtin() {
         call $_read
     "#;
     // 30_000_000 fuel / FUEL_DENOM_RATE = 1_500_000 gas
-    let gas = run_twice_and_find_gas_difference(main, 1_000) - 1_500_000;
+    let gas_offset = fuel_to_gas(30_000_000);
+    let gas = run_twice_and_find_gas_difference(main, 1_000).saturating_sub(gas_offset);
     let words = (800 + 31) / 32;
     let expected_fuel =
         COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * words + CHARGE_FUEL_BASE_COST + CALL_FUEL_COST;

@@ -1,4 +1,3 @@
-use crate::SysFuncIdx::{ENTER_UNCONSTRAINED, EXIT_UNCONSTRAINED, WRITE_FD};
 use crate::{SysFuncIdx, FUEL_DENOM_RATE};
 use rwasm::{instruction_set, InstructionSet, TrapCode};
 
