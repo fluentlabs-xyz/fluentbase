@@ -55,9 +55,10 @@ macro_rules! linear_fuel {
     ($local_depth:expr, $base_cost:expr, $word_cost:expr) => {{
         // compile-time overflow check
         const _: () = {
+            const MAX_WORDS: u128 = ((FUEL_MAX_LINEAR_X as u128 + 31) / 32);
             assert!(
-                ($base_cost as u128) + ($word_cost as u128) * (FUEL_MAX_LINEAR_X as u128) <= (u32::MAX as u128),
-                "base_cost + word_cost * FUEL_MAX_LINEAR_X must fit into u32"
+                ($base_cost as u128) + ($word_cost as u128) * MAX_WORDS <= (u32::MAX as u128),
+                "base_cost + word_cost * MAX_WORDS must fit into u32"
             );
         };
 
