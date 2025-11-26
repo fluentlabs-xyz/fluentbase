@@ -11,7 +11,7 @@ use crate::{
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use bincode::{Decode, Encode};
-use fluentbase_sdk::{debug_log, Address, SharedAPI, B256, U256, UNIVERSAL_TOKEN_MAGIC_BYTES};
+use fluentbase_sdk::{Address, SharedAPI, U256, UNIVERSAL_TOKEN_MAGIC_BYTES};
 
 pub const ADDRESS_LEN_BYTES: usize = Address::len_bytes();
 pub const U256_LEN_BYTES: usize = size_of::<U256>();
@@ -166,12 +166,10 @@ impl Settings {
 
     pub fn total_supply_set(&mut self, value: &U256) {
         let s = self.total_supply_slot();
-        debug_log!("s {}", s);
         storage_service(self.default_on_read).try_set(&s, value);
     }
     pub fn total_supply_get(&mut self) -> ResultOrInterruption<U256, u32> {
         let s = self.total_supply_slot();
-        debug_log!("s {}", s);
         unwrap_opt!(storage_service(self.default_on_read).try_get(&s).cloned()).into()
     }
     pub fn minter_set(&mut self, value: &Address) {
@@ -328,9 +326,7 @@ impl Config {
         if idx >= U256_LEN_BITS {
             return ERR_INDEX_OUT_OF_BOUNDS.into();
         }
-        debug_log!();
         let flags: U256 = unwrap!(self.get_or_init_flags());
-        debug_log!();
         flags.bit(idx).into()
     }
 
@@ -453,8 +449,7 @@ impl Allowance {
 
     #[inline(always)]
     pub fn set(&self, owner: &Address, spender: &Address, value: &U256) {
-        let key = self.key(owner, spender);
-        storage_service(self.default_on_read).try_set(&key, value);
+        storage_service(self.default_on_read).try_set(&self.key(owner, spender), value);
     }
 
     #[inline(always)]
@@ -464,17 +459,10 @@ impl Allowance {
 
     #[inline(always)]
     pub fn get(&self, owner: &Address, spender: &Address) -> ResultOrInterruption<U256, u32> {
-        let key = self.key(owner, spender);
-        unwrap_opt!(storage_service(self.default_on_read).try_get(&key).cloned()).into()
-    }
-
-    #[inline(always)]
-    pub fn get_current(
-        &self,
-        owner: &Address,
-        spender: &Address,
-    ) -> ResultOrInterruption<U256, u32> {
-        self.get(owner, spender)
+        unwrap_opt!(storage_service(self.default_on_read)
+            .try_get(&self.key(owner, spender))
+            .cloned())
+        .into()
     }
     pub fn subtract(
         &self,
@@ -482,11 +470,11 @@ impl Allowance {
         spender: &Address,
         amount: &U256,
     ) -> ResultOrInterruption<bool, u32> {
-        let current_allowance: U256 = unwrap!(self.get(owner, spender));
-        if current_allowance < *amount {
+        let allowance: U256 = unwrap!(self.get(owner, spender));
+        if allowance < *amount {
             return false.into();
         }
-        let new_allowance = current_allowance - amount;
+        let new_allowance = allowance - amount;
         self.set(owner, spender, &new_allowance);
         true.into()
     }

@@ -1,4 +1,4 @@
-use fluentbase_sdk::{debug_log, B256, U256};
+use fluentbase_sdk::U256;
 use hashbrown::hash_map::Entry;
 use hashbrown::{HashMap, HashSet};
 
@@ -38,7 +38,6 @@ impl StorageService {
             Entry::Vacant(_) => {}
         }
         if self.values_new.len() >= STORAGE_SERVICE_VALUES_CAP {
-            debug_log!("new values full");
             panic!("new values full");
         }
         self.values_new.insert(key.clone(), value.clone())
@@ -46,7 +45,6 @@ impl StorageService {
 
     pub fn set_existing(&mut self, key: &U256, value: &U256) -> Option<U256> {
         if self.values_existing.len() >= STORAGE_SERVICE_VALUES_CAP {
-            debug_log!("existing values full");
             panic!("existing values full");
         }
         self.values_existing.insert(key.clone(), value.clone())
@@ -63,7 +61,6 @@ impl StorageService {
             return Some(v);
         }
         if self.keys_to_query.len() >= STORAGE_SERVICE_QUERY_CAP {
-            debug_log!("query stack full");
             panic!("query stack full");
         }
         self.keys_to_query.insert(*slot);

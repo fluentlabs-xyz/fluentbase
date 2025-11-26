@@ -1,6 +1,6 @@
 use alloc::vec;
 use core::sync::atomic::{AtomicU64, Ordering};
-use fluentbase_sdk::{debug_log, keccak256, B256, U256};
+use fluentbase_sdk::{keccak256, B256, U256};
 
 static GLOBAL_SLOT: AtomicU64 = AtomicU64::new(1);
 const SLOT_BYTES: usize = size_of::<u64>();
@@ -25,11 +25,6 @@ impl KeyDeriver {
     pub fn new_specific_slot(slot: u64) -> Self {
         let current_slot = GLOBAL_SLOT.fetch_add(1, Ordering::Relaxed);
         if slot != current_slot {
-            debug_log!(
-                "Slot {} is not equal to current slot {}",
-                slot,
-                current_slot
-            );
             panic!("incorrect selected slot");
         }
         Self { slot }

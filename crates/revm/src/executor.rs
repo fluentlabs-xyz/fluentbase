@@ -13,12 +13,11 @@ use fluentbase_runtime::{
     RuntimeContext, RuntimeExecutor,
 };
 use fluentbase_sdk::{
-    bincode, debug_log, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
+    bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
     rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
-    ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
-    RuntimeUniversalTokenDeployOutputV1, SharedContextInput, SharedContextInputV1,
-    SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
-    STATE_DEPLOY, STATE_MAIN, U256,
+    ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, RuntimeUniversalTokenOutputV1,
+    SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
+    FUEL_DENOM_RATE, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -365,6 +364,27 @@ fn get_ownable_account_mut<'a, CTX: ContextTr + 'a, INSP: Inspector<CTX>>(
     }))
 }
 
+fn process_universal_token_output<CTX: ContextTr>(
+    target_address: &[u8; 20],
+    ctx: &mut CTX,
+    return_data: &mut Bytes,
+) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
+    let (deploy_out, _) = bincode::decode_from_slice::<RuntimeUniversalTokenOutputV1, _>(
+        return_data,
+        bincode::config::legacy(),
+    )
+    .expect("universal token output");
+    *return_data = deploy_out.output.into();
+    for (k, v) in &deploy_out.storage {
+        ctx.journal_mut().sstore(
+            target_address.into(),
+            U256::from_le_slice(k),
+            U256::from_le_slice(v),
+        )?;
+    }
+    Ok(())
+}
+
 fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
@@ -377,26 +397,28 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     match exit_code {
         // If we return `Ok` in deployment mode, then we assume we store new metadata in the output,
         // it's used to rewrite the existing metadata to store custom bytecode.
-        0 if is_create => {
-            if ownable_account.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
-                let (deploy_out, _) = bincode::decode_from_slice::<
-                    RuntimeUniversalTokenDeployOutputV1,
-                    _,
-                >(&mut return_data, bincode::config::legacy())
-                .expect("universal token deploy output");
-                return_data.clear();
-                let address = frame.interpreter.input.target_address();
-                for (k, v) in &deploy_out.storage {
-                    let k = U256::from_le_slice(k);
-                    let v = U256::from_le_slice(v);
-                    debug_log!("address {} k {} v {}", address, k, v);
-                    ctx.journal_mut().sstore(address, k, v)?;
+        0 => {
+            if is_create {
+                if ownable_account.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
+                    process_universal_token_output(
+                        &frame.interpreter.input.target_address(),
+                        ctx,
+                        &mut return_data,
+                    )?;
+                } else {
+                    ownable_account.metadata = take(&mut return_data);
+                    let bytecode = Bytecode::OwnableAccount(ownable_account);
+                    ctx.journal_mut()
+                        .set_code(frame.interpreter.input.target_address(), bytecode);
                 }
             } else {
-                ownable_account.metadata = take(&mut return_data);
-                let bytecode = Bytecode::OwnableAccount(ownable_account);
-                ctx.journal_mut()
-                    .set_code(frame.interpreter.input.target_address(), bytecode);
+                if ownable_account.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
+                    process_universal_token_output(
+                        &frame.interpreter.input.target_address(),
+                        ctx,
+                        &mut return_data,
+                    )?;
+                }
             }
         }
         // Don't do anything, execution default case

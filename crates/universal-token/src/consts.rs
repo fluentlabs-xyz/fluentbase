@@ -44,6 +44,7 @@ pub const EVENT_PAUSED: B256 = B256::new(derive_keccak256!("Paused(address)"));
 pub const EVENT_UNPAUSED: B256 = B256::new(derive_keccak256!("Unpaused(address)"));
 
 pub fn emit_transfer_event(sdk: &mut impl SharedAPI, from: &Address, to: &Address, amount: &U256) {
+    return; // TODO
     sdk.emit_log(
         &[
             EVENT_TRANSFER,
@@ -55,10 +56,12 @@ pub fn emit_transfer_event(sdk: &mut impl SharedAPI, from: &Address, to: &Addres
 }
 
 pub fn emit_pause_event(sdk: &mut impl SharedAPI, pauser: &Address) {
+    return; // TODO
     sdk.emit_log(&[EVENT_PAUSED], pauser.as_slice());
 }
 
 pub fn emit_unpause_event(sdk: &mut impl SharedAPI, pauser: &Address) {
+    return; // TODO
     sdk.emit_log(&[EVENT_UNPAUSED], pauser.as_slice());
 }
 
@@ -68,6 +71,7 @@ pub fn emit_approval_event(
     spender: &Address,
     amount: &U256,
 ) {
+    return; // TODO
     sdk.emit_log(
         &[
             EVENT_APPROVAL,

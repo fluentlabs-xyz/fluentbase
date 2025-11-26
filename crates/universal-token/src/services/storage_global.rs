@@ -40,16 +40,16 @@ pub fn query_batch_span_ptr() -> usize {
 /// return query span memory offset
 pub fn prepare_query_batch<const READ: bool, const DEFAULT_ON_READ: bool>(
 ) -> Option<SyscallInvocationParams> {
-    let mut storage_service = storage_service(DEFAULT_ON_READ);
+    let mut service = storage_service(DEFAULT_ON_READ);
     let count = if READ {
-        storage_service.keys_to_query().len()
+        service.values_new_clear();
+        service.keys_to_query().len()
     } else {
-        storage_service.values_new().len()
+        service.values_new().len()
     };
     if count <= 0 {
         return None;
     } else if count > 1 {
-        debug_log!("count>1 not supported yet");
         return None;
     }
     let mut span = lock_query_batch_span();
@@ -58,8 +58,7 @@ pub fn prepare_query_batch<const READ: bool, const DEFAULT_ON_READ: bool>(
     span_mut[offset] = count as u8;
     offset += 1;
     if READ {
-        debug_log!();
-        let slot = storage_service.keys_to_query_pop();
+        let slot = service.keys_to_query_pop();
         if let Some(slot) = slot {
             span_mut[offset..offset + B256::len_bytes()].copy_from_slice(slot.as_le_slice());
             let ptr = span_mut.as_ptr() as usize;
@@ -72,8 +71,7 @@ pub fn prepare_query_batch<const READ: bool, const DEFAULT_ON_READ: bool>(
             });
         };
     } else {
-        debug_log!();
-        if let Some((slot, value)) = storage_service.values_new_pop() {
+        if let Some((slot, value)) = service.values_new_pop() {
             span_mut[offset..offset + B256::len_bytes()].copy_from_slice(slot.as_le_slice());
             span_mut[offset + B256::len_bytes()..offset + B256::len_bytes() + U256::BYTES]
                 .copy_from_slice(&value.as_le_slice());

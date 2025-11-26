@@ -76,7 +76,8 @@ impl<C> bincode::Decode<C> for RuntimeInterruptionOutcomeV1 {
 }
 
 #[derive(Default, Clone, Debug, PartialEq, bincode::Encode, bincode::Decode)]
-pub struct RuntimeUniversalTokenDeployOutputV1 {
+pub struct RuntimeUniversalTokenOutputV1 {
+    pub output: Vec<u8>,
     pub storage: Vec<([u8; 32], [u8; 32])>,
 }
 

@@ -1,16 +1,5 @@
-use crate::{
-    consts::ERR_CONVERSION,
-    storage::{ADDRESS_LEN_BYTES, U256_LEN_BYTES},
-};
+use crate::storage::{ADDRESS_LEN_BYTES, U256_LEN_BYTES};
 use fluentbase_sdk::{Address, SharedAPI, B256, U256};
-
-// #[inline(always)]
-// pub fn u256_from_bytes_slice(sdk: &mut impl SharedAPI, value: &[u8]) -> U256 {
-//     if let Some(v) = u256_from_bytes_slice_try(value) {
-//         return v;
-//     }
-//     sdk.evm_exit(ERR_CONVERSION);
-// }
 
 #[inline(always)]
 pub fn u256_from_bytes_slice_try(value: &[u8]) -> Option<U256> {

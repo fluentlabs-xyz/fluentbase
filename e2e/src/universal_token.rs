@@ -21,6 +21,9 @@ use fluentbase_universal_token::{
 use revm::context::result::ExecutionResult;
 use std::ops::Add;
 
+const DEPLOYER_ADDR: Address = Address::repeat_byte(1);
+const USER_ADDR: Address = Address::repeat_byte(2);
+
 fn call_with_sig(
     ctx: &mut EvmTestingContext,
     input: Bytes,
@@ -55,36 +58,9 @@ fn call_with_sig_revert(
     }
 }
 
-fn call_with_sig_halt(
-    ctx: &mut EvmTestingContext,
-    input: Bytes,
-    caller: &Address,
-    callee: &Address,
-) -> Option<(RwasmHaltReason, u32)> {
-    let result = ctx.call_evm_tx(*caller, *callee, input, None, None);
-    match &result {
-        ExecutionResult::Halt { reason, .. } => {
-            let output = ctx.sdk.take_output();
-            debug_log!("output.len={} {:x?}", output.len(), output);
-            if output.len() >= size_of::<u32>() {
-                return Some((
-                    reason.clone(),
-                    u32::from_le_bytes(output[..size_of::<u32>()].try_into().unwrap()),
-                ));
-            }
-            None
-        }
-        _ => {
-            panic!("expected revert, got: {:?}", &result)
-        }
-    }
-}
-
 #[test]
-fn erc20_no_plugins_enabled_test() {
+fn no_plugins_enabled_test() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    const DEPLOYER_ADDR: Address = address!("1111111111111111111111111111111111111111");
-    const USER_ADDR: Address = address!("2222222222222222222222222222222222222222");
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
         address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
         ..Default::default()
@@ -116,7 +92,6 @@ fn erc20_no_plugins_enabled_test() {
     let total_supply_recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(total_supply, total_supply_recovered);
 
-    debug_log!();
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_PAUSE));
     let error_code = call_with_sig_revert(
@@ -125,9 +100,8 @@ fn erc20_no_plugins_enabled_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    assert_eq!(error_code, ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
+    assert_eq!(error_code, ERR_PAUSABLE_PLUGIN_NOT_ACTIVE); // ERR_PAUSABLE_PLUGIN_NOT_ACTIVE
 
-    debug_log!();
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_MINT));
     input.extend(USER_ADDR.as_slice());
@@ -138,14 +112,12 @@ fn erc20_no_plugins_enabled_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    assert_eq!(error_code, ERR_MINTABLE_PLUGIN_NOT_ACTIVE);
+    assert_eq!(error_code, ERR_MINTABLE_PLUGIN_NOT_ACTIVE); // ERR_MINTABLE_PLUGIN_NOT_ACTIVE
 }
 
 #[test]
-fn erc20_test() {
+fn mixed_test() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    const DEPLOYER_ADDR: Address = address!("1111111111111111111111111111111111111111");
-    const USER_ADDR: Address = address!("2222222222222222222222222222222222222222");
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
         address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
         ..Default::default()
@@ -192,7 +164,6 @@ fn erc20_test() {
     let total_supply_recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(total_supply, total_supply_recovered);
 
-    // SIG_TRANSFER
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_TRANSFER));
     input.extend(USER_ADDR);
@@ -209,7 +180,6 @@ fn erc20_test() {
     let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
 
-    // SIG_BALANCE_OF
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_BALANCE_OF));
     input.extend(USER_ADDR.as_slice());
@@ -224,7 +194,6 @@ fn erc20_test() {
     let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
 
-    // SIG_NAME
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_NAME));
     let output_data = call_with_sig(
@@ -250,7 +219,6 @@ fn erc20_test() {
     let recovered = from_utf8(output_data.as_ref()).expect("output_data should be utf8");
     assert_eq!(token_symbol, recovered);
 
-    // SIG_DECIMALS
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_DECIMALS));
     let output_data = call_with_sig(
@@ -264,7 +232,6 @@ fn erc20_test() {
         u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(decimals, recovered);
 
-    // SIG_TOTAL_SUPPLY
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_TOTAL_SUPPLY));
     let output_data = call_with_sig(
@@ -278,8 +245,7 @@ fn erc20_test() {
         u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(total_supply, recovered);
 
-    // ALLOWANCE TESTS:
-    // SIG_TRANSFER_FROM: before approve
+    // before approve
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_TRANSFER_FROM));
     input.extend(USER_ADDR);
@@ -294,7 +260,8 @@ fn erc20_test() {
         &contract_address,
     );
     assert_eq!(error_code, ERR_INSUFFICIENT_ALLOWANCE);
-    // SIG_ALLOWANCE: before approve
+
+    // before approve
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_ALLOWANCE));
     input.extend(USER_ADDR);
@@ -309,7 +276,7 @@ fn erc20_test() {
     let recovered =
         u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(U256::from(0), recovered);
-    // SIG_APPROVE
+
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_APPROVE));
     input.extend(USER_ADDR);
@@ -325,7 +292,8 @@ fn erc20_test() {
     let recovered =
         u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(U256::from(1), recovered);
-    // SIG_ALLOWANCE: after approve
+
+    // after approve
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_ALLOWANCE));
     input.extend(USER_ADDR);
@@ -337,10 +305,9 @@ fn erc20_test() {
         &contract_address,
     );
     println!("output_data: {:?}", output_data);
-    let recovered =
-        u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
+    let recovered = u256_from_bytes_slice_try(output_data.as_ref()).expect("output is a u256 repr");
     assert_eq!(U256::from(deployer_2_1_allowance), recovered);
-    // SIG_TRANSFER_FROM
+
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_TRANSFER_FROM));
     input.extend(USER_ADDR);
@@ -358,7 +325,8 @@ fn erc20_test() {
     let recovered =
         u256_from_bytes_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(U256::from(1), recovered);
-    // SIG_ALLOWANCE: after transfer from
+
+    // after transfer from
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_ALLOWANCE));
     input.extend(USER_ADDR);
@@ -376,7 +344,8 @@ fn erc20_test() {
         U256::from(deployer_2_1_allowance - deployer_2_1_transfer_from),
         recovered
     );
-    // SIG_BALANCE_OF: after transfer from
+
+    // after transfer from
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_BALANCE_OF));
     input.extend(USER_ADDR.as_slice());
@@ -391,7 +360,6 @@ fn erc20_test() {
     let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
 
-    // SIG_PAUSE
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_PAUSE));
     let output_data = call_with_sig(
@@ -404,7 +372,8 @@ fn erc20_test() {
     let expected = U256::from(1);
     let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
-    // SIG_PAUSE: 2nd time
+
+    // 2nd time
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_PAUSE));
     let error_code = call_with_sig_revert(
@@ -414,7 +383,7 @@ fn erc20_test() {
         &contract_address,
     );
     assert_eq!(error_code, ERR_ALREADY_PAUSED);
-    // SIG_UNPAUSE
+
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_UNPAUSE));
     let output_data = call_with_sig(
@@ -427,7 +396,8 @@ fn erc20_test() {
     let expected = U256::from(1);
     let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
-    // SIG_UNPAUSE: 2nd time
+
+    // 2nd time
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_UNPAUSE));
     let error_code = call_with_sig_revert(
@@ -453,7 +423,8 @@ fn erc20_test() {
     let expected = U256::from(1);
     let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
-    // SIG_BALANCE_OF: after mint
+
+    // after mint
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_BALANCE_OF));
     input.extend(USER_ADDR.as_slice());
@@ -467,7 +438,8 @@ fn erc20_test() {
     let expected = U256::from(deployer_1_2_transfer - deployer_2_1_transfer_from + amount_to_mint);
     let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
-    // SIG_TOTAL_SUPPLY: after mint
+
+    // after mint
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_TOTAL_SUPPLY));
     let output_data = call_with_sig(
