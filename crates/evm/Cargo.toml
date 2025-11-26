@@ -29,3 +29,6 @@ std = [
     "revm-interpreter/std",
     "revm-context/std",
 ]
+fluent-testnet = [
+	"fluentbase-sdk/fluent-testnet"
+]

@@ -1,34 +1,64 @@
+use crate::SysFuncIdx::{ENTER_UNCONSTRAINED, EXIT_UNCONSTRAINED, WRITE_FD};
 use crate::{SysFuncIdx, FUEL_DENOM_RATE};
 use rwasm::{instruction_set, InstructionSet, TrapCode};
 
 /// The maximum allowed value for the `x` parameter used in linear gas cost calculation
 /// of builtins.
-/// This limit ensures the result does not overflow a `u32`.
-/// Specifically:
-/// - `word_cost` is assumed to be at most `8191` (i.e. `2^13-1`)
-/// - `base_cost` is assumed to be at most `2_147_483_647` (i.e. `2^31-1`)
-const FUEL_MAX_LINEAR_X: u32 = 262_143; // 2^18 - 1
+/// This limit ensures:
+/// 1. Runtime: all intermediate i32 operations do not overflow (WASM constraint)
+/// 2. Compile-time: final fuel value fits in u32
+///
+/// Formula:
+/// words = (x + 31) / 32
+/// fuel = base_cost + word_cost × words
+///
+/// Derivation:
+/// The bottleneck is I32Mul: words × word_cost ≤ i32::MAX
+///
+/// words ≈ x / 32, so:
+/// (x / 32) × word_cost ≤ 2^31
+/// x ≤ (2^31 × 32) / word_cost_max
+///
+/// Worst case (DEBUG_LOG with FUEL_DENOM_RATE = 20):
+/// - word_cost_max = 16 × 20 = 320
+///
+/// x ≤ (2^31 × 32) / 320 = 214,748,364 bytes (~204 MB)
+///
+/// We use 128 MB as a safe limit within the theoretical maximum:
+const FUEL_MAX_LINEAR_X: u32 = 134_217_728; // 128 MB (2^27)
+
+/// The maximum allowed value for the `x` parameter used in quadratic gas cost calculation
+/// of builtins.
+/// This limit ensures:
+/// 1. Runtime: words × words does not overflow i32 (WASM constraint)
+/// 2. Compile-time: final fuel value fits in u32
+///
+/// Formula:
+/// words = (x + 31) / 32
+/// fuel = (word_cost × words + words² / divisor) × FUEL_DENOM_RATE
+///
+/// Derivation:
+/// words × words must not overflow i32:
+/// words² ≤ i32::MAX (2,147,483,647)
+/// words ≤ 46,340
+/// x ≤ 46,340 × 32 = 1,482,880 bytes (~1.4 MB)
+///
+/// We use 1.25 MB as a safe limit within the theoretical maximum:
+const FUEL_MAX_QUADRATIC_X: u32 = 1_310_720; // 1.25 MB (2^20 + 2^18)
 
 /// In this file, we define the fuel procedures that will be inserted by the rwasm translator
 /// before the builtin calls. Each fuel procedure is a set of rwasm Opcodes that will be
 /// executed. Fuel procedures can potentially access the variables of the function they are
 /// inserted into.
-
-/// Formula: cost = base_cost + word_cost * (x + 31) / 32, where x is one of the parameters
-/// of the builtin. What parameter is used depends on the builtin and defined by local_depth.
-///
-/// Local depth equal to 1 means the last parameter, increase by 1 for each previous parameter. For
-/// more info on that, checkout implementation of local gets a visitor in the rwasm codebase (fn
-/// visit_local_get).
-///
 /// Word is defined as 32 bytes, the same as in the EVM.
 macro_rules! linear_fuel {
     ($local_depth:expr, $base_cost:expr, $word_cost:expr) => {{
         // compile-time overflow check
         const _: () = {
+            const MAX_WORDS: u128 = ((FUEL_MAX_LINEAR_X as u128 + 31) / 32);
             assert!(
-                ($base_cost as u128) + ($word_cost as u128) * (FUEL_MAX_LINEAR_X as u128) <= (u32::MAX as u128),
-                "base_cost + word_cost * FUEL_MAX_LINEAR_X must fit into u32"
+                ($base_cost as u128) + ($word_cost as u128) * MAX_WORDS <= (u32::MAX as u128),
+                "base_cost + word_cost * MAX_WORDS must fit into u32"
             );
         };
 
@@ -49,6 +79,72 @@ macro_rules! linear_fuel {
             I32Const($base_cost)
             I32Add
             I32Const(0) // Push two 32-bit values, which are interpreted as a single 64-bit value inside the builtin.
+            Call(SysFuncIdx::CHARGE_FUEL)
+        }
+    }};
+}
+
+/// Formula: fuel = (word_cost × words + words² / divisor) × FUEL_DENOM_RATE
+/// where words = (x + 31) / 32
+///
+/// The result is in fuel units, which are then charged via CHARGE_FUEL syscall.
+/// FUEL_DENOM_RATE converts from gas units (EVM) to fuel units (runtime).
+macro_rules! quadratic_fuel {
+    ($local_depth:expr, $word_cost:expr, $divisor:expr) => {{
+        // Compile-time overflow check
+        const _: () = {
+            const MAX_WORDS: u128 = ((FUEL_MAX_QUADRATIC_X as u128 + 31) / 32);
+            const LINEAR: u128 = ($word_cost as u128) * MAX_WORDS;
+            const QUADRATIC: u128 = (MAX_WORDS * MAX_WORDS) / ($divisor as u128);
+            const TOTAL: u128 = (LINEAR + QUADRATIC) * (FUEL_DENOM_RATE as u128);
+            assert!(
+                TOTAL <= (u32::MAX as u128),
+                "fuel cost after FUEL_DENOM_RATE conversion must fit into u32"
+            );
+        };
+
+        instruction_set! {
+             // Runtime overflow check
+            LocalGet($local_depth)
+            I32Const(FUEL_MAX_QUADRATIC_X)
+            I32GtU
+            BrIfEqz(2)
+            Trap(TrapCode::IntegerOverflow)
+
+            // Linear part: word_cost × words
+            LocalGet($local_depth)
+            I32Const(31)
+            I32Add
+            I32Const(32)
+            I32DivU
+            I32Const($word_cost)
+            I32Mul
+
+            // Quadratic part: words² / divisor
+            LocalGet($local_depth + 1) // linear part left words on stack
+            I32Const(31)
+            I32Add
+            I32Const(32)
+            I32DivU
+
+            LocalGet($local_depth + 2) // linear and first words on stack
+            I32Const(31)
+            I32Add
+            I32Const(32)
+            I32DivU
+
+            I32Mul
+            I32Const($divisor)
+            I32DivU
+
+            // Sum: linear + quadratic
+            I32Add
+
+            // Convert gas -> fuel
+            I32Const(FUEL_DENOM_RATE as u32)
+            I32Mul
+
+            I32Const(0)
             Call(SysFuncIdx::CHARGE_FUEL)
         }
     }};
@@ -103,6 +199,11 @@ pub const SECP256K1_ADD_COST: u32 = 150 * FUEL_DENOM_RATE as u32;
 pub const SECP256K1_DOUBLE_COST: u32 = 150 * FUEL_DENOM_RATE as u32;
 pub const SECP256K1_DECOMPRESS_COST: u32 = 4_000 * FUEL_DENOM_RATE as u32;
 
+// Secp256r1
+pub const SECP256R1_ADD_COST: u32 = 150 * FUEL_DENOM_RATE as u32;
+pub const SECP256R1_DOUBLE_COST: u32 = 150 * FUEL_DENOM_RATE as u32;
+pub const SECP256R1_DECOMPRESS_COST: u32 = 4_000 * FUEL_DENOM_RATE as u32;
+
 // BN254
 pub const BN254_ADD_COST: u32 = 150 * FUEL_DENOM_RATE as u32;
 pub const BN254_DOUBLE_COST: u32 = 150 * FUEL_DENOM_RATE as u32;
@@ -119,10 +220,16 @@ pub const BLS_G2_ADD_COST: u32 = 4_500 * FUEL_DENOM_RATE as u32;
 pub const BLS_PAIRING_COST: u32 = 45_000 * FUEL_DENOM_RATE as u32;
 pub const BLS_MAP_G1_COST: u32 = 8_000 * FUEL_DENOM_RATE as u32;
 pub const BLS_MAP_G2_COST: u32 = 80_000 * FUEL_DENOM_RATE as u32;
+pub const BLS_G1_DOUBLE_COST: u32 = 600 * FUEL_DENOM_RATE as u32;
+pub const BLS_G1_DECOMPRESS_COST: u32 = 600 * FUEL_DENOM_RATE as u32;
 
 // Big integer
 pub const UINT256_MUL_MOD_COST: u32 = 8 * FUEL_DENOM_RATE as u32;
 pub const UINT256_X2048_MUL_COST: u32 = 5_000 * FUEL_DENOM_RATE as u32;
+
+// Quadratic fuel constants (EVM memory expansion formula)
+pub const QUADRATIC_WORD_FUEL_COST: u32 = 3;
+pub const QUADRATIC_DIVISOR: u32 = 512;
 
 pub(crate) fn emit_fuel_procedure(sys_func_idx: SysFuncIdx) -> InstructionSet {
     use SysFuncIdx::*;
@@ -135,13 +242,17 @@ pub(crate) fn emit_fuel_procedure(sys_func_idx: SysFuncIdx) -> InstructionSet {
         WRITE_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
         OUTPUT_SIZE => const_fuel!(LOW_FUEL_COST),
         READ_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
-        EXEC => no_fuel!(),
+        EXEC => quadratic_fuel!(3, QUADRATIC_WORD_FUEL_COST, QUADRATIC_DIVISOR),
         RESUME => no_fuel!(),
         FORWARD_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
         CHARGE_FUEL_MANUALLY => no_fuel!(),
         FUEL => const_fuel!(LOW_FUEL_COST),
         DEBUG_LOG => linear_fuel!(1, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST),
         CHARGE_FUEL => const_fuel!(CHARGE_FUEL_BASE_COST),
+        ENTER_UNCONSTRAINED => no_fuel!(),
+        EXIT_UNCONSTRAINED => no_fuel!(),
+        // TODO: use correct fuel calculations here, once we will implement WRITE_FD
+        WRITE_FD => no_fuel!(),
 
         // hashing functions (0x01)
         KECCAK256 => linear_fuel!(2, KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST),
@@ -170,13 +281,15 @@ pub(crate) fn emit_fuel_procedure(sys_func_idx: SysFuncIdx) -> InstructionSet {
         SECP256K1_ADD => const_fuel!(SECP256K1_ADD_COST),
         SECP256K1_DECOMPRESS => const_fuel!(SECP256K1_DECOMPRESS_COST),
         SECP256K1_DOUBLE => const_fuel!(SECP256K1_DOUBLE_COST),
+        // secp256r1 (0x05)
+        SECP256R1_ADD => const_fuel!(SECP256R1_ADD_COST),
+        SECP256R1_DECOMPRESS => const_fuel!(SECP256R1_DECOMPRESS_COST),
+        SECP256R1_DOUBLE => const_fuel!(SECP256R1_DOUBLE_COST),
 
         // bls12381 (0x06)
         BLS12381_ADD => const_fuel!(BLS_G1_ADD_COST),
-        // BLS12381_G2_ADD => const_fuel!(BLS_G2_ADD_COST),
-        // BLS12381_PAIRING => const_fuel!(BLS_PAIRING_COST),
-        // BLS12381_MAP_G1 => const_fuel!(BLS_MAP_G1_COST),
-        // BLS12381_MAP_G2 => const_fuel!(BLS_MAP_G2_COST),
+        BLS12381_DECOMPRESS => const_fuel!(BLS_G1_DECOMPRESS_COST),
+        BLS12381_DOUBLE => const_fuel!(BLS_G1_DOUBLE_COST),
 
         // bn254 (0x07)
         BN254_ADD => const_fuel!(BN254_ADD_COST),
@@ -185,7 +298,5 @@ pub(crate) fn emit_fuel_procedure(sys_func_idx: SysFuncIdx) -> InstructionSet {
         // uint256 (0x08)
         UINT256_MUL_MOD => const_fuel!(UINT256_MUL_MOD_COST),
         UINT256_X2048_MUL => const_fuel!(UINT256_X2048_MUL_COST),
-
-        _ => no_fuel!(),
     }
 }

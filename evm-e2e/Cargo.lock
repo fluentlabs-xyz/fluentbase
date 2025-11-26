@@ -2009,6 +2009,7 @@ dependencies = [
 name = "fluentbase-revm"
 version = "0.4.11-dev"
 dependencies = [
+ "cfg-if",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
