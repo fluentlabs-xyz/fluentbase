@@ -61,21 +61,60 @@ fn syscall_weierstrass_double_handler<E: EllipticCurve, const POINT_SIZE: usize>
     Ok(())
 }
 
+/// Secp256k1 curve point doubling.
+///
+/// # Input format
+/// `p` must be an affine point encoded as `[x || y]` in little-endian,
+/// where each coordinate is 32 bytes.
+///
+/// # Safety
+/// Caller must ensure coordinates are valid field elements (< modulus).
+/// No validation is performed — invalid input produces undefined output.
 pub fn syscall_secp256k1_double_impl(
     p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE],
 ) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
     syscall_weierstrass_double_impl::<Secp256k1, { SECP256K1_G1_RAW_AFFINE_SIZE }>(p)
 }
+
+/// Secp256r1 curve point doubling.
+///
+/// # Input format
+/// `p` must be an affine point encoded as `[x || y]` in little-endian,
+/// where each coordinate is 32 bytes.
+///
+/// # Safety
+/// Caller must ensure coordinates are valid field elements (< modulus).
+/// No validation is performed — invalid input produces undefined output.
 pub fn syscall_secp256r1_double_impl(
     p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE],
 ) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
     syscall_weierstrass_double_impl::<Secp256r1, { SECP256R1_G1_RAW_AFFINE_SIZE }>(p)
 }
+
+/// BN254 curve point doubling.
+///
+/// # Input format
+/// `p` must be an affine point encoded as `[x || y]` in little-endian,
+/// where each coordinate is 32 bytes.
+///
+/// # Safety
+/// Caller must ensure coordinates are valid field elements (< modulus).
+/// No validation is performed — invalid input produces undefined output.
 pub fn syscall_bn254_double_impl(
     p: [u8; BN254_G1_RAW_AFFINE_SIZE],
 ) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
     syscall_weierstrass_double_impl::<Bn254, { BN254_G1_RAW_AFFINE_SIZE }>(p)
 }
+
+/// BLS12-381 curve point doubling.
+///
+/// # Input format
+/// `p` must be an affine point encoded as `[x || y]` in little-endian,
+/// where each coordinate is 48 bytes.
+///
+/// # Safety
+/// Caller must ensure coordinates are valid field elements (< modulus).
+/// No validation is performed — invalid input produces undefined output.
 pub fn syscall_bls12381_double_impl(
     p: [u8; BLS12381_G1_RAW_AFFINE_SIZE],
 ) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
