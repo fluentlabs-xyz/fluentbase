@@ -5,11 +5,8 @@ extern crate core;
 use alloc::vec::Vec;
 use fluentbase_sdk::bincode::Encode;
 use fluentbase_sdk::{
-    system_entrypoint2, Address, Bytes,
-    ContextReader, ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1
-    ,
-    RuntimeUniversalTokenOutputV1, SharedAPI
-    , U256,
+    system_entrypoint2, Address, Bytes, ContextReader, ExitCode, RuntimeInterruptionOutcomeV1,
+    RuntimeNewFrameInputV1, RuntimeUniversalTokenOutputV1, SharedAPI, U256,
 };
 use fluentbase_universal_token::consts::{ERR_INSUFFICIENT_BALANCE, ERR_UNKNOWN};
 use fluentbase_universal_token::helpers::bincode::{decode, encode};
