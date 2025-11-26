@@ -123,13 +123,8 @@ fn erc20_transfer_benches(c: &mut Criterion) {
             owner: DEPLOYER_ADDR.into(),
             decimals: DECIMALS_DEFAULT,
         });
-        let contract_address = ctx.deploy_evm_tx(
-            DEPLOYER_ADDR,
-            initial_settings
-                .encode_for_deploy()
-                .expect("failed to encode settings for deployment")
-                .into(),
-        );
+        let contract_address =
+            ctx.deploy_evm_tx(DEPLOYER_ADDR, initial_settings.encode_for_deploy().into());
 
         let mut input = Vec::<u8>::new();
         input.extend(sig_to_bytes(SIG_TRANSFER));
