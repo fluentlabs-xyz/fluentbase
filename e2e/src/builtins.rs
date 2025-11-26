@@ -116,7 +116,7 @@ fn test_write_builtin_overflow() {
     "#;
     let main_with_overflow = r#"
         i32.const 0
-        i32.const 300000
+        i32.const 135_000_000
         call $_write
     "#; // excessively large data size argument
     let result1 = run_main(main_without_overflow, 0);

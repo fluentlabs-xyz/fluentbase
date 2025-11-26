@@ -46,6 +46,8 @@ pub mod svm;
 mod update_account;
 #[cfg(test)]
 mod wasm;
+#[cfg(test)]
+mod exec_input;
 
 pub trait EvmTestingContextWithGenesis {
     fn with_full_genesis(self) -> Self;

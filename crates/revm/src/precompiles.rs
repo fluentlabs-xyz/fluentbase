@@ -2,18 +2,15 @@
 use crate::RwasmSpecId;
 use fluentbase_sdk::PRECOMPILE_ADDRESSES;
 use once_cell::race::OnceBox;
-use revm::handler::EthPrecompiles;
-use revm::primitives::hardfork::SpecId;
 use revm::{
     context::Cfg,
     context_interface::ContextTr,
-    handler::PrecompileProvider,
+    handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{InputsImpl, InterpreterResult},
     precompile::Precompiles,
     primitives::Address,
 };
-use std::boxed::Box;
-use std::string::String;
+use std::{boxed::Box, string::String};
 
 /// Optimism precompile provider
 #[derive(Debug, Clone)]
@@ -32,10 +29,7 @@ impl RwasmPrecompiles {
             _ => genesis(),
         };
         Self {
-            inner: EthPrecompiles {
-                precompiles,
-                spec: SpecId::default(),
-            },
+            inner: EthPrecompiles { precompiles, spec },
             spec,
         }
     }

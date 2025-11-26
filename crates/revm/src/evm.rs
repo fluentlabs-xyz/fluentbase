@@ -1,16 +1,9 @@
 //! Contains the `[RwasmEvm]` type and its implementation of the execution EVM traits.
 
 use crate::{
-    api::RwasmFrame,
-    executor::run_rwasm_loop,
-    precompiles::RwasmPrecompiles,
-    upgrade::{upgrade_runtime_hook_v1, upgrade_runtime_hook_v2},
-    ExecutionResult,
+    api::RwasmFrame, executor::run_rwasm_loop, precompiles::RwasmPrecompiles, ExecutionResult,
 };
-use fluentbase_sdk::{
-    resolve_precompiled_runtime_from_input, try_resolve_precompile_account_from_input, Address,
-    Bytes, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX_V1, UPDATE_GENESIS_PREFIX_V2,
-};
+use fluentbase_sdk::{resolve_precompiled_runtime_from_input, Address, Bytes};
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
     context::{ContextError, ContextSetters, Evm, FrameStack, JournalTr},
@@ -223,6 +216,7 @@ where
         match &mut res {
             ItemOrResult::Item(new_frame) => {
                 match &mut new_frame.input {
+                    #[allow(unused_variables)]
                     FrameInput::Call(inputs) => {
                         let _span = tracing::info_span!("revm.frame_init.call_hook").entered();
 
@@ -253,15 +247,21 @@ where
                         // - Multicall tests temporarily disabled (see e2e/src/multicall.rs)
                         //
                         // TODO: Implement proper EIP-1352 compliant precompile system:
-                        // 1. Assign fixed addresses for precompiles (e.g., 0x0000...0100)
-                        // 2. Dispatch based on target address, not calldata
-                        // 3. Remove try_resolve_precompile_account_from_input entirely
-                        // 4. Update all affected tests
+                        //  1. Assign fixed addresses for precompiles (e.g., 0x0000...0100)
+                        //  2. Dispatch based on target address, not calldata
+                        //  3. Remove try_resolve_precompile_account_from_input entirely
+                        //  4. Update all affected tests
                         //
                         // ============================================================================
-
                         #[cfg(feature = "fluent-testnet")]
                         {
+                            use crate::upgrade::{
+                                upgrade_runtime_hook_v1, upgrade_runtime_hook_v2,
+                            };
+                            use fluentbase_sdk::{
+                                try_resolve_precompile_account_from_input, UPDATE_GENESIS_AUTH,
+                                UPDATE_GENESIS_PREFIX_V1, UPDATE_GENESIS_PREFIX_V2,
+                            };
                             // a special hook for runtime upgrade
                             // that is used only for testnet to upgrade genesis without forks
                             if inputs.caller == UPDATE_GENESIS_AUTH {
