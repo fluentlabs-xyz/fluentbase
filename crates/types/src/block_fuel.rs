@@ -1,6 +1,6 @@
 use crate::SysFuncIdx::{ENTER_UNCONSTRAINED, EXIT_UNCONSTRAINED, WRITE_FD};
 use crate::{SysFuncIdx, FUEL_DENOM_RATE};
-use rwasm::SyscallFuelParams;
+use rwasm::{SyscallFuelParams, QuadraticFuelParams, LinearFuelParams};
 
 /// The maximum allowed value for the `x` parameter used in linear gas cost calculation
 /// of builtins.
@@ -53,32 +53,34 @@ const FUEL_MAX_QUADRATIC_X: u32 = 1_310_720; // 1.25 MB (2^20 + 2^18)
 /// Word is defined as 32 bytes, the same as in the EVM.
 macro_rules! no_fuel {
     () => {
-        SyscallFuelParams {
-            base_fuel: 0,
-            param_index: 0,
-            linear_fuel: 0,
-        }
+        SyscallFuelParams::None
     };
 }
 
 macro_rules! const_fuel {
     ($base:expr) => {
-        SyscallFuelParams {
-            base_fuel: $base as u64,
-            param_index: 0,
-            linear_fuel: 0,
-        }
+        SyscallFuelParams::Const($base as u64)
     };
 }
 
 macro_rules! linear_fuel {
     ($param_index:expr, $base:expr, $linear:expr) => {
-        SyscallFuelParams {
+        SyscallFuelParams::LinearFuel(LinearFuelParams {
             base_fuel: $base as u64,
             param_index: $param_index,
-            linear_fuel: $linear as u64,
-        }
+            word_cost: $linear as u64,
+        })
     };
+}
+
+macro_rules! quadratic_fuel {
+    ($local_depth:expr, $word_cost:expr, $divisor:expr) => {
+        SyscallFuelParams::QuadraticFuel(QuadraticFuelParams {
+            divisor: $divisor as u64,
+            param_index: $local_depth,
+            word_cost: $word_cost as u64,
+        })
+    }
 }
 
 // Common fuel cost constants
