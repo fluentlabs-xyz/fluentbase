@@ -63,3 +63,6 @@ inter-process-lock = [
     "dep:fs2",
 ]
 global-executor = ["dep:core_affinity"]
+fluent-testnet = [
+	"fluentbase-types/fluent-testnet"
+]

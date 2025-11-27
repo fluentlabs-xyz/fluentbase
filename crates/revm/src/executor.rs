@@ -6,6 +6,7 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
+use cfg_if::cfg_if;
 use core::mem::take;
 use fluentbase_runtime::{
     default_runtime_executor,
@@ -217,15 +218,21 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         if is_create { STATE_DEPLOY } else { STATE_MAIN },
     );
 
-    // make sure we have enough gas to charge from the call
-    // assert_eq!(
-    //     (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE,
-    //     fuel_consumed / FUEL_DENOM_RATE
-    // );
-    if !interpreter.gas.record_denominated_cost(fuel_consumed) {
+    cfg_if! {
+        if #[cfg(feature = "fluent-testnet")] {
+            let gas_consumed = fuel_consumed / FUEL_DENOM_RATE;
+        } else {
+            let gas_consumed = (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE;
+        }
+    }
+
+    if !interpreter.gas.record_cost(gas_consumed) {
         return Ok(NextAction::error(ExitCode::OutOfFuel, interpreter.gas));
     }
-    interpreter.gas.record_denominated_refund(fuel_refunded);
+
+    interpreter
+        .gas
+        .record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
 
     // extract return data from the execution context
     let return_data: Bytes;
@@ -317,8 +324,16 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     );
     let return_data: Bytes = runtime_context.execution_result.return_data.into();
 
+    cfg_if! {
+        if #[cfg(feature = "fluent-testnet")] {
+            let gas_consumed = fuel_consumed / FUEL_DENOM_RATE;
+        } else {
+            let gas_consumed = (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE;
+        }
+    }
+
     // make sure we have enough gas to charge from the call
-    if !frame.interpreter.gas.record_denominated_cost(fuel_consumed) {
+    if !frame.interpreter.gas.record_cost(gas_consumed) {
         return Ok(NextAction::error(
             ExitCode::OutOfFuel,
             frame.interpreter.gas,
@@ -328,7 +343,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame
         .interpreter
         .gas
-        .record_denominated_refund(fuel_refunded);
+        .record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
 
     let result = process_exec_result::<CTX, INSP>(frame, ctx, inspector, exit_code, return_data)?;
     // If interruption ends with return,

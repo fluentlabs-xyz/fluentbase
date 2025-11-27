@@ -368,7 +368,9 @@ fn pad_to_be(val: &BigUint, len: usize) -> Vec<u8> {
     // First take the byes in little endian
     let mut bytes = val.to_bytes_le();
     // Resize so we get the full padding correctly.
-    bytes.resize(len, 0);
+    if len > bytes.len() {
+        bytes.resize(len, 0);
+    }
     // Convert back to big endian.
     bytes.reverse();
 

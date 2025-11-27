@@ -17,3 +17,6 @@ fluentbase-sdk = { workspace = true, default-features = false }
 [features]
 default = []
 std = []
+fluent-testnet = [
+	"fluentbase-sdk/fluent-testnet"
+]
