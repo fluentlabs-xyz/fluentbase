@@ -1747,7 +1747,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-rwasm-precompile",
+ "revm-precompile",
 ]
 
 [[package]]
@@ -1757,7 +1757,7 @@ dependencies = [
  "bls12_381",
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-rwasm-precompile",
+ "revm-precompile",
 ]
 
 [[package]]
@@ -1769,7 +1769,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-rwasm-precompile",
+ "revm-precompile",
 ]
 
 [[package]]
@@ -1778,7 +1778,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-rwasm-precompile",
+ "revm-precompile",
 ]
 
 [[package]]
@@ -1805,7 +1805,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-rwasm-precompile",
+ "revm-precompile",
 ]
 
 [[package]]
@@ -1814,7 +1814,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-rwasm-precompile",
+ "revm-precompile",
 ]
 
 [[package]]
@@ -1823,7 +1823,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-rwasm-precompile",
+ "revm-precompile",
 ]
 
 [[package]]
@@ -1863,7 +1863,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "revm-rwasm-precompile",
+ "revm-precompile",
 ]
 
 [[package]]
@@ -1874,7 +1874,7 @@ dependencies = [
  "fluentbase-testing",
  "hex",
  "p256",
- "revm-rwasm-precompile",
+ "revm-precompile",
  "sha2 0.10.9",
 ]
 
@@ -1912,7 +1912,7 @@ dependencies = [
  "fluentbase-testing",
  "hex",
  "p256",
- "revm-rwasm-precompile",
+ "revm-precompile",
  "sha2 0.10.9",
 ]
 
@@ -1946,6 +1946,7 @@ dependencies = [
 name = "fluentbase-revm"
 version = "0.4.11-dev"
 dependencies = [
+ "cfg-if",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -3810,6 +3811,42 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "revm-precompile"
+version = "24.0.1"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#a30020ea2c951504a7faf4c78c8bf3f11c001cb5"
+dependencies = [
+ "ark-bls12-381",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "arrayref",
+ "aurora-engine-modexp",
+ "c-kzg",
+ "cfg-if",
+ "k256",
+ "kzg-rs",
+ "libsecp256k1 0.7.2",
+ "once_cell",
+ "p256",
+ "revm-primitives",
+ "ripemd",
+ "rug",
+ "secp256k1",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "revm-primitives"
+version = "20.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=audit%2Fflu-574#a30020ea2c951504a7faf4c78c8bf3f11c001cb5"
+dependencies = [
+ "alloy-primitives",
+ "num_enum",
+ "serde",
+]
+
+[[package]]
 name = "revm-rwasm"
 version = "27.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3961,7 +3998,6 @@ dependencies = [
  "c-kzg",
  "cfg-if",
  "k256",
- "kzg-rs",
  "libsecp256k1 0.7.2",
  "once_cell",
  "p256",
@@ -3974,9 +4010,9 @@ dependencies = [
 
 [[package]]
 name = "revm-rwasm-primitives"
-version = "20.0.1"
+version = "20.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5de54252dfd2bbedda78ca38daa99f13161dc9a2ddbc9d6c1fa56fbe439212f"
+checksum = "41ab2c264030a0351d15a5ca907a5774351cf3d099d7e2b2d6c44a1cf9017cbe"
 dependencies = [
  "alloy-primitives",
  "num_enum",

@@ -4,7 +4,7 @@ use crate::RuntimeContext;
 use fluentbase_types::B256;
 use rwasm::{Store, TrapCode, Value};
 
-pub fn syscall_hashing_blak3_handler(
+pub fn syscall_hashing_blake3_handler(
     caller: &mut impl Store<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
@@ -16,12 +16,12 @@ pub fn syscall_hashing_blak3_handler(
     );
     let mut data = vec![0u8; data_len];
     caller.memory_read(data_offset, &mut data)?;
-    let hash = syscall_hashing_blake3_handler(&data);
+    let hash = syscall_hashing_blake3_impl(&data);
     caller.memory_write(output_offset, hash.as_slice())?;
     Ok(())
 }
 
-pub fn syscall_hashing_blake3_handler(data: &[u8]) -> B256 {
+pub fn syscall_hashing_blake3_impl(data: &[u8]) -> B256 {
     let mut hasher = blake3::Hasher::default();
     hasher.update(data);
     hasher.finalize().as_bytes().into()

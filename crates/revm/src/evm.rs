@@ -1,16 +1,9 @@
 //! Contains the `[RwasmEvm]` type and its implementation of the execution EVM traits.
 
 use crate::{
-    api::RwasmFrame,
-    executor::run_rwasm_loop,
-    precompiles::RwasmPrecompiles,
-    upgrade::{upgrade_runtime_hook_v1, upgrade_runtime_hook_v2},
-    ExecutionResult,
+    api::RwasmFrame, executor::run_rwasm_loop, precompiles::RwasmPrecompiles, ExecutionResult,
 };
-use fluentbase_sdk::{
-    resolve_precompiled_runtime_from_input, try_resolve_precompile_account_from_input, Address,
-    Bytes, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX_V1, UPDATE_GENESIS_PREFIX_V2,
-};
+use fluentbase_sdk::{resolve_precompiled_runtime_from_input, Address, Bytes};
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
     context::{ContextError, ContextSetters, Evm, FrameStack, JournalTr},
@@ -223,31 +216,78 @@ where
         match &mut res {
             ItemOrResult::Item(new_frame) => {
                 match &mut new_frame.input {
+                    #[allow(unused_variables)]
                     FrameInput::Call(inputs) => {
                         let _span = tracing::info_span!("revm.frame_init.call_hook").entered();
-                        // a special hook for runtime upgrade
-                        // that is used only for testnet to upgrade genesis without forks
-                        if inputs.caller == UPDATE_GENESIS_AUTH {
-                            let input = inputs.input.bytes(ctx);
-                            if input.starts_with(&UPDATE_GENESIS_PREFIX_V1) {
-                                return upgrade_runtime_hook_v1(ctx, inputs);
-                            } else if input.starts_with(&UPDATE_GENESIS_PREFIX_V2) {
-                                return upgrade_runtime_hook_v2(ctx, inputs);
+
+                        // ============================================================================
+                        // SECURITY: CALLDATA-BASED PRECOMPILE DISPATCH VULNERABILITY
+                        // ============================================================================
+                        //
+                        // The following code is DISABLED for mainnet and restricted to testnet only.
+                        //
+                        // VULNERABILITY DESCRIPTION:
+                        // 1. UPDATE_GENESIS_AUTH: Privileged address that can deploy arbitrary bytecode
+                        //    to any address via upgrade_runtime_hook_v1/v2
+                        // 2. Calldata-based dispatch: Precompiles invoked by calldata prefix instead of
+                        //    destination address (via try_resolve_precompile_account_from_input)
+                        //
+                        // SECURITY IMPACT:
+                        // - If UPDATE_GENESIS_AUTH key is compromised, attacker gains full system control
+                        // - Calldata-based dispatch violates Ethereum standard (EIP-1352)
+                        // - Any transaction with specific byte prefix unexpectedly triggers precompiles
+                        // - Breaks tooling/scripts expecting standard address-based precompile behavior
+                        //
+                        // AUDITOR RECOMMENDATION:
+                        // Remove functionality for mainnet deployment. Use standard address-based
+                        // precompile dispatch as specified in EIP-1352.
+                        //
+                        // CURRENT MITIGATION:
+                        // - Restricted to testnet via 'fluent-testnet' feature flag
+                        // - Multicall tests temporarily disabled (see e2e/src/multicall.rs)
+                        //
+                        // TODO: Implement proper EIP-1352 compliant precompile system:
+                        //  1. Assign fixed addresses for precompiles (e.g., 0x0000...0100)
+                        //  2. Dispatch based on target address, not calldata
+                        //  3. Remove try_resolve_precompile_account_from_input entirely
+                        //  4. Update all affected tests
+                        //
+                        // ============================================================================
+                        #[cfg(feature = "fluent-testnet")]
+                        {
+                            use crate::upgrade::{
+                                upgrade_runtime_hook_v1, upgrade_runtime_hook_v2,
+                            };
+                            use fluentbase_sdk::{
+                                try_resolve_precompile_account_from_input, UPDATE_GENESIS_AUTH,
+                                UPDATE_GENESIS_PREFIX_V1, UPDATE_GENESIS_PREFIX_V2,
+                            };
+                            // a special hook for runtime upgrade
+                            // that is used only for testnet to upgrade genesis without forks
+                            if inputs.caller == UPDATE_GENESIS_AUTH {
+                                let input = inputs.input.bytes(ctx);
+                                if input.starts_with(&UPDATE_GENESIS_PREFIX_V1) {
+                                    return upgrade_runtime_hook_v1(ctx, inputs);
+                                } else if input.starts_with(&UPDATE_GENESIS_PREFIX_V2) {
+                                    return upgrade_runtime_hook_v2(ctx, inputs);
+                                }
                             }
-                        }
-                        // TODO(dmitry123): "do we want to disable it for mainnet?"
-                        if let Some(precompiled_address) = try_resolve_precompile_account_from_input(
-                            inputs.input.bytes(ctx).as_ref(),
-                        ) {
-                            let account =
-                                &ctx.journal_mut().load_account_code(precompiled_address)?;
-                            // rewrite bytecode address
-                            inputs.bytecode_address = precompiled_address;
-                            // rewrite bytecode with code hash
-                            new_frame.interpreter.bytecode = ExtBytecode::new_with_hash(
-                                account.info.code.clone().unwrap_or_default(),
-                                account.info.code_hash,
-                            );
+                            // calldata-based precompile dispatch for testnet only
+                            if let Some(precompiled_address) =
+                                try_resolve_precompile_account_from_input(
+                                    inputs.input.bytes(ctx).as_ref(),
+                                )
+                            {
+                                let account =
+                                    &ctx.journal_mut().load_account_code(precompiled_address)?;
+                                // rewrite bytecode address
+                                inputs.bytecode_address = precompiled_address;
+                                // rewrite bytecode with code hash
+                                new_frame.interpreter.bytecode = ExtBytecode::new_with_hash(
+                                    account.info.code.clone().unwrap_or_default(),
+                                    account.info.code_hash,
+                                );
+                            }
                         }
                     }
                     FrameInput::Create(inputs) => {

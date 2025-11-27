@@ -35,3 +35,6 @@ serde = [
     "revm-interpreter/serde",
     "fluentbase-sdk/serde"
 ]
+fluent-testnet = [
+	"fluentbase-sdk/fluent-testnet"
+]

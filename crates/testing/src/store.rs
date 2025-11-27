@@ -1,10 +1,10 @@
-use crate::RuntimeContext;
 use rwasm::{Store, TrapCode};
+use fluentbase_runtime::RuntimeContext;
 
-pub(crate) struct TestingStore {
-    pub(crate) ctx: RuntimeContext,
-    pub(crate) memory: Vec<u8>,
-    pub(crate) fuel_consumed: u64,
+pub struct TestingStore {
+    pub ctx: RuntimeContext,
+    pub memory: Vec<u8>,
+    pub fuel_consumed: u64,
 }
 
 impl Store<RuntimeContext> for TestingStore {

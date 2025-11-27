@@ -168,12 +168,6 @@ impl SystemRuntime {
         //  applications can use this error code, but it won't be handled because of different
         //  runtime (only punishment for halt exit code).
         if ExitCode::from_repr(exit_code) == Some(ExitCode::InterruptionCalled) {
-            // It's not allowed to have trap code with this output
-            // (even ExecutionHalted is not allowed)
-            assert!(
-                result.is_ok(),
-                "runtime: a trap code can't happen during system interruption"
-            );
             // We need to move output into return data, because in our common case, interruptions
             // store syscall params inside return data,
             // but we can't suppose this for system runtime contracts because we don't expose such

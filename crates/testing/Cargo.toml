@@ -37,3 +37,8 @@ debug-print = [
     "revm/debug-print",
     #    "fluentbase-revm/debug-print",
 ]
+fluent-testnet = [
+	"fluentbase-revm/fluent-testnet",
+	"fluentbase-runtime/fluent-testnet",
+	"fluentbase-sdk/fluent-testnet"
+]

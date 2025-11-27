@@ -37,6 +37,7 @@ std = [
 ]
 debug-print = []
 fast-panic = []
+fluent-testnet = []
 svm = [
     "revm-primitives/svm",
 ]

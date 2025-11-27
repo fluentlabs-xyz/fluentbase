@@ -27,3 +27,7 @@ debug = true
 
 [profile.test]
 debug = true
+fluent-testnet = [
+    "fluentbase-sdk/fluent-testnet",
+    "fluentbase-testing/fluent-testnet"
+]

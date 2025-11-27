@@ -36,6 +36,13 @@ test:
 	cargo test --release
 	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e short_tests::good_coverage_tests --release
 
+.PHONY: testnet_test
+testnet_test:
+	cargo test --manifest-path=./contracts/Cargo.toml --release --features fluent-testnet
+	cargo test --manifest-path=./examples/Cargo.toml --release --features fluent-testnet
+	cargo test --release --features fluent-testnet
+	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e short_tests::good_coverage_tests --release
+
 .PHONY: svm_tests
 svm_tests:
 	cargo test --frozen --profile test --manifest-path crates/svm/Cargo.toml --

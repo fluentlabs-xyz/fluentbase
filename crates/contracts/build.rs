@@ -51,6 +51,12 @@ fn main() {
             "--color=always".to_string(),
             "--no-default-features".to_string(),
         ];
+        #[cfg(feature = "fluent-testnet")]
+        {
+            args.push("--features".to_string());
+            args.push("fluent-testnet".to_string());
+        }
+
         if !is_debug_profile {
             args.push("--release".to_string());
         }
