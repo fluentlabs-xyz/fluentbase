@@ -1,7 +1,6 @@
-use crate::{
-    address, hex, Address, Bytes, B256, SVM_ELF_MAGIC_BYTES, UNIVERSAL_TOKEN_MAGIC_BYTES,
-    WASM_MAGIC_BYTES,
-};
+#[cfg(feature = "svm")]
+use crate::SVM_ELF_MAGIC_BYTES;
+use crate::{address, hex, Address, Bytes, B256, UNIVERSAL_TOKEN_MAGIC_BYTES, WASM_MAGIC_BYTES};
 
 /// An address of EVM runtime that is used to execute an EVM program
 pub const PRECOMPILE_EVM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520001");
@@ -140,12 +139,15 @@ pub fn is_execute_using_system_runtime(address: &Address) -> bool {
 ///   based on their initialization input data.
 pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
     if input.len() > WASM_MAGIC_BYTES.len() && input[..WASM_MAGIC_BYTES.len()] == WASM_MAGIC_BYTES {
-        PRECOMPILE_WASM_RUNTIME
-    } else if input.len() > SVM_ELF_MAGIC_BYTES.len()
+        return PRECOMPILE_WASM_RUNTIME;
+    }
+    #[cfg(feature = "svm")]
+    if input.len() > SVM_ELF_MAGIC_BYTES.len()
         && input[..SVM_ELF_MAGIC_BYTES.len()] == SVM_ELF_MAGIC_BYTES
     {
         PRECOMPILE_SVM_RUNTIME
-    } else if input.len() > UNIVERSAL_TOKEN_MAGIC_BYTES.len()
+    }
+    if input.len() > UNIVERSAL_TOKEN_MAGIC_BYTES.len()
         && input[..UNIVERSAL_TOKEN_MAGIC_BYTES.len()] == UNIVERSAL_TOKEN_MAGIC_BYTES
     {
         PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME

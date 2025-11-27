@@ -31,9 +31,9 @@ fluentbase-svm = { workspace = true }
 [features]
 default = [
     "std",
-    #    "enable-svm"
+    #    "svm"
 ]
-enable-svm = []
+svm = []
 wasmtime = []
 std = [
     "fluentbase-sdk/std",

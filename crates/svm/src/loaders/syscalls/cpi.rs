@@ -28,8 +28,7 @@ use alloc::{boxed::Box, vec, vec::Vec};
 use core::{fmt::Debug, marker::PhantomData, ptr};
 use fluentbase_sdk::{
     Address, ContextReader, IsAccountEmpty, IsAccountOwnable, IsColdAccess, SharedAPI,
-    SyscallResult, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, SVM_ELF_MAGIC_BYTES, U256,
-    UNIVERSAL_TOKEN_MAGIC_BYTES,
+    SyscallResult, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256, UNIVERSAL_TOKEN_MAGIC_BYTES,
 };
 use fluentbase_svm_common::common::evm_address_from_pubkey;
 use fluentbase_universal_token::{common::sig_to_bytes, consts::SIG_TOKEN2022};

@@ -36,7 +36,7 @@ mod multicall;
 mod router;
 #[cfg(test)]
 mod stateless;
-#[cfg(all(test, feature = "enable-svm"))]
+#[cfg(all(test, feature = "svm"))]
 pub mod svm;
 // #[cfg(test)]
 // mod universal_token;
