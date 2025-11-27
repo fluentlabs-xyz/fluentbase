@@ -16,16 +16,12 @@ use fluentbase_runtime::{
 use fluentbase_sdk::{
     bincode, debug_log, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
     rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
-    ExitCode, HashMap, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
+    ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
     RuntimeUniversalTokenNewFrameInputV1, RuntimeUniversalTokenOutputV1, SharedContextInput,
     SharedContextInputV1, SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN, U256,
 };
-use fluentbase_universal_token::common::{sig_from_slice, sig_to_bytes};
-use fluentbase_universal_token::consts::{
-    SIG_ALLOWANCE, SIG_APPROVE, SIG_BALANCE_OF, SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE,
-    SIG_SYMBOL, SIG_TOTAL_SUPPLY, SIG_TRANSFER, SIG_TRANSFER_FROM, SIG_UNPAUSE,
-};
+use fluentbase_universal_token::common::sig_from_slice;
 use fluentbase_universal_token::helpers::storage::compute_storage_keys;
 use fluentbase_universal_token::storage::SIG_LEN_BYTES;
 use revm::{
