@@ -1,4 +1,5 @@
 #![allow(soft_unstable)]
+#![allow(unused)]
 
 extern crate alloc;
 extern crate core;
