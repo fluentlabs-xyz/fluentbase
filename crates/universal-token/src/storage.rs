@@ -119,43 +119,43 @@ impl Settings {
         self.default_on_read
     }
 
-    fn total_supply_slot(&mut self) -> U256 {
+    pub fn total_supply_slot(&mut self) -> U256 {
         self.total_supply_slot
             .get_or_insert_with(|| self.kd.u256(&U256::from(1)))
             .clone()
     }
 
-    fn minter_slot(&mut self) -> U256 {
+    pub fn minter_slot(&mut self) -> U256 {
         self.minter_slot
             .get_or_insert_with(|| self.kd.u256(&U256::from(2)))
             .clone()
     }
 
-    fn pauser_slot(&mut self) -> U256 {
+    pub fn pauser_slot(&mut self) -> U256 {
         self.pauser_slot
             .get_or_insert_with(|| self.kd.u256(&U256::from(3)))
             .clone()
     }
 
-    fn symbol_slot(&mut self) -> U256 {
+    pub fn symbol_slot(&mut self) -> U256 {
         self.symbol_slot
             .get_or_insert_with(|| self.kd.u256(&U256::from(4)))
             .clone()
     }
 
-    fn name_slot(&mut self) -> U256 {
+    pub fn name_slot(&mut self) -> U256 {
         self.name_slot
             .get_or_insert_with(|| self.kd.u256(&U256::from(5)))
             .clone()
     }
 
-    fn decimals_slot(&mut self) -> U256 {
+    pub fn decimals_slot(&mut self) -> U256 {
         self.decimals_slot
             .get_or_insert_with(|| self.kd.u256(&U256::from(6)))
             .clone()
     }
 
-    fn flags_slot(&mut self) -> U256 {
+    pub fn flags_slot(&mut self) -> U256 {
         self.flags_slot
             .get_or_insert_with(|| self.kd.u256(&U256::from(7)))
             .clone()
@@ -388,8 +388,13 @@ impl Balance {
     }
 
     #[inline(always)]
+    pub fn key(&self, address: &Address) -> U256 {
+        self.kd.b256(&b256_from_address_try(address))
+    }
+
+    #[inline(always)]
     pub fn get(&self, address: &Address) -> ResultOrInterruption<U256, u32> {
-        let key = self.kd.b256(&b256_from_address_try(address));
+        let key = self.key(address);
         unwrap_opt!(global_service(self.default_on_read).try_get(&key).cloned()).into()
     }
 
@@ -437,10 +442,10 @@ impl Allowance {
         }
     }
 
-    fn key(&self, addr1: &Address, addr2: &Address) -> U256 {
+    pub fn key(&self, a1: &Address, a2: &Address) -> U256 {
         let mut s = Vec::with_capacity(Address::len_bytes() * 2);
-        s.extend_from_slice(addr1.as_slice());
-        s.extend_from_slice(addr2.as_slice());
+        s.extend_from_slice(a1.as_slice());
+        s.extend_from_slice(a2.as_slice());
         self.kd.slice(&s)
     }
 

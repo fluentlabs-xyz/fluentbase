@@ -5,8 +5,9 @@ extern crate core;
 use alloc::vec::Vec;
 use fluentbase_sdk::bincode::Encode;
 use fluentbase_sdk::{
-    system_entrypoint2, Address, Bytes, ContextReader, ExitCode, RuntimeInterruptionOutcomeV1,
-    RuntimeNewFrameInputV1, RuntimeUniversalTokenOutputV1, SharedAPI, U256,
+    debug_log, system_entrypoint2, Address, Bytes, ContextReader, ExitCode,
+    RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, RuntimeUniversalTokenNewFrameInputV1,
+    RuntimeUniversalTokenOutputV1, SharedAPI, U256,
 };
 use fluentbase_universal_token::consts::{ERR_INSUFFICIENT_BALANCE, ERR_UNKNOWN};
 use fluentbase_universal_token::events::{
@@ -30,9 +31,9 @@ use fluentbase_universal_token::{
         ERR_ALREADY_PAUSED, ERR_ALREADY_UNPAUSED, ERR_DECODE, ERR_INSUFFICIENT_ALLOWANCE,
         ERR_INVALID_META_NAME, ERR_INVALID_META_SYMBOL, ERR_INVALID_MINTER, ERR_INVALID_PAUSER,
         ERR_MALFORMED_INPUT, ERR_MINTABLE_PLUGIN_NOT_ACTIVE, ERR_OVERFLOW,
-        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, ERR_VALIDATION, SIG_ALLOWANCE, SIG_APPROVE, SIG_BALANCE_OF,
-        SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE, SIG_SYMBOL, SIG_TOTAL_SUPPLY, SIG_TRANSFER,
-        SIG_TRANSFER_FROM, SIG_UNPAUSE,
+        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, ERR_VALIDATION, SIG_ALLOWANCE, SIG_APPROVE, SIG_BALANCE,
+        SIG_BALANCE_OF, SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE, SIG_SYMBOL, SIG_TOTAL_SUPPLY,
+        SIG_TRANSFER, SIG_TRANSFER_FROM, SIG_UNPAUSE,
     },
     storage::{Config, Feature, InitialSettings, SIG_LEN_BYTES},
     unwrap, unwrap_result,
@@ -112,6 +113,12 @@ fn total_supply(_input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     result.into()
 }
 
+fn balance(sdk: &mut impl SharedAPI, _input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
+    let result = unwrap!(balance_service(false).get(&sdk.context().contract_caller()));
+    let result: Bytes = fixed_bytes_from_u256(&result).into();
+    result.into()
+}
+
 fn balance_of(input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let c = unwrap_result!(BalanceOfCommand::try_decode(input));
     let result = unwrap!(balance_service(false).get(&c.owner));
@@ -146,7 +153,7 @@ fn mint(sdk: &mut impl SharedAPI, input: &[u8]) -> ResultOrInterruption<Bytes, u
 
 fn pause(sdk: &mut impl SharedAPI, _input: &[u8]) -> ResultOrInterruption<Bytes, u32> {
     let mut config = Config::new(false);
-    if !unwrap!(config.pausable_plugin_enabled().map_err(|e| ERR_UNKNOWN)) {
+    if !unwrap!(config.pausable_plugin_enabled()) {
         return ERR_PAUSABLE_PLUGIN_NOT_ACTIVE.into();
     }
     let pauser = sdk.context().contract_caller();
@@ -156,7 +163,7 @@ fn pause(sdk: &mut impl SharedAPI, _input: &[u8]) -> ResultOrInterruption<Bytes,
     if pauser != current_pauser {
         return ERR_INVALID_PAUSER.into();
     }
-    if unwrap!(config.paused().map_err(|e| ERR_UNKNOWN)) {
+    if unwrap!(config.paused()) {
         return ERR_ALREADY_PAUSED.into();
     }
     config.pause();
@@ -208,7 +215,7 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
     if input_size < SIG_LEN_BYTES as u32 {
         return_custom_err!(ERR_MALFORMED_INPUT)
     }
-    let (new_frame_input, _) = decode::<RuntimeNewFrameInputV1>(&input).unwrap();
+    let (new_frame_input, _) = decode::<RuntimeUniversalTokenNewFrameInputV1>(&input).unwrap();
     let (_sig, input) = new_frame_input.input.split_at(SIG_LEN_BYTES);
     let initial_settings = InitialSettings::try_decode_from_slice(&input);
     let (initial_settings, _) = if let Ok(v) = initial_settings {
@@ -294,27 +301,24 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
 pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCode)> {
     init_services(false);
 
-    let return_data = sdk.return_data();
-    if !return_data.is_empty() {
-        let (out, _) = decode::<RuntimeInterruptionOutcomeV1>(&return_data).unwrap();
-        assert_eq!(out.output.len(), 32);
-        let slot = get_slot_key_at(0);
-        let value = U256::from_le_slice(&out.output);
-        global_service(false).set_existing(&slot, &value);
-        if try_process_read_query_batch::<true, false>(sdk) {
-            return_interruption!()
-        };
-    }
-
     let input = sdk.input();
-    let (new_frame_input, _) = decode::<RuntimeNewFrameInputV1>(input).unwrap();
+    let (new_frame_input, _) = decode::<RuntimeUniversalTokenNewFrameInputV1>(input).unwrap();
 
+    debug_log!(
+        "new_frame_input.storage.len={}",
+        new_frame_input.storage.len()
+    );
+    for (k, v) in new_frame_input.storage {
+        let k = U256::from_le_slice(k.as_slice());
+        let v = U256::from_le_slice(v.as_slice());
+        global_service(false).set_existing(&k, &v);
+    }
     let input_size = new_frame_input.input.len() as u32;
     if input_size < SIG_LEN_BYTES as u32 {
         return_custom_err!(ERR_MALFORMED_INPUT);
     }
-    let (sig, input) = new_frame_input.input.split_at(SIG_LEN_BYTES);
-    let signature = bytes_to_sig(sig);
+    let (sig_bytes, input) = new_frame_input.input.split_at(SIG_LEN_BYTES);
+    let signature = bytes_to_sig(sig_bytes).unwrap();
     let result: ResultOrInterruption<Bytes, u32> = match signature {
         SIG_SYMBOL => symbol(input),
         SIG_NAME => name(input),
@@ -324,6 +328,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
         SIG_DECIMALS => decimals(input),
         SIG_ALLOWANCE => allowance(input),
         SIG_TOTAL_SUPPLY => total_supply(input),
+        SIG_BALANCE => balance(sdk, input),
         SIG_BALANCE_OF => balance_of(input),
         SIG_MINT => mint(sdk, input),
         SIG_PAUSE => pause(sdk, input),
@@ -358,9 +363,8 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
             }
         },
         ResultOrInterruption::Interruption() => {
-            if try_process_read_query_batch::<true, false>(sdk) {
-                return_interruption!()
-            };
+            debug_log!("interruptions not supported");
+            unreachable!();
         }
     }
     Ok(Bytes::new())

@@ -1,6 +1,7 @@
 use crate::ExitCode;
 use alloc::vec::Vec;
 use alloy_primitives::Bytes;
+use hashbrown::HashMap;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RuntimeNewFrameInputV1 {
@@ -73,6 +74,13 @@ impl<C> bincode::Decode<C> for RuntimeInterruptionOutcomeV1 {
             exit_code: ExitCode::from(exit_code),
         })
     }
+}
+
+#[derive(Default, Clone, Debug, PartialEq, bincode::Encode, bincode::Decode)]
+pub struct RuntimeUniversalTokenNewFrameInputV1 {
+    pub metadata: Vec<u8>,
+    pub input: Vec<u8>,
+    pub storage: Vec<([u8; 32], [u8; 32])>,
 }
 
 #[derive(Default, Clone, Debug, PartialEq, bincode::Encode, bincode::Decode)]

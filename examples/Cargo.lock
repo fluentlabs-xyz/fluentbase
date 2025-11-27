@@ -1914,6 +1914,7 @@ dependencies = [
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
+ "fluentbase-universal-token",
  "once_cell",
  "revm-rwasm",
  "rwasm",
@@ -2025,6 +2026,24 @@ dependencies = [
  "rwasm",
  "serde",
  "strum_macros 0.27.2",
+]
+
+[[package]]
+name = "fluentbase-universal-token"
+version = "0.4.11-dev"
+dependencies = [
+ "bincode 2.0.1",
+ "bytemuck",
+ "bytemuck_derive",
+ "fluentbase-sdk",
+ "hashbrown 0.16.0",
+ "num-derive",
+ "num-traits",
+ "num_enum",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "spin 0.10.0",
 ]
 
 [[package]]

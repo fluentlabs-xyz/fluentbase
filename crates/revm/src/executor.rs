@@ -14,12 +14,20 @@ use fluentbase_runtime::{
     RuntimeContext, RuntimeExecutor,
 };
 use fluentbase_sdk::{
-    bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
+    bincode, debug_log, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
     rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
-    ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, RuntimeUniversalTokenOutputV1,
-    SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
-    FUEL_DENOM_RATE, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN, U256,
+    ExitCode, HashMap, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
+    RuntimeUniversalTokenNewFrameInputV1, RuntimeUniversalTokenOutputV1, SharedContextInput,
+    SharedContextInputV1, SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN, U256,
 };
+use fluentbase_universal_token::common::{bytes_to_sig, sig_to_bytes};
+use fluentbase_universal_token::consts::{
+    SIG_ALLOWANCE, SIG_APPROVE, SIG_BALANCE_OF, SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE,
+    SIG_SYMBOL, SIG_TOTAL_SUPPLY, SIG_TRANSFER, SIG_TRANSFER_FROM, SIG_UNPAUSE,
+};
+use fluentbase_universal_token::helpers::storage::compute_storage_keys;
+use fluentbase_universal_token::storage::SIG_LEN_BYTES;
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
     context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
@@ -169,13 +177,39 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     match meta_bytecode {
         Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
-            let new_frame_input = RuntimeNewFrameInputV1 {
-                metadata: v.metadata,
-                input,
-            };
-            let new_frame_input =
-                bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
-            context_input.extend(new_frame_input);
+            if v.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
+                let target_address = interpreter.input.target_address();
+                let mut storage = Vec::<([u8; 32], [u8; 32])>::new();
+                if input.len() >= 4 {
+                    debug_log!();
+                    let sig = bytes_to_sig(&input).unwrap();
+                    let keys = compute_storage_keys(
+                        sig,
+                        &input[SIG_LEN_BYTES..],
+                        &interpreter.input.caller_address,
+                    );
+                    for k in &keys {
+                        let v = ctx.journal_mut().sload(target_address, k.clone())?.data;
+                        storage.push((k.to_le_bytes(), v.to_le_bytes()));
+                    }
+                };
+                let new_frame_input = RuntimeUniversalTokenNewFrameInputV1 {
+                    metadata: v.metadata.into(),
+                    input: input.into(),
+                    storage,
+                };
+                let new_frame_input =
+                    bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
+                context_input.extend(new_frame_input);
+            } else {
+                let new_frame_input = RuntimeNewFrameInputV1 {
+                    metadata: v.metadata,
+                    input,
+                };
+                let new_frame_input =
+                    bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
+                context_input.extend(new_frame_input);
+            }
         }
         _ => context_input.extend_from_slice(&input),
     }

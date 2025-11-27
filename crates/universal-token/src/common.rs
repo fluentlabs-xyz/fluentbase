@@ -1,4 +1,5 @@
 use crate::storage::{ADDRESS_LEN_BYTES, U256_LEN_BYTES};
+use core::array::TryFromSliceError;
 use core::mem::transmute;
 use fluentbase_sdk::{Address, SharedAPI, B256, U256};
 
@@ -47,9 +48,9 @@ pub fn fixed_bytes_to_sig(value: [u8; size_of::<u32>()]) -> u32 {
     u32::from_be_bytes(value)
 }
 #[inline(always)]
-pub fn bytes_to_sig(value: &[u8]) -> u32 {
-    let value: [u8; size_of::<u32>()] = value.try_into().unwrap();
-    fixed_bytes_to_sig(value)
+pub fn bytes_to_sig(value: &[u8]) -> Result<u32, TryFromSliceError> {
+    let value: [u8; size_of::<u32>()] = value[..size_of::<u32>()].try_into()?;
+    Ok(fixed_bytes_to_sig(value))
 }
 
 #[cfg(test)]

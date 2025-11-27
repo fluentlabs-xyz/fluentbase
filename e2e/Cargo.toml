@@ -84,7 +84,7 @@ wasmtime = [
 ]
 
 [[bench]]
-name = "erc20"
+name = "tokens"
 harness = false
 
 [[bench]]

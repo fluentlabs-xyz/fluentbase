@@ -2023,6 +2023,7 @@ dependencies = [
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
+ "fluentbase-universal-token",
  "once_cell",
  "revm-rwasm",
  "rwasm",
