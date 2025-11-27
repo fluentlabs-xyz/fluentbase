@@ -1,13 +1,12 @@
+use crate::common::{address_from_u256, fixed_bytes_from_u256};
 use crate::common::{b256_from_address_try, u256_from_address, u256_from_slice_try};
-use crate::consts::{ERR_INDEX_OUT_OF_BOUNDS, ERR_MALFORMED_INPUT};
+use crate::consts::{
+    ERR_INDEX_OUT_OF_BOUNDS, ERR_INSUFFICIENT_ALLOWANCE, ERR_INSUFFICIENT_BALANCE,
+    ERR_MALFORMED_INPUT, ERR_OVERFLOW,
+};
 use crate::helpers::bincode::{decode, encode};
 use crate::services::global_service::global_service;
 use crate::types::derived_key::{IKeyDeriver, KeyDeriver};
-use crate::types::result_or_interruption::ResultOrInterruption;
-use crate::{
-    common::{address_from_u256, fixed_bytes_from_u256},
-    unwrap, unwrap_opt,
-};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use bincode::{Decode, Encode};
@@ -82,7 +81,6 @@ impl InitialSettings {
 
 pub struct Settings {
     kd: Arc<KeyDeriver>,
-    default_on_read: bool,
     total_supply_slot: Option<U256>,
     minter_slot: Option<U256>,
     pauser_slot: Option<U256>,
@@ -99,7 +97,7 @@ impl Settings {
         Self::SHORT_STR_LEN_MIN + Self::SHORT_STR_LEN_LEN_BYTES;
     const SHORT_STR_LEN_MAX: usize = 31;
     const DECIMALS_MAX: u8 = 36;
-    pub fn new(slot: u64, default_on_read: bool) -> Self {
+    pub fn new(slot: u64) -> Self {
         let kd = Arc::new(KeyDeriver::new_specific_slot(slot));
 
         Self {
@@ -111,12 +109,7 @@ impl Settings {
             decimals_slot: None,
             flags_slot: None,
             kd,
-            default_on_read,
         }
-    }
-
-    pub fn default_on_read(&self) -> bool {
-        self.default_on_read
     }
 
     pub fn total_supply_slot(&mut self) -> U256 {
@@ -163,35 +156,33 @@ impl Settings {
 
     pub fn total_supply_set(&mut self, value: &U256) {
         let s = self.total_supply_slot();
-        global_service(self.default_on_read).try_set(&s, value);
+        global_service().set_value(&s, value);
     }
-    pub fn total_supply_get(&mut self) -> ResultOrInterruption<U256, u32> {
+    pub fn total_supply_get(&mut self) -> Option<U256> {
         let s = self.total_supply_slot();
-        unwrap_opt!(global_service(self.default_on_read).try_get(&s).cloned()).into()
+        global_service().try_get_value(&s).cloned()
     }
     pub fn minter_set(&mut self, value: &Address) {
         let s = self.minter_slot();
         let v = u256_from_address(&value);
-        global_service(self.default_on_read).try_set(&s, &v);
+        global_service().set_value(&s, &v);
     }
-    pub fn minter_get(&mut self) -> ResultOrInterruption<Address, u32> {
+    pub fn minter_get(&mut self) -> Option<Address> {
         let s = self.minter_slot();
-        unwrap_opt!(global_service(self.default_on_read)
-            .try_get(&s)
-            .map(|v| address_from_u256(v)))
-        .into()
+        global_service()
+            .try_get_value(&s)
+            .map(|v| address_from_u256(v))
     }
     pub fn pauser_set(&mut self, value: &Address) {
         let s = self.pauser_slot();
         let v = u256_from_address(value);
-        global_service(self.default_on_read).try_set(&s, &v);
+        global_service().set_value(&s, &v);
     }
-    pub fn pauser_get(&mut self) -> ResultOrInterruption<Address, u32> {
+    pub fn pauser_get(&mut self) -> Option<Address> {
         let s = self.pauser_slot();
-        unwrap_opt!(global_service(self.default_on_read)
-            .try_get(&s)
-            .map(|v| address_from_u256(v)))
-        .into()
+        global_service()
+            .try_get_value(&s)
+            .map(|v| address_from_u256(v))
     }
     #[inline(always)]
     fn short_str_to_u256_repr(&self, short_str: &[u8]) -> Result<U256, u32> {
@@ -219,22 +210,23 @@ impl Settings {
     #[inline(always)]
     fn short_str_set(&self, slot: &U256, short_str: &[u8]) -> bool {
         if let Ok(u256_repr) = self.short_str_to_u256_repr(&short_str) {
-            global_service(self.default_on_read).try_set(&slot, &u256_repr);
+            global_service().set_value(&slot, &u256_repr);
         } else {
             return false;
         };
         true
     }
     #[inline(always)]
-    fn short_str<'a>(&self, slot: &U256) -> ResultOrInterruption<Vec<u8>, u32> {
-        let repr = unwrap_opt!(global_service(self.default_on_read).try_get(slot).cloned());
-        self.short_str_from_u256_repr(&repr).into()
+    fn short_str<'a>(&self, slot: &U256) -> Option<Vec<u8>> {
+        let s = global_service();
+        let repr = s.try_get_value(slot)?;
+        self.short_str_from_u256_repr(repr).into()
     }
     pub fn symbol_set(&mut self, symbol: &[u8]) -> bool {
         let s = self.symbol_slot();
         self.short_str_set(&s, symbol)
     }
-    pub fn symbol<'a>(&mut self) -> ResultOrInterruption<Vec<u8>, u32> {
+    pub fn symbol<'a>(&mut self) -> Option<Vec<u8>> {
         let v = self.symbol_slot();
         self.short_str(&v)
     }
@@ -242,7 +234,7 @@ impl Settings {
         let s = self.name_slot();
         self.short_str_set(&s, symbol)
     }
-    pub fn name<'a>(&mut self) -> ResultOrInterruption<Vec<u8>, u32> {
+    pub fn name<'a>(&mut self) -> Option<Vec<u8>> {
         let s = self.name_slot();
         self.short_str(&s)
     }
@@ -251,80 +243,69 @@ impl Settings {
             return false;
         }
         let s = self.decimals_slot();
-        global_service(self.default_on_read).try_set(&s, &U256::from(decimals));
+        global_service().set_value(&s, &U256::from(decimals));
         true
     }
-    pub fn decimals_get(&mut self) -> ResultOrInterruption<U256, u32> {
+    pub fn decimals_get(&mut self) -> Option<U256> {
         let s = self.decimals_slot();
-        unwrap_opt!(global_service(self.default_on_read).try_get(&s).cloned()).into()
+        global_service().try_get_value(&s).cloned()
     }
-    pub fn flags_get(&mut self) -> ResultOrInterruption<U256, u32> {
+    pub fn flags_get(&mut self) -> Option<U256> {
         let s = self.flags_slot();
-        unwrap_opt!(global_service(self.default_on_read).try_get(&s).cloned()).into()
+        global_service().try_get_value(&s).cloned()
     }
     pub fn flags_set(&mut self, flags: U256) {
         let s = self.flags_slot();
-        global_service(self.default_on_read).try_set(&s, &flags);
+        global_service().set_value(&s, &flags);
     }
 }
 
 pub struct Config {
     flags: Option<U256>,
-    // settings: Settings,
-    default_on_read: bool,
 }
 
 impl Config {
-    pub fn new(default_on_read: bool) -> Self {
-        Self {
-            flags: None,
-            default_on_read,
-        }
+    pub fn new() -> Self {
+        Self { flags: None }
     }
 
-    pub fn get_or_init_flags(&mut self) -> ResultOrInterruption<U256, u32> {
-        if None == self.flags {
-            self.flags = Some(unwrap!(settings_service(self.default_on_read).flags_get()));
+    pub fn get_or_init_flags(&mut self) -> &Option<U256> {
+        if self.flags.is_none() {
+            self.flags = Some(settings_service().flags_get().expect("flags value exists"));
         }
-        if let Some(v) = self.flags.as_mut() {
-            return v.clone().into();
-        }
-        unreachable!();
+        &self.flags
     }
 
-    fn get_or_init_flags_mut(&mut self) -> ResultOrInterruption<&mut U256, u32> {
-        if None == self.flags {
-            self.flags = Some(unwrap!(settings_service(self.default_on_read).flags_get()));
+    fn get_or_init_flags_mut(&mut self) -> &mut U256 {
+        if self.flags.is_none() {
+            self.flags = Some(settings_service().flags_get().expect("flags value exists"));
         }
-        if let Some(v) = self.flags.as_mut() {
-            return v.into();
-        }
-        unreachable!();
+        self.flags.as_mut().unwrap()
     }
 
-    pub fn set_flag(&mut self, idx: usize, value: bool) -> ResultOrInterruption<(), u32> {
+    pub fn set_flag(&mut self, idx: usize, value: bool) -> Result<(), u32> {
         if idx >= U256_LEN_BITS {
-            return ERR_INDEX_OUT_OF_BOUNDS.into();
+            return Err(ERR_INDEX_OUT_OF_BOUNDS);
         }
-        let flags: &mut U256 = unwrap!(self.get_or_init_flags_mut());
+        let flags: &mut U256 = self.get_or_init_flags_mut();
         flags.set_bit(idx, value);
-        ().into()
+        Ok(())
     }
 
     pub fn save_flags(&self) -> bool {
         if let Some(flags) = self.flags {
-            settings_service(self.default_on_read).flags_set(flags);
+            settings_service().flags_set(flags);
             return true;
         }
         false
     }
 
-    fn flag_value(&mut self, idx: usize) -> ResultOrInterruption<bool, u32> {
+    fn flag_value(&mut self, idx: usize) -> Result<bool, u32> {
         if idx >= U256_LEN_BITS {
-            return ERR_INDEX_OUT_OF_BOUNDS.into();
+            return Err(ERR_INDEX_OUT_OF_BOUNDS);
         }
-        let flags: U256 = unwrap!(self.get_or_init_flags());
-        flags.bit(idx).into()
+        let flags = self.get_or_init_flags().expect("flags value exists");
+        Ok(flags.bit(idx))
     }
 
     const MINTABLE_PLUGIN_FLAG_IDX: usize = 0;
@@ -337,7 +318,7 @@ impl Config {
     }
 
     #[inline(always)]
-    pub fn mintable_plugin_enabled(&mut self) -> ResultOrInterruption<bool, u32> {
+    pub fn mintable_plugin_enabled(&mut self) -> Result<bool, u32> {
         self.flag_value(Self::MINTABLE_PLUGIN_FLAG_IDX)
     }
 
@@ -347,12 +328,12 @@ impl Config {
     }
 
     #[inline(always)]
-    pub fn pausable_plugin_enabled(&mut self) -> ResultOrInterruption<bool, u32> {
+    pub fn pausable_plugin_enabled(&mut self) -> Result<bool, u32> {
         self.flag_value(Self::PAUSABLE_PLUGIN_FLAG_IDX)
     }
 
     #[inline(always)]
-    pub fn paused(&mut self) -> ResultOrInterruption<bool, u32> {
+    pub fn paused(&mut self) -> Result<bool, u32> {
         self.flag_value(Self::PAUSED_FLAG_IDX)
     }
 
@@ -369,22 +350,18 @@ impl Config {
 
 pub struct Balance {
     kd: KeyDeriver,
-    default_on_read: bool,
 }
 
 impl Balance {
-    pub fn new(slot: u64, default_on_read: bool) -> Self {
+    pub fn new(slot: u64) -> Self {
         let kd = KeyDeriver::new_specific_slot(slot);
-        Self {
-            kd,
-            default_on_read,
-        }
+        Self { kd }
     }
 
     #[inline(always)]
     pub fn set(&self, address: &Address, value: &U256) {
         let key = self.kd.b256(&b256_from_address_try(address));
-        global_service(self.default_on_read).try_set(&key, value);
+        global_service().set_value(&key, value);
     }
 
     #[inline(always)]
@@ -393,53 +370,48 @@ impl Balance {
     }
 
     #[inline(always)]
-    pub fn get(&self, address: &Address) -> ResultOrInterruption<U256, u32> {
+    pub fn get(&self, address: &Address) -> U256 {
         let key = self.key(address);
-        unwrap_opt!(global_service(self.default_on_read).try_get(&key).cloned()).into()
+        global_service()
+            .try_get_value(&key)
+            .cloned()
+            .expect("balance exists")
     }
 
-    pub fn add(&self, address: &Address, amount: &U256) -> ResultOrInterruption<(), u32> {
-        let current_balance: U256 = unwrap!(self.get(address));
-        let new_balance = current_balance + amount;
-        self.set(address, &new_balance);
-        ().into()
-    }
-
-    pub fn subtract(&self, address: &Address, amount: &U256) -> ResultOrInterruption<bool, u32> {
-        let current_balance: U256 = unwrap!(self.get(address));
-        if &current_balance < amount {
-            return false.into();
+    pub fn add(&self, address: &Address, amount: &U256) -> Result<(), u32> {
+        let current_balance = self.get(address);
+        let new_balance = current_balance.overflowing_add(*amount);
+        if new_balance.1 {
+            return Err(ERR_OVERFLOW);
         }
-        let new_balance = current_balance - amount;
-        self.set(address, &new_balance);
-        true.into()
+        self.set(address, &new_balance.0);
+        Ok(())
     }
 
-    pub fn send(
-        &self,
-        from: &Address,
-        to: &Address,
-        amount: &U256,
-    ) -> ResultOrInterruption<bool, u32> {
-        if !unwrap!(self.subtract(from, amount)) {
-            return false.into();
+    pub fn subtract(&self, address: &Address, amount: &U256) -> Result<(), u32> {
+        let current_balance = self.get(address);
+        let new_balance = current_balance.overflowing_sub(*amount);
+        if new_balance.1 {
+            return Err(ERR_INSUFFICIENT_BALANCE);
         }
-        self.add(to, amount).map(|_| true)
+        self.set(address, &new_balance.0);
+        Ok(())
+    }
+
+    pub fn send(&self, from: &Address, to: &Address, amount: &U256) -> Result<(), u32> {
+        self.subtract(from, amount)?;
+        self.add(to, amount)
     }
 }
 
 pub struct Allowance {
     kd: KeyDeriver,
-    default_on_read: bool,
 }
 
 impl Allowance {
-    pub fn new(slot: u64, default_on_read: bool) -> Self {
+    pub fn new(slot: u64) -> Self {
         let kd = KeyDeriver::new_specific_slot(slot);
-        Self {
-            kd,
-            default_on_read,
-        }
+        Self { kd }
     }
 
     pub fn key(&self, a1: &Address, a2: &Address) -> U256 {
@@ -451,7 +423,7 @@ impl Allowance {
 
     #[inline(always)]
     pub fn set(&self, owner: &Address, spender: &Address, value: &U256) {
-        global_service(self.default_on_read).try_set(&self.key(owner, spender), value);
+        global_service().set_value(&self.key(owner, spender), value);
     }
 
     #[inline(always)]
@@ -460,58 +432,51 @@ impl Allowance {
     }
 
     #[inline(always)]
-    pub fn get(&self, owner: &Address, spender: &Address) -> ResultOrInterruption<U256, u32> {
-        unwrap_opt!(global_service(self.default_on_read)
-            .try_get(&self.key(owner, spender))
-            .cloned())
-        .into()
+    pub fn get(&self, owner: &Address, spender: &Address) -> U256 {
+        global_service()
+            .try_get_value(&self.key(owner, spender))
+            .cloned()
+            .expect("storage value exists")
     }
-    pub fn subtract(
-        &self,
-        owner: &Address,
-        spender: &Address,
-        amount: &U256,
-    ) -> ResultOrInterruption<bool, u32> {
-        let allowance: U256 = unwrap!(self.get(owner, spender));
-        if allowance < *amount {
-            return false.into();
+    pub fn subtract(&self, owner: &Address, spender: &Address, amount: &U256) -> Result<(), u32> {
+        let allowance = self.get(owner, spender);
+        if &allowance < amount {
+            return Err(ERR_INSUFFICIENT_ALLOWANCE);
         }
         let new_allowance = allowance - amount;
         self.set(owner, spender, &new_allowance);
-        true.into()
+        Ok(())
     }
 }
 
 pub static SETTINGS_SERVICE: spin::Once<spin::Mutex<Settings>> = spin::Once::new();
-pub fn settings_service<'a>(default_on_read: bool) -> spin::MutexGuard<'a, Settings> {
+pub fn settings_service<'a>() -> spin::MutexGuard<'a, Settings> {
     SETTINGS_SERVICE
-        .call_once(|| spin::Mutex::new(Settings::new(1, default_on_read)))
+        .call_once(|| spin::Mutex::new(Settings::new(1)))
         .lock()
 }
 pub static BALANCE_SERVICE: spin::Once<spin::Mutex<Balance>> = spin::Once::new();
-pub fn balance_service<'a>(default_on_read: bool) -> spin::MutexGuard<'a, Balance> {
+pub fn balance_service<'a>() -> spin::MutexGuard<'a, Balance> {
     BALANCE_SERVICE
-        .call_once(|| spin::Mutex::new(Balance::new(2, default_on_read)))
+        .call_once(|| spin::Mutex::new(Balance::new(2)))
         .lock()
 }
 pub static ALLOWANCE_SERVICE: spin::Once<spin::Mutex<Allowance>> = spin::Once::new();
-pub fn allowance_service<'a>(default_on_read: bool) -> spin::MutexGuard<'a, Allowance> {
+pub fn allowance_service<'a>() -> spin::MutexGuard<'a, Allowance> {
     ALLOWANCE_SERVICE
-        .call_once(|| spin::Mutex::new(Allowance::new(3, default_on_read)))
+        .call_once(|| spin::Mutex::new(Allowance::new(3)))
         .lock()
 }
 
-pub fn init_services<'a>(
-    default_on_read: bool,
-) -> (
+pub fn init_services<'a>() -> (
     spin::MutexGuard<'a, Settings>,
     spin::MutexGuard<'a, Balance>,
     spin::MutexGuard<'a, Allowance>,
 ) {
     // do not change slot values
-    let s1 = settings_service(default_on_read);
-    let s2 = balance_service(default_on_read);
-    let s3 = allowance_service(default_on_read);
+    let s1 = settings_service();
+    let s2 = balance_service();
+    let s3 = allowance_service();
     (s1, s2, s3)
 }
 

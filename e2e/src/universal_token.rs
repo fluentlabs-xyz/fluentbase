@@ -1,9 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use core::str::from_utf8;
-use fluentbase_sdk::{
-    debug_log, Address, Bytes, ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
-};
+use fluentbase_sdk::{Address, Bytes, ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256};
 use fluentbase_testing::EvmTestingContext;
 use fluentbase_universal_token::types::input_commands::{
     AllowanceCommand, ApproveCommand, BalanceOfCommand, Encodable, MintCommand, TransferCommand,
@@ -75,7 +73,6 @@ fn no_plugins_enabled_test() {
     });
 
     let init_bytecode: Bytes = initial_settings.encode_for_deploy().into();
-    debug_log!("init_bytecode.len={}", init_bytecode.len());
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDR, init_bytecode);
 
     let mut input = Vec::<u8>::new();

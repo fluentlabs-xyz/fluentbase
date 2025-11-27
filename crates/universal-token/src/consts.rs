@@ -2,6 +2,7 @@ use fluentbase_sdk::derive::{derive_evm_error, derive_keccak256_id};
 
 pub const ERR_UNKNOWN: u32 = derive_evm_error!("Unknown()");
 pub const ERR_MALFORMED_INPUT: u32 = derive_evm_error!("MalformedInput()");
+pub const ERR_INVALID_INPUT: u32 = derive_evm_error!("InvalidInput()");
 pub const ERR_INSUFFICIENT_BALANCE: u32 = derive_evm_error!("InsufficientBalance()");
 pub const ERR_INSUFFICIENT_ALLOWANCE: u32 = derive_evm_error!("InsufficientAllowance()");
 pub const ERR_INDEX_OUT_OF_BOUNDS: u32 = derive_evm_error!("IndexOutOfBounds()");
@@ -11,11 +12,13 @@ pub const ERR_INVALID_META_SYMBOL: u32 = derive_evm_error!("InvalidMetaSymbol()"
 pub const ERR_MINTABLE_PLUGIN_NOT_ACTIVE: u32 = derive_evm_error!("MintablePluginNotActive()");
 pub const ERR_PAUSABLE_PLUGIN_NOT_ACTIVE: u32 = derive_evm_error!("PausablePluginNotActive()");
 pub const ERR_ALREADY_PAUSED: u32 = derive_evm_error!("AlreadyPaused()");
+pub const ERR_MINTING_PAUSED: u32 = derive_evm_error!("MintingPaused()");
 pub const ERR_ALREADY_UNPAUSED: u32 = derive_evm_error!("AlreadyUnpaused()");
 pub const ERR_INVALID_MINTER: u32 = derive_evm_error!("InvalidMinter()");
-pub const ERR_INVALID_PAUSER: u32 = derive_evm_error!("InvalidPauser()");
+pub const ERR_PAUSER_MISMATCH: u32 = derive_evm_error!("PauserMismatch()");
 pub const ERR_INVALID_RECIPIENT: u32 = derive_evm_error!("InvalidRecipient()");
 pub const ERR_OVERFLOW: u32 = derive_evm_error!("Overflow()");
+pub const ERR_UNDERFLOW: u32 = derive_evm_error!("Underflow()");
 pub const ERR_VALIDATION: u32 = derive_evm_error!("Validation()");
 pub const ERR_UNINIT: u32 = derive_evm_error!("UninitError()");
 pub const ERR_CONVERSION: u32 = derive_evm_error!("ConversionError()");

@@ -48,7 +48,7 @@ pub fn fixed_bytes_to_sig(value: [u8; size_of::<u32>()]) -> u32 {
     u32::from_be_bytes(value)
 }
 #[inline(always)]
-pub fn bytes_to_sig(value: &[u8]) -> Result<u32, TryFromSliceError> {
+pub fn sig_from_slice(value: &[u8]) -> Result<u32, TryFromSliceError> {
     let value: [u8; size_of::<u32>()] = value[..size_of::<u32>()].try_into()?;
     Ok(fixed_bytes_to_sig(value))
 }

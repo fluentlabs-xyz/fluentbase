@@ -21,7 +21,7 @@ use fluentbase_sdk::{
     SharedContextInputV1, SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN, U256,
 };
-use fluentbase_universal_token::common::{bytes_to_sig, sig_to_bytes};
+use fluentbase_universal_token::common::{sig_from_slice, sig_to_bytes};
 use fluentbase_universal_token::consts::{
     SIG_ALLOWANCE, SIG_APPROVE, SIG_BALANCE_OF, SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE,
     SIG_SYMBOL, SIG_TOTAL_SUPPLY, SIG_TRANSFER, SIG_TRANSFER_FROM, SIG_UNPAUSE,
@@ -180,9 +180,9 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             if v.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
                 let target_address = interpreter.input.target_address();
                 let mut storage = Vec::<([u8; 32], [u8; 32])>::new();
-                if input.len() >= 4 {
+                if input.len() >= SIG_LEN_BYTES {
                     debug_log!();
-                    let sig = bytes_to_sig(&input).unwrap();
+                    let sig = sig_from_slice(&input).unwrap();
                     let keys = compute_storage_keys(
                         sig,
                         &input[SIG_LEN_BYTES..],
