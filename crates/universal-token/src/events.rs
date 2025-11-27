@@ -8,7 +8,7 @@ pub const EVENT_PAUSED: B256 = B256::new(derive_keccak256!("Paused(address)"));
 pub const EVENT_UNPAUSED: B256 = B256::new(derive_keccak256!("Unpaused(address)"));
 
 pub fn emit_transfer_event(from: &Address, to: &Address, amount: &U256) {
-    global_service().events_add(
+    global_service().add_event(
         [
             EVENT_TRANSFER.0,
             B256::left_padding_from(from.as_slice()).0,
@@ -20,15 +20,15 @@ pub fn emit_transfer_event(from: &Address, to: &Address, amount: &U256) {
 }
 
 pub fn emit_pause_event(pauser: &Address) {
-    global_service().events_add([EVENT_PAUSED.0].into(), pauser.to_vec());
+    global_service().add_event([EVENT_PAUSED.0].into(), pauser.to_vec());
 }
 
 pub fn emit_unpause_event(pauser: &Address) {
-    global_service().events_add([EVENT_UNPAUSED.0].into(), pauser.to_vec());
+    global_service().add_event([EVENT_UNPAUSED.0].into(), pauser.to_vec());
 }
 
 pub fn emit_approval_event(owner: &Address, spender: &Address, amount: &U256) {
-    global_service().events_add(
+    global_service().add_event(
         [
             EVENT_APPROVAL.0,
             B256::left_padding_from(owner.as_slice()).0,

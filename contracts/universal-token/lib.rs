@@ -4,7 +4,7 @@ extern crate core;
 
 use fluentbase_sdk::bincode::Encode;
 use fluentbase_sdk::{
-    system_entrypoint2, Address, Bytes, ContextReader, ExitCode,
+    debug_log, system_entrypoint2, Address, Bytes, ContextReader, ExitCode,
     RuntimeUniversalTokenNewFrameInputV1, RuntimeUniversalTokenOutputV1, SharedAPI, U256,
 };
 use fluentbase_universal_token::consts::{ERR_INVALID_INPUT, ERR_MINTING_PAUSED};
@@ -256,7 +256,7 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
     sdk.write(&ExitCode::Ok.into_i32().to_le_bytes());
     let output = encode(&RuntimeUniversalTokenOutputV1 {
         storage: global_service()
-            .values_new()
+            .new_values()
             .iter()
             .map(|(k, v)| (k.to_le_bytes(), v.to_le_bytes()))
             .collect(),
@@ -312,14 +312,14 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
                 output: v.into(),
                 storage: {
                     let result = global_service()
-                        .values_new()
+                        .new_values()
                         .iter()
                         .map(|(k, v)| (k.to_le_bytes(), v.to_le_bytes()))
                         .collect();
                     global_service().clear();
                     result
                 },
-                events: global_service().events_take(),
+                events: global_service().take_events(),
             })
             .unwrap();
             Ok(output.into())

@@ -14,7 +14,7 @@ use fluentbase_runtime::{
     RuntimeContext, RuntimeExecutor,
 };
 use fluentbase_sdk::{
-    bincode, debug_log, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
+    bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
     rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
     ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
     RuntimeUniversalTokenNewFrameInputV1, RuntimeUniversalTokenOutputV1, SharedContextInput,
@@ -177,7 +177,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                 let target_address = interpreter.input.target_address();
                 let mut storage = Vec::<([u8; 32], [u8; 32])>::new();
                 if input.len() >= SIG_LEN_BYTES {
-                    debug_log!();
                     let sig = sig_from_slice(&input).unwrap();
                     let keys = compute_storage_keys(
                         sig,
