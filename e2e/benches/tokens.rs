@@ -6,9 +6,8 @@ use fluentbase_sdk::{
 };
 use fluentbase_testing::EvmTestingContext;
 use fluentbase_universal_token::common::fixed_bytes_from_u256;
-use fluentbase_universal_token::common::sig_to_bytes;
-use fluentbase_universal_token::consts::SIG_TRANSFER;
 use fluentbase_universal_token::storage::{Feature, InitialSettings, DECIMALS_DEFAULT};
+use fluentbase_universal_token::types::input_commands::{Encodable, TransferCommand};
 use hex_literal::hex;
 use std::time::Duration;
 
@@ -127,11 +126,12 @@ fn erc20_transfer_benches(c: &mut Criterion) {
             ctx.deploy_evm_tx(DEPLOYER_ADDR, initial_settings.encode_for_deploy().into());
 
         let mut input = Vec::<u8>::new();
-        input.extend(sig_to_bytes(SIG_TRANSFER));
-        input.extend(USER_ADDR);
-        input.extend(&fixed_bytes_from_u256(&U256::from(1)));
+        TransferCommand {
+            to: USER_ADDR,
+            amount: U256::from(1),
+        }
+        .encode_for_send(&mut input);
         let transfer_payload: Bytes = input.into();
-
         group.bench_function("4_Precompiled_Universal_token", |b| {
             // Note: Manual warmup calls are not needed. Criterion handles warmups automatically.
             b.iter(|| {

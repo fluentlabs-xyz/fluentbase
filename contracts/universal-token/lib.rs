@@ -4,7 +4,7 @@ extern crate core;
 
 use fluentbase_sdk::bincode::Encode;
 use fluentbase_sdk::{
-    debug_log, system_entrypoint2, Address, Bytes, ContextReader, ExitCode,
+    system_entrypoint2, Address, Bytes, ContextReader, ExitCode,
     RuntimeUniversalTokenNewFrameInputV1, RuntimeUniversalTokenOutputV1, SharedAPI, U256,
 };
 use fluentbase_universal_token::consts::{ERR_INVALID_INPUT, ERR_MINTING_PAUSED};
@@ -13,9 +13,7 @@ use fluentbase_universal_token::events::{
 };
 use fluentbase_universal_token::helpers::bincode::{decode, encode};
 use fluentbase_universal_token::services::global_service::global_service;
-use fluentbase_universal_token::storage::{
-    allowance_service, balance_service, init_services, settings_service,
-};
+use fluentbase_universal_token::storage::{allowance_service, balance_service, settings_service};
 use fluentbase_universal_token::types::input_commands::{
     AllowanceCommand, ApproveCommand, BalanceOfCommand, Encodable, MintCommand, TransferCommand,
     TransferFromCommand,
@@ -186,8 +184,6 @@ fn unpause(sdk: &mut impl SharedAPI, _input: &[u8]) -> Result<Bytes, u32> {
 
 #[inline(never)]
 pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCode)> {
-    init_services();
-
     let input = sdk.bytes_input();
     let input_size = sdk.input_size();
     if input_size < SIG_LEN_BYTES as u32 {
@@ -271,8 +267,6 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
 
 #[inline(never)]
 pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCode)> {
-    init_services();
-
     let input = sdk.input();
     let (new_frame_input, _) = decode::<RuntimeUniversalTokenNewFrameInputV1>(input).unwrap();
 

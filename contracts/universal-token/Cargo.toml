@@ -9,7 +9,6 @@ fluentbase-sdk = { workspace = true, features = [
     "debug-print",
 ] }
 fluentbase-universal-token = { workspace = true }
-spin = { workspace = true }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }
@@ -22,7 +21,7 @@ path = "lib.rs"
 default = ["std"]
 std = ["fluentbase-sdk/std"]
 fluent-testnet = [
-	"fluentbase-sdk/fluent-testnet",
-	"fluentbase-testing/fluent-testnet",
-	"fluentbase-universal-token/fluent-testnet"
+    "fluentbase-sdk/fluent-testnet",
+    "fluentbase-testing/fluent-testnet",
+    "fluentbase-universal-token/fluent-testnet"
 ]

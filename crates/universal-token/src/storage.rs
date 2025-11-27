@@ -5,12 +5,13 @@ use crate::consts::{
     ERR_MALFORMED_INPUT, ERR_OVERFLOW,
 };
 use crate::helpers::bincode::{decode, encode};
+use crate::impl_key_deriver;
 use crate::services::global_service::global_service;
-use crate::types::derived_key::{IKeyDeriver, KeyDeriver};
-use alloc::sync::Arc;
+use crate::types::derived_key::{IKeyDeriver, SlotType};
 use alloc::vec::Vec;
 use bincode::{Decode, Encode};
-use fluentbase_sdk::{Address, SharedAPI, U256, UNIVERSAL_TOKEN_MAGIC_BYTES};
+use fluentbase_sdk::derive::derive_keccak256;
+use fluentbase_sdk::{Address, U256, UNIVERSAL_TOKEN_MAGIC_BYTES};
 
 pub const ADDRESS_LEN_BYTES: usize = Address::len_bytes();
 pub const U256_LEN_BYTES: usize = size_of::<U256>();
@@ -79,15 +80,10 @@ impl InitialSettings {
     }
 }
 
+impl_key_deriver!(1);
+
 pub struct Settings {
-    kd: Arc<KeyDeriver>,
-    total_supply_slot: Option<U256>,
-    minter_slot: Option<U256>,
-    pauser_slot: Option<U256>,
-    symbol_slot: Option<U256>,
-    name_slot: Option<U256>,
-    decimals_slot: Option<U256>,
-    flags_slot: Option<U256>,
+    kd: KeyDeriver1,
 }
 
 impl Settings {
@@ -97,61 +93,36 @@ impl Settings {
         Self::SHORT_STR_LEN_MIN + Self::SHORT_STR_LEN_LEN_BYTES;
     const SHORT_STR_LEN_MAX: usize = 31;
     const DECIMALS_MAX: u8 = 36;
-    pub fn new(slot: u64) -> Self {
-        let kd = Arc::new(KeyDeriver::new_specific_slot(slot));
-
-        Self {
-            total_supply_slot: None,
-            minter_slot: None,
-            pauser_slot: None,
-            symbol_slot: None,
-            name_slot: None,
-            decimals_slot: None,
-            flags_slot: None,
-            kd,
-        }
+    pub fn new() -> Self {
+        Self { kd: KeyDeriver1 {} }
     }
 
-    pub fn total_supply_slot(&mut self) -> U256 {
-        self.total_supply_slot
-            .get_or_insert_with(|| self.kd.u256(&U256::from(1)))
-            .clone()
+    pub const fn total_supply_slot(&mut self) -> U256 {
+        U256::from_le_bytes(derive_keccak256!(total_supply_slot))
     }
 
-    pub fn minter_slot(&mut self) -> U256 {
-        self.minter_slot
-            .get_or_insert_with(|| self.kd.u256(&U256::from(2)))
-            .clone()
+    pub const fn minter_slot(&mut self) -> U256 {
+        U256::from_le_bytes(derive_keccak256!(total_supply_slotminter_slot))
     }
 
-    pub fn pauser_slot(&mut self) -> U256 {
-        self.pauser_slot
-            .get_or_insert_with(|| self.kd.u256(&U256::from(3)))
-            .clone()
+    pub const fn pauser_slot(&mut self) -> U256 {
+        U256::from_le_bytes(derive_keccak256!(pauser_slot))
     }
 
-    pub fn symbol_slot(&mut self) -> U256 {
-        self.symbol_slot
-            .get_or_insert_with(|| self.kd.u256(&U256::from(4)))
-            .clone()
+    pub const fn symbol_slot(&mut self) -> U256 {
+        U256::from_le_bytes(derive_keccak256!(symbol_slot))
     }
 
-    pub fn name_slot(&mut self) -> U256 {
-        self.name_slot
-            .get_or_insert_with(|| self.kd.u256(&U256::from(5)))
-            .clone()
+    pub const fn name_slot(&mut self) -> U256 {
+        U256::from_le_bytes(derive_keccak256!(name_slot))
     }
 
-    pub fn decimals_slot(&mut self) -> U256 {
-        self.decimals_slot
-            .get_or_insert_with(|| self.kd.u256(&U256::from(6)))
-            .clone()
+    pub const fn decimals_slot(&mut self) -> U256 {
+        U256::from_le_bytes(derive_keccak256!(decimals_slot))
     }
 
-    pub fn flags_slot(&mut self) -> U256 {
-        self.flags_slot
-            .get_or_insert_with(|| self.kd.u256(&U256::from(7)))
-            .clone()
+    pub const fn flags_slot(&mut self) -> U256 {
+        U256::from_le_bytes(derive_keccak256!(flags_slot))
     }
 
     pub fn total_supply_set(&mut self, value: &U256) {
@@ -348,19 +319,19 @@ impl Config {
     }
 }
 
+impl_key_deriver!(2);
 pub struct Balance {
-    kd: KeyDeriver,
+    kd: KeyDeriver2,
 }
 
 impl Balance {
-    pub fn new(slot: u64) -> Self {
-        let kd = KeyDeriver::new_specific_slot(slot);
-        Self { kd }
+    pub fn new() -> Self {
+        Self { kd: KeyDeriver2 {} }
     }
 
     #[inline(always)]
     pub fn set(&self, address: &Address, value: &U256) {
-        let key = self.kd.b256(&b256_from_address_try(address));
+        let key = self.key(address);
         global_service().set_value(&key, value);
     }
 
@@ -404,20 +375,21 @@ impl Balance {
     }
 }
 
+impl_key_deriver!(3);
+
 pub struct Allowance {
-    kd: KeyDeriver,
+    kd: KeyDeriver3,
 }
 
 impl Allowance {
-    pub fn new(slot: u64) -> Self {
-        let kd = KeyDeriver::new_specific_slot(slot);
-        Self { kd }
+    pub fn new() -> Self {
+        Self { kd: KeyDeriver3 {} }
     }
 
     pub fn key(&self, a1: &Address, a2: &Address) -> U256 {
-        let mut s = Vec::with_capacity(Address::len_bytes() * 2);
-        s.extend_from_slice(a1.as_slice());
-        s.extend_from_slice(a2.as_slice());
+        let mut s = [0u8; Address::len_bytes() * 2];
+        s[..Address::len_bytes()].copy_from_slice(a1.as_slice());
+        s[Address::len_bytes()..].copy_from_slice(a2.as_slice());
         self.kd.slice(&s)
     }
 
@@ -449,35 +421,32 @@ impl Allowance {
     }
 }
 
-pub static SETTINGS_SERVICE: spin::Once<spin::Mutex<Settings>> = spin::Once::new();
-pub fn settings_service<'a>() -> spin::MutexGuard<'a, Settings> {
-    SETTINGS_SERVICE
-        .call_once(|| spin::Mutex::new(Settings::new(1)))
-        .lock()
+// pub static SETTINGS_SERVICE: spin::Once<spin::Mutex<Settings>> = spin::Once::new();
+// pub fn settings_service<'a>() -> spin::MutexGuard<'a, Settings> {
+//     SETTINGS_SERVICE
+//         .call_once(|| spin::Mutex::new(Settings::new()))
+//         .lock()
+// }
+pub fn settings_service() -> Settings {
+    Settings::new()
 }
-pub static BALANCE_SERVICE: spin::Once<spin::Mutex<Balance>> = spin::Once::new();
-pub fn balance_service<'a>() -> spin::MutexGuard<'a, Balance> {
-    BALANCE_SERVICE
-        .call_once(|| spin::Mutex::new(Balance::new(2)))
-        .lock()
+// pub static BALANCE_SERVICE: spin::Once<spin::Mutex<Balance>> = spin::Once::new();
+// pub fn balance_service<'a>() -> spin::MutexGuard<'a, Balance> {
+//     BALANCE_SERVICE
+//         .call_once(|| spin::Mutex::new(Balance::new()))
+//         .lock()
+// }
+pub fn balance_service() -> Balance {
+    Balance::new()
 }
-pub static ALLOWANCE_SERVICE: spin::Once<spin::Mutex<Allowance>> = spin::Once::new();
-pub fn allowance_service<'a>() -> spin::MutexGuard<'a, Allowance> {
-    ALLOWANCE_SERVICE
-        .call_once(|| spin::Mutex::new(Allowance::new(3)))
-        .lock()
-}
-
-pub fn init_services<'a>() -> (
-    spin::MutexGuard<'a, Settings>,
-    spin::MutexGuard<'a, Balance>,
-    spin::MutexGuard<'a, Allowance>,
-) {
-    // do not change slot values
-    let s1 = settings_service();
-    let s2 = balance_service();
-    let s3 = allowance_service();
-    (s1, s2, s3)
+// pub static ALLOWANCE_SERVICE: spin::Once<spin::Mutex<Allowance>> = spin::Once::new();
+// pub fn allowance_service<'a>() -> spin::MutexGuard<'a, Allowance> {
+//     ALLOWANCE_SERVICE
+//         .call_once(|| spin::Mutex::new(Allowance::new()))
+//         .lock()
+// }
+pub fn allowance_service() -> Allowance {
+    Allowance::new()
 }
 
 #[cfg(test)]

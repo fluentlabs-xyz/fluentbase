@@ -42,7 +42,6 @@ impl Encodable for TransferCommand {
     fn try_decode(input: &[u8]) -> Result<Self, u32> {
         const TO_OFFSET: usize = 0;
         const AMOUNT_OFFSET: usize = TO_OFFSET + ADDRESS_LEN_BYTES;
-        const END_OFFSET: usize = AMOUNT_OFFSET + U256_LEN_BYTES;
         Self::validate_input_for_decode(input)?;
         let to = Address::from_slice(&input[TO_OFFSET..TO_OFFSET + ADDRESS_LEN_BYTES]);
         let amount =

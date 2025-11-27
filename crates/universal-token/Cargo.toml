@@ -12,22 +12,14 @@ categories.workspace = true
 [dependencies]
 fluentbase-sdk = { workspace = true, features = [
     #    "fast-panic",
-    "debug-print"
+    #    "debug-print"
 ] }
 
-#solana-pubkey = { workspace = true, default-features = false }
 
 bincode = { workspace = true, default-features = false, features = ["serde"] }
-serde = { workspace = true, default-features = false, features = ["derive"] }
-num_enum = { workspace = true, default-features = false }
-num-traits = { workspace = true, default-features = false }
-num-derive = { workspace = true, default-features = false }
-bytemuck = { workspace = true, default-features = false }
-bytemuck_derive = { workspace = true, default-features = false }
 hashbrown = { workspace = true, default-features = false }
-serde_json = { workspace = true, default-features = false, features = ["alloc"] }
-serde_with = { workspace = true, default-features = false, features = ["alloc"] }
 spin = { workspace = true }
+paste = { workspace = true }
 
 [dev-dependencies]
 

@@ -1,6 +1,8 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use core::str::from_utf8;
+use fluentbase_sdk::crypto::crypto_keccak256;
+use fluentbase_sdk::derive::derive_keccak256;
 use fluentbase_sdk::{Address, Bytes, ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256};
 use fluentbase_testing::EvmTestingContext;
 use fluentbase_universal_token::types::input_commands::{
