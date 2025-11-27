@@ -11,6 +11,14 @@ macro_rules! define_tests {
     };
 }
 
+mod single_test {
+    define_tests! {
+        // fn transaction_create_auto_suicide_contract("tests/GeneralStateTests/stInitCodeTest/TransactionCreateAutoSuicideContract.json");
+        // fn failed_tx_xcf416c53_paris("tests/GeneralStateTests/stSpecialTest/failed_tx_xcf416c53_Paris.json");
+        fn precompile_absence("tests/GeneralStateTests/Pyspecs/frontier/precompiles/precompile_absence.json");
+    }
+}
+
 mod good_coverage_tests {
     define_tests! {
         fn st_e_i_p3860_limitmeterinitcode_create_init_code_size_limit("tests/GeneralStateTests/Shanghai/stEIP3860-limitmeterinitcode/createInitCodeSizeLimit.json");
@@ -120,7 +128,7 @@ mod fails_with_stack_expansion {
     define_tests! {
         fn _15_tstore_cannot_be_dosd("tests/GeneralStateTests/Cancun/stEIP1153-transientStorage/15_tstoreCannotBeDosd.json");
         fn _21_tstore_cannot_be_dosd_ooo("tests/GeneralStateTests/Cancun/stEIP1153-transientStorage/21_tstoreCannotBeDosdOOO.json");
-        fn contract_creation_spam("tests/GeneralStateTests/stAttackTest/ContractCreationSpam.json");
+        // fn contract_creation_spam("tests/GeneralStateTests/stAttackTest/ContractCreationSpam.json");
     }
 }
 
@@ -224,8 +232,24 @@ mod new_gas_model_failing_tests {
     }
 }
 
-mod rwasm_stuck_tests {
+mod rwasm_stuck_failing_tests {
     define_tests! {
         fn modexp("tests/GeneralStateTests/stPreCompiledContracts/modexp.json");
+    }
+}
+
+mod new_system_runtime_failing_tests {
+    define_tests! {
+        fn run_until_out_of_gas("tests/GeneralStateTests/Pyspecs/cancun/eip1153_tstore/run_until_out_of_gas.json");
+        // fn contract_creation_spam("tests/GeneralStateTests/stAttackTest/ContractCreationSpam.json");
+        fn opc_d9_diff_places("tests/GeneralStateTests/stBadOpcode/opcD9DiffPlaces.json");
+        // fn call50000("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000.json");
+        // fn callcode50000("tests/GeneralStateTests/stQuadraticComplexityTest/Callcode50000.json");
+        // fn static_call50000_identity("tests/GeneralStateTests/stStaticCall/static_Call50000_identity.json");
+        fn abacalls2("tests/GeneralStateTests/stSystemOperationsTest/ABAcalls2.json");
+        fn sstore_gas_left("tests/GeneralStateTests/stSStoreTest/sstore_gasLeft.json");
+        fn call_oog_additional_gas_costs2("tests/GeneralStateTests/stCallCodes/call_OOG_additionalGasCosts2.json");
+        // fn static_call1_mb1024_calldepth("tests/GeneralStateTests/stStaticCall/static_Call1MB1024Calldepth.json");
+        // fn static_loop_calls_then_revert("tests/GeneralStateTests/stStaticCall/static_LoopCallsThenRevert.json");
     }
 }

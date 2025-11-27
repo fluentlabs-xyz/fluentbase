@@ -3,13 +3,13 @@ use alloc::vec::Vec;
 const WASM_PAGE_SIZE_IN_BYTES: usize = 65536;
 
 #[allow(dead_code)]
-fn calc_pages_needed(pages_allocated: usize, ptr: usize) -> usize {
-    let current_memory = pages_allocated * WASM_PAGE_SIZE_IN_BYTES;
-    if ptr >= current_memory {
-        (current_memory + ptr + 1 + WASM_PAGE_SIZE_IN_BYTES - 1) / WASM_PAGE_SIZE_IN_BYTES
-            - pages_allocated
-    } else {
+fn calc_pages_needed(pages_allocated: usize, required_bytes: usize) -> usize {
+    let have = pages_allocated * WASM_PAGE_SIZE_IN_BYTES;
+    if required_bytes <= have {
         0
+    } else {
+        let missing = required_bytes - have;
+        (missing + WASM_PAGE_SIZE_IN_BYTES - 1) / WASM_PAGE_SIZE_IN_BYTES
     }
 }
 
@@ -17,16 +17,16 @@ fn calc_pages_needed(pages_allocated: usize, ptr: usize) -> usize {
 fn test_pages_needed() {
     assert_eq!(calc_pages_needed(0, 1), 1);
     assert_eq!(calc_pages_needed(0, 65535), 1);
-    assert_eq!(calc_pages_needed(0, 65536), 2);
-    assert_eq!(calc_pages_needed(1, 65536), 2);
+    assert_eq!(calc_pages_needed(0, 65536), 1);
+    assert_eq!(calc_pages_needed(1, 65536), 0);
     assert_eq!(calc_pages_needed(1, 65535), 0);
-    assert_eq!(calc_pages_needed(1, 65536 * 2), 3);
-    assert_eq!(calc_pages_needed(5, 327680), 6);
+    assert_eq!(calc_pages_needed(1, 65536 + 65536), 1);
+    assert_eq!(calc_pages_needed(5, 327680), 0);
 }
 
 #[inline(always)]
 pub fn alloc_ptr(len: usize) -> *mut u8 {
-    unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align_unchecked(len, 8)) }
+    unsafe { alloc::alloc::alloc_zeroed(core::alloc::Layout::from_size_align_unchecked(len, 8)) }
 }
 
 #[inline(always)]
@@ -46,6 +46,26 @@ pub struct HeapBaseAllocator {}
 #[cfg(target_arch = "wasm32")]
 static mut HEAP_POS: usize = 0;
 
+#[inline(always)]
+pub fn alloc_heap_pos() -> usize {
+    #[cfg(target_arch = "wasm32")]
+    unsafe {
+        HEAP_POS
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        usize::MAX
+    }
+}
+
+#[inline(always)]
+pub fn rollback_heap_pos(_new_heap_pos: usize) {
+    #[cfg(target_arch = "wasm32")]
+    unsafe {
+        HEAP_POS = _new_heap_pos
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
     #[inline(never)]
@@ -61,7 +81,7 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
         }
         let offset = heap_pos & (align - 1);
         if offset != 0 {
-            heap_pos += align - offset;
+            heap_pos = heap_pos.wrapping_add(align - offset);
         }
         // allocate memory pages if needed
         let pages_allocated = core::arch::wasm32::memory_size::<0>();
@@ -90,10 +110,11 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
 
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
-pub extern "C" fn __heap_reset() {
+pub extern "C" fn __heap_pos() -> usize {
     extern "C" {
         static __heap_base: u8;
     }
     let mut heap_pos = unsafe { HEAP_POS };
     heap_pos = unsafe { (&__heap_base) as *const u8 as usize };
+    heap_pos
 }

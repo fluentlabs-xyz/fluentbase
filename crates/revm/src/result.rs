@@ -34,6 +34,7 @@ pub fn instruction_result_from_exit_code(
         }
         ExitCode::Panic => InstructionResult::Revert,
         ExitCode::Err => InstructionResult::UnknownError,
+        ExitCode::InterruptionCalled => InstructionResult::Stop,
         /* Fluentbase Runtime Error Codes */
         ExitCode::RootCallOnly => InstructionResult::RootCallOnly,
         ExitCode::MalformedBuiltinParams => InstructionResult::MalformedBuiltinParams,
@@ -46,6 +47,7 @@ pub fn instruction_result_from_exit_code(
         ExitCode::StateChangeDuringStaticCall => InstructionResult::StateChangeDuringStaticCall,
         ExitCode::CreateContractSizeLimit => InstructionResult::CreateContractSizeLimit,
         ExitCode::CreateContractCollision => InstructionResult::CreateCollision,
+        ExitCode::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
         /* Trap Error Codes */
         ExitCode::UnreachableCodeReached => InstructionResult::UnreachableCodeReached,
         ExitCode::MemoryOutOfBounds => InstructionResult::MemoryOutOfBounds,

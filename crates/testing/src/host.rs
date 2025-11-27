@@ -1,9 +1,9 @@
 use core::cell::RefCell;
 use fluentbase_runtime::RuntimeContextWrapper;
 use fluentbase_sdk::{
-    bytes::Buf, calc_create_metadata_address, Address, Bytes, ContextReader, ContractContextV1, ExitCode,
-    IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, SharedAPI,
-    SharedContextInputV1, StorageAPI, SyscallResult, B256, FUEL_DENOM_RATE, U256,
+    bytes::Buf, calc_create_metadata_address, Address, Bytes, ContextReader, ContractContextV1,
+    ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI,
+    SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
 use hashbrown::HashMap;
 use std::{mem::take, rc::Rc};

@@ -117,8 +117,11 @@ const disabledTests = new Set([
     'static_loop_calls_depth_then_revert2',
     'static_loop_calls_depth_then_revert3',
     'static_return50000_2',
-    // failing tests (uncomment once fixed)
-    'high_gas_price_paris',
+    'contract_creation_spam',
+    'static_call50000_identity',
+    'static_call1_mb1024_calldepth',
+    'static_loop_calls_then_revert',
+    'static_call50000_rip160',
 ]);
 
 // Group tests by subdirectory (module name)

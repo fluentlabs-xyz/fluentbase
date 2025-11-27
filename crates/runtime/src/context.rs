@@ -56,6 +56,21 @@ impl RuntimeContext {
         self
     }
 
+    /// Extract serialized resumable context
+    pub fn take_resumable_context_serialized(&mut self) -> Option<Vec<u8>> {
+        // Take resumable context from execution context
+        let resumable_context = self.resumable_context.take()?;
+        if resumable_context.is_root {
+            unimplemented!("validate this logic, might not be ok in STF mode");
+        }
+        // serialize the delegated execution state,
+        // but we don't serialize registers and stack state,
+        // instead we remember it inside the internal structure
+        // and assign a special identifier for recovery
+        let result = resumable_context.params.encode();
+        Some(result)
+    }
+
     /// Clears the accumulated output buffer.
     pub fn clear_output(&mut self) {
         self.execution_result.output.clear();

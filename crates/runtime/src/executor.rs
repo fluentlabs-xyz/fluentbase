@@ -4,7 +4,7 @@ mod local_executor;
 
 use crate::{
     module_factory::ModuleFactory,
-    runtime::{ExecutionMode, StrategyRuntime},
+    runtime::{ExecutionMode, RwasmRuntime, SystemRuntime},
     RuntimeContext,
 };
 use fluentbase_types::{
@@ -13,10 +13,7 @@ use fluentbase_types::{
 };
 use local_executor::LocalExecutor;
 use rwasm::{ExecutionEngine, FuelConfig, ImportLinker, RwasmModule, Strategy, TrapCode};
-use std::{
-    mem::take,
-    sync::Arc,
-};
+use std::{mem::take, sync::Arc};
 
 /// Finalized outcome of a single runtime invocation.
 ///
@@ -55,7 +52,7 @@ pub struct ExecutionInterruption {
     /// Fuel to refund to the caller at the interruption point.
     pub fuel_refunded: i64,
     /// Encoded interruption payload (e.g., delegated call parameters).
-    pub output: Vec<u8>,
+    pub return_data: Vec<u8>,
 }
 
 /// Result of running or resuming a runtime.
@@ -115,6 +112,13 @@ pub trait RuntimeExecutor {
     ///
     /// Intended to be invoked at the beginning of a new transaction.
     fn reset_call_id_counter(&mut self);
+
+    fn memory_read(
+        &mut self,
+        call_id: u32,
+        offset: usize,
+        buffer: &mut [u8],
+    ) -> Result<(), TrapCode>;
 }
 
 /// Returns a default runtime executor.
@@ -183,7 +187,7 @@ impl RuntimeFactoryExecutor {
             fuel_consumed: interruption.fuel_consumed,
             fuel_refunded: interruption.fuel_refunded,
             // The output we map into return data
-            output: interruption.output,
+            output: interruption.return_data,
             return_data: vec![],
         }
     }
@@ -208,47 +212,48 @@ impl RuntimeFactoryExecutor {
         if let Some(store_fuel_consumed) = fuel_consumed {
             execution_result.fuel_consumed = store_fuel_consumed;
         }
+
+        // Fill the exit code in the execution result based on the next result:
+        // - Ok - execution passed, exit code is 0 (Ok)
+        // - InterruptionCalled - we don't know exit code since it's just an interruption
+        // - Err - an execution trap code (halts execution)
         match next_result {
-            Ok(_) => {}
+            Ok(_) => {
+                // Don't write exit code here, because it's managed by host functions
+            }
             Err(TrapCode::InterruptionCalled) => {
-                return self.handle_resumable_state(execution_result, ctx);
+                // We don't set exit code here,
+                // because exit code is used to represent identifier of call id
             }
             Err(err) => {
                 execution_result.exit_code = ExitCode::from(err).into_i32();
             }
         }
-        RuntimeResult::Result(execution_result)
-    }
 
-    /// Converts an in-flight interruption into a RuntimeResult::Interruption and prepares payload.
-    ///
-    /// Clears transient buffers, encodes the delegated invocation parameters, and packages the
-    /// suspended runtime for recovery by the root context.
-    fn handle_resumable_state(
-        &mut self,
-        execution_result: ExecutionResult,
-        ctx: &mut RuntimeContext,
-    ) -> RuntimeResult {
-        let ExecutionResult {
-            fuel_consumed,
-            fuel_refunded,
-            ..
-        } = execution_result;
-        // Take resumable context from execution context
-        let resumable_context = ctx.resumable_context.take().unwrap();
-        if resumable_context.is_root {
-            unimplemented!("validate this logic, might not be ok in STF mode");
+        // If the next result is interruption
+        if next_result == Err(TrapCode::InterruptionCalled) {
+            let ExecutionResult {
+                fuel_consumed,
+                fuel_refunded,
+                mut return_data,
+                ..
+            } = execution_result;
+            // A case for normal interruption (not system runtime interruption), where we should
+            // serialize the context we remembered inside `exec.rs`
+            // handler to pass into parent runtime.
+            //
+            // SAFETY: For system runtimes we don't save this
+            if let Some(resumable_return_data) = ctx.take_resumable_context_serialized() {
+                return_data = resumable_return_data;
+            }
+            return RuntimeResult::Interruption(ExecutionInterruption {
+                fuel_consumed,
+                fuel_refunded,
+                return_data,
+            });
         }
-        // serialize the delegated execution state,
-        // but we don't serialize registers and stack state,
-        // instead we remember it inside the internal structure
-        // and assign a special identifier for recovery
-        let output = resumable_context.params.encode();
-        RuntimeResult::Interruption(ExecutionInterruption {
-            fuel_consumed,
-            fuel_refunded,
-            output,
-        })
+
+        RuntimeResult::Result(execution_result)
     }
 }
 
@@ -258,13 +263,13 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         bytecode_or_hash: BytecodeOrHash,
         ctx: RuntimeContext,
     ) -> ExecutionResult {
-        #[cfg(feature = "wasmtime")]
-        let enable_wasmtime_runtime = match &bytecode_or_hash {
-            BytecodeOrHash::Bytecode { address, hash, .. } => {
-                fluentbase_types::is_execute_using_aot_compiler(address)
-                    .then_some((*address, *hash))
-            }
-            BytecodeOrHash::Hash(_) => None,
+        let (enable_wasmtime_runtime, enable_system_runtime) = match &bytecode_or_hash {
+            BytecodeOrHash::Bytecode { address, hash, .. } => (
+                fluentbase_types::is_execute_using_wasmtime_strategy(address)
+                    .then_some((*address, *hash)),
+                fluentbase_types::is_execute_using_system_runtime(address).then_some(*hash),
+            ),
+            BytecodeOrHash::Hash(_) => (None, None),
         };
 
         // If we have a cached module, then use it, otherwise create a new one and cache
@@ -274,33 +279,39 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let fuel_remaining = Some(ctx.fuel_limit);
         let fuel_config = FuelConfig::default().with_fuel_limit(ctx.fuel_limit);
 
-        #[cfg(feature = "wasmtime")]
-        let strategy = if let Some((address, code_hash)) = enable_wasmtime_runtime {
-            let module = self
-                .module_factory
-                .get_wasmtime_module_or_compile(code_hash, address);
-            Strategy::Wasmtime { module }
+        let mut exec_mode = if let Some(code_hash) = enable_system_runtime {
+            let runtime = SystemRuntime::new(module, self.import_linker.clone(), code_hash, ctx);
+            ExecutionMode::System(runtime)
         } else {
-            let engine = ExecutionEngine::acquire_shared();
-            Strategy::Rwasm { module, engine }
+            #[cfg(feature = "wasmtime")]
+            let strategy = if let Some((address, code_hash)) = enable_wasmtime_runtime {
+                let module = self
+                    .module_factory
+                    .get_wasmtime_module_or_compile(code_hash, address);
+                Strategy::Wasmtime { module }
+            } else {
+                let engine = ExecutionEngine::acquire_shared();
+                Strategy::Rwasm { module, engine }
+            };
+            #[cfg(not(feature = "wasmtime"))]
+            let strategy = {
+                let engine = ExecutionEngine::acquire_shared();
+                Strategy::Rwasm { module, engine }
+            };
+            let runtime = RwasmRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
+            ExecutionMode::Rwasm(runtime)
         };
-        #[cfg(not(feature = "wasmtime"))]
-        let strategy = {
-            let engine = ExecutionEngine::acquire_shared();
-            Strategy::Rwasm { module, engine }
-        };
-        let runtime = StrategyRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
-        let mut runtime = ExecutionMode::Strategy(runtime);
 
-        // Execute rWasm program
-        let result = runtime.execute();
-        let fuel_consumed = runtime
+        // Execute program
+        let result = exec_mode.execute();
+        let fuel_consumed = exec_mode
             .remaining_fuel()
             .zip(fuel_remaining)
             .map(|(remaining_fuel, store_fuel)| store_fuel - remaining_fuel);
+
         let runtime_result =
-            runtime.context_mut(|ctx| self.handle_execution_result(result, fuel_consumed, ctx));
-        self.try_remember_runtime(runtime_result, runtime)
+            exec_mode.context_mut(|ctx| self.handle_execution_result(result, fuel_consumed, ctx));
+        self.try_remember_runtime(runtime_result, exec_mode)
     }
 
     fn resume(
@@ -322,17 +333,13 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             runtime.context_mut(|ctx| {
                 ctx.execution_result.return_data = return_data.to_vec();
             });
-            // If we have fuel consumed greater than 0 then record it
-            if fuel_consumed > 0 {
-                runtime.try_consume_fuel(fuel_consumed)?;
-            }
             if fuel16_ptr > 0 {
                 let mut buffer = [0u8; 16];
                 LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
                 LittleEndian::write_i64(&mut buffer[8..], fuel_refunded);
                 runtime.memory_write(fuel16_ptr as usize, &buffer)?;
             }
-            runtime.resume(exit_code)
+            runtime.resume(exit_code, fuel_consumed)
         };
         let result = resume_inner(&mut runtime);
         // We need to adjust the fuel limit because `fuel_consumed` should not be included into spent.
@@ -379,15 +386,33 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     fn reset_call_id_counter(&mut self) {
         self.transaction_call_id_counter = 1;
         self.recoverable_runtimes.clear();
+        self.recoverable_runtimes.clear();
+        // Note: Ideally this shouldn't be required if there is no memory leaks, but supporting a
+        // memory allocator inside virtual runtime brings overhead.
+        // Instead, we can just re-create the store to make sure all data is pruned.
+        SystemRuntime::reset_cached_runtimes();
+    }
+
+    fn memory_read(
+        &mut self,
+        call_id: u32,
+        offset: usize,
+        buffer: &mut [u8],
+    ) -> Result<(), TrapCode> {
+        let runtime_ref = self.recoverable_runtimes.get_mut(&call_id).expect(
+            "runtime: missing recoverable runtime for memory read, this should never happen",
+        );
+        runtime_ref.memory_read(offset, buffer)
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use crate::executor::{ExecutionInterruption, RuntimeFactoryExecutor, RuntimeResult};
-    use crate::runtime::ExecutionMode;
-    use crate::RuntimeContext;
+    use crate::{
+        executor::{ExecutionInterruption, RuntimeFactoryExecutor, RuntimeResult},
+        runtime::{ExecutionMode, RwasmRuntime},
+        RuntimeContext,
+    };
     use fluentbase_types::{import_linker_v1_preview, ExitCode};
     use rwasm::{ExecutionEngine, FuelConfig, RwasmModule, Strategy};
 
@@ -401,7 +426,7 @@ mod tests {
         let interruption = RuntimeResult::Interruption(ExecutionInterruption {
             fuel_consumed: 100,
             fuel_refunded: 0,
-            output: vec![1, 2, 3],
+            return_data: vec![1, 2, 3],
         });
 
         let engine = ExecutionEngine::acquire_shared();
@@ -409,13 +434,13 @@ mod tests {
         let ctx = RuntimeContext::default();
         let fuel_config = FuelConfig::default();
 
-        let strategy_runtime = crate::runtime::StrategyRuntime::new(
+        let strategy_runtime = RwasmRuntime::new(
             Strategy::Rwasm { module, engine },
             executor.import_linker.clone(),
             ctx,
             fuel_config,
         );
-        let runtime = ExecutionMode::Strategy(strategy_runtime);
+        let runtime = ExecutionMode::Rwasm(strategy_runtime);
 
         // Try to allocate call_id - should fail with overflow
         let result = executor.try_remember_runtime(interruption, runtime);
@@ -426,5 +451,4 @@ mod tests {
         assert_eq!(result.fuel_refunded, 0);
         assert!(result.output.is_empty());
     }
-
 }

@@ -10,10 +10,12 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+# fluentbase
 fluentbase-sdk = { workspace = true }
+# misc
 bitvec = { workspace = true }
 bincode = { workspace = true }
-
+serde = { workspace = true }
 # revm
 revm-primitives = { workspace = true }
 revm-bytecode = { workspace = true }
@@ -28,6 +30,10 @@ std = [
     "revm-bytecode/std",
     "revm-interpreter/std",
     "revm-context/std",
+]
+serde = [
+    "revm-interpreter/serde",
+    "fluentbase-sdk/serde"
 ]
 fluent-testnet = [
 	"fluentbase-sdk/fluent-testnet"

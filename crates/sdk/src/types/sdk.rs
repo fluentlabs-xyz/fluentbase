@@ -68,11 +68,16 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
 
     fn charge_fuel(&self, fuel_consumed: u64);
 
-    fn sync_evm_gas(&self, gas_consumed: u64) {
+    fn sync_evm_gas(&self, gas_consumed: u64) -> Result<(), ExitCode> {
         let fuel_consumed = gas_consumed
             .checked_mul(FUEL_DENOM_RATE)
             .unwrap_or(u64::MAX);
+        let fuel_remaining = self.fuel();
+        if fuel_consumed > fuel_remaining {
+            return Err(ExitCode::OutOfFuel);
+        }
         self.charge_fuel(fuel_consumed);
+        Ok(())
     }
 
     fn fuel(&self) -> u64;

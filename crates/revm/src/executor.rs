@@ -7,19 +7,21 @@ use crate::{
     ExecutionResult, NextAction,
 };
 use cfg_if::cfg_if;
+use core::mem::take;
 use fluentbase_runtime::{
     default_runtime_executor,
     syscall_handler::{syscall_exec_impl, syscall_resume_impl},
-    RuntimeContext,
+    RuntimeContext, RuntimeExecutor,
 };
 use fluentbase_sdk::{
-    is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule, BlockContextV1,
-    BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode, SharedContextInput,
+    bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
+    rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
+    ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SharedContextInput,
     SharedContextInputV1, SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY,
     STATE_MAIN, U256,
 };
 use revm::{
-    bytecode::{opcode, Bytecode},
+    bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
     context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
     handler::FrameData,
     interpreter::{
@@ -118,7 +120,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let interpreter = &mut frame.interpreter;
     let is_create: bool = matches!(frame.input, FrameInput::Create(..));
-    let is_static: bool = interpreter.runtime_flag.is_static();
     let bytecode_address = interpreter
         .input
         .bytecode_address()
@@ -128,6 +129,8 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .input
         .account_owner
         .unwrap_or_else(|| bytecode_address);
+    let meta_account = ctx.journal_mut().load_account_code(bytecode_address)?;
+    let meta_bytecode = meta_account.info.code.clone().unwrap_or_default();
 
     // encode input with all related context info
     let context_input = SharedContextInput::V1(SharedContextInputV1 {
@@ -162,8 +165,20 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .encode()
         .expect("revm: unable to encode shared context input")
         .to_vec();
-    let inputs_bytes = interpreter.input.input.bytes(ctx);
-    context_input.extend_from_slice(&inputs_bytes);
+    let input = interpreter.input.input.bytes(ctx);
+
+    match meta_bytecode {
+        Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
+            let new_frame_input = RuntimeNewFrameInputV1 {
+                metadata: v.metadata,
+                input,
+            };
+            let new_frame_input =
+                bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
+            context_input.extend(new_frame_input);
+        }
+        _ => context_input.extend_from_slice(&input),
+    }
 
     let rwasm_bytecode = match &*interpreter.bytecode {
         Bytecode::Rwasm(bytecode) => bytecode.clone(),
@@ -179,6 +194,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             ));
         }
     };
+
     let bytecode_hash = BytecodeOrHash::Bytecode {
         address: effective_bytecode_address,
         bytecode: rwasm_bytecode.module,
@@ -222,15 +238,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     let return_data: Bytes;
     return_data = runtime_context.execution_result.return_data.into();
 
-    process_exec_result(
-        frame,
-        ctx,
-        inspector,
-        exit_code,
-        return_data,
-        is_create,
-        is_static,
-    )
+    process_exec_result(frame, ctx, inspector, exit_code, return_data)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -240,7 +248,12 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     interruption_outcome: SystemInterruptionOutcome,
     inspector: Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
-    let SystemInterruptionOutcome { inputs, result, .. } = interruption_outcome;
+    let SystemInterruptionOutcome {
+        inputs,
+        result,
+        halted_frame,
+        ..
+    } = interruption_outcome;
     let result = result.unwrap();
     let call_id = inputs.call_id;
 
@@ -275,11 +288,35 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         _ => ExitCode::UnknownError,
     };
 
+    let bytecode_address = frame
+        .interpreter
+        .input
+        .bytecode_address()
+        .cloned()
+        .unwrap_or_else(|| frame.interpreter.input.target_address());
+    let meta_account = ctx.journal_mut().load_account_code(bytecode_address)?;
+    let meta_bytecode = meta_account.info.code.clone().unwrap_or_default();
+    let outcome: Bytes = match meta_bytecode {
+        Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
+            let outcome = RuntimeInterruptionOutcomeV1 {
+                halted_frame,
+                output: result.output,
+                fuel_consumed,
+                fuel_refunded,
+                exit_code,
+            };
+            bincode::encode_to_vec(&outcome, bincode::config::legacy())
+                .unwrap()
+                .into()
+        }
+        _ => result.output,
+    };
+
     let mut runtime_context = RuntimeContext::default();
     let (fuel_consumed, fuel_refunded, exit_code) = syscall_resume_impl(
         &mut runtime_context,
         inputs.call_id,
-        result.output.as_ref(),
+        outcome.as_ref(),
         exit_code.into_i32(),
         fuel_consumed,
         fuel_refunded,
@@ -308,25 +345,68 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         .gas
         .record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
 
-    let result = process_exec_result::<CTX, INSP>(
-        frame,
-        ctx,
-        inspector,
-        exit_code,
-        return_data,
-        inputs.is_create,
-        inputs.is_static,
-    )?;
+    let result = process_exec_result::<CTX, INSP>(frame, ctx, inspector, exit_code, return_data)?;
     // If interruption ends with return,
     // then we should forget saved runtime, because otherwise it can cause memory leak
     match &result {
         NextAction::Return(_) => {
-            use fluentbase_runtime::RuntimeExecutor;
             default_runtime_executor().forget_runtime(call_id);
         }
         _ => {}
     }
     Ok(result)
+}
+
+fn get_ownable_account_mut<'a, CTX: ContextTr + 'a, INSP: Inspector<CTX>>(
+    frame: &'a mut RwasmFrame,
+    ctx: &'a mut CTX,
+) -> Result<Option<OwnableAccountBytecode>, ContextError<<CTX::Db as Database>::Error>> {
+    let bytecode_address = frame
+        .interpreter
+        .input
+        .bytecode_address()
+        .cloned()
+        .unwrap_or_else(|| frame.interpreter.input.target_address());
+    let bytecode_account = ctx.journal_mut().load_account_code(bytecode_address)?.data;
+    let bytecode_account = bytecode_account.info.code.clone();
+    Ok(bytecode_account.and_then(|bytecode| match bytecode {
+        Bytecode::OwnableAccount(account)
+            if is_execute_using_system_runtime(&account.owner_address) =>
+        {
+            Some(account)
+        }
+        _ => None,
+    }))
+}
+
+fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
+    frame: &mut RwasmFrame,
+    ctx: &mut CTX,
+    inspector: Option<&mut INSP>,
+    mut ownable_account: OwnableAccountBytecode,
+    exit_code: i32,
+    mut return_data: Bytes,
+) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
+    let is_create: bool = matches!(frame.input, FrameInput::Create(..));
+    match exit_code {
+        // If we return `Ok` in deployment mode, then we assume we store new metadata in the output,
+        // it's used to rewrite the existing metadata to store custom bytecode.
+        0 if is_create => {
+            ownable_account.metadata = take(&mut return_data);
+            let bytecode = Bytecode::OwnableAccount(ownable_account);
+            ctx.journal_mut()
+                .set_code(frame.interpreter.input.target_address(), bytecode);
+        }
+        // Don't do anything, execution default case
+        _ => {}
+    }
+    Ok(process_halt(
+        frame,
+        ctx,
+        inspector,
+        ExitCode::from(exit_code),
+        return_data,
+    ))
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -336,11 +416,22 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     inspector: Option<&mut INSP>,
     exit_code: i32,
     return_data: Bytes,
-    is_create: bool,
-    is_static: bool,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     // if we have success or failed exit code
     if exit_code <= 0 {
+        // If the result is produced by system runtime (like EVM, SVM, etc.) then use custom handler
+        if let Some(ownable_account) = get_ownable_account_mut::<CTX, INSP>(frame, ctx)? {
+            return process_system_runtime_result(
+                frame,
+                ctx,
+                inspector,
+                ownable_account,
+                exit_code,
+                return_data,
+            );
+        }
+        // A fallback with an execution result
+        let exit_code = ExitCode::from(exit_code);
         return Ok(process_halt(frame, ctx, inspector, exit_code, return_data));
     }
 
@@ -349,18 +440,23 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     // try to parse execution params, if it's not possible, then return an error
     let Some(syscall_params) = SyscallInvocationParams::decode(&return_data) else {
-        unreachable!("can't decode invocation params");
+        unreachable!("revm: can't decode invocation params");
     };
 
+    let gas = frame.interpreter.gas;
     let inputs = SystemInterruptionInputs {
         call_id,
-        is_create,
         syscall_params,
-        gas: frame.interpreter.gas,
-        is_static,
+        gas,
     };
 
-    execute_rwasm_interruption::<CTX, INSP>(frame, inspector, ctx, inputs)
+    execute_rwasm_interruption::<CTX, INSP>(
+        frame,
+        inspector,
+        ctx,
+        inputs,
+        crate::syscall::DefaultRuntimeExecutorMemoryReader {},
+    )
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -368,10 +464,9 @@ fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
     inspector: Option<&mut INSP>,
-    exit_code: i32,
+    exit_code: ExitCode,
     return_data: Bytes,
 ) -> NextAction {
-    let exit_code = ExitCode::from(exit_code);
     let result = instruction_result_from_exit_code(exit_code, return_data.is_empty());
     if let Some(inspector) = inspector {
         let evm_opcode = match result {

@@ -1,4 +1,5 @@
 use auto_impl::auto_impl;
+use bincode::config::{Configuration, Fixint, LittleEndian};
 use fluentbase_types::{Address, Bytes, B256, U256};
 
 #[auto_impl(&)]
@@ -25,6 +26,8 @@ pub trait ContextReader {
     fn contract_gas_limit(&self) -> u64;
 }
 
+const BINCODE_CONFIG_DEFAULT: Configuration<LittleEndian, Fixint> = bincode::config::legacy();
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum SharedContextInput {
     V1(SharedContextInputV1),
@@ -32,16 +35,14 @@ pub enum SharedContextInput {
 
 impl SharedContextInput {
     pub fn decode(buf: &[u8]) -> Result<Self, bincode::error::DecodeError> {
-        let config = bincode::config::legacy();
-        let result = bincode::decode_from_slice(buf, config)?;
+        let result = bincode::decode_from_slice(buf, BINCODE_CONFIG_DEFAULT)?;
         Ok(Self::V1(result.0))
     }
 
     pub fn encode(&self) -> Result<Bytes, bincode::error::EncodeError> {
         match self {
             SharedContextInput::V1(value) => {
-                let config = bincode::config::legacy();
-                let result: Bytes = bincode::encode_to_vec(value, config)?.into();
+                let result: Bytes = bincode::encode_to_vec(value, BINCODE_CONFIG_DEFAULT)?.into();
                 Ok(result)
             }
         }
@@ -226,8 +227,9 @@ impl bincode::Encode for SharedContextInputV1 {
         bincode::Encode::encode(&contract_value, e)?;
         bincode::Encode::encode(&contract_gas_limit, e)?;
 
-        let reserved = [0u8; 642]; // Use this space to add new fields in the future
+        let reserved = [0u8; Self::SIZE_RESERVED];
         bincode::Encode::encode(&reserved, e)?;
+
         Ok(())
     }
 }
@@ -259,6 +261,9 @@ impl<C> bincode::Decode<C> for SharedContextInputV1 {
         let contract_is_static = bincode::Decode::decode(d)?;
         let contract_value: [u8; 32] = bincode::Decode::decode(d)?;
         let contract_gas_limit = bincode::Decode::decode(d)?;
+
+        // Skip reserved, since we have metadata right after the reserved context input
+        let _reserved: [u8; Self::SIZE_RESERVED] = bincode::Decode::decode(d)?;
 
         Ok(Self {
             block: BlockContextV1 {
@@ -293,15 +298,23 @@ impl<C> bincode::Decode<C> for SharedContextInputV1 {
 }
 
 impl SharedContextInputV1 {
-    pub const SIZE: usize = 1024; // size of encoded struct
+    pub const SIZE: usize = 1024; // total size of encoded struct
+    pub const SIZE_RESERVED: usize = 642; // size reserved for new fields
+
+    pub fn decode_type_from_slice<T: bincode::de::Decode<()>>(
+        buf: &[u8],
+    ) -> Result<T, bincode::error::DecodeError> {
+        let (result, _) = bincode::decode_from_slice(buf, BINCODE_CONFIG_DEFAULT)?;
+        Ok(result)
+    }
 
     pub fn decode_from_slice(buf: &[u8]) -> Result<Self, bincode::error::DecodeError> {
-        let (result, _) = bincode::decode_from_slice(buf, bincode::config::legacy())?;
+        let result = Self::decode_type_from_slice(buf)?;
         Ok(result)
     }
 
     pub fn encode_to_vec(&self) -> Result<Bytes, bincode::error::EncodeError> {
-        let result: Bytes = bincode::encode_to_vec(self, bincode::config::legacy())?.into();
+        let result: Bytes = bincode::encode_to_vec(self, BINCODE_CONFIG_DEFAULT)?.into();
         Ok(result)
     }
 }
@@ -314,11 +327,11 @@ mod tests {
     #[test]
     fn test_size_is_correct() {
         assert_eq!(SharedContextInputV1::SIZE, 1024);
+        assert_eq!(SharedContextInputV1::SIZE_RESERVED, 642);
     }
 
-    #[test]
-    fn test_serialize_context() {
-        let context = SharedContextInputV1 {
+    fn example_context() -> SharedContextInputV1 {
+        SharedContextInputV1 {
             block: BlockContextV1 {
                 chain_id: 1,
                 coinbase: Address::from(hex!("1000000000000000000000000000000000000001")),
@@ -347,19 +360,24 @@ mod tests {
                 value: U256::from(0),
                 gas_limit: 100_000,
             },
-        };
+        }
+    }
+
+    #[test]
+    fn test_simple_context_serialize() {
+        let context = example_context();
         let encoded = context.encode_to_vec().unwrap();
+        assert_eq!(encoded.len(), SharedContextInputV1::SIZE);
         let decoded = SharedContextInputV1::decode_from_slice(&encoded).unwrap();
         assert_eq!(context, decoded);
-        assert_eq!(encoded.len(), SharedContextInputV1::SIZE);
     }
 
     #[test]
     fn test_serialize_default_context() {
         let context = SharedContextInputV1::default();
         let encoded = context.encode_to_vec().unwrap();
+        assert_eq!(encoded.len(), SharedContextInputV1::SIZE);
         let decoded = SharedContextInputV1::decode_from_slice(&encoded).unwrap();
         assert_eq!(context, decoded);
-        assert_eq!(encoded.len(), SharedContextInputV1::SIZE);
     }
 }

@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint, Bytes, ExitCode, SharedAPI};
 use revm_precompile::secp256r1::{p256_verify, P256VERIFY_BASE_GAS_FEE};
 
 /// Main entry point for the secp256r1 wrapper contract.
@@ -18,19 +18,14 @@ use revm_precompile::secp256r1::{p256_verify, P256VERIFY_BASE_GAS_FEE};
 /// Output:
 /// - Returns a single byte with value 1 if the signature is valid
 /// - Returns an empty byte array if the signature is invalid
-pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    let input_length = sdk.input_size();
-    let mut input = alloc_slice(input_length as usize);
-    sdk.read(&mut input, 0);
-    sdk.sync_evm_gas(P256VERIFY_BASE_GAS_FEE);
-    let result = match p256_verify(input, u64::MAX) {
-        Ok(result) => result,
-        Err(_) => sdk.native_exit(ExitCode::PrecompileError),
-    };
-    sdk.write(&result.bytes);
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
+    let input = sdk.input();
+    sdk.sync_evm_gas(P256VERIFY_BASE_GAS_FEE)?;
+    let result = p256_verify(input, u64::MAX).map_err(|_| ExitCode::PrecompileError)?;
+    Ok(result.bytes)
 }
 
-entrypoint!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -44,16 +39,15 @@ mod tests {
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 100_000;
-        let sdk = HostTestingContext::default()
+        let mut sdk = HostTestingContext::default()
             .with_input(Bytes::copy_from_slice(inputs))
             .with_contract_context(ContractContextV1 {
                 gas_limit,
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        main_entry(sdk.clone());
-        let output = sdk.take_output();
-        assert_eq!(output, expected);
+        let output = main_entry(&mut sdk).unwrap();
+        assert_eq!(output.as_ref(), expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
     }

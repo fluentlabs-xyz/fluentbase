@@ -21,6 +21,8 @@ hashbrown = { workspace = true }
 auto_impl = { workspace = true }
 bincode = { workspace = true }
 
+spin = { version = "0.10.0", default-features = false, features = ["mutex"] }
+
 [dev-dependencies]
 hex-literal = { workspace = true }
 

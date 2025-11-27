@@ -13,14 +13,18 @@ use fluentbase_sdk::{Bytes, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE}
 use revm_bytecode::{Bytecode, LegacyAnalyzedBytecode};
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},
-    CallInput, Gas, InputsImpl, Interpreter, InterpreterAction, SharedMemory, Stack,
+    CallInput, Gas, InputsImpl, InstructionTable, Interpreter, InterpreterAction, SharedMemory,
+    Stack,
 };
 use revm_primitives::hardfork::SpecId;
 
 /// EVM interpreter wrapper running with an interruption extension.
 pub struct EthVM {
-    interpreter: Interpreter<InterruptingInterpreter>,
+    pub interpreter: Interpreter<InterruptingInterpreter>,
 }
+
+unsafe impl Sync for EthVM {}
+unsafe impl Send for EthVM {}
 
 impl EthVM {
     /// Create a new VM instance bound to the given context and input.
@@ -118,6 +122,7 @@ impl EthVM {
                             output,
                             gas,
                             exit_code,
+                            halted_frame: false,
                         });
                 }
                 InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
@@ -125,14 +130,23 @@ impl EthVM {
         }
     }
 
-    pub fn run_step<SDK: SharedAPI>(mut self, sdk: &mut SDK) -> InterpreterAction {
-        let instruction_table = interruptable_instruction_table();
+    /// Executes 1 step of the interpreter run.
+    /// Returns EVM result plus precise gas/fuel accounting.
+    #[inline]
+    pub fn run_step<'a, SDK>(
+        &mut self,
+        instruction_table: &InstructionTable<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>,
+        sdk: &'a mut SDK,
+    ) -> InterpreterAction
+    where
+        SDK: SharedAPI,
+    {
         let mut sdk = HostWrapperImpl::wrap(sdk);
         self.interpreter.run_plain(&instruction_table, &mut sdk)
     }
 
     /// Commit interpreter gas deltas to the host (fuel) and snapshot the state.
-    pub(crate) fn sync_evm_gas<SDK: SharedAPI>(&mut self, sdk: &mut SDK) {
+    pub fn sync_evm_gas<SDK: SharedAPI>(&mut self, sdk: &mut SDK) {
         let (gas, committed_gas) = (
             &self.interpreter.gas,
             &mut self.interpreter.extend.committed_gas,

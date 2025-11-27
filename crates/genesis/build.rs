@@ -1,7 +1,7 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_sdk::{
-    address, compile_wasm_to_rwasm_with_config, default_compilation_config, hex, keccak256,
-    Address, Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID, U256,
+    address, compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256, Address,
+    Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID, U256,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -94,9 +94,6 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
             continue;
         }
         println!("compiling {}", contract.name);
-        if contract.name == "fluentbase_contracts_bls12381" {
-            println!("{}", hex::encode(contract.wasm_bytecode));
-        }
         let start = Instant::now();
         let rwasm_bytecode =
             compile_wasm_to_rwasm_with_config(contract.wasm_bytecode, config.clone())
