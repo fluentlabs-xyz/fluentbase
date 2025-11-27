@@ -37,3 +37,6 @@ default = [
 ]
 std = []
 debug-print = []
+fluent-testnet = [
+    "fluentbase-sdk/fluent-testnet",
+]

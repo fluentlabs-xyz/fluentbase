@@ -37,3 +37,4 @@ std = [
 ]
 debug-print = []
 fast-panic = []
+fluent-testnet = []

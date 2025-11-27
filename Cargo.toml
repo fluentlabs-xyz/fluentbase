@@ -146,6 +146,7 @@ convert_case = "0.8.0"
 proc-macro2 = { version = "1.0", default-features = false }
 quote = { version = "1.0" }
 elliptic-curve = { version = "0.13.4", features = ["hazmat", "sec1", "ecdh"], default-features = false }
+cfg-if = { version = "1.0.3", default-features = false }
 
 # revm
 revm = { package = "revm-rwasm", version = "27.0.3", default-features = false }

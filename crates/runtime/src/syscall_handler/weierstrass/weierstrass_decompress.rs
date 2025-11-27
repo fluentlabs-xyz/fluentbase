@@ -75,6 +75,19 @@ fn syscall_weierstrass_decompress_handler<
     Ok(())
 }
 
+/// Secp256k1 point decompression.
+///
+/// # Input format
+/// - `x_bytes_le`: x-coordinate as 32 bytes in little-endian
+/// - `sign_bit`: 0 or 1, indicates which y to recover
+///
+/// # Output
+/// Affine point `[y || x]` in little-endian (96 bytes total, y first).
+///
+/// # Validation
+/// Returns `ExitCode::MalformedBuiltinParams` if:
+/// - `sign_bit > 1`
+/// - x-coordinate doesn't correspond to a valid curve point
 pub fn syscall_secp256k1_decompress_impl(
     x_bytes_le: [u8; SECP256K1_G1_COMPRESSED_SIZE],
     sign_bit: u32,
@@ -85,6 +98,20 @@ pub fn syscall_secp256k1_decompress_impl(
         { SECP256K1_G1_RAW_AFFINE_SIZE },
     >(x_bytes_le, sign_bit)
 }
+
+/// Secp256r1 point decompression.
+///
+/// # Input format
+/// - `x_bytes_le`: x-coordinate as 32 bytes in little-endian
+/// - `sign_bit`: 0 or 1, indicates which y to recover
+///
+/// # Output
+/// Affine point `[y || x]` in little-endian (64 bytes total, y first).
+///
+/// # Validation
+/// Returns `ExitCode::MalformedBuiltinParams` if:
+/// - `sign_bit > 1`
+/// - x-coordinate doesn't correspond to a valid curve point
 pub fn syscall_secp256r1_decompress_impl(
     x_bytes_le: [u8; SECP256R1_G1_COMPRESSED_SIZE],
     sign_bit: u32,
@@ -95,6 +122,20 @@ pub fn syscall_secp256r1_decompress_impl(
         { SECP256R1_G1_RAW_AFFINE_SIZE },
     >(x_bytes_le, sign_bit)
 }
+
+/// BLS12-381 point decompression.
+///
+/// # Input format
+/// - `x_bytes_le`: x-coordinate as 48 bytes in little-endian
+/// - `sign_bit`: 0 or 1, indicates which y to recover
+///
+/// # Output
+/// Affine point `[y || x]` in little-endian (96 bytes total, y first).
+///
+/// # Validation
+/// Returns `ExitCode::MalformedBuiltinParams` if:
+/// - `sign_bit > 1`
+/// - x-coordinate doesn't correspond to a valid curve point
 pub fn syscall_bls12381_decompress_impl(
     x_bytes_le: [u8; BLS12381_G1_COMPRESSED_SIZE],
     sign_bit: u32,

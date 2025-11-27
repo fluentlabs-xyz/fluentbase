@@ -37,3 +37,6 @@ std = [
     "fluentbase-sdk/std",
     "rwasm/std",
 ]
+fluent-testnet = [
+	"fluentbase-sdk/fluent-testnet"
+]

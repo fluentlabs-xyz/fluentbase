@@ -314,7 +314,7 @@ impl Config {
 
     #[inline(always)]
     pub fn enable_mintable_plugin(&mut self) {
-        self.set_flag(Self::MINTABLE_PLUGIN_FLAG_IDX, true);
+        self.set_flag(Self::MINTABLE_PLUGIN_FLAG_IDX, true).unwrap();
     }
 
     #[inline(always)]
@@ -324,7 +324,7 @@ impl Config {
 
     #[inline(always)]
     pub fn enable_pausable_plugin(&mut self) {
-        self.set_flag(Self::PAUSABLE_PLUGIN_FLAG_IDX, true);
+        self.set_flag(Self::PAUSABLE_PLUGIN_FLAG_IDX, true).unwrap();
     }
 
     #[inline(always)]
@@ -339,12 +339,12 @@ impl Config {
 
     #[inline(always)]
     pub fn pause(&mut self) {
-        self.set_flag(Self::PAUSED_FLAG_IDX, true);
+        self.set_flag(Self::PAUSED_FLAG_IDX, true).unwrap();
     }
 
     #[inline(always)]
     pub fn unpause(&mut self) {
-        self.set_flag(Self::PAUSED_FLAG_IDX, false);
+        self.set_flag(Self::PAUSED_FLAG_IDX, false).unwrap();
     }
 }
 
