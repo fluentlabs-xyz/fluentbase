@@ -49,11 +49,12 @@ mod ddos;
 #[cfg(test)]
 mod bench;
 #[cfg(test)]
+mod exec_input;
+#[cfg(feature = "fluent-testnet")]
+#[cfg(test)]
 mod update_account;
 #[cfg(test)]
 mod wasm;
-#[cfg(test)]
-mod exec_input;
 
 pub trait EvmTestingContextWithGenesis {
     fn with_full_genesis(self) -> Self;
