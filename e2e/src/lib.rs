@@ -48,15 +48,13 @@ mod ddos;
 // mod erc20;
 #[cfg(test)]
 mod bench;
-#[cfg(test)]
-mod exec_input;
 #[cfg(feature = "fluent-testnet")]
 #[cfg(test)]
 mod ddos;
+#[cfg(test)]
+mod exec_input;
 // #[cfg(test)]
 // mod erc20;
-#[cfg(test)]
-mod bench;
 #[cfg(test)]
 mod update_account;
 #[cfg(test)]
