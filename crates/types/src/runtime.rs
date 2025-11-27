@@ -1,7 +1,6 @@
 use crate::ExitCode;
 use alloc::vec::Vec;
 use alloy_primitives::Bytes;
-use hashbrown::HashMap;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RuntimeNewFrameInputV1 {

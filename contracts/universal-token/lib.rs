@@ -311,13 +311,12 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
             let output = encode(&RuntimeUniversalTokenOutputV1 {
                 output: v.into(),
                 storage: {
-                    let mut s = global_service();
-                    let result = s
+                    let result = global_service()
                         .values_new()
                         .iter()
                         .map(|(k, v)| (k.to_le_bytes(), v.to_le_bytes()))
                         .collect();
-                    s.clear();
+                    global_service().clear();
                     result
                 },
                 events: global_service().events_take(),
