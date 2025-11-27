@@ -149,7 +149,7 @@ elliptic-curve = { version = "0.13.4", features = ["hazmat", "sec1", "ecdh"], de
 
 # revm
 revm = { package = "revm-rwasm", version = "27.0.3", default-features = false }
-revm-primitives = { package = "revm-rwasm-primitives", version = "20.0.0", default-features = false }
+revm-primitives = { package = "revm-rwasm-primitives", version = "20.0.1", default-features = false }
 revm-precompile = { package = "revm-rwasm-precompile", version = "24.0.1", default-features = false }
 revm-bytecode = { package = "revm-rwasm-bytecode", version = "6.0.1", default-features = false }
 revm-interpreter = { package = "revm-rwasm-interpreter", version = "23.0.2", default-features = false }
