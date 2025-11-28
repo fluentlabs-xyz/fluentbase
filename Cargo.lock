@@ -2158,7 +2158,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "fluentbase-codec-derive",
- "hashbrown 0.15.5",
+ "hashbrown 0.16.1",
  "hex",
  "hex-literal 1.1.0",
  "serde",
@@ -2239,7 +2239,6 @@ dependencies = [
  "solana-bn254",
  "solana-curve25519",
  "solana-poseidon",
- "solana-program-option",
  "solana-program-pack",
  "wat",
 ]
@@ -2255,6 +2254,7 @@ dependencies = [
  "revm-rwasm-context",
  "revm-rwasm-interpreter",
  "revm-rwasm-primitives",
+ "serde",
 ]
 
 [[package]]
@@ -2275,6 +2275,7 @@ version = "0.4.11-dev"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "cfg-if",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -2323,9 +2324,10 @@ dependencies = [
  "fluentbase-crypto",
  "fluentbase-sdk-derive",
  "fluentbase-types",
- "hashbrown 0.15.5",
+ "hashbrown 0.16.1",
  "hex-literal 1.1.0",
  "rwasm",
+ "spin 0.10.0",
 ]
 
 [[package]]
@@ -2384,7 +2386,7 @@ dependencies = [
  "fluentbase-svm-common",
  "fluentbase-testing",
  "fluentbase-universal-token",
- "hashbrown 0.15.5",
+ "hashbrown 0.16.1",
  "itertools 0.14.0",
  "lazy_static",
  "memoffset",
@@ -2455,7 +2457,7 @@ dependencies = [
  "fluentbase-revm",
  "fluentbase-runtime",
  "fluentbase-sdk",
- "hashbrown 0.15.5",
+ "hashbrown 0.16.1",
  "hex",
  "revm-rwasm",
  "rwasm",
@@ -2468,7 +2470,9 @@ dependencies = [
  "alloy-primitives",
  "bincode 2.0.1",
  "byteorder",
- "hashbrown 0.15.5",
+ "fluentbase-codec",
+ "fluentbase-codec-derive",
+ "hashbrown 0.16.1",
  "paste",
  "revm-rwasm-precompile",
  "revm-rwasm-primitives",
@@ -4624,9 +4628,9 @@ dependencies = [
 
 [[package]]
 name = "revm-rwasm-primitives"
-version = "20.0.0"
+version = "20.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41ab2c264030a0351d15a5ca907a5774351cf3d099d7e2b2d6c44a1cf9017cbe"
+checksum = "c5de54252dfd2bbedda78ca38daa99f13161dc9a2ddbc9d6c1fa56fbe439212f"
 dependencies = [
  "alloy-primitives",
  "num_enum",

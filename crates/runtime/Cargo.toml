@@ -16,9 +16,9 @@ rwasm = { workspace = true }
 
 # wasmtime
 #wasmtime = { version = "34.0.1", package = "wasmtime-rwasm", optional = true, features = ["disable-fpu", "cache"] }
-wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "feat/sync-strategies", optional = true, features = ["cache"] }
-anyhow = { version = "1.0.98", default-features = false, optional = true }
-smallvec = { version = "1.15.1", optional = true }
+wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "feat/sync-strategies", features = ["cache"] }
+anyhow = { version = "1.0.98", default-features = false }
+smallvec = { version = "1.15.1" }
 
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
