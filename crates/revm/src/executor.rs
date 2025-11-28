@@ -26,6 +26,8 @@ use fluentbase_sdk::{
 use fluentbase_universal_token::common::sig_from_slice;
 use fluentbase_universal_token::helpers::storage::compute_storage_keys;
 use fluentbase_universal_token::storage::SIG_LEN_BYTES;
+use revm::context::transaction::AccessListItemTr;
+use revm::interpreter::Host;
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
     context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
@@ -195,10 +197,22 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             } else {
                 None
             };
+            let mut balances = HashMap::new();
+            let al_iter = ctx.tx().access_list().as_slice();
+            // for item in al_iter {
+            //     let addr = item.address();
+            //     let balance = ctx.balance(*addr).unwrap_or_default().data;
+            //     balances.insert(*addr, balance);
+            // }
             let new_frame_input = RuntimeNewFrameInputV1 {
                 metadata: v.metadata,
                 input,
                 storage,
+                balances: if balances.is_empty() {
+                    None
+                } else {
+                    Some(balances)
+                },
             };
             let new_frame_input = encode(&new_frame_input).unwrap();
             context_input.extend(new_frame_input);
