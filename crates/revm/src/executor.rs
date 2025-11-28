@@ -6,8 +6,9 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
-use alloy_primitives::{Log, LogData};
+use alloy_primitives::{Address, FixedBytes, Log, LogData};
 use cfg_if::cfg_if;
+use core::iter;
 use core::mem::take;
 use fluentbase_runtime::{
     default_runtime_executor,
@@ -26,7 +27,7 @@ use fluentbase_sdk::{
 use fluentbase_universal_token::common::sig_from_slice;
 use fluentbase_universal_token::helpers::storage::compute_storage_keys;
 use fluentbase_universal_token::storage::SIG_LEN_BYTES;
-use revm::context::transaction::AccessListItemTr;
+use revm::context_interface::transaction::AccessListItemTr;
 use revm::interpreter::Host;
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -197,9 +198,9 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             } else {
                 None
             };
-            let mut balances = HashMap::new();
-            let al_iter = ctx.tx().access_list().as_slice();
-            // for item in al_iter {
+            let mut balances: HashMap<Address, U256> = HashMap::new();
+            let al_iter = ctx.tx().access_list();
+            // for item in al_iter.unwrap_or(iter::empty) {
             //     let addr = item.address();
             //     let balance = ctx.balance(*addr).unwrap_or_default().data;
             //     balances.insert(*addr, balance);
