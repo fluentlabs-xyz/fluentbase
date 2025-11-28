@@ -113,12 +113,12 @@ impl<C> bincode::Decode<C> for RuntimeInterruptionOutcomeV1 {
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub struct RuntimeOutputV1 {
+pub struct RuntimeExecutionOutcomeV1 {
     pub output: Bytes,
     pub storage: Option<HashMap<U256, U256>>,
     pub events: Vec<(Vec<B256>, Bytes)>,
 }
-impl bincode::Encode for RuntimeOutputV1 {
+impl bincode::Encode for RuntimeExecutionOutcomeV1 {
     fn encode<E: bincode::enc::Encoder>(
         &self,
         e: &mut E,
@@ -159,7 +159,7 @@ impl bincode::Encode for RuntimeOutputV1 {
     }
 }
 
-impl<C> bincode::Decode<C> for RuntimeOutputV1 {
+impl<C> bincode::Decode<C> for RuntimeExecutionOutcomeV1 {
     fn decode<D: Decoder<Context = C>>(d: &mut D) -> Result<Self, bincode::error::DecodeError> {
         let output: Vec<u8> = bincode::Decode::decode(d)?;
 
@@ -240,13 +240,13 @@ fn test_runtime_new_frame_input_v1_encode_decode() {
 fn test_runtime_output_v1_encode_decode() {
     let mut storage = HashMap::new();
     let mut events = Vec::<(Vec<B256>, Bytes)>::new();
-    let mut v = RuntimeOutputV1 {
+    let mut v = RuntimeExecutionOutcomeV1 {
         output: [1, 2, 3].into(),
         storage: Some(storage.clone()),
         events: events.clone(),
     };
     let v_encoded = encode(&v).unwrap();
-    let (v_decoded, read_count) = decode::<RuntimeOutputV1>(&v_encoded).unwrap();
+    let (v_decoded, read_count) = decode::<RuntimeExecutionOutcomeV1>(&v_encoded).unwrap();
     assert_eq!(v_encoded.len(), read_count);
     v.storage = None;
     assert_eq!(v_decoded, v);
@@ -262,13 +262,13 @@ fn test_runtime_output_v1_encode_decode() {
         [B256::repeat_byte(87), B256::repeat_byte(23)].into(),
         [4, 5].into(),
     ));
-    let v = RuntimeOutputV1 {
+    let v = RuntimeExecutionOutcomeV1 {
         output: [1, 2, 3].into(),
         storage: Some(storage.clone()),
         events,
     };
     let v_encoded = encode(&v).unwrap();
-    let (v_decoded, read_count) = decode::<RuntimeOutputV1>(&v_encoded).unwrap();
+    let (v_decoded, read_count) = decode::<RuntimeExecutionOutcomeV1>(&v_encoded).unwrap();
     assert_eq!(v_encoded.len(), read_count);
     assert_eq!(v_decoded, v);
 }

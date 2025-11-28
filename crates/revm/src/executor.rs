@@ -18,7 +18,7 @@ use fluentbase_sdk::bincode_helpers::{decode, encode};
 use fluentbase_sdk::{
     is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
     rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
-    ExitCode, HashMap, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, RuntimeOutputV1,
+    ExitCode, HashMap, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, RuntimeExecutionOutcomeV1,
     SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
     FUEL_DENOM_RATE, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN, U256,
 };
@@ -408,7 +408,7 @@ fn process_universal_token_output<CTX: ContextTr>(
     return_data: &mut Bytes,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
     let (runtime_output, _) =
-        decode::<RuntimeOutputV1>(return_data).expect("encoded runtime output v1");
+        decode::<RuntimeExecutionOutcomeV1>(return_data).expect("encoded runtime output v1");
     *return_data = runtime_output.output.into();
     for (k, v) in runtime_output.storage.unwrap_or_default() {
         ctx.journal_mut().sstore(target_address.into(), k, v)?;
