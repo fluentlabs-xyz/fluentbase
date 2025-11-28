@@ -60,6 +60,8 @@ pub fn instruction_result_from_exit_code(
         ExitCode::BadSignature => InstructionResult::BadSignature,
         ExitCode::OutOfFuel => InstructionResult::OutOfFuel,
         ExitCode::UnknownExternalFunction => InstructionResult::UnknownExternalFunction,
+        /* System Fatal Error Codes */
+        ExitCode::UnexpectedFatalExecutionFailure => InstructionResult::FatalExternalError,
     }
 }
 

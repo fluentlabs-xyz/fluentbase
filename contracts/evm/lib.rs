@@ -272,7 +272,7 @@ entrypoint!(main_entry, deploy_entry);
 mod tests {
     use crate::{deploy_entry, main_entry};
     use core::str::from_utf8;
-    use fluentbase_sdk::{hex, Address, ContractContextV1, ExitCode, PRECOMPILE_EVM_RUNTIME, U256};
+    use fluentbase_sdk::{hex, Address, ContractContextV1, PRECOMPILE_EVM_RUNTIME, U256};
     use fluentbase_testing::HostTestingContext;
 
     #[ignore]

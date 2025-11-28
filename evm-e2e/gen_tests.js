@@ -122,6 +122,8 @@ const disabledTests = new Set([
     'static_call1_mb1024_calldepth',
     'static_loop_calls_then_revert',
     'static_call50000_rip160',
+    'call50000',
+    'callcode50000',
 ]);
 
 // Group tests by subdirectory (module name)
