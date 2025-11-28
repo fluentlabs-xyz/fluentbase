@@ -53,9 +53,9 @@ impl<C> bincode::Decode<C> for RuntimeNewFrameInputV1 {
                 let mut v_restored: [u8; 32] = [0u8; 32];
                 d.reader().read(&mut k_restored)?;
                 d.reader().read(&mut v_restored)?;
-                let k: &U256 = unsafe { &*(&k_restored as *const [u8; 32] as *const U256) };
-                let v: &U256 = unsafe { &*(&v_restored as *const [u8; 32] as *const U256) };
-                storage.insert(*k, *v);
+                let k = unsafe { *(&k_restored as *const [u8; 32] as *const U256) };
+                let v = unsafe { *(&v_restored as *const [u8; 32] as *const U256) };
+                storage.insert(k, v);
             }
             Some(storage)
         } else {
@@ -172,9 +172,9 @@ impl<C> bincode::Decode<C> for RuntimeOutputV1 {
                 let mut v_restored: [u8; 32] = [0u8; 32];
                 d.reader().read(&mut k_restored)?;
                 d.reader().read(&mut v_restored)?;
-                let k: &U256 = unsafe { &*(&k_restored as *const [u8; 32] as *const U256) };
-                let v: &U256 = unsafe { &*(&v_restored as *const [u8; 32] as *const U256) };
-                storage.insert(*k, *v);
+                let k = unsafe { *(&k_restored as *const [u8; 32] as *const U256) };
+                let v = unsafe { *(&v_restored as *const [u8; 32] as *const U256) };
+                storage.insert(k, v);
             }
             Some(storage)
         } else {
