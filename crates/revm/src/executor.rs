@@ -6,9 +6,8 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
-use alloy_primitives::{Address, FixedBytes, Log, LogData};
+use alloy_primitives::{Address, Log, LogData};
 use cfg_if::cfg_if;
-use core::iter;
 use core::mem::take;
 use fluentbase_runtime::{
     default_runtime_executor,
@@ -199,12 +198,15 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                 None
             };
             let mut balances: HashMap<Address, U256> = HashMap::new();
-            let al_iter = ctx.tx().access_list();
-            // for item in al_iter.unwrap_or(iter::empty) {
-            //     let addr = item.address();
-            //     let balance = ctx.balance(*addr).unwrap_or_default().data;
-            //     balances.insert(*addr, balance);
-            // }
+            let addresses: Vec<Address> = if let Some(access_list) = ctx.tx().access_list() {
+                access_list.map(|v| v.address().clone()).collect()
+            } else {
+                Vec::new()
+            };
+            for addr in addresses {
+                let balance = ctx.balance(addr.into()).unwrap_or_default().data;
+                balances.insert(addr, balance);
+            }
             let new_frame_input = RuntimeNewFrameInputV1 {
                 metadata: v.metadata,
                 input,
