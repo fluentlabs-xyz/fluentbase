@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
+#![forbid(unused_results)]
 extern crate alloc;
 extern crate core;
 
@@ -7,12 +8,12 @@ use fluentbase_sdk::{
     system_entrypoint2, Address, Bytes, ContextReader, ExitCode,
     RuntimeUniversalTokenNewFrameInputV1, RuntimeUniversalTokenOutputV1, SharedAPI, U256,
 };
-use fluentbase_universal_token::consts::{ERR_INVALID_INPUT, ERR_MINTING_PAUSED};
+use fluentbase_universal_token::consts::ERR_MINTING_PAUSED;
 use fluentbase_universal_token::events::{
     emit_approval_event, emit_pause_event, emit_transfer_event, emit_unpause_event,
 };
 use fluentbase_universal_token::helpers::bincode::{decode, encode};
-use fluentbase_universal_token::services::global_service::global_service;
+use fluentbase_universal_token::services::global::global_service;
 use fluentbase_universal_token::storage::{allowance_service, balance_service, settings_service};
 use fluentbase_universal_token::types::input_commands::{
     AllowanceCommand, ApproveCommand, BalanceOfCommand, Encodable, MintCommand, TransferCommand,
@@ -40,6 +41,12 @@ macro_rules! custom_err_tuple {
 macro_rules! return_custom_err {
     ($e:ident) => {
         return Err(custom_err_tuple!($e));
+    };
+}
+
+macro_rules! unwrap_into_custom_err {
+    ($e:expr) => {
+        $e.map_err(|e| custom_err_tuple!(e))?;
     };
 }
 
@@ -209,10 +216,10 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
     for feature in initial_settings.features() {
         let result: Result<(), u32> = match feature {
             Feature::Meta { name, symbol } => {
-                if !settings_service().name_set(name) {
+                if settings_service().name_set(name).is_err() {
                     return_custom_err!(ERR_INVALID_META_NAME);
                 }
-                if !settings_service().symbol_set(symbol) {
+                if settings_service().symbol_set(symbol).is_err() {
                     return_custom_err!(ERR_INVALID_META_SYMBOL);
                 }
                 Ok(())
@@ -224,9 +231,7 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
             } => {
                 let amount = u256_from_fixed_bytes(amount);
                 let owner = owner.into();
-                if !settings_service().decimals_set(*decimals) {
-                    return_custom_err!(ERR_INVALID_INPUT);
-                };
+                unwrap_into_custom_err!(settings_service().decimals_set(*decimals));
                 settings_service().total_supply_set(&amount);
                 balance_service().add(&owner, &amount)
             }

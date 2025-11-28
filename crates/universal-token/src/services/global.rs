@@ -3,6 +3,7 @@ use core::mem::take;
 use fluentbase_sdk::U256;
 use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
+use spin::{Mutex, MutexGuard};
 
 pub const GLOBAL_SERVICE_VALUES_CAP: usize = 8;
 pub const GLOBAL_SERVICE_QUERY_CAP: usize = 8;
@@ -24,17 +25,17 @@ impl GlobalService {
         }
     }
 
-    pub fn set_value(&mut self, key: &U256, value: &U256) -> Option<U256> {
+    pub fn set_value(&mut self, key: &U256, value: &U256) {
         let entry = self.existing_values.entry(*key);
         match entry {
             Entry::Occupied(v) => {
                 if value == v.get() {
-                    return None;
+                    return;
                 }
             }
             _ => {}
         }
-        self.new_values.insert(key.clone(), value.clone())
+        let _ = self.new_values.insert(key.clone(), value.clone());
     }
 
     pub fn try_get_value(&self, slot: &U256) -> Option<&U256> {
@@ -88,4 +89,15 @@ impl GlobalService {
         self.new_values.clear();
         self.events.clear();
     }
+}
+
+pub static GLOBAL_SERVICE: spin::Once<Mutex<GlobalService>> = spin::Once::new();
+
+pub fn global_service<'a>() -> MutexGuard<'a, GlobalService> {
+    GLOBAL_SERVICE
+        .call_once(|| {
+            let service = GlobalService::new();
+            Mutex::new(service)
+        })
+        .lock()
 }

@@ -1,12 +1,12 @@
 use crate::common::{address_from_u256, fixed_bytes_from_u256};
 use crate::common::{b256_from_address_try, u256_from_address, u256_from_slice_try};
 use crate::consts::{
-    ERR_INDEX_OUT_OF_BOUNDS, ERR_INSUFFICIENT_ALLOWANCE, ERR_INSUFFICIENT_BALANCE,
-    ERR_MALFORMED_INPUT, ERR_OVERFLOW,
+    ERR_DECIMALS_OVERFLOW, ERR_INDEX_OUT_OF_BOUNDS, ERR_INSUFFICIENT_ALLOWANCE,
+    ERR_INSUFFICIENT_BALANCE, ERR_INVALID_LEN, ERR_OVERFLOW,
 };
 use crate::helpers::bincode::{decode, encode};
 use crate::impl_key_deriver;
-use crate::services::global_service::global_service;
+use crate::services::global::global_service;
 use crate::types::derived_key::{IKeyDeriver, SlotType};
 use alloc::vec::Vec;
 use bincode::{Decode, Encode};
@@ -79,12 +79,7 @@ impl InitialSettings {
         &self.features
     }
 }
-
-impl_key_deriver!(1);
-
-pub struct Settings {
-    kd: KeyDeriver1,
-}
+pub struct Settings {}
 
 impl Settings {
     pub const SHORT_STR_LEN_MIN: usize = 1;
@@ -94,63 +89,63 @@ impl Settings {
     const SHORT_STR_LEN_MAX: usize = 31;
     const DECIMALS_MAX: u8 = 36;
     pub fn new() -> Self {
-        Self { kd: KeyDeriver1 {} }
+        Self {}
     }
 
-    pub const fn total_supply_slot(&mut self) -> U256 {
+    pub const fn total_supply_slot() -> U256 {
         U256::from_le_bytes(derive_keccak256!(total_supply_slot))
     }
 
-    pub const fn minter_slot(&mut self) -> U256 {
+    pub const fn minter_slot() -> U256 {
         U256::from_le_bytes(derive_keccak256!(total_supply_slotminter_slot))
     }
 
-    pub const fn pauser_slot(&mut self) -> U256 {
+    pub const fn pauser_slot() -> U256 {
         U256::from_le_bytes(derive_keccak256!(pauser_slot))
     }
 
-    pub const fn symbol_slot(&mut self) -> U256 {
+    pub const fn symbol_slot() -> U256 {
         U256::from_le_bytes(derive_keccak256!(symbol_slot))
     }
 
-    pub const fn name_slot(&mut self) -> U256 {
+    pub const fn name_slot() -> U256 {
         U256::from_le_bytes(derive_keccak256!(name_slot))
     }
 
-    pub const fn decimals_slot(&mut self) -> U256 {
+    pub const fn decimals_slot() -> U256 {
         U256::from_le_bytes(derive_keccak256!(decimals_slot))
     }
 
-    pub const fn flags_slot(&mut self) -> U256 {
+    pub const fn flags_slot() -> U256 {
         U256::from_le_bytes(derive_keccak256!(flags_slot))
     }
 
     pub fn total_supply_set(&mut self, value: &U256) {
-        let s = self.total_supply_slot();
+        let s = Self::total_supply_slot();
         global_service().set_value(&s, value);
     }
     pub fn total_supply_get(&mut self) -> Option<U256> {
-        let s = self.total_supply_slot();
+        let s = Self::total_supply_slot();
         global_service().try_get_value(&s).cloned()
     }
     pub fn minter_set(&mut self, value: &Address) {
-        let s = self.minter_slot();
+        let s = Self::minter_slot();
         let v = u256_from_address(&value);
         global_service().set_value(&s, &v);
     }
     pub fn minter_get(&mut self) -> Option<Address> {
-        let s = self.minter_slot();
+        let s = Self::minter_slot();
         global_service()
             .try_get_value(&s)
             .map(|v| address_from_u256(v))
     }
     pub fn pauser_set(&mut self, value: &Address) {
-        let s = self.pauser_slot();
+        let s = Self::pauser_slot();
         let v = u256_from_address(value);
         global_service().set_value(&s, &v);
     }
     pub fn pauser_get(&mut self) -> Option<Address> {
-        let s = self.pauser_slot();
+        let s = Self::pauser_slot();
         global_service()
             .try_get_value(&s)
             .map(|v| address_from_u256(v))
@@ -159,7 +154,7 @@ impl Settings {
     fn short_str_to_u256_repr(&self, short_str: &[u8]) -> Result<U256, u32> {
         let len = short_str.len();
         if len < Self::SHORT_STR_LEN_MIN || len > Self::SHORT_STR_LEN_MAX {
-            return Err(ERR_MALFORMED_INPUT);
+            return Err(ERR_INVALID_LEN);
         }
         let mut byte_repr = [0u8; U256_LEN_BYTES];
         byte_repr[0] = len as u8;
@@ -174,18 +169,13 @@ impl Settings {
         if len == 0 {
             return Default::default();
         }
-        repr[Self::SHORT_STR_LEN_LEN_BYTES..Self::SHORT_STR_LEN_LEN_BYTES + len]
-            .try_into()
-            .unwrap()
+        repr[Self::SHORT_STR_LEN_LEN_BYTES..Self::SHORT_STR_LEN_LEN_BYTES + len].to_vec()
     }
     #[inline(always)]
-    fn short_str_set(&self, slot: &U256, short_str: &[u8]) -> bool {
-        if let Ok(u256_repr) = self.short_str_to_u256_repr(&short_str) {
-            global_service().set_value(&slot, &u256_repr);
-        } else {
-            return false;
-        };
-        true
+    fn short_str_set(&self, slot: &U256, short_str: &[u8]) -> Result<(), u32> {
+        let u256_repr = self.short_str_to_u256_repr(&short_str)?;
+        global_service().set_value(&slot, &u256_repr);
+        Ok(())
     }
     #[inline(always)]
     fn short_str<'a>(&self, slot: &U256) -> Option<Vec<u8>> {
@@ -193,40 +183,40 @@ impl Settings {
         let repr = s.try_get_value(slot)?;
         self.short_str_from_u256_repr(repr).into()
     }
-    pub fn symbol_set(&mut self, symbol: &[u8]) -> bool {
-        let s = self.symbol_slot();
+    pub fn symbol_set(&mut self, symbol: &[u8]) -> Result<(), u32> {
+        let s = Self::symbol_slot();
         self.short_str_set(&s, symbol)
     }
     pub fn symbol<'a>(&mut self) -> Option<Vec<u8>> {
-        let v = self.symbol_slot();
+        let v = Self::symbol_slot();
         self.short_str(&v)
     }
-    pub fn name_set(&mut self, symbol: &[u8]) -> bool {
-        let s = self.name_slot();
+    pub fn name_set(&mut self, symbol: &[u8]) -> Result<(), u32> {
+        let s = Self::name_slot();
         self.short_str_set(&s, symbol)
     }
     pub fn name<'a>(&mut self) -> Option<Vec<u8>> {
-        let s = self.name_slot();
+        let s = Self::name_slot();
         self.short_str(&s)
     }
-    pub fn decimals_set(&mut self, decimals: u8) -> bool {
+    pub fn decimals_set(&mut self, decimals: u8) -> Result<(), u32> {
         if decimals > Self::DECIMALS_MAX {
-            return false;
+            return Err(ERR_DECIMALS_OVERFLOW);
         }
-        let s = self.decimals_slot();
+        let s = Self::decimals_slot();
         global_service().set_value(&s, &U256::from(decimals));
-        true
+        Ok(())
     }
     pub fn decimals_get(&mut self) -> Option<U256> {
-        let s = self.decimals_slot();
+        let s = Self::decimals_slot();
         global_service().try_get_value(&s).cloned()
     }
     pub fn flags_get(&mut self) -> Option<U256> {
-        let s = self.flags_slot();
+        let s = Self::flags_slot();
         global_service().try_get_value(&s).cloned()
     }
     pub fn flags_set(&mut self, flags: U256) {
-        let s = self.flags_slot();
+        let s = Self::flags_slot();
         global_service().set_value(&s, &flags);
     }
 }
@@ -236,6 +226,9 @@ pub struct Config {
 }
 
 impl Config {
+    const MINTABLE_PLUGIN_FLAG_IDX: usize = 0;
+    const PAUSABLE_PLUGIN_FLAG_IDX: usize = 1;
+    const PAUSED_FLAG_IDX: usize = 2;
     pub fn new() -> Self {
         Self { flags: None }
     }
@@ -263,12 +256,10 @@ impl Config {
         Ok(())
     }
 
-    pub fn save_flags(&self) -> bool {
+    pub fn save_flags(&self) {
         if let Some(flags) = self.flags {
             settings_service().flags_set(flags);
-            return true;
         }
-        false
     }
 
     fn flag_value(&mut self, idx: usize) -> Result<bool, u32> {
@@ -278,10 +269,6 @@ impl Config {
         let flags = self.get_or_init_flags().expect("flags value exists");
         Ok(flags.bit(idx))
     }
-
-    const MINTABLE_PLUGIN_FLAG_IDX: usize = 0;
-    const PAUSABLE_PLUGIN_FLAG_IDX: usize = 1;
-    const PAUSED_FLAG_IDX: usize = 2;
 
     #[inline(always)]
     pub fn enable_mintable_plugin(&mut self) {
@@ -319,14 +306,14 @@ impl Config {
     }
 }
 
-impl_key_deriver!(2);
+impl_key_deriver!(1);
 pub struct Balance {
-    kd: KeyDeriver2,
+    kd: KeyDeriver1,
 }
 
 impl Balance {
     pub fn new() -> Self {
-        Self { kd: KeyDeriver2 {} }
+        Self { kd: KeyDeriver1 {} }
     }
 
     #[inline(always)]
@@ -375,15 +362,15 @@ impl Balance {
     }
 }
 
-impl_key_deriver!(3);
+impl_key_deriver!(2);
 
 pub struct Allowance {
-    kd: KeyDeriver3,
+    kd: KeyDeriver2,
 }
 
 impl Allowance {
     pub fn new() -> Self {
-        Self { kd: KeyDeriver3 {} }
+        Self { kd: KeyDeriver2 {} }
     }
 
     pub fn key(&self, a1: &Address, a2: &Address) -> U256 {
@@ -421,33 +408,33 @@ impl Allowance {
     }
 }
 
+pub fn settings_service() -> Settings {
+    Settings::new()
+}
+pub fn balance_service() -> Balance {
+    Balance::new()
+}
+pub fn allowance_service() -> Allowance {
+    Allowance::new()
+}
 // pub static SETTINGS_SERVICE: spin::Once<spin::Mutex<Settings>> = spin::Once::new();
 // pub fn settings_service<'a>() -> spin::MutexGuard<'a, Settings> {
 //     SETTINGS_SERVICE
 //         .call_once(|| spin::Mutex::new(Settings::new()))
 //         .lock()
 // }
-pub fn settings_service() -> Settings {
-    Settings::new()
-}
 // pub static BALANCE_SERVICE: spin::Once<spin::Mutex<Balance>> = spin::Once::new();
 // pub fn balance_service<'a>() -> spin::MutexGuard<'a, Balance> {
 //     BALANCE_SERVICE
 //         .call_once(|| spin::Mutex::new(Balance::new()))
 //         .lock()
 // }
-pub fn balance_service() -> Balance {
-    Balance::new()
-}
 // pub static ALLOWANCE_SERVICE: spin::Once<spin::Mutex<Allowance>> = spin::Once::new();
 // pub fn allowance_service<'a>() -> spin::MutexGuard<'a, Allowance> {
 //     ALLOWANCE_SERVICE
 //         .call_once(|| spin::Mutex::new(Allowance::new()))
 //         .lock()
 // }
-pub fn allowance_service() -> Allowance {
-    Allowance::new()
-}
 
 #[cfg(test)]
 mod tests {

@@ -2,6 +2,8 @@ use fluentbase_sdk::derive::{derive_evm_error, derive_keccak256_id};
 
 pub const ERR_UNKNOWN: u32 = derive_evm_error!("Unknown()");
 pub const ERR_MALFORMED_INPUT: u32 = derive_evm_error!("MalformedInput()");
+pub const ERR_INVALID_LEN: u32 = derive_evm_error!("InvalidLen()");
+pub const ERR_DECIMALS_OVERFLOW: u32 = derive_evm_error!("DecimalsOverflow()");
 pub const ERR_INVALID_INPUT: u32 = derive_evm_error!("InvalidInput()");
 pub const ERR_INSUFFICIENT_BALANCE: u32 = derive_evm_error!("InsufficientBalance()");
 pub const ERR_INSUFFICIENT_ALLOWANCE: u32 = derive_evm_error!("InsufficientAllowance()");

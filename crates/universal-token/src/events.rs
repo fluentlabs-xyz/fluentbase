@@ -1,5 +1,5 @@
 use crate::common::fixed_bytes_from_u256;
-use crate::services::global_service::global_service;
+use crate::services::global::global_service;
 use fluentbase_sdk::{derive::derive_keccak256, Address, B256, U256};
 
 pub const EVENT_TRANSFER: B256 = B256::new(derive_keccak256!("Transfer(address,address,uint256)"));
