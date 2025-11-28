@@ -1,9 +1,12 @@
 use crate::EvmTestingContextWithGenesis;
-use fluentbase_sdk::syscall::SYSCALL_ID_CALL;
-use fluentbase_sdk::{calc_create_address, Address, Bytes, STATE_MAIN, U256};
+use fluentbase_sdk::{
+    calc_create_address, syscall::SYSCALL_ID_CALL, Address, Bytes, STATE_MAIN, U256,
+};
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
-use std::time::{Duration, Instant};
-use std::{fmt::Write, hash::Hash};
+use std::{
+    fmt::Write,
+    time::{Duration, Instant},
+};
 
 fn encode_bytes_for_wat(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 4);
@@ -12,7 +15,6 @@ fn encode_bytes_for_wat(bytes: &[u8]) -> String {
     }
     out
 }
-
 
 fn callee_contract_wat() -> String {
     r#"
@@ -41,18 +43,17 @@ fn callee_contract_wat() -> String {
 }
 
 fn caller_contract_wat(callee: Address, payload_size: usize) -> String {
-    use fluentbase_sdk::{syscall::SYSCALL_ID_CALL, STATE_MAIN, U256};
     // Build data section
     let mut data_section = Vec::new();
-    data_section.extend_from_slice(&SYSCALL_ID_CALL.0);        // [0..32]
-    data_section.extend_from_slice(callee.as_slice());         // [32..52]
+    data_section.extend_from_slice(&SYSCALL_ID_CALL.0); // [0..32]
+    data_section.extend_from_slice(callee.as_slice()); // [32..52]
     data_section.extend_from_slice(&U256::ZERO.as_le_slice()); // [52..84] value=0
-    data_section.extend(vec![0xAB; payload_size]);              // [84..84+N] payload
+    data_section.extend(vec![0xAB; payload_size]); // [84..84+N] payload
 
     let data_section_wat = encode_bytes_for_wat(&data_section);
 
     // EXEC parameters
-    let input_ptr = 32;              // Start from address
+    let input_ptr = 32; // Start from address
     let input_len = 52 + payload_size; // address(20) + value(32) + payload
 
     // Calculate memory pages
@@ -166,7 +167,10 @@ fn measure_call_gas(payload_size: usize) -> (u64, Duration) {
 
         let input_size = u32::from_le_bytes(output[0..4].try_into().unwrap());
         let expected_input = payload_size as u32 + 1024; // payload + SharedContext length
-        assert_eq!(input_size, expected_input, "direct call to callee returns unexpected result: {call:?}");
+        assert_eq!(
+            input_size, expected_input,
+            "direct call to callee returns unexpected result: {call:?}"
+        );
     }
 
     // Execute and measure
@@ -186,7 +190,6 @@ fn measure_call_gas(payload_size: usize) -> (u64, Duration) {
     let expected_input = payload_size + 1024; // payload + SharedContext
     assert_eq!(input_size, expected_input as u32, "input size mismatch");
 
-
     let gas_used = call.gas_used();
 
     (gas_used, elapsed)
@@ -197,17 +200,16 @@ fn calc_evm_memory_expansion_cost(payload_size: usize) -> u64 {
     (3 * words + words * words / 512) as u64
 }
 
-
 #[test]
 fn test_exec_quadratic_charging() {
     let payload_sizes = [
-        0,             // 0 bytes - baseline
-        1usize << 10,  // 1 KiB
-        1usize << 11,  // 2 KiB
-        1usize << 12,  // 4 KiB
-        1usize << 13,  // 8 KiB
-        1usize << 16,  // 64 KiB
-        1usize << 20,  // 1 MiB
+        0,            // 0 bytes - baseline
+        1usize << 10, // 1 KiB
+        1usize << 11, // 2 KiB
+        1usize << 12, // 4 KiB
+        1usize << 13, // 8 KiB
+        1usize << 16, // 64 KiB
+        1usize << 20, // 1 MiB
     ];
 
     let mut observations = Vec::with_capacity(payload_sizes.len());
@@ -230,7 +232,10 @@ fn test_exec_quadratic_charging() {
         assert!(
             diff <= (expected as f64 * TOLERANCE) as u64,
             "payload={}: gas={}, expected={}, diff={}",
-            payload, input_gas, expected, diff
+            payload,
+            input_gas,
+            expected,
+            diff
         );
     }
 }

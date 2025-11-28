@@ -5,7 +5,6 @@ use fluentbase_svm::{
     helpers::{storage_read_account_data, storage_write_account_data},
     pubkey::Pubkey,
     solana_program::instruction::AccountMeta,
-    // token_2022::{helpers::account_info_from_meta_and_account, state::Account},
 };
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext};
 use revm::context::result::ExecutionResult;
@@ -44,7 +43,7 @@ pub fn call_with_sig(
     }
 }
 
-#[cfg(feature = "enable-svm")]
+#[cfg(feature = "svm")]
 pub fn svm_deploy(
     ctx: &mut EvmTestingContext,
     deployer_address: &Address,
@@ -78,7 +77,7 @@ pub fn svm_deploy(
     (pk_deployer1, pk_contract, pk_new, contract_address)
 }
 
-#[cfg(feature = "enable-svm")]
+#[cfg(feature = "svm")]
 pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
     let mut file = File::open(path).expect("file open failed");
     let mut elf = Vec::new();

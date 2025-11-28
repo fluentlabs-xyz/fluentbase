@@ -1,4 +1,5 @@
 #![allow(soft_unstable)]
+#![allow(unused)]
 
 extern crate alloc;
 extern crate core;
@@ -36,10 +37,10 @@ mod multicall;
 mod router;
 #[cfg(test)]
 mod stateless;
-#[cfg(all(test, feature = "enable-svm"))]
+#[cfg(all(test, feature = "svm"))]
 pub mod svm;
-// #[cfg(test)]
-// mod universal_token;
+#[cfg(test)]
+mod universal_token;
 // Testnet-only: Runtime upgrade functionality. See frame_init() for details.
 #[cfg(test)]
 mod bench;
@@ -48,9 +49,7 @@ mod bench;
 mod ddos;
 #[cfg(test)]
 mod exec_input;
-// #[cfg(feature = "fluent-testnet")]
-#[cfg(test)]
-mod universal_token;
+#[cfg(feature = "fluent-testnet")]
 #[cfg(test)]
 mod update_account;
 #[cfg(test)]

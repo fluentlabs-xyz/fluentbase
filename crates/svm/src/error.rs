@@ -174,7 +174,6 @@ pub enum SvmError {
     SyscallError(SyscallError),
     RuntimeError(RuntimeError),
     Secp256k1RecoverError(Secp256k1RecoverError),
-    ProgramError(ProgramError),
 }
 
 impl Display for SvmError {
@@ -209,9 +208,6 @@ impl Display for SvmError {
             }
             SvmError::Secp256k1RecoverError(e) => {
                 write!(f, "SvmError::Secp256k1RecoverError:{}", e)
-            }
-            SvmError::ProgramError(e) => {
-                write!(f, "SvmError::ProgramError:{}", e)
             }
         }
     }
@@ -284,7 +280,6 @@ impl From<SvmError> for Error {
             SvmError::SyscallError(e) => Box::new(e),
             SvmError::RuntimeError(e) => Box::new(e),
             SvmError::Secp256k1RecoverError(e) => Box::new(e),
-            SvmError::ProgramError(e) => Box::new(e),
         }
     }
 }

@@ -36,6 +36,7 @@ use revm::{
     },
     Database, Inspector,
 };
+use std::vec::Vec;
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
@@ -125,6 +126,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let interpreter = &mut frame.interpreter;
     let is_create: bool = matches!(frame.input, FrameInput::Create(..));
+    let is_static: bool = interpreter.runtime_flag.is_static();
     let bytecode_address = interpreter
         .input
         .bytecode_address()

@@ -4,10 +4,10 @@ use fluentbase_types::{
 };
 use rwasm::{ImportLinker, RwasmModule, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE};
 use smallvec::SmallVec;
-use std::rc::Rc;
 use std::{
     cell::RefCell,
     mem::take,
+    rc::Rc,
     sync::{Arc, OnceLock, RwLock},
 };
 use wasmtime::{

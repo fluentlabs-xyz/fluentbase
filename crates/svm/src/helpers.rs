@@ -54,7 +54,10 @@ use crate::{
     native_loader::create_loadable_account_with_fields2,
     solana_program::{loader_v4, sysvar::Sysvar},
 };
-use fluentbase_sdk::{calc_create_metadata_address, debug_log, keccak256, Address, Bytes, MetadataAPI, MetadataStorageAPI, SharedAPI, StorageAPI, B256, PRECOMPILE_SVM_RUNTIME, U256};
+use fluentbase_sdk::{
+    calc_create_metadata_address, keccak256, Address, Bytes, MetadataAPI, MetadataStorageAPI,
+    SharedAPI, StorageAPI, B256, PRECOMPILE_SVM_RUNTIME, U256,
+};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
@@ -225,13 +228,11 @@ macro_rules! with_mock_invoke_context {
 }
 
 pub fn derive_metadata_addr(pk: &Pubkey, alt_precompile_address: Option<Address>) -> Address {
-    debug_log!();
     let pk_bytes = pk.to_bytes();
     let derived_addr = calc_create_metadata_address(
         &alt_precompile_address.unwrap_or(PRECOMPILE_SVM_RUNTIME),
         &U256::from_be_bytes(pk_bytes),
     );
-    debug_log!();
     derived_addr
 }
 
@@ -241,14 +242,11 @@ pub fn storage_read_metadata_params<API: MetadataAPI>(
     alt_precompile_address: Option<Address>,
 ) -> Result<(Address, u32), SvmError> {
     // let pubkey_hash = keccak256(pubkey.as_ref());
-    debug_log!();
     let derived_metadata_address = derive_metadata_addr(pk, alt_precompile_address);
-    debug_log!();
     let metadata_size_result = api.metadata_size(&derived_metadata_address);
     // if !metadata_size_result.status.is_ok() {
     //     return Err(metadata_size_result.status.into());
     // }
-    debug_log!();
     let metadata_len = metadata_size_result.data.0;
     Ok((derived_metadata_address, metadata_len))
 }
@@ -379,11 +377,9 @@ pub fn storage_write_account_data<API: MetadataAPI + MetadataStorageAPI>(
     account_data: &AccountSharedData,
     alt_precompile_address: Option<Address>,
 ) -> Result<(), SvmError> {
-    debug_log!();
     let mut buffer = vec![];
     account_data_encode_into(account_data, &mut buffer);
     storage_write_metadata(api, pk, buffer.into(), alt_precompile_address)?;
-    debug_log!();
     GlobalLamportsBalance::set(api, &pk, account_data.lamports());
     Ok(())
 }

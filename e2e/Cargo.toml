@@ -53,11 +53,11 @@ default = [
     #    "fluent-testnet",
     #    "wasmtime",
     #    "debug-print",
-    #    "enable-svm",
+    #    "svm",
     #    "enable-error-text-checks", # when 'fast-panic' is off
 ]
-enable-svm = [
-    "fluentbase-genesis/enable-svm",
+svm = [
+    "fluentbase-genesis/svm",
     "fluentbase-svm/use-extended-debug-log"
 ]
 enable-error-text-checks = []

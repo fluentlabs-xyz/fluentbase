@@ -11,7 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-serde = { workspace = true, default-features = false, features = ["derive"] }
+serde = { workspace = true, default-features = false }
 byteorder = { workspace = true, default-features = false }
 rwasm = { workspace = true }
 alloy-primitives = { workspace = true }
@@ -38,3 +38,6 @@ std = [
 debug-print = []
 fast-panic = []
 fluent-testnet = []
+svm = [
+    "revm-primitives/svm",
+]
