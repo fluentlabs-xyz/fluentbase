@@ -6,7 +6,7 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
-use alloy_primitives::{Log, LogData, B256};
+use alloy_primitives::{Log, LogData};
 use cfg_if::cfg_if;
 use core::mem::take;
 use fluentbase_runtime::{
@@ -14,13 +14,13 @@ use fluentbase_runtime::{
     syscall_handler::{syscall_exec_impl, syscall_resume_impl},
     RuntimeContext, RuntimeExecutor,
 };
+use fluentbase_sdk::bincode_helpers::{decode, encode};
 use fluentbase_sdk::{
-    bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
+    is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
     rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
-    ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
-    RuntimeUniversalTokenNewFrameInputV1, RuntimeUniversalTokenOutputV1, SharedContextInput,
-    SharedContextInputV1, SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN, U256,
+    ExitCode, HashMap, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, RuntimeOutputV1,
+    SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
+    FUEL_DENOM_RATE, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN, U256,
 };
 use fluentbase_universal_token::common::sig_from_slice;
 use fluentbase_universal_token::helpers::storage::compute_storage_keys;
@@ -36,7 +36,6 @@ use revm::{
     },
     Database, Inspector,
 };
-use std::vec::Vec;
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
@@ -126,7 +125,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let interpreter = &mut frame.interpreter;
     let is_create: bool = matches!(frame.input, FrameInput::Create(..));
-    let is_static: bool = interpreter.runtime_flag.is_static();
     let bytecode_address = interpreter
         .input
         .bytecode_address()
@@ -176,9 +174,9 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     match meta_bytecode {
         Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
-            if v.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
+            let storage = if v.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
                 let target_address = interpreter.input.target_address();
-                let mut storage = Vec::<([u8; 32], [u8; 32])>::new();
+                let mut storage = HashMap::<U256, U256>::new();
                 if input.len() >= SIG_LEN_BYTES {
                     let sig = sig_from_slice(&input).unwrap();
                     let keys = compute_storage_keys(
@@ -186,28 +184,23 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                         &input[SIG_LEN_BYTES..],
                         &interpreter.input.caller_address,
                     );
-                    for k in &keys {
-                        let v = ctx.journal_mut().sload(target_address, k.clone())?.data;
-                        storage.push((k.to_le_bytes(), v.to_le_bytes()));
+                    storage.reserve(keys.len());
+                    for k in keys {
+                        let v = ctx.journal_mut().sload(target_address, k)?.data;
+                        storage.insert(k, v);
                     }
                 };
-                let new_frame_input = RuntimeUniversalTokenNewFrameInputV1 {
-                    metadata: v.metadata.into(),
-                    input: input.into(),
-                    storage,
-                };
-                let new_frame_input =
-                    bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
-                context_input.extend(new_frame_input);
+                Some(storage)
             } else {
-                let new_frame_input = RuntimeNewFrameInputV1 {
-                    metadata: v.metadata,
-                    input,
-                };
-                let new_frame_input =
-                    bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
-                context_input.extend(new_frame_input);
-            }
+                None
+            };
+            let new_frame_input = RuntimeNewFrameInputV1 {
+                metadata: v.metadata,
+                input,
+                storage,
+            };
+            let new_frame_input = encode(&new_frame_input).unwrap();
+            context_input.extend(new_frame_input);
         }
         _ => context_input.extend_from_slice(&input),
     }
@@ -337,9 +330,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
                 fuel_refunded,
                 exit_code,
             };
-            bincode::encode_to_vec(&outcome, bincode::config::legacy())
-                .unwrap()
-                .into()
+            encode(&outcome).unwrap().into()
         }
         _ => result.output,
     };
@@ -416,26 +407,16 @@ fn process_universal_token_output<CTX: ContextTr>(
     ctx: &mut CTX,
     return_data: &mut Bytes,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
-    let (runtime_output, _) = bincode::decode_from_slice::<RuntimeUniversalTokenOutputV1, _>(
-        return_data,
-        bincode::config::legacy(),
-    )
-    .expect("universal token output");
+    let (runtime_output, _) =
+        decode::<RuntimeOutputV1>(return_data).expect("encoded runtime output v1");
     *return_data = runtime_output.output.into();
-    for (k, v) in &runtime_output.storage {
-        ctx.journal_mut().sstore(
-            target_address.into(),
-            U256::from_le_slice(k),
-            U256::from_le_slice(v),
-        )?;
+    for (k, v) in runtime_output.storage.unwrap_or_default() {
+        ctx.journal_mut().sstore(target_address.into(), k, v)?;
     }
     for (topics, data) in runtime_output.events {
         ctx.journal_mut().log(Log {
             address: target_address.into(),
-            data: LogData::new_unchecked(
-                topics.iter().map(|v| B256::from_slice(v)).collect(),
-                data.into(),
-            ),
+            data: LogData::new_unchecked(topics, data),
         });
     }
     Ok(())

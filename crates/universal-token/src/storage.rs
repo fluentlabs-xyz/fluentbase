@@ -4,12 +4,12 @@ use crate::consts::{
     ERR_DECIMALS_OVERFLOW, ERR_INDEX_OUT_OF_BOUNDS, ERR_INSUFFICIENT_ALLOWANCE,
     ERR_INSUFFICIENT_BALANCE, ERR_INVALID_LEN, ERR_OVERFLOW,
 };
-use crate::helpers::bincode::{decode, encode};
 use crate::impl_key_deriver;
 use crate::services::global::global_service;
 use crate::types::derived_key::{IKeyDeriver, SlotType};
 use alloc::vec::Vec;
 use bincode::{Decode, Encode};
+use fluentbase_sdk::bincode_helpers::{decode, encode};
 use fluentbase_sdk::derive::derive_keccak256;
 use fluentbase_sdk::{Address, U256, UNIVERSAL_TOKEN_MAGIC_BYTES};
 
@@ -438,11 +438,11 @@ pub fn allowance_service() -> Allowance {
 
 #[cfg(test)]
 mod tests {
-    use crate::helpers::bincode::{decode, encode};
     use crate::{
         common::fixed_bytes_from_u256,
         storage::{Feature, InitialSettings, ADDRESS_LEN_BYTES},
     };
+    use fluentbase_sdk::bincode_helpers::{decode, encode};
     use fluentbase_sdk::{address, Address, U256};
 
     #[test]

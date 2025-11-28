@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use core::mem::take;
-use fluentbase_sdk::U256;
+use fluentbase_sdk::{Bytes, B256, U256};
 use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
 use spin::{Mutex, MutexGuard};
@@ -13,7 +13,7 @@ pub const GLOBAL_SERVICE_EVENT_CAP: usize = 8;
 pub struct GlobalService {
     existing_values: HashMap<U256, U256>,
     new_values: HashMap<U256, U256>,
-    events: Vec<(Vec<[u8; 32]>, Vec<u8>)>,
+    events: Vec<(Vec<B256>, Bytes)>,
 }
 
 impl GlobalService {
@@ -48,8 +48,12 @@ impl GlobalService {
         None
     }
 
-    pub fn set_existing(&mut self, key: &U256, value: &U256) -> Option<U256> {
+    pub fn set_existing_value(&mut self, key: &U256, value: &U256) -> Option<U256> {
         self.existing_values.insert(key.clone(), value.clone())
+    }
+
+    pub fn set_existing_values(&mut self, map: HashMap<U256, U256>) {
+        self.existing_values = map;
     }
 
     pub fn existing_values(&self) -> &HashMap<U256, U256> {
@@ -64,19 +68,23 @@ impl GlobalService {
         &self.new_values
     }
 
+    pub fn take_new_values(&mut self) -> HashMap<U256, U256> {
+        take(&mut self.new_values)
+    }
+
     pub fn clear_new_values(&mut self) {
         self.new_values.clear();
     }
 
-    pub fn events(&self) -> &Vec<(Vec<[u8; 32]>, Vec<u8>)> {
+    pub fn events(&self) -> &Vec<(Vec<B256>, Bytes)> {
         &self.events
     }
 
-    pub fn take_events(&mut self) -> Vec<(Vec<[u8; 32]>, Vec<u8>)> {
+    pub fn take_events(&mut self) -> Vec<(Vec<B256>, Bytes)> {
         take(&mut self.events)
     }
 
-    pub fn add_event(&mut self, topics: Vec<[u8; 32]>, data: Vec<u8>) {
+    pub fn add_event(&mut self, topics: Vec<B256>, data: Bytes) {
         self.events.push((topics, data));
     }
 

@@ -80,8 +80,8 @@ pub fn compute_storage_keys(sig: u32, input: &[u8], caller: &Address) -> Vec<U25
             keys.push(Settings::pauser_slot());
         }
         _ => {
-            keys.reserve_exact(3);
             let (initial_settings, _) = InitialSettings::try_decode_from_slice(&input).unwrap();
+            keys.reserve_exact(initial_settings.features().len() * 3);
             for f in initial_settings.features() {
                 match f {
                     Feature::Meta { .. } => {

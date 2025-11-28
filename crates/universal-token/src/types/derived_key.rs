@@ -2,7 +2,7 @@ use alloc::vec;
 use fluentbase_sdk::crypto::crypto_keccak256;
 use fluentbase_sdk::{B256, U256};
 
-pub type SlotType = u32;
+pub type SlotType = u8;
 
 const SLOT_BYTES: usize = size_of::<SlotType>();
 

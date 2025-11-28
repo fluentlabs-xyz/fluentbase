@@ -3,16 +3,15 @@
 extern crate alloc;
 extern crate core;
 
-use fluentbase_sdk::bincode::Encode;
+use fluentbase_sdk::bincode_helpers::{decode, encode};
 use fluentbase_sdk::{
-    system_entrypoint2, Address, Bytes, ContextReader, ExitCode,
-    RuntimeUniversalTokenNewFrameInputV1, RuntimeUniversalTokenOutputV1, SharedAPI, U256,
+    system_entrypoint2, Address, Bytes, ContextReader, ExitCode, RuntimeNewFrameInputV1,
+    RuntimeOutputV1, SharedAPI, U256,
 };
 use fluentbase_universal_token::consts::ERR_MINTING_PAUSED;
 use fluentbase_universal_token::events::{
     emit_approval_event, emit_pause_event, emit_transfer_event, emit_unpause_event,
 };
-use fluentbase_universal_token::helpers::bincode::{decode, encode};
 use fluentbase_universal_token::services::global::global_service;
 use fluentbase_universal_token::storage::{allowance_service, balance_service, settings_service};
 use fluentbase_universal_token::types::input_commands::{
@@ -197,13 +196,8 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
         return_custom_err!(ERR_MALFORMED_INPUT)
     }
 
-    let (new_frame_input, _) = decode::<RuntimeUniversalTokenNewFrameInputV1>(&input).unwrap();
-    new_frame_input.storage.iter().for_each(|(k, v)| {
-        global_service().set_value(
-            &U256::from_le_slice(k.as_slice()),
-            &U256::from_le_slice(v.as_slice()),
-        );
-    });
+    let (mut new_frame_input, _) = decode::<RuntimeNewFrameInputV1>(&input).unwrap();
+    global_service().set_existing_values(new_frame_input.storage.take().unwrap_or_default());
 
     let (_sig, input) = new_frame_input.input.split_at(SIG_LEN_BYTES);
     let (initial_settings, _) = InitialSettings::try_decode_from_slice(&input)
@@ -255,12 +249,8 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
     }
     config.save_flags();
     sdk.write(&ExitCode::Ok.into_i32().to_le_bytes());
-    let output = encode(&RuntimeUniversalTokenOutputV1 {
-        storage: global_service()
-            .new_values()
-            .iter()
-            .map(|(k, v)| (k.to_le_bytes(), v.to_le_bytes()))
-            .collect(),
+    let output = encode(&RuntimeOutputV1 {
+        storage: Some(global_service().take_new_values()),
         ..Default::default()
     })
     .unwrap();
@@ -273,14 +263,9 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
 #[inline(never)]
 pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCode)> {
     let input = sdk.input();
-    let (new_frame_input, _) = decode::<RuntimeUniversalTokenNewFrameInputV1>(input).unwrap();
+    let (mut new_frame_input, _) = decode::<RuntimeNewFrameInputV1>(input).unwrap();
 
-    new_frame_input.storage.iter().for_each(|(k, v)| {
-        global_service().set_value(
-            &U256::from_le_slice(k.as_slice()),
-            &U256::from_le_slice(v.as_slice()),
-        );
-    });
+    global_service().set_existing_values(new_frame_input.storage.take().unwrap_or_default());
     let input_size = new_frame_input.input.len() as u32;
     if input_size < SIG_LEN_BYTES as u32 {
         return_custom_err!(ERR_MALFORMED_INPUT);
@@ -307,18 +292,11 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
     };
     match result {
         Ok(v) => {
-            let output = encode(&RuntimeUniversalTokenOutputV1 {
-                output: v.into(),
-                storage: {
-                    let result = global_service()
-                        .new_values()
-                        .iter()
-                        .map(|(k, v)| (k.to_le_bytes(), v.to_le_bytes()))
-                        .collect();
-                    global_service().clear();
-                    result
-                },
-                events: global_service().take_events(),
+            let mut global_service = global_service();
+            let output = encode(&RuntimeOutputV1 {
+                output: v,
+                storage: Some(global_service.take_new_values()),
+                events: global_service.take_events(),
             })
             .unwrap();
             Ok(output.into())
