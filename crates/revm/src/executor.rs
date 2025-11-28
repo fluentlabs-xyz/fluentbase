@@ -39,6 +39,7 @@ use revm::{
     },
     Database, Inspector,
 };
+use std::vec::Vec;
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
