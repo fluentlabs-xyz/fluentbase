@@ -18,9 +18,10 @@ use fluentbase_sdk::bincode_helpers::{decode, encode};
 use fluentbase_sdk::{
     is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
     rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
-    ExitCode, HashMap, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, RuntimeExecutionOutcomeV1,
-    SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
-    FUEL_DENOM_RATE, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN, U256,
+    ExitCode, HashMap, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1,
+    RuntimeNewFrameInputV1, SharedContextInput, SharedContextInputV1, SyscallInvocationParams,
+    TxContextV1, FUEL_DENOM_RATE, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN,
+    U256,
 };
 use fluentbase_universal_token::common::sig_from_slice;
 use fluentbase_universal_token::helpers::storage::compute_storage_keys;
@@ -413,7 +414,7 @@ fn process_universal_token_output<CTX: ContextTr>(
     for (k, v) in runtime_output.storage.unwrap_or_default() {
         ctx.journal_mut().sstore(target_address.into(), k, v)?;
     }
-    for (topics, data) in runtime_output.events {
+    for (topics, data) in runtime_output.logs {
         ctx.journal_mut().log(Log {
             address: target_address.into(),
             data: LogData::new_unchecked(topics, data),

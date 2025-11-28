@@ -5,8 +5,8 @@ extern crate core;
 
 use fluentbase_sdk::bincode_helpers::{decode, encode};
 use fluentbase_sdk::{
-    system_entrypoint2, Address, Bytes, ContextReader, ExitCode, RuntimeNewFrameInputV1,
-    RuntimeExecutionOutcomeV1, SharedAPI, U256,
+    system_entrypoint2, Address, Bytes, ContextReader, ExitCode, RuntimeExecutionOutcomeV1,
+    RuntimeNewFrameInputV1, SharedAPI, U256,
 };
 use fluentbase_universal_token::consts::ERR_MINTING_PAUSED;
 use fluentbase_universal_token::events::{
@@ -296,7 +296,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
             let output = encode(&RuntimeExecutionOutcomeV1 {
                 output: v,
                 storage: Some(global_service.take_new_values()),
-                events: global_service.take_events(),
+                logs: global_service.take_events(),
             })
             .unwrap();
             Ok(output.into())

@@ -116,7 +116,7 @@ impl<C> bincode::Decode<C> for RuntimeInterruptionOutcomeV1 {
 pub struct RuntimeExecutionOutcomeV1 {
     pub output: Bytes,
     pub storage: Option<HashMap<U256, U256>>,
-    pub events: Vec<(Vec<B256>, Bytes)>,
+    pub logs: Vec<(Vec<B256>, Bytes)>,
 }
 impl bincode::Encode for RuntimeExecutionOutcomeV1 {
     fn encode<E: bincode::enc::Encoder>(
@@ -140,12 +140,12 @@ impl bincode::Encode for RuntimeExecutionOutcomeV1 {
             }
         }
 
-        let events_len = self.events.len() as u32;
-        let events_presented = events_len > 0;
-        bincode::Encode::encode(&events_presented, e)?;
-        if events_presented {
-            bincode::Encode::encode(&events_len, e)?;
-            for (topics, data) in &self.events {
+        let logs_len = self.logs.len() as u32;
+        let logs_presented = logs_len > 0;
+        bincode::Encode::encode(&logs_presented, e)?;
+        if logs_presented {
+            bincode::Encode::encode(&logs_len, e)?;
+            for (topics, data) in &self.logs {
                 bincode::Encode::encode(data.as_ref(), e)?;
                 bincode::Encode::encode(&(topics.len() as u32), e)?;
                 for topic in topics {
@@ -204,7 +204,7 @@ impl<C> bincode::Decode<C> for RuntimeExecutionOutcomeV1 {
         Ok(Self {
             output: output.into(),
             storage,
-            events,
+            logs: events,
         })
     }
 }
@@ -243,7 +243,7 @@ fn test_runtime_output_v1_encode_decode() {
     let mut v = RuntimeExecutionOutcomeV1 {
         output: [1, 2, 3].into(),
         storage: Some(storage.clone()),
-        events: events.clone(),
+        logs: events.clone(),
     };
     let v_encoded = encode(&v).unwrap();
     let (v_decoded, read_count) = decode::<RuntimeExecutionOutcomeV1>(&v_encoded).unwrap();
@@ -265,7 +265,7 @@ fn test_runtime_output_v1_encode_decode() {
     let v = RuntimeExecutionOutcomeV1 {
         output: [1, 2, 3].into(),
         storage: Some(storage.clone()),
-        events,
+        logs: events,
     };
     let v_encoded = encode(&v).unwrap();
     let (v_decoded, read_count) = decode::<RuntimeExecutionOutcomeV1>(&v_encoded).unwrap();
