@@ -11,8 +11,8 @@ use fluentbase_universal_token::types::input_commands::{Encodable, TransferComma
 use hex_literal::hex;
 use std::time::Duration;
 
-fn erc20_transfer_benches(c: &mut Criterion) {
-    let mut group = c.benchmark_group("ERC20 Transfer Comparison");
+fn tokens_transfer_benches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Tokens Transfer Comparison");
 
     // --- Benchmark 1: Original EVM ERC20 (rWasm disabled) ---
     {
@@ -157,6 +157,6 @@ pub fn benches() {
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(1))
         .sample_size(1000);
-    erc20_transfer_benches(&mut criterion);
+    tokens_transfer_benches(&mut criterion);
 }
 criterion_main!(benches);

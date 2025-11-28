@@ -1,4 +1,3 @@
-use crate::bincode_helpers::{decode, encode};
 use crate::ExitCode;
 use alloc::vec::Vec;
 use alloy_primitives::{Bytes, B256, U256};
@@ -209,66 +208,75 @@ impl<C> bincode::Decode<C> for RuntimeExecutionOutcomeV1 {
     }
 }
 
-#[test]
-fn test_runtime_new_frame_input_v1_encode_decode() {
-    let mut storage = HashMap::new();
-    let mut v = RuntimeNewFrameInputV1 {
-        metadata: [1, 2, 3].into(),
-        input: [4, 5, 6, 7].into(),
-        storage: Some(storage.clone()),
-    };
-    let v_encoded = encode(&v).unwrap();
-    let (v_decoded, read_count) = decode::<RuntimeNewFrameInputV1>(&v_encoded).unwrap();
-    assert_eq!(v_encoded.len(), read_count);
-    v.storage = None;
-    assert_eq!(v_decoded, v);
+#[cfg(test)]
+mod tests {
+    use crate::bincode_helpers::{decode, encode};
+    use crate::{RuntimeExecutionOutcomeV1, RuntimeNewFrameInputV1};
+    use alloy_primitives::Bytes;
+    use alloy_primitives::{B256, U256};
+    use hashbrown::HashMap;
 
-    storage.insert(U256::from_le_bytes([1; 32]), U256::from_le_bytes([2; 32]));
-    storage.insert(U256::from_le_bytes([3; 32]), U256::from_le_bytes([4; 32]));
-    let v = RuntimeNewFrameInputV1 {
-        metadata: [1, 2, 3].into(),
-        input: [4, 5, 6, 7].into(),
-        storage: Some(storage.clone()),
-    };
-    let v_encoded = encode(&v).unwrap();
-    let (v_decoded, read_count) = decode::<RuntimeNewFrameInputV1>(&v_encoded).unwrap();
-    assert_eq!(v_encoded.len(), read_count);
-    assert_eq!(v_decoded, v);
-}
+    #[test]
+    fn test_runtime_new_frame_input_v1_encode_decode() {
+        let mut storage = HashMap::new();
+        let mut v = RuntimeNewFrameInputV1 {
+            metadata: [1, 2, 3].into(),
+            input: [4, 5, 6, 7].into(),
+            storage: Some(storage.clone()),
+        };
+        let v_encoded = encode(&v).unwrap();
+        let (v_decoded, read_count) = decode::<RuntimeNewFrameInputV1>(&v_encoded).unwrap();
+        assert_eq!(v_encoded.len(), read_count);
+        v.storage = None;
+        assert_eq!(v_decoded, v);
 
-#[test]
-fn test_runtime_output_v1_encode_decode() {
-    let mut storage = HashMap::new();
-    let mut events = Vec::<(Vec<B256>, Bytes)>::new();
-    let mut v = RuntimeExecutionOutcomeV1 {
-        output: [1, 2, 3].into(),
-        storage: Some(storage.clone()),
-        logs: events.clone(),
-    };
-    let v_encoded = encode(&v).unwrap();
-    let (v_decoded, read_count) = decode::<RuntimeExecutionOutcomeV1>(&v_encoded).unwrap();
-    assert_eq!(v_encoded.len(), read_count);
-    v.storage = None;
-    assert_eq!(v_decoded, v);
+        storage.insert(U256::from_le_bytes([1; 32]), U256::from_le_bytes([2; 32]));
+        storage.insert(U256::from_le_bytes([3; 32]), U256::from_le_bytes([4; 32]));
+        let v = RuntimeNewFrameInputV1 {
+            metadata: [1, 2, 3].into(),
+            input: [4, 5, 6, 7].into(),
+            storage: Some(storage.clone()),
+        };
+        let v_encoded = encode(&v).unwrap();
+        let (v_decoded, read_count) = decode::<RuntimeNewFrameInputV1>(&v_encoded).unwrap();
+        assert_eq!(v_encoded.len(), read_count);
+        assert_eq!(v_decoded, v);
+    }
 
-    storage.insert(U256::from_le_bytes([1; 32]), U256::from_le_bytes([2; 32]));
-    storage.insert(U256::from_le_bytes([3; 32]), U256::from_le_bytes([4; 32]));
-    events.push((
-        [B256::repeat_byte(4), B256::repeat_byte(7)].into(),
-        [].into(),
-    ));
-    events.push(([].into(), [4, 5].into()));
-    events.push((
-        [B256::repeat_byte(87), B256::repeat_byte(23)].into(),
-        [4, 5].into(),
-    ));
-    let v = RuntimeExecutionOutcomeV1 {
-        output: [1, 2, 3].into(),
-        storage: Some(storage.clone()),
-        logs: events,
-    };
-    let v_encoded = encode(&v).unwrap();
-    let (v_decoded, read_count) = decode::<RuntimeExecutionOutcomeV1>(&v_encoded).unwrap();
-    assert_eq!(v_encoded.len(), read_count);
-    assert_eq!(v_decoded, v);
+    #[test]
+    fn test_runtime_output_v1_encode_decode() {
+        let mut storage = HashMap::new();
+        let mut events = Vec::<(Vec<B256>, Bytes)>::new();
+        let mut v = RuntimeExecutionOutcomeV1 {
+            output: [1, 2, 3].into(),
+            storage: Some(storage.clone()),
+            logs: events.clone(),
+        };
+        let v_encoded = encode(&v).unwrap();
+        let (v_decoded, read_count) = decode::<RuntimeExecutionOutcomeV1>(&v_encoded).unwrap();
+        assert_eq!(v_encoded.len(), read_count);
+        v.storage = None;
+        assert_eq!(v_decoded, v);
+
+        storage.insert(U256::from_le_bytes([1; 32]), U256::from_le_bytes([2; 32]));
+        storage.insert(U256::from_le_bytes([3; 32]), U256::from_le_bytes([4; 32]));
+        events.push((
+            [B256::repeat_byte(4), B256::repeat_byte(7)].into(),
+            [].into(),
+        ));
+        events.push(([].into(), [4, 5].into()));
+        events.push((
+            [B256::repeat_byte(87), B256::repeat_byte(23)].into(),
+            [4, 5].into(),
+        ));
+        let v = RuntimeExecutionOutcomeV1 {
+            output: [1, 2, 3].into(),
+            storage: Some(storage.clone()),
+            logs: events,
+        };
+        let v_encoded = encode(&v).unwrap();
+        let (v_decoded, read_count) = decode::<RuntimeExecutionOutcomeV1>(&v_encoded).unwrap();
+        assert_eq!(v_encoded.len(), read_count);
+        assert_eq!(v_decoded, v);
+    }
 }
