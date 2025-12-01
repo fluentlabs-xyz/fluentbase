@@ -189,6 +189,8 @@ impl<C> bincode::Decode<C> for RuntimeInterruptionOutcomeV1 {
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RuntimeExecutionOutcomeV1 {
+    pub exit_code: ExitCode,
+    pub custom_exit_code: u32,
     pub output: Bytes,
     pub storage: Option<HashMap<U256, U256>>,
     pub logs: Vec<(Vec<B256>, Bytes)>,
@@ -198,6 +200,10 @@ impl bincode::Encode for RuntimeExecutionOutcomeV1 {
         &self,
         e: &mut E,
     ) -> Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(&self.exit_code.into_i32(), e)?;
+
+        bincode::Encode::encode(&self.custom_exit_code, e)?;
+
         bincode::Encode::encode(self.output.as_ref(), e)?;
 
         encode_opt_hashmap::<_, _, _, { U256::BYTES }, { U256::BYTES }>(e, &self.storage)?;
@@ -210,6 +216,10 @@ impl bincode::Encode for RuntimeExecutionOutcomeV1 {
 
 impl<C> bincode::Decode<C> for RuntimeExecutionOutcomeV1 {
     fn decode<D: Decoder<Context = C>>(d: &mut D) -> Result<Self, bincode::error::DecodeError> {
+        let exit_code: i32 = bincode::Decode::decode(d)?;
+
+        let custom_exit_code: u32 = bincode::Decode::decode(d)?;
+
         let output: Vec<u8> = bincode::Decode::decode(d)?;
 
         let storage = decode_opt_hashmap::<_, _, _, _, { U256::BYTES }, { U256::BYTES }>(d)?;
@@ -217,6 +227,8 @@ impl<C> bincode::Decode<C> for RuntimeExecutionOutcomeV1 {
         let logs = decode_logs(d)?;
 
         Ok(Self {
+            exit_code: ExitCode::from(exit_code),
+            custom_exit_code,
             output: output.into(),
             storage,
             logs,
@@ -227,7 +239,7 @@ impl<C> bincode::Decode<C> for RuntimeExecutionOutcomeV1 {
 #[cfg(test)]
 mod tests {
     use crate::bincode_helpers::{decode, encode};
-    use crate::{RuntimeExecutionOutcomeV1, RuntimeNewFrameInputV1};
+    use crate::{ExitCode, RuntimeExecutionOutcomeV1, RuntimeNewFrameInputV1};
     use alloy_primitives::{Address, Bytes};
     use alloy_primitives::{B256, U256};
     use hashbrown::HashMap;
@@ -270,6 +282,8 @@ mod tests {
         let mut storage = HashMap::new();
         let mut events = Vec::<(Vec<B256>, Bytes)>::new();
         let mut v = RuntimeExecutionOutcomeV1 {
+            exit_code: ExitCode::PrecompileError,
+            custom_exit_code: 531,
             output: [1, 2, 3].into(),
             storage: Some(storage.clone()),
             logs: events.clone(),
@@ -292,6 +306,8 @@ mod tests {
             [4, 5].into(),
         ));
         let v = RuntimeExecutionOutcomeV1 {
+            exit_code: ExitCode::CallDepthOverflow,
+            custom_exit_code: 523,
             output: [1, 2, 3].into(),
             storage: Some(storage.clone()),
             logs: events,

@@ -3,10 +3,11 @@
 extern crate alloc;
 extern crate core;
 
+use alloc::vec::Vec;
 use fluentbase_sdk::bincode_helpers::{decode, encode};
 use fluentbase_sdk::{
-    system_entrypoint2, Address, Bytes, ContextReader, ExitCode, RuntimeExecutionOutcomeV1,
-    RuntimeNewFrameInputV1, SharedAPI, U256,
+    debug_log, system_entrypoint2, Address, Bytes, ContextReader, ExitCode,
+    RuntimeExecutionOutcomeV1, RuntimeNewFrameInputV1, SharedAPI, U256,
 };
 use fluentbase_universal_token::consts::ERR_MINTING_PAUSED;
 use fluentbase_universal_token::events::{
@@ -31,21 +32,53 @@ use fluentbase_universal_token::{
     storage::{Config, Feature, InitialSettings, SIG_LEN_BYTES},
 };
 
-macro_rules! custom_err_tuple {
+macro_rules! runtime_outcome {
+    ($o:expr, $s:expr, $l:expr $(,)?) => {
+        RuntimeExecutionOutcomeV1 {
+            exit_code: ExitCode::Ok,
+            custom_exit_code: 0,
+            output: $o,
+            storage: $s,
+            logs: $l,
+        }
+    };
+    () => {
+        runtime_outcome!(Bytes::new(), None, Vec::new())
+    };
+}
+
+macro_rules! custom_err {
     ($e:ident) => {
-        ($e.to_le_bytes().into(), ExitCode::Panic)
+        RuntimeExecutionOutcomeV1 {
+            exit_code: ExitCode::Panic,
+            custom_exit_code: $e,
+            output: Bytes::new(),
+            logs: Vec::new(),
+            storage: None,
+        }
+    };
+}
+
+macro_rules! unwrap_return_custom_err {
+    ($result:expr) => {
+        match $result {
+            Ok(value) => value,
+            Err(err) => {
+                return_custom_err!(err)
+            }
+        }
     };
 }
 
 macro_rules! return_custom_err {
     ($e:ident) => {
-        return Err(custom_err_tuple!($e));
+        return custom_err!($e)
     };
 }
 
-macro_rules! unwrap_into_custom_err {
-    ($e:expr) => {
-        $e.map_err(|e| custom_err_tuple!(e))?;
+macro_rules! map_err_unwrap {
+    ($r:expr, $e:ident) => {
+        unwrap_return_custom_err!($r.map_err(|_| $e))
     };
 }
 
@@ -151,6 +184,7 @@ fn mint(sdk: &mut impl SharedAPI, input: &[u8]) -> Result<Bytes, u32> {
 fn pause(sdk: &mut impl SharedAPI, _input: &[u8]) -> Result<Bytes, u32> {
     let mut config = Config::new();
     if !config.pausable_plugin_enabled()? {
+        debug_log!();
         return Err(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
     }
     let pauser = sdk.context().contract_caller();
@@ -189,7 +223,7 @@ fn unpause(sdk: &mut impl SharedAPI, _input: &[u8]) -> Result<Bytes, u32> {
 }
 
 #[inline(never)]
-pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCode)> {
+pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> RuntimeExecutionOutcomeV1 {
     let input = sdk.bytes_input();
     let input_size = sdk.input_size();
     if input_size < SIG_LEN_BYTES as u32 {
@@ -200,21 +234,21 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
     global_service().set_existing_values(new_frame_input.storage.take().unwrap_or_default());
 
     let (_sig, input) = new_frame_input.input.split_at(SIG_LEN_BYTES);
-    let (initial_settings, _) = InitialSettings::try_decode_from_slice(&input)
-        .map_err(|_| custom_err_tuple!(ERR_DECODE))?;
+    let (initial_settings, _) =
+        map_err_unwrap!(InitialSettings::try_decode_from_slice(&input), ERR_DECODE);
 
     if !initial_settings.is_valid() {
-        return_custom_err!(ERR_VALIDATION);
+        return_custom_err!(ERR_VALIDATION)
     }
     let mut config = Config::new();
     for feature in initial_settings.features() {
         let result: Result<(), u32> = match feature {
             Feature::Meta { name, symbol } => {
                 if settings_service().name_set(name).is_err() {
-                    return_custom_err!(ERR_INVALID_META_NAME);
+                    return_custom_err!(ERR_INVALID_META_NAME)
                 }
                 if settings_service().symbol_set(symbol).is_err() {
-                    return_custom_err!(ERR_INVALID_META_SYMBOL);
+                    return_custom_err!(ERR_INVALID_META_SYMBOL)
                 }
                 Ok(())
             }
@@ -225,7 +259,7 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
             } => {
                 let amount = u256_from_fixed_bytes(amount);
                 let owner = owner.into();
-                unwrap_into_custom_err!(settings_service().decimals_set(*decimals));
+                unwrap_return_custom_err!(settings_service().decimals_set(*decimals));
                 settings_service().total_supply_set(&amount);
                 balance_service().add(&owner, &amount)
             }
@@ -257,18 +291,18 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, Exit
 
     sdk.write(&output);
     global_service().clear();
-    Ok(Bytes::new())
+    runtime_outcome!()
 }
 
 #[inline(never)]
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCode)> {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> RuntimeExecutionOutcomeV1 {
     let input = sdk.input();
     let (mut new_frame_input, _) = decode::<RuntimeNewFrameInputV1>(input).unwrap();
 
     global_service().set_existing_values(new_frame_input.storage.take().unwrap_or_default());
     let input_size = new_frame_input.input.len() as u32;
     if input_size < SIG_LEN_BYTES as u32 {
-        return_custom_err!(ERR_MALFORMED_INPUT);
+        return_custom_err!(ERR_MALFORMED_INPUT)
     }
     let (sig_bytes, input) = new_frame_input.input.split_at(SIG_LEN_BYTES);
     let signature = sig_from_slice(sig_bytes).unwrap();
@@ -293,13 +327,11 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, (Bytes, ExitCo
     match result {
         Ok(v) => {
             let mut global_service = global_service();
-            let output = encode(&RuntimeExecutionOutcomeV1 {
-                output: v,
-                storage: Some(global_service.take_new_values()),
-                logs: global_service.take_events(),
-            })
-            .unwrap();
-            Ok(output.into())
+            runtime_outcome!(
+                v,
+                Some(global_service.take_new_values()),
+                global_service.take_events(),
+            )
         }
         Err(e) => {
             global_service().clear();

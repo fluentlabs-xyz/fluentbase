@@ -220,32 +220,20 @@ macro_rules! system_entrypoint2 {
         #[cfg(target_arch = "wasm32")]
         mod _fluentbase_entrypoint {
             use alloc::vec::Vec;
+            use $crate::bincode_helpers::encode;
+            use $crate::RuntimeExecutionOutcomeV1;
             use $crate::{byteorder, byteorder::ByteOrder, Bytes, ExitCode, SharedAPI};
             #[inline(always)]
             fn __main_entry(mut sdk: impl SharedAPI) {
-                let (output, exit_code) = match super::$main_func(&mut sdk) {
-                    Ok(output) => (output, ExitCode::Ok),
-                    Err((output, exit_code)) => (output, exit_code),
-                };
-                let mut exit_code_le: [u8; 4] = [0u8; 4];
-                byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
-                let mut result = Vec::with_capacity(4 + output.len());
-                result.extend_from_slice(&exit_code_le);
-                result.extend_from_slice(&output);
-                sdk.write(&result);
+                let out: RuntimeExecutionOutcomeV1 = super::$main_func(&mut sdk);
+                sdk.write(&out.exit_code.into_i32().to_le_bytes());
+                sdk.write(&encode(&out).unwrap());
             }
             #[inline(always)]
             fn __deploy_entry(mut sdk: impl SharedAPI) {
-                let (output, exit_code) = match super::$deploy_func(&mut sdk) {
-                    Ok(output) => (output, ExitCode::Ok),
-                    Err((output, exit_code)) => (output, exit_code),
-                };
-                let mut exit_code_le: [u8; 4] = [0u8; 4];
-                byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
-                let mut result = Vec::with_capacity(4 + output.len());
-                result.extend_from_slice(&exit_code_le);
-                result.extend_from_slice(&output);
-                sdk.write(&result);
+                let out: RuntimeExecutionOutcomeV1 = super::$deploy_func(&mut sdk);
+                sdk.write(&out.exit_code.into_i32().to_le_bytes());
+                sdk.write(&encode(&out).unwrap());
             }
             #[no_mangle]
             extern "C" fn main() {
@@ -272,16 +260,9 @@ macro_rules! system_entrypoint2 {
             use $crate::{byteorder, byteorder::ByteOrder, Bytes, ExitCode, SharedAPI};
             #[inline(always)]
             fn __main_entry(mut sdk: impl SharedAPI) {
-                let (output, exit_code) = match super::$main_func(&mut sdk) {
-                    Ok(output) => (output, ExitCode::Ok),
-                    Err((output, exit_code)) => (output, exit_code),
-                };
-                let mut exit_code_le: [u8; 4] = [0u8; 4];
-                byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
-                let mut result = Vec::with_capacity(4 + output.len());
-                result.extend_from_slice(&exit_code_le);
-                result.extend_from_slice(&output);
-                sdk.write(&result);
+                let out: RuntimeExecutionOutcomeV1 = super::$main_func(&mut sdk);
+                sdk.write(&out.exit_code.into_i32().to_le_bytes());
+                sdk.write(&encode(&out).unwrap());
             }
             #[no_mangle]
             extern "C" fn main() {

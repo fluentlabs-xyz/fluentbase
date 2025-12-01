@@ -421,13 +421,13 @@ fn get_ownable_account_mut<'a, CTX: ContextTr + 'a, INSP: Inspector<CTX>>(
     }))
 }
 
-fn process_universal_token_output<CTX: ContextTr>(
+fn process_runtime_execution_outcome<CTX: ContextTr>(
     target_address: &[u8; 20],
     ctx: &mut CTX,
     return_data: &mut Bytes,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
     let (runtime_output, _) =
-        decode::<RuntimeExecutionOutcomeV1>(return_data).expect("encoded runtime output v1");
+        decode::<RuntimeExecutionOutcomeV1>(return_data).expect("runtime execution outcome");
     *return_data = runtime_output.output.into();
     for (k, v) in runtime_output.storage.unwrap_or_default() {
         ctx.journal_mut().sstore(target_address.into(), k, v)?;
@@ -456,7 +456,7 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         0 => {
             if is_create {
                 if ownable_account.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
-                    process_universal_token_output(
+                    process_runtime_execution_outcome(
                         &frame.interpreter.input.target_address(),
                         ctx,
                         &mut return_data,
@@ -469,7 +469,7 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
                 }
             } else {
                 if ownable_account.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
-                    process_universal_token_output(
+                    process_runtime_execution_outcome(
                         &frame.interpreter.input.target_address(),
                         ctx,
                         &mut return_data,

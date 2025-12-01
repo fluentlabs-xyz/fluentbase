@@ -306,7 +306,9 @@ impl Config {
     }
 }
 
+// do not change the number. changing remaps keys which affects persisted values
 impl_key_deriver!(1);
+
 pub struct Balance {
     kd: KeyDeriver1,
 }
@@ -362,6 +364,7 @@ impl Balance {
     }
 }
 
+// do not change the number. changing remaps keys which affects persisted values
 impl_key_deriver!(2);
 
 pub struct Allowance {
