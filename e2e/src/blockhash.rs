@@ -1,5 +1,6 @@
+use crate::EvmTestingContextWithGenesis;
 use fluentbase_sdk::{Address, B256, U256};
-use fluentbase_testing::{EvmTestingContext, EvmTestingContextWithGenesis};
+use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
 use revm::Database;
 

@@ -13,7 +13,6 @@ categories.workspace = true
 fluentbase-codec = { workspace = true }
 fluentbase-runtime = { workspace = true, features = ["std"] }
 fluentbase-sdk = { workspace = true }
-fluentbase-genesis = { workspace = true }
 
 hashbrown = { workspace = true }
 revm = { workspace = true }
@@ -31,7 +30,6 @@ std = [
     "rwasm/std",
     "revm/std",
     "fluentbase-revm/std",
-    "fluentbase-genesis/std",
 ]
 debug-print = [
     "fluentbase-sdk/debug-print",

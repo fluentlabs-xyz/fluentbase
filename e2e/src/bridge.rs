@@ -1,7 +1,8 @@
+use crate::EvmTestingContextWithGenesis;
 use core::str::from_utf8;
 use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{address, bytes, calc_create_address, Address, Bytes, U256};
-use fluentbase_testing::{EvmTestingContext, EvmTestingContextWithGenesis, TxBuilder};
+use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use hex_literal::hex;
 use revm::context::result::{ExecutionResult, Output};
 

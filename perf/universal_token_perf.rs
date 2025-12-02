@@ -1,10 +1,38 @@
 #![no_main]
 
-use fluentbase_sdk::{Address, Bytes, ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256};
-use fluentbase_testing::{EvmTestingContext, EvmTestingContextWithGenesis};
+use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
+use fluentbase_sdk::{
+    Address, Bytes, ContractContextV1, GenesisContract, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
+    PRECOMPILE_WASM_RUNTIME, U256,
+};
+use fluentbase_testing::EvmTestingContext;
 use fluentbase_universal_token::common::fixed_bytes_from_u256;
 use fluentbase_universal_token::storage::{Feature, InitialSettings, DECIMALS_DEFAULT};
 use fluentbase_universal_token::types::input_commands::{Encodable, TransferCommand};
+
+pub trait EvmTestingContextWithGenesis {
+    fn with_full_genesis(self) -> Self;
+
+    fn with_minimal_genesis(self) -> Self;
+}
+
+impl EvmTestingContextWithGenesis for EvmTestingContext {
+    fn with_full_genesis(self) -> EvmTestingContext {
+        let contracts: Vec<GenesisContract> = GENESIS_CONTRACTS_BY_ADDRESS
+            .iter()
+            .map(|(_k, v)| v.clone())
+            .collect();
+        self.with_contracts(&contracts)
+    }
+
+    fn with_minimal_genesis(self) -> EvmTestingContext {
+        let wasm_runtime = GENESIS_CONTRACTS_BY_ADDRESS
+            .get(&PRECOMPILE_WASM_RUNTIME)
+            .unwrap()
+            .clone();
+        self.with_contracts(&[wasm_runtime])
+    }
+}
 
 #[no_mangle]
 pub fn main() {

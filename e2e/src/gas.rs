@@ -1,3 +1,4 @@
+use crate::EvmTestingContextWithGenesis;
 use core::str::from_utf8;
 use fluentbase_codec::byteorder::LittleEndian;
 use fluentbase_contracts::FLUENTBASE_EXAMPLES_GREETING;
@@ -5,7 +6,7 @@ use fluentbase_sdk::{
     address, byteorder::ByteOrder, bytes, syscall::SYSCALL_ID_CALL, Address, SysFuncIdx,
     FUEL_DENOM_RATE, STATE_MAIN, U256,
 };
-use fluentbase_testing::{EvmTestingContext, EvmTestingContextWithGenesis, TxBuilder};
+use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use hex_literal::hex;
 use revm::context::result::{ExecutionResult, Output};
 use rwasm::{instruction_set, RwasmModule, RwasmModuleInner};
