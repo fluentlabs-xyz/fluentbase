@@ -80,6 +80,7 @@ std = [
     "fluentbase-sdk/std",
     "itertools/use_std",
     "solana_rbpf/std",
+    "fluentbase-testing/std",
 ]
 debug-print = [
     "fluentbase-sdk/debug-print",
@@ -87,8 +88,8 @@ debug-print = [
 do-not-validate-elf-on-deploy = []
 use-extended-debug-log = []
 fluent-testnet = [
-	"fluentbase-sdk/fluent-testnet",
-	"fluentbase-svm-common/fluent-testnet",
-	"fluentbase-testing/fluent-testnet",
-	"fluentbase-universal-token/fluent-testnet"
+    "fluentbase-sdk/fluent-testnet",
+    "fluentbase-svm-common/fluent-testnet",
+    "fluentbase-testing/fluent-testnet",
+    "fluentbase-universal-token/fluent-testnet"
 ]

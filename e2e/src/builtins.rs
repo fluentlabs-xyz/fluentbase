@@ -1,11 +1,10 @@
-use crate::EvmTestingContextWithGenesis;
 use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
     calc_create_address, Address, Bytes, CHARGE_FUEL_BASE_COST, COPY_BASE_FUEL_COST,
     COPY_WORD_FUEL_COST, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST, FUEL_DENOM_RATE,
     KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST, LOW_FUEL_COST,
 };
-use fluentbase_testing::{EvmTestingContext, TxBuilder};
+use fluentbase_testing::{EvmTestingContext, EvmTestingContextWithGenesis, TxBuilder};
 use revm::{
     context::result::ExecutionResult, interpreter::gas::calculate_initial_tx_gas,
     primitives::hardfork::SpecId,

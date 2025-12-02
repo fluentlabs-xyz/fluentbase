@@ -1,4 +1,3 @@
-use crate::EvmTestingContextWithGenesis;
 use core::str::from_utf8;
 use fluentbase_codec::{bytes::BytesMut, SolidityABI};
 use fluentbase_contracts::{
@@ -11,7 +10,7 @@ use fluentbase_contracts::{
 use fluentbase_sdk::{
     address, bytes, constructor::encode_constructor_params, Address, Bytes, U256,
 };
-use fluentbase_testing::EvmTestingContext;
+use fluentbase_testing::{EvmTestingContext, EvmTestingContextWithGenesis};
 use hex_literal::hex;
 use revm::bytecode::Bytecode;
 use rwasm::RwasmModule;

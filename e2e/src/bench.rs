@@ -1,6 +1,5 @@
-use crate::EvmTestingContextWithGenesis;
 use fluentbase_sdk::{constructor::encode_constructor_params, hex, Address, Bytes};
-use fluentbase_testing::EvmTestingContext;
+use fluentbase_testing::{EvmTestingContext, EvmTestingContextWithGenesis};
 
 #[test]
 fn test_bench_erc20_transfer() {

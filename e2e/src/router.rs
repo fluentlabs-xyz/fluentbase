@@ -1,10 +1,9 @@
-use crate::EvmTestingContextWithGenesis;
 use fluentbase_codec::SolidityABI;
 use fluentbase_contracts::{
     FLUENTBASE_EXAMPLES_CLIENT_SOLIDITY, FLUENTBASE_EXAMPLES_ROUTER_SOLIDITY,
 };
 use fluentbase_sdk::{address, Address, U256};
-use fluentbase_testing::EvmTestingContext;
+use fluentbase_testing::{EvmTestingContext, EvmTestingContextWithGenesis};
 use hex_literal::hex;
 
 #[test]

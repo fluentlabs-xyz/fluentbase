@@ -1,0 +1,76 @@
+[package]
+name = "perf"
+#edition = "2021"
+#version = "0.1.0"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[build]
+rustflags = ["-C", "force-frame-pointers=yes"]
+
+[[bin]]
+name = "universal_token_perf"
+path = "universal_token_perf.rs"
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = 3
+strip = false
+debug = true
+debug-assertions = true
+rpath = true
+codegen-units = 1
+
+[profile.dev]
+panic = "abort"
+debug = true
+opt-level = 0
+debug-assertions = true
+strip = false
+codegen-units = 256
+rpath = true
+
+[features]
+default = [
+    "std",
+    "debug-print",
+]
+std = [
+    "fluentbase-genesis/std",
+    "fluentbase-runtime/std",
+    "fluentbase-sdk/std",
+    "revm/std",
+    "fluentbase-testing/std",
+    "fluentbase-universal-token/std",
+]
+debug-print = [
+    "fluentbase-runtime/debug-print",
+    "fluentbase-sdk/debug-print",
+    "fluentbase-genesis/debug-print",
+    "revm/debug-print",
+    "fluentbase-revm/debug-print",
+]
+
+[dependencies]
+#fluentbase-genesis = { path = "../crates/genesis", default-features = false }
+#fluentbase-runtime = { path = "../crates/runtime", default-features = false }
+#fluentbase-sdk = { path = "../crates/sdk", default-features = false }
+#fluentbase-testing = { path = "../crates/testing" }
+#fluentbase-universal-token = { path = "../crates/universal-token", default-features = false }
+#revm = { package = "revm-rwasm", version = "27.0.3", default-features = false }
+#fluentbase-revm = { path = "../crates/revm", default-features = false }
+
+fluentbase-genesis = { workspace = true, default-features = false }
+fluentbase-runtime = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-testing = { workspace = true }
+fluentbase-universal-token = { workspace = true, default-features = false }
+revm = { workspace = true, default-features = false }
+fluentbase-revm = { workspace = true, default-features = false }

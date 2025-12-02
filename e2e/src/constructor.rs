@@ -1,8 +1,7 @@
-use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use fluentbase_contracts::FLUENTBASE_EXAMPLES_CONSTRUCTOR_PARAMS;
 use fluentbase_sdk::{constructor::encode_constructor_params, Address, Bytes};
-use fluentbase_testing::EvmTestingContext;
+use fluentbase_testing::{EvmTestingContext, EvmTestingContextWithGenesis};
 use hex_literal::hex;
 
 #[test]

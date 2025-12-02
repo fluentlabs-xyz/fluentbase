@@ -1,8 +1,7 @@
-use crate::EvmTestingContextWithGenesis;
 use fluentbase_sdk::{
     calc_create_address, syscall::SYSCALL_ID_CALL, Address, Bytes, STATE_MAIN, U256,
 };
-use fluentbase_testing::{EvmTestingContext, TxBuilder};
+use fluentbase_testing::{EvmTestingContext, EvmTestingContextWithGenesis, TxBuilder};
 use std::{
     fmt::Write,
     time::{Duration, Instant},

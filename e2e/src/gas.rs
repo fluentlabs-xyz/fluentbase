@@ -1,4 +1,3 @@
-use crate::EvmTestingContextWithGenesis;
 use core::str::from_utf8;
 use fluentbase_codec::byteorder::LittleEndian;
 use fluentbase_contracts::FLUENTBASE_EXAMPLES_GREETING;
@@ -6,7 +5,7 @@ use fluentbase_sdk::{
     address, byteorder::ByteOrder, bytes, syscall::SYSCALL_ID_CALL, Address, SysFuncIdx,
     FUEL_DENOM_RATE, STATE_MAIN, U256,
 };
-use fluentbase_testing::{EvmTestingContext, TxBuilder};
+use fluentbase_testing::{EvmTestingContext, EvmTestingContextWithGenesis, TxBuilder};
 use hex_literal::hex;
 use revm::context::result::{ExecutionResult, Output};
 use rwasm::{instruction_set, RwasmModule, RwasmModuleInner};
@@ -335,6 +334,9 @@ fn test_blended_gas_spend_evm_from_wasm() {
     // + 100 warm call cost
     // + 637 evm opcodes cost
     // + 1 call wasm code
-    assert_eq!(result.gas_used(), 21000 + 2600 + 637 + 100 + 637 + call_cast);
+    assert_eq!(
+        result.gas_used(),
+        21000 + 2600 + 637 + 100 + 637 + call_cast
+    );
     // TODO(dmitry123): "wasm code cost should be 2, not 1"
 }
