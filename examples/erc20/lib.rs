@@ -4,32 +4,34 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use alloc::{string::String, vec::Vec};
-use alloy_sol_types::{sol, SolEvent};
+use alloc::string::String;
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{constructor, router, Contract},
+    derive::{constructor, router, Contract, Event},
     storage::{StorageMap, StorageString, StorageU256},
-    Address, ContextReader, SharedAPI, B256, U256,
+    Address, ContextReader, SharedAPI, U256,
 };
 
-// Define the Transfer and Approval events
-sol! {
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
+/// ERC20 Transfer event
+#[derive(Event)]
+struct Transfer {
+    #[indexed]
+    from: Address,
+    #[indexed]
+    to: Address,
+    value: U256,
 }
 
-fn emit_event<SDK: SharedAPI, T: SolEvent>(sdk: &mut SDK, event: T) {
-    let data = event.encode_data();
-    let topics: Vec<B256> = event
-        .encode_topics()
-        .iter()
-        .map(|v| B256::from(v.0))
-        .collect();
-    sdk.emit_log(&topics, &data);
+/// ERC20 Approval event
+#[derive(Event)]
+struct Approval {
+    #[indexed]
+    owner: Address,
+    #[indexed]
+    spender: Address,
+    value: U256,
 }
 
-// Define ERC20 trait interface
 pub trait ERC20Interface {
     fn name(&self) -> String;
     fn symbol(&self) -> String;
@@ -42,7 +44,6 @@ pub trait ERC20Interface {
     fn transfer_from(&mut self, from: Address, to: Address, value: U256) -> U256;
 }
 
-// Storage structure
 #[derive(Contract)]
 pub struct ERC20<SDK> {
     sdk: SDK,
@@ -53,35 +54,28 @@ pub struct ERC20<SDK> {
     allowances: StorageMap<Address, StorageMap<Address, StorageU256>>,
 }
 
-// Separate constructor implementation
 #[constructor(mode = "solidity")]
 impl<SDK: SharedAPI> ERC20<SDK> {
     pub fn constructor(&mut self, name: String, symbol: String, initial_supply: U256) {
-        // Set token metadata
         self.token_name_accessor().set(&mut self.sdk, &name);
         self.token_symbol_accessor().set(&mut self.sdk, &symbol);
         self.total_supply_accessor()
             .set(&mut self.sdk, initial_supply);
 
-        // Assign initial supply to deployer
         let deployer = self.sdk.context().contract_caller();
         self.balances_accessor()
             .entry(deployer)
             .set(&mut self.sdk, initial_supply);
 
-        // Emit initial transfer event from zero address
-        emit_event(
-            &mut self.sdk,
-            Transfer {
-                from: Address::ZERO,
-                to: deployer,
-                value: initial_supply,
-            },
-        );
+        Transfer {
+            from: Address::ZERO,
+            to: deployer,
+            value: initial_supply,
+        }
+        .emit(&mut self.sdk);
     }
 }
 
-// Router implementation for trait methods
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> ERC20Interface for ERC20<SDK> {
     fn name(&self) -> String {
@@ -107,13 +101,11 @@ impl<SDK: SharedAPI> ERC20Interface for ERC20<SDK> {
     fn transfer(&mut self, to: Address, value: U256) -> U256 {
         let from = self.sdk.context().contract_caller();
 
-        // Check sufficient balance
         let from_balance = self.balances_accessor().entry(from).get(&self.sdk);
         if from_balance < value {
             panic!("insufficient balance");
         }
 
-        // Update balances
         self.balances_accessor()
             .entry(from)
             .set(&mut self.sdk, from_balance - value);
@@ -123,7 +115,7 @@ impl<SDK: SharedAPI> ERC20Interface for ERC20<SDK> {
             .entry(to)
             .set(&mut self.sdk, to_balance + value);
 
-        emit_event(&mut self.sdk, Transfer { from, to, value });
+        Transfer { from, to, value }.emit(&mut self.sdk);
         U256::from(1)
     }
 
@@ -142,21 +134,18 @@ impl<SDK: SharedAPI> ERC20Interface for ERC20<SDK> {
             .entry(spender)
             .set(&mut self.sdk, value);
 
-        emit_event(
-            &mut self.sdk,
-            Approval {
-                owner,
-                spender,
-                value,
-            },
-        );
+        Approval {
+            owner,
+            spender,
+            value,
+        }
+        .emit(&mut self.sdk);
         U256::from(1)
     }
 
     fn transfer_from(&mut self, from: Address, to: Address, value: U256) -> U256 {
         let spender = self.sdk.context().contract_caller();
 
-        // Check allowance
         let current_allowance = self
             .allowances_accessor()
             .entry(from)
@@ -167,19 +156,16 @@ impl<SDK: SharedAPI> ERC20Interface for ERC20<SDK> {
             panic!("insufficient allowance");
         }
 
-        // Check balance
         let from_balance = self.balances_accessor().entry(from).get(&self.sdk);
         if from_balance < value {
             panic!("insufficient balance");
         }
 
-        // Update allowance
         self.allowances_accessor()
             .entry(from)
             .entry(spender)
             .set(&mut self.sdk, current_allowance - value);
 
-        // Update balances
         self.balances_accessor()
             .entry(from)
             .set(&mut self.sdk, from_balance - value);
@@ -189,7 +175,7 @@ impl<SDK: SharedAPI> ERC20Interface for ERC20<SDK> {
             .entry(to)
             .set(&mut self.sdk, to_balance + value);
 
-        emit_event(&mut self.sdk, Transfer { from, to, value });
+        Transfer { from, to, value }.emit(&mut self.sdk);
         U256::from(1)
     }
 }
@@ -398,5 +384,80 @@ mod tests {
             recipient_balance.0 .0, transfer_amount,
             "recipient balance should equal transfer amount"
         );
+    }
+
+    mod events {
+        use super::*;
+        use fluentbase_sdk::address;
+        use fluentbase_testing::HostTestingContext;
+
+        /// Known ERC20 Transfer selector: keccak256("Transfer(address,address,uint256)")
+        const TRANSFER_SELECTOR: [u8; 32] = [
+            0xdd, 0xf2, 0x52, 0xad, 0x1b, 0xe2, 0xc8, 0x9b, 0x69, 0xc2, 0xb0, 0x68, 0xfc, 0x37,
+            0x8d, 0xaa, 0x95, 0x2b, 0xa7, 0xf1, 0x63, 0xc4, 0xa1, 0x16, 0x28, 0xf5, 0x5a, 0x4d,
+            0xf5, 0x23, 0xb3, 0xef,
+        ];
+
+        /// Known ERC20 Approval selector: keccak256("Approval(address,address,uint256)")
+        const APPROVAL_SELECTOR: [u8; 32] = [
+            0x8c, 0x5b, 0xe1, 0xe5, 0xeb, 0xec, 0x7d, 0x5b, 0xd1, 0x4f, 0x71, 0x42, 0x7d, 0x1e,
+            0x84, 0xf3, 0xdd, 0x03, 0x14, 0xc0, 0xf7, 0xb2, 0x29, 0x1e, 0x5b, 0x20, 0x0a, 0xc8,
+            0xc7, 0xc3, 0xb9, 0x25,
+        ];
+
+        #[test]
+        fn test_event_selectors_match_solidity() {
+            // Verify our macro generates correct selectors
+            assert_eq!(
+                Transfer::SELECTOR,
+                TRANSFER_SELECTOR,
+                "Transfer selector mismatch"
+            );
+            assert_eq!(
+                Approval::SELECTOR,
+                APPROVAL_SELECTOR,
+                "Approval selector mismatch"
+            );
+        }
+
+        #[test]
+        fn test_event_signatures() {
+            assert_eq!(Transfer::SIGNATURE, "Transfer(address,address,uint256)");
+            assert_eq!(Approval::SIGNATURE, "Approval(address,address,uint256)");
+        }
+
+        #[test]
+        fn test_transfer_event_encoding() {
+            let from = address!("1111111111111111111111111111111111111111");
+            let to = address!("2222222222222222222222222222222222222222");
+            let value = U256::from(1000);
+
+            let mut sdk = HostTestingContext::default();
+
+            Transfer { from, to, value }.emit(&mut sdk);
+
+            let logs = sdk.take_logs();
+            assert_eq!(logs.len(), 1);
+
+            let (data, topics) = &logs[0];
+
+            // topics[0] = selector
+            assert_eq!(topics[0].0, Transfer::SELECTOR);
+
+            // topics[1] = from (left-padded)
+            let mut expected_from = [0u8; 32];
+            expected_from[12..32].copy_from_slice(from.as_slice());
+            assert_eq!(topics[1].0, expected_from);
+
+            // topics[2] = to (left-padded)
+            let mut expected_to = [0u8; 32];
+            expected_to[12..32].copy_from_slice(to.as_slice());
+            assert_eq!(topics[2].0, expected_to);
+
+            // data = ABI-encoded value
+            assert_eq!(data.len(), 32);
+            let decoded_value = U256::from_be_slice(data);
+            assert_eq!(decoded_value, value);
+        }
     }
 }

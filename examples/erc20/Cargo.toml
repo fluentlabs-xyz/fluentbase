@@ -5,12 +5,9 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-alloy-sol-types = { workspace = true }
-hex-literal = { version = "0.4.1", default-features = false }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }
-serial_test = "3.0.0"
 
 [lib]
 crate-type = ["cdylib"]

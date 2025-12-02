@@ -106,6 +106,17 @@ impl HostTestingContext {
     pub fn visit_inner_storage<F: Fn(&HashMap<(Address, U256), U256>)>(&self, f: F) {
         f(&self.inner.borrow_mut().persistent_storage)
     }
+
+    /// Returns and clears all emitted logs.
+    /// Each log is (data, topics).
+    pub fn take_logs(&self) -> Vec<(Bytes, Vec<B256>)> {
+        take(&mut self.inner.borrow_mut().logs)
+    }
+
+    /// Returns logs without clearing.
+    pub fn logs(&self) -> Vec<(Bytes, Vec<B256>)> {
+        self.inner.borrow().logs.clone()
+    }
 }
 
 struct TestingContextInner {
