@@ -16,7 +16,7 @@ mod tower;
 pub use tower::*;
 
 /// Routes a syscall identified by func_idx to the corresponding runtime instruction handler.
-pub(crate) fn runtime_syscall_handler(
+pub fn runtime_syscall_handler(
     caller: &mut TypedCaller<RuntimeContext>,
     func_idx: u32,
     params: &[Value],
