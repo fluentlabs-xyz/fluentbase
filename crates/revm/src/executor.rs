@@ -16,9 +16,9 @@ use fluentbase_runtime::{
 };
 use fluentbase_sdk::bincode_helpers::{decode, encode};
 use fluentbase_sdk::{
-    is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
-    rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
-    ExitCode, HashMap, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1,
+    debug_log, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
+    measure_time, rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef,
+    ContractContextV1, ExitCode, HashMap, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1,
     RuntimeNewFrameInputV1, SharedContextInput, SharedContextInputV1, SyscallInvocationParams,
     TxContextV1, FUEL_DENOM_RATE, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN,
     U256,
@@ -181,19 +181,21 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             let storage = if v.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
                 let target_address = interpreter.input.target_address();
                 let mut storage = HashMap::<U256, U256>::new();
-                if input.len() >= SIG_LEN_BYTES {
-                    let sig = sig_from_slice(&input).unwrap();
-                    let keys = compute_storage_keys(
-                        sig,
-                        &input[SIG_LEN_BYTES..],
-                        &interpreter.input.caller_address,
-                    );
-                    storage.reserve(keys.len());
-                    for k in keys {
-                        let v = ctx.journal_mut().sload(target_address, k)?.data;
-                        storage.insert(k, v);
+                measure_time!({
+                    if input.len() >= SIG_LEN_BYTES {
+                        let sig = sig_from_slice(&input).unwrap();
+                        let keys = compute_storage_keys(
+                            sig,
+                            &input[SIG_LEN_BYTES..],
+                            &interpreter.input.caller_address,
+                        );
+                        storage.reserve(keys.len());
+                        for k in keys {
+                            let v = ctx.journal_mut().sload(target_address, k)?.data;
+                            storage.insert(k, v);
+                        }
                     }
-                };
+                });
                 Some(storage)
             } else {
                 None
@@ -204,6 +206,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             } else {
                 Vec::new()
             };
+            balances.reserve(addresses.len());
             for addr in addresses {
                 let balance = ctx.balance(addr.into()).unwrap_or_default().data;
                 balances.insert(addr, balance);
@@ -218,8 +221,8 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                     Some(balances)
                 },
             };
-            let new_frame_input = encode(&new_frame_input).unwrap();
-            context_input.extend(new_frame_input);
+            let new_frame_input = measure_time!(encode(&new_frame_input).unwrap());
+            measure_time!(context_input.extend(new_frame_input));
         }
         _ => context_input.extend_from_slice(&input),
     }

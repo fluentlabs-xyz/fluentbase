@@ -5,7 +5,8 @@ use crate::{
 };
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    BytecodeOrHash, BytesOrRef, ExitCode, SyscallInvocationParams, B256, CALL_STACK_LIMIT,
+    measure_time, BytecodeOrHash, BytesOrRef, ExitCode, SyscallInvocationParams, B256,
+    CALL_STACK_LIMIT,
 };
 use rwasm::{Store, TrapCode, Value};
 use std::{
@@ -116,7 +117,8 @@ pub fn syscall_exec_impl<I: Into<BytecodeOrHash>>(
         .with_state(state)
         .with_call_depth(ctx.call_depth + 1);
 
-    let result = default_runtime_executor().execute(code_hash.into(), ctx2);
+    let mut executor = measure_time!(default_runtime_executor());
+    let result = measure_time!(executor.execute(code_hash.into(), ctx2));
     ctx.execution_result.return_data = result.output;
     (result.fuel_consumed, result.fuel_refunded, result.exit_code)
 }

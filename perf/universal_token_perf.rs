@@ -78,15 +78,6 @@ pub fn main() {
         core::hint::black_box(result.clone());
     }
     for _ in 0..1000 {
-        // let result = ctx.call_evm_tx(
-        //     DEPLOYER_ADDR,
-        //     contract_address,
-        //     transfer_payload.clone(),
-        //     None,
-        //     None,
-        // );
-        // assert!(!result.is_success());
-        // core::hint::black_box(result.clone());
         bench_iter(&mut ctx, &contract_address, &transfer_payload);
     }
 }

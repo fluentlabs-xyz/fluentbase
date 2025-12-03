@@ -1,6 +1,7 @@
 use crate::{syscall_handler::invoke_runtime_handler, RuntimeContext};
 use fluentbase_types::{
-    ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, B256, STATE_DEPLOY, STATE_MAIN,
+    measure_time, ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, B256, STATE_DEPLOY,
+    STATE_MAIN,
 };
 use rwasm::{ImportLinker, RwasmModule, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE};
 use smallvec::SmallVec;
@@ -72,16 +73,19 @@ impl SystemRuntime {
             if let Some(compiled_runtime) = compiled_runtimes.get(&code_hash).cloned() {
                 return compiled_runtime;
             }
-            let module = Self::compiled_module(code_hash, module);
-            let engine = wasmtime_engine();
-            let linker = wasmtime_import_linker(engine, import_linker);
-            let mut store = Store::new(engine, RuntimeContext::default());
-            let instance = linker.instantiate(store.as_context_mut(), &module).unwrap();
-            let deploy_func = instance.get_func(store.as_context_mut(), "deploy").unwrap();
-            let main_func = instance.get_func(store.as_context_mut(), "main").unwrap();
-            let memory = instance
+            let module = measure_time!(Self::compiled_module(code_hash, module));
+            let engine = measure_time!(wasmtime_engine());
+            let linker = measure_time!(wasmtime_import_linker(engine, import_linker));
+            let mut store = measure_time!(Store::new(engine, RuntimeContext::default()));
+            let instance =
+                measure_time!(linker.instantiate(store.as_context_mut(), &module).unwrap());
+            let deploy_func =
+                measure_time!(instance.get_func(store.as_context_mut(), "deploy").unwrap());
+            let main_func =
+                measure_time!(instance.get_func(store.as_context_mut(), "main").unwrap());
+            let memory = measure_time!(instance
                 .get_memory(store.as_context_mut(), "memory")
-                .unwrap();
+                .unwrap());
             let compiled_runtime = CompiledRuntime {
                 module,
                 store,
@@ -118,9 +122,9 @@ impl SystemRuntime {
             STATE_DEPLOY => compiled_runtime.deploy_func,
             _ => unreachable!(),
         };
-        let result = entrypoint
+        let result = measure_time!(entrypoint
             .call(compiled_runtime.store.as_context_mut(), &[], &mut [])
-            .map_err(map_anyhow_error);
+            .map_err(map_anyhow_error));
 
         // Always swap back right after the call
         core::mem::swap(compiled_runtime.store.data_mut(), &mut self.ctx);

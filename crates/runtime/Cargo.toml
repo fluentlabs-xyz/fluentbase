@@ -64,5 +64,5 @@ inter-process-lock = [
 ]
 global-executor = ["dep:core_affinity"]
 fluent-testnet = [
-	"fluentbase-types/fluent-testnet"
+    "fluentbase-types/fluent-testnet"
 ]

@@ -9,7 +9,7 @@ use crate::{
 };
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    Address, BytecodeOrHash, ExitCode, HashMap, B256,
+    measure_time, Address, BytecodeOrHash, ExitCode, HashMap, B256,
 };
 use local_executor::LocalExecutor;
 use rwasm::{ExecutionEngine, FuelConfig, ImportLinker, RwasmModule, Strategy, TrapCode};
@@ -273,14 +273,19 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         };
 
         // If we have a cached module, then use it, otherwise create a new one and cache
-        let module = self.module_factory.get_module_or_init(bytecode_or_hash);
+        let module = measure_time!(self.module_factory.get_module_or_init(bytecode_or_hash));
 
         // If there is no cached store, then construct a new one (slow)
         let fuel_remaining = Some(ctx.fuel_limit);
         let fuel_config = FuelConfig::default().with_fuel_limit(ctx.fuel_limit);
 
         let mut exec_mode = if let Some(code_hash) = enable_system_runtime {
-            let runtime = SystemRuntime::new(module, self.import_linker.clone(), code_hash, ctx);
+            let runtime = measure_time!(SystemRuntime::new(
+                module,
+                self.import_linker.clone(),
+                code_hash,
+                ctx
+            ));
             ExecutionMode::System(runtime)
         } else {
             #[cfg(feature = "wasmtime")]
@@ -303,7 +308,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         };
 
         // Execute program
-        let result = exec_mode.execute();
+        let result = measure_time!(exec_mode.execute());
         let fuel_consumed = exec_mode
             .remaining_fuel()
             .zip(fuel_remaining)

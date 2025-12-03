@@ -10,6 +10,7 @@ mod curves;
 mod exit_code;
 pub mod fd;
 mod genesis;
+mod helpers;
 mod import_linker;
 mod native_api;
 mod runtime;

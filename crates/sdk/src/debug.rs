@@ -247,6 +247,16 @@ macro_rules! debug_log {
     }};
 }
 
+#[macro_export]
+macro_rules! measure_time {
+    ($b:expr) => {{
+        let start = std::time::Instant::now();
+        let result = $b;
+        $crate::debug_log!("elapsed {:?}", start.elapsed());
+        result
+    }};
+}
+
 #[cfg(not(debug_assertions))]
 #[macro_export]
 macro_rules! debug_log {

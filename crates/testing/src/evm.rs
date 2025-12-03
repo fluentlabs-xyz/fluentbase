@@ -3,9 +3,9 @@ use core::{borrow::Borrow, mem::take, str::from_utf8};
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
 use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecutor};
 use fluentbase_sdk::{
-    bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, Address, BytecodeOrHash, Bytes,
-    ContextReader, ExitCode, GenesisContract, MetadataAPI, SharedAPI, SharedContextInputV1,
-    STATE_MAIN, U256,
+    bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, debug_log, measure_time, Address,
+    BytecodeOrHash, Bytes, ContextReader, ExitCode, GenesisContract, MetadataAPI, SharedAPI,
+    SharedContextInputV1, STATE_MAIN, U256,
 };
 use revm::{
     context::{
@@ -19,6 +19,7 @@ use revm::{
     DatabaseCommit, ExecuteCommitEvm, MainBuilder,
 };
 use rwasm::RwasmModule;
+use std::time::Instant;
 
 #[allow(dead_code)]
 pub struct EvmTestingContext {
@@ -281,7 +282,7 @@ impl EvmTestingContext {
         if let Some(gas_limit) = gas_limit {
             tx_builder = tx_builder.gas_limit(gas_limit);
         }
-        tx_builder.exec()
+        measure_time!(tx_builder.exec())
     }
 
     pub fn call_evm_tx(
@@ -390,11 +391,12 @@ impl<'a> TxBuilder<'a> {
             result
         } else {
             let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, PRAGUE);
-            context.cfg = self.ctx.cfg.clone();
-            context.block = self.block.clone();
-            context.tx = self.tx.clone();
-            let mut evm = context.build_rwasm();
-            let result = evm.transact_commit(self.tx.clone()).unwrap();
+            context.cfg = measure_time!(self.ctx.cfg.clone());
+            context.block = measure_time!(self.block.clone());
+            context.tx = measure_time!(self.tx.clone());
+            let mut evm = measure_time!(context.build_rwasm());
+            let tx = measure_time!(self.tx.clone());
+            let result = measure_time!(evm.transact_commit(tx).unwrap());
             let new_db = &mut evm.0.journaled_state.database;
             self.ctx.db = take(new_db);
             result.map_haltreason(RwasmHaltReason::from)

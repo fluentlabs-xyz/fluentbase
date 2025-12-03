@@ -5,7 +5,7 @@ use fluentbase_sdk::bincode_helpers::decode;
 use fluentbase_sdk::crypto::crypto_keccak256;
 use fluentbase_sdk::derive::derive_keccak256;
 use fluentbase_sdk::{
-    Address, Bytes, ContractContextV1, RuntimeExecutionOutcomeV1,
+    debug_log, Address, Bytes, ContractContextV1, RuntimeExecutionOutcomeV1,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::EvmTestingContext;
@@ -435,4 +435,53 @@ fn mixed_test() {
     );
     let recovered = u256_from_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(total_supply.add(U256::from(amount_to_mint)), recovered);
+}
+
+#[test]
+fn perf_test() {
+    // --- Benchmark 4: Precompiled Universal Token ---
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    const DEPLOYER_ADDR: Address = Address::repeat_byte(1);
+    const USER_ADDR: Address = Address::repeat_byte(2);
+    ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
+        address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
+        ..Default::default()
+    });
+    let mut initial_settings = InitialSettings::new();
+    let total_supply = U256::from(0xffff_ffffu64);
+    initial_settings.add_feature(Feature::InitialSupply {
+        amount: fixed_bytes_from_u256(&total_supply),
+        owner: DEPLOYER_ADDR.into(),
+        decimals: DECIMALS_DEFAULT,
+    });
+    let contract_address =
+        ctx.deploy_evm_tx(DEPLOYER_ADDR, initial_settings.encode_for_deploy().into());
+
+    let mut input = Vec::<u8>::new();
+    TransferCommand {
+        to: USER_ADDR,
+        amount: U256::from(1),
+    }
+    .encode_for_send(&mut input);
+    let transfer_payload: Bytes = input.into();
+
+    #[inline(never)]
+    fn bench_iter(
+        ctx: &mut EvmTestingContext,
+        contract_address: &Address,
+        transfer_payload: &Bytes,
+    ) {
+        debug_log!("started iteration");
+        let result = ctx.call_evm_tx(
+            DEPLOYER_ADDR,
+            *contract_address,
+            transfer_payload.clone(),
+            None,
+            None,
+        );
+        assert!(result.is_success());
+        core::hint::black_box(result.clone());
+    }
+
+    bench_iter(&mut ctx, &contract_address, &transfer_payload);
 }
