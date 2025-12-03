@@ -184,7 +184,6 @@ fn mint(sdk: &mut impl SharedAPI, input: &[u8]) -> Result<Bytes, u32> {
 fn pause(sdk: &mut impl SharedAPI, _input: &[u8]) -> Result<Bytes, u32> {
     let mut config = Config::new();
     if !config.pausable_plugin_enabled()? {
-        debug_log!();
         return Err(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
     }
     let pauser = sdk.context().contract_caller();

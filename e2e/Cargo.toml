@@ -52,7 +52,7 @@ default = [
     "std",
     #    "fluent-testnet",
     #    "wasmtime",
-    "debug-print",
+    #    "debug-print",
     #    "svm",
     #    "enable-error-text-checks", # when 'fast-panic' is off
 ]

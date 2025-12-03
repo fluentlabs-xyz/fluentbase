@@ -58,6 +58,20 @@ pub fn alloc_heap_pos() -> usize {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+// #[inline(never)]
+#[no_mangle]
+pub fn heap_pos() -> u32 {
+    unsafe { HEAP_POS as u32 }
+}
+
+#[cfg(target_arch = "wasm32")]
+// #[inline(never)]
+#[no_mangle]
+pub fn heap_pos_set(v: u32) {
+    unsafe { HEAP_POS = v as usize }
+}
+
 #[inline(always)]
 pub fn rollback_heap_pos(_new_heap_pos: usize) {
     #[cfg(target_arch = "wasm32")]

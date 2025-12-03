@@ -5,9 +5,8 @@ use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
 use spin::{Mutex, MutexGuard};
 
-pub const GLOBAL_SERVICE_VALUES_CAP: usize = 8;
-pub const GLOBAL_SERVICE_QUERY_CAP: usize = 8;
-pub const GLOBAL_SERVICE_EVENT_CAP: usize = 8;
+pub const GLOBAL_SERVICE_VALUES_CAP: usize = 4;
+pub const GLOBAL_SERVICE_EVENT_CAP: usize = 4;
 
 #[derive(Debug)]
 pub struct GlobalService {

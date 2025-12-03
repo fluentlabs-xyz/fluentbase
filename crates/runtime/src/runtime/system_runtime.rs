@@ -1,4 +1,5 @@
 use crate::{syscall_handler::invoke_runtime_handler, RuntimeContext};
+use blake3::IncrementCounter::No;
 use fluentbase_types::{
     measure_time, ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, B256, STATE_DEPLOY,
     STATE_MAIN,
@@ -13,7 +14,7 @@ use std::{
 };
 use wasmtime::{
     AsContextMut, Config, Engine, Func, Instance, Linker, Memory, Module, OptLevel, Store,
-    Strategy, Trap, Val,
+    Strategy, Trap, TypedFunc, Val,
 };
 
 pub struct SystemRuntime {
@@ -32,6 +33,9 @@ struct CompiledRuntime {
     memory: Memory,
     deploy_func: Func,
     main_func: Func,
+    heap_pos_func: Func,
+    heap_pos_set_func: Func,
+    main_base_heap_pos: Option<u32>,
 }
 
 thread_local! {
@@ -59,7 +63,15 @@ impl SystemRuntime {
 
     pub fn reset_cached_runtimes() {
         COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            compiled_runtimes.clear();
+            compiled_runtimes.iter().for_each(|(_, runtime)| {
+                let mut rm = runtime.borrow_mut();
+                if let Some(base) = rm.main_base_heap_pos {
+                    let args = &[Val::I32(base as i32)];
+                    let f = rm.heap_pos_set_func;
+                    f.call(&mut rm.store, args, &mut []).unwrap();
+                }
+            });
+            // compiled_runtimes.clear();
         });
     }
 
@@ -77,12 +89,15 @@ impl SystemRuntime {
             let engine = measure_time!(wasmtime_engine());
             let linker = measure_time!(wasmtime_import_linker(engine, import_linker));
             let mut store = measure_time!(Store::new(engine, RuntimeContext::default()));
-            let instance =
-                measure_time!(linker.instantiate(store.as_context_mut(), &module).unwrap());
-            let deploy_func =
-                measure_time!(instance.get_func(store.as_context_mut(), "deploy").unwrap());
-            let main_func =
-                measure_time!(instance.get_func(store.as_context_mut(), "main").unwrap());
+            let instance = linker.instantiate(store.as_context_mut(), &module).unwrap();
+            let deploy_func = instance.get_func(store.as_context_mut(), "deploy").unwrap();
+            let main_func = instance.get_func(store.as_context_mut(), "main").unwrap();
+            let heap_pos_func = instance
+                .get_func(store.as_context_mut(), "heap_pos")
+                .unwrap();
+            let heap_pos_set_func = instance
+                .get_func(store.as_context_mut(), "heap_pos_set")
+                .unwrap();
             let memory = measure_time!(instance
                 .get_memory(store.as_context_mut(), "memory")
                 .unwrap());
@@ -93,6 +108,9 @@ impl SystemRuntime {
                 memory,
                 deploy_func,
                 main_func,
+                heap_pos_func,
+                heap_pos_set_func,
+                main_base_heap_pos: None,
             };
             let compiled_runtime = Rc::new(RefCell::new(compiled_runtime));
             compiled_runtimes.insert(code_hash, compiled_runtime.clone());
@@ -117,11 +135,26 @@ impl SystemRuntime {
         core::mem::swap(compiled_runtime.store.data_mut(), &mut self.ctx);
 
         // Call the function based on the passed state
-        let entrypoint = match compiled_runtime.store.data().state {
+        let state = compiled_runtime.store.data().state;
+        let entrypoint = match state {
             STATE_MAIN => compiled_runtime.main_func,
             STATE_DEPLOY => compiled_runtime.deploy_func,
             _ => unreachable!(),
         };
+
+        if state == STATE_MAIN && compiled_runtime.main_base_heap_pos.is_none() {
+            let heap_pos = &mut [Val::I32(0)];
+            let f = compiled_runtime.heap_pos_func;
+            f.call(compiled_runtime.store.as_context_mut(), &[], heap_pos)
+                .expect("call failed");
+            let heap_pos_current = heap_pos[0].i32().unwrap();
+            compiled_runtime.main_base_heap_pos = Some(heap_pos_current as u32);
+        } else if state == STATE_DEPLOY && compiled_runtime.main_base_heap_pos.is_none() {
+        }
+        // println!(
+        //     "state {} main_base_heap_pos {:?} current {:?}",
+        //     state, compiled_runtime.main_base_heap_pos, heap_pos_current,
+        // );
         let result = measure_time!(entrypoint
             .call(compiled_runtime.store.as_context_mut(), &[], &mut [])
             .map_err(map_anyhow_error));
