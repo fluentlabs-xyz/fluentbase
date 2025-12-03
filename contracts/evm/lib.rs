@@ -29,7 +29,7 @@ pub(crate) fn evm_bytecode_from_metadata(metadata: &Bytes) -> Option<AnalyzedByt
 static SAVED_EVM_CONTEXT: spin::Once<spin::Mutex<Vec<EthVM>>> = spin::Once::new();
 
 fn lock_evm_context<'a>() -> MutexGuard<'a, Vec<EthVM>> {
-    let cached_state = SAVED_EVM_CONTEXT.call_once(|| spin::Mutex::new(Vec::new()));
+    let cached_state = SAVED_EVM_CONTEXT.call_once(|| spin::Mutex::new(Vec::with_capacity(1024)));
     debug_assert!(
         !cached_state.is_locked(),
         "evm: spin mutex is locked, looks like memory corruption"

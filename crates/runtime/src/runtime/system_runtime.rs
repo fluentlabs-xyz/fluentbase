@@ -35,6 +35,7 @@ struct CompiledRuntime {
     main_func: Func,
     heap_pos_func: Func,
     heap_pos_set_func: Func,
+    deploy_base_heap_pos: Option<u32>,
     main_base_heap_pos: Option<u32>,
 }
 
@@ -66,6 +67,11 @@ impl SystemRuntime {
             compiled_runtimes.iter().for_each(|(_, runtime)| {
                 let mut rm = runtime.borrow_mut();
                 if let Some(base) = rm.main_base_heap_pos {
+                    let args = &[Val::I32(base as i32)];
+                    let f = rm.heap_pos_set_func;
+                    f.call(&mut rm.store, args, &mut []).unwrap();
+                }
+                if let Some(base) = rm.deploy_base_heap_pos {
                     let args = &[Val::I32(base as i32)];
                     let f = rm.heap_pos_set_func;
                     f.call(&mut rm.store, args, &mut []).unwrap();
@@ -111,6 +117,7 @@ impl SystemRuntime {
                 heap_pos_func,
                 heap_pos_set_func,
                 main_base_heap_pos: None,
+                deploy_base_heap_pos: None,
             };
             let compiled_runtime = Rc::new(RefCell::new(compiled_runtime));
             compiled_runtimes.insert(code_hash, compiled_runtime.clone());
@@ -149,7 +156,13 @@ impl SystemRuntime {
                 .expect("call failed");
             let heap_pos_current = heap_pos[0].i32().unwrap();
             compiled_runtime.main_base_heap_pos = Some(heap_pos_current as u32);
-        } else if state == STATE_DEPLOY && compiled_runtime.main_base_heap_pos.is_none() {
+        } else if state == STATE_DEPLOY && compiled_runtime.deploy_base_heap_pos.is_none() {
+            let heap_pos = &mut [Val::I32(0)];
+            let f = compiled_runtime.heap_pos_func;
+            f.call(compiled_runtime.store.as_context_mut(), &[], heap_pos)
+                .expect("call failed");
+            let heap_pos_current = heap_pos[0].i32().unwrap();
+            compiled_runtime.deploy_base_heap_pos = Some(heap_pos_current as u32);
         }
         // println!(
         //     "state {} main_base_heap_pos {:?} current {:?}",
