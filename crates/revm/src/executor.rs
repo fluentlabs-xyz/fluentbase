@@ -16,9 +16,9 @@ use fluentbase_runtime::{
 };
 use fluentbase_sdk::bincode_helpers::{decode, encode};
 use fluentbase_sdk::{
-    debug_log, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
-    measure_time, rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef,
-    ContractContextV1, ExitCode, HashMap, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1,
+    is_delegated_runtime_address, is_execute_using_system_runtime, keccak256, measure_time,
+    rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
+    ExitCode, HashMap, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1,
     RuntimeNewFrameInputV1, SharedContextInput, SharedContextInputV1, SyscallInvocationParams,
     TxContextV1, FUEL_DENOM_RATE, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN,
     U256,

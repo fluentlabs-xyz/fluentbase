@@ -1,5 +1,4 @@
 use crate::{syscall_handler::invoke_runtime_handler, RuntimeContext};
-use blake3::IncrementCounter::No;
 use fluentbase_types::{
     measure_time, ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, B256, STATE_DEPLOY,
     STATE_MAIN,
@@ -14,7 +13,7 @@ use std::{
 };
 use wasmtime::{
     AsContextMut, Config, Engine, Func, Instance, Linker, Memory, Module, OptLevel, Store,
-    Strategy, Trap, TypedFunc, Val,
+    Strategy, Trap, Val,
 };
 
 pub struct SystemRuntime {

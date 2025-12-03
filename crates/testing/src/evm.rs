@@ -3,7 +3,7 @@ use core::{borrow::Borrow, mem::take, str::from_utf8};
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
 use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecutor};
 use fluentbase_sdk::{
-    bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, debug_log, measure_time, Address,
+    bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, measure_time, Address,
     BytecodeOrHash, Bytes, ContextReader, ExitCode, GenesisContract, MetadataAPI, SharedAPI,
     SharedContextInputV1, STATE_MAIN, U256,
 };
@@ -19,7 +19,6 @@ use revm::{
     DatabaseCommit, ExecuteCommitEvm, MainBuilder,
 };
 use rwasm::RwasmModule;
-use std::time::Instant;
 
 #[allow(dead_code)]
 pub struct EvmTestingContext {
