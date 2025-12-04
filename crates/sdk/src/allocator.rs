@@ -66,10 +66,17 @@ pub fn heap_pos() -> u32 {
 }
 
 #[cfg(target_arch = "wasm32")]
-// #[inline(never)]
 #[no_mangle]
 pub fn heap_pos_set(v: u32) {
-    unsafe { HEAP_POS = v as usize }
+    unsafe {
+        let current = HEAP_POS;
+        let new = v as usize;
+        HEAP_POS = v as usize;
+        if current > new {
+            let mut s = core::slice::from_raw_parts_mut(new as *mut u8, current - new);
+            s.fill(0);
+        }
+    }
 }
 
 #[inline(always)]

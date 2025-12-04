@@ -10,9 +10,9 @@ use fluentbase_evm::{
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
 };
 use fluentbase_sdk::{
-    bincode, byteorder, byteorder::ByteOrder, crypto::crypto_keccak256, entrypoint, Bytes,
-    ContextReader, ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SharedAPI,
-    SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
+    bincode, byteorder, byteorder::ByteOrder, crypto::crypto_keccak256, debug_log, entrypoint,
+    Bytes, ContextReader, ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
+    SharedAPI, SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
 };
 use spin::MutexGuard;
 
@@ -211,6 +211,15 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     result.extend_from_slice(&exit_code_le);
     result.extend_from_slice(&output);
     sdk.write(&result);
+}
+
+#[inline(never)]
+#[no_mangle]
+fn reset() {
+    let mut ctx = lock_evm_context();
+    debug_log!("before ctx.len={}", ctx.len());
+    // ctx.clear();
+    // debug_log!("after ctx.len={}", ctx.len());
 }
 
 #[inline(never)]

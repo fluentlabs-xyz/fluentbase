@@ -1,10 +1,10 @@
 use crate::{syscall_handler::invoke_runtime_handler, RuntimeContext};
 use fluentbase_types::{
-    measure_time, ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, B256, STATE_DEPLOY,
-    STATE_MAIN,
+    ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, B256, STATE_DEPLOY, STATE_MAIN,
 };
 use rwasm::{ImportLinker, RwasmModule, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE};
 use smallvec::SmallVec;
+use std::sync::atomic::AtomicU32;
 use std::{
     cell::RefCell,
     mem::take,
@@ -26,6 +26,7 @@ pub struct SystemRuntime {
 }
 
 struct CompiledRuntime {
+    id: u32,
     module: Module,
     store: Store<RuntimeContext>,
     instance: Instance,
@@ -34,12 +35,13 @@ struct CompiledRuntime {
     main_func: Func,
     heap_pos_func: Func,
     heap_pos_set_func: Func,
+    reset_func: Option<Func>,
     deploy_base_heap_pos: Option<u32>,
     main_base_heap_pos: Option<u32>,
 }
 
 thread_local! {
-    pub static COMPILED_RUNTIMES: RefCell<HashMap<B256, Rc<RefCell<CompiledRuntime>>>> = RefCell::new(HashMap::new());
+    pub static COMPILED_RUNTIMES: RefCell<HashMap<(u32, B256), Rc<RefCell<CompiledRuntime>>>> = RefCell::new(HashMap::new());
 }
 
 impl SystemRuntime {
@@ -63,19 +65,33 @@ impl SystemRuntime {
 
     pub fn reset_cached_runtimes() {
         COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            compiled_runtimes.iter().for_each(|(_, runtime)| {
-                let mut rm = runtime.borrow_mut();
-                if let Some(base) = rm.main_base_heap_pos {
-                    let args = &[Val::I32(base as i32)];
-                    let f = rm.heap_pos_set_func;
-                    f.call(&mut rm.store, args, &mut []).unwrap();
-                }
-                if let Some(base) = rm.deploy_base_heap_pos {
-                    let args = &[Val::I32(base as i32)];
-                    let f = rm.heap_pos_set_func;
-                    f.call(&mut rm.store, args, &mut []).unwrap();
-                }
-            });
+            compiled_runtimes
+                .iter()
+                .for_each(|((state, _hash), runtime)| {
+                    let mut runtime_mut = runtime.borrow_mut();
+
+                    if state == &STATE_DEPLOY {
+                        if let Some(base) = runtime_mut.deploy_base_heap_pos {
+                            let args = &[Val::I32(base as i32)];
+                            let f = runtime_mut.heap_pos_set_func;
+                            f.call(&mut runtime_mut.store, args, &mut []).unwrap();
+                            println!("heap_pos reset to deploy_base_heap_pos {}", base);
+                        }
+                    }
+                    if state == &STATE_MAIN {
+                        if let Some(base) = runtime_mut.main_base_heap_pos {
+                            let args = &[Val::I32(base as i32)];
+                            let f = runtime_mut.heap_pos_set_func;
+                            f.call(&mut runtime_mut.store, args, &mut []).unwrap();
+                            println!("heap_pos reset to main_base_heap_pos {}", base);
+                        }
+                    }
+                    if let Some(reset_func) = runtime_mut.reset_func {
+                        reset_func
+                            .call(&mut runtime_mut.store, &[], &mut [])
+                            .unwrap();
+                    }
+                });
             // compiled_runtimes.clear();
         });
     }
@@ -87,13 +103,14 @@ impl SystemRuntime {
         ctx: RuntimeContext,
     ) -> Self {
         let compiled_runtime = COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            if let Some(compiled_runtime) = compiled_runtimes.get(&code_hash).cloned() {
+            if let Some(compiled_runtime) = compiled_runtimes.get(&(ctx.state, code_hash)).cloned()
+            {
                 return compiled_runtime;
             }
-            let module = measure_time!(Self::compiled_module(code_hash, module));
-            let engine = measure_time!(wasmtime_engine());
-            let linker = measure_time!(wasmtime_import_linker(engine, import_linker));
-            let mut store = measure_time!(Store::new(engine, RuntimeContext::default()));
+            let module = Self::compiled_module(code_hash, module);
+            let engine = wasmtime_engine();
+            let linker = wasmtime_import_linker(engine, import_linker);
+            let mut store = Store::new(engine, RuntimeContext::default());
             let instance = linker.instantiate(store.as_context_mut(), &module).unwrap();
             let deploy_func = instance.get_func(store.as_context_mut(), "deploy").unwrap();
             let main_func = instance.get_func(store.as_context_mut(), "main").unwrap();
@@ -103,10 +120,13 @@ impl SystemRuntime {
             let heap_pos_set_func = instance
                 .get_func(store.as_context_mut(), "heap_pos_set")
                 .unwrap();
-            let memory = measure_time!(instance
+            let reset_func = instance.get_func(store.as_context_mut(), "reset");
+            let memory = instance
                 .get_memory(store.as_context_mut(), "memory")
-                .unwrap());
+                .unwrap();
+            static ID: AtomicU32 = AtomicU32::new(0);
             let compiled_runtime = CompiledRuntime {
+                id: ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 module,
                 store,
                 instance,
@@ -117,9 +137,10 @@ impl SystemRuntime {
                 heap_pos_set_func,
                 main_base_heap_pos: None,
                 deploy_base_heap_pos: None,
+                reset_func,
             };
             let compiled_runtime = Rc::new(RefCell::new(compiled_runtime));
-            compiled_runtimes.insert(code_hash, compiled_runtime.clone());
+            compiled_runtimes.insert((ctx.state, code_hash), compiled_runtime.clone());
             compiled_runtime
         });
         Self {
@@ -147,29 +168,30 @@ impl SystemRuntime {
             STATE_DEPLOY => compiled_runtime.deploy_func,
             _ => unreachable!(),
         };
+        let result = entrypoint
+            .call(compiled_runtime.store.as_context_mut(), &[], &mut [])
+            .map_err(map_anyhow_error);
 
-        if state == STATE_MAIN && compiled_runtime.main_base_heap_pos.is_none() {
-            let heap_pos = &mut [Val::I32(0)];
-            let f = compiled_runtime.heap_pos_func;
-            f.call(compiled_runtime.store.as_context_mut(), &[], heap_pos)
-                .expect("call failed");
-            let heap_pos_current = heap_pos[0].i32().unwrap();
-            compiled_runtime.main_base_heap_pos = Some(heap_pos_current as u32);
-        } else if state == STATE_DEPLOY && compiled_runtime.deploy_base_heap_pos.is_none() {
-            let heap_pos = &mut [Val::I32(0)];
-            let f = compiled_runtime.heap_pos_func;
-            f.call(compiled_runtime.store.as_context_mut(), &[], heap_pos)
-                .expect("call failed");
-            let heap_pos_current = heap_pos[0].i32().unwrap();
-            compiled_runtime.deploy_base_heap_pos = Some(heap_pos_current as u32);
+        let heap_pos = &mut [Val::I32(0)];
+        let f = compiled_runtime.heap_pos_func;
+        f.call(compiled_runtime.store.as_context_mut(), &[], heap_pos)
+            .expect("call failed");
+        let heap_pos_current = heap_pos[0].i32().unwrap() as u32;
+        println!(
+            "id={} state={} heap_pos_current={}",
+            compiled_runtime.id, state, heap_pos_current
+        );
+        if heap_pos_current != 0 {
+            if state == STATE_MAIN && compiled_runtime.main_base_heap_pos.is_none() {
+                compiled_runtime.main_base_heap_pos = Some(heap_pos_current);
+            } else if state == STATE_DEPLOY && compiled_runtime.deploy_base_heap_pos.is_none() {
+                compiled_runtime.deploy_base_heap_pos = Some(heap_pos_current);
+            }
         }
         // println!(
         //     "state {} main_base_heap_pos {:?} current {:?}",
         //     state, compiled_runtime.main_base_heap_pos, heap_pos_current,
         // );
-        let result = measure_time!(entrypoint
-            .call(compiled_runtime.store.as_context_mut(), &[], &mut [])
-            .map_err(map_anyhow_error));
 
         // Always swap back right after the call
         core::mem::swap(compiled_runtime.store.data_mut(), &mut self.ctx);

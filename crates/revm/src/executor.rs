@@ -221,8 +221,8 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                     Some(balances)
                 },
             };
-            let new_frame_input = measure_time!(encode(&new_frame_input).unwrap());
-            measure_time!(context_input.extend(new_frame_input));
+            let new_frame_input = encode(&new_frame_input).unwrap();
+            context_input.extend(new_frame_input);
         }
         _ => context_input.extend_from_slice(&input),
     }
