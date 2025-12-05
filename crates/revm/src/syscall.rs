@@ -22,9 +22,9 @@ use revm::{
         gas::{sload_cost, sstore_cost, sstore_refund, warm_cold_cost},
         interpreter_types::InputsTr,
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, Gas, Host,
-        MAX_INITCODE_SIZE,
     },
     primitives::{
+        eip3860::MAX_INITCODE_SIZE,
         hardfork::{SpecId, BERLIN, ISTANBUL, TANGERINE},
         wasm::{wasm_max_code_size, WASM_MAX_CODE_SIZE},
     },
@@ -262,6 +262,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             if is_system_precompile(&target_address) {
                 account_load.is_empty = true;
             }
+            // charge_gas!(gas::calc_call_static_gas(spec_id, has_transfer));
             // EIP-150: gas cost changes for IO-heavy operations
             charge_gas!(gas::call_cost(spec_id, has_transfer, account_load));
             let mut gas_limit = min(
@@ -300,6 +301,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 scheme: CallScheme::Call,
                 is_static,
                 return_memory_offset: Default::default(),
+                known_bytecode: None,
             });
             return_frame!(NextAction::NewFrame(FrameInput::Call(call_inputs)));
         }
@@ -348,6 +350,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 scheme: CallScheme::StaticCall,
                 is_static: true,
                 return_memory_offset: Default::default(),
+                known_bytecode: None,
             });
             return_frame!(NextAction::NewFrame(FrameInput::Call(call_inputs)));
         }
@@ -402,6 +405,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 scheme: CallScheme::CallCode,
                 is_static,
                 return_memory_offset: Default::default(),
+                known_bytecode: None,
             });
             return_frame!(NextAction::NewFrame(FrameInput::Call(call_inputs)));
         }
@@ -450,6 +454,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 scheme: CallScheme::DelegateCall,
                 is_static,
                 return_memory_offset: Default::default(),
+                known_bytecode: None,
             });
             return_frame!(NextAction::NewFrame(FrameInput::Call(call_inputs)));
         }
@@ -619,9 +624,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             assert_halt!(!is_static, StateChangeDuringStaticCall);
             // destroy an account
             let target = Address::from_slice(&input[0..20]);
+            // let skip_cold = frame.interpreter.gas.remaining()
+            //     < gas::selfdestruct_cold_beneficiary_cost(spec_id);
             let mut result = ctx
                 .journal_mut()
-                .selfdestruct(current_target_address, target)?;
+                .selfdestruct(current_target_address, target, false)
+                .map_err(|e| e.unwrap_db_error())?;
             // system precompiles are always empty...
             if result.data.target_exists && is_system_precompile(&target) {
                 result.data.target_exists = false;
@@ -670,7 +678,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let address = Address::from_slice(&input[0..20]);
 
             // Load an account with the bytecode
-            let account = ctx.journal_mut().load_account_code(address)?;
+            let account = ctx.journal_mut().load_account_with_code(address)?;
             charge_gas!(warm_cold_cost(account.is_cold));
 
             // A special case for precompiled runtimes, where the way of extracting bytecode might be different.
@@ -705,7 +713,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let address = Address::from_slice(&input[0..20]);
 
             // Load an account from database
-            let account = ctx.journal_mut().load_account_code(address)?;
+            let account = ctx.journal_mut().load_account_with_code(address)?;
             charge_gas!(warm_cold_cost(account.is_cold));
 
             // Extract code hash for an account for delegated account.
@@ -747,7 +755,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let code_length = reader.read_u64::<LittleEndian>().unwrap();
 
             // Load account with bytecode and charge gas
-            let account = ctx.journal_mut().load_account_code(address)?;
+            let account = ctx.journal_mut().load_account_with_code(address)?;
 
             // CRITICAL: Gas is charged for REQUESTED length, not actual returned length
             // This prevents gas abuse where attacker requests small length but expects full bytecode
@@ -805,7 +813,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 return_result!(result, Ok);
             }
 
-            // Slow path: Padding required to reach requested length
+            // Slow path: Padding required to reach the requested length
             let mut result = Vec::with_capacity(code_length_usize);
             result.resize(code_length_usize, 0u8);
             result[..to_copy].copy_from_slice(&bytecode[start..start + to_copy]);
@@ -820,10 +828,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let input = get_input_validated!(== 20);
             // read an account from its address
             let address = Address::from_slice(&input[..20]);
-            let mut account = ctx.journal_mut().load_account_code(address)?;
+            let account = ctx.journal_mut().load_account_with_code(address)?;
             // to make sure this account is ownable and owner by the same runtime, that allows
             // a runtime to modify any account it owns
-            let Some(ownable_account_bytecode) = (match account.info.code.as_mut() {
+            let Some(ownable_account_bytecode) = (match account.info.code.as_ref() {
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode)) => {
                     // if an account is not the same - it's not a malformed building param, runtime might not know it's account
                     if ownable_account_bytecode.owner_address == account_owner_address {
@@ -865,7 +873,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             if address == current_target_address {
                 return_result!(account_owner_address.0, Ok);
             }
-            let account = ctx.journal_mut().load_account_code(address)?;
+            let account = ctx.journal_mut().load_account_with_code(address)?;
             match account.info.code.as_ref() {
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode)) => {
                     return_result!(ownable_account_bytecode.owner_address.0, Ok)
@@ -884,7 +892,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 calc_create_metadata_address(&account_owner_address, &salt);
             let account = ctx
                 .journal_mut()
-                .load_account_code(derived_metadata_address)?;
+                .load_account_with_code(derived_metadata_address)?;
             // Verify no deployment collision exists at derived address.
             // Check only code_hash and nonce - intentionally ignore balance to prevent
             // front-running DoS where attacker funds address before legitimate creation.
@@ -914,10 +922,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // read an account from its address
             let address = Address::from_slice(&input[..20]);
             let _offset = LittleEndian::read_u32(&input[20..24]) as usize;
-            let mut account = ctx.journal_mut().load_account_code(address)?;
+            let account = ctx.journal_mut().load_account_with_code(address)?;
             // to make sure this account is ownable and owner by the same runtime, that allows
             // a runtime to modify any account it owns
-            let ownable_account_bytecode = match account.info.code.as_mut() {
+            let ownable_account_bytecode = match account.info.code.as_ref() {
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode))
                     if ownable_account_bytecode.owner_address == account_owner_address =>
                 {
@@ -946,10 +954,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let input = get_input_validated!(== 28);
             // read an account from its address
             let address = Address::from_slice(&input[..20]);
-            let mut account = ctx.journal_mut().load_account_code(address)?;
+            let account = ctx.journal_mut().load_account_with_code(address)?;
             // to make sure this account is ownable and owner by the same runtime, that allows
             // a runtime to modify any account it owns
-            let ownable_account_bytecode = match account.info.code.as_mut() {
+            let ownable_account_bytecode = match account.info.code.as_ref() {
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode))
                     if ownable_account_bytecode.owner_address == account_owner_address =>
                 {
@@ -1087,9 +1095,12 @@ mod code_copy_tests {
         let target_address = Address::from([0x42; 20]);
 
         {
-            let mut account = ctx.journal_mut().load_account(target_address).unwrap();
-            account.info.code = Some(Bytecode::new_raw(bytecode.clone()));
-            account.info.balance = U256::from(1); // Non-empty account
+            let mut account = ctx
+                .journal_mut()
+                .load_account_with_code_mut(target_address)
+                .unwrap();
+            account.set_code_and_hash_slow(Bytecode::new_raw(bytecode.clone()));
+            account.set_balance(U256::ONE); // Non-empty account
         }
 
         // === Prepare syscall input ===
@@ -1319,7 +1330,10 @@ mod metadata_write_tests {
             result.err()
         );
 
-        let acc = ctx.journal_mut().load_account_code(test_address).unwrap();
+        let acc = ctx
+            .journal_mut()
+            .load_account_with_code(test_address)
+            .unwrap();
         match &acc.info.code {
             Some(Bytecode::OwnableAccount(ownable)) => {
                 assert_eq!(ownable.metadata[..], new_data);
@@ -1348,14 +1362,14 @@ mod metadata_write_tests {
 
         let derived_address = calc_create_metadata_address(&owner_address, &salt);
 
-        // Pre-load the account to avoid empty account check
+        // Preload the account to avoid empty account check
         // (In real scenario, this would be done by previous transactions)
         {
             let mut account = ctx
                 .journal_mut()
-                .load_account_code(derived_address)
+                .load_account_with_code_mut(derived_address)
                 .unwrap();
-            account.info.balance = U256::from(1);
+            account.set_balance(U256::ONE);
         }
 
         // === Execute: Prepare syscall input (salt + metadata) ===
@@ -1399,7 +1413,7 @@ mod metadata_write_tests {
         // === Verify: Check the created account ===
         let created_account = ctx
             .journal_mut()
-            .load_account_code(derived_address)
+            .load_account_with_code(derived_address)
             .expect("Failed to load created account");
 
         match &created_account.info.code {

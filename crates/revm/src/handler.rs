@@ -1,6 +1,6 @@
 //!Handler related to a Fluent chain
 
-use crate::{RwasmFrame, RwasmHaltReason};
+use crate::{types::SystemInterruptionOutcome, RwasmFrame, RwasmHaltReason};
 use revm::{
     context::{ContextTr, JournalTr},
     handler::{EvmTr, EvmTrError, FrameResult, FrameTr, Handler},
@@ -36,9 +36,11 @@ impl<CTX, ERROR, FRAME> Default for RwasmHandler<CTX, ERROR, FRAME> {
     }
 }
 
-impl<EVM, ERROR> InspectorHandler for RwasmHandler<EVM, ERROR, RwasmFrame>
+impl<EVM, ERROR> InspectorHandler<SystemInterruptionOutcome>
+    for RwasmHandler<EVM, ERROR, RwasmFrame>
 where
     EVM: InspectorEvmTr<
+        SystemInterruptionOutcome,
         Context: ContextTr<Journal: JournalTr<State = EvmState>>,
         Frame = RwasmFrame,
         Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context, EthInterpreter>,

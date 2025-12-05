@@ -74,7 +74,7 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
         if interpreter_result.output.first() == Some(&0xEF) {
             let account = ctx
                 .journal_mut()
-                .load_account_code(create_frame.created_address)?;
+                .load_account_with_code(create_frame.created_address)?;
             match account.data.info.code.as_ref() {
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode)) => {
                     is_delegated_runtime_address(&ownable_account_bytecode.owner_address)
@@ -98,7 +98,6 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
             .set_code(create_frame.created_address, bytecode.clone());
         // Change input params
         frame.interpreter.input.input = CallInput::Bytes(constructor_params_raw);
-        frame.interpreter.input.account_owner = None;
         frame.interpreter.bytecode = ExtBytecode::new_with_hash(bytecode, bytecode_hash);
         frame.interpreter.gas = interpreter_result.gas;
         // Make sure the execution context is clear
@@ -125,11 +124,24 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .bytecode_address()
         .cloned()
         .unwrap_or_else(|| interpreter.input.target_address());
-    let effective_bytecode_address = interpreter
-        .input
-        .account_owner
-        .unwrap_or_else(|| bytecode_address);
-    let meta_account = ctx.journal_mut().load_account_code(bytecode_address)?;
+
+    // A special case for ownable accounts, where we can delegate an execution to a specific
+    // runtime by replacing the final bytecode.
+    //
+    // Note: It must be executed right after EIP-7702 resolution,
+    //  otherwise account delegation won't work to EVM accounts in Fluent mode.
+    if let Bytecode::OwnableAccount(ownable_bytecode) = &*interpreter.bytecode {
+        let delegated_address = ownable_bytecode.owner_address;
+        interpreter.input.account_owner = Some(delegated_address);
+        let account = &ctx
+            .journal_mut()
+            .load_account_with_code(delegated_address)?
+            .info;
+        let bytecode = account.code.clone().unwrap_or_default();
+        interpreter.bytecode = ExtBytecode::new_with_hash(bytecode, account.code_hash);
+    }
+
+    let meta_account = ctx.journal_mut().load_account_with_code(bytecode_address)?;
     let meta_bytecode = meta_account.info.code.clone().unwrap_or_default();
 
     // encode input with all related context info
@@ -167,7 +179,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .to_vec();
     let input = interpreter.input.input.bytes(ctx);
 
-    match meta_bytecode {
+    let account_owner = match meta_bytecode {
         Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
             let new_frame_input = RuntimeNewFrameInputV1 {
                 metadata: v.metadata,
@@ -176,9 +188,14 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             let new_frame_input =
                 bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
             context_input.extend(new_frame_input);
+            Some(v.owner_address)
         }
-        _ => context_input.extend_from_slice(&input),
-    }
+        _ => {
+            context_input.extend_from_slice(&input);
+            None
+        }
+    };
+    let effective_bytecode_address = account_owner.unwrap_or_else(|| bytecode_address);
 
     let rwasm_bytecode = match &*interpreter.bytecode {
         Bytecode::Rwasm(bytecode) => bytecode.clone(),
@@ -294,7 +311,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         .bytecode_address()
         .cloned()
         .unwrap_or_else(|| frame.interpreter.input.target_address());
-    let meta_account = ctx.journal_mut().load_account_code(bytecode_address)?;
+    let meta_account = ctx.journal_mut().load_account_with_code(bytecode_address)?;
     let meta_bytecode = meta_account.info.code.clone().unwrap_or_default();
     let outcome: Bytes = match meta_bytecode {
         Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
@@ -367,7 +384,10 @@ fn get_ownable_account_mut<'a, CTX: ContextTr + 'a, INSP: Inspector<CTX>>(
         .bytecode_address()
         .cloned()
         .unwrap_or_else(|| frame.interpreter.input.target_address());
-    let bytecode_account = ctx.journal_mut().load_account_code(bytecode_address)?.data;
+    let bytecode_account = ctx
+        .journal_mut()
+        .load_account_with_code(bytecode_address)?
+        .data;
     let bytecode_account = bytecode_account.info.code.clone();
     Ok(bytecode_account.and_then(|bytecode| match bytecode {
         Bytecode::OwnableAccount(account)

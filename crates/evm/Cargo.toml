@@ -36,5 +36,7 @@ serde = [
     "fluentbase-sdk/serde"
 ]
 fluent-testnet = [
-	"fluentbase-sdk/fluent-testnet"
+    "fluentbase-sdk/fluent-testnet"
 ]
+# We have it to silent warnings inside macroses
+memory_limit = []

@@ -1,8 +1,12 @@
 use fluentbase_sdk::{Address, Log, U256};
-use revm::context::ContextTr;
-use revm::interpreter::interpreter_types::{Jumps, MemoryTr};
-use revm::interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
-use revm::{state, Inspector};
+use revm::{
+    context::ContextTr,
+    interpreter::{
+        interpreter_types::{Jumps, MemoryTr},
+        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
+    },
+    state, Inspector,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct InterpreterState {
@@ -91,7 +95,7 @@ impl<CTX: ContextTr> Inspector<CTX> for TraceInspector {
         }
     }
 
-    fn log(&mut self, _interp: &mut Interpreter, _ctx: &mut CTX, log: Log) {
+    fn log(&mut self, _ctx: &mut CTX, log: Log) {
         self.events.push(InspectorEvent::Log(log));
     }
 
