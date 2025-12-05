@@ -51,11 +51,11 @@ ark-serialize = { workspace = true }
 [features]
 default = [
     "std",
-    #    "fluent-testnet",
-    #    "wasmtime",
-    "debug-print",
-    #    "svm",
-    #    "enable-error-text-checks", # when 'fast-panic' is off
+    # "fluent-testnet",
+    # "wasmtime",
+    # "debug-print",
+    # "svm",
+    # "enable-error-text-checks", # when 'fast-panic' is off
 ]
 svm = [
     "fluentbase-genesis/svm",
