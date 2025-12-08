@@ -132,6 +132,9 @@ pub enum ExitCode {
     OutOfFuel = -2010,
     /// Call an undefined or unregistered external function
     UnknownExternalFunction = -2011,
+
+    /* System Fatal Error Codes */
+    UnexpectedFatalExecutionFailure = -3001,
 }
 
 impl core::error::Error for ExitCode {}

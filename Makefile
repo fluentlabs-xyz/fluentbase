@@ -34,14 +34,13 @@ test:
 	cargo test --manifest-path=./contracts/Cargo.toml --release
 	cargo test --manifest-path=./examples/Cargo.toml --release
 	cargo test --release
-	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e short_tests::good_coverage_tests --release
+	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e tests --release
 
 .PHONY: testnet_test
 testnet_test:
 	cargo test --manifest-path=./contracts/Cargo.toml --release --features fluent-testnet
 	cargo test --manifest-path=./examples/Cargo.toml --release --features fluent-testnet
 	cargo test --release --features fluent-testnet
-	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e short_tests::good_coverage_tests --release
 	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e tests --release
 
 .PHONY: svm_tests
@@ -51,7 +50,7 @@ svm_tests:
 
 .PHONY: wasm_contracts_sizes
 wasm_contracts_sizes:
-	ls -al target/contracts/wasm32-unknown-unknown/release/*.wasm
+	du -sch target/contracts/wasm32-unknown-unknown/release/*.wasm
 
 CONTRACTS_DIR := target/contracts/wasm32-unknown-unknown
 WAT_OUT_DIR       := target/wats

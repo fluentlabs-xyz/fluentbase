@@ -143,7 +143,9 @@ impl SystemRuntime {
                 "runtime: an unexpected trap code happened inside system runtime: {:?} ({}), falling back to the unreachable code, this should be investigated",
                 trap_code, trap_code,
             );
-            return Err(TrapCode::UnreachableCodeReached);
+            self.ctx.execution_result.exit_code =
+                ExitCode::UnexpectedFatalExecutionFailure.into_i32();
+            return Ok(());
         }
 
         // System runtime returns output with exit code (as first four bytes).
@@ -154,7 +156,9 @@ impl SystemRuntime {
                 "runtime: an unexpected output size returned from system runtime: {}, falling back to the unreachable code, this should be investigated",
                 output.len()
             );
-            return Err(TrapCode::UnreachableCodeReached);
+            self.ctx.execution_result.exit_code =
+                ExitCode::UnexpectedFatalExecutionFailure.into_i32();
+            return Ok(());
         }
         let (exit_code_le, output) = output.split_at(4);
         self.ctx.execution_result.output = output.to_vec();

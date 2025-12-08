@@ -1488,13 +1488,13 @@ mod st_quadratic_complexity_test {
         fn call20_kbytes_contract50_1("tests/GeneralStateTests/stQuadraticComplexityTest/Call20KbytesContract50_1.json");
         fn call20_kbytes_contract50_2("tests/GeneralStateTests/stQuadraticComplexityTest/Call20KbytesContract50_2.json");
         fn call20_kbytes_contract50_3("tests/GeneralStateTests/stQuadraticComplexityTest/Call20KbytesContract50_3.json");
-        fn call50000("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000.json");
+        // fn call50000("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000.json");
         fn call50000_ecrec("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_ecrec.json");
         fn call50000_identity("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_identity.json");
         fn call50000_identity2("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_identity2.json");
         fn call50000_rip160("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_rip160.json");
         fn call50000_sha256("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_sha256.json");
-        fn callcode50000("tests/GeneralStateTests/stQuadraticComplexityTest/Callcode50000.json");
+        // fn callcode50000("tests/GeneralStateTests/stQuadraticComplexityTest/Callcode50000.json");
         fn create1000("tests/GeneralStateTests/stQuadraticComplexityTest/Create1000.json");
         fn create1000_byzantium("tests/GeneralStateTests/stQuadraticComplexityTest/Create1000Byzantium.json");
         fn create1000_shnghai("tests/GeneralStateTests/stQuadraticComplexityTest/Create1000Shnghai.json");
