@@ -1,7 +1,8 @@
 //! Contains the `[RwasmEvm]` type and its implementation of the execution EVM traits.
 
 use crate::{
-    api::RwasmFrame, executor::run_rwasm_loop, precompiles::RwasmPrecompiles, ExecutionResult,
+    api::RwasmFrame, executor::run_rwasm_loop, precompiles::RwasmPrecompiles,
+    types::SystemInterruptionOutcome, ExecutionResult,
 };
 use fluentbase_sdk::{resolve_precompiled_runtime_from_input, Address, Bytes};
 use revm::{
@@ -9,14 +10,11 @@ use revm::{
     context::{ContextError, ContextSetters, Evm, FrameStack, JournalTr},
     context_interface::ContextTr,
     handler::{
-        evm::{ContextDbError, FrameInitResult, FrameTr},
+        evm::FrameTr,
         instructions::{EthInstructions, InstructionProvider},
         EvmTr, FrameInitOrResult, FrameResult, ItemOrResult, PrecompileProvider,
     },
-    inspector::{
-        handler::{frame_end, frame_start},
-        InspectorEvmTr, JournalExt, NoOpInspector,
-    },
+    inspector::{InspectorEvmTr, JournalExt, NoOpInspector},
     interpreter::{
         interpreter::{EthInterpreter, ExtBytecode},
         return_ok, return_revert, CallInput, FrameInput, Gas, InstructionResult, InterpreterResult,
@@ -69,7 +67,7 @@ impl<CTX, INSP, I, P> RwasmEvm<CTX, INSP, I, P> {
     }
 }
 
-impl<CTX, INSP, I, P> InspectorEvmTr for RwasmEvm<CTX, INSP, I, P>
+impl<CTX, INSP, I, P> InspectorEvmTr<SystemInterruptionOutcome> for RwasmEvm<CTX, INSP, I, P>
 where
     CTX: ContextTr<Journal: JournalExt> + ContextSetters,
     I: InstructionProvider<Context = CTX, InterpreterTypes = EthInterpreter>,
@@ -77,6 +75,39 @@ where
     INSP: Inspector<CTX, I::InterpreterTypes>,
 {
     type Inspector = INSP;
+
+    fn all_inspector(
+        &self,
+    ) -> (
+        &Self::Context,
+        &Self::Instructions,
+        &Self::Precompiles,
+        &FrameStack<Self::Frame>,
+        &Self::Inspector,
+    ) {
+        let ctx = &self.0.ctx;
+        let frame = &self.0.frame_stack;
+        let instructions = &self.0.instruction;
+        let precompiles = &self.0.precompiles;
+        let inspector = &self.0.inspector;
+        (ctx, instructions, precompiles, frame, inspector)
+    }
+    fn all_mut_inspector(
+        &mut self,
+    ) -> (
+        &mut Self::Context,
+        &mut Self::Instructions,
+        &mut Self::Precompiles,
+        &mut FrameStack<Self::Frame>,
+        &mut Self::Inspector,
+    ) {
+        let ctx = &mut self.0.ctx;
+        let frame = &mut self.0.frame_stack;
+        let instructions = &mut self.0.instruction;
+        let precompiles = &mut self.0.precompiles;
+        let inspector = &mut self.0.inspector;
+        (ctx, instructions, precompiles, frame, inspector)
+    }
 
     fn inspector(&mut self) -> &mut Self::Inspector {
         &mut self.0.inspector
@@ -111,50 +142,6 @@ where
             &mut self.0.instruction,
         )
     }
-
-    #[inline]
-    #[tracing::instrument(level = "info", skip_all)]
-    fn inspect_frame_init(
-        &mut self,
-        mut frame_init: <Self::Frame as FrameTr>::FrameInit,
-    ) -> Result<FrameInitResult<'_, Self::Frame>, ContextDbError<Self::Context>> {
-        let (ctx, inspector) = self.ctx_inspector();
-        if let Some(mut output) = frame_start(ctx, inspector, &mut frame_init.frame_input) {
-            frame_end(ctx, inspector, &frame_init.frame_input, &mut output);
-            return Ok(ItemOrResult::Result(output));
-        }
-
-        let frame_input = frame_init.frame_input.clone();
-        if let ItemOrResult::Result(mut output) = self.frame_init(frame_init)? {
-            let (ctx, inspector) = self.ctx_inspector();
-            frame_end(ctx, inspector, &frame_input, &mut output);
-            return Ok(ItemOrResult::Result(output));
-        }
-
-        // if it is a new frame, initialize the interpreter.
-        let (ctx, inspector, frame) = self.ctx_inspector_frame();
-        let interp = &mut frame.interpreter;
-        inspector.initialize_interp(interp, ctx);
-        Ok(ItemOrResult::Item(frame))
-    }
-
-    #[inline]
-    #[tracing::instrument(level = "info", skip_all)]
-    fn inspect_frame_run(
-        &mut self,
-    ) -> Result<FrameInitOrResult<Self::Frame>, ContextDbError<Self::Context>> {
-        let (context, inspector, frame, _) = self.ctx_inspector_frame_instructions();
-
-        let action = run_rwasm_loop(frame, context, Some(inspector))?.into_interpreter_action();
-        let mut result = frame.process_next_action(context, action);
-
-        if let Ok(ItemOrResult::Result(frame_result)) = &mut result {
-            let (ctx, inspector, frame) = self.ctx_inspector_frame();
-            frame_end(ctx, inspector, &frame.input, frame_result);
-            frame.set_finished(true);
-        };
-        result
-    }
 }
 
 impl<CTX, INSP, I, P> EvmTr for RwasmEvm<CTX, INSP, I, P, RwasmFrame>
@@ -167,6 +154,38 @@ where
     type Instructions = I;
     type Precompiles = P;
     type Frame = RwasmFrame;
+
+    #[inline]
+    fn all(
+        &self,
+    ) -> (
+        &Self::Context,
+        &Self::Instructions,
+        &Self::Precompiles,
+        &FrameStack<Self::Frame>,
+    ) {
+        let ctx = &self.0.ctx;
+        let instructions = &self.0.instruction;
+        let precompiles = &self.0.precompiles;
+        let frame_stack = &self.0.frame_stack;
+        (ctx, instructions, precompiles, frame_stack)
+    }
+
+    #[inline]
+    fn all_mut(
+        &mut self,
+    ) -> (
+        &mut Self::Context,
+        &mut Self::Instructions,
+        &mut Self::Precompiles,
+        &mut FrameStack<Self::Frame>,
+    ) {
+        let ctx = &mut self.0.ctx;
+        let instructions = &mut self.0.instruction;
+        let precompiles = &mut self.0.precompiles;
+        let frame_stack = &mut self.0.frame_stack;
+        (ctx, instructions, precompiles, frame_stack)
+    }
 
     fn ctx(&mut self) -> &mut Self::Context {
         &mut self.0.ctx
@@ -207,9 +226,9 @@ where
         let res = Self::Frame::init_with_context(new_frame, ctx, precompiles, frame_input)?;
         let mut res = res.map_frame(|token| {
             if is_first_init {
-                self.0.frame_stack.end_init(token);
+                unsafe { self.0.frame_stack.end_init(token) };
             } else {
-                self.0.frame_stack.push(token);
+                unsafe { self.0.frame_stack.push(token) };
             }
             self.0.frame_stack.get()
         });
