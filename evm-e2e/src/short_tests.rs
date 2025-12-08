@@ -253,3 +253,10 @@ mod new_system_runtime_failing_tests {
         // fn static_loop_calls_then_revert("tests/GeneralStateTests/stStaticCall/static_LoopCallsThenRevert.json");
     }
 }
+
+mod new_v102_interpreter_failing_tests {
+    define_tests! {
+        // fn call_ecrecover0_no_gas("tests/GeneralStateTests/stPreCompiledContracts2/CallEcrecover0_NoGas.json");
+        fn sstore_gas_left("tests/GeneralStateTests/stSStoreTest/sstore_gasLeft.json");
+    }
+}

@@ -51,11 +51,11 @@ ark-serialize = { workspace = true }
 [features]
 default = [
     "std",
-    #    "fluent-testnet",
-    #    "wasmtime",
-    #    "debug-print",
-    #    "svm",
-    #    "enable-error-text-checks", # when 'fast-panic' is off
+    # "fluent-testnet",
+    # "wasmtime",
+    # "debug-print",
+    # "svm",
+    # "enable-error-text-checks", # when 'fast-panic' is off
 ]
 svm = [
     "fluentbase-genesis/svm",
@@ -84,15 +84,15 @@ wasmtime = [
     "fluentbase-revm/wasmtime",
 ]
 fluent-testnet = [
-	"fluentbase-contracts/fluent-testnet",
-	"fluentbase-genesis/fluent-testnet",
-	"fluentbase-revm/fluent-testnet",
-	"fluentbase-runtime/fluent-testnet",
-	"fluentbase-sdk/fluent-testnet",
-	"fluentbase-svm/fluent-testnet",
-	"fluentbase-svm-common/fluent-testnet",
-	"fluentbase-testing/fluent-testnet",
-	"fluentbase-universal-token/fluent-testnet"
+    "fluentbase-contracts/fluent-testnet",
+    "fluentbase-genesis/fluent-testnet",
+    "fluentbase-revm/fluent-testnet",
+    "fluentbase-runtime/fluent-testnet",
+    "fluentbase-sdk/fluent-testnet",
+    "fluentbase-svm/fluent-testnet",
+    "fluentbase-svm-common/fluent-testnet",
+    "fluentbase-testing/fluent-testnet",
+    "fluentbase-universal-token/fluent-testnet"
 ]
 
 [[bench]]

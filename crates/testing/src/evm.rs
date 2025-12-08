@@ -381,6 +381,7 @@ impl<'a> TxBuilder<'a> {
         if self.ctx.disabled_rwasm {
             let mut context: MainnetContext<InMemoryDB> = MainnetContext::new(db, PRAGUE);
             context.cfg = self.ctx.cfg.clone();
+            context.cfg.legacy_bytecode_enabled = true;
             context.block = self.block.clone();
             context.tx = self.tx.clone();
             let mut evm = context.build_mainnet();
@@ -391,6 +392,7 @@ impl<'a> TxBuilder<'a> {
         } else {
             let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, PRAGUE);
             context.cfg = self.ctx.cfg.clone();
+            context.cfg.legacy_bytecode_enabled = false;
             context.block = self.block.clone();
             context.tx = self.tx.clone();
             let mut evm = context.build_rwasm();

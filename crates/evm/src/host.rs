@@ -4,7 +4,10 @@
 //! via interruptions. The unreachable!() bodies here document that path.
 use core::ops::{Deref, DerefMut};
 use fluentbase_sdk::{Address, Bytes, ContextReader, Log, SharedAPI, B256, U256};
-use revm_context::journaled_state::{AccountLoad, StateLoad};
+use revm_context::{
+    host::LoadError,
+    journaled_state::{AccountInfoLoad, AccountLoad, StateLoad},
+};
 use revm_interpreter::{Host, SStoreResult, SelfDestructResult};
 use revm_primitives::{StorageKey, StorageValue};
 
@@ -108,11 +111,22 @@ impl<'a, SDK: SharedAPI> Host for HostWrapperImpl<'a, SDK> {
         &mut self,
         _address: Address,
         _target: Address,
-    ) -> Option<StateLoad<SelfDestructResult>> {
+        _skip_cold_load: bool,
+    ) -> Result<StateLoad<SelfDestructResult>, LoadError> {
         unreachable!()
     }
 
     fn log(&mut self, _log: Log) {
+        unreachable!()
+    }
+
+    fn sstore_skip_cold_load(
+        &mut self,
+        _address: Address,
+        _key: StorageKey,
+        _value: StorageValue,
+        _skip_cold_load: bool,
+    ) -> Result<StateLoad<SStoreResult>, LoadError> {
         unreachable!()
     }
 
@@ -125,6 +139,15 @@ impl<'a, SDK: SharedAPI> Host for HostWrapperImpl<'a, SDK> {
         unreachable!()
     }
 
+    fn sload_skip_cold_load(
+        &mut self,
+        _address: Address,
+        _key: StorageKey,
+        _skip_cold_load: bool,
+    ) -> Result<StateLoad<StorageValue>, LoadError> {
+        unreachable!()
+    }
+
     fn sload(&mut self, _address: Address, _key: StorageKey) -> Option<StateLoad<StorageValue>> {
         unreachable!()
     }
@@ -134,6 +157,15 @@ impl<'a, SDK: SharedAPI> Host for HostWrapperImpl<'a, SDK> {
     }
 
     fn tload(&mut self, _address: Address, _key: StorageKey) -> StorageValue {
+        unreachable!()
+    }
+
+    fn load_account_info_skip_cold_load(
+        &mut self,
+        _address: Address,
+        _load_code: bool,
+        _skip_cold_load: bool,
+    ) -> Result<AccountInfoLoad<'_>, LoadError> {
         unreachable!()
     }
 

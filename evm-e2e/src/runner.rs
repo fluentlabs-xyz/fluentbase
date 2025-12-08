@@ -14,14 +14,10 @@ use revm::{
         result::ExecutionResult, transaction::AccessListItem, BlockEnv, CfgEnv, TransactTo,
         TransactionType::Eip1559, TxEnv,
     },
-    context_interface::block::calc_excess_blob_gas,
     database::{CacheState, InMemoryDB, State, StateBuilder},
     handler::MainnetContext,
     interpreter::{gas::MemoryGas, return_error, return_ok, return_revert},
-    primitives::{
-        eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, hardfork::SpecId, keccak256, Bytes, B256,
-        U256,
-    },
+    primitives::{hardfork::SpecId, keccak256, Bytes, B256, U256},
     state::AccountInfo,
     ExecuteCommitEvm, InspectCommitEvm, MainBuilder, MainnetEvm,
 };
@@ -758,20 +754,20 @@ pub fn execute_test_suite(
         // opcode in EVM.
         block_env.prevrandao = unit.env.current_random;
         // EIP-4844
-        if let Some(current_excess_blob_gas) = unit.env.current_excess_blob_gas {
-            block_env.set_blob_excess_gas_and_price(
-                current_excess_blob_gas.to(),
-                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-            );
-        } else if let (Some(parent_blob_gas_used), Some(parent_excess_blob_gas)) = (
-            unit.env.parent_blob_gas_used,
-            unit.env.parent_excess_blob_gas,
-        ) {
-            block_env.set_blob_excess_gas_and_price(
-                calc_excess_blob_gas(parent_blob_gas_used.to(), parent_excess_blob_gas.to(), 0),
-                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-            );
-        }
+        // if let Some(current_excess_blob_gas) = unit.env.current_excess_blob_gas {
+        //     block_env.set_blob_excess_gas_and_price(
+        //         current_excess_blob_gas.to(),
+        //         BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        //     );
+        // } else if let (Some(parent_blob_gas_used), Some(parent_excess_blob_gas)) = (
+        //     unit.env.parent_blob_gas_used,
+        //     unit.env.parent_excess_blob_gas,
+        // ) {
+        //     block_env.set_blob_excess_gas_and_price(
+        //         calc_excess_blob_gas(parent_blob_gas_used.to(), parent_excess_blob_gas.to(), 0),
+        //         BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        //     );
+        // }
 
         // tx env
         tx_env.caller = if let Some(address) = unit.transaction.sender {
@@ -887,6 +883,7 @@ pub fn execute_test_suite(
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
                         .build_mainnet_with_inspector(TraceInspector::new());
+                    evm.cfg.legacy_bytecode_enabled = true;
                     let start = Instant::now();
                     let result_native = evm.inspect_tx_commit(tx_env.clone());
                     if cfg!(feature = "debug-print") {
@@ -900,6 +897,7 @@ pub fn execute_test_suite(
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
                         .build_rwasm_with_inspector(TraceInspector::new());
+                    evm2.0.cfg.legacy_bytecode_enabled = false;
                     let result_fluent = evm2.inspect_tx_commit(tx_env.clone());
                     if cfg!(feature = "debug-print") {
                         println!("{:?}", start.elapsed());
@@ -934,6 +932,7 @@ pub fn execute_test_suite(
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
                         .build_mainnet();
+                    evm.cfg.legacy_bytecode_enabled = true;
                     let start = Instant::now();
                     let result_native = evm.transact_commit(tx_env.clone());
                     if cfg!(feature = "debug-print") {
@@ -944,6 +943,7 @@ pub fn execute_test_suite(
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
                         .build_rwasm();
+                    evm2.0.cfg.legacy_bytecode_enabled = false;
                     let start = Instant::now();
                     let result_fluent = evm2.transact_commit(tx_env.clone());
                     if cfg!(feature = "debug-print") {
