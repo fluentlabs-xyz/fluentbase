@@ -330,6 +330,41 @@ mod tests {
         assert_eq!(SharedContextInputV1::SIZE_RESERVED, 642);
     }
 
+    #[test]
+    fn test_encode_decode_shared_context_input() {
+        let source = SharedContextInput::V1(SharedContextInputV1 {
+            block: BlockContextV1 {
+                chain_id: 1,
+                coinbase: Address::with_last_byte(1),
+                timestamp: 2,
+                number: 3,
+                difficulty: U256::from(2),
+                prev_randao: B256::left_padding_from(&[1]),
+                gas_limit: 4,
+                base_fee: U256::from(3),
+            },
+            tx: TxContextV1 {
+                gas_limit: 5,
+                nonce: 6,
+                gas_price: U256::from(4),
+                gas_priority_fee: Some(U256::from(5)),
+                origin: Address::with_last_byte(2),
+                value: U256::from(6),
+            },
+            contract: ContractContextV1 {
+                address: Address::with_last_byte(3),
+                bytecode_address: Address::with_last_byte(4),
+                caller: Address::with_last_byte(5),
+                is_static: true,
+                value: U256::from(7),
+                gas_limit: 8,
+            },
+        });
+        let encoded = source.encode().unwrap();
+        let decoded = SharedContextInput::decode(&encoded).unwrap();
+        assert_eq!(source, decoded);
+    }
+
     fn example_context() -> SharedContextInputV1 {
         SharedContextInputV1 {
             block: BlockContextV1 {

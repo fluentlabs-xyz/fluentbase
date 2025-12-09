@@ -60,7 +60,20 @@ fn main() {
         if !is_debug_profile {
             args.push("--release".to_string());
         }
+        let stack_size: u64 = 1024 * 1024 * 1;
+        let flags = [
+            "-C".to_string(),
+            format!("link-arg=-zstack-size={}", stack_size),
+            "-C".to_string(),
+            "panic=abort".to_string(),
+            "-C".to_string(),
+            "target-feature=+bulk-memory".to_string(),
+            "-C".to_string(),
+            "link-args=--export=__stack_pointer".to_string(),
+        ];
+        let encoded_flags = flags.join("\x1f");
         let status = Command::new("cargo")
+            .env("CARGO_ENCODED_RUSTFLAGS", encoded_flags)
             .args(args)
             .status()
             .expect("WASM compilation failure: failed to run cargo build");

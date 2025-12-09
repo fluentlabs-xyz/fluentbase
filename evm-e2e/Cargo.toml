@@ -42,7 +42,7 @@ rwasm = { version = "0.3.2", default-features = false, features = ["wasmtime"] }
 [features]
 default = [
     "std",
-    # "debug-print",
+    "debug-print",
     # "wasmtime",
 ]
 std = [

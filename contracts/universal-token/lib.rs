@@ -43,7 +43,7 @@ macro_rules! runtime_outcome {
         }
     };
     () => {
-        runtime_outcome!(Bytes::new(), None, Vec::new())
+        runtime_outcome!(Vec::new(), None, Vec::new())
     };
 }
 
@@ -52,7 +52,7 @@ macro_rules! custom_err {
         RuntimeExecutionOutcomeV1 {
             exit_code: ExitCode::Panic,
             custom_exit_code: $e,
-            output: Bytes::new(),
+            output: Vec::new(),
             logs: Vec::new(),
             storage: None,
         }
@@ -328,7 +328,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> RuntimeExecutionOutcomeV1 {
         Ok(v) => {
             let mut global_service = global_service();
             runtime_outcome!(
-                v,
+                v.into(),
                 Some(global_service.take_new_values()),
                 global_service.take_events(),
             )

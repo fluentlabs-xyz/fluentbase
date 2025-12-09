@@ -12,6 +12,7 @@ pub mod fd;
 mod genesis;
 mod import_linker;
 mod native_api;
+pub mod reusable_pool;
 mod runtime;
 #[cfg(target_arch = "wasm32")]
 mod rwasm_context;

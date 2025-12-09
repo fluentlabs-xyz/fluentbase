@@ -711,7 +711,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Extract code hash for an account for delegated account.
             // For EVM, we extract code hash from the metadata to satisfy EVM requirements.
             // It requires the account to be loaded with bytecode.
-            let mut code_hash = match &account.data.info.code {
+            let mut code_hash: B256 = match &account.data.info.code {
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode))
                     if ownable_account_bytecode.owner_address == PRECOMPILE_EVM_RUNTIME =>
                 {
@@ -722,18 +722,18 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 }
                 // We return code hash only if account exists (not empty),
                 // this is a requirement from EVM
-                _ if account.is_empty() => B256::ZERO,
-                _ => account.info.code_hash,
+                _ if account.is_empty() => B256::ZERO.into(),
+                _ => account.info.code_hash.into(),
             };
 
             if is_system_precompile(&address) {
                 // We store system precompile bytecode in the state trie,
                 // according to evm requirements, we should return empty code
-                code_hash = B256::ZERO;
-            } else if code_hash == B256::ZERO && !account.is_empty() {
+                code_hash = B256::ZERO.into();
+            } else if code_hash.0 == B256::ZERO.0 && !account.is_empty() {
                 // If the delegated code hash is zero, then it might be a contract deployment stage,
                 // for non-empty account return KECCAK_EMPTY
-                code_hash = KECCAK_EMPTY;
+                code_hash = KECCAK_EMPTY.into();
             }
 
             return_result!(code_hash, Ok);

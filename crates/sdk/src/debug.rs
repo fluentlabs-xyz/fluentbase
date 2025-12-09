@@ -255,6 +255,25 @@ macro_rules! debug_log {
     ($($arg:tt)*) => {{}};
 }
 
+pub const STACK_SIZE: usize = 1024 * 1024 * 1;
+#[macro_export]
+macro_rules! print_system_resources {
+    () => {{
+        #[cfg(not(target_arch = "wasm32"))]
+        compile_error!("use in wasm32 only");
+        let value_on_stack = 1;
+        let stack_offset = (&value_on_stack) as *const i32 as usize;
+        let heap_pos = $crate::alloc_heap_pos();
+        let heap_occupied = heap_pos.saturating_sub($crate::debug::STACK_SIZE);
+        debug_log!(
+            "stack: occupied {}; heap: pos {} occupied {}",
+            $crate::debug::STACK_SIZE - stack_offset,
+            heap_pos,
+            heap_occupied,
+        );
+    }};
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2243,6 +2243,7 @@ dependencies = [
  "revm-rwasm-primitives",
  "rwasm",
  "serde",
+ "spin 0.10.0",
  "strum_macros 0.27.2",
 ]
 

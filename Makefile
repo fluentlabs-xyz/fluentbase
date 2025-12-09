@@ -22,6 +22,7 @@ examples:
 clean:
 	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE) clean; fi
 	cargo clean
+	cd contracts && rm -rf target
 	cd examples/svm/solana-program && $(MAKE) clean
 	cd examples/svm/solana-program-state-usage && $(MAKE) clean
 	cd examples/svm/solana-program-transfer-with-cpi && $(MAKE) clean
@@ -52,11 +53,13 @@ svm_tests:
 wasm_contracts_sizes:
 	ls -al target/contracts/wasm32-unknown-unknown/release/*.wasm
 
-CONTRACT_NAME=svm
+CONTRACT_NAME=contracts_evm
+TARGET=debug
 .PHONY: wasm2wat
 wasm2wat:
 	mkdir -p tmp
-	wasm2wat target/contracts/wasm32-unknown-unknown/release/fluentbase_contracts_$(CONTRACT_NAME).wasm > tmp/$(CONTRACT_NAME).wat
+	ls -alh target/contracts/wasm32-unknown-unknown/$(TARGET)/fluentbase_$(CONTRACT_NAME).wasm
+	wasm2wat target/contracts/wasm32-unknown-unknown/$(TARGET)/fluentbase_$(CONTRACT_NAME).wasm > tmp/$(TARGET)_$(CONTRACT_NAME).wat
 
 .PHONY: check
 check:

@@ -209,8 +209,8 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                 balances.insert(addr, balance);
             }
             let new_frame_input = RuntimeNewFrameInputV1 {
-                metadata: v.metadata,
-                input,
+                metadata: v.metadata.into(),
+                input: input.into(),
                 storage,
                 balances: if balances.is_empty() {
                     None
@@ -344,7 +344,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
             let outcome = RuntimeInterruptionOutcomeV1 {
                 halted_frame,
-                output: result.output,
+                output: result.output.into(),
                 fuel_consumed,
                 fuel_refunded,
                 exit_code,

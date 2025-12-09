@@ -7,11 +7,12 @@ use crate::{
     IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI, SharedAPI,
     SharedContextInputV1, StorageAPI, SyscallResult, B256, U256,
 };
+use alloc::boxed::Box;
 use core::cell::OnceCell;
 
 pub struct SharedContextImpl<API: NativeAPI> {
     native_sdk: API,
-    shared_context_input_v1: OnceCell<SharedContextInputV1>,
+    shared_context_input_v1: OnceCell<Box<SharedContextInputV1>>,
 }
 
 impl<API: NativeAPI> SharedContextImpl<API> {
@@ -27,19 +28,21 @@ impl<API: NativeAPI> SharedContextImpl<API> {
     }
 
     fn shared_context_ref(&self) -> &SharedContextInputV1 {
-        self.shared_context_input_v1.get_or_init(|| {
-            let input_size = self.native_sdk.input_size() as usize;
-            assert!(
-                input_size >= SharedContextInputV1::SIZE,
-                "malformed input header"
-            );
-            let mut header_input: [u8; SharedContextInputV1::SIZE] =
-                [0u8; SharedContextInputV1::SIZE];
-            self.native_sdk.read(&mut header_input, 0);
-            let result = SharedContextInputV1::decode_from_slice(&header_input)
-                .unwrap_or_else(|_| unreachable!("fluentbase: malformed input header"));
-            result
-        })
+        self.shared_context_input_v1
+            .get_or_init(|| {
+                let input_size = self.native_sdk.input_size() as usize;
+                assert!(
+                    input_size >= SharedContextInputV1::SIZE,
+                    "malformed input header"
+                );
+                let mut header_input: [u8; SharedContextInputV1::SIZE] =
+                    [0u8; SharedContextInputV1::SIZE];
+                self.native_sdk.read(&mut header_input, 0);
+                let result = SharedContextInputV1::decode_from_slice(&header_input)
+                    .unwrap_or_else(|_| unreachable!("fluentbase: malformed input header"));
+                Box::new(result)
+            })
+            .as_ref()
     }
 
     pub fn commit_changes_and_exit(&mut self) -> ! {

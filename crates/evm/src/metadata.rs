@@ -1,5 +1,6 @@
 use crate::bytecode::{AnalyzedBytecode, LegacyBytecode};
 use alloc::vec;
+use fluentbase_sdk::reusable_pool::global::vec_u8_pool;
 use fluentbase_sdk::{Bytes, B256};
 
 pub enum EthereumMetadata {
@@ -21,7 +22,10 @@ impl EthereumMetadata {
             ),
             hash => {
                 let bytecode = metadata.slice(32..);
-                Self::Legacy(LegacyBytecode { hash, bytecode })
+                Self::Legacy(LegacyBytecode {
+                    hash,
+                    bytecode: vec_u8_pool::with_pool_item(|v| v.extend_from_slice(&bytecode)),
+                })
             }
         })
     }
@@ -62,7 +66,7 @@ impl EthereumMetadata {
 
     pub fn code_copy(&self) -> Bytes {
         match self {
-            EthereumMetadata::Legacy(bytecode) => bytecode.bytecode.clone(),
+            EthereumMetadata::Legacy(bytecode) => bytecode.bytecode.clone().into(),
             EthereumMetadata::Analyzed(bytecode) => bytecode.bytecode.slice(0..bytecode.len),
         }
     }

@@ -109,7 +109,7 @@ const disabledTests = new Set([
     'revert_in_create_in_init_create2_paris',
     'revert_in_create_in_init_paris',
     // expansive tests fails with OOM (need an extra investigation)
-    'return50000',
+    // 'return50000',
     'return50000_2',
     'static_call50000',
     'static_call50000_ecrec',

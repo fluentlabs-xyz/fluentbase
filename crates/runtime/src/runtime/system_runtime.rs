@@ -4,11 +4,13 @@ use fluentbase_types::{
 };
 use rwasm::{ImportLinker, RwasmModule, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE};
 use smallvec::SmallVec;
+use std::time::Duration;
 use std::{
     cell::RefCell,
     mem::take,
     rc::Rc,
     sync::{Arc, OnceLock, RwLock},
+    thread,
 };
 use wasmtime::{
     AsContextMut, Config, Engine, Func, Instance, Linker, Memory, Module, OptLevel, Store,
@@ -26,7 +28,7 @@ pub struct SystemRuntime {
 
 struct CompiledRuntime {
     module: Module,
-    store: Store<RuntimeContext>,
+    store: Rc<RefCell<Store<RuntimeContext>>>,
     instance: Instance,
     memory: Memory,
     deploy_func: Func,
@@ -84,7 +86,7 @@ impl SystemRuntime {
                 .unwrap();
             let compiled_runtime = CompiledRuntime {
                 module,
-                store,
+                store: Rc::new(RefCell::new(store)),
                 instance,
                 memory,
                 deploy_func,
@@ -103,27 +105,38 @@ impl SystemRuntime {
     }
 
     pub fn execute(&mut self) -> Result<(), TrapCode> {
-        let mut compiled_runtime = self.compiled_runtime.borrow_mut();
+        thread::sleep(Duration::from_millis(300));
+        let compiled_runtime = self.compiled_runtime.borrow_mut();
 
         // Rewrite runtime context before each call, since we reuse the same store and runtime for
         // all EVM/SVM contract calls, then we should replace an existing context.
         //
         // SAFETY: We always call execute/resume in "right" order (w/o call overlying) that makes
         //  calls sequential and apps can't access non-their context.
-        core::mem::swap(compiled_runtime.store.data_mut(), &mut self.ctx);
+        core::mem::swap(
+            compiled_runtime.store.borrow_mut().data_mut(),
+            &mut self.ctx,
+        );
 
         // Call the function based on the passed state
-        let entrypoint = match compiled_runtime.store.data().state {
+        let entrypoint = match compiled_runtime.store.borrow_mut().data().state {
             STATE_MAIN => compiled_runtime.main_func,
             STATE_DEPLOY => compiled_runtime.deploy_func,
             _ => unreachable!(),
         };
         let result = entrypoint
-            .call(compiled_runtime.store.as_context_mut(), &[], &mut [])
+            .call(
+                compiled_runtime.store.borrow_mut().as_context_mut(),
+                &[],
+                &mut [],
+            )
             .map_err(map_anyhow_error);
 
         // Always swap back right after the call
-        core::mem::swap(compiled_runtime.store.data_mut(), &mut self.ctx);
+        core::mem::swap(
+            compiled_runtime.store.borrow_mut().data_mut(),
+            &mut self.ctx,
+        );
 
         if let Err(trap_code) = result.as_ref() {
             let exit_code = ExitCode::from(self.ctx.execution_result.exit_code);
@@ -201,18 +214,20 @@ impl SystemRuntime {
     }
 
     pub fn memory_write(&mut self, offset: usize, data: &[u8]) -> Result<(), TrapCode> {
-        let mut compiled_runtime = self.compiled_runtime.borrow_mut();
+        let compiled_runtime = self.compiled_runtime.borrow_mut();
         let memory = compiled_runtime.memory;
+        let mut store = compiled_runtime.store.borrow_mut();
         memory
-            .write(&mut compiled_runtime.store, offset, data)
+            .write(store.as_context_mut(), offset, data)
             .map_err(|_| TrapCode::MemoryOutOfBounds)
     }
 
     pub fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
         let compiled_runtime = self.compiled_runtime.borrow();
+        let mut store = compiled_runtime.store.borrow_mut();
         compiled_runtime
             .memory
-            .read(&compiled_runtime.store, offset, buffer)
+            .read(store.as_context_mut(), offset, buffer)
             .map_err(|_| TrapCode::MemoryOutOfBounds)
     }
 

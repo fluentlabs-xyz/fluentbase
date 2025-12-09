@@ -23,6 +23,7 @@ bincode = { workspace = true, features = ["alloc", "serde", "derive"] }
 paste = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-codec-derive = { workspace = true }
+spin = { workspace = true, default-features = false, features = ["mutex"] }
 
 [features]
 default = ["std"]

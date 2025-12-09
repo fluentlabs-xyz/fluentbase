@@ -50,7 +50,7 @@ overflow-checks = false
 [profile.dev]
 opt-level = "z"
 debug = false
-strip = "symbols"
+strip = false
 
 [patch.crates-io]
 # patch tiny-keccak
