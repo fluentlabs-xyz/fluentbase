@@ -465,7 +465,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Make sure input doesn't exceed hard cap at least
             const HARD_CAP: usize = WASM_MAX_CODE_SIZE + U256::BYTES + U256::BYTES;
             assert_halt!(
-                inputs.syscall_params.input.len() < HARD_CAP,
+                inputs.syscall_params.input.len() <= HARD_CAP,
                 MalformedBuiltinParams
             );
 
