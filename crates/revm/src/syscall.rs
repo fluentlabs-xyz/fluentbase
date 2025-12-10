@@ -971,9 +971,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let length = LittleEndian::read_u32(&input[24..28]);
             // take min
             let length = length.min(ownable_account_bytecode.metadata.len() as u32);
-            let metadata = ownable_account_bytecode
-                .metadata
-                .slice(offset as usize..(offset + length) as usize);
+            let metadata = if offset < length {
+                ownable_account_bytecode
+                    .metadata
+                    .slice(offset as usize..(offset + length) as usize)
+            } else {
+                Bytes::new()
+            };
             return_result!(metadata, Ok)
         }
 
@@ -1433,10 +1437,12 @@ mod metadata_write_tests {
 mod block_hash_tests {
     use super::*;
     use crate::{RwasmContext, RwasmFrame, RwasmSpecId};
-    use alloy_primitives::{Address, StorageValue, B256};
+    use alloy_primitives::{address, bytes, Address, StorageValue, B256};
     use core::error::Error;
     use fluentbase_sdk::{
-        syscall::SYSCALL_ID_BLOCK_HASH, Bytes, SyscallInvocationParams, STATE_MAIN, U256,
+        byteorder::LE,
+        syscall::{SYSCALL_ID_BLOCK_HASH, SYSCALL_ID_METADATA_COPY},
+        Bytes, SyscallInvocationParams, STATE_MAIN, U256,
     };
     use revm::{
         bytecode::Bytecode,
@@ -1628,5 +1634,57 @@ mod block_hash_tests {
             B256::ZERO.as_slice(),
             "Should return zero hash for block older than 256"
         );
+    }
+
+    #[test]
+    fn test_metadata_copy_out_of_bounds() {
+        let mut ctx: RwasmContext<InMemoryDB> =
+            RwasmContext::new(InMemoryDB::default(), RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.account_owner = Some(Address::ZERO);
+
+        const ADDRESS: Address = address!("1111111111111111111111111111111111111111");
+        _ = ctx.load_account_delegated(ADDRESS).unwrap();
+        ctx.journal_mut().set_code(
+            ADDRESS,
+            Bytecode::new_ownable_account(Address::ZERO, bytes!("112233445566")),
+        );
+
+        let mut syscall_input = vec![0u8; 28];
+        syscall_input[0..20].copy_from_slice(ADDRESS.as_slice());
+        LE::write_u32(&mut syscall_input[20..24], 100); // offset
+        LE::write_u32(&mut syscall_input[24..28], 0); // length
+        let mr = ForwardInputMemoryReader(syscall_input.into());
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            syscall_params: SyscallInvocationParams {
+                code_hash: SYSCALL_ID_METADATA_COPY,
+                input: 0..mr.0.len(),
+                state: STATE_MAIN,
+                ..Default::default()
+            },
+            gas: Gas::new(10_000_000),
+        };
+        execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+            mr,
+        )
+        .unwrap();
+        let output = frame
+            .interrupted_outcome
+            .as_ref()
+            .unwrap()
+            .result
+            .as_ref()
+            .unwrap()
+            .output
+            .clone();
     }
 }
