@@ -886,6 +886,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Some(account_owner_address) = account_owner_address else {
                 return_halt!(MalformedBuiltinParams);
             };
+            assert_halt!(!is_static, StateChangeDuringStaticCall);
             let (input, lazy_metadata_input) = get_input_validated!(>= 32);
             let salt = U256::from_be_slice(&input);
             let derived_metadata_address =
@@ -918,6 +919,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Some(account_owner_address) = account_owner_address else {
                 return_halt!(MalformedBuiltinParams);
             };
+            assert_halt!(!is_static, StateChangeDuringStaticCall);
             let (input, lazy_metadata_input) = get_input_validated!(>= 20 + 4);
             // read an account from its address
             let address = Address::from_slice(&input[..20]);
@@ -1000,6 +1002,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Some(account_owner_address) = account_owner_address else {
                 return_halt!(MalformedBuiltinParams);
             };
+            assert_halt!(!is_static, StateChangeDuringStaticCall);
             // input: slot + value
             let input = get_input_validated!(== U256::BYTES + U256::BYTES);
 
@@ -1441,7 +1444,7 @@ mod block_hash_tests {
     use core::error::Error;
     use fluentbase_sdk::{
         byteorder::LE,
-        syscall::{SYSCALL_ID_BLOCK_HASH, SYSCALL_ID_METADATA_COPY},
+        syscall::{SYSCALL_ID_BLOCK_HASH, SYSCALL_ID_METADATA_COPY, SYSCALL_ID_METADATA_WRITE},
         Bytes, SyscallInvocationParams, STATE_MAIN, U256,
     };
     use revm::{
@@ -1449,7 +1452,7 @@ mod block_hash_tests {
         context::{BlockEnv, CfgEnv, TxEnv},
         database::{DBErrorMarker, InMemoryDB},
         inspector::NoOpInspector,
-        interpreter::Gas,
+        interpreter::{Gas, InstructionResult},
         state::AccountInfo,
         Database,
     };
@@ -1686,5 +1689,52 @@ mod block_hash_tests {
             .unwrap()
             .output
             .clone();
+        assert_eq!(output, Bytes::new());
+    }
+
+    #[test]
+    fn test_metadata_write_static_context() {
+        let mut ctx: RwasmContext<InMemoryDB> =
+            RwasmContext::new(InMemoryDB::default(), RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.account_owner = Some(Address::ZERO);
+        frame.interpreter.runtime_flag.is_static = true;
+
+        const ADDRESS: Address = address!("1111111111111111111111111111111111111111");
+        _ = ctx.load_account_delegated(ADDRESS).unwrap();
+
+        let mut syscall_input = vec![0u8; 24];
+        syscall_input[0..20].copy_from_slice(ADDRESS.as_slice());
+        LE::write_u32(&mut syscall_input[20..24], 0); // _offset
+        let mr = ForwardInputMemoryReader(syscall_input.into());
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            syscall_params: SyscallInvocationParams {
+                code_hash: SYSCALL_ID_METADATA_WRITE,
+                input: 0..mr.0.len(),
+                state: STATE_MAIN,
+                ..Default::default()
+            },
+            gas: Gas::new(10_000_000),
+        };
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+            mr,
+        )
+        .unwrap();
+        assert_eq!(
+            result
+                .into_interpreter_action()
+                .instruction_result()
+                .unwrap(),
+            InstructionResult::StateChangeDuringStaticCall
+        );
     }
 }
