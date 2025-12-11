@@ -6,31 +6,125 @@ use fluentbase_sdk::{
     PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM,
     PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
 };
-use revm_precompile::bls12_381::{
-    g1_add::g1_add, g1_msm::g1_msm, g2_add::g2_add, g2_msm::g2_msm, map_fp2_to_g2::map_fp2_to_g2,
-    map_fp_to_g1::map_fp_to_g1, pairing::pairing,
+use revm_precompile::{
+    bls12_381::{
+        g1_add::g1_add, g1_msm::g1_msm, g2_add::g2_add, g2_msm::g2_msm,
+        map_fp2_to_g2::map_fp2_to_g2, map_fp_to_g1::map_fp_to_g1, pairing::pairing,
+    },
+    bls12_381_const::{
+        DISCOUNT_TABLE_G1_MSM, DISCOUNT_TABLE_G2_MSM, G1_ADD_BASE_GAS_FEE, G1_MSM_BASE_GAS_FEE,
+        G1_MSM_INPUT_LENGTH, G2_ADD_BASE_GAS_FEE, G2_MSM_BASE_GAS_FEE, G2_MSM_INPUT_LENGTH,
+        MAP_FP2_TO_G2_BASE_GAS_FEE, MAP_FP_TO_G1_BASE_GAS_FEE, PADDED_FP2_LENGTH, PADDED_FP_LENGTH,
+        PAIRING_INPUT_LENGTH, PAIRING_MULTIPLIER_BASE, PAIRING_OFFSET_BASE,
+    },
+    bls12_381_utils::msm_required_gas,
+    PrecompileOutput,
 };
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
-    // read full input data
-    let bytecode_address = sdk.context().contract_bytecode_address();
-    // read full input data
+fn g1_add_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
     let gas_limit = sdk.context().contract_gas_limit();
+    if G1_ADD_BASE_GAS_FEE > gas_limit {
+        return Err(ExitCode::OutOfFuel);
+    }
     let input = sdk.input();
-    // dispatch to SDK-backed implementation
+    g1_add(input, gas_limit).map_err(|_| ExitCode::PrecompileError)
+}
+
+fn g2_add_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+    let gas_limit = sdk.context().contract_gas_limit();
+    if G2_ADD_BASE_GAS_FEE > gas_limit {
+        return Err(ExitCode::OutOfFuel);
+    }
+    let input = sdk.input();
+    g2_add(input, gas_limit).map_err(|_| ExitCode::PrecompileError)
+}
+
+fn g1_msm_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+    let gas_limit = sdk.context().contract_gas_limit();
+    let input_size = sdk.input_size() as usize;
+    if input_size == 0 || !input_size.is_multiple_of(G1_MSM_INPUT_LENGTH) {
+        return Err(ExitCode::PrecompileError);
+    }
+    let k = input_size / G1_MSM_INPUT_LENGTH;
+    let required_gas = msm_required_gas(k, &DISCOUNT_TABLE_G1_MSM, G1_MSM_BASE_GAS_FEE);
+    if required_gas > gas_limit {
+        return Err(ExitCode::OutOfFuel);
+    }
+    let input = sdk.input();
+    g1_msm(input, gas_limit).map_err(|_| ExitCode::PrecompileError)
+}
+
+fn g2_msm_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+    let gas_limit = sdk.context().contract_gas_limit();
+    let input_size = sdk.input_size() as usize;
+    if input_size == 0 || !input_size.is_multiple_of(G2_MSM_INPUT_LENGTH) {
+        return Err(ExitCode::PrecompileError);
+    }
+    let k = input_size / G2_MSM_INPUT_LENGTH;
+    let required_gas = msm_required_gas(k, &DISCOUNT_TABLE_G2_MSM, G2_MSM_BASE_GAS_FEE);
+    if required_gas > gas_limit {
+        return Err(ExitCode::OutOfFuel);
+    }
+    let input = sdk.input();
+    g2_msm(input, gas_limit).map_err(|_| ExitCode::PrecompileError)
+}
+
+fn pairing_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+    let gas_limit = sdk.context().contract_gas_limit();
+    let input_size = sdk.input_size() as usize;
+    if input_size == 0 || !input_size.is_multiple_of(PAIRING_INPUT_LENGTH) {
+        return Err(ExitCode::PrecompileError);
+    }
+    let k = input_size / PAIRING_INPUT_LENGTH;
+    let required_gas: u64 = PAIRING_MULTIPLIER_BASE * k as u64 + PAIRING_OFFSET_BASE;
+    if required_gas > gas_limit {
+        return Err(ExitCode::OutOfFuel);
+    }
+    let input = sdk.input();
+    pairing(input, gas_limit).map_err(|_| ExitCode::PrecompileError)
+}
+
+fn map_fp_to_g1_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+    let gas_limit = sdk.context().contract_gas_limit();
+    if MAP_FP_TO_G1_BASE_GAS_FEE > gas_limit {
+        return Err(ExitCode::OutOfFuel);
+    }
+    let input_size = sdk.input_size() as usize;
+    if input_size != PADDED_FP_LENGTH {
+        return Err(ExitCode::PrecompileError);
+    }
+    let input = sdk.input();
+    map_fp_to_g1(input, gas_limit).map_err(|_| ExitCode::PrecompileError)
+}
+
+fn map_fp2_to_g2_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+    let gas_limit = sdk.context().contract_gas_limit();
+    if MAP_FP2_TO_G2_BASE_GAS_FEE > gas_limit {
+        return Err(ExitCode::OutOfFuel);
+    }
+    let input_size = sdk.input_size() as usize;
+    if input_size != PADDED_FP2_LENGTH {
+        return Err(ExitCode::PrecompileError);
+    }
+    let input = sdk.input();
+    map_fp2_to_g2(input, gas_limit).map_err(|_| ExitCode::PrecompileError)
+}
+
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
+    let bytecode_address = sdk.context().contract_bytecode_address();
+    // dispatch to SDK-backed implementation (w/ pre gas/input checks)
     let result = match bytecode_address {
-        PRECOMPILE_BLS12_381_G1_ADD => g1_add(&input, gas_limit),
-        PRECOMPILE_BLS12_381_G2_ADD => g2_add(&input, gas_limit),
-        PRECOMPILE_BLS12_381_G1_MSM => g1_msm(&input, gas_limit),
-        PRECOMPILE_BLS12_381_G2_MSM => g2_msm(&input, gas_limit),
-        PRECOMPILE_BLS12_381_PAIRING => pairing(&input, gas_limit),
-        PRECOMPILE_BLS12_381_MAP_G1 => map_fp_to_g1(&input, gas_limit),
-        PRECOMPILE_BLS12_381_MAP_G2 => map_fp2_to_g2(&input, gas_limit),
+        PRECOMPILE_BLS12_381_G1_ADD => g1_add_checked(sdk),
+        PRECOMPILE_BLS12_381_G2_ADD => g2_add_checked(sdk),
+        PRECOMPILE_BLS12_381_G1_MSM => g1_msm_checked(sdk),
+        PRECOMPILE_BLS12_381_G2_MSM => g2_msm_checked(sdk),
+        PRECOMPILE_BLS12_381_PAIRING => pairing_checked(sdk),
+        PRECOMPILE_BLS12_381_MAP_G1 => map_fp_to_g1_checked(sdk),
+        PRECOMPILE_BLS12_381_MAP_G2 => map_fp2_to_g2_checked(sdk),
         _ => unreachable!("bls12381: unsupported contract address"),
     }
     .map_err(|_| ExitCode::PrecompileError)?;
     sdk.sync_evm_gas(result.gas_used)?;
-    // write output
     Ok(result.bytes)
 }
 
