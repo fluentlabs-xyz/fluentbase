@@ -1,11 +1,9 @@
 [build]
-# Default build target triple
-target = "wasm32-unknown-unknown"
-
 # Directory for all build artifacts
 target-dir = "../target/contracts"
 
 # Global rustflags
+[target.wasm32-unknown-unknown]
 rustflags = [
     "-C", "link-arg=-zstack-size=1048576",
     "-C", "target-feature=+bulk-memory",
