@@ -6,6 +6,7 @@ pub mod attr;
 pub mod client;
 mod codec;
 pub mod constructor;
+pub mod event;
 mod method;
 pub mod router;
 mod signature;

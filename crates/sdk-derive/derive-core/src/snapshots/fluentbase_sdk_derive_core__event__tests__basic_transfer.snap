@@ -1,0 +1,56 @@
+---
+source: crates/sdk-derive/derive-core/src/event.rs
+expression: generate(input)
+---
+impl Transfer {
+    /// Solidity event signature.
+    pub const SIGNATURE: &'static str = "Transfer(address,address,uint256)";
+    /// Keccak256 hash of signature, computed at compile-time.
+    pub const SELECTOR: [u8; 32] = [
+        221u8, 242u8, 82u8, 173u8, 27u8, 226u8, 200u8, 155u8, 105u8, 194u8, 176u8, 104u8,
+        252u8, 55u8, 141u8, 170u8, 149u8, 43u8, 167u8, 241u8, 99u8, 196u8, 161u8, 22u8,
+        40u8, 245u8, 90u8, 77u8, 245u8, 35u8, 179u8, 239u8,
+    ];
+    /// Emits this event as an EVM log.
+    pub fn emit<SDK: fluentbase_sdk::SharedAPI>(&self, sdk: &mut SDK) {
+        use fluentbase_sdk::codec::SolidityABI;
+        let topics: [fluentbase_sdk::B256; 3usize] = [
+            fluentbase_sdk::B256::new([
+                221u8, 242u8, 82u8, 173u8, 27u8, 226u8, 200u8, 155u8, 105u8, 194u8,
+                176u8, 104u8, 252u8, 55u8, 141u8, 170u8, 149u8, 43u8, 167u8, 241u8, 99u8,
+                196u8, 161u8, 22u8, 40u8, 245u8, 90u8, 77u8, 245u8, 35u8, 179u8, 239u8,
+            ]),
+            {
+                let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+                let value = self.from.clone();
+                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                if SolidityABI::<Address>::is_dynamic() {
+                    fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
+                } else {
+                    let mut bytes = [0u8; 32];
+                    bytes.copy_from_slice(&buf[..32]);
+                    fluentbase_sdk::B256::new(bytes)
+                }
+            },
+            {
+                let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+                let value = self.to.clone();
+                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                if SolidityABI::<Address>::is_dynamic() {
+                    fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
+                } else {
+                    let mut bytes = [0u8; 32];
+                    bytes.copy_from_slice(&buf[..32]);
+                    fluentbase_sdk::B256::new(bytes)
+                }
+            },
+        ];
+        let data = {
+            let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            let values = (self.value.clone(),);
+            SolidityABI::encode(&values, &mut buf, 0).expect("encode data fields");
+            buf.freeze()
+        };
+        sdk.emit_log(&topics, &data);
+    }
+}

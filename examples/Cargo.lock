@@ -1778,11 +1778,8 @@ dependencies = [
 name = "fluentbase-examples-erc20"
 version = "0.1.0"
 dependencies = [
- "alloy-sol-types",
  "fluentbase-sdk",
  "fluentbase-testing",
- "hex-literal 0.4.1",
- "serial_test",
 ]
 
 [[package]]
