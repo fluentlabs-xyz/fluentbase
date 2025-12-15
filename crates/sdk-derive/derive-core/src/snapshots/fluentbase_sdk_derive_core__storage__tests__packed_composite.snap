@@ -35,7 +35,7 @@ impl PackedConfig {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         let is_paused_layout = {
@@ -64,7 +64,7 @@ impl PackedConfig {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         let version_layout = {
@@ -93,7 +93,7 @@ impl PackedConfig {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         let flags_layout = {
@@ -122,7 +122,7 @@ impl PackedConfig {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         let owner_layout = {
@@ -151,7 +151,7 @@ impl PackedConfig {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         Self {

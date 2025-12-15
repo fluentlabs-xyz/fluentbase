@@ -38,7 +38,7 @@ impl<SDK> Storage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         let counter_layout = {
@@ -67,7 +67,7 @@ impl<SDK> Storage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         Self {
@@ -116,7 +116,7 @@ impl<SDK> Storage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         let counter_layout = {
@@ -145,7 +145,7 @@ impl<SDK> Storage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         Self {

@@ -38,7 +38,7 @@ impl<SDK> MixedStorage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         let auto2_layout = {
@@ -67,7 +67,7 @@ impl<SDK> MixedStorage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         let explicit_layout = {
@@ -107,7 +107,7 @@ impl<SDK> MixedStorage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         Self {
@@ -168,7 +168,7 @@ impl<SDK> MixedStorage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         let auto2_layout = {
@@ -197,7 +197,7 @@ impl<SDK> MixedStorage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         let explicit_layout = {
@@ -237,7 +237,7 @@ impl<SDK> MixedStorage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         Self {

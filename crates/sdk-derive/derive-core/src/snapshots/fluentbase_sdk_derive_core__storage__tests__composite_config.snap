@@ -35,7 +35,7 @@ impl Config {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         let version_layout = {
@@ -64,7 +64,7 @@ impl Config {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         let max_supply_layout = {
@@ -93,7 +93,7 @@ impl Config {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                (result)
+                result
             }
         };
         Self {
