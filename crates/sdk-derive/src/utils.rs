@@ -16,3 +16,12 @@ pub fn calculate_keccak256(signature: &str) -> [u8; 32] {
     val.copy_from_slice(calculate_keccak256_bytes::<32>(signature.trim_matches('"')).as_slice());
     val
 }
+
+pub fn calculate_keccak256_raw<const N: usize>(data: &[u8]) -> [u8; N] {
+    use crypto_hashes::{digest::Digest, sha3::Keccak256};
+    let mut hash = Keccak256::new();
+    hash.update(data);
+    let mut dst = [0u8; N];
+    dst.copy_from_slice(hash.finalize().as_slice()[0..N].as_ref());
+    dst
+}

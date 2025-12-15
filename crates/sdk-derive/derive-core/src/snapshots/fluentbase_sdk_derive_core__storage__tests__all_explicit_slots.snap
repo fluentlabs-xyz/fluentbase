@@ -1,0 +1,120 @@
+---
+source: crates/sdk-derive/derive-core/src/storage.rs
+expression: formatted
+---
+impl<SDK> AllExplicit<SDK> {
+    /// Number of storage slots used by auto-layout fields.
+    /// Fields with explicit #[slot()] are not counted.
+    pub const SLOTS: usize = Self::calculate_slots();
+    /// Creates a new instance starting at slot 0.
+    pub fn new(sdk: SDK) -> Self {
+        let slot = fluentbase_sdk::U256::from(0);
+        let offset = 0u8;
+        let mut current_slot = slot;
+        let mut current_offset: u8 = offset;
+        let field_a_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let explicit_slot: fluentbase_sdk::U256 = SLOT_A;
+            let offset = if slots == 0 { 32 - bytes } else { 0 };
+            (explicit_slot, offset)
+        };
+        let field_b_layout = {
+            let bytes = <StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let explicit_slot: fluentbase_sdk::U256 = SLOT_B;
+            let offset = if slots == 0 { 32 - bytes } else { 0 };
+            (explicit_slot, offset)
+        };
+        Self {
+            sdk,
+            field_a: <<StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                field_a_layout.0,
+                field_a_layout.1,
+            ),
+            field_b: <<StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                field_b_layout.0,
+                field_b_layout.1,
+            ),
+        }
+    }
+    /// Creates a new instance at a specific slot and offset.
+    pub fn new_at(sdk: SDK, slot: fluentbase_sdk::U256, offset: u8) -> Self {
+        let mut current_slot = slot;
+        let mut current_offset: u8 = offset;
+        let field_a_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let explicit_slot: fluentbase_sdk::U256 = SLOT_A;
+            let offset = if slots == 0 { 32 - bytes } else { 0 };
+            (explicit_slot, offset)
+        };
+        let field_b_layout = {
+            let bytes = <StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let explicit_slot: fluentbase_sdk::U256 = SLOT_B;
+            let offset = if slots == 0 { 32 - bytes } else { 0 };
+            (explicit_slot, offset)
+        };
+        Self {
+            sdk,
+            field_a: <<StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                field_a_layout.0,
+                field_a_layout.1,
+            ),
+            field_b: <<StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                field_b_layout.0,
+                field_b_layout.1,
+            ),
+        }
+    }
+    const fn calculate_slots() -> usize {
+        let mut current_slot: usize = 0;
+        let mut current_offset: usize = 0;
+        if current_offset > 0 { current_slot + 1 } else { current_slot }
+    }
+    ///Returns an accessor for the `field_a` storage field.
+    #[inline]
+    pub fn field_a_accessor(
+        &self,
+    ) -> <StoragePrimitive<
+        Address,
+    > as fluentbase_sdk::storage::StorageLayout>::Accessor {
+        <StoragePrimitive<
+            Address,
+        > as fluentbase_sdk::storage::StorageLayout>::access(self.field_a)
+    }
+    ///Returns an accessor for the `field_b` storage field.
+    #[inline]
+    pub fn field_b_accessor(
+        &self,
+    ) -> <StoragePrimitive<U256> as fluentbase_sdk::storage::StorageLayout>::Accessor {
+        <StoragePrimitive<
+            U256,
+        > as fluentbase_sdk::storage::StorageLayout>::access(self.field_b)
+    }
+}

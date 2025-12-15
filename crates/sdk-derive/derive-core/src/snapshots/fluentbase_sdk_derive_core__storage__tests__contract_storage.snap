@@ -3,7 +3,10 @@ source: crates/sdk-derive/derive-core/src/storage.rs
 expression: formatted
 ---
 impl<SDK> Storage<SDK> {
+    /// Number of storage slots used by auto-layout fields.
+    /// Fields with explicit #[slot()] are not counted.
     pub const SLOTS: usize = Self::calculate_slots();
+    /// Creates a new instance starting at slot 0.
     pub fn new(sdk: SDK) -> Self {
         let slot = fluentbase_sdk::U256::from(0);
         let offset = 0u8;
@@ -16,7 +19,7 @@ impl<SDK> Storage<SDK> {
             let slots = <StoragePrimitive<
                 Address,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
-            let layout = if slots == 0 {
+            if slots == 0 {
                 if current_offset + bytes <= 32 {
                     let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
@@ -35,10 +38,8 @@ impl<SDK> Storage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                current_offset = 0;
-                result
-            };
-            layout
+                (result)
+            }
         };
         let counter_layout = {
             let bytes = <StoragePrimitive<
@@ -47,7 +48,7 @@ impl<SDK> Storage<SDK> {
             let slots = <StoragePrimitive<
                 U256,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
-            let layout = if slots == 0 {
+            if slots == 0 {
                 if current_offset + bytes <= 32 {
                     let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
@@ -66,10 +67,8 @@ impl<SDK> Storage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                current_offset = 0;
-                result
-            };
-            layout
+                (result)
+            }
         };
         Self {
             sdk,
@@ -87,6 +86,7 @@ impl<SDK> Storage<SDK> {
             ),
         }
     }
+    /// Creates a new instance at a specific slot and offset.
     pub fn new_at(sdk: SDK, slot: fluentbase_sdk::U256, offset: u8) -> Self {
         let mut current_slot = slot;
         let mut current_offset: u8 = offset;
@@ -97,7 +97,7 @@ impl<SDK> Storage<SDK> {
             let slots = <StoragePrimitive<
                 Address,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
-            let layout = if slots == 0 {
+            if slots == 0 {
                 if current_offset + bytes <= 32 {
                     let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
@@ -116,10 +116,8 @@ impl<SDK> Storage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                current_offset = 0;
-                result
-            };
-            layout
+                (result)
+            }
         };
         let counter_layout = {
             let bytes = <StoragePrimitive<
@@ -128,7 +126,7 @@ impl<SDK> Storage<SDK> {
             let slots = <StoragePrimitive<
                 U256,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
-            let layout = if slots == 0 {
+            if slots == 0 {
                 if current_offset + bytes <= 32 {
                     let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
@@ -147,10 +145,8 @@ impl<SDK> Storage<SDK> {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                current_offset = 0;
-                result
-            };
-            layout
+                (result)
+            }
         };
         Self {
             sdk,
@@ -219,7 +215,7 @@ impl<SDK> Storage<SDK> {
         }
         if current_offset > 0 { current_slot + 1 } else { current_slot }
     }
-    ///Returns an accessor for the owner field
+    ///Returns an accessor for the `owner` storage field.
     #[inline]
     pub fn owner_accessor(
         &self,
@@ -230,7 +226,7 @@ impl<SDK> Storage<SDK> {
             Address,
         > as fluentbase_sdk::storage::StorageLayout>::access(self.owner)
     }
-    ///Returns an accessor for the counter field
+    ///Returns an accessor for the `counter` storage field.
     #[inline]
     pub fn counter_accessor(
         &self,

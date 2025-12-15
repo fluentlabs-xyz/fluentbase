@@ -3,7 +3,9 @@ source: crates/sdk-derive/derive-core/src/storage.rs
 expression: formatted
 ---
 impl PackedConfig {
+    /// Number of storage slots used by auto-layout fields.
     pub const SLOTS: usize = Self::calculate_slots();
+    /// Creates a new instance at a specific slot and offset.
     pub fn new(slot: fluentbase_sdk::U256, offset: u8) -> Self {
         let mut current_slot = slot;
         let mut current_offset: u8 = offset;
@@ -14,7 +16,7 @@ impl PackedConfig {
             let slots = <StoragePrimitive<
                 bool,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
-            let layout = if slots == 0 {
+            if slots == 0 {
                 if current_offset + bytes <= 32 {
                     let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
@@ -33,10 +35,8 @@ impl PackedConfig {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                current_offset = 0;
-                result
-            };
-            layout
+                (result)
+            }
         };
         let is_paused_layout = {
             let bytes = <StoragePrimitive<
@@ -45,7 +45,7 @@ impl PackedConfig {
             let slots = <StoragePrimitive<
                 bool,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
-            let layout = if slots == 0 {
+            if slots == 0 {
                 if current_offset + bytes <= 32 {
                     let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
@@ -64,10 +64,8 @@ impl PackedConfig {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                current_offset = 0;
-                result
-            };
-            layout
+                (result)
+            }
         };
         let version_layout = {
             let bytes = <StoragePrimitive<
@@ -76,7 +74,7 @@ impl PackedConfig {
             let slots = <StoragePrimitive<
                 u32,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
-            let layout = if slots == 0 {
+            if slots == 0 {
                 if current_offset + bytes <= 32 {
                     let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
@@ -95,10 +93,8 @@ impl PackedConfig {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                current_offset = 0;
-                result
-            };
-            layout
+                (result)
+            }
         };
         let flags_layout = {
             let bytes = <StoragePrimitive<
@@ -107,7 +103,7 @@ impl PackedConfig {
             let slots = <StoragePrimitive<
                 u64,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
-            let layout = if slots == 0 {
+            if slots == 0 {
                 if current_offset + bytes <= 32 {
                     let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
@@ -126,10 +122,8 @@ impl PackedConfig {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                current_offset = 0;
-                result
-            };
-            layout
+                (result)
+            }
         };
         let owner_layout = {
             let bytes = <StoragePrimitive<
@@ -138,7 +132,7 @@ impl PackedConfig {
             let slots = <StoragePrimitive<
                 Address,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
-            let layout = if slots == 0 {
+            if slots == 0 {
                 if current_offset + bytes <= 32 {
                     let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
@@ -157,10 +151,8 @@ impl PackedConfig {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                current_offset = 0;
-                result
-            };
-            layout
+                (result)
+            }
         };
         Self {
             is_active: <<StoragePrimitive<
@@ -331,7 +323,7 @@ impl PackedConfig {
             > as fluentbase_sdk::storage::StorageLayout>::BYTES;
         total_bytes
     }
-    ///Returns an accessor for the is_active field
+    ///Returns an accessor for the `is_active` storage field.
     #[inline]
     pub fn is_active_accessor(
         &self,
@@ -340,7 +332,7 @@ impl PackedConfig {
             bool,
         > as fluentbase_sdk::storage::StorageLayout>::access(self.is_active)
     }
-    ///Returns an accessor for the is_paused field
+    ///Returns an accessor for the `is_paused` storage field.
     #[inline]
     pub fn is_paused_accessor(
         &self,
@@ -349,7 +341,7 @@ impl PackedConfig {
             bool,
         > as fluentbase_sdk::storage::StorageLayout>::access(self.is_paused)
     }
-    ///Returns an accessor for the version field
+    ///Returns an accessor for the `version` storage field.
     #[inline]
     pub fn version_accessor(
         &self,
@@ -358,7 +350,7 @@ impl PackedConfig {
             u32,
         > as fluentbase_sdk::storage::StorageLayout>::access(self.version)
     }
-    ///Returns an accessor for the flags field
+    ///Returns an accessor for the `flags` storage field.
     #[inline]
     pub fn flags_accessor(
         &self,
@@ -367,7 +359,7 @@ impl PackedConfig {
             u64,
         > as fluentbase_sdk::storage::StorageLayout>::access(self.flags)
     }
-    ///Returns an accessor for the owner field
+    ///Returns an accessor for the `owner` storage field.
     #[inline]
     pub fn owner_accessor(
         &self,

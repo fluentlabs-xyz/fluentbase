@@ -3,7 +3,9 @@ source: crates/sdk-derive/derive-core/src/storage.rs
 expression: formatted
 ---
 impl Config {
+    /// Number of storage slots used by auto-layout fields.
     pub const SLOTS: usize = Self::calculate_slots();
+    /// Creates a new instance at a specific slot and offset.
     pub fn new(slot: fluentbase_sdk::U256, offset: u8) -> Self {
         let mut current_slot = slot;
         let mut current_offset: u8 = offset;
@@ -14,7 +16,7 @@ impl Config {
             let slots = <StoragePrimitive<
                 Address,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
-            let layout = if slots == 0 {
+            if slots == 0 {
                 if current_offset + bytes <= 32 {
                     let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
@@ -33,10 +35,8 @@ impl Config {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                current_offset = 0;
-                result
-            };
-            layout
+                (result)
+            }
         };
         let version_layout = {
             let bytes = <StoragePrimitive<
@@ -45,7 +45,7 @@ impl Config {
             let slots = <StoragePrimitive<
                 u32,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
-            let layout = if slots == 0 {
+            if slots == 0 {
                 if current_offset + bytes <= 32 {
                     let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
@@ -64,10 +64,8 @@ impl Config {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                current_offset = 0;
-                result
-            };
-            layout
+                (result)
+            }
         };
         let max_supply_layout = {
             let bytes = <StoragePrimitive<
@@ -76,7 +74,7 @@ impl Config {
             let slots = <StoragePrimitive<
                 U256,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
-            let layout = if slots == 0 {
+            if slots == 0 {
                 if current_offset + bytes <= 32 {
                     let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
@@ -95,10 +93,8 @@ impl Config {
                 }
                 let result = (current_slot, 0);
                 current_slot = current_slot + fluentbase_sdk::U256::from(slots);
-                current_offset = 0;
-                result
-            };
-            layout
+                (result)
+            }
         };
         Self {
             owner: <<StoragePrimitive<
@@ -207,7 +203,7 @@ impl Config {
             += <StoragePrimitive<U256> as fluentbase_sdk::storage::StorageLayout>::BYTES;
         total_bytes
     }
-    ///Returns an accessor for the owner field
+    ///Returns an accessor for the `owner` storage field.
     #[inline]
     pub fn owner_accessor(
         &self,
@@ -218,7 +214,7 @@ impl Config {
             Address,
         > as fluentbase_sdk::storage::StorageLayout>::access(self.owner)
     }
-    ///Returns an accessor for the version field
+    ///Returns an accessor for the `version` storage field.
     #[inline]
     pub fn version_accessor(
         &self,
@@ -227,7 +223,7 @@ impl Config {
             u32,
         > as fluentbase_sdk::storage::StorageLayout>::access(self.version)
     }
-    ///Returns an accessor for the max_supply field
+    ///Returns an accessor for the `max_supply` storage field.
     #[inline]
     pub fn max_supply_accessor(
         &self,
