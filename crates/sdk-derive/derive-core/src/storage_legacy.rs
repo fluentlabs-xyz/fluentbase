@@ -440,7 +440,7 @@ impl Parse for StorageKind {
 #[derive(Clone, Debug)]
 pub struct StorageSlot {
     /// The numerical index of the storage slot
-    slot: usize,
+    slot: [u8; 32],
     /// The name of the storage variable
     name: Ident,
     /// The type of storage (mapping, array, or primitive)
@@ -519,9 +519,18 @@ impl StorageSlot {
 
     /// Generates the slot definition code
     fn slot_definition(&self) -> TokenStream2 {
-        let slot = self.slot as u64;
+        let slot: [u8; 32] = self.slot;
+        // Convert EVM-style BE bytes into LE u64 limbs (least-significant limb first).
+        let limbs: [u64; 4] = [
+            u64::from_be_bytes(slot[24..32].try_into().unwrap()),
+            u64::from_be_bytes(slot[16..24].try_into().unwrap()),
+            u64::from_be_bytes(slot[8..16].try_into().unwrap()),
+            u64::from_be_bytes(slot[0..8].try_into().unwrap()),
+        ];
+        let limb_tokens = limbs.iter().map(|x| quote!(#x));
         quote! {
-            const SLOT: fluentbase_sdk::U256 = fluentbase_sdk::U256::from_limbs([#slot, 0u64, 0u64, 0u64]);
+            const SLOT: fluentbase_sdk::U256 =
+                fluentbase_sdk::U256::from_limbs([#(#limb_tokens),*]);
         }
     }
 
@@ -662,7 +671,7 @@ impl Parse for StorageSlot {
         let (args, output) = kind.parse_args();
 
         let slot = Self {
-            slot: 0,
+            slot: [0u8; 32],
             name,
             kind,
             args,
@@ -695,7 +704,9 @@ impl Storage {
 
     /// Adds a storage slot to the collection, assigning it the next available slot number
     pub fn add_slot(&mut self, mut slot: StorageSlot) {
-        slot.slot = self.slots.len();
+        let next_slot_number = self.slots.len();
+        slot.slot = [0u8; 32]; // remove if you intentionally keep a prefix
+        slot.slot[24..32].copy_from_slice(&next_slot_number.to_be_bytes()); // last 8 bytes = BE integer
         self.slots.push(slot);
     }
 

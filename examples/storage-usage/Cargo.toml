@@ -20,7 +20,7 @@ fluentbase-testing = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std"]
+std = ["fluentbase-sdk/std", "fluentbase-testing/std"]
 
 [profile.dev]
 debug = true

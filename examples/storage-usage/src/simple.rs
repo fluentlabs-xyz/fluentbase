@@ -1,6 +1,6 @@
 #![allow(dead_code)]
-use fluentbase_sdk::derive::Contract;
 use fluentbase_sdk::{
+    derive::Contract,
     storage::{
         StorageAddress, StorageBool, StorageMap, StorageString, StorageU256, StorageU32, StorageVec,
     },

@@ -6,6 +6,7 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
+use alloy_primitives::{Address, Log, LogData};
 use cfg_if::cfg_if;
 use core::mem::take;
 use fluentbase_runtime::{
@@ -15,14 +16,19 @@ use fluentbase_runtime::{
 };
 use fluentbase_sdk::{
     bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
-    rwasm_core::RwasmModule, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1,
-    ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SharedContextInput,
-    SharedContextInputV1, SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY,
-    STATE_MAIN, U256,
+    rwasm_core::RwasmModule,
+    system::{
+        JournalLog, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
+    },
+    BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode, HashMap,
+    SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
+    FUEL_DENOM_RATE, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN, U256,
 };
+use fluentbase_universal_token::storage::erc20_compute_storage_keys;
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
     context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
+    context_interface::transaction::AccessListItemTr,
     handler::FrameData,
     interpreter::{
         interpreter::ExtBytecode,
@@ -31,6 +37,7 @@ use revm::{
     },
     Database, Inspector,
 };
+use std::vec::Vec;
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
@@ -173,7 +180,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             gas_limit: interpreter.gas.remaining(),
         },
     });
-    let mut context_input = context_input
+    let mut contract_input = context_input
         .encode()
         .expect("revm: unable to encode shared context input")
         .to_vec();
@@ -181,17 +188,56 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     let account_owner = match meta_bytecode {
         Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
-            let new_frame_input = RuntimeNewFrameInputV1 {
-                metadata: v.metadata,
-                input,
+            let target_address = interpreter.input.target_address();
+            let caller_address = interpreter.input.caller_address();
+            let storage = if v.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
+                let keys = erc20_compute_storage_keys(input.as_ref(), &caller_address, is_create)
+                    .unwrap_or_default();
+                let mut storage = HashMap::<U256, U256>::with_capacity(keys.len());
+                for k in keys {
+                    storage.insert(k, ctx.journal_mut().sload(target_address, k)?.data);
+                }
+                Some(storage)
+            } else {
+                None
             };
-            let new_frame_input =
-                bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
-            context_input.extend(new_frame_input);
+            let mut balances: HashMap<Address, U256> = HashMap::new();
+            let addresses: Vec<Address> = if let Some(access_list) = ctx.tx().access_list() {
+                access_list.map(|v| v.address().clone()).collect()
+            } else {
+                Vec::new()
+            };
+            for addr in addresses {
+                let account = ctx.journal_mut().load_account(addr)?;
+                balances.insert(addr, account.info.balance);
+            }
+            if v.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
+                let new_frame_input = RuntimeNewFrameInputV1 {
+                    metadata: v.metadata,
+                    input,
+                    context: contract_input.into(),
+                    storage,
+                    balances: Some(balances),
+                };
+                let new_frame_input =
+                    bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
+                contract_input = new_frame_input
+            } else {
+                let new_frame_input = RuntimeNewFrameInputV1 {
+                    metadata: v.metadata,
+                    input,
+                    context: Bytes::new(),
+                    storage,
+                    balances: Some(balances),
+                };
+                let new_frame_input =
+                    bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
+                contract_input.extend(new_frame_input);
+            }
             Some(v.owner_address)
         }
         _ => {
-            context_input.extend_from_slice(&input);
+            contract_input.extend_from_slice(&input);
             None
         }
     };
@@ -230,7 +276,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     let (fuel_consumed, fuel_refunded, exit_code) = syscall_exec_impl(
         &mut runtime_context,
         bytecode_hash,
-        BytesOrRef::Bytes(context_input.into()),
+        BytesOrRef::Bytes(contract_input.into()),
         fuel_limit,
         if is_create { STATE_DEPLOY } else { STATE_MAIN },
     );
@@ -399,6 +445,27 @@ fn get_ownable_account_mut<'a, CTX: ContextTr + 'a, INSP: Inspector<CTX>>(
     }))
 }
 
+fn process_runtime_execution_outcome<CTX: ContextTr>(
+    target_address: &[u8; 20],
+    ctx: &mut CTX,
+    return_data: &mut Bytes,
+) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
+    let (runtime_output, _): (RuntimeExecutionOutcomeV1, usize) =
+        bincode::decode_from_slice(return_data, bincode::config::legacy())
+            .expect("runtime execution outcome");
+    *return_data = runtime_output.output.into();
+    for (k, v) in runtime_output.storage.unwrap_or_default() {
+        ctx.journal_mut().sstore(target_address.into(), k, v)?;
+    }
+    for JournalLog { topics, data } in runtime_output.logs {
+        ctx.journal_mut().log(Log {
+            address: target_address.into(),
+            data: LogData::new_unchecked(topics, data),
+        });
+    }
+    Ok(())
+}
+
 fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
@@ -411,11 +478,19 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     match exit_code {
         // If we return `Ok` in deployment mode, then we assume we store new metadata in the output,
         // it's used to rewrite the existing metadata to store custom bytecode.
-        0 if is_create => {
+        0 if is_create && ownable_account.owner_address != PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME => {
             ownable_account.metadata = take(&mut return_data);
             let bytecode = Bytecode::OwnableAccount(ownable_account);
             ctx.journal_mut()
                 .set_code(frame.interpreter.input.target_address(), bytecode);
+        }
+        // A special case for Universal Token (other runtimes will be migrated as well)
+        _ if ownable_account.owner_address == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME => {
+            process_runtime_execution_outcome(
+                &frame.interpreter.input.target_address(),
+                ctx,
+                &mut return_data,
+            )?;
         }
         // Don't do anything, execution default case
         _ => {}

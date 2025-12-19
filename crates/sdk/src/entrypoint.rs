@@ -213,3 +213,47 @@ macro_rules! system_entrypoint {
         fn main() {}
     };
 }
+
+#[macro_export]
+macro_rules! system_entrypoint2 {
+    ($main_func:ident, $deploy_func:ident) => {
+        #[cfg(target_arch = "wasm32")]
+        mod _fluentbase_entrypoint {
+            use $crate::{system::SystemContextImpl, RwasmContext};
+            #[no_mangle]
+            extern "C" fn main() {
+                let mut sdk = SystemContextImpl::new(RwasmContext {});
+                let result = super::main_entry(&mut sdk);
+                sdk.finalize(result);
+            }
+            #[no_mangle]
+            extern "C" fn deploy() {
+                let mut sdk = SystemContextImpl::new(RwasmContext {});
+                let result = super::deploy_entry(&mut sdk);
+                sdk.finalize(result);
+            }
+        }
+        $crate::define_panic_handler!();
+        $crate::define_allocator!();
+        #[cfg(not(target_arch = "wasm32"))]
+        fn main() {}
+    };
+    ($main_func:ident) => {
+        #[cfg(target_arch = "wasm32")]
+        mod _fluentbase_entrypoint {
+            use $crate::{system::SystemContextImpl, RwasmContext};
+            #[no_mangle]
+            extern "C" fn main() {
+                let mut sdk = SystemContextImpl::new(RwasmContext {});
+                let result = super::main_entry(&mut sdk);
+                sdk.finalize(result);
+            }
+            #[no_mangle]
+            extern "C" fn deploy() {}
+        }
+        $crate::define_panic_handler!();
+        $crate::define_allocator!();
+        #[cfg(not(target_arch = "wasm32"))]
+        fn main() {}
+    };
+}

@@ -62,6 +62,7 @@ pub fn instruction_result_from_exit_code(
         ExitCode::UnknownExternalFunction => InstructionResult::UnknownExternalFunction,
         /* System Fatal Error Codes */
         ExitCode::UnexpectedFatalExecutionFailure => InstructionResult::FatalExternalError,
+        ExitCode::MissingStorageSlot => InstructionResult::InvalidOperandOOG,
     }
 }
 

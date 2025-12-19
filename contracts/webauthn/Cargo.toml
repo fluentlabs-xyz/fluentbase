@@ -30,6 +30,7 @@ std = [
     "base64/std",
     "hex/std",
     "revm-precompile/std",
+    "fluentbase-testing/std",
 ]
 fluent-testnet = [
     "fluentbase-sdk/fluent-testnet",

@@ -47,10 +47,7 @@ mod tests {
         BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
         BN254_G2_POINT_DECOMPRESSED_SIZE, PRECOMPILE_SHA256, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
     };
-    use fluentbase_universal_token::{
-        common::sig_to_bytes,
-        consts::{SIG_BALANCE, SIG_DECIMALS, SIG_DECIMALS_FOR_MINT},
-    };
+    use fluentbase_universal_token::consts::{SIG_BALANCE, SIG_DECIMALS, SIG_DECIMALS_FOR_MINT};
     use hex_literal::hex;
     use rand::random_range;
     use serde::Deserialize;
@@ -669,7 +666,7 @@ mod tests {
         // decimals for mint
         let mut input_data = vec![];
         input_data.extend_from_slice(mint_key.as_ref());
-        let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS_FOR_MINT), &input_data);
+        let input = build_input_raw(&SIG_DECIMALS_FOR_MINT.to_be_bytes(), &input_data);
         let output_data =
             call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
         assert_eq!(output_data.len(), 1);
@@ -678,7 +675,7 @@ mod tests {
         // decimals for account
         let mut input_data = vec![];
         input_data.extend_from_slice(account1_key.as_ref());
-        let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS), &input_data);
+        let input = build_input_raw(&SIG_DECIMALS.to_be_bytes(), &input_data);
         let output_data =
             call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
         assert_eq!(output_data.len(), 1);
@@ -727,7 +724,7 @@ mod tests {
 
         let mut input_data = vec![];
         input_data.extend_from_slice(mint_key.as_ref());
-        let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS_FOR_MINT), &input_data);
+        let input = build_input_raw(&SIG_DECIMALS_FOR_MINT.to_be_bytes(), &input_data);
         let output_data =
             call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
         assert_eq!(output_data.len(), 1);
@@ -737,14 +734,14 @@ mod tests {
 
         let mut input_data = vec![];
         input_data.extend_from_slice(account1_key.as_ref());
-        let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS), &input_data);
+        let input = build_input_raw(&SIG_DECIMALS.to_be_bytes(), &input_data);
         let output_data =
             call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
         assert_eq!(output_data.len(), 1);
         assert_eq!(output_data[0], decimals);
 
         // balance for account1
-        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let input = build_input_raw(&SIG_BALANCE.to_be_bytes(), &[]);
         let output_data =
             call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
         assert_eq!(output_data.len(), size_of::<u64>());
@@ -799,7 +796,7 @@ mod tests {
         assert!(result.is_success());
 
         // balance for account1
-        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let input = build_input_raw(&SIG_BALANCE.to_be_bytes(), &[]);
         let output_data =
             call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
         assert_eq!(output_data.len(), size_of::<u64>());
@@ -807,7 +804,7 @@ mod tests {
         assert_eq!(balance, amount);
 
         // balance for account2
-        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let input = build_input_raw(&SIG_BALANCE.to_be_bytes(), &[]);
         let output_data =
             call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
         assert_eq!(output_data.len(), size_of::<u64>());
@@ -863,7 +860,7 @@ mod tests {
         assert!(result.is_success());
 
         // balance for account1
-        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let input = build_input_raw(&SIG_BALANCE.to_be_bytes(), &[]);
         let output_data =
             call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
         assert_eq!(output_data.len(), size_of::<u64>());
@@ -871,7 +868,7 @@ mod tests {
         assert_eq!(balance, amount);
 
         // balance for account2
-        let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+        let input = build_input_raw(&SIG_BALANCE.to_be_bytes(), &[]);
         let output_data =
             call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
         assert_eq!(output_data.len(), size_of::<u64>());

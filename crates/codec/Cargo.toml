@@ -1,10 +1,10 @@
 [package]
+name = "fluentbase-codec"
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true
 keywords.workspace = true
 license.workspace = true
-name = "fluentbase-codec"
 readme.workspace = true
 repository.workspace = true
 version.workspace = true
@@ -12,7 +12,7 @@ version.workspace = true
 [dependencies]
 alloy-primitives = { workspace = true }
 byteorder = { workspace = true }
-bytes = { workspace = true, default-features = false }
+bytes = { workspace = true }
 fluentbase-codec-derive = { workspace = true }
 hashbrown = { workspace = true }
 serde = { workspace = true, default-features = false }

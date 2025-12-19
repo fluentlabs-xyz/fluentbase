@@ -14,8 +14,7 @@ use crate::{
     mem_ops::{
         translate, translate_slice, translate_slice_mut, translate_type, translate_type_mut,
     },
-    native_loader, token_2022,
-    token_2022::{instruction::decode_instruction_type, pod_instruction::PodTokenInstruction},
+    native_loader,
     word_size::{
         addr_type::AddrType,
         common::{MemoryMappingHelper, STABLE_VEC_FAT_PTR64_BYTE_SIZE},
@@ -31,7 +30,7 @@ use fluentbase_sdk::{
     SyscallResult, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256, UNIVERSAL_TOKEN_MAGIC_BYTES,
 };
 use fluentbase_svm_common::common::evm_address_from_pubkey;
-use fluentbase_universal_token::{common::sig_to_bytes, consts::SIG_TOKEN2022};
+use fluentbase_universal_token::consts::SIG_TOKEN2022;
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_instruction::{error::InstructionError, AccountMeta};
 use solana_program_entrypoint::SUCCESS;
@@ -673,7 +672,7 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
         metadata_account_owner_result.status.is_ok()
             && metadata_account_owner_result.data == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
     }) {
-        input_prefix = Some(sig_to_bytes(SIG_TOKEN2022));
+        input_prefix = Some(SIG_TOKEN2022.to_be_bytes());
     }
     if input_prefix.is_some()
         || !is_program_exists(invoke_context.sdk, &instruction.program_id, None)?
