@@ -335,6 +335,9 @@ fn test_blended_gas_spend_evm_from_wasm() {
     // + 100 warm call cost
     // + 637 evm opcodes cost
     // + 1 call wasm code
-    assert_eq!(result.gas_used(), 21000 + 2600 + 637 + 100 + 637 + call_cast);
+    assert_eq!(
+        result.gas_used(),
+        21000 + 2600 + 637 + 100 + 637 + call_cast
+    );
     // TODO(dmitry123): "wasm code cost should be 2, not 1"
 }

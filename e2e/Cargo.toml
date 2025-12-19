@@ -41,7 +41,6 @@ solana-curve25519 = { workspace = true, default-features = false }
 solana-bn254 = { workspace = true, default-features = false }
 solana-poseidon = { workspace = true, default-features = false }
 solana-program-pack = { workspace = true, default-features = false }
-#solana-program-option = { workspace = true, default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 array-bytes = { workspace = true }
@@ -69,6 +68,7 @@ std = [
     "fluentbase-sdk/std",
     "rwasm/std",
     "revm/std",
+    "fluentbase-testing/std",
 ]
 debug-print = [
     "fluentbase-runtime/debug-print",

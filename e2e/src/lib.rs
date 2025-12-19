@@ -39,16 +39,14 @@ mod router;
 mod stateless;
 #[cfg(all(test, feature = "svm"))]
 pub mod svm;
-// #[cfg(test)]
-// mod universal_token;
+#[cfg(test)]
+mod universal_token;
 // Testnet-only: Runtime upgrade functionality. See frame_init() for details.
+#[cfg(test)]
+mod bench;
 #[cfg(feature = "fluent-testnet")]
 #[cfg(test)]
 mod ddos;
-// #[cfg(test)]
-// mod erc20;
-#[cfg(test)]
-mod bench;
 #[cfg(test)]
 mod exec_input;
 #[cfg(feature = "fluent-testnet")]

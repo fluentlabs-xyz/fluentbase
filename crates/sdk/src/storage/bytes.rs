@@ -5,6 +5,7 @@ use crate::{
 };
 use alloc::{string::String, vec::Vec};
 use core::marker::PhantomData;
+use fluentbase_types::ExitCode;
 
 /// Dynamic byte array in storage.
 /// Optimized for Solidity compatibility:
@@ -39,59 +40,59 @@ impl StorageBytes {
     }
 
     /// Read length and check if long form.
-    fn read_metadata<S: StorageAPI>(&self, sdk: &S) -> (usize, bool) {
-        let word = sdk.sload(self.base_slot);
+    fn read_metadata<S: StorageAPI>(&self, sdk: &S) -> Result<(usize, bool), ExitCode> {
+        let word = sdk.sload(self.base_slot)?;
         let last_byte = word.0[31];
 
         if last_byte & 1 == 0 {
             // Short form
-            ((last_byte / 2) as usize, false)
+            Ok(((last_byte / 2) as usize, false))
         } else {
             // Long form
             let len = U256::from_be_bytes(word.0) / U256::from(2);
-            (len.try_into().unwrap_or(0), true)
+            Ok((len.try_into().unwrap_or(0), true))
         }
     }
 
     /// Get byte array length.
     pub fn len<S: StorageAPI>(&self, sdk: &S) -> usize {
-        self.read_metadata(sdk).0
+        self.read_metadata(sdk).map(|v| v.0).unwrap_or(0)
     }
 
     /// Load entire byte array.
-    pub fn load<S: StorageAPI>(&self, sdk: &S) -> Vec<u8> {
-        let (len, is_long) = self.read_metadata(sdk);
+    pub fn load<S: StorageAPI>(&self, sdk: &S) -> Result<Vec<u8>, ExitCode> {
+        let (len, is_long) = self.read_metadata(sdk)?;
         let mut result = Vec::with_capacity(len);
 
         if !is_long {
             // Short form
-            let word = sdk.sload(self.base_slot);
+            let word = sdk.sload(self.base_slot)?;
             result.extend_from_slice(&word.0[..len]);
         } else {
             // Long form
             let data_base = self.data_slot();
             for i in 0..(len + 31) / 32 {
                 let slot = data_base + U256::from(i);
-                let word = sdk.sload(slot);
+                let word = sdk.sload(slot)?;
                 let start = i * 32;
                 let end = (start + 32).min(len);
                 result.extend_from_slice(&word.0[..(end - start)]);
             }
         }
 
-        result
+        Ok(result)
     }
 
     /// Store byte array, replacing existing data.
-    pub fn store<S: StorageAPI>(&self, sdk: &mut S, data: &[u8]) {
+    pub fn store<S: StorageAPI>(&self, sdk: &mut S, data: &[u8]) -> Result<(), ExitCode> {
         let new_len = data.len();
-        let (old_len, was_long) = self.read_metadata(sdk);
+        let (old_len, was_long) = self.read_metadata(sdk)?;
 
         // Clear old long form data if needed
         if was_long && old_len > 31 {
             let data_base = self.data_slot();
             for i in 0..(old_len + 31) / 32 {
-                sdk.sstore(data_base + U256::from(i), B256::ZERO);
+                sdk.sstore(data_base + U256::from(i), B256::ZERO)?;
             }
         }
 
@@ -100,7 +101,7 @@ impl StorageBytes {
             let mut word = B256::ZERO;
             word.0[..new_len].copy_from_slice(data);
             word.0[31] = (new_len * 2) as u8;
-            sdk.sstore(self.base_slot, word);
+            sdk.sstore(self.base_slot, word)
         } else {
             // Store as long form
             let data_base = self.data_slot();
@@ -109,51 +110,58 @@ impl StorageBytes {
             for (i, chunk) in data.chunks(32).enumerate() {
                 let mut word = B256::ZERO;
                 word.0[..chunk.len()].copy_from_slice(chunk);
-                sdk.sstore(data_base + U256::from(i), word);
+                sdk.sstore(data_base + U256::from(i), word)?;
             }
 
             // Write length
             let len_encoded = U256::from(new_len * 2 + 1);
-            sdk.sstore(self.base_slot, B256::from(len_encoded.to_be_bytes::<32>()));
+            sdk.sstore(self.base_slot, B256::from(len_encoded.to_be_bytes::<32>()))
         }
     }
 
     /// Read slice of bytes without modifying storage.
-    pub fn slice<S: StorageAPI>(&self, sdk: &S, start: usize, end: usize) -> Vec<u8> {
-        let data = self.load(sdk);
+    pub fn slice<S: StorageAPI>(
+        &self,
+        sdk: &S,
+        start: usize,
+        end: usize,
+    ) -> Result<Vec<u8>, ExitCode> {
+        let data = self.load(sdk)?;
         let actual_end = end.min(data.len());
-        data.get(start..actual_end)
+        Ok(data
+            .get(start..actual_end)
             .map(|s| s.to_vec())
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
     /// Append bytes to existing data.
-    pub fn append<S: StorageAPI>(&self, sdk: &mut S, data: &[u8]) {
-        let mut current = self.load(sdk);
+    pub fn append<S: StorageAPI>(&self, sdk: &mut S, data: &[u8]) -> Result<(), ExitCode> {
+        let mut current = self.load(sdk)?;
         current.extend_from_slice(data);
-        self.store(sdk, &current);
+        self.store(sdk, &current)
     }
 
     /// Truncate to specified length.
-    pub fn truncate<S: StorageAPI>(&self, sdk: &mut S, new_len: usize) {
-        let current = self.load(sdk);
+    pub fn truncate<S: StorageAPI>(&self, sdk: &mut S, new_len: usize) -> Result<(), ExitCode> {
+        let current = self.load(sdk)?;
         if new_len < current.len() {
-            self.store(sdk, &current[..new_len]);
+            self.store(sdk, &current[..new_len])?;
         }
+        Ok(())
     }
 
     /// Clear all data.
-    pub fn clear<S: StorageAPI>(&self, sdk: &mut S) {
-        let (len, is_long) = self.read_metadata(sdk);
+    pub fn clear<S: StorageAPI>(&self, sdk: &mut S) -> Result<(), ExitCode> {
+        let (len, is_long) = self.read_metadata(sdk)?;
 
         if is_long && len > 31 {
             let data_base = self.data_slot();
             for i in 0..(len + 31) / 32 {
-                sdk.sstore(data_base + U256::from(i), B256::ZERO);
+                sdk.sstore(data_base + U256::from(i), B256::ZERO)?;
             }
         }
 
-        sdk.sstore(self.base_slot, B256::ZERO);
+        sdk.sstore(self.base_slot, B256::ZERO)
     }
 }
 
@@ -209,13 +217,21 @@ impl StorageString {
 
     /// Get string value.
     pub fn get<S: StorageAPI>(&self, sdk: &S) -> String {
-        let bytes = self.as_bytes().load(sdk);
-        String::from_utf8_lossy(&bytes).into_owned()
+        self.get_checked(sdk).unwrap()
+    }
+
+    pub fn get_checked<S: StorageAPI>(&self, sdk: &S) -> Result<String, ExitCode> {
+        let bytes = self.as_bytes().load(sdk)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Set string value.
     pub fn set<S: StorageAPI>(&self, sdk: &mut S, value: &str) {
-        self.as_bytes().store(sdk, value.as_bytes());
+        self.set_checked(sdk, value).unwrap()
+    }
+
+    pub fn set_checked<S: StorageAPI>(&self, sdk: &mut S, value: &str) -> Result<(), ExitCode> {
+        self.as_bytes().store(sdk, value.as_bytes())
     }
 
     /// Get string length in bytes.
@@ -224,8 +240,8 @@ impl StorageString {
     }
 
     /// Clear string.
-    pub fn clear<S: StorageAPI>(&self, sdk: &mut S) {
-        self.as_bytes().clear(sdk);
+    pub fn clear<S: StorageAPI>(&self, sdk: &mut S) -> Result<(), ExitCode> {
+        self.as_bytes().clear(sdk)
     }
 
     /// Convert to bytes for complex operations.
@@ -273,24 +289,27 @@ mod tests {
 
         // Store and load
         let data = vec![0x11, 0x22, 0x33];
-        bytes.store(&mut sdk, &data);
-        assert_eq!(bytes.load(&sdk), data);
+        bytes.store(&mut sdk, &data).unwrap();
+        assert_eq!(bytes.load(&sdk).unwrap(), data);
         assert_eq!(bytes.len(&sdk), 3);
 
         // Append
-        bytes.append(&mut sdk, &[0x44, 0x55]);
-        assert_eq!(bytes.load(&sdk), vec![0x11, 0x22, 0x33, 0x44, 0x55]);
+        bytes.append(&mut sdk, &[0x44, 0x55]).unwrap();
+        assert_eq!(
+            bytes.load(&sdk).unwrap(),
+            vec![0x11, 0x22, 0x33, 0x44, 0x55]
+        );
 
         // Slice
-        assert_eq!(bytes.slice(&sdk, 1, 4), vec![0x22, 0x33, 0x44]);
-        assert!(bytes.slice(&sdk, 10, 20).is_empty()); // Out of bounds
+        assert_eq!(bytes.slice(&sdk, 1, 4).unwrap(), vec![0x22, 0x33, 0x44]);
+        assert!(bytes.slice(&sdk, 10, 20).unwrap().is_empty()); // Out of bounds
 
         // Truncate
-        bytes.truncate(&mut sdk, 3);
-        assert_eq!(bytes.load(&sdk), vec![0x11, 0x22, 0x33]);
+        bytes.truncate(&mut sdk, 3).unwrap();
+        assert_eq!(bytes.load(&sdk).unwrap(), vec![0x11, 0x22, 0x33]);
 
         // Clear
-        bytes.clear(&mut sdk);
+        bytes.clear(&mut sdk).unwrap();
         assert_eq!(bytes.len(&sdk), 0);
     }
 
@@ -301,7 +320,7 @@ mod tests {
 
         // Start with short form (31 bytes max)
         let short_data: Vec<u8> = (0..31).collect();
-        bytes.store(&mut sdk, &short_data);
+        bytes.store(&mut sdk, &short_data).unwrap();
 
         // Verify short form storage layout
         let mut expected = String::new();
@@ -312,7 +331,7 @@ mod tests {
         assert_eq!(sdk.get_slot_hex(U256::from(200)), expected);
 
         // Append to trigger long form (32+ bytes)
-        bytes.append(&mut sdk, &[31]);
+        bytes.append(&mut sdk, &[31]).unwrap();
         assert_eq!(bytes.len(&sdk), 32);
 
         // Verify long form: base slot has length*2+1 = 65 = 0x41
@@ -331,7 +350,7 @@ mod tests {
         assert_eq!(&data[62..64], "1f"); // Last byte is 31
 
         // Truncate back to short form
-        bytes.truncate(&mut sdk, 30);
+        bytes.truncate(&mut sdk, 30).unwrap();
         assert_eq!(bytes.len(&sdk), 30);
 
         // Verify short form restored and data slot cleared
@@ -365,10 +384,10 @@ mod tests {
 
         // Complex operations via as_bytes()
         let bytes = string.as_bytes();
-        let slice = bytes.slice(&sdk, 0, 4);
+        let slice = bytes.slice(&sdk, 0, 4).unwrap();
         assert_eq!(slice, b"This");
 
-        bytes.append(&mut sdk, b" More text.");
+        bytes.append(&mut sdk, b" More text.").unwrap();
         assert_eq!(string.len(&sdk), 71); // 60 + 11 = 71
         assert_eq!(
             string.get(&sdk),
@@ -376,7 +395,7 @@ mod tests {
         );
 
         // Clear
-        string.clear(&mut sdk);
+        string.clear(&mut sdk).unwrap();
         assert_eq!(string.len(&sdk), 0);
     }
 
@@ -387,21 +406,21 @@ mod tests {
 
         // Store 100 bytes (requires 4 slots in long form)
         let data: Vec<u8> = (0..100).collect();
-        bytes.store(&mut sdk, &data);
+        bytes.store(&mut sdk, &data).unwrap();
 
-        assert_eq!(bytes.load(&sdk), data);
+        assert_eq!(bytes.load(&sdk).unwrap(), data);
         assert_eq!(bytes.len(&sdk), 100);
 
         // Test slicing across slot boundaries
-        let slice = bytes.slice(&sdk, 30, 35);
+        let slice = bytes.slice(&sdk, 30, 35).unwrap();
         assert_eq!(slice, vec![30, 31, 32, 33, 34]);
 
         // Append more data
-        bytes.append(&mut sdk, &[100, 101, 102]);
+        bytes.append(&mut sdk, &[100, 101, 102]).unwrap();
         assert_eq!(bytes.len(&sdk), 103);
 
         // Truncate to exactly 32 bytes (still long form)
-        bytes.truncate(&mut sdk, 32);
+        bytes.truncate(&mut sdk, 32).unwrap();
         assert_eq!(bytes.len(&sdk), 32);
 
         // Verify still in long form
@@ -415,22 +434,22 @@ mod tests {
         let bytes = StorageBytes::new(U256::from(500));
 
         // Empty operations
-        assert!(bytes.slice(&sdk, 0, 10).is_empty());
-        bytes.truncate(&mut sdk, 100); // No-op when empty
+        assert!(bytes.slice(&sdk, 0, 10).unwrap().is_empty());
+        bytes.truncate(&mut sdk, 100).unwrap(); // No-op when empty
         assert_eq!(bytes.len(&sdk), 0);
 
         // Single byte
-        bytes.store(&mut sdk, &[0xFF]);
-        assert_eq!(bytes.load(&sdk), vec![0xFF]);
+        bytes.store(&mut sdk, &[0xFF]).unwrap();
+        assert_eq!(bytes.load(&sdk).unwrap(), vec![0xFF]);
 
         // Exactly 31 bytes (max short)
         let data_31: Vec<u8> = vec![0xAA; 31];
-        bytes.store(&mut sdk, &data_31);
+        bytes.store(&mut sdk, &data_31).unwrap();
         assert_eq!(bytes.len(&sdk), 31);
 
         // Exactly 32 bytes (min long)
         let data_32: Vec<u8> = vec![0xBB; 32];
-        bytes.store(&mut sdk, &data_32);
+        bytes.store(&mut sdk, &data_32).unwrap();
         assert_eq!(bytes.len(&sdk), 32);
 
         // Verify it's in long form

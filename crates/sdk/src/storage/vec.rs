@@ -6,6 +6,7 @@ use crate::{
     StorageAPI, B256, U256,
 };
 use core::marker::PhantomData;
+use fluentbase_types::ExitCode;
 
 /// Dynamic vector in storage.
 /// Length at base slot, elements at keccak256(base_slot).
@@ -59,15 +60,23 @@ where
 {
     /// Get current length of vector.
     pub fn len<S: StorageAPI>(&self, sdk: &S) -> u64 {
-        let word = sdk.sload(self.base_slot);
+        self.len_checked(sdk).unwrap()
+    }
+
+    pub fn len_checked<S: StorageAPI>(&self, sdk: &S) -> Result<u64, ExitCode> {
+        let word = sdk.sload(self.base_slot)?;
         let mut len_bytes = [0u8; 8];
         len_bytes.copy_from_slice(&word.0[24..32]);
-        u64::from_be_bytes(len_bytes)
+        Ok(u64::from_be_bytes(len_bytes))
     }
 
     /// Check if vector is empty.
     pub fn is_empty<S: StorageAPI>(&self, sdk: &S) -> bool {
-        self.len(sdk) == 0
+        self.is_empty_checked(sdk).unwrap()
+    }
+
+    pub fn is_empty_checked<S: StorageAPI>(&self, sdk: &S) -> Result<bool, ExitCode> {
+        Ok(self.len_checked(sdk)? == 0)
     }
 
     /// Calculate storage location for element at index.
@@ -98,24 +107,35 @@ where
 
     /// Grow vector by one and return accessor to new element.
     pub fn grow<S: StorageAPI>(&self, sdk: &mut S) -> T::Accessor {
+        self.grow_checked(sdk).unwrap()
+    }
+
+    pub fn grow_checked<S: StorageAPI>(&self, sdk: &mut S) -> Result<T::Accessor, ExitCode> {
         let current_len = self.len(sdk);
 
         // Update length
         let new_len = current_len + 1;
         let mut len_bytes = [0u8; 32];
         len_bytes[24..32].copy_from_slice(&new_len.to_be_bytes());
-        sdk.sstore(self.base_slot, B256::from(len_bytes));
+        sdk.sstore(self.base_slot, B256::from(len_bytes))?;
 
         // Return accessor to new element
-        self.at(current_len)
+        Ok(self.at(current_len))
     }
 
     /// Shrink vector by one and return accessor to the removed element.
     /// The accessor remains valid until the slot is reused.
     pub fn shrink<S: StorageAPI>(&self, sdk: &mut S) -> Option<T::Accessor> {
+        self.shrink_checked(sdk).unwrap()
+    }
+
+    pub fn shrink_checked<S: StorageAPI>(
+        &self,
+        sdk: &mut S,
+    ) -> Result<Option<T::Accessor>, ExitCode> {
         let current_len = self.len(sdk);
         if current_len == 0 {
-            return None;
+            return Ok(None);
         }
 
         let index = current_len - 1;
@@ -123,14 +143,19 @@ where
         // Update length first
         let mut len_bytes = [0u8; 32];
         len_bytes[24..32].copy_from_slice(&index.to_be_bytes());
-        sdk.sstore(self.base_slot, B256::from(len_bytes));
+        sdk.sstore(self.base_slot, B256::from(len_bytes))?;
 
         // Return accessor to removed element (still in storage)
-        Some(self.at(index))
+        Ok(Some(self.at(index)))
     }
+
     /// Clear vector (sets length to 0).
     pub fn clear<S: StorageAPI>(&self, sdk: &mut S) {
-        sdk.sstore(self.base_slot, B256::ZERO);
+        self.clear_checked(sdk).unwrap()
+    }
+
+    pub fn clear_checked<S: StorageAPI>(&self, sdk: &mut S) -> Result<(), ExitCode> {
+        sdk.sstore(self.base_slot, B256::ZERO)
     }
 }
 
@@ -138,12 +163,22 @@ where
 impl<T: PackableCodec> StorageVec<StoragePrimitive<T>> {
     /// Push primitive value directly.
     pub fn push<S: StorageAPI>(&self, sdk: &mut S, value: T) {
-        self.grow(sdk).set(sdk, value);
+        self.push_checked(sdk, value).unwrap()
+    }
+
+    pub fn push_checked<S: StorageAPI>(&self, sdk: &mut S, value: T) -> Result<(), ExitCode> {
+        self.grow_checked(sdk)?.set_checked(sdk, value)
     }
 
     /// Remove and return last value.
     pub fn pop<S: StorageAPI>(&self, sdk: &mut S) -> Option<T> {
-        self.shrink(sdk).map(|accessor| accessor.get(sdk))
+        self.pop_checked(sdk).unwrap()
+    }
+
+    pub fn pop_checked<S: StorageAPI>(&self, sdk: &mut S) -> Result<Option<T>, ExitCode> {
+        self.shrink_checked(sdk)?
+            .map(|accessor| accessor.get_checked(sdk))
+            .transpose()
     }
 }
 
