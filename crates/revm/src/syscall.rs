@@ -4,7 +4,6 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
-use core::cmp::min;
 use fluentbase_evm::EthereumMetadata;
 use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
@@ -265,7 +264,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // charge_gas!(gas::calc_call_static_gas(spec_id, has_transfer));
             // EIP-150: gas cost changes for IO-heavy operations
             charge_gas!(gas::call_cost(spec_id, has_transfer, account_load));
-            let mut gas_limit = min(
+            let mut gas_limit = core::cmp::min(
                 frame.interpreter.gas.remaining_63_of_64_parts(),
                 inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
             );
@@ -315,7 +314,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // EIP-150: gas cost changes for IO-heavy operations
             charge_gas!(gas::call_cost(spec_id.clone(), false, account_load));
             let gas_limit = if spec_id.is_enabled_in(TANGERINE) {
-                min(
+                core::cmp::min(
                     frame.interpreter.gas.remaining_63_of_64_parts(),
                     inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
                 )
@@ -365,7 +364,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // EIP-150: gas cost changes for IO-heavy operations
             charge_gas!(gas::call_cost(spec_id, !value.is_zero(), account_load));
             let mut gas_limit = if spec_id.is_enabled_in(TANGERINE) {
-                min(
+                core::cmp::min(
                     frame.interpreter.gas.remaining_63_of_64_parts(),
                     inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
                 )
@@ -419,7 +418,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // EIP-150: gas cost changes for IO-heavy operations
             charge_gas!(gas::call_cost(spec_id, false, account_load));
             let gas_limit = if spec_id.is_enabled_in(TANGERINE) {
-                min(
+                core::cmp::min(
                     frame.interpreter.gas.remaining_63_of_64_parts(),
                     inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
                 )
@@ -969,17 +968,22 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     return_halt!(MalformedBuiltinParams)
                 }
             };
-            let offset = LittleEndian::read_u32(&input[20..24]);
-            let length = LittleEndian::read_u32(&input[24..28]);
+            let offset = LittleEndian::read_u32(&input[20..24]) as usize;
+            let length = LittleEndian::read_u32(&input[24..28]) as usize;
             // take min
-            let length = length.min(ownable_account_bytecode.metadata.len() as u32);
-            let metadata = if offset < length {
-                ownable_account_bytecode
-                    .metadata
-                    .slice(offset as usize..(offset + length) as usize)
-            } else {
-                Bytes::new()
-            };
+            let metadata_len = ownable_account_bytecode.metadata.len();
+
+            // If the offset is beyond the end of metadata, nothing can be copied - return empty.
+            if offset >= metadata_len {
+                return_result!(Bytes::new(), Ok);
+            }
+
+            // Clamp the requested length to the remaining bytes after `offset`.
+            let copy_len = core::cmp::min(length, length - offset);
+            let metadata = ownable_account_bytecode
+                .metadata
+                .slice(offset..(offset + copy_len));
+
             return_result!(metadata, Ok)
         }
 
