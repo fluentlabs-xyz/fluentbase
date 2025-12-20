@@ -1013,8 +1013,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 return_halt!(MalformedBuiltinParams)
             };
 
-            assert_halt!(!is_static, StateChangeDuringStaticCall);
-
             let slot_u256 = U256::from_le_bytes(slot);
             let value_u256 = U256::from_le_bytes(value);
             ctx.journal_mut()
