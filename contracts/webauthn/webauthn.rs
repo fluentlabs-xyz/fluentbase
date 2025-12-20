@@ -125,12 +125,6 @@ fn verify_client_data_json(
     if !contains_at(challenge_str.as_bytes(), client_data_json, challenge_idx) {
         return false;
     }
-    // Verify that the challenge is followed by a closing quote
-    let expected_quote_pos = challenge_idx + challenge_str.len() - 1;
-    if expected_quote_pos >= client_data_json.len() || client_data_json[expected_quote_pos] != b'"'
-    {
-        return false;
-    }
 
     true
 }
