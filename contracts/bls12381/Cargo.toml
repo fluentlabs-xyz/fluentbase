@@ -22,5 +22,5 @@ default = ["std"]
 std = ["fluentbase-sdk/std", "revm-precompile/std", "fluentbase-testing/std"]
 fluent-testnet = [
     "fluentbase-sdk/fluent-testnet",
-    "fluentbase-testing/fluent-testnet"
+    "fluentbase-testing/fluent-testnet",
 ]

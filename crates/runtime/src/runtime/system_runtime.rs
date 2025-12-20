@@ -1,6 +1,7 @@
 use crate::{syscall_handler::invoke_runtime_handler, RuntimeContext};
 use fluentbase_types::{
-    ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, B256, STATE_DEPLOY, STATE_MAIN,
+    system::RuntimeInterruptionOutcomeV1, ExitCode, HashMap, SysFuncIdx, B256, STATE_DEPLOY,
+    STATE_MAIN,
 };
 use rwasm::{ImportLinker, RwasmModule, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE};
 use smallvec::SmallVec;

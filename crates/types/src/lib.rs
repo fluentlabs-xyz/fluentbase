@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+pub mod bincode_helpers;
 mod block_fuel;
 mod bytecode;
 mod crypto_api;
@@ -11,11 +12,11 @@ pub mod fd;
 mod genesis;
 mod import_linker;
 mod native_api;
-mod runtime;
 #[cfg(target_arch = "wasm32")]
 mod rwasm_context;
 mod sys_func_idx;
 mod syscall;
+pub mod system;
 
 pub use alloy_primitives::*;
 pub use bincode;
@@ -29,7 +30,7 @@ pub use genesis::*;
 pub use hashbrown::{self, hash_map, hash_set, HashMap, HashSet};
 pub use import_linker::*;
 pub use native_api::*;
-pub use runtime::*;
+pub use paste;
 #[cfg(target_arch = "wasm32")]
 pub use rwasm_context::{bindings, RwasmContext};
 pub use sys_func_idx::*;

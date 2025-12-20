@@ -15,4 +15,4 @@ path = "lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std"]
+std = ["fluentbase-sdk/std", "fluentbase-testing/std"]

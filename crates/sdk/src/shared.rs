@@ -98,14 +98,6 @@ impl<API: NativeAPI> MetadataAPI for SharedContextImpl<API> {
         )
     }
 
-    fn metadata_account_owner(&self, address: &Address) -> SyscallResult<Address> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.metadata_account_owner(address);
-        let mut address = Address::ZERO;
-        self.native_sdk.read_output(&mut address.as_mut(), 0);
-        SyscallResult::new(address, fuel_consumed, fuel_refunded, exit_code)
-    }
-
     fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk.metadata_create(salt, metadata);
@@ -117,6 +109,14 @@ impl<API: NativeAPI> MetadataAPI for SharedContextImpl<API> {
             self.native_sdk.metadata_copy(address, offset, length);
         let value = self.native_sdk.return_data();
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+    }
+
+    fn metadata_account_owner(&self, address: &Address) -> SyscallResult<Address> {
+        let (fuel_consumed, fuel_refunded, exit_code) =
+            self.native_sdk.metadata_account_owner(address);
+        let mut address = Address::ZERO;
+        self.native_sdk.read_output(&mut address.as_mut(), 0);
+        SyscallResult::new(address, fuel_consumed, fuel_refunded, exit_code)
     }
 }
 

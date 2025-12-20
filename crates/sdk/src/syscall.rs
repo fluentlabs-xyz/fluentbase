@@ -33,14 +33,6 @@ pub const SYSCALL_ID_METADATA_STORAGE_READ: B256 = B256::with_last_byte(0x44);
 pub const SYSCALL_ID_METADATA_STORAGE_WRITE: B256 = B256::with_last_byte(0x45);
 pub const SYSCALL_ID_METADATA_ACCOUNT_OWNER: B256 = B256::with_last_byte(0x46);
 
-pub fn pack_storage_read(target: &mut [u8], slot: &U256) {
-    target.copy_from_slice(slot.as_le_slice())
-}
-
-pub fn pack_storage_write(target: &mut [u8], slot: &U256) {
-    target.copy_from_slice(slot.as_le_slice())
-}
-
 pub trait SyscallInterruptExecutor {
     fn write_storage(&mut self, slot: U256, value: U256) -> (u64, i64, i32);
     fn storage(&self, slot: &U256) -> (u64, i64, i32);

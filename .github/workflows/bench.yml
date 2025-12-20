@@ -25,7 +25,7 @@ jobs:
           rustup target add wasm32-unknown-unknown
           cd e2e && cargo bench -- --save-baseline devel
       - name: Upload baseline artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: criterion-baseline-devel
           path: target/criterion
@@ -66,7 +66,7 @@ jobs:
           cd e2e && cargo bench | grep -v ignored | tee bench_output.txt
 
       - name: Upload full report
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: criterion-report-${{ github.sha }}
           path: target/criterion

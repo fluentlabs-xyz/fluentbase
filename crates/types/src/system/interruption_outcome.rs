@@ -1,36 +1,7 @@
 use crate::ExitCode;
 use alloc::vec::Vec;
 use alloy_primitives::Bytes;
-
-#[derive(Default, Clone, Debug, PartialEq)]
-pub struct RuntimeNewFrameInputV1 {
-    pub metadata: Bytes,
-    pub input: Bytes,
-}
-
-impl bincode::Encode for RuntimeNewFrameInputV1 {
-    fn encode<E: bincode::enc::Encoder>(
-        &self,
-        e: &mut E,
-    ) -> Result<(), bincode::error::EncodeError> {
-        bincode::Encode::encode(self.metadata.as_ref(), e)?;
-        bincode::Encode::encode(&self.input.as_ref(), e)?;
-        Ok(())
-    }
-}
-
-impl<C> bincode::Decode<C> for RuntimeNewFrameInputV1 {
-    fn decode<D: bincode::de::Decoder<Context = C>>(
-        d: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        let metadata: Vec<u8> = bincode::Decode::decode(d)?;
-        let input: Vec<u8> = bincode::Decode::decode(d)?;
-        Ok(Self {
-            metadata: metadata.into(),
-            input: input.into(),
-        })
-    }
-}
+use bincode::de::Decoder;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RuntimeInterruptionOutcomeV1 {
@@ -57,9 +28,7 @@ impl bincode::Encode for RuntimeInterruptionOutcomeV1 {
 }
 
 impl<C> bincode::Decode<C> for RuntimeInterruptionOutcomeV1 {
-    fn decode<D: bincode::de::Decoder<Context = C>>(
-        d: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
+    fn decode<D: Decoder<Context = C>>(d: &mut D) -> Result<Self, bincode::error::DecodeError> {
         let halted_frame: bool = bincode::Decode::decode(d)?;
         let output: Vec<u8> = bincode::Decode::decode(d)?;
         let fuel_consumed: u64 = bincode::Decode::decode(d)?;
@@ -70,7 +39,7 @@ impl<C> bincode::Decode<C> for RuntimeInterruptionOutcomeV1 {
             output: output.into(),
             fuel_consumed,
             fuel_refunded,
-            exit_code: ExitCode::from(exit_code),
+            exit_code: exit_code.into(),
         })
     }
 }

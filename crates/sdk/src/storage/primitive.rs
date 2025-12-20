@@ -3,6 +3,7 @@ use crate::{
     Address, FixedBytes, Signed, StorageAPI, Uint, U256,
 };
 use core::marker::PhantomData;
+use fluentbase_types::ExitCode;
 
 /// Storage descriptor and accessor for single packable values.
 #[derive(Debug, PartialEq, Eq)]
@@ -43,12 +44,20 @@ impl<T> StorageDescriptor for StoragePrimitive<T> {
 impl<T: PackableCodec> StoragePrimitive<T> {
     /// Read value from storage.
     pub fn get<S: StorageAPI>(&self, sdk: &S) -> T {
+        sdk.read_at(self.slot, self.offset).unwrap()
+    }
+
+    pub fn get_checked<S: StorageAPI>(&self, sdk: &S) -> Result<T, ExitCode> {
         sdk.read_at(self.slot, self.offset)
     }
 
     /// Write value to storage.
     pub fn set<S: StorageAPI>(&self, sdk: &mut S, value: T) {
-        sdk.write_at(self.slot, self.offset, &value);
+        sdk.write_at(self.slot, self.offset, &value).unwrap()
+    }
+
+    pub fn set_checked<S: StorageAPI>(&self, sdk: &mut S, value: T) -> Result<(), ExitCode> {
+        sdk.write_at(self.slot, self.offset, &value)
     }
 }
 

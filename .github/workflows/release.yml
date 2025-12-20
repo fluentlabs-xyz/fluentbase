@@ -68,13 +68,13 @@ jobs:
         shell: bash
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
           path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
 
       - name: Upload signature
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
           path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
@@ -93,7 +93,7 @@ jobs:
       # It has to come before "Download Artifacts" or else it deletes the artifacts.
       - uses: actions/checkout@v6
       - name: Download artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
       - name: Generate full changelog
         id: changelog
         run: |

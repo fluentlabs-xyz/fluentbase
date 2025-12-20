@@ -25,6 +25,8 @@ all = "warn"
 # revm
 revm = { workspace = true }
 
+fluentbase-universal-token = { workspace = true }
+
 # static precompile sets.
 once_cell = { workspace = true, features = ["alloc"] }
 
@@ -34,6 +36,8 @@ rwasm = { workspace = true, default-features = false }
 tracing = { version = "0.1" }
 
 cfg-if = { workspace = true }
+
+alloy-primitives = { workspace = true }
 
 # Optional
 serde = { workspace = true, features = ["derive", "rc"], optional = true }

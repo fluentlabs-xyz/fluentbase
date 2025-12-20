@@ -2019,10 +2019,12 @@ dependencies = [
 name = "fluentbase-revm"
 version = "0.4.11-dev"
 dependencies = [
+ "alloy-primitives",
  "cfg-if",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
+ "fluentbase-universal-token",
  "once_cell",
  "revm",
  "rwasm",
@@ -2188,10 +2190,7 @@ dependencies = [
 name = "fluentbase-universal-token"
 version = "0.4.11-dev"
 dependencies = [
- "bincode 2.0.1",
  "fluentbase-sdk",
- "fluentbase-svm-common",
- "solana-pubkey",
 ]
 
 [[package]]

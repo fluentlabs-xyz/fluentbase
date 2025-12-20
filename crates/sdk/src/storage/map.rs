@@ -1,10 +1,10 @@
 use crate::{
-    keccak256,
     storage::{PackableCodec, StorageDescriptor, StorageLayout},
     U256,
 };
 use alloc::{string::String, vec::Vec};
 use core::marker::PhantomData;
+use fluentbase_crypto::crypto_keccak256;
 
 /// Storage map (Solidity mapping).
 /// Base slot used only for computing value locations via keccak256.
@@ -102,7 +102,7 @@ impl<T: PackableCodec> MapKey for T {
         data[0..32].copy_from_slice(&key_bytes);
         data[32..64].copy_from_slice(&base_slot.to_be_bytes::<32>());
 
-        let hash = keccak256(data);
+        let hash = crypto_keccak256(&data);
         U256::from_be_bytes(hash.0)
     }
 }
@@ -114,7 +114,7 @@ impl MapKey for &[u8] {
         data.extend_from_slice(self);
         data.extend_from_slice(&base_slot.to_be_bytes::<32>());
 
-        let hash = keccak256(&data);
+        let hash = crypto_keccak256(&data);
         U256::from_be_bytes(hash.0)
     }
 }
@@ -169,7 +169,7 @@ mod tests {
             let mut data = [0u8; 64];
             data[0..32].copy_from_slice(&key.to_be_bytes::<32>());
             data[32..64].copy_from_slice(&U256::from(5).to_be_bytes::<32>());
-            let hash = keccak256(data);
+            let hash = crypto_keccak256(&data);
             U256::from_be_bytes(hash.0)
         };
 
@@ -309,7 +309,7 @@ mod tests {
         let mut data = [0u8; 64];
         data[0..32].copy_from_slice(&key.to_be_bytes::<32>());
         data[32..64].copy_from_slice(&U256::from(5).to_be_bytes::<32>());
-        let expected_slot = U256::from_be_bytes(keccak256(data).0);
+        let expected_slot = U256::from_be_bytes(crypto_keccak256(&data).0);
 
         // Verify value is stored at the correct slot
         assert_eq!(sdk.get_slot(expected_slot), value);
@@ -331,7 +331,7 @@ mod tests {
         let mut data = [0u8; 64];
         data[0..32].copy_from_slice(&U256::from(1).to_be_bytes::<32>());
         data[32..64].copy_from_slice(&U256::from(10).to_be_bytes::<32>());
-        let slot = U256::from_be_bytes(keccak256(data).0);
+        let slot = U256::from_be_bytes(crypto_keccak256(&data).0);
 
         // u64 should be stored at the rightmost 8 bytes (offset 24)
         let stored = sdk.get_slot_hex(slot);
@@ -350,7 +350,7 @@ mod tests {
         let mut data = [0u8; 64];
         data[0..32].copy_from_slice(&U256::from(1).to_be_bytes::<32>());
         data[32..64].copy_from_slice(&U256::from(20).to_be_bytes::<32>());
-        let slot_true = U256::from_be_bytes(keccak256(data).0);
+        let slot_true = U256::from_be_bytes(crypto_keccak256(&data).0);
         assert_eq!(sdk.get_slot(slot_true), U256::from(100));
 
         // Test string key storage
@@ -361,7 +361,7 @@ mod tests {
         let mut str_data = Vec::new();
         str_data.extend_from_slice(b"test");
         str_data.extend_from_slice(&U256::from(30).to_be_bytes::<32>());
-        let slot_test = U256::from_be_bytes(keccak256(&str_data).0);
+        let slot_test = U256::from_be_bytes(crypto_keccak256(&str_data).0);
         assert_eq!(sdk.get_slot(slot_test), U256::from(999));
     }
 
@@ -379,13 +379,13 @@ mod tests {
         let mut data1 = [0u8; 64];
         data1[0..32].copy_from_slice(&U256::from(1).to_be_bytes::<32>());
         data1[32..64].copy_from_slice(&U256::from(40).to_be_bytes::<32>());
-        let slot1 = U256::from_be_bytes(keccak256(data1).0);
+        let slot1 = U256::from_be_bytes(crypto_keccak256(&data1).0);
 
         // Calculate second level slot: keccak256(2 || slot1)
         let mut data2 = [0u8; 64];
         data2[0..32].copy_from_slice(&U256::from(2).to_be_bytes::<32>());
         data2[32..64].copy_from_slice(&slot1.to_be_bytes::<32>());
-        let slot2 = U256::from_be_bytes(keccak256(data2).0);
+        let slot2 = U256::from_be_bytes(crypto_keccak256(&data2).0);
 
         // Verify value is at the correct nested slot
         assert_eq!(sdk.get_slot(slot2), U256::from(100));
@@ -406,7 +406,7 @@ mod tests {
         let mut data = [0u8; 64];
         data[0..32].copy_from_slice(&U256::from(5).to_be_bytes::<32>());
         data[32..64].copy_from_slice(&U256::from(50).to_be_bytes::<32>());
-        let array_slot = U256::from_be_bytes(keccak256(data).0);
+        let array_slot = U256::from_be_bytes(crypto_keccak256(&data).0);
 
         // All 3 u64 values should be packed in one slot
         // Layout: [empty(8)] [elem2(8)] [elem1(8)] [elem0(8)]
@@ -432,12 +432,12 @@ mod tests {
         let mut data1 = [0u8; 64];
         data1[0..32].copy_from_slice(&U256::from(1).to_be_bytes::<32>());
         data1[32..64].copy_from_slice(&U256::from(60).to_be_bytes::<32>());
-        let slot1 = U256::from_be_bytes(keccak256(data1).0);
+        let slot1 = U256::from_be_bytes(crypto_keccak256(&data1).0);
 
         let mut data2 = [0u8; 64];
         data2[0..32].copy_from_slice(&U256::from(1).to_be_bytes::<32>());
         data2[32..64].copy_from_slice(&U256::from(61).to_be_bytes::<32>());
-        let slot2 = U256::from_be_bytes(keccak256(data2).0);
+        let slot2 = U256::from_be_bytes(crypto_keccak256(&data2).0);
 
         // Verify slots are different and contain correct values
         assert_ne!(slot1, slot2);
@@ -457,7 +457,7 @@ mod tests {
         let mut data = [0u8; 64];
         data[0..32].copy_from_slice(&U256::ZERO.to_be_bytes::<32>());
         data[32..64].copy_from_slice(&U256::from(70).to_be_bytes::<32>());
-        let slot = U256::from_be_bytes(keccak256(data).0);
+        let slot = U256::from_be_bytes(crypto_keccak256(&data).0);
 
         assert_eq!(sdk.get_slot(slot), U256::from(0xABCDEF));
     }

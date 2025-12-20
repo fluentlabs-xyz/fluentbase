@@ -22,5 +22,6 @@ default = ["std"]
 std = ["fluentbase-sdk/std"]
 fluent-testnet = [
     "fluentbase-sdk/fluent-testnet",
-    "fluentbase-testing/fluent-testnet"
+    "fluentbase-testing/fluent-testnet",
+    "fluentbase-testing/std",
 ]

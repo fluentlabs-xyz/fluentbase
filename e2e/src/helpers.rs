@@ -5,7 +5,6 @@ use fluentbase_svm::{
     helpers::{storage_read_account_data, storage_write_account_data},
     pubkey::Pubkey,
     solana_program::instruction::AccountMeta,
-    token_2022::{helpers::account_info_from_meta_and_account, state::Account},
 };
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext};
 use revm::context::result::ExecutionResult;
@@ -109,25 +108,25 @@ pub fn with_svm_account_mut(
     .unwrap();
     ctx.commit_sdk_to_db();
 }
-pub fn with_svm_account_info_mut(
-    ctx: &mut EvmTestingContext,
-    pk: &Pubkey,
-    f: impl FnOnce(&mut AccountInfo),
-) {
-    with_svm_account_mut(ctx, pk, |mut account| {
-        let account_meta = AccountMeta::default();
-        let mut account_info = account_info_from_meta_and_account(&account_meta, &mut account);
-        f(&mut account_info);
-    });
-}
-pub fn with_svm_account_state_mut(
-    ctx: &mut EvmTestingContext,
-    pk: &Pubkey,
-    f: impl FnOnce(&mut Account),
-) {
-    with_svm_account_info_mut(ctx, pk, |account_info| {
-        let mut account1_state = Account::unpack_unchecked(&account_info.data.borrow()).unwrap();
-        f(&mut account1_state);
-        Account::pack(account1_state, &mut account_info.data.borrow_mut()).unwrap();
-    });
-}
+// pub fn with_svm_account_info_mut(
+//     ctx: &mut EvmTestingContext,
+//     pk: &Pubkey,
+//     f: impl FnOnce(&mut AccountInfo),
+// ) {
+//     with_svm_account_mut(ctx, pk, |mut account| {
+//         let account_meta = AccountMeta::default();
+//         let mut account_info = account_info_from_meta_and_account(&account_meta, &mut account);
+//         f(&mut account_info);
+//     });
+// }
+// pub fn with_svm_account_state_mut(
+//     ctx: &mut EvmTestingContext,
+//     pk: &Pubkey,
+//     f: impl FnOnce(&mut Account),
+// ) {
+//     with_svm_account_info_mut(ctx, pk, |account_info| {
+//         let mut account1_state = Account::unpack_unchecked(&account_info.data.borrow()).unwrap();
+//         f(&mut account1_state);
+//         Account::pack(account1_state, &mut account_info.data.borrow_mut()).unwrap();
+//     });
+// }

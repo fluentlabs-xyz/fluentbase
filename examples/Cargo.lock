@@ -787,18 +787,18 @@ checksum = "7575182f7272186991736b70173b0ea045398f984bf5ebbb3804736ce1330c9d"
 
 [[package]]
 name = "bytemuck"
-version = "1.24.0"
+version = "1.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fbdf580320f38b612e485521afda1ee26d10cc9884efaaa750d383e13e3c5f4"
+checksum = "5c76a5792e44e4abe34d3abf15636779261d45a7450612059293d1d2cfc63422"
 dependencies = [
  "bytemuck_derive",
 ]
 
 [[package]]
 name = "bytemuck_derive"
-version = "1.10.2"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9abbd1bc6865053c427f7198e6af43bfdedc55ab791faed4fbd361d789575ff"
+checksum = "3fa76293b4f7bb636ab88fd78228235b5248b4d05cc589aed610f954af5d7c7a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1778,11 +1778,8 @@ dependencies = [
 name = "fluentbase-examples-erc20"
 version = "0.1.0"
 dependencies = [
- "alloy-sol-types",
  "fluentbase-sdk",
  "fluentbase-testing",
- "hex-literal 0.4.1",
- "serial_test",
 ]
 
 [[package]]
@@ -1910,10 +1907,12 @@ dependencies = [
 name = "fluentbase-revm"
 version = "0.4.11-dev"
 dependencies = [
+ "alloy-primitives",
  "cfg-if",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
+ "fluentbase-universal-token",
  "once_cell",
  "revm",
  "rwasm",
@@ -2025,6 +2024,13 @@ dependencies = [
  "rwasm",
  "serde",
  "strum_macros 0.27.2",
+]
+
+[[package]]
+name = "fluentbase-universal-token"
+version = "0.4.11-dev"
+dependencies = [
+ "fluentbase-sdk",
 ]
 
 [[package]]

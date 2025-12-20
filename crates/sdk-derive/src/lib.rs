@@ -1,4 +1,4 @@
-use fluentbase_sdk_derive_core::{client, router, storage_legacy};
+use fluentbase_sdk_derive_core::{client, event, router, storage_legacy};
 use proc_macro::TokenStream;
 use proc_macro_error::proc_macro_error;
 use quote::{quote, ToTokens};
@@ -462,6 +462,31 @@ pub fn derive_contract(input: TokenStream) -> TokenStream {
 pub fn constructor(attr: TokenStream, input: TokenStream) -> TokenStream {
     match fluentbase_sdk_derive_core::constructor::process_constructor(attr.into(), input.into()) {
         Ok(constructor) => constructor.to_token_stream().into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Derives Solidity-compatible event emission for structs.
+///
+/// # Example
+/// ```rust,ignore
+/// #[derive(Event)]
+/// struct Transfer {
+///     #[indexed]
+///     from: Address,
+///     #[indexed]
+///     to: Address,
+///     value: U256,
+/// }
+///
+/// Transfer { from, to, value }.emit(&mut sdk);
+/// ```
+#[proc_macro_derive(Event, attributes(indexed, anonymous))]
+#[proc_macro_error]
+pub fn derive_event(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as syn::DeriveInput);
+    match event::process_event(input) {
+        Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
 }
