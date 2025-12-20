@@ -1892,6 +1892,8 @@ dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
  "revm-precompile",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
