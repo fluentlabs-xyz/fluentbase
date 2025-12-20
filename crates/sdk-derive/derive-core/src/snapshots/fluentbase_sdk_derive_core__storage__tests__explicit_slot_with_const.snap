@@ -1,0 +1,122 @@
+---
+source: crates/sdk-derive/derive-core/src/storage.rs
+expression: formatted
+---
+impl<SDK> Proxy<SDK> {
+    /// Number of storage slots used by auto-layout fields.
+    /// Fields with explicit #[slot()] are not counted.
+    pub const SLOTS: usize = Self::calculate_slots();
+    /// Creates a new instance starting at slot 0.
+    pub fn new(sdk: SDK) -> Self {
+        let slot = fluentbase_sdk::U256::from(0);
+        let offset = 0u8;
+        let mut current_slot = slot;
+        let mut current_offset: u8 = offset;
+        let implementation_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let explicit_slot: fluentbase_sdk::U256 = IMPLEMENTATION_SLOT;
+            let offset = if slots == 0 { 32 - bytes } else { 0 };
+            (explicit_slot, offset)
+        };
+        let admin_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let explicit_slot: fluentbase_sdk::U256 = ADMIN_SLOT;
+            let offset = if slots == 0 { 32 - bytes } else { 0 };
+            (explicit_slot, offset)
+        };
+        Self {
+            sdk,
+            implementation: <<StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                implementation_layout.0,
+                implementation_layout.1,
+            ),
+            admin: <<StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                admin_layout.0,
+                admin_layout.1,
+            ),
+        }
+    }
+    /// Creates a new instance at a specific slot and offset.
+    pub fn new_at(sdk: SDK, slot: fluentbase_sdk::U256, offset: u8) -> Self {
+        let mut current_slot = slot;
+        let mut current_offset: u8 = offset;
+        let implementation_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let explicit_slot: fluentbase_sdk::U256 = IMPLEMENTATION_SLOT;
+            let offset = if slots == 0 { 32 - bytes } else { 0 };
+            (explicit_slot, offset)
+        };
+        let admin_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let explicit_slot: fluentbase_sdk::U256 = ADMIN_SLOT;
+            let offset = if slots == 0 { 32 - bytes } else { 0 };
+            (explicit_slot, offset)
+        };
+        Self {
+            sdk,
+            implementation: <<StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                implementation_layout.0,
+                implementation_layout.1,
+            ),
+            admin: <<StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                admin_layout.0,
+                admin_layout.1,
+            ),
+        }
+    }
+    const fn calculate_slots() -> usize {
+        let mut current_slot: usize = 0;
+        let mut current_offset: usize = 0;
+        if current_offset > 0 { current_slot + 1 } else { current_slot }
+    }
+    ///Returns an accessor for the `implementation` storage field.
+    #[inline]
+    pub fn implementation_accessor(
+        &self,
+    ) -> <StoragePrimitive<
+        Address,
+    > as fluentbase_sdk::storage::StorageLayout>::Accessor {
+        <StoragePrimitive<
+            Address,
+        > as fluentbase_sdk::storage::StorageLayout>::access(self.implementation)
+    }
+    ///Returns an accessor for the `admin` storage field.
+    #[inline]
+    pub fn admin_accessor(
+        &self,
+    ) -> <StoragePrimitive<
+        Address,
+    > as fluentbase_sdk::storage::StorageLayout>::Accessor {
+        <StoragePrimitive<
+            Address,
+        > as fluentbase_sdk::storage::StorageLayout>::access(self.admin)
+    }
+}

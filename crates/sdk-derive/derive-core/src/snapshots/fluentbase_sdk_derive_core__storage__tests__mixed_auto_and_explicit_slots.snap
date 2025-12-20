@@ -2,7 +2,7 @@
 source: crates/sdk-derive/derive-core/src/storage.rs
 expression: formatted
 ---
-impl<SDK> NestedStructTest<SDK> {
+impl<SDK> MixedStorage<SDK> {
     /// Number of storage slots used by auto-layout fields.
     /// Fields with explicit #[slot()] are not counted.
     pub const SLOTS: usize = Self::calculate_slots();
@@ -12,7 +12,36 @@ impl<SDK> NestedStructTest<SDK> {
         let offset = 0u8;
         let mut current_slot = slot;
         let mut current_offset: u8 = offset;
-        let counter_layout = {
+        let auto1_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
+                    let result = (current_slot, actual_offset);
+                    current_offset += bytes;
+                    result
+                } else {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
+                    (current_slot, actual_offset)
+                }
+            } else {
+                if current_offset > 0 {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_offset = 0;
+                }
+                let result = (current_slot, 0);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
+                result
+            }
+        };
+        let auto2_layout = {
             let bytes = <StoragePrimitive<
                 U256,
             > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
@@ -41,12 +70,23 @@ impl<SDK> NestedStructTest<SDK> {
                 result
             }
         };
-        let config_layout = {
-            let bytes = <Composite<
-                Config,
+        let explicit_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
             > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
-            let slots = <Composite<
-                Config,
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let explicit_slot: fluentbase_sdk::U256 = SPECIAL_SLOT;
+            let offset = if slots == 0 { 32 - bytes } else { 0 };
+            (explicit_slot, offset)
+        };
+        let auto3_layout = {
+            let bytes = <StoragePrimitive<
+                bool,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                bool,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
             if slots == 0 {
                 if current_offset + bytes <= 32 {
@@ -72,17 +112,29 @@ impl<SDK> NestedStructTest<SDK> {
         };
         Self {
             sdk,
-            counter: <<StoragePrimitive<
+            auto1: <<StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                auto1_layout.0,
+                auto1_layout.1,
+            ),
+            auto2: <<StoragePrimitive<
                 U256,
             > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
-                counter_layout.0,
-                counter_layout.1,
+                auto2_layout.0,
+                auto2_layout.1,
             ),
-            config: <<Composite<
-                Config,
+            explicit: <<StoragePrimitive<
+                Address,
             > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
-                config_layout.0,
-                config_layout.1,
+                explicit_layout.0,
+                explicit_layout.1,
+            ),
+            auto3: <<StoragePrimitive<
+                bool,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                auto3_layout.0,
+                auto3_layout.1,
             ),
         }
     }
@@ -90,7 +142,36 @@ impl<SDK> NestedStructTest<SDK> {
     pub fn new_at(sdk: SDK, slot: fluentbase_sdk::U256, offset: u8) -> Self {
         let mut current_slot = slot;
         let mut current_offset: u8 = offset;
-        let counter_layout = {
+        let auto1_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
+                    let result = (current_slot, actual_offset);
+                    current_offset += bytes;
+                    result
+                } else {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
+                    (current_slot, actual_offset)
+                }
+            } else {
+                if current_offset > 0 {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_offset = 0;
+                }
+                let result = (current_slot, 0);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
+                result
+            }
+        };
+        let auto2_layout = {
             let bytes = <StoragePrimitive<
                 U256,
             > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
@@ -119,12 +200,23 @@ impl<SDK> NestedStructTest<SDK> {
                 result
             }
         };
-        let config_layout = {
-            let bytes = <Composite<
-                Config,
+        let explicit_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
             > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
-            let slots = <Composite<
-                Config,
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let explicit_slot: fluentbase_sdk::U256 = SPECIAL_SLOT;
+            let offset = if slots == 0 { 32 - bytes } else { 0 };
+            (explicit_slot, offset)
+        };
+        let auto3_layout = {
+            let bytes = <StoragePrimitive<
+                bool,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                bool,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
             if slots == 0 {
                 if current_offset + bytes <= 32 {
@@ -150,23 +242,58 @@ impl<SDK> NestedStructTest<SDK> {
         };
         Self {
             sdk,
-            counter: <<StoragePrimitive<
+            auto1: <<StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                auto1_layout.0,
+                auto1_layout.1,
+            ),
+            auto2: <<StoragePrimitive<
                 U256,
             > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
-                counter_layout.0,
-                counter_layout.1,
+                auto2_layout.0,
+                auto2_layout.1,
             ),
-            config: <<Composite<
-                Config,
+            explicit: <<StoragePrimitive<
+                Address,
             > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
-                config_layout.0,
-                config_layout.1,
+                explicit_layout.0,
+                explicit_layout.1,
+            ),
+            auto3: <<StoragePrimitive<
+                bool,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                auto3_layout.0,
+                auto3_layout.1,
             ),
         }
     }
     const fn calculate_slots() -> usize {
         let mut current_slot: usize = 0;
         let mut current_offset: usize = 0;
+        {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    current_offset += bytes;
+                } else {
+                    current_slot += 1;
+                    current_offset = bytes;
+                }
+            } else {
+                if current_offset > 0 {
+                    current_slot += 1;
+                    current_offset = 0;
+                }
+                current_slot += slots;
+                current_offset = 0;
+            }
+        }
         {
             let bytes = <StoragePrimitive<
                 U256,
@@ -191,11 +318,11 @@ impl<SDK> NestedStructTest<SDK> {
             }
         }
         {
-            let bytes = <Composite<
-                Config,
+            let bytes = <StoragePrimitive<
+                bool,
             > as fluentbase_sdk::storage::StorageLayout>::BYTES;
-            let slots = <Composite<
-                Config,
+            let slots = <StoragePrimitive<
+                bool,
             > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
             if slots == 0 {
                 if current_offset + bytes <= 32 {
@@ -215,22 +342,44 @@ impl<SDK> NestedStructTest<SDK> {
         }
         if current_offset > 0 { current_slot + 1 } else { current_slot }
     }
-    ///Returns an accessor for the `counter` storage field.
+    ///Returns an accessor for the `auto1` storage field.
     #[inline]
-    pub fn counter_accessor(
+    pub fn auto1_accessor(
+        &self,
+    ) -> <StoragePrimitive<
+        Address,
+    > as fluentbase_sdk::storage::StorageLayout>::Accessor {
+        <StoragePrimitive<
+            Address,
+        > as fluentbase_sdk::storage::StorageLayout>::access(self.auto1)
+    }
+    ///Returns an accessor for the `auto2` storage field.
+    #[inline]
+    pub fn auto2_accessor(
         &self,
     ) -> <StoragePrimitive<U256> as fluentbase_sdk::storage::StorageLayout>::Accessor {
         <StoragePrimitive<
             U256,
-        > as fluentbase_sdk::storage::StorageLayout>::access(self.counter)
+        > as fluentbase_sdk::storage::StorageLayout>::access(self.auto2)
     }
-    ///Returns an accessor for the `config` storage field.
+    ///Returns an accessor for the `explicit` storage field.
     #[inline]
-    pub fn config_accessor(
+    pub fn explicit_accessor(
         &self,
-    ) -> <Composite<Config> as fluentbase_sdk::storage::StorageLayout>::Accessor {
-        <Composite<
-            Config,
-        > as fluentbase_sdk::storage::StorageLayout>::access(self.config)
+    ) -> <StoragePrimitive<
+        Address,
+    > as fluentbase_sdk::storage::StorageLayout>::Accessor {
+        <StoragePrimitive<
+            Address,
+        > as fluentbase_sdk::storage::StorageLayout>::access(self.explicit)
+    }
+    ///Returns an accessor for the `auto3` storage field.
+    #[inline]
+    pub fn auto3_accessor(
+        &self,
+    ) -> <StoragePrimitive<bool> as fluentbase_sdk::storage::StorageLayout>::Accessor {
+        <StoragePrimitive<
+            bool,
+        > as fluentbase_sdk::storage::StorageLayout>::access(self.auto3)
     }
 }
