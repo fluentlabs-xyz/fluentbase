@@ -4,7 +4,6 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
-use core::cmp::min;
 use fluentbase_evm::EthereumMetadata;
 use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
@@ -265,7 +264,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // charge_gas!(gas::calc_call_static_gas(spec_id, has_transfer));
             // EIP-150: gas cost changes for IO-heavy operations
             charge_gas!(gas::call_cost(spec_id, has_transfer, account_load));
-            let mut gas_limit = min(
+            let mut gas_limit = core::cmp::min(
                 frame.interpreter.gas.remaining_63_of_64_parts(),
                 inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
             );
@@ -315,7 +314,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // EIP-150: gas cost changes for IO-heavy operations
             charge_gas!(gas::call_cost(spec_id.clone(), false, account_load));
             let gas_limit = if spec_id.is_enabled_in(TANGERINE) {
-                min(
+                core::cmp::min(
                     frame.interpreter.gas.remaining_63_of_64_parts(),
                     inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
                 )
@@ -365,7 +364,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // EIP-150: gas cost changes for IO-heavy operations
             charge_gas!(gas::call_cost(spec_id, !value.is_zero(), account_load));
             let mut gas_limit = if spec_id.is_enabled_in(TANGERINE) {
-                min(
+                core::cmp::min(
                     frame.interpreter.gas.remaining_63_of_64_parts(),
                     inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
                 )
@@ -419,7 +418,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // EIP-150: gas cost changes for IO-heavy operations
             charge_gas!(gas::call_cost(spec_id, false, account_load));
             let gas_limit = if spec_id.is_enabled_in(TANGERINE) {
-                min(
+                core::cmp::min(
                     frame.interpreter.gas.remaining_63_of_64_parts(),
                     inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
                 )
@@ -465,7 +464,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Make sure input doesn't exceed hard cap at least
             const HARD_CAP: usize = WASM_MAX_CODE_SIZE + U256::BYTES + U256::BYTES;
             assert_halt!(
-                inputs.syscall_params.input.len() < HARD_CAP,
+                inputs.syscall_params.input.len() <= HARD_CAP,
                 MalformedBuiltinParams
             );
 
@@ -886,6 +885,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Some(account_owner_address) = account_owner_address else {
                 return_halt!(MalformedBuiltinParams);
             };
+            assert_halt!(!is_static, StateChangeDuringStaticCall);
             let (input, lazy_metadata_input) = get_input_validated!(>= 32);
             let salt = U256::from_be_slice(&input);
             let derived_metadata_address =
@@ -918,6 +918,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Some(account_owner_address) = account_owner_address else {
                 return_halt!(MalformedBuiltinParams);
             };
+            assert_halt!(!is_static, StateChangeDuringStaticCall);
             let (input, lazy_metadata_input) = get_input_validated!(>= 20 + 4);
             // read an account from its address
             let address = Address::from_slice(&input[..20]);
@@ -967,13 +968,22 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     return_halt!(MalformedBuiltinParams)
                 }
             };
-            let offset = LittleEndian::read_u32(&input[20..24]);
-            let length = LittleEndian::read_u32(&input[24..28]);
+            let offset = LittleEndian::read_u32(&input[20..24]) as usize;
+            let length = LittleEndian::read_u32(&input[24..28]) as usize;
             // take min
-            let length = length.min(ownable_account_bytecode.metadata.len() as u32);
+            let metadata_len = ownable_account_bytecode.metadata.len();
+
+            // If the offset is beyond the end of metadata, nothing can be copied - return empty.
+            if offset >= metadata_len {
+                return_result!(Bytes::new(), Ok);
+            }
+
+            // Clamp the requested length to the remaining bytes after `offset`.
+            let copy_len = core::cmp::min(length, length - offset);
             let metadata = ownable_account_bytecode
                 .metadata
-                .slice(offset as usize..(offset + length) as usize);
+                .slice(offset..(offset + copy_len));
+
             return_result!(metadata, Ok)
         }
 
@@ -996,6 +1006,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Some(account_owner_address) = account_owner_address else {
                 return_halt!(MalformedBuiltinParams);
             };
+            assert_halt!(!is_static, StateChangeDuringStaticCall);
             // input: slot + value
             let input = get_input_validated!(== U256::BYTES + U256::BYTES);
 
@@ -1005,8 +1016,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Ok(value): Result<[u8; U256::BYTES], _> = input[U256::BYTES..].try_into() else {
                 return_halt!(MalformedBuiltinParams)
             };
-
-            assert_halt!(!is_static, StateChangeDuringStaticCall);
 
             let slot_u256 = U256::from_le_bytes(slot);
             let value_u256 = U256::from_le_bytes(value);
@@ -1433,17 +1442,19 @@ mod metadata_write_tests {
 mod block_hash_tests {
     use super::*;
     use crate::{RwasmContext, RwasmFrame, RwasmSpecId};
-    use alloy_primitives::{Address, StorageValue, B256};
+    use alloy_primitives::{address, bytes, Address, StorageValue, B256};
     use core::error::Error;
     use fluentbase_sdk::{
-        syscall::SYSCALL_ID_BLOCK_HASH, Bytes, SyscallInvocationParams, STATE_MAIN, U256,
+        byteorder::LE,
+        syscall::{SYSCALL_ID_BLOCK_HASH, SYSCALL_ID_METADATA_COPY, SYSCALL_ID_METADATA_WRITE},
+        Bytes, SyscallInvocationParams, STATE_MAIN, U256,
     };
     use revm::{
         bytecode::Bytecode,
         context::{BlockEnv, CfgEnv, TxEnv},
         database::{DBErrorMarker, InMemoryDB},
         inspector::NoOpInspector,
-        interpreter::Gas,
+        interpreter::{Gas, InstructionResult},
         state::AccountInfo,
         Database,
     };
@@ -1627,6 +1638,105 @@ mod block_hash_tests {
             &output[..],
             B256::ZERO.as_slice(),
             "Should return zero hash for block older than 256"
+        );
+    }
+
+    #[test]
+    fn test_metadata_copy_out_of_bounds() {
+        let mut ctx: RwasmContext<InMemoryDB> =
+            RwasmContext::new(InMemoryDB::default(), RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.account_owner = Some(Address::ZERO);
+
+        const ADDRESS: Address = address!("1111111111111111111111111111111111111111");
+        _ = ctx.load_account_delegated(ADDRESS).unwrap();
+        ctx.journal_mut().set_code(
+            ADDRESS,
+            Bytecode::new_ownable_account(Address::ZERO, bytes!("112233445566")),
+        );
+
+        let mut syscall_input = vec![0u8; 28];
+        syscall_input[0..20].copy_from_slice(ADDRESS.as_slice());
+        LE::write_u32(&mut syscall_input[20..24], 100); // offset
+        LE::write_u32(&mut syscall_input[24..28], 0); // length
+        let mr = ForwardInputMemoryReader(syscall_input.into());
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            syscall_params: SyscallInvocationParams {
+                code_hash: SYSCALL_ID_METADATA_COPY,
+                input: 0..mr.0.len(),
+                state: STATE_MAIN,
+                ..Default::default()
+            },
+            gas: Gas::new(10_000_000),
+        };
+        execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+            mr,
+        )
+        .unwrap();
+        let output = frame
+            .interrupted_outcome
+            .as_ref()
+            .unwrap()
+            .result
+            .as_ref()
+            .unwrap()
+            .output
+            .clone();
+        assert_eq!(output, Bytes::new());
+    }
+
+    #[test]
+    fn test_metadata_write_static_context() {
+        let mut ctx: RwasmContext<InMemoryDB> =
+            RwasmContext::new(InMemoryDB::default(), RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.account_owner = Some(Address::ZERO);
+        frame.interpreter.runtime_flag.is_static = true;
+
+        const ADDRESS: Address = address!("1111111111111111111111111111111111111111");
+        _ = ctx.load_account_delegated(ADDRESS).unwrap();
+
+        let mut syscall_input = vec![0u8; 24];
+        syscall_input[0..20].copy_from_slice(ADDRESS.as_slice());
+        LE::write_u32(&mut syscall_input[20..24], 0); // _offset
+        let mr = ForwardInputMemoryReader(syscall_input.into());
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            syscall_params: SyscallInvocationParams {
+                code_hash: SYSCALL_ID_METADATA_WRITE,
+                input: 0..mr.0.len(),
+                state: STATE_MAIN,
+                ..Default::default()
+            },
+            gas: Gas::new(10_000_000),
+        };
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+            mr,
+        )
+        .unwrap();
+        assert_eq!(
+            result
+                .into_interpreter_action()
+                .instruction_result()
+                .unwrap(),
+            InstructionResult::StateChangeDuringStaticCall
         );
     }
 }
