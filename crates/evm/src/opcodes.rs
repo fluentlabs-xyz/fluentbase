@@ -449,8 +449,7 @@ fn call<
     };
     interrupt_into_action(context, |context, sdk| {
         let input = global_memory_from_shared_buffer(&context, in_range);
-        // TODO(dmitry123): I know that wrapping mul works here, but why?
-        let fuel_limit = Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE));
+        let fuel_limit = Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE));
         sdk.call(to, value, input.as_ref(), fuel_limit)
     });
 }
@@ -474,8 +473,7 @@ fn call_code<
     };
     interrupt_into_action(context, |context, sdk| {
         let input = global_memory_from_shared_buffer(&context, in_range);
-        // TODO(dmitry123): I know that wrapping mul works here, but why?
-        let fuel_limit = Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE));
+        let fuel_limit = Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE));
         sdk.call_code(to, value, input.as_ref(), fuel_limit)
     });
 }
@@ -499,8 +497,7 @@ fn delegate_call<
     };
     interrupt_into_action(context, |context, sdk| {
         let input = global_memory_from_shared_buffer(&context, in_range);
-        // TODO(dmitry123): I know that wrapping mul works here, but why?
-        let fuel_limit = Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE));
+        let fuel_limit = Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE));
         sdk.delegate_call(to, input.as_ref(), fuel_limit)
     });
 }
@@ -524,8 +521,7 @@ fn static_call<
     };
     interrupt_into_action(context, |context, sdk| {
         let input = global_memory_from_shared_buffer(&context, in_range);
-        // TODO(dmitry123): I know that wrapping mul works here, but why?
-        let fuel_limit = Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE));
+        let fuel_limit = Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE));
         sdk.static_call(to, input.as_ref(), fuel_limit)
     });
 }
