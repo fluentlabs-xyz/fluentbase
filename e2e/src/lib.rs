@@ -49,6 +49,8 @@ mod bench;
 mod ddos;
 #[cfg(test)]
 mod exec_input;
+#[cfg(test)]
+mod oom;
 #[cfg(feature = "fluent-testnet")]
 #[cfg(test)]
 mod update_account;

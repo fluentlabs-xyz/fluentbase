@@ -77,7 +77,7 @@ debug-print = [
     "revm/debug-print",
     "fluentbase-revm/debug-print",
     "fluentbase-svm/debug-print",
-    #    "rwasm/debug-print",
+    # "rwasm/debug-print",
 ]
 wasmtime = [
     "fluentbase-runtime/wasmtime",

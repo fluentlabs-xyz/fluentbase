@@ -4,8 +4,8 @@ use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
 use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecutor};
 use fluentbase_sdk::{
     bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, Address, BytecodeOrHash, Bytes,
-    ContextReader, ExitCode, GenesisContract, MetadataAPI, SharedAPI, SharedContextInputV1,
-    STATE_MAIN, U256,
+    ContextReader, ExitCode, GenesisContract, MetadataAPI, RwasmCompilationResult, SharedAPI,
+    SharedContextInputV1, STATE_MAIN, U256,
 };
 use revm::{
     context::{
@@ -132,7 +132,13 @@ impl EvmTestingContext {
         }
     }
 
-    pub fn add_wasm_contract<I: Into<RwasmModule>>(
+    pub fn add_wasm_contract(&mut self, address: Address, wasm_module: &[u8]) -> AccountInfo {
+        let RwasmCompilationResult { rwasm_module, .. } =
+            compile_wasm_to_rwasm(wasm_module).unwrap();
+        self.add_rwasm_contract(address, rwasm_module)
+    }
+
+    pub fn add_rwasm_contract<I: Into<RwasmModule>>(
         &mut self,
         address: Address,
         rwasm_module: I,

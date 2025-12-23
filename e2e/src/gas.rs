@@ -17,7 +17,7 @@ fn test_simple_nested_call() {
     const ACCOUNT1_ADDRESS: Address = address!("1111111111111111111111111111111111111111");
     const ACCOUNT2_ADDRESS: Address = address!("1111111111111111111111111111111111111112");
     const ACCOUNT3_ADDRESS: Address = address!("1111111111111111111111111111111111111113");
-    let _account1 = ctx.add_wasm_contract(
+    let _account1 = ctx.add_rwasm_contract(
         ACCOUNT1_ADDRESS,
         RwasmModule::with_one_function(instruction_set! {
             ConsumeFuel(1 * FUEL_DENOM_RATE)
@@ -38,7 +38,7 @@ fn test_simple_nested_call() {
             Call(SysFuncIdx::EXIT)
         }),
     );
-    let _account2 = ctx.add_wasm_contract(
+    let _account2 = ctx.add_rwasm_contract(
         ACCOUNT2_ADDRESS,
         RwasmModule::with_one_function(instruction_set! {
             ConsumeFuel(2 * FUEL_DENOM_RATE)
@@ -123,7 +123,7 @@ fn test_simple_nested_call() {
         I32Const(0)
         Call(SysFuncIdx::EXIT)
     };
-    ctx.add_wasm_contract(
+    ctx.add_rwasm_contract(
         ACCOUNT3_ADDRESS,
         RwasmModuleInner {
             code_section,
@@ -187,7 +187,7 @@ fn test_blended_gas_spend_wasm_from_evm() {
     const ACCOUNT2_ADDRESS: Address = address!("1111111111111111111111111111111111111112");
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
 
-    let _account1 = ctx.add_wasm_contract(
+    let _account1 = ctx.add_rwasm_contract(
         ACCOUNT1_ADDRESS,
         RwasmModule::with_one_function(instruction_set! {
             ConsumeFuel(1000u32)
@@ -195,7 +195,7 @@ fn test_blended_gas_spend_wasm_from_evm() {
             Call(SysFuncIdx::EXIT)
         }),
     );
-    let _account2 = ctx.add_wasm_contract(
+    let _account2 = ctx.add_rwasm_contract(
         ACCOUNT2_ADDRESS,
         RwasmModule::with_one_function(instruction_set! {
             ConsumeFuel(2000u32)
@@ -303,7 +303,7 @@ fn test_blended_gas_spend_evm_from_wasm() {
         // what's on the stack?
         Return
     };
-    ctx.add_wasm_contract(
+    ctx.add_rwasm_contract(
         ACCOUNT3_ADDRESS,
         RwasmModuleInner {
             code_section,
