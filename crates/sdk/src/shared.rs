@@ -210,8 +210,9 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
-    fn emit_log(&mut self, topics: &[B256], data: &[u8]) -> SyscallResult<()> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.emit_log(topics, data);
+    fn emit_log<D: AsRef<[u8]>>(&mut self, topics: &[B256], data: D) -> SyscallResult<()> {
+        let (fuel_consumed, fuel_refunded, exit_code) =
+            self.native_sdk.emit_log(topics, data.as_ref());
         SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 

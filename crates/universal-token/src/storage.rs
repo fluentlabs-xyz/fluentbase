@@ -5,10 +5,11 @@ use crate::{
     },
     consts::{
         ALLOWANCE_STORAGE_SLOT, BALANCE_STORAGE_SLOT, CONTRACT_FROZEN_STORAGE_SLOT,
-        DECIMALS_STORAGE_SLOT, FLAGS_STORAGE_SLOT, MINTER_STORAGE_SLOT, NAME_STORAGE_SLOT,
-        PAUSER_STORAGE_SLOT, SIG_ALLOWANCE, SIG_APPROVE, SIG_BALANCE, SIG_BALANCE_OF, SIG_DECIMALS,
-        SIG_MINT, SIG_NAME, SIG_PAUSE, SIG_SYMBOL, SIG_TOTAL_SUPPLY, SIG_TRANSFER,
-        SIG_TRANSFER_FROM, SIG_UNPAUSE, SYMBOL_STORAGE_SLOT, TOTAL_SUPPLY_STORAGE_SLOT,
+        DECIMALS_STORAGE_SLOT, MINTER_STORAGE_SLOT, NAME_STORAGE_SLOT, PAUSER_STORAGE_SLOT,
+        SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE, SIG_ERC20_BALANCE_OF,
+        SIG_ERC20_DECIMALS, SIG_ERC20_MINT, SIG_ERC20_NAME, SIG_ERC20_PAUSE, SIG_ERC20_SYMBOL,
+        SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM, SIG_ERC20_UNPAUSE,
+        SYMBOL_STORAGE_SLOT, TOTAL_SUPPLY_STORAGE_SLOT,
     },
 };
 use alloc::vec::Vec;
@@ -61,8 +62,8 @@ pub struct InitialSettings {
     pub token_symbol: TokenNameOrSymbol,
     pub decimals: u8,
     pub initial_supply: U256,
-    pub minter: Option<Address>,
-    pub pauser: Option<Address>,
+    pub minter: Address,
+    pub pauser: Address,
 }
 
 impl InitialSettings {
@@ -105,20 +106,18 @@ pub fn erc20_compute_deploy_storage_keys(input: &[u8], caller: &Address) -> Opti
         // If input is incorrect then no storage keys required
         return None;
     };
+    result.push(DECIMALS_STORAGE_SLOT);
     result.push(NAME_STORAGE_SLOT);
     result.push(SYMBOL_STORAGE_SLOT);
-    result.push(FLAGS_STORAGE_SLOT);
     result.push(TOTAL_SUPPLY_STORAGE_SLOT);
     if !initial_supply.is_zero() {
         let storage_slot = caller.compute_slot(BALANCE_STORAGE_SLOT);
         result.push(storage_slot);
     }
-    if let Some(minter) = minter {
+    if !minter.is_zero() {
         result.push(MINTER_STORAGE_SLOT);
-        let storage_slot = minter.compute_slot(BALANCE_STORAGE_SLOT);
-        result.push(storage_slot);
     }
-    if let Some(_pauser) = pauser {
+    if !pauser.is_zero() {
         result.push(PAUSER_STORAGE_SLOT);
     }
     Some(result)
@@ -132,8 +131,8 @@ pub fn erc20_compute_main_storage_keys(input: &[u8], caller: &Address) -> Option
     let (sig, input) = input.split_at(SIG_LEN_BYTES);
     let sig = u32::from_be_bytes(sig.try_into().unwrap());
     match sig {
-        SIG_TOTAL_SUPPLY => result.push(TOTAL_SUPPLY_STORAGE_SLOT),
-        SIG_TRANSFER => {
+        SIG_ERC20_TOTAL_SUPPLY => result.push(TOTAL_SUPPLY_STORAGE_SLOT),
+        SIG_ERC20_TRANSFER => {
             result.push(CONTRACT_FROZEN_STORAGE_SLOT);
             let storage_slot = caller.compute_slot(BALANCE_STORAGE_SLOT);
             result.push(storage_slot);
@@ -141,7 +140,7 @@ pub fn erc20_compute_main_storage_keys(input: &[u8], caller: &Address) -> Option
             let storage_slot = to.compute_slot(BALANCE_STORAGE_SLOT);
             result.push(storage_slot);
         }
-        SIG_TRANSFER_FROM => {
+        SIG_ERC20_TRANSFER_FROM => {
             result.push(CONTRACT_FROZEN_STORAGE_SLOT);
             let TransferFromCommand { from, to, .. } =
                 TransferFromCommand::try_decode(input).ok()?;
@@ -150,43 +149,40 @@ pub fn erc20_compute_main_storage_keys(input: &[u8], caller: &Address) -> Option
             let allowance_slot = from.compute_slot(ALLOWANCE_STORAGE_SLOT);
             result.push(caller.compute_slot(allowance_slot));
         }
-        SIG_BALANCE => {
+        SIG_ERC20_BALANCE => {
             let storage_slot = caller.compute_slot(BALANCE_STORAGE_SLOT);
             result.push(storage_slot);
         }
-        SIG_BALANCE_OF => {
+        SIG_ERC20_BALANCE_OF => {
             let BalanceOfCommand { owner } = BalanceOfCommand::try_decode(input).ok()?;
             result.push(owner.compute_slot(BALANCE_STORAGE_SLOT));
         }
-        SIG_SYMBOL => result.push(SYMBOL_STORAGE_SLOT),
-        SIG_NAME => result.push(NAME_STORAGE_SLOT),
-        SIG_DECIMALS => result.push(DECIMALS_STORAGE_SLOT),
-        SIG_ALLOWANCE => {
+        SIG_ERC20_SYMBOL => result.push(SYMBOL_STORAGE_SLOT),
+        SIG_ERC20_NAME => result.push(NAME_STORAGE_SLOT),
+        SIG_ERC20_DECIMALS => result.push(DECIMALS_STORAGE_SLOT),
+        SIG_ERC20_ALLOWANCE => {
             let AllowanceCommand { owner, spender } = AllowanceCommand::try_decode(input).ok()?;
             let allowance_slot = owner.compute_slot(ALLOWANCE_STORAGE_SLOT);
             result.push(spender.compute_slot(allowance_slot));
         }
-        SIG_APPROVE => {
+        SIG_ERC20_APPROVE => {
             let ApproveCommand { spender, .. } = ApproveCommand::try_decode(input).ok()?;
             let allowance_slot = caller.compute_slot(ALLOWANCE_STORAGE_SLOT);
             result.push(spender.compute_slot(allowance_slot));
         }
-        SIG_MINT => {
+        SIG_ERC20_MINT => {
             result.push(CONTRACT_FROZEN_STORAGE_SLOT);
             let MintCommand { to, .. } = MintCommand::try_decode(input).ok()?;
             result.push(to.compute_slot(BALANCE_STORAGE_SLOT));
             result.push(MINTER_STORAGE_SLOT);
             result.push(TOTAL_SUPPLY_STORAGE_SLOT);
-            result.push(FLAGS_STORAGE_SLOT);
         }
-        SIG_PAUSE => {
+        SIG_ERC20_PAUSE => {
             result.push(CONTRACT_FROZEN_STORAGE_SLOT);
-            result.push(FLAGS_STORAGE_SLOT);
             result.push(PAUSER_STORAGE_SLOT);
         }
-        SIG_UNPAUSE => {
+        SIG_ERC20_UNPAUSE => {
             result.push(CONTRACT_FROZEN_STORAGE_SLOT);
-            result.push(FLAGS_STORAGE_SLOT);
             result.push(PAUSER_STORAGE_SLOT);
         }
         _ => {}
@@ -231,8 +227,8 @@ mod tests {
             token_symbol: Default::default(),
             decimals: 12,
             initial_supply: U256::from(2),
-            minter: Some(address!("0303000200500020400000040000002000809020")),
-            pauser: None,
+            minter: address!("0303000200500020400000040000002000809020"),
+            pauser: Address::ZERO,
         };
         let addr = address!("0003000200500000400000040000002000800020");
         let addr_bytes: [u8; ADDRESS_LEN_BYTES] = addr.into();

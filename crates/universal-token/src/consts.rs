@@ -1,50 +1,59 @@
 use fluentbase_sdk::{
-    derive::{derive_evm_error, derive_keccak256, derive_keccak256_id},
+    derive::{derive_evm_error, derive_keccak256_id, erc7201_slot},
     EvmExitCode, U256,
 };
 
-pub const ERR_UNKNOWN_METHOD: EvmExitCode = derive_evm_error!("UnknownMethod()");
-pub const ERR_INSUFFICIENT_BALANCE: EvmExitCode = derive_evm_error!("InsufficientBalance()");
-pub const ERR_INSUFFICIENT_ALLOWANCE: EvmExitCode = derive_evm_error!("InsufficientAllowance()");
-pub const ERR_CONTRACT_NOT_MINTABLE: EvmExitCode = derive_evm_error!("ContractNotMintable()");
-pub const ERR_CONTRACT_NOT_PAUSABLE: EvmExitCode = derive_evm_error!("ContractNotPausable()");
-pub const ERR_ALREADY_PAUSED: EvmExitCode = derive_evm_error!("AlreadyPaused()");
-pub const ERR_MINTING_PAUSED: EvmExitCode = derive_evm_error!("MintingPaused()");
-pub const ERR_ALREADY_UNPAUSED: EvmExitCode = derive_evm_error!("AlreadyUnpaused()");
-pub const ERR_INVALID_MINTER: EvmExitCode = derive_evm_error!("InvalidMinter()");
-pub const ERR_PAUSER_MISMATCH: EvmExitCode = derive_evm_error!("PauserMismatch()");
-pub const ERR_INVALID_RECIPIENT: EvmExitCode = derive_evm_error!("InvalidRecipient()");
-pub const ERR_INTEGER_OVERFLOW: EvmExitCode = derive_evm_error!("Overflow()");
+// Custom UST (Universal Token Standard) error codes
+pub const ERR_UST_UNKNOWN_METHOD: EvmExitCode = derive_evm_error!("USTUnknownMethod(bytes4)");
+pub const ERR_UST_NOT_PAUSABLE: EvmExitCode = derive_evm_error!("USTNotPausable()");
+pub const ERR_UST_PAUSER_MISMATCH: EvmExitCode = derive_evm_error!("USTPauserMismatch(address)");
+pub const ERR_UST_NOT_MINTABLE: EvmExitCode = derive_evm_error!("USTNotMintable()");
+pub const ERR_UST_MINTER_MISMATCH: EvmExitCode = derive_evm_error!("USTMinterMismatch(address)");
 
-pub const SIG_SYMBOL: EvmExitCode = derive_keccak256_id!("symbol()");
-pub const SIG_NAME: EvmExitCode = derive_keccak256_id!("name()");
-pub const SIG_DECIMALS: EvmExitCode = derive_keccak256_id!("decimals()");
-pub const SIG_TOTAL_SUPPLY: EvmExitCode = derive_keccak256_id!("totalSupply()");
-pub const SIG_BALANCE: EvmExitCode = derive_keccak256_id!("balance()");
-pub const SIG_BALANCE_OF: EvmExitCode = derive_keccak256_id!("balanceOf(address)");
-pub const SIG_TRANSFER: EvmExitCode = derive_keccak256_id!("transfer(address,uint256)");
-pub const SIG_TRANSFER_FROM: EvmExitCode =
+// These errors are compliant with: @openzeppelin-contracts/contracts/interfaces/draft-IERC6093.sol
+pub const ERR_ERC20_INSUFFICIENT_BALANCE: EvmExitCode =
+    derive_evm_error!("ERC20InsufficientBalance(address,uint256,uint256)");
+pub const ERR_ERC20_INVALID_SENDER: EvmExitCode = derive_evm_error!("ERC20InvalidSender(address)");
+pub const ERR_ERC20_INVALID_RECEIVER: EvmExitCode =
+    derive_evm_error!("ERC20InvalidReceiver(address)");
+pub const ERR_ERC20_INSUFFICIENT_ALLOWANCE: EvmExitCode =
+    derive_evm_error!("ERC20InsufficientAllowance(address,uint256,uint256)");
+pub const ERR_ERC20_INVALID_APPROVER: EvmExitCode =
+    derive_evm_error!("ERC20InvalidApprover(address)");
+pub const ERR_ERC20_INVALID_SPENDER: EvmExitCode =
+    derive_evm_error!("ERC20InvalidSpender(address)");
+
+// These errors are compliant with: @openzeppelin-contracts/contracts/token/ERC20/extensions/ERC20Pausable.sol
+pub const ERR_PAUSABLE_ENFORCED_PAUSE: EvmExitCode = derive_evm_error!("EnforcedPause()");
+pub const ERR_PAUSABLE_EXPECTED_PAUSE: EvmExitCode = derive_evm_error!("ExpectedPause()");
+
+// These signatures are compliant with: @openzeppelin-contracts/contracts/token/ERC20/IERC20.sol
+pub const SIG_ERC20_SYMBOL: EvmExitCode = derive_keccak256_id!("symbol()");
+pub const SIG_ERC20_NAME: EvmExitCode = derive_keccak256_id!("name()");
+pub const SIG_ERC20_DECIMALS: EvmExitCode = derive_keccak256_id!("decimals()");
+pub const SIG_ERC20_TOTAL_SUPPLY: EvmExitCode = derive_keccak256_id!("totalSupply()");
+pub const SIG_ERC20_BALANCE: EvmExitCode = derive_keccak256_id!("balance()");
+pub const SIG_ERC20_BALANCE_OF: EvmExitCode = derive_keccak256_id!("balanceOf(address)");
+pub const SIG_ERC20_TRANSFER: EvmExitCode = derive_keccak256_id!("transfer(address,uint256)");
+pub const SIG_ERC20_TRANSFER_FROM: EvmExitCode =
     derive_keccak256_id!("transferFrom(address,address,uint256)");
-pub const SIG_ALLOWANCE: EvmExitCode = derive_keccak256_id!("allowance(address)");
-pub const SIG_APPROVE: EvmExitCode = derive_keccak256_id!("approve(address,uint256)");
-pub const SIG_MINT: EvmExitCode = derive_keccak256_id!("mint(address,uint256)");
-pub const SIG_PAUSE: EvmExitCode = derive_keccak256_id!("pause()");
-pub const SIG_UNPAUSE: EvmExitCode = derive_keccak256_id!("unpause()");
+pub const SIG_ERC20_ALLOWANCE: EvmExitCode = derive_keccak256_id!("allowance(address,address)");
+pub const SIG_ERC20_APPROVE: EvmExitCode = derive_keccak256_id!("approve(address,uint256)");
+pub const SIG_ERC20_MINT: EvmExitCode = derive_keccak256_id!("mint(address,uint256)");
+pub const SIG_ERC20_PAUSE: EvmExitCode = derive_keccak256_id!("pause()");
+pub const SIG_ERC20_UNPAUSE: EvmExitCode = derive_keccak256_id!("unpause()");
+
 pub const SIG_TOKEN2022: EvmExitCode = derive_keccak256_id!("token2022()");
 
-pub const TOTAL_SUPPLY_STORAGE_SLOT: U256 =
-    U256::from_le_bytes(derive_keccak256!(total_supply_slot));
-pub const MINTER_STORAGE_SLOT: U256 =
-    U256::from_le_bytes(derive_keccak256!(total_supply_slotminter_slot));
-pub const PAUSER_STORAGE_SLOT: U256 = U256::from_le_bytes(derive_keccak256!(pauser_slot));
-pub const CONTRACT_FROZEN_STORAGE_SLOT: U256 =
-    U256::from_le_bytes(derive_keccak256!(contract_frozen_slot));
-pub const SYMBOL_STORAGE_SLOT: U256 = U256::from_le_bytes(derive_keccak256!(symbol_slot));
-pub const NAME_STORAGE_SLOT: U256 = U256::from_le_bytes(derive_keccak256!(name_slot));
-pub const DECIMALS_STORAGE_SLOT: U256 = U256::from_le_bytes(derive_keccak256!(decimals_slot));
-pub const FLAGS_STORAGE_SLOT: U256 = U256::from_le_bytes(derive_keccak256!(flags_slot));
-pub const ALLOWANCE_STORAGE_SLOT: U256 = U256::from_le_bytes(derive_keccak256!(allowance_slot));
-pub const BALANCE_STORAGE_SLOT: U256 = U256::from_le_bytes(derive_keccak256!(balance_slot));
+pub const TOTAL_SUPPLY_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.total-supply");
+pub const MINTER_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.minter");
+pub const PAUSER_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.pauser");
+pub const CONTRACT_FROZEN_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.contract-frozen");
+pub const SYMBOL_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.symbol");
+pub const NAME_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.name");
+pub const DECIMALS_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.decimals");
+pub const ALLOWANCE_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.allowance");
+pub const BALANCE_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.balance");
 
 #[allow(unused)]
 const fn assert_unique_u32<const N: usize>(values: [u32; N]) {
@@ -62,33 +71,34 @@ const fn assert_unique_u32<const N: usize>(values: [u32; N]) {
 }
 
 const _: () = assert_unique_u32([
-    ERR_UNKNOWN_METHOD,
-    ERR_INSUFFICIENT_BALANCE,
-    ERR_INSUFFICIENT_ALLOWANCE,
-    ERR_CONTRACT_NOT_MINTABLE,
-    ERR_CONTRACT_NOT_PAUSABLE,
-    ERR_ALREADY_PAUSED,
-    ERR_MINTING_PAUSED,
-    ERR_ALREADY_UNPAUSED,
-    ERR_INVALID_MINTER,
-    ERR_PAUSER_MISMATCH,
-    ERR_INVALID_RECIPIENT,
-    ERR_INTEGER_OVERFLOW,
+    ERR_UST_UNKNOWN_METHOD,
+    ERR_UST_NOT_PAUSABLE,
+    ERR_UST_PAUSER_MISMATCH,
+    ERR_UST_NOT_MINTABLE,
+    ERR_UST_MINTER_MISMATCH,
+    ERR_ERC20_INSUFFICIENT_BALANCE,
+    ERR_ERC20_INVALID_SENDER,
+    ERR_ERC20_INVALID_RECEIVER,
+    ERR_ERC20_INSUFFICIENT_ALLOWANCE,
+    ERR_ERC20_INVALID_APPROVER,
+    ERR_ERC20_INVALID_SPENDER,
+    ERR_PAUSABLE_ENFORCED_PAUSE,
+    ERR_PAUSABLE_EXPECTED_PAUSE,
 ]);
 
 const _: () = assert_unique_u32([
-    SIG_SYMBOL,
-    SIG_NAME,
-    SIG_DECIMALS,
-    SIG_TOTAL_SUPPLY,
-    SIG_BALANCE,
-    SIG_BALANCE_OF,
-    SIG_TRANSFER,
-    SIG_TRANSFER_FROM,
-    SIG_ALLOWANCE,
-    SIG_APPROVE,
-    SIG_MINT,
-    SIG_PAUSE,
-    SIG_UNPAUSE,
+    SIG_ERC20_SYMBOL,
+    SIG_ERC20_NAME,
+    SIG_ERC20_DECIMALS,
+    SIG_ERC20_TOTAL_SUPPLY,
+    SIG_ERC20_BALANCE,
+    SIG_ERC20_BALANCE_OF,
+    SIG_ERC20_TRANSFER,
+    SIG_ERC20_TRANSFER_FROM,
+    SIG_ERC20_ALLOWANCE,
+    SIG_ERC20_APPROVE,
+    SIG_ERC20_MINT,
+    SIG_ERC20_PAUSE,
+    SIG_ERC20_UNPAUSE,
     SIG_TOKEN2022,
 ]);

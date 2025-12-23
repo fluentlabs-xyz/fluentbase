@@ -1,5 +1,6 @@
 use crate::consts::{
-    SIG_ALLOWANCE, SIG_APPROVE, SIG_BALANCE_OF, SIG_MINT, SIG_TRANSFER, SIG_TRANSFER_FROM,
+    SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE_OF, SIG_ERC20_MINT,
+    SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM,
 };
 use alloc::vec::Vec;
 use fluentbase_sdk::{
@@ -35,7 +36,7 @@ pub struct TransferCommand {
     pub amount: U256,
 }
 impl UniversalTokenCommand for TransferCommand {
-    const SIGNATURE: u32 = SIG_TRANSFER;
+    const SIGNATURE: u32 = SIG_ERC20_TRANSFER;
 }
 
 #[derive(Default, Debug, Codec)]
@@ -45,7 +46,7 @@ pub struct TransferFromCommand {
     pub amount: U256,
 }
 impl UniversalTokenCommand for TransferFromCommand {
-    const SIGNATURE: u32 = SIG_TRANSFER_FROM;
+    const SIGNATURE: u32 = SIG_ERC20_TRANSFER_FROM;
 }
 
 #[derive(Default, Debug, Codec)]
@@ -54,7 +55,7 @@ pub struct ApproveCommand {
     pub amount: U256,
 }
 impl UniversalTokenCommand for ApproveCommand {
-    const SIGNATURE: u32 = SIG_APPROVE;
+    const SIGNATURE: u32 = SIG_ERC20_APPROVE;
 }
 
 #[derive(Default, Debug, Codec)]
@@ -63,7 +64,7 @@ pub struct AllowanceCommand {
     pub spender: Address,
 }
 impl UniversalTokenCommand for AllowanceCommand {
-    const SIGNATURE: u32 = SIG_ALLOWANCE;
+    const SIGNATURE: u32 = SIG_ERC20_ALLOWANCE;
 }
 
 #[derive(Default, Debug, Codec)]
@@ -71,7 +72,7 @@ pub struct BalanceOfCommand {
     pub owner: Address,
 }
 impl UniversalTokenCommand for BalanceOfCommand {
-    const SIGNATURE: u32 = SIG_BALANCE_OF;
+    const SIGNATURE: u32 = SIG_ERC20_BALANCE_OF;
 }
 
 #[derive(Default, Debug, Codec)]
@@ -80,5 +81,5 @@ pub struct MintCommand {
     pub amount: U256,
 }
 impl UniversalTokenCommand for MintCommand {
-    const SIGNATURE: u32 = SIG_MINT;
+    const SIGNATURE: u32 = SIG_ERC20_MINT;
 }

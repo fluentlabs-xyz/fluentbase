@@ -49,11 +49,11 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
                 outcome: None,
             }
         } else if output_size > 0 {
-            let output = alloc_slice(output_size);
-            native_sdk.read_output(output, 0);
-            let (outcome, _): (RuntimeInterruptionOutcomeV1, usize) =
-                bincode::decode_from_slice(output, bincode::config::legacy()).unwrap();
-            unreachable!()
+            // let output = alloc_slice(output_size);
+            // native_sdk.read_output(output, 0);
+            // let (outcome, _): (RuntimeInterruptionOutcomeV1, usize) =
+            //     bincode::decode_from_slice(output, bincode::config::legacy()).unwrap();
+            unimplemented!("not implemented yet")
         } else {
             unreachable!()
         }
@@ -199,9 +199,9 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
         unimplemented!()
     }
 
-    fn emit_log(&mut self, topics: &[B256], data: &[u8]) -> SyscallResult<()> {
+    fn emit_log<D: AsRef<[u8]>>(&mut self, topics: &[B256], data: D) -> SyscallResult<()> {
         self.storage
-            .emit_log(topics.to_vec(), Bytes::copy_from_slice(data));
+            .emit_log(topics.to_vec(), Bytes::copy_from_slice(data.as_ref()));
         SyscallResult::default()
     }
 

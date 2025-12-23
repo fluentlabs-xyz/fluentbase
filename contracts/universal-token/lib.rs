@@ -11,6 +11,8 @@ extern crate core;
 mod tests;
 
 use fluentbase_sdk::{
+    bytes::BytesMut,
+    codec::SolidityABI,
     evm::write_evm_exit_message,
     storage::{StorageMap, StorageU256},
     system_entrypoint2, Address, ContextReader, EvmExitCode, ExitCode, SharedAPI, StorageUtils,
@@ -37,7 +39,10 @@ fn erc20_symbol_handler<SDK: SharedAPI>(
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
     let value = sdk.storage_short_string(&SYMBOL_STORAGE_SLOT)?;
-    sdk.write(value.as_bytes());
+    let mut bytes = BytesMut::new();
+    SolidityABI::encode(&value, &mut bytes, 0).unwrap();
+    let result = bytes.freeze();
+    sdk.write(&result);
     Ok(0)
 }
 
@@ -47,7 +52,10 @@ fn erc20_name_handler<SDK: SharedAPI>(
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
     let value = sdk.storage_short_string(&NAME_STORAGE_SLOT)?;
-    sdk.write(value.as_bytes());
+    let mut bytes = BytesMut::new();
+    SolidityABI::encode(&value, &mut bytes, 0).unwrap();
+    let result = bytes.freeze();
+    sdk.write(&result);
     Ok(0)
 }
 
@@ -67,13 +75,22 @@ fn erc20_transfer_handler<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
     let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
     if !is_contract_frozen.is_zero() {
-        return Ok(ERR_MINTING_PAUSED);
+        return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
     }
 
     let from = sdk.context().contract_caller();
+    if from.is_zero() {
+        return Ok(ERR_ERC20_INVALID_SENDER);
+    }
     let TransferCommand { to, amount } = TransferCommand::try_decode(input)?;
+    if to.is_zero() {
+        return Ok(ERR_ERC20_INVALID_RECEIVER);
+    }
 
     let balance_storage_map = BalanceStorageMap::new(BALANCE_STORAGE_SLOT);
 
@@ -81,17 +98,15 @@ fn erc20_transfer_handler<SDK: SharedAPI>(
     let sender_accessor = balance_storage_map.entry(from);
     let sender_balance = sender_accessor.get_checked(sdk)?;
     let Some(new_sender_balance) = sender_balance.checked_sub(amount) else {
-        return Ok(ERR_INSUFFICIENT_BALANCE);
+        return Ok(ERR_ERC20_INSUFFICIENT_BALANCE);
     };
+    sender_accessor.set_checked(sdk, new_sender_balance)?;
 
     let recipient_accessor = balance_storage_map.entry(to);
     let recipient_balance = recipient_accessor.get_checked(sdk)?;
-    let Some(new_recipient_balance) = recipient_balance.checked_add(amount) else {
-        return Ok(ERR_INTEGER_OVERFLOW);
-    };
-
-    // Commit state changes only after all checks pass.
-    sender_accessor.set_checked(sdk, new_sender_balance)?;
+    let new_recipient_balance = recipient_balance
+        .checked_add(amount)
+        .ok_or(ExitCode::IntegerOverflow)?;
     recipient_accessor.set_checked(sdk, new_recipient_balance)?;
 
     emit_transfer_event(sdk, &from, &to, &amount)?;
@@ -106,13 +121,19 @@ fn erc20_transfer_from_handler<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
     let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
     if !is_contract_frozen.is_zero() {
-        return Ok(ERR_MINTING_PAUSED);
+        return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
     }
 
     let spender = sdk.context().contract_caller();
     let TransferFromCommand { from, to, amount } = TransferFromCommand::try_decode(input)?;
+    if to.is_zero() {
+        return Ok(ERR_ERC20_INVALID_RECEIVER);
+    }
 
     let allowance_storage_map = AllowanceStorageMap::new(ALLOWANCE_STORAGE_SLOT);
     let balance_storage_map = BalanceStorageMap::new(BALANCE_STORAGE_SLOT);
@@ -121,24 +142,22 @@ fn erc20_transfer_from_handler<SDK: SharedAPI>(
     let allowance_accessor = allowance_storage_map.entry(from).entry(spender);
     let allowance = allowance_accessor.get_checked(sdk)?;
     let Some(new_allowance) = allowance.checked_sub(amount) else {
-        return Ok(ERR_INSUFFICIENT_ALLOWANCE);
+        return Ok(ERR_ERC20_INSUFFICIENT_ALLOWANCE);
     };
+    allowance_accessor.set_checked(sdk, new_allowance)?;
 
     let sender_accessor = balance_storage_map.entry(from);
     let sender_balance = sender_accessor.get_checked(sdk)?;
     let Some(new_sender_balance) = sender_balance.checked_sub(amount) else {
-        return Ok(ERR_INSUFFICIENT_BALANCE);
+        return Ok(ERR_ERC20_INSUFFICIENT_BALANCE);
     };
+    sender_accessor.set_checked(sdk, new_sender_balance)?;
 
     let recipient_accessor = balance_storage_map.entry(to);
     let recipient_balance = recipient_accessor.get_checked(sdk)?;
-    let Some(new_recipient_balance) = recipient_balance.checked_add(amount) else {
-        return Ok(ERR_INTEGER_OVERFLOW);
-    };
-
-    // Commit state only after all checks pass.
-    allowance_accessor.set_checked(sdk, new_allowance)?;
-    sender_accessor.set_checked(sdk, new_sender_balance)?;
+    let new_recipient_balance = recipient_balance
+        .checked_add(amount)
+        .ok_or(ExitCode::IntegerOverflow)?;
     recipient_accessor.set_checked(sdk, new_recipient_balance)?;
 
     emit_transfer_event(sdk, &from, &to, &amount)?;
@@ -153,6 +172,9 @@ fn erc20_approve_handler<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
     let contract_caller = sdk.context().contract_caller();
     let ApproveCommand { spender, amount } = ApproveCommand::try_decode(input)?;
 
@@ -227,36 +249,39 @@ fn erc20_mint_handler<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
     let contract_minter = sdk.storage_address(&MINTER_STORAGE_SLOT)?;
     if contract_minter == Address::ZERO {
-        return Ok(ERR_CONTRACT_NOT_MINTABLE);
+        return Ok(ERR_UST_NOT_MINTABLE);
     }
     let caller = sdk.context().contract_caller();
     if caller != contract_minter {
-        return Ok(ERR_INVALID_MINTER);
+        return Ok(ERR_UST_MINTER_MISMATCH);
     }
 
     let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
     if !is_contract_frozen.is_zero() {
-        return Ok(ERR_MINTING_PAUSED);
+        return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
     }
 
     let MintCommand { to, amount } = MintCommand::try_decode(input)?;
     if to == Address::ZERO {
-        return Ok(ERR_INVALID_RECIPIENT);
+        return Ok(ERR_ERC20_INVALID_RECEIVER);
     }
 
     // Read current state first so we can fail without partial writes.
     let total_supply = sdk.storage(&TOTAL_SUPPLY_STORAGE_SLOT).ok()?;
-    let Some(new_total_supply) = total_supply.checked_add(amount) else {
-        return Ok(ERR_INTEGER_OVERFLOW);
-    };
+    let new_total_supply = total_supply
+        .checked_add(amount)
+        .ok_or(ExitCode::IntegerOverflow)?;
 
     let recipient_accessor = BalanceStorageMap::new(BALANCE_STORAGE_SLOT).entry(to);
     let recipient_balance = recipient_accessor.get_checked(sdk)?;
-    let Some(new_recipient_balance) = recipient_balance.checked_add(amount) else {
-        return Ok(ERR_INTEGER_OVERFLOW);
-    };
+    let new_recipient_balance = recipient_balance
+        .checked_add(amount)
+        .ok_or(ExitCode::IntegerOverflow)?;
 
     // Commit state.
     sdk.write_storage(TOTAL_SUPPLY_STORAGE_SLOT, new_total_supply)
@@ -275,20 +300,23 @@ fn erc20_pause_handler<SDK: SharedAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
     // Make sure contract is pausable (pauser is provided)
     let contract_pauser = sdk.storage_address(&PAUSER_STORAGE_SLOT)?;
     if contract_pauser.is_zero() {
-        return Ok(ERR_CONTRACT_NOT_PAUSABLE);
+        return Ok(ERR_UST_NOT_PAUSABLE);
     }
     // Make sure contract is unpaused
     let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
     if !is_contract_frozen.is_zero() {
-        return Ok(ERR_ALREADY_PAUSED);
+        return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
     }
     // Check is caller (sender) is pauser, because only pauser can pause/unpause the contract
     let contract_caller = sdk.context().contract_caller();
     if contract_caller != contract_pauser {
-        return Ok(ERR_PAUSER_MISMATCH);
+        return Ok(ERR_UST_PAUSER_MISMATCH);
     }
     // Write paused flag
     sdk.write_storage(CONTRACT_FROZEN_STORAGE_SLOT, U256::ONE)
@@ -306,20 +334,23 @@ fn erc20_unpause_handler<SDK: SharedAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
     // Make sure contract is pausable (pauser is provided)
     let contract_pauser = sdk.storage_address(&PAUSER_STORAGE_SLOT)?;
     if contract_pauser.is_zero() {
-        return Ok(ERR_CONTRACT_NOT_PAUSABLE);
+        return Ok(ERR_UST_NOT_PAUSABLE);
     }
     // Make sure contract is paused
     let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
     if is_contract_frozen.is_zero() {
-        return Ok(ERR_ALREADY_UNPAUSED);
+        return Ok(ERR_PAUSABLE_EXPECTED_PAUSE);
     }
     // Check is caller (sender) is pauser, because only pauser can pause/unpause the contract
     let contract_caller = sdk.context().contract_caller();
     if contract_caller != contract_pauser {
-        return Ok(ERR_PAUSER_MISMATCH);
+        return Ok(ERR_UST_PAUSER_MISMATCH);
     }
     // Write paused flag
     sdk.write_storage(CONTRACT_FROZEN_STORAGE_SLOT, U256::ZERO)
@@ -337,7 +368,7 @@ fn erc20_unknown_method<SDK: SharedAPI>(
     _sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
-    Ok(ERR_UNKNOWN_METHOD)
+    Ok(ERR_UST_UNKNOWN_METHOD)
 }
 
 /// Constructor entrypoint: decodes `InitialSettings` and initializes storage (metadata, supply, optional minter/pauser).
@@ -380,13 +411,15 @@ fn erc20_constructor_handler<SDK: SharedAPI>(
         // Increase token supply
         sdk.write_storage(TOTAL_SUPPLY_STORAGE_SLOT, initial_supply)
             .ok()?;
+        // Emit transfer event
+        emit_transfer_event(sdk, &Address::ZERO, &caller, &initial_supply)?;
     }
     // If token is mintable then minter is provided
-    if let Some(minter) = minter {
+    if !minter.is_zero() {
         sdk.write_storage_address(MINTER_STORAGE_SLOT, minter)?;
     }
     // If token is pausable then pauser is provided
-    if let Some(pauser) = pauser {
+    if !pauser.is_zero() {
         sdk.write_storage_address(PAUSER_STORAGE_SLOT, pauser)?;
     }
     Ok(0)
@@ -415,19 +448,19 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let (sig, input) = sdk.input().split_at(SIG_LEN_BYTES);
     let sig = u32::from_be_bytes(sig.try_into().unwrap());
     let evm_exit_code = match sig {
-        SIG_SYMBOL => erc20_symbol_handler(sdk, input),
-        SIG_NAME => erc20_name_handler(sdk, input),
-        SIG_TRANSFER => erc20_transfer_handler(sdk, input),
-        SIG_TRANSFER_FROM => erc20_transfer_from_handler(sdk, input),
-        SIG_APPROVE => erc20_approve_handler(sdk, input),
-        SIG_DECIMALS => erc20_decimals_handler(sdk, input),
-        SIG_ALLOWANCE => erc20_allowance_handler(sdk, input),
-        SIG_TOTAL_SUPPLY => erc20_total_supply_handler(sdk, input),
-        SIG_BALANCE => erc20_balance_handler(sdk, input),
-        SIG_BALANCE_OF => erc20_balance_of_handler(sdk, input),
-        SIG_MINT => erc20_mint_handler(sdk, input),
-        SIG_PAUSE => erc20_pause_handler(sdk, input),
-        SIG_UNPAUSE => erc20_unpause_handler(sdk, input),
+        SIG_ERC20_SYMBOL => erc20_symbol_handler(sdk, input),
+        SIG_ERC20_NAME => erc20_name_handler(sdk, input),
+        SIG_ERC20_TRANSFER => erc20_transfer_handler(sdk, input),
+        SIG_ERC20_TRANSFER_FROM => erc20_transfer_from_handler(sdk, input),
+        SIG_ERC20_APPROVE => erc20_approve_handler(sdk, input),
+        SIG_ERC20_DECIMALS => erc20_decimals_handler(sdk, input),
+        SIG_ERC20_ALLOWANCE => erc20_allowance_handler(sdk, input),
+        SIG_ERC20_TOTAL_SUPPLY => erc20_total_supply_handler(sdk, input),
+        SIG_ERC20_BALANCE => erc20_balance_handler(sdk, input),
+        SIG_ERC20_BALANCE_OF => erc20_balance_of_handler(sdk, input),
+        SIG_ERC20_MINT => erc20_mint_handler(sdk, input),
+        SIG_ERC20_PAUSE => erc20_pause_handler(sdk, input),
+        SIG_ERC20_UNPAUSE => erc20_unpause_handler(sdk, input),
         _ => erc20_unknown_method(sdk, input),
     }?;
     if evm_exit_code != 0 {
