@@ -327,13 +327,17 @@ impl SharedAPI for HostTestingContext {
         fuel_limit - ctx.consumed_fuel
     }
 
-    fn write(&mut self, output: &[u8]) {
+    fn write<T: AsRef<[u8]>>(&mut self, output: T) {
         let mut ctx = self.inner.borrow_mut();
-        ctx.output.extend_from_slice(output);
+        ctx.output.extend_from_slice(output.as_ref());
     }
 
     fn native_exit(&self, exit_code: ExitCode) -> ! {
-        unreachable!("exit code: {} ({})", exit_code, exit_code as i32)
+        unimplemented!(
+            "not allowed to do native exit: {} ({})",
+            exit_code,
+            exit_code as i32
+        )
     }
 
     fn native_exec(

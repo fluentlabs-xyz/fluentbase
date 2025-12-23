@@ -169,8 +169,8 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
         unimplemented!()
     }
 
-    fn write(&mut self, output: &[u8]) {
-        self.output.extend_from_slice(output);
+    fn write<T: AsRef<[u8]>>(&mut self, output: T) {
+        self.output.extend_from_slice(output.as_ref());
     }
 
     fn native_exit(&self, _exit_code: ExitCode) -> ! {
