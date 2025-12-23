@@ -141,10 +141,12 @@ fn erc20_transfer_from_handler<SDK: SharedAPI>(
     // Read all state first; do not mutate on failure.
     let allowance_accessor = allowance_storage_map.entry(from).entry(spender);
     let allowance = allowance_accessor.get_checked(sdk)?;
-    let Some(new_allowance) = allowance.checked_sub(amount) else {
-        return Ok(ERR_ERC20_INSUFFICIENT_ALLOWANCE);
-    };
-    allowance_accessor.set_checked(sdk, new_allowance)?;
+    if allowance < U256::MAX {
+        let Some(new_allowance) = allowance.checked_sub(amount) else {
+            return Ok(ERR_ERC20_INSUFFICIENT_ALLOWANCE);
+        };
+        allowance_accessor.set_checked(sdk, new_allowance)?;
+    }
 
     let sender_accessor = balance_storage_map.entry(from);
     let sender_balance = sender_accessor.get_checked(sdk)?;

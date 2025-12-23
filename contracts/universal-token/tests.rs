@@ -1554,3 +1554,50 @@ fn staticcall_blocks_mint_and_emits_no_logs_and_no_state_change() {
     assert_eq!(ec, ExitCode::Ok);
     assert_eq!(bal, abi_word_u256(U256::ZERO).to_vec());
 }
+
+#[test]
+fn transfer_from_does_not_decrease_allowance_when_allowance_is_u256_max() {
+    let token = Address::with_last_byte(1);
+    let owner = Address::with_last_byte(10);
+    let spender = Address::with_last_byte(11);
+    let to = Address::with_last_byte(12);
+
+    let mut h = Harness::new(token);
+    deploy_with_supply_to(&mut h, owner, U256::from(100u64));
+
+    // owner approves "infinite" allowance
+    h.set_caller(owner);
+    let (ec, out) = h.call(with_sig(
+        SIG_ERC20_APPROVE,
+        &abi_encode_1_addr_1_u256(spender, U256::MAX),
+    ));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(out, ok_32());
+
+    // spender spends some amount via transferFrom
+    h.set_caller(spender);
+    let amount = U256::from(7u64);
+    let (ec, out) = h.call(with_sig(
+        SIG_ERC20_TRANSFER_FROM,
+        &abi_encode_2_addr_1_u256(owner, to, amount),
+    ));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(out, ok_32());
+
+    // allowance must remain U256::MAX (not charged)
+    let (ec, allow) = h.call(with_sig(
+        SIG_ERC20_ALLOWANCE,
+        &abi_encode_2_addr(owner, spender),
+    ));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(allow, abi_word_u256(U256::MAX).to_vec());
+
+    // sanity: balances moved correctly
+    let (ec, bal_owner) = h.call(with_sig(SIG_ERC20_BALANCE_OF, &abi_encode_1_addr(owner)));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(bal_owner, abi_word_u256(U256::from(93u64)).to_vec());
+
+    let (ec, bal_to) = h.call(with_sig(SIG_ERC20_BALANCE_OF, &abi_encode_1_addr(to)));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(bal_to, abi_word_u256(amount).to_vec());
+}
