@@ -1,6 +1,60 @@
 use alloc::vec::Vec;
+use crate::debug_log;
 
 const WASM_PAGE_SIZE_IN_BYTES: usize = 65536;
+const HEAP_POS_CHECKPOINTS_HEIGHT_MIN: usize = 0;
+const HEAP_POS_CHECKPOINTS_HEIGHT_MAX: usize = 1024;
+static mut HEAP_POS_CHECKPOINTS: [usize; HEAP_POS_CHECKPOINTS_HEIGHT_MAX] = [0usize; HEAP_POS_CHECKPOINTS_HEIGHT_MAX];
+static mut HEAP_POS_CHECKPOINTS_HEIGHT: usize = 0;
+
+#[inline(always)]
+pub fn checkpoint_count() -> usize {
+    #[cfg(target_arch = "wasm32")]
+    {
+        unsafe {
+            return HEAP_POS_CHECKPOINTS_HEIGHT
+        }
+    }
+    usize::MAX
+}
+
+#[inline(always)]
+pub fn checkpoint_try_save() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        unsafe {
+            if HEAP_POS_CHECKPOINTS_HEIGHT >= HEAP_POS_CHECKPOINTS_HEIGHT_MAX {
+                return false;
+            }
+            let current = alloc_heap_pos();
+            HEAP_POS_CHECKPOINTS[HEAP_POS_CHECKPOINTS_HEIGHT] = current;
+            HEAP_POS_CHECKPOINTS_HEIGHT += 1;
+        }
+        return true
+    }
+    false
+}
+
+#[inline(always)]
+pub fn checkpoint_try_restore(do_pop: bool) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        unsafe {
+            if HEAP_POS_CHECKPOINTS_HEIGHT <= HEAP_POS_CHECKPOINTS_HEIGHT_MIN {
+                return false;
+            }
+            let prev = HEAP_POS_CHECKPOINTS_HEIGHT - 1;
+            // let current = alloc_heap_pos();
+            let restored = HEAP_POS_CHECKPOINTS[prev];
+            rollback_heap_pos(restored);
+            if do_pop {
+                HEAP_POS_CHECKPOINTS_HEIGHT -= 1;
+            }
+        }
+        return true
+    }
+    false
+}
 
 #[allow(dead_code)]
 fn calc_pages_needed(pages_allocated: usize, required_bytes: usize) -> usize {
@@ -45,6 +99,29 @@ pub struct HeapBaseAllocator {}
 
 #[cfg(target_arch = "wasm32")]
 static mut HEAP_POS: usize = 0;
+#[cfg(target_arch = "wasm32")]
+static mut HEAP_POS_LAST: usize = 0;
+
+#[inline(always)]
+pub fn heap_pos_change() -> usize {
+    #[cfg(target_arch = "wasm32")]
+    unsafe {
+        if HEAP_POS > HEAP_POS_LAST {
+            let change = HEAP_POS - HEAP_POS_LAST;
+            HEAP_POS_LAST = HEAP_POS;
+            return change;
+        }
+    }
+    0
+}
+
+#[inline(always)]
+pub fn heap_pos_last_reset() {
+    #[cfg(target_arch = "wasm32")]
+    unsafe {
+        HEAP_POS_LAST = 0;
+    }
+}
 
 #[inline(always)]
 pub fn alloc_heap_pos() -> usize {
@@ -59,11 +136,20 @@ pub fn alloc_heap_pos() -> usize {
 }
 
 #[inline(always)]
-pub fn rollback_heap_pos(_new_heap_pos: usize) {
+pub fn rollback_heap_pos(new_heap_pos: usize) {
     #[cfg(target_arch = "wasm32")]
     unsafe {
-        HEAP_POS = _new_heap_pos
+        HEAP_POS = new_heap_pos
     }
+}
+
+pub fn run_with_heap_drop<T, F: FnMut() -> T>(mut f: F) -> T {
+    let start = alloc_heap_pos();
+    let r = f();
+    // let stop = alloc_heap_pos();
+    // debug_log!("start={} stop={} rolled_back={}", start, stop, stop-start);
+    rollback_heap_pos(start);
+    r
 }
 
 #[cfg(target_arch = "wasm32")]

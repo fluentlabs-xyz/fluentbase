@@ -1,6 +1,6 @@
 [package]
 name = "fluentbase-types"
-description = "Fluentbase SDK"
+description = "Fluentbase types"
 version.workspace = true
 authors.workspace = true
 repository.workspace = true

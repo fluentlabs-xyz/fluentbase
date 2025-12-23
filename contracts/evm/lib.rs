@@ -9,16 +9,9 @@ use fluentbase_evm::{
     bytecode::AnalyzedBytecode, gas, gas::Gas, opcodes::interruptable_instruction_table,
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
 };
-use fluentbase_sdk::{
-    bincode, byteorder,
-    byteorder::ByteOrder,
-    crypto::crypto_keccak256,
-    entrypoint,
-    system::{RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1},
-    Bytes, ContextReader, ExitCode, SharedAPI, SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE,
-    FUEL_DENOM_RATE,
-};
+use fluentbase_sdk::{alloc_heap_pos, bincode, byteorder, byteorder::ByteOrder, checkpoint_try_restore, checkpoint_try_save, crypto::crypto_keccak256, debug_log, entrypoint, heap_pos_change, rollback_heap_pos, run_with_heap_drop, system::{RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1}, Bytes, ContextReader, ExitCode, SharedAPI, SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE};
 use spin::MutexGuard;
+use fluentbase_sdk::bincode_helpers::decode;
 
 /// Transforms metadata into analyzed EVM bytecode when possible.
 pub(crate) fn evm_bytecode_from_metadata(metadata: &Bytes) -> Option<AnalyzedBytecode> {
@@ -33,88 +26,110 @@ pub(crate) fn evm_bytecode_from_metadata(metadata: &Bytes) -> Option<AnalyzedByt
 static SAVED_EVM_CONTEXT: spin::Once<spin::Mutex<Vec<EthVM>>> = spin::Once::new();
 
 fn lock_evm_context<'a>() -> MutexGuard<'a, Vec<EthVM>> {
-    let cached_state = SAVED_EVM_CONTEXT.call_once(|| spin::Mutex::new(Vec::new()));
-    debug_assert!(
-        !cached_state.is_locked(),
-        "evm: spin mutex is locked, looks like memory corruption"
-    );
+    let cached_state = SAVED_EVM_CONTEXT.call_once(|| spin::Mutex::new(Vec::with_capacity(1024)));
+    // debug_assert!(
+    //     !cached_state.is_locked(),
+    //     "evm: spin mutex is locked, looks like memory corruption"
+    // );
     cached_state.lock()
 }
 
-fn restore_evm_context_or_create<'a>(
+fn restore_evm_context_or_create<'a, SDK: SharedAPI>(
+    cached_state: &'a mut MutexGuard<Vec<EthVM>>,
+    sdk: &mut SDK,
+) -> &'a mut EthVM {
+    // debug_log!("heap_pos_change={}", heap_pos_change());
+    let return_data = sdk.return_data();
+    // debug_log!("heap_pos_change={}", heap_pos_change());
+    if return_data.is_empty() {
+        create_evm_context(cached_state, sdk.context(), sdk.input())
+    } else {
+        restore_evm_context(cached_state, sdk)
+    }
+}
+fn create_evm_context<'a>(
     cached_state: &'a mut MutexGuard<Vec<EthVM>>,
     context: impl ContextReader,
-    input: Bytes,
-    return_data: Bytes,
+    input: &[u8],
 ) -> &'a mut EthVM {
-    // If return data is empty, then we create new EVM frame
-    if return_data.is_empty() {
-        // Decode new frame input
-        let (new_frame_input, _) = bincode::decode_from_slice::<RuntimeNewFrameInputV1, _>(
-            input.as_ref(),
-            bincode::config::legacy(),
-        )
-        .unwrap();
-        // If analyzed, bytecode is not presented then extract it from the input
-        // (contract deployment stage)
-        let (analyzed_bytecode, contract_input) = if !new_frame_input.metadata.is_empty() {
-            let Some(analyzed_bytecode) = evm_bytecode_from_metadata(&new_frame_input.metadata)
-            else {
-                unreachable!("evm: a valid metadata must be provided")
-            };
-            (analyzed_bytecode, new_frame_input.input)
-        } else {
-            let analyzed_bytecode =
-                AnalyzedBytecode::new(new_frame_input.input.clone(), B256::ZERO);
-            (analyzed_bytecode, Bytes::new())
+    // debug_log!("cached_state.len={} heap_pos_change={}", cached_state.len(), heap_pos_change());
+    // Decode new frame input
+    let (new_frame_input, _) = decode::<RuntimeNewFrameInputV1>(input).unwrap();
+    // If analyzed, bytecode is not presented then extract it from the input
+    // (contract deployment stage)
+    let (analyzed_bytecode, contract_input) = if !new_frame_input.metadata.is_empty() {
+        let Some(analyzed_bytecode) = evm_bytecode_from_metadata(&new_frame_input.metadata)
+        else {
+            unreachable!("evm: a valid metadata must be provided")
         };
-        let eth_vm = EthVM::new(context, contract_input, analyzed_bytecode);
-        // Push new EthVM frame (new frame is created)
-        cached_state.push(eth_vm);
-        cached_state.last_mut().unwrap()
+        (analyzed_bytecode, new_frame_input.input)
     } else {
-        drop(context);
-        let (
-            RuntimeInterruptionOutcomeV1 {
-                halted_frame,
-                output,
-                fuel_consumed,
-                fuel_refunded,
-                exit_code,
-            },
-            _,
-        ) = bincode::decode_from_slice::<RuntimeInterruptionOutcomeV1, _>(
-            return_data.as_ref(),
-            bincode::config::legacy(),
-        )
-        .unwrap();
-        let Some(eth_vm) = cached_state.last_mut() else {
-            unreachable!("evm: missing cached evm state, can't resume execution")
-        };
-        let mut gas = Gas::new_spent(fuel_consumed / FUEL_DENOM_RATE);
-        gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
-        {
-            let dirty_gas = &mut eth_vm.interpreter.gas;
-            if !dirty_gas.record_cost(gas.spent()) {
-                unreachable!(
-                    "evm: a fatal gas mis-sync between runtimes, this should never happen"
-                );
-            }
-            eth_vm.interpreter.extend.committed_gas = *dirty_gas;
-        }
-        let exit_code = ExitCode::from(exit_code);
-        _ = eth_vm
-            .interpreter
-            .extend
-            .interruption_outcome
-            .insert(InterruptionOutcome {
-                output,
-                gas,
-                exit_code,
-                halted_frame,
-            });
-        eth_vm
+        let analyzed_bytecode =
+            AnalyzedBytecode::new(new_frame_input.input.clone(), B256::ZERO);
+        (analyzed_bytecode, Bytes::new())
+    };
+    let eth_vm = EthVM::new(context, contract_input, analyzed_bytecode);
+    // Push new EthVM frame (new frame is created)
+    cached_state.push(eth_vm);
+    let eth_vm = cached_state.last_mut().unwrap();
+    // debug_log!("checkpoint saved: {:?} at {}", checkpoint_save(), alloc_heap_pos());
+    eth_vm
+}
+
+fn restore_evm_context<'a, SDK: SharedAPI>(
+    cached_state: &'a mut MutexGuard<Vec<EthVM>>,
+    sdk: &mut SDK,
+) -> &'a mut EthVM {
+    // debug_log!("cached_state.len={} heap_pos_change={}", cached_state.len(), heap_pos_change());
+    let Some(eth_vm) = cached_state.last_mut() else {
+        unreachable!("evm: missing cached evm state, can't resume execution")
+    };
+    // drop heap-based values to prevent from accessing after heap reset
+    eth_vm
+        .interpreter
+        .extend
+        .interruption_outcome = None;
+    if checkpoint_try_restore(false) {
+        // debug_log!("checkpoint_restored");
     }
+    // debug_log!("heap_pos_change={}", heap_pos_change());
+    checkpoint_try_save();
+    let (
+        RuntimeInterruptionOutcomeV1 {
+            halted_frame,
+            output,
+            fuel_consumed,
+            fuel_refunded,
+            exit_code,
+        },
+        _,
+    ) = decode::<RuntimeInterruptionOutcomeV1>(
+        sdk.return_data().as_ref(),
+    )
+        .unwrap();
+    let mut gas = Gas::new_spent(fuel_consumed / FUEL_DENOM_RATE);
+    gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
+    {
+        let dirty_gas = &mut eth_vm.interpreter.gas;
+        if !dirty_gas.record_cost(gas.spent()) {
+            unreachable!(
+                "evm: a fatal gas mis-sync between runtimes, this should never happen"
+            );
+        }
+        eth_vm.interpreter.extend.committed_gas = *dirty_gas;
+    }
+    let exit_code = ExitCode::from(exit_code);
+    _ = eth_vm
+        .interpreter
+        .extend
+        .interruption_outcome
+        .insert(InterruptionOutcome {
+            output,
+            gas,
+            exit_code,
+            halted_frame,
+        });
+    eth_vm
 }
 
 /// Deploy entry for EVM contracts.
@@ -136,9 +151,7 @@ fn deploy_inner<SDK: SharedAPI>(
 ) -> (Bytes, ExitCode) {
     let evm = restore_evm_context_or_create(
         &mut cached_state,
-        sdk.context(),
-        sdk.bytes_input(),
-        sdk.return_data(),
+        sdk,
     );
     let instruction_table = interruptable_instruction_table::<SDK>();
     match evm.run_step(&instruction_table, sdk) {
@@ -208,13 +221,16 @@ fn deploy_inner<SDK: SharedAPI>(
 /// and writes the returned data.
 #[inline(never)]
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
+    // debug_log!("heap_pos_change={}", heap_pos_change());
     let (output, exit_code) = main_inner(&mut sdk, lock_evm_context());
-    let mut exit_code_le: [u8; 4] = [0u8; 4];
-    byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
-    let mut result = Vec::with_capacity(4 + output.len());
-    result.extend_from_slice(&exit_code_le);
-    result.extend_from_slice(&output);
-    sdk.write(&result);
+    // debug_log!("heap_pos_change={}", heap_pos_change());
+    run_with_heap_drop(|| {
+        let mut result = Vec::with_capacity(size_of::<i32>() + output.len());
+        result.extend_from_slice(&exit_code.into_i32().to_le_bytes());
+        result.extend_from_slice(&output);
+        sdk.write(&result);
+    });
+    // debug_log!("heap_pos_change={}", heap_pos_change());
 }
 
 #[inline(never)]
@@ -222,23 +238,23 @@ fn main_inner<SDK: SharedAPI>(
     sdk: &mut SDK,
     mut cached_state: MutexGuard<Vec<EthVM>>,
 ) -> (Bytes, ExitCode) {
+    // debug_log!("heap_pos_change={}", heap_pos_change());
     let evm = restore_evm_context_or_create(
         &mut cached_state,
         // Pass information about execution context (contract address, caller) into the EthVM,
         // but it's used only if EthVM is not created (aka first call, not resume)
-        sdk.context(),
-        // Input of the smart contract
-        sdk.bytes_input(),
-        // Return data indicates the existence of interrupted state,
-        // if we have return data not empty,
-        // then we've executed this frame before and need to resume
-        sdk.return_data(),
+        sdk,
     );
+    // debug_log!("heap_pos_change={}", heap_pos_change());
     let instruction_table = interruptable_instruction_table::<SDK>();
+    // debug_log!("heap_pos_change={}", heap_pos_change());
     match evm.run_step(&instruction_table, sdk) {
         InterpreterAction::Return(result) => {
+            // debug_log!("heap_pos_change={}", heap_pos_change());
             evm.sync_evm_gas(sdk);
+            // debug_log!("heap_pos_change={}", heap_pos_change());
             _ = cached_state.pop();
+            // debug_log!("heap_pos_change={}", heap_pos_change());
             let exit_code = if result.result.is_ok() {
                 ExitCode::Ok
             } else if result.result.is_revert() {
@@ -246,6 +262,7 @@ fn main_inner<SDK: SharedAPI>(
             } else {
                 ExitCode::Err
             };
+            // debug_log!("heap_pos_change={}", heap_pos_change());
             (result.output, exit_code)
         }
         InterpreterAction::SystemInterruption {
@@ -255,7 +272,9 @@ fn main_inner<SDK: SharedAPI>(
             state,
         } => {
             let input_offset = input.as_ptr() as usize;
+            // debug_log!("heap_pos_change={}", heap_pos_change());
             evm.sync_evm_gas(sdk);
+            // debug_log!("heap_pos_change={}", heap_pos_change());
             let syscall_params = SyscallInvocationParams {
                 code_hash,
                 input: input_offset..(input_offset + input.len()),
@@ -264,6 +283,7 @@ fn main_inner<SDK: SharedAPI>(
                 fuel16_ptr: 0,
             }
             .encode();
+            // debug_log!("heap_pos_change={}", heap_pos_change());
             (syscall_params.into(), ExitCode::InterruptionCalled)
         }
         InterpreterAction::NewFrame(_) => unreachable!("evm: frames can't be produced"),

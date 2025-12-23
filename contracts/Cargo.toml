@@ -23,8 +23,8 @@ fluentbase-svm-common = { path = "../crates/svm-common", default-features = fals
 fluentbase-svm = { path = "../crates/svm", default-features = false }
 fluentbase-testing = { path = "../crates/testing", default-features = false }
 # revm
-revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
-#revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
+#revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
+revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
 # solana
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }

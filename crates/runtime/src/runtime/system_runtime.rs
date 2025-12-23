@@ -11,6 +11,7 @@ use std::{
     rc::Rc,
     sync::{Arc, OnceLock, RwLock},
 };
+use std::time::Duration;
 use wasmtime::{
     AsContextMut, Config, Engine, Func, Instance, Linker, Memory, Module, OptLevel, Store,
     Strategy, Trap, Val,
@@ -104,6 +105,7 @@ impl SystemRuntime {
     }
 
     pub fn execute(&mut self) -> Result<(), TrapCode> {
+        // std::thread::sleep(Duration::from_millis(400));
         let mut compiled_runtime = self.compiled_runtime.borrow_mut();
 
         // Rewrite runtime context before each call, since we reuse the same store and runtime for

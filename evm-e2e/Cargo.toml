@@ -11,8 +11,8 @@ fluentbase-sdk = { path = "../crates/sdk" }
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 
 #revm = { version = "27.0.3", package = "revm-rwasm", default-features = false, features = ["std", "serde-json", "serde"] }
-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false, features = ["std", "serde-json", "serde"] }
-#revm = { path = "../../revm-rwasm/crates/revm", default-features = false, features = ["std", "serde-json", "serde"] }
+#revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false, features = ["std", "serde-json", "serde"] }
+revm = { path = "../../revm-rwasm/crates/revm", default-features = false, features = ["std", "serde-json", "serde"] }
 fluentbase-revm = { path = "../crates/revm" }
 
 hash-db = "=0.15"
@@ -43,7 +43,7 @@ rwasm = { version = "0.3.2", default-features = false, features = ["wasmtime"] }
 [features]
 default = [
     "std",
-    # "debug-print",
+     "debug-print",
     # "wasmtime",
 ]
 std = [
