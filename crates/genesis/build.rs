@@ -22,7 +22,6 @@ const GENESIS_CONTRACTS: &[(Address, fluentbase_contracts::BuildOutput)] = &[
     (fluentbase_sdk::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_EVM),
     #[cfg(feature="svm")]
     (fluentbase_sdk::PRECOMPILE_SVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_SVM),
-    (fluentbase_sdk::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_FAIRBLOCK),
     (fluentbase_sdk::PRECOMPILE_IDENTITY, fluentbase_contracts::FLUENTBASE_CONTRACTS_IDENTITY),
     (fluentbase_sdk::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts::FLUENTBASE_CONTRACTS_KZG),
     (fluentbase_sdk::PRECOMPILE_BLS12_381_G1_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
