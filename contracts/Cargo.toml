@@ -66,5 +66,5 @@ fluentbase-svm = { path = "../crates/svm" }
 fluentbase-testing = { path = "../crates/testing" }
 #ecdsa = { path = "../../signatures/ecdsa" }
 #rwasm = { path = "../../rwasm", default-features = false,  }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/sync-strategies", default-features = false, features = ["serde"]}
-wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "feat/sync-strategies", features = ["cache"] }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false, features = ["serde"]}
+wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", features = ["cache"] }

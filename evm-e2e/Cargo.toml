@@ -62,5 +62,5 @@ wasmtime = [
 ]
 
 [patch.crates-io]
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/sync-strategies", default-features = false }
-wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "feat/sync-strategies", features = ["cache"] }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", features = ["cache"] }

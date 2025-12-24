@@ -1067,7 +1067,7 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "cranelift-assembler-x64-meta",
 ]
@@ -1075,7 +1075,7 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64-meta"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "cranelift-srcgen",
 ]
@@ -1083,7 +1083,7 @@ dependencies = [
 [[package]]
 name = "cranelift-bforest"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "cranelift-entity",
 ]
@@ -1091,7 +1091,7 @@ dependencies = [
 [[package]]
 name = "cranelift-bitset"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "serde",
  "serde_derive",
@@ -1100,7 +1100,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -1126,7 +1126,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-meta"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "cranelift-assembler-x64-meta",
  "cranelift-codegen-shared",
@@ -1137,12 +1137,12 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-shared"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 
 [[package]]
 name = "cranelift-control"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "arbitrary",
 ]
@@ -1150,7 +1150,7 @@ dependencies = [
 [[package]]
 name = "cranelift-entity"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "cranelift-bitset",
  "serde",
@@ -1160,7 +1160,7 @@ dependencies = [
 [[package]]
 name = "cranelift-frontend"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -1171,12 +1171,12 @@ dependencies = [
 [[package]]
 name = "cranelift-isle"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 
 [[package]]
 name = "cranelift-native"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "cranelift-codegen",
  "libc",
@@ -1186,7 +1186,7 @@ dependencies = [
 [[package]]
 name = "cranelift-srcgen"
 version = "0.121.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 
 [[package]]
 name = "crc"
@@ -3673,7 +3673,7 @@ dependencies = [
 [[package]]
 name = "pulley-interpreter"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "cranelift-bitset",
  "log",
@@ -3684,7 +3684,7 @@ dependencies = [
 [[package]]
 name = "pulley-macros"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4256,7 +4256,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.3.2"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=feat%2Fsync-strategies#5d3d1710da7d9354bc8a4724920378debd690c64"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#e5363da1656945fa7676cd9dc7bcb4b9f4d0c237"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -5901,7 +5901,7 @@ dependencies = [
 [[package]]
 name = "wasmtime"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "addr2line",
  "anyhow",
@@ -5956,7 +5956,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-asm-macros"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "cfg-if",
 ]
@@ -5964,7 +5964,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-cache"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5983,7 +5983,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-component-macro"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "anyhow",
  "proc-macro2",
@@ -5997,12 +5997,12 @@ dependencies = [
 [[package]]
 name = "wasmtime-component-util"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 
 [[package]]
 name = "wasmtime-cranelift"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -6028,7 +6028,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-environ"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "anyhow",
  "cpp_demangle",
@@ -6054,7 +6054,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-fiber"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "anyhow",
  "cc",
@@ -6069,7 +6069,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-jit-debug"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "cc",
  "object 0.36.7",
@@ -6080,7 +6080,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-jit-icache-coherence"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -6091,7 +6091,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-math"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "libm",
 ]
@@ -6099,12 +6099,12 @@ dependencies = [
 [[package]]
 name = "wasmtime-slab"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 
 [[package]]
 name = "wasmtime-versioned-export-macros"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6114,7 +6114,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-winch"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -6130,7 +6130,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-wit-bindgen"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "anyhow",
  "heck",
@@ -6213,7 +6213,7 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 [[package]]
 name = "winch-codegen"
 version = "34.0.1"
-source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=feat%2Fsync-strategies#5be9364e3420b75cd0c8d962c0561ad1517182f9"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "anyhow",
  "cranelift-assembler-x64",

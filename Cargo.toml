@@ -99,7 +99,7 @@ solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/s
 
 # rwasm
 #rwasm = { version = "0.3.2", default-features = false }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/sync-strategies", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 #rwasm = { path = "../rwasm", default-features = false }
 
 # alloy
@@ -197,8 +197,8 @@ array-bytes = "1.6.0"
 tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
 bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm" }
 #rwasm = { path = "../rwasm", default-features = false }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/sync-strategies", default-features = false }
-wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "feat/sync-strategies", optional = true, features = ["cache"] }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", optional = true, features = ["cache"] }
 
 [workspace.lints]
 rust.missing_debug_implementations = "warn"
