@@ -1,11 +1,17 @@
 use alloc::{string::String, vec, vec::Vec};
 use coset::{CborSerializable, CoseError, CoseSign1};
-use der::{Decode, DecodePem, Encode};
+use der::{asn1::ObjectIdentifier, Decode, DecodePem, Encode};
 use fluentbase_sdk::debug_log;
 use p384::ecdsa::signature::Verifier;
-use x509_cert::certificate::Certificate;
+use x509_cert::{certificate::Certificate, ext::pkix::BasicConstraints};
 
 static NITRO_ROOT_CA_BYTES: &[u8] = include_bytes!("nitro.pem");
+
+// OIDs for X.509 extensions (RFC 5280)
+// BasicConstraints: 2.5.29.19
+const BASIC_CONSTRAINTS_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.19");
+// KeyUsage: 2.5.29.15
+const KEY_USAGE_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.15");
 
 #[derive(Debug, Default)]
 pub struct AttestationDoc {
@@ -130,6 +136,123 @@ impl AttestationDoc {
     }
 }
 
+/// Validates certificate extensions according to RFC 5280 and Nitro specification.
+/// Both BasicConstraints and KeyUsage extensions must be present.
+/// Returns the pathLenConstraint if present (None means unlimited).
+/// Note: Critical flag is not enforced, aligning with reference:
+#[cfg_attr(test, allow(dead_code))]
+fn verify_certificate_extensions(cert: &Certificate, is_ca: bool) -> Option<u8> {
+    let extensions = cert
+        .tbs_certificate
+        .extensions
+        .as_ref()
+        .expect("extensions must be present");
+
+    let mut basic_constraints_found = false;
+    let mut key_usage_found = false;
+    let mut max_path_len = None;
+
+    for ext in extensions {
+        if ext.extn_id == BASIC_CONSTRAINTS_OID {
+            // BasicConstraints extension found (critical flag is optional)
+            basic_constraints_found = true;
+
+            // Decode BasicConstraints from the extension value (which is an OctetString)
+            let extn_bytes = ext.extn_value.as_bytes();
+            let basic_constraints = BasicConstraints::from_der(extn_bytes)
+                .expect("failed to decode basicConstraints extension");
+
+            // Verify CA flag matches expected value
+            assert!(
+                basic_constraints.ca == is_ca,
+                "basicConstraints CA flag mismatch"
+            );
+
+            // Extract pathLenConstraint if present
+            if let Some(path_len) = basic_constraints.path_len_constraint {
+                max_path_len = Some(path_len);
+            }
+        } else if ext.extn_id == KEY_USAGE_OID {
+            // KeyUsage extension found (critical flag is optional)
+            key_usage_found = true;
+
+            // Decode KeyUsage as BitString from the extension value
+            // The extension value is an OctetString containing a DER-encoded BitString
+            let extn_bytes = ext.extn_value.as_bytes();
+
+            // Parse the BitString manually (similar to Solidity code)
+            // BitString DER format: [0x03] [length] [unused_bits: u8] [data...]
+            // We expect tag 0x03 (BIT STRING), unused_bits should be 0x00 (full bytes)
+            if extn_bytes.is_empty() {
+                panic!("keyUsage extension value is empty");
+            }
+
+            // Verify it's a BIT STRING (tag 0x03)
+            if extn_bytes[0] != 0x03 {
+                panic!(
+                    "keyUsage extension: expected BIT STRING (0x03), got {}",
+                    extn_bytes[0]
+                );
+            }
+
+            // Parse length (simple DER length encoding)
+            let mut data_start = 2; // Skip tag (1 byte) and length (1 byte for short form)
+            if extn_bytes.len() < data_start + 1 {
+                panic!("keyUsage extension: invalid length");
+            }
+
+            // Check unused bits (used bits only affect the last byte)
+            let _unused_bits = extn_bytes[data_start];
+
+            // Skip unused_bits byte to get the actual data
+            data_start += 1;
+            if extn_bytes.len() <= data_start {
+                panic!("keyUsage extension is empty");
+            }
+
+            // Get the first byte of KeyUsage data
+            // Unused bits only affect interpretation of the last byte, so the first byte is always valid
+            let first_byte = extn_bytes[data_start];
+
+            // Ensure we have at least one full byte of data (unused bits only affect the last byte)
+            // For our checks (bit 0 and bit 5), we only need the first byte, so we're good
+
+            if is_ca {
+                // For CA certificates: keyCertSign (bit 5) must be set
+                // In the bitstring, bit 5 means the 6th bit from the left (0-indexed: bit 5)
+                // This corresponds to: 0x04 (binary: 00000100)
+                assert!(
+                    (first_byte & 0x04) != 0,
+                    "keyCertSign bit must be set for CA certificates"
+                );
+            } else {
+                // For leaf certificates: digitalSignature (bit 0) must be set
+                // Bit 0 is the leftmost bit, which corresponds to: 0x80 (binary: 10000000)
+                assert!(
+                    (first_byte & 0x80) != 0,
+                    "digitalSignature bit must be set for leaf certificates"
+                );
+            }
+        }
+    }
+
+    assert!(
+        basic_constraints_found,
+        "basicConstraints extension not found"
+    );
+    assert!(key_usage_found, "keyUsage extension not found");
+
+    // For leaf certificates, pathLenConstraint must not be present
+    if !is_ca {
+        assert!(
+            max_path_len.is_none(),
+            "pathLenConstraint must be undefined for client cert"
+        );
+    }
+
+    max_path_len
+}
+
 fn verify_certificate(subject: &Certificate, issuer: &Certificate) {
     let signed_data = subject.tbs_certificate.to_der().unwrap();
     let signature = subject
@@ -166,8 +289,84 @@ fn verify_attestation_doc(doc: &AttestationDoc, root_certificate: &Certificate) 
         chain.push(Certificate::from_der(cert).unwrap());
     }
     chain.push(Certificate::from_der(&doc.certificate).unwrap());
-    for i in 0..chain.len() - 1 {
-        verify_certificate(&chain[i + 1], &chain[i]);
+
+    let chain_size = chain.len();
+    // Chain size excluding root and leaf = number of intermediate CA certificates
+    // The root is at index 0, leaf is at index chain.len() - 1
+    let ca_chain_length = chain_size - 2; // Excluding root (index 0) and leaf (last index)
+
+    // Track parent maxPathLen for pathLenConstraint validation
+    let mut parent_max_path_len: Option<u8> = None;
+
+    // Verify extensions and signatures for each certificate in the chain
+    for (i, cert) in chain.iter().enumerate() {
+        let is_ca = i < chain.len() - 1; // All certs except the last are CA certs
+        let max_path_len = verify_certificate_extensions(cert, is_ca);
+
+        if i == 0 {
+            // Root certificate (index 0) specific validation
+            // pathLenConstraint must be >= chain size (number of CA certs in chain excluding root)
+            // If pathLenConstraint is undefined (None), it's unlimited, which is valid
+            if let Some(root_path_len) = max_path_len {
+                assert!(
+                    root_path_len as usize >= ca_chain_length,
+                    "root certificate pathLenConstraint ({}) must be >= chain size ({})",
+                    root_path_len,
+                    ca_chain_length
+                );
+            }
+            // Root certificate should have keyCertSign (already validated in verify_certificate_extensions)
+        } else if is_ca {
+            // Intermediate CA certificates (all except root and leaf)
+            // Check that pathLenConstraint is not exceeded
+            if let Some(parent_max) = parent_max_path_len {
+                // Parent's pathLenConstraint limits how many more CA certs can follow
+                // If parent_max is 0, no more certificates can follow (chain already too long)
+                assert!(
+                    parent_max > 0,
+                    "pathLenConstraint exceeded: parent certificate allows no more certificates"
+                );
+                // Child's pathLenConstraint, if defined, must be less than parent's
+                if let Some(child_max) = max_path_len {
+                    assert!(
+                        child_max < parent_max,
+                        "pathLenConstraint exceeded: child maxPathLen ({}) must be less than parent's ({})",
+                        child_max,
+                        parent_max
+                    );
+                }
+            }
+        } else {
+            // Leaf certificate (last in chain)
+            // pathLenConstraint must be undefined (already validated in verify_certificate_extensions)
+            // digitalSignature bit must be set (already validated in verify_certificate_extensions)
+            assert!(
+                max_path_len.is_none(),
+                "leaf certificate pathLenConstraint must be undefined"
+            );
+        }
+
+        // Update parent_max_path_len for the next iteration
+        // For CA certs, use the effective maxPathLen (parent - 1 if parent was defined)
+        if is_ca {
+            parent_max_path_len = match (parent_max_path_len, max_path_len) {
+                (Some(parent_max), Some(child_max)) => {
+                    // Constrain to the more restrictive value: min(child, parent - 1)
+                    Some(child_max.min(parent_max.saturating_sub(1)))
+                }
+                (Some(parent_max), None) => {
+                    // Child has no constraint, but parent limits it to parent - 1
+                    Some(parent_max.saturating_sub(1))
+                }
+                (None, Some(child_max)) => Some(child_max),
+                (None, None) => None, // Unlimited
+            };
+        }
+
+        // Verify signature (except for root, which we trust)
+        if i > 0 {
+            verify_certificate(&chain[i], &chain[i - 1]);
+        }
     }
 }
 
