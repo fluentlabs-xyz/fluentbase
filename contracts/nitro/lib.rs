@@ -6,13 +6,14 @@ extern crate fluentbase_sdk;
 
 mod attestation;
 
-use fluentbase_sdk::{alloc_slice, entrypoint, SharedAPI};
+use fluentbase_sdk::{alloc_slice, entrypoint, ContextReader, SharedAPI};
 
 pub fn main_entry(sdk: impl SharedAPI) {
     let input_size = sdk.input_size();
     let input = alloc_slice(input_size as usize);
     sdk.read(input, 0);
-    attestation::parse_and_verify(&input);
+    let current_timestamp = sdk.context().block_timestamp();
+    attestation::parse_and_verify(&input, current_timestamp);
 }
 
 entrypoint!(main_entry);
@@ -22,6 +23,7 @@ mod tests {
     use super::*;
     use coset::CborSerializable;
     use der::{Decode, DecodePem, Encode};
+    use fluentbase_sdk::SharedContextInputV1;
     use fluentbase_testing::HostTestingContext;
     use x509_cert::certificate::Certificate;
 
@@ -34,9 +36,19 @@ mod tests {
         let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
             .unwrap()
             .into();
-        let doc = attestation::parse_and_verify(&data);
+        // Use a timestamp that should be within the certificate validity period
+        // The attestation document timestamp is in milliseconds, but certificates use seconds
+        // The root certificate notBefore is 1572269285 (2019-10-28), so we need a timestamp after that
+        // We'll use a reasonable timestamp (e.g., 2023-09-18 which is when the test cert was issued)
+        let current_timestamp = 1695050165u64; // Approximate timestamp for the test certificate validity period
+        let doc = attestation::parse_and_verify(&data, current_timestamp);
         assert_eq!(doc.digest, "SHA384");
-        let sdk = HostTestingContext::default().with_input(data);
+        // Test main_entry with proper timestamp set in the context
+        let mut shared_ctx = SharedContextInputV1::default();
+        shared_ctx.block.timestamp = current_timestamp;
+        let sdk = HostTestingContext::default()
+            .with_shared_context_input(shared_ctx)
+            .with_input(data.clone());
         main_entry(sdk);
     }
 

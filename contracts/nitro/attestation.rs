@@ -281,7 +281,50 @@ fn verify_certificate(subject: &Certificate, issuer: &Certificate) {
     };
 }
 
-fn verify_attestation_doc(doc: &AttestationDoc, root_certificate: &Certificate) {
+/// Verifies that a certificate is valid at the given timestamp.
+/// Checks that notBefore <= timestamp <= notAfter.
+fn verify_certificate_validity(cert: &Certificate, current_timestamp: u64) {
+    let validity = &cert.tbs_certificate.validity;
+
+    // Convert certificate validity times to Unix timestamps
+    // x509-cert uses Time which can be UTCTime or GeneralizedTime
+    // Both represent time as seconds since Unix epoch
+    let not_before = match &validity.not_before {
+        x509_cert::time::Time::UtcTime(utc) => {
+            // UTCTime is seconds since 1970-01-01 00:00:00 UTC
+            utc.to_unix_duration().as_secs()
+        }
+        x509_cert::time::Time::GeneralTime(gen) => {
+            // GeneralTime is also seconds since 1970-01-01 00:00:00 UTC
+            gen.to_unix_duration().as_secs()
+        }
+    };
+
+    let not_after = match &validity.not_after {
+        x509_cert::time::Time::UtcTime(utc) => utc.to_unix_duration().as_secs(),
+        x509_cert::time::Time::GeneralTime(gen) => gen.to_unix_duration().as_secs(),
+    };
+
+    assert!(
+        not_before <= current_timestamp,
+        "certificate not valid yet: notBefore={}, current={}",
+        not_before,
+        current_timestamp
+    );
+
+    assert!(
+        not_after >= current_timestamp,
+        "certificate not valid anymore: notAfter={}, current={}",
+        not_after,
+        current_timestamp
+    );
+}
+
+fn verify_attestation_doc(
+    doc: &AttestationDoc,
+    root_certificate: &Certificate,
+    current_timestamp: u64,
+) {
     let mut chain = Vec::new();
     assert!(!doc.cabundle.is_empty());
     assert_eq!(doc.cabundle[0], root_certificate.to_der().unwrap());
@@ -298,9 +341,13 @@ fn verify_attestation_doc(doc: &AttestationDoc, root_certificate: &Certificate) 
     // Track parent maxPathLen for pathLenConstraint validation
     let mut parent_max_path_len: Option<u8> = None;
 
-    // Verify extensions and signatures for each certificate in the chain
+    // Verify extensions, validity, and signatures for each certificate in the chain
     for (i, cert) in chain.iter().enumerate() {
         let is_ca = i < chain.len() - 1; // All certs except the last are CA certs
+
+        // Verify certificate validity period (Section 3.2.3.1)
+        verify_certificate_validity(cert, current_timestamp);
+
         let max_path_len = verify_certificate_extensions(cert, is_ca);
 
         if i == 0 {
@@ -387,7 +434,7 @@ fn verify_cosesign1(cosesign1: &CoseSign1, certificate: &Certificate) {
         .unwrap();
 }
 
-pub fn parse_and_verify(slice: &[u8]) -> AttestationDoc {
+pub fn parse_and_verify(slice: &[u8], current_timestamp: u64) -> AttestationDoc {
     debug_log!("parsing sign");
     let sign1 = coset::CoseSign1::from_slice(slice).unwrap();
     debug_log!("parsing doc");
@@ -395,7 +442,7 @@ pub fn parse_and_verify(slice: &[u8]) -> AttestationDoc {
     debug_log!("parsing CA certificate");
     let root_cert = Certificate::from_pem(NITRO_ROOT_CA_BYTES).unwrap();
     debug_log!("verifying CA certificate");
-    verify_attestation_doc(&doc, &root_cert);
+    verify_attestation_doc(&doc, &root_cert, current_timestamp);
     debug_log!("parsing certificate");
     let cert = Certificate::from_der(doc.certificate.as_slice()).unwrap();
     debug_log!("verifying certificate");
