@@ -102,11 +102,6 @@ fn main() {
         }
     }
 
-    let fairblock_fallback_dir = fluentbase_root_dir.join("contracts/fairblock/fallback.wasm");
-    paths.push((
-        "fluentbase-contracts-fairblock".to_string(),
-        fairblock_fallback_dir,
-    ));
     paths.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut code = Vec::new();

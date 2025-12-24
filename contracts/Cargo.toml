@@ -1,6 +1,6 @@
 [workspace]
 members = ["*"]
-exclude = [".cargo", "fairblock", "target"]
+exclude = [".cargo", "target"]
 resolver = "2"
 
 [workspace.package]

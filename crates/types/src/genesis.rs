@@ -1,12 +1,7 @@
-#[cfg(feature = "svm")]
-use crate::SVM_ELF_MAGIC_BYTES;
 use crate::{address, hex, Address, Bytes, B256, UNIVERSAL_TOKEN_MAGIC_BYTES, WASM_MAGIC_BYTES};
 
 /// An address of EVM runtime that is used to execute an EVM program
 pub const PRECOMPILE_EVM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520001");
-/// A verifier for Fairblock attestations
-pub const PRECOMPILE_FAIRBLOCK_VERIFIER: Address =
-    address!("0x0000000000000000000000000000000000052002");
 
 /// An address for SVM runtime
 pub const PRECOMPILE_SVM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520003");
@@ -69,7 +64,6 @@ pub const PRECOMPILE_ADDRESSES: &[Address] = &[
     // PRECOMPILE_EIP7951,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
     PRECOMPILE_EVM_RUNTIME,
-    PRECOMPILE_FAIRBLOCK_VERIFIER,
     PRECOMPILE_IDENTITY,
     PRECOMPILE_KZG_POINT_EVALUATION,
     PRECOMPILE_NITRO_VERIFIER,
@@ -109,7 +103,6 @@ pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[
     // PRECOMPILE_EIP7951,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
     PRECOMPILE_EVM_RUNTIME,
-    // PRECOMPILE_FAIRBLOCK_VERIFIER,
     PRECOMPILE_IDENTITY,
     PRECOMPILE_KZG_POINT_EVALUATION,
     // PRECOMPILE_NITRO_VERIFIER,
@@ -142,8 +135,8 @@ pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
         return PRECOMPILE_WASM_RUNTIME;
     }
     #[cfg(feature = "svm")]
-    if input.len() > SVM_ELF_MAGIC_BYTES.len()
-        && input[..SVM_ELF_MAGIC_BYTES.len()] == SVM_ELF_MAGIC_BYTES
+    if input.len() > crate::SVM_ELF_MAGIC_BYTES.len()
+        && input[..crate::SVM_ELF_MAGIC_BYTES.len()] == crate::SVM_ELF_MAGIC_BYTES
     {
         PRECOMPILE_SVM_RUNTIME
     }
