@@ -1,8 +1,10 @@
-use crate::SysFuncIdx::{ENTER_UNCONSTRAINED, EXIT_UNCONSTRAINED, WRITE_FD};
-use crate::{SysFuncIdx, FUEL_DENOM_RATE, QUADRATIC_DIVISOR, QUADRATIC_WORD_FUEL_COST};
-use rwasm::{SyscallFuelParams, QuadraticFuelParams, LinearFuelParams};
-
-
+use crate::{
+    SysFuncIdx,
+    SysFuncIdx::{ENTER_UNCONSTRAINED, EXIT_UNCONSTRAINED, WRITE_FD},
+    FUEL_DENOM_RATE, FUEL_MAX_LINEAR_X, FUEL_MAX_QUADRATIC_X, QUADRATIC_DIVISOR,
+    QUADRATIC_WORD_FUEL_COST,
+};
+use rwasm::{LinearFuelParams, QuadraticFuelParams, SyscallFuelParams};
 
 /// In this file, we define the fuel procedures that will be inserted by the rwasm translator
 /// before the builtin calls. Each fuel procedure is a set of rwasm Opcodes that will be
@@ -27,6 +29,7 @@ macro_rules! linear_fuel {
             base_fuel: $base as u64,
             param_index: $param_index,
             word_cost: $linear as u64,
+            max_linear: FUEL_MAX_LINEAR_X as u64,
         })
     };
 }
@@ -37,8 +40,10 @@ macro_rules! quadratic_fuel {
             divisor: $divisor as u64,
             param_index: $local_depth,
             word_cost: $word_cost as u64,
+            max_quadratic: FUEL_MAX_QUADRATIC_X as u64,
+            fuel_denom_rate: FUEL_DENOM_RATE as u64,
         })
-    }
+    };
 }
 
 // Common fuel cost constants
