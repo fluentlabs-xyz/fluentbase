@@ -33,7 +33,7 @@ fn warmup_wasmtime_modules() {
         wasmtime::deserialize_wasmtime_module, CompilationConfig, RwasmModule,
     };
     for (name, wasmtime_module) in precompiled::PRECOMPILED_MODULES {
-        let module = deserialize_wasmtime_module(CompilationConfig::default(), wasmtime_module)
+        let module = deserialize_wasmtime_module(CompilationConfig::default().with_consume_fuel(false), wasmtime_module)
             .expect("failed to parse wasmtime module");
         let contract = fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS
             .values()

@@ -60,3 +60,7 @@ debug-print = [
 wasmtime = [
     "fluentbase-revm/wasmtime",
 ]
+
+[patch.crates-io]
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", features = ["cache"] }

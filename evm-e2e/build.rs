@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut full_list = String::new();
     for (name, contract, _addresses) in contracts {
         let wasmtime_module =
-            compile_wasmtime_module(CompilationConfig::default(), contract.wasm_bytecode)
+            compile_wasmtime_module(CompilationConfig::default().with_consume_fuel(false), contract.wasm_bytecode)
                 .expect("failed to compile contract into wasmtime module");
         let raw_wasmtime_module = wasmtime_module
             .serialize()
