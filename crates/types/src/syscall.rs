@@ -65,6 +65,17 @@ pub struct SyscallResult<T> {
     pub status: ExitCode,
 }
 
+impl<T: Default> Default for SyscallResult<T> {
+    fn default() -> Self {
+        Self {
+            data: T::default(),
+            fuel_consumed: 0,
+            fuel_refunded: 0,
+            status: ExitCode::Ok,
+        }
+    }
+}
+
 impl SyscallResult<()> {
     pub fn is_ok<I: Into<ExitCode>>(status: I) -> bool {
         Into::<ExitCode>::into(status) == ExitCode::Ok
@@ -113,6 +124,13 @@ impl<T> SyscallResult<T> {
             panic!("syscall failed with status ({})", self.status);
         }
         self.data
+    }
+    pub fn ok(self) -> Result<T, ExitCode> {
+        if self.status == ExitCode::Ok {
+            Ok(self.data)
+        } else {
+            Err(self.status)
+        }
     }
 }
 

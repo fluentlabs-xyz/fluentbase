@@ -27,6 +27,15 @@ use revm_interpreter::{
 };
 use revm_primitives::{wasm::wasm_max_code_size, BLOCK_HASH_HISTORY};
 
+#[doc(hidden)]
+#[macro_export]
+#[collapse_debuginfo(yes)]
+macro_rules! _count {
+    (@count) => { 0 };
+    (@count $head:tt $($tail:tt)*) => { 1 + _count!(@count $($tail)*) };
+    ($($arg:tt)*) => { _count!(@count $($arg)*) };
+}
+
 macro_rules! unpack_interruption {
     (@frame $context:expr) => {
         if let Some(interruption_outcome) =
@@ -440,8 +449,7 @@ fn call<
     };
     interrupt_into_action(context, |context, sdk| {
         let input = global_memory_from_shared_buffer(&context, in_range);
-        // TODO(dmitry123): I know that wrapping mul works here, but why?
-        let fuel_limit = Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE));
+        let fuel_limit = Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE));
         sdk.call(to, value, input.as_ref(), fuel_limit)
     });
 }
@@ -465,8 +473,7 @@ fn call_code<
     };
     interrupt_into_action(context, |context, sdk| {
         let input = global_memory_from_shared_buffer(&context, in_range);
-        // TODO(dmitry123): I know that wrapping mul works here, but why?
-        let fuel_limit = Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE));
+        let fuel_limit = Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE));
         sdk.call_code(to, value, input.as_ref(), fuel_limit)
     });
 }
@@ -490,8 +497,7 @@ fn delegate_call<
     };
     interrupt_into_action(context, |context, sdk| {
         let input = global_memory_from_shared_buffer(&context, in_range);
-        // TODO(dmitry123): I know that wrapping mul works here, but why?
-        let fuel_limit = Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE));
+        let fuel_limit = Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE));
         sdk.delegate_call(to, input.as_ref(), fuel_limit)
     });
 }
@@ -515,8 +521,7 @@ fn static_call<
     };
     interrupt_into_action(context, |context, sdk| {
         let input = global_memory_from_shared_buffer(&context, in_range);
-        // TODO(dmitry123): I know that wrapping mul works here, but why?
-        let fuel_limit = Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE));
+        let fuel_limit = Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE));
         sdk.static_call(to, input.as_ref(), fuel_limit)
     });
 }
@@ -542,27 +547,27 @@ pub const fn interruptable_instruction_table<'a, SDK: SharedAPI>(
 ) -> [Instruction<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>; 256] {
     let mut table = instruction_table::<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>();
     use revm_bytecode::opcode::*;
-    table[BALANCE as usize] = balance;
-    table[EXTCODESIZE as usize] = extcodesize;
-    table[EXTCODECOPY as usize] = extcodecopy;
-    table[EXTCODEHASH as usize] = extcodehash;
-    table[BLOCKHASH as usize] = blockhash;
-    table[SELFBALANCE as usize] = selfbalance;
-    table[SLOAD as usize] = sload;
-    table[SSTORE as usize] = sstore;
-    table[TLOAD as usize] = tload;
-    table[TSTORE as usize] = tstore;
-    table[LOG0 as usize] = log::<0, _>;
-    table[LOG1 as usize] = log::<1, _>;
-    table[LOG2 as usize] = log::<2, _>;
-    table[LOG3 as usize] = log::<3, _>;
-    table[LOG4 as usize] = log::<4, _>;
-    table[CREATE as usize] = create::<_, false, _>;
-    table[CALL as usize] = call;
-    table[CALLCODE as usize] = call_code;
-    table[DELEGATECALL as usize] = delegate_call;
-    table[CREATE2 as usize] = create::<_, true, _>;
-    table[STATICCALL as usize] = static_call;
-    table[SELFDESTRUCT as usize] = selfdestruct;
+    table[BALANCE as usize] = Instruction::new(balance, 0);
+    table[EXTCODESIZE as usize] = Instruction::new(extcodesize, 0);
+    table[EXTCODECOPY as usize] = Instruction::new(extcodecopy, 0);
+    table[EXTCODEHASH as usize] = Instruction::new(extcodehash, 0);
+    table[BLOCKHASH as usize] = Instruction::new(blockhash, 0);
+    table[SELFBALANCE as usize] = Instruction::new(selfbalance, 0);
+    table[SLOAD as usize] = Instruction::new(sload, 0);
+    table[SSTORE as usize] = Instruction::new(sstore, 0);
+    table[TLOAD as usize] = Instruction::new(tload, 0);
+    table[TSTORE as usize] = Instruction::new(tstore, 0);
+    table[LOG0 as usize] = Instruction::new(log::<0, _>, 0);
+    table[LOG1 as usize] = Instruction::new(log::<1, _>, 0);
+    table[LOG2 as usize] = Instruction::new(log::<2, _>, 0);
+    table[LOG3 as usize] = Instruction::new(log::<3, _>, 0);
+    table[LOG4 as usize] = Instruction::new(log::<4, _>, 0);
+    table[CREATE as usize] = Instruction::new(create::<_, false, _>, 0);
+    table[CALL as usize] = Instruction::new(call, 0);
+    table[CALLCODE as usize] = Instruction::new(call_code, 0);
+    table[DELEGATECALL as usize] = Instruction::new(delegate_call, 0);
+    table[CREATE2 as usize] = Instruction::new(create::<_, true, _>, 0);
+    table[STATICCALL as usize] = Instruction::new(static_call, 0);
+    table[SELFDESTRUCT as usize] = Instruction::new(selfdestruct, 0);
     table
 }

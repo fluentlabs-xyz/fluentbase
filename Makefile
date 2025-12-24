@@ -34,14 +34,14 @@ test:
 	cargo test --manifest-path=./contracts/Cargo.toml --release
 	cargo test --manifest-path=./examples/Cargo.toml --release
 	cargo test --release
-	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e short_tests::good_coverage_tests --release
+	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e tests --release
 
 .PHONY: testnet_test
 testnet_test:
 	cargo test --manifest-path=./contracts/Cargo.toml --release --features fluent-testnet
 	cargo test --manifest-path=./examples/Cargo.toml --release --features fluent-testnet
 	cargo test --release --features fluent-testnet
-	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e short_tests::good_coverage_tests --release
+	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e tests --release
 
 .PHONY: svm_tests
 svm_tests:
@@ -50,13 +50,22 @@ svm_tests:
 
 .PHONY: wasm_contracts_sizes
 wasm_contracts_sizes:
-	ls -al target/contracts/wasm32-unknown-unknown/release/*.wasm
+	du -sch target/contracts/wasm32-unknown-unknown/release/*.wasm
 
-CONTRACT_NAME=svm
+CONTRACTS_DIR := target/contracts/wasm32-unknown-unknown
+WAT_OUT_DIR       := target/wats
+
 .PHONY: wasm2wat
 wasm2wat:
-	mkdir -p tmp
-	wasm2wat target/contracts/wasm32-unknown-unknown/release/fluentbase_contracts_$(CONTRACT_NAME).wasm > tmp/$(CONTRACT_NAME).wat
+	mkdir -p $(WAT_OUT_DIR)
+	for mode in debug release; do \
+		for f in $(CONTRACTS_DIR)/$$mode/*.wasm; do \
+			[ -e "$$f" ] || continue; \
+			name=$$(basename $$f .wasm); \
+			echo "Converting $$f -> $(WAT_OUT_DIR)/$$name.$$mode.wat"; \
+			wasm2wat "$$f" > "$(WAT_OUT_DIR)/$$name.$$mode.wat"; \
+		done; \
+	done
 
 .PHONY: check
 check:

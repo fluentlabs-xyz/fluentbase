@@ -10,9 +10,13 @@ use fluentbase_evm::{
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
 };
 use fluentbase_sdk::{
-    bincode, byteorder, byteorder::ByteOrder, crypto::crypto_keccak256, entrypoint, Bytes,
-    ContextReader, ExitCode, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1, SharedAPI,
-    SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
+    bincode, byteorder,
+    byteorder::ByteOrder,
+    crypto::crypto_keccak256,
+    entrypoint,
+    system::{RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1},
+    Bytes, ContextReader, ExitCode, SharedAPI, SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE,
+    FUEL_DENOM_RATE,
 };
 use spin::MutexGuard;
 
@@ -272,7 +276,7 @@ entrypoint!(main_entry, deploy_entry);
 mod tests {
     use crate::{deploy_entry, main_entry};
     use core::str::from_utf8;
-    use fluentbase_sdk::{hex, Address, ContractContextV1, ExitCode, PRECOMPILE_EVM_RUNTIME, U256};
+    use fluentbase_sdk::{hex, Address, ContractContextV1, PRECOMPILE_EVM_RUNTIME, U256};
     use fluentbase_testing::HostTestingContext;
 
     #[ignore]

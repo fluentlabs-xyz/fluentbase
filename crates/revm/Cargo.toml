@@ -25,6 +25,8 @@ all = "warn"
 # revm
 revm = { workspace = true }
 
+fluentbase-universal-token = { workspace = true }
+
 # static precompile sets.
 once_cell = { workspace = true, features = ["alloc"] }
 
@@ -33,7 +35,9 @@ rwasm = { workspace = true, default-features = false, features = ["serde"] }
 
 tracing = { version = "0.1" }
 
-cfg-if = {workspace = true}
+cfg-if = { workspace = true }
+
+alloy-primitives = { workspace = true }
 
 # Optional
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
@@ -89,8 +93,6 @@ optional_no_base_fee = ["revm/optional_no_base_fee"]
 # See comments in `revm-precompile`
 secp256k1 = ["revm/secp256k1"]
 c-kzg = ["revm/c-kzg"]
-# `kzg-rs` is not audited but useful for `no_std` environment, use it with causing and default to `c-kzg` if possible.
-kzg-rs = ["revm/kzg-rs"]
 blst = ["revm/blst"]
 bn = ["revm/bn"]
 
@@ -101,7 +103,7 @@ debug-print = [
 ]
 wasmtime = ["fluentbase-runtime/wasmtime", "rwasm/wasmtime"]
 fluent-testnet = [
-	"fluentbase-runtime/fluent-testnet",
-	"fluentbase-sdk/fluent-testnet",
-	"fluentbase-evm/fluent-testnet"
+    "fluentbase-runtime/fluent-testnet",
+    "fluentbase-sdk/fluent-testnet",
+    "fluentbase-evm/fluent-testnet"
 ]

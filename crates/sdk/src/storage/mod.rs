@@ -10,6 +10,7 @@ mod vec;
 
 pub use array::*;
 pub use bytes::*;
+use fluentbase_types::ExitCode;
 pub use map::*;
 pub use primitive::*;
 pub use vec::*;
@@ -104,31 +105,37 @@ pub trait PackableCodec: Sized + Copy {
 /// Automatically implemented for all types implementing StorageAPI.
 pub(crate) trait StorageOps: StorageAPI {
     /// Read full 32-byte slot.
-    fn sload(&self, slot: U256) -> B256 {
-        self.storage(&slot).unwrap().into()
+    fn sload(&self, slot: U256) -> Result<B256, ExitCode> {
+        let result = self.storage(&slot).ok()?;
+        Ok(result.into())
     }
 
     /// Write full 32-byte slot.
-    fn sstore(&mut self, slot: U256, value: B256) {
-        self.write_storage(slot, value.into()).unwrap()
+    fn sstore(&mut self, slot: U256, value: B256) -> Result<(), ExitCode> {
+        self.write_storage(slot, value.into()).ok()
     }
 
     /// Read packed value from slot at specific offset.
     ///
     /// Optimization: single SLOAD even for small types.
-    fn read_at<T: PackableCodec>(&self, slot: U256, offset: u8) -> T {
+    fn read_at<T: PackableCodec>(&self, slot: U256, offset: u8) -> Result<T, ExitCode> {
         let start = offset as usize;
         let end = start + T::ENCODED_SIZE;
         assert!(end <= 32, "read out of bounds");
 
-        let word = self.sload(slot);
-        T::decode(&word[start..end])
+        let word = self.sload(slot)?;
+        Ok(T::decode(&word[start..end]))
     }
 
     /// Write packed value to slot at specific offset.
     ///
     /// Optimization: skip SLOAD for full-slot writes.
-    fn write_at<T: PackableCodec>(&mut self, slot: U256, offset: u8, value: &T) {
+    fn write_at<T: PackableCodec>(
+        &mut self,
+        slot: U256,
+        offset: u8,
+        value: &T,
+    ) -> Result<(), ExitCode> {
         let start = offset as usize;
         let end = start + T::ENCODED_SIZE;
         assert!(end <= 32, "write out of bounds");
@@ -137,14 +144,14 @@ pub(crate) trait StorageOps: StorageAPI {
             // Full slot overwrite - no need to read existing value
             let mut word = [0u8; 32];
             value.encode_into(&mut word);
-            self.sstore(slot, B256::from(word));
-            return;
+            self.sstore(slot, B256::from(word))?;
+            return Ok(());
         }
 
         // Partial update - preserve other bytes in slot
-        let mut word = self.sload(slot);
+        let mut word = self.sload(slot)?;
         value.encode_into(&mut word.0[start..end]);
-        self.sstore(slot, word);
+        self.sstore(slot, word)
     }
 }
 

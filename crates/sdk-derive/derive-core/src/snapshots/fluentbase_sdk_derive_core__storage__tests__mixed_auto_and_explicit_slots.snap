@@ -1,0 +1,385 @@
+---
+source: crates/sdk-derive/derive-core/src/storage.rs
+expression: formatted
+---
+impl<SDK> MixedStorage<SDK> {
+    /// Number of storage slots used by auto-layout fields.
+    /// Fields with explicit #[slot()] are not counted.
+    pub const SLOTS: usize = Self::calculate_slots();
+    /// Creates a new instance starting at slot 0.
+    pub fn new(sdk: SDK) -> Self {
+        let slot = fluentbase_sdk::U256::from(0);
+        let offset = 0u8;
+        let mut current_slot = slot;
+        let mut current_offset: u8 = offset;
+        let auto1_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
+                    let result = (current_slot, actual_offset);
+                    current_offset += bytes;
+                    result
+                } else {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
+                    (current_slot, actual_offset)
+                }
+            } else {
+                if current_offset > 0 {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_offset = 0;
+                }
+                let result = (current_slot, 0);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
+                result
+            }
+        };
+        let auto2_layout = {
+            let bytes = <StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
+                    let result = (current_slot, actual_offset);
+                    current_offset += bytes;
+                    result
+                } else {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
+                    (current_slot, actual_offset)
+                }
+            } else {
+                if current_offset > 0 {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_offset = 0;
+                }
+                let result = (current_slot, 0);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
+                result
+            }
+        };
+        let explicit_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let explicit_slot: fluentbase_sdk::U256 = SPECIAL_SLOT;
+            let offset = if slots == 0 { 32 - bytes } else { 0 };
+            (explicit_slot, offset)
+        };
+        let auto3_layout = {
+            let bytes = <StoragePrimitive<
+                bool,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                bool,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
+                    let result = (current_slot, actual_offset);
+                    current_offset += bytes;
+                    result
+                } else {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
+                    (current_slot, actual_offset)
+                }
+            } else {
+                if current_offset > 0 {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_offset = 0;
+                }
+                let result = (current_slot, 0);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
+                result
+            }
+        };
+        Self {
+            sdk,
+            auto1: <<StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                auto1_layout.0,
+                auto1_layout.1,
+            ),
+            auto2: <<StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                auto2_layout.0,
+                auto2_layout.1,
+            ),
+            explicit: <<StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                explicit_layout.0,
+                explicit_layout.1,
+            ),
+            auto3: <<StoragePrimitive<
+                bool,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                auto3_layout.0,
+                auto3_layout.1,
+            ),
+        }
+    }
+    /// Creates a new instance at a specific slot and offset.
+    pub fn new_at(sdk: SDK, slot: fluentbase_sdk::U256, offset: u8) -> Self {
+        let mut current_slot = slot;
+        let mut current_offset: u8 = offset;
+        let auto1_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
+                    let result = (current_slot, actual_offset);
+                    current_offset += bytes;
+                    result
+                } else {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
+                    (current_slot, actual_offset)
+                }
+            } else {
+                if current_offset > 0 {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_offset = 0;
+                }
+                let result = (current_slot, 0);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
+                result
+            }
+        };
+        let auto2_layout = {
+            let bytes = <StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
+                    let result = (current_slot, actual_offset);
+                    current_offset += bytes;
+                    result
+                } else {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
+                    (current_slot, actual_offset)
+                }
+            } else {
+                if current_offset > 0 {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_offset = 0;
+                }
+                let result = (current_slot, 0);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
+                result
+            }
+        };
+        let explicit_layout = {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let explicit_slot: fluentbase_sdk::U256 = SPECIAL_SLOT;
+            let offset = if slots == 0 { 32 - bytes } else { 0 };
+            (explicit_slot, offset)
+        };
+        let auto3_layout = {
+            let bytes = <StoragePrimitive<
+                bool,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
+                bool,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
+                    let result = (current_slot, actual_offset);
+                    current_offset += bytes;
+                    result
+                } else {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
+                    (current_slot, actual_offset)
+                }
+            } else {
+                if current_offset > 0 {
+                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_offset = 0;
+                }
+                let result = (current_slot, 0);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
+                result
+            }
+        };
+        Self {
+            sdk,
+            auto1: <<StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                auto1_layout.0,
+                auto1_layout.1,
+            ),
+            auto2: <<StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                auto2_layout.0,
+                auto2_layout.1,
+            ),
+            explicit: <<StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                explicit_layout.0,
+                explicit_layout.1,
+            ),
+            auto3: <<StoragePrimitive<
+                bool,
+            > as fluentbase_sdk::storage::StorageLayout>::Descriptor as fluentbase_sdk::storage::StorageDescriptor>::new(
+                auto3_layout.0,
+                auto3_layout.1,
+            ),
+        }
+    }
+    const fn calculate_slots() -> usize {
+        let mut current_slot: usize = 0;
+        let mut current_offset: usize = 0;
+        {
+            let bytes = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES;
+            let slots = <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    current_offset += bytes;
+                } else {
+                    current_slot += 1;
+                    current_offset = bytes;
+                }
+            } else {
+                if current_offset > 0 {
+                    current_slot += 1;
+                    current_offset = 0;
+                }
+                current_slot += slots;
+                current_offset = 0;
+            }
+        }
+        {
+            let bytes = <StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES;
+            let slots = <StoragePrimitive<
+                U256,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    current_offset += bytes;
+                } else {
+                    current_slot += 1;
+                    current_offset = bytes;
+                }
+            } else {
+                if current_offset > 0 {
+                    current_slot += 1;
+                    current_offset = 0;
+                }
+                current_slot += slots;
+                current_offset = 0;
+            }
+        }
+        {
+            let bytes = <StoragePrimitive<
+                bool,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES;
+            let slots = <StoragePrimitive<
+                bool,
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    current_offset += bytes;
+                } else {
+                    current_slot += 1;
+                    current_offset = bytes;
+                }
+            } else {
+                if current_offset > 0 {
+                    current_slot += 1;
+                    current_offset = 0;
+                }
+                current_slot += slots;
+                current_offset = 0;
+            }
+        }
+        if current_offset > 0 { current_slot + 1 } else { current_slot }
+    }
+    ///Returns an accessor for the `auto1` storage field.
+    #[inline]
+    pub fn auto1_accessor(
+        &self,
+    ) -> <StoragePrimitive<
+        Address,
+    > as fluentbase_sdk::storage::StorageLayout>::Accessor {
+        <StoragePrimitive<
+            Address,
+        > as fluentbase_sdk::storage::StorageLayout>::access(self.auto1)
+    }
+    ///Returns an accessor for the `auto2` storage field.
+    #[inline]
+    pub fn auto2_accessor(
+        &self,
+    ) -> <StoragePrimitive<U256> as fluentbase_sdk::storage::StorageLayout>::Accessor {
+        <StoragePrimitive<
+            U256,
+        > as fluentbase_sdk::storage::StorageLayout>::access(self.auto2)
+    }
+    ///Returns an accessor for the `explicit` storage field.
+    #[inline]
+    pub fn explicit_accessor(
+        &self,
+    ) -> <StoragePrimitive<
+        Address,
+    > as fluentbase_sdk::storage::StorageLayout>::Accessor {
+        <StoragePrimitive<
+            Address,
+        > as fluentbase_sdk::storage::StorageLayout>::access(self.explicit)
+    }
+    ///Returns an accessor for the `auto3` storage field.
+    #[inline]
+    pub fn auto3_accessor(
+        &self,
+    ) -> <StoragePrimitive<bool> as fluentbase_sdk::storage::StorageLayout>::Accessor {
+        <StoragePrimitive<
+            bool,
+        > as fluentbase_sdk::storage::StorageLayout>::access(self.auto3)
+    }
+}

@@ -6,7 +6,7 @@ members = [
 exclude = [
     "examples/svm",
     # exclude revm e2e testing suite to let it be a separate crate
-    "evm-e2e"
+    "evm-e2e",
 ]
 resolver = "2"
 
@@ -106,7 +106,7 @@ rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/sync-s
 alloy-primitives = { version = "1.2.0", default-features = false, features = ["sha3-keccak"] }
 alloy-rlp = { version = "0.3.12", default-features = false }
 alloy-sol-types = { version = "1.2.0", default-features = false, features = ["json"] }
-alloy-genesis = { version = "1.0.11", default-features = false }
+alloy-genesis = { version = "=1.0.42", default-features = false }
 
 # misc
 blake3 = { version = "1.5.4", default-features = false }
@@ -149,12 +149,18 @@ elliptic-curve = { version = "0.13.4", features = ["hazmat", "sec1", "ecdh"], de
 cfg-if = { version = "1.0.3", default-features = false }
 
 # revm
-revm = { package = "revm-rwasm", version = "27.0.3", default-features = false }
-revm-primitives = { package = "revm-rwasm-primitives", version = "20.0.1", default-features = false }
-revm-precompile = { package = "revm-rwasm-precompile", version = "24.0.1", default-features = false }
-revm-bytecode = { package = "revm-rwasm-bytecode", version = "6.0.1", default-features = false }
-revm-interpreter = { package = "revm-rwasm-interpreter", version = "23.0.2", default-features = false }
-revm-context = { package = "revm-rwasm-context", version = "8.0.3", default-features = false }
+#revm = { package = "revm-rwasm", version = "27.0.3", default-features = false }
+#revm-primitives = { package = "revm-rwasm-primitives", version = "20.0.0", default-features = false }
+#revm-precompile = { package = "revm-rwasm-precompile", version = "24.0.1", default-features = false }
+#revm-bytecode = { package = "revm-rwasm-bytecode", version = "6.0.1", default-features = false }
+#revm-interpreter = { package = "revm-rwasm-interpreter", version = "23.0.2", default-features = false }
+#revm-context = { package = "revm-rwasm-context", version = "8.0.3", default-features = false }
+revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
+revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
+revm-bytecode = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
+revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
+revm-context = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
 #revm = { path = "../revm-rwasm/crates/revm", default-features = false }
 #revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false }
 #revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false }

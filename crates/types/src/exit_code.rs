@@ -132,6 +132,12 @@ pub enum ExitCode {
     OutOfFuel = -2010,
     /// Call an undefined or unregistered external function
     UnknownExternalFunction = -2011,
+
+    /* System Error Codes */
+    /// An unexpected fatal execution failure (node should panic or terminate the execution)
+    UnexpectedFatalExecutionFailure = -3001,
+    /// Missing storage slot
+    MissingStorageSlot = -3002,
 }
 
 impl core::error::Error for ExitCode {}
@@ -219,3 +225,5 @@ impl From<&PrecompileError> for ExitCode {
         }
     }
 }
+
+pub type EvmExitCode = u32;

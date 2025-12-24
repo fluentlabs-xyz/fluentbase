@@ -1,6 +1,7 @@
 use crate::{syscall_handler::invoke_runtime_handler, RuntimeContext};
 use fluentbase_types::{
-    ExitCode, HashMap, RuntimeInterruptionOutcomeV1, SysFuncIdx, B256, STATE_DEPLOY, STATE_MAIN,
+    system::RuntimeInterruptionOutcomeV1, ExitCode, HashMap, SysFuncIdx, B256, STATE_DEPLOY,
+    STATE_MAIN,
 };
 use rwasm::{ImportLinker, RwasmModule, TrapCode, ValType, Value, F32, F64, N_MAX_STACK_SIZE};
 use smallvec::SmallVec;
@@ -143,7 +144,9 @@ impl SystemRuntime {
                 "runtime: an unexpected trap code happened inside system runtime: {:?} ({}), falling back to the unreachable code, this should be investigated",
                 trap_code, trap_code,
             );
-            return Err(TrapCode::UnreachableCodeReached);
+            self.ctx.execution_result.exit_code =
+                ExitCode::UnexpectedFatalExecutionFailure.into_i32();
+            return Ok(());
         }
 
         // System runtime returns output with exit code (as first four bytes).
@@ -154,7 +157,9 @@ impl SystemRuntime {
                 "runtime: an unexpected output size returned from system runtime: {}, falling back to the unreachable code, this should be investigated",
                 output.len()
             );
-            return Err(TrapCode::UnreachableCodeReached);
+            self.ctx.execution_result.exit_code =
+                ExitCode::UnexpectedFatalExecutionFailure.into_i32();
+            return Ok(());
         }
         let (exit_code_le, output) = output.split_at(4);
         self.ctx.execution_result.output = output.to_vec();

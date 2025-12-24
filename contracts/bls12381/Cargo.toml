@@ -10,6 +10,8 @@ revm-precompile = { workspace = true }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }
+serde = "1.0.228"
+serde_json = "1.0.145"
 
 [lib]
 crate-type = ["cdylib"]
@@ -17,8 +19,8 @@ path = "lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "revm-precompile/std"]
+std = ["fluentbase-sdk/std", "revm-precompile/std", "fluentbase-testing/std"]
 fluent-testnet = [
     "fluentbase-sdk/fluent-testnet",
-    "fluentbase-testing/fluent-testnet"
+    "fluentbase-testing/fluent-testnet",
 ]

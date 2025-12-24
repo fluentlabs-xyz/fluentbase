@@ -1,4 +1,4 @@
-use fluentbase_sdk_derive_core::{client, router, storage_legacy};
+use fluentbase_sdk_derive_core::{client, event, router, storage_legacy};
 use proc_macro::TokenStream;
 use proc_macro_error::proc_macro_error;
 use quote::{quote, ToTokens};
@@ -407,6 +407,32 @@ fn derive_storage_layout(input: TokenStream) -> TokenStream {
 /// Use for composite storage types within contracts.
 /// For main contracts, use `#[derive(Contract)]` instead.
 ///
+/// # Field Attributes
+///
+/// ## `#[slot(expr)]`
+///
+/// Places field at explicit storage slot. The expression must evaluate to `U256`.
+///
+/// ```rust,ignore
+/// use fluentbase_sdk::derive::{Storage, eip1967_slot};
+///
+/// pub const MY_SLOT: U256 = eip1967_slot!("eip1967.proxy.implementation");
+///
+/// #[derive(Storage)]
+/// struct Config {
+///     #[slot(MY_SLOT)]
+///     implementation: StorageAddress,
+///
+///     // Auto-layout continues normally
+///     owner: StorageAddress,
+/// }
+/// ```
+///
+/// Fields with explicit slots:
+/// - Do not affect auto-layout counter
+/// - Are excluded from `SLOTS` constant
+/// - Must use `U256` type (compile error otherwise)
+///
 /// # Example
 /// ```rust,ignore
 /// #[derive(Storage)]
@@ -415,7 +441,7 @@ fn derive_storage_layout(input: TokenStream) -> TokenStream {
 ///     version: StoragePrimitive<u32>,
 /// }
 /// ```
-#[proc_macro_derive(Storage)]
+#[proc_macro_derive(Storage, attributes(slot))]
 pub fn derive_storage(input: TokenStream) -> TokenStream {
     derive_storage_layout(input)
 }
@@ -424,6 +450,39 @@ pub fn derive_storage(input: TokenStream) -> TokenStream {
 ///
 /// Generates initialization and storage accessor methods for contract structs.
 /// For nested storage structures, use `#[derive(Storage)]` instead.
+///
+/// # Field Attributes
+///
+/// ## `#[slot(expr)]`
+///
+/// Places field at explicit storage slot for EIP-1967 proxy patterns
+/// or ERC-7201 namespaced storage.
+///
+/// ```rust,ignore
+/// use fluentbase_sdk::derive::{Contract, eip1967_slot, erc7201_slot};
+///
+/// pub mod slots {
+///     use fluentbase_sdk::derive::eip1967_slot;
+///     pub const IMPLEMENTATION: U256 = eip1967_slot!("eip1967.proxy.implementation");
+/// }
+///
+/// #[derive(Contract)]
+/// pub struct Proxy<SDK> {
+///     sdk: SDK,
+///
+///     #[slot(slots::IMPLEMENTATION)]
+///     implementation: StorageAddress,
+///
+///     // Auto-layout fields
+///     owner: StorageAddress,
+///     counter: StorageU256,
+/// }
+/// ```
+///
+/// # Helper Macros
+///
+/// - [`eip1967_slot!`] - Computes EIP-1967 slot: `keccak256(id) - 1`
+/// - [`erc7201_slot!`] - Computes ERC-7201 slot: `keccak256(keccak256(id) - 1) & ~0xff`
 ///
 /// # Example
 /// ```rust,ignore
@@ -434,9 +493,90 @@ pub fn derive_storage(input: TokenStream) -> TokenStream {
 ///     balances: StorageMap<Address, U256>,
 /// }
 /// ```
-#[proc_macro_derive(Contract)]
+#[proc_macro_derive(Contract, attributes(slot))]
 pub fn derive_contract(input: TokenStream) -> TokenStream {
     derive_storage_layout(input)
+}
+
+/// Computes EIP-1967 storage slot at compile time.
+/// Formula: keccak256(id) - 1
+///
+/// See: https://eips.ethereum.org/EIPS/eip-1967
+///
+/// # Example
+/// ```rust,ignore
+/// use fluentbase_sdk::derive::eip1967_slot;
+///
+/// const IMPL_SLOT: U256 = eip1967_slot!("eip1967.proxy.implementation");
+/// ```
+#[proc_macro]
+pub fn eip1967_slot(input: TokenStream) -> TokenStream {
+    let lit = syn::parse_macro_input!(input as syn::LitStr);
+    let id = lit.value();
+
+    let hash = utils::calculate_keccak256(&id);
+
+    // keccak256(id) - 1
+    let mut bytes = hash;
+    let mut borrow = true;
+    for i in (0..32).rev() {
+        if borrow {
+            if bytes[i] == 0 {
+                bytes[i] = 0xff;
+            } else {
+                bytes[i] -= 1;
+                borrow = false;
+            }
+        }
+    }
+
+    TokenStream::from(quote! {
+        fluentbase_sdk::U256::from_be_bytes([#(#bytes),*])
+    })
+}
+
+/// Computes ERC-7201 namespaced storage slot at compile time.
+/// Formula: keccak256(abi.encode(uint256(keccak256(id)) - 1)) & ~0xff
+///
+/// See: https://eips.ethereum.org/EIPS/eip-7201
+///
+/// # Example
+/// ```rust,ignore
+/// use fluentbase_sdk::derive::erc7201_slot;
+///
+/// const STORAGE_SLOT: U256 = erc7201_slot!("example.main");
+/// ```
+#[proc_macro]
+pub fn erc7201_slot(input: TokenStream) -> TokenStream {
+    let lit = syn::parse_macro_input!(input as syn::LitStr);
+    let id = lit.value();
+
+    // Step 1: keccak256(id)
+    let inner = utils::calculate_keccak256(&id);
+
+    // Step 2: subtract 1
+    let mut shifted = inner;
+    let mut borrow = true;
+    for i in (0..32).rev() {
+        if borrow {
+            if shifted[i] == 0 {
+                shifted[i] = 0xff;
+            } else {
+                shifted[i] -= 1;
+                borrow = false;
+            }
+        }
+    }
+
+    // Step 3: keccak256(shifted)
+    let mut outer = utils::calculate_keccak256_raw::<32>(&shifted);
+
+    // Step 4: & ~0xff (clear last byte)
+    outer[31] = 0;
+
+    TokenStream::from(quote! {
+        fluentbase_sdk::U256::from_be_bytes([#(#outer),*])
+    })
 }
 
 /// Defines contract initialization logic.
@@ -462,6 +602,31 @@ pub fn derive_contract(input: TokenStream) -> TokenStream {
 pub fn constructor(attr: TokenStream, input: TokenStream) -> TokenStream {
     match fluentbase_sdk_derive_core::constructor::process_constructor(attr.into(), input.into()) {
         Ok(constructor) => constructor.to_token_stream().into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Derives Solidity-compatible event emission for structs.
+///
+/// # Example
+/// ```rust,ignore
+/// #[derive(Event)]
+/// struct Transfer {
+///     #[indexed]
+///     from: Address,
+///     #[indexed]
+///     to: Address,
+///     value: U256,
+/// }
+///
+/// Transfer { from, to, value }.emit(&mut sdk);
+/// ```
+#[proc_macro_derive(Event, attributes(indexed, anonymous))]
+#[proc_macro_error]
+pub fn derive_event(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as syn::DeriveInput);
+    match event::process_event(input) {
+        Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
 }

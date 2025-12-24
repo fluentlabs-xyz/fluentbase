@@ -1,0 +1,51 @@
+---
+source: crates/sdk-derive/derive-core/src/event.rs
+expression: generate(input)
+---
+impl Message {
+    /// Solidity event signature.
+    pub const SIGNATURE: &'static str = "Message(address,string)";
+    /// Keccak256 hash of signature, computed at compile-time.
+    pub const SELECTOR: [u8; 32] = [
+        129u8, 31u8, 124u8, 255u8, 10u8, 51u8, 116u8, 255u8, 103u8, 204u8, 204u8, 55u8,
+        38u8, 3u8, 93u8, 52u8, 186u8, 112u8, 65u8, 14u8, 2u8, 86u8, 129u8, 138u8, 137u8,
+        30u8, 77u8, 106u8, 204u8, 1u8, 216u8, 142u8,
+    ];
+    /// Emits this event as an EVM log.
+    pub fn emit<SDK: fluentbase_sdk::SharedAPI>(&self, sdk: &mut SDK) {
+        use fluentbase_sdk::codec::SolidityABI;
+        let topics: [fluentbase_sdk::B256; 3usize] = [
+            fluentbase_sdk::B256::new([
+                129u8, 31u8, 124u8, 255u8, 10u8, 51u8, 116u8, 255u8, 103u8, 204u8, 204u8,
+                55u8, 38u8, 3u8, 93u8, 52u8, 186u8, 112u8, 65u8, 14u8, 2u8, 86u8, 129u8,
+                138u8, 137u8, 30u8, 77u8, 106u8, 204u8, 1u8, 216u8, 142u8,
+            ]),
+            {
+                let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+                let value = self.sender.clone();
+                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                if SolidityABI::<Address>::is_dynamic() {
+                    fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
+                } else {
+                    let mut bytes = [0u8; 32];
+                    bytes.copy_from_slice(&buf[..32]);
+                    fluentbase_sdk::B256::new(bytes)
+                }
+            },
+            {
+                let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+                let value = self.text.clone();
+                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                if SolidityABI::<String>::is_dynamic() {
+                    fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
+                } else {
+                    let mut bytes = [0u8; 32];
+                    bytes.copy_from_slice(&buf[..32]);
+                    fluentbase_sdk::B256::new(bytes)
+                }
+            },
+        ];
+        let data: &[u8] = &[];
+        sdk.emit_log(&topics, &data);
+    }
+}

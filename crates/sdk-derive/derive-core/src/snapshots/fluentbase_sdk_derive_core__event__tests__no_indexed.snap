@@ -1,0 +1,32 @@
+---
+source: crates/sdk-derive/derive-core/src/event.rs
+expression: generate(input)
+---
+impl DataStored {
+    /// Solidity event signature.
+    pub const SIGNATURE: &'static str = "DataStored(uint256,uint256)";
+    /// Keccak256 hash of signature, computed at compile-time.
+    pub const SELECTOR: [u8; 32] = [
+        211u8, 182u8, 197u8, 148u8, 69u8, 27u8, 234u8, 50u8, 4u8, 113u8, 108u8, 158u8,
+        52u8, 101u8, 59u8, 82u8, 26u8, 206u8, 57u8, 0u8, 21u8, 123u8, 167u8, 78u8, 171u8,
+        193u8, 57u8, 12u8, 32u8, 187u8, 140u8, 152u8,
+    ];
+    /// Emits this event as an EVM log.
+    pub fn emit<SDK: fluentbase_sdk::SharedAPI>(&self, sdk: &mut SDK) {
+        use fluentbase_sdk::codec::SolidityABI;
+        let topics: [fluentbase_sdk::B256; 1usize] = [
+            fluentbase_sdk::B256::new([
+                211u8, 182u8, 197u8, 148u8, 69u8, 27u8, 234u8, 50u8, 4u8, 113u8, 108u8,
+                158u8, 52u8, 101u8, 59u8, 82u8, 26u8, 206u8, 57u8, 0u8, 21u8, 123u8,
+                167u8, 78u8, 171u8, 193u8, 57u8, 12u8, 32u8, 187u8, 140u8, 152u8,
+            ]),
+        ];
+        let data = {
+            let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            let values = (self.key.clone(), self.value.clone());
+            SolidityABI::encode(&values, &mut buf, 0).expect("encode data fields");
+            buf.freeze()
+        };
+        sdk.emit_log(&topics, &data);
+    }
+}

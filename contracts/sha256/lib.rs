@@ -2,9 +2,7 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{
-    alloc_slice, crypto::crypto_sha256, system_entrypoint, Bytes, ExitCode, SharedAPI,
-};
+use fluentbase_sdk::{crypto::crypto_sha256, system_entrypoint, Bytes, ExitCode, SharedAPI};
 
 /// Main entry point for the sha256 wrapper contract.
 /// This contract wraps the sha256 precompile (EIP-210) which computes the SHA-256 hash of a given input.

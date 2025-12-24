@@ -5,11 +5,13 @@ pub mod helpers;
 mod preimage;
 mod rwasm;
 mod sdk;
+mod storage;
 
 pub use context::*;
 pub use preimage::*;
 pub use rwasm::*;
 pub use sdk::*;
+pub use storage::*;
 
 #[macro_export]
 macro_rules! bn254_add_common_impl {

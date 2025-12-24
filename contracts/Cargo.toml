@@ -23,7 +23,8 @@ fluentbase-svm-common = { path = "../crates/svm-common", default-features = fals
 fluentbase-svm = { path = "../crates/svm", default-features = false }
 fluentbase-testing = { path = "../crates/testing", default-features = false }
 # revm
-revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "audit/flu-574", default-features = false }
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
+#revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
 # solana
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
@@ -32,6 +33,8 @@ solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "fe
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 ecdsa = { git = "https://github.com/rwasm-patches/signatures.git", default-features = false, features = ["hazmat", "verifying"] }
 k256 = { version = "0.13.4", default-features = false }
+hashbrown = { version = "0.16.0", default-features = false, features = ["default-hasher", "inline-more"] }
+spin = { version = "0.10.0", default-features = false, features = ["mutex"] }
 
 [profile.release]
 panic = "abort"
@@ -48,7 +51,7 @@ overflow-checks = false
 [profile.dev]
 opt-level = "z"
 debug = false
-strip = "symbols"
+#strip = "symbols"
 
 [patch.crates-io]
 # patch tiny-keccak

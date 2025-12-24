@@ -9,8 +9,8 @@ use fluentbase_sdk::{
     PRECOMPILE_BN256_PAIR,
 };
 use revm_precompile::{
-    bn128,
-    bn128::{
+    bn254,
+    bn254::{
         add::ISTANBUL_ADD_GAS_COST,
         mul::ISTANBUL_MUL_GAS_COST,
         pair::{ISTANBUL_PAIR_BASE, ISTANBUL_PAIR_PER_POINT},
@@ -134,7 +134,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
         }
         PRECOMPILE_BN256_MUL => {
             sdk.sync_evm_gas(ISTANBUL_MUL_GAS_COST)?;
-            let result = bn128::run_mul(input, ISTANBUL_MUL_GAS_COST, u64::MAX)
+            let result = bn254::run_mul(input, ISTANBUL_MUL_GAS_COST, u64::MAX)
                 .map_err(|_| ExitCode::PrecompileError)?;
             Ok(result.bytes)
         }
@@ -143,7 +143,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
                 + ISTANBUL_PAIR_BASE;
             sdk.sync_evm_gas(gas_used)?;
             let result =
-                bn128::run_pair(input, ISTANBUL_PAIR_PER_POINT, ISTANBUL_PAIR_BASE, u64::MAX)
+                bn254::run_pair(input, ISTANBUL_PAIR_PER_POINT, ISTANBUL_PAIR_BASE, u64::MAX)
                     .map_err(|_| ExitCode::PrecompileError)?;
             Ok(result.bytes)
         }
