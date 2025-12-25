@@ -52,6 +52,220 @@ mod tests {
         main_entry(sdk);
     }
 
+    /// Test that validates attestation document field requirements.
+    ///
+    /// This test verifies that all required fields are validated:
+    /// - module_id must not be empty
+    /// - timestamp must be > 0
+    /// - cabundle must not be empty
+    /// - digest must be "SHA384" (keccak256("SHA384") == ATTESTATION_DIGEST)
+    /// - pcrs length must be between 1 and 32
+    /// - public_key length must be between 1 and 1024 (if present)
+    /// - user_data length must be <= 512 (if present)
+    /// - nonce length must be <= 512 (if present)
+    /// - Each PCR length must be 32, 48, or 64 bytes
+    /// - Each cabundle cert length must be between 1 and 1024
+    /// - Certificate length must be between 1 and 1024
+    #[test]
+    fn test_attestation_document_validation() {
+        // Load a valid attestation document to use as a base
+        let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
+            .unwrap()
+            .into();
+        use coset::CoseSign1;
+        let sign1 = CoseSign1::from_slice(&data).unwrap();
+        let valid_doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+        let current_timestamp = 1695050165u64;
+
+        // Test that a valid document passes validation
+        // This is implicitly tested through parse_and_verify, but we verify the structure
+        assert!(
+            !valid_doc.module_id.is_empty(),
+            "module_id should not be empty"
+        );
+        assert!(valid_doc.timestamp > 0, "timestamp should be > 0");
+        assert!(
+            !valid_doc.cabundle.is_empty(),
+            "cabundle should not be empty"
+        );
+        assert_eq!(valid_doc.digest, "SHA384", "digest should be SHA384");
+        assert!(
+            (1..=32).contains(&valid_doc.pcrs.len()),
+            "pcrs length should be between 1 and 32"
+        );
+
+        // Verify PCR lengths are valid
+        for (_, pcr_value) in &valid_doc.pcrs {
+            assert!(
+                pcr_value.len() == 32 || pcr_value.len() == 48 || pcr_value.len() == 64,
+                "PCR length should be 32, 48, or 64 bytes"
+            );
+        }
+
+        // Verify cabundle cert lengths are valid
+        for cert_bytes in &valid_doc.cabundle {
+            assert!(
+                (1..=1024).contains(&cert_bytes.len()),
+                "cabundle cert length should be between 1 and 1024"
+            );
+        }
+
+        // Verify certificate length is valid
+        assert!(
+            (1..=1024).contains(&valid_doc.certificate.len()),
+            "certificate length should be between 1 and 1024"
+        );
+    }
+
+    /// Test that validates empty module_id is rejected.
+    #[test]
+    #[should_panic(expected = "no module id")]
+    fn test_attestation_validation_empty_module_id() {
+        let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
+            .unwrap()
+            .into();
+        use coset::CoseSign1;
+        let sign1 = CoseSign1::from_slice(&data).unwrap();
+        let mut doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+        doc.module_id = String::new(); // Empty module_id
+        attestation::validate_attestation_document(&doc);
+    }
+
+    /// Test that validates zero timestamp is rejected.
+    #[test]
+    #[should_panic(expected = "no timestamp")]
+    fn test_attestation_validation_zero_timestamp() {
+        let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
+            .unwrap()
+            .into();
+        use coset::CoseSign1;
+        let sign1 = CoseSign1::from_slice(&data).unwrap();
+        let mut doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+        doc.timestamp = 0; // Zero timestamp
+        attestation::validate_attestation_document(&doc);
+    }
+
+    /// Test that validates invalid digest is rejected.
+    #[test]
+    #[should_panic(expected = "invalid digest")]
+    fn test_attestation_validation_invalid_digest() {
+        let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
+            .unwrap()
+            .into();
+        use coset::CoseSign1;
+        let sign1 = CoseSign1::from_slice(&data).unwrap();
+        let mut doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+        doc.digest = "SHA256".to_string(); // Invalid digest (should be SHA384)
+        attestation::validate_attestation_document(&doc);
+    }
+
+    /// Test that validates empty cabundle is rejected.
+    #[test]
+    #[should_panic(expected = "no cabundle")]
+    fn test_attestation_validation_empty_cabundle() {
+        let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
+            .unwrap()
+            .into();
+        use coset::CoseSign1;
+        let sign1 = CoseSign1::from_slice(&data).unwrap();
+        let mut doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+        doc.cabundle = Vec::new(); // Empty cabundle
+        attestation::validate_attestation_document(&doc);
+    }
+
+    /// Test that validates PCR count limits (1-32).
+    #[test]
+    #[should_panic(expected = "invalid pcrs")]
+    fn test_attestation_validation_invalid_pcr_count() {
+        let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
+            .unwrap()
+            .into();
+        use coset::CoseSign1;
+        let sign1 = CoseSign1::from_slice(&data).unwrap();
+        let mut doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+        doc.pcrs = Vec::new(); // Empty pcrs (should be 1-32)
+        attestation::validate_attestation_document(&doc);
+    }
+
+    /// Test that validates PCR length requirements (32, 48, or 64 bytes).
+    #[test]
+    #[should_panic(expected = "invalid pcr")]
+    fn test_attestation_validation_invalid_pcr_length() {
+        let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
+            .unwrap()
+            .into();
+        use coset::CoseSign1;
+        let sign1 = CoseSign1::from_slice(&data).unwrap();
+        let mut doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+        // Replace first PCR with invalid length (16 bytes instead of 32/48/64)
+        if !doc.pcrs.is_empty() {
+            doc.pcrs[0].1 = vec![0u8; 16]; // Invalid PCR length
+        }
+        attestation::validate_attestation_document(&doc);
+    }
+
+    /// Test that validates public_key length limits (1-1024 if present).
+    #[test]
+    #[should_panic(expected = "invalid pub key")]
+    fn test_attestation_validation_invalid_public_key_length() {
+        let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
+            .unwrap()
+            .into();
+        use coset::CoseSign1;
+        let sign1 = CoseSign1::from_slice(&data).unwrap();
+        let mut doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+        // Set public_key to invalid length (> 1024)
+        doc.public_key = Some(vec![0u8; 1025]); // Too long
+        attestation::validate_attestation_document(&doc);
+    }
+
+    /// Test that validates user_data length limits (<= 512 if present).
+    #[test]
+    #[should_panic(expected = "invalid user data")]
+    fn test_attestation_validation_invalid_user_data_length() {
+        let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
+            .unwrap()
+            .into();
+        use coset::CoseSign1;
+        let sign1 = CoseSign1::from_slice(&data).unwrap();
+        let mut doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+        // Set user_data to invalid length (> 512)
+        doc.user_data = Some(vec![0u8; 513]); // Too long
+        attestation::validate_attestation_document(&doc);
+    }
+
+    /// Test that validates nonce length limits (<= 512 if present).
+    #[test]
+    #[should_panic(expected = "invalid nonce")]
+    fn test_attestation_validation_invalid_nonce_length() {
+        let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
+            .unwrap()
+            .into();
+        use coset::CoseSign1;
+        let sign1 = CoseSign1::from_slice(&data).unwrap();
+        let mut doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+        // Set nonce to invalid length (> 512)
+        doc.nonce = Some(vec![0u8; 513]); // Too long
+        attestation::validate_attestation_document(&doc);
+    }
+
+    /// Test that validates cabundle certificate length limits (1-1024).
+    #[test]
+    #[should_panic(expected = "invalid cabundle cert")]
+    fn test_attestation_validation_invalid_cabundle_cert_length() {
+        let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
+            .unwrap()
+            .into();
+        use coset::CoseSign1;
+        let sign1 = CoseSign1::from_slice(&data).unwrap();
+        let mut doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+        // Replace first cabundle cert with invalid length (> 1024)
+        if !doc.cabundle.is_empty() {
+            doc.cabundle[0] = vec![0u8; 1025]; // Too long
+        }
+        attestation::validate_attestation_document(&doc);
+    }
+
     /// Test that certificate extension validation correctly identifies required extensions.
     ///
     /// This test verifies that:

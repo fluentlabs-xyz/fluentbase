@@ -1,17 +1,34 @@
 use alloc::{string::String, vec, vec::Vec};
 use coset::{CborSerializable, CoseError, CoseSign1};
 use der::{asn1::ObjectIdentifier, Decode, DecodePem, Encode};
-use fluentbase_sdk::debug_log;
+use fluentbase_sdk::{crypto::crypto_keccak256, debug_log};
 use p384::ecdsa::signature::Verifier;
 use x509_cert::{certificate::Certificate, ext::pkix::BasicConstraints};
 
 static NITRO_ROOT_CA_BYTES: &[u8] = include_bytes!("nitro.pem");
 
-// OIDs for X.509 extensions (RFC 5280)
-// BasicConstraints: 2.5.29.19
+// Standard X.509 certificate extension Object Identifiers (OIDs) as defined in RFC 5280
+// These are globally unique identifiers for certificate extensions
+//
+// BasicConstraints (OID: 2.5.29.19)
+// - Indicates whether the certificate is for a Certificate Authority (CA)
+// - May include pathLenConstraint to limit certification path depth
+// - Defined in RFC 5280 Section 4.2.1.9
 const BASIC_CONSTRAINTS_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.19");
-// KeyUsage: 2.5.29.15
+
+// KeyUsage (OID: 2.5.29.15)
+// - Specifies the purpose of the key contained in the certificate
+// - Defines which cryptographic operations the key can be used for
+//   (e.g., digitalSignature, keyCertSign for CA certificates)
+// - Defined in RFC 5280 Section 4.2.1.3
 const KEY_USAGE_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.15");
+
+// ATTESTATION_DIGEST is keccak256("SHA384")
+// This constant matches the Solidity reference: 0x501a3a7a4e0cf54b03f2488098bdd59bc1c2e8d741a300d6b25926d531733fef
+const ATTESTATION_DIGEST: [u8; 32] = [
+    0x50, 0x1a, 0x3a, 0x7a, 0x4e, 0x0c, 0xf5, 0x4b, 0x03, 0xf2, 0x48, 0x80, 0x98, 0xbd, 0xd5, 0x9b,
+    0xc1, 0xc2, 0xe8, 0xd7, 0x41, 0xa3, 0x00, 0xd6, 0xb2, 0x59, 0x26, 0xd5, 0x31, 0x73, 0x3f, 0xef,
+];
 
 #[derive(Debug, Default)]
 pub struct AttestationDoc {
@@ -320,6 +337,93 @@ fn verify_certificate_validity(cert: &Certificate, current_timestamp: u64) {
     );
 }
 
+/// Validates attestation document fields according to the specification.
+/// This implements the validation requirements from validateAttestation in the Solidity reference.
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn validate_attestation_document(doc: &AttestationDoc) {
+    // require(ptrs.moduleID.length() > 0, "no module id");
+    assert!(!doc.module_id.is_empty(), "no module id");
+
+    // require(ptrs.timestamp > 0, "no timestamp");
+    assert!(doc.timestamp > 0, "no timestamp");
+
+    // require(ptrs.cabundle.length > 0, "no cabundle");
+    assert!(!doc.cabundle.is_empty(), "no cabundle");
+
+    // require(attestationTbs.keccak(ptrs.digest) == ATTESTATION_DIGEST, "invalid digest");
+    // ATTESTATION_DIGEST is keccak256("SHA384")
+    let digest_hash = crypto_keccak256(doc.digest.as_bytes());
+    assert!(
+        digest_hash.as_slice() == ATTESTATION_DIGEST,
+        "invalid digest: expected keccak256('SHA384'), got keccak256('{}')",
+        doc.digest
+    );
+
+    // require(1 <= ptrs.pcrs.length && ptrs.pcrs.length <= 32, "invalid pcrs");
+    assert!(
+        (1..=32).contains(&doc.pcrs.len()),
+        "invalid pcrs: length must be between 1 and 32, got {}",
+        doc.pcrs.len()
+    );
+
+    // require(ptrs.publicKey.isNull() || (1 <= ptrs.publicKey.length() && ptrs.publicKey.length() <= 1024), "invalid pub key");
+    if let Some(ref public_key) = doc.public_key {
+        assert!(
+            (1..=1024).contains(&public_key.len()),
+            "invalid pub key: length must be between 1 and 1024, got {}",
+            public_key.len()
+        );
+    }
+
+    // require(ptrs.userData.isNull() || (ptrs.userData.length() <= 512), "invalid user data");
+    if let Some(ref user_data) = doc.user_data {
+        assert!(
+            user_data.len() <= 512,
+            "invalid user data: length must be <= 512, got {}",
+            user_data.len()
+        );
+    }
+
+    // require(ptrs.nonce.isNull() || (ptrs.nonce.length() <= 512), "invalid nonce");
+    if let Some(ref nonce) = doc.nonce {
+        assert!(
+            nonce.len() <= 512,
+            "invalid nonce: length must be <= 512, got {}",
+            nonce.len()
+        );
+    }
+
+    // Validate each PCR length
+    // require(ptrs.pcrs[i].length() == 32 || ptrs.pcrs[i].length() == 48 || ptrs.pcrs[i].length() == 64, "invalid pcr");
+    for (pcr_index, (_, pcr_value)) in doc.pcrs.iter().enumerate() {
+        assert!(
+            pcr_value.len() == 32 || pcr_value.len() == 48 || pcr_value.len() == 64,
+            "invalid pcr at index {}: length must be 32, 48, or 64 bytes, got {}",
+            pcr_index,
+            pcr_value.len()
+        );
+    }
+
+    // Validate each cabundle certificate length
+    // require(1 <= ptrs.cabundle[i].length() && ptrs.cabundle[i].length() <= 1024, "invalid cabundle cert");
+    for (i, cert_bytes) in doc.cabundle.iter().enumerate() {
+        assert!(
+            (1..=1024).contains(&cert_bytes.len()),
+            "invalid cabundle cert at index {}: length must be between 1 and 1024, got {}",
+            i,
+            cert_bytes.len()
+        );
+    }
+
+    // Validate certificate length (from doc.certificate)
+    // The certificate should also be validated, similar to cabundle certs
+    assert!(
+        (1..=1024).contains(&doc.certificate.len()),
+        "invalid certificate: length must be between 1 and 1024, got {}",
+        doc.certificate.len()
+    );
+}
+
 fn verify_attestation_doc(
     doc: &AttestationDoc,
     root_certificate: &Certificate,
@@ -439,6 +543,8 @@ pub fn parse_and_verify(slice: &[u8], current_timestamp: u64) -> AttestationDoc 
     let sign1 = coset::CoseSign1::from_slice(slice).unwrap();
     debug_log!("parsing doc");
     let doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+    debug_log!("validating attestation document");
+    validate_attestation_document(&doc);
     debug_log!("parsing CA certificate");
     let root_cert = Certificate::from_pem(NITRO_ROOT_CA_BYTES).unwrap();
     debug_log!("verifying CA certificate");
