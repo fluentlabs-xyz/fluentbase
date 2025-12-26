@@ -1,10 +1,9 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
-use core::str::from_utf8;
 use fluentbase_sdk::{
-    bincode_helpers::decode, crypto::crypto_keccak256, derive::derive_keccak256, hex,
-    system::RuntimeExecutionOutcomeV1, Address, Bytes, ContractContextV1,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
+    hex,
+    storage::{MapKey, StorageDescriptor, StorageMap, StorageU256},
+    Address, Bytes, ContractContextV1, StorageAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::EvmTestingContext;
 use fluentbase_universal_token::{
@@ -13,13 +12,14 @@ use fluentbase_universal_token::{
         TransferFromCommand, UniversalTokenCommand,
     },
     consts::{
-        ERR_ERC20_INSUFFICIENT_ALLOWANCE, ERR_PAUSABLE_ENFORCED_PAUSE, ERR_PAUSABLE_EXPECTED_PAUSE,
-        ERR_UST_NOT_MINTABLE, ERR_UST_NOT_PAUSABLE, SIG_ERC20_DECIMALS, SIG_ERC20_NAME,
-        SIG_ERC20_PAUSE, SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_UNPAUSE,
+        BALANCE_STORAGE_SLOT, ERR_ERC20_INSUFFICIENT_ALLOWANCE, ERR_ERC20_INSUFFICIENT_BALANCE,
+        ERR_PAUSABLE_ENFORCED_PAUSE, ERR_PAUSABLE_EXPECTED_PAUSE, ERR_UST_NOT_MINTABLE,
+        ERR_UST_NOT_PAUSABLE, SIG_ERC20_DECIMALS, SIG_ERC20_NAME, SIG_ERC20_PAUSE,
+        SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_UNPAUSE,
     },
-    storage::{InitialSettings, DECIMALS_DEFAULT},
+    storage::{erc20_compute_main_storage_keys, InitialSettings, DECIMALS_DEFAULT},
 };
-use revm::context::result::ExecutionResult;
+use revm::context::result::{ExecutionResult, HaltReason};
 use std::ops::Add;
 
 const DEPLOYER_ADDR: Address = Address::repeat_byte(1);
@@ -437,4 +437,80 @@ fn mixed_test() {
     );
     let recovered = u256_from_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(total_supply.add(U256::from(amount_to_mint)), recovered);
+}
+
+#[test]
+fn reverted_transaction_should_not_commit_changes() {
+    const ACC1_ADDRESS: Address = Address::with_last_byte(77);
+    const ACC2_ADDRESS: Address = Address::with_last_byte(88);
+    const ACC3_ADDRESS: Address = Address::with_last_byte(99);
+
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    // Deploy an ERC20 token with max supply
+    let initial_settings = InitialSettings {
+        token_name: Default::default(),
+        token_symbol: Default::default(),
+        decimals: 0,
+        initial_supply: U256::from(10),
+        minter: ACC1_ADDRESS,
+        pauser: Address::ZERO,
+    }
+    .encode_with_prefix();
+    let contract_address = ctx.deploy_evm_tx(ACC1_ADDRESS, initial_settings);
+    ctx.sdk.context_mut().address = contract_address;
+
+    // Check minter balance (should be U256::MAX)
+    let mut input = Vec::new();
+    BalanceOfCommand {
+        owner: ACC1_ADDRESS,
+    }
+    .encode_for_send(&mut input);
+    let result = ctx.call_evm_tx(ACC1_ADDRESS, contract_address, input.into(), None, None);
+    assert!(result.is_success());
+    let balance = U256::from_be_slice(result.into_output().unwrap_or_default().as_ref());
+    assert_eq!(balance, U256::from(10));
+
+    // Approve 1 to spender (spender balance is 0)
+    let mut input = Vec::new();
+    ApproveCommand {
+        spender: ACC1_ADDRESS,
+        amount: U256::ONE,
+    }
+    .encode_for_send(&mut input);
+    let result = ctx.call_evm_tx(ACC2_ADDRESS, contract_address, input.into(), None, None);
+    assert!(result.is_success());
+
+    // Transfer from acc2 to acc3 (should fail with insufficient balance)
+    let mut input = Vec::new();
+    TransferFromCommand {
+        from: ACC2_ADDRESS,
+        to: ACC3_ADDRESS,
+        amount: U256::ONE,
+    }
+    .encode_for_send(&mut input);
+    let result = ctx.call_evm_tx(ACC1_ADDRESS, contract_address, input.into(), None, None);
+    assert_eq!(ERR_ERC20_INSUFFICIENT_BALANCE, 0xe450d38c);
+    assert_eq!(
+        result,
+        ExecutionResult::Revert {
+            gas_used: 22_210,
+            output: hex!(
+                "0x4e487b7100000000000000000000000000000000000000000000000000000000e450d38c"
+            )
+            .into()
+        }
+    );
+
+    // Allowance should not change
+    let mut input = Vec::new();
+    AllowanceCommand {
+        owner: ACC2_ADDRESS,
+        spender: ACC1_ADDRESS,
+    }
+    .encode_for_send(&mut input);
+    let result = ctx.call_evm_tx(ACC1_ADDRESS, contract_address, input.into(), None, None);
+    assert!(result.is_success());
+    let balance = U256::from_be_slice(result.into_output().unwrap_or_default().as_ref());
+    assert_eq!(balance, U256::ONE);
 }

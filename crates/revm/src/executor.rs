@@ -454,6 +454,11 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
         bincode::decode_from_slice(return_data, bincode::config::legacy())
             .expect("runtime execution outcome");
     *return_data = runtime_output.output.into();
+    // Optimization: Don't write any state changes into journal, since we know that all state
+    //  changes will roll back if exit code is not `Ok`
+    if !runtime_output.exit_code.is_ok() {
+        return Ok(());
+    }
     for (k, v) in runtime_output.storage.unwrap_or_default() {
         ctx.journal_mut().sstore(target_address.into(), k, v)?;
     }

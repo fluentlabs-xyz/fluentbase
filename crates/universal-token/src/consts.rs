@@ -28,23 +28,25 @@ pub const ERR_PAUSABLE_ENFORCED_PAUSE: EvmExitCode = derive_evm_error!("Enforced
 pub const ERR_PAUSABLE_EXPECTED_PAUSE: EvmExitCode = derive_evm_error!("ExpectedPause()");
 
 // These signatures are compliant with: @openzeppelin-contracts/contracts/token/ERC20/IERC20.sol
-pub const SIG_ERC20_SYMBOL: EvmExitCode = derive_keccak256_id!("symbol()");
-pub const SIG_ERC20_NAME: EvmExitCode = derive_keccak256_id!("name()");
-pub const SIG_ERC20_DECIMALS: EvmExitCode = derive_keccak256_id!("decimals()");
-pub const SIG_ERC20_TOTAL_SUPPLY: EvmExitCode = derive_keccak256_id!("totalSupply()");
-pub const SIG_ERC20_BALANCE: EvmExitCode = derive_keccak256_id!("balance()");
-pub const SIG_ERC20_BALANCE_OF: EvmExitCode = derive_keccak256_id!("balanceOf(address)");
-pub const SIG_ERC20_TRANSFER: EvmExitCode = derive_keccak256_id!("transfer(address,uint256)");
-pub const SIG_ERC20_TRANSFER_FROM: EvmExitCode =
+pub const SIG_ERC20_SYMBOL: u32 = derive_keccak256_id!("symbol()");
+pub const SIG_ERC20_NAME: u32 = derive_keccak256_id!("name()");
+pub const SIG_ERC20_DECIMALS: u32 = derive_keccak256_id!("decimals()");
+pub const SIG_ERC20_TOTAL_SUPPLY: u32 = derive_keccak256_id!("totalSupply()");
+pub const SIG_ERC20_BALANCE: u32 = derive_keccak256_id!("balance()");
+pub const SIG_ERC20_BALANCE_OF: u32 = derive_keccak256_id!("balanceOf(address)");
+pub const SIG_ERC20_TRANSFER: u32 = derive_keccak256_id!("transfer(address,uint256)");
+pub const SIG_ERC20_TRANSFER_FROM: u32 =
     derive_keccak256_id!("transferFrom(address,address,uint256)");
-pub const SIG_ERC20_ALLOWANCE: EvmExitCode = derive_keccak256_id!("allowance(address,address)");
-pub const SIG_ERC20_APPROVE: EvmExitCode = derive_keccak256_id!("approve(address,uint256)");
-pub const SIG_ERC20_MINT: EvmExitCode = derive_keccak256_id!("mint(address,uint256)");
-pub const SIG_ERC20_PAUSE: EvmExitCode = derive_keccak256_id!("pause()");
-pub const SIG_ERC20_UNPAUSE: EvmExitCode = derive_keccak256_id!("unpause()");
+pub const SIG_ERC20_ALLOWANCE: u32 = derive_keccak256_id!("allowance(address,address)");
+pub const SIG_ERC20_APPROVE: u32 = derive_keccak256_id!("approve(address,uint256)");
+pub const SIG_ERC20_MINT: u32 = derive_keccak256_id!("mint(address,uint256)");
+pub const SIG_ERC20_PAUSE: u32 = derive_keccak256_id!("pause()");
+pub const SIG_ERC20_UNPAUSE: u32 = derive_keccak256_id!("unpause()");
 
-pub const SIG_TOKEN2022: EvmExitCode = derive_keccak256_id!("token2022()");
+// Not in use, reserved for future use
+pub const SIG_TOKEN2022: u32 = derive_keccak256_id!("token2022()");
 
+// Storage slots (all ERC7201 complaint)
 pub const TOTAL_SUPPLY_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.total-supply");
 pub const MINTER_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.minter");
 pub const PAUSER_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.pauser");
