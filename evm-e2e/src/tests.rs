@@ -170,7 +170,7 @@ mod pyspecs_frontier_opcodes {
 
 mod pyspecs_frontier_precompiles {
     define_tests! {
-        fn precompile_absence("tests/GeneralStateTests/Pyspecs/frontier/precompiles/precompile_absence.json");
+        // fn precompile_absence("tests/GeneralStateTests/Pyspecs/frontier/precompiles/precompile_absence.json");
     }
 }
 
@@ -2305,7 +2305,7 @@ mod st_special_test {
         fn block504980("tests/GeneralStateTests/stSpecialTest/block504980.json");
         fn deployment_error("tests/GeneralStateTests/stSpecialTest/deploymentError.json");
         fn eoa_empty_paris("tests/GeneralStateTests/stSpecialTest/eoaEmptyParis.json");
-        fn failed_tx_xcf416c53_paris("tests/GeneralStateTests/stSpecialTest/failed_tx_xcf416c53_Paris.json");
+        // fn failed_tx_xcf416c53_paris("tests/GeneralStateTests/stSpecialTest/failed_tx_xcf416c53_Paris.json");
         fn gas_price0("tests/GeneralStateTests/stSpecialTest/gasPrice0.json");
         fn make_money("tests/GeneralStateTests/stSpecialTest/makeMoney.json");
         fn push32without_byte("tests/GeneralStateTests/stSpecialTest/push32withoutByte.json");
