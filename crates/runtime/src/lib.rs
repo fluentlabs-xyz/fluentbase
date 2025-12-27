@@ -7,12 +7,9 @@ mod context;
 mod context_wrapper;
 mod crypto;
 mod executor;
-#[cfg(all(feature = "wasmtime", feature = "inter-process-lock"))]
-mod inter_process_lock;
 mod module_factory;
 mod runtime;
 pub mod syscall_handler;
-mod utils;
 
 pub use context::*;
 #[cfg(feature = "std")]
