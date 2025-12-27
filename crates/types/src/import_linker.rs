@@ -1,4 +1,4 @@
-use crate::{emit_fuel_procedure, SysFuncIdx};
+use crate::{calculate_syscall_fuel, SysFuncIdx};
 use alloc::sync::Arc;
 use rwasm::{ImportLinker, ImportName, ValType};
 
@@ -10,7 +10,7 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
             import_linker.insert_function(
                 ImportName::new("fluentbase_v1preview", $func_name),
                 SysFuncIdx::$sys_func_idx as u32,
-                emit_fuel_procedure(SysFuncIdx::$sys_func_idx),
+                calculate_syscall_fuel(SysFuncIdx::$sys_func_idx),
                 $params,
                 $results,
             );

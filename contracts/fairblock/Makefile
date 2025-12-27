@@ -1,2 +1,0 @@
-fallback.wasm: go.mod go.sum main.go
-	tinygo build -o fallback.wasm --target wasm-unknown github.com/fluentlabs-xyz/fluentbase/examples/fairblock || echo "WARNING: missing TinyGo, build might be outdated"

@@ -28,9 +28,6 @@ Each subfolder is an individual crate. Notable crates include:
 - wasm — A compiler form Wasm into rWasm (devnet & testnet only).
 - webauthn — WebAuthn verification helpers and tests.
 
-Note: The fairblock directory is present in the repository but excluded from this workspace (see Cargo.toml [workspace]
-exclude).
-
 ## Building
 
 You can build all contracts in this workspace from the contracts directory or the repository root:

@@ -31,7 +31,7 @@ fluentbase-universal-token = { workspace = true }
 once_cell = { workspace = true, features = ["alloc"] }
 
 # rwasm (keep this dep here to enforce feature propagation)
-rwasm = { workspace = true, default-features = false }
+rwasm = { workspace = true, default-features = false, features = ["serde"] }
 
 tracing = { version = "0.1" }
 
