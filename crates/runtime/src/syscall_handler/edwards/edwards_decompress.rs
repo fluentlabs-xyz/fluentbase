@@ -8,7 +8,6 @@ use fluentbase_types::{ExitCode, ED25519_POINT_COMPRESSED_SIZE, ED25519_POINT_DE
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{curve25519_dalek::CompressedEdwardsY, edwards::ed25519::decompress};
 
-
 pub fn syscall_ed25519_decompress_handler(
     ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
@@ -83,11 +82,16 @@ mod tests {
     fn test_ed25519_decompress_invalid_input_returns_error() {
         let sign = 0;
         // Y=2: mathematically proven to not satisfy Ed25519 curve equation
-        let invalid_y: [u8; 32] = hex!("0200000000000000000000000000000000000000000000000000000000000000");
+        let invalid_y: [u8; 32] =
+            hex!("0200000000000000000000000000000000000000000000000000000000000000");
 
         let result = syscall_ed25519_decompress_impl(invalid_y, sign);
 
-        assert!(result.is_err(), "Expected error for invalid point, got: {:?}", result);
+        assert!(
+            result.is_err(),
+            "Expected error for invalid point, got: {:?}",
+            result
+        );
         assert_eq!(result.unwrap_err(), ExitCode::MalformedBuiltinParams);
     }
 }

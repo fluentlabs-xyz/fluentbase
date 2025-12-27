@@ -7,8 +7,6 @@ mod context;
 mod context_wrapper;
 mod crypto;
 mod executor;
-#[cfg(feature = "global-executor")]
-mod global_executor;
 #[cfg(all(feature = "wasmtime", feature = "inter-process-lock"))]
 mod inter_process_lock;
 mod module_factory;

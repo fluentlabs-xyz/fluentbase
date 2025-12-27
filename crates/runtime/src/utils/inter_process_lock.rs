@@ -1,9 +1,5 @@
-use fluentbase_types::B256;
 use fs2::FileExt;
-use std::{
-    fs::{File, OpenOptions},
-    path::PathBuf,
-};
+use std::{fs::File, path::PathBuf};
 
 pub fn inter_process_lock(id: String) -> File {
     // Put the lock file in target dir to avoid VCS noise
