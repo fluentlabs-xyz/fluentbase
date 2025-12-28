@@ -9,9 +9,9 @@ use fluentbase_evm::{
     bytecode::AnalyzedBytecode, gas, gas::Gas, opcodes::interruptable_instruction_table,
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
 };
-use fluentbase_sdk::{alloc_heap_pos, bincode, byteorder, byteorder::ByteOrder, checkpoint_try_restore, checkpoint_try_save, crypto::crypto_keccak256, debug_log, entrypoint, heap_pos_change, rollback_heap_pos, run_with_heap_drop, system::{RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1}, Bytes, ContextReader, ExitCode, SharedAPI, SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE};
-use spin::MutexGuard;
 use fluentbase_sdk::bincode_helpers::decode;
+use fluentbase_sdk::{alloc_heap_pos, byteorder, byteorder::ByteOrder, checkpoint_count, checkpoint_try_restore, checkpoint_try_save, crypto::crypto_keccak256, debug_log, entrypoint, heap_pos_change, system::{RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1}, try_rollback_heap_pos, Bytes, ContextReader, ExitCode, HeapController, SharedAPI, SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE};
+use spin::MutexGuard;
 
 /// Transforms metadata into analyzed EVM bytecode when possible.
 pub(crate) fn evm_bytecode_from_metadata(metadata: &Bytes) -> Option<AnalyzedBytecode> {
@@ -27,34 +27,35 @@ static SAVED_EVM_CONTEXT: spin::Once<spin::Mutex<Vec<EthVM>>> = spin::Once::new(
 
 fn lock_evm_context<'a>() -> MutexGuard<'a, Vec<EthVM>> {
     let cached_state = SAVED_EVM_CONTEXT.call_once(|| spin::Mutex::new(Vec::with_capacity(1024)));
-    // debug_assert!(
-    //     !cached_state.is_locked(),
-    //     "evm: spin mutex is locked, looks like memory corruption"
-    // );
+    debug_assert!(
+        !cached_state.is_locked(),
+        "evm: spin mutex is locked, looks like memory corruption"
+    );
     cached_state.lock()
 }
 
-fn restore_evm_context_or_create<'a, SDK: SharedAPI>(
+fn restore_evm_context_or_create<'a, SDK: SharedAPI, const IS_DEPLOY: bool>(
     cached_state: &'a mut MutexGuard<Vec<EthVM>>,
     sdk: &mut SDK,
 ) -> &'a mut EthVM {
-    // debug_log!("heap_pos_change={}", heap_pos_change());
+    // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
     let return_data = sdk.return_data();
-    // debug_log!("heap_pos_change={}", heap_pos_change());
+    // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
     if return_data.is_empty() {
-        create_evm_context(cached_state, sdk.context(), sdk.input())
+        create_evm_context::<SDK, IS_DEPLOY>(cached_state, sdk)
     } else {
-        restore_evm_context(cached_state, sdk)
+        restore_evm_context::<SDK, IS_DEPLOY>(cached_state, sdk)
     }
 }
-fn create_evm_context<'a>(
+fn create_evm_context<'a, SDK: SharedAPI, const IS_DEPLOY: bool>(
     cached_state: &'a mut MutexGuard<Vec<EthVM>>,
-    context: impl ContextReader,
-    input: &[u8],
+    // context: impl ContextReader,
+    // input: &[u8],
+    sdk: &mut SDK,
 ) -> &'a mut EthVM {
-    // debug_log!("cached_state.len={} heap_pos_change={}", cached_state.len(), heap_pos_change());
+    // debug_log!("cached_state.len={} heap_pos_change={} alloc_heap_pos={}", cached_state.len(), heap_pos_change(), alloc_heap_pos());
     // Decode new frame input
-    let (new_frame_input, _) = decode::<RuntimeNewFrameInputV1>(input).unwrap();
+    let (new_frame_input, _) = decode::<RuntimeNewFrameInputV1>(sdk.input()).unwrap();
     // If analyzed, bytecode is not presented then extract it from the input
     // (contract deployment stage)
     let (analyzed_bytecode, contract_input) = if !new_frame_input.metadata.is_empty() {
@@ -68,32 +69,42 @@ fn create_evm_context<'a>(
             AnalyzedBytecode::new(new_frame_input.input.clone(), B256::ZERO);
         (analyzed_bytecode, Bytes::new())
     };
-    let eth_vm = EthVM::new(context, contract_input, analyzed_bytecode);
+    let eth_vm = EthVM::new(sdk.context(), contract_input, analyzed_bytecode);
     // Push new EthVM frame (new frame is created)
     cached_state.push(eth_vm);
     let eth_vm = cached_state.last_mut().unwrap();
-    // debug_log!("checkpoint saved: {:?} at {}", checkpoint_save(), alloc_heap_pos());
+    // debug_log!("heap_pos_change={:?} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
+    if !IS_DEPLOY {
+        if checkpoint_try_save(true) {
+            // debug_log!("checkpoint_saved {}", alloc_heap_pos());
+        };
+    }
     eth_vm
 }
 
-fn restore_evm_context<'a, SDK: SharedAPI>(
+fn restore_evm_context<'a, SDK: SharedAPI, const IS_DEPLOY: bool>(
     cached_state: &'a mut MutexGuard<Vec<EthVM>>,
     sdk: &mut SDK,
 ) -> &'a mut EthVM {
-    // debug_log!("cached_state.len={} heap_pos_change={}", cached_state.len(), heap_pos_change());
+    // debug_log!("cached_state.len={} heap_pos_change={} alloc_heap_pos={}", cached_state.len(), heap_pos_change(), alloc_heap_pos());
     let Some(eth_vm) = cached_state.last_mut() else {
         unreachable!("evm: missing cached evm state, can't resume execution")
     };
-    // drop heap-based values to prevent from accessing after heap reset
-    eth_vm
-        .interpreter
-        .extend
-        .interruption_outcome = None;
-    if checkpoint_try_restore(false) {
-        // debug_log!("checkpoint_restored");
+    // // drop heap-based values to prevent from accessing after partial heap drop
+    // eth_vm
+    //     .interpreter
+    //     .extend
+    //     .interruption_outcome = None;
+    if !IS_DEPLOY {
+       // debug_log!("checkpoint_count={}", checkpoint_count());
+        if checkpoint_try_restore(false) {
+            // debug_log!("checkpoint_restored {}", alloc_heap_pos());
+        };
+        if checkpoint_try_save(true) {
+        //     // debug_log!("checkpoint_saved {}", alloc_heap_pos());
+        };
     }
-    // debug_log!("heap_pos_change={}", heap_pos_change());
-    checkpoint_try_save();
+    // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
     let (
         RuntimeInterruptionOutcomeV1 {
             halted_frame,
@@ -107,8 +118,11 @@ fn restore_evm_context<'a, SDK: SharedAPI>(
         sdk.return_data().as_ref(),
     )
         .unwrap();
+    // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
     let mut gas = Gas::new_spent(fuel_consumed / FUEL_DENOM_RATE);
+    // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
     gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
+    // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
     {
         let dirty_gas = &mut eth_vm.interpreter.gas;
         if !dirty_gas.record_cost(gas.spent()) {
@@ -118,7 +132,9 @@ fn restore_evm_context<'a, SDK: SharedAPI>(
         }
         eth_vm.interpreter.extend.committed_gas = *dirty_gas;
     }
+    // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
     let exit_code = ExitCode::from(exit_code);
+    // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
     _ = eth_vm
         .interpreter
         .extend
@@ -149,15 +165,18 @@ fn deploy_inner<SDK: SharedAPI>(
     sdk: &mut SDK,
     mut cached_state: MutexGuard<Vec<EthVM>>,
 ) -> (Bytes, ExitCode) {
-    let evm = restore_evm_context_or_create(
+    let evm = restore_evm_context_or_create::<SDK, true>(
         &mut cached_state,
         sdk,
     );
     let instruction_table = interruptable_instruction_table::<SDK>();
     match evm.run_step(&instruction_table, sdk) {
         InterpreterAction::Return(result) => {
+            // debug_log!("InterpreterAction::Return");
             let committed_gas = evm.interpreter.extend.committed_gas;
+            // debug_log!();
             _ = cached_state.pop();
+            // debug_log!();
             let mut result = ExecutionResult {
                 result: result.result,
                 output: result.output,
@@ -221,40 +240,50 @@ fn deploy_inner<SDK: SharedAPI>(
 /// and writes the returned data.
 #[inline(never)]
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    // debug_log!("heap_pos_change={}", heap_pos_change());
-    let (output, exit_code) = main_inner(&mut sdk, lock_evm_context());
-    // debug_log!("heap_pos_change={}", heap_pos_change());
-    run_with_heap_drop(|| {
+    // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
+    let (output, exit_code, state_pop_happened) = main_inner(&mut sdk, lock_evm_context());
+    // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
+    HeapController::run_with_heap_drop(|| {
         let mut result = Vec::with_capacity(size_of::<i32>() + output.len());
         result.extend_from_slice(&exit_code.into_i32().to_le_bytes());
         result.extend_from_slice(&output);
         sdk.write(&result);
     });
-    // debug_log!("heap_pos_change={}", heap_pos_change());
+    // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
+    // if state_pop_happened {
+    //     if checkpoint_try_restore(true) {
+    //        // debug_log!("checkpoint_restored {} ({}) with pop", alloc_heap_pos(), checkpoint_count());
+    //     }
+    // }
 }
 
 #[inline(never)]
 fn main_inner<SDK: SharedAPI>(
     sdk: &mut SDK,
     mut cached_state: MutexGuard<Vec<EthVM>>,
-) -> (Bytes, ExitCode) {
-    // debug_log!("heap_pos_change={}", heap_pos_change());
-    let evm = restore_evm_context_or_create(
+) -> (Bytes, ExitCode, bool) {
+    // debug_log!(
+    //     "heap_pos_change={} alloc_heap_pos={} stack_pointer_offset={}",
+    //     heap_pos_change(),
+    //     alloc_heap_pos(),
+    //     HeapController::stack_pointer_offset(),
+    // );
+    let evm = restore_evm_context_or_create::<SDK, false>(
         &mut cached_state,
         // Pass information about execution context (contract address, caller) into the EthVM,
         // but it's used only if EthVM is not created (aka first call, not resume)
         sdk,
     );
-    // debug_log!("heap_pos_change={}", heap_pos_change());
+    // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
     let instruction_table = interruptable_instruction_table::<SDK>();
-    // debug_log!("heap_pos_change={}", heap_pos_change());
+    // debug_log!("heap_pos_change={} alloc_heap_pos={} evm.interpreter.return_data.len={}", heap_pos_change(), alloc_heap_pos(), evm.interpreter.return_data.0.len());
     match evm.run_step(&instruction_table, sdk) {
         InterpreterAction::Return(result) => {
-            // debug_log!("heap_pos_change={}", heap_pos_change());
+            // debug_log!("heap_pos_change={} alloc_heap_pos={} result.output.len={} evm.interpreter.return_data.len={}", heap_pos_change(), alloc_heap_pos(), result.output.len(), evm.interpreter.return_data.0.len());
             evm.sync_evm_gas(sdk);
-            // debug_log!("heap_pos_change={}", heap_pos_change());
+            // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
             _ = cached_state.pop();
-            // debug_log!("heap_pos_change={}", heap_pos_change());
+            // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
             let exit_code = if result.result.is_ok() {
                 ExitCode::Ok
             } else if result.result.is_revert() {
@@ -262,8 +291,8 @@ fn main_inner<SDK: SharedAPI>(
             } else {
                 ExitCode::Err
             };
-            // debug_log!("heap_pos_change={}", heap_pos_change());
-            (result.output, exit_code)
+            // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
+            (result.output, exit_code, true)
         }
         InterpreterAction::SystemInterruption {
             code_hash,
@@ -272,9 +301,9 @@ fn main_inner<SDK: SharedAPI>(
             state,
         } => {
             let input_offset = input.as_ptr() as usize;
-            // debug_log!("heap_pos_change={}", heap_pos_change());
+            // debug_log!("heap_pos_change={} alloc_heap_pos={} input.len={} evm.interpreter.return_data.len={}", heap_pos_change(), alloc_heap_pos(), input.len(), evm.interpreter.return_data.0.len());
             evm.sync_evm_gas(sdk);
-            // debug_log!("heap_pos_change={}", heap_pos_change());
+            // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
             let syscall_params = SyscallInvocationParams {
                 code_hash,
                 input: input_offset..(input_offset + input.len()),
@@ -283,8 +312,8 @@ fn main_inner<SDK: SharedAPI>(
                 fuel16_ptr: 0,
             }
             .encode();
-            // debug_log!("heap_pos_change={}", heap_pos_change());
-            (syscall_params.into(), ExitCode::InterruptionCalled)
+            // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
+            (syscall_params.into(), ExitCode::InterruptionCalled, false)
         }
         InterpreterAction::NewFrame(_) => unreachable!("evm: frames can't be produced"),
     }

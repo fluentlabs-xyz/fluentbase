@@ -19,7 +19,7 @@ pub fn checkpoint_count() -> usize {
 }
 
 #[inline(always)]
-pub fn checkpoint_try_save() -> bool {
+pub fn checkpoint_try_save(skip_if_same_height: bool) -> bool {
     #[cfg(target_arch = "wasm32")]
     {
         unsafe {
@@ -27,6 +27,12 @@ pub fn checkpoint_try_save() -> bool {
                 return false;
             }
             let current = alloc_heap_pos();
+            if skip_if_same_height && HEAP_POS_CHECKPOINTS_HEIGHT > 0 {
+                let prev = HEAP_POS_CHECKPOINTS[HEAP_POS_CHECKPOINTS_HEIGHT - 1];
+                if prev == current {
+                    return false;
+                }
+            }
             HEAP_POS_CHECKPOINTS[HEAP_POS_CHECKPOINTS_HEIGHT] = current;
             HEAP_POS_CHECKPOINTS_HEIGHT += 1;
         }
@@ -36,7 +42,7 @@ pub fn checkpoint_try_save() -> bool {
 }
 
 #[inline(always)]
-pub fn checkpoint_try_restore(do_pop: bool) -> bool {
+pub fn checkpoint_try_restore(pop: bool) -> bool {
     #[cfg(target_arch = "wasm32")]
     {
         unsafe {
@@ -44,11 +50,12 @@ pub fn checkpoint_try_restore(do_pop: bool) -> bool {
                 return false;
             }
             let prev = HEAP_POS_CHECKPOINTS_HEIGHT - 1;
-            // let current = alloc_heap_pos();
             let restored = HEAP_POS_CHECKPOINTS[prev];
-            rollback_heap_pos(restored);
-            if do_pop {
-                HEAP_POS_CHECKPOINTS_HEIGHT -= 1;
+            let rollback_ok = try_rollback_heap_pos(restored);
+            if !rollback_ok {
+                return false;
+            } else if pop {
+                HEAP_POS_CHECKPOINTS_HEIGHT = prev;
             }
         }
         return true
@@ -116,10 +123,10 @@ pub fn heap_pos_change() -> usize {
 }
 
 #[inline(always)]
-pub fn heap_pos_last_reset() {
+pub fn heap_pos_last_reset(v: usize) {
     #[cfg(target_arch = "wasm32")]
     unsafe {
-        HEAP_POS_LAST = 0;
+        HEAP_POS_LAST = v;
     }
 }
 
@@ -136,20 +143,51 @@ pub fn alloc_heap_pos() -> usize {
 }
 
 #[inline(always)]
-pub fn rollback_heap_pos(new_heap_pos: usize) {
+pub fn try_rollback_heap_pos(new_heap_pos: usize) -> bool {
     #[cfg(target_arch = "wasm32")]
     unsafe {
-        HEAP_POS = new_heap_pos
+        if new_heap_pos < HEAP_POS {
+            HEAP_POS = new_heap_pos;
+            heap_pos_last_reset(new_heap_pos);
+            return true;
+        }
     }
+    false
 }
 
-pub fn run_with_heap_drop<T, F: FnMut() -> T>(mut f: F) -> T {
-    let start = alloc_heap_pos();
-    let r = f();
-    // let stop = alloc_heap_pos();
-    // debug_log!("start={} stop={} rolled_back={}", start, stop, stop-start);
-    rollback_heap_pos(start);
-    r
+pub struct HeapController {
+    heap_pos: usize,
+}
+impl Drop for HeapController {
+    fn drop(&mut self) {
+        try_rollback_heap_pos(self.heap_pos);
+        debug_log!("heap_pos rolled to {}", self.heap_pos);
+    }
+}
+impl HeapController {
+    pub fn new() -> Self {
+        let heap_pos = alloc_heap_pos();
+        debug_log!("heap_pos memorised {}", heap_pos);
+        Self { heap_pos }
+    }
+    pub fn run_with_heap_drop<T, F: FnMut() -> T>(mut f: F) -> (bool, T) {
+        let start = alloc_heap_pos();
+        let r = f();
+        // let stop = alloc_heap_pos();
+        // debug_log!("start={} stop={} rolled_back={}", start, stop, stop-start);
+        (try_rollback_heap_pos(start), r)
+    }
+
+    #[inline(always)]
+    pub fn stack_pointer_offset() -> usize {
+        #[cfg(target_arch = "wasm32")]
+        unsafe {
+            let some_var: u8 = 1;
+            let offset = &some_var as *const u8 as usize;
+            return offset;
+        }
+        0
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
