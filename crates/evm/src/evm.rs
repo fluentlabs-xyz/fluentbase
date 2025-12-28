@@ -9,7 +9,7 @@ use crate::{
     opcodes::interruptable_instruction_table,
     types::{ExecutionResult, InterruptingInterpreter, InterruptionExtension, InterruptionOutcome},
 };
-use fluentbase_sdk::{alloc_heap_pos, debug_log, heap_pos_change, Bytes, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
+use fluentbase_sdk::{Bytes, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
 use revm_bytecode::{Bytecode, LegacyAnalyzedBytecode};
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},

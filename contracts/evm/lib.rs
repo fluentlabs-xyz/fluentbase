@@ -12,6 +12,8 @@ use fluentbase_evm::{
 use fluentbase_sdk::bincode_helpers::decode;
 use fluentbase_sdk::{alloc_heap_pos, byteorder, byteorder::ByteOrder, checkpoint_count, checkpoint_try_restore, checkpoint_try_save, crypto::crypto_keccak256, debug_log, entrypoint, heap_pos_change, system::{RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1}, try_rollback_heap_pos, Bytes, ContextReader, ExitCode, HeapController, SharedAPI, SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE};
 use spin::MutexGuard;
+use revm_interpreter::interpreter_types::MemoryTr;
+use revm_interpreter::interpreter_types::StackTr;
 
 /// Transforms metadata into analyzed EVM bytecode when possible.
 pub(crate) fn evm_bytecode_from_metadata(metadata: &Bytes) -> Option<AnalyzedBytecode> {
@@ -268,17 +270,36 @@ fn main_inner<SDK: SharedAPI>(
     //     alloc_heap_pos(),
     //     HeapController::stack_pointer_offset(),
     // );
+    let cached_state_len = cached_state.len();
     let evm = restore_evm_context_or_create::<SDK, false>(
         &mut cached_state,
         // Pass information about execution context (contract address, caller) into the EthVM,
         // but it's used only if EthVM is not created (aka first call, not resume)
         sdk,
     );
+    debug_log!(
+        "evm.interpreter({}) stack.cap={} memory.cap={} input.len={} return_data.len={} bytecode.len={}",
+        cached_state_len,
+        evm.interpreter.stack.cap(),
+        evm.interpreter.memory.cap(),
+        evm.interpreter.input.input.len(),
+        evm.interpreter.return_data.0.len(),
+        evm.interpreter.bytecode.len(),
+    );
     // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
     let instruction_table = interruptable_instruction_table::<SDK>();
     // debug_log!("heap_pos_change={} alloc_heap_pos={} evm.interpreter.return_data.len={}", heap_pos_change(), alloc_heap_pos(), evm.interpreter.return_data.0.len());
     match evm.run_step(&instruction_table, sdk) {
         InterpreterAction::Return(result) => {
+            debug_log!(
+                "evm.interpreter({}) stack.cap={} memory.cap={} input.len={} return_data.len={} bytecode.len={}",
+                cached_state_len,
+                evm.interpreter.stack.cap(),
+                evm.interpreter.memory.cap(),
+                evm.interpreter.input.input.len(),
+                evm.interpreter.return_data.0.len(),
+                evm.interpreter.bytecode.len(),
+            );
             // debug_log!("heap_pos_change={} alloc_heap_pos={} result.output.len={} evm.interpreter.return_data.len={}", heap_pos_change(), alloc_heap_pos(), result.output.len(), evm.interpreter.return_data.0.len());
             evm.sync_evm_gas(sdk);
             // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
@@ -304,6 +325,15 @@ fn main_inner<SDK: SharedAPI>(
             // debug_log!("heap_pos_change={} alloc_heap_pos={} input.len={} evm.interpreter.return_data.len={}", heap_pos_change(), alloc_heap_pos(), input.len(), evm.interpreter.return_data.0.len());
             evm.sync_evm_gas(sdk);
             // debug_log!("heap_pos_change={} alloc_heap_pos={}", heap_pos_change(), alloc_heap_pos());
+            debug_log!(
+                "evm.interpreter({}) stack.cap={} memory.cap={} input.len={} return_data.len={} bytecode.len={}",
+                cached_state_len,
+                evm.interpreter.stack.cap(),
+                evm.interpreter.memory.cap(),
+                evm.interpreter.input.input.len(),
+                evm.interpreter.return_data.0.len(),
+                evm.interpreter.bytecode.len(),
+            );
             let syscall_params = SyscallInvocationParams {
                 code_hash,
                 input: input_offset..(input_offset + input.len()),

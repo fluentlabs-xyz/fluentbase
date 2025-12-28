@@ -1932,6 +1932,7 @@ dependencies = [
  "fluentbase-evm",
  "fluentbase-sdk",
  "fluentbase-testing",
+ "revm-interpreter",
  "spin 0.10.0",
 ]
 
