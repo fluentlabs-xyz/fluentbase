@@ -171,8 +171,8 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         self.native_sdk.fuel()
     }
 
-    fn write(&mut self, output: &[u8]) {
-        self.native_sdk.write(output);
+    fn write<T: AsRef<[u8]>>(&mut self, output: T) {
+        self.native_sdk.write(output.as_ref());
     }
 
     fn native_exit(&self, exit_code: ExitCode) -> ! {

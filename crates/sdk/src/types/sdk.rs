@@ -82,7 +82,7 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
 
     fn fuel(&self) -> u64;
 
-    fn write(&mut self, output: &[u8]);
+    fn write<T: AsRef<[u8]>>(&mut self, output: T);
 
     fn evm_exit(&mut self, exit_code: u32) -> ! {
         // write an EVM-compatible exit message (only if exit code is not zero)

@@ -124,6 +124,9 @@ const disabledTests = new Set([
     'static_call50000_rip160',
     'call50000',
     'callcode50000',
+    // disabled tests (don't pass because of EIP-7951 enabled)
+    'failed_tx_xcf416c53_paris',
+    'precompile_absence',
 ]);
 
 // Group tests by subdirectory (module name)
