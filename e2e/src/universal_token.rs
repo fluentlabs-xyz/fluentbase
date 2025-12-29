@@ -1,10 +1,9 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
-use core::str::from_utf8;
 use fluentbase_sdk::{
-    bincode_helpers::decode, crypto::crypto_keccak256, derive::derive_keccak256,
-    system::RuntimeExecutionOutcomeV1, Address, Bytes, ContractContextV1,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
+    hex,
+    storage::{MapKey, StorageDescriptor, StorageMap, StorageU256},
+    Address, Bytes, ContractContextV1, StorageAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::EvmTestingContext;
 use fluentbase_universal_token::{
@@ -13,13 +12,14 @@ use fluentbase_universal_token::{
         TransferFromCommand, UniversalTokenCommand,
     },
     consts::{
-        ERR_ALREADY_PAUSED, ERR_ALREADY_UNPAUSED, ERR_CONTRACT_NOT_MINTABLE,
-        ERR_CONTRACT_NOT_PAUSABLE, ERR_INSUFFICIENT_ALLOWANCE, SIG_DECIMALS, SIG_NAME, SIG_PAUSE,
-        SIG_SYMBOL, SIG_TOTAL_SUPPLY, SIG_UNPAUSE,
+        BALANCE_STORAGE_SLOT, ERR_ERC20_INSUFFICIENT_ALLOWANCE, ERR_ERC20_INSUFFICIENT_BALANCE,
+        ERR_PAUSABLE_ENFORCED_PAUSE, ERR_PAUSABLE_EXPECTED_PAUSE, ERR_UST_NOT_MINTABLE,
+        ERR_UST_NOT_PAUSABLE, SIG_ERC20_DECIMALS, SIG_ERC20_NAME, SIG_ERC20_PAUSE,
+        SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_UNPAUSE,
     },
-    storage::{InitialSettings, DECIMALS_DEFAULT},
+    storage::{erc20_compute_main_storage_keys, InitialSettings, DECIMALS_DEFAULT},
 };
-use revm::context::result::ExecutionResult;
+use revm::context::result::{ExecutionResult, HaltReason};
 use std::ops::Add;
 
 const DEPLOYER_ADDR: Address = Address::repeat_byte(1);
@@ -73,8 +73,8 @@ fn no_plugins_enabled_test() {
         token_symbol: Default::default(),
         decimals: DECIMALS_DEFAULT,
         initial_supply: U256::from(0xffff_ffffu64),
-        minter: None,
-        pauser: None,
+        minter: Address::ZERO,
+        pauser: Address::ZERO,
     };
     let total_supply = U256::from(0xffff_ffffu64);
     let amount_to_mint = 93842;
@@ -83,7 +83,7 @@ fn no_plugins_enabled_test() {
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDR, init_bytecode);
 
     let mut input = Vec::<u8>::new();
-    input.extend(SIG_TOTAL_SUPPLY.to_be_bytes());
+    input.extend(SIG_ERC20_TOTAL_SUPPLY.to_be_bytes());
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
@@ -94,7 +94,7 @@ fn no_plugins_enabled_test() {
     assert_eq!(total_supply, total_supply_recovered);
 
     let mut input = Vec::<u8>::new();
-    input.extend(SIG_PAUSE.to_be_bytes());
+    input.extend(SIG_ERC20_PAUSE.to_be_bytes());
     let output = call_with_sig_revert(
         &mut ctx,
         input.clone().into(),
@@ -103,7 +103,7 @@ fn no_plugins_enabled_test() {
     );
     assert_eq!(output[0..4], [0x4e, 0x48, 0x7b, 0x71]);
     let evm_exit_code = u32::from_be_bytes(output[32..].try_into().unwrap());
-    assert_eq!(ERR_CONTRACT_NOT_PAUSABLE, evm_exit_code);
+    assert_eq!(ERR_UST_NOT_PAUSABLE, evm_exit_code);
 
     let mut input = Vec::<u8>::new();
     MintCommand {
@@ -119,7 +119,7 @@ fn no_plugins_enabled_test() {
     );
     assert_eq!(output[0..4], [0x4e, 0x48, 0x7b, 0x71]);
     let evm_exit_code = u32::from_be_bytes(output[32..].try_into().unwrap());
-    assert_eq!(ERR_CONTRACT_NOT_MINTABLE, evm_exit_code);
+    assert_eq!(ERR_UST_NOT_MINTABLE, evm_exit_code);
 }
 
 #[test]
@@ -134,8 +134,8 @@ fn mixed_test() {
         token_symbol: "SyMbOl".into(),
         decimals: DECIMALS_DEFAULT,
         initial_supply: U256::from(0xffff_ffffu64),
-        minter: Some(DEPLOYER_ADDR),
-        pauser: Some(DEPLOYER_ADDR),
+        minter: DEPLOYER_ADDR,
+        pauser: DEPLOYER_ADDR,
     };
     let total_supply = U256::from(0xffff_ffffu64);
     let token_name = "NaMe";
@@ -150,7 +150,7 @@ fn mixed_test() {
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDR, init_bytecode);
 
     let mut input = Vec::<u8>::new();
-    input.extend(SIG_TOTAL_SUPPLY.to_be_bytes());
+    input.extend(SIG_ERC20_TOTAL_SUPPLY.to_be_bytes());
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
@@ -189,30 +189,30 @@ fn mixed_test() {
     assert_eq!(expected, recovered);
 
     let mut input = Vec::<u8>::new();
-    input.extend(SIG_NAME.to_be_bytes());
+    input.extend(SIG_ERC20_NAME.to_be_bytes());
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    let recovered = from_utf8(output_data.as_ref()).expect("output_data should be utf8");
-    assert_eq!(token_name, recovered);
+    let expected_token_name = hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000044e614d6500000000000000000000000000000000000000000000000000000000");
+    assert_eq!(&expected_token_name, output_data.as_slice());
 
     // SIG_SYMBOL
     let mut input = Vec::<u8>::new();
-    input.extend(SIG_SYMBOL.to_be_bytes());
+    input.extend(SIG_ERC20_SYMBOL.to_be_bytes());
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    let recovered = from_utf8(output_data.as_ref()).expect("output_data should be utf8");
-    assert_eq!(token_symbol, recovered);
+    let expected_token_symbol = hex!("0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000653794d624f6c0000000000000000000000000000000000000000000000000000");
+    assert_eq!(&expected_token_symbol, output_data.as_slice());
 
     let mut input = Vec::<u8>::new();
-    input.extend(SIG_DECIMALS.to_be_bytes());
+    input.extend(SIG_ERC20_DECIMALS.to_be_bytes());
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
@@ -223,7 +223,7 @@ fn mixed_test() {
     assert_eq!(decimals, recovered);
 
     let mut input = Vec::<u8>::new();
-    input.extend(SIG_TOTAL_SUPPLY.to_be_bytes());
+    input.extend(SIG_ERC20_TOTAL_SUPPLY.to_be_bytes());
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
@@ -249,7 +249,7 @@ fn mixed_test() {
     );
     assert_eq!(output[0..4], [0x4e, 0x48, 0x7b, 0x71]);
     let evm_exit_code = u32::from_be_bytes(output[32..].try_into().unwrap());
-    assert_eq!(ERR_INSUFFICIENT_ALLOWANCE, evm_exit_code);
+    assert_eq!(ERR_ERC20_INSUFFICIENT_ALLOWANCE, evm_exit_code);
 
     // before approve
     let mut input = Vec::<u8>::new();
@@ -347,7 +347,7 @@ fn mixed_test() {
     assert_eq!(expected, recovered);
 
     let mut input = Vec::<u8>::new();
-    input.extend(SIG_PAUSE.to_be_bytes());
+    input.extend(SIG_ERC20_PAUSE.to_be_bytes());
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
@@ -360,7 +360,7 @@ fn mixed_test() {
 
     // 2nd time
     let mut input = Vec::<u8>::new();
-    input.extend(SIG_PAUSE.to_be_bytes());
+    input.extend(SIG_ERC20_PAUSE.to_be_bytes());
     let output = call_with_sig_revert(
         &mut ctx,
         input.clone().into(),
@@ -369,10 +369,10 @@ fn mixed_test() {
     );
     assert_eq!(output[0..4], [0x4e, 0x48, 0x7b, 0x71]);
     let evm_exit_code = u32::from_be_bytes(output[32..].try_into().unwrap());
-    assert_eq!(ERR_ALREADY_PAUSED, evm_exit_code);
+    assert_eq!(ERR_PAUSABLE_ENFORCED_PAUSE, evm_exit_code);
 
     let mut input = Vec::<u8>::new();
-    input.extend(SIG_UNPAUSE.to_be_bytes());
+    input.extend(SIG_ERC20_UNPAUSE.to_be_bytes());
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
@@ -385,7 +385,7 @@ fn mixed_test() {
 
     // 2nd time
     let mut input = Vec::<u8>::new();
-    input.extend(SIG_UNPAUSE.to_be_bytes());
+    input.extend(SIG_ERC20_UNPAUSE.to_be_bytes());
     let output = call_with_sig_revert(
         &mut ctx,
         input.clone().into(),
@@ -394,7 +394,7 @@ fn mixed_test() {
     );
     assert_eq!(output[0..4], [0x4e, 0x48, 0x7b, 0x71]);
     let evm_exit_code = u32::from_be_bytes(output[32..].try_into().unwrap());
-    assert_eq!(ERR_ALREADY_UNPAUSED, evm_exit_code);
+    assert_eq!(ERR_PAUSABLE_EXPECTED_PAUSE, evm_exit_code);
 
     // SIG_MINT
     let mut input = Vec::<u8>::new();
@@ -428,7 +428,7 @@ fn mixed_test() {
 
     // after mint
     let mut input = Vec::<u8>::new();
-    input.extend(SIG_TOTAL_SUPPLY.to_be_bytes());
+    input.extend(SIG_ERC20_TOTAL_SUPPLY.to_be_bytes());
     let output_data = call_with_sig(
         &mut ctx,
         input.clone().into(),
@@ -437,4 +437,80 @@ fn mixed_test() {
     );
     let recovered = u256_from_slice_try(output_data.as_ref()).expect("output is not a u256 repr");
     assert_eq!(total_supply.add(U256::from(amount_to_mint)), recovered);
+}
+
+#[test]
+fn reverted_transaction_should_not_commit_changes() {
+    const ACC1_ADDRESS: Address = Address::with_last_byte(77);
+    const ACC2_ADDRESS: Address = Address::with_last_byte(88);
+    const ACC3_ADDRESS: Address = Address::with_last_byte(99);
+
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    // Deploy an ERC20 token with max supply
+    let initial_settings = InitialSettings {
+        token_name: Default::default(),
+        token_symbol: Default::default(),
+        decimals: 0,
+        initial_supply: U256::from(10),
+        minter: ACC1_ADDRESS,
+        pauser: Address::ZERO,
+    }
+    .encode_with_prefix();
+    let contract_address = ctx.deploy_evm_tx(ACC1_ADDRESS, initial_settings);
+    ctx.sdk.context_mut().address = contract_address;
+
+    // Check minter balance (should be U256::MAX)
+    let mut input = Vec::new();
+    BalanceOfCommand {
+        owner: ACC1_ADDRESS,
+    }
+    .encode_for_send(&mut input);
+    let result = ctx.call_evm_tx(ACC1_ADDRESS, contract_address, input.into(), None, None);
+    assert!(result.is_success());
+    let balance = U256::from_be_slice(result.into_output().unwrap_or_default().as_ref());
+    assert_eq!(balance, U256::from(10));
+
+    // Approve 1 to spender (spender balance is 0)
+    let mut input = Vec::new();
+    ApproveCommand {
+        spender: ACC1_ADDRESS,
+        amount: U256::ONE,
+    }
+    .encode_for_send(&mut input);
+    let result = ctx.call_evm_tx(ACC2_ADDRESS, contract_address, input.into(), None, None);
+    assert!(result.is_success());
+
+    // Transfer from acc2 to acc3 (should fail with insufficient balance)
+    let mut input = Vec::new();
+    TransferFromCommand {
+        from: ACC2_ADDRESS,
+        to: ACC3_ADDRESS,
+        amount: U256::ONE,
+    }
+    .encode_for_send(&mut input);
+    let result = ctx.call_evm_tx(ACC1_ADDRESS, contract_address, input.into(), None, None);
+    assert_eq!(ERR_ERC20_INSUFFICIENT_BALANCE, 0xe450d38c);
+    assert_eq!(
+        result,
+        ExecutionResult::Revert {
+            gas_used: 22_210,
+            output: hex!(
+                "0x4e487b7100000000000000000000000000000000000000000000000000000000e450d38c"
+            )
+            .into()
+        }
+    );
+
+    // Allowance should not change
+    let mut input = Vec::new();
+    AllowanceCommand {
+        owner: ACC2_ADDRESS,
+        spender: ACC1_ADDRESS,
+    }
+    .encode_for_send(&mut input);
+    let result = ctx.call_evm_tx(ACC1_ADDRESS, contract_address, input.into(), None, None);
+    assert!(result.is_success());
+    let balance = U256::from_be_slice(result.into_output().unwrap_or_default().as_ref());
+    assert_eq!(balance, U256::ONE);
 }

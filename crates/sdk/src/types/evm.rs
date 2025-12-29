@@ -1,7 +1,7 @@
 use crate::byteorder::{BigEndian, ByteOrder};
 
 #[inline(always)]
-pub fn write_evm_exit_message<R, F: FnMut(&[u8]) -> R>(exit_code: u32, mut write_func: F) -> R {
+pub fn write_evm_exit_message<R, F: FnOnce(&[u8]) -> R>(exit_code: u32, mut write_func: F) -> R {
     // we use Solidity 0.8 compatible error format where the first 4 bytes is signature,
     // and the last 4 bytes is error code
     let mut output: [u8; 4 + 32] = [

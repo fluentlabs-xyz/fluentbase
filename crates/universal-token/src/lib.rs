@@ -2,6 +2,7 @@
 #![forbid(unused_results)]
 
 extern crate alloc;
+extern crate core;
 
 pub mod command;
 pub mod consts;

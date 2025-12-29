@@ -6,7 +6,7 @@ use fluentbase_sdk::{
     SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
 use hashbrown::HashMap;
-use std::{mem::take, rc::Rc};
+use std::{cell::RefMut, mem::take, rc::Rc};
 
 #[derive(Clone)]
 pub struct HostTestingContext {
@@ -23,6 +23,11 @@ impl HostTestingContext {
     pub fn with_contract_context(self, contract_context: ContractContextV1) -> Self {
         self.inner.borrow_mut().shared_context_input_v1.contract = contract_context;
         self
+    }
+    pub fn context_mut(&self) -> RefMut<'_, ContractContextV1> {
+        RefMut::map(self.inner.borrow_mut(), |v| {
+            &mut v.shared_context_input_v1.contract
+        })
     }
     pub fn with_block_number(self, number: u64) -> Self {
         self.inner.borrow_mut().shared_context_input_v1.block.number = number;
@@ -81,6 +86,9 @@ impl HostTestingContext {
     }
     pub fn dump_storage(&self) -> HashMap<(Address, U256), U256> {
         self.inner.borrow().persistent_storage.clone()
+    }
+    pub fn restore_storage(&self, new_storage: HashMap<(Address, U256), U256>) {
+        self.inner.borrow_mut().persistent_storage = new_storage;
     }
     pub fn dump_metadata_storage(&self) -> HashMap<(Address, U256), U256> {
         self.inner.borrow().metadata_storage.clone()
@@ -375,11 +383,11 @@ impl SharedAPI for HostTestingContext {
         SyscallResult::new(value, 0, 0, 0)
     }
 
-    fn emit_log(&mut self, topics: &[B256], data: &[u8]) -> SyscallResult<()> {
+    fn emit_log<D: AsRef<[u8]>>(&mut self, topics: &[B256], data: D) -> SyscallResult<()> {
         self.inner
             .borrow_mut()
             .logs
-            .push((Bytes::copy_from_slice(data), topics.to_vec()));
+            .push((Bytes::copy_from_slice(data.as_ref()), topics.to_vec()));
         SyscallResult::new((), 0, 0, 0)
     }
 

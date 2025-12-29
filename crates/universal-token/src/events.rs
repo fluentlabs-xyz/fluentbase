@@ -23,11 +23,13 @@ pub fn emit_transfer_event<SDK: SharedAPI>(
 }
 
 pub fn emit_pause_event<SDK: SharedAPI>(sdk: &mut SDK, pauser: &Address) -> Result<(), ExitCode> {
-    sdk.emit_log(&[EVENT_PAUSED], pauser.as_slice()).ok()
+    let pauser_padded = B256::left_padding_from(pauser.as_slice());
+    sdk.emit_log(&[EVENT_PAUSED], pauser_padded).ok()
 }
 
 pub fn emit_unpause_event<SDK: SharedAPI>(sdk: &mut SDK, pauser: &Address) -> Result<(), ExitCode> {
-    sdk.emit_log(&[EVENT_UNPAUSED], pauser.as_slice()).ok()
+    let pauser_padded = B256::left_padding_from(pauser.as_slice());
+    sdk.emit_log(&[EVENT_UNPAUSED], pauser_padded).ok()
 }
 
 pub fn emit_approval_event<SDK: SharedAPI>(

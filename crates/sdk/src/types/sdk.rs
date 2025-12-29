@@ -127,7 +127,7 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256>;
 
-    fn emit_log(&mut self, topics: &[B256], data: &[u8]) -> SyscallResult<()>;
+    fn emit_log<D: AsRef<[u8]>>(&mut self, topics: &[B256], data: D) -> SyscallResult<()>;
 
     fn self_balance(&self) -> SyscallResult<U256>;
     fn balance(&self, address: &Address) -> SyscallResult<U256>;
