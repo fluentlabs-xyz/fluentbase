@@ -210,10 +210,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         ));
     }
 
-    if target_address == PRECOMPILE_BLAKE2F {
-        println!("BLAKE!");
-    }
-
     if is_execute_using_system_runtime_v2(&effective_bytecode_address) {
         let block_number = ctx.block().number().as_limbs()[0];
         let keys = match effective_bytecode_address {
@@ -296,10 +292,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .remaining()
         .checked_mul(FUEL_DENOM_RATE)
         .unwrap_or(u64::MAX);
-
-    if target_address == PRECOMPILE_BLAKE2F {
-        println!("BLAKE!");
-    }
 
     // Execute function
     let mut runtime_context = RuntimeContext::default();
