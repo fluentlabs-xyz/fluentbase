@@ -103,18 +103,18 @@ impl<API: NativeAPI + CryptoAPI> MetadataAPI for SystemContextImpl<API> {
         _offset: u32,
         _metadata: Bytes,
     ) -> SyscallResult<()> {
-        unimplemented!()
+        unimplemented!("metadata_write")
     }
 
     fn metadata_size(
         &self,
         _address: &Address,
     ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
-        unimplemented!()
+        unimplemented!("metadata_size")
     }
 
     fn metadata_create(&mut self, _salt: &U256, _metadata: Bytes) -> SyscallResult<()> {
-        unimplemented!()
+        unimplemented!("metadata_create")
     }
 
     fn metadata_copy(
@@ -123,21 +123,21 @@ impl<API: NativeAPI + CryptoAPI> MetadataAPI for SystemContextImpl<API> {
         _offset: u32,
         _length: u32,
     ) -> SyscallResult<Bytes> {
-        unimplemented!()
+        unimplemented!("metadata_copy")
     }
 
     fn metadata_account_owner(&self, _address: &Address) -> SyscallResult<Address> {
-        unimplemented!()
+        unimplemented!("metadata_account_owner")
     }
 }
 
 impl<API: NativeAPI + CryptoAPI> MetadataStorageAPI for SystemContextImpl<API> {
     fn metadata_storage_read(&self, _slot: &U256) -> SyscallResult<U256> {
-        unimplemented!()
+        unimplemented!("metadata_storage_read")
     }
 
     fn metadata_storage_write(&mut self, _slot: &U256, _value: U256) -> SyscallResult<()> {
-        unimplemented!()
+        unimplemented!("metadata_storage_write")
     }
 }
 
@@ -158,15 +158,15 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
     }
 
     fn read_context(&self, _target: &mut [u8], _offset: u32) {
-        unimplemented!()
+        unimplemented!("read_context")
     }
 
-    fn charge_fuel(&self, _fuel_consumed: u64) {
-        unimplemented!()
+    fn charge_fuel(&self, fuel_consumed: u64) {
+        self.native_sdk.charge_fuel(fuel_consumed);
     }
 
     fn fuel(&self) -> u64 {
-        unimplemented!()
+        self.native_sdk.fuel()
     }
 
     fn write<T: AsRef<[u8]>>(&mut self, output: T) {
@@ -174,7 +174,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
     }
 
     fn native_exit(&self, _exit_code: ExitCode) -> ! {
-        unimplemented!()
+        unimplemented!("native_exit")
     }
 
     fn native_exec(
@@ -184,11 +184,11 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
         _fuel_limit: Option<u64>,
         _state: u32,
     ) -> (u64, i64, i32) {
-        unimplemented!()
+        unimplemented!("native_exec")
     }
 
     fn return_data(&self) -> Bytes {
-        unimplemented!()
+        unimplemented!("return_data")
     }
 
     fn write_transient_storage(&mut self, _slot: U256, _value: U256) -> SyscallResult<()> {
@@ -196,7 +196,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
     }
 
     fn transient_storage(&self, _slot: &U256) -> SyscallResult<U256> {
-        unimplemented!()
+        unimplemented!("transient_storage")
     }
 
     fn emit_log<D: AsRef<[u8]>>(&mut self, topics: &[B256], data: D) -> SyscallResult<()> {
@@ -206,23 +206,23 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
     }
 
     fn self_balance(&self) -> SyscallResult<U256> {
-        unimplemented!()
+        unimplemented!("self_balance")
     }
 
     fn balance(&self, _address: &Address) -> SyscallResult<U256> {
-        unimplemented!()
+        unimplemented!("balance")
     }
 
     fn block_hash(&self, _block_number: u64) -> SyscallResult<B256> {
-        unimplemented!()
+        unimplemented!("block_hash")
     }
 
     fn code_size(&self, _address: &Address) -> SyscallResult<u32> {
-        unimplemented!()
+        unimplemented!("code_size")
     }
 
     fn code_hash(&self, _address: &Address) -> SyscallResult<B256> {
-        unimplemented!()
+        unimplemented!("code_hash")
     }
 
     fn code_copy(
@@ -231,7 +231,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
         _code_offset: u64,
         _code_length: u64,
     ) -> SyscallResult<Bytes> {
-        unimplemented!()
+        unimplemented!("code_copy")
     }
 
     fn create(
@@ -240,7 +240,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
         _value: &U256,
         _init_code: &[u8],
     ) -> SyscallResult<Bytes> {
-        unimplemented!()
+        unimplemented!("create")
     }
 
     fn call(
@@ -250,7 +250,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
         _input: &[u8],
         _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        unimplemented!()
+        unimplemented!("call")
     }
 
     fn call_code(
@@ -260,7 +260,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
         _input: &[u8],
         _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        unimplemented!()
+        unimplemented!("call_code")
     }
 
     fn delegate_call(
@@ -278,10 +278,10 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
         _input: &[u8],
         _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        unimplemented!()
+        unimplemented!("static_call")
     }
 
     fn destroy_account(&mut self, _address: Address) -> SyscallResult<()> {
-        unimplemented!()
+        unimplemented!("destroy_account")
     }
 }

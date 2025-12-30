@@ -16,7 +16,7 @@ use fluentbase_runtime::{
     RuntimeContext, RuntimeExecutor,
 };
 use fluentbase_sdk::{
-    bincode, hex, is_delegated_runtime_address, is_execute_using_system_runtime_v1,
+    bincode, is_delegated_runtime_address, is_execute_using_system_runtime_v1,
     is_execute_using_system_runtime_v2, keccak256,
     rwasm_core::RwasmModule,
     system::{
@@ -259,7 +259,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         };
         let new_frame_input =
             bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
-        println!("runtime v1 input: {:?}", hex::encode(&new_frame_input));
         contract_input.extend(new_frame_input);
     } else {
         contract_input.extend_from_slice(&input);
@@ -533,7 +532,9 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         // A special case for Universal Token (other runtimes will be migrated as well)
-        _ if is_execute_using_system_runtime_v2(&effective_bytecode_address) => {
+        ExitCode::Ok | ExitCode::Panic
+            if is_execute_using_system_runtime_v2(&effective_bytecode_address) =>
+        {
             process_runtime_execution_outcome(&target_address, ctx, &mut return_data)?;
         }
 

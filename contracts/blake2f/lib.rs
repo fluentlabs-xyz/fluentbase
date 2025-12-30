@@ -2,21 +2,23 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{system_entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint2, Bytes, ContextReader, ExitCode, SharedAPI};
+use revm_precompile::PrecompileOutput;
 
-pub fn main_entry(sdk: &mut impl SharedAPI) -> Result<Bytes, ExitCode> {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
     let input = sdk.input();
     // call blake2 function
-    let result =
-        revm_precompile::blake2::run(&input, gas_limit).map_err(|_| ExitCode::PrecompileError)?;
-    sdk.sync_evm_gas(result.gas_used)?;
-    // write output
-    Ok(result.bytes)
+    let PrecompileOutput {
+        gas_used, bytes, ..
+    } = revm_precompile::blake2::run(&input, gas_limit).map_err(|_| ExitCode::PrecompileError)?;
+    sdk.sync_evm_gas(gas_used)?;
+    sdk.write(bytes);
+    Ok(())
 }
 
-system_entrypoint!(main_entry);
+system_entrypoint2!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -33,8 +35,9 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        let output = main_entry(&mut sdk).unwrap();
-        assert_eq!(output.as_ref(), expected);
+        main_entry(&mut sdk).unwrap();
+        let output = sdk.take_output();
+        assert_eq!(&output, expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
     }

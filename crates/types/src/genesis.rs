@@ -173,7 +173,7 @@ pub fn is_execute_using_wasmtime_strategy(address: &Address) -> bool {
 /// exist, but not be executed by the system runtime (or may be feature/fork gated).
 pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[
     PRECOMPILE_BIG_MODEXP,
-    PRECOMPILE_BLAKE2F,
+    // PRECOMPILE_BLAKE2F,
     PRECOMPILE_BLS12_381_G1_ADD,
     PRECOMPILE_BLS12_381_G1_MSM,
     PRECOMPILE_BLS12_381_G2_ADD,
@@ -202,7 +202,7 @@ pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[
 ];
 pub const EXECUTE_USING_SYSTEM_RUNTIME_V2_ADDRESSES: &[Address] = &[
     // PRECOMPILE_BIG_MODEXP,
-    // PRECOMPILE_BLAKE2F,
+    PRECOMPILE_BLAKE2F,
     // PRECOMPILE_BLS12_381_G1_ADD,
     // PRECOMPILE_BLS12_381_G1_MSM,
     // PRECOMPILE_BLS12_381_G2_ADD,
