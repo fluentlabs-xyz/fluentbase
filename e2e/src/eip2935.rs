@@ -57,47 +57,47 @@ fn eip2935_test() {
 
     ctx.sdk = ctx.sdk.with_block_number(1);
 
-    let input = block_hash1.as_le_slice().to_vec().into();
+    let input = block_hash1.to_be_bytes_vec().into();
     let output_data = call_success(&mut ctx, input, &SYSTEM_ADDRESS, &PRECOMPILE_EIP2935);
-    let recovered = U256::try_from_le_slice(&output_data).unwrap();
+    let recovered = U256::try_from_be_slice(&output_data).unwrap();
     let expected = U256::from(0);
     assert_eq!(expected, recovered);
 
-    let input = U256::from(0).as_le_slice().to_vec().into();
+    let input = U256::from(0).to_be_bytes_vec().into();
     let output_data = call_success(&mut ctx, input, &USER_ADDR, &PRECOMPILE_EIP2935);
-    let recovered = U256::try_from_le_slice(&output_data).unwrap();
+    let recovered = U256::try_from_be_slice(&output_data).unwrap();
     let expected = block_hash1;
     assert_eq!(expected, recovered);
 
-    let input = U256::from(1).as_le_slice().to_vec().into();
+    let input = U256::from(1).to_be_bytes_vec().into();
     call_revert(&mut ctx, input, &USER_ADDR, &PRECOMPILE_EIP2935);
 
     ctx.sdk = ctx.sdk.with_block_number(2);
 
-    let input = block_hash2.as_le_slice().to_vec().into();
+    let input = block_hash2.to_be_bytes_vec().into();
     let output_data = call_success(&mut ctx, input, &SYSTEM_ADDRESS, &PRECOMPILE_EIP2935);
-    let recovered = U256::try_from_le_slice(&output_data).unwrap();
+    let recovered = U256::try_from_be_slice(&output_data).unwrap();
     assert_eq!(recovered, U256::from(0));
 
-    let input = U256::from(1).as_le_slice().to_vec().into();
+    let input = U256::from(1).to_be_bytes_vec().into();
     let output_data = call_success(&mut ctx, input, &USER_ADDR, &PRECOMPILE_EIP2935);
-    let recovered = U256::try_from_le_slice(&output_data).unwrap();
+    let recovered = U256::try_from_be_slice(&output_data).unwrap();
     assert_eq!(recovered, block_hash2);
 
-    let input = U256::from(2).as_le_slice().to_vec().into();
+    let input = U256::from(2).to_be_bytes_vec().into();
     call_revert(&mut ctx, input, &USER_ADDR, &PRECOMPILE_EIP2935);
 
     ctx.sdk = ctx.sdk.with_block_number(3);
-    let input = block_hash3.as_le_slice().to_vec().into();
+    let input = block_hash3.to_be_bytes_vec().into();
     let output_data = call_success(&mut ctx, input, &SYSTEM_ADDRESS, &PRECOMPILE_EIP2935);
-    let recovered = U256::try_from_le_slice(&output_data).unwrap();
+    let recovered = U256::try_from_be_slice(&output_data).unwrap();
     assert_eq!(recovered, U256::from(0));
 
-    let input = U256::from(2).as_le_slice().to_vec().into();
+    let input = U256::from(2).to_be_bytes_vec().into();
     let output_data = call_success(&mut ctx, input, &USER_ADDR, &PRECOMPILE_EIP2935);
-    let recovered = U256::try_from_le_slice(&output_data).unwrap();
+    let recovered = U256::try_from_be_slice(&output_data).unwrap();
     assert_eq!(recovered, block_hash3);
 
-    let input = U256::from(3).as_le_slice().to_vec().into();
+    let input = U256::from(3).to_be_bytes_vec().into();
     call_revert(&mut ctx, input, &USER_ADDR, &PRECOMPILE_EIP2935);
 }

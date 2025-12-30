@@ -338,7 +338,9 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             BytecodeOrHash::Bytecode { address, hash, .. } => (
                 fluentbase_types::is_execute_using_wasmtime_strategy(address)
                     .then_some((*address, *hash)),
-                fluentbase_types::is_execute_using_system_runtime(address).then_some(*hash),
+                (fluentbase_types::is_execute_using_system_runtime_v1(address)
+                    || fluentbase_types::is_execute_using_system_runtime_v2(address))
+                .then_some(*hash),
             ),
             BytecodeOrHash::Hash(_) => (None, None),
         };

@@ -186,7 +186,7 @@ pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[
     PRECOMPILE_BN256_PAIR,
     // PRECOMPILE_EIP2935,
     // PRECOMPILE_EIP7951,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
+    // PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
     PRECOMPILE_EVM_RUNTIME,
     PRECOMPILE_IDENTITY,
     PRECOMPILE_KZG_POINT_EVALUATION,
@@ -200,14 +200,46 @@ pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[
     // PRECOMPILE_WEBAUTHN_VERIFIER,
     // PRECOMPILE_WRAPPED_ETH,
 ];
+pub const EXECUTE_USING_SYSTEM_RUNTIME_V2_ADDRESSES: &[Address] = &[
+    // PRECOMPILE_BIG_MODEXP,
+    // PRECOMPILE_BLAKE2F,
+    // PRECOMPILE_BLS12_381_G1_ADD,
+    // PRECOMPILE_BLS12_381_G1_MSM,
+    // PRECOMPILE_BLS12_381_G2_ADD,
+    // PRECOMPILE_BLS12_381_G2_MSM,
+    // PRECOMPILE_BLS12_381_MAP_G1,
+    // PRECOMPILE_BLS12_381_MAP_G2,
+    // PRECOMPILE_BLS12_381_PAIRING,
+    // PRECOMPILE_BN256_ADD,
+    // PRECOMPILE_BN256_MUL,
+    // PRECOMPILE_BN256_PAIR,
+    PRECOMPILE_EIP2935,
+    // PRECOMPILE_EIP7951,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
+    // PRECOMPILE_EVM_RUNTIME,
+    // PRECOMPILE_IDENTITY,
+    // PRECOMPILE_KZG_POINT_EVALUATION,
+    // PRECOMPILE_NITRO_VERIFIER,
+    // PRECOMPILE_OAUTH2_VERIFIER,
+    // PRECOMPILE_RIPEMD160,
+    // PRECOMPILE_SECP256K1_RECOVER,
+    // PRECOMPILE_SHA256,
+    // PRECOMPILE_SVM_RUNTIME,
+    // PRECOMPILE_WASM_RUNTIME,
+    // PRECOMPILE_WEBAUTHN_VERIFIER,
+    // PRECOMPILE_WRAPPED_ETH,
+];
 
 /// Returns `true` if `address` should be executed by the system runtime.
 ///
 /// This is a separate list from `PRECOMPILE_ADDRESSES` because:
 /// - some addresses may exist but be disabled until a fork activates them
 /// - some addresses may be routed via different execution strategies
-pub fn is_execute_using_system_runtime(address: &Address) -> bool {
+pub fn is_execute_using_system_runtime_v1(address: &Address) -> bool {
     EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES.contains(address)
+}
+pub fn is_execute_using_system_runtime_v2(address: &Address) -> bool {
+    EXECUTE_USING_SYSTEM_RUNTIME_V2_ADDRESSES.contains(address)
 }
 
 /// Resolves and returns the account owner `Address` based on the provided input byte slice.
