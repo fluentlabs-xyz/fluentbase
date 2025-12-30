@@ -24,8 +24,8 @@ use fluentbase_sdk::{
     },
     BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode, HashMap,
     SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
-    FUEL_DENOM_RATE, PRECOMPILE_BLAKE2F, PRECOMPILE_EIP2935, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
-    STATE_DEPLOY, STATE_MAIN, U256,
+    FUEL_DENOM_RATE, PRECOMPILE_EIP2935, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY,
+    STATE_MAIN, U256,
 };
 use fluentbase_universal_token::storage::erc20_compute_storage_keys;
 use revm::{
