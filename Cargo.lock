@@ -2248,7 +2248,7 @@ dependencies = [
  "insta",
  "proc-macro2",
  "quote",
- "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Fadd-call)",
+ "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Ftracing-new)",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2341,7 +2341,7 @@ dependencies = [
  "paste",
  "rand 0.9.2",
  "revm",
- "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Fadd-call)",
+ "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Ftracing-new)",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2391,7 +2391,7 @@ dependencies = [
  "fluentbase-universal-token",
  "once_cell",
  "revm",
- "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Fadd-call)",
+ "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Ftracing-new)",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2411,7 +2411,7 @@ dependencies = [
  "num",
  "p256",
  "rand 0.9.2",
- "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Fadd-call)",
+ "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Ftracing-new)",
  "schnellru",
  "sha2 0.10.9",
  "smallvec",
@@ -2435,7 +2435,7 @@ dependencies = [
  "fluentbase-types",
  "hashbrown 0.16.1",
  "hex-literal 1.1.0",
- "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Fadd-call)",
+ "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Ftracing-new)",
  "spin 0.10.0",
 ]
 
@@ -2569,7 +2569,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "hex",
  "revm",
- "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Fadd-call)",
+ "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Ftracing-new)",
 ]
 
 [[package]]
@@ -2585,7 +2585,7 @@ dependencies = [
  "paste",
  "revm-precompile",
  "revm-primitives",
- "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Fadd-call)",
+ "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Ftracing-new)",
  "serde",
  "strum_macros 0.27.2",
 ]
@@ -4869,7 +4869,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.3.2"
-source = "git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Fadd-call#4de499a26d0c1b73ceb5d277798e85bde750ce0d"
+source = "git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Ftracing-new#0af282511aaaea8189ca8c2dfa5e1b9ddbc7411a"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
