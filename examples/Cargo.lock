@@ -1829,6 +1829,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-examples-memory-oom"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-testing",
+]
+
+[[package]]
 name = "fluentbase-examples-panic"
 version = "0.1.0"
 dependencies = [

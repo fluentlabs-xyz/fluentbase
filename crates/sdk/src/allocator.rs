@@ -6,11 +6,10 @@ const WASM_PAGE_SIZE_IN_BYTES: usize = 65536;
 fn calc_pages_needed(pages_allocated: usize, required_bytes: usize) -> usize {
     let have = pages_allocated * WASM_PAGE_SIZE_IN_BYTES;
     if required_bytes <= have {
-        0
-    } else {
-        let missing = required_bytes - have;
-        (missing + WASM_PAGE_SIZE_IN_BYTES - 1) / WASM_PAGE_SIZE_IN_BYTES
+        return 0;
     }
+    let missing = required_bytes - have;
+    (missing + WASM_PAGE_SIZE_IN_BYTES - 1) / WASM_PAGE_SIZE_IN_BYTES
 }
 
 #[test]
@@ -26,18 +25,20 @@ fn test_pages_needed() {
 
 #[inline(always)]
 pub fn alloc_ptr(len: usize) -> *mut u8 {
+    // TODO(dmitry123): Wasm guarantee that memory is always zeroed during pages creation, so do we
+    //  actually need to zero memory here additionally or `__rust_alloc_zeroed` don't alloc for wasm32 target?
     unsafe { alloc::alloc::alloc_zeroed(core::alloc::Layout::from_size_align_unchecked(len, 8)) }
 }
 
 #[inline(always)]
 pub fn alloc_slice<'a>(len: usize) -> &'a mut [u8] {
-    use core::ptr;
-    unsafe { &mut *ptr::slice_from_raw_parts_mut(alloc_ptr(len), len) }
+    unsafe { &mut *core::ptr::slice_from_raw_parts_mut(alloc_ptr(len), len) }
 }
 
 #[inline(always)]
 pub fn alloc_vec(len: usize) -> Vec<u8> {
-    alloc_slice(len).to_vec()
+    let slice = alloc_ptr(len);
+    unsafe { Vec::from_raw_parts(slice, len, len) }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -89,10 +90,8 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
         if pages_needed > 0 {
             let new_pages = core::arch::wasm32::memory_grow::<0>(pages_needed);
             if new_pages == usize::MAX {
-                // TODO(dmitry123): "how to use trap code here?"
-                unsafe {
-                    core::hint::unreachable_unchecked();
-                }
+                use fluentbase_types::{bindings::_exit, ExitCode};
+                _exit(ExitCode::OutOfMemory.into_i32());
             }
         }
         // return allocated pointer
@@ -106,15 +105,4 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: core::alloc::Layout) {
         // ops, no dealoc
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[no_mangle]
-pub extern "C" fn __heap_pos() -> usize {
-    extern "C" {
-        static __heap_base: u8;
-    }
-    let mut heap_pos = unsafe { HEAP_POS };
-    heap_pos = unsafe { (&__heap_base) as *const u8 as usize };
-    heap_pos
 }

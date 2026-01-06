@@ -108,6 +108,8 @@ pub enum ExitCode {
     CreateContractCollision = -1012,
     /// Created contract starts with invalid bytes (`0xEF`).
     CreateContractStartingWithEF = -1013,
+    /// A program runs out of memory (max memory pages reached)
+    OutOfMemory = -1014,
 
     /* Trap Error Codes */
     /// Execution reached a code path marked as unreachable
