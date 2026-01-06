@@ -29,7 +29,7 @@ blake3 = { workspace = true, default-features = false }
 sha2 = { workspace = true, default-features = false }
 solana-poseidon = { workspace = true }
 num = "0.4.3"
-sp1-curves = {git = "https://github.com/fluentlabs-xyz/rwasm-zkvm.git",branch = "change-executor-to-rwasm-native"}
+sp1-curves = {git = "https://github.com/nagatoism/rwasm-zkvm.git",branch = "update-sp1"}
 fs2 = { version = "0.4.3", optional = true }
 bytemuck = { workspace = true }
 schnellru = { workspace = true }
