@@ -4,8 +4,8 @@ extern crate alloc;
 mod webauthn;
 
 use fluentbase_sdk::{
-    alloc_slice, codec::SolidityABI, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, B256,
-    U256,
+    alloc_slice, codec::SolidityABI, system_entrypoint2, Bytes, ContextReader, ExitCode, SharedAPI,
+    B256, U256,
 };
 use webauthn::{verify_webauthn, WebAuthnAuth};
 
@@ -22,7 +22,7 @@ const VERIFY_SELECTOR: [u8; 4] = [0x94, 0x51, 0x6d, 0xde];
 /// - Daimo: https://github.com/daimo-eth/p256-verifier/blob/master/src/WebAuthn.sol
 /// - Coinbase: https://github.com/base-org/webauthn-sol/blob/main/src/WebAuthn.sol
 
-pub fn main_entry(mut sdk: impl SharedAPI) {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // Read input
     let input_length = sdk.input_size();
     assert!(
@@ -68,9 +68,11 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
 
     // Write the result
     sdk.write(&result[..]);
+
+    Ok(())
 }
 
-entrypoint!(main_entry);
+system_entrypoint2!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -80,14 +82,14 @@ mod tests {
 
     fn assert_call_eq(input: &[u8], expected: &[u8]) {
         let gas_limit = 100_000;
-        let sdk = HostTestingContext::default()
+        let mut sdk = HostTestingContext::default()
             .with_input(Bytes::copy_from_slice(input))
             .with_contract_context(ContractContextV1 {
                 gas_limit,
                 ..Default::default()
             });
 
-        main_entry(sdk.clone());
+        main_entry(&mut sdk).unwrap();
 
         let output = sdk.take_output();
         assert_eq!(output.len(), expected.len(), "Output length mismatch");
