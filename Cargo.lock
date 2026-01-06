@@ -1285,9 +1285,30 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64"
 version = "0.121.1"
+<<<<<<< HEAD
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
+=======
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
 dependencies = [
- "cranelift-assembler-x64-meta",
+ "cranelift-assembler-x64-meta 0.121.1",
+]
+
+[[package]]
+name = "cranelift-assembler-x64"
+version = "0.121.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ce81edaca6167d1f78da026afa92d7ff957a80aa82a79076e11cd34cde20165"
+>>>>>>> bc924abe (rebase devel)
+dependencies = [
+ "cranelift-assembler-x64-meta 0.121.2",
+]
+
+[[package]]
+name = "cranelift-assembler-x64-meta"
+version = "0.121.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "cranelift-srcgen 0.121.1",
 ]
 
 [[package]]
@@ -1295,7 +1316,15 @@ name = "cranelift-assembler-x64-meta"
 version = "0.121.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
- "cranelift-srcgen",
+ "cranelift-srcgen 0.121.2",
+]
+
+[[package]]
+name = "cranelift-bforest"
+version = "0.121.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "cranelift-entity 0.121.1",
 ]
 
 [[package]]
@@ -1303,7 +1332,16 @@ name = "cranelift-bforest"
 version = "0.121.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
- "cranelift-entity",
+ "cranelift-entity 0.121.2",
+]
+
+[[package]]
+name = "cranelift-bitset"
+version = "0.121.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -1321,24 +1359,50 @@ version = "0.121.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "bumpalo",
- "cranelift-assembler-x64",
- "cranelift-bforest",
- "cranelift-bitset",
- "cranelift-codegen-meta",
- "cranelift-codegen-shared",
- "cranelift-control",
- "cranelift-entity",
- "cranelift-isle",
+ "cranelift-assembler-x64 0.121.2",
+ "cranelift-bforest 0.121.2",
+ "cranelift-bitset 0.121.2",
+ "cranelift-codegen-meta 0.121.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cranelift-codegen-shared 0.121.2",
+ "cranelift-control 0.121.2",
+ "cranelift-entity 0.121.2",
+ "cranelift-isle 0.121.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "gimli",
  "hashbrown 0.15.5",
  "log",
- "pulley-interpreter",
+ "pulley-interpreter 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "regalloc2",
  "rustc-hash",
  "serde",
  "smallvec",
  "target-lexicon",
- "wasmtime-math",
+ "wasmtime-math 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "cranelift-codegen"
+version = "0.121.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "bumpalo",
+ "cranelift-assembler-x64 0.121.1",
+ "cranelift-bforest 0.121.1",
+ "cranelift-bitset 0.121.1",
+ "cranelift-codegen-meta 0.121.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "cranelift-codegen-shared 0.121.1",
+ "cranelift-control 0.121.1",
+ "cranelift-entity 0.121.1",
+ "cranelift-isle 0.121.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "gimli",
+ "hashbrown 0.15.5",
+ "log",
+ "pulley-interpreter 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "regalloc2",
+ "rustc-hash",
+ "serde",
+ "smallvec",
+ "target-lexicon",
+ "wasmtime-math 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
 ]
 
 [[package]]
@@ -1346,11 +1410,27 @@ name = "cranelift-codegen-meta"
 version = "0.121.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
- "cranelift-assembler-x64-meta",
- "cranelift-codegen-shared",
- "cranelift-srcgen",
- "pulley-interpreter",
+ "cranelift-assembler-x64-meta 0.121.2",
+ "cranelift-codegen-shared 0.121.2",
+ "cranelift-srcgen 0.121.2",
+ "pulley-interpreter 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
+
+[[package]]
+name = "cranelift-codegen-meta"
+version = "0.121.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "cranelift-assembler-x64-meta 0.121.1",
+ "cranelift-codegen-shared 0.121.1",
+ "cranelift-srcgen 0.121.1",
+ "pulley-interpreter 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+]
+
+[[package]]
+name = "cranelift-codegen-shared"
+version = "0.121.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
 
 [[package]]
 name = "cranelift-codegen-shared"
@@ -1360,7 +1440,20 @@ source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ce
 [[package]]
 name = "cranelift-control"
 version = "0.121.1"
+<<<<<<< HEAD
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
+=======
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "arbitrary",
+]
+
+[[package]]
+name = "cranelift-control"
+version = "0.121.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6671962c7d65b9a7ad038cd92da6784744d8a9ecf8ded8bb9a1f7046dbe2ccf"
+>>>>>>> bc924abe (rebase devel)
 dependencies = [
  "arbitrary",
 ]
@@ -1368,9 +1461,24 @@ dependencies = [
 [[package]]
 name = "cranelift-entity"
 version = "0.121.1"
+<<<<<<< HEAD
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
+=======
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
 dependencies = [
- "cranelift-bitset",
+ "cranelift-bitset 0.121.1",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
+name = "cranelift-entity"
+version = "0.121.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee832f8329fa87c5df6c1d64a8506a58031e6f8a190d9b21b1900272a4dbb47d"
+>>>>>>> bc924abe (rebase devel)
+dependencies = [
+ "cranelift-bitset 0.121.2",
  "serde",
  "serde_derive",
 ]
@@ -1380,7 +1488,18 @@ name = "cranelift-frontend"
 version = "0.121.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
- "cranelift-codegen",
+ "cranelift-codegen 0.121.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log",
+ "smallvec",
+ "target-lexicon",
+]
+
+[[package]]
+name = "cranelift-frontend"
+version = "0.121.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "cranelift-codegen 0.121.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
  "log",
  "smallvec",
  "target-lexicon",
@@ -1392,14 +1511,34 @@ version = "0.121.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 
 [[package]]
+name = "cranelift-isle"
+version = "0.121.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+
+[[package]]
 name = "cranelift-native"
 version = "0.121.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
- "cranelift-codegen",
+ "cranelift-codegen 0.121.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc",
  "target-lexicon",
 ]
+
+[[package]]
+name = "cranelift-native"
+version = "0.121.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "cranelift-codegen 0.121.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "libc",
+ "target-lexicon",
+]
+
+[[package]]
+name = "cranelift-srcgen"
+version = "0.121.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
 
 [[package]]
 name = "cranelift-srcgen"
@@ -2111,7 +2250,7 @@ dependencies = [
  "insta",
  "proc-macro2",
  "quote",
- "rwasm",
+ "rwasm 0.0.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2204,7 +2343,7 @@ dependencies = [
  "paste",
  "rand 0.9.2",
  "revm",
- "rwasm",
+ "rwasm 0.0.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2254,7 +2393,7 @@ dependencies = [
  "fluentbase-universal-token",
  "once_cell",
  "revm",
- "rwasm",
+ "rwasm 0.0.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2274,7 +2413,7 @@ dependencies = [
  "num",
  "p256",
  "rand 0.9.2",
- "rwasm",
+ "rwasm 0.0.0",
  "schnellru",
  "sha2 0.10.9",
  "smallvec",
@@ -2298,7 +2437,7 @@ dependencies = [
  "fluentbase-types",
  "hashbrown 0.16.1",
  "hex-literal 1.1.0",
- "rwasm",
+ "rwasm 0.0.0",
  "spin 0.10.0",
 ]
 
@@ -2432,7 +2571,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "hex",
  "revm",
- "rwasm",
+ "rwasm 0.0.0",
 ]
 
 [[package]]
@@ -2448,7 +2587,7 @@ dependencies = [
  "paste",
  "revm-precompile",
  "revm-primitives",
- "rwasm",
+ "rwasm 0.0.0",
  "serde",
  "strum_macros 0.27.2",
 ]
@@ -4069,10 +4208,21 @@ name = "pulley-interpreter"
 version = "34.0.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
- "cranelift-bitset",
+ "cranelift-bitset 0.121.2",
  "log",
- "pulley-macros",
- "wasmtime-math",
+ "pulley-macros 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-math 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "pulley-interpreter"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "cranelift-bitset 0.121.1",
+ "log",
+ "pulley-macros 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-math 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
 ]
 
 [[package]]
@@ -4083,6 +4233,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.113",
+]
+
+[[package]]
+name = "pulley-macros"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.111",
 ]
 
 [[package]]
@@ -4381,7 +4541,7 @@ dependencies = [
  "bitvec",
  "phf",
  "revm-primitives",
- "rwasm",
+ "rwasm 0.3.2",
  "serde",
 ]
 
@@ -4685,16 +4845,48 @@ dependencies = [
 
 [[package]]
 name = "rwasm"
+<<<<<<< HEAD
 version = "0.3.2"
 source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#e5363da1656945fa7676cd9dc7bcb4b9f4d0c237"
+=======
+version = "0.0.0"
+source = "git+https://github.com/fluentlabs-xyz/rwasm.git?branch=feat%2Ftracing#1b241272c1fa6c4f474b89fb0f70ff76ef0a6ecc"
+>>>>>>> bc924abe (rebase devel)
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
  "bitvec",
  "bytes",
+ "cfg-if",
  "directories",
  "downcast-rs",
+ "fnv",
  "futures",
+ "hashbrown 0.15.5",
+ "libc",
+ "libm",
+ "num-derive",
+ "num-traits",
+ "paste",
+ "serde",
+ "smallvec",
+ "spin 0.10.0",
+ "tiny-keccak",
+ "wasmi",
+ "wasmparser-nostd",
+ "wasmtime",
+]
+
+[[package]]
+name = "rwasm"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b36169175e8ed473a54baf2a23ff6cf3391c12abf12c339a18d18e4990ee3c8"
+dependencies = [
+ "bincode 2.0.1",
+ "bitvec",
+ "bytes",
+ "downcast-rs",
  "hashbrown 0.15.5",
  "libm",
  "num-derive",
@@ -6423,8 +6615,12 @@ dependencies = [
 
 [[package]]
 name = "wasmtime"
+<<<<<<< HEAD
 version = "34.0.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
+=======
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
 dependencies = [
  "addr2line",
  "anyhow",
@@ -6447,7 +6643,7 @@ dependencies = [
  "once_cell",
  "postcard",
  "psm",
- "pulley-interpreter",
+ "pulley-interpreter 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
  "rayon",
  "rustix",
  "semver 1.0.27",
@@ -6459,6 +6655,359 @@ dependencies = [
  "trait-variant",
  "wasm-encoder 0.233.0",
  "wasmparser 0.233.0",
+ "wasmtime-asm-macros 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-cache 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-component-macro 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-component-util 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-cranelift 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-environ 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-fiber 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-jit-debug 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-jit-icache-coherence 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-math 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-slab 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-versioned-export-macros 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-winch 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wat",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "wasmtime-asm-macros"
+version = "34.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c45ecc343d3ad4629d5882e94f3b0f0fac22a043c07e64373381168ae00c259"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
+name = "wasmtime-asm-macros"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
+name = "wasmtime-cache"
+version = "34.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3eb1976337108c8b9f80b05e9b909bf603f85c4ea97e31c112876a36d3cdcb98"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "directories-next",
+ "log",
+ "postcard",
+ "rustix",
+ "serde",
+ "serde_derive",
+ "sha2 0.10.9",
+ "toml 0.8.23",
+ "windows-sys 0.59.0",
+ "zstd",
+]
+
+[[package]]
+name = "wasmtime-cache"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "directories-next",
+ "log",
+ "postcard",
+ "rustix",
+ "serde",
+ "serde_derive",
+ "sha2 0.10.9",
+ "toml 0.8.23",
+ "windows-sys 0.59.0",
+ "zstd",
+]
+
+[[package]]
+name = "wasmtime-component-macro"
+version = "34.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3491c0f2511be561a92ac9b086351abc3a0f48c5f5f7d14f3975e246c13838be"
+dependencies = [
+ "anyhow",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.111",
+ "wasmtime-component-util 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-wit-bindgen 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wit-parser",
+]
+
+[[package]]
+name = "wasmtime-component-macro"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "anyhow",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.111",
+ "wasmtime-component-util 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-wit-bindgen 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wit-parser",
+]
+
+[[package]]
+name = "wasmtime-component-util"
+version = "34.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26bc084e249f74e61c79077d8937c34fb0af223752b9b1725e3d7ed94b006f23"
+
+[[package]]
+name = "wasmtime-component-util"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+
+[[package]]
+name = "wasmtime-cranelift"
+version = "34.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0010bd93362c634837e6bb13e213c2d83673b28dc12208b64ddd821fa55f7d33"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "cranelift-codegen 0.121.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cranelift-control 0.121.2",
+ "cranelift-entity 0.121.2",
+ "cranelift-frontend 0.121.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cranelift-native 0.121.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gimli",
+ "itertools 0.14.0",
+ "log",
+ "object 0.36.7",
+ "smallvec",
+ "target-lexicon",
+ "thiserror 2.0.17",
+ "wasmparser 0.233.0",
+ "wasmtime-environ 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-math 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-versioned-export-macros 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "wasmtime-cranelift"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "cranelift-codegen 0.121.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "cranelift-control 0.121.1",
+ "cranelift-entity 0.121.1",
+ "cranelift-frontend 0.121.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "cranelift-native 0.121.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "gimli",
+ "itertools 0.14.0",
+ "log",
+ "object 0.36.7",
+ "pulley-interpreter 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "smallvec",
+ "target-lexicon",
+ "thiserror 2.0.17",
+ "wasmparser 0.233.0",
+ "wasmtime-environ 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-math 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-versioned-export-macros 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+]
+
+[[package]]
+name = "wasmtime-environ"
+version = "34.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36a035dc308ff6be3d790dafdc2e41a128415e20ad864580da49470073e21dc1"
+dependencies = [
+ "anyhow",
+ "cpp_demangle",
+ "cranelift-bitset 0.121.2",
+ "cranelift-entity 0.121.2",
+ "gimli",
+ "indexmap 2.12.1",
+ "log",
+ "object 0.36.7",
+ "postcard",
+ "rustc-demangle",
+ "semver 1.0.27",
+ "serde",
+ "serde_derive",
+ "smallvec",
+ "target-lexicon",
+ "wasm-encoder 0.233.0",
+ "wasmparser 0.233.0",
+ "wasmprinter",
+ "wasmtime-component-util 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "wasmtime-environ"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "anyhow",
+ "cpp_demangle",
+ "cranelift-bitset 0.121.1",
+ "cranelift-entity 0.121.1",
+ "gimli",
+ "indexmap 2.12.1",
+ "log",
+ "object 0.36.7",
+ "postcard",
+ "rustc-demangle",
+ "semver 1.0.27",
+ "serde",
+ "serde_derive",
+ "smallvec",
+ "target-lexicon",
+ "wasm-encoder 0.233.0",
+ "wasmparser 0.233.0",
+ "wasmprinter",
+ "wasmtime-component-util 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+]
+
+[[package]]
+name = "wasmtime-fiber"
+version = "34.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdc3c1e4e70cdd3a4572dff79062caa48988f7f1ccf6850d98a4e4c41bf3cfc8"
+dependencies = [
+ "anyhow",
+ "cc",
+ "cfg-if",
+ "libc",
+ "rustix",
+ "wasmtime-asm-macros 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-versioned-export-macros 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "wasmtime-fiber"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "anyhow",
+ "cc",
+ "cfg-if",
+ "libc",
+ "rustix",
+ "wasmtime-asm-macros 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-versioned-export-macros 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "wasmtime-jit-debug"
+version = "34.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d83fa2dea686f76b5437b66045aae6351d359ee11cc4124f9842de63837b81"
+dependencies = [
+ "cc",
+ "object 0.36.7",
+ "rustix",
+ "wasmtime-versioned-export-macros 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "wasmtime-jit-debug"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "cc",
+ "object 0.36.7",
+ "rustix",
+ "wasmtime-versioned-export-macros 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+]
+
+[[package]]
+name = "wasmtime-jit-icache-coherence"
+version = "34.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44c71d64e8ebe132cd45e9d299a4d0daf261d66bd05cf50a204a1bf8cf96ff1f"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "libc",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "wasmtime-jit-icache-coherence"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "libc",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "wasmtime-math"
+version = "34.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "222bfa4769c6931c985711eb49a92748ea0acc4ca85fcd24e945a2f1bacda0c1"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "wasmtime-math"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "wasmtime-rwasm"
+version = "34.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e2a7abdccb3ea676c977e0bb4757de6a765c98d3c2baf703be9b8fd2a0ec170"
+>>>>>>> bc924abe (rebase devel)
+dependencies = [
+ "addr2line",
+ "anyhow",
+ "async-trait",
+ "bitflags",
+ "bumpalo",
+ "cc",
+ "cfg-if",
+ "encoding_rs",
+ "fxprof-processed-profile",
+ "gimli",
+ "hashbrown 0.15.5",
+ "indexmap 2.12.1",
+ "ittapi",
+ "libc",
+ "log",
+ "mach2",
+ "memfd",
+ "object 0.36.7",
+ "once_cell",
+ "postcard",
+ "psm",
+ "pulley-interpreter 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rayon",
+ "rustix",
+ "semver 1.0.27",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "smallvec",
+ "target-lexicon",
+ "trait-variant",
+ "wasm-encoder 0.233.0",
+ "wasmparser 0.233.0",
+<<<<<<< HEAD
  "wasmtime-asm-macros",
  "wasmtime-cache",
  "wasmtime-component-macro",
@@ -6472,6 +7021,21 @@ dependencies = [
  "wasmtime-slab",
  "wasmtime-versioned-export-macros",
  "wasmtime-winch",
+=======
+ "wasmtime-asm-macros 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-cache 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-component-macro 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-component-util 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-environ 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-fiber 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-jit-debug 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-jit-icache-coherence 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-math 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-rwasm-cranelift",
+ "wasmtime-slab 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-versioned-export-macros 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-winch 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+>>>>>>> bc924abe (rebase devel)
  "wat",
  "windows-sys 0.59.0",
 ]
@@ -6529,23 +7093,23 @@ source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ce
 dependencies = [
  "anyhow",
  "cfg-if",
- "cranelift-codegen",
- "cranelift-control",
- "cranelift-entity",
- "cranelift-frontend",
- "cranelift-native",
+ "cranelift-codegen 0.121.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cranelift-control 0.121.2",
+ "cranelift-entity 0.121.2",
+ "cranelift-frontend 0.121.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cranelift-native 0.121.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "gimli",
  "itertools 0.14.0",
  "log",
  "object 0.36.7",
- "pulley-interpreter",
+ "pulley-interpreter 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "smallvec",
  "target-lexicon",
  "thiserror 2.0.17",
  "wasmparser 0.233.0",
- "wasmtime-environ",
- "wasmtime-math",
- "wasmtime-versioned-export-macros",
+ "wasmtime-environ 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-math 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-versioned-export-macros 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -6625,6 +7189,11 @@ version = "34.0.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 
 [[package]]
+name = "wasmtime-slab"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+
+[[package]]
 name = "wasmtime-versioned-export-macros"
 version = "34.0.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
@@ -6635,25 +7204,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasmtime-versioned-export-macros"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.111",
+]
+
+[[package]]
 name = "wasmtime-winch"
 version = "34.0.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "anyhow",
- "cranelift-codegen",
+ "cranelift-codegen 0.121.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "gimli",
  "object 0.36.7",
  "target-lexicon",
  "wasmparser 0.233.0",
- "wasmtime-cranelift",
- "wasmtime-environ",
- "winch-codegen",
+ "wasmtime-cranelift 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-environ 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "winch-codegen 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "wasmtime-winch"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "anyhow",
+ "cranelift-codegen 0.121.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "gimli",
+ "object 0.36.7",
+ "target-lexicon",
+ "wasmparser 0.233.0",
+ "wasmtime-cranelift 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-environ 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "winch-codegen 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
 ]
 
 [[package]]
 name = "wasmtime-wit-bindgen"
 version = "34.0.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
+dependencies = [
+ "anyhow",
+ "heck",
+ "indexmap 2.12.1",
+ "wit-parser",
+]
+
+[[package]]
+name = "wasmtime-wit-bindgen"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
 dependencies = [
  "anyhow",
  "heck",
@@ -6739,17 +7345,36 @@ version = "34.0.1"
 source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#4b241923ced28707c63c24839e204c20f696c705"
 dependencies = [
  "anyhow",
- "cranelift-assembler-x64",
- "cranelift-codegen",
+ "cranelift-assembler-x64 0.121.2",
+ "cranelift-codegen 0.121.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "gimli",
  "regalloc2",
  "smallvec",
  "target-lexicon",
  "thiserror 2.0.17",
  "wasmparser 0.233.0",
- "wasmtime-cranelift",
- "wasmtime-environ",
- "wasmtime-math",
+ "wasmtime-cranelift 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-environ 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmtime-math 34.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "winch-codegen"
+version = "34.0.1"
+source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel#e7833300b105b09907133bb877f464889932e00d"
+dependencies = [
+ "anyhow",
+ "cranelift-assembler-x64 0.121.1",
+ "cranelift-codegen 0.121.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "gimli",
+ "regalloc2",
+ "smallvec",
+ "target-lexicon",
+ "thiserror 2.0.17",
+ "wasmparser 0.233.0",
+ "wasmtime-cranelift 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-environ 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
+ "wasmtime-math 34.0.1 (git+https://github.com/fluentlabs-xyz/wasmtime?branch=devel)",
 ]
 
 [[package]]
