@@ -3,10 +3,10 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, system_entrypoint, Bytes, ExitCode, SharedAPI, B256, B512};
+use fluentbase_sdk::{alloc_slice, system_entrypoint2, Bytes, ExitCode, SharedAPI, B256, B512};
 use revm_precompile::{secp256k1::ecrecover, utilities::right_pad};
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // read full input data
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
@@ -21,7 +21,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
 
     // `v` must be a 32-byte big-endian integer equal to 27 or 28.
     if !(input[32..63].iter().all(|&b| b == 0) && matches!(input[63], 27 | 28)) {
-        return Ok(Bytes::new());
+        return Ok(());
     }
 
     let msg = <&B256>::try_from(&input[0..32]).unwrap();
@@ -29,10 +29,9 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
     let sig = <&B512>::try_from(&input[64..128]).unwrap();
 
     if let Ok(result) = ecrecover(sig, rec_id, msg) {
-        Ok(result.into())
-    } else {
-        Ok(Bytes::new())
+        sdk.write(result);
     }
+    Ok(())
 
     // TODO(dmitry123): Recover signature using ecdsa library once we have unconstrainted mode
     // let Ok(signature) = Signature::<k256::Secp256k1>::from_slice(&sig) else {
@@ -54,7 +53,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
     // sdk.write(&out);
 }
 
-system_entrypoint!(main_entry);
+system_entrypoint2!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -71,8 +70,9 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        let output = main_entry(&mut sdk).unwrap();
-        assert_eq!(output.as_ref(), expected);
+        main_entry(&mut sdk).unwrap();
+        let output = sdk.take_output();
+        assert_eq!(&output, expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
     }

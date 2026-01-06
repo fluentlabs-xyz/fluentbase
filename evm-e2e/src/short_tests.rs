@@ -16,6 +16,7 @@ mod single_test {
         // fn transaction_create_auto_suicide_contract("tests/GeneralStateTests/stInitCodeTest/TransactionCreateAutoSuicideContract.json");
         // fn failed_tx_xcf416c53_paris("tests/GeneralStateTests/stSpecialTest/failed_tx_xcf416c53_Paris.json");
         // fn precompile_absence("tests/GeneralStateTests/Pyspecs/frontier/precompiles/precompile_absence.json");
+        fn modexp_modsize0_returndatasize("tests/GeneralStateTests/stReturnDataTest/modexp_modsize0_returndatasize.json");
     }
 }
 

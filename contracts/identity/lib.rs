@@ -3,13 +3,13 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{system_entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint2, ContextReader, ExitCode, SharedAPI};
 use revm_precompile::{
     calc_linear_cost_u32,
     identity::{IDENTITY_BASE, IDENTITY_PER_WORD},
 };
 
-pub fn main_entry(sdk: &mut impl SharedAPI) -> Result<Bytes, ExitCode> {
+pub fn main_entry(sdk: &mut impl SharedAPI) -> Result<(), ExitCode> {
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     // fail fast if we don't have enough fuel for the call
@@ -19,10 +19,11 @@ pub fn main_entry(sdk: &mut impl SharedAPI) -> Result<Bytes, ExitCode> {
     }
     sdk.sync_evm_gas(gas_used)?;
     // write an identical output
-    Ok(sdk.bytes_input())
+    sdk.write(sdk.input());
+    Ok(())
 }
 
-system_entrypoint!(main_entry);
+system_entrypoint2!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -39,8 +40,9 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        let output = main_entry(&mut sdk).unwrap();
-        assert_eq!(output.as_ref(), expected);
+        main_entry(&mut sdk).unwrap();
+        let output = sdk.take_output();
+        assert_eq!(&output, expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
     }

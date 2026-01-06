@@ -4,8 +4,8 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    alloc_slice, crypto::CryptoRuntime, system_entrypoint, Bytes, ContextReader, CryptoAPI,
-    ExitCode, SharedAPI, BN254_G1_RAW_AFFINE_SIZE, PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL,
+    alloc_slice, crypto::CryptoRuntime, system_entrypoint2, ContextReader, CryptoAPI, ExitCode,
+    SharedAPI, BN254_G1_RAW_AFFINE_SIZE, PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL,
     PRECOMPILE_BN256_PAIR,
 };
 use revm_precompile::{
@@ -81,7 +81,7 @@ fn is_valid_point(point: &[u8; BN254_G1_RAW_AFFINE_SIZE]) -> bool {
     point.is_on_curve() && point.is_in_correct_subgroup_assuming_on_curve()
 }
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let bytecode_address = sdk.context().contract_bytecode_address();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
@@ -130,13 +130,15 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
 
             // Convert result back to Ethereum's big-endian format
             point_le_to_be(&mut result);
-            Ok(result.into())
+            sdk.write(result);
+            Ok(())
         }
         PRECOMPILE_BN256_MUL => {
             sdk.sync_evm_gas(ISTANBUL_MUL_GAS_COST)?;
             let result = bn254::run_mul(input, ISTANBUL_MUL_GAS_COST, u64::MAX)
                 .map_err(|_| ExitCode::PrecompileError)?;
-            Ok(result.bytes)
+            sdk.write(result.bytes);
+            Ok(())
         }
         PRECOMPILE_BN256_PAIR => {
             let gas_used = (input.len() / PAIR_ELEMENT_LEN) as u64 * ISTANBUL_PAIR_PER_POINT
@@ -145,13 +147,14 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
             let result =
                 bn254::run_pair(input, ISTANBUL_PAIR_PER_POINT, ISTANBUL_PAIR_BASE, u64::MAX)
                     .map_err(|_| ExitCode::PrecompileError)?;
-            Ok(result.bytes)
+            sdk.write(result.bytes);
+            Ok(())
         }
         _ => unreachable!("bn128: unsupported contract address"),
     }
 }
 
-system_entrypoint!(main_entry);
+system_entrypoint2!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -170,8 +173,9 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        let output = main_entry(&mut sdk).unwrap();
-        assert_eq!(output.as_ref(), expected);
+        main_entry(&mut sdk).unwrap();
+        let output = sdk.take_output();
+        assert_eq!(&output, expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
     }

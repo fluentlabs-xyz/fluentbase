@@ -531,10 +531,8 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
                 .set_code(frame.interpreter.input.target_address(), bytecode);
         }
 
-        // A special case for Universal Token (other runtimes will be migrated as well)
-        ExitCode::Ok | ExitCode::Panic
-            if is_execute_using_system_runtime_v2(&effective_bytecode_address) =>
-        {
+        // A special case for system runtime v2
+        _ if is_execute_using_system_runtime_v2(&effective_bytecode_address) => {
             process_runtime_execution_outcome(&target_address, ctx, &mut return_data)?;
         }
 
