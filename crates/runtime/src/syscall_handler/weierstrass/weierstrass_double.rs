@@ -1,12 +1,18 @@
-use crate::RuntimeContext;
+use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use fluentbase_types::{
-    BLS12381_G1_RAW_AFFINE_SIZE, BN254_G1_RAW_AFFINE_SIZE, SECP256K1_G1_RAW_AFFINE_SIZE,
+    ExitCode, BLS12381_G1_RAW_AFFINE_SIZE, BN254_G1_RAW_AFFINE_SIZE, SECP256K1_G1_RAW_AFFINE_SIZE,
     SECP256R1_G1_RAW_AFFINE_SIZE,
 };
 use num::BigUint;
 use rwasm::{Store, TrapCode, Value};
 use sp1_curves::{
-    weierstrass::{bls12_381::Bls12381, bn254::Bn254, secp256k1::Secp256k1, secp256r1::Secp256r1},
+    params::FieldParameters,
+    weierstrass::{
+        bls12_381::{Bls12381, Bls12381BaseField},
+        bn254::{Bn254, Bn254BaseField},
+        secp256k1::{Secp256k1, Secp256k1BaseField},
+        secp256r1::{Secp256r1, Secp256r1BaseField},
+    },
     AffinePoint, EllipticCurve,
 };
 
@@ -15,37 +21,47 @@ pub fn syscall_secp256k1_double_handler(
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_weierstrass_double_handler::<Secp256k1, { SECP256K1_G1_RAW_AFFINE_SIZE }>(
-        ctx, params, result,
-    )
+    syscall_weierstrass_double_handler::<
+        Secp256k1,
+        Secp256k1BaseField,
+        { SECP256K1_G1_RAW_AFFINE_SIZE },
+    >(ctx, params, result)
 }
 pub fn syscall_secp256r1_double_handler(
     ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_weierstrass_double_handler::<Secp256r1, { SECP256R1_G1_RAW_AFFINE_SIZE }>(
-        ctx, params, result,
-    )
+    syscall_weierstrass_double_handler::<
+        Secp256r1,
+        Secp256r1BaseField,
+        { SECP256R1_G1_RAW_AFFINE_SIZE },
+    >(ctx, params, result)
 }
 pub fn syscall_bn254_double_handler(
     ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_weierstrass_double_handler::<Bn254, { BN254_G1_RAW_AFFINE_SIZE }>(ctx, params, result)
+    syscall_weierstrass_double_handler::<Bn254, Bn254BaseField, { BN254_G1_RAW_AFFINE_SIZE }>(
+        ctx, params, result,
+    )
 }
 pub fn syscall_bls12381_double_handler(
     ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_weierstrass_double_handler::<Bls12381, { BLS12381_G1_RAW_AFFINE_SIZE }>(
+    syscall_weierstrass_double_handler::<Bls12381, Bls12381BaseField, { BLS12381_G1_RAW_AFFINE_SIZE }>(
         ctx, params, result,
     )
 }
 
-fn syscall_weierstrass_double_handler<E: EllipticCurve, const POINT_SIZE: usize>(
+fn syscall_weierstrass_double_handler<
+    E: EllipticCurve,
+    P: FieldParameters,
+    const POINT_SIZE: usize,
+>(
     ctx: &mut impl Store<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
@@ -55,7 +71,8 @@ fn syscall_weierstrass_double_handler<E: EllipticCurve, const POINT_SIZE: usize>
     let mut p = [0u8; POINT_SIZE];
     ctx.memory_read(p_ptr as usize, &mut p)?;
 
-    let result = syscall_weierstrass_double_impl::<E, POINT_SIZE>(p);
+    let result = syscall_weierstrass_double_impl::<E, P, POINT_SIZE>(p)
+        .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
     ctx.memory_write(p_ptr as usize, &result)?;
 
     Ok(())
@@ -72,8 +89,10 @@ fn syscall_weierstrass_double_handler<E: EllipticCurve, const POINT_SIZE: usize>
 /// No validation is performed — invalid input produces undefined output.
 pub fn syscall_secp256k1_double_impl(
     p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE],
-) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
-    syscall_weierstrass_double_impl::<Secp256k1, { SECP256K1_G1_RAW_AFFINE_SIZE }>(p)
+) -> Result<[u8; SECP256K1_G1_RAW_AFFINE_SIZE], ExitCode> {
+    syscall_weierstrass_double_impl::<Secp256k1, Secp256k1BaseField, { SECP256K1_G1_RAW_AFFINE_SIZE }>(
+        p,
+    )
 }
 
 /// Secp256r1 curve point doubling.
@@ -87,8 +106,10 @@ pub fn syscall_secp256k1_double_impl(
 /// No validation is performed — invalid input produces undefined output.
 pub fn syscall_secp256r1_double_impl(
     p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE],
-) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
-    syscall_weierstrass_double_impl::<Secp256r1, { SECP256R1_G1_RAW_AFFINE_SIZE }>(p)
+) -> Result<[u8; SECP256R1_G1_RAW_AFFINE_SIZE], ExitCode> {
+    syscall_weierstrass_double_impl::<Secp256r1, Secp256r1BaseField, { SECP256R1_G1_RAW_AFFINE_SIZE }>(
+        p,
+    )
 }
 
 /// BN254 curve point doubling.
@@ -102,8 +123,8 @@ pub fn syscall_secp256r1_double_impl(
 /// No validation is performed — invalid input produces undefined output.
 pub fn syscall_bn254_double_impl(
     p: [u8; BN254_G1_RAW_AFFINE_SIZE],
-) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
-    syscall_weierstrass_double_impl::<Bn254, { BN254_G1_RAW_AFFINE_SIZE }>(p)
+) -> Result<[u8; BN254_G1_RAW_AFFINE_SIZE], ExitCode> {
+    syscall_weierstrass_double_impl::<Bn254, Bn254BaseField, { BN254_G1_RAW_AFFINE_SIZE }>(p)
 }
 
 /// BLS12-381 curve point doubling.
@@ -117,15 +138,27 @@ pub fn syscall_bn254_double_impl(
 /// No validation is performed — invalid input produces undefined output.
 pub fn syscall_bls12381_double_impl(
     p: [u8; BLS12381_G1_RAW_AFFINE_SIZE],
-) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
-    syscall_weierstrass_double_impl::<Bls12381, { BLS12381_G1_RAW_AFFINE_SIZE }>(p)
+) -> Result<[u8; BLS12381_G1_RAW_AFFINE_SIZE], ExitCode> {
+    syscall_weierstrass_double_impl::<Bls12381, Bls12381BaseField, { BLS12381_G1_RAW_AFFINE_SIZE }>(
+        p,
+    )
 }
 
-fn syscall_weierstrass_double_impl<E: EllipticCurve, const POINT_SIZE: usize>(
+fn syscall_weierstrass_double_impl<
+    E: EllipticCurve,
+    P: FieldParameters,
+    const POINT_SIZE: usize,
+>(
     p: [u8; POINT_SIZE],
-) -> [u8; POINT_SIZE] {
+) -> Result<[u8; POINT_SIZE], ExitCode> {
     let (px, py) = p.split_at(p.len() / 2);
-    let p_affine = AffinePoint::<E>::new(BigUint::from_bytes_le(px), BigUint::from_bytes_le(py));
+    let (px, py) = (BigUint::from_bytes_le(px), BigUint::from_bytes_le(py));
+    // Make sure px/py are always less than modulus (to avoid neg underflow)
+    let modulus = P::modulus();
+    if px >= modulus || py >= modulus {
+        return Err(ExitCode::MalformedBuiltinParams);
+    }
+    let p_affine = AffinePoint::<E>::new(px, py);
     let result_affine = E::ec_double(&p_affine);
     let (rx, ry) = (result_affine.x, result_affine.y);
     let mut result = [0u8; POINT_SIZE];
@@ -135,7 +168,7 @@ fn syscall_weierstrass_double_impl<E: EllipticCurve, const POINT_SIZE: usize>(
     ry.resize(POINT_SIZE / 2, 0);
     result[..POINT_SIZE / 2].copy_from_slice(&rx);
     result[POINT_SIZE / 2..].copy_from_slice(&ry);
-    result
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -168,7 +201,7 @@ mod tests {
             22,
         ];
 
-        let result = syscall_bls12381_double_impl(generator);
+        let result = syscall_bls12381_double_impl(generator).unwrap();
         assert_eq!(result, expected_doubled);
     }
 
@@ -193,7 +226,7 @@ mod tests {
                 231, 146, 124, 10, 14, 140, 115, 237, 21,
             ];
 
-            let result = syscall_bn254_double_impl(a);
+            let result = syscall_bn254_double_impl(a).unwrap();
             assert_eq!(result, b);
         }
     }
@@ -221,7 +254,7 @@ mod tests {
                 197, 163, 57, 195, 61, 166, 254, 104, 225, 26,
             ];
 
-            let result = syscall_secp256k1_double_impl(a);
+            let result = syscall_secp256k1_double_impl(a).unwrap();
             assert_eq!(result, b);
         }
     }
@@ -248,7 +281,21 @@ mod tests {
             64, 208, 142, 219, 16, 85, 119, 7,
         ];
 
-        let result = syscall_secp256r1_double_impl(a);
+        let result = syscall_secp256r1_double_impl(a).unwrap();
         assert_eq!(result, b);
+    }
+
+    /// Reproduces chain halt when doubling an invalid BLS12-381 point with
+    /// x = 0xff..ff (above modulus) and y = 0x0.
+    #[test]
+    fn test_coords_above_modulus_halt() {
+        // 96-byte affine point: [x || y], each 48 bytes.
+        let mut coords_above_modulus_point = [0u8; 96];
+
+        // Set x = 0xff..ff (48 bytes of 0xff), y stays all zeros.
+        coords_above_modulus_point[..48].fill(0xff);
+
+        let exit_code = syscall_bls12381_double_impl(coords_above_modulus_point).unwrap_err();
+        assert_eq!(exit_code, ExitCode::MalformedBuiltinParams);
     }
 }
