@@ -379,9 +379,10 @@ fn test_wasm_balance_charge() {
         DEPLOYER_ADDRESS,
         contract_address,
         Bytes::new(), // 0x01 -> 21237 0x0102 -> 21269
-        Some(22_000),
+        Some(23514),
         None,
     );
+    assert!(result.is_success());
     let balance = U256::from_le_slice(result.output().unwrap_or_default().as_ref());
     assert_eq!(balance, U256::from(123));
 }
@@ -402,7 +403,7 @@ fn test_wasm_output_remains_unwiped_after_interruption() {
         DEPLOYER_ADDRESS,
         contract_address,
         Bytes::new(),
-        Some(22_000),
+        Some(24000),
         None,
     );
     assert_eq!(result.output().unwrap_or_default().as_ref(), &[0x1]);
