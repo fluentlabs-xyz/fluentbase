@@ -755,6 +755,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_CODE_HASH => {
             let input = get_input_validated!(== 20);
             let address = Address::from_slice(&input[0..20]);
+            if frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL {
+                return_halt!(OutOfFuel);
+            }
             // Load an account from database
             let account = ctx.journal_mut().load_account_with_code(address)?;
             charge_gas!(warm_cold_cost(account.is_cold));
@@ -796,6 +799,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let mut reader = input[20..].reader();
             let code_offset = reader.read_u64::<LittleEndian>().unwrap();
             let code_length = reader.read_u64::<LittleEndian>().unwrap();
+            // if frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL {
+            if frame.interpreter.gas.remaining() < gas::BASE {
+                return_halt!(OutOfFuel);
+            }
             // Load account with bytecode and charge gas
             let account = ctx.journal_mut().load_account_with_code(address)?;
 
