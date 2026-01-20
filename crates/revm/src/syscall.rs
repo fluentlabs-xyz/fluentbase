@@ -4,7 +4,7 @@ use crate::{
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
-use fluentbase_evm::gas::{COLD_SLOAD_COST_ADDITIONAL, WARM_STORAGE_READ_COST};
+use fluentbase_evm::gas::{COLD_SLOAD_COST_ADDITIONAL};
 use fluentbase_evm::EthereumMetadata;
 use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
@@ -230,12 +230,19 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let input = get_input_validated!(== 64);
             let slot = U256::from_le_slice(&input[0..32]);
             let new_value = U256::from_le_slice(&input[32..64]);
-            if frame.interpreter.gas.remaining() < WARM_STORAGE_READ_COST {
-                return_halt!(OutOfFuel)
-            }
-            let value = ctx
+            let skip_cold = frame.interpreter.gas.remaining() < COLD_SLOAD_COST_ADDITIONAL;
+            let res = ctx
                 .journal_mut()
-                .sstore(current_target_address, slot, new_value)?;
+                .sstore_skip_cold_load(current_target_address, slot, new_value, skip_cold);
+            let value = match res {
+                Ok(v) => v,
+                Err(e) => {
+                    match e {
+                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
+                        JournalLoadError::DBError(_) => return_halt!(Err),
+                    }
+                }
+            };
             assert_halt!(
                 frame.interpreter.gas.remaining() > gas::CALL_STIPEND,
                 OutOfFuel
@@ -710,6 +717,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_CODE_SIZE => {
             let input = get_input_validated!(== 20);
             let address = Address::from_slice(&input[0..20]);
+            // if frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL {
             if frame.interpreter.gas.remaining() < gas::BASE {
                 return_halt!(OutOfFuel);
             }
