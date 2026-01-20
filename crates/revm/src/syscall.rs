@@ -717,6 +717,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_CODE_SIZE => {
             let input = get_input_validated!(== 20);
             let address = Address::from_slice(&input[0..20]);
+            // highes value when all evm-e2e pass: 209
             // if frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL {
             if frame.interpreter.gas.remaining() < gas::BASE {
                 return_halt!(OutOfFuel);
@@ -799,6 +800,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let mut reader = input[20..].reader();
             let code_offset = reader.read_u64::<LittleEndian>().unwrap();
             let code_length = reader.read_u64::<LittleEndian>().unwrap();
+            // highes value when all evm-e2e pass: 106
             // if frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL {
             if frame.interpreter.gas.remaining() < gas::BASE {
                 return_halt!(OutOfFuel);
