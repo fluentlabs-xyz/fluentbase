@@ -662,13 +662,19 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             assert_halt!(!is_static, StateChangeDuringStaticCall);
             // destroy an account
             let target = Address::from_slice(&input[0..20]);
-            if frame.interpreter.gas.remaining() < gas::static_selfdestruct_cost(spec_id) {
-                return_halt!(OutOfFuel)
-            }
+            let skip_cold = frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL + gas::WARM_STORAGE_READ_COST;
             let mut result = ctx
                 .journal_mut()
-                .selfdestruct(current_target_address, target, false)
-                .map_err(|e| e.unwrap_db_error())?;
+                .selfdestruct(current_target_address, target, skip_cold);
+            let mut result = match result {
+                Ok(v) => v,
+                Err(e) => {
+                    match e {
+                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
+                        JournalLoadError::DBError(_) => return_halt!(Err),
+                    }
+                }
+            };
             // system precompiles are always empty...
             if result.data.target_exists && is_system_precompile(&target) {
                 result.data.target_exists = false;
