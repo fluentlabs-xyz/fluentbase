@@ -14,7 +14,7 @@ use fluentbase_sdk::{
     Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME,
     STATE_MAIN, U256,
 };
-use revm::context::journaled_state::JournalLoadError;
+use revm::context::journaled_state::{AccountLoad, JournalLoadError};
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
     context::{Cfg, ContextError, ContextTr, CreateScheme, JournalTr},
@@ -267,10 +267,64 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             if is_static && has_transfer {
                 return_halt!(StateChangeDuringStaticCall);
             }
-            if frame.interpreter.gas.remaining() < gas::calc_call_static_gas(spec_id, has_transfer) {
-                return_halt!(OutOfFuel)
-            }
-            let mut account_load = ctx.journal_mut().load_account_delegated(target_address)?;
+            // if frame.interpreter.gas.remaining() < gas::calc_call_static_gas(spec_id, has_transfer) {
+            //     return_halt!(OutOfFuel)
+            // }
+            // let mut account_load = ctx.journal_mut().load_account_delegated(target_address)?;
+            let mut cost = 0;
+            let skip_cold = frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
+            // below is load_account_delegated() fn to use 'skip_load' functionality
+            let mut account_load = {
+                let is_eip7702_enabled = spec_id.is_enabled_in(SpecId::PRAGUE);
+                let res = ctx.journal_mut()
+                    .load_account_info_skip_cold_load(target_address, is_eip7702_enabled, skip_cold);
+                let account_info_load = match res {
+                    Ok(v) => v,
+                    Err(e) => {
+                        match e {
+                            JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
+                            JournalLoadError::DBError(_) => return_halt!(Err),
+                        }
+                    }
+                };
+
+                let is_empty = account_info_load.is_empty();
+                if account_info_load.is_cold {
+                    cost += gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
+                }
+
+                let mut account_load = StateLoad::new(
+                    AccountLoad {
+                        is_delegate_account_cold: None,
+                        is_empty,
+                    },
+                    account_info_load.is_cold,
+                );
+
+                // load delegate code if account is EIP-7702
+                if let Some(Bytecode::Eip7702(code)) = &account_info_load.code {
+                    let address = code.address();
+                    cost += gas::WARM_STORAGE_READ_COST;
+                    if cost > frame.interpreter.gas.remaining() {
+                        return return_halt!(OutOfFuel);
+                    }
+                    let skip_cold = frame.interpreter.gas.remaining() < cost + gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
+                    let res = ctx.journal_mut()
+                        .load_account_info_skip_cold_load(address, true, skip_cold);
+                    let delegate_account = match res {
+                        Ok(v) => v,
+                        Err(e) => {
+                            match e {
+                                JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
+                                JournalLoadError::DBError(_) => return_halt!(Err),
+                            }
+                        }
+                    };
+                    account_load.data.is_delegate_account_cold = Some(delegate_account.is_cold);
+                }
+
+                account_load
+            };
             // In EVM, there exists an issue with precompiled contracts.
             // These contracts are preloaded and initially empty.
             // However, a precompiled contract can also be explicitly added
