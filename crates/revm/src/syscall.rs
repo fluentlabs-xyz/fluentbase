@@ -262,17 +262,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let input = get_input_validated!(== 32);
             let slot = U256::from_le_slice(&input[0..32]);
             let skip_cold = frame.interpreter.gas.remaining() < COLD_SLOAD_COST_ADDITIONAL;
-            let value = ctx.journal_mut()
+            let result = ctx.journal_mut()
                 .sload_skip_cold_load(current_target_address, slot, skip_cold);
-            let value = match value {
-                Ok(v) => { v }
-                Err(e) => {
-                    match e {
-                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
-                        JournalLoadError::DBError(_) => return_halt!(Err),
-                    }
-                }
-            };
+            let value = process_journal_load_result!(result);
             charge_gas!(sload_cost(spec_id, value.is_cold));
             inspect!(opcode::SLOAD, [slot], [value.data]);
             let output: [u8; 32] = value.to_le_bytes();
@@ -285,18 +277,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let slot = U256::from_le_slice(&input[0..32]);
             let new_value = U256::from_le_slice(&input[32..64]);
             let skip_cold = frame.interpreter.gas.remaining() < COLD_SLOAD_COST_ADDITIONAL;
-            let res = ctx
+            let result = ctx
                 .journal_mut()
                 .sstore_skip_cold_load(current_target_address, slot, new_value, skip_cold);
-            let value = match res {
-                Ok(v) => v,
-                Err(e) => {
-                    match e {
-                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
-                        JournalLoadError::DBError(_) => return_halt!(Err),
-                    }
-                }
-            };
+            let value = process_journal_load_result!(result);
             assert_halt!(
                 frame.interpreter.gas.remaining() > gas::CALL_STIPEND,
                 OutOfFuel
@@ -385,15 +369,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_STATIC_CALL => {
             let (input, lazy_contract_input) = get_input_validated!(>= 20);
             let target_address = Address::from_slice(&input[0..20]);
-            const TRANSFERS_VALUE: bool = false;
-            if frame.interpreter.gas.remaining() < gas::calc_call_static_gas(spec_id, TRANSFERS_VALUE) {
-                return_halt!(OutOfFuel)
-            }
             let mut account_load = load_account_with_gas_pre_checks!(target_address);
             // set is_empty to false as we are not creating this account.
             account_load.is_empty = false;
             // EIP-150: gas cost changes for IO-heavy operations
-            charge_gas!(gas::call_cost(spec_id.clone(), TRANSFERS_VALUE, account_load));
+            charge_gas!(gas::call_cost(spec_id.clone(), false, account_load));
             let gas_limit = if spec_id.is_enabled_in(TANGERINE) {
                 core::cmp::min(
                     frame.interpreter.gas.remaining_63_of_64_parts(),
@@ -439,13 +419,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let (input, lazy_contract_input) = get_input_validated!(>= 20 + 32);
             let target_address = Address::from_slice(&input[0..20]);
             let value = U256::from_le_slice(&input[20..52]);
-            let has_transfer = !value.is_zero();
-            if frame.interpreter.gas.remaining() < gas::calc_call_static_gas(spec_id, has_transfer) {
-                return_halt!(OutOfFuel)
-            }
             let mut account_load = load_account_with_gas_pre_checks!(target_address);
             // set is_empty to false as we are not creating this account
             account_load.is_empty = false;
+            let has_transfer = !value.is_zero();
             // EIP-150: gas cost changes for IO-heavy operations
             charge_gas!(gas::call_cost(spec_id, has_transfer, account_load));
             let mut gas_limit = if spec_id.is_enabled_in(TANGERINE) {
@@ -497,15 +474,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_DELEGATE_CALL => {
             let (input, lazy_contract_input) = get_input_validated!(>= 20);
             let target_address = Address::from_slice(&input[0..20]);
-            const TRANSFERS_VALUE: bool = false;
-            if frame.interpreter.gas.remaining() < gas::calc_call_static_gas(spec_id, TRANSFERS_VALUE) {
-                return_halt!(OutOfFuel)
-            }
             let mut account_load = load_account_with_gas_pre_checks!(target_address);
             // set is_empty to false as we are not creating this account.
             account_load.is_empty = false;
             // EIP-150: gas cost changes for IO-heavy operations
-            charge_gas!(gas::call_cost(spec_id, TRANSFERS_VALUE, account_load));
+            charge_gas!(gas::call_cost(spec_id, false, account_load));
             let gas_limit = if spec_id.is_enabled_in(TANGERINE) {
                 core::cmp::min(
                     frame.interpreter.gas.remaining_63_of_64_parts(),
