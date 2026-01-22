@@ -77,6 +77,46 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         .filter(is_execute_using_system_runtime)
         .is_some();
 
+    /// This is modified Journal::load_account_delegated() fn contents to support 'skip_load'
+    macro_rules! load_account_with_gas_pre_checks {
+        ($target_address:expr) => {{
+            let mut cost = 0;
+            let skip_cold = frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
+            let is_eip7702_enabled = spec_id.is_enabled_in(SpecId::PRAGUE);
+            let result = ctx.journal_mut()
+                .load_account_info_skip_cold_load($target_address, is_eip7702_enabled, skip_cold);
+            let account_info_load = process_journal_load_result!(result);
+
+            let is_empty = account_info_load.is_empty();
+            if account_info_load.is_cold {
+                cost += gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
+            }
+
+            let mut account_load = StateLoad::new(
+                AccountLoad {
+                    is_delegate_account_cold: None,
+                    is_empty,
+                },
+                account_info_load.is_cold,
+            );
+
+            // load delegate code if account is EIP-7702
+            if let Some(Bytecode::Eip7702(code)) = &account_info_load.code {
+                let address = code.address();
+                cost += gas::WARM_STORAGE_READ_COST;
+                if cost > frame.interpreter.gas.remaining() {
+                    return return_halt!(OutOfFuel);
+                }
+                let skip_cold = frame.interpreter.gas.remaining() < cost + gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
+                let result = ctx.journal_mut()
+                    .load_account_info_skip_cold_load(address, true, skip_cold);
+                let delegate_account = process_journal_load_result!(result);
+                account_load.data.is_delegate_account_cold = Some(delegate_account.is_cold);
+            }
+
+            account_load
+        }}
+    }
     macro_rules! return_result {
         ($output:expr, $result:ident) => {{
             let output: Bytes = $output.into();
@@ -202,6 +242,19 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             (input, lazy_contract_input)
         }};
     }
+    macro_rules! process_journal_load_result {
+        ($load_result:expr) => {
+            match $load_result {
+                Ok(v) => v,
+                Err(e) => {
+                    match e {
+                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
+                        JournalLoadError::DBError(_) => return_halt!(Err),
+                    }
+                }
+            }
+        }
+    }
 
     use fluentbase_sdk::syscall::*;
     match inputs.syscall_params.code_hash {
@@ -267,64 +320,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             if is_static && has_transfer {
                 return_halt!(StateChangeDuringStaticCall);
             }
-            // if frame.interpreter.gas.remaining() < gas::calc_call_static_gas(spec_id, has_transfer) {
-            //     return_halt!(OutOfFuel)
-            // }
-            // let mut account_load = ctx.journal_mut().load_account_delegated(target_address)?;
-            let mut cost = 0;
-            let skip_cold = frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
-            // below is load_account_delegated() fn to use 'skip_load' functionality
-            let mut account_load = {
-                let is_eip7702_enabled = spec_id.is_enabled_in(SpecId::PRAGUE);
-                let res = ctx.journal_mut()
-                    .load_account_info_skip_cold_load(target_address, is_eip7702_enabled, skip_cold);
-                let account_info_load = match res {
-                    Ok(v) => v,
-                    Err(e) => {
-                        match e {
-                            JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
-                            JournalLoadError::DBError(_) => return_halt!(Err),
-                        }
-                    }
-                };
-
-                let is_empty = account_info_load.is_empty();
-                if account_info_load.is_cold {
-                    cost += gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
-                }
-
-                let mut account_load = StateLoad::new(
-                    AccountLoad {
-                        is_delegate_account_cold: None,
-                        is_empty,
-                    },
-                    account_info_load.is_cold,
-                );
-
-                // load delegate code if account is EIP-7702
-                if let Some(Bytecode::Eip7702(code)) = &account_info_load.code {
-                    let address = code.address();
-                    cost += gas::WARM_STORAGE_READ_COST;
-                    if cost > frame.interpreter.gas.remaining() {
-                        return return_halt!(OutOfFuel);
-                    }
-                    let skip_cold = frame.interpreter.gas.remaining() < cost + gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
-                    let res = ctx.journal_mut()
-                        .load_account_info_skip_cold_load(address, true, skip_cold);
-                    let delegate_account = match res {
-                        Ok(v) => v,
-                        Err(e) => {
-                            match e {
-                                JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
-                                JournalLoadError::DBError(_) => return_halt!(Err),
-                            }
-                        }
-                    };
-                    account_load.data.is_delegate_account_cold = Some(delegate_account.is_cold);
-                }
-
-                account_load
-            };
+            let mut account_load = load_account_with_gas_pre_checks!(target_address);
             // In EVM, there exists an issue with precompiled contracts.
             // These contracts are preloaded and initially empty.
             // However, a precompiled contract can also be explicitly added
@@ -393,7 +389,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             if frame.interpreter.gas.remaining() < gas::calc_call_static_gas(spec_id, TRANSFERS_VALUE) {
                 return_halt!(OutOfFuel)
             }
-            let mut account_load = ctx.journal_mut().load_account_delegated(target_address)?;
+            let mut account_load = load_account_with_gas_pre_checks!(target_address);
             // set is_empty to false as we are not creating this account.
             account_load.is_empty = false;
             // EIP-150: gas cost changes for IO-heavy operations
@@ -447,7 +443,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             if frame.interpreter.gas.remaining() < gas::calc_call_static_gas(spec_id, has_transfer) {
                 return_halt!(OutOfFuel)
             }
-            let mut account_load = ctx.journal_mut().load_account_delegated(target_address)?;
+            let mut account_load = load_account_with_gas_pre_checks!(target_address);
             // set is_empty to false as we are not creating this account
             account_load.is_empty = false;
             // EIP-150: gas cost changes for IO-heavy operations
@@ -505,7 +501,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             if frame.interpreter.gas.remaining() < gas::calc_call_static_gas(spec_id, TRANSFERS_VALUE) {
                 return_halt!(OutOfFuel)
             }
-            let mut account_load = ctx.journal_mut().load_account_delegated(target_address)?;
+            let mut account_load = load_account_with_gas_pre_checks!(target_address);
             // set is_empty to false as we are not creating this account.
             account_load.is_empty = false;
             // EIP-150: gas cost changes for IO-heavy operations
@@ -717,18 +713,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // destroy an account
             let target = Address::from_slice(&input[0..20]);
             let skip_cold = frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL + gas::WARM_STORAGE_READ_COST;
-            let mut result = ctx
+            let result = ctx
                 .journal_mut()
                 .selfdestruct(current_target_address, target, skip_cold);
-            let mut result = match result {
-                Ok(v) => v,
-                Err(e) => {
-                    match e {
-                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
-                        JournalLoadError::DBError(_) => return_halt!(Err),
-                    }
-                }
-            };
+            let mut result = process_journal_load_result!(result);
             // system precompiles are always empty...
             if result.data.target_exists && is_system_precompile(&target) {
                 result.data.target_exists = false;
@@ -744,21 +732,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let address = Address::from_slice(&input[0..20]);
             let skip_cold = frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
             // Load an account with the bytecode
-            let res = ctx.journal_mut()
+            let result = ctx.journal_mut()
                 .load_account_info_skip_cold_load(
                     address,
                     false,
                     skip_cold
                 );
-            let account_info = match res {
-                Ok(v) => v,
-                Err(e) => {
-                    match e {
-                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
-                        JournalLoadError::DBError(_) => return_halt!(Err),
-                    }
-                }
-            };
+            let account_info = process_journal_load_result!(result);
             let balance_load = StateLoad::new(account_info.balance, account_info.is_cold);
             // make sure we have enough gas for this op
             charge_gas!(if spec_id.is_enabled_in(BERLIN) {
@@ -791,21 +771,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let address = Address::from_slice(&input[0..20]);
             let skip_cold = frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
             // Load an account with the bytecode
-            let res = ctx.journal_mut()
+            let result = ctx.journal_mut()
                 .load_account_info_skip_cold_load(
                     address,
                     true,
                     skip_cold
                 );
-            let account_info = match res {
-                Ok(v) => v,
-                Err(e) => {
-                    match e {
-                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
-                        JournalLoadError::DBError(_) => return_halt!(Err),
-                    }
-                }
-            };
+            let account_info = process_journal_load_result!(result);
             charge_gas!(warm_cold_cost(account_info.is_cold));
 
             // A special case for precompiled runtimes, where the way of extracting bytecode might be different.
@@ -840,21 +812,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let address = Address::from_slice(&input[0..20]);
             let skip_cold = frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
             // Load an account with the bytecode
-            let res = ctx.journal_mut()
+            let result = ctx.journal_mut()
                 .load_account_info_skip_cold_load(
                     address,
                     false,
                     skip_cold
                 );
-            let account_info = match res {
-                Ok(v) => v,
-                Err(e) => {
-                    match e {
-                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
-                        JournalLoadError::DBError(_) => return_halt!(Err),
-                    }
-                }
-            };
+            let account_info = process_journal_load_result!(result);
             charge_gas!(warm_cold_cost(account_info.is_cold));
 
             // Extract code hash for an account for delegated account.
@@ -896,21 +860,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let code_length = reader.read_u64::<LittleEndian>().unwrap();
             let skip_cold = frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
             // Load an account with the bytecode
-            let res = ctx.journal_mut()
+            let result = ctx.journal_mut()
                 .load_account_info_skip_cold_load(
                     address,
                     true,
                     skip_cold
                 );
-            let account_info = match res {
-                Ok(v) => v,
-                Err(e) => {
-                    match e {
-                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
-                        JournalLoadError::DBError(_) => return_halt!(Err),
-                    }
-                }
-            };
+            let account_info = process_journal_load_result!(result);
 
             // CRITICAL: Gas is charged for REQUESTED length, not actual returned length
             // This prevents gas abuse where attacker requests small length but expects full bytecode
