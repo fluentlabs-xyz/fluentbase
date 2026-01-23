@@ -1,6 +1,7 @@
 use fluentbase_types::{BytecodeOrHash, B256};
 use rwasm::RwasmModule;
 use schnellru::{Limiter, LruMap};
+use std::marker::PhantomData;
 use std::sync::{Arc, LazyLock, Mutex};
 
 /// Global factory maintaining compiled module cache and resumable runtime instances.
@@ -50,10 +51,7 @@ impl ModuleFactory {
         if let Some(module) = ctx.wasmtime_modules.get(&code_hash) {
             return module.clone();
         }
-        println!(
-            "missing wasmtime module address={} code_hash={}, compiling",
-            address, code_hash
-        );
+        println!("missing wasmtime module address={address} code_hash={code_hash}, compiling");
 
         let rwasm_module = ctx
             .cached_modules
@@ -91,6 +89,9 @@ struct ModuleFactoryInner {
 }
 
 /// Maximum memory for module cache: 1 GB
+///
+/// This limits only the estimated size of cached module content,
+/// not the hash table overhead (which is negligible for typical workloads).
 pub const CACHED_MODULES_SIZE_LIMIT: usize = 1024 * 1024 * 1024;
 
 impl Default for ModuleFactoryInner {
@@ -107,18 +108,16 @@ impl Default for ModuleFactoryInner {
     }
 }
 
+/// Trait for estimating heap-allocated memory size of cached values.
 pub trait SizeEstimator {
+    /// Returns estimated heap memory usage in bytes.
+    ///
+    /// Must return a value > 0 for valid entries. Zero-size entries
+    /// are rejected by the limiter to prevent unbounded cache growth.
     fn estimate_size(&self) -> usize;
 }
 
 impl SizeEstimator for RwasmModule {
-    /// Estimates memory size by calculating heap-allocated section sizes.
-    ///
-    /// Formula:
-    /// - code_section: instructions × 8 bytes per Opcode
-    /// - hint_section: original bytecode bytes
-    /// - data_section: static data bytes
-    /// - elem_section: elements × 4 bytes per u32
     #[inline]
     fn estimate_size(&self) -> usize {
         const OPCODE_SIZE: usize = 8;
@@ -133,32 +132,60 @@ impl SizeEstimator for RwasmModule {
 
 #[cfg(feature = "wasmtime")]
 impl SizeEstimator for wasmtime::Module {
-    /// Estimates memory size using the compiled artifact's image range.
-    ///
-    /// This includes executable code, data sections, and metadata.
     #[inline]
     fn estimate_size(&self) -> usize {
         let range = self.image_range();
-        let start = range.start as usize;
-        let end = range.end as usize;
-        end - start
+        (range.end as usize).saturating_sub(range.start as usize)
     }
 }
 
+/// Memory-based limiter for LRU cache that tracks total byte usage.
+///
+/// Evicts least-recently-used entries when total cached size exceeds `max_bytes`.
+///
+/// # Rejection Rules
+/// - Items with `estimate_size() == 0` are rejected (would bypass limits)
+/// - Items with `estimate_size() > max_bytes` are rejected (can never fit)
+///
+/// # Example
+/// ```ignore
+/// let limiter = ModuleMemoryLimiter::<MyModule>::new(1024 * 1024); // 1MB limit
+/// let mut cache = LruMap::new(limiter);
+/// ```
 #[derive(Clone, Debug)]
 pub struct ModuleMemoryLimiter<V> {
     max_bytes: usize,
     current_bytes: usize,
-    _marker: std::marker::PhantomData<V>,
+    _marker: PhantomData<V>,
 }
 
 impl<V> ModuleMemoryLimiter<V> {
-    pub const fn new(max_bytes: usize) -> Self {
+    /// Creates a new limiter with the specified memory budget.
+    ///
+    /// # Panics
+    /// Panics if `max_bytes` is 0 (would reject all entries).
+    pub fn new(max_bytes: usize) -> Self {
+        assert!(max_bytes > 0, "max_bytes must be greater than 0");
         Self {
             max_bytes,
             current_bytes: 0,
-            _marker: std::marker::PhantomData,
+            _marker: PhantomData,
         }
+    }
+
+    /// Returns the maximum memory budget in bytes.
+    pub const fn max_bytes(&self) -> usize {
+        self.max_bytes
+    }
+
+    /// Returns current tracked memory usage in bytes.
+    pub const fn current_bytes(&self) -> usize {
+        self.current_bytes
+    }
+
+    /// Returns remaining available memory in bytes.
+    pub const fn available_bytes(&self) -> usize {
+        self.max_bytes.saturating_sub(self.current_bytes)
     }
 }
 
@@ -166,11 +193,17 @@ impl<V: SizeEstimator> Limiter<B256, V> for ModuleMemoryLimiter<V> {
     type KeyToInsert<'a> = B256;
     type LinkType = u32;
 
+    /// Checks if eviction is needed after an insert or replacement.
     #[inline]
     fn is_over_the_limit(&self, _length: usize) -> bool {
         self.current_bytes > self.max_bytes
     }
 
+    /// Validates and tracks a new entry before insertion.
+    ///
+    /// Returns `None` if:
+    /// - `estimate_size() == 0` (zero-size items bypass limits)
+    /// - `estimate_size() > max_bytes` (item can never fit)
     fn on_insert(
         &mut self,
         _length: usize,
@@ -179,14 +212,22 @@ impl<V: SizeEstimator> Limiter<B256, V> for ModuleMemoryLimiter<V> {
     ) -> Option<(B256, V)> {
         let size = value.estimate_size();
 
-        if size > self.max_bytes {
+        if size == 0 || size > self.max_bytes {
             return None;
         }
 
-        self.current_bytes += size;
+        self.current_bytes = self.current_bytes.saturating_add(size);
         Some((key, value))
     }
 
+    /// Validates and tracks a value replacement for an existing key.
+    ///
+    /// Returns `false` (causing entry removal) if:
+    /// - `new_value.estimate_size() == 0`
+    /// - `new_value.estimate_size() > max_bytes`
+    ///
+    /// Otherwise, updates size tracking and returns `true`, allowing LRU
+    /// eviction to handle any overflow.
     fn on_replace(
         &mut self,
         _length: usize,
@@ -198,30 +239,37 @@ impl<V: SizeEstimator> Limiter<B256, V> for ModuleMemoryLimiter<V> {
         let old_size = old_value.estimate_size();
         let new_size = new_value.estimate_size();
 
-        if new_size > old_size {
-            let diff = new_size - old_size;
-            if self.current_bytes + diff > self.max_bytes {
-                return false;
-            }
-            self.current_bytes += diff;
-        } else {
-            self.current_bytes = self.current_bytes.saturating_sub(old_size - new_size);
+        if new_size == 0 || new_size > self.max_bytes {
+            return false;
         }
+
+        self.current_bytes = self
+            .current_bytes
+            .saturating_sub(old_size)
+            .saturating_add(new_size);
 
         true
     }
 
+    /// Updates size tracking after an entry is removed.
     fn on_removed(&mut self, _key: &mut B256, value: &mut V) {
         let size = value.estimate_size();
         self.current_bytes = self.current_bytes.saturating_sub(size);
     }
 
+    /// Resets size tracking when the cache is cleared.
     fn on_cleared(&mut self) {
         self.current_bytes = 0;
     }
 
-    fn on_grow(&mut self, new_memory_usage: usize) -> bool {
-        new_memory_usage <= self.max_bytes
+    /// Controls whether the internal hash table can grow its bucket array.
+    ///
+    /// The `new_memory_usage` parameter is the allocation size for the table's
+    /// internal structure (entry slots + control bytes), NOT the stored content.
+    ///
+    /// Always returns `true`: we budget content size only, not table overhead.
+    fn on_grow(&mut self, _new_memory_usage: usize) -> bool {
+        true
     }
 }
 
@@ -230,68 +278,240 @@ mod tests {
     use super::*;
     use rwasm::{InstructionSet, RwasmModuleInner};
 
-    fn create_rwasm_module(hint_size: usize, hint_value: u8) -> RwasmModule {
+    // ==================== Test Helpers ====================
+
+    /// Creates a module with specified hint_section size.
+    fn module(hint_size: usize) -> RwasmModule {
         RwasmModuleInner {
             code_section: InstructionSet::default(),
-            hint_section: vec![hint_value; hint_size],
+            hint_section: vec![0u8; hint_size],
             data_section: vec![],
             elem_section: vec![],
         }
-        .into()
+            .into()
+    }
+
+    /// Creates a deterministic B256 key from a u16 id.
+    fn key(id: u16) -> B256 {
+        let mut bytes = [0u8; 32];
+        bytes[0..2].copy_from_slice(&id.to_le_bytes());
+        B256::from(bytes)
+    }
+
+    /// Fixed seed for deterministic hash table behavior.
+    const TEST_SEED: [u64; 4] = [1, 2, 3, 4];
+
+    fn new_cache(max_bytes: usize) -> LruMap<B256, RwasmModule, ModuleMemoryLimiter<RwasmModule>> {
+        LruMap::with_seed(ModuleMemoryLimiter::new(max_bytes), TEST_SEED)
+    }
+
+    // ==================== Basic Operations ====================
+
+    #[test]
+    fn insert_and_retrieve() {
+        let mut cache = new_cache(1000);
+
+        cache.insert(key(1), module(100));
+
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.limiter().current_bytes(), 100);
+        assert!(cache.get(&key(1)).is_some());
     }
 
     #[test]
-    fn enforces_memory_limit() {
-        const LIMIT: usize = 5 * 1024; // 5 KB
-        let mut cache = LruMap::new(ModuleMemoryLimiter::<RwasmModule>::new(LIMIT));
+    fn remove_updates_tracking() {
+        let mut cache = new_cache(1000);
 
-        // Insert 10 modules × 1 KB = 10 KB (2x over limit)
-        for i in 0..10u8 {
-            cache.insert(B256::from([i; 32]), create_rwasm_module(1024, i));
+        cache.insert(key(1), module(100));
+        cache.remove(&key(1));
+
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.limiter().current_bytes(), 0);
+    }
+
+    #[test]
+    fn clear_resets_tracking() {
+        let mut cache = new_cache(1000);
+
+        cache.insert(key(1), module(100));
+        cache.insert(key(2), module(200));
+        cache.clear();
+
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.limiter().current_bytes(), 0);
+    }
+
+    // ==================== LRU Eviction ====================
+
+    #[test]
+    fn evicts_lru_when_over_limit() {
+        let mut cache = new_cache(500); // 5 × 100 bytes
+
+        for i in 0..10u16 {
+            cache.insert(key(i), module(100));
         }
 
-        // Should evict old entries to stay near limit
-        assert!(cache.len() == 5, "Should evict to stay under limit");
-        assert_eq!(
-            cache.len() * 1024,
-            LIMIT,
-            "Memory usage should be close to limit"
-        );
-        assert_eq!(
-            cache.get(&B256::from([1; 32])),
-            None,
-            "Oldest item should be evicted"
-        );
-        assert_eq!(
-            cache.get(&B256::from([5; 32])),
-            Some(&mut create_rwasm_module(1024, 5)),
-            "Recent item should remain"
-        );
+        assert_eq!(cache.len(), 5);
+        assert_eq!(cache.limiter().current_bytes(), 500);
+
+        // Oldest (0-4) evicted, newest (5-9) remain
+        for i in 0..5u16 {
+            assert!(cache.get(&key(i)).is_none(), "key({i}) should be evicted");
+        }
+        for i in 5..10u16 {
+            assert!(cache.get(&key(i)).is_some(), "key({i}) should remain");
+        }
     }
 
     #[test]
-    fn access_updates_lru_order() {
-        const LIMIT: usize = 3 * 1024;
-        let mut cache = LruMap::with_seed(ModuleMemoryLimiter::<RwasmModule>::new(LIMIT), [0; 4]);
+    fn access_promotes_entry() {
+        let mut cache = new_cache(300); // 3 × 100 bytes
 
-        // Insert 3 modules (at capacity)
-        cache.insert(B256::from([0; 32]), create_rwasm_module(1024, 0));
-        cache.insert(B256::from([1; 32]), create_rwasm_module(1024, 1));
-        cache.insert(B256::from([2; 32]), create_rwasm_module(1024, 2));
+        cache.insert(key(0), module(100));
+        cache.insert(key(1), module(100));
+        cache.insert(key(2), module(100));
 
-        // Access oldest item (makes it newest)
-        let _ = cache.get(&B256::from([0; 32]));
+        // Promote key(0) to MRU
+        let _ = cache.get(&key(0));
 
-        // Insert new item (should evict [1], not [0])
-        cache.insert(B256::from([3; 32]), create_rwasm_module(1024, 3));
+        // Insert key(3) → evicts LRU (key(1))
+        cache.insert(key(3), module(100));
 
-        assert!(
-            cache.get(&B256::from([0; 32])).is_some(),
-            "Accessed item should remain"
-        );
-        assert!(
-            cache.get(&B256::from([1; 32])).is_none(),
-            "Non-accessed old item should be evicted"
-        );
+        assert!(cache.get(&key(0)).is_some(), "accessed entry should remain");
+        assert!(cache.get(&key(1)).is_none(), "LRU should be evicted");
+        assert!(cache.get(&key(2)).is_some());
+        assert!(cache.get(&key(3)).is_some());
+    }
+
+    // ==================== Replacement Behavior ====================
+
+    #[test]
+    fn replacement_triggers_eviction_not_removal() {
+        let mut cache = new_cache(300); // 3 × 100 bytes
+
+        cache.insert(key(1), module(100));
+        cache.insert(key(2), module(100));
+        cache.insert(key(3), module(100));
+
+        // Replace key(2): 100 → 150, total 350 → evicts key(1)
+        cache.insert(key(2), module(150));
+
+        assert!(cache.get(&key(2)).is_some(), "replaced entry must remain");
+        assert!(cache.get(&key(1)).is_none(), "LRU should be evicted");
+        assert!(cache.get(&key(3)).is_some());
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.limiter().current_bytes(), 250);
+    }
+
+    #[test]
+    fn replacement_with_smaller_value() {
+        let mut cache = new_cache(200);
+
+        cache.insert(key(1), module(150));
+        cache.insert(key(1), module(50));
+
+        assert_eq!(cache.limiter().current_bytes(), 50);
+        assert_eq!(cache.limiter().available_bytes(), 150);
+    }
+
+    // ==================== Rejection Cases ====================
+
+    #[test]
+    fn rejects_oversized_item() {
+        let mut cache = new_cache(100);
+
+        let inserted = cache.insert(key(1), module(101));
+
+        assert!(!inserted);
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.limiter().current_bytes(), 0);
+    }
+
+    #[test]
+    fn rejects_zero_size_item() {
+        let mut cache = new_cache(100);
+
+        let inserted = cache.insert(key(1), module(0));
+
+        assert!(!inserted);
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn replacement_with_oversized_removes_entry() {
+        let mut cache = new_cache(100);
+
+        cache.insert(key(1), module(50));
+        cache.insert(key(1), module(101));
+
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.limiter().current_bytes(), 0);
+    }
+
+    #[test]
+    fn replacement_with_zero_size_removes_entry() {
+        let mut cache = new_cache(100);
+
+        cache.insert(key(1), module(50));
+        cache.insert(key(1), module(0));
+
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.limiter().current_bytes(), 0);
+    }
+
+    // ==================== Limiter Construction ====================
+
+    #[test]
+    #[should_panic(expected = "max_bytes must be greater than 0")]
+    fn panics_on_zero_max_bytes() {
+        ModuleMemoryLimiter::<RwasmModule>::new(0);
+    }
+
+    // ==================== Edge Cases ====================
+
+    #[test]
+    fn exact_capacity_fit() {
+        let mut cache = new_cache(100);
+
+        let inserted = cache.insert(key(1), module(100));
+
+        assert!(inserted);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.limiter().current_bytes(), 100);
+        assert_eq!(cache.limiter().available_bytes(), 0);
+    }
+
+    #[test]
+    fn multiple_evictions_for_large_item() {
+        let mut cache = new_cache(400); // 4 × 100 bytes
+
+        for i in 0..4u16 {
+            cache.insert(key(i), module(100));
+        }
+        assert_eq!(cache.len(), 4);
+
+        // Insert 250 bytes → evicts 3 items to fit
+        cache.insert(key(10), module(250));
+
+        assert_eq!(cache.len(), 2);
+        assert!(cache.limiter().current_bytes() <= 400);
+        assert!(cache.get(&key(10)).is_some());
+    }
+
+    #[test]
+    fn hash_table_growth() {
+        let mut cache = new_cache(100_000);
+
+        for i in 0..500u16 {
+            cache.insert(key(i), module(100));
+        }
+
+        assert_eq!(cache.len(), 500);
+        assert_eq!(cache.limiter().current_bytes(), 50_000);
+
+        // Verify access after growth
+        assert!(cache.get(&key(0)).is_some());
+        assert!(cache.get(&key(250)).is_some());
+        assert!(cache.get(&key(499)).is_some());
     }
 }
