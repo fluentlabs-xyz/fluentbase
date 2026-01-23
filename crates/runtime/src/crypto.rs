@@ -92,7 +92,7 @@ impl CryptoAPI for RuntimeContextWrapper {
     }
     #[inline(always)]
     fn secp256k1_double(p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE]) -> [u8; SECP256K1_G1_RAW_AFFINE_SIZE] {
-        syscall_secp256k1_double_impl(p)
+        syscall_secp256k1_double_impl(p).unwrap_exit_code()
     }
 
     #[inline(always)]
@@ -108,7 +108,7 @@ impl CryptoAPI for RuntimeContextWrapper {
     }
     #[inline(always)]
     fn secp256r1_double(p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE]) -> [u8; SECP256R1_G1_RAW_AFFINE_SIZE] {
-        syscall_secp256r1_double_impl(p)
+        syscall_secp256r1_double_impl(p).unwrap_exit_code()
     }
 
     #[inline(always)]
@@ -124,7 +124,7 @@ impl CryptoAPI for RuntimeContextWrapper {
     }
     #[inline(always)]
     fn bls12381_double(p: [u8; BLS12381_G1_RAW_AFFINE_SIZE]) -> [u8; BLS12381_G1_RAW_AFFINE_SIZE] {
-        syscall_bls12381_double_impl(p)
+        syscall_bls12381_double_impl(p).unwrap_exit_code()
     }
 
     #[inline(always)]
@@ -133,7 +133,7 @@ impl CryptoAPI for RuntimeContextWrapper {
     }
     #[inline(always)]
     fn bn254_double(p: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE] {
-        syscall_bn254_double_impl(p)
+        syscall_bn254_double_impl(p).unwrap_exit_code()
     }
 
     #[inline(always)]
