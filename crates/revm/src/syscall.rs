@@ -90,7 +90,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 is_eip7702_enabled,
                 skip_cold,
             );
-            let account_info_load = process_journal_load_result!(result);
+            let account_info_load = unwrap_journal_load_error!(result);
 
             let is_empty = account_info_load.is_empty();
             if account_info_load.is_cold {
@@ -117,7 +117,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 let result = ctx
                     .journal_mut()
                     .load_account_info_skip_cold_load(address, true, skip_cold);
-                let delegate_account = process_journal_load_result!(result);
+                let delegate_account = unwrap_journal_load_error!(result);
                 account_load.data.is_delegate_account_cold = Some(delegate_account.is_cold);
             }
 
@@ -249,13 +249,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             (input, lazy_contract_input)
         }};
     }
-    macro_rules! process_journal_load_result {
+    macro_rules! unwrap_journal_load_error {
         ($load_result:expr) => {
             match $load_result {
                 Ok(v) => v,
                 Err(e) => match e {
                     JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
-                    JournalLoadError::DBError(_) => return_halt!(Err),
+                    JournalLoadError::DBError(e) => return Err(ContextError::Db(e)),
                 },
             }
         };
@@ -270,7 +270,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let result =
                 ctx.journal_mut()
                     .sload_skip_cold_load(current_target_address, slot, skip_cold);
-            let value = process_journal_load_result!(result);
+            let value = unwrap_journal_load_error!(result);
             charge_gas!(sload_cost(spec_id, value.is_cold));
             inspect!(opcode::SLOAD, [slot], [value.data]);
             let output: [u8; 32] = value.to_le_bytes();
@@ -289,7 +289,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 new_value,
                 skip_cold,
             );
-            let value = process_journal_load_result!(result);
+            let value = unwrap_journal_load_error!(result);
             assert_halt!(
                 frame.interpreter.gas.remaining() > gas::CALL_STIPEND,
                 OutOfFuel
@@ -699,7 +699,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let result = ctx
                 .journal_mut()
                 .selfdestruct(current_target_address, target, skip_cold);
-            let mut result = process_journal_load_result!(result);
+            let mut result = unwrap_journal_load_error!(result);
             // system precompiles are always empty...
             if result.data.target_exists && is_system_precompile(&target) {
                 result.data.target_exists = false;
@@ -719,7 +719,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let result = ctx
                 .journal_mut()
                 .load_account_info_skip_cold_load(address, false, skip_cold);
-            let account_info = process_journal_load_result!(result);
+            let account_info = unwrap_journal_load_error!(result);
             let balance_load = StateLoad::new(account_info.balance, account_info.is_cold);
             // make sure we have enough gas for this op
             charge_gas!(if spec_id.is_enabled_in(BERLIN) {
@@ -756,7 +756,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let result = ctx
                 .journal_mut()
                 .load_account_info_skip_cold_load(address, true, skip_cold);
-            let account_info = process_journal_load_result!(result);
+            let account_info = unwrap_journal_load_error!(result);
             charge_gas!(warm_cold_cost(account_info.is_cold));
 
             // A special case for precompiled runtimes, where the way of extracting bytecode might be different.
@@ -795,7 +795,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let result = ctx
                 .journal_mut()
                 .load_account_info_skip_cold_load(address, false, skip_cold);
-            let account_info = process_journal_load_result!(result);
+            let account_info = unwrap_journal_load_error!(result);
             charge_gas!(warm_cold_cost(account_info.is_cold));
 
             // Extract code hash for an account for delegated account.
@@ -841,7 +841,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let result = ctx
                 .journal_mut()
                 .load_account_info_skip_cold_load(address, true, skip_cold);
-            let account_info = process_journal_load_result!(result);
+            let account_info = unwrap_journal_load_error!(result);
 
             // CRITICAL: Gas is charged for REQUESTED length, not actual returned length
             // This prevents gas abuse where attacker requests small length but expects full bytecode
