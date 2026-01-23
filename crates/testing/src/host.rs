@@ -29,6 +29,14 @@ impl HostTestingContext {
             &mut v.shared_context_input_v1.contract
         })
     }
+    pub fn with_caller(self, caller: Address) -> Self {
+        self.inner
+            .borrow_mut()
+            .shared_context_input_v1
+            .contract
+            .caller = caller;
+        self
+    }
     pub fn with_block_number(self, number: u64) -> Self {
         self.inner.borrow_mut().shared_context_input_v1.block.number = number;
         self

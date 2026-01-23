@@ -129,6 +129,7 @@ macro_rules! entrypoint {
     };
 }
 
+#[deprecated(note = "migrate to `system_entrypoint2`")]
 #[macro_export]
 macro_rules! system_entrypoint {
     ($main_func:ident, $deploy_func:ident) => {
@@ -223,13 +224,13 @@ macro_rules! system_entrypoint2 {
             #[no_mangle]
             extern "C" fn main() {
                 let mut sdk = SystemContextImpl::new(RwasmContext {});
-                let result = super::main_entry(&mut sdk);
+                let result = super::$main_func(&mut sdk);
                 sdk.finalize(result);
             }
             #[no_mangle]
             extern "C" fn deploy() {
                 let mut sdk = SystemContextImpl::new(RwasmContext {});
-                let result = super::deploy_entry(&mut sdk);
+                let result = super::$deploy_func(&mut sdk);
                 sdk.finalize(result);
             }
         }
@@ -245,7 +246,7 @@ macro_rules! system_entrypoint2 {
             #[no_mangle]
             extern "C" fn main() {
                 let mut sdk = SystemContextImpl::new(RwasmContext {});
-                let result = super::main_entry(&mut sdk);
+                let result = super::$main_func(&mut sdk);
                 sdk.finalize(result);
             }
             #[no_mangle]
