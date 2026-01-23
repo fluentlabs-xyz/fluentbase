@@ -65,7 +65,6 @@ mod tests {
     /// - nonce length must be <= 512 (if present)
     /// - Each PCR length must be 32, 48, or 64 bytes
     /// - Each cabundle cert length must be between 1 and 1024
-    /// - Certificate length must be between 1 and 1024
     #[test]
     fn test_attestation_document_validation() {
         // Load a valid attestation document to use as a base
@@ -110,11 +109,8 @@ mod tests {
             );
         }
 
-        // Verify certificate length is valid
-        assert!(
-            (1..=1024).contains(&valid_doc.certificate.len()),
-            "certificate length should be between 1 and 1024"
-        );
+        // Note: we intentionally do not enforce an explicit byte-length bound for `certificate`
+        // here, since it's not defined by the AWS Nitro syntactical validation spec (3.2.2.2).
     }
 
     /// Test that validates empty module_id is rejected.

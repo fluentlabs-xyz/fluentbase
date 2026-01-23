@@ -158,7 +158,7 @@ impl AttestationDoc {
 /// Returns the pathLenConstraint if present (None means unlimited).
 /// Note: Critical flag is not enforced, aligning with reference:
 #[cfg_attr(test, allow(dead_code))]
-fn verify_certificate_extensions(cert: &Certificate, is_ca: bool) -> Option<u8> {
+fn verify_certificate_extensions(cert: &Certificate, is_ca: bool) -> Option<u32> {
     let extensions = cert
         .tbs_certificate
         .extensions
@@ -167,7 +167,7 @@ fn verify_certificate_extensions(cert: &Certificate, is_ca: bool) -> Option<u8> 
 
     let mut basic_constraints_found = false;
     let mut key_usage_found = false;
-    let mut max_path_len = None;
+    let mut max_path_len: Option<u32> = None;
 
     for ext in extensions {
         if ext.extn_id == BASIC_CONSTRAINTS_OID {
@@ -187,7 +187,7 @@ fn verify_certificate_extensions(cert: &Certificate, is_ca: bool) -> Option<u8> 
 
             // Extract pathLenConstraint if present
             if let Some(path_len) = basic_constraints.path_len_constraint {
-                max_path_len = Some(path_len);
+                max_path_len = Some(path_len as u32);
             }
         } else if ext.extn_id == KEY_USAGE_OID {
             // KeyUsage extension found (critical flag is optional)
@@ -414,14 +414,6 @@ pub(crate) fn validate_attestation_document(doc: &AttestationDoc) {
             cert_bytes.len()
         );
     }
-
-    // Validate certificate length (from doc.certificate)
-    // The certificate should also be validated, similar to cabundle certs
-    assert!(
-        (1..=1024).contains(&doc.certificate.len()),
-        "invalid certificate: length must be between 1 and 1024, got {}",
-        doc.certificate.len()
-    );
 }
 
 fn verify_attestation_doc(
@@ -443,7 +435,7 @@ fn verify_attestation_doc(
     let ca_chain_length = chain_size - 2; // Excluding root (index 0) and leaf (last index)
 
     // Track parent maxPathLen for pathLenConstraint validation
-    let mut parent_max_path_len: Option<u8> = None;
+    let mut parent_max_path_len: Option<u32> = None;
 
     // Verify extensions, validity, and signatures for each certificate in the chain
     for (i, cert) in chain.iter().enumerate() {
@@ -477,15 +469,9 @@ fn verify_attestation_doc(
                     parent_max > 0,
                     "pathLenConstraint exceeded: parent certificate allows no more certificates"
                 );
-                // Child's pathLenConstraint, if defined, must be less than parent's
-                if let Some(child_max) = max_path_len {
-                    assert!(
-                        child_max < parent_max,
-                        "pathLenConstraint exceeded: child maxPathLen ({}) must be less than parent's ({})",
-                        child_max,
-                        parent_max
-                    );
-                }
+                // Note: a child's pathLenConstraint can be greater than its parent's.
+                // We enforce the parent's stricter constraint via the effective value computed below:
+                // min(child, parent - 1).
             }
         } else {
             // Leaf certificate (last in chain)
