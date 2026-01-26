@@ -9,13 +9,13 @@ use hashbrown::HashMap;
 use std::{cell::RefMut, mem::take, rc::Rc};
 
 #[derive(Clone)]
-pub struct HostTestingContext {
+pub struct TestingContextImpl {
     inner: Rc<RefCell<TestingContextInner>>,
 }
 
 pub type HostTestingContextNativeAPI = RuntimeContextWrapper;
 
-impl HostTestingContext {
+impl TestingContextImpl {
     pub fn with_shared_context_input(self, ctx: SharedContextInputV1) -> Self {
         self.inner.borrow_mut().shared_context_input_v1 = ctx;
         self
@@ -150,7 +150,7 @@ struct TestingContextInner {
     fuel_limit: Option<u64>,
 }
 
-impl Default for HostTestingContext {
+impl Default for TestingContextImpl {
     fn default() -> Self {
         Self {
             inner: Rc::new(RefCell::new(TestingContextInner {
@@ -171,7 +171,7 @@ impl Default for HostTestingContext {
     }
 }
 
-impl StorageAPI for HostTestingContext {
+impl StorageAPI for TestingContextImpl {
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
         let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
         self.inner
@@ -194,7 +194,7 @@ impl StorageAPI for HostTestingContext {
     }
 }
 
-impl MetadataAPI for HostTestingContext {
+impl MetadataAPI for TestingContextImpl {
     fn metadata_write(
         &mut self,
         address: &Address,
@@ -276,7 +276,7 @@ impl MetadataAPI for HostTestingContext {
     }
 }
 
-impl MetadataStorageAPI for HostTestingContext {
+impl MetadataStorageAPI for TestingContextImpl {
     fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256> {
         let ctx = self.inner.borrow();
         let account_owner = ctx
@@ -300,7 +300,7 @@ impl MetadataStorageAPI for HostTestingContext {
     }
 }
 
-impl SharedAPI for HostTestingContext {
+impl SharedAPI for TestingContextImpl {
     fn context(&self) -> impl ContextReader {
         self.inner.borrow().shared_context_input_v1.clone()
     }

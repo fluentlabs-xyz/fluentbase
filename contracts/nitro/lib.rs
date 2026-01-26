@@ -23,7 +23,7 @@ mod tests {
     use coset::CborSerializable;
     use der::{Decode, DecodePem, Encode};
     use fluentbase_sdk::SharedContextInputV1;
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
     use x509_cert::certificate::Certificate;
 
     /// Test for full attestation document verification.
@@ -45,7 +45,7 @@ mod tests {
         // Test main_entry with proper timestamp set in the context
         let mut shared_ctx = SharedContextInputV1::default();
         shared_ctx.block.timestamp = current_timestamp;
-        let mut sdk = HostTestingContext::default()
+        let mut sdk = TestingContextImpl::default()
             .with_shared_context_input(shared_ctx)
             .with_input(data.clone());
         main_entry(&mut sdk).unwrap();

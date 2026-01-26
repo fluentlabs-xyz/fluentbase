@@ -14,12 +14,12 @@ entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
 
     #[should_panic(expected = "it's panic time")]
     #[test]
     fn tets_contract_works() {
-        let sdk = HostTestingContext::default();
+        let sdk = TestingContextImpl::default();
         main_entry(sdk);
     }
 }

@@ -27,11 +27,11 @@ entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
 
     #[test]
     fn test_contract_works() {
-        let sdk = HostTestingContext::default().with_input("{\"message\": \"Hello, World\"}");
+        let sdk = TestingContextImpl::default().with_input("{\"message\": \"Hello, World\"}");
         main_entry(sdk.clone());
         let output = sdk.take_output();
         assert_eq!(&output, "Hello, World".as_bytes());

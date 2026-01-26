@@ -144,7 +144,7 @@ mod tests {
         PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
     };
     use fluentbase_sdk::{hex, Address, ContractContextV1, SharedAPI, FUEL_DENOM_RATE};
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
     use serde::Deserialize;
 
     /// Must match the JSON keys exactly.
@@ -173,7 +173,7 @@ mod tests {
         let input = decode_hex(&bls_test_vector.input);
         let expected = bls_test_vector.expected.map(|v| decode_hex(&v));
         let gas_limit = 2_000_000;
-        let mut sdk = HostTestingContext::default()
+        let mut sdk = TestingContextImpl::default()
             .with_input(input)
             .with_contract_context(ContractContextV1 {
                 address,

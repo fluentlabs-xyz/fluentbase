@@ -27,7 +27,7 @@ entrypoint!(main_entry, deploy);
 mod tests {
     use super::*;
     use fluentbase_sdk::{address, ContractContextV1, U256};
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
 
     #[test]
     fn test_constructor_params() {
@@ -39,7 +39,7 @@ mod tests {
             value: U256::ZERO,
             gas_limit: 0,
         };
-        let sdk = HostTestingContext::default()
+        let sdk = TestingContextImpl::default()
             .with_input(U256::from(123).to_le_bytes::<32>())
             .with_contract_context(context.clone());
         deploy(sdk.clone());

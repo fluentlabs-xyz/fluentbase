@@ -17,11 +17,11 @@ entrypoint!(main_entry);
 mod tests {
     use super::*;
     use fluentbase_sdk::hex;
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
 
     #[test]
     fn test_contract_works() {
-        let sdk = HostTestingContext::default().with_input("Hello, World");
+        let sdk = TestingContextImpl::default().with_input("Hello, World");
         main_entry(sdk.clone());
         let output = sdk.take_output();
         assert_eq!(

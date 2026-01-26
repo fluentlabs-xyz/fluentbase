@@ -37,7 +37,7 @@ entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
     use hex_literal::hex;
     use libsecp256k1::{sign, Message, PublicKey, SecretKey};
     use tiny_keccak::{Hasher, Keccak};
@@ -71,7 +71,7 @@ mod tests {
 
         println!("input: {:?}", hex::encode(&input));
 
-        let sdk = HostTestingContext::default().with_input(input);
+        let sdk = TestingContextImpl::default().with_input(input);
         main_entry(sdk.clone());
     }
 }

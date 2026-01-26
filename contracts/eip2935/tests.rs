@@ -17,7 +17,7 @@
 
 use crate::entrypoint;
 use fluentbase_sdk::{Address, Bytes, ExitCode, EIP2935_HISTORY_SERVE_WINDOW, SYSTEM_ADDRESS};
-use fluentbase_testing::HostTestingContext;
+use fluentbase_testing::TestingContextImpl;
 
 const USER_ADDRESS: Address = Address::repeat_byte(0x11);
 
@@ -68,7 +68,7 @@ fn hash_for_block(k: u64) -> [u8; 32] {
 /// configures the call parameters (input/caller/block number), runs the entrypoint, and then
 /// extracts the output.
 fn exec_as(
-    sdk: &mut HostTestingContext,
+    sdk: &mut TestingContextImpl,
     sender: Address,
     block_number: u64,
     input: &[u8],
@@ -95,7 +95,7 @@ fn exec_as(
 ///
 /// For this contract, both invalid input and out-of-window requests revert with `ExitCode::Panic`.
 fn exec_ok(
-    sdk: &mut HostTestingContext,
+    sdk: &mut TestingContextImpl,
     sender: Address,
     block_number: u64,
     input: &[u8],
@@ -104,7 +104,7 @@ fn exec_ok(
 }
 
 fn exec_expect_revert(
-    sdk: &mut HostTestingContext,
+    sdk: &mut TestingContextImpl,
     sender: Address,
     block_number: u64,
     input: &[u8],
@@ -113,7 +113,7 @@ fn exec_expect_revert(
     assert!(res.is_err(), "expected revert/error, got Ok");
 }
 
-fn set_at_block(sdk: &mut HostTestingContext, block_number: u64, parent_hash: [u8; 32]) {
+fn set_at_block(sdk: &mut TestingContextImpl, block_number: u64, parent_hash: [u8; 32]) {
     // SYSTEM path: calldata is the hash to store; success produces empty output.
     let out = exec_ok(sdk, SYSTEM_ADDRESS, block_number, &parent_hash);
     assert!(
@@ -123,7 +123,7 @@ fn set_at_block(sdk: &mut HostTestingContext, block_number: u64, parent_hash: [u
     );
 }
 
-fn get_at_block(sdk: &mut HostTestingContext, block_number: u64, query_bn: u64) -> Bytes {
+fn get_at_block(sdk: &mut TestingContextImpl, block_number: u64, query_bn: u64) -> Bytes {
     let cd = u256_be_u64(query_bn);
     let out = exec_ok(sdk, USER_ADDRESS, block_number, &cd);
     assert_eq!(out.len(), 32, "get() should return 32 bytes");
@@ -133,7 +133,7 @@ fn get_at_block(sdk: &mut HostTestingContext, block_number: u64, query_bn: u64) 
 /// Populate history for blocks `[start_bn, start_bn + count - 1]`.
 ///
 /// For each block `k` in the range, the test calls `submit(hash_for_block(k))` at block `k + 1`.
-fn populate_history(sdk: &mut HostTestingContext, start_bn: u64, count: u64) {
+fn populate_history(sdk: &mut TestingContextImpl, start_bn: u64, count: u64) {
     for k in start_bn..(start_bn + count) {
         let at_block = k + 1;
         set_at_block(sdk, at_block, hash_for_block(k));
@@ -144,7 +144,7 @@ fn populate_history(sdk: &mut HostTestingContext, start_bn: u64, count: u64) {
 
 #[test]
 fn get_reverts_on_bad_calldata_length() {
-    let mut sdk = HostTestingContext::default();
+    let mut sdk = TestingContextImpl::default();
     let current = 10_000;
 
     exec_expect_revert(&mut sdk, USER_ADDRESS, current, &[]);
@@ -156,7 +156,7 @@ fn get_reverts_on_bad_calldata_length() {
 
 #[test]
 fn get_reverts_for_current_or_future_block() {
-    let mut sdk = HostTestingContext::default();
+    let mut sdk = TestingContextImpl::default();
     let current = 20_000;
 
     // Fill enough history so in-range reads are meaningful.
@@ -177,7 +177,7 @@ fn get_reverts_for_current_or_future_block() {
 
 #[test]
 fn get_reverts_for_too_old_block() {
-    let mut sdk = HostTestingContext::default();
+    let mut sdk = TestingContextImpl::default();
     let current = 30_000;
     populate_history(
         &mut sdk,
@@ -192,7 +192,7 @@ fn get_reverts_for_too_old_block() {
 
 #[test]
 fn get_succeeds_on_boundary_oldest_and_newest() {
-    let mut sdk = HostTestingContext::default();
+    let mut sdk = TestingContextImpl::default();
     let current = 40_000;
     populate_history(
         &mut sdk,
@@ -212,7 +212,7 @@ fn get_succeeds_on_boundary_oldest_and_newest() {
 
 #[test]
 fn get_decodes_big_endian_correctly_via_behavior() {
-    let mut sdk = HostTestingContext::default();
+    let mut sdk = TestingContextImpl::default();
     // The retrieve path expects a 32-byte big-endian block number.
     // We test this via behavior rather than by peeking into decoding internals.
 
@@ -238,7 +238,7 @@ fn get_decodes_big_endian_correctly_via_behavior() {
 
 #[test]
 fn non_system_sender_never_triggers_set_path() {
-    let mut sdk = HostTestingContext::default();
+    let mut sdk = TestingContextImpl::default();
     // If caller != SYSTEM, calldata is treated as retrieve(block_number).
     // A user cannot reach the submit path.
     let current = 60_000;
@@ -259,7 +259,7 @@ fn non_system_sender_never_triggers_set_path() {
 
 #[test]
 fn bootstrap_unwritten_slots_return_zero_but_in_range() {
-    let mut sdk = HostTestingContext::default();
+    let mut sdk = TestingContextImpl::default();
     // The ring buffer is populated gradually. Before a slot is written, its value is zero.
     // Within the serve window, such a slot should return `0x00..00` rather than reverting.
 
@@ -282,7 +282,7 @@ fn bootstrap_unwritten_slots_return_zero_but_in_range() {
 
 #[test]
 fn ring_wraparound_overwrites_expectedly() {
-    let mut sdk = HostTestingContext::default();
+    let mut sdk = TestingContextImpl::default();
 
     let base = 100_000u64;
 
@@ -336,7 +336,7 @@ fn ring_wraparound_overwrites_expectedly() {
 
 #[test]
 fn smoke_get_and_set_paths_produce_expected_outputs() {
-    let mut sdk = HostTestingContext::default();
+    let mut sdk = TestingContextImpl::default();
     // This is a smoke test for the two entry paths. Gas accounting is tested elsewhere.
     let current = 120_000;
 

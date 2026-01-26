@@ -123,12 +123,12 @@ mod tests {
     use super::*;
     use crate::{assert_storage_layout, utils::storage_from_fixture};
     use fluentbase_sdk::address;
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
 
     #[test]
     fn test_layout_calculations() {
         assert_storage_layout! {
-            App<HostTestingContext> => {
+            App<TestingContextImpl> => {
                 owner: 0, 12,
                 counter: 1, 0,
                 balances: 2, 0,
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_storage_layout_with_data() {
-        let sdk = HostTestingContext::default();
+        let sdk = TestingContextImpl::default();
         let mut app = App::new(sdk);
 
         let state_data = StateData {

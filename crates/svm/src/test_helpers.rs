@@ -15,7 +15,7 @@ use crate::{
 };
 use alloc::sync::Arc;
 use fluentbase_sdk::{Address, ContractContextV1, SharedAPI, U256};
-use fluentbase_testing::HostTestingContext;
+use fluentbase_testing::TestingContextImpl;
 use solana_epoch_schedule::EpochSchedule;
 use solana_instruction::error::InstructionError;
 use solana_rbpf::{
@@ -136,12 +136,12 @@ pub(crate) fn contract_context() -> ContractContextV1 {
         gas_limit: 0,
     }
 }
-pub(crate) fn journal_state() -> HostTestingContext {
-    let tc = HostTestingContext::default();
+pub(crate) fn journal_state() -> TestingContextImpl {
+    let tc = TestingContextImpl::default();
     let cc = contract_context();
     tc.with_contract_context(cc)
 }
 
-pub(crate) fn new_test_sdk() -> HostTestingContext {
+pub(crate) fn new_test_sdk() -> TestingContextImpl {
     journal_state()
 }

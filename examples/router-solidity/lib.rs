@@ -46,7 +46,7 @@ basic_entrypoint!(App);
 mod tests {
     use super::*;
     use alloy_sol_types::{sol, SolCall};
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
 
     #[test]
     fn test_greeting() {
@@ -60,7 +60,7 @@ mod tests {
         .abi_encode();
         assert_eq!(hex::encode(&input), hex::encode(&input_sol));
         println!("greeting(string) input: {:?}", hex::encode(&input));
-        let sdk = HostTestingContext::default().with_input(input);
+        let sdk = TestingContextImpl::default().with_input(input);
         let mut router = App::new(sdk.clone());
         router.deploy();
         router.main();
@@ -82,7 +82,7 @@ mod tests {
         let input_sol = customGreetingCall { message: s.clone() }.abi_encode();
         assert_eq!(hex::encode(&input), hex::encode(&input_sol));
         println!("customGreeting(string) input: {:?}", hex::encode(&input));
-        let sdk = HostTestingContext::default().with_input(input);
+        let sdk = TestingContextImpl::default().with_input(input);
         let mut router = App::new(sdk.clone());
         router.deploy();
         router.main();

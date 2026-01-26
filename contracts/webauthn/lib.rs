@@ -78,11 +78,11 @@ system_entrypoint2!(main_entry);
 mod tests {
     use super::*;
     use fluentbase_sdk::{Bytes, ContractContextV1, B256};
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
 
     fn assert_call_eq(input: &[u8], expected: &[u8]) {
         let gas_limit = 100_000;
-        let mut sdk = HostTestingContext::default()
+        let mut sdk = TestingContextImpl::default()
             .with_input(Bytes::copy_from_slice(input))
             .with_contract_context(ContractContextV1 {
                 gas_limit,
