@@ -6,7 +6,7 @@ extern crate fluentbase_sdk;
 
 mod attestation;
 
-use fluentbase_sdk::{system_entrypoint2, ExitCode, ContextReader, SharedAPI};
+use fluentbase_sdk::{system_entrypoint2, ContextReader, ExitCode, SharedAPI};
 
 pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input = sdk.input();
@@ -74,7 +74,6 @@ mod tests {
         use coset::CoseSign1;
         let sign1 = CoseSign1::from_slice(&data).unwrap();
         let valid_doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
-        let current_timestamp = 1695050165u64;
 
         // Test that a valid document passes validation
         // This is implicitly tested through parse_and_verify, but we verify the structure
