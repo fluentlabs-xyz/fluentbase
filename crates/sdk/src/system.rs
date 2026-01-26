@@ -7,18 +7,17 @@ use alloc::{vec, vec::Vec};
 use core::cell::OnceCell;
 pub use fluentbase_types::system::*;
 use fluentbase_types::{CryptoAPI, ExitCode, NativeAPI, SyscallResult};
-use hashbrown::HashMap;
 
 pub struct SystemContextImpl<API> {
     native_sdk: API,
     storage: JournalStorage,
-    metadata: Bytes,
+    // metadata: Bytes,
     input: Bytes,
     context: Bytes,
     context_ref: OnceCell<SharedContextInputV1>,
-    balances: HashMap<Address, U256>,
+    // balances: HashMap<Address, U256>,
     output: Vec<u8>,
-    outcome: Option<RuntimeInterruptionOutcomeV1>,
+    // outcome: Option<RuntimeInterruptionOutcomeV1>,
 }
 
 impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
@@ -31,22 +30,23 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
             let (input, _): (RuntimeNewFrameInputV1, usize) =
                 bincode::decode_from_slice(input, bincode::config::legacy()).unwrap();
             let RuntimeNewFrameInputV1 {
-                metadata,
+                // metadata,
                 input,
                 context,
                 storage,
-                balances,
+                // balances,
+                ..
             } = input;
             Self {
                 native_sdk,
                 storage: JournalStorage::new(storage.unwrap_or_default()),
-                metadata,
+                // metadata,
                 input,
                 context,
                 context_ref: OnceCell::new(),
-                balances: balances.unwrap_or_default(),
+                // balances: balances.unwrap_or_default(),
                 output: vec![],
-                outcome: None,
+                // outcome: None,
             }
         } else if output_size > 0 {
             // let output = alloc_slice(output_size);

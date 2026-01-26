@@ -15,7 +15,7 @@ fluentbase-types = { workspace = true }
 bytemuck = { workspace = true }
 elliptic-curve = { workspace = true }
 fluentbase-runtime = { workspace = true, optional = true }
-cfg-if = "1.0"
+cfg-if = { workspace = true }
 tiny-keccak = { workspace = true }
 
 [features]
@@ -30,6 +30,6 @@ std = [
     "elliptic-curve/std",
 ]
 fluent-testnet = [
-	"fluentbase-runtime?/fluent-testnet",
-	"fluentbase-types/fluent-testnet"
+    "fluentbase-runtime?/fluent-testnet",
+    "fluentbase-types/fluent-testnet"
 ]

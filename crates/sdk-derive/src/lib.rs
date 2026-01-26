@@ -1,10 +1,12 @@
-use fluentbase_sdk_derive_core::{client, event, router, storage_legacy};
+use fluentbase_sdk_derive_core::{
+    client, event, router, storage::process_storage_layout, storage_legacy,
+};
 use proc_macro::TokenStream;
 use proc_macro_error::proc_macro_error;
 use quote::{quote, ToTokens};
-mod utils;
-use fluentbase_sdk_derive_core::storage::process_storage_layout;
 use syn::parse_macro_input;
+
+mod utils;
 
 /// Function ID attribute for overriding function selectors in smart contracts.
 ///

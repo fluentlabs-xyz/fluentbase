@@ -334,6 +334,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         bytecode_or_hash: BytecodeOrHash,
         ctx: RuntimeContext,
     ) -> ExecutionResult {
+        #[allow(unused_variables)]
         let (enable_wasmtime_runtime, enable_system_runtime) = match &bytecode_or_hash {
             BytecodeOrHash::Bytecode { address, hash, .. } => (
                 fluentbase_types::is_execute_using_wasmtime_strategy(address)

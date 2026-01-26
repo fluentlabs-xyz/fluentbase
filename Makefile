@@ -1,11 +1,12 @@
-all: build test
+all: check build test
+
+.PHONY: check
+check:
+	cargo check --all
 
 .PHONY: build
 build:
-	# build examples & contracts by triggering "build.rs"
-	cargo check --lib #--exclude fluentbase-genesis --workspace --lib
-	# build genesis files
-	#cd crates/genesis && $(MAKE) # build genesis
+	cargo build --all
 
 .PHONY: update-deps
 update-deps:
@@ -13,10 +14,6 @@ update-deps:
 	cargo update --manifest-path=./examples/Cargo.toml revm rwasm
 	cargo update revm rwasm
 	cargo update --manifest-path=./evm-e2e/Cargo.toml revm rwasm
-
-.PHONY: examples
-examples:
-	cd examples && $(MAKE)
 
 .PHONY: clean
 clean:
@@ -67,6 +64,3 @@ wasm2wat:
 		done; \
 	done
 
-.PHONY: check
-check:
-	cargo check

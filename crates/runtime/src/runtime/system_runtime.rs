@@ -79,11 +79,11 @@ struct CompiledRuntime {
     main_func: Func,
 }
 
-/// Thread-local cache of fully instantiated runtimes keyed by code hash.
-///
-/// We keep this thread-local because Wasmtime components are not generally cheap to share across
-/// threads without careful synchronization, and because per-thread reuse is often sufficient.
 thread_local! {
+    /// Thread-local cache of fully instantiated runtimes keyed by code hash.
+    ///
+    /// We keep this thread-local because Wasmtime components are not generally cheap to share across
+    /// threads without careful synchronization, and because per-thread reuse is often sufficient.
     pub static COMPILED_RUNTIMES: RefCell<HashMap<B256, Rc<RefCell<CompiledRuntime>>>> =
         RefCell::new(HashMap::new());
 }

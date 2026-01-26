@@ -655,9 +655,13 @@ dependencies = [
 
 [[package]]
 name = "array-bytes"
-version = "1.6.0"
+version = "9.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5b210fcebfebcdd3ac59145390e5a4c16a980f4a18d4b676cd96dee09926854"
+checksum = "27d55334c98d756b32dcceb60248647ab34f027690f87f9a362fd292676ee927"
+dependencies = [
+ "smallvec",
+ "thiserror 2.0.17",
+]
 
 [[package]]
 name = "arrayref"
@@ -7093,8 +7097,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "bls12_381"
-version = "0.8.0"
-source = "git+https://github.com/rwasm-patches/bls12_381.git?branch=rwasm#ea07f37fd601969909798b957b5ed942d798a9de"

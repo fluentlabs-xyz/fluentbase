@@ -1756,7 +1756,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
- "hex-literal 0.4.1",
+ "hex-literal 1.1.0",
 ]
 
 [[package]]
@@ -4477,9 +4477,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-curves"
-version = "5.2.3"
+version = "5.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6a7ce14c504360349f3eda564a0c9de286c35e1dfbcc979921a3384db02ae82"
+checksum = "b7a5dc6007e0c1f35afe334e45531e17b8b347fdf73f6e7786ef5c1bc2218e30"
 dependencies = [
  "cfg-if",
  "dashu",
@@ -4499,9 +4499,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-derive"
-version = "5.2.3"
+version = "5.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1144840e0b75e988f3b8d24ffd015bc5fd76599f7864bfd994f3eaf2eb261a"
+checksum = "83a1ed8d5acbb6cea056401791e79ca3cba7c7d5e17d0d44cd60e117f16b11ca"
 dependencies = [
  "quote",
  "syn 1.0.109",
@@ -4509,9 +4509,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-primitives"
-version = "5.2.3"
+version = "5.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7d2a6187e394c30097ea7a975a4832f172918690dc89a979f0fad67422d3a8b"
+checksum = "7e69a03098f827102c54c31a5e57280eb45b2c085de433b3f702e4f9e3ec1641"
 dependencies = [
  "bincode 1.3.3",
  "blake3",
@@ -4529,9 +4529,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-stark"
-version = "5.2.3"
+version = "5.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40477690a0bb6d7102322947407439a8f1d05aecd535f0081db05e9a31f808f2"
+checksum = "0e99d1cc89ba28fc95736afb1e6ad22b9eb689e95a1dbb29cf0e9d1fa4fc2a5c"
 dependencies = [
  "arrayref",
  "hashbrown 0.14.5",
