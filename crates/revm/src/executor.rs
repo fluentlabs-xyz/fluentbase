@@ -513,14 +513,14 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         .map(|v| v.owner_address)
         .unwrap_or(bytecode_address);
 
-    let exit_code = ExitCode::from(exit_code);
+    let mut exit_code = ExitCode::from(exit_code);
 
     let is_create: bool = matches!(frame.input, FrameInput::Create(..));
     match exit_code {
         // If we return `Ok` in deployment mode, then we assume we store new metadata in the output,
         // it's used to rewrite the existing metadata to store custom bytecode.
         //
-        // NOTE: this mode is legacy and will be replaced with V2 scheme
+        // Note: this mode is legacy and will be replaced with V2 scheme
         ExitCode::Ok
             if is_create && is_execute_using_system_runtime_v1(&effective_bytecode_address) =>
         {
@@ -534,6 +534,14 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         // A special case for system runtime v2
         _ if is_execute_using_system_runtime_v2(&effective_bytecode_address) => {
             process_runtime_execution_outcome(&target_address, ctx, &mut return_data)?;
+        }
+
+        // Don't allow to use fatal exit codes for non system-runtime contracts
+        //
+        // Note: We don't expose API for using fatal exit codes here,
+        //  caller will be punished for doing this
+        ExitCode::UnexpectedFatalExecutionFailure | ExitCode::MissingStorageSlot => {
+            exit_code = ExitCode::UnknownError;
         }
 
         // Don't do anything, execution default case

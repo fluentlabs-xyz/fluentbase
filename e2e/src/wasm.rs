@@ -13,7 +13,10 @@ use fluentbase_sdk::{
 };
 use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
-use revm::bytecode::Bytecode;
+use revm::{
+    bytecode::Bytecode,
+    context::result::{ExecutionResult, HaltReason},
+};
 use rwasm::RwasmModule;
 use std::str::from_utf8_unchecked;
 
@@ -407,4 +410,42 @@ fn test_wasm_output_remains_unwiped_after_interruption() {
         None,
     );
     assert_eq!(result.output().unwrap_or_default().as_ref(), &[0x1]);
+}
+
+#[test]
+fn test_wasm_cant_use_fatal_exit_code() {
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
+    let wasm_binary = wat::parse_str(
+        r#"
+    (module
+        (import "fluentbase_v1preview" "_exit" (func $_exit (param i32)))
+        (func $main
+            i32.const -3001 ;; `ExitCode::UnexpectedFatalExecutionFailure`
+            call $_exit
+        )
+        (memory 1)
+        (export "main"   (func $main))
+        (export "memory" (memory 0))
+    )
+    "#,
+    )
+    .unwrap();
+    const CALLER_ADDRESS: Address = Address::repeat_byte(0x01);
+    ctx.add_balance(CALLER_ADDRESS, U256::from(1e18));
+    const CONTRACT_ADDRESS: Address = Address::repeat_byte(0x02);
+    ctx.add_wasm_contract(CONTRACT_ADDRESS, &wasm_binary);
+    let result = ctx.call_evm_tx_simple(
+        CALLER_ADDRESS,
+        CONTRACT_ADDRESS,
+        Bytes::new(),
+        Some(1_000_000),
+        None,
+    );
+    assert_eq!(
+        result,
+        ExecutionResult::Halt {
+            reason: HaltReason::UnknownError,
+            gas_used: 1_000_000
+        }
+    );
 }
