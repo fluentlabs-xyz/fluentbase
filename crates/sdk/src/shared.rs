@@ -148,9 +148,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     fn input_size(&self) -> u32 {
         let input_size = self.native_sdk.input_size();
         if input_size < SharedContextInputV1::SIZE as u32 {
-            unsafe {
-                core::hint::unreachable_unchecked();
-            }
+            self.native_sdk.exit(ExitCode::InputOutputOutOfBounds);
         }
         unsafe { input_size.unchecked_sub(SharedContextInputV1::SIZE as u32) }
     }
