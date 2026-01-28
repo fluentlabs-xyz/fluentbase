@@ -53,11 +53,11 @@ fn main() {
         ];
         #[cfg(feature = "fluent-testnet")]
         {
-            args.extend_from_slice(&["--features", "fluent-testnet"]);
+            args.extend_from_slice(&["--features".into(), "fluent-testnet".into()]);
         }
         #[cfg(feature = "testing-enabled")]
         {
-            args.extend_from_slice(&["--features", "testing-enable"]);
+            args.extend_from_slice(&["--features".into(), "testing-enabled".into()]);
         }
 
         if !is_debug_profile {

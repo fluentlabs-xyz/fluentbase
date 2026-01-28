@@ -69,6 +69,7 @@ std = [
     "rwasm/std",
     "revm/std",
     "fluentbase-testing/std",
+    "fluentbase-contracts/testing-enabled",
 ]
 debug-print = [
     "fluentbase-runtime/debug-print",

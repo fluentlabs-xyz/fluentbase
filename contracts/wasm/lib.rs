@@ -17,11 +17,7 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     #[cfg(feature = "testing-enabled")]
     const RWASM_MAX_CODE_SIZE: usize = 800_000;
     if rwasm_binary.len() > RWASM_MAX_CODE_SIZE {
-        panic!("code size exceeded");
-    }
-    #[cfg(not(feature = "testing-enabled"))]
-    {
-        panic!("rwasm_binary.len()={}", rwasm_binary.len());
+        panic!("max code size exceeded");
     }
     sdk.write(&rwasm_binary);
     let constructor_params = constructor_params.into_vec();
