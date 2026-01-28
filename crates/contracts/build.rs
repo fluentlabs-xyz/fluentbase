@@ -55,10 +55,6 @@ fn main() {
         {
             args.extend_from_slice(&["--features".into(), "fluent-testnet".into()]);
         }
-        #[cfg(feature = "testing-enabled")]
-        {
-            args.extend_from_slice(&["--features".into(), "testing-enabled".into()]);
-        }
 
         if !is_debug_profile {
             args.push("--release".to_string());

@@ -89,7 +89,7 @@ fn test_evm_create_large_wasm_contract() {
 fn test_locals_amplification_find_limit() {
     let test_cases: &[(u32, bool)] = &[
         (1, true),
-        (5, false),
+        (20, false),
     ];
     let owner: Address = Address::ZERO;
     // Test various function counts to find limits

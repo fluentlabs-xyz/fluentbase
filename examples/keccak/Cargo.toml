@@ -20,4 +20,3 @@ fluent-testnet = [
     "fluentbase-sdk/fluent-testnet",
     "fluentbase-testing/fluent-testnet"
 ]
-testing-enabled = []
