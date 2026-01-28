@@ -15,7 +15,7 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let (result, constructor_params) = RwasmModule::compile(config, &wasm_binary).unwrap();
     let rwasm_binary = result.serialize();
     #[cfg(feature = "testing-enabled")]
-    const RWASM_MAX_CODE_SIZE: usize = 2_500_000;
+    const RWASM_MAX_CODE_SIZE: usize = 3_000_000;
     if rwasm_binary.len() > RWASM_MAX_CODE_SIZE {
         panic!("max code size exceeded {}>{}", rwasm_binary.len(), RWASM_MAX_CODE_SIZE);
     }
