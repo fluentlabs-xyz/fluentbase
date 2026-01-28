@@ -85,7 +85,7 @@ fn test_evm_create_large_wasm_contract() {
     deploy_via_deployer(&mut ctx, input.into());
 }
 
-#[cfg(feature = "testing-enabled")]
+#[cfg(test)]
 #[test]
 fn test_locals_amplification_find_limit() {
     let test_cases: &[(u32, bool)] = &[
