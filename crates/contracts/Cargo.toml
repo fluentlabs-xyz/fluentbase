@@ -48,4 +48,4 @@ fluent-testnet = [
     "fluentbase-svm/fluent-testnet",
     "fluentbase-universal-token/fluent-testnet"
 ]
-
+testing-enabled = []
