@@ -1859,7 +1859,7 @@ dependencies = [
  "k256",
  "plain_hasher",
  "revm",
- "rwasm",
+ "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm?branch=devel)",
  "serde",
  "serde_json",
  "structopt",
@@ -2046,7 +2046,7 @@ dependencies = [
  "fluentbase-universal-token",
  "once_cell",
  "revm",
- "rwasm",
+ "rwasm 0.3.2",
  "serde",
  "tracing",
 ]
@@ -2062,7 +2062,7 @@ dependencies = [
  "k256",
  "num",
  "p256",
- "rwasm",
+ "rwasm 0.3.2",
  "schnellru",
  "sha2 0.10.9",
  "smallvec",
@@ -2085,7 +2085,7 @@ dependencies = [
  "fluentbase-sdk-derive",
  "fluentbase-types",
  "hashbrown 0.16.1",
- "rwasm",
+ "rwasm 0.3.2",
  "spin 0.10.0",
 ]
 
@@ -2200,7 +2200,7 @@ dependencies = [
  "paste",
  "revm-precompile",
  "revm-primitives",
- "rwasm",
+ "rwasm 0.3.2",
  "serde",
  "strum_macros 0.27.2",
 ]
@@ -4042,7 +4042,7 @@ dependencies = [
  "bitvec",
  "phf",
  "revm-primitives",
- "rwasm",
+ "rwasm 0.3.2 (git+https://github.com/fluentlabs-xyz/rwasm?branch=devel)",
  "serde",
 ]
 
@@ -4346,13 +4346,37 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.3.2"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#e5363da1656945fa7676cd9dc7bcb4b9f4d0c237"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
  "bitvec",
  "bytes",
  "directories",
+ "downcast-rs",
+ "futures",
+ "hashbrown 0.15.5",
+ "libm",
+ "num-derive",
+ "num-traits",
+ "paste",
+ "serde",
+ "smallvec",
+ "spin 0.10.0",
+ "tiny-keccak",
+ "wasmi",
+ "wasmparser-nostd",
+ "wasmtime",
+]
+
+[[package]]
+name = "rwasm"
+version = "0.3.2"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#e5363da1656945fa7676cd9dc7bcb4b9f4d0c237"
+dependencies = [
+ "anyhow",
+ "bincode 2.0.1",
+ "bitvec",
+ "bytes",
  "downcast-rs",
  "futures",
  "hashbrown 0.15.5",

@@ -129,6 +129,7 @@ pub const CALL_STACK_LIMIT: u32 = 1024;
 pub const WASM_MAX_CODE_SIZE: usize = revm_primitives::wasm::WASM_MAX_CODE_SIZE;
 #[cfg(feature = "svm")]
 pub const SVM_MAX_CODE_SIZE: usize = revm_primitives::wasm::SVM_MAX_CODE_SIZE;
+pub const RWASM_MAX_CODE_SIZE: usize = 12 * 1024 * 1024;
 
 /// WebAssembly magic bytes
 ///
