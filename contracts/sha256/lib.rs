@@ -2,7 +2,7 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{crypto::crypto_sha256, system_entrypoint2, ExitCode, SharedAPI};
+use fluentbase_sdk::{crypto::crypto_sha256, system_entrypoint, ExitCode, SharedAPI};
 
 /// Main entry point for the sha256 wrapper contract.
 /// This contract wraps the sha256 precompile (EIP-210) which computes the SHA-256 hash of a given input.
@@ -32,7 +32,7 @@ fn estimate_gas(input_len: usize) -> u64 {
     60 + (words as u64 * 12)
 }
 
-system_entrypoint2!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

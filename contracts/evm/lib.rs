@@ -9,8 +9,8 @@ use fluentbase_evm::{
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
 };
 use fluentbase_sdk::{
-    crypto::crypto_keccak256, system::RuntimeInterruptionOutcomeV1, system_entrypoint2, Bytes,
-    ExitCode, HashMap, SharedAPI, SystemAPI, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
+    crypto::crypto_keccak256, system::RuntimeInterruptionOutcomeV1, system_entrypoint, Bytes,
+    ExitCode, HashMap, SystemAPI, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
 };
 use spin::{Mutex, MutexGuard, Once};
 
@@ -195,4 +195,4 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     }
 }
 
-system_entrypoint2!(main_entry, deploy_entry);
+system_entrypoint!(main_entry, deploy_entry);

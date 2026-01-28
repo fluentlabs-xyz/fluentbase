@@ -9,15 +9,13 @@ use crate::{
 };
 use alloy_primitives::{Address, Log, LogData};
 use cfg_if::cfg_if;
-use core::mem::take;
 use fluentbase_runtime::{
     default_runtime_executor,
     syscall_handler::{syscall_exec_impl, syscall_resume_impl},
     RuntimeContext, RuntimeExecutor,
 };
 use fluentbase_sdk::{
-    bincode, is_delegated_runtime_address, is_execute_using_system_runtime_v1,
-    is_execute_using_system_runtime_v2, keccak256,
+    bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
     rwasm_core::RwasmModule,
     system::{
         JournalLog, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
@@ -208,7 +206,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         ));
     }
 
-    if is_execute_using_system_runtime_v2(&effective_bytecode_address) {
+    if is_execute_using_system_runtime(&effective_bytecode_address) {
         let block_number = ctx.block().number().as_limbs()[0];
 
         let mut address_list: Vec<Address> = vec![];
@@ -253,19 +251,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         let new_frame_input =
             bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
         contract_input = new_frame_input;
-    } else if is_execute_using_system_runtime_v1(&effective_bytecode_address)
-        && effective_bytecode_metadata.is_some()
-    {
-        let new_frame_input = RuntimeNewFrameInputV1 {
-            metadata: effective_bytecode_metadata.unwrap_or_default(),
-            input,
-            context: Bytes::new(),
-            storage: None,
-            balances: None,
-        };
-        let new_frame_input =
-            bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
-        contract_input.extend(new_frame_input);
     } else {
         contract_input.extend_from_slice(&input);
     }
@@ -387,10 +372,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     let meta_account = ctx.journal_mut().load_account_with_code(bytecode_address)?;
     let meta_bytecode = meta_account.info.code.clone().unwrap_or_default();
     let outcome: Bytes = match meta_bytecode {
-        Bytecode::OwnableAccount(v)
-            if is_execute_using_system_runtime_v1(&v.owner_address)
-                || is_execute_using_system_runtime_v2(&v.owner_address) =>
-        {
+        Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
             let outcome = RuntimeInterruptionOutcomeV1 {
                 halted_frame,
                 output: result.output,
@@ -467,8 +449,7 @@ fn get_ownable_account_mut<'a, CTX: ContextTr + 'a, INSP: Inspector<CTX>>(
     let bytecode_account = bytecode_account.info.code.clone();
     Ok(bytecode_account.and_then(|bytecode| match bytecode {
         Bytecode::OwnableAccount(account)
-            if is_execute_using_system_runtime_v1(&account.owner_address)
-                || is_execute_using_system_runtime_v2(&account.owner_address) =>
+            if is_execute_using_system_runtime(&account.owner_address) =>
         {
             Some(account)
         }
@@ -538,25 +519,9 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         .unwrap_or(bytecode_address);
 
     let mut exit_code = ExitCode::from(exit_code);
-
-    let is_create: bool = matches!(frame.input, FrameInput::Create(..));
     match exit_code {
-        // If we return `Ok` in deployment mode, then we assume we store new metadata in the output,
-        // it's used to rewrite the existing metadata to store custom bytecode.
-        //
-        // Note: this mode is legacy and will be replaced with V2 scheme
-        ExitCode::Ok
-            if is_create && is_execute_using_system_runtime_v1(&effective_bytecode_address) =>
-        {
-            let mut ownable_account = ownable_account.unwrap();
-            ownable_account.metadata = take(&mut return_data);
-            let bytecode = Bytecode::OwnableAccount(ownable_account);
-            ctx.journal_mut()
-                .set_code(frame.interpreter.input.target_address(), bytecode);
-        }
-
         // A special case for system runtime v2
-        exit_code if is_execute_using_system_runtime_v2(&effective_bytecode_address) => {
+        exit_code if is_execute_using_system_runtime(&effective_bytecode_address) => {
             process_runtime_execution_outcome(
                 &target_address,
                 ctx,

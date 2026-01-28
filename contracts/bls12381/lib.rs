@@ -2,7 +2,7 @@
 extern crate alloc;
 
 use fluentbase_sdk::{
-    system_entrypoint2, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BLS12_381_G1_ADD,
+    system_entrypoint, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BLS12_381_G1_ADD,
     PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM,
     PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
 };
@@ -129,7 +129,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     Ok(())
 }
 
-system_entrypoint2!(main_entry);
+system_entrypoint!(main_entry);
 
 /**
  * The following are the tests for the BLS12-381 precompile contract.

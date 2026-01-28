@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    alloc_slice, default_compilation_config, rwasm_core::RwasmModule, system_entrypoint2, ExitCode,
+    alloc_slice, default_compilation_config, rwasm_core::RwasmModule, system_entrypoint, ExitCode,
     SharedAPI,
 };
 
@@ -24,4 +24,4 @@ pub fn main_entry<SDK: SharedAPI>(_: &mut SDK) -> Result<(), ExitCode> {
     Err(ExitCode::UnreachableCodeReached)
 }
 
-system_entrypoint2!(main_entry, deploy_entry);
+system_entrypoint!(main_entry, deploy_entry);

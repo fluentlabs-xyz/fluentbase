@@ -4,7 +4,7 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    alloc_slice, crypto::CryptoRuntime, system_entrypoint2, ContextReader, CryptoAPI, ExitCode,
+    alloc_slice, crypto::CryptoRuntime, system_entrypoint, ContextReader, CryptoAPI, ExitCode,
     SharedAPI, BN254_G1_RAW_AFFINE_SIZE, PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL,
     PRECOMPILE_BN256_PAIR,
 };
@@ -154,7 +154,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     }
 }
 
-system_entrypoint2!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

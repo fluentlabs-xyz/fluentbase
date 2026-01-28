@@ -6,7 +6,7 @@ extern crate fluentbase_sdk;
 
 mod attestation;
 
-use fluentbase_sdk::{system_entrypoint2, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SharedAPI};
 
 pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input = sdk.input();
@@ -15,7 +15,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     Ok(())
 }
 
-system_entrypoint2!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

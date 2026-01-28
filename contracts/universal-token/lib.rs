@@ -15,7 +15,7 @@ use fluentbase_sdk::{
     codec::SolidityABI,
     evm::write_evm_exit_message,
     storage::{StorageMap, StorageU256},
-    system_entrypoint2, Address, ContextReader, EvmExitCode, ExitCode, SharedAPI, StorageUtils,
+    system_entrypoint, Address, ContextReader, EvmExitCode, ExitCode, SharedAPI, StorageUtils,
     U256,
 };
 use fluentbase_universal_token::{
@@ -472,4 +472,4 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     Ok(())
 }
 
-system_entrypoint2!(main_entry, deploy_entry);
+system_entrypoint!(main_entry, deploy_entry);

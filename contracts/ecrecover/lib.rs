@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, system_entrypoint2, Bytes, ExitCode, SharedAPI, B256, B512};
+use fluentbase_sdk::{alloc_slice, system_entrypoint, Bytes, ExitCode, SharedAPI, B256, B512};
 use revm_precompile::{secp256k1::ecrecover, utilities::right_pad};
 
 pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
@@ -53,7 +53,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // sdk.write(&out);
 }
 
-system_entrypoint2!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

@@ -171,9 +171,7 @@ pub fn is_execute_using_wasmtime_strategy(address: &Address) -> bool {
 ///
 /// This is a narrower set than `PRECOMPILE_ADDRESSES`: some system contracts may
 /// exist, but not be executed by the system runtime (or may be feature/fork gated).
-pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[];
-
-pub const EXECUTE_USING_SYSTEM_RUNTIME_V2_ADDRESSES: &[Address] = &[
+pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[
     PRECOMPILE_BIG_MODEXP,
     PRECOMPILE_BLAKE2F,
     PRECOMPILE_BLS12_381_G1_ADD,
@@ -207,11 +205,8 @@ pub const EXECUTE_USING_SYSTEM_RUNTIME_V2_ADDRESSES: &[Address] = &[
 /// This is a separate list from `PRECOMPILE_ADDRESSES` because:
 /// - some addresses may exist but be disabled until a fork activates them
 /// - some addresses may be routed via different execution strategies
-pub fn is_execute_using_system_runtime_v1(address: &Address) -> bool {
+pub fn is_execute_using_system_runtime(address: &Address) -> bool {
     EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES.contains(address)
-}
-pub fn is_execute_using_system_runtime_v2(address: &Address) -> bool {
-    EXECUTE_USING_SYSTEM_RUNTIME_V2_ADDRESSES.contains(address)
 }
 
 /// Resolves and returns the account owner `Address` based on the provided input byte slice.

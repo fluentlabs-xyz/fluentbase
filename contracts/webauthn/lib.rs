@@ -4,7 +4,7 @@ extern crate alloc;
 mod webauthn;
 
 use fluentbase_sdk::{
-    alloc_slice, codec::SolidityABI, system_entrypoint2, Bytes, ContextReader, ExitCode, SharedAPI,
+    alloc_slice, codec::SolidityABI, system_entrypoint, Bytes, ContextReader, ExitCode, SharedAPI,
     B256, U256,
 };
 use webauthn::{verify_webauthn, WebAuthnAuth};
@@ -72,7 +72,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     Ok(())
 }
 
-system_entrypoint2!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

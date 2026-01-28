@@ -5,7 +5,7 @@
 mod tests;
 
 use fluentbase_sdk::{
-    system_entrypoint2, ContextReader, ExitCode, SharedAPI, EIP2935_HISTORY_SERVE_WINDOW,
+    system_entrypoint, ContextReader, ExitCode, SharedAPI, EIP2935_HISTORY_SERVE_WINDOW,
     SYSTEM_ADDRESS, U256,
 };
 
@@ -66,4 +66,4 @@ pub fn entrypoint<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     }
 }
 
-system_entrypoint2!(entrypoint);
+system_entrypoint!(entrypoint);

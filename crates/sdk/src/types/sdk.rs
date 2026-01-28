@@ -1,6 +1,7 @@
 use crate::{
     evm::{write_evm_exit_message, write_evm_panic_message},
-    Address, Bytes, system::RuntimeInterruptionOutcomeV1, ContextReader, ExitCode, SyscallResult, B256, FUEL_DENOM_RATE, U256,
+    system::RuntimeInterruptionOutcomeV1,
+    Address, Bytes, ContextReader, ExitCode, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
 use fluentbase_crypto::crypto_keccak256;
 

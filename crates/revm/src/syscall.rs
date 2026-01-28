@@ -9,9 +9,9 @@ use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create_metadata_address, is_execute_using_system_runtime_v1,
-    is_execute_using_system_runtime_v2, is_system_precompile, Address, Bytes, ExitCode, Log,
-    LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
+    calc_create_metadata_address, is_execute_using_system_runtime, is_system_precompile, Address,
+    Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME,
+    STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -75,7 +75,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     let is_static = frame.interpreter.runtime_flag.is_static;
     let is_system_runtime = account_owner_address
-        .filter(|v| is_execute_using_system_runtime_v1(v) || is_execute_using_system_runtime_v2(v))
+        .filter(is_execute_using_system_runtime)
         .is_some();
 
     /// This is modified Journal::load_account_delegated() fn contents to support 'skip_load'

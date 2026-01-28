@@ -2,7 +2,7 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, system_entrypoint2, Bytes, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{alloc_slice, system_entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
 
 pub fn main_entry(sdk: &mut impl SharedAPI) -> Result<(), ExitCode> {
     // read full input data
@@ -20,7 +20,7 @@ pub fn main_entry(sdk: &mut impl SharedAPI) -> Result<(), ExitCode> {
     Ok(())
 }
 
-system_entrypoint2!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {
