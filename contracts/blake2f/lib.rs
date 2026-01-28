@@ -2,7 +2,7 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{system_entrypoint2, Bytes, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint2, ContextReader, ExitCode, SharedAPI};
 use revm_precompile::PrecompileOutput;
 
 pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
@@ -23,7 +23,7 @@ system_entrypoint2!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{hex, Bytes, ContractContextV1, FUEL_DENOM_RATE};
     use fluentbase_testing::TestingContextImpl;
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {

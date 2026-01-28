@@ -3,22 +3,26 @@
 extern crate alloc;
 extern crate core;
 
-use alloc::vec::Vec;
 use core::convert::AsRef;
 use fluentbase_evm::{
     bytecode::AnalyzedBytecode, gas, gas::Gas, opcodes::interruptable_instruction_table,
     types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
 };
 use fluentbase_sdk::{
-    bincode, byteorder,
-    byteorder::ByteOrder,
-    crypto::crypto_keccak256,
-    entrypoint,
-    system::{RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1},
-    Bytes, ContextReader, ExitCode, SharedAPI, SyscallInvocationParams, B256, EVM_MAX_CODE_SIZE,
-    FUEL_DENOM_RATE,
+    crypto::crypto_keccak256, system::RuntimeInterruptionOutcomeV1, system_entrypoint2, Bytes,
+    ExitCode, HashMap, SharedAPI, SystemAPI, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
 };
-use spin::MutexGuard;
+use spin::{Mutex, MutexGuard, Once};
+
+/// A saved EthVM context we store between calls
+fn lock_evm_context<'a>() -> MutexGuard<'a, HashMap<u32, EthVM>> {
+    static SAVED_EVM_CONTEXT: Once<Mutex<HashMap<u32, EthVM>>> = Once::new();
+    let mutex = SAVED_EVM_CONTEXT.call_once(|| Mutex::new(HashMap::new()));
+    if mutex.is_locked() {
+        unreachable!("runtime corruption, can't restore evm context");
+    }
+    mutex.lock()
+}
 
 /// Transforms metadata into analyzed EVM bytecode when possible.
 pub(crate) fn evm_bytecode_from_metadata(metadata: &Bytes) -> Option<AnalyzedBytecode> {
@@ -30,65 +34,20 @@ pub(crate) fn evm_bytecode_from_metadata(metadata: &Bytes) -> Option<AnalyzedByt
     })
 }
 
-static SAVED_EVM_CONTEXT: spin::Once<spin::Mutex<Vec<EthVM>>> = spin::Once::new();
-
-fn lock_evm_context<'a>() -> MutexGuard<'a, Vec<EthVM>> {
-    let cached_state = SAVED_EVM_CONTEXT.call_once(|| spin::Mutex::new(Vec::new()));
-    debug_assert!(
-        !cached_state.is_locked(),
-        "evm: spin mutex is locked, looks like memory corruption"
-    );
-    cached_state.lock()
-}
-
-fn restore_evm_context_or_create<'a>(
-    cached_state: &'a mut MutexGuard<Vec<EthVM>>,
-    context: impl ContextReader,
-    input: Bytes,
-    return_data: Bytes,
+fn restore_evm_context_or_create<'a, SDK: SystemAPI>(
+    context: &'a mut MutexGuard<HashMap<u32, EthVM>>,
+    sdk: &mut SDK,
 ) -> &'a mut EthVM {
-    // If return data is empty, then we create new EVM frame
-    if return_data.is_empty() {
-        // Decode new frame input
-        let (new_frame_input, _) = bincode::decode_from_slice::<RuntimeNewFrameInputV1, _>(
-            input.as_ref(),
-            bincode::config::legacy(),
-        )
-        .unwrap();
-        // If analyzed, bytecode is not presented then extract it from the input
-        // (contract deployment stage)
-        let (analyzed_bytecode, contract_input) = if !new_frame_input.metadata.is_empty() {
-            let Some(analyzed_bytecode) = evm_bytecode_from_metadata(&new_frame_input.metadata)
-            else {
-                unreachable!("evm: a valid metadata must be provided")
-            };
-            (analyzed_bytecode, new_frame_input.input)
-        } else {
-            let analyzed_bytecode =
-                AnalyzedBytecode::new(new_frame_input.input.clone(), B256::ZERO);
-            (analyzed_bytecode, Bytes::new())
-        };
-        let eth_vm = EthVM::new(context, contract_input, analyzed_bytecode);
-        // Push new EthVM frame (new frame is created)
-        cached_state.push(eth_vm);
-        cached_state.last_mut().unwrap()
-    } else {
-        drop(context);
-        let (
-            RuntimeInterruptionOutcomeV1 {
-                halted_frame,
-                output,
-                fuel_consumed,
-                fuel_refunded,
-                exit_code,
-            },
-            _,
-        ) = bincode::decode_from_slice::<RuntimeInterruptionOutcomeV1, _>(
-            return_data.as_ref(),
-            bincode::config::legacy(),
-        )
-        .unwrap();
-        let Some(eth_vm) = cached_state.last_mut() else {
+    // A special case when runtime returns interruption with missing runtime data (like balances or storage)
+    if let Some(outcome) = sdk.take_interruption_outcome() {
+        let RuntimeInterruptionOutcomeV1 {
+            halted_frame,
+            output,
+            fuel_consumed,
+            fuel_refunded,
+            exit_code,
+        } = outcome;
+        let Some(eth_vm) = context.get_mut(&sdk.unique_key()) else {
             unreachable!("evm: missing cached evm state, can't resume execution")
         };
         let mut gas = Gas::new_spent(fuel_consumed / FUEL_DENOM_RATE);
@@ -114,37 +73,38 @@ fn restore_evm_context_or_create<'a>(
                 halted_frame,
             });
         eth_vm
+    } else {
+        let metadata = sdk.contract_metadata();
+        let input = sdk.bytes_input();
+        // If analyzed, bytecode is not presented then extract it from the input
+        // (contract deployment stage)
+        let (analyzed_bytecode, contract_input) = if !metadata.is_empty() {
+            let Some(analyzed_bytecode) = evm_bytecode_from_metadata(&metadata) else {
+                unreachable!("evm: a valid metadata must be provided")
+            };
+            (analyzed_bytecode, input)
+        } else {
+            let analyzed_bytecode = AnalyzedBytecode::new(input.clone(), B256::ZERO);
+            (analyzed_bytecode, Bytes::new())
+        };
+        let eth_vm = EthVM::new(sdk.context(), contract_input, analyzed_bytecode);
+        // Push new EthVM frame (new frame is created)
+        _ = context.insert(sdk.unique_key(), eth_vm);
+        context.get_mut(&sdk.unique_key()).unwrap()
     }
 }
 
 /// Deploy entry for EVM contracts.
 /// Runs init bytecode, enforces EIP-3541 and EIP-170, charges CODEDEPOSIT gas,
 /// then commits the resulting runtime bytecode to metadata.
-pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    let (output, exit_code) = deploy_inner(&mut sdk, lock_evm_context());
-    let mut exit_code_le: [u8; 4] = [0u8; 4];
-    byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
-    let mut result = Vec::with_capacity(4 + output.len());
-    result.extend_from_slice(&exit_code_le);
-    result.extend_from_slice(&output);
-    sdk.write(&result);
-}
-
-fn deploy_inner<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    mut cached_state: MutexGuard<Vec<EthVM>>,
-) -> (Bytes, ExitCode) {
-    let evm = restore_evm_context_or_create(
-        &mut cached_state,
-        sdk.context(),
-        sdk.bytes_input(),
-        sdk.return_data(),
-    );
+pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    let mut cached_state = lock_evm_context();
+    let evm = restore_evm_context_or_create(&mut cached_state, sdk);
     let instruction_table = interruptable_instruction_table::<SDK>();
     match evm.run_step(&instruction_table, sdk) {
         InterpreterAction::Return(result) => {
             let committed_gas = evm.interpreter.extend.committed_gas;
-            _ = cached_state.pop();
+            cached_state.remove(&sdk.unique_key());
             let mut result = ExecutionResult {
                 result: result.result,
                 output: result.output,
@@ -154,13 +114,13 @@ fn deploy_inner<SDK: SharedAPI>(
             if result.result.is_ok() {
                 // EIP-3541 and EIP-170 checks
                 if result.output.first() == Some(&0xEF) {
-                    return (Bytes::new(), ExitCode::CreateContractStartingWithEF);
+                    return Err(ExitCode::CreateContractStartingWithEF);
                 } else if result.output.len() > EVM_MAX_CODE_SIZE {
-                    return (Bytes::new(), ExitCode::CreateContractSizeLimit);
+                    return Err(ExitCode::CreateContractSizeLimit);
                 }
                 let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
                 if !result.gas.record_cost(gas_for_code) {
-                    return (Bytes::new(), ExitCode::OutOfFuel);
+                    return Err(ExitCode::OutOfFuel);
                 }
                 let consumed_diff = result.chargeable_fuel();
                 sdk.charge_fuel(consumed_diff);
@@ -169,7 +129,8 @@ fn deploy_inner<SDK: SharedAPI>(
                 let evm_code_hash = crypto_keccak256(result.output.as_ref());
                 let analyzed_bytecode = AnalyzedBytecode::new(result.output, evm_code_hash);
                 let evm_bytecode = EthereumMetadata::Analyzed(analyzed_bytecode).write_to_bytes();
-                (evm_bytecode, ExitCode::Ok)
+                sdk.write_contract_metadata(evm_bytecode);
+                Ok(())
             } else {
                 let consumed_diff = result.chargeable_fuel();
                 sdk.charge_fuel(consumed_diff);
@@ -178,7 +139,8 @@ fn deploy_inner<SDK: SharedAPI>(
                 } else {
                     ExitCode::Err
                 };
-                (result.output, exit_code)
+                sdk.write(result.output);
+                Err(exit_code)
             }
         }
         InterpreterAction::SystemInterruption {
@@ -187,17 +149,10 @@ fn deploy_inner<SDK: SharedAPI>(
             fuel_limit,
             state,
         } => {
-            let input_offset = input.as_ptr() as usize;
+            // Always sync gas before doing interruption
             evm.sync_evm_gas(sdk);
-            let syscall_params = SyscallInvocationParams {
-                code_hash,
-                input: input_offset..(input_offset + input.len()),
-                fuel_limit: fuel_limit.unwrap_or(u64::MAX),
-                state,
-                fuel16_ptr: 0,
-            }
-            .encode();
-            (syscall_params.into(), ExitCode::InterruptionCalled)
+            sdk.insert_interruption_income(code_hash, input, fuel_limit, state);
+            Err(ExitCode::InterruptionCalled)
         }
         InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
     }
@@ -207,25 +162,14 @@ fn deploy_inner<SDK: SharedAPI>(
 /// Loads analyzed code from metadata, runs EthVM with call input, settles fuel,
 /// and writes the returned data.
 #[inline(never)]
-pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
+pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let mut cached_state = lock_evm_context();
-    let evm = restore_evm_context_or_create(
-        &mut cached_state,
-        // Pass information about execution context (contract address, caller) into the EthVM,
-        // but it's used only if EthVM is not created (aka first call, not resume)
-        sdk.context(),
-        // Input of the smart contract
-        sdk.bytes_input(),
-        // Return data indicates the existence of interrupted state,
-        // if we have return data not empty,
-        // then we've executed this frame before and need to resume
-        sdk.return_data(),
-    );
+    let evm = restore_evm_context_or_create(&mut cached_state, sdk);
     let instruction_table = interruptable_instruction_table::<SDK>();
-    let (output, exit_code) = match evm.run_step(&instruction_table, &mut sdk) {
+    match evm.run_step(&instruction_table, sdk) {
         InterpreterAction::Return(result) => {
-            evm.sync_evm_gas(&mut sdk);
-            _ = cached_state.pop();
+            evm.sync_evm_gas(sdk);
+            cached_state.remove(&sdk.unique_key());
             let exit_code = if result.result.is_ok() {
                 ExitCode::Ok
             } else if result.result.is_revert() {
@@ -233,7 +177,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             } else {
                 ExitCode::Err
             };
-            (result.output, exit_code)
+            sdk.write(result.output);
+            Err(exit_code)
         }
         InterpreterAction::SystemInterruption {
             code_hash,
@@ -241,26 +186,13 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             fuel_limit,
             state,
         } => {
-            let input_offset = input.as_ptr() as usize;
-            evm.sync_evm_gas(&mut sdk);
-            let syscall_params = SyscallInvocationParams {
-                code_hash,
-                input: input_offset..(input_offset + input.len()),
-                fuel_limit: fuel_limit.unwrap_or(u64::MAX),
-                state,
-                fuel16_ptr: 0,
-            }
-            .encode();
-            (syscall_params.into(), ExitCode::InterruptionCalled)
+            // Always sync gas before doing interruption
+            evm.sync_evm_gas(sdk);
+            sdk.insert_interruption_income(code_hash, input, fuel_limit, state);
+            Err(ExitCode::InterruptionCalled)
         }
         InterpreterAction::NewFrame(_) => unreachable!("evm: frames can't be produced"),
-    };
-    let mut exit_code_le: [u8; 4] = [0u8; 4];
-    byteorder::LE::write_i32(&mut exit_code_le, exit_code as i32);
-    let mut result = Vec::with_capacity(4 + output.len());
-    result.extend_from_slice(&exit_code_le);
-    result.extend_from_slice(&output);
-    sdk.write(&result);
+    }
 }
 
-entrypoint!(main_entry, deploy_entry);
+system_entrypoint2!(main_entry, deploy_entry);

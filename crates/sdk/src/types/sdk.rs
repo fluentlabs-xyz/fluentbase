@@ -1,6 +1,6 @@
 use crate::{
     evm::{write_evm_exit_message, write_evm_panic_message},
-    Address, Bytes, ContextReader, ExitCode, SyscallResult, B256, FUEL_DENOM_RATE, U256,
+    Address, Bytes, system::RuntimeInterruptionOutcomeV1, ContextReader, ExitCode, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
 use fluentbase_crypto::crypto_keccak256;
 
@@ -174,4 +174,22 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
         fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes>;
     fn destroy_account(&mut self, address: Address) -> SyscallResult<()>;
+}
+
+pub trait SystemAPI: SharedAPI {
+    fn take_interruption_outcome(&mut self) -> Option<RuntimeInterruptionOutcomeV1>;
+
+    fn insert_interruption_income(
+        &mut self,
+        code_hash: B256,
+        input: Bytes,
+        fuel_limit: Option<u64>,
+        state: u32,
+    );
+
+    fn unique_key(&self) -> u32;
+
+    fn write_contract_metadata(&mut self, metadata: Bytes);
+
+    fn contract_metadata(&self) -> Bytes;
 }

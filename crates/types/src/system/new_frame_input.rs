@@ -91,6 +91,19 @@ pub struct RuntimeExecutionOutcomeV1 {
     pub output: Bytes,
     pub storage: Option<HashMap<U256, U256>>,
     pub logs: Vec<JournalLog>,
+    pub new_metadata: Option<Bytes>,
+}
+
+impl RuntimeExecutionOutcomeV1 {
+    pub fn encode(&self) -> Vec<u8> {
+        bincode::encode_to_vec(self, bincode::config::legacy()).unwrap()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        let (result, _bytes_read) =
+            bincode::decode_from_slice(bytes, bincode::config::legacy()).ok()?;
+        Some(result)
+    }
 }
 
 impl bincode::Encode for RuntimeExecutionOutcomeV1 {
@@ -110,6 +123,7 @@ impl bincode::Encode for RuntimeExecutionOutcomeV1 {
             bincode::Encode::encode(&0u32, e)?;
         }
         bincode::Encode::encode(&self.logs, e)?;
+        bincode::Encode::encode(&self.new_metadata.as_ref().map(|v| v.as_ref()), e)?;
         Ok(())
     }
 }
@@ -131,11 +145,13 @@ impl<C> bincode::Decode<C> for RuntimeExecutionOutcomeV1 {
             None
         };
         let logs: Vec<JournalLog> = bincode::Decode::decode(d)?;
+        let new_metadata: Option<Vec<u8>> = bincode::Decode::decode(d)?;
         Ok(Self {
             exit_code: ExitCode::from(exit_code),
             output: output.into(),
             storage,
             logs,
+            new_metadata: new_metadata.map(Into::into),
         })
     }
 }
@@ -150,7 +166,7 @@ mod tests {
         },
         ExitCode,
     };
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::{bytes, Address, B256, U256};
     use hashbrown::HashMap;
 
     #[test]
@@ -197,6 +213,7 @@ mod tests {
             output: [1, 2, 3].into(),
             storage: Some(storage.clone()),
             logs: logs.clone(),
+            new_metadata: Some(bytes!("112233")),
         };
         let v_encoded = encode(&v).unwrap();
         let (v_decoded, read_count) = decode::<RuntimeExecutionOutcomeV1>(&v_encoded).unwrap();
@@ -223,6 +240,7 @@ mod tests {
             output: [1, 2, 3].into(),
             storage: Some(storage.clone()),
             logs,
+            new_metadata: None,
         };
         let v_encoded = encode(&v).unwrap();
         let (v_decoded, read_count) = decode::<RuntimeExecutionOutcomeV1>(&v_encoded).unwrap();

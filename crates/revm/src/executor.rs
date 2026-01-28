@@ -197,10 +197,8 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         _ => (None, bytecode_address),
     };
 
-    // TODO(dmitry123): Do we want to allow to invoke delegatable runtimes directly?
-    //  We disallow this, because it might be used for non-proper state access, need to double
-    //  check how safe to allow this. Theoretically I don't see any issues here, but better
-    //  to double check.
+    // We disallow this, because it might be used for non-proper state access, need to
+    // double-check how safe to allow this...
     if is_delegated_runtime_address(&target_address)
         || is_delegated_runtime_address(&bytecode_address)
     {
@@ -212,7 +210,16 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     if is_execute_using_system_runtime_v2(&effective_bytecode_address) {
         let block_number = ctx.block().number().as_limbs()[0];
-        let keys = match effective_bytecode_address {
+
+        let mut address_list: Vec<Address> = vec![];
+        let mut storage_list: Vec<U256> = vec![];
+        if let Some(access_list) = ctx.tx().access_list() {
+            for x in access_list {
+                address_list.push(*x.address());
+                storage_list.extend(x.storage_slots().map(|v| U256::from_be_bytes(v.0)));
+            }
+        };
+        storage_list = match effective_bytecode_address {
             PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME => {
                 erc20_compute_storage_keys(input.as_ref(), &caller_address, is_create)
                     .unwrap_or_default()
@@ -221,18 +228,17 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                 eip2935_compute_storage_keys(input.as_ref(), &caller_address, block_number)
                     .unwrap_or_default()
             }
-            _ => vec![],
+            _ => {
+                // Note: we don't use EVM storage access list, it's not supported by runtime yet
+                vec![]
+            }
         };
-        let mut storage = HashMap::<U256, U256>::with_capacity(keys.len());
-        for k in keys {
+
+        let mut storage = HashMap::<U256, U256>::with_capacity(storage_list.len());
+        for k in storage_list {
             storage.insert(k, ctx.journal_mut().sload(target_address, k)?.data);
         }
         let mut balances: HashMap<Address, U256> = HashMap::new();
-        let address_list: Vec<Address> = if let Some(access_list) = ctx.tx().access_list() {
-            access_list.map(|v| v.address().clone()).collect()
-        } else {
-            Vec::new()
-        };
         for address in address_list {
             let account = ctx.journal_mut().load_account(address)?;
             balances.insert(address, account.info.balance);
@@ -381,7 +387,10 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     let meta_account = ctx.journal_mut().load_account_with_code(bytecode_address)?;
     let meta_bytecode = meta_account.info.code.clone().unwrap_or_default();
     let outcome: Bytes = match meta_bytecode {
-        Bytecode::OwnableAccount(v) if is_execute_using_system_runtime_v1(&v.owner_address) => {
+        Bytecode::OwnableAccount(v)
+            if is_execute_using_system_runtime_v1(&v.owner_address)
+                || is_execute_using_system_runtime_v2(&v.owner_address) =>
+        {
             let outcome = RuntimeInterruptionOutcomeV1 {
                 halted_frame,
                 output: result.output,
@@ -468,10 +477,17 @@ fn get_ownable_account_mut<'a, CTX: ContextTr + 'a, INSP: Inspector<CTX>>(
 }
 
 fn process_runtime_execution_outcome<CTX: ContextTr>(
-    target_address: &[u8; 20],
+    target_address: &Address,
     ctx: &mut CTX,
     return_data: &mut Bytes,
+    exit_code: ExitCode,
+    ownable_account_bytecode: Option<OwnableAccountBytecode>,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
+    // Note: If we have fatal exit code then we had execution halt or panic, it means
+    //  we can't decode output params because they might be corrupted
+    if exit_code.is_fatal_exit_code() {
+        return Ok(());
+    }
     let (runtime_output, _): (RuntimeExecutionOutcomeV1, usize) =
         bincode::decode_from_slice(return_data, bincode::config::legacy())
             .expect("runtime execution outcome");
@@ -482,13 +498,21 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
         return Ok(());
     }
     for (k, v) in runtime_output.storage.unwrap_or_default() {
-        ctx.journal_mut().sstore(target_address.into(), k, v)?;
+        ctx.journal_mut().sstore(*target_address, k, v)?;
     }
     for JournalLog { topics, data } in runtime_output.logs {
         ctx.journal_mut().log(Log {
-            address: target_address.into(),
+            address: *target_address,
             data: LogData::new_unchecked(topics, data),
         });
+    }
+    if let Some(new_metadata) = runtime_output.new_metadata {
+        // Safety: We unwrap here because `new_metadata` should be set only by ownable accounts,
+        //  if it's made by other non-ownable system contracts then it's fatal error
+        let mut ownable_account_bytecode = ownable_account_bytecode.unwrap();
+        ownable_account_bytecode.metadata = new_metadata;
+        let bytecode = Bytecode::OwnableAccount(ownable_account_bytecode);
+        ctx.journal_mut().set_code(*target_address, bytecode);
     }
     Ok(())
 }
@@ -532,8 +556,14 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         // A special case for system runtime v2
-        _ if is_execute_using_system_runtime_v2(&effective_bytecode_address) => {
-            process_runtime_execution_outcome(&target_address, ctx, &mut return_data)?;
+        exit_code if is_execute_using_system_runtime_v2(&effective_bytecode_address) => {
+            process_runtime_execution_outcome(
+                &target_address,
+                ctx,
+                &mut return_data,
+                exit_code,
+                ownable_account,
+            )?;
         }
 
         // Don't allow to use fatal exit codes for non system-runtime contracts

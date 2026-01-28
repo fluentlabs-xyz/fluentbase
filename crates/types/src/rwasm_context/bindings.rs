@@ -1,4 +1,4 @@
-/// Check [crate::NativeAPI] for docs.
+//! Check [crate::NativeAPI] for docs.
 #[link(wasm_import_module = "fluentbase_v1preview")]
 extern "C" {
     // input/output & state control (0x00)

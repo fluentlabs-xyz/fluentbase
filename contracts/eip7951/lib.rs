@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{system_entrypoint2, Bytes, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint2, ExitCode, SharedAPI};
 use revm_precompile::secp256r1::{p256_verify, P256VERIFY_BASE_GAS_FEE};
 
 /// Main entry point for the secp256r1 wrapper contract.
@@ -31,7 +31,7 @@ system_entrypoint2!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, ContractContextV1, B256, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{hex, Bytes, ContractContextV1, B256, FUEL_DENOM_RATE};
     use fluentbase_testing::TestingContextImpl;
     use p256::{
         ecdsa::{signature::Verifier, SigningKey, VerifyingKey},

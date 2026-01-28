@@ -419,7 +419,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let result = resume_inner(&mut runtime);
         // We need to adjust the fuel limit because `fuel_consumed` should not be included into spent.
         if result != Err(TrapCode::OutOfFuel) {
-            // SAFETY: We can safely unwrap here, because `OutOfFuel` check we did in `resume_inner` and the result is ok.
+            // Safety: We can safely unwrap here, because `OutOfFuel` check we did in `resume_inner` and the result is ok.
             fuel_remaining = fuel_remaining.map(|v| v.checked_sub(fuel_consumed).unwrap());
         }
         let fuel_consumed = runtime

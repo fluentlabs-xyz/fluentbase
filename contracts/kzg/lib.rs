@@ -2,7 +2,7 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{system_entrypoint2, Bytes, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint2, ContextReader, ExitCode, SharedAPI};
 
 pub fn main_entry(sdk: &mut impl SharedAPI) -> Result<(), ExitCode> {
     // read full input data
@@ -22,7 +22,7 @@ system_entrypoint2!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{hex, Bytes, ContractContextV1, FUEL_DENOM_RATE};
     use fluentbase_testing::TestingContextImpl;
     use revm_precompile::kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG;
 

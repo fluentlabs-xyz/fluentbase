@@ -171,7 +171,7 @@ pub fn is_execute_using_wasmtime_strategy(address: &Address) -> bool {
 ///
 /// This is a narrower set than `PRECOMPILE_ADDRESSES`: some system contracts may
 /// exist, but not be executed by the system runtime (or may be feature/fork gated).
-pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[PRECOMPILE_EVM_RUNTIME];
+pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[];
 
 pub const EXECUTE_USING_SYSTEM_RUNTIME_V2_ADDRESSES: &[Address] = &[
     PRECOMPILE_BIG_MODEXP,
@@ -189,7 +189,7 @@ pub const EXECUTE_USING_SYSTEM_RUNTIME_V2_ADDRESSES: &[Address] = &[
     PRECOMPILE_EIP2935,
     PRECOMPILE_EIP7951,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
-    // PRECOMPILE_EVM_RUNTIME,
+    PRECOMPILE_EVM_RUNTIME,
     PRECOMPILE_IDENTITY,
     PRECOMPILE_KZG_POINT_EVALUATION,
     PRECOMPILE_NITRO_VERIFIER,

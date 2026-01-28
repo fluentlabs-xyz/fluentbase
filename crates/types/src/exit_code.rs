@@ -183,6 +183,10 @@ impl ExitCode {
         !self.is_ok() && !self.is_revert()
     }
 
+    pub fn is_fatal_exit_code(&self) -> bool {
+        self == &ExitCode::UnexpectedFatalExecutionFailure
+    }
+
     pub const fn into_i32(self) -> i32 {
         self as i32
     }
