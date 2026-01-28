@@ -85,10 +85,11 @@ fn test_evm_create_large_wasm_contract() {
     deploy_via_deployer(&mut ctx, input.into());
 }
 
+#[cfg(feature = "testing-enabled")]
 #[test]
 fn test_locals_amplification_find_limit() {
     let test_cases: &[(u32, bool)] = &[
-        // (1, true),
+        (1, true),
         (2, false),
     ];
     let owner: Address = Address::ZERO;

@@ -19,7 +19,7 @@ fluentbase-svm = { workspace = true }
 fluentbase-svm-common = { workspace = true }
 fluentbase-svm-shared = { workspace = true }
 fluentbase-universal-token = { workspace = true }
-fluentbase-contracts = { workspace = true }
+fluentbase-contracts = { workspace = true, features = ["testing-enabled"] }
 curve25519-dalek = { workspace = true }
 
 rwasm = { workspace = true }
@@ -50,11 +50,15 @@ ark-serialize = { workspace = true }
 [features]
 default = [
     "std",
+    "testing-enabled",
     # "fluent-testnet",
     # "wasmtime",
     # "debug-print",
     # "svm",
     # "enable-error-text-checks", # when 'fast-panic' is off
+]
+testing-enabled = [
+    "fluentbase-contracts/testing-enabled",
 ]
 svm = [
     "fluentbase-genesis/svm",
@@ -69,7 +73,6 @@ std = [
     "rwasm/std",
     "revm/std",
     "fluentbase-testing/std",
-    "fluentbase-contracts/testing-enabled",
 ]
 debug-print = [
     "fluentbase-runtime/debug-print",
