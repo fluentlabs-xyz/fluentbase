@@ -1,10 +1,10 @@
-use std::time::Instant;
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall, SolValue};
-use revm::context::result::ExecutionResult;
 use fluentbase_contracts::{FLUENTBASE_EXAMPLES_ERC20, FLUENTBASE_EXAMPLES_GREETING};
 use fluentbase_sdk::{constructor::encode_constructor_params, hex, Address, Bytes};
 use fluentbase_testing::EvmTestingContext;
+use revm::context::result::ExecutionResult;
+use std::time::Instant;
 
 /// Contract `ContractDeployer.sol` is a smart contract that deploys
 /// the given smart contract using the CREATE opcode of the EVM.
@@ -87,17 +87,14 @@ fn test_evm_create_large_wasm_contract() {
 
 #[test]
 fn test_locals_amplification_find_limit() {
-    let test_cases: &[(u32, bool)] = &[
-        (1, true),
-        (20, false),
-    ];
+    let test_cases: &[(u32, bool)] = &[(4, true), (20, false)];
     let owner: Address = Address::ZERO;
     // Test various function counts to find limits
     for (num_funcs, expected_ok) in test_cases.iter().cloned() {
         let result = try_deploy(owner, num_funcs);
         if expected_ok {
             assert!(result.is_ok(), "expected result is OK");
-        } else{
+        } else {
             assert!(result.is_err(), "expected result is ERR");
         }
     }
@@ -166,9 +163,7 @@ fn build_max_locals_module(num_funcs: u32) -> Vec<u8> {
     }
 
     // Export section (export first func as "main")
-    wasm.extend_from_slice(&[
-        0x07, 0x08, 0x01, 0x04, 0x6d, 0x61, 0x69, 0x6e, 0x00, 0x00,
-    ]);
+    wasm.extend_from_slice(&[0x07, 0x08, 0x01, 0x04, 0x6d, 0x61, 0x69, 0x6e, 0x00, 0x00]);
 
     // Code section
     wasm.push(0x0a);
