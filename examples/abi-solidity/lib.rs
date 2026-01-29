@@ -18,12 +18,12 @@ entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
     use hex_literal::hex;
 
     #[test]
     fn test_contract_works() {
-        let sdk = HostTestingContext::default().with_input(hex!(
+        let sdk = TestingContextImpl::default().with_input(hex!(
             "000000000000000000000000000000000000000000000000000000000000007b"
         ));
         main_entry(sdk.clone());

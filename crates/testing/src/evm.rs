@@ -1,4 +1,4 @@
-use crate::HostTestingContext;
+use crate::TestingContextImpl;
 use core::{borrow::Borrow, mem::take, str::from_utf8};
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
 use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecutor};
@@ -22,7 +22,7 @@ use rwasm::RwasmModule;
 
 #[allow(dead_code)]
 pub struct EvmTestingContext {
-    pub sdk: HostTestingContext,
+    pub sdk: TestingContextImpl,
     pub db: InMemoryDB,
     pub cfg: CfgEnv,
     pub disabled_rwasm: bool,
@@ -38,7 +38,7 @@ impl Default for EvmTestingContext {
 impl EvmTestingContext {
     pub fn new() -> Self {
         Self {
-            sdk: HostTestingContext::default(),
+            sdk: TestingContextImpl::default(),
             db: InMemoryDB::default(),
             cfg: CfgEnv::default(),
             disabled_rwasm: false,

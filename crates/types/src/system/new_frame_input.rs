@@ -1,6 +1,6 @@
 use crate::{system::JournalLog, ExitCode};
 use alloc::vec::Vec;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Bytes, U256};
 use bincode::de::Decoder;
 use hashbrown::HashMap;
 
@@ -10,7 +10,6 @@ pub struct RuntimeNewFrameInputV1 {
     pub input: Bytes,
     pub context: Bytes,
     pub storage: Option<HashMap<U256, U256>>,
-    pub balances: Option<HashMap<Address, U256>>,
 }
 
 impl bincode::Encode for RuntimeNewFrameInputV1 {
@@ -25,15 +24,6 @@ impl bincode::Encode for RuntimeNewFrameInputV1 {
             bincode::Encode::encode(&(storage.len() as u32), e)?;
             for (k, v) in storage.iter() {
                 bincode::Encode::encode(&k.to_le_bytes::<{ U256::BYTES }>(), e)?;
-                bincode::Encode::encode(&v.to_le_bytes::<{ U256::BYTES }>(), e)?;
-            }
-        } else {
-            bincode::Encode::encode(&0u32, e)?;
-        }
-        if let Some(balances) = self.balances.as_ref() {
-            bincode::Encode::encode(&(balances.len() as u32), e)?;
-            for (k, v) in balances.iter() {
-                bincode::Encode::encode(&k.0 .0, e)?;
                 bincode::Encode::encode(&v.to_le_bytes::<{ U256::BYTES }>(), e)?;
             }
         } else {
@@ -63,24 +53,11 @@ impl<C> bincode::Decode<C> for RuntimeNewFrameInputV1 {
         } else {
             None
         };
-        let balances_len: u32 = bincode::Decode::decode(d)?;
-        let balances = if balances_len > 0 {
-            let mut balances = HashMap::<Address, U256>::with_capacity(balances_len as usize);
-            for _ in 0..balances_len {
-                let k: [u8; 20] = bincode::Decode::decode(d)?;
-                let v: [u8; 32] = bincode::Decode::decode(d)?;
-                balances.insert(Address::from_slice(&k), U256::from_le_bytes(v));
-            }
-            Some(balances)
-        } else {
-            None
-        };
         Ok(Self {
             metadata: metadata.into(),
             input: input.into(),
             context: context.into(),
             storage,
-            balances,
         })
     }
 }
@@ -91,6 +68,19 @@ pub struct RuntimeExecutionOutcomeV1 {
     pub output: Bytes,
     pub storage: Option<HashMap<U256, U256>>,
     pub logs: Vec<JournalLog>,
+    pub new_metadata: Option<Bytes>,
+}
+
+impl RuntimeExecutionOutcomeV1 {
+    pub fn encode(&self) -> Vec<u8> {
+        bincode::encode_to_vec(self, bincode::config::legacy()).unwrap()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        let (result, _bytes_read) =
+            bincode::decode_from_slice(bytes, bincode::config::legacy()).ok()?;
+        Some(result)
+    }
 }
 
 impl bincode::Encode for RuntimeExecutionOutcomeV1 {
@@ -110,6 +100,7 @@ impl bincode::Encode for RuntimeExecutionOutcomeV1 {
             bincode::Encode::encode(&0u32, e)?;
         }
         bincode::Encode::encode(&self.logs, e)?;
+        bincode::Encode::encode(&self.new_metadata.as_ref().map(|v| v.as_ref()), e)?;
         Ok(())
     }
 }
@@ -131,11 +122,13 @@ impl<C> bincode::Decode<C> for RuntimeExecutionOutcomeV1 {
             None
         };
         let logs: Vec<JournalLog> = bincode::Decode::decode(d)?;
+        let new_metadata: Option<Vec<u8>> = bincode::Decode::decode(d)?;
         Ok(Self {
             exit_code: ExitCode::from(exit_code),
             output: output.into(),
             storage,
             logs,
+            new_metadata: new_metadata.map(Into::into),
         })
     }
 }
@@ -150,37 +143,31 @@ mod tests {
         },
         ExitCode,
     };
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::{bytes, B256, U256};
     use hashbrown::HashMap;
 
     #[test]
     fn test_runtime_new_frame_input_v1_encode_decode() {
         let mut storage = HashMap::new();
-        let mut balances = HashMap::new();
         let mut v = RuntimeNewFrameInputV1 {
             metadata: [1, 2, 3].into(),
             input: [4, 5, 6, 7].into(),
             context: [8, 9, 10, 11, 12].into(),
             storage: Some(storage.clone()),
-            balances: Some(balances.clone()),
         };
         let v_encoded = encode(&v).unwrap();
         let (v_decoded, read_count) = decode::<RuntimeNewFrameInputV1>(&v_encoded).unwrap();
         assert_eq!(v_encoded.len(), read_count);
         v.storage = None;
-        v.balances = None;
         assert_eq!(v_decoded, v);
 
         storage.insert(U256::from_le_bytes([1; 32]), U256::from_le_bytes([2; 32]));
         storage.insert(U256::from_le_bytes([3; 32]), U256::from_le_bytes([4; 32]));
-        balances.insert(Address::with_last_byte(8), U256::from_le_bytes([2; 32]));
-        balances.insert(Address::with_last_byte(5), U256::from_le_bytes([4; 32]));
         let v = RuntimeNewFrameInputV1 {
             metadata: [1, 2, 3].into(),
             input: [4, 5, 6, 7].into(),
             context: [8, 9, 10, 11, 12].into(),
             storage: Some(storage.clone()),
-            balances: Some(balances.clone()),
         };
         let v_encoded = encode(&v).unwrap();
         let (v_decoded, read_count) = decode::<RuntimeNewFrameInputV1>(&v_encoded).unwrap();
@@ -197,6 +184,7 @@ mod tests {
             output: [1, 2, 3].into(),
             storage: Some(storage.clone()),
             logs: logs.clone(),
+            new_metadata: Some(bytes!("112233")),
         };
         let v_encoded = encode(&v).unwrap();
         let (v_decoded, read_count) = decode::<RuntimeExecutionOutcomeV1>(&v_encoded).unwrap();
@@ -223,6 +211,7 @@ mod tests {
             output: [1, 2, 3].into(),
             storage: Some(storage.clone()),
             logs,
+            new_metadata: None,
         };
         let v_encoded = encode(&v).unwrap();
         let (v_decoded, read_count) = decode::<RuntimeExecutionOutcomeV1>(&v_encoded).unwrap();

@@ -3,7 +3,7 @@ pub fn calculate_keccak256_bytes<const N: usize>(signature: &str) -> [u8; N] {
     let mut hash = Keccak256::new();
     hash.update(signature);
     let mut dst = [0u8; N];
-    dst.copy_from_slice(hash.finalize().as_slice()[0..N].as_ref());
+    dst.copy_from_slice(&*hash.finalize()[0..N].as_ref());
     dst
 }
 
@@ -22,6 +22,6 @@ pub fn calculate_keccak256_raw<const N: usize>(data: &[u8]) -> [u8; N] {
     let mut hash = Keccak256::new();
     hash.update(data);
     let mut dst = [0u8; N];
-    dst.copy_from_slice(hash.finalize().as_slice()[0..N].as_ref());
+    dst.copy_from_slice(&*hash.finalize()[0..N].as_ref());
     dst
 }

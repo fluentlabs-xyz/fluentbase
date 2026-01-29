@@ -2,7 +2,7 @@
 extern crate alloc;
 
 use fluentbase_sdk::{
-    system_entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BLS12_381_G1_ADD,
+    system_entrypoint, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BLS12_381_G1_ADD,
     PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM,
     PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
 };
@@ -110,7 +110,7 @@ fn map_fp2_to_g2_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutp
     map_fp2_to_g2(input, gas_limit).map_err(|_| ExitCode::PrecompileError)
 }
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let bytecode_address = sdk.context().contract_bytecode_address();
     // dispatch to SDK-backed implementation (w/ pre gas/input checks)
     let result = match bytecode_address {
@@ -125,7 +125,8 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
     }
     .map_err(|_| ExitCode::PrecompileError)?;
     sdk.sync_evm_gas(result.gas_used)?;
-    Ok(result.bytes)
+    sdk.write(result.bytes);
+    Ok(())
 }
 
 system_entrypoint!(main_entry);
@@ -143,7 +144,7 @@ mod tests {
         PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
     };
     use fluentbase_sdk::{hex, Address, ContractContextV1, SharedAPI, FUEL_DENOM_RATE};
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
     use serde::Deserialize;
 
     /// Must match the JSON keys exactly.
@@ -172,7 +173,7 @@ mod tests {
         let input = decode_hex(&bls_test_vector.input);
         let expected = bls_test_vector.expected.map(|v| decode_hex(&v));
         let gas_limit = 2_000_000;
-        let mut sdk = HostTestingContext::default()
+        let mut sdk = TestingContextImpl::default()
             .with_input(input)
             .with_contract_context(ContractContextV1 {
                 address,
@@ -182,7 +183,8 @@ mod tests {
             })
             .with_gas_limit(gas_limit);
         if let Some(expected) = expected {
-            let output = main_entry(&mut sdk).unwrap();
+            main_entry(&mut sdk).unwrap();
+            let output = sdk.take_output();
             assert_eq!(
                 output.as_ref(),
                 expected,

@@ -102,14 +102,13 @@ mod ecrecover {
 
     pub(super) fn handle_secp256k1(r: [u8; 32], alpha: [u8; 32], r_y_is_odd: bool) -> Vec<u8> {
         use k256::{
-            elliptic_curve::ff::PrimeField, FieldBytes as K256FieldBytes,
-            FieldElement as K256FieldElement, Scalar as K256Scalar,
+            elliptic_curve::ff::PrimeField, FieldElement as K256FieldElement, Scalar as K256Scalar,
         };
 
-        let r = K256FieldElement::from_bytes(K256FieldBytes::from_slice(&r)).unwrap();
+        let r = K256FieldElement::from_bytes(r.as_ref().into()).unwrap();
         debug_assert!(!bool::from(r.is_zero()), "r should not be zero");
 
-        let alpha = K256FieldElement::from_bytes(K256FieldBytes::from_slice(&alpha)).unwrap();
+        let alpha = K256FieldElement::from_bytes(alpha.as_ref().into()).unwrap();
         assert!(!bool::from(alpha.is_zero()), "alpha should not be zero");
 
         // nomralize the y-coordinate always to be consistent.
@@ -123,31 +122,30 @@ mod ecrecover {
             }
 
             let mut result = vec![0x1];
-            result.copy_from_slice(y_coord.to_bytes().as_slice());
-            result.copy_from_slice(r_inv.to_bytes().as_slice());
+            result.copy_from_slice(&*y_coord.to_bytes());
+            result.copy_from_slice(&*r_inv.to_bytes());
             result
         } else {
-            let nqr_field = K256FieldElement::from_bytes(K256FieldBytes::from_slice(&NQR)).unwrap();
+            let nqr_field = K256FieldElement::from_bytes(NQR.as_ref().into()).unwrap();
             let qr = alpha * nqr_field;
             let root = qr
                 .sqrt()
                 .expect("if alpha is not a square, then qr should be a square");
             let mut result = vec![0x0];
-            result.extend_from_slice(root.to_bytes().as_slice());
+            result.extend_from_slice(&*root.to_bytes());
             result
         }
     }
 
     pub(super) fn handle_secp256r1(r: [u8; 32], alpha: [u8; 32], r_y_is_odd: bool) -> Vec<u8> {
         use p256::{
-            elliptic_curve::ff::PrimeField, FieldBytes as P256FieldBytes,
-            FieldElement as P256FieldElement, Scalar as P256Scalar,
+            elliptic_curve::ff::PrimeField, FieldElement as P256FieldElement, Scalar as P256Scalar,
         };
 
-        let r = P256FieldElement::from_bytes(P256FieldBytes::from_slice(&r)).unwrap();
+        let r = P256FieldElement::from_bytes(r.as_ref().into()).unwrap();
         debug_assert!(!bool::from(r.is_zero()), "r should not be zero");
 
-        let alpha = P256FieldElement::from_bytes(P256FieldBytes::from_slice(&alpha)).unwrap();
+        let alpha = P256FieldElement::from_bytes(alpha.as_ref().into()).unwrap();
         debug_assert!(!bool::from(alpha.is_zero()), "alpha should not be zero");
 
         if let Some(mut y_coord) = alpha.sqrt().into_option() {
@@ -159,17 +157,17 @@ mod ecrecover {
             }
 
             let mut result = vec![0x1];
-            result.copy_from_slice(y_coord.to_bytes().as_slice());
-            result.copy_from_slice(r_inv.to_bytes().as_slice());
+            result.copy_from_slice(&*y_coord.to_bytes());
+            result.copy_from_slice(&*r_inv.to_bytes());
             result
         } else {
-            let nqr_field = P256FieldElement::from_bytes(P256FieldBytes::from_slice(&NQR)).unwrap();
+            let nqr_field = P256FieldElement::from_bytes(NQR.as_ref().into()).unwrap();
             let qr = alpha * nqr_field;
             let root = qr
                 .sqrt()
                 .expect("if alpha is not a square, then qr should be a square");
             let mut result = vec![0x0];
-            result.extend_from_slice(root.to_bytes().as_slice());
+            result.extend_from_slice(&*root.to_bytes());
             result
         }
     }

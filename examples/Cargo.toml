@@ -16,7 +16,7 @@ readme = "README.md"
 
 [workspace.dependencies]
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
-hex-literal = { version = "0.4.1", default-features = false }
+hex-literal = { version = "1.1.0", default-features = false }
 alloy-sol-types = { version = "1.2.0", default-features = false, features = ["json"] }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
@@ -45,5 +45,5 @@ strip = "symbols"
 # patch tiny-keccak
 tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
 #rwasm = { path = "../../rwasm", default-features = false, features = ["serde"] }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false, features = ["serde"]}
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false, features = ["serde"] }
 wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", optional = true, features = ["cache"] }

@@ -6,17 +6,16 @@ extern crate fluentbase_sdk;
 
 mod attestation;
 
-use fluentbase_sdk::{alloc_slice, entrypoint, ContextReader, SharedAPI};
+use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SharedAPI};
 
-pub fn main_entry(sdk: impl SharedAPI) {
-    let input_size = sdk.input_size();
-    let input = alloc_slice(input_size as usize);
-    sdk.read(input, 0);
+pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    let input = sdk.input();
     let current_timestamp = sdk.context().block_timestamp();
-    attestation::parse_and_verify(&input, current_timestamp);
+    _ = attestation::parse_and_verify(input, current_timestamp);
+    Ok(())
 }
 
-entrypoint!(main_entry);
+system_entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {
@@ -24,7 +23,7 @@ mod tests {
     use coset::CborSerializable;
     use der::{Decode, DecodePem, Encode};
     use fluentbase_sdk::SharedContextInputV1;
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
     use x509_cert::certificate::Certificate;
 
     /// Test for full attestation document verification.
@@ -46,10 +45,11 @@ mod tests {
         // Test main_entry with proper timestamp set in the context
         let mut shared_ctx = SharedContextInputV1::default();
         shared_ctx.block.timestamp = current_timestamp;
-        let sdk = HostTestingContext::default()
+        let mut sdk = TestingContextImpl::default()
             .with_shared_context_input(shared_ctx)
             .with_input(data.clone());
-        main_entry(sdk);
+        main_entry(&mut sdk).unwrap();
+        _ = sdk.take_output();
     }
 
     /// Test that validates attestation document field requirements.
@@ -74,7 +74,6 @@ mod tests {
         use coset::CoseSign1;
         let sign1 = CoseSign1::from_slice(&data).unwrap();
         let valid_doc = attestation::AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
-        let current_timestamp = 1695050165u64;
 
         // Test that a valid document passes validation
         // This is implicitly tested through parse_and_verify, but we verify the structure

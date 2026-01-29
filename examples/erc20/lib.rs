@@ -186,7 +186,7 @@ basic_entrypoint!(ERC20);
 mod tests {
     use super::*;
     use fluentbase_sdk::{address, ContractContextV1, U256};
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
 
     #[test]
     fn test_constructor_initializes_correctly() {
@@ -199,7 +199,7 @@ mod tests {
         let constructor_call =
             ConstructorCall::new((token_name.clone(), token_symbol.clone(), initial_supply));
 
-        let sdk = HostTestingContext::default()
+        let sdk = TestingContextImpl::default()
             .with_input(constructor_call.encode())
             .with_contract_context(ContractContextV1 {
                 address: address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
@@ -258,7 +258,7 @@ mod tests {
         let constructor_call =
             ConstructorCall::new((token_name.clone(), token_symbol.clone(), initial_supply));
 
-        let sdk = HostTestingContext::default()
+        let sdk = TestingContextImpl::default()
             .with_input(constructor_call.encode())
             .with_contract_context(ContractContextV1 {
                 address: address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
@@ -331,7 +331,7 @@ mod tests {
         let constructor_call =
             ConstructorCall::new(("TestToken".to_string(), "TST".to_string(), initial_supply));
 
-        let sdk = HostTestingContext::default()
+        let sdk = TestingContextImpl::default()
             .with_input(constructor_call.encode())
             .with_contract_context(ContractContextV1 {
                 address: token_address,
@@ -389,7 +389,7 @@ mod tests {
     mod events {
         use super::*;
         use fluentbase_sdk::address;
-        use fluentbase_testing::HostTestingContext;
+        use fluentbase_testing::TestingContextImpl;
 
         /// Known ERC20 Transfer selector: keccak256("Transfer(address,address,uint256)")
         const TRANSFER_SELECTOR: [u8; 32] = [
@@ -432,7 +432,7 @@ mod tests {
             let to = address!("2222222222222222222222222222222222222222");
             let value = U256::from(1000);
 
-            let mut sdk = HostTestingContext::default();
+            let mut sdk = TestingContextImpl::default();
 
             Transfer { from, to, value }.emit(&mut sdk);
 

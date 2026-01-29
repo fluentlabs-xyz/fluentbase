@@ -1,7 +1,6 @@
 #![allow(dead_code)]
-use fluentbase_sdk::derive::Contract;
 use fluentbase_sdk::{
-    derive::Storage,
+    derive::{Contract, Storage},
     storage::{
         StorageAddress, StorageArray, StorageBool, StorageMap, StorageU256, StorageU32, StorageU8,
         StorageVec,
@@ -152,7 +151,7 @@ mod tests {
     use super::*;
     use crate::{assert_storage_layout, utils::storage_from_fixture};
     use fluentbase_sdk::address;
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_testing::TestingContextImpl;
 
     #[test]
     fn test_layout_calculations() {
@@ -178,7 +177,7 @@ mod tests {
         }
 
         assert_storage_layout! {
-            Game<HostTestingContext> => {
+            Game<TestingContextImpl> => {
                 admin: 0, 12,
                 version: 0, 8,
                 player_inventory: 1, 0,
@@ -219,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_storage_layout_with_data_structures() {
-        let sdk = HostTestingContext::default();
+        let sdk = TestingContextImpl::default();
         let mut game = Game::new(sdk);
 
         // Set simple fields

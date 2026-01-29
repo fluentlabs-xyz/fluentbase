@@ -38,5 +38,9 @@ serde = [
 fluent-testnet = [
     "fluentbase-sdk/fluent-testnet"
 ]
+debug-print = [
+    "fluentbase-sdk/debug-print",
+    "revm-interpreter/debug-print",
+]
 # We have it to silent warnings inside macroses
 memory_limit = []

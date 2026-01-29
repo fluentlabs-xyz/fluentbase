@@ -36,7 +36,7 @@ sha2 = { workspace = true }
 [dev-dependencies]
 fluentbase-svm = { workspace = true }
 fluentbase-sdk = { workspace = true }
-criterion = "0.7.0"
+criterion = "0.8.1"
 solana-curve25519 = { workspace = true, default-features = false }
 solana-bn254 = { workspace = true, default-features = false }
 solana-poseidon = { workspace = true, default-features = false }

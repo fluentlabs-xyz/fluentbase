@@ -334,13 +334,12 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         bytecode_or_hash: BytecodeOrHash,
         ctx: RuntimeContext,
     ) -> ExecutionResult {
+        #[allow(unused_variables)]
         let (enable_wasmtime_runtime, enable_system_runtime) = match &bytecode_or_hash {
             BytecodeOrHash::Bytecode { address, hash, .. } => (
                 fluentbase_types::is_execute_using_wasmtime_strategy(address)
                     .then_some((*address, *hash)),
-                (fluentbase_types::is_execute_using_system_runtime_v1(address)
-                    || fluentbase_types::is_execute_using_system_runtime_v2(address))
-                .then_some(*hash),
+                fluentbase_types::is_execute_using_system_runtime(address).then_some(*hash),
             ),
             BytecodeOrHash::Hash(_) => (None, None),
         };
@@ -418,7 +417,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let result = resume_inner(&mut runtime);
         // We need to adjust the fuel limit because `fuel_consumed` should not be included into spent.
         if result != Err(TrapCode::OutOfFuel) {
-            // SAFETY: We can safely unwrap here, because `OutOfFuel` check we did in `resume_inner` and the result is ok.
+            // Safety: We can safely unwrap here, because `OutOfFuel` check we did in `resume_inner` and the result is ok.
             fuel_remaining = fuel_remaining.map(|v| v.checked_sub(fuel_consumed).unwrap());
         }
         let fuel_consumed = runtime

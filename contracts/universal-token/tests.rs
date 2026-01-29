@@ -7,7 +7,7 @@ use fluentbase_sdk::{
     Address, Bytes, ContextReader, ContractContextV1, ExitCode, SharedAPI, B256, FUEL_DENOM_RATE,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
-use fluentbase_testing::HostTestingContext;
+use fluentbase_testing::TestingContextImpl;
 use fluentbase_universal_token::{
     consts::{
         BALANCE_STORAGE_SLOT, ERR_ERC20_INSUFFICIENT_ALLOWANCE, ERR_ERC20_INSUFFICIENT_BALANCE,
@@ -250,13 +250,13 @@ type BalanceStorageMap = StorageMap<Address, StorageU256>;
 
 /// Stateful test harness that preserves storage across calls.
 struct Harness {
-    sdk: HostTestingContext,
+    sdk: TestingContextImpl,
 }
 
 impl Harness {
     fn new(token_address: Address) -> Self {
         let gas_limit = 120_000;
-        let sdk = HostTestingContext::default()
+        let sdk = TestingContextImpl::default()
             .with_contract_context(ContractContextV1 {
                 address: token_address,
                 bytecode_address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,

@@ -1,14 +1,15 @@
 // custom_slots.rs
 #![allow(dead_code)]
-use fluentbase_sdk::derive::{Contract, Storage};
-use fluentbase_sdk::storage::{StorageAddress, StorageBool, StorageU256};
-use fluentbase_sdk::{Address, SharedAPI, U256};
+use fluentbase_sdk::{
+    derive::{Contract, Storage},
+    storage::{StorageAddress, StorageBool, StorageU256},
+    Address, SharedAPI, U256,
+};
 
 // EIP-1967 storage slots
 // https://eips.ethereum.org/EIPS/eip-1967
 pub mod eip1967 {
-    use fluentbase_sdk::derive::eip1967_slot;
-    use fluentbase_sdk::U256;
+    use fluentbase_sdk::{derive::eip1967_slot, U256};
 
     pub const IMPLEMENTATION: U256 = eip1967_slot!("eip1967.proxy.implementation");
     pub const ADMIN: U256 = eip1967_slot!("eip1967.proxy.admin");
@@ -18,8 +19,7 @@ pub mod eip1967 {
 // ERC-7201 namespaced storage slots
 // https://eips.ethereum.org/EIPS/eip-7201
 pub mod erc7201 {
-    use fluentbase_sdk::derive::erc7201_slot;
-    use fluentbase_sdk::U256;
+    use fluentbase_sdk::{derive::erc7201_slot, U256};
 
     pub const EXAMPLE_MAIN: U256 = erc7201_slot!("example.main");
 }
@@ -177,10 +177,8 @@ impl<SDK: SharedAPI> MixedStorage<SDK> {
 mod tests {
     use super::*;
     use crate::utils::storage_from_fixture;
-    use fluentbase_sdk::hex;
-    use fluentbase_sdk::storage::StorageDescriptor;
-    use fluentbase_sdk::address;
-    use fluentbase_testing::HostTestingContext;
+    use fluentbase_sdk::{address, hex, storage::StorageDescriptor};
+    use fluentbase_testing::TestingContextImpl;
 
     // ========================================================================
     // EIP-1967 Tests
@@ -211,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_proxy_slot_positions() {
-        let sdk = HostTestingContext::default();
+        let sdk = TestingContextImpl::default();
         let proxy = Proxy::new(sdk);
 
         assert_eq!(proxy.implementation.slot(), eip1967::IMPLEMENTATION);
@@ -221,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_proxy_read_write() {
-        let sdk = HostTestingContext::default();
+        let sdk = TestingContextImpl::default();
         let mut proxy = Proxy::new(sdk);
 
         let impl_addr = address!("0x1111111111111111111111111111111111111111");
@@ -247,7 +245,7 @@ mod tests {
 
     #[test]
     fn test_proxy_storage_layout() {
-        let sdk = HostTestingContext::default();
+        let sdk = TestingContextImpl::default();
         let mut proxy = Proxy::new(sdk);
 
         proxy.set_implementation(address!("0x1111111111111111111111111111111111111111"));
@@ -263,7 +261,7 @@ mod tests {
     #[test]
     fn test_proxy_slots_constant_is_zero() {
         // Explicit slots don't contribute to SLOTS count
-        assert_eq!(Proxy::<HostTestingContext>::SLOTS, 0);
+        assert_eq!(Proxy::<TestingContextImpl>::SLOTS, 0);
     }
 
     // ========================================================================
@@ -289,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_namespaced_slot_positions() {
-        let sdk = HostTestingContext::default();
+        let sdk = TestingContextImpl::default();
         let contract = NamespacedContract::new(sdk);
 
         let base = erc7201::EXAMPLE_MAIN;
@@ -302,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_namespaced_read_write() {
-        let sdk = HostTestingContext::default();
+        let sdk = TestingContextImpl::default();
         let mut contract = NamespacedContract::new(sdk);
 
         let owner = address!("0x1111111111111111111111111111111111111111");
@@ -327,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_namespaced_storage_layout() {
-        let sdk = HostTestingContext::default();
+        let sdk = TestingContextImpl::default();
         let mut contract = NamespacedContract::new(sdk);
 
         contract.set_owner(address!("0x1111111111111111111111111111111111111111"));
@@ -343,7 +341,7 @@ mod tests {
     #[test]
     fn test_namespaced_slots_constant_is_zero() {
         // Explicit slots don't contribute to SLOTS count
-        assert_eq!(NamespacedContract::<HostTestingContext>::SLOTS, 0);
+        assert_eq!(NamespacedContract::<TestingContextImpl>::SLOTS, 0);
     }
 
     // ========================================================================
@@ -352,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_mixed_slot_positions() {
-        let sdk = HostTestingContext::default();
+        let sdk = TestingContextImpl::default();
         let contract = MixedStorage::new(sdk);
 
         // Auto-layout fields: sequential from 0
@@ -370,12 +368,12 @@ mod tests {
     fn test_mixed_slots_constant() {
         // SLOTS only counts auto-layout fields (owner, counter, paused)
         // implementation has explicit slot and is not counted
-        assert_eq!(MixedStorage::<HostTestingContext>::SLOTS, 3);
+        assert_eq!(MixedStorage::<TestingContextImpl>::SLOTS, 3);
     }
 
     #[test]
     fn test_mixed_read_write() {
-        let sdk = HostTestingContext::default();
+        let sdk = TestingContextImpl::default();
         let mut contract = MixedStorage::new(sdk);
 
         let owner = address!("0x1111111111111111111111111111111111111111");
@@ -404,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_mixed_storage_layout() {
-        let sdk = HostTestingContext::default();
+        let sdk = TestingContextImpl::default();
         let mut contract = MixedStorage::new(sdk);
 
         contract.set_owner(address!("0x1111111111111111111111111111111111111111"));
