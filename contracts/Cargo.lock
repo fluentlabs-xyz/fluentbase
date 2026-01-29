@@ -2118,6 +2118,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "rwasm",
  "spin 0.10.0",
+ "talc",
 ]
 
 [[package]]
@@ -5332,6 +5333,15 @@ dependencies = [
  "once_cell",
  "rayon",
  "windows",
+]
+
+[[package]]
+name = "talc"
+version = "4.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3ae828aa394de34c7de08f522d1b86bd1c182c668d27da69caadda00590f26d"
+dependencies = [
+ "lock_api",
 ]
 
 [[package]]

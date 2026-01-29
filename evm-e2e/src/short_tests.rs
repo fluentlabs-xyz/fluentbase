@@ -86,7 +86,7 @@ mod failing_tests {
         // fn random_statetest650("tests/GeneralStateTests/stRandom2/randomStatetest650.json");
 
         // quadratic complexity tests, fails because of OOM, need to investigate
-        // fn call50000("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000.json");
+        fn call50000("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000.json");
         // fn call50000_ecrec("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_ecrec.json");
         // fn call50000_identity("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_identity.json");
         // fn call50000_identity2("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_identity2.json");
@@ -107,7 +107,7 @@ mod failing_tests {
         // infinite loop or a very long test
         // fn st_attack_test_contract_creation_spam("tests/GeneralStateTests/stAttackTest/ContractCreationSpam.json");
 
-        fn high_gas_price_paris("tests/GeneralStateTests/stTransactionTest/HighGasPriceParis.json");
+        // fn high_gas_price_paris("tests/GeneralStateTests/stTransactionTest/HighGasPriceParis.json");
 
         // fn return50000("tests/GeneralStateTests/stQuadraticComplexityTest/Return50000.json");
         // fn return50000_2("tests/GeneralStateTests/stQuadraticComplexityTest/Return50000_2.json");
