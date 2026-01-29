@@ -15,6 +15,8 @@ mod precompiles;
 mod result;
 mod spec;
 mod syscall;
+#[cfg(test)]
+mod tests;
 mod types;
 #[cfg(feature = "fluent-testnet")]
 mod upgrade;

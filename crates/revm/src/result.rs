@@ -5,18 +5,6 @@ use revm::{
     interpreter::{FrameInput, Gas, InstructionResult, InterpreterAction, InterpreterResult},
 };
 
-// /// The result of an execution operation.
-// #[derive(Clone, Debug, PartialEq, Eq)]
-// #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-// pub struct ExecutionResult {
-//     /// The result of the instruction execution.
-//     pub result: InterpreterResult,
-//     /// The output of the instruction execution.
-//     pub output: Bytes,
-//     /// The gas usage information.
-//     pub gas: Gas,
-// }
-
 pub type ExecutionResult = InterpreterResult;
 
 pub fn instruction_result_from_exit_code(
