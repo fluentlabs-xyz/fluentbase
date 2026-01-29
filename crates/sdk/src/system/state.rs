@@ -24,7 +24,6 @@ impl RecoverableState {
             input,
             context,
             storage,
-            // balances,
             ..
         } = input;
         let context = SharedContextInputV1::decode_from_slice(context.as_ref()).unwrap();
@@ -33,7 +32,6 @@ impl RecoverableState {
             metadata,
             input,
             context,
-            // balances: balances.unwrap_or_default(),
             output: vec![],
             interruption_outcome: None,
             unique_key: next_unique_key(),
