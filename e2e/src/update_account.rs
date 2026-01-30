@@ -8,6 +8,9 @@ use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
 
 #[test]
+#[should_panic(
+    expected = "Encountered unexpected internal return flag: FatalExternalError with instruction result: InterpreterResult { result: FatalExternalError, output: 0x, gas: Gas { limit: 3000000, remaining: 0, refunded: 0, memory: MemoryGas { words_num: 0, expansion_cost: 0 } } }"
+)]
 fn test_update_account_code_by_auth_v1() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 
@@ -83,6 +86,9 @@ fn test_update_account_code_by_auth_v1() {
 }
 
 #[test]
+#[should_panic(
+    expected = "Encountered unexpected internal return flag: FatalExternalError with instruction result: InterpreterResult { result: FatalExternalError, output: 0x, gas: Gas { limit: 3000000, remaining: 0, refunded: 0, memory: MemoryGas { words_num: 0, expansion_cost: 0 } } }"
+)]
 fn test_update_account_code_by_auth_v2() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 

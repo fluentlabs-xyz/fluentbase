@@ -297,8 +297,9 @@ where
                                     inputs.input.bytes(ctx).as_ref(),
                                 )
                             {
-                                let account =
-                                    &ctx.journal_mut().load_account_code(precompiled_address)?;
+                                let account = &ctx
+                                    .journal_mut()
+                                    .load_account_with_code(precompiled_address)?;
                                 // rewrite bytecode address
                                 inputs.bytecode_address = precompiled_address;
                                 // rewrite bytecode with code hash

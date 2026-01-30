@@ -9,7 +9,7 @@ use revm::{
     interpreter::{CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult},
     Database,
 };
-use std::boxed::Box;
+use std::{boxed::Box, vec::Vec};
 
 macro_rules! upgrade_panic {
     ($inputs:expr, $message:literal) => {{}
@@ -20,6 +20,8 @@ macro_rules! upgrade_panic {
             gas: Gas::new(0),
         },
         memory_offset: $inputs.return_memory_offset.clone(),
+        was_precompile_called: false,
+        precompile_call_logs: Vec::new(),
     })));};
 }
 
@@ -49,6 +51,8 @@ pub(crate) fn upgrade_runtime_hook_v1<
             gas: Gas::new(0),
         },
         memory_offset: inputs.return_memory_offset.clone(),
+        was_precompile_called: false,
+        precompile_call_logs: Vec::new(),
     })))
 }
 
@@ -80,5 +84,7 @@ pub(crate) fn upgrade_runtime_hook_v2<
             gas: Gas::new(0),
         },
         memory_offset: inputs.return_memory_offset.clone(),
+        was_precompile_called: false,
+        precompile_call_logs: Vec::new(),
     })))
 }
