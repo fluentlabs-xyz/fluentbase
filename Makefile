@@ -1,4 +1,4 @@
-all: check build test
+all: check build
 
 .PHONY: check
 check:
@@ -28,13 +28,12 @@ clean:
 
 .PHONY: test
 test:
+	# fluent devnet/mainnet
 	cargo test --manifest-path=./contracts/Cargo.toml --release
 	cargo test --manifest-path=./examples/Cargo.toml --release
 	cargo test --release
 	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e tests --release
-
-.PHONY: testnet_test
-testnet_test:
+	# fluent testnet
 	cargo test --manifest-path=./contracts/Cargo.toml --release --features fluent-testnet
 	cargo test --manifest-path=./examples/Cargo.toml --release --features fluent-testnet
 	cargo test --release --features fluent-testnet
