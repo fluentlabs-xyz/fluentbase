@@ -61,7 +61,9 @@ jobs:
         run: cargo fetch --locked
 
       - name: Run tests (offline)
-        run: cargo test --release --no-fail-fast --frozen
+        run: |
+          cargo test --release --no-fail-fast --frozen
+          cargo test --release --no-fail-fast --frozen --features=fluent-testnet
 
       - name: Show sccache stats
         run: ${SCCACHE_PATH} --show-stats
