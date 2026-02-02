@@ -122,8 +122,8 @@ mod ecrecover {
             }
 
             let mut result = vec![0x1];
-            result.copy_from_slice(&*y_coord.to_bytes());
-            result.copy_from_slice(&*r_inv.to_bytes());
+            result.extend_from_slice(&*y_coord.to_bytes());
+            result.extend_from_slice(&*r_inv.to_bytes());
             result
         } else {
             let nqr_field = K256FieldElement::from_bytes(NQR.as_ref().into()).unwrap();
@@ -157,8 +157,8 @@ mod ecrecover {
             }
 
             let mut result = vec![0x1];
-            result.copy_from_slice(&*y_coord.to_bytes());
-            result.copy_from_slice(&*r_inv.to_bytes());
+            result.extend_from_slice(&*y_coord.to_bytes());
+            result.extend_from_slice(&*r_inv.to_bytes());
             result
         } else {
             let nqr_field = P256FieldElement::from_bytes(NQR.as_ref().into()).unwrap();
