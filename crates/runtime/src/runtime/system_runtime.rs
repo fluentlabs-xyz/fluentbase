@@ -200,7 +200,7 @@ impl SystemRuntime {
         // Rewrite runtime context before each call, since we reuse the same store/runtime instance
         // across multiple calls. We must replace whatever context was left from the previous call.
         //
-        // SAFETY: Calls into a cached runtime must be strictly sequential. No re-entrancy or
+        // Safety: Calls into a cached runtime must be strictly sequential. No reentrancy or
         // overlapping calls are allowed because we swap a single `RuntimeContext` in/out.
         core::mem::swap(compiled_runtime.store.data_mut(), &mut self.ctx);
 
@@ -248,7 +248,7 @@ impl SystemRuntime {
 
         // System runtimes return output prefixed with an LE i32 exit code.
         //
-        // NOTE: System runtimes avoid trapping for control flow because trapping/halt may not unwind
+        // Note: System runtimes avoid trapping for control flow because trapping/halt may not unwind
         // the stack as required in this environment.
         let output = take(&mut self.ctx.execution_result.output);
         if output.len() < 4 {
@@ -269,7 +269,7 @@ impl SystemRuntime {
         // If exit code indicates interruption, convert it into a trap that the outer executor
         // understands (`TrapCode::InterruptionCalled`).
         //
-        // SAFETY: `InterruptionCalled` is expected only from trusted system runtimes.
+        // Safety: `InterruptionCalled` is expected only from trusted system runtimes.
         // Untrusted contracts might use the same numeric code but will not be executed here.
         if ExitCode::from_repr(exit_code) == Some(ExitCode::InterruptionCalled) {
             // Move output into return_data. For system runtimes we don't expose a dedicated
