@@ -1,8 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
-use fluentbase_contracts::FLUENTBASE_EXAMPLES_MEMORY_OOM;
 use fluentbase_sdk::{Address, Bytes, PRECOMPILE_OAUTH2_VERIFIER};
 use fluentbase_testing::EvmTestingContext;
-use revm::context::result::{ExecutionResult, HaltReason, OutOfGasError};
+use revm::context::result::{ExecutionResult, HaltReason};
 
 #[test]
 fn test_oauth2_should_not_panic() {
