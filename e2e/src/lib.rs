@@ -50,6 +50,8 @@ mod ddos;
 #[cfg(test)]
 mod exec_input;
 #[cfg(test)]
+mod oauth2;
+#[cfg(test)]
 mod oom;
 #[cfg(feature = "fluent-testnet")]
 #[cfg(test)]

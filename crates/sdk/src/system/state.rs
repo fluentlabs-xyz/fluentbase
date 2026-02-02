@@ -1,6 +1,6 @@
 use crate::{Bytes, SharedContextInputV1};
 use alloc::{vec, vec::Vec};
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 use fluentbase_types::system::{
     JournalStorage, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
 };
@@ -67,7 +67,7 @@ pub(super) fn lock_state_context<'a>() -> MutexGuard<'a, Vec<RecoverableState>> 
 }
 
 pub(super) fn next_unique_key() -> u32 {
-    static NEXT_STATE_KEY: AtomicU64 = AtomicU64::new(0);
+    static NEXT_STATE_KEY: AtomicU32 = AtomicU32::new(0);
     // Safety: 1k TPS gives ~50 days of key rotation that seems to be safe enough, especially since we reset state every transaction
-    (NEXT_STATE_KEY.fetch_add(1, Ordering::Relaxed) % (u32::MAX as u64 + 1)) as u32
+    NEXT_STATE_KEY.fetch_add(1, Ordering::Relaxed)
 }

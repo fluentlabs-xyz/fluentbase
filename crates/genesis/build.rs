@@ -92,7 +92,6 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
         if cache.contains_key(contract.wasm_bytecode) {
             continue;
         }
-        println!("compiling {}", contract.name);
         let start = Instant::now();
         let rwasm_bytecode =
             compile_wasm_to_rwasm_with_config(contract.wasm_bytecode, config.clone())
@@ -102,7 +101,7 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
         let hash = keccak256(rwasm_bytecode.as_ref());
         let result = (hash, rwasm_bytecode.clone());
         cache.insert(contract.wasm_bytecode, result.clone());
-        println!(
+        eprintln!(
             "{} time={: <3}ms | wasm={: <5}KiB | rwasm={: <5}KiB | increased={:.1}x",
             format!("{: <30}", contract.name), // Pads with dots to 20 chars
             start.elapsed().as_millis(),
@@ -132,7 +131,7 @@ fn init_contract(
     rwasm_bytecode_hash: B256,
     address: Address,
 ) {
-    println!("creating genesis account {} (0x{})... ", name, address);
+    eprintln!("creating genesis account {} (0x{})... ", name, address);
     let mut account = genesis
         .get(&address)
         .cloned()
@@ -213,7 +212,6 @@ fn main() {
     let genesis = serde_json::to_string_pretty(&genesis).unwrap();
     fs::write(&genesis_path, &genesis).unwrap();
 
-    println!("{}", code);
     let code_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("build_output.rs");
     fs::write(&code_path, &code).unwrap();
 }
