@@ -4,7 +4,7 @@ extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
     alloc_slice, default_compilation_config, rwasm_core::RwasmModule, system_entrypoint, ExitCode,
-    SharedAPI,
+    SharedAPI, RWASM_MAX_CODE_SIZE,
 };
 
 pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
@@ -14,6 +14,9 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let config = default_compilation_config();
     let (result, constructor_params) = RwasmModule::compile(config, &wasm_binary).unwrap();
     let rwasm_binary = result.serialize();
+    if rwasm_binary.len() > RWASM_MAX_CODE_SIZE {
+        return Err(ExitCode::CreateContractSizeLimit);
+    }
     sdk.write(&rwasm_binary);
     let constructor_params = constructor_params.into_vec();
     sdk.write(&constructor_params);

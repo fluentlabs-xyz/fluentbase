@@ -53,8 +53,7 @@ fn main() {
         ];
         #[cfg(feature = "fluent-testnet")]
         {
-            args.push("--features".to_string());
-            args.push("fluent-testnet".to_string());
+            args.extend_from_slice(&["--features".into(), "fluent-testnet".into()]);
         }
 
         if !is_debug_profile {
