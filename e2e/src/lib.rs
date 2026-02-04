@@ -23,6 +23,8 @@ mod eip2935;
 #[cfg(test)]
 mod evm;
 #[cfg(test)]
+mod fuel;
+#[cfg(test)]
 mod gas;
 #[cfg(test)]
 mod helpers;
