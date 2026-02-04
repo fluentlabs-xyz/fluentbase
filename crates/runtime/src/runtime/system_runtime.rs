@@ -149,7 +149,7 @@ impl SystemRuntime {
                 wasmtime_engine_with_consume_fuel(),
                 &rwasm_module.hint_section,
             )
-            .unwrap()
+                .unwrap()
         } else {
             Module::new(wasmtime_engine(), &rwasm_module.hint_section).unwrap()
         };
