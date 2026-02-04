@@ -149,7 +149,7 @@ impl SystemRuntime {
                 wasmtime_engine_with_consume_fuel(),
                 &rwasm_module.hint_section,
             )
-                .unwrap()
+            .unwrap()
         } else {
             Module::new(wasmtime_engine(), &rwasm_module.hint_section).unwrap()
         };
@@ -262,7 +262,6 @@ impl SystemRuntime {
         // If fuel metering is enabled, set the fuel limit before execution.
         // The store is reused, so we must reset fuel for each new call.
         if self.consume_fuel {
-            eprintln!("DEBUG: consume fuel");
             let fuel_limit = compiled_runtime.store.data().fuel_limit;
             compiled_runtime
                 .store
@@ -410,7 +409,11 @@ impl SystemRuntime {
         if self.consume_fuel {
             let compiled_runtime = self.compiled_runtime.borrow();
             let fuel = compiled_runtime.store.get_fuel().ok();
-            eprintln!("DEBUG: remaining_fuel={:?}, fuel_limit={}", fuel, compiled_runtime.store.data().fuel_limit);
+            eprintln!(
+                "DEBUG: remaining_fuel={:?}, fuel_limit={}",
+                fuel,
+                compiled_runtime.store.data().fuel_limit
+            );
             fuel
         } else {
             None
