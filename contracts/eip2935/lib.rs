@@ -1,4 +1,12 @@
-//! A contract that implements EIP-2935 (https://eips.ethereum.org/EIPS/eip-2935)
+//! EIP-2935 predeploy (ring buffer of recent block hashes).
+//!
+//! This version charges different gas amounts before each Panic/Revert
+//! to match the *EVM assembly control-flow* you provided.
+//!
+//! Charges are expressed in EVM gas units then multiplied by FUEL_DENOM_RATE.
+//!
+//! https://eips.ethereum.org/EIPS/eip-2935
+
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 
 #[cfg(test)]
@@ -6,54 +14,108 @@ mod tests;
 
 use fluentbase_sdk::{
     system_entrypoint, ContextReader, ExitCode, SharedAPI, EIP2935_HISTORY_SERVE_WINDOW,
-    SYSTEM_ADDRESS, U256,
+    FUEL_DENOM_RATE, SYSTEM_ADDRESS, U256,
 };
 
-fn submit<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    let input = sdk.input();
-    if input.len() != U256::BYTES {
-        return Err(ExitCode::Panic);
-    }
-    let Some(hash_value) = U256::try_from_be_slice(&input[..U256::BYTES]) else {
-        return Err(ExitCode::Panic);
-    };
-    let block_number = sdk.context().block_number();
-    if block_number <= 0 {
-        return Err(ExitCode::Panic);
-    }
-    let slot = (block_number - 1) % EIP2935_HISTORY_SERVE_WINDOW;
-    let hash_key = U256::from(slot);
-    sdk.write_storage(hash_key, hash_value).ok()?;
-    Ok(())
+/// ------------------------------
+/// Gas accounting (Prague fork)
+/// ------------------------------
+/// These are "entry-to-throw" gas totals for the *read* path reverts,
+/// derived from the exact opcode sequences in the EVM snippet.
+///
+/// throw tail in snippet:
+///   JUMPDEST (1) + PUSH0 (3) + PUSH0 (3) + REVERT (0) = 7
+///
+/// Prefix gate (caller != SYSADDR; jump not taken):
+///   CALLER(2) + PUSH20(3) + EQ(3) + JUMPI(10) = 18
+///
+/// Length check block:
+///   PUSH1(3) + CALLDATASIZE(2) + SUB(3) + JUMPI(10) = 18
+///
+/// Future-block check block:
+///   PUSH0(3) + CALLDATALOAD(3) + PUSH1(3) + NUMBER(2) + SUB(3)
+///   + DUP2(3) + GT(3) + JUMPI(10) = 30
+///
+/// Too-old check block:
+///   PUSH(3) + DUP2(3) + NUMBER(2) + SUB(3) + GT(3) + JUMPI(10) = 24
+///
+/// Totals:
+/// - Bad length: 18 + 18 + 7 = 43
+/// - Future block: 18 + 18 + 30 + 7 = 73
+/// - Too old block: 18 + 18 + 30 + 24 + 7 = 97
+const GAS_BAD_BLOCK_INPUT_BRANCH: u64 = 43;
+const GAS_INVALID_BLOCK_BRANCH: u64 = 73;
+const GAS_BLOCK_TOO_OLD_BRANCH: u64 = 97;
+
+#[inline(always)]
+fn charge_and_panic<SDK: SharedAPI, T>(sdk: &mut SDK, gas: u64) -> Result<T, ExitCode> {
+    sdk.charge_fuel(gas * FUEL_DENOM_RATE);
+    Err(ExitCode::Panic)
 }
 
-fn retrieve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    let input = sdk.input();
-    if input.len() != U256::BYTES {
-        return Err(ExitCode::Panic);
+/// Submit path (SYSTEM_ADDRESS) — store block hash at slot (number-1) % EIP2935_HISTORY_SERVE_WINDOW.
+///
+/// Your EVM contract never reverts in `submit:`; it just sstores and stops.
+/// In Rust we still defend against malformed input and revert with the "len" cost
+/// (closest to how the EVM read path throws on bad calldata length).
+fn submit<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    // Make sure the input is correct
+    let input_size = sdk.input_size();
+    if input_size != U256::BYTES as u32 {
+        return charge_and_panic(sdk, GAS_BAD_BLOCK_INPUT_BRANCH);
     }
-    // Check if the input is requesting a block hash before the earliest available hash currently.
-    // Since we've verified that input <= number - 1, we know there will be no overflow during the
-    // subtraction of number - input.
-    let Some(user_requested_block_number) = U256::try_from_be_slice(&input[..U256::BYTES]) else {
-        return Err(ExitCode::Panic);
-    };
+    let mut hash_value = [0u8; 32];
+    sdk.read(&mut hash_value, 0);
+    let hash_value = U256::from_be_bytes(hash_value);
+
+    // EVM would underflow if number=0, but on Ethereum bn>=0 always and genesis is 0.
+    // We keep a guard; if triggered, treat it like a "future/invalid" style revert.
     let block_number = sdk.context().block_number();
-    if block_number <= 0 {
-        return Err(ExitCode::Panic);
+    if block_number == 0 {
+        return charge_and_panic(sdk, GAS_INVALID_BLOCK_BRANCH);
     }
-    let block_number = U256::from(block_number);
-    let block_number_prev = block_number - U256::from(1);
-    if user_requested_block_number > block_number_prev {
-        return Err(ExitCode::Panic);
+
+    let storage_slot = U256::from((block_number - 1) % EIP2935_HISTORY_SERVE_WINDOW);
+    // Storage write here can't fail, even if it fails it causes trap and charges all gas available
+    sdk.write_storage(storage_slot, hash_value).ok()
+}
+
+/// Read path — validates calldata, range checks, then returns hash from ring buffer.
+fn retrieve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    // Make sure the input is correct
+    let input_size = sdk.input_size();
+    if input_size != U256::BYTES as u32 {
+        return charge_and_panic(sdk, GAS_BAD_BLOCK_INPUT_BRANCH);
     }
-    if block_number - user_requested_block_number > U256::from(EIP2935_HISTORY_SERVE_WINDOW) {
-        return Err(ExitCode::Panic);
+    let mut requested_bn = [0u8; 32];
+    sdk.read(&mut requested_bn, 0);
+    let requested_bn = U256::from_be_bytes(requested_bn);
+
+    let block_number = sdk.context().block_number();
+    if block_number == 0 {
+        // Matches the spirit of "requested > number-1" invalidity.
+        return charge_and_panic(sdk, GAS_INVALID_BLOCK_BRANCH);
     }
-    // Load the hash.
-    let hash_key = user_requested_block_number % U256::from(EIP2935_HISTORY_SERVE_WINDOW);
-    let hash_value = sdk.storage(&hash_key).ok()?;
-    sdk.write(hash_value.to_be_bytes::<{ U256::BYTES }>());
+
+    let bn = U256::from(block_number);
+    let bn_prev = bn - U256::from(1);
+
+    // EVM: if input > number-1 => throw
+    if requested_bn > bn_prev {
+        return charge_and_panic(sdk, GAS_INVALID_BLOCK_BRANCH);
+    }
+    // EVM: if (number - input) > EIP2935_HISTORY_SERVE_WINDOW => throw
+    // Note: EVM proves input <= number-1 first, so subtraction can't underflow.
+    let age = bn - requested_bn;
+    if age > U256::from(EIP2935_HISTORY_SERVE_WINDOW) {
+        return charge_and_panic(sdk, GAS_BLOCK_TOO_OLD_BRANCH);
+    }
+
+    // EVM: slot = input % EIP2935_HISTORY_SERVE_WINDOW ; sload(slot)
+    let slot = requested_bn % U256::from(EIP2935_HISTORY_SERVE_WINDOW);
+    let hash = sdk.storage(&slot).ok()?;
+
+    sdk.write(hash.to_be_bytes::<{ U256::BYTES }>());
     Ok(())
 }
 

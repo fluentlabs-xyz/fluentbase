@@ -15,8 +15,12 @@
 //! The `HostTestingContext` is treated as the chain state. Each call clones the context, sets
 //! caller/block number/input, runs the entrypoint, and then reads the produced output.
 
-use crate::entrypoint;
-use fluentbase_sdk::{Address, Bytes, ExitCode, EIP2935_HISTORY_SERVE_WINDOW, SYSTEM_ADDRESS};
+use crate::{
+    entrypoint, GAS_BAD_BLOCK_INPUT_BRANCH, GAS_BLOCK_TOO_OLD_BRANCH, GAS_INVALID_BLOCK_BRANCH,
+};
+use fluentbase_sdk::{
+    Address, Bytes, ExitCode, EIP2935_HISTORY_SERVE_WINDOW, FUEL_DENOM_RATE, SYSTEM_ADDRESS,
+};
 use fluentbase_testing::TestingContextImpl;
 
 const USER_ADDRESS: Address = Address::repeat_byte(0x11);
@@ -67,28 +71,34 @@ fn hash_for_block(k: u64) -> [u8; 32] {
 /// This helper does **not** mutate the provided `sdk` in-place. Instead, it clones it,
 /// configures the call parameters (input/caller/block number), runs the entrypoint, and then
 /// extracts the output.
-fn exec_as(
+fn exec_as_ctx(
     sdk: &mut TestingContextImpl,
     sender: Address,
     block_number: u64,
     input: &[u8],
-) -> Result<Bytes, ExitCode> {
+) -> (Result<Bytes, ExitCode>, TestingContextImpl) {
     let gas_limit = GAS_LIMIT;
-
-    // `HostTestingContext` is cheap to clone and is expected to share the underlying state
-    // (storage, output buffer) via interior mutability. Each call configures a fresh view of the
-    // context (caller / input / block number) and then executes the contract.
     let mut call_ctx = sdk
         .clone()
         .with_input(Bytes::copy_from_slice(input))
         .with_caller(sender)
         .with_block_number(block_number)
         .with_gas_limit(gas_limit);
+    let res = entrypoint(&mut call_ctx);
+    (res.map(|_| call_ctx.take_output().into()), call_ctx)
+}
 
-    // `entrypoint` may take the context by value. We keep `call_ctx` around to read the produced
-    // output after execution.
-    entrypoint(&mut call_ctx)?;
-    Ok(call_ctx.take_output().into())
+/// Execute one precompile call in a controlled context.
+fn exec_as(
+    sdk: &mut TestingContextImpl,
+    sender: Address,
+    block_number: u64,
+    input: &[u8],
+) -> Result<(Bytes, u64), ExitCode> {
+    let consumed_fuel_before = sdk.consumed_fuel();
+    let (res, call_ctx) = exec_as_ctx(sdk, sender, block_number, input);
+    let gas_consumed = (call_ctx.consumed_fuel() - consumed_fuel_before) / FUEL_DENOM_RATE;
+    res.map(|out| (out, gas_consumed))
 }
 
 /// Execute and require the call to succeed.
@@ -100,7 +110,9 @@ fn exec_ok(
     block_number: u64,
     input: &[u8],
 ) -> Bytes {
-    exec_as(sdk, sender, block_number, input).expect("expected Ok, got revert/error")
+    let (output, _gas) =
+        exec_as(sdk, sender, block_number, input).expect("expected Ok, got revert/error");
+    output
 }
 
 fn exec_expect_revert(
@@ -108,9 +120,17 @@ fn exec_expect_revert(
     sender: Address,
     block_number: u64,
     input: &[u8],
+    expected_gas: u64,
 ) {
-    let res = exec_as(sdk, sender, block_number, input);
+    let consumed_fuel_before = sdk.consumed_fuel();
+    let (res, call_ctx) = exec_as_ctx(sdk, sender, block_number, input);
     assert!(res.is_err(), "expected revert/error, got Ok");
+    let gas_consumed = (call_ctx.consumed_fuel() - consumed_fuel_before) / FUEL_DENOM_RATE;
+    assert_eq!(
+        gas_consumed, expected_gas,
+        "gas mismatch on revert: expected {}, got {}",
+        expected_gas, gas_consumed
+    );
 }
 
 fn set_at_block(sdk: &mut TestingContextImpl, block_number: u64, parent_hash: [u8; 32]) {
@@ -147,11 +167,41 @@ fn get_reverts_on_bad_calldata_length() {
     let mut sdk = TestingContextImpl::default();
     let current = 10_000;
 
-    exec_expect_revert(&mut sdk, USER_ADDRESS, current, &[]);
-    exec_expect_revert(&mut sdk, USER_ADDRESS, current, &[0x01]);
-    exec_expect_revert(&mut sdk, USER_ADDRESS, current, &[0u8; 31]);
-    exec_expect_revert(&mut sdk, USER_ADDRESS, current, &[0u8; 33]);
-    exec_expect_revert(&mut sdk, USER_ADDRESS, current, &[0u8; 64]);
+    exec_expect_revert(
+        &mut sdk,
+        USER_ADDRESS,
+        current,
+        &[],
+        GAS_BAD_BLOCK_INPUT_BRANCH,
+    );
+    exec_expect_revert(
+        &mut sdk,
+        USER_ADDRESS,
+        current,
+        &[0x01],
+        GAS_BAD_BLOCK_INPUT_BRANCH,
+    );
+    exec_expect_revert(
+        &mut sdk,
+        USER_ADDRESS,
+        current,
+        &[0u8; 31],
+        GAS_BAD_BLOCK_INPUT_BRANCH,
+    );
+    exec_expect_revert(
+        &mut sdk,
+        USER_ADDRESS,
+        current,
+        &[0u8; 33],
+        GAS_BAD_BLOCK_INPUT_BRANCH,
+    );
+    exec_expect_revert(
+        &mut sdk,
+        USER_ADDRESS,
+        current,
+        &[0u8; 64],
+        GAS_BAD_BLOCK_INPUT_BRANCH,
+    );
 }
 
 #[test]
@@ -168,11 +218,29 @@ fn get_reverts_for_current_or_future_block() {
     );
 
     // Querying current block number must revert (only hashes up to `current - 1` are served).
-    exec_expect_revert(&mut sdk, USER_ADDRESS, current, &u256_be_u64(current));
+    exec_expect_revert(
+        &mut sdk,
+        USER_ADDRESS,
+        current,
+        &u256_be_u64(current),
+        GAS_INVALID_BLOCK_BRANCH,
+    );
 
     // Querying future must revert.
-    exec_expect_revert(&mut sdk, USER_ADDRESS, current, &u256_be_u64(current + 1));
-    exec_expect_revert(&mut sdk, USER_ADDRESS, current, &u256_be_u64(current + 123));
+    exec_expect_revert(
+        &mut sdk,
+        USER_ADDRESS,
+        current,
+        &u256_be_u64(current + 1),
+        GAS_INVALID_BLOCK_BRANCH,
+    );
+    exec_expect_revert(
+        &mut sdk,
+        USER_ADDRESS,
+        current,
+        &u256_be_u64(current + 123),
+        GAS_INVALID_BLOCK_BRANCH,
+    );
 }
 
 #[test]
@@ -187,7 +255,13 @@ fn get_reverts_for_too_old_block() {
 
     // Oldest allowed is (current - W). One older must revert.
     let too_old = current - EIP2935_HISTORY_SERVE_WINDOW - 1;
-    exec_expect_revert(&mut sdk, USER_ADDRESS, current, &u256_be_u64(too_old));
+    exec_expect_revert(
+        &mut sdk,
+        USER_ADDRESS,
+        current,
+        &u256_be_u64(too_old),
+        GAS_BLOCK_TOO_OLD_BRANCH,
+    );
 }
 
 #[test]
@@ -233,7 +307,13 @@ fn get_decodes_big_endian_correctly_via_behavior() {
     wrong[0..8].copy_from_slice(&target.to_le_bytes());
 
     // This should revert as out-of-range.
-    exec_expect_revert(&mut sdk, USER_ADDRESS, current, &wrong);
+    exec_expect_revert(
+        &mut sdk,
+        USER_ADDRESS,
+        current,
+        &wrong,
+        GAS_INVALID_BLOCK_BRANCH,
+    );
 }
 
 #[test]
@@ -250,7 +330,13 @@ fn non_system_sender_never_triggers_set_path() {
     // A user sends 32 bytes that look like a hash.
     // Under retrieve() rules, this is interpreted as a block number and should revert.
     let fake_hash = [0x42u8; 32];
-    exec_expect_revert(&mut sdk, USER_ADDRESS, current, &fake_hash);
+    exec_expect_revert(
+        &mut sdk,
+        USER_ADDRESS,
+        current,
+        &fake_hash,
+        GAS_INVALID_BLOCK_BRANCH,
+    );
 
     // Ensure known history is still readable and correct.
     let got = get_at_block(&mut sdk, current, known_block);
@@ -304,7 +390,13 @@ fn ring_wraparound_overwrites_expectedly() {
     assert_eq!(got_newest.as_ref(), &hash_for_block(newest));
 
     // Too old must revert (outside window).
-    exec_expect_revert(&mut sdk, USER_ADDRESS, current, &u256_be_u64(base));
+    exec_expect_revert(
+        &mut sdk,
+        USER_ADDRESS,
+        current,
+        &u256_be_u64(base),
+        GAS_BLOCK_TOO_OLD_BRANCH,
+    );
 
     // Oldest allowed should match.
     let got_oldest = get_at_block(&mut sdk, current, oldest_allowed);
@@ -316,6 +408,7 @@ fn ring_wraparound_overwrites_expectedly() {
         USER_ADDRESS,
         current,
         &u256_be_u64(oldest_allowed - 1),
+        GAS_BLOCK_TOO_OLD_BRANCH,
     );
 
     // Sanity check two distinct in-range blocks.
