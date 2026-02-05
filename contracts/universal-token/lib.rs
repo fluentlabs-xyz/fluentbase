@@ -320,10 +320,10 @@ fn erc20_pause_handler<SDK: SharedAPI>(
     if contract_caller != contract_pauser {
         return Ok(ERR_UST_PAUSER_MISMATCH);
     }
-    // Write paused flag
+    // Write a paused flag
     sdk.write_storage(CONTRACT_FROZEN_STORAGE_SLOT, U256::ONE)
         .ok()?;
-    // Emit an event, indicating that contract is paused
+    // Emit an event, indicating that the contract is paused
     emit_pause_event(sdk, &contract_caller)?;
     // Write output (1)
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
@@ -344,17 +344,17 @@ fn erc20_unpause_handler<SDK: SharedAPI>(
     if contract_pauser.is_zero() {
         return Ok(ERR_UST_NOT_PAUSABLE);
     }
-    // Make sure contract is paused
+    // Make sure the contract is paused
     let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
     if is_contract_frozen.is_zero() {
         return Ok(ERR_PAUSABLE_EXPECTED_PAUSE);
     }
-    // Check is caller (sender) is pauser, because only pauser can pause/unpause the contract
+    // Check if caller (sender) is pauser, because only pauser can pause/unpause the contract
     let contract_caller = sdk.context().contract_caller();
     if contract_caller != contract_pauser {
         return Ok(ERR_UST_PAUSER_MISMATCH);
     }
-    // Write paused flag
+    // Write a paused flag
     sdk.write_storage(CONTRACT_FROZEN_STORAGE_SLOT, U256::ZERO)
         .ok()?;
     // Emit an event indicating contract is now unpaused
@@ -427,7 +427,6 @@ fn erc20_constructor_handler<SDK: SharedAPI>(
     Ok(0)
 }
 
-#[inline(never)]
 pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input_size = sdk.input_size();
     if input_size < SIG_LEN_BYTES as u32 {

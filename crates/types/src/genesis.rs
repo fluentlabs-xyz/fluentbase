@@ -218,6 +218,7 @@ pub const ENGINE_METERED_PRECOMPILES: &[Address] = &[
     PRECOMPILE_OAUTH2_VERIFIER,
     PRECOMPILE_WASM_RUNTIME,
     PRECOMPILE_WEBAUTHN_VERIFIER,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
 ];
 
 /// Returns `true` if the contract at `address` should be charged fuel by the runtime.

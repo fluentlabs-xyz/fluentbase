@@ -409,11 +409,6 @@ impl SystemRuntime {
         if self.consume_fuel {
             let compiled_runtime = self.compiled_runtime.borrow();
             let fuel = compiled_runtime.store.get_fuel().ok();
-            eprintln!(
-                "DEBUG: remaining_fuel={:?}, fuel_limit={}",
-                fuel,
-                compiled_runtime.store.data().fuel_limit
-            );
             fuel
         } else {
             None
