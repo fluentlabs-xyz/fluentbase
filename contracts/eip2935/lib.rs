@@ -46,6 +46,8 @@ use fluentbase_sdk::{
 const GAS_BAD_BLOCK_INPUT_BRANCH: u64 = 43;
 const GAS_INVALID_BLOCK_BRANCH: u64 = 73;
 const GAS_BLOCK_TOO_OLD_BRANCH: u64 = 97;
+const GAS_RETRIEVE_SUCCESS_BRANCH: u64 = 113;
+const GAS_SUBMIT_SUCCESS_BRANCH: u64 = 41;
 
 #[inline(always)]
 fn charge_and_panic<SDK: SharedAPI, T>(sdk: &mut SDK, gas: u64) -> Result<T, ExitCode> {
@@ -76,8 +78,13 @@ fn submit<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     }
 
     let storage_slot = U256::from((block_number - 1) % EIP2935_HISTORY_SERVE_WINDOW);
-    // Storage write here can't fail, even if it fails it causes trap and charges all gas available
-    sdk.write_storage(storage_slot, hash_value).ok()
+    let result = sdk.write_storage(storage_slot, hash_value);
+    if !result.status.is_ok() {
+        // Storage write here can't fail, even if it fails, it causes trap and charges all gas available
+        return Err(result.status);
+    }
+    sdk.charge_fuel(result.fuel_consumed + GAS_SUBMIT_SUCCESS_BRANCH);
+    Ok(())
 }
 
 /// Read path — validates calldata, range checks, then returns hash from ring buffer.
@@ -97,24 +104,29 @@ fn retrieve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         return charge_and_panic(sdk, GAS_INVALID_BLOCK_BRANCH);
     }
 
-    let bn = U256::from(block_number);
-    let bn_prev = bn - U256::from(1);
+    let block_number = U256::from(block_number);
+    let block_number_prev = block_number - U256::from(1);
 
     // EVM: if input > number-1 => throw
-    if requested_bn > bn_prev {
+    if requested_bn > block_number_prev {
         return charge_and_panic(sdk, GAS_INVALID_BLOCK_BRANCH);
     }
     // EVM: if (number - input) > EIP2935_HISTORY_SERVE_WINDOW => throw
     // Note: EVM proves input <= number-1 first, so subtraction can't underflow.
-    let age = bn - requested_bn;
-    if age > U256::from(EIP2935_HISTORY_SERVE_WINDOW) {
+    let block_age = block_number - requested_bn;
+    if block_age > U256::from(EIP2935_HISTORY_SERVE_WINDOW) {
         return charge_and_panic(sdk, GAS_BLOCK_TOO_OLD_BRANCH);
     }
 
     // EVM: slot = input % EIP2935_HISTORY_SERVE_WINDOW ; sload(slot)
     let slot = requested_bn % U256::from(EIP2935_HISTORY_SERVE_WINDOW);
-    let hash = sdk.storage(&slot).ok()?;
-
+    let result = sdk.storage(&slot);
+    if !result.status.is_ok() {
+        // Storage write here can't fail, even if it fails, it causes trap and charges all gas available
+        return Err(result.status);
+    }
+    sdk.charge_fuel(result.fuel_consumed + GAS_RETRIEVE_SUCCESS_BRANCH);
+    let hash = result.data;
     sdk.write(hash.to_be_bytes::<{ U256::BYTES }>());
     Ok(())
 }
