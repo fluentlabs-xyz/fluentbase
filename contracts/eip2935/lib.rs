@@ -1,4 +1,4 @@
-//! EIP-2935 predeploy (ring buffer of recent block hashes).
+//! EIP-2935 pre-deploy (ring buffer of recent block hashes).
 //!
 //! This version charges different gas amounts before each Panic/Revert
 //! to match the *EVM assembly control-flow* you provided.
@@ -23,7 +23,7 @@ use fluentbase_sdk::{
 /// These are "entry-to-throw" gas totals for the *read* path reverts,
 /// derived from the exact opcode sequences in the EVM snippet.
 ///
-/// throw tail in snippet:
+/// Throw tail in snippet:
 ///   JUMPDEST (1) + PUSH0 (3) + PUSH0 (3) + REVERT (0) = 7
 ///
 /// Prefix gate (caller != SYSADDR; jump not taken):
@@ -55,10 +55,10 @@ fn charge_and_panic<SDK: SharedAPI, T>(sdk: &mut SDK, gas: u64) -> Result<T, Exi
     Err(ExitCode::Panic)
 }
 
-/// Submit path (SYSTEM_ADDRESS) — store block hash at slot (number-1) % EIP2935_HISTORY_SERVE_WINDOW.
+/// Submit a path (SYSTEM_ADDRESS) — store block hash at slot (number-1) % EIP2935_HISTORY_SERVE_WINDOW.
 ///
-/// Your EVM contract never reverts in `submit:`; it just sstores and stops.
-/// In Rust we still defend against malformed input and revert with the "len" cost
+/// Your EVM contract never reverts to `submit:`; it just sstores and stops.
+/// In Rust, we still defend against malformed input and revert with the "len" cost
 /// (closest to how the EVM read path throws on bad calldata length).
 fn submit<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // Make sure the input is correct
