@@ -83,7 +83,7 @@ fn submit<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         // Storage write here can't fail, even if it fails, it causes trap and charges all gas available
         return Err(result.status);
     }
-    sdk.charge_fuel(result.fuel_consumed + GAS_SUBMIT_SUCCESS_BRANCH);
+    sdk.charge_fuel(result.fuel_consumed + GAS_SUBMIT_SUCCESS_BRANCH * FUEL_DENOM_RATE);
     Ok(())
 }
 
@@ -125,7 +125,7 @@ fn retrieve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         // Storage write here can't fail, even if it fails, it causes trap and charges all gas available
         return Err(result.status);
     }
-    sdk.charge_fuel(result.fuel_consumed + GAS_RETRIEVE_SUCCESS_BRANCH);
+    sdk.charge_fuel(result.fuel_consumed + GAS_RETRIEVE_SUCCESS_BRANCH * FUEL_DENOM_RATE);
     let hash = result.data;
     sdk.write(hash.to_be_bytes::<{ U256::BYTES }>());
     Ok(())
