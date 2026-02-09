@@ -1,15 +1,15 @@
 use crate::{
     command::{
-        AllowanceCommand, ApproveCommand, BalanceOfCommand, MintCommand, TransferCommand,
-        TransferFromCommand, UniversalTokenCommand,
+        AllowanceCommand, ApproveCommand, BalanceOfCommand, BurnCommand, MintCommand,
+        TransferCommand, TransferFromCommand, UniversalTokenCommand,
     },
     consts::{
         ALLOWANCE_STORAGE_SLOT, BALANCE_STORAGE_SLOT, CONTRACT_FROZEN_STORAGE_SLOT,
         DECIMALS_STORAGE_SLOT, MINTER_STORAGE_SLOT, NAME_STORAGE_SLOT, PAUSER_STORAGE_SLOT,
         SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE, SIG_ERC20_BALANCE_OF,
-        SIG_ERC20_DECIMALS, SIG_ERC20_MINT, SIG_ERC20_NAME, SIG_ERC20_PAUSE, SIG_ERC20_SYMBOL,
-        SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM, SIG_ERC20_UNPAUSE,
-        SYMBOL_STORAGE_SLOT, TOTAL_SUPPLY_STORAGE_SLOT,
+        SIG_ERC20_BURN, SIG_ERC20_DECIMALS, SIG_ERC20_MINT, SIG_ERC20_NAME, SIG_ERC20_PAUSE,
+        SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM,
+        SIG_ERC20_UNPAUSE, SYMBOL_STORAGE_SLOT, TOTAL_SUPPLY_STORAGE_SLOT,
     },
 };
 use alloc::vec::Vec;
@@ -174,6 +174,13 @@ pub fn erc20_compute_main_storage_keys(input: &[u8], caller: &Address) -> Option
             result.push(CONTRACT_FROZEN_STORAGE_SLOT);
             let MintCommand { to, .. } = MintCommand::try_decode(input).ok()?;
             result.push(to.compute_slot(BALANCE_STORAGE_SLOT));
+            result.push(MINTER_STORAGE_SLOT);
+            result.push(TOTAL_SUPPLY_STORAGE_SLOT);
+        }
+        SIG_ERC20_BURN => {
+            result.push(CONTRACT_FROZEN_STORAGE_SLOT);
+            let BurnCommand { from, .. } = BurnCommand::try_decode(input).ok()?;
+            result.push(from.compute_slot(BALANCE_STORAGE_SLOT));
             result.push(MINTER_STORAGE_SLOT);
             result.push(TOTAL_SUPPLY_STORAGE_SLOT);
         }
