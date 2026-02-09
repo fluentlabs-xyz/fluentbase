@@ -23,37 +23,88 @@ use fluentbase_sdk::{
 /// These are "entry-to-throw" gas totals for the *read* path reverts,
 /// derived from the exact opcode sequences in the EVM snippet.
 ///
-/// Throw tail in snippet:
-///   JUMPDEST (1) + PUSH0 (3) + PUSH0 (3) + REVERT (0) = 7
+/// ; --- prefix gate: if caller == 0xffff..fffe jump to write-path @0x46 ---
+/// caller                               ; 2
+/// push20 0xfffffffffffffffffffffffffffffffffffffffe ; 3
+/// eq                                   ; 3
+/// push1 0x46                            ; 3
+/// jumpi                                 ; 10
+/// ; prefix subtotal = 21
+/// ; --- read-path length gate: if (calldatasize - 0x20) != 0 then revert @0x42 ---
+/// push1 0x20                            ; 3
+/// calldatasize                          ; 2
+/// sub                                   ; 3
+/// push1 0x42                            ; 3
+/// jumpi                                 ; 10
+/// ; length-check subtotal = 21
+/// ; --- load arg (slot selector / block number) from calldata[0:32] ---
+/// push0                                 ; 2
+/// calldataload                           ; 3
+/// ; --- future-block gate: if arg > (number - 1) then revert @0x42 ---
+/// push1 0x01                            ; 3
+/// number                                 ; 2
+/// sub                                    ; 3
+/// dup2                                   ; 3
+/// gt                                     ; 3
+/// push1 0x42                             ; 3
+/// jumpi                                  ; 10
+/// ; future-check subtotal = 32
+/// ; --- too-old gate: if (number - arg) > 0x1fff then revert @0x42 ---
+/// push2 0x1fff                           ; 3
+/// dup2                                   ; 3
+/// number                                 ; 2
+/// sub                                    ; 3
+/// gt                                     ; 3
+/// push1 0x42                             ; 3
+/// jumpi                                  ; 10
+/// ; too-old subtotal = 27
+/// ; --- read: sload[(arg mod 0x1fff)] and return it as 32 bytes ---
+/// push2 0x1fff                           ; 3
+/// swap1                                  ; 3
+/// mod                                    ; 5
+/// sload                                  ; syscall
+/// push0                                  ; 2
+/// mstore                                 ; 3 + memory expansion (3)
+/// push1 0x20                             ; 3
+/// push0                                  ; 2
+/// return                                 ; 0  + memory expansion (0)
+/// ; --- revert handler @0x42 ---
+/// jumpdest                               ; 1
+/// push0                                  ; 2
+/// push0                                  ; 2
+/// revert                                 ; 0
+/// ; throw-tail subtotal = 5
+/// ; --- write-path @0x46: store (arg mod (number-1) mod 0x1fff) into s[ (number-1) mod 0x1fff ] ---
+/// jumpdest                               ; 1
+/// push0                                  ; 2
+/// calldataload                           ; 3
+/// push2 0x1fff                           ; 3
+/// push1 0x01                             ; 3
+/// number                                 ; 2
+/// sub                                    ; 3
+/// mod                                    ; 5
+/// sstore                                 ; syscall
+/// stop                                   ; 0
 ///
-/// Prefix gate (caller != SYSADDR; jump not taken):
-///   CALLER(2) + PUSH20(3) + EQ(3) + JUMPI(10) = 18
-///
-/// Length check block:
-///   PUSH1(3) + CALLDATASIZE(2) + SUB(3) + JUMPI(10) = 18
-///
-/// Future-block check block:
-///   PUSH0(3) + CALLDATALOAD(3) + PUSH1(3) + NUMBER(2) + SUB(3)
-///   + DUP2(3) + GT(3) + JUMPI(10) = 30
-///
-/// Too-old check block:
-///   PUSH(3) + DUP2(3) + NUMBER(2) + SUB(3) + GT(3) + JUMPI(10) = 24
-///
-/// Totals:
-/// - Bad length: 18 + 18 + 7 = 43
-/// - Future block: 18 + 18 + 30 + 7 = 73
-/// - Too old block: 18 + 18 + 30 + 24 + 7 = 97
-const GAS_BAD_BLOCK_INPUT_BRANCH: u64 = 43;
-const GAS_INVALID_BLOCK_BRANCH: u64 = 73;
-const GAS_BLOCK_TOO_OLD_BRANCH: u64 = 97;
-const GAS_RETRIEVE_SUCCESS_BRANCH: u64 = 113;
-const GAS_SUBMIT_SUCCESS_BRANCH: u64 = 41;
+/// GAS_BAD_BLOCK_INPUT_BRANCH = 21 + 21 + 5 = 47
+/// GAS_INVALID_BLOCK_BRANCH = 21 + 21 + 32 + 5 = 79
+/// GAS_BLOCK_TOO_OLD_BRANCH = 21 + 21 + 32 + 27 + 5 = 106
+/// GAS_RETRIEVE_SUCCESS_BRANCH = 21 + 21 + 32 + 27 + 24 = 125
+/// GAS_SUBMIT_SUCCESS_BRANCH = 21 + 22 = 43
+const GAS_BAD_BLOCK_INPUT_BRANCH: u64 = 47;
+const GAS_INVALID_BLOCK_BRANCH: u64 = 79;
+const GAS_BLOCK_TOO_OLD_BRANCH: u64 = 106;
+const GAS_RETRIEVE_SUCCESS_BRANCH: u64 = 125;
+const GAS_SUBMIT_SUCCESS_BRANCH: u64 = 43;
 
 #[inline(always)]
 fn charge_and_panic<SDK: SharedAPI, T>(sdk: &mut SDK, gas: u64) -> Result<T, ExitCode> {
     sdk.charge_fuel(gas * FUEL_DENOM_RATE);
     Err(ExitCode::Panic)
 }
+
+/// Gas cost for reading from a warm storage slot (EIP-2929).
+pub const WARM_STORAGE_READ_COST: u64 = 100;
 
 /// Submit a path (SYSTEM_ADDRESS) — store block hash at slot (number-1) % EIP2935_HISTORY_SERVE_WINDOW.
 ///
@@ -83,7 +134,9 @@ fn submit<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         // Storage write here can't fail, even if it fails, it causes trap and charges all gas available
         return Err(result.status);
     }
-    sdk.charge_fuel(result.fuel_consumed + GAS_SUBMIT_SUCCESS_BRANCH * FUEL_DENOM_RATE);
+    sdk.charge_fuel(
+        WARM_STORAGE_READ_COST * FUEL_DENOM_RATE + GAS_SUBMIT_SUCCESS_BRANCH * FUEL_DENOM_RATE,
+    );
     Ok(())
 }
 
@@ -125,7 +178,9 @@ fn retrieve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         // Storage write here can't fail, even if it fails, it causes trap and charges all gas available
         return Err(result.status);
     }
-    sdk.charge_fuel(result.fuel_consumed + GAS_RETRIEVE_SUCCESS_BRANCH * FUEL_DENOM_RATE);
+    sdk.charge_fuel(
+        WARM_STORAGE_READ_COST * FUEL_DENOM_RATE + GAS_RETRIEVE_SUCCESS_BRANCH * FUEL_DENOM_RATE,
+    );
     let hash = result.data;
     sdk.write(hash.to_be_bytes::<{ U256::BYTES }>());
     Ok(())
