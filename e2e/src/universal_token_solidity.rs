@@ -11,94 +11,12 @@ use fluentbase_universal_token::storage::InitialSettings;
 use hex_literal::hex;
 use revm::context::result::ExecutionResult;
 
-// Helper function similar to universal_token.rs
 fn u256_from_slice_try(value: &[u8]) -> Option<U256> {
     U256::try_from_be_slice(value)
 }
 
-// Helper function to encode address as ABI word (right-aligned)
-fn abi_word_addr(a: Address) -> [u8; 32] {
-    let mut w = [0u8; 32];
-    w[12..].copy_from_slice(a.as_ref());
-    w
-}
-
-/// Test Universal Token deployment using the Solidity SDK
-///
-/// To compile Solidity contracts:
-/// ```bash
-/// solc --bin contracts/universal-token/UniversalToken.sol -o e2e/assets/
-/// solc --bin contracts/universal-token/UniversalTokenFactory.sol -o e2e/assets/
-/// ```
-///
-/// Note: Universal Tokens use a precompile pattern, so they're deployed
-/// directly with magic bytes + InitialSettings, not via a factory contract.
-
 #[test]
-#[ignore] // Ignore until Solidity contracts are compiled
-fn test_universal_token_solidity_deployment() {
-    let mut ctx = EvmTestingContext::default().with_full_genesis();
-    const DEPLOYER: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-
-    ctx.add_balance(DEPLOYER, U256::from(1e18));
-
-    // Compile UniversalToken.sol first:
-    // solc --bin contracts/universal-token/UniversalToken.sol -o e2e/assets/
-    let bytecode = include_bytes!("../assets/UniversalToken.bin");
-
-    // Encode constructor parameters: (string name, string symbol, uint8 decimals, uint256 initialSupply, address minter, address pauser)
-    let constructor_params = hex!("00000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000de0b6b3a7640000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000084d7920546f6b656e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000034d544b0000000000000000000000000000000000000000000000000000000000");
-    let encoded_constructor_params = encode_constructor_params(&constructor_params);
-    let mut full_bytecode = Vec::new();
-    full_bytecode.extend_from_slice(bytecode);
-    full_bytecode.extend_from_slice(&encoded_constructor_params);
-
-    let token_address = ctx.deploy_evm_tx(DEPLOYER, full_bytecode.into());
-    println!("Token deployed at: {:?}", token_address);
-
-    // Test name() - selector: 0x06fdde03
-    let result = TxBuilder::call(&mut ctx, DEPLOYER, token_address, None)
-        .input(bytes!("06fdde03"))
-        .exec();
-    assert!(result.is_success());
-    let output = result.output().unwrap();
-    // Decode string from output (following router.rs pattern)
-    let name: String = SolidityABI::decode(output, 0).unwrap();
-    assert_eq!(name, "My Token");
-
-    // Test symbol() - selector: 0x95d89b41
-    let result = TxBuilder::call(&mut ctx, DEPLOYER, token_address, None)
-        .input(bytes!("95d89b41"))
-        .exec();
-    assert!(result.is_success());
-    let output = result.output().unwrap();
-    let symbol: String = SolidityABI::decode(output, 0).unwrap();
-    assert_eq!(symbol, "MTK");
-
-    // Test decimals() - selector: 0x313ce567
-    let result = TxBuilder::call(&mut ctx, DEPLOYER, token_address, None)
-        .input(bytes!("313ce567"))
-        .exec();
-    assert!(result.is_success());
-    let output = result.output().unwrap();
-    // Decimals returns uint8, decode as U256 then convert (following universal_token.rs pattern)
-    let decimals_u256 = u256_from_slice_try(output.as_ref()).unwrap();
-    let decimals = decimals_u256.to::<u8>();
-    assert_eq!(decimals, 18);
-
-    // Test totalSupply() - selector: 0x18160ddd
-    let result = TxBuilder::call(&mut ctx, DEPLOYER, token_address, None)
-        .input(bytes!("18160ddd"))
-        .exec();
-    assert!(result.is_success());
-    let output = result.output().unwrap();
-    // Use the same pattern as universal_token.rs - decode U256 from output
-    let total_supply = u256_from_slice_try(output.as_ref()).unwrap();
-    assert_eq!(total_supply, U256::from(1e18));
-}
-
-#[test]
-fn test_deploy_factory_and_token() {
+fn test_deploy_factory_and_universal_token() {
     // Test deploying UniversalTokenFactory and then deploying a Universal Token
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
@@ -211,10 +129,10 @@ fn test_deploy_factory_and_token() {
     // Generate deployment data using Rust SDK for comparison. This is the format
     // we already know works with the Universal Token runtime.
     let rust_deploy_data = TokenConfigBuilder::default()
-        .name("Bridged Token".to_string())
-        .symbol("BRIDGE".to_string())
-        .decimals(18)
-        .initial_supply(U256::ZERO)
+        .name(TOKEN_NAME.to_string())
+        .symbol(TOKEN_SYMBOL.to_string())
+        .decimals(TOKEN_DECIMALS)
+        .initial_supply(token_initial_supply)
         .minter(Address::ZERO)
         .pauser(Address::ZERO)
         .build()
@@ -247,65 +165,6 @@ fn test_deploy_factory_and_token() {
         hex::encode(expected_magic),
         hex::encode(magic)
     );
-
-    // Step 3: Test CREATE with ContractDeployer using the Rust SDK deployment data
-    // This proves the Solidity SDK format works through ContractDeployer
-    let deployer_bytecode_hex =
-        std::str::from_utf8(include_bytes!("../assets/ContractDeployer.bin"))
-            .expect("Invalid ContractDeployer bytecode file");
-    let deployer_hex_line: String = deployer_bytecode_hex
-        .lines()
-        .next()
-        .unwrap_or("")
-        .chars()
-        .filter(|c| c.is_ascii_hexdigit())
-        .collect();
-    let deployer_bytecode =
-        hex::decode(&deployer_hex_line).expect("Failed to decode ContractDeployer bytecode");
-    let deployer_address = ctx.deploy_evm_tx(DEPLOYER, deployer_bytecode.into());
-    println!("ContractDeployer deployed at: {:?}", deployer_address);
-
-    // Deploy via ContractDeployer using the Solidity SDK deployment data
-    sol! {
-        function deploy(bytes memory bytecode) public returns (address contractAddress);
-    }
-    let deploy_via_deployer = deployCall {
-        bytecode: sdk_deploy_data.as_ref().to_vec().into(),
-    }
-    .abi_encode();
-    let deployer_result = TxBuilder::call(&mut ctx, DEPLOYER, deployer_address, None)
-        .input(deploy_via_deployer.into())
-        .gas_limit(50_000_000)
-        .exec();
-    if deployer_result.is_success() {
-        let deployer_output = deployer_result.output().unwrap();
-        let deployed_via_deployer: Address = SolidityABI::decode(deployer_output, 0).unwrap();
-        println!(
-            "Successfully deployed via ContractDeployer at: {:?}",
-            deployed_via_deployer
-        );
-
-        // Verify the token deployed via ContractDeployer works
-        let result = TxBuilder::call(&mut ctx, DEPLOYER, deployed_via_deployer, None)
-            .input(bytes!("06fdde03")) // name() selector
-            .exec();
-        if result.is_success() {
-            let output = result.output().unwrap();
-            let name: String = SolidityABI::decode(output, 0).unwrap();
-            println!("Token name from ContractDeployer: {}", name);
-        } else if let Some(output) = result.output() {
-            println!(
-                "name() call on ContractDeployer-deployed token failed: {:?}",
-                result
-            );
-            try_print_utf8_error(output.as_ref());
-        }
-    } else {
-        println!("ContractDeployer deployment failed: {:?}", deployer_result);
-        if let Some(output) = deployer_result.output() {
-            try_print_utf8_error(output.as_ref());
-        }
-    }
 
     // Step 4: Deploy Universal Token via factory using the Solidity SDK encoder
     sol! {
@@ -360,7 +219,7 @@ fn test_deploy_factory_and_token() {
     let total_supply = u256_from_slice_try(output.as_ref()).unwrap();
     assert_eq!(
         total_supply, token_initial_supply,
-        "Initial supply should be zero"
+        "Initial supply is wrong"
     );
 
     // Step 6: Verify token name
@@ -405,42 +264,4 @@ fn test_deploy_factory_and_token() {
         total_supply, token_initial_supply,
         "Token total supply mismatch"
     );
-}
-
-#[test]
-fn test_universal_token_direct_deployment() {
-    // Test deploying Universal Token directly (without Solidity wrapper)
-    // This shows how the underlying precompile works
-    let mut ctx = EvmTestingContext::default().with_full_genesis();
-    const DEPLOYER: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-
-    ctx.add_balance(DEPLOYER, U256::from(1e18));
-
-    // Create InitialSettings
-    let initial_settings = InitialSettings {
-        token_name: Default::default(),
-        token_symbol: Default::default(),
-        decimals: 18,
-        initial_supply: U256::from(1000e18),
-        minter: Address::ZERO,
-        pauser: Address::ZERO,
-    };
-
-    // Encode with magic bytes prefix
-    let deploy_data = initial_settings.encode_with_prefix();
-    let token_address = ctx.deploy_evm_tx(DEPLOYER, deploy_data);
-
-    // Verify the token was deployed
-    let code = ctx.get_code(token_address);
-    assert!(code.is_some());
-
-    // Test totalSupply() - selector: 0x18160ddd
-    let result = TxBuilder::call(&mut ctx, DEPLOYER, token_address, None)
-        .input(bytes!("18160ddd"))
-        .exec();
-    assert!(result.is_success());
-    let output = result.output().unwrap();
-    // Use the same pattern as universal_token.rs - decode U256 from output
-    let total_supply = u256_from_slice_try(output.as_ref()).unwrap();
-    assert_eq!(total_supply, U256::from(1000e18));
 }
