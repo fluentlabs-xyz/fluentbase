@@ -160,10 +160,6 @@ fn test_deploy_factory_and_token() {
 
     let factory_address = ctx.deploy_evm_tx(DEPLOYER, factory_bytecode.into());
     println!("Factory deployed at: {:?}", factory_address);
-    println!(
-        "Factory address hex: {}",
-        hex::encode(factory_address.as_slice())
-    );
 
     // Step 2: Generate deployment data using Rust SDK (this is the format the runtime expects)
     // Note: The runtime expects the Rust struct encoding format, not raw ABI-encoded parameters
@@ -200,30 +196,12 @@ fn test_deploy_factory_and_token() {
         lib_result
     );
     let lib_output = lib_result.output().unwrap();
-    println!(
-        "Solidity SDK createDeploymentData raw ABI output (len={}): {}",
-        lib_output.len(),
-        hex::encode(lib_output.as_ref())
-    );
 
     // Properly decode the `bytes` return value from the Solidity SDK.
     // This gives us the raw deployment data that the Solidity SDK believes
     // should be passed to CREATE.
     let mut cursor: &[u8] = lib_output.as_ref();
     let sdk_deploy_data: Bytes = SolidityABI::decode(&mut cursor, 0).unwrap();
-    println!(
-        "Solidity SDK deployment data len: {}, first 64 bytes: {}",
-        sdk_deploy_data.len(),
-        hex::encode(&sdk_deploy_data.as_ref())
-    );
-    if sdk_deploy_data.len() >= 4 {
-        let sdk_magic = &sdk_deploy_data.as_ref()[0..4];
-        println!(
-            "Solidity SDK magic bytes: {}, expected: {}",
-            hex::encode(sdk_magic),
-            hex::encode(hex!("45524320"))
-        );
-    }
 
     // Generate deployment data using Rust SDK for comparison. This is the format
     // we already know works with the Universal Token runtime.
@@ -238,12 +216,8 @@ fn test_deploy_factory_and_token() {
         .create_deployment_transaction();
 
     println!(
-        "✅ Generated deployment data using Rust SDK (length: {} bytes)",
+        "Generated deployment data using Rust SDK (length: {} bytes)",
         rust_deploy_data.len()
-    );
-    println!(
-        "Rust SDK deployment data: {}",
-        hex::encode(&rust_deploy_data.as_ref())
     );
     println!(
         "SDK vs Rust deployment data equality: {} (sdk_len={}, rust_len={})",
@@ -252,17 +226,14 @@ fn test_deploy_factory_and_token() {
         rust_deploy_data.len()
     );
 
-    // For now we continue to use the Rust SDK format for actual deployment,
-    // but we keep the Solidity SDK data around for debugging/comparison.
-    let solidity_deploy_data = rust_deploy_data.clone();
-
+    //let solidity_deploy_data = sdk_deploy_data.clone();
     // Verify magic bytes are present
     assert!(
-        solidity_deploy_data.len() >= 4,
+        sdk_deploy_data.len() >= 4,
         "Deployment data too short: {} bytes",
-        solidity_deploy_data.len()
+        sdk_deploy_data.len()
     );
-    let magic = &solidity_deploy_data.as_ref()[0..4];
+    let magic = &sdk_deploy_data.as_ref()[0..4];
     let expected_magic = hex!("45524320"); // "ERC "
     assert_eq!(
         magic,
@@ -294,7 +265,7 @@ fn test_deploy_factory_and_token() {
         function deploy(bytes memory bytecode) public returns (address contractAddress);
     }
     let deploy_via_deployer = deployCall {
-        bytecode: solidity_deploy_data.as_ref().to_vec().into(),
+        bytecode: sdk_deploy_data.as_ref().to_vec().into(),
     }
     .abi_encode();
     let deployer_result = TxBuilder::call(&mut ctx, DEPLOYER, deployer_address, None)
@@ -305,7 +276,7 @@ fn test_deploy_factory_and_token() {
         let deployer_output = deployer_result.output().unwrap();
         let deployed_via_deployer: Address = SolidityABI::decode(deployer_output, 0).unwrap();
         println!(
-            "✅ Successfully deployed via ContractDeployer at: {:?}",
+            "Successfully deployed via ContractDeployer at: {:?}",
             deployed_via_deployer
         );
 
@@ -316,19 +287,16 @@ fn test_deploy_factory_and_token() {
         if result.is_success() {
             let output = result.output().unwrap();
             let name: String = SolidityABI::decode(output, 0).unwrap();
-            println!("✅ Token name from ContractDeployer: {}", name);
+            println!("Token name from ContractDeployer: {}", name);
         } else if let Some(output) = result.output() {
             println!(
-                "❌ name() call on ContractDeployer-deployed token failed: {:?}",
+                "name() call on ContractDeployer-deployed token failed: {:?}",
                 result
             );
             try_print_utf8_error(output.as_ref());
         }
     } else {
-        println!(
-            "❌ ContractDeployer deployment failed: {:?}",
-            deployer_result
-        );
+        println!("ContractDeployer deployment failed: {:?}", deployer_result);
         if let Some(output) = deployer_result.output() {
             try_print_utf8_error(output.as_ref());
         }
@@ -372,11 +340,7 @@ fn test_deploy_factory_and_token() {
 
     let deploy_output = deploy_result.output().unwrap();
     let deployed_address: Address = SolidityABI::decode(deploy_output, 0).unwrap();
-    println!(
-        "✅ Deployed token address via factory: {:?}",
-        deployed_address
-    );
-    println!("✅ Deployed token address: {:?}", deployed_address);
+    println!("Deployed token address via factory: {:?}", deployed_address);
 
     // Step 5: Verify token was deployed by calling totalSupply()
     let result = TxBuilder::call(&mut ctx, DEPLOYER, deployed_address, None)
@@ -408,8 +372,6 @@ fn test_deploy_factory_and_token() {
     let output = result.output().unwrap();
     let symbol: String = SolidityABI::decode(output, 0).unwrap();
     assert_eq!(symbol, "BRIDGE", "Token symbol mismatch");
-
-    println!("✅ Successfully deployed factory and Universal Token!");
 }
 
 #[test]
