@@ -7,6 +7,9 @@ pragma solidity ^0.8.0;
  * @dev Universal Tokens use a precompile/runtime pattern with magic bytes for deployment
  */
 library UniversalTokenSDK {
+    /// @notice Prefix for bridge token deployment
+    string public constant BRIDGE_TOKEN_PREFIX = "BRIDGE_TOKEN";
+
     /// @notice Magic bytes prefix for Universal Token deployment (4 bytes: "ERC" + 0x20)
     bytes4 public constant UNIVERSAL_TOKEN_MAGIC_BYTES = bytes4(0x45524320); // "ERC "
 
@@ -83,7 +86,7 @@ library UniversalTokenSDK {
         address l1Token,
         uint256 chainId
     ) internal pure returns (bytes32 salt) {
-        return keccak256(abi.encodePacked("BRIDGE_TOKEN", l1Token, chainId));
+        return keccak256(abi.encodePacked(BRIDGE_TOKEN_PREFIX, l1Token, chainId));
     }
 
     // NOTE: Previously this SDK provided CREATE2-based address prediction helpers:

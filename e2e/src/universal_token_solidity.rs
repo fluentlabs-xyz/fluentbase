@@ -60,15 +60,15 @@ fn test_deploy_factory_and_universal_token() {
 
     // Link the library: Replace placeholder with actual library address
     // Work with hex string for easier string replacement
-    // The placeholder "__$a7643d6ae8530b3ab7fd5d554e19792c1c$__" contains the hash:
-    // a7643d6ae8530b3ab7fd5d554e19792c1c (40 hex chars).
-    // solc prints it in the .bin as "73__$a7643d6ae8530b3ab7fd5d554e19792c1c$__63..." etc.
+    // The placeholder "__$f7bb912695101d7377bc19c7d693b1b376$__" contains the hash:
+    // f7bb912695101d7377bc19c7d693b1b376 (40 hex chars).
+    // solc prints it in the .bin as "73__$f7bb912695101d7377bc19c7d693b1b376$__63..." etc.
     // After filtering to only hex digits we see just the hash, so we replace that.
     // with the library address (also 40 hex chars)
     let mut factory_hex = hex_line.clone();
     let placeholder_hex =
-        "5f5f2461373634336436616538353330623361623766643564353534653139373932633163245f5f";
-    let hash_hex = "a7643d6ae8530b3ab7fd5d554e19792c1c";
+        "5f5f2466376262393132363935313031643733373762633139633764363933623162333736245f5f";
+    let hash_hex = "f7bb912695101d7377bc19c7d693b1b376";
     let sdk_address_hex = hex::encode(sdk_address.as_slice());
 
     if factory_hex.contains(placeholder_hex) {
@@ -167,9 +167,53 @@ fn test_deploy_factory_and_universal_token() {
         hex::encode(magic)
     );
 
-    // Step 4: Deploy Universal Token via factory using the Solidity SDK encoder
+    // Step 3: Compute the token address using computeTokenAddressString (CREATE2 formula)
+    let chain_id = 1u64;
+    let l1_token = address!("1111111111111111111111111111111111111111");
     sol! {
-        function deployBridgedToken(
+        function computeTokenAddressString(
+            address l1Token,
+            uint256 chainId,
+            string memory name,
+            string memory symbol,
+            uint8 decimals,
+            uint256 initialSupply,
+            address minter,
+            address pauser
+        ) public view returns (address tokenAddress);
+    }
+    let compute_token_address_call = computeTokenAddressStringCall {
+        l1Token: l1_token,
+        chainId: U256::from(chain_id),
+        name: TOKEN_NAME.to_string(),
+        symbol: TOKEN_SYMBOL.to_string(),
+        decimals: TOKEN_DECIMALS,
+        initialSupply: token_initial_supply,
+        minter: Address::ZERO,
+        pauser: Address::ZERO,
+    }
+    .abi_encode();
+    let compute_token_address_result = ctx.call_evm_tx(
+        DEPLOYER,
+        factory_address,
+        compute_token_address_call.into(),
+        Some(50_000_000),
+        None,
+    );
+    assert!(
+        compute_token_address_result.is_success(),
+        "computeTokenAddressString failed: {:?}",
+        compute_token_address_result
+    );
+    let compute_token_address_output = compute_token_address_result.output().unwrap();
+    let computed_address: Address = SolidityABI::decode(compute_token_address_output, 0).unwrap();
+    println!("Computed token address: {:?}", computed_address);
+
+    // Step 4: Deploy Universal Token via factory using deployBridgedTokenCreate2 (CREATE2)
+    sol! {
+        function deployBridgedTokenCreate2(
+            address l1Token,
+            uint256 chainId,
             string memory name,
             string memory symbol,
             uint8 decimals,
@@ -179,7 +223,9 @@ fn test_deploy_factory_and_universal_token() {
         ) public returns (address tokenAddress);
     }
 
-    let deploy_call = deployBridgedTokenCall {
+    let deploy_call = deployBridgedTokenCreate2Call {
+        l1Token: l1_token,
+        chainId: U256::from(chain_id),
         name: TOKEN_NAME.to_string(),
         symbol: TOKEN_SYMBOL.to_string(),
         decimals: TOKEN_DECIMALS,
@@ -199,13 +245,18 @@ fn test_deploy_factory_and_universal_token() {
 
     assert!(
         deploy_result.is_success(),
-        "deployBridgedToken failed: {:?}",
+        "deployBridgedTokenCreate2 failed: {:?}",
         deploy_result
     );
 
     let deploy_output = deploy_result.output().unwrap();
     let deployed_address: Address = SolidityABI::decode(deploy_output, 0).unwrap();
     println!("Deployed token address via factory: {:?}", deployed_address);
+
+    assert_eq!(
+        deployed_address, computed_address,
+        "CREATE2 deployed address does not match computed address"
+    );
 
     // Step 5: Verify token was deployed by calling totalSupply()
     let result = TxBuilder::call(&mut ctx, DEPLOYER, deployed_address, None)

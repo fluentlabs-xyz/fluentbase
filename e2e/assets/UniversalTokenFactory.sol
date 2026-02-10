@@ -2,7 +2,6 @@
 pragma solidity ^0.8.0;
 
 import "./UniversalTokenSDK.sol";
-import "./IUniversalToken.sol";
 
 /**
  * @title UniversalTokenFactory
@@ -36,25 +35,38 @@ contract UniversalTokenFactory {
 
     /**
      * @notice Computes the address of a Universal Token for a given L1 token
-     * @dev With CREATE-based deployment we can no longer predict the final
-     *      token address from inputs alone, so this function now always
-     *      returns the zero address and is kept only for API compatibility.
+     * @dev Uses CREATE2 semantics with the same salt and init code as
+     *      `deployBridgedTokenCreate2`. This allows deterministic address
+     *      prediction from inputs alone.
      */
     function computeTokenAddress(
-        address /* l1Token */,
-        uint256 /* chainId */,
-        bytes32 /* name */,
-        bytes32 /* symbol */,
-        uint8 /* decimals */,
-        uint256 /* initialSupply */,
-        address /* minter */,
-        address /* pauser */
-    ) public pure returns (address tokenAddress) {
-        // CREATE-based deployment does not allow us to precompute the final token
-        // address without access to the deployer's nonce/CREATE semantics.
-        // This function is kept for backwards compatibility but now always
-        // returns the zero address to signal "no prediction available".
-        return address(0);
+        address l1Token,
+        uint256 chainId,
+        bytes32 name,
+        bytes32 symbol,
+        uint8 decimals,
+        uint256 initialSupply,
+        address minter,
+        address pauser
+    ) public view returns (address tokenAddress) {
+        bytes memory deploymentData = UniversalTokenSDK.createDeploymentDataBytes32(
+            name,
+            symbol,
+            decimals,
+            initialSupply,
+            minter,
+            pauser
+        );
+
+        bytes32 salt = UniversalTokenSDK.computeBridgeTokenSalt(l1Token, chainId);
+        bytes32 initCodeHash = keccak256(deploymentData);
+
+        // Standard CREATE2 address formula:
+        // address = keccak256(0xff ++ deployingAddr ++ salt ++ keccak256(init_code))[12:]
+        bytes32 hash = keccak256(
+            abi.encodePacked(bytes1(0xff), address(this), salt, initCodeHash)
+        );
+        tokenAddress = address(uint160(uint256(hash)));
     }
 
     /**
@@ -165,7 +177,9 @@ contract UniversalTokenFactory {
     }
 
     /**
-     * @notice Deploys a Universal Token using Solidity SDK encoder
+     * @notice Deploys a Universal Token for a bridged L1 token using CREATE2
+     * @param l1Token Original L1 token address (cannot be zero)
+     * @param chainId Chain ID of the L1 chain (must be > 0)
      * @param name Token name (will be truncated to 32 bytes if longer)
      * @param symbol Token symbol (will be truncated to 32 bytes if longer)
      * @param decimals Number of decimals (typically 18)
@@ -173,9 +187,12 @@ contract UniversalTokenFactory {
      * @param minter Minter address (address(0) if not mintable)
      * @param pauser Pauser address (address(0) if not pausable)
      * @return tokenAddress Address of the deployed Universal Token
-     * @dev Uses CREATE for deployment; address is whatever the EVM assigns.
+     * @dev Uses CREATE2 for deterministic deployment; address is
+     *      keccak256(0xff ++ factory ++ salt ++ keccak256(init_code))[12:].
      */
-    function deployBridgedToken(
+    function deployBridgedTokenCreate2(
+        address l1Token,
+        uint256 chainId,
         string memory name,
         string memory symbol,
         uint8 decimals,
@@ -183,6 +200,13 @@ contract UniversalTokenFactory {
         address minter,
         address pauser
     ) public returns (address tokenAddress) {
+        require(l1Token != address(0), "UniversalTokenFactory: invalid L1 token");
+        require(chainId > 0, "UniversalTokenFactory: invalid chain ID");
+        require(
+            bridgedTokens[l1Token] == address(0),
+            "UniversalTokenFactory: token already deployed"
+        );
+
         bytes memory deploymentData = UniversalTokenSDK.createDeploymentData(
             name,
             symbol,
@@ -191,19 +215,22 @@ contract UniversalTokenFactory {
             minter,
             pauser
         );
+        bytes32 salt = UniversalTokenSDK.computeBridgeTokenSalt(l1Token, chainId);
+
         assembly {
-            tokenAddress := create(0, add(deploymentData, 0x20), mload(deploymentData))
+            tokenAddress := create2(0, add(deploymentData, 0x20), mload(deploymentData), salt)
             if iszero(tokenAddress) {
                 revert(0, 0)
             }
         }
 
+        bridgedTokens[l1Token] = tokenAddress;
         tokenInfo[tokenAddress] = TokenInfo({
-            l1Token: address(0),
-            chainId: 0,
+            l1Token: l1Token,
+            chainId: chainId,
             deployed: true
         });
 
-        emit TokenDeployed(address(0), tokenAddress, name, symbol, decimals);
+        emit TokenDeployed(l1Token, tokenAddress, name, symbol, decimals);
     }
 }
