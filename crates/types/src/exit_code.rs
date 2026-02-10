@@ -184,7 +184,7 @@ impl ExitCode {
     }
 
     pub fn is_fatal_exit_code(&self) -> bool {
-        self == &ExitCode::UnexpectedFatalExecutionFailure
+        self == &ExitCode::UnexpectedFatalExecutionFailure || self == &ExitCode::OutOfFuel
     }
 
     pub const fn into_i32(self) -> i32 {
