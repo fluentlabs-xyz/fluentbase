@@ -102,9 +102,9 @@ pub enum ExitCode {
     NotSupportedBytecode = -1009,
     /// State changed inside immutable call (static=true)
     StateChangeDuringStaticCall = -1010,
-    /// Create contract size limit reached (limit depends on the application type)
+    /// Create a contract size limit reached (limit depends on the application type)
     CreateContractSizeLimit = -1011,
-    /// There is a collision on the contract creation (same address is derived)
+    /// There is a collision on the contract creation (the same address is derived)
     CreateContractCollision = -1012,
     /// Created contract starts with invalid bytes (`0xEF`).
     CreateContractStartingWithEF = -1013,
@@ -143,6 +143,13 @@ pub enum ExitCode {
 }
 
 impl core::error::Error for ExitCode {}
+
+impl ExitCode {
+    /// Check if the exit code represents a trap code
+    pub fn is_trap_code(&self) -> bool {
+        self.into_i32() <= -2000 && self.into_i32() > -3000
+    }
+}
 
 pub trait UnwrapExitCode<T> {
     fn unwrap_exit_code(self) -> T;
@@ -183,8 +190,13 @@ impl ExitCode {
         !self.is_ok() && !self.is_revert()
     }
 
+    /// Check if the exit code represents a fatal error
+    ///
+    /// Fatal exit code means that the application terminated unexpectedly, for example,
+    /// by having out of fuel or memory out of bounds. It means that we can't handle the output
+    /// state of this contract gracefully.
     pub fn is_fatal_exit_code(&self) -> bool {
-        self == &ExitCode::UnexpectedFatalExecutionFailure || self == &ExitCode::OutOfFuel
+        self == &ExitCode::UnexpectedFatalExecutionFailure || self.is_trap_code()
     }
 
     pub const fn into_i32(self) -> i32 {
