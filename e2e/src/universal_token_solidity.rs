@@ -103,6 +103,11 @@ fn test_deploy_factory_and_token() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
+    const TOKEN_NAME: &str = "Bridged Token";
+    const TOKEN_SYMBOL: &str = "BRIDGE";
+    const TOKEN_DECIMALS: u8 = 18;
+    let token_initial_supply: U256 = U256::from(100);
+
     ctx.add_balance(DEPLOYER, U256::from(1e18));
 
     // Step 0: Deploy UniversalTokenSDK library first (required for linking)
@@ -175,10 +180,10 @@ fn test_deploy_factory_and_token() {
         ) public pure returns (bytes memory deploymentData);
     }
     let create_deployment_data_call = createDeploymentDataCall {
-        name: "Bridged Token".to_string(),
-        symbol: "BRIDGE".to_string(),
-        decimals: 18u8,
-        initialSupply: U256::ZERO,
+        name: TOKEN_NAME.to_string(),
+        symbol: TOKEN_SYMBOL.to_string(),
+        decimals: TOKEN_DECIMALS,
+        initialSupply: token_initial_supply,
         minter: Address::ZERO,
         pauser: Address::ZERO,
     }
@@ -315,10 +320,10 @@ fn test_deploy_factory_and_token() {
     }
 
     let deploy_call = deployBridgedTokenCall {
-        name: "Bridged Token".to_string(),
-        symbol: "BRIDGE".to_string(),
-        decimals: 18u8,
-        initialSupply: U256::from(0u8),
+        name: TOKEN_NAME.to_string(),
+        symbol: TOKEN_SYMBOL.to_string(),
+        decimals: TOKEN_DECIMALS,
+        initialSupply: token_initial_supply,
         minter: Address::ZERO,
         pauser: Address::ZERO,
     }
@@ -353,7 +358,10 @@ fn test_deploy_factory_and_token() {
     );
     let output = result.output().unwrap();
     let total_supply = u256_from_slice_try(output.as_ref()).unwrap();
-    assert_eq!(total_supply, U256::ZERO, "Initial supply should be zero");
+    assert_eq!(
+        total_supply, token_initial_supply,
+        "Initial supply should be zero"
+    );
 
     // Step 6: Verify token name
     let result = TxBuilder::call(&mut ctx, DEPLOYER, deployed_address, None)
@@ -362,7 +370,7 @@ fn test_deploy_factory_and_token() {
     assert!(result.is_success(), "name() call failed: {:?}", result);
     let output = result.output().unwrap();
     let name: String = SolidityABI::decode(output, 0).unwrap();
-    assert_eq!(name, "Bridged Token", "Token name mismatch");
+    assert_eq!(name, TOKEN_NAME, "Token name mismatch");
 
     // Step 7: Verify token symbol
     let result = TxBuilder::call(&mut ctx, DEPLOYER, deployed_address, None)
@@ -371,7 +379,32 @@ fn test_deploy_factory_and_token() {
     assert!(result.is_success(), "symbol() call failed: {:?}", result);
     let output = result.output().unwrap();
     let symbol: String = SolidityABI::decode(output, 0).unwrap();
-    assert_eq!(symbol, "BRIDGE", "Token symbol mismatch");
+    assert_eq!(symbol, TOKEN_SYMBOL, "Token symbol mismatch");
+
+    // Step 8: Verify token decimals
+    let result = TxBuilder::call(&mut ctx, DEPLOYER, deployed_address, None)
+        .input(bytes!("313ce567")) // decimals() selector
+        .exec();
+    assert!(result.is_success(), "decimals() call failed: {:?}", result);
+    let output = result.output().unwrap();
+    let decimals = u256_from_slice_try(output.as_ref()).unwrap();
+    assert_eq!(decimals, TOKEN_DECIMALS, "Token decimals mismatch");
+
+    // Step 9: Verify token totalSupply
+    let result = TxBuilder::call(&mut ctx, DEPLOYER, deployed_address, None)
+        .input(bytes!("18160ddd")) // totalSupply() selector
+        .exec();
+    assert!(
+        result.is_success(),
+        "totalSupply() call failed: {:?}",
+        result
+    );
+    let output = result.output().unwrap();
+    let total_supply = u256_from_slice_try(output.as_ref()).unwrap();
+    assert_eq!(
+        total_supply, token_initial_supply,
+        "Token total supply mismatch"
+    );
 }
 
 #[test]
