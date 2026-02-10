@@ -142,9 +142,10 @@ fn test_deploy_factory_and_universal_token() {
         "Generated deployment data using Rust SDK (length: {} bytes)",
         rust_deploy_data.len()
     );
-    println!(
-        "SDK vs Rust deployment data equality: {} (sdk_len={}, rust_len={})",
-        sdk_deploy_data.as_ref() == rust_deploy_data.as_ref(),
+    assert_eq!(
+        sdk_deploy_data.as_ref(),
+        rust_deploy_data.as_ref(),
+        "Solidity SDK deployment data must match Rust SDK data (sdk_len={}, rust_len={})",
         sdk_deploy_data.len(),
         rust_deploy_data.len()
     );
