@@ -24,7 +24,6 @@ fluentbase-svm = { path = "../crates/svm", default-features = false }
 fluentbase-testing = { path = "../crates/testing", default-features = false }
 # revm
 revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
-#revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
 # solana
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
@@ -57,6 +56,8 @@ debug = false
 # patch tiny-keccak
 tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
 #bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm" }
+# patch revm
+#revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
 # patch fluentbase
 fluentbase-sdk = { path = "../crates/sdk" }
 fluentbase-universal-token = { path = "../crates/universal-token" }
@@ -65,6 +66,4 @@ fluentbase-svm-common = { path = "../crates/svm-common" }
 fluentbase-svm = { path = "../crates/svm" }
 fluentbase-testing = { path = "../crates/testing" }
 #ecdsa = { path = "../../signatures/ecdsa" }
-#rwasm = { path = "../../rwasm", default-features = false,  }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false, features = ["serde"] }
-wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", features = ["cache"] }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/new-stateless-runtime" }

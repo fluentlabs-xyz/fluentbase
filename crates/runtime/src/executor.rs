@@ -7,7 +7,7 @@ use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     import_linker_v1_preview, Address, BytecodeOrHash, ExitCode, HashMap, B256,
 };
-use rwasm::{ExecutionEngine, FuelConfig, ImportLinker, RwasmModule, Strategy, TrapCode};
+use rwasm::{ExecutionEngine, FuelConfig, ImportLinker, RwasmModule, TrapCode, TypedModule};
 use std::{cell::RefCell, mem::take, sync::Arc};
 
 /// Finalized outcome of a single runtime invocation.
@@ -99,7 +99,7 @@ pub trait RuntimeExecutor {
     fn warmup_wasmtime(
         &mut self,
         rwasm_module: RwasmModule,
-        wasmtime_module: wasmtime::Module,
+        wasmtime_module: rwasm::WasmtimeModule,
         code_hash: B256,
     );
 
@@ -167,7 +167,7 @@ impl RuntimeExecutor for ThreadLocalExecutor {
     fn warmup_wasmtime(
         &mut self,
         rwasm_module: RwasmModule,
-        wasmtime_module: wasmtime::Module,
+        wasmtime_module: rwasm::WasmtimeModule,
         code_hash: B256,
     ) {
         LOCAL_RUNTIME_EXECUTOR.with_borrow_mut(|runtime_executor| {
@@ -367,15 +367,15 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
                 let module = self
                     .module_factory
                     .get_wasmtime_module_or_compile(code_hash, address);
-                Strategy::Wasmtime { module }
+                TypedModule::Wasmtime { module }
             } else {
                 let engine = ExecutionEngine::acquire_shared();
-                Strategy::Rwasm { module, engine }
+                TypedModule::Rwasm { module, engine }
             };
             #[cfg(not(feature = "wasmtime"))]
             let strategy = {
                 let engine = ExecutionEngine::acquire_shared();
-                Strategy::Rwasm { module, engine }
+                TypedModule::Rwasm { module, engine }
             };
             let runtime =
                 ContractRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
@@ -456,7 +456,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     fn warmup_wasmtime(
         &mut self,
         rwasm_module: RwasmModule,
-        wasmtime_module: wasmtime::Module,
+        wasmtime_module: rwasm::WasmtimeModule,
         hash: B256,
     ) {
         self.module_factory
@@ -467,8 +467,8 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         self.transaction_call_id_counter = 1;
         self.recoverable_runtimes.clear();
         self.recoverable_runtimes.clear();
-        // Note: Ideally this shouldn't be required if there is no memory leaks, but supporting a
-        // memory allocator inside virtual runtime brings overhead.
+        // Note: Ideally, this shouldn't be required if there are no memory leaks, but supporting a
+        //  memory allocator inside virtual runtime brings overhead.
         // Instead, we can just re-create the store to make sure all data is pruned.
         SystemRuntime::reset_cached_runtimes();
     }
@@ -494,7 +494,7 @@ mod tests {
         RuntimeContext,
     };
     use fluentbase_types::{import_linker_v1_preview, ExitCode};
-    use rwasm::{ExecutionEngine, FuelConfig, RwasmModule, Strategy};
+    use rwasm::{ExecutionEngine, FuelConfig, RwasmModule, TypedModule};
 
     #[test]
     fn call_id_overflow() {
@@ -515,7 +515,7 @@ mod tests {
         let fuel_config = FuelConfig::default();
 
         let strategy_runtime = ContractRuntime::new(
-            Strategy::Rwasm { module, engine },
+            TypedModule::Rwasm { module, engine },
             executor.import_linker.clone(),
             ctx,
             fuel_config,

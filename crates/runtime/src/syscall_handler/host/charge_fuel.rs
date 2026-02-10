@@ -12,7 +12,7 @@ pub fn syscall_charge_fuel_handler(
     // Charge the engine fuel counter (instructions + builtins).
     caller.try_consume_fuel(fuel_consumed)?;
     // Mirror the charge in the runtime context (builtins-managed accounting).
-    caller.context_mut(|ctx| syscall_charge_fuel_impl(ctx, fuel_consumed))?;
+    syscall_charge_fuel_impl(caller.data_mut(), fuel_consumed)?;
     Ok(())
 }
 

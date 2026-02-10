@@ -8,7 +8,7 @@ pub fn syscall_exit_handler(
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
     let exit_code = params[0].i32().unwrap();
-    caller.context_mut(|ctx| syscall_exit_impl(ctx, ExitCode::from(exit_code)).unwrap_err());
+    syscall_exit_impl(caller.data_mut(), ExitCode::from(exit_code)).unwrap_err();
     Err(TrapCode::ExecutionHalted)
 }
 

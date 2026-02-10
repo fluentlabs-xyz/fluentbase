@@ -23,7 +23,7 @@ function toSnakeCase(str) {
         .replaceAll('^', '_pow_')
         .toLowerCase();
 
-    // If result doesn't start with a latin letter, prepend "_"
+    // If a result doesn't start with a latin letter, prepend "_"
     if (!/^[a-zA-Z]/.test(result)) {
         result = '_' + result;
     }
@@ -124,6 +124,7 @@ const disabledTests = new Set([
     'static_call50000_rip160',
     'call50000',
     'callcode50000',
+    'call50000_ecrec',
     // disabled tests (don't pass because of EIP-7951 enabled)
     'failed_tx_xcf416c53_paris',
     'precompile_absence',

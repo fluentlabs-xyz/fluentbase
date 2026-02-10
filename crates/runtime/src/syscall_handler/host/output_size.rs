@@ -8,7 +8,7 @@ pub fn syscall_output_size_handler(
     _params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    let output_size = caller.context(syscall_output_size_impl);
+    let output_size = syscall_output_size_impl(caller.data());
     result[0] = Value::I32(output_size as i32);
     Ok(())
 }

@@ -37,14 +37,13 @@ ctor = "0.5.0"
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
 fluentbase-contracts = { path = "../crates/contracts", default-features = false }
-rwasm = { version = "0.3.2", default-features = false, features = ["wasmtime"] }
-#rwasm = { path = "../../rwasm", default-features = false, features = ["wasmtime"] }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/new-stateless-runtime", default-features = false, features = ["wasmtime"] }
 
 [features]
 default = [
     "std",
     # "debug-print",
-    # "wasmtime",
+    "wasmtime",
 ]
 std = [
     "fluentbase-genesis/std",
@@ -62,5 +61,5 @@ wasmtime = [
 ]
 
 [patch.crates-io]
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
-wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", features = ["cache"] }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/new-stateless-runtime", default-features = false }
+#wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", features = ["cache"] }

@@ -36,8 +36,7 @@ pub fn syscall_write_fd_handler(
     );
     let mut input = vec![0u8; slice_len as usize];
     caller.memory_read(slice_ptr as usize, &mut input)?;
-    caller
-        .context_mut(|ctx| syscall_write_fd_impl(ctx, fd, &input))
+    syscall_write_fd_impl(caller.data_mut(), fd, &input)
         .map_err(|err| syscall_process_exit_code(caller, err))?;
     Ok(())
 }

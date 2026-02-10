@@ -6,7 +6,7 @@ pub fn syscall_enter_leave_unconstrained_handler(
     _params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    ctx.context_mut(syscall_enter_leave_unconstrained_impl);
+    syscall_enter_leave_unconstrained_impl(ctx.data_mut());
     Ok(())
 }
 

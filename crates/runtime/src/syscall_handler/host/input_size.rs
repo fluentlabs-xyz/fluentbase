@@ -8,7 +8,7 @@ pub fn syscall_input_size_handler(
     _params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    let input_size = caller.context(syscall_input_size_impl);
+    let input_size = syscall_input_size_impl(caller.data());
     result[0] = Value::I32(input_size as i32);
     Ok(())
 }

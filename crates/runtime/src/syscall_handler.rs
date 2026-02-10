@@ -118,6 +118,6 @@ pub(crate) fn syscall_process_exit_code(
     ctx: &mut impl Store<RuntimeContext>,
     exit_code: ExitCode,
 ) -> TrapCode {
-    ctx.context_mut(|ctx| ctx.execution_result.exit_code = exit_code.into());
+    ctx.data_mut().execution_result.exit_code = exit_code.into();
     TrapCode::ExecutionHalted
 }

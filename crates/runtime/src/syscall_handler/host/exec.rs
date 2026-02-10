@@ -65,7 +65,7 @@ pub fn syscall_exec_handler(
     let mut code_hash = [0u8; 32];
     caller.memory_read(hash32_ptr, &mut code_hash)?;
     let code_hash = B256::from(code_hash);
-    let is_root = caller.context(|ctx| ctx.call_depth) == 0;
+    let is_root = caller.data().call_depth == 0;
     let params = SyscallInvocationParams {
         code_hash,
         input: input_ptr..(input_ptr + input_len),
@@ -74,7 +74,7 @@ pub fn syscall_exec_handler(
         fuel16_ptr: fuel16_ptr as u32,
     };
     // return resumable error
-    caller.context_mut(|ctx| ctx.resumable_context = Some(InterruptionHolder { params, is_root }));
+    caller.data_mut().resumable_context = Some(InterruptionHolder { params, is_root });
     Err(TrapCode::InterruptionCalled)
 }
 

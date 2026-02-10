@@ -51,7 +51,7 @@ ark-serialize = { workspace = true }
 default = [
     "std",
     # "fluent-testnet",
-    # "wasmtime",
+    "wasmtime",
     # "debug-print",
     # "svm",
     # "enable-error-text-checks", # when 'fast-panic' is off

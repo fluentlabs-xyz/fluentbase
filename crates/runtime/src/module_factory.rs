@@ -1,8 +1,10 @@
 use fluentbase_types::{BytecodeOrHash, B256};
 use rwasm::RwasmModule;
 use schnellru::{Limiter, LruMap};
-use std::marker::PhantomData;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::{
+    marker::PhantomData,
+    sync::{Arc, LazyLock, Mutex},
+};
 
 /// Global factory maintaining compiled module cache and resumable runtime instances.
 #[derive(Clone)]
@@ -45,7 +47,7 @@ impl ModuleFactory {
         &mut self,
         code_hash: B256,
         address: fluentbase_types::Address,
-    ) -> wasmtime::Module {
+    ) -> rwasm::WasmtimeModule {
         let mut ctx = self.inner.lock().unwrap();
 
         if let Some(module) = ctx.wasmtime_modules.get(&code_hash) {
@@ -72,7 +74,7 @@ impl ModuleFactory {
     pub fn warmup_wasmtime(
         &mut self,
         rwasm_module: RwasmModule,
-        wasmtime_module: wasmtime::Module,
+        wasmtime_module: rwasm::WasmtimeModule,
         code_hash: B256,
     ) {
         let mut ctx = self.inner.lock().unwrap();
@@ -85,7 +87,8 @@ impl ModuleFactory {
 struct ModuleFactoryInner {
     pub cached_modules: LruMap<B256, RwasmModule, ModuleMemoryLimiter<RwasmModule>>,
     #[cfg(feature = "wasmtime")]
-    pub wasmtime_modules: LruMap<B256, wasmtime::Module, ModuleMemoryLimiter<wasmtime::Module>>,
+    pub wasmtime_modules:
+        LruMap<B256, rwasm::WasmtimeModule, ModuleMemoryLimiter<rwasm::WasmtimeModule>>,
 }
 
 /// Maximum memory for module cache: 1 GB
@@ -101,7 +104,7 @@ impl Default for ModuleFactoryInner {
                 CACHED_MODULES_SIZE_LIMIT,
             )),
             #[cfg(feature = "wasmtime")]
-            wasmtime_modules: LruMap::new(ModuleMemoryLimiter::<wasmtime::Module>::new(
+            wasmtime_modules: LruMap::new(ModuleMemoryLimiter::<rwasm::WasmtimeModule>::new(
                 CACHED_MODULES_SIZE_LIMIT,
             )),
         }
@@ -131,7 +134,7 @@ impl SizeEstimator for RwasmModule {
 }
 
 #[cfg(feature = "wasmtime")]
-impl SizeEstimator for wasmtime::Module {
+impl SizeEstimator for rwasm::WasmtimeModule {
     #[inline]
     fn estimate_size(&self) -> usize {
         let range = self.image_range();
@@ -288,7 +291,7 @@ mod tests {
             data_section: vec![],
             elem_section: vec![],
         }
-            .into()
+        .into()
     }
 
     /// Creates a deterministic B256 key from a u16 id.

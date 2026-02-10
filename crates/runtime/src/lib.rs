@@ -1,5 +1,6 @@
 #![allow(dead_code, unreachable_patterns, unused_macros)]
 #![warn(unused_crate_dependencies)]
+extern crate alloc;
 extern crate core;
 
 mod context;

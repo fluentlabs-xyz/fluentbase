@@ -33,17 +33,15 @@ pub fn syscall_resume_handler(
     } else {
         (0, 0)
     };
-    let (fuel_consumed, fuel_refunded, exit_code) = caller.context_mut(|ctx| {
-        syscall_resume_impl(
-            ctx,
-            call_id,
-            &return_data,
-            exit_code,
-            fuel_consumed,
-            fuel_refunded,
-            fuel16_ptr as u32,
-        )
-    });
+    let (fuel_consumed, fuel_refunded, exit_code) = syscall_resume_impl(
+        caller.data_mut(),
+        call_id,
+        &return_data,
+        exit_code,
+        fuel_consumed,
+        fuel_refunded,
+        fuel16_ptr as u32,
+    );
     if fuel16_ptr > 0 {
         caller.memory_write(fuel16_ptr, &fuel_consumed.to_le_bytes())?;
         caller.memory_write(fuel16_ptr + 8, &fuel_refunded.to_le_bytes())?;

@@ -15,8 +15,7 @@ pub fn syscall_read_output_handler(
         params[1].i32().unwrap() as u32,
         params[2].i32().unwrap() as u32,
     );
-    let input = ctx
-        .context_mut(|ctx| syscall_read_output_impl(ctx, offset, length))
+    let input = syscall_read_output_impl(ctx.data_mut(), offset, length)
         .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
     let _ = ctx.memory_write(target_ptr, &input)?;
     Ok(())

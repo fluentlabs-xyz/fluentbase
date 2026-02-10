@@ -1,7 +1,4 @@
-use crate::{
-    SysFuncIdx, FUEL_DENOM_RATE, FUEL_MAX_LINEAR_X, FUEL_MAX_QUADRATIC_X, QUADRATIC_DIVISOR,
-    QUADRATIC_WORD_FUEL_COST,
-};
+use crate::{SysFuncIdx, FUEL_DENOM_RATE, QUADRATIC_DIVISOR, QUADRATIC_WORD_FUEL_COST};
 use rwasm::{LinearFuelParams, QuadraticFuelParams, SyscallFuelParams};
 
 /// In this file, we define the fuel procedures that will be inserted by the rwasm translator
@@ -24,10 +21,9 @@ macro_rules! const_fuel {
 macro_rules! linear_fuel {
     ($param_index:expr, $base:expr, $linear:expr) => {
         SyscallFuelParams::LinearFuel(LinearFuelParams {
-            base_fuel: $base as u64,
+            base_fuel: $base,
             param_index: $param_index,
-            word_cost: $linear as u64,
-            max_linear: FUEL_MAX_LINEAR_X as u64,
+            word_cost: $linear,
         })
     };
 }
@@ -35,17 +31,16 @@ macro_rules! linear_fuel {
 macro_rules! quadratic_fuel {
     ($local_depth:expr, $word_cost:expr, $divisor:expr) => {
         SyscallFuelParams::QuadraticFuel(QuadraticFuelParams {
-            divisor: $divisor as u64,
-            param_index: $local_depth,
-            word_cost: $word_cost as u64,
-            max_quadratic: FUEL_MAX_QUADRATIC_X as u64,
-            fuel_denom_rate: FUEL_DENOM_RATE as u64,
+            divisor: $divisor,
+            local_depth: $local_depth,
+            word_cost: $word_cost,
+            fuel_denom_rate: FUEL_DENOM_RATE as u32,
         })
     };
 }
 
 // Common fuel cost constants
-pub const LOW_FUEL_COST: u32 = 20 * FUEL_DENOM_RATE as u32;
+pub const STATE_FUEL_COST: u32 = 20 * FUEL_DENOM_RATE as u32;
 pub const COPY_BASE_FUEL_COST: u32 = 20 * FUEL_DENOM_RATE as u32;
 pub const COPY_WORD_FUEL_COST: u32 = 3 * FUEL_DENOM_RATE as u32;
 pub const DEBUG_LOG_BASE_FUEL_COST: u32 = 50 * FUEL_DENOM_RATE as u32;
@@ -110,22 +105,22 @@ pub(crate) fn calculate_syscall_fuel(sys_func_idx: SysFuncIdx) -> SyscallFuelPar
     match sys_func_idx {
         // input/output & state control (0x00)
         EXIT => no_fuel!(),
-        STATE => const_fuel!(LOW_FUEL_COST),
+        STATE => const_fuel!(STATE_FUEL_COST),
         READ_INPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
-        INPUT_SIZE => const_fuel!(LOW_FUEL_COST),
+        INPUT_SIZE => const_fuel!(STATE_FUEL_COST),
         WRITE_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
-        OUTPUT_SIZE => const_fuel!(LOW_FUEL_COST),
+        OUTPUT_SIZE => const_fuel!(STATE_FUEL_COST),
         READ_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
         EXEC => quadratic_fuel!(3, QUADRATIC_WORD_FUEL_COST, QUADRATIC_DIVISOR),
         RESUME => no_fuel!(),
         FORWARD_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
         CHARGE_FUEL_MANUALLY => no_fuel!(),
-        FUEL => const_fuel!(LOW_FUEL_COST),
+        FUEL => const_fuel!(STATE_FUEL_COST),
         DEBUG_LOG => linear_fuel!(1, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST),
         CHARGE_FUEL => const_fuel!(CHARGE_FUEL_BASE_COST),
         ENTER_UNCONSTRAINED => no_fuel!(),
         EXIT_UNCONSTRAINED => no_fuel!(),
-        // TODO: use correct fuel calculations here, once we will implement WRITE_FD
+        // TODO: use correct fuel calculations here, once we implement `WRITE_FD`, no fuel for now
         WRITE_FD => no_fuel!(),
 
         // hashing functions (0x01)

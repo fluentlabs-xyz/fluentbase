@@ -1,18 +1,18 @@
 //! Contract execution runtime.
 //!
-//! This module implements execution of user-deployed contracts
+//! This module implements the execution of user-deployed contracts
 //! in the rWasm environment. It is responsible for:
-//! - selecting the correct entrypoint (`main` vs `deploy`),
+//! - selecting the correct entrypoint (`main` vs. `deploy`),
 //! - wiring syscalls via the runtime syscall handler,
 //! - driving execution and resumption,
-//! - mediating access to linear memory, fuel and runtime context.
+//! - mediating access to linear memory, fuel, and runtime context.
 //!
 //! `ContractRuntime` is intentionally thin: most execution semantics
 //! are delegated to `Strategy` and `TypedStore`.
 
 use crate::{syscall_handler::runtime_syscall_handler, RuntimeContext};
 use fluentbase_types::{STATE_DEPLOY, STATE_MAIN};
-use rwasm::{FuelConfig, ImportLinker, Store, Strategy, TrapCode, TypedStore, Value};
+use rwasm::{FuelConfig, ImportLinker, Store, TrapCode, TypedModule, TypedStore, Value};
 use std::sync::Arc;
 
 /// Runtime responsible for executing a single contract invocation.
@@ -27,10 +27,10 @@ pub struct ContractRuntime {
     /// Execution strategy used to run the contract code.
     ///
     /// The strategy defines how rWasm bytecode is executed
-    /// (e.g. interpreter vs compiled backend).
-    strategy: Strategy,
+    /// (e.g., interpreter vs. compiled backend).
+    strategy: TypedModule,
 
-    /// Typed store containing linear memory, globals, fuel state
+    /// Typed store containing linear memory, globals, fuel state,
     /// and the associated `RuntimeContext`.
     store: TypedStore<RuntimeContext>,
 
@@ -54,7 +54,7 @@ impl ContractRuntime {
     ///
     /// Panics if the contract state is neither `STATE_MAIN` nor `STATE_DEPLOY`.
     pub fn new(
-        strategy: Strategy,
+        strategy: TypedModule,
         import_linker: Arc<ImportLinker>,
         ctx: RuntimeContext,
         fuel_config: FuelConfig,
@@ -64,9 +64,7 @@ impl ContractRuntime {
             STATE_DEPLOY => "deploy",
             _ => unreachable!(),
         };
-
         let store = strategy.create_store(import_linker, ctx, runtime_syscall_handler, fuel_config);
-
         Self {
             strategy,
             store,
@@ -124,13 +122,13 @@ impl ContractRuntime {
     /// This is the only supported way to mutate execution-scoped state
     /// such as logs, gas accounting, call depth or environment data.
     pub fn context_mut<R, F: FnOnce(&mut RuntimeContext) -> R>(&mut self, func: F) -> R {
-        self.store.context_mut(func)
+        func(self.store.data_mut())
     }
 
     /// Provides immutable access to the runtime context.
     ///
     /// Intended for inspection and read-only queries.
     pub fn context<R, F: FnOnce(&RuntimeContext) -> R>(&self, func: F) -> R {
-        self.store.context(func)
+        func(self.store.data())
     }
 }

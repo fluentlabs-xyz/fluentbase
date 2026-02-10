@@ -13,11 +13,9 @@ pub fn syscall_forward_output_handler(
         params[0].i32().unwrap() as u32,
         params[1].i32().unwrap() as u32,
     );
-    caller.context_mut(|ctx| {
-        syscall_forward_output_impl(ctx, offset, length).map_err(|err| {
-            ctx.execution_result.exit_code = err.into_i32();
-            TrapCode::ExecutionHalted
-        })
+    syscall_forward_output_impl(caller.data_mut(), offset, length).map_err(|err| {
+        caller.data_mut().execution_result.exit_code = err.into_i32();
+        TrapCode::ExecutionHalted
     })
 }
 
