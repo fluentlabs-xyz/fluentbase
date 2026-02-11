@@ -4110,9 +4110,8 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.3.2"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=feat%2Fnew-stateless-runtime#0fe016c22a04b7e02a173eba373127016a0ba966"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=feat%2Fnew-stateless-runtime#a8b52a490fc2d1192ae308cc5c12828280397369"
 dependencies = [
- "anyhow",
  "bincode 2.0.1",
  "bitvec",
  "bytes",

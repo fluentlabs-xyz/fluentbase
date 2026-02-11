@@ -5,11 +5,11 @@
 ///  that must be represented inside rWasm zkVM.
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use fluentbase_types::{ExitCode, ED25519_POINT_COMPRESSED_SIZE, ED25519_POINT_DECOMPRESSED_SIZE};
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 use sp1_curves::{curve25519_dalek::CompressedEdwardsY, edwards::ed25519::decompress};
 
 pub fn syscall_ed25519_decompress_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

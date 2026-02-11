@@ -1,10 +1,10 @@
 /// Builtin to query the size of the current return_data buffer.
 use crate::RuntimeContext;
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 /// Writes the length of ctx.execution_result.return_data into result[0].
 pub fn syscall_output_size_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     _params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {

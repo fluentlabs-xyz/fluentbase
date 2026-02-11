@@ -2,11 +2,11 @@
 ///
 /// TODO(dmitry123): Remove this method for the finalized builtin scheme.
 use crate::RuntimeContext;
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 /// Validates that fuel metering is disabled, applies manual charge/refund, and returns remaining fuel.
 pub fn syscall_charge_fuel_manually_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {

@@ -1,9 +1,9 @@
 use crate::RuntimeContext;
 use num::{BigUint, One, Zero};
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 pub fn syscall_uint256_mul_mod_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

@@ -1,5 +1,3 @@
-mod context;
-
 use crate::{
     byteorder::{ByteOrder, LittleEndian},
     syscall::*,

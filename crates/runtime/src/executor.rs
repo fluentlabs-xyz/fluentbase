@@ -7,7 +7,7 @@ use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     import_linker_v1_preview, Address, BytecodeOrHash, ExitCode, HashMap, B256,
 };
-use rwasm::{ExecutionEngine, FuelConfig, ImportLinker, RwasmModule, TrapCode, TypedModule};
+use rwasm::{ExecutionEngine, ImportLinker, RwasmModule, StrategyDefinition, TrapCode};
 use std::{cell::RefCell, mem::take, sync::Arc};
 
 /// Finalized outcome of a single runtime invocation.
@@ -30,7 +30,7 @@ pub struct ExecutionResult {
 impl ExecutionResult {
     pub fn take_and_continue(&mut self, is_interrupted: bool) -> Self {
         let mut result = take(self);
-        // We don't propagate output into intermediary state
+        // We don't propagate output into an intermediary state
         if is_interrupted {
             self.output = take(&mut result.output);
             self.return_data = take(&mut result.return_data);
@@ -78,7 +78,7 @@ pub trait RuntimeExecutor {
 
     /// Resumes a previously interrupted runtime.
     ///
-    /// fuel16_ptr optionally points to a 16-byte buffer where fuel consumption and refund are written back.
+    /// `fuel16_ptr` optionally points to a 16-byte buffer where fuel consumption and refund are written back.
     fn resume(
         &mut self,
         call_id: u32,
@@ -92,16 +92,8 @@ pub trait RuntimeExecutor {
     /// Drop a runtime we don't need to resume anymore
     fn forget_runtime(&mut self, call_id: u32);
 
-    /// Warmup the bytecode
+    /// Warm up the bytecode
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address);
-
-    #[cfg(feature = "wasmtime")]
-    fn warmup_wasmtime(
-        &mut self,
-        rwasm_module: RwasmModule,
-        wasmtime_module: rwasm::WasmtimeModule,
-        code_hash: B256,
-    );
 
     /// Resets the per-transaction call identifier counter and clears recoverable runtimes.
     ///
@@ -161,18 +153,6 @@ impl RuntimeExecutor for ThreadLocalExecutor {
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {
         LOCAL_RUNTIME_EXECUTOR
             .with_borrow_mut(|runtime_executor| runtime_executor.warmup(bytecode, hash, address))
-    }
-
-    #[cfg(feature = "wasmtime")]
-    fn warmup_wasmtime(
-        &mut self,
-        rwasm_module: RwasmModule,
-        wasmtime_module: rwasm::WasmtimeModule,
-        code_hash: B256,
-    ) {
-        LOCAL_RUNTIME_EXECUTOR.with_borrow_mut(|runtime_executor| {
-            runtime_executor.warmup_wasmtime(rwasm_module, wasmtime_module, code_hash)
-        })
     }
 
     fn reset_call_id_counter(&mut self) {
@@ -252,7 +232,7 @@ impl RuntimeFactoryExecutor {
         debug_assert!(prev.is_none());
 
         ExecutionResult {
-            // We return `call_id` as exit code (it's safe, because exit code can't be positive)
+            // We return `call_id` as exit code (it's safe because exit code can't be positive)
             exit_code: call_id as i32,
             // Forward info about consumed and refunded fuel (during the call)
             fuel_consumed: interruption.fuel_consumed,
@@ -277,7 +257,7 @@ impl RuntimeFactoryExecutor {
             .execution_result
             .take_and_continue(ctx.resumable_context.is_some());
         // There are two counters for fuel: opcode fuel counter; manually charged.
-        // It's applied for execution runtimes where we don't know the final fuel consumed,
+        // It's applied for execution runtimes where we don't know the final fuel consumed
         // till it's committed by Wasm runtime.
         // That is why we rewrite fuel here to check how much we've really spent based on the context information.
         if let Some(store_fuel_consumed) = fuel_consumed {
@@ -310,10 +290,10 @@ impl RuntimeFactoryExecutor {
                 ..
             } = execution_result;
             // A case for normal interruption (not system runtime interruption), where we should
-            // serialize the context we remembered inside `exec.rs`
+            // serialize the context we remembered inside the `exec.rs `
             // handler to pass into parent runtime.
             //
-            // SAFETY: For system runtimes we don't save this
+            // Safety: For system runtimes we don't save this
             if let Some(resumable_return_data) = ctx.take_resumable_context_serialized() {
                 return_data = resumable_return_data;
             }
@@ -334,23 +314,19 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         ctx: RuntimeContext,
     ) -> ExecutionResult {
         #[allow(unused_variables)]
-        let (enable_wasmtime_runtime, enable_system_runtime, consume_fuel) = match &bytecode_or_hash
-        {
+        let (enable_system_runtime, consume_fuel) = match &bytecode_or_hash {
             BytecodeOrHash::Bytecode { address, hash, .. } => (
-                fluentbase_types::is_execute_using_wasmtime_strategy(address)
-                    .then_some((*address, *hash)),
                 fluentbase_types::is_execute_using_system_runtime(address).then_some(*hash),
                 fluentbase_types::is_engine_metered_precompile(address),
             ),
-            BytecodeOrHash::Hash(_) => (None, None, false),
+            BytecodeOrHash::Hash(_) => (None, false),
         };
 
         // If we have a cached module, then use it, otherwise create a new one and cache
         let module = self.module_factory.get_module_or_init(bytecode_or_hash);
 
         // If there is no cached store, then construct a new one (slow)
-        let fuel_remaining = Some(ctx.fuel_limit);
-        let fuel_config = FuelConfig::default().with_fuel_limit(ctx.fuel_limit);
+        let fuel_limit = Some(ctx.fuel_limit);
 
         let mut exec_mode = if let Some(code_hash) = enable_system_runtime {
             let runtime = SystemRuntime::new(
@@ -362,35 +338,39 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             );
             ExecutionMode::System(runtime)
         } else {
-            #[cfg(feature = "wasmtime")]
-            let strategy = if let Some((address, code_hash)) = enable_wasmtime_runtime {
-                let module = self
-                    .module_factory
-                    .get_wasmtime_module_or_compile(code_hash, address);
-                TypedModule::Wasmtime { module }
-            } else {
-                let engine = ExecutionEngine::acquire_shared();
-                TypedModule::Rwasm { module, engine }
-            };
-            #[cfg(not(feature = "wasmtime"))]
-            let strategy = {
-                let engine = ExecutionEngine::acquire_shared();
-                TypedModule::Rwasm { module, engine }
-            };
+            let engine = ExecutionEngine::acquire_shared();
+            // We always execute untrusted contracts with rWasm VM
+            let strategy = StrategyDefinition::Rwasm { engine, module };
             let runtime =
-                ContractRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_config);
-            ExecutionMode::Contract(runtime)
+                ContractRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_limit);
+            // This is an extraordinary case where we fail during resource init inside the entrypoint,
+            // but there is nothing we can do here rather than just return the execution error.
+            //
+            // By default, start sections are not allowed for users, so users can't deploy contracts that
+            // cause traps inside the entrypoint.
+            //
+            // Ideally, it should never happen.
+            if let Some(trap_code) = runtime.as_ref().err() {
+                return ExecutionResult {
+                    exit_code: ExitCode::from(trap_code).into_i32(),
+                    fuel_consumed: fuel_limit.unwrap_or(0),
+                    fuel_refunded: 0,
+                    output: vec![],
+                    return_data: vec![],
+                };
+            }
+            ExecutionMode::Contract(runtime.unwrap())
         };
 
         // Execute program
         let result = exec_mode.execute();
         let fuel_consumed = exec_mode
             .remaining_fuel()
-            .zip(fuel_remaining)
+            .zip(fuel_limit)
             .map(|(remaining_fuel, store_fuel)| store_fuel - remaining_fuel);
 
         let runtime_result =
-            exec_mode.context_mut(|ctx| self.handle_execution_result(result, fuel_consumed, ctx));
+            self.handle_execution_result(result, fuel_consumed, exec_mode.context_mut());
         self.try_remember_runtime(runtime_result, exec_mode)
     }
 
@@ -410,9 +390,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let mut fuel_remaining = runtime.remaining_fuel();
         let resume_inner = |runtime: &mut ExecutionMode| {
             // Copy return data into return data
-            runtime.context_mut(|ctx| {
-                ctx.execution_result.return_data = return_data.to_vec();
-            });
+            runtime.context_mut().execution_result.return_data = return_data.to_vec();
             if fuel16_ptr > 0 {
                 let mut buffer = [0u8; 16];
                 LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
@@ -431,7 +409,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             .remaining_fuel()
             .and_then(|remaining_fuel| Some(fuel_remaining? - remaining_fuel));
         let runtime_result =
-            runtime.context_mut(|ctx| self.handle_execution_result(result, fuel_consumed, ctx));
+            self.handle_execution_result(result, fuel_consumed, runtime.context_mut());
         let result = self.try_remember_runtime(runtime_result, runtime);
         result
     }
@@ -447,20 +425,6 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
                 hash,
                 address,
             });
-        #[cfg(feature = "wasmtime")]
-        self.module_factory
-            .get_wasmtime_module_or_compile(hash, address);
-    }
-
-    #[cfg(feature = "wasmtime")]
-    fn warmup_wasmtime(
-        &mut self,
-        rwasm_module: RwasmModule,
-        wasmtime_module: rwasm::WasmtimeModule,
-        hash: B256,
-    ) {
-        self.module_factory
-            .warmup_wasmtime(rwasm_module, wasmtime_module, hash);
     }
 
     fn reset_call_id_counter(&mut self) {
@@ -494,13 +458,13 @@ mod tests {
         RuntimeContext,
     };
     use fluentbase_types::{import_linker_v1_preview, ExitCode};
-    use rwasm::{ExecutionEngine, FuelConfig, RwasmModule, TypedModule};
+    use rwasm::{ExecutionEngine, RwasmModule, StrategyDefinition};
 
     #[test]
     fn call_id_overflow() {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
 
-        // Set counter to i32::MAX to trigger overflow on next allocation
+        // Set counter to i32::MAX to trigger overflow on the next allocation
         executor.transaction_call_id_counter = i32::MAX as u32 + 1;
 
         let interruption = RuntimeResult::Interruption(ExecutionInterruption {
@@ -512,14 +476,14 @@ mod tests {
         let engine = ExecutionEngine::acquire_shared();
         let module = RwasmModule::default();
         let ctx = RuntimeContext::default();
-        let fuel_config = FuelConfig::default();
 
         let strategy_runtime = ContractRuntime::new(
-            TypedModule::Rwasm { module, engine },
+            StrategyDefinition::Rwasm { module, engine },
             executor.import_linker.clone(),
             ctx,
-            fuel_config,
-        );
+            None,
+        )
+        .unwrap();
         let runtime = ExecutionMode::Contract(strategy_runtime);
 
         // Try to allocate call_id - should fail with overflow

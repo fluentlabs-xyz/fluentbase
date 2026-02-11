@@ -2,10 +2,10 @@
 /// We keep it only for backward compatibility with testnet.
 use crate::RuntimeContext;
 use fluentbase_types::{keccak256, B256};
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 pub fn syscall_hashing_keccak256_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

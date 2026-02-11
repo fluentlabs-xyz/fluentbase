@@ -1,10 +1,10 @@
 /// Builtin to append bytes to the runtime output buffer.
 use crate::RuntimeContext;
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 /// Reads a slice from linear memory and appends it to ctx.execution_result.output.
 pub fn syscall_write_output_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

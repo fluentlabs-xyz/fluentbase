@@ -41,54 +41,10 @@ impl ModuleFactory {
         ctx.cached_modules.insert(code_hash, rwasm_module.clone());
         rwasm_module
     }
-
-    #[cfg(feature = "wasmtime")]
-    pub fn get_wasmtime_module_or_compile(
-        &mut self,
-        code_hash: B256,
-        address: fluentbase_types::Address,
-    ) -> rwasm::WasmtimeModule {
-        let mut ctx = self.inner.lock().unwrap();
-
-        if let Some(module) = ctx.wasmtime_modules.get(&code_hash) {
-            return module.clone();
-        }
-        println!("missing wasmtime module address={address} code_hash={code_hash}, compiling");
-
-        let rwasm_module = ctx
-            .cached_modules
-            .get(&code_hash)
-            .cloned()
-            .expect("runtime: missing rwasm module during wasmtime compilation");
-
-        use rwasm::{compile_wasmtime_module, CompilationConfig};
-        let module =
-            compile_wasmtime_module(CompilationConfig::default(), &rwasm_module.hint_section)
-                .unwrap();
-
-        ctx.wasmtime_modules.insert(code_hash, module.clone());
-        module
-    }
-
-    #[cfg(feature = "wasmtime")]
-    pub fn warmup_wasmtime(
-        &mut self,
-        rwasm_module: RwasmModule,
-        wasmtime_module: rwasm::WasmtimeModule,
-        code_hash: B256,
-    ) {
-        let mut ctx = self.inner.lock().unwrap();
-        ctx.cached_modules.insert(code_hash, rwasm_module);
-        ctx.wasmtime_modules
-            .insert(code_hash, wasmtime_module.clone());
-    }
 }
 
 struct ModuleFactoryInner {
     pub cached_modules: LruMap<B256, RwasmModule, ModuleMemoryLimiter<RwasmModule>>,
-    #[cfg(feature = "wasmtime")]
-    pub wasmtime_modules:
-        LruMap<B256, rwasm::WasmtimeModule, ModuleMemoryLimiter<rwasm::WasmtimeModule>>,
 }
 
 /// Maximum memory for module cache: 1 GB
@@ -101,10 +57,6 @@ impl Default for ModuleFactoryInner {
     fn default() -> Self {
         Self {
             cached_modules: LruMap::new(ModuleMemoryLimiter::<RwasmModule>::new(
-                CACHED_MODULES_SIZE_LIMIT,
-            )),
-            #[cfg(feature = "wasmtime")]
-            wasmtime_modules: LruMap::new(ModuleMemoryLimiter::<rwasm::WasmtimeModule>::new(
                 CACHED_MODULES_SIZE_LIMIT,
             )),
         }
@@ -130,15 +82,6 @@ impl SizeEstimator for RwasmModule {
             + self.hint_section.len()
             + self.data_section.len()
             + self.elem_section.len() * U32_SIZE
-    }
-}
-
-#[cfg(feature = "wasmtime")]
-impl SizeEstimator for rwasm::WasmtimeModule {
-    #[inline]
-    fn estimate_size(&self) -> usize {
-        let range = self.image_range();
-        (range.end as usize).saturating_sub(range.start as usize)
     }
 }
 
@@ -290,6 +233,7 @@ mod tests {
             hint_section: vec![0u8; hint_size],
             data_section: vec![],
             elem_section: vec![],
+            source_pc: 0,
         }
         .into()
     }

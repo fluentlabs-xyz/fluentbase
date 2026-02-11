@@ -2,11 +2,11 @@
 use crate::syscall_handler::syscall_process_exit_code;
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 /// Reads [offset, offset+length) from `ctx.input` and writes it at target_ptr.
 pub fn syscall_read_input_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

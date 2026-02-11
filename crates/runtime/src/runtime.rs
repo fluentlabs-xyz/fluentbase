@@ -23,7 +23,7 @@ pub use system_runtime::SystemRuntime;
 /// or in a *system* context (privileged runtimes, precompiles, delegated VMs).
 ///
 /// Both modes expose the same operational surface:
-/// execution control, memory access, fuel accounting and context access.
+/// execution control, memory access, fuel accounting, and context access.
 /// This enum acts as a dynamic dispatcher between them.
 pub enum ExecutionMode {
     /// Contract-level execution runtime.
@@ -34,7 +34,7 @@ pub enum ExecutionMode {
 
     /// System-level execution runtime.
     ///
-    /// Used for privileged or delegated runtimes (e.g. EVM/SVM/Wasm system
+    /// Used for privileged or delegated runtimes (e.g., EVM/SVM/Wasm system
     /// runtimes) that may have different invariants or capabilities.
     System(SystemRuntime),
 }
@@ -100,15 +100,15 @@ impl ExecutionMode {
     /// Provides mutable access to the underlying `RuntimeContext`.
     ///
     /// This is the only sanctioned way to mutate execution context shared
-    /// between the executor and the runtime (e.g. call depth, logs, gas
+    /// between the executor and the runtime (e.g., call depth, logs, gas
     /// accounting, environment data).
     ///
     /// The closure-based API prevents leaking mutable references outside
     /// the execution boundary.
-    pub fn context_mut<R, F: FnOnce(&mut RuntimeContext) -> R>(&mut self, func: F) -> R {
+    pub fn context_mut(&mut self) -> &mut RuntimeContext {
         match self {
-            ExecutionMode::Contract(runtime) => runtime.context_mut(func),
-            ExecutionMode::System(runtime) => runtime.context_mut(func),
+            ExecutionMode::Contract(runtime) => runtime.context_mut(),
+            ExecutionMode::System(runtime) => runtime.context_mut(),
         }
     }
 
@@ -116,10 +116,10 @@ impl ExecutionMode {
     ///
     /// Intended for inspection and read-only queries without allowing
     /// mutation of consensus-critical state.
-    pub fn context<R, F: FnOnce(&RuntimeContext) -> R>(&self, func: F) -> R {
+    pub fn context(&self) -> &RuntimeContext {
         match self {
-            ExecutionMode::Contract(runtime) => runtime.context(func),
-            ExecutionMode::System(runtime) => runtime.context(func),
+            ExecutionMode::Contract(runtime) => runtime.context(),
+            ExecutionMode::System(runtime) => runtime.context(),
         }
     }
 }

@@ -1,11 +1,11 @@
 ///! Builtin to append a slice of return_data to the output buffer.
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 /// Copies [offset, offset+length) from return_data into output; halts on out-of-bounds.
 pub fn syscall_forward_output_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

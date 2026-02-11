@@ -9,14 +9,14 @@ use fluentbase_types::{
 };
 use k256::elliptic_curve::{point::DecompressPoint, sec1::ToEncodedPoint, subtle::Choice};
 use num::{BigUint, Num};
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 use sp1_curves::{
     weierstrass::{bls12_381::Bls12381, secp256k1::Secp256k1, secp256r1::Secp256r1},
     AffinePoint, CurveType, EllipticCurve,
 };
 
 pub fn syscall_secp256k1_decompress_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -27,7 +27,7 @@ pub fn syscall_secp256k1_decompress_handler(
     >(ctx, params, _result)
 }
 pub fn syscall_secp256r1_decompress_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -38,7 +38,7 @@ pub fn syscall_secp256r1_decompress_handler(
     >(ctx, params, _result)
 }
 pub fn syscall_bls12381_decompress_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -54,7 +54,7 @@ fn syscall_weierstrass_decompress_handler<
     const COMPRESSED_SIZE: usize,
     const DECOMPRESSED_SIZE: usize,
 >(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

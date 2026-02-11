@@ -7,11 +7,11 @@ use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     ExitCode,
 };
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 /// Handles the resume syscall. Copies return data, applies fuel, resumes the target, and writes back the exit code.
 pub fn syscall_resume_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {

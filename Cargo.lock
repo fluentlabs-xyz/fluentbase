@@ -2800,6 +2800,8 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.2.0",
  "serde",
  "serde_core",
@@ -3219,6 +3221,15 @@ name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+
+[[package]]
+name = "lru"
+version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1dc47f592c06f33f8e3aea9591776ec7c9f9e4124778ff8a3c3b87159f7e593"
+dependencies = [
+ "hashbrown 0.16.1",
+]
 
 [[package]]
 name = "mach2"
@@ -4707,7 +4718,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.3.2"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=feat%2Fnew-stateless-runtime#0fe016c22a04b7e02a173eba373127016a0ba966"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=feat%2Fnew-stateless-runtime#a8b52a490fc2d1192ae308cc5c12828280397369"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -4717,6 +4728,7 @@ dependencies = [
  "downcast-rs",
  "hashbrown 0.15.5",
  "libm",
+ "lru",
  "num-derive",
  "num-traits",
  "paste",

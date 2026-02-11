@@ -33,8 +33,8 @@ use alloc::sync::Arc;
 use core::{cell::RefCell, mem::take};
 use fluentbase_types::{ExitCode, HashMap, SysFuncIdx, B256, STATE_DEPLOY, STATE_MAIN};
 use rwasm::{
-    CompilationConfig, FuelConfig, ImportLinker, Opcode, RwasmModule, StateRouterConfig, Store,
-    TrapCode, TypedModule, TypedStore,
+    CompilationConfig, ImportLinker, Opcode, RwasmModule, StateRouterConfig, StoreTr,
+    StrategyDefinition, StrategyExecutor, TrapCode,
 };
 
 /// A system runtime instance.
@@ -79,17 +79,7 @@ pub struct SystemRuntime {
 /// - a `Store<RuntimeContext>` holding runtime state and a swap-in context,
 /// - an instantiated `Instance` and its exported memory,
 /// - cached exported entry functions.
-struct CompiledRuntime {
-    module: TypedModule,
-    store: TypedStore<RuntimeContext>,
-}
-
-impl CompiledRuntime {
-    pub fn execute(&mut self, entrypoint: &str) -> Result<(), TrapCode> {
-        self.module
-            .execute(&mut self.store, entrypoint, &[], &mut [])
-    }
-}
+type CompiledRuntime = StrategyExecutor<RuntimeContext>;
 
 thread_local! {
     /// Thread-local cache of fully instantiated runtimes keyed by code hash.
@@ -148,22 +138,20 @@ impl SystemRuntime {
             // `hint_section` contains Wasmtime-compatible wasm bytes for the system runtime.
             // Any compilation failure here is fatal: genesis/runtime packaging is inconsistent.
             let Ok(typed_module) =
-                TypedModule::new(config, &rwasm_module.hint_section, Some(code_hash.0))
+                StrategyDefinition::new(config, &rwasm_module.hint_section, Some(code_hash.0))
             else {
                 unreachable!("runtime: failed to compile system runtime module")
             };
-            let fuel_config = FuelConfig::default();
-            let typed_store = typed_module.create_store(
+            let Ok(executor) = typed_module.create_executor(
                 import_linker,
                 RuntimeContext::default(),
                 runtime_syscall_handler,
-                fuel_config,
-            );
+                None,
+            ) else {
+                unreachable!("runtime: failed to create executor for system runtime module")
+            };
 
-            let compiled_runtime = Arc::new(RefCell::new(CompiledRuntime {
-                module: typed_module,
-                store: typed_store,
-            }));
+            let compiled_runtime = Arc::new(RefCell::new(executor));
             compiled_runtimes.insert(code_hash, compiled_runtime.clone());
             compiled_runtime
         });
@@ -200,25 +188,25 @@ impl SystemRuntime {
         //
         // Safety: Calls into a cached runtime must be strictly sequential. No reentrancy or
         // overlapping calls are allowed because we swap a single `RuntimeContext` in/out.
-        core::mem::swap(compiled_runtime.store.data_mut(), &mut self.ctx);
+        core::mem::swap(compiled_runtime.data_mut(), &mut self.ctx);
 
         // If fuel metering is enabled, set the fuel limit before execution.
         // The store is reused, so we must reset fuel for each new call.
         if self.consume_fuel {
-            let fuel_limit = compiled_runtime.store.data().fuel_limit;
-            compiled_runtime.store.set_fuel(fuel_limit);
+            let fuel_limit = compiled_runtime.data().fuel_limit;
+            compiled_runtime.reset_fuel(fuel_limit);
         }
 
         // Choose an entrypoint based on the current execution state.
-        let entrypoint = match compiled_runtime.store.data().state {
+        let entrypoint = match compiled_runtime.data().state {
             STATE_MAIN => "main",
             STATE_DEPLOY => "deploy",
             _ => unreachable!(),
         };
-        let result = compiled_runtime.execute(entrypoint);
+        let result = compiled_runtime.execute(entrypoint, &[], &mut []);
 
         // Always swap back immediately after the call, so we keep `self.ctx` authoritative.
-        core::mem::swap(compiled_runtime.store.data_mut(), &mut self.ctx);
+        core::mem::swap(compiled_runtime.data_mut(), &mut self.ctx);
 
         // If Wasmtime trapped, treat it as an unexpected fatal failure and degrade into a safe
         // error code. This avoids propagating a raw trap across the execution boundary.
@@ -315,7 +303,7 @@ impl SystemRuntime {
     /// Bounds violations are mapped into `TrapCode::MemoryOutOfBounds`.
     pub fn memory_write(&mut self, offset: usize, data: &[u8]) -> Result<(), TrapCode> {
         let mut compiled_runtime = self.compiled_runtime.borrow_mut();
-        compiled_runtime.store.memory_write(offset, data)
+        compiled_runtime.memory_write(offset, data)
     }
 
     /// Reads bytes from the system runtime's linear memory.
@@ -323,7 +311,7 @@ impl SystemRuntime {
     /// Bounds violations are mapped into `TrapCode::MemoryOutOfBounds`.
     pub fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
         let mut compiled_runtime = self.compiled_runtime.borrow_mut();
-        compiled_runtime.store.memory_read(offset, buffer)
+        compiled_runtime.memory_read(offset, buffer)
     }
 
     /// Returns remaining fuel if fuel metering is enabled.
@@ -336,19 +324,19 @@ impl SystemRuntime {
     pub fn remaining_fuel(&self) -> Option<u64> {
         let compiled_runtime = self.compiled_runtime.borrow();
         if self.consume_fuel {
-            compiled_runtime.store.remaining_fuel()
+            compiled_runtime.remaining_fuel()
         } else {
             None
         }
     }
 
     /// Provides mutable access to the per-call runtime context.
-    pub fn context_mut<R, F: FnOnce(&mut RuntimeContext) -> R>(&mut self, func: F) -> R {
-        func(&mut self.ctx)
+    pub fn context_mut(&mut self) -> &mut RuntimeContext {
+        &mut self.ctx
     }
 
     /// Provides immutable access to the per-call runtime context.
-    pub fn context<R, F: FnOnce(&RuntimeContext) -> R>(&self, func: F) -> R {
-        func(&self.ctx)
+    pub fn context(&self) -> &RuntimeContext {
+        &self.ctx
     }
 }
