@@ -17,7 +17,7 @@ use fluentbase_types::{
     },
     ExitCode,
 };
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 use sp1_curves::{
     edwards::ed25519::{ed25519_sqrt, Ed25519BaseField},
     params::FieldParameters,
@@ -25,7 +25,7 @@ use sp1_curves::{
 };
 
 pub fn syscall_write_fd_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -36,8 +36,7 @@ pub fn syscall_write_fd_handler(
     );
     let mut input = vec![0u8; slice_len as usize];
     caller.memory_read(slice_ptr as usize, &mut input)?;
-    caller
-        .context_mut(|ctx| syscall_write_fd_impl(ctx, fd, &input))
+    syscall_write_fd_impl(caller.data_mut(), fd, &input)
         .map_err(|err| syscall_process_exit_code(caller, err))?;
     Ok(())
 }

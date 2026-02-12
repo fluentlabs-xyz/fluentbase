@@ -3,14 +3,14 @@ use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
     calc_create_address, Address, Bytes, CHARGE_FUEL_BASE_COST, COPY_BASE_FUEL_COST,
     COPY_WORD_FUEL_COST, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST, FUEL_DENOM_RATE,
-    KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST, LOW_FUEL_COST,
+    KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST, STATE_FUEL_COST,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use revm::{
     context::result::ExecutionResult, interpreter::gas::calculate_initial_tx_gas,
     primitives::hardfork::SpecId,
 };
-use rwasm::CALL_FUEL_COST;
+use rwasm::{BASE_FUEL_COST, CALL_FUEL_COST};
 
 const WAT_TEMPLATE: &str = r#"
     (module
@@ -90,7 +90,8 @@ fn test_keccak_builtin() {
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
     let words = (123000 + 31) / 32;
-    let expected_fuel = KECCAK_BASE_FUEL_COST + KECCAK_WORD_FUEL_COST * words + CALL_FUEL_COST;
+    let expected_fuel =
+        KECCAK_BASE_FUEL_COST + KECCAK_WORD_FUEL_COST * words + 3 * BASE_FUEL_COST + CALL_FUEL_COST;
     assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
@@ -103,7 +104,8 @@ fn test_write_builtin() {
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
     let words = (123000 + 31) / 32;
-    let expected_fuel = COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * words + CALL_FUEL_COST;
+    let expected_fuel =
+        COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * words + 2 * BASE_FUEL_COST + CALL_FUEL_COST;
     assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
@@ -146,8 +148,11 @@ fn test_read_builtin() {
     let gas_offset = fuel_to_gas(30_000_000);
     let gas = run_twice_and_find_gas_difference(main, 1_000).saturating_sub(gas_offset);
     let words = (800 + 31) / 32;
-    let expected_fuel =
-        COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * words + CHARGE_FUEL_BASE_COST + CALL_FUEL_COST;
+    let expected_fuel = COPY_BASE_FUEL_COST
+        + COPY_WORD_FUEL_COST * words
+        + CHARGE_FUEL_BASE_COST
+        + 4 * BASE_FUEL_COST
+        + 2 * CALL_FUEL_COST;
     assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
@@ -160,8 +165,10 @@ fn test_debug_log_builtin() {
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
     let words = (123000 + 31) / 32;
-    let expected_fuel =
-        DEBUG_LOG_BASE_FUEL_COST + DEBUG_LOG_WORD_FUEL_COST * words + CALL_FUEL_COST;
+    let expected_fuel = DEBUG_LOG_BASE_FUEL_COST
+        + DEBUG_LOG_WORD_FUEL_COST * words
+        + 2 * BASE_FUEL_COST
+        + CALL_FUEL_COST;
     assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
@@ -174,7 +181,7 @@ fn test_output_size_builtin() {
     let gas = run_twice_and_find_gas_difference(main, 0);
 
     // OUTPUT_SIZE syscall uses LOW_FUEL_COST
-    let expected_fuel = CALL_FUEL_COST + LOW_FUEL_COST;
+    let expected_fuel = CALL_FUEL_COST + BASE_FUEL_COST + STATE_FUEL_COST;
     assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
@@ -186,7 +193,7 @@ fn test_state_builtin() {
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
     // STATE syscall uses LOW_FUEL_COST
-    let expected_fuel = CALL_FUEL_COST + LOW_FUEL_COST;
+    let expected_fuel = CALL_FUEL_COST + BASE_FUEL_COST + STATE_FUEL_COST;
     assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
@@ -198,7 +205,7 @@ fn test_fuel_builtin() {
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
     // FUEL syscall uses LOW_FUEL_COST
-    let expected_fuel = CALL_FUEL_COST + LOW_FUEL_COST;
+    let expected_fuel = CALL_FUEL_COST + BASE_FUEL_COST + STATE_FUEL_COST;
     assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
@@ -219,7 +226,7 @@ fn test_charge_fuel_builtin() {
         call $_charge_fuel
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = 3 * (CALL_FUEL_COST + CHARGE_FUEL_BASE_COST);
+    let expected_fuel = 3 * (CALL_FUEL_COST + CHARGE_FUEL_BASE_COST + BASE_FUEL_COST);
     assert_eq!(gas, fuel_to_gas(expected_fuel));
 
     // Call with argument - shows that argument adds to the base costs
@@ -228,7 +235,7 @@ fn test_charge_fuel_builtin() {
         call $_charge_fuel
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
-    let expected_fuel = CALL_FUEL_COST + CHARGE_FUEL_BASE_COST + 500;
+    let expected_fuel = CALL_FUEL_COST + CHARGE_FUEL_BASE_COST + BASE_FUEL_COST + 500;
     assert_eq!(gas, fuel_to_gas(expected_fuel));
 }
 
@@ -240,5 +247,5 @@ fn test_exit_builtin() {
     "#;
     let gas = run_twice_and_find_gas_difference(main, 0);
     // Exit doesn't consume fuel, only the call instruction
-    assert_eq!(gas, fuel_to_gas(CALL_FUEL_COST));
+    assert_eq!(gas, fuel_to_gas(BASE_FUEL_COST + CALL_FUEL_COST));
 }

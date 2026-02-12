@@ -1,18 +1,18 @@
 //! Contract execution runtime.
 //!
-//! This module implements execution of user-deployed contracts
+//! This module implements the execution of user-deployed contracts
 //! in the rWasm environment. It is responsible for:
-//! - selecting the correct entrypoint (`main` vs `deploy`),
+//! - selecting the correct entrypoint (`main` vs. `deploy`),
 //! - wiring syscalls via the runtime syscall handler,
 //! - driving execution and resumption,
-//! - mediating access to linear memory, fuel and runtime context.
+//! - mediating access to linear memory, fuel, and runtime context.
 //!
 //! `ContractRuntime` is intentionally thin: most execution semantics
-//! are delegated to `Strategy` and `TypedStore`.
+//! are delegated to `StrategyDefinition` and `StrategyExecutor`.
 
 use crate::{syscall_handler::runtime_syscall_handler, RuntimeContext};
 use fluentbase_types::{STATE_DEPLOY, STATE_MAIN};
-use rwasm::{FuelConfig, ImportLinker, Store, Strategy, TrapCode, TypedStore, Value};
+use rwasm::{ImportLinker, StoreTr, StrategyDefinition, StrategyExecutor, TrapCode, Value};
 use std::sync::Arc;
 
 /// Runtime responsible for executing a single contract invocation.
@@ -24,15 +24,9 @@ use std::sync::Arc;
 /// A single instance corresponds to one logical contract execution
 /// (call or deployment).
 pub struct ContractRuntime {
-    /// Execution strategy used to run the contract code.
-    ///
-    /// The strategy defines how rWasm bytecode is executed
-    /// (e.g. interpreter vs compiled backend).
-    strategy: Strategy,
-
-    /// Typed store containing linear memory, globals, fuel state
+    /// Typed store containing linear memory, globals, fuel state,
     /// and the associated `RuntimeContext`.
-    store: TypedStore<RuntimeContext>,
+    executor: StrategyExecutor<RuntimeContext>,
 
     /// Name of the entrypoint function to execute.
     ///
@@ -54,24 +48,22 @@ impl ContractRuntime {
     ///
     /// Panics if the contract state is neither `STATE_MAIN` nor `STATE_DEPLOY`.
     pub fn new(
-        strategy: Strategy,
+        strategy: StrategyDefinition,
         import_linker: Arc<ImportLinker>,
         ctx: RuntimeContext,
-        fuel_config: FuelConfig,
-    ) -> Self {
+        fuel_limit: Option<u64>,
+    ) -> Result<Self, TrapCode> {
         let entrypoint = match ctx.state {
             STATE_MAIN => "main",
             STATE_DEPLOY => "deploy",
             _ => unreachable!(),
         };
-
-        let store = strategy.create_store(import_linker, ctx, runtime_syscall_handler, fuel_config);
-
-        Self {
-            strategy,
-            store,
+        let executor =
+            strategy.create_executor(import_linker, ctx, runtime_syscall_handler, fuel_limit)?;
+        Ok(Self {
+            executor,
             entrypoint,
-        }
+        })
     }
 
     /// Executes the contract entrypoint.
@@ -81,8 +73,7 @@ impl ContractRuntime {
     ///
     /// Any trap produced by execution is surfaced as a `TrapCode`.
     pub fn execute(&mut self) -> Result<(), TrapCode> {
-        self.strategy
-            .execute(&mut self.store, self.entrypoint, &[], &mut [])
+        self.executor.execute(self.entrypoint, &[], &mut [])
     }
 
     /// Resumes contract execution after an external interruption.
@@ -91,9 +82,8 @@ impl ContractRuntime {
     /// execution. The provided `exit_code` is passed back into the runtime,
     /// and `fuel_consumed` is charged before resuming execution.
     pub fn resume(&mut self, exit_code: i32, fuel_consumed: u64) -> Result<(), TrapCode> {
-        self.store.try_consume_fuel(fuel_consumed)?;
-        self.strategy
-            .resume(&mut self.store, &[Value::I32(exit_code)], &mut [])
+        self.executor.try_consume_fuel(fuel_consumed)?;
+        self.executor.resume(&[Value::I32(exit_code)], &mut [])
     }
 
     /// Writes data into the contract linear memory.
@@ -101,7 +91,7 @@ impl ContractRuntime {
     /// Performs bounds checking according to the underlying memory model.
     /// Out-of-bounds writes result in a trap.
     pub fn memory_write(&mut self, offset: usize, data: &[u8]) -> Result<(), TrapCode> {
-        self.store.memory_write(offset, data)
+        self.executor.memory_write(offset, data)
     }
 
     /// Reads data from the contract linear memory.
@@ -109,28 +99,28 @@ impl ContractRuntime {
     /// Fills `buffer` with bytes starting at `offset`.
     /// Traps if the read exceeds accessible memory.
     pub fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
-        self.store.memory_read(offset, buffer)
+        self.executor.memory_read(offset, buffer)
     }
 
-    /// Returns the remaining execution fuel, if fuel metering is enabled.
+    /// Returns the remaining execution fuel if fuel metering is enabled.
     ///
     /// Returns `None` if fuel accounting is disabled for this execution.
     pub fn remaining_fuel(&self) -> Option<u64> {
-        self.store.remaining_fuel()
+        self.executor.remaining_fuel()
     }
 
     /// Provides mutable access to the runtime context.
     ///
     /// This is the only supported way to mutate execution-scoped state
-    /// such as logs, gas accounting, call depth or environment data.
-    pub fn context_mut<R, F: FnOnce(&mut RuntimeContext) -> R>(&mut self, func: F) -> R {
-        self.store.context_mut(func)
+    /// such as logs, gas accounting, call depth, or environment data.
+    pub fn context_mut(&mut self) -> &mut RuntimeContext {
+        self.executor.data_mut()
     }
 
     /// Provides immutable access to the runtime context.
     ///
     /// Intended for inspection and read-only queries.
-    pub fn context<R, F: FnOnce(&RuntimeContext) -> R>(&self, func: F) -> R {
-        self.store.context(func)
+    pub fn context(&self) -> &RuntimeContext {
+        self.executor.data()
     }
 }

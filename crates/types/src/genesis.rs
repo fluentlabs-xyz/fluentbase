@@ -156,17 +156,6 @@ pub fn is_system_precompile(address: &Address) -> bool {
     PRECOMPILE_ADDRESSES.contains(address)
 }
 
-/// Returns `true` if calls to `address` should be executed via the Wasmtime strategy.
-///
-/// Today this mirrors `is_system_precompile`, but it exists as a separate predicate
-/// because the execution strategy may diverge from "system precompile" membership
-/// as new runtimes/dispatch paths are introduced.
-///
-/// Note: Only for legacy runtime, will be removed
-pub fn is_execute_using_wasmtime_strategy(address: &Address) -> bool {
-    PRECOMPILE_ADDRESSES.contains(address)
-}
-
 /// Addresses whose execution is delegated to the **system runtime** implementation.
 ///
 /// This is a narrower set than `PRECOMPILE_ADDRESSES`: some system contracts may

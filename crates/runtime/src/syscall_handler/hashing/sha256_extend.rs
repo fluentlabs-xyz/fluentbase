@@ -2,10 +2,10 @@
 /// `w[0..16]` must be pre-filled with the message block (big-endian words).
 /// Fills `w[16..64]` according to the standard recurrence.
 use crate::RuntimeContext;
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 pub fn syscall_hashing_sha256_extend_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

@@ -31,20 +31,18 @@ thiserror = "1.0"
 triehash = "0.8"
 walkdir = "2.5"
 k256 = { version = "0.13.3", features = ["ecdsa"] }
-ctor = "0.5.0"
 
 [build-dependencies]
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
 fluentbase-contracts = { path = "../crates/contracts", default-features = false }
-rwasm = { version = "0.3.2", default-features = false, features = ["wasmtime"] }
-#rwasm = { path = "../../rwasm", default-features = false, features = ["wasmtime"] }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/new-stateless-runtime", default-features = false, features = ["wasmtime"] }
 
 [features]
 default = [
     "std",
     # "debug-print",
-    # "wasmtime",
+    "wasmtime",
 ]
 std = [
     "fluentbase-genesis/std",
@@ -62,5 +60,5 @@ wasmtime = [
 ]
 
 [patch.crates-io]
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
-wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", features = ["cache"] }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/new-stateless-runtime" }
+#wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", features = ["cache"] }

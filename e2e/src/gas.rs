@@ -9,7 +9,7 @@ use fluentbase_sdk::{
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use hex_literal::hex;
 use revm::context::result::{ExecutionResult, Output};
-use rwasm::{instruction_set, RwasmModule, RwasmModuleInner};
+use rwasm::{instruction_set, RwasmModule, RwasmModuleBuilder, RwasmModuleInner};
 
 #[test]
 fn test_simple_nested_call() {
@@ -19,7 +19,7 @@ fn test_simple_nested_call() {
     const ACCOUNT3_ADDRESS: Address = address!("1111111111111111111111111111111111111113");
     let _account1 = ctx.add_rwasm_contract(
         ACCOUNT1_ADDRESS,
-        RwasmModule::with_one_function(instruction_set! {
+        RwasmModuleBuilder::new(instruction_set! {
             ConsumeFuel(1 * FUEL_DENOM_RATE)
             // add one memory page
             I32Const(1)
@@ -40,7 +40,7 @@ fn test_simple_nested_call() {
     );
     let _account2 = ctx.add_rwasm_contract(
         ACCOUNT2_ADDRESS,
-        RwasmModule::with_one_function(instruction_set! {
+        RwasmModuleBuilder::new(instruction_set! {
             ConsumeFuel(2 * FUEL_DENOM_RATE)
             // add one memory page
             I32Const(1)
@@ -175,7 +175,7 @@ fn test_deploy_gas_spend() {
     }
     // 62030 - init contract cost
     // 67400 - store space cost in fuel
-    // 5126  - opcode cost in fuel
+    // 5126 - opcode cost in fuel
     assert_eq!(result.gas_used(), 62030 + (67400 + 5126) / 1000 + 1);
 }
 
@@ -189,7 +189,7 @@ fn test_blended_gas_spend_wasm_from_evm() {
 
     let _account1 = ctx.add_rwasm_contract(
         ACCOUNT1_ADDRESS,
-        RwasmModule::with_one_function(instruction_set! {
+        RwasmModuleBuilder::new(instruction_set! {
             ConsumeFuel(1000u32)
             I32Const(-1)
             Call(SysFuncIdx::EXIT)
@@ -197,7 +197,7 @@ fn test_blended_gas_spend_wasm_from_evm() {
     );
     let _account2 = ctx.add_rwasm_contract(
         ACCOUNT2_ADDRESS,
-        RwasmModule::with_one_function(instruction_set! {
+        RwasmModuleBuilder::new(instruction_set! {
             ConsumeFuel(2000u32)
             I32Const(-20)
             Call(SysFuncIdx::EXIT)
@@ -301,6 +301,8 @@ fn test_blended_gas_spend_evm_from_wasm() {
         I32Const(STATE_MAIN) // state
         Call(SysFuncIdx::EXEC)
         // what's on the stack?
+        Drop
+        Drop
         Return
     };
     ctx.add_rwasm_contract(

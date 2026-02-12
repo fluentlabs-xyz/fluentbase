@@ -1,11 +1,11 @@
 ///! Builtin to append a slice of return_data to the output buffer.
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 /// Copies [offset, offset+length) from return_data into output; halts on out-of-bounds.
 pub fn syscall_forward_output_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -13,11 +13,9 @@ pub fn syscall_forward_output_handler(
         params[0].i32().unwrap() as u32,
         params[1].i32().unwrap() as u32,
     );
-    caller.context_mut(|ctx| {
-        syscall_forward_output_impl(ctx, offset, length).map_err(|err| {
-            ctx.execution_result.exit_code = err.into_i32();
-            TrapCode::ExecutionHalted
-        })
+    syscall_forward_output_impl(caller.data_mut(), offset, length).map_err(|err| {
+        caller.data_mut().execution_result.exit_code = err.into_i32();
+        TrapCode::ExecutionHalted
     })
 }
 

@@ -221,7 +221,7 @@ mod tests {
     fn create_generator(
         route: &ParsedMethod<ImplItemFn>,
         mode: Mode,
-    ) -> CodecGenerator<ImplItemFn> {
+    ) -> CodecGenerator<'_, ImplItemFn> {
         CodecGenerator::new(route, &mode)
     }
 

@@ -1,13 +1,13 @@
 use crate::RuntimeContext;
 use core::cell::Cell;
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 thread_local! {
     pub static LAST_LOG_TIME: Cell<u128> = const { Cell::new(0) };
 }
 
 pub fn syscall_debug_log_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

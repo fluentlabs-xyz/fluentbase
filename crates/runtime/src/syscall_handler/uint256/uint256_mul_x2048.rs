@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
 use num::{BigUint, Integer, One};
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 const U256_NUM_BYTES: usize = 32;
 const U2048_NUM_BYTES: usize = 256;
 
 pub fn syscall_uint256_x2048_mul_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

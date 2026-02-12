@@ -7,7 +7,7 @@ use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     BytecodeOrHash, BytesOrRef, ExitCode, SyscallInvocationParams, B256, CALL_STACK_LIMIT,
 };
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 use std::{
     cmp::min,
     fmt::{Debug, Display, Formatter},
@@ -36,7 +36,7 @@ impl Display for InterruptionHolder {
 
 /// Dispatches the exec syscall: validates fuel, captures parameters, and triggers an interruption.
 pub fn syscall_exec_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -65,7 +65,7 @@ pub fn syscall_exec_handler(
     let mut code_hash = [0u8; 32];
     caller.memory_read(hash32_ptr, &mut code_hash)?;
     let code_hash = B256::from(code_hash);
-    let is_root = caller.context(|ctx| ctx.call_depth) == 0;
+    let is_root = caller.data().call_depth == 0;
     let params = SyscallInvocationParams {
         code_hash,
         input: input_ptr..(input_ptr + input_len),
@@ -74,13 +74,13 @@ pub fn syscall_exec_handler(
         fuel16_ptr: fuel16_ptr as u32,
     };
     // return resumable error
-    caller.context_mut(|ctx| ctx.resumable_context = Some(InterruptionHolder { params, is_root }));
+    caller.data_mut().resumable_context = Some(InterruptionHolder { params, is_root });
     Err(TrapCode::InterruptionCalled)
 }
 
 /// Continues an exec after an interruption, executing the delegated call.
 pub fn syscall_exec_continue(
-    _caller: &mut impl Store<RuntimeContext>,
+    _caller: &mut impl StoreTr<RuntimeContext>,
     _context: &InterruptionHolder,
 ) -> (u64, i64, i32) {
     unimplemented!("runtime: not supported until we finish zkVM");

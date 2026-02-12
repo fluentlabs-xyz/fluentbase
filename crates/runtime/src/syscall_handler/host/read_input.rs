@@ -2,11 +2,11 @@
 use crate::syscall_handler::syscall_process_exit_code;
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 /// Reads [offset, offset+length) from `ctx.input` and writes it at target_ptr.
 pub fn syscall_read_input_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -15,8 +15,7 @@ pub fn syscall_read_input_handler(
         params[1].i32().unwrap() as u32,
         params[2].i32().unwrap() as u32,
     );
-    let input = ctx
-        .context_mut(|ctx| syscall_read_input_impl(ctx, offset, length))
+    let input = syscall_read_input_impl(ctx.data_mut(), offset, length)
         .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
     let _ = ctx.memory_write(target_ptr, &input)?;
     Ok(())

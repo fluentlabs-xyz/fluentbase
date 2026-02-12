@@ -1,11 +1,11 @@
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use fluentbase_types::{ExitCode, BLS12381_FP_SIZE, BN254_FP_SIZE};
 use num::BigUint;
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 use sp1_curves::weierstrass::{bls12_381::Bls12381BaseField, bn254::Bn254BaseField, FpOpField};
 
 pub fn syscall_tower_fp2_bn254_add_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -14,7 +14,7 @@ pub fn syscall_tower_fp2_bn254_add_handler(
     )
 }
 pub fn syscall_tower_fp2_bn254_sub_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -23,7 +23,7 @@ pub fn syscall_tower_fp2_bn254_sub_handler(
     )
 }
 pub fn syscall_tower_fp2_bn254_mul_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -32,7 +32,7 @@ pub fn syscall_tower_fp2_bn254_mul_handler(
     )
 }
 pub fn syscall_tower_fp2_bls12381_add_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -41,7 +41,7 @@ pub fn syscall_tower_fp2_bls12381_add_handler(
     )
 }
 pub fn syscall_tower_fp2_bls12381_sub_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -50,7 +50,7 @@ pub fn syscall_tower_fp2_bls12381_sub_handler(
     )
 }
 pub fn syscall_tower_fp2_bls12381_mul_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -68,7 +68,7 @@ pub(crate) fn syscall_tower_fp2_add_sub_mul_handler<
     P: FpOpField,
     const FIELD_OP: u32,
 >(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

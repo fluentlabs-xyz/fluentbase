@@ -98,9 +98,7 @@ solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/s
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 # rwasm
-#rwasm = { version = "0.3.2", default-features = false }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
-#rwasm = { path = "../rwasm", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/new-stateless-runtime", default-features = false }
 
 # alloy
 alloy-primitives = { version = "1.2.0", default-features = false, features = ["sha3-keccak"] }
@@ -200,8 +198,7 @@ array-bytes = "9.3.0"
 [patch.crates-io]
 tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
 #bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm" }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel" }
-wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel" }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/new-stateless-runtime" }
 
 [workspace.lints]
 rust.missing_debug_implementations = "warn"

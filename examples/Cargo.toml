@@ -44,6 +44,5 @@ strip = "symbols"
 [patch.crates-io]
 # patch tiny-keccak
 tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
-#rwasm = { path = "../../rwasm", default-features = false, features = ["serde"] }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false, features = ["serde"] }
-wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", optional = true, features = ["cache"] }
+#rwasm = { path = "../../rwasm" }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/new-stateless-runtime" }

@@ -3,7 +3,7 @@
 
 use cargo_metadata::{CrateType, Metadata, MetadataCommand, TargetKind};
 use fluentbase_sdk::{compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256};
-use rwasm::{compile_wasmtime_module, CompilationConfig};
+use rwasm::CompilationConfig;
 use std::{env, fs, path::PathBuf, process::Command, str::from_utf8};
 
 #[derive(Debug, Clone)]
@@ -98,19 +98,6 @@ pub fn rust_to_wasm(config: RustToWasmConfig) -> PathBuf {
         .join("wasm32-unknown-unknown")
         .join("release")
         .join(wasm_artifact_name)
-}
-
-pub fn wasm_to_wasmtime(wasm_path: &PathBuf) -> PathBuf {
-    let wasm_bytecode = fs::read(wasm_path).unwrap();
-    let config = default_compilation_config();
-    let module =
-        compile_wasmtime_module(config, &wasm_bytecode).expect("failed to compile wasmtime module");
-    let module_bytes = module
-        .serialize()
-        .expect("failed to serialize wasm bytecode");
-    let wasmtime_module_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("lib.cwasm");
-    fs::write(&wasmtime_module_path, module_bytes).unwrap();
-    wasmtime_module_path
 }
 
 pub fn go_to_wasm() -> PathBuf {

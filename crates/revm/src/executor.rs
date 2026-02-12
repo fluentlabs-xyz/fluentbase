@@ -141,8 +141,8 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
             interpreter_result.output.slice(bytes_read..),
         );
 
-        // Note: it never panics, because we check created address
-        //  inside `should_overwrite_delegated_bytecode` function.
+        // Note: it never panics, because we check the created address
+        //  inside the `should_overwrite_delegated_bytecode` function.
         let created_address = frame.data.created_address().unwrap();
 
         // Replace the deployed bytecode with rWasm.
@@ -165,7 +165,7 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
         frame.interpreter.return_data.clear();
         frame.interpreter.memory.free_child_context();
 
-        // Re-run deploy function using rWasm with new bytecode (for constructor execution).
+        // Re-run the `deploy` function using rWasm with new bytecode (for constructor execution).
         // Recursion is checked inside `should_overwrite_delegated_bytecode`, where we verify
         // that delegated ownership is presented (we remove ownership by replacing the bytecode).
         return run_rwasm_loop(frame, ctx, inspector);

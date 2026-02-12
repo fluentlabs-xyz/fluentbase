@@ -8,14 +8,16 @@ pub trait SVMMessage: Clone {
     fn num_instructions(&self) -> usize;
 
     /// Return an iterator over the instructions in the message.
-    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction>;
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>>;
 
     /// Return an iterator over the instructions in the message, paired with
     /// the pubkey of the program.
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone;
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone;
 
     /// Return the account keys.
-    fn account_keys(&self) -> AccountKeys;
+    fn account_keys(&self) -> AccountKeys<'_>;
 
     /// Return the fee-payer
     fn fee_payer(&self) -> &Pubkey;

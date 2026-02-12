@@ -1,5 +1,5 @@
-use rwasm::{Store, TrapCode};
 use fluentbase_runtime::RuntimeContext;
+use rwasm::{StoreTr, TrapCode};
 
 pub struct TestingStore {
     pub ctx: RuntimeContext,
@@ -7,7 +7,7 @@ pub struct TestingStore {
     pub fuel_consumed: u64,
 }
 
-impl Store<RuntimeContext> for TestingStore {
+impl StoreTr<RuntimeContext> for TestingStore {
     fn memory_read(&mut self, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode> {
         let data = self
             .memory
@@ -25,12 +25,12 @@ impl Store<RuntimeContext> for TestingStore {
         Ok(())
     }
 
-    fn context_mut<R, F: FnOnce(&mut RuntimeContext) -> R>(&mut self, func: F) -> R {
-        func(&mut self.ctx)
+    fn data_mut(&mut self) -> &mut RuntimeContext {
+        &mut self.ctx
     }
 
-    fn context<R, F: FnOnce(&RuntimeContext) -> R>(&self, func: F) -> R {
-        func(&self.ctx)
+    fn data(&self) -> &RuntimeContext {
+        &self.ctx
     }
 
     fn try_consume_fuel(&mut self, delta: u64) -> Result<(), TrapCode> {
@@ -43,5 +43,10 @@ impl Store<RuntimeContext> for TestingStore {
 
     fn remaining_fuel(&self) -> Option<u64> {
         Some(self.ctx.fuel_limit - self.fuel_consumed)
+    }
+
+    fn reset_fuel(&mut self, new_fuel_limit: u64) {
+        self.fuel_consumed = 0;
+        self.ctx.fuel_limit = new_fuel_limit;
     }
 }

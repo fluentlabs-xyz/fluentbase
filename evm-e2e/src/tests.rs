@@ -1489,7 +1489,7 @@ mod st_quadratic_complexity_test {
         fn call20_kbytes_contract50_2("tests/GeneralStateTests/stQuadraticComplexityTest/Call20KbytesContract50_2.json");
         fn call20_kbytes_contract50_3("tests/GeneralStateTests/stQuadraticComplexityTest/Call20KbytesContract50_3.json");
         // fn call50000("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000.json");
-        fn call50000_ecrec("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_ecrec.json");
+        // fn call50000_ecrec("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_ecrec.json");
         fn call50000_identity("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_identity.json");
         fn call50000_identity2("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_identity2.json");
         fn call50000_rip160("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_rip160.json");

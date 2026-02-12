@@ -1,10 +1,10 @@
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use fluentbase_types::{ExitCode, ED25519_POINT_DECOMPRESSED_SIZE};
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 use sp1_curves::{edwards::ed25519::Ed25519, AffinePoint};
 
 pub fn syscall_edwards_add_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

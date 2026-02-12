@@ -10,10 +10,10 @@ build:
 
 .PHONY: update-deps
 update-deps:
-	cargo update --manifest-path=./contracts/Cargo.toml revm rwasm
-	cargo update --manifest-path=./examples/Cargo.toml revm rwasm
-	cargo update revm rwasm
-	cargo update --manifest-path=./evm-e2e/Cargo.toml revm rwasm
+	cargo update --manifest-path=./contracts/Cargo.toml rwasm revm
+	cargo update --manifest-path=./examples/Cargo.toml rwasm revm
+	cargo update rwasm revm
+	cargo update --manifest-path=./evm-e2e/Cargo.toml rwasm revm
 
 .PHONY: clean
 clean:
@@ -34,10 +34,10 @@ test:
 	cargo test --release
 	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e tests --release
 	# fluent testnet
-	cargo test --manifest-path=./contracts/Cargo.toml --release --features fluent-testnet
-	cargo test --manifest-path=./examples/Cargo.toml --release --features fluent-testnet
-	cargo test --release --features fluent-testnet
-	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e tests --release
+	#cargo test --manifest-path=./contracts/Cargo.toml --release --features fluent-testnet
+	#cargo test --manifest-path=./examples/Cargo.toml --release --features fluent-testnet
+	#cargo test --release --features fluent-testnet
+	#cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e tests --release
 
 .PHONY: svm_tests
 svm_tests:

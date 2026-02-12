@@ -3,7 +3,7 @@ use fluentbase_types::{
     ExitCode, BLS12381_G1_RAW_AFFINE_SIZE, BN254_G1_RAW_AFFINE_SIZE, SECP256K1_G1_RAW_AFFINE_SIZE,
     SECP256R1_G1_RAW_AFFINE_SIZE,
 };
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 use sp1_curves::{
     params::FieldParameters,
     weierstrass::{
@@ -16,7 +16,7 @@ use sp1_curves::{
 };
 
 pub fn syscall_secp256k1_add_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -25,7 +25,7 @@ pub fn syscall_secp256k1_add_handler(
     )
 }
 pub fn syscall_secp256r1_add_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -34,7 +34,7 @@ pub fn syscall_secp256r1_add_handler(
     )
 }
 pub fn syscall_bn254_add_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -43,7 +43,7 @@ pub fn syscall_bn254_add_handler(
     )
 }
 pub fn syscall_bls12381_add_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
@@ -57,7 +57,7 @@ fn syscall_weierstrass_add_handler<
     P: FieldParameters,
     const POINT_SIZE: usize,
 >(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {

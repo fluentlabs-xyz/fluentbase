@@ -273,7 +273,7 @@ fn erc20_mint_handler<SDK: SharedAPI>(
         return Ok(ERR_ERC20_INVALID_RECEIVER);
     }
 
-    // Read current state first so we can fail without partial writes.
+    // Read the current state first so we can fail without partial writes.
     let total_supply = sdk.storage(&TOTAL_SUPPLY_STORAGE_SLOT).ok()?;
     let new_total_supply = total_supply
         .checked_add(amount)

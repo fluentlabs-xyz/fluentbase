@@ -2,11 +2,11 @@
 /// We keep it only for backward compatibility with testnet.
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use fluentbase_types::{ExitCode, B256};
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 use solana_poseidon::HASH_BYTES;
 
 pub fn syscall_hashing_poseidon_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {

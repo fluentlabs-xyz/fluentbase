@@ -1,14 +1,14 @@
 /// Builtin to query the current state selector.
 use crate::RuntimeContext;
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
-/// Writes ctx.state into result[0].
+/// Writes `ctx.state` into `result[0]`.
 pub fn syscall_state_handler(
-    caller: &mut impl Store<RuntimeContext>,
+    caller: &mut impl StoreTr<RuntimeContext>,
     _params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    let state = caller.context(syscall_state_impl);
+    let state = syscall_state_impl(caller.data());
     result[0] = Value::I32(state as i32);
     Ok(())
 }

@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use rwasm::{Store, TrapCode, Value};
+use rwasm::{StoreTr, TrapCode, Value};
 
 pub(crate) const STATE_SIZE: u32 = 25;
 
@@ -34,7 +34,7 @@ impl Aligned200 {
 }
 
 pub fn syscall_hashing_keccak256_permute_handler(
-    ctx: &mut impl Store<RuntimeContext>,
+    ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
