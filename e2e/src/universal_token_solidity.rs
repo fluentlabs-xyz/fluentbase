@@ -60,11 +60,13 @@ fn test_deploy_factory_and_universal_token() {
 
     // Link the library: Replace placeholder with actual library address
     // Work with hex string for easier string replacement
-    // The placeholder "__$f7bb912695101d7377bc19c7d693b1b376$__" contains the hash:
-    // f7bb912695101d7377bc19c7d693b1b376 (40 hex chars).
-    // solc prints it in the .bin as "73__$f7bb912695101d7377bc19c7d693b1b376$__63..." etc.
-    // After filtering to only hex digits we see just the hash, so we replace that.
-    // with the library address (also 40 hex chars)
+    // The placeholder "__$f7bb912695101d7377bc19c7d693b1b376$__" is 40 characters total:
+    // - The hash "f7bb912695101d7377bc19c7d693b1b376" is 34 hex chars
+    // - The delimiters "__$" and "$__" add 6 non-hex characters
+    // solc emits the placeholder in the .bin file (e.g., "73__$f7bb912695101d7377bc19c7d693b1b376$__63...").
+    // After filtering to only hex digits, we're left with just the 34-char hash.
+    // We replace that 34-char hash with the 40-char library address (20 bytes = 40 hex digits),
+    // which restores the expected bytecode length after filtering.
     let mut factory_hex = hex_line.clone();
     let hash_hex = "f7bb912695101d7377bc19c7d693b1b376";
     let sdk_address_hex = hex::encode(sdk_address.as_slice());
