@@ -43,6 +43,6 @@ strip = "symbols"
 
 [patch.crates-io]
 # patch tiny-keccak
-tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
+tiny-keccak = { git = "https://github.com/fluentlabs-xyz/tiny-keccak.git", branch = "rwasm" }
 #rwasm = { path = "../../rwasm" }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/new-stateless-runtime" }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel" }

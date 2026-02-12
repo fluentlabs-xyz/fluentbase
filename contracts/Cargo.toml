@@ -54,7 +54,7 @@ debug = false
 
 [patch.crates-io]
 # patch tiny-keccak
-tiny-keccak = { git = "https://github.com/rwasm-patches/tiny-keccak.git", branch = "rwasm" }
+tiny-keccak = { git = "https://github.com/fluentlabs-xyz/tiny-keccak.git", branch = "rwasm" }
 #bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm" }
 # patch revm
 #revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
@@ -66,4 +66,4 @@ fluentbase-svm-common = { path = "../crates/svm-common" }
 fluentbase-svm = { path = "../crates/svm" }
 fluentbase-testing = { path = "../crates/testing" }
 #ecdsa = { path = "../../signatures/ecdsa" }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/new-stateless-runtime" }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel" }

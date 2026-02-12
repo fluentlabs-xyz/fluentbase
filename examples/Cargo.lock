@@ -4110,7 +4110,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.3.2"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=feat%2Fnew-stateless-runtime#a8b52a490fc2d1192ae308cc5c12828280397369"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#b3e797db8dfcb15eac97a43645627b780b82ac6d"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -4905,7 +4905,7 @@ dependencies = [
 [[package]]
 name = "tiny-keccak"
 version = "2.0.2"
-source = "git+https://github.com/rwasm-patches/tiny-keccak.git?branch=rwasm#8cc319a6f53f3275b90871a2037a7a7999940995"
+source = "git+https://github.com/fluentlabs-xyz/tiny-keccak.git?branch=rwasm#8cc319a6f53f3275b90871a2037a7a7999940995"
 dependencies = [
  "cfg-if",
  "crunchy",
