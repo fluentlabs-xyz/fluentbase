@@ -20,6 +20,7 @@ pub mod storage_legacy;
 pub mod syscall;
 pub mod system;
 mod types;
+#[cfg(feature = "universal-token")]
 pub mod universal_token;
 
 pub use address::*;

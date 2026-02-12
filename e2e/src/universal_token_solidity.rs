@@ -66,17 +66,39 @@ fn test_deploy_factory_and_universal_token() {
     // After filtering to only hex digits we see just the hash, so we replace that.
     // with the library address (also 40 hex chars)
     let mut factory_hex = hex_line.clone();
-    let placeholder_hex =
-        "5f5f2466376262393132363935313031643733373762633139633764363933623162333736245f5f";
     let hash_hex = "f7bb912695101d7377bc19c7d693b1b376";
     let sdk_address_hex = hex::encode(sdk_address.as_slice());
 
-    if factory_hex.contains(placeholder_hex) {
-        // Replace the entire placeholder with the library address
-        factory_hex = factory_hex.replace(placeholder_hex, &sdk_address_hex);
-    } else if factory_hex.contains(hash_hex) {
-        // Just replace the hash part
+    // Replace the library hash with the actual deployed SDK address
+    if factory_hex.contains(hash_hex) {
         factory_hex = factory_hex.replace(hash_hex, &sdk_address_hex);
+    } else {
+        panic!(
+            "Failed to link UniversalTokenFactory: library hash '{}' not found in bytecode. \
+             This likely means the Solidity compiler output format changed or the library linking \
+             placeholder is missing. Original hex length: {}",
+            hash_hex,
+            hex_line.len()
+        );
+    }
+
+    // Verify that replacement actually occurred
+    if factory_hex == hex_line {
+        panic!(
+            "Failed to link UniversalTokenFactory: replacement did not occur. \
+             Expected to find hash '{}' and replace with SDK address '{}', but factory_hex unchanged.",
+            hash_hex,
+            sdk_address_hex
+        );
+    }
+
+    // Verify the SDK address is now present in the bytecode
+    if !factory_hex.contains(&sdk_address_hex) {
+        panic!(
+            "Failed to link UniversalTokenFactory: SDK address '{}' not found in linked bytecode. \
+             This indicates the replacement logic failed.",
+            sdk_address_hex
+        );
     }
 
     factory_bytecode = hex::decode(&factory_hex).expect("Failed to decode linked bytecode");
