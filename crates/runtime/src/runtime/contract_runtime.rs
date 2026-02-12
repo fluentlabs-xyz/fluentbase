@@ -8,7 +8,7 @@
 //! - mediating access to linear memory, fuel, and runtime context.
 //!
 //! `ContractRuntime` is intentionally thin: most execution semantics
-//! are delegated to `Strategy` and `TypedStore`.
+//! are delegated to `StrategyDefinition` and `StrategyExecutor`.
 
 use crate::{syscall_handler::runtime_syscall_handler, RuntimeContext};
 use fluentbase_types::{STATE_DEPLOY, STATE_MAIN};
