@@ -1,7 +1,8 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_sdk::{
-    address, compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256, Address,
-    Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID, U256,
+    address, compile_wasm_to_rwasm_with_config, default_compilation_config,
+    is_engine_metered_precompile, keccak256, Address, Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID,
+    U256,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -85,13 +86,19 @@ fn devnet_chain_config() -> ChainConfig {
 fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
     let mut cache = HashMap::new();
 
-    let config = default_compilation_config()
-        .with_consume_fuel(false)
-        .with_builtins_consume_fuel(false);
-    for (_, contract) in GENESIS_CONTRACTS {
+    for (address, contract) in GENESIS_CONTRACTS {
         if cache.contains_key(contract.wasm_bytecode) {
             continue;
         }
+        // Most system precompiles manage fuel internally via `_charge_fuel` syscall.
+        // However, some precompiles (NITRO_VERIFIER, OAUTH2_VERIFIER, WASM_RUNTIME,
+        // WEBAUTHN_VERIFIER) don't self-meter, so they need fuel instrumentation.
+        let should_charge_fuel = is_engine_metered_precompile(address);
+
+        let config = default_compilation_config()
+            .with_consume_fuel(should_charge_fuel)
+            .with_builtins_consume_fuel(should_charge_fuel);
+
         let start = Instant::now();
         let rwasm_bytecode =
             compile_wasm_to_rwasm_with_config(contract.wasm_bytecode, config.clone())

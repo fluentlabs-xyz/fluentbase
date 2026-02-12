@@ -3,8 +3,19 @@
 //! This module implements **system runtimes** (trusted, privileged rWasm programs) executed via
 //! Wasmtime. The key difference from `ContractRuntime` is that system runtimes:
 //! - may be reused across multiple calls (store/instance caching),
-//! - manage gas/fuel at the context level (Wasmtime fuel metering is disabled),
 //! - signal "soft exits" via *returned output* rather than trapping/unwinding.
+//!
+//! ## Fuel metering modes
+//!
+//! System runtimes support two fuel metering strategies:
+//!
+//! 1. **Self-metering** (`consume_fuel=false`): The contract manages fuel internally by calling
+//!    the `_charge_fuel` syscall. Wasmtime fuel metering is disabled. This is used by runtimes
+//!    like EVM_RUNTIME and SVM_RUNTIME that have their own gas accounting.
+//!
+//! 2. **Engine-metered** (`consume_fuel=true`): Wasmtime automatically meters fuel for both
+//!    wasm instructions and builtin syscalls. This is used by precompiles that don't self-meter:
+//!    NITRO_VERIFIER, OAUTH2_VERIFIER, WASM_RUNTIME, WEBAUTHN_VERIFIER.
 //!
 //! ## Why "return output" instead of trapping?
 //! Some system runtimes intentionally avoid `trap` / `halt` paths because they do not always unwind
@@ -39,6 +50,7 @@ use wasmtime::{
 /// - a cached, compiled+instantiated Wasmtime runtime (`CompiledRuntime`),
 /// - the per-call `RuntimeContext` (`ctx`) which is swapped into the cached store on execution,
 /// - an optional resumable interruption state used when system runtimes request an interruption.
+/// - a flag indicating whether Wasmtime fuel metering is enabled (`consume_fuel`).
 ///
 /// The runtime is keyed by `code_hash` so that we can cache compiled artifacts and instances.
 pub struct SystemRuntime {
@@ -61,6 +73,12 @@ pub struct SystemRuntime {
     ///
     /// Used as a cache key for both compiled modules and instantiated runtimes.
     code_hash: B256,
+
+    /// Whether Wasmtime fuel metering is enabled for this runtime.
+    ///
+    /// When `true`, the engine automatically charges fuel for wasm instructions and syscalls.
+    /// When `false`, the contract is expected to self-meter via `_charge_fuel` syscall.
+    consume_fuel: bool,
 }
 
 /// Fully initialized compiled runtime artifacts.
@@ -93,8 +111,21 @@ impl SystemRuntime {
     ///
     /// Uses a global cache (`COMPILED_MODULES`) to avoid recompilation costs.
     /// Double-checked locking is used to minimize write lock contention.
-    pub fn compiled_module(code_hash: B256, rwasm_module: RwasmModule) -> Module {
-        pub static COMPILED_MODULES: OnceLock<RwLock<HashMap<B256, Module>>> = OnceLock::new();
+    ///
+    /// ## Fuel metering
+    ///
+    /// When `consume_fuel=true`, the module is compiled using `compile_wasmtime_module` with
+    /// `consume_fuel=true` and `builtins_consume_fuel=true`. This enables automatic fuel
+    /// charging for both wasm instructions and syscall invocations.
+    ///
+    /// When `consume_fuel=false`, the module is compiled with the standard engine where
+    /// fuel metering is disabled. The contract is expected to self-meter.
+    pub fn compiled_module(
+        code_hash: B256,
+        rwasm_module: RwasmModule,
+        consume_fuel: bool,
+    ) -> Module {
+        static COMPILED_MODULES: OnceLock<RwLock<HashMap<B256, Module>>> = OnceLock::new();
         let compiled_modules = COMPILED_MODULES.get_or_init(|| RwLock::new(HashMap::new()));
 
         // Fast path: read lock lookup.
@@ -113,7 +144,15 @@ impl SystemRuntime {
 
         // `hint_section` contains Wasmtime-compatible wasm bytes for the system runtime.
         // Any compilation failure here is fatal: genesis/runtime packaging is inconsistent.
-        let module = Module::new(wasmtime_engine(), &rwasm_module.hint_section).unwrap();
+        let module = if consume_fuel {
+            Module::new(
+                wasmtime_engine_with_consume_fuel(),
+                &rwasm_module.hint_section,
+            )
+            .unwrap()
+        } else {
+            Module::new(wasmtime_engine(), &rwasm_module.hint_section).unwrap()
+        };
         guard.insert(code_hash, module.clone());
         module
     }
@@ -132,19 +171,29 @@ impl SystemRuntime {
     /// If a compiled runtime for `code_hash` is present in the thread-local cache, it will be reused.
     /// Otherwise, this function compiles/loads the module and instantiates it with imports wired via
     /// `import_linker`.
+    ///
+    /// ## Fuel metering
+    ///
+    /// The `consume_fuel` parameter determines whether Wasmtime fuel metering is enabled:
+    /// - `true`: Engine automatically meters fuel (for NITRO, OAUTH2, WASM_RUNTIME, WEBAUTHN)
+    /// - `false`: Contract self-meters via `_charge_fuel` syscall (for EVM_RUNTIME, etc.)
     pub fn new(
         module: RwasmModule,
         import_linker: Arc<ImportLinker>,
         code_hash: B256,
         ctx: RuntimeContext,
+        consume_fuel: bool,
     ) -> Self {
         let compiled_runtime = COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
             if let Some(compiled_runtime) = compiled_runtimes.get(&code_hash).cloned() {
                 return compiled_runtime;
             }
 
-            let module = Self::compiled_module(code_hash, module);
-            let engine = wasmtime_engine();
+            let module = Self::compiled_module(code_hash, module, consume_fuel);
+
+            // IMPORTANT: Engine must be obtained FROM the module to ensure store uses
+            // the same engine with correct consume_fuel configuration.
+            let engine = module.engine();
             let linker = wasmtime_import_linker(engine, import_linker);
 
             // NOTE: store starts with a default context and receives the actual per-call context
@@ -180,6 +229,7 @@ impl SystemRuntime {
             compiled_runtime,
             ctx,
             code_hash,
+            consume_fuel,
         }
     }
 
@@ -187,6 +237,11 @@ impl SystemRuntime {
     ///
     /// Execution uses the cached store/instance. Before calling into Wasmtime, we swap
     /// `self.ctx` into the store to ensure syscalls and state access refer to the correct context.
+    ///
+    /// ## Fuel metering
+    ///
+    /// If `consume_fuel=true`, the fuel limit is set in the store before execution. Wasmtime
+    /// will automatically decrement fuel as instructions execute.
     ///
     /// ## Error handling model
     /// - If Wasmtime traps unexpectedly, we **do not propagate** the trap outward as fatal.
@@ -203,6 +258,16 @@ impl SystemRuntime {
         // Safety: Calls into a cached runtime must be strictly sequential. No reentrancy or
         // overlapping calls are allowed because we swap a single `RuntimeContext` in/out.
         core::mem::swap(compiled_runtime.store.data_mut(), &mut self.ctx);
+
+        // If fuel metering is enabled, set the fuel limit before execution.
+        // The store is reused, so we must reset fuel for each new call.
+        if self.consume_fuel {
+            let fuel_limit = compiled_runtime.store.data().fuel_limit;
+            compiled_runtime
+                .store
+                .set_fuel(fuel_limit)
+                .expect("failed to set fuel limit");
+        }
 
         // Choose entrypoint based on the current execution state.
         let entrypoint = match compiled_runtime.store.data().state {
@@ -221,6 +286,11 @@ impl SystemRuntime {
         // If Wasmtime trapped, treat it as an unexpected fatal failure and degrade into a safe
         // error code. This avoids propagating a raw trap across the execution boundary.
         if let Err(trap_code) = result.as_ref() {
+            // OutOfFuel is expected for engine-metered precompiles when fuel is exhausted.
+            if *trap_code == TrapCode::OutOfFuel {
+                return Err(TrapCode::OutOfFuel);
+            }
+
             let exit_code = ExitCode::from(self.ctx.execution_result.exit_code);
 
             if exit_code == ExitCode::Panic {
@@ -328,13 +398,21 @@ impl SystemRuntime {
             .map_err(|_| TrapCode::MemoryOutOfBounds)
     }
 
-    /// Returns remaining fuel, if available.
+    /// Returns remaining fuel, if fuel metering is enabled.
     ///
-    /// System runtimes are trusted and manage gas/fuel at the `RuntimeContext` level,
-    /// while Wasmtime fuel metering is disabled. Therefore we cannot reliably expose
-    /// "remaining fuel" from this runtime boundary.
+    /// For engine-metered precompiles (`consume_fuel=true`), returns the actual remaining fuel
+    /// from the Wasmtime store.
+    ///
+    /// For self-metering runtimes (`consume_fuel=false`), returns `None` because fuel is
+    /// tracked in `RuntimeContext` via `_charge_fuel` syscall, not in the Wasmtime store.
     pub fn remaining_fuel(&self) -> Option<u64> {
-        None
+        if self.consume_fuel {
+            let compiled_runtime = self.compiled_runtime.borrow();
+            let fuel = compiled_runtime.store.get_fuel().ok();
+            fuel
+        } else {
+            None
+        }
     }
 
     /// Provides mutable access to the per-call runtime context.
@@ -371,6 +449,79 @@ fn wasmtime_engine() -> &'static Engine {
 
         // Fuel accounting is handled externally via RuntimeContext.
         cfg.consume_fuel(false);
+
+        Engine::new(&cfg).unwrap()
+    })
+}
+
+/// Builds wasmtime syscall fuel params from ImportLinker.
+///
+/// TODO(d1r1): move to rwasm crate as a method on ImportLinker
+fn build_syscall_fuel_params(
+    import_linker: &ImportLinker,
+) -> std::collections::HashMap<wasmtime::SyscallName, wasmtime::SyscallFuelParams> {
+    use wasmtime::{LinearFuelParams, QuadraticFuelParams, SyscallFuelParams, SyscallName};
+
+    let mut params = std::collections::HashMap::new();
+    for (import_name, import_entity) in import_linker.iter() {
+        let syscall_name = SyscallName {
+            module: import_name.module().to_string(),
+            name: import_name.name().to_string(),
+        };
+
+        let fuel_param = match &import_entity.syscall_fuel_param {
+            rwasm::SyscallFuelParams::None => continue,
+            rwasm::SyscallFuelParams::Const(base) => SyscallFuelParams::Const(*base),
+            rwasm::SyscallFuelParams::LinearFuel(p) => {
+                SyscallFuelParams::LinearFuel(LinearFuelParams {
+                    base_fuel: p.base_fuel,
+                    word_cost: p.word_cost,
+                    linear_param_index: p.param_index,
+                    max_linear: p.max_linear,
+                })
+            }
+            rwasm::SyscallFuelParams::QuadraticFuel(p) => {
+                SyscallFuelParams::QuadraticFuel(QuadraticFuelParams {
+                    local_depth: p.param_index,
+                    word_cost: p.word_cost,
+                    divisor: p.divisor,
+                    max_quadratic: p.max_quadratic,
+                    fuel_denom_rate: p.fuel_denom_rate,
+                })
+            }
+        };
+
+        params.insert(syscall_name, fuel_param);
+    }
+    params
+}
+
+/// Returns the shared Wasmtime engine instance with fuel metering enabled.
+///
+/// Used for engine-metered precompiles (NITRO, OAUTH2, WASM_RUNTIME, WEBAUTHN).
+/// These precompiles don't self-meter via `_charge_fuel` syscall, so the engine
+/// must automatically charge fuel for:
+/// - wasm instructions (via `consume_fuel=true`)
+/// - syscall/builtin calls (via `syscall_fuel_params`)
+///
+/// TODO(d1r1): move to rwasm crate - add async_support parameter to
+/// factory_wasmtime_engine_with_linker and reuse it here
+fn wasmtime_engine_with_consume_fuel() -> &'static Engine {
+    static ENGINE: OnceLock<Engine> = OnceLock::new();
+    ENGINE.get_or_init(|| {
+        let import_linker = fluentbase_types::import_linker_v1_preview();
+
+        let mut cfg = Config::new();
+        cfg.strategy(Strategy::Cranelift);
+        cfg.collector(wasmtime::Collector::Null);
+        cfg.max_wasm_stack(N_MAX_STACK_SIZE * size_of::<u32>());
+        cfg.async_support(false); // Must be false for sync instantiate()/call()
+        cfg.wasm_memory64(false);
+        cfg.memory_init_cow(false);
+        cfg.cranelift_opt_level(OptLevel::Speed);
+        cfg.parallel_compilation(true);
+        cfg.consume_fuel(true);
+        cfg.syscall_fuel_params(build_syscall_fuel_params(&import_linker));
 
         Engine::new(&cfg).unwrap()
     })
@@ -423,7 +574,9 @@ impl<'a> rwasm::Store<RuntimeContext> for CallerAdapter<'a> {
 
     /// Charges fuel from this store, if applicable.
     ///
-    /// System runtimes account fuel in `RuntimeContext`, so this is a no-op.
+    /// For self-metering runtimes, fuel is handled via RuntimeContext.
+    /// For engine-metered runtimes, fuel is automatically charged by Wasmtime.
+    /// In both cases, this callback is a no-op.
     fn try_consume_fuel(&mut self, _delta: u64) -> Result<(), TrapCode> {
         Ok(())
     }

@@ -84,6 +84,9 @@ impl TestingContextImpl {
         self.inner.borrow_mut().fuel_limit = Some(gas_limit * FUEL_DENOM_RATE);
         self
     }
+    pub fn consumed_fuel(&self) -> u64 {
+        self.inner.borrow().consumed_fuel
+    }
     pub fn take_output(&self) -> Vec<u8> {
         let mut ctx = self.inner.borrow_mut();
         take(&mut ctx.output)

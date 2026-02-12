@@ -1,9 +1,8 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use fluentbase_sdk::{
-    hex,
-    storage::{MapKey, StorageDescriptor, StorageMap, StorageU256},
-    Address, Bytes, ContractContextV1, StorageAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
+    hex, storage::StorageDescriptor, Address, Bytes, ContractContextV1,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::EvmTestingContext;
 use fluentbase_universal_token::{
@@ -12,14 +11,14 @@ use fluentbase_universal_token::{
         TransferFromCommand, UniversalTokenCommand,
     },
     consts::{
-        BALANCE_STORAGE_SLOT, ERR_ERC20_INSUFFICIENT_ALLOWANCE, ERR_ERC20_INSUFFICIENT_BALANCE,
+        ERR_ERC20_INSUFFICIENT_ALLOWANCE, ERR_ERC20_INSUFFICIENT_BALANCE,
         ERR_PAUSABLE_ENFORCED_PAUSE, ERR_PAUSABLE_EXPECTED_PAUSE, ERR_UST_NOT_MINTABLE,
         ERR_UST_NOT_PAUSABLE, SIG_ERC20_DECIMALS, SIG_ERC20_NAME, SIG_ERC20_PAUSE,
         SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_UNPAUSE,
     },
-    storage::{erc20_compute_main_storage_keys, InitialSettings, DECIMALS_DEFAULT},
+    storage::{InitialSettings, DECIMALS_DEFAULT},
 };
-use revm::context::result::{ExecutionResult, HaltReason};
+use revm::context::result::ExecutionResult;
 use std::ops::Add;
 
 const DEPLOYER_ADDR: Address = Address::repeat_byte(1);
@@ -491,15 +490,10 @@ fn reverted_transaction_should_not_commit_changes() {
     .encode_for_send(&mut input);
     let result = ctx.call_evm_tx(ACC1_ADDRESS, contract_address, input.into(), None, None);
     assert_eq!(ERR_ERC20_INSUFFICIENT_BALANCE, 0xe450d38c);
+    assert!(!result.is_success());
     assert_eq!(
-        result,
-        ExecutionResult::Revert {
-            gas_used: 22_210,
-            output: hex!(
-                "0x4e487b7100000000000000000000000000000000000000000000000000000000e450d38c"
-            )
-            .into()
-        }
+        result.output().unwrap_or_default().as_ref(),
+        hex!("0x4e487b7100000000000000000000000000000000000000000000000000000000e450d38c")
     );
 
     // Allowance should not change

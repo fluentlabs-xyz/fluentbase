@@ -327,7 +327,6 @@ impl RuntimeFactoryExecutor {
         RuntimeResult::Result(execution_result)
     }
 }
-
 impl RuntimeExecutor for RuntimeFactoryExecutor {
     fn execute(
         &mut self,
@@ -335,13 +334,15 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         ctx: RuntimeContext,
     ) -> ExecutionResult {
         #[allow(unused_variables)]
-        let (enable_wasmtime_runtime, enable_system_runtime) = match &bytecode_or_hash {
+        let (enable_wasmtime_runtime, enable_system_runtime, consume_fuel) = match &bytecode_or_hash
+        {
             BytecodeOrHash::Bytecode { address, hash, .. } => (
                 fluentbase_types::is_execute_using_wasmtime_strategy(address)
                     .then_some((*address, *hash)),
                 fluentbase_types::is_execute_using_system_runtime(address).then_some(*hash),
+                fluentbase_types::is_engine_metered_precompile(address),
             ),
-            BytecodeOrHash::Hash(_) => (None, None),
+            BytecodeOrHash::Hash(_) => (None, None, false),
         };
 
         // If we have a cached module, then use it, otherwise create a new one and cache
@@ -352,7 +353,13 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let fuel_config = FuelConfig::default().with_fuel_limit(ctx.fuel_limit);
 
         let mut exec_mode = if let Some(code_hash) = enable_system_runtime {
-            let runtime = SystemRuntime::new(module, self.import_linker.clone(), code_hash, ctx);
+            let runtime = SystemRuntime::new(
+                module,
+                self.import_linker.clone(),
+                code_hash,
+                ctx,
+                consume_fuel,
+            );
             ExecutionMode::System(runtime)
         } else {
             #[cfg(feature = "wasmtime")]

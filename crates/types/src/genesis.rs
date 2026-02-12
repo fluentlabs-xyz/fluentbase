@@ -209,6 +209,23 @@ pub fn is_execute_using_system_runtime(address: &Address) -> bool {
     EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES.contains(address)
 }
 
+/// Addresses whose execution should be charged by the runtime.
+///
+/// These contracts should be compiled with `consume_fuel=true` and
+/// `builtins_consume_fuel=true`.
+pub const ENGINE_METERED_PRECOMPILES: &[Address] = &[
+    PRECOMPILE_NITRO_VERIFIER,
+    PRECOMPILE_OAUTH2_VERIFIER,
+    PRECOMPILE_WASM_RUNTIME,
+    PRECOMPILE_WEBAUTHN_VERIFIER,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
+];
+
+/// Returns `true` if the contract at `address` should be charged fuel by the runtime.
+pub fn is_engine_metered_precompile(address: &Address) -> bool {
+    ENGINE_METERED_PRECOMPILES.contains(address)
+}
+
 /// Resolves and returns the account owner `Address` based on the provided input byte slice.
 ///
 /// # Parameters
