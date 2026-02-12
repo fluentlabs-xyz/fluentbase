@@ -8,6 +8,7 @@ use crate::{
     ExecutionResult, NextAction,
 };
 use alloy_primitives::{Address, Log, LogData};
+use fluentbase_evm::gas;
 use fluentbase_runtime::{
     default_runtime_executor,
     syscall_handler::{syscall_exec_impl, syscall_resume_impl},
@@ -28,12 +29,14 @@ use fluentbase_universal_token::storage::erc20_compute_storage_keys;
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, rwasm::RwasmBytecode, Bytecode},
     context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
+    context_interface::journaled_state::JournalLoadError,
     handler::FrameData,
     interpreter::{
         interpreter::ExtBytecode,
         interpreter_types::{InputsTr, ReturnData, RuntimeFlag, StackTr},
-        return_ok, return_revert, CallInput, FrameInput, InstructionResult,
+        return_ok, return_revert, CallInput, FrameInput, Gas, InstructionResult,
     },
+    primitives::hardfork::SpecId,
     Database, Inspector,
 };
 use std::vec::Vec;
@@ -186,6 +189,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let interpreter = &mut frame.interpreter;
     let is_create: bool = matches!(frame.input, FrameInput::Create(..));
+    let spec_id: SpecId = ctx.cfg().spec().into();
 
     // `bytecode_address` is the address from which we fetched code; if not set, fall back to
     // the target address (typical CALL semantics).
@@ -316,7 +320,31 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         // Prefetch storage values.
         let mut storage = HashMap::<U256, U256>::with_capacity(storage_list.len());
         for k in storage_list {
-            storage.insert(k, ctx.journal_mut().sload(target_address, k)?.data);
+            let skip_cold = interpreter.gas.remaining() < gas::COLD_SLOAD_COST_ADDITIONAL;
+            let state_load = ctx
+                .journal_mut()
+                .sload_skip_cold_load(target_address, k, skip_cold);
+            match state_load {
+                // We have enough gas to execute the cold sload
+                Ok(data) => {
+                    let gas_cost = gas::sload_cost(spec_id, data.is_cold);
+                    // We charge for gas in advance because we don't charge inside system contracts
+                    if !interpreter.gas.record_cost(gas_cost) {
+                        return Ok(NextAction::out_of_fuel(Gas::new_spent(
+                            interpreter.gas.remaining(),
+                        )));
+                    }
+                    _ = storage.insert(k, data.data)
+                }
+                // We need more gas to execute the cold sload
+                Err(JournalLoadError::ColdLoadSkipped) => {
+                    return Ok(NextAction::out_of_fuel(Gas::new_spent(
+                        interpreter.gas.remaining(),
+                    )))
+                }
+                // Return database error
+                Err(JournalLoadError::DBError(err)) => return Err(ContextError::Db(err)),
+            }
         }
 
         // Wrap everything into the system-runtime new-frame input format.

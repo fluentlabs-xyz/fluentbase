@@ -83,6 +83,10 @@ impl NextAction {
             gas,
         })
     }
+
+    pub fn out_of_fuel(gas: Gas) -> Self {
+        Self::error(ExitCode::OutOfFuel, gas)
+    }
 }
 
 pub enum NextActionOrInterruption {
