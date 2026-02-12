@@ -103,9 +103,6 @@ fn charge_and_panic<SDK: SharedAPI, T>(sdk: &mut SDK, gas: u64) -> Result<T, Exi
     Err(ExitCode::Panic)
 }
 
-/// Gas cost for reading from a warm storage slot (EIP-2929).
-pub const WARM_STORAGE_READ_COST: u64 = 100;
-
 /// Submit a path (SYSTEM_ADDRESS) — store block hash at slot (number-1) % EIP2935_HISTORY_SERVE_WINDOW.
 ///
 /// Your EVM contract never reverts to `submit:`; it just sstores and stops.
@@ -134,9 +131,7 @@ fn submit<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         // Storage write here can't fail, even if it fails, it causes trap and charges all gas available
         return Err(result.status);
     }
-    sdk.charge_fuel(
-        WARM_STORAGE_READ_COST * FUEL_DENOM_RATE + GAS_SUBMIT_SUCCESS_BRANCH * FUEL_DENOM_RATE,
-    );
+    sdk.charge_fuel(GAS_SUBMIT_SUCCESS_BRANCH * FUEL_DENOM_RATE);
     Ok(())
 }
 
@@ -178,9 +173,7 @@ fn retrieve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         // Storage write here can't fail, even if it fails, it causes trap and charges all gas available
         return Err(result.status);
     }
-    sdk.charge_fuel(
-        WARM_STORAGE_READ_COST * FUEL_DENOM_RATE + GAS_RETRIEVE_SUCCESS_BRANCH * FUEL_DENOM_RATE,
-    );
+    sdk.charge_fuel(GAS_RETRIEVE_SUCCESS_BRANCH * FUEL_DENOM_RATE);
     let hash = result.data;
     sdk.write(hash.to_be_bytes::<{ U256::BYTES }>());
     Ok(())
