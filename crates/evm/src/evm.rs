@@ -47,11 +47,14 @@ impl EthVM {
         let gas_limit = context_input.contract_gas_limit();
         // Initialize EVM bytecode and interpreter
         let bytecode = ExtBytecode::new_with_hash(
-            Bytecode::LegacyAnalyzed(LegacyAnalyzedBytecode::new(
-                analyzed_bytecode.bytecode,
-                analyzed_bytecode.len,
-                analyzed_bytecode.jump_table,
-            )),
+            Bytecode::LegacyAnalyzed(
+                LegacyAnalyzedBytecode::new(
+                    analyzed_bytecode.bytecode,
+                    analyzed_bytecode.len,
+                    analyzed_bytecode.jump_table,
+                )
+                .into(),
+            ),
             analyzed_bytecode.hash,
         );
         let gas = Gas::new(gas_limit);

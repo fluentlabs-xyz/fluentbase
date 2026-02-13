@@ -157,18 +157,20 @@ cfg-if = { version = "1.0.3", default-features = false }
 #revm-bytecode = { package = "revm-rwasm-bytecode", version = "6.0.1", default-features = false }
 #revm-interpreter = { package = "revm-rwasm-interpreter", version = "23.0.2", default-features = false }
 #revm-context = { package = "revm-rwasm-context", version = "8.0.3", default-features = false }
-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
-revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
-revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
-revm-bytecode = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
-revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
-revm-context = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v102-patched", default-features = false }
+revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched", default-features = false }
+revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched", default-features = false }
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched", default-features = false }
+revm-bytecode = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched", default-features = false }
+revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched", default-features = false }
+revm-context = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched", default-features = false }
+revm-context-interface = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched", default-features = false }
 #revm = { path = "../revm-rwasm/crates/revm", default-features = false }
 #revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false }
 #revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false }
 #revm-bytecode = { path = "../revm-rwasm/crates/bytecode", default-features = false }
 #revm-interpreter = { path = "../revm-rwasm/crates/interpreter", default-features = false }
 #revm-context = { path = "../revm-rwasm/crates/context", default-features = false }
+#revm-context-interface = { path = "../revm-rwasm/crates/context-interface", default-features = false }
 
 # precompiles
 ark-bn254 = { version = "0.5", default-features = false }

@@ -63,6 +63,7 @@ impl EvmTestingContext {
                 balance: U256::ZERO,
                 nonce: 0,
                 code_hash: contract.rwasm_bytecode_hash,
+                account_id: None,
                 code: Some(Bytecode::new_raw(contract.rwasm_bytecode.clone())),
             };
             db.insert_account_info(contract.address, info);
@@ -151,6 +152,7 @@ impl EvmTestingContext {
             balance: U256::ZERO,
             nonce: 0,
             code_hash: keccak256(&rwasm_binary),
+            account_id: None,
             code: None,
         };
         if !rwasm_binary.is_empty() {
@@ -165,6 +167,7 @@ impl EvmTestingContext {
             balance: U256::ZERO,
             nonce: 0,
             code_hash: keccak256(bytecode.as_ref()),
+            account_id: None,
             code: None,
         };
         info.code = Some(Bytecode::new_raw(bytecode));

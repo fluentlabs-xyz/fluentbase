@@ -11,7 +11,7 @@ use crate::{
 use alloc::vec::Vec;
 use core::{cmp::min, mem::take, ops::Range};
 use fluentbase_sdk::{
-    syscall::SyscallInterruptExecutor, Address, Bytes, ExitCode, SharedAPI, B256,
+    debug_log, syscall::SyscallInterruptExecutor, Address, Bytes, ExitCode, SharedAPI, B256,
     EVM_MAX_INITCODE_SIZE, FUEL_DENOM_RATE, U256,
 };
 use revm_interpreter::{
@@ -121,7 +121,12 @@ fn extcodecopy<
         let code = interruption_outcome.output;
         let len = as_usize_or_fail!(context.interpreter, len_u256);
         let memory_offset = as_usize_or_fail!(context.interpreter, memory_offset);
-        resize_memory!(context.interpreter, memory_offset, len);
+        resize_memory!(
+            context.interpreter,
+            context.host.gas_params(),
+            memory_offset,
+            len
+        );
         context
             .interpreter
             .memory
@@ -244,7 +249,9 @@ fn log<const N: usize, H: Host + ?Sized>(
         Bytes::new()
     } else {
         let offset = as_usize_or_fail!(context.interpreter, offset);
-        resize_memory!(context.interpreter, offset, len);
+        debug_log!("resize memory: offset={}, len={}", offset, len);
+        resize_memory!(context.interpreter, context.host.gas_params(), offset, len);
+        debug_log!("resize memory: offset={}, len={}", offset, len);
         Bytes::copy_from_slice(context.interpreter.memory.slice_len(offset, len).as_ref())
     };
     if context.interpreter.stack.len() < N {
@@ -311,12 +318,17 @@ fn create<
                 .halt(InstructionResult::CreateInitCodeSizeLimit);
             return;
         }
-        let init_gas_cost = gas::initcode_cost(code_len);
+        let init_gas_cost = context.host.gas_params().initcode_cost(code_len);
         if init_gas_cost > context.interpreter.gas.remaining() {
             context.interpreter.halt(InstructionResult::OutOfGas);
             return;
         }
-        resize_memory!(context.interpreter, code_offset, code_len);
+        resize_memory!(
+            context.interpreter,
+            context.host.gas_params(),
+            code_offset,
+            code_len
+        );
         init_code = Bytes::copy_from_slice(
             context
                 .interpreter
@@ -329,13 +341,9 @@ fn create<
         0
     };
     let create_gas_cost = if IS_CREATE2 {
-        let Some(gas) = gas::create2_cost(init_code.len().try_into().unwrap()) else {
-            context.interpreter.halt(InstructionResult::OutOfGas);
-            return;
-        };
-        gas
+        context.host.gas_params().create2_cost(init_code.len())
     } else {
-        gas::CREATE
+        context.host.gas_params().create_cost()
     };
     // EIP-3860: Check we have enough gas before doing CREATE
     if init_gas_cost + create_gas_cost > context.interpreter.gas.remaining() {
@@ -392,17 +400,34 @@ fn insert_call_outcome<
 }
 
 #[inline]
-fn get_memory_input_range<WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>>(
-    interpreter: &mut Interpreter<WIRE>,
+fn get_memory_input_range<
+    WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>,
+    H: Host + HostWrapper + ?Sized,
+>(
+    context: &mut InstructionContext<'_, H, WIRE>,
 ) -> Option<Range<usize>> {
-    // We peek here, because we pop in [get_memory_output_range] function call
-    peekn!([in_offset, in_len, out_offset, out_len], interpreter, None);
-    let mut in_range = resize_memory(interpreter, in_offset, in_len)?;
+    // We peek here because we pop in [get_memory_output_range] function call
+    peekn!(
+        [in_offset, in_len, out_offset, out_len],
+        context.interpreter,
+        None
+    );
+    let mut in_range = resize_memory(
+        context.interpreter,
+        context.host.gas_params(),
+        in_offset,
+        in_len,
+    )?;
     if !in_range.is_empty() {
-        let offset = interpreter.memory.local_memory_offset();
+        let offset = context.interpreter.memory.local_memory_offset();
         in_range = in_range.start.saturating_add(offset)..in_range.end.saturating_add(offset);
     }
-    resize_memory(interpreter, out_offset, out_len)?;
+    resize_memory(
+        context.interpreter,
+        context.host.gas_params(),
+        out_offset,
+        out_len,
+    )?;
     Some(in_range)
 }
 
@@ -427,7 +452,7 @@ fn call<
     WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>,
     H: Host + HostWrapper + ?Sized,
 >(
-    context: InstructionContext<'_, H, WIRE>,
+    mut context: InstructionContext<'_, H, WIRE>,
 ) {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
         insert_call_outcome(context, interruption_outcome);
@@ -435,7 +460,7 @@ fn call<
     }
     popn!([local_gas_limit, to, value], context.interpreter);
     let to = to.into_address();
-    // Max gas limit is not possible in real ethereum situation.
+    // Max gas limit is not possible in a real ethereum situation.
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
     let has_transfer = !value.is_zero();
     if context.interpreter.runtime_flag.is_static() && has_transfer {
@@ -444,7 +469,7 @@ fn call<
             .halt(InstructionResult::CallNotAllowedInsideStatic);
         return;
     }
-    let Some(in_range) = get_memory_input_range(context.interpreter) else {
+    let Some(in_range) = get_memory_input_range(&mut context) else {
         return;
     };
     interrupt_into_action(context, |context, sdk| {
@@ -458,7 +483,7 @@ fn call_code<
     WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>,
     H: Host + HostWrapper + ?Sized,
 >(
-    context: InstructionContext<'_, H, WIRE>,
+    mut context: InstructionContext<'_, H, WIRE>,
 ) {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
         insert_call_outcome(context, interruption_outcome);
@@ -466,9 +491,9 @@ fn call_code<
     }
     popn!([local_gas_limit, to, value], context.interpreter);
     let to = to.into_address();
-    // Max gas limit is not possible in real ethereum situation.
+    // Max gas limit is not possible in a real ethereum situation.
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
-    let Some(in_range) = get_memory_input_range(context.interpreter) else {
+    let Some(in_range) = get_memory_input_range(&mut context) else {
         return;
     };
     interrupt_into_action(context, |context, sdk| {
@@ -482,7 +507,7 @@ fn delegate_call<
     WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>,
     H: Host + HostWrapper + ?Sized,
 >(
-    context: InstructionContext<'_, H, WIRE>,
+    mut context: InstructionContext<'_, H, WIRE>,
 ) {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
         insert_call_outcome(context, interruption_outcome);
@@ -490,9 +515,9 @@ fn delegate_call<
     }
     popn!([local_gas_limit, to], context.interpreter);
     let to = to.into_address();
-    // Max gas limit is not possible in real ethereum situation.
+    // Max gas limit is not possible in a real ethereum situation.
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
-    let Some(in_range) = get_memory_input_range(context.interpreter) else {
+    let Some(in_range) = get_memory_input_range(&mut context) else {
         return;
     };
     interrupt_into_action(context, |context, sdk| {
@@ -506,7 +531,7 @@ fn static_call<
     WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>,
     H: Host + HostWrapper + ?Sized,
 >(
-    context: InstructionContext<'_, H, WIRE>,
+    mut context: InstructionContext<'_, H, WIRE>,
 ) {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
         insert_call_outcome(context, interruption_outcome);
@@ -514,9 +539,9 @@ fn static_call<
     }
     popn!([local_gas_limit, to], context.interpreter);
     let to = to.into_address();
-    // Max gas limit is not possible in real ethereum situation.
+    // Max gas limit is not possible in a real ethereum situation.
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
-    let Some(in_range) = get_memory_input_range(context.interpreter) else {
+    let Some(in_range) = get_memory_input_range(&mut context) else {
         return;
     };
     interrupt_into_action(context, |context, sdk| {
