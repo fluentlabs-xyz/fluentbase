@@ -87,8 +87,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     macro_rules! load_account_with_gas_pre_checks {
         ($target_address:expr) => {{
             let mut cost = 0;
-            let skip_cold =
-                frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
+            let warm_storage_read_cost = ctx.cfg().gas_params().warm_storage_read_cost();
+            let cold_account_additional_cost =
+                ctx.cfg().gas_params().cold_account_additional_cost();
+            let skip_cold = frame.interpreter.gas.remaining() < cold_account_additional_cost;
             let is_eip7702_enabled = spec_id.is_enabled_in(SpecId::PRAGUE);
             let result = ctx.journal_mut().load_account_info_skip_cold_load(
                 $target_address,
@@ -99,7 +101,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
             let is_empty = account_info_load.is_empty();
             if account_info_load.is_cold {
-                cost += gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
+                cost += cold_account_additional_cost;
             }
 
             let mut account_load = StateLoad::new(
@@ -113,12 +115,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Load delegate code if the account uses EIP-7702 delegation.
             if let Some(Bytecode::Eip7702(code)) = &account_info_load.code {
                 let address = code.address();
-                cost += gas::WARM_STORAGE_READ_COST;
+                cost += warm_storage_read_cost;
                 if cost > frame.interpreter.gas.remaining() {
                     return_halt!(OutOfFuel);
                 }
-                let skip_cold = frame.interpreter.gas.remaining()
-                    < cost + gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
+                let skip_cold =
+                    frame.interpreter.gas.remaining() < cost + cold_account_additional_cost;
                 let result = ctx
                     .journal_mut()
                     .load_account_info_skip_cold_load(address, true, skip_cold);
@@ -305,7 +307,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
             let state_load = unwrap_journal_load_error!(result);
             assert_halt!(
-                frame.interpreter.gas.remaining() > gas::CALL_STIPEND,
+                frame.interpreter.gas.remaining() > ctx.cfg().gas_params().call_stipend(),
                 OutOfFuel
             );
             let gas_cost = ctx.cfg().gas_params().sstore_static_gas()
@@ -351,7 +353,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
             charge_gas!(gas_limit);
             if has_transfer {
-                gas_limit = gas_limit.saturating_add(gas::CALL_STIPEND);
+                gas_limit = gas_limit.saturating_add(ctx.cfg().gas_params().call_stipend());
             }
             inspect!(
                 opcode::CALL,
@@ -452,7 +454,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             charge_gas!(gas_limit);
             // Add a call stipend if there is a value to be transferred.
             if !value.is_zero() {
-                gas_limit = gas_limit.saturating_add(gas::CALL_STIPEND);
+                gas_limit = gas_limit.saturating_add(ctx.cfg().gas_params().call_stipend());
             }
             inspect!(
                 opcode::CALLCODE,
@@ -674,7 +676,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Self-destruct the current contract, sending any remaining balance to `target`.
             let target = Address::from_slice(&input[0..20]);
             let skip_cold = frame.interpreter.gas.remaining()
-                < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL + gas::WARM_STORAGE_READ_COST;
+                < ctx.cfg().gas_params().cold_account_additional_cost()
+                    + ctx.cfg().gas_params().warm_storage_read_cost();
             let result = ctx
                 .journal_mut()
                 .selfdestruct(current_target_address, target, skip_cold);
@@ -726,8 +729,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_CODE_SIZE => {
             let input = get_input_validated!(== 20);
             let address = Address::from_slice(&input[0..20]);
-            let skip_cold =
-                frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
+            let skip_cold = frame.interpreter.gas.remaining()
+                < ctx.cfg().gas_params().cold_account_additional_cost();
             // Load account info (and optionally code) with Berlin warm/cold accounting.
             let result = ctx
                 .journal_mut()
@@ -762,8 +765,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_CODE_HASH => {
             let input = get_input_validated!(== 20);
             let address = Address::from_slice(&input[0..20]);
-            let skip_cold =
-                frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
+            let skip_cold = frame.interpreter.gas.remaining()
+                < ctx.cfg().gas_params().cold_account_additional_cost();
             // Load account info (and optionally code) with Berlin warm/cold accounting.
             let result = ctx
                 .journal_mut()
@@ -771,7 +774,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let account_info = unwrap_journal_load_error!(result);
             charge_gas!(account_warm_cold_cost(account_info.is_cold));
 
-            // Extract code hash for an account for delegated account.
+            // Extract code hash for an account for a delegated account.
             // For EVM, we extract code hash from the metadata to satisfy EVM requirements.
             // It requires the account to be loaded with bytecode.
             let mut code_hash = match &account_info.code {
@@ -813,8 +816,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // This prevents gas abuse where an attacker requests a small length but expects the full bytecode.
             charge_gas!(ctx.cfg().gas_params().extcodecopy(code_length as usize));
 
-            let skip_cold =
-                frame.interpreter.gas.remaining() < gas::COLD_ACCOUNT_ACCESS_COST_ADDITIONAL;
+            let skip_cold = frame.interpreter.gas.remaining()
+                < ctx.cfg().gas_params().cold_account_additional_cost();
             // Load account info (and optionally code) with Berlin warm/cold accounting.
             let result = ctx
                 .journal_mut()
@@ -1073,7 +1076,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_TRANSIENT_READ => {
             let input = get_input_validated!(== 32);
             // Charge gas.
-            charge_gas!(gas::WARM_STORAGE_READ_COST);
+            charge_gas!(ctx.cfg().gas_params().warm_storage_read_cost());
             // Read value from storage.
             let slot = U256::from_le_slice(&input[0..32].as_ref());
             let value = ctx.journal_mut().tload(current_target_address, slot);
@@ -1089,7 +1092,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let slot = U256::from_le_slice(&input[0..32]);
             let value = U256::from_le_slice(&input[32..64]);
             // Charge gas.
-            charge_gas!(gas::WARM_STORAGE_READ_COST);
+            charge_gas!(ctx.cfg().gas_params().warm_storage_read_cost());
             ctx.journal_mut()
                 .tstore(current_target_address, slot, value);
             // Empty result.
