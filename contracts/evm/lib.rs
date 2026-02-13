@@ -38,7 +38,7 @@ fn restore_evm_context_or_create<'a, SDK: SystemAPI>(
     context: &'a mut MutexGuard<HashMap<u32, EthVM>>,
     sdk: &mut SDK,
 ) -> &'a mut EthVM {
-    // A special case when runtime returns interruption with missing runtime data (like balances or storage)
+    // A special case when runtime returns an interruption with missing runtime data (like balances or storage)
     if let Some(outcome) = sdk.take_interruption_outcome() {
         let RuntimeInterruptionOutcomeV1 {
             halted_frame,
@@ -76,7 +76,7 @@ fn restore_evm_context_or_create<'a, SDK: SystemAPI>(
     } else {
         let metadata = sdk.contract_metadata();
         let input = sdk.bytes_input();
-        // If analyzed, bytecode is not presented then extract it from the input
+        // If analyzed, bytecode is not presented, then extract it from the input
         // (contract deployment stage)
         let (analyzed_bytecode, contract_input) = if !metadata.is_empty() {
             let Some(analyzed_bytecode) = evm_bytecode_from_metadata(&metadata) else {
@@ -88,7 +88,7 @@ fn restore_evm_context_or_create<'a, SDK: SystemAPI>(
             (analyzed_bytecode, Bytes::new())
         };
         let eth_vm = EthVM::new(sdk.context(), contract_input, analyzed_bytecode);
-        // Push new EthVM frame (new frame is created)
+        // Push a new EthVM frame (new frame is created)
         _ = context.insert(sdk.unique_key(), eth_vm);
         context.get_mut(&sdk.unique_key()).unwrap()
     }

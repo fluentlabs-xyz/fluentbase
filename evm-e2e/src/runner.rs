@@ -666,6 +666,7 @@ pub fn execute_test_suite(
                 balance: U256::ZERO,
                 nonce: 0,
                 code_hash: *code_hash,
+                account_id: None,
                 code: Some(bytecode.clone()),
             };
             cache_state2.insert_account(*address, acc_info);

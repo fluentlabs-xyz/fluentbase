@@ -313,7 +313,7 @@ where
                     FrameInput::Create(inputs) => {
                         let _span = tracing::info_span!("revm.frame_init.create_hook").entered();
                         let precompile_runtime =
-                            resolve_precompiled_runtime_from_input(inputs.init_code.as_ref());
+                            resolve_precompiled_runtime_from_input(inputs.init_code().as_ref());
                         // create a new EIP-7702 account that points to the EVM runtime system precompile
                         let ownable_account_bytecode =
                             OwnableAccountBytecode::new(precompile_runtime, Bytes::new());
@@ -323,7 +323,7 @@ where
                             .set_code(new_frame.interpreter.input.target_address, bytecode);
                         // an original init code we pass as an input inside the runtime
                         // to execute deployment logic
-                        let input_bytecode = inputs.init_code.clone();
+                        let input_bytecode = inputs.init_code().clone();
                         new_frame.interpreter.input.input = CallInput::Bytes(input_bytecode);
                         // we should reload bytecode here since it's an EIP-7702 account
                         let bytecode = ctx.journal_mut().code(precompile_runtime)?;

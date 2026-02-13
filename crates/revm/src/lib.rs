@@ -9,6 +9,7 @@ mod api;
 mod eip2935;
 mod evm;
 mod executor;
+mod gas;
 mod handler;
 mod inspector;
 mod precompiles;

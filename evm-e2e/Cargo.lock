@@ -624,12 +624,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "az"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be5eb007b7cacc6c660343e96f650fedf4b5a77512399eb952ca6642cf8d13f7"
-
-[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2016,8 +2010,10 @@ dependencies = [
  "bincode 2.0.1",
  "bitvec",
  "fluentbase-sdk",
+ "once_cell",
  "revm-bytecode",
  "revm-context",
+ "revm-context-interface",
  "revm-interpreter",
  "revm-primitives",
  "serde",
@@ -2405,16 +2401,6 @@ name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
-
-[[package]]
-name = "gmp-mpfr-sys"
-version = "1.6.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60f8970a75c006bb2f8ae79c6768a116dd215fa8346a87aed99bf9d82ca43394"
-dependencies = [
- "libc",
- "windows-sys 0.60.2",
-]
 
 [[package]]
 name = "goblin"
@@ -4035,8 +4021,8 @@ checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
 
 [[package]]
 name = "revm"
-version = "33.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v102-patched#bbe12ae982c199d7c24bb8360d02cc86a4ba3c98"
+version = "34.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#d720e97991ee50394ef5c7d5fc5ef17dc0c704b2"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -4053,8 +4039,8 @@ dependencies = [
 
 [[package]]
 name = "revm-bytecode"
-version = "7.1.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v102-patched#bbe12ae982c199d7c24bb8360d02cc86a4ba3c98"
+version = "8.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#d720e97991ee50394ef5c7d5fc5ef17dc0c704b2"
 dependencies = [
  "bitvec",
  "phf",
@@ -4065,8 +4051,8 @@ dependencies = [
 
 [[package]]
 name = "revm-context"
-version = "12.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v102-patched#bbe12ae982c199d7c24bb8360d02cc86a4ba3c98"
+version = "13.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#d720e97991ee50394ef5c7d5fc5ef17dc0c704b2"
 dependencies = [
  "bitvec",
  "cfg-if",
@@ -4081,8 +4067,8 @@ dependencies = [
 
 [[package]]
 name = "revm-context-interface"
-version = "13.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v102-patched#bbe12ae982c199d7c24bb8360d02cc86a4ba3c98"
+version = "14.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#d720e97991ee50394ef5c7d5fc5ef17dc0c704b2"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -4096,8 +4082,8 @@ dependencies = [
 
 [[package]]
 name = "revm-database"
-version = "9.0.6"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v102-patched#bbe12ae982c199d7c24bb8360d02cc86a4ba3c98"
+version = "10.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#d720e97991ee50394ef5c7d5fc5ef17dc0c704b2"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -4109,20 +4095,21 @@ dependencies = [
 
 [[package]]
 name = "revm-database-interface"
-version = "8.0.5"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v102-patched#bbe12ae982c199d7c24bb8360d02cc86a4ba3c98"
+version = "9.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#d720e97991ee50394ef5c7d5fc5ef17dc0c704b2"
 dependencies = [
  "auto_impl",
  "either",
  "revm-primitives",
  "revm-state",
  "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "revm-handler"
-version = "14.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v102-patched#bbe12ae982c199d7c24bb8360d02cc86a4ba3c98"
+version = "15.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#d720e97991ee50394ef5c7d5fc5ef17dc0c704b2"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -4139,8 +4126,8 @@ dependencies = [
 
 [[package]]
 name = "revm-inspector"
-version = "14.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v102-patched#bbe12ae982c199d7c24bb8360d02cc86a4ba3c98"
+version = "15.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#d720e97991ee50394ef5c7d5fc5ef17dc0c704b2"
 dependencies = [
  "auto_impl",
  "either",
@@ -4156,8 +4143,8 @@ dependencies = [
 
 [[package]]
 name = "revm-interpreter"
-version = "31.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v102-patched#bbe12ae982c199d7c24bb8360d02cc86a4ba3c98"
+version = "32.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#d720e97991ee50394ef5c7d5fc5ef17dc0c704b2"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -4168,8 +4155,8 @@ dependencies = [
 
 [[package]]
 name = "revm-precompile"
-version = "31.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v102-patched#bbe12ae982c199d7c24bb8360d02cc86a4ba3c98"
+version = "32.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#d720e97991ee50394ef5c7d5fc5ef17dc0c704b2"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -4185,15 +4172,14 @@ dependencies = [
  "p256",
  "revm-primitives",
  "ripemd",
- "rug",
  "secp256k1",
  "sha2 0.10.9",
 ]
 
 [[package]]
 name = "revm-primitives"
-version = "21.0.2"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v102-patched#bbe12ae982c199d7c24bb8360d02cc86a4ba3c98"
+version = "22.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#d720e97991ee50394ef5c7d5fc5ef17dc0c704b2"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -4203,9 +4189,10 @@ dependencies = [
 
 [[package]]
 name = "revm-state"
-version = "8.1.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v102-patched#bbe12ae982c199d7c24bb8360d02cc86a4ba3c98"
+version = "9.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#d720e97991ee50394ef5c7d5fc5ef17dc0c704b2"
 dependencies = [
+ "alloy-eip7928",
  "bitflags 2.10.0",
  "revm-bytecode",
  "revm-primitives",
@@ -4239,18 +4226,6 @@ checksum = "bb919243f34364b6bd2fc10ef797edbfa75f33c252e7998527479c6d6b47e1ec"
 dependencies = [
  "bytes",
  "rustc-hex",
-]
-
-[[package]]
-name = "rug"
-version = "1.28.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de190ec858987c79cad4da30e19e546139b3339331282832af004d0ea7829639"
-dependencies = [
- "az",
- "gmp-mpfr-sys",
- "libc",
- "libm",
 ]
 
 [[package]]
@@ -6439,7 +6414,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e48a53791691ab099e5e2ad123536d0fff50652600abaf43bbf952894110d0be"
 dependencies = [
  "windows-core 0.52.0",
- "windows-targets 0.52.6",
+ "windows-targets",
 ]
 
 [[package]]
@@ -6448,7 +6423,7 @@ version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33ab640c8d7e35bf8ba19b884ba838ceb4fba93a4e8c65a9059d08afcfc683d9"
 dependencies = [
- "windows-targets 0.52.6",
+ "windows-targets",
 ]
 
 [[package]]
@@ -6516,16 +6491,7 @@ version = "0.59.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.60.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
-dependencies = [
- "windows-targets 0.53.5",
+ "windows-targets",
 ]
 
 [[package]]
@@ -6543,31 +6509,14 @@ version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b724f72796e036ab90c1021d4780d4d3d648aca59e491e6b98e725b84e99973"
 dependencies = [
- "windows_aarch64_gnullvm 0.52.6",
- "windows_aarch64_msvc 0.52.6",
- "windows_i686_gnu 0.52.6",
- "windows_i686_gnullvm 0.52.6",
- "windows_i686_msvc 0.52.6",
- "windows_x86_64_gnu 0.52.6",
- "windows_x86_64_gnullvm 0.52.6",
- "windows_x86_64_msvc 0.52.6",
-]
-
-[[package]]
-name = "windows-targets"
-version = "0.53.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4945f9f551b88e0d65f3db0bc25c33b8acea4d9e41163edf90dcd0b19f9069f3"
-dependencies = [
- "windows-link",
- "windows_aarch64_gnullvm 0.53.1",
- "windows_aarch64_msvc 0.53.1",
- "windows_i686_gnu 0.53.1",
- "windows_i686_gnullvm 0.53.1",
- "windows_i686_msvc 0.53.1",
- "windows_x86_64_gnu 0.53.1",
- "windows_x86_64_gnullvm 0.53.1",
- "windows_x86_64_msvc 0.53.1",
+ "windows_aarch64_gnullvm",
+ "windows_aarch64_msvc",
+ "windows_i686_gnu",
+ "windows_i686_gnullvm",
+ "windows_i686_msvc",
+ "windows_x86_64_gnu",
+ "windows_x86_64_gnullvm",
+ "windows_x86_64_msvc",
 ]
 
 [[package]]
@@ -6577,22 +6526,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a4622180e7a0ec044bb555404c800bc9fd9ec262ec147edd5989ccd0c02cd3"
 
 [[package]]
-name = "windows_aarch64_gnullvm"
-version = "0.53.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9d8416fa8b42f5c947f8482c43e7d89e73a173cead56d044f6a56104a6d1b53"
-
-[[package]]
 name = "windows_aarch64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09ec2a7bb152e2252b53fa7803150007879548bc709c039df7627cabbd05d469"
-
-[[package]]
-name = "windows_aarch64_msvc"
-version = "0.53.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9d782e804c2f632e395708e99a94275910eb9100b2114651e04744e9b125006"
 
 [[package]]
 name = "windows_i686_gnu"
@@ -6601,22 +6538,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e9b5ad5ab802e97eb8e295ac6720e509ee4c243f69d781394014ebfe8bbfa0b"
 
 [[package]]
-name = "windows_i686_gnu"
-version = "0.53.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "960e6da069d81e09becb0ca57a65220ddff016ff2d6af6a223cf372a506593a3"
-
-[[package]]
 name = "windows_i686_gnullvm"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0eee52d38c090b3caa76c563b86c3a4bd71ef1a819287c19d586d7334ae8ed66"
-
-[[package]]
-name = "windows_i686_gnullvm"
-version = "0.53.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa7359d10048f68ab8b09fa71c3daccfb0e9b559aed648a8f95469c27057180c"
 
 [[package]]
 name = "windows_i686_msvc"
@@ -6625,22 +6550,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "240948bc05c5e7c6dabba28bf89d89ffce3e303022809e73deaefe4f6ec56c66"
 
 [[package]]
-name = "windows_i686_msvc"
-version = "0.53.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e7ac75179f18232fe9c285163565a57ef8d3c89254a30685b57d83a38d326c2"
-
-[[package]]
 name = "windows_x86_64_gnu"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "147a5c80aabfbf0c7d901cb5895d1de30ef2907eb21fbbab29ca94c5b08b1a78"
-
-[[package]]
-name = "windows_x86_64_gnu"
-version = "0.53.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c3842cdd74a865a8066ab39c8a7a473c0778a3f29370b5fd6b4b9aa7df4a499"
 
 [[package]]
 name = "windows_x86_64_gnullvm"
@@ -6649,22 +6562,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24d5b23dc417412679681396f2b49f3de8c1473deb516bd34410872eff51ed0d"
 
 [[package]]
-name = "windows_x86_64_gnullvm"
-version = "0.53.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ffa179e2d07eee8ad8f57493436566c7cc30ac536a3379fdf008f47f6bb7ae1"
-
-[[package]]
 name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
-
-[[package]]
-name = "windows_x86_64_msvc"
-version = "0.53.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 
 [[package]]
 name = "winnow"

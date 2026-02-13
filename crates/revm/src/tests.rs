@@ -43,6 +43,7 @@ impl MemoryReaderTr for ForwardInputMemoryReader {
 #[cfg(test)]
 mod code_copy_tests {
     use super::*;
+    use revm::context::journaled_state::account::JournaledAccountTr;
 
     /// Helper function to test code_copy syscall
     /// Returns (output_data, gas_used)
@@ -221,6 +222,7 @@ mod code_copy_tests {
 #[cfg(test)]
 mod metadata_write_tests {
     use super::*;
+    use revm::context::journaled_state::account::JournaledAccountTr;
 
     #[test]
     fn test_metadata_write_truncates_existing_data() {
@@ -322,7 +324,7 @@ mod metadata_write_tests {
         let derived_address = calc_create_metadata_address(&owner_address, &salt);
 
         // Preload the account to avoid empty account check.
-        // (In real scenario, this would be done by previous transactions)
+        // (In a real scenario, this would be done by previous transactions)
         {
             let mut account = ctx
                 .journal_mut()
