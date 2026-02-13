@@ -65,7 +65,7 @@ pub fn syscall_write_fd_impl(
 /// The input should be of the form [(`curve_id_u8` | `r_is_y_odd_u8` << 7) || `r` || `alpha`]
 /// where:
 /// * `curve_id` is 1 for secp256k1 and 2 for secp256r1
-/// * `r_is_y_odd` is 0 if r is even and 1 if r is is odd
+/// * `r_is_y_odd` is 0 if r is even and 1 if r is odd
 /// * r is the x-coordinate of the point, which should be 32 bytes,
 /// * alpha := r * r * r * (a * r) + b, which should be 32 bytes.
 ///
@@ -85,7 +85,7 @@ fn hook_ecrecover(buf: &[u8]) -> Result<Vec<u8>, ExitCode> {
     Ok(match curve_id {
         1 => ecrecover::handle_secp256k1(r_bytes, alpha_bytes, r_is_y_odd),
         2 => ecrecover::handle_secp256r1(r_bytes, alpha_bytes, r_is_y_odd),
-        _ => unimplemented!("Unsupported curve id: {}", curve_id),
+        _ => return Err(ExitCode::MalformedBuiltinParams),
     })
 }
 
@@ -405,7 +405,9 @@ mod fp_ops {
         let element = BigUint::from_bytes_be(&buf[..len]);
         let modulus = BigUint::from_bytes_be(&buf[len..2 * len]);
 
-        assert!(!element.is_zero(), "FpOp: Inverse called with zero");
+        if element.is_zero() {
+            return Err(ExitCode::MalformedBuiltinParams);
+        }
 
         let inverse = element.modpow(&(&modulus - BigUint::from(2u64)), &modulus);
 
