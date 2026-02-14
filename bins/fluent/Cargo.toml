@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Fluent node implementation"
-default-run = "reth"
 
 [lints]
 workspace = true
@@ -172,5 +171,5 @@ min-trace-logs = [
 edge = ["reth-ethereum-cli/edge", "reth-node-core/edge"]
 
 [[bin]]
-name = "reth"
+name = "fluent"
 path = "src/main.rs"
