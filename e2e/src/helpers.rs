@@ -1,14 +1,14 @@
 use fluentbase_sdk::{Address, Bytes, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
-use fluentbase_svm::{
-    account::AccountSharedData,
-    account_info::AccountInfo,
-    helpers::{storage_read_account_data, storage_write_account_data},
-    pubkey::Pubkey,
-    solana_program::instruction::AccountMeta,
-};
+// use fluentbase_svm::{
+//     account::AccountSharedData,
+//     account_info::AccountInfo,
+//     helpers::{storage_read_account_data, storage_write_account_data},
+//     pubkey::Pubkey,
+//     solana_program::instruction::AccountMeta,
+// };
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext};
 use revm::context::result::ExecutionResult;
-use solana_program_pack::Pack;
+// use solana_program_pack::Pack;
 
 pub fn call_with_sig(
     ctx: &mut EvmTestingContext,
@@ -88,26 +88,26 @@ pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> Acc
     program_account
 }
 
-pub fn with_svm_account_mut(
-    ctx: &mut EvmTestingContext,
-    pk: &Pubkey,
-    f: impl FnOnce(&mut fluentbase_svm::account::Account),
-) {
-    ctx.commit_db_to_sdk();
-    let account_data =
-        storage_read_account_data(&ctx.sdk, &pk, Some(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME)).unwrap();
-    let mut account: fluentbase_svm::account::Account = account_data.into();
-    f(&mut account);
-    let account_data: AccountSharedData = account.into();
-    storage_write_account_data(
-        &mut ctx.sdk,
-        &pk,
-        &account_data,
-        Some(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME),
-    )
-    .unwrap();
-    ctx.commit_sdk_to_db();
-}
+// pub fn with_svm_account_mut(
+//     ctx: &mut EvmTestingContext,
+//     pk: &Pubkey,
+//     f: impl FnOnce(&mut fluentbase_svm::account::Account),
+// ) {
+//     ctx.commit_db_to_sdk();
+//     let account_data =
+//         storage_read_account_data(&ctx.sdk, &pk, Some(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME)).unwrap();
+//     let mut account: fluentbase_svm::account::Account = account_data.into();
+//     f(&mut account);
+//     let account_data: AccountSharedData = account.into();
+//     storage_write_account_data(
+//         &mut ctx.sdk,
+//         &pk,
+//         &account_data,
+//         Some(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME),
+//     )
+//     .unwrap();
+//     ctx.commit_sdk_to_db();
+// }
 // pub fn with_svm_account_info_mut(
 //     ctx: &mut EvmTestingContext,
 //     pk: &Pubkey,

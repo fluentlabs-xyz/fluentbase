@@ -26,7 +26,7 @@ cargo_metadata = "0.19.1"
 revm-precompile = { workspace = true }
 fluentbase-universal-token = { workspace = true }
 fluentbase-evm = { workspace = true }
-fluentbase-svm = { workspace = true }
+#fluentbase-svm = { workspace = true }
 
 [features]
 default = [
@@ -45,6 +45,6 @@ generate-genesis = [] # this feature is doing nothing now (genesis is always gen
 fluent-testnet = [
     "fluentbase-evm/fluent-testnet",
     "fluentbase-sdk/fluent-testnet",
-    "fluentbase-svm/fluent-testnet",
+    # "fluentbase-svm/fluent-testnet",
     "fluentbase-universal-token/fluent-testnet"
 ]

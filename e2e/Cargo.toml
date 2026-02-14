@@ -15,12 +15,12 @@ fluentbase-genesis = { workspace = true }
 fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
 fluentbase-testing = { workspace = true }
-fluentbase-svm = { workspace = true }
-fluentbase-svm-common = { workspace = true }
-fluentbase-svm-shared = { workspace = true }
+#fluentbase-svm = { workspace = true }
+#fluentbase-svm-common = { workspace = true }
+#fluentbase-svm-shared = { workspace = true }
 fluentbase-universal-token = { workspace = true }
 fluentbase-contracts = { workspace = true }
-curve25519-dalek = { workspace = true }
+#curve25519-dalek = { workspace = true }
 
 rwasm = { workspace = true }
 revm = { workspace = true }
@@ -34,18 +34,18 @@ rand = { version = "0.9.1" }
 sha2 = { workspace = true }
 
 [dev-dependencies]
-fluentbase-svm = { workspace = true }
+#fluentbase-svm = { workspace = true }
 fluentbase-sdk = { workspace = true }
 criterion = "0.8.1"
-solana-curve25519 = { workspace = true, default-features = false }
-solana-bn254 = { workspace = true, default-features = false }
-solana-poseidon = { workspace = true, default-features = false }
-solana-program-pack = { workspace = true, default-features = false }
-serde = { workspace = true }
-serde_json = { workspace = true }
-array-bytes = { workspace = true }
-ark-bn254 = { workspace = true }
-ark-serialize = { workspace = true }
+#solana-curve25519 = { workspace = true, default-features = false }
+#solana-bn254 = { workspace = true, default-features = false }
+#solana-poseidon = { workspace = true, default-features = false }
+#solana-program-pack = { workspace = true, default-features = false }
+#serde = { workspace = true }
+#serde_json = { workspace = true }
+#array-bytes = { workspace = true }
+#ark-bn254 = { workspace = true }
+#ark-serialize = { workspace = true }
 
 [features]
 default = [
@@ -58,7 +58,7 @@ default = [
 ]
 svm = [
     "fluentbase-genesis/svm",
-    "fluentbase-svm/use-extended-debug-log"
+    # "fluentbase-svm/use-extended-debug-log"
 ]
 enable-error-text-checks = []
 std = [
@@ -76,7 +76,7 @@ debug-print = [
     "fluentbase-genesis/debug-print",
     "revm/debug-print",
     "fluentbase-revm/debug-print",
-    "fluentbase-svm/debug-print",
+    #  "fluentbase-svm/debug-print",
     # "rwasm/debug-print",
 ]
 wasmtime = [
@@ -89,8 +89,8 @@ fluent-testnet = [
     "fluentbase-revm/fluent-testnet",
     "fluentbase-runtime/fluent-testnet",
     "fluentbase-sdk/fluent-testnet",
-    "fluentbase-svm/fluent-testnet",
-    "fluentbase-svm-common/fluent-testnet",
+    #    "fluentbase-svm/fluent-testnet",
+    #    "fluentbase-svm-common/fluent-testnet",
     "fluentbase-testing/fluent-testnet",
     "fluentbase-universal-token/fluent-testnet"
 ]

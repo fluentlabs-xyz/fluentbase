@@ -1,6 +1,6 @@
 [workspace]
 members = ["*"]
-exclude = [".cargo", "target"]
+exclude = [".cargo", "target", "svm"]
 resolver = "2"
 
 [workspace.package]
@@ -19,15 +19,15 @@ readme = "README.md"
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
 fluentbase-universal-token = { path = "../crates/universal-token", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
-fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
-fluentbase-svm = { path = "../crates/svm", default-features = false }
+#fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
+#fluentbase-svm = { path = "../crates/svm", default-features = false }
 fluentbase-testing = { path = "../crates/testing", default-features = false }
 # revm
 revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched", default-features = false }
 # solana
-solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+#solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+#solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+#solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 # misc
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 ecdsa = { git = "https://github.com/rwasm-patches/signatures.git", default-features = false, features = ["hazmat", "verifying"] }
@@ -62,8 +62,8 @@ tiny-keccak = { git = "https://github.com/fluentlabs-xyz/tiny-keccak.git", branc
 fluentbase-sdk = { path = "../crates/sdk" }
 fluentbase-universal-token = { path = "../crates/universal-token" }
 fluentbase-evm = { path = "../crates/evm" }
-fluentbase-svm-common = { path = "../crates/svm-common" }
-fluentbase-svm = { path = "../crates/svm" }
+#fluentbase-svm-common = { path = "../crates/svm-common" }
+#fluentbase-svm = { path = "../crates/svm" }
 fluentbase-testing = { path = "../crates/testing" }
 #ecdsa = { path = "../../signatures/ecdsa" }
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel" }
