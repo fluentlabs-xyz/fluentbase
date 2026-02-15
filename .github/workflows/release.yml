@@ -45,7 +45,7 @@ jobs:
     needs: extract-version
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.90.0
       - name: Verify crate version matches tag
         # Check that the Cargo version starts with the tag,
         # so that Cargo version 1.4.8 can be matched against both v1.4.8 and v1.4.8-rc.1
