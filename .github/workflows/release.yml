@@ -134,9 +134,10 @@ jobs:
           export GPG_TTY=$(tty)
           echo -n "$GPG_SIGNING_KEY" | base64 --decode | gpg --batch --import
           cd artifacts
+          tar -czf ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz ${{ matrix.build.binary }}*
           echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
-          echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz
-          mv *json* ..
+          mv *json.gz* ..
+          mv *tar.gz* ..
         shell: bash
 
       - name: Upload genesis
