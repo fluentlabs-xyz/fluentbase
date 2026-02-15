@@ -33,11 +33,16 @@ jobs:
     name: extract version
     runs-on: ubuntu-amd64-8core
     steps:
-      - name: Extract version
-        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+      - name: Extract and sanitize version
         id: extract_version
+        run: |
+          VERSION="${GITHUB_REF_NAME}"  
+          # Replace slashes with dashes (safe for filenames)
+          VERSION="${VERSION//\//-}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
     outputs:
       VERSION: ${{ steps.extract_version.outputs.VERSION }}
+
 
   check-version:
     name: check version
