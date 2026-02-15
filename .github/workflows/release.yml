@@ -17,6 +17,7 @@ env:
   REPO_NAME: ${{ github.repository_owner }}/fluent
   IMAGE_NAME: ${{ github.repository_owner }}/fluent
   DOCKER_IMAGE_NAME_URL: https://ghcr.io/${{ github.repository_owner }}/fluent
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   dry-run:
@@ -89,15 +90,30 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: rui314/setup-mold@v1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.configs.target }}
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Install cross main
+        id: cross_main
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: Apple M1 setup
+        if: matrix.configs.target == 'aarch64-apple-darwin'
+        run: |
+          echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
+          echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
+
       - name: Build genesis
         run: cargo b --release
       - name: Build Fluent
         run: make PROFILE=${{ matrix.configs.profile }} ${{ matrix.build.command }}-${{ matrix.configs.target }}
+
       - name: Move binary
         run: |
           mkdir artifacts
