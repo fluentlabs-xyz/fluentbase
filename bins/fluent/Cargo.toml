@@ -67,7 +67,7 @@ serde_json = { workspace = true }
 # for chainspec only
 #sequoia-sqv = { version = "1", default-features = false, features = ["crypto-openssl"] }
 #sequoia-openpgp = { version = "2.2.0", default-features = false, features = ["crypto-openssl"] }
-reqwest = { version = "0.13.2", default-features = false, features = ["blocking", "rustls"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["blocking", "native-tls"] }
 directories = "6.0.0"
 
 [dev-dependencies]
