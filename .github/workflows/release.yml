@@ -73,22 +73,22 @@ jobs:
             os: ubuntu-amd64-8core
             profile: maxperf
             allow_fail: false
-        # - target: x86_64-apple-darwin
-        #   os: macos-14
-        #   profile: maxperf
-        #   allow_fail: false
-        # - target: aarch64-apple-darwin
-        #   os: macos-14
-        #   profile: maxperf
-        #   allow_fail: false
-        # - target: x86_64-pc-windows-gnu
-        #   os: ubuntu-24.04
-        #   profile: maxperf
-        #   allow_fail: false
-        # - target: riscv64gc-unknown-linux-gnu
-        #   os: ubuntu-24.04
-        #   profile: maxperf
-        #   allow_fail: true
+          - target: x86_64-apple-darwin
+            os: macos-14
+            profile: maxperf
+            allow_fail: false
+          - target: aarch64-apple-darwin
+            os: macos-14
+            profile: maxperf
+            allow_fail: false
+        #  - target: x86_64-pc-windows-gnu
+        #    os: ubuntu-24.04
+        #    profile: maxperf
+        #    allow_fail: false
+        #  - target: riscv64gc-unknown-linux-gnu
+        #    os: ubuntu-24.04
+        #    profile: maxperf
+        #    allow_fail: true
         build:
           - command: build
             binary: fluent
