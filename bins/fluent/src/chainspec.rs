@@ -37,7 +37,7 @@ fn download_and_cache_genesis_verified(tag: &str) -> eyre::Result<Genesis> {
 
     let (gz_url, asc_url, gz_name, asc_name) = genesis_urls(tag);
 
-    println!("Downloading genesis from {}...", gz_url);
+    println!("Checking genesis for tag  {}...", tag);
     let genesis_dir = genesis_cache_dir()?;
     fs::create_dir_all(&genesis_dir).wrap_err_with(|| {
         format!(
@@ -60,7 +60,7 @@ fn download_and_cache_genesis_verified(tag: &str) -> eyre::Result<Genesis> {
         let _ = fs::remove_file(&asc_path);
     }
 
-    println!("Genesis not found in cache, downloading...");
+    println!("Genesis not found in cache, downloading from {}", gz_url);
 
     // Download both files.
     download_to(&gz_url, &gz_path).wrap_err("failed to download genesis .gz")?;
