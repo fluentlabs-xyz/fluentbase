@@ -79,4 +79,4 @@ assets/
 *.hex
 *.pem
 
-Dockerfile
+datadir
