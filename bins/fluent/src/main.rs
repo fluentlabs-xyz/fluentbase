@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+#![allow(missing_docs, dead_code)]
 
 use clap::Parser;
 use fluent::chainspec::FluentChainSpecParser;
