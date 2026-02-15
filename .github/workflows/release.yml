@@ -111,6 +111,10 @@ jobs:
         run: |
           echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
           echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
+      - name: Install OpenSSL
+        if: matrix.configs.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          apt install libssl-dev
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
 
