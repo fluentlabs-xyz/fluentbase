@@ -115,7 +115,7 @@ jobs:
         if: matrix.configs.target == 'x86_64-unknown-linux-gnu'
         run: |
           sudo apt update
-          sudo apt install libssl-dev
+          sudo apt install -y libssl-dev
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
 
