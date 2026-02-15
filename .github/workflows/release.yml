@@ -17,7 +17,6 @@ env:
   REPO_NAME: ${{ github.repository_owner }}/fluent
   IMAGE_NAME: ${{ github.repository_owner }}/fluent
   DOCKER_IMAGE_NAME_URL: https://ghcr.io/${{ github.repository_owner }}/fluent
-  RUSTC_WRAPPER: "sccache"
 
 jobs:
   dry-run:
