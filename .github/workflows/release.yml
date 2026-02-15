@@ -90,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: rui314/setup-mold@v1
-      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: dtolnay/rust-toolchain@1.92.0
         with:
           target: ${{ matrix.configs.target }}
       - uses: mozilla-actions/sccache-action@v0.0.9
