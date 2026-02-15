@@ -39,8 +39,8 @@ mod multicall;
 mod router;
 #[cfg(test)]
 mod stateless;
-#[cfg(all(test, feature = "svm"))]
-pub mod svm;
+// #[cfg(all(test, feature = "svm"))]
+// pub mod svm;
 #[cfg(test)]
 mod universal_token;
 // Testnet-only: Runtime upgrade functionality. See frame_init() for details.

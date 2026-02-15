@@ -1728,7 +1728,7 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.4.11-dev"
+version = "0.5.0"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1740,7 +1740,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.4.11-dev"
+version = "0.5.0"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -1752,7 +1752,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-crypto"
-version = "0.4.11-dev"
+version = "0.5.0"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -1764,7 +1764,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.4.11-dev"
+version = "0.5.0"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-revm"
-version = "0.4.11-dev"
+version = "0.5.0"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -1977,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.4.11-dev"
+version = "0.5.0"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -1989,14 +1989,13 @@ dependencies = [
  "schnellru",
  "sha2 0.10.9",
  "snowbridge-amcl",
- "solana-poseidon",
  "sp1-curves",
  "tiny-keccak",
 ]
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.4.11-dev"
+version = "0.5.0"
 dependencies = [
  "alloy-rlp",
  "auto_impl",
@@ -2012,7 +2011,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.4.11-dev"
+version = "0.5.0"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -2025,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.4.11-dev"
+version = "0.5.0"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -2047,7 +2046,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-testing"
-version = "0.4.11-dev"
+version = "0.5.0"
 dependencies = [
  "bytes",
  "fluentbase-codec",
@@ -2062,7 +2061,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.4.11-dev"
+version = "0.5.0"
 dependencies = [
  "alloy-primitives",
  "bincode 2.0.1",
@@ -2080,7 +2079,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-universal-token"
-version = "0.4.11-dev"
+version = "0.5.0"
 dependencies = [
  "fluentbase-sdk",
 ]
@@ -2747,17 +2746,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3db8d6ba2cec9eacc40e6e8ccc98931840301f1006e95647ceb2dd5c3aa06f7c"
 dependencies = [
  "libsecp256k1-core",
-]
-
-[[package]]
-name = "light-poseidon"
-version = "0.2.0"
-source = "git+https://github.com/fluentlabs-xyz/light-poseidon?branch=feat%2Fsvm-0.2.0#636095c8a469fb5d28ebd166f3b2f86c5c8f2f3c"
-dependencies = [
- "ark-bn254",
- "ark-ff 0.5.0",
- "num-bigint",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -4525,21 +4513,6 @@ checksum = "460a9ed63cdf03c1b9847e8a12a5f5ba19c4efd5869e4a737e05be25d7c427e5"
 dependencies = [
  "parity-scale-codec",
  "scale-info",
-]
-
-[[package]]
-name = "solana-define-syscall"
-version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ca0b8c4a46e162fa27f869543aa7e3e7eeeaec04"
-
-[[package]]
-name = "solana-poseidon"
-version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ca0b8c4a46e162fa27f869543aa7e3e7eeeaec04"
-dependencies = [
- "ark-bn254",
- "light-poseidon",
- "solana-define-syscall",
 ]
 
 [[package]]

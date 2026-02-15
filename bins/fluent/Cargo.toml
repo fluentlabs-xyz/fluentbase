@@ -1,0 +1,181 @@
+[package]
+name = "fluent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Fluent node implementation"
+
+[lints]
+workspace = true
+
+[dependencies]
+# reth
+reth-ethereum-cli.workspace = true
+reth-chainspec.workspace = true
+reth-primitives.workspace = true
+reth-db = { workspace = true, features = ["mdbx"] }
+reth-provider.workspace = true
+reth-evm.workspace = true
+reth-revm.workspace = true
+reth-transaction-pool.workspace = true
+reth-cli.workspace = true
+reth-cli-runner.workspace = true
+reth-cli-util.workspace = true
+reth-consensus-common.workspace = true
+reth-rpc-builder.workspace = true
+reth-rpc.workspace = true
+reth-rpc-convert.workspace = true
+reth-rpc-api = { workspace = true, features = ["client"] }
+reth-rpc-eth-types.workspace = true
+reth-rpc-server-types.workspace = true
+reth-network = { workspace = true, features = ["serde"] }
+reth-network-api.workspace = true
+reth-tasks.workspace = true
+reth-payload-builder.workspace = true
+reth-payload-primitives.workspace = true
+reth-node-api.workspace = true
+reth-node-core.workspace = true
+reth-ethereum-payload-builder.workspace = true
+reth-ethereum-primitives.workspace = true
+reth-node-ethereum.workspace = true
+reth-node-builder.workspace = true
+reth-node-metrics.workspace = true
+reth-consensus.workspace = true
+reth-tokio-util.workspace = true
+reth-ress-protocol.workspace = true
+reth-ress-provider.workspace = true
+
+# alloy
+#alloy-rpc-types = { workspace = true, features = ["engine"] }
+alloy-genesis = { workspace = true }
+
+# tracing
+tracing.workspace = true
+
+# async
+tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thread"] }
+
+# misc
+#aquamarine.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+flate2 = { workspace = true }
+eyre = { workspace = true }
+serde_json = { workspace = true }
+
+# for chainspec only
+#sequoia-sqv = { version = "1", default-features = false, features = ["crypto-openssl"] }
+#sequoia-openpgp = { version = "2.2.0", default-features = false, features = ["crypto-openssl"] }
+reqwest = { version = "0.13.2", features = ["blocking"] }
+directories = "6.0.0"
+
+[dev-dependencies]
+#backon.workspace = true
+#tempfile.workspace = true
+
+[features]
+default = ["jemalloc", "otlp", "otlp-logs", "reth-revm/portable", "js-tracer", "keccak-cache-global", "asm-keccak"]
+
+otlp = [
+    "reth-ethereum-cli/otlp",
+    "reth-node-core/otlp",
+]
+otlp-logs = [
+    "reth-ethereum-cli/otlp-logs",
+    "reth-node-core/otlp-logs",
+]
+js-tracer = [
+    "reth-node-builder/js-tracer",
+    "reth-node-ethereum/js-tracer",
+    "reth-rpc/js-tracer",
+    "reth-rpc-eth-types/js-tracer",
+]
+
+dev = ["reth-ethereum-cli/dev"]
+
+asm-keccak = [
+    "reth-node-core/asm-keccak",
+    "reth-primitives/asm-keccak",
+    "reth-ethereum-cli/asm-keccak",
+    "reth-node-ethereum/asm-keccak",
+]
+keccak-cache-global = [
+    "reth-node-core/keccak-cache-global",
+    "reth-node-ethereum/keccak-cache-global",
+]
+jemalloc = [
+    "reth-cli-util/jemalloc",
+    "reth-node-core/jemalloc",
+    "reth-node-metrics/jemalloc",
+    "reth-ethereum-cli/jemalloc",
+]
+jemalloc-prof = [
+    "reth-cli-util/jemalloc",
+    "reth-cli-util/jemalloc-prof",
+    "reth-ethereum-cli/jemalloc-prof",
+    "reth-node-metrics/jemalloc-prof",
+]
+jemalloc-symbols = [
+    "jemalloc-prof",
+    "reth-ethereum-cli/jemalloc-symbols",
+]
+jemalloc-unprefixed = [
+    "reth-cli-util/jemalloc-unprefixed",
+    "reth-node-core/jemalloc",
+    "reth-node-metrics/jemalloc",
+    "reth-ethereum-cli/jemalloc",
+]
+tracy-allocator = [
+    "reth-cli-util/tracy-allocator",
+    "reth-ethereum-cli/tracy-allocator",
+    "tracy",
+]
+tracy = [
+    "reth-ethereum-cli/tracy",
+    "reth-node-core/tracy",
+]
+
+# Because jemalloc is default and preferred over snmalloc when both features are
+# enabled, `--no-default-features` should be used when enabling snmalloc or
+# snmalloc-native.
+snmalloc = [
+    "reth-cli-util/snmalloc",
+    "reth-ethereum-cli/snmalloc",
+]
+snmalloc-native = [
+    "reth-cli-util/snmalloc-native",
+    "reth-ethereum-cli/snmalloc-native",
+]
+
+min-error-logs = [
+    "tracing/release_max_level_error",
+    "reth-ethereum-cli/min-error-logs",
+    "reth-node-core/min-error-logs",
+]
+min-warn-logs = [
+    "tracing/release_max_level_warn",
+    "reth-ethereum-cli/min-warn-logs",
+    "reth-node-core/min-warn-logs",
+]
+min-info-logs = [
+    "tracing/release_max_level_info",
+    "reth-ethereum-cli/min-info-logs",
+    "reth-node-core/min-info-logs",
+]
+min-debug-logs = [
+    "tracing/release_max_level_debug",
+    "reth-ethereum-cli/min-debug-logs",
+    "reth-node-core/min-debug-logs",
+]
+min-trace-logs = [
+    "tracing/release_max_level_trace",
+    "reth-ethereum-cli/min-trace-logs",
+    "reth-node-core/min-trace-logs",
+]
+
+edge = ["reth-ethereum-cli/edge", "reth-node-core/edge"]
+
+[[bin]]
+name = "fluent"
+path = "src/main.rs"

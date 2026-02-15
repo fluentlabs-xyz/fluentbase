@@ -4,21 +4,45 @@ on:
   push:
     tags:
       - v*
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Enable dry run mode (builds artifacts but skips uploads and release creation)"
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  REPO_NAME: ${{ github.repository_owner }}/fluent
+  IMAGE_NAME: ${{ github.repository_owner }}/fluent
+  DOCKER_IMAGE_NAME_URL: https://ghcr.io/${{ github.repository_owner }}/fluent
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
+  dry-run:
+    name: check dry run
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "Dry run value: ${{ github.event.inputs.dry_run }}"
+          echo "Dry run enabled: ${{ github.event.inputs.dry_run == 'true'}}"
+          echo "Dry run disabled: ${{ github.event.inputs.dry_run != 'true'}}"
+
   extract-version:
     name: extract version
     runs-on: ubuntu-amd64-8core
     steps:
-      - name: Extract version
-        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+      - name: Extract and sanitize version
         id: extract_version
+        run: |
+          VERSION="${GITHUB_REF_NAME}"  
+          # Replace slashes with dashes (safe for filenames)
+          VERSION="${VERSION//\//-}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
     outputs:
       VERSION: ${{ steps.extract_version.outputs.VERSION }}
+
 
   check-version:
     name: check version
@@ -38,21 +62,68 @@ jobs:
 
   build:
     name: build release
-    runs-on: ubuntu-amd64-8core
+    runs-on: ${{ matrix.configs.os }}
     needs: extract-version
+    continue-on-error: ${{ matrix.configs.allow_fail }}
+    strategy:
+      fail-fast: true
+      matrix:
+        configs:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-amd64-8core
+            profile: maxperf
+            allow_fail: false
+        #  - target: x86_64-apple-darwin
+        #    os: macos-14
+        #    profile: maxperf
+        #    allow_fail: false
+        #  - target: aarch64-apple-darwin
+        #    os: macos-14
+        #    profile: maxperf
+        #    allow_fail: false
+        #  - target: x86_64-pc-windows-gnu
+        #    os: ubuntu-24.04
+        #    profile: maxperf
+        #    allow_fail: false
+        #  - target: riscv64gc-unknown-linux-gnu
+        #    os: ubuntu-24.04
+        #    profile: maxperf
+        #    allow_fail: true
+        build:
+          - command: build
+            binary: fluent
     steps:
       - uses: actions/checkout@v6
       - uses: rui314/setup-mold@v1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.configs.target }}
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Install cross main
+        id: cross_main
+        run: |
+          cargo +1.92.0 install cross --git https://github.com/cross-rs/cross
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: Apple M1 setup
+        if: matrix.configs.target == 'aarch64-apple-darwin'
+        run: |
+          echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
+          echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
-      - name: Build genesis
+
+      - name: Build Genesis
         run: cargo b --release
+      - name: Build Fluent
+        run: make PROFILE=${{ matrix.configs.profile }} ${{ matrix.build.command }}-${{ matrix.configs.target }}
+
       - name: Move binary
         run: |
           mkdir artifacts
+          tar -czf ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz ${{ matrix.build.binary }}*
+          mv "target/${{ matrix.configs.target }}/${{ matrix.configs.profile }}/${{ matrix.build.binary }}.tar.gz" ./artifacts
           gzip ./crates/genesis/genesis-devnet.json 
           mv ./crates/genesis/genesis-devnet.json.gz ./artifacts/genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
       - name: Configure GPG and create artifacts
@@ -63,25 +134,42 @@ jobs:
           export GPG_TTY=$(tty)
           echo -n "$GPG_SIGNING_KEY" | base64 --decode | gpg --batch --import
           cd artifacts
+          echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz
           echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
-          mv *json* ..
+          mv *json.gz* ..
+          mv *tar.gz* ..
         shell: bash
 
-      - name: Upload artifact
+      - name: Upload genesis
+        if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: actions/upload-artifact@v6
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
           path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
+      - name: Upload fluent
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz
+          path: ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz
 
-      - name: Upload signature
+      - name: Upload genesis signature
+        if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: actions/upload-artifact@v6
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
           path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
+      - name: Upload fluent signature
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz.asc
+          path: ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz.asc
 
   draft-release:
     name: draft release
     needs: [ build, extract-version ]
+    if: ${{ github.event.inputs.dry_run != 'true' }}
     runs-on: ubuntu-amd64-8core
     env:
       VERSION: ${{ needs.extract-version.outputs.VERSION }}

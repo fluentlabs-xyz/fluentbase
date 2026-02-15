@@ -21,7 +21,7 @@ p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 blake3 = { workspace = true, default-features = false }
 sha2 = { workspace = true, default-features = false }
-solana-poseidon = { workspace = true }
+#solana-poseidon = { workspace = true }
 num = "0.4.3"
 sp1-curves = { workspace = true }
 bytemuck = { workspace = true }

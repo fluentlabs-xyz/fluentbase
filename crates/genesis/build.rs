@@ -213,6 +213,7 @@ fn main() {
         excess_blob_gas: None,
         blob_gas_used: None,
         number: Some(0),
+        parent_hash: None,
     };
     let genesis_path =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("genesis-devnet.json");

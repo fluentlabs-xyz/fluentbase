@@ -62,7 +62,8 @@ pub fn invoke_runtime_handler(
         // hashing functions (0x01)
         SysFuncIdx::KECCAK256 => syscall_hashing_keccak256_handler(caller, params, result),
         SysFuncIdx::KECCAK256_PERMUTE => syscall_hashing_keccak256_permute_handler(caller, params, result),
-        SysFuncIdx::POSEIDON => syscall_hashing_poseidon_handler(caller, params, result),
+        // TODO(dmitry123): This syscall is disabled since we don't support SVM yet.
+        SysFuncIdx::POSEIDON => Err(TrapCode::UnreachableCodeReached),
         SysFuncIdx::SHA256_EXTEND => syscall_hashing_sha256_extend_handler(caller, params, result),
         SysFuncIdx::SHA256_COMPRESS => syscall_hashing_sha256_compress_handler(caller, params, result),
         SysFuncIdx::SHA256 => syscall_hashing_sha256_handler(caller, params, result),

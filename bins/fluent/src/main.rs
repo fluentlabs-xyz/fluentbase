@@ -1,0 +1,39 @@
+#![allow(missing_docs, dead_code)]
+
+use clap::Parser;
+use fluent::chainspec::FluentChainSpecParser;
+use reth_ethereum_cli::Cli;
+use reth_node_builder::NodeHandle;
+use reth_node_ethereum::EthereumNode;
+use tracing::info;
+
+#[global_allocator]
+static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
+
+#[cfg(all(feature = "jemalloc-prof", unix))]
+#[unsafe(export_name = "_rjem_malloc_conf")]
+static MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
+
+fn main() {
+    reth_cli_util::sigsegv_handler::install();
+
+    // Enable backtraces unless a RUST_BACKTRACE value has already been explicitly provided.
+    if std::env::var_os("RUST_BACKTRACE").is_none() {
+        unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
+    }
+
+    if let Err(err) = Cli::<FluentChainSpecParser>::parse().run(async move |builder, _| {
+        info!(target: "reth::cli", "Launching node");
+        let NodeHandle {
+            node_exit_future, ..
+        } = builder
+            .node(EthereumNode::default())
+            .launch_with_debug_capabilities()
+            .await?;
+
+        node_exit_future.await
+    }) {
+        eprintln!("Error: {err:?}");
+        std::process::exit(1);
+    }
+}
