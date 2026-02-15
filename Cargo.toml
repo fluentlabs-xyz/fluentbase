@@ -19,7 +19,7 @@ version = "0.5.0"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
-repository = "https://github.com/fluentlabs-xyz/fuentbase"
+repository = "https://github.com/fluentlabs-xyz/fluentbase"
 edition = "2021"
 rust-version = "1.90.0"
 readme = "README.md"
@@ -304,7 +304,6 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [profile.bench]
-inherits = "profiling"
 lto = "fat"
 codegen-units = 1
 
