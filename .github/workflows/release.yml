@@ -73,14 +73,14 @@ jobs:
             os: ubuntu-amd64-8core
             profile: maxperf
             allow_fail: false
-          - target: x86_64-apple-darwin
-            os: macos-14
-            profile: maxperf
-            allow_fail: false
-          - target: aarch64-apple-darwin
-            os: macos-14
-            profile: maxperf
-            allow_fail: false
+        #  - target: x86_64-apple-darwin
+        #    os: macos-14
+        #    profile: maxperf
+        #    allow_fail: false
+        #  - target: aarch64-apple-darwin
+        #    os: macos-14
+        #    profile: maxperf
+        #    allow_fail: false
         #  - target: x86_64-pc-windows-gnu
         #    os: ubuntu-24.04
         #    profile: maxperf
@@ -114,7 +114,7 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
 
-      - name: Build genesis
+      - name: Build Genesis
         run: cargo b --release
       - name: Build Fluent
         run: make PROFILE=${{ matrix.configs.profile }} ${{ matrix.build.command }}-${{ matrix.configs.target }}
