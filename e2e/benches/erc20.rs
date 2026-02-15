@@ -117,13 +117,13 @@ fn tokens_transfer_benches(c: &mut Criterion) {
             ..Default::default()
         });
         let total_supply = U256::from(0xffff_ffffu64);
-        let mut initial_settings = InitialSettings {
+        let initial_settings = InitialSettings {
             token_name: Default::default(),
             token_symbol: Default::default(),
             decimals: DECIMALS_DEFAULT,
             initial_supply: total_supply,
-            minter: None,
-            pauser: None,
+            minter: Address::ZERO,
+            pauser: Address::ZERO,
         };
         let contract_address =
             ctx.deploy_evm_tx(DEPLOYER_ADDR, initial_settings.encode_with_prefix());
