@@ -40,6 +40,7 @@ pub const SIG_ERC20_TRANSFER_FROM: u32 =
 pub const SIG_ERC20_ALLOWANCE: u32 = derive_keccak256_id!("allowance(address,address)");
 pub const SIG_ERC20_APPROVE: u32 = derive_keccak256_id!("approve(address,uint256)");
 pub const SIG_ERC20_MINT: u32 = derive_keccak256_id!("mint(address,uint256)");
+pub const SIG_ERC20_BURN: u32 = derive_keccak256_id!("burn(address,uint256)");
 pub const SIG_ERC20_PAUSE: u32 = derive_keccak256_id!("pause()");
 pub const SIG_ERC20_UNPAUSE: u32 = derive_keccak256_id!("unpause()");
 
@@ -100,6 +101,7 @@ const _: () = assert_unique_u32([
     SIG_ERC20_ALLOWANCE,
     SIG_ERC20_APPROVE,
     SIG_ERC20_MINT,
+    SIG_ERC20_BURN,
     SIG_ERC20_PAUSE,
     SIG_ERC20_UNPAUSE,
     SIG_TOKEN2022,

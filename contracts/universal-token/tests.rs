@@ -15,8 +15,8 @@ use fluentbase_universal_token::{
         ERR_ERC20_INVALID_SPENDER, ERR_PAUSABLE_ENFORCED_PAUSE, ERR_PAUSABLE_EXPECTED_PAUSE,
         ERR_UST_MINTER_MISMATCH, ERR_UST_NOT_MINTABLE, ERR_UST_NOT_PAUSABLE,
         ERR_UST_PAUSER_MISMATCH, ERR_UST_UNKNOWN_METHOD, SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE,
-        SIG_ERC20_BALANCE, SIG_ERC20_BALANCE_OF, SIG_ERC20_DECIMALS, SIG_ERC20_MINT,
-        SIG_ERC20_NAME, SIG_ERC20_PAUSE, SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY,
+        SIG_ERC20_BALANCE, SIG_ERC20_BALANCE_OF, SIG_ERC20_BURN, SIG_ERC20_DECIMALS,
+        SIG_ERC20_MINT, SIG_ERC20_NAME, SIG_ERC20_PAUSE, SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY,
         SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM, SIG_ERC20_UNPAUSE,
     },
     storage::InitialSettings,
@@ -726,6 +726,80 @@ fn mint_requires_minter_and_not_paused_and_updates_supply() {
 }
 
 #[test]
+fn burn_requires_minter_and_not_paused_and_updates_supply() {
+    let token = Address::with_last_byte(2);
+    let owner = Address::with_last_byte(20);
+    let minter = Address::with_last_byte(40);
+    let pauser = Address::with_last_byte(50);
+    let victim = Address::with_last_byte(41);
+    let attacker = Address::with_last_byte(42);
+
+    let mut h = Harness::new(token);
+
+    h.set_caller(minter);
+    let (exit_code, out) = h.call(with_sig(
+        SIG_ERC20_BURN,
+        &abi_encode_1_addr_1_u256(victim, U256::from(1u64)),
+    ));
+    assert_eq!(exit_code, ExitCode::Panic);
+    assert_eq!(out, evm_exit_bytes(ERR_UST_NOT_MINTABLE));
+
+    // Deploy with minter+pauser configured and some initial supply to victim.
+    deploy_with_roles(&mut h, owner, U256::from(10u64), minter, pauser);
+    h.set_caller(owner);
+    let (ec, _) = h.call(with_sig(
+        SIG_ERC20_TRANSFER,
+        &abi_encode_1_addr_1_u256(victim, U256::from(10u64)),
+    ));
+    assert_eq!(ec, ExitCode::Ok);
+
+    h.set_caller(attacker);
+    let (exit_code, out) = h.call(with_sig(
+        SIG_ERC20_BURN,
+        &abi_encode_1_addr_1_u256(victim, U256::from(3u64)),
+    ));
+    assert_eq!(exit_code, ExitCode::Panic);
+    assert_eq!(out, evm_exit_bytes(ERR_UST_MINTER_MISMATCH));
+
+    // Happy path: minter can burn from arbitrary victim balance.
+    h.set_caller(minter);
+    let (exit_code, out) = h.call(with_sig(
+        SIG_ERC20_BURN,
+        &abi_encode_1_addr_1_u256(victim, U256::from(4u64)),
+    ));
+    assert_eq!(exit_code, ExitCode::Ok);
+    assert_eq!(out, ok_32());
+
+    // totalSupply decreased from 10 to 6.
+    let (exit_code, ts) = h.call(with_sig(SIG_ERC20_TOTAL_SUPPLY, &[]));
+    assert_eq!(exit_code, ExitCode::Ok);
+    assert_eq!(ts, abi_word_u256(U256::from(6u64)).to_vec());
+
+    // victim balance decreased from 10 to 6.
+    let (exit_code, b) = h.call(with_sig(SIG_ERC20_BALANCE_OF, &abi_encode_1_addr(victim)));
+    assert_eq!(exit_code, ExitCode::Ok);
+    assert_eq!(b, abi_word_u256(U256::from(6u64)).to_vec());
+
+    // Pause blocks burning and must not mutate supply/balance.
+    h.set_caller(pauser);
+    let (exit_code, out) = h.call(with_sig(SIG_ERC20_PAUSE, &[]));
+    assert_eq!(exit_code, ExitCode::Ok);
+    assert_eq!(out, ok_32());
+
+    h.set_caller(minter);
+    let (exit_code, out) = h.call(with_sig(
+        SIG_ERC20_BURN,
+        &abi_encode_1_addr_1_u256(victim, U256::from(1u64)),
+    ));
+    assert_eq!(exit_code, ExitCode::Panic);
+    assert_eq!(out, evm_exit_bytes(ERR_PAUSABLE_ENFORCED_PAUSE));
+
+    let (exit_code, ts2) = h.call(with_sig(SIG_ERC20_TOTAL_SUPPLY, &[]));
+    assert_eq!(exit_code, ExitCode::Ok);
+    assert_eq!(ts2, abi_word_u256(U256::from(6u64)).to_vec());
+}
+
+#[test]
 fn pause_unpause_access_control_and_idempotence() {
     let token = Address::with_last_byte(1);
     let owner = Address::with_last_byte(10);
@@ -918,6 +992,7 @@ fn selectors_do_not_collide_across_public_surface() {
         SIG_ERC20_ALLOWANCE,
         SIG_ERC20_APPROVE,
         SIG_ERC20_MINT,
+        SIG_ERC20_BURN,
         SIG_ERC20_PAUSE,
         SIG_ERC20_UNPAUSE,
     ];
@@ -1271,6 +1346,41 @@ fn transfer_emits_transfer_event_exactly() {
 }
 
 #[test]
+fn burn_emits_transfer_to_zero_exactly() {
+    let token = Address::with_last_byte(3);
+    let owner = Address::with_last_byte(10);
+    let minter = Address::with_last_byte(40);
+    let victim = Address::with_last_byte(41);
+
+    let mut h = Harness::new(token);
+    deploy_with_roles(&mut h, owner, U256::from(10u64), minter, Address::ZERO);
+
+    // Move full supply to victim.
+    h.set_caller(owner);
+    let (ec, _) = h.call(with_sig(
+        SIG_ERC20_TRANSFER,
+        &abi_encode_1_addr_1_u256(victim, U256::from(10u64)),
+    ));
+    assert_eq!(ec, ExitCode::Ok);
+
+    let _ = h.take_logs(); // clear constructor Transfer log and transfer log
+
+    // Minter burns a portion from victim.
+    h.set_caller(minter);
+    let amount = U256::from(4u64);
+    let (exit_code, out) = h.call(with_sig(
+        SIG_ERC20_BURN,
+        &abi_encode_1_addr_1_u256(victim, amount),
+    ));
+    assert_eq!(exit_code, ExitCode::Ok);
+    assert_eq!(out, ok_32());
+
+    let logs = h.take_logs();
+    // Expect a single Transfer(victim, 0x0, amount)
+    assert_single_transfer_log(&logs, token, victim, Address::ZERO, amount);
+}
+
+#[test]
 fn approve_emits_approval_event_exactly() {
     let token = Address::with_last_byte(1);
     let owner = Address::with_last_byte(20);
@@ -1553,6 +1663,51 @@ fn staticcall_blocks_mint_and_emits_no_logs_and_no_state_change() {
     ));
     assert_eq!(ec, ExitCode::Ok);
     assert_eq!(bal, abi_word_u256(U256::ZERO).to_vec());
+}
+
+#[test]
+fn staticcall_blocks_burn_and_emits_no_logs_and_no_state_change() {
+    let token = Address::with_last_byte(1);
+    let minter = Address::with_last_byte(50);
+    let from = Address::with_last_byte(51);
+
+    let mut h = Harness::new(token);
+
+    // Deploy burnable with `minter` configured and mint some tokens to `minter`.
+    deploy_with_roles(&mut h, minter, U256::from(100u64), minter, Address::ZERO);
+    let _ = h.take_logs();
+
+    // Transfer tokens from `minter` to `from` so we can test burning from `from`.
+    h.set_caller(minter);
+    let (ec, _) = h.call(with_sig(
+        SIG_ERC20_TRANSFER,
+        &abi_encode_1_addr_1_u256(from, U256::from(100u64)),
+    ));
+    assert_eq!(ec, ExitCode::Ok);
+    let _ = h.take_logs();
+
+    // Try to burn from `from` under staticcall.
+    h.set_caller(minter);
+    h.set_static(true);
+
+    // check initial balance of `from`
+    let (ec, bal) = h.call(with_sig(SIG_ERC20_BALANCE_OF, &abi_encode_1_addr(from)));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(bal, abi_word_u256(U256::from(100u64)).to_vec());
+
+    let amt = U256::from(9u64);
+    let (ec, out) = h.call(with_sig(
+        SIG_ERC20_BURN,
+        &abi_encode_1_addr_1_u256(from, amt),
+    ));
+    assert_eq!(ec, ExitCode::StateChangeDuringStaticCall);
+    assert!(out.is_empty());
+    assert!(h.take_logs().is_empty());
+
+    h.set_static(false);
+    let (ec, bal) = h.call(with_sig(SIG_ERC20_BALANCE_OF, &abi_encode_1_addr(from)));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(bal, abi_word_u256(U256::from(100u64)).to_vec());
 }
 
 #[test]

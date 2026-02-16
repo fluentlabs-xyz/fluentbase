@@ -20,8 +20,8 @@ use fluentbase_sdk::{
 };
 use fluentbase_universal_token::{
     command::{
-        AllowanceCommand, ApproveCommand, BalanceOfCommand, MintCommand, TransferCommand,
-        TransferFromCommand, UniversalTokenCommand,
+        AllowanceCommand, ApproveCommand, BalanceOfCommand, BurnCommand, MintCommand,
+        TransferCommand, TransferFromCommand, UniversalTokenCommand,
     },
     consts::*,
     events::{emit_approval_event, emit_pause_event, emit_transfer_event, emit_unpause_event},
@@ -297,6 +297,64 @@ fn erc20_mint_handler<SDK: SharedAPI>(
     Ok(0)
 }
 
+/// Burns tokens from the specified address, reducing total supply.
+fn erc20_burn_handler<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<EvmExitCode, ExitCode> {
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
+
+    let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
+    if !is_contract_frozen.is_zero() {
+        return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
+    }
+
+    // Ensure the token is configured as burnable: we currently reuse the minter role
+    // as the privileged burner, mirroring how mint works for arbitrary `to`.
+    let contract_minter = sdk.storage_address(&MINTER_STORAGE_SLOT)?;
+    if contract_minter == Address::ZERO {
+        return Ok(ERR_UST_NOT_MINTABLE);
+    }
+
+    let BurnCommand { from, amount } = BurnCommand::try_decode(input)?;
+    if from.is_zero() {
+        return Ok(ERR_ERC20_INVALID_SENDER);
+    }
+
+    // Only allow the configured minter (acting as burner) to burn from any `from`.
+    let caller = sdk.context().contract_caller();
+    if caller != contract_minter {
+        return Ok(ERR_UST_MINTER_MISMATCH);
+    }
+
+    // Read current state first so we can fail without partial writes.
+    let total_supply = sdk.storage(&TOTAL_SUPPLY_STORAGE_SLOT).ok()?;
+    let Some(new_total_supply) = total_supply.checked_sub(amount) else {
+        return Ok(ERR_ERC20_INSUFFICIENT_BALANCE);
+    };
+
+    let balance_storage_map = BalanceStorageMap::new(BALANCE_STORAGE_SLOT);
+    let sender_accessor = balance_storage_map.entry(from);
+    let sender_balance = sender_accessor.get_checked(sdk)?;
+    let Some(new_sender_balance) = sender_balance.checked_sub(amount) else {
+        return Ok(ERR_ERC20_INSUFFICIENT_BALANCE);
+    };
+
+    // Commit state.
+    sdk.write_storage(TOTAL_SUPPLY_STORAGE_SLOT, new_total_supply)
+        .ok()?;
+    sender_accessor.set_checked(sdk, new_sender_balance)?;
+
+    // Emit ERC20 Transfer event to zero address.
+    emit_transfer_event(sdk, &from, &Address::ZERO, &amount)?;
+
+    let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
+    sdk.write(&result);
+    Ok(0)
+}
+
 /// Pauses transfers/minting when the pausable plugin is enabled and the caller is the configured pauser.
 fn erc20_pause_handler<SDK: SharedAPI>(
     sdk: &mut SDK,
@@ -460,6 +518,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_ERC20_BALANCE => erc20_balance_handler(sdk, input),
         SIG_ERC20_BALANCE_OF => erc20_balance_of_handler(sdk, input),
         SIG_ERC20_MINT => erc20_mint_handler(sdk, input),
+        SIG_ERC20_BURN => erc20_burn_handler(sdk, input),
         SIG_ERC20_PAUSE => erc20_pause_handler(sdk, input),
         SIG_ERC20_UNPAUSE => erc20_unpause_handler(sdk, input),
         _ => erc20_unknown_method(sdk, input),

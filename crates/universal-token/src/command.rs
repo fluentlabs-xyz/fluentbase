@@ -1,5 +1,5 @@
 use crate::consts::{
-    SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE_OF, SIG_ERC20_MINT,
+    SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE_OF, SIG_ERC20_BURN, SIG_ERC20_MINT,
     SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM,
 };
 use alloc::vec::Vec;
@@ -82,4 +82,13 @@ pub struct MintCommand {
 }
 impl UniversalTokenCommand for MintCommand {
     const SIGNATURE: u32 = SIG_ERC20_MINT;
+}
+
+#[derive(Default, Debug, Codec)]
+pub struct BurnCommand {
+    pub from: Address,
+    pub amount: U256,
+}
+impl UniversalTokenCommand for BurnCommand {
+    const SIGNATURE: u32 = SIG_ERC20_BURN;
 }
