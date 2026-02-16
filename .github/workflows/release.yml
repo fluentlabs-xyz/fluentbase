@@ -182,9 +182,6 @@ jobs:
       - uses: actions/checkout@v6
       - name: Download artifacts
         uses: actions/download-artifact@v7
-        with:
-          merge-multiple: true
-          path: .
       - name: Generate full changelog
         id: changelog
         run: |
@@ -233,11 +230,11 @@ jobs:
           ENDBODY
           )
           assets=()
-          for asset in ./*fluent-*.tar.gz*; do
-              assets+=("$asset/$asset")
+          for d in ./*fluent-*.tar.gz*; do
+            assets+=("$d/$(basename "$d")")
           done
-          for asset in ./*genesis-*.json*; do
-              assets+=("$asset/$asset")
+          for d in ./*genesis-*.json.gz*; do
+            assets+=("$d/$(basename "$d")")
           done
           tag_name="${{ env.VERSION }}"
           echo "$body" | gh release create --draft $prerelease_flag -t "Genesis $tag_name" -F "-" "$tag_name" "${assets[@]}"
