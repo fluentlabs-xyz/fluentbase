@@ -1,6 +1,6 @@
 # Publishes the Docker image.
 
-name: docker
+name: Docker (Fluent)
 
 on:
   push:
@@ -40,7 +40,7 @@ jobs:
       - name: Install cross main
         id: cross_main
         run: |
-          cargo install cross --git https://github.com/cross-rs/cross
+          cargo +1.92.0 install cross --git https://github.com/cross-rs/cross
       - name: Log in to Docker
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username ${DOCKER_USERNAME} --password-stdin
@@ -76,7 +76,7 @@ jobs:
       - name: Install cross main
         id: cross_main
         run: |
-          cargo install cross --git https://github.com/cross-rs/cross
+          cargo +1.92.0 install cross --git https://github.com/cross-rs/cross
       - name: Log in to Docker
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username ${DOCKER_USERNAME} --password-stdin
