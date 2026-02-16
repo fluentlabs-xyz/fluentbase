@@ -38,6 +38,7 @@ std = [
     "fluentbase-crypto/std",
     "alloy-rlp/std",
 ]
+universal-token = ["std"]
 debug-print = []
 fast-panic = []
 fluent-testnet = [

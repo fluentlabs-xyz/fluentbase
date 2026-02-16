@@ -43,6 +43,8 @@ mod stateless;
 // pub mod svm;
 #[cfg(test)]
 mod universal_token;
+#[cfg(test)]
+mod universal_token_solidity;
 // Testnet-only: Runtime upgrade functionality. See frame_init() for details.
 #[cfg(test)]
 mod bench;
