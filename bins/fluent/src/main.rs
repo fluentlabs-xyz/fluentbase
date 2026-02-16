@@ -25,7 +25,8 @@ fn main() {
     if let Err(err) = Cli::<FluentChainSpecParser>::parse().run(async move |builder, _| {
         info!(target: "reth::cli", "Launching node");
         let NodeHandle {
-            node_exit_future, ..
+            node: _node,
+            node_exit_future,
         } = builder
             .node(EthereumNode::default())
             .launch_with_debug_capabilities()
