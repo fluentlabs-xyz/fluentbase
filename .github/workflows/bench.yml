@@ -8,30 +8,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  baseline-on-push:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-amd64-8core
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Run Criterion (save baseline "devel")
-        env:
-          CRITERION_NO_PLOTTING: "1"
-          CRITERION_WARM_UP_TIME: "3"
-          CRITERION_MEASUREMENT_TIME: "5"
-          CRITERION_SAMPLE_SIZE: "50"
-        run: |
-          rustup target add wasm32-unknown-unknown
-          cd e2e && cargo bench -- --save-baseline devel
-      - name: Upload baseline artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: criterion-baseline-devel
-          path: target/criterion
-          if-no-files-found: error
-          compression-level: 6
-
   compare-on-pr:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-amd64-8core
