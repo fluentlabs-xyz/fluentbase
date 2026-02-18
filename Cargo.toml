@@ -21,7 +21,7 @@ authors = [
 ]
 repository = "https://github.com/fluentlabs-xyz/fluentbase"
 edition = "2021"
-rust-version = "1.90.0"
+rust-version = "1.92.0"
 readme = "README.md"
 license = "MIT"
 keywords = ["wasm", "webassembly", "interpreter", "vm"]
@@ -252,6 +252,22 @@ serde_derive = { version = "1.0", default-features = false }
 thiserror = "2.0"
 array-bytes = "9.3.0"
 
+[patch."https://github.com/fluentlabs-xyz/fluentbase"]
+fluentbase-build = { path = "./crates/build" }
+fluentbase-codec = { path = "./crates/codec" }
+fluentbase-codec-derive = { path = "./crates/codec-derive" }
+fluentbase-contracts = { path = "./crates/contracts" }
+fluentbase-crypto = { path = "./crates/crypto" }
+fluentbase-evm = { path = "./crates/evm" }
+fluentbase-genesis = { path = "./crates/genesis" }
+fluentbase-revm = { path = "./crates/revm" }
+fluentbase-runtime = { path = "./crates/runtime" }
+fluentbase-sdk = { path = "./crates/sdk" }
+fluentbase-sdk-derive = { path = "./crates/sdk-derive" }
+fluentbase-testing = { path = "./crates/testing" }
+fluentbase-types = { path = "./crates/types" }
+fluentbase-universal-token = { path = "./crates/universal-token" }
+
 [patch.crates-io]
 # revm
 revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched" }
@@ -268,22 +284,6 @@ op-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "
 
 # alloy-evm
 alloy-evm = { git = "https://github.com/fluentlabs-xyz/alloy-rwasm.git", branch = "v26-patched" }
-
-# fluentbase
-fluentbase-build = { path = "./crates/build" }
-fluentbase-codec = { path = "./crates/codec" }
-fluentbase-codec-derive = { path = "./crates/codec-derive" }
-fluentbase-contracts = { path = "./crates/contracts" }
-fluentbase-crypto = { path = "./crates/crypto" }
-fluentbase-evm = { path = "./crates/evm" }
-fluentbase-genesis = { path = "./crates/genesis" }
-fluentbase-revm = { path = "./crates/revm" }
-fluentbase-runtime = { path = "./crates/runtime" }
-fluentbase-sdk = { path = "./crates/sdk" }
-fluentbase-sdk-derive = { path = "./crates/sdk-derive" }
-fluentbase-testing = { path = "./crates/testing" }
-fluentbase-types = { path = "./crates/types" }
-fluentbase-universal-token = { path = "./crates/universal-token" }
 
 # tiny-keccak
 tiny-keccak = { git = "https://github.com/fluentlabs-xyz/tiny-keccak.git", branch = "rwasm" }
@@ -322,11 +322,11 @@ codegen-units = 16
 # Uncomment this section if you're using a debugger.
 [profile.dev]
 # https://davidlattimore.github.io/posts/2024/02/04/speeding-up-the-rust-edit-build-run-cycle.html
-debug = "line-tables-only"
-split-debuginfo = "unpacked"
+#debug = "line-tables-only"
+#split-debuginfo = "unpacked"
 
 [profile.dev.build-override]
-debug = false
+#debug = false
 opt-level = 3
 
 # Use the `--profile profiling` flag to show symbols in release mode.
