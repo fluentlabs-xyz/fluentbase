@@ -16,6 +16,7 @@ use revm_precompile::{
         pair::{ISTANBUL_PAIR_BASE, ISTANBUL_PAIR_PER_POINT},
         PAIR_ELEMENT_LEN,
     },
+    PrecompileError,
 };
 
 const BN254_ADD_INPUT_SIZE: usize = BN254_G1_RAW_AFFINE_SIZE * 2;
@@ -135,8 +136,13 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         }
         PRECOMPILE_BN256_MUL => {
             sdk.sync_evm_gas(ISTANBUL_MUL_GAS_COST)?;
-            let result = bn254::run_mul(input, ISTANBUL_MUL_GAS_COST, u64::MAX)
-                .map_err(|_| ExitCode::PrecompileError)?;
+            let result =
+                bn254::run_mul(input, ISTANBUL_MUL_GAS_COST, u64::MAX).map_err(
+                    |err| match err {
+                        PrecompileError::OutOfGas => ExitCode::OutOfFuel,
+                        _ => ExitCode::PrecompileError,
+                    },
+                )?;
             sdk.write(result.bytes);
             Ok(())
         }
@@ -146,7 +152,10 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
             sdk.sync_evm_gas(gas_used)?;
             let result =
                 bn254::run_pair(input, ISTANBUL_PAIR_PER_POINT, ISTANBUL_PAIR_BASE, u64::MAX)
-                    .map_err(|_| ExitCode::PrecompileError)?;
+                    .map_err(|err| match err {
+                        PrecompileError::OutOfGas => ExitCode::OutOfFuel,
+                        _ => ExitCode::PrecompileError,
+                    })?;
             sdk.write(result.bytes);
             Ok(())
         }

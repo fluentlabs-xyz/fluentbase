@@ -939,9 +939,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let account = ctx
                 .journal_mut()
                 .load_account_with_code(derived_metadata_address)?;
-            // Verify no deployment collision exists at derived address.
+            // Verify no deployment collision exists at the derived address.
             // Check only code_hash and nonce - intentionally ignore balance to prevent.
-            // Front-running DoS where attacker funds address before legitimate creation.
+            // Front-running DoS where the attacker funds an address before legitimate creation.
             // This matches Ethereum CREATE/CREATE2 behavior: accounts can be pre-funded.
             if account.info.code_hash != KECCAK_EMPTY || account.info.nonce != 0 {
                 return_result!(CreateContractCollision);

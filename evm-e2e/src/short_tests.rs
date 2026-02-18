@@ -19,7 +19,14 @@ mod single_test {
         // fn modexp_modsize0_returndatasize("tests/GeneralStateTests/stReturnDataTest/modexp_modsize0_returndatasize.json");
         // fn access_list_example("tests/GeneralStateTests/stExample/accessListExample.json");
         // fn address_opcodes("tests/GeneralStateTests/stEIP2930/addressOpcodes.json");
-        fn revert_ret_data_size("tests/GeneralStateTests/stReturnDataTest/revertRetDataSize.json");
+        // fn revert_ret_data_size("tests/GeneralStateTests/stReturnDataTest/revertRetDataSize.json");
+        // fn create_name_registrator_out_of_memory_bonds1("tests/GeneralStateTests/stSystemOperationsTest/createNameRegistratorOutOfMemoryBonds1.json");
+        // fn returndatacopy_initial_big_sum("tests/GeneralStateTests/stReturnDataTest/returndatacopy_initial_big_sum.json");
+        // fn create_bounds3("tests/GeneralStateTests/stMemoryStressTest/CREATE_Bounds3.json");
+        // fn create2_bounds3("tests/GeneralStateTests/stCreate2/CREATE2_Bounds3.json");
+        // fn buffer_src_offset("tests/GeneralStateTests/stMemoryTest/bufferSrcOffset.json");
+        // fn random_statetest647("tests/GeneralStateTests/stRandom2/randomStatetest647.json");
+        fn returndatacopy_overrun("tests/GeneralStateTests/stReturnDataTest/returndatacopy_overrun.json");
     }
 }
 

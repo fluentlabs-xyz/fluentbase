@@ -51,3 +51,23 @@ pub(crate) fn global_memory_from_shared_buffer<
         context.interpreter.memory.global_slice(0..0)
     }
 }
+
+/// A special case for a 32-bit wasm machine, where we want to fail with proper error
+/// code like `CreateInitCodeSizeLimit` or `OutOfOffset` instead of `OutOfGas`.
+///
+/// * ethereum is (usually) executed on a 64-bit machine where usize is 64-bit
+/// * this contract executes on a wasm machine where usize is 32-bit
+#[macro_export]
+macro_rules! as_u64_or_fail {
+    ($interpreter:expr, $v:expr) => {
+        match $v.as_limbs() {
+            x => {
+                if (x[1] == 0) & (x[2] == 0) & (x[3] == 0) {
+                    x[0]
+                } else {
+                    return $interpreter.halt(InstructionResult::InvalidOperandOOG);
+                }
+            }
+        }
+    };
+}

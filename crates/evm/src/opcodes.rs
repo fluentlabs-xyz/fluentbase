@@ -4,6 +4,7 @@
 //! host interaction, we emit a SystemInterruption and resume after the host
 //! provides a result.
 use crate::{
+    as_u64_or_fail,
     host::{HostWrapper, HostWrapperImpl},
     types::{InterruptingInterpreter, InterruptionExtension, InterruptionOutcome},
     utils::{global_memory_from_shared_buffer, interrupt_into_action},
@@ -11,7 +12,7 @@ use crate::{
 use alloc::vec::Vec;
 use core::{cmp::min, mem::take, ops::Range};
 use fluentbase_sdk::{
-    debug_log, syscall::SyscallInterruptExecutor, Address, Bytes, ExitCode, SharedAPI, B256,
+    syscall::SyscallInterruptExecutor, Address, Bytes, ExitCode, SharedAPI, B256,
     EVM_MAX_INITCODE_SIZE, FUEL_DENOM_RATE, U256,
 };
 use revm_interpreter::{
@@ -19,6 +20,7 @@ use revm_interpreter::{
     instruction_table,
     instructions::{
         contract::resize_memory,
+        system::copy_cost_and_memory_resize,
         utility::{IntoAddress, IntoU256},
     },
     interpreter_types::{LoopControl, MemoryTr, ReturnData, RuntimeFlag, StackTr},
@@ -249,9 +251,7 @@ fn log<const N: usize, H: Host + ?Sized>(
         Bytes::new()
     } else {
         let offset = as_usize_or_fail!(context.interpreter, offset);
-        debug_log!("resize memory: offset={}, len={}", offset, len);
         resize_memory!(context.interpreter, context.host.gas_params(), offset, len);
-        debug_log!("resize memory: offset={}, len={}", offset, len);
         Bytes::copy_from_slice(context.interpreter.memory.slice_len(offset, len).as_ref())
     };
     if context.interpreter.stack.len() < N {
@@ -298,7 +298,7 @@ fn create<
     }
     require_non_staticcall!(context.interpreter);
     popn!([value, code_offset, len], context.interpreter);
-    let code_len = as_usize_or_fail!(context.interpreter, len);
+    let code_len = as_u64_or_fail!(context.interpreter, len);
     let mut init_code = Bytes::new();
     let init_gas_cost = if code_len != 0 {
         let code_offset = as_usize_or_fail!(context.interpreter, code_offset);
@@ -312,13 +312,13 @@ fn create<
             EVM_MAX_INITCODE_SIZE
         };
         // The limit is set as double of max contract bytecode size
-        if code_len > max_initcode_size {
+        if code_len > max_initcode_size as u64 {
             context
                 .interpreter
                 .halt(InstructionResult::CreateInitCodeSizeLimit);
             return;
         }
-        let init_gas_cost = context.host.gas_params().initcode_cost(code_len);
+        let init_gas_cost = context.host.gas_params().initcode_cost(code_len as usize);
         if init_gas_cost > context.interpreter.gas.remaining() {
             context.interpreter.halt(InstructionResult::OutOfGas);
             return;
@@ -327,13 +327,13 @@ fn create<
             context.interpreter,
             context.host.gas_params(),
             code_offset,
-            code_len
+            code_len as usize
         );
         init_code = Bytes::copy_from_slice(
             context
                 .interpreter
                 .memory
-                .slice_len(code_offset, code_len)
+                .slice_len(code_offset, code_len as usize)
                 .as_ref(),
         );
         init_gas_cost
@@ -567,6 +567,40 @@ fn selfdestruct<
     interrupt_into_action(context, |_context, sdk| sdk.destroy_account(target));
 }
 
+/// EIP-211: New opcodes: RETURNDATASIZE and RETURNDATACOPY
+pub fn returndatacopy<WIRE: InterpreterTypes, H: Host + ?Sized>(
+    context: InstructionContext<'_, H, WIRE>,
+) {
+    popn!([memory_offset, offset, len], context.interpreter);
+
+    let len = as_u64_or_fail!(context.interpreter, len);
+    let data_offset = as_u64_saturated!(offset);
+
+    // Old legacy behavior is to panic if data_end is out of the scope of the return buffer.
+    let data_end = data_offset.saturating_add(len);
+    if data_end > context.interpreter.return_data.buffer().len() as u64 {
+        context.interpreter.halt(InstructionResult::OutOfOffset);
+        return;
+    }
+
+    let Some(memory_offset) = copy_cost_and_memory_resize(
+        context.interpreter,
+        context.host.gas_params(),
+        memory_offset,
+        len as usize,
+    ) else {
+        return;
+    };
+
+    // Note: This can't panic because we resized memory to fit.
+    context.interpreter.memory.set_data(
+        memory_offset,
+        data_offset as usize,
+        len as usize,
+        context.interpreter.return_data.buffer(),
+    );
+}
+
 /// Build an instruction table matching EVM semantics with interruption-aware handlers.
 pub const fn interruptable_instruction_table<'a, SDK: SharedAPI>(
 ) -> [Instruction<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>; 256] {
@@ -575,6 +609,7 @@ pub const fn interruptable_instruction_table<'a, SDK: SharedAPI>(
     table[BALANCE as usize] = Instruction::new(balance, 0);
     table[EXTCODESIZE as usize] = Instruction::new(extcodesize, 0);
     table[EXTCODECOPY as usize] = Instruction::new(extcodecopy, 0);
+    table[RETURNDATACOPY as usize] = Instruction::new(returndatacopy, 3);
     table[EXTCODEHASH as usize] = Instruction::new(extcodehash, 0);
     table[BLOCKHASH as usize] = Instruction::new(blockhash, 0);
     table[SELFBALANCE as usize] = Instruction::new(selfbalance, 0);
