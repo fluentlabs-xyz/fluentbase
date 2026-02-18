@@ -262,7 +262,7 @@ fn check_evm_trace(
     Ok(())
 }
 
-fn check_evm_execution<ERROR: Debug + ToString + Clone, INSP>(
+fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
     test: &Test,
     expected_output: Option<&Bytes>,
     test_name: &str,

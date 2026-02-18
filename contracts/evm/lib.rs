@@ -5,8 +5,12 @@ extern crate core;
 
 use core::convert::AsRef;
 use fluentbase_evm::{
-    bytecode::AnalyzedBytecode, gas, gas::Gas, opcodes::interruptable_instruction_table,
-    types::InterruptionOutcome, EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
+    bytecode::AnalyzedBytecode,
+    gas,
+    gas::Gas,
+    opcodes::interruptable_instruction_table,
+    types::{exit_code_from_instruction_result, InterruptionOutcome},
+    EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
 };
 use fluentbase_sdk::{
     crypto::crypto_keccak256, system::RuntimeInterruptionOutcomeV1, system_entrypoint, Bytes,
@@ -134,11 +138,7 @@ pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
             } else {
                 let consumed_diff = result.chargeable_fuel();
                 sdk.charge_fuel(consumed_diff);
-                let exit_code = if result.result.is_revert() {
-                    ExitCode::Panic
-                } else {
-                    ExitCode::Err
-                };
+                let exit_code = exit_code_from_instruction_result(result.result);
                 sdk.write(result.output);
                 Err(exit_code)
             }
@@ -170,13 +170,7 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         InterpreterAction::Return(result) => {
             evm.sync_evm_gas(sdk);
             cached_state.remove(&sdk.unique_key());
-            let exit_code = if result.result.is_ok() {
-                ExitCode::Ok
-            } else if result.result.is_revert() {
-                ExitCode::Panic
-            } else {
-                ExitCode::Err
-            };
+            let exit_code = exit_code_from_instruction_result(result.result);
             sdk.write(result.output);
             Err(exit_code)
         }

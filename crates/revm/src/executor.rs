@@ -2,12 +2,12 @@ use crate::{
     api::RwasmFrame,
     eip2935::eip2935_compute_storage_keys,
     inspector::inspect_syscall,
-    instruction_result_from_exit_code,
     syscall::execute_rwasm_interruption,
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
 use alloy_primitives::{Address, Log, LogData};
+use fluentbase_evm::types::instruction_result_from_exit_code;
 use fluentbase_runtime::{
     default_runtime_executor,
     syscall_handler::{syscall_exec_impl, syscall_resume_impl},
@@ -487,7 +487,12 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         | InstructionResult::InvalidOperandOOG
         | InstructionResult::ReentrancySentryOOG => ExitCode::OutOfFuel,
 
-        _ => ExitCode::UnknownError,
+        // rWasm family
+        InstructionResult::PrecompileError => ExitCode::PrecompileError,
+        err => {
+            eprintln!("WARN: unexpected instruction result: {:?}", err);
+            ExitCode::UnknownError
+        }
     };
 
     // If we are resuming a system runtime v2 contract, the resume payload must be wrapped
@@ -556,7 +561,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     let result = process_exec_result::<CTX, INSP>(frame, ctx, inspector, exit_code, return_data)?;
 
-    // If the interruption resolves to a final return, forget saved runtime state;
+    // If the interruption resolves to a final return, forget the saved runtime state;
     // otherwise we risk retaining contexts longer than necessary.
     if matches!(&result, NextAction::Return(_)) {
         default_runtime_executor().forget_runtime(call_id);
@@ -611,15 +616,24 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
     exit_code: ExitCode,
     ownable_account_bytecode: Option<OwnableAccountBytecode>,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
-    // If we have a fatal exit code, execution halted/panicked and output may be corrupted,
+    // If we have a fatal exit code, execution halted/panicked, and output may be corrupted,
     // so we must not attempt to decode structured outcome bytes.
     if exit_code.is_fatal_exit_code() {
         return Ok(());
     }
 
-    let (runtime_output, _): (RuntimeExecutionOutcomeV1, usize) =
+    // Try to decode output params (in some cases it's not possible because output might be corrupted,
+    // so instead of print warning into output and return Ok w/o state commitment, there is nothing we can
+    // do here, it's a trap)
+    let Ok((runtime_output, _)): Result<(RuntimeExecutionOutcomeV1, usize), _> =
         bincode::decode_from_slice(return_data, bincode::config::legacy())
-            .expect("runtime execution outcome");
+    else {
+        eprintln!(
+            "WARN: failed to decode structured runtime execution outcome: exit_code={}",
+            exit_code
+        );
+        return Ok(());
+    };
 
     // Replace the raw runtime bytes with the contract-visible output.
     *return_data = runtime_output.output.into();

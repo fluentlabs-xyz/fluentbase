@@ -19,7 +19,7 @@ fn test_oom_has_proper_exit_code() {
     assert_eq!(
         result,
         ExecutionResult::Halt {
-            reason: HaltReason::OutOfGas(OutOfGasError::MemoryLimit),
+            reason: HaltReason::MemoryOutOfBounds,
             gas_used: 3_000_000
         }
     );

@@ -9,11 +9,10 @@
 use crate::{
     api::RwasmFrame,
     gas::{account_warm_cold_cost, call_cost},
-    instruction_result_from_exit_code,
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
-use fluentbase_evm::EthereumMetadata;
+use fluentbase_evm::{types::instruction_result_from_exit_code, EthereumMetadata};
 use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},

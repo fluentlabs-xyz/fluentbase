@@ -17,8 +17,9 @@ mod single_test {
         // fn failed_tx_xcf416c53_paris("tests/GeneralStateTests/stSpecialTest/failed_tx_xcf416c53_Paris.json");
         // fn precompile_absence("tests/GeneralStateTests/Pyspecs/frontier/precompiles/precompile_absence.json");
         // fn modexp_modsize0_returndatasize("tests/GeneralStateTests/stReturnDataTest/modexp_modsize0_returndatasize.json");
-        fn access_list_example("tests/GeneralStateTests/stExample/accessListExample.json");
+        // fn access_list_example("tests/GeneralStateTests/stExample/accessListExample.json");
         // fn address_opcodes("tests/GeneralStateTests/stEIP2930/addressOpcodes.json");
+        fn revert_ret_data_size("tests/GeneralStateTests/stReturnDataTest/revertRetDataSize.json");
     }
 }
 

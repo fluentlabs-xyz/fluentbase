@@ -25,8 +25,6 @@ all = "warn"
 # revm
 revm = { workspace = true }
 
-fluentbase-universal-token = { workspace = true }
-
 # static precompile sets.
 once_cell = { workspace = true, features = ["alloc"] }
 
@@ -34,9 +32,7 @@ once_cell = { workspace = true, features = ["alloc"] }
 rwasm = { workspace = true, default-features = false, features = ["serde"] }
 
 tracing = { version = "0.1" }
-
 cfg-if = { workspace = true }
-
 alloy-primitives = { workspace = true }
 
 # Optional
@@ -46,6 +42,7 @@ serde = { workspace = true, features = ["derive", "rc"], optional = true }
 fluentbase-evm = { workspace = true }
 fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
+fluentbase-universal-token = { workspace = true }
 
 [dev-dependencies]
 alloy-sol-types.workspace = true

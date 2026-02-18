@@ -83,9 +83,6 @@ impl SyscallResult<()> {
     pub fn is_panic<I: Into<ExitCode>>(status: I) -> bool {
         Into::<ExitCode>::into(status) == ExitCode::Panic
     }
-    pub fn is_err<I: Into<ExitCode>>(status: I) -> bool {
-        Into::<ExitCode>::into(status) == ExitCode::Err
-    }
 }
 
 impl<T> SyscallResult<T> {
