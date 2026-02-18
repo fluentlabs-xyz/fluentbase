@@ -232,7 +232,7 @@ impl MetadataAPI for TestingContextImpl {
             let len = value.len();
             return SyscallResult::new((len as u32, false, false, false), 0, 0, ExitCode::Ok);
         }
-        SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)
+        SyscallResult::new(Default::default(), 0, 0, ExitCode::UnknownError)
     }
 
     fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
@@ -267,7 +267,7 @@ impl MetadataAPI for TestingContextImpl {
                 ExitCode::Ok,
             );
         }
-        SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)
+        SyscallResult::new(Default::default(), 0, 0, ExitCode::UnknownError)
     }
 
     fn metadata_account_owner(&self, _address: &Address) -> SyscallResult<Address> {

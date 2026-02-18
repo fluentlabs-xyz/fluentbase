@@ -1,59 +1,12 @@
 //! Contains the `[RwasmHaltReason]` type.
+use fluentbase_evm::types::instruction_result_from_exit_code;
 use fluentbase_sdk::{Bytes, ExitCode};
 use revm::{
     context_interface::result::HaltReason,
-    interpreter::{FrameInput, Gas, InstructionResult, InterpreterAction, InterpreterResult},
+    interpreter::{FrameInput, Gas, InterpreterAction, InterpreterResult},
 };
 
 pub type ExecutionResult = InterpreterResult;
-
-pub fn instruction_result_from_exit_code(
-    exit_code: ExitCode,
-    is_empty_return_data: bool,
-) -> InstructionResult {
-    match exit_code {
-        /* Basic Error Codes */
-        ExitCode::Ok => {
-            if is_empty_return_data {
-                InstructionResult::Stop
-            } else {
-                InstructionResult::Return
-            }
-        }
-        ExitCode::Panic => InstructionResult::Revert,
-        ExitCode::Err => InstructionResult::UnknownError,
-        ExitCode::InterruptionCalled => InstructionResult::Stop,
-        /* Fluentbase Runtime Error Codes */
-        ExitCode::RootCallOnly => InstructionResult::RootCallOnly,
-        ExitCode::MalformedBuiltinParams => InstructionResult::MalformedBuiltinParams,
-        ExitCode::CallDepthOverflow => InstructionResult::CallDepthOverflow,
-        ExitCode::NonNegativeExitCode => InstructionResult::NonNegativeExitCode,
-        ExitCode::UnknownError => InstructionResult::UnknownError,
-        ExitCode::InputOutputOutOfBounds => InstructionResult::InputOutputOutOfBounds,
-        ExitCode::PrecompileError => InstructionResult::PrecompileError,
-        ExitCode::NotSupportedBytecode => InstructionResult::CreateContractStartingWithEF,
-        ExitCode::StateChangeDuringStaticCall => InstructionResult::StateChangeDuringStaticCall,
-        ExitCode::CreateContractSizeLimit => InstructionResult::CreateContractSizeLimit,
-        ExitCode::CreateContractCollision => InstructionResult::CreateCollision,
-        ExitCode::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
-        ExitCode::OutOfMemory => InstructionResult::MemoryLimitOOG,
-        /* Trap Error Codes */
-        ExitCode::UnreachableCodeReached => InstructionResult::UnreachableCodeReached,
-        ExitCode::MemoryOutOfBounds => InstructionResult::MemoryOutOfBounds,
-        ExitCode::TableOutOfBounds => InstructionResult::TableOutOfBounds,
-        ExitCode::IndirectCallToNull => InstructionResult::IndirectCallToNull,
-        ExitCode::IntegerDivisionByZero => InstructionResult::IntegerDivisionByZero,
-        ExitCode::IntegerOverflow => InstructionResult::IntegerOverflow,
-        ExitCode::BadConversionToInteger => InstructionResult::BadConversionToInteger,
-        ExitCode::StackOverflow => InstructionResult::StackOverflow,
-        ExitCode::BadSignature => InstructionResult::BadSignature,
-        ExitCode::OutOfFuel => InstructionResult::OutOfFuel,
-        ExitCode::UnknownExternalFunction => InstructionResult::UnknownExternalFunction,
-        /* System Fatal Error Codes */
-        ExitCode::UnexpectedFatalExecutionFailure => InstructionResult::FatalExternalError,
-        ExitCode::MissingStorageSlot => InstructionResult::InvalidOperandOOG,
-    }
-}
 
 /// Next actions to be executed
 #[derive(Clone, Debug, PartialEq, Eq)]

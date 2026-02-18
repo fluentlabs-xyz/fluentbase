@@ -79,13 +79,11 @@ impl AffinePoint<N> for Bls12381Point {
 }
 
 /// Decompresses a compressed public key using bls12381_decompress precompile.
-pub fn decompress_pubkey(compressed_key: &[u8; 48]) -> Result<[u8; 96], ()> {
-    let mut decompressed_key = [0u8; 96];
-    decompressed_key[..48].copy_from_slice(compressed_key);
-
-    let _sign_bit = ((decompressed_key[0] & 0b_0010_0000) >> 5) == 1;
-    decompressed_key[0] &= 0b_0001_1111;
-    unimplemented!("where is bls12_381_decompress?");
-
+pub fn decompress_pubkey(_compressed_key: &[u8; 48]) -> Result<[u8; 96], ()> {
+    // let mut decompressed_key = [0u8; 96];
+    // decompressed_key[..48].copy_from_slice(compressed_key);
+    // let _sign_bit = ((decompressed_key[0] & 0b_0010_0000) >> 5) == 1;
+    // decompressed_key[0] &= 0b_0001_1111;
     // Ok(decompressed_key)
+    unimplemented!("where is bls12_381_decompress?");
 }

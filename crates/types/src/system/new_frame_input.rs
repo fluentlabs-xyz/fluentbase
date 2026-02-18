@@ -176,6 +176,20 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_decode_none_metadata() {
+        let v = RuntimeExecutionOutcomeV1 {
+            exit_code: ExitCode::BadConversionToInteger,
+            output: bytes!("112233"),
+            storage: None,
+            logs: vec![],
+            new_metadata: None,
+        };
+        let v_encoded = v.encode();
+        let v_decoded = RuntimeExecutionOutcomeV1::decode(&v_encoded).unwrap();
+        assert_eq!(v_decoded, v);
+    }
+
+    #[test]
     fn test_runtime_output_v1_encode_decode() {
         let mut storage = HashMap::new();
         let mut logs = Vec::new();

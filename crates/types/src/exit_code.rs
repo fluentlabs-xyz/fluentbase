@@ -21,7 +21,7 @@ use strum_macros::{Display, FromRepr};
 ///
 /// Within applications, developers can use any exit code, but there are conventions:
 /// 1. `Ok` (0) — Indicates successful execution.
-/// 2. `Panic` (-1) — Controlled application revert (intended error, no gas penalty).
+/// 2. `Panic` (-1) — Controlled application reverts (intended error, no gas penalty).
 /// 3. Any other code is treated as an error with a gas penalty and is mapped to `Err` (-2).
 ///
 /// Technically, developers *can* return trap codes, but it's generally pointless:
@@ -78,8 +78,6 @@ pub enum ExitCode {
     Ok = 0,
     /// Panic is produced by a program (aka revert)
     Panic = -1,
-    /// An internal error (mapped from the errors below for nested EVM calls)
-    Err = -2,
     /// An interruption created by runtime (only for system contracts)
     InterruptionCalled = -3,
 
@@ -196,7 +194,7 @@ impl ExitCode {
     /// by having out of fuel or memory out of bounds. It means that we can't handle the output
     /// state of this contract gracefully.
     pub fn is_fatal_exit_code(&self) -> bool {
-        self == &ExitCode::UnexpectedFatalExecutionFailure || self.is_trap_code()
+        self == &ExitCode::UnexpectedFatalExecutionFailure
     }
 
     pub const fn into_i32(self) -> i32 {
@@ -225,7 +223,11 @@ impl From<&TrapCode> for ExitCode {
             TrapCode::OutOfFuel => ExitCode::OutOfFuel,
             TrapCode::UnknownExternalFunction => ExitCode::UnknownExternalFunction,
             TrapCode::InterruptionCalled => ExitCode::InterruptionCalled,
-            _ => ExitCode::UnknownError,
+            _ => {
+                #[cfg(feature = "std")]
+                eprintln!("WARN: unknown trap code: {:?}", value);
+                ExitCode::UnknownError
+            }
         }
     }
 }
