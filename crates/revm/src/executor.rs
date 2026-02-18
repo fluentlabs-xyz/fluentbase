@@ -645,9 +645,12 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
         // Safety: `new_metadata` should only be set by ownable accounts. If a non-ownable system
         // contract sets it, that indicates a severe invariant break.
         let mut ownable_account_bytecode = ownable_account_bytecode.unwrap();
-        ownable_account_bytecode.metadata = new_metadata;
-        let bytecode = Bytecode::OwnableAccount(ownable_account_bytecode);
-        ctx.journal_mut().set_code(*target_address, bytecode);
+        ownable_account_bytecode =
+            OwnableAccountBytecode::new(ownable_account_bytecode.owner_address, new_metadata);
+        ctx.journal_mut().set_code(
+            *target_address,
+            Bytecode::OwnableAccount(ownable_account_bytecode),
+        );
     }
 
     Ok(())

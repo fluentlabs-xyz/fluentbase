@@ -70,6 +70,9 @@ serde_json = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["blocking"] }
 directories = "6.0.0"
 
+# keep it here to make patch work inside the workspace
+alloy-evm = { version = "0.26.3", default-features = false }
+
 [dev-dependencies]
 #backon.workspace = true
 #tempfile.workspace = true
