@@ -4,7 +4,10 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{system_entrypoint, ExitCode, SharedAPI};
-use revm_precompile::secp256r1::{p256_verify, P256VERIFY_BASE_GAS_FEE};
+use revm_precompile::{
+    secp256r1::{p256_verify, P256VERIFY_BASE_GAS_FEE},
+    PrecompileError,
+};
 
 /// Main entry point for the secp256r1 wrapper contract.
 /// This contract wraps the secp256r1 precompile (EIP-7212) which verifies ECDSA signatures
@@ -21,7 +24,10 @@ use revm_precompile::secp256r1::{p256_verify, P256VERIFY_BASE_GAS_FEE};
 pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input = sdk.input();
     sdk.sync_evm_gas(P256VERIFY_BASE_GAS_FEE)?;
-    let result = p256_verify(input, u64::MAX).map_err(|_| ExitCode::PrecompileError)?;
+    let result = p256_verify(input, u64::MAX).map_err(|err| match err {
+        PrecompileError::OutOfGas => ExitCode::OutOfFuel,
+        _ => ExitCode::PrecompileError,
+    })?;
     sdk.write(result.bytes);
     Ok(())
 }

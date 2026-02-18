@@ -4,14 +4,18 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SharedAPI};
+use revm_precompile::PrecompileError;
 
 pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
     let input = sdk.input();
     // call modexp function
-    let result = revm_precompile::modexp::berlin_run(&input, gas_limit)
-        .map_err(|_| ExitCode::PrecompileError)?;
+    let result =
+        revm_precompile::modexp::berlin_run(&input, gas_limit).map_err(|err| match err {
+            PrecompileError::OutOfGas => ExitCode::OutOfFuel,
+            _ => ExitCode::PrecompileError,
+        })?;
     sdk.sync_evm_gas(result.gas_used)?;
     // write output
     sdk.write(result.bytes);

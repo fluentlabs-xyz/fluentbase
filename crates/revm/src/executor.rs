@@ -7,7 +7,7 @@ use crate::{
     ExecutionResult, NextAction,
 };
 use alloy_primitives::{Address, Log, LogData};
-use fluentbase_evm::types::instruction_result_from_exit_code;
+use fluentbase_evm::types::{exit_code_from_instruction_result, instruction_result_from_exit_code};
 use fluentbase_runtime::{
     default_runtime_executor,
     syscall_handler::{syscall_exec_impl, syscall_resume_impl},
@@ -477,22 +477,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     let exit_code: ExitCode = match result.result {
         return_ok!() => ExitCode::Ok,
         return_revert!() => ExitCode::Panic,
-
-        // Out-of-gas families map to a single exit code.
-        InstructionResult::OutOfGas
-        | InstructionResult::OutOfFuel
-        | InstructionResult::MemoryOOG
-        | InstructionResult::MemoryLimitOOG
-        | InstructionResult::PrecompileOOG
-        | InstructionResult::InvalidOperandOOG
-        | InstructionResult::ReentrancySentryOOG => ExitCode::OutOfFuel,
-
-        // rWasm family
-        InstructionResult::PrecompileError => ExitCode::PrecompileError,
-        err => {
-            eprintln!("WARN: unexpected instruction result: {:?}", err);
-            ExitCode::UnknownError
-        }
+        err => exit_code_from_instruction_result(err),
     };
 
     // If we are resuming a system runtime v2 contract, the resume payload must be wrapped

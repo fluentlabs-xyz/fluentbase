@@ -16,7 +16,7 @@ use revm::{
     },
     database::{CacheState, InMemoryDB, State, StateBuilder},
     handler::MainnetContext,
-    interpreter::{gas::MemoryGas, return_error, return_ok, return_revert},
+    interpreter::{gas::MemoryGas, return_error, return_ok, return_revert, InstructionResult},
     primitives::{hardfork::SpecId, keccak256, Bytes, B256, U256},
     state::AccountInfo,
     ExecuteCommitEvm, InspectCommitEvm, MainBuilder, MainnetEvm,
@@ -274,6 +274,44 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
 ) -> Result<(), TestError> {
     if !exec_result1.is_err() && exec_result2.is_err() {
         exec_result2.as_ref().unwrap();
+    }
+
+    match (exec_result1, exec_result2) {
+        (
+            Ok(ExecutionResult::Halt {
+                reason: reason1, ..
+            }),
+            Ok(ExecutionResult::Halt {
+                reason: reason2, ..
+            }),
+        ) => {
+            let reason1: InstructionResult = reason1.clone().into();
+            let reason2: InstructionResult = reason2.clone().into();
+            use InstructionResult::*;
+            match (reason1, reason2) {
+                (
+                    OutOfGas | MemoryOOG | MemoryLimitOOG | PrecompileOOG | InvalidOperandOOG
+                    | ReentrancySentryOOG,
+                    OutOfFuel,
+                ) => {}
+                (
+                    CreateContractSizeLimit
+                    | CreateContractStartingWithEF
+                    | CreateInitCodeSizeLimit,
+                    CreateContractSizeLimit,
+                ) => {}
+                (OutOfOffset, InputOutputOutOfBounds) => {}
+                (StackUnderflow | StackOverflow, StackOverflow) => {}
+                (
+                    NotActivated | InvalidJump | OpcodeNotFound | InvalidFEOpcode,
+                    MalformedBuiltinParams,
+                ) => {}
+                _ => {
+                    assert_eq!(reason1, reason2);
+                }
+            }
+        }
+        _ => {}
     }
 
     let logs_root1 = log_rlp_hash(exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default());
