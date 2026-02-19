@@ -1,8 +1,10 @@
 use crate::{
+    alloc_ptr_unaligned,
     evm::{write_evm_exit_message, write_evm_panic_message},
     system::RuntimeInterruptionOutcomeV1,
     Address, Bytes, ContextReader, ExitCode, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
+use alloc::vec::Vec;
 use fluentbase_crypto::crypto_keccak256;
 
 pub type IsAccountOwnable = bool;
@@ -14,30 +16,10 @@ pub trait StorageAPI {
     fn storage(&self, slot: &U256) -> SyscallResult<U256>;
 }
 
-pub trait MetadataAPI {
-    fn metadata_write(
-        &mut self,
-        address: &Address,
-        offset: u32,
-        metadata: Bytes,
-    ) -> SyscallResult<()>;
-    fn metadata_size(
-        &self,
-        address: &Address,
-    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)>;
-    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()>;
-    fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
-    fn metadata_account_owner(&self, address: &Address) -> SyscallResult<Address>;
-}
-
-pub trait MetadataStorageAPI {
-    fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256>;
-    fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()>;
-}
-
-pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
-    /// We keep it here only for backward compatibility, but we suggest using crypto library instead.
+pub trait SharedAPI: StorageAPI {
+    /// We keep it here only for backward compatibility, but we suggest using a crypto library instead.
     /// This function can be removed in the future.
+    #[deprecated(note = "Use crypto_keccak256() instead", since = "0.5.2")]
     fn keccak256(data: &[u8]) -> B256 {
         crypto_keccak256(data)
     }
@@ -47,46 +29,39 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     fn read(&self, target: &mut [u8], offset: u32);
     fn input_size(&self) -> u32;
 
-    fn input<'a>(&self) -> &'a [u8] {
+    #[deprecated(note = "Use bytes_input() instead", since = "0.5.2")]
+    fn input(&self) -> &[u8] {
         let input_size = self.input_size();
-        let pointer = unsafe {
-            alloc::alloc::alloc(core::alloc::Layout::from_size_align_unchecked(
+        let buffer = unsafe {
+            &mut *core::ptr::slice_from_raw_parts_mut(
+                alloc_ptr_unaligned(input_size as usize),
                 input_size as usize,
-                8,
-            ))
+            )
         };
-        let mut buffer =
-            unsafe { &mut *core::ptr::slice_from_raw_parts_mut(pointer, input_size as usize) };
-        self.read(&mut buffer, 0);
+        self.read(buffer, 0);
         buffer
     }
 
     fn bytes_input(&self) -> Bytes {
-        Bytes::from(self.input())
+        let input_size = self.input_size() as usize;
+        let mut buffer = Vec::with_capacity(input_size);
+        unsafe {
+            buffer.set_len(input_size);
+        }
+        self.read(buffer.as_mut_slice(), 0);
+        buffer.into()
     }
 
     fn read_context(&self, target: &mut [u8], offset: u32);
 
     fn charge_fuel(&self, fuel_consumed: u64);
 
-    fn sync_evm_gas(&self, gas_consumed: u64) -> Result<(), ExitCode> {
-        let fuel_consumed = gas_consumed
-            .checked_mul(FUEL_DENOM_RATE)
-            .unwrap_or(u64::MAX);
-        let fuel_remaining = self.fuel();
-        if fuel_consumed > fuel_remaining {
-            return Err(ExitCode::OutOfFuel);
-        }
-        self.charge_fuel(fuel_consumed);
-        Ok(())
-    }
-
     fn fuel(&self) -> u64;
 
     fn write<T: AsRef<[u8]>>(&mut self, output: T);
 
     fn evm_exit(&mut self, exit_code: u32) -> ! {
-        // write an EVM-compatible exit message (only if exit code is not zero)
+        // write an EVM-compatible exit message (only if the exit code is not zero)
         if exit_code != 0 {
             write_evm_exit_message(exit_code, |slice| {
                 self.write(slice);
@@ -178,6 +153,22 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
 }
 
 pub trait SystemAPI: SharedAPI {
+    fn metadata_write(
+        &mut self,
+        address: &Address,
+        offset: u32,
+        metadata: Bytes,
+    ) -> SyscallResult<()>;
+    fn metadata_size(
+        &self,
+        address: &Address,
+    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)>;
+    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()>;
+    fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
+    fn metadata_account_owner(&self, address: &Address) -> SyscallResult<Address>;
+    fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256>;
+    fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()>;
+
     fn take_interruption_outcome(&mut self) -> Option<RuntimeInterruptionOutcomeV1>;
 
     fn insert_interruption_income(
@@ -193,4 +184,17 @@ pub trait SystemAPI: SharedAPI {
     fn write_contract_metadata(&mut self, metadata: Bytes);
 
     fn contract_metadata(&self) -> Bytes;
+
+    fn sync_evm_gas(&self, gas_consumed: u64) -> Result<(), ExitCode> {
+        let fuel_consumed = gas_consumed
+            .checked_mul(FUEL_DENOM_RATE)
+            .unwrap_or(u64::MAX);
+        let fuel_remaining = self.fuel();
+        // Important: We assume fuel remaining is always set (no matter fuel enabled or disabled)
+        if fuel_consumed > fuel_remaining {
+            return Err(ExitCode::OutOfFuel);
+        }
+        self.charge_fuel(fuel_consumed);
+        Ok(())
+    }
 }

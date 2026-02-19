@@ -4,14 +4,9 @@ extern crate fluentbase_sdk;
 
 use alloc::vec::Vec;
 use fluentbase_sdk::{
-    alloc_slice,
     bytes::Buf,
     codec::{bytes::BytesMut, encoder::SolidityABI},
-    entrypoint,
-    Bytes,
-    ContextReader,
-    SharedAPI,
-    SyscallResult,
+    entrypoint, Bytes, ContextReader, SharedAPI, SyscallResult,
 };
 
 /// A selector for "multicall(bytes[])" - 0xac9650d8
@@ -21,8 +16,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     // Read full input data
     let input_length = sdk.input_size();
     assert!(input_length >= 4, "multicall: insufficient input length");
-    let mut call_data = alloc_slice(input_length as usize);
-    sdk.read(&mut call_data, 0);
+    let call_data = sdk.bytes_input();
 
     // Split into selector and parameters
     let (selector, params) = call_data.split_at(4);
@@ -32,7 +26,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     );
 
     // Decode parameters into Vec<Bytes>
-    let data = SolidityABI::<Vec<Bytes>>::decode(&Bytes::from(params), 0)
+    let data = SolidityABI::<Vec<Bytes>>::decode(&params, 0)
         .unwrap_or_else(|_| panic!("multicall: can't decode input parameters"));
 
     // Get contract address for delegate calls

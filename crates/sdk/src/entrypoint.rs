@@ -20,7 +20,7 @@ macro_rules! basic_entrypoint {
         #[cfg(target_arch = "wasm32")]
         $crate::define_panic_handler!();
         #[cfg(target_arch = "wasm32")]
-        $crate::define_allocator!();
+        $crate::define_heap_base_allocator!();
         #[cfg(not(target_arch = "wasm32"))]
         pub fn main() {}
     };
@@ -47,7 +47,7 @@ macro_rules! entrypoint_with_storage {
         #[cfg(target_arch = "wasm32")]
         $crate::define_panic_handler!();
         #[cfg(target_arch = "wasm32")]
-        $crate::define_allocator!();
+        $crate::define_heap_base_allocator!();
         #[cfg(not(target_arch = "wasm32"))]
         pub fn main() {}
     };
@@ -106,12 +106,12 @@ macro_rules! func_entrypoint {
     ($main_func:ident, $deploy_func:ident) => {
         $crate::define_entrypoint!($main_func, $deploy_func);
         $crate::define_panic_handler!();
-        $crate::define_allocator!();
+        $crate::define_heap_base_allocator!();
     };
     ($main_func:ident) => {
         $crate::define_entrypoint!($main_func);
         $crate::define_panic_handler!();
-        $crate::define_allocator!();
+        $crate::define_heap_base_allocator!();
     };
 }
 
@@ -140,16 +140,27 @@ macro_rules! system_entrypoint {
                 let mut sdk = SystemContextImpl::new(RwasmContext {});
                 let result = super::$main_func(&mut sdk);
                 sdk.finalize(result);
+                $crate::BlockListAllocator::gc();
             }
             #[no_mangle]
             extern "C" fn deploy() {
                 let mut sdk = SystemContextImpl::new(RwasmContext {});
                 let result = super::$deploy_func(&mut sdk);
                 sdk.finalize(result);
+                $crate::BlockListAllocator::gc();
             }
         }
-        $crate::define_panic_handler!();
-        $crate::define_allocator!();
+        #[cfg(target_arch = "wasm32")]
+        #[panic_handler]
+        #[inline(always)]
+        unsafe fn panic(info: &core::panic::PanicInfo) -> ! {
+            use $crate::{ExitCode, NativeAPI, RwasmContext};
+            let panic_message = alloc::format!("{}", info.message());
+            $crate::debug_log!("panic: {}", panic_message);
+            let native_sdk = RwasmContext {};
+            native_sdk.exit(ExitCode::UnreachableCodeReached)
+        }
+        $crate::define_block_list_allocator!();
         #[cfg(not(target_arch = "wasm32"))]
         fn main() {}
     };
@@ -162,12 +173,13 @@ macro_rules! system_entrypoint {
                 let mut sdk = SystemContextImpl::new(RwasmContext {});
                 let result = super::$main_func(&mut sdk);
                 sdk.finalize(result);
+                ::fluentbase_sdk::BlockListAllocator::gc();
             }
             #[no_mangle]
             extern "C" fn deploy() {}
         }
         $crate::define_panic_handler!();
-        $crate::define_allocator!();
+        $crate::define_block_list_allocator!();
         #[cfg(not(target_arch = "wasm32"))]
         fn main() {}
     };

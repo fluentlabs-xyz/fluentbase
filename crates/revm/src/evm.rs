@@ -381,7 +381,6 @@ where
         }
 
         let frame = self.0.frame_stack.get();
-        // TODO(dmitry123): "it seems we can't eliminate interpreter (revm is not ready for this yet)"
         frame.interpreter.memory.free_child_context();
         // P.S: we can skip frame's error check here because we don't use Host
 

@@ -61,4 +61,3 @@ wasmtime = [
 
 [patch.crates-io]
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel" }
-#wasmtime = { git = "https://github.com/fluentlabs-xyz/wasmtime", branch = "devel", features = ["cache"] }

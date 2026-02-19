@@ -1,9 +1,23 @@
-use alloc::vec::Vec;
+#[cfg(target_arch = "wasm32")]
+mod block_list;
+#[cfg(target_arch = "wasm32")]
+mod heap_base;
 
-const WASM_PAGE_SIZE_IN_BYTES: usize = 65536;
+#[cfg(target_arch = "wasm32")]
+pub use self::{block_list::BlockListAllocator, heap_base::HeapBaseAllocator};
+
+#[inline(always)]
+pub fn alloc_ptr_unaligned(len: usize) -> *mut u8 {
+    if len == 0 {
+        return core::ptr::null_mut();
+    }
+    let layout = core::alloc::Layout::from_size_align(len, 1).unwrap();
+    unsafe { alloc::alloc::alloc(layout) }
+}
 
 #[allow(dead_code)]
 fn calc_pages_needed(pages_allocated: usize, required_bytes: usize) -> usize {
+    const WASM_PAGE_SIZE_IN_BYTES: usize = 65536;
     let have = pages_allocated * WASM_PAGE_SIZE_IN_BYTES;
     if required_bytes <= have {
         return 0;
@@ -21,88 +35,4 @@ fn test_pages_needed() {
     assert_eq!(calc_pages_needed(1, 65535), 0);
     assert_eq!(calc_pages_needed(1, 65536 + 65536), 1);
     assert_eq!(calc_pages_needed(5, 327680), 0);
-}
-
-#[inline(always)]
-pub fn alloc_ptr(len: usize) -> *mut u8 {
-    // TODO(dmitry123): Wasm guarantee that memory is always zeroed during pages creation, so do we
-    //  actually need to zero memory here additionally or `__rust_alloc_zeroed` don't alloc for wasm32 target?
-    unsafe { alloc::alloc::alloc_zeroed(core::alloc::Layout::from_size_align_unchecked(len, 8)) }
-}
-
-#[inline(always)]
-pub fn alloc_slice<'a>(len: usize) -> &'a mut [u8] {
-    unsafe { &mut *core::ptr::slice_from_raw_parts_mut(alloc_ptr(len), len) }
-}
-
-#[inline(always)]
-pub fn alloc_vec(len: usize) -> Vec<u8> {
-    let slice = alloc_ptr(len);
-    unsafe { Vec::from_raw_parts(slice, len, len) }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub struct HeapBaseAllocator {}
-
-#[cfg(target_arch = "wasm32")]
-static mut HEAP_POS: usize = 0;
-
-#[inline(always)]
-pub fn alloc_heap_pos() -> usize {
-    #[cfg(target_arch = "wasm32")]
-    unsafe {
-        HEAP_POS
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        usize::MAX
-    }
-}
-
-#[inline(always)]
-pub fn rollback_heap_pos(_new_heap_pos: usize) {
-    #[cfg(target_arch = "wasm32")]
-    unsafe {
-        HEAP_POS = _new_heap_pos
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
-    #[inline(never)]
-    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        let bytes: usize = layout.size();
-        let align: usize = layout.align();
-        extern "C" {
-            static __heap_base: u8;
-        }
-        let mut heap_pos = unsafe { HEAP_POS };
-        if heap_pos == 0 {
-            heap_pos = unsafe { (&__heap_base) as *const u8 as usize };
-        }
-        let offset = heap_pos & (align - 1);
-        if offset != 0 {
-            heap_pos = heap_pos.wrapping_add(align - offset);
-        }
-        // allocate memory pages if needed
-        let pages_allocated = core::arch::wasm32::memory_size::<0>();
-        let pages_needed = calc_pages_needed(pages_allocated, heap_pos + bytes);
-        if pages_needed > 0 {
-            let new_pages = core::arch::wasm32::memory_grow::<0>(pages_needed);
-            if new_pages == usize::MAX {
-                use fluentbase_types::{bindings::_exit, ExitCode};
-                _exit(ExitCode::OutOfMemory.into_i32());
-            }
-        }
-        // return allocated pointer
-        let ptr = heap_pos as *mut u8;
-        heap_pos += bytes;
-        unsafe { HEAP_POS = heap_pos };
-        ptr
-    }
-
-    #[inline(always)]
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: core::alloc::Layout) {
-        // ops, no dealoc
-    }
 }

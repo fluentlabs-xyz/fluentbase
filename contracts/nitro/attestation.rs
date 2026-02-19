@@ -1,7 +1,7 @@
 use alloc::{string::String, vec, vec::Vec};
 use coset::{CborSerializable, CoseError, CoseSign1};
 use der::{asn1::ObjectIdentifier, Decode, DecodePem, Encode};
-use fluentbase_sdk::{crypto::crypto_keccak256, debug_log};
+use fluentbase_sdk::crypto::crypto_keccak256;
 use p384::ecdsa::signature::Verifier;
 use x509_cert::{certificate::Certificate, ext::pkix::BasicConstraints};
 
@@ -290,7 +290,6 @@ fn verify_certificate(subject: &Certificate, issuer: &Certificate) {
             let verify_key = p384::ecdsa::VerifyingKey::from_sec1_bytes(verifying_key).unwrap();
 
             verify_key.verify(&signed_data, &signature).unwrap();
-            debug_log!("verified key");
         }
         _ => {
             panic!("Unsupported ECDSA algorithm");
@@ -525,20 +524,12 @@ fn verify_cosesign1(cosesign1: &CoseSign1, certificate: &Certificate) {
 }
 
 pub fn parse_and_verify(slice: &[u8], current_timestamp: u64) -> AttestationDoc {
-    debug_log!("parsing sign");
-    let sign1 = coset::CoseSign1::from_slice(slice).unwrap();
-    debug_log!("parsing doc");
+    let sign1 = CoseSign1::from_slice(slice).unwrap();
     let doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
-    debug_log!("validating attestation document");
     validate_attestation_document(&doc);
-    debug_log!("parsing CA certificate");
     let root_cert = Certificate::from_pem(NITRO_ROOT_CA_BYTES).unwrap();
-    debug_log!("verifying CA certificate");
     verify_attestation_doc(&doc, &root_cert, current_timestamp);
-    debug_log!("parsing certificate");
     let cert = Certificate::from_der(doc.certificate.as_slice()).unwrap();
-    debug_log!("verifying certificate");
     verify_cosesign1(&sign1, &cert);
-    debug_log!("all done");
     doc
 }

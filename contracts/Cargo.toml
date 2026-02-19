@@ -39,7 +39,7 @@ spin = { version = "0.10.0", default-features = false, features = ["mutex"] }
 panic = "abort"
 lto = "fat"
 opt-level = 3
-strip = true
+strip = false
 debug = false
 debug-assertions = false
 rpath = false

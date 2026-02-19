@@ -2,7 +2,7 @@
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, entrypoint, SharedAPI};
+use fluentbase_sdk::{entrypoint, SharedAPI};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -12,9 +12,7 @@ struct JsonInput<'a> {
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
     // read input
-    let input_size = sdk.input_size() as usize;
-    let mut buffer = alloc_slice(input_size);
-    sdk.read(&mut buffer, 0);
+    let buffer = sdk.bytes_input();
     // parse json and extract name
     let (json_input, _) = serde_json_core::from_slice::<JsonInput>(&buffer)
         .unwrap_or_else(|_| panic!("invalid JSON input"));

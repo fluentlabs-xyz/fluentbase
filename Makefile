@@ -17,14 +17,10 @@ update-deps:
 
 .PHONY: clean
 clean:
-	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE) clean; fi
+	cargo clean --manifest-path=./contracts/Cargo.toml
+	cargo clean --manifest-path=./examples/Cargo.toml
 	cargo clean
-	cd examples/svm/solana-program && $(MAKE) clean
-	cd examples/svm/solana-program-state-usage && $(MAKE) clean
-	cd examples/svm/solana-program-transfer-with-cpi && $(MAKE) clean
-	cd revm/e2e && cargo clean
-	cd examples/svm/solana-program && $(MAKE) clean
-	cd examples/svm/solana-program-state-usage && $(MAKE) clean
+	cargo clean --manifest-path=./evm-e2e/Cargo.toml
 
 .PHONY: test
 test:

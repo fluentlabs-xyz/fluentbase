@@ -1,5 +1,4 @@
 use crate::{BytecodeOrHash, Bytes, ExitCode, B256};
-use alloc::vec;
 use core::cell::RefCell;
 
 /// A trait for providing shared API functionality.
@@ -42,20 +41,6 @@ pub trait NativeAPI {
     fn enter_unconstrained(&self);
     fn exit_unconstrained(&self);
     fn write_fd(&self, fd: u32, slice: &[u8]);
-
-    fn input(&self) -> Bytes {
-        let input_size = self.input_size();
-        let mut buffer = vec![0u8; input_size as usize];
-        self.read(&mut buffer, 0);
-        buffer.into()
-    }
-
-    fn return_data(&self) -> Bytes {
-        let output_size = self.output_size();
-        let mut buffer = vec![0u8; output_size as usize];
-        self.read_output(&mut buffer, 0);
-        buffer.into()
-    }
 }
 
 pub trait InterruptAPI {

@@ -2,10 +2,18 @@
 use crate::{host::HostWrapper, types::InterruptionExtension};
 use core::{cell::Ref, ops::Range};
 use fluentbase_sdk::InterruptionExtractingAdapter;
+use once_cell::race::OnceBox;
+use revm_context_interface::cfg::GasParams;
 use revm_interpreter::{
     interpreter_types::{Jumps, LoopControl, MemoryTr},
     Host, InstructionContext, InterpreterAction, InterpreterTypes,
 };
+use revm_primitives::hardfork::SpecId;
+
+pub fn evm_gas_params() -> &'static GasParams {
+    static PRAGUE_GAS_PARAMS: OnceBox<GasParams> = OnceBox::new();
+    PRAGUE_GAS_PARAMS.get_or_init(|| GasParams::new_spec(SpecId::PRAGUE).into())
+}
 
 /// Convert opcode handler logic into a SystemInterruption and set up re-dispatch.
 pub(crate) fn interrupt_into_action<

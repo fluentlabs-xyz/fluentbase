@@ -1,5 +1,4 @@
 use crate::{
-    alloc_slice,
     byteorder::{ByteOrder, LittleEndian},
     Address, BytecodeOrHash, Bytes, InterruptAPI, B256, STATE_MAIN, U256,
 };
@@ -285,7 +284,7 @@ impl<T: InterruptAPI + ?Sized> SyscallInterruptExecutor for T {
     }
     fn create(&mut self, salt: Option<U256>, value: &U256, init_code: &[u8]) -> (u64, i64, i32) {
         if let Some(salt) = salt {
-            let buffer = alloc_slice(32 + 32 + init_code.len());
+            let mut buffer = vec![0u8; 32 + 32 + init_code.len()];
             buffer[0..32].copy_from_slice(value.as_le_slice());
             buffer[32..64].copy_from_slice(salt.as_le_slice());
             buffer[64..].copy_from_slice(init_code);
@@ -296,7 +295,7 @@ impl<T: InterruptAPI + ?Sized> SyscallInterruptExecutor for T {
                 STATE_MAIN,
             )
         } else {
-            let buffer = alloc_slice(32 + init_code.len());
+            let mut buffer = vec![0u8; 32 + init_code.len()];
             buffer[0..32].copy_from_slice(value.as_le_slice());
             buffer[32..].copy_from_slice(init_code);
             self.interrupt(

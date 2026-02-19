@@ -2,7 +2,6 @@ use crate::{
     attr::{function_id::FunctionID, FunctionIDAttribute},
     signature::ParsedSignature,
 };
-
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use proc_macro_error::{abort, abort_call_site};
 use quote::{format_ident, quote};
@@ -262,7 +261,7 @@ impl<T: MethodLike> ParsedMethod<T> {
         // Generate complete deploy body
         quote! {
             let input_length = self.sdk.input_size();
-            let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
+            let mut call_data = alloc::vec![0u8; input_length as usize];
             self.sdk.read(&mut call_data, 0);
 
             #param_handling

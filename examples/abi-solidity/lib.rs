@@ -4,7 +4,7 @@ extern crate fluentbase_sdk;
 use fluentbase_sdk::{bytes::BytesMut, codec::SolidityABI, entrypoint, SharedAPI, U256};
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
-    let input = sdk.input();
+    let input = sdk.bytes_input();
     let value: U256 =
         SolidityABI::decode(&input, 0).unwrap_or_else(|_| panic!("malformed ABI input"));
     let value = value * U256::from(2);

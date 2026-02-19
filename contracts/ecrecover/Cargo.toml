@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true }
+fluentbase-sdk = { workspace = true, features = [] }
 revm-precompile = { workspace = true }
 #ecdsa = { workspace = true }
 #k256 = { workspace = true }

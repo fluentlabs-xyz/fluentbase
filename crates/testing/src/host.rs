@@ -1,9 +1,10 @@
 use core::cell::RefCell;
 use fluentbase_runtime::RuntimeContextWrapper;
 use fluentbase_sdk::{
-    bytes::Buf, calc_create_metadata_address, Address, Bytes, ContextReader, ContractContextV1,
-    ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI,
-    SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256, FUEL_DENOM_RATE, U256,
+    bytes::Buf, calc_create_metadata_address, system::RuntimeInterruptionOutcomeV1, Address, Bytes,
+    ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess,
+    SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, SystemAPI, B256, FUEL_DENOM_RATE,
+    U256,
 };
 use hashbrown::HashMap;
 use std::{cell::RefMut, mem::take, rc::Rc};
@@ -197,112 +198,6 @@ impl StorageAPI for TestingContextImpl {
     }
 }
 
-impl MetadataAPI for TestingContextImpl {
-    fn metadata_write(
-        &mut self,
-        address: &Address,
-        _offset: u32,
-        metadata: Bytes,
-    ) -> SyscallResult<()> {
-        let mut ctx = self.inner.borrow_mut();
-        let account_owner = ctx
-            .ownable_account_address
-            .expect("expected ownable account address");
-        let value = ctx.metadata.get_mut(&(account_owner, *address));
-        if let Some(value) = value {
-            value.resize(metadata.len(), 0);
-            value.copy_from_slice(metadata.as_ref());
-        } else {
-            ctx.metadata
-                .insert((account_owner, address.clone()), metadata.to_vec());
-        }
-        SyscallResult::new((), 0, 0, ExitCode::Ok)
-    }
-
-    fn metadata_size(
-        &self,
-        address: &Address,
-    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
-        let ctx = self.inner.borrow();
-        let account_owner = ctx
-            .ownable_account_address
-            .expect("expected ownable account address");
-        let value = ctx.metadata.get(&(account_owner, *address));
-        if let Some(value) = value {
-            let len = value.len();
-            return SyscallResult::new((len as u32, false, false, false), 0, 0, ExitCode::Ok);
-        }
-        SyscallResult::new(Default::default(), 0, 0, ExitCode::UnknownError)
-    }
-
-    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
-        let mut ctx = self.inner.borrow_mut();
-        let account_owner = ctx
-            .ownable_account_address
-            .expect("ownable account address should exist");
-        let derived_metadata_address = calc_create_metadata_address(&account_owner, salt);
-        let target_address = ctx.shared_context_input_v1.contract.address;
-        let res = ctx.metadata.insert(
-            (target_address, derived_metadata_address),
-            metadata.to_vec(),
-        );
-        if res.is_some() {
-            panic!("metadata account collision")
-        }
-        SyscallResult::new(Default::default(), 0, 0, ExitCode::Ok)
-    }
-
-    fn metadata_copy(&self, address: &Address, _offset: u32, length: u32) -> SyscallResult<Bytes> {
-        let ctx = self.inner.borrow();
-        let account_owner = ctx
-            .ownable_account_address
-            .expect("expected ownable account address");
-        let value = ctx.metadata.get(&(account_owner, *address));
-        if let Some(value) = value {
-            let length = length.min(value.len() as u32);
-            return SyscallResult::new(
-                Bytes::copy_from_slice(&value[0..length as usize]),
-                0,
-                0,
-                ExitCode::Ok,
-            );
-        }
-        SyscallResult::new(Default::default(), 0, 0, ExitCode::UnknownError)
-    }
-
-    fn metadata_account_owner(&self, _address: &Address) -> SyscallResult<Address> {
-        let ctx = self.inner.borrow();
-        let account_owner = ctx
-            .ownable_account_address
-            .expect("expected ownable account address");
-        SyscallResult::new(account_owner, 0, 0, ExitCode::Ok)
-    }
-}
-
-impl MetadataStorageAPI for TestingContextImpl {
-    fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256> {
-        let ctx = self.inner.borrow();
-        let account_owner = ctx
-            .ownable_account_address
-            .expect("expected ownable account address");
-        let value = ctx
-            .metadata_storage
-            .get(&(account_owner, *slot))
-            .unwrap_or(&U256::ZERO)
-            .clone();
-        SyscallResult::new(value, 0, 0, ExitCode::Ok)
-    }
-
-    fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()> {
-        let mut ctx = self.inner.borrow_mut();
-        let account_owner = ctx
-            .ownable_account_address
-            .expect("expected ownable account address");
-        ctx.metadata_storage.insert((account_owner, *slot), value);
-        SyscallResult::new((), 0, 0, ExitCode::Ok)
-    }
-}
-
 impl SharedAPI for TestingContextImpl {
     fn context(&self) -> impl ContextReader {
         self.inner.borrow().shared_context_input_v1.clone()
@@ -480,5 +375,135 @@ impl SharedAPI for TestingContextImpl {
 
     fn destroy_account(&mut self, _address: Address) -> SyscallResult<()> {
         unimplemented!("not supported for testing context")
+    }
+}
+
+impl SystemAPI for TestingContextImpl {
+    fn metadata_write(
+        &mut self,
+        address: &Address,
+        _offset: u32,
+        metadata: Bytes,
+    ) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        let value = ctx.metadata.get_mut(&(account_owner, *address));
+        if let Some(value) = value {
+            value.resize(metadata.len(), 0);
+            value.copy_from_slice(metadata.as_ref());
+        } else {
+            ctx.metadata
+                .insert((account_owner, address.clone()), metadata.to_vec());
+        }
+        SyscallResult::new((), 0, 0, ExitCode::Ok)
+    }
+
+    fn metadata_size(
+        &self,
+        address: &Address,
+    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
+        let ctx = self.inner.borrow();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        let value = ctx.metadata.get(&(account_owner, *address));
+        if let Some(value) = value {
+            let len = value.len();
+            return SyscallResult::new((len as u32, false, false, false), 0, 0, ExitCode::Ok);
+        }
+        SyscallResult::new(Default::default(), 0, 0, ExitCode::UnknownError)
+    }
+
+    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("ownable account address should exist");
+        let derived_metadata_address = calc_create_metadata_address(&account_owner, salt);
+        let target_address = ctx.shared_context_input_v1.contract.address;
+        let res = ctx.metadata.insert(
+            (target_address, derived_metadata_address),
+            metadata.to_vec(),
+        );
+        if res.is_some() {
+            panic!("metadata account collision")
+        }
+        SyscallResult::new(Default::default(), 0, 0, ExitCode::Ok)
+    }
+
+    fn metadata_copy(&self, address: &Address, _offset: u32, length: u32) -> SyscallResult<Bytes> {
+        let ctx = self.inner.borrow();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        let value = ctx.metadata.get(&(account_owner, *address));
+        if let Some(value) = value {
+            let length = length.min(value.len() as u32);
+            return SyscallResult::new(
+                Bytes::copy_from_slice(&value[0..length as usize]),
+                0,
+                0,
+                ExitCode::Ok,
+            );
+        }
+        SyscallResult::new(Default::default(), 0, 0, ExitCode::UnknownError)
+    }
+
+    fn metadata_account_owner(&self, _address: &Address) -> SyscallResult<Address> {
+        let ctx = self.inner.borrow();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        SyscallResult::new(account_owner, 0, 0, ExitCode::Ok)
+    }
+
+    fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256> {
+        let ctx = self.inner.borrow();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        let value = ctx
+            .metadata_storage
+            .get(&(account_owner, *slot))
+            .unwrap_or(&U256::ZERO)
+            .clone();
+        SyscallResult::new(value, 0, 0, ExitCode::Ok)
+    }
+
+    fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        ctx.metadata_storage.insert((account_owner, *slot), value);
+        SyscallResult::new((), 0, 0, ExitCode::Ok)
+    }
+
+    fn take_interruption_outcome(&mut self) -> Option<RuntimeInterruptionOutcomeV1> {
+        todo!()
+    }
+
+    fn insert_interruption_income(
+        &mut self,
+        _code_hash: B256,
+        _input: Bytes,
+        _fuel_limit: Option<u64>,
+        _state: u32,
+    ) {
+        todo!()
+    }
+
+    fn unique_key(&self) -> u32 {
+        todo!()
+    }
+
+    fn write_contract_metadata(&mut self, _metadata: Bytes) {
+        todo!()
+    }
+
+    fn contract_metadata(&self) -> Bytes {
+        todo!()
     }
 }

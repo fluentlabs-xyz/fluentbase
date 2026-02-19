@@ -23,7 +23,7 @@ pub fn is_checkmate(board: String, mv: String) -> bool {
     let Ok(mv) = san.to_move(&pos) else {
         return false;
     };
-    // try to play the move on the chess board and get new position
+    // try to play the move on the chess board and get a new position
     let Ok(new_pos) = pos.play(mv) else {
         return false;
     };
@@ -32,7 +32,7 @@ pub fn is_checkmate(board: String, mv: String) -> bool {
 }
 
 pub fn main_entry(sdk: impl SharedAPI) {
-    let input = sdk.input();
+    let input = sdk.bytes_input();
     let (board, mv) = SolidityABI::<(String, String)>::decode(&input, 0).unwrap_or_else(|_| {
         panic!("malformed input");
     });

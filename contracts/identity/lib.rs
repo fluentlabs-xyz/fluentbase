@@ -3,13 +3,13 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SystemAPI};
 use revm_precompile::{
     calc_linear_cost_u32,
     identity::{IDENTITY_BASE, IDENTITY_PER_WORD},
 };
 
-pub fn main_entry(sdk: &mut impl SharedAPI) -> Result<(), ExitCode> {
+pub fn main_entry(sdk: &mut impl SystemAPI) -> Result<(), ExitCode> {
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     // fail fast if we don't have enough fuel for the call
@@ -19,7 +19,8 @@ pub fn main_entry(sdk: &mut impl SharedAPI) -> Result<(), ExitCode> {
     }
     sdk.sync_evm_gas(gas_used)?;
     // write an identical output
-    sdk.write(sdk.input());
+    let input = sdk.bytes_input();
+    sdk.write(input);
     Ok(())
 }
 
@@ -28,7 +29,7 @@ system_entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{Bytes, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{Bytes, ContractContextV1, SharedAPI, FUEL_DENOM_RATE};
     use fluentbase_testing::TestingContextImpl;
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {

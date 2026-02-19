@@ -9,9 +9,9 @@ mod attestation;
 use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SharedAPI};
 
 pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    let input = sdk.input();
+    let input = sdk.bytes_input();
     let current_timestamp = sdk.context().block_timestamp();
-    _ = attestation::parse_and_verify(input, current_timestamp);
+    _ = attestation::parse_and_verify(input.as_ref(), current_timestamp);
     Ok(())
 }
 

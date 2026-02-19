@@ -2,13 +2,13 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SystemAPI};
 use revm_precompile::{PrecompileError, PrecompileOutput};
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
-    let input = sdk.input();
+    let input = sdk.bytes_input();
     // call blake2 function
     let PrecompileOutput {
         gas_used, bytes, ..
@@ -26,7 +26,7 @@ system_entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, Bytes, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{hex, Bytes, ContractContextV1, SharedAPI, FUEL_DENOM_RATE};
     use fluentbase_testing::TestingContextImpl;
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {

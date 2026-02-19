@@ -53,8 +53,8 @@ fn sha256_hash_bytes(msg: &[u8]) -> [u32; 8] {
     state
 }
 
-pub fn crypto_sha256(data: &[u8]) -> B256 {
-    let words = sha256_hash_bytes(data);
+pub fn crypto_sha256<T: AsRef<[u8]>>(data: T) -> B256 {
+    let words = sha256_hash_bytes(data.as_ref());
     let mut out = [0u8; 32];
     for (i, word) in words.iter().enumerate() {
         out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());

@@ -271,3 +271,23 @@ mod new_v102_interpreter_failing_tests {
         fn sstore_gas_left("tests/GeneralStateTests/stSStoreTest/sstore_gasLeft.json");
     }
 }
+
+mod st_quadratic_complexity_test {
+    define_tests! {
+        // fn call50000("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000.json");
+        // fn call50000_identity("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_identity.json");
+        // fn call50000_identity2("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_identity2.json");
+        // fn call50000_rip160("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_rip160.json");
+        // fn callcode50000("tests/GeneralStateTests/stQuadraticComplexityTest/Callcode50000.json");
+        // fn return50000("tests/GeneralStateTests/stQuadraticComplexityTest/Return50000.json");
+        // fn return50000_2("tests/GeneralStateTests/stQuadraticComplexityTest/Return50000_2.json");
+        // fn static_call50000("tests/GeneralStateTests/stStaticCall/static_Call50000.json");
+        // fn call50000_ecrec("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_ecrec.json");
+        // fn static_call50000_ecrec("tests/GeneralStateTests/stStaticCall/static_Call50000_ecrec.json");
+        // fn static_call50000_identity("tests/GeneralStateTests/stStaticCall/static_Call50000_identity.json");
+        // fn static_call50000_identity2("tests/GeneralStateTests/stStaticCall/static_Call50000_identity2.json");
+        // fn static_call50000_rip160("tests/GeneralStateTests/stStaticCall/static_Call50000_rip160.json");
+        // fn static_loop_calls_then_revert("tests/GeneralStateTests/stStaticCall/static_LoopCallsThenRevert.json");
+        // fn static_return50000_2("tests/GeneralStateTests/stStaticCall/static_Return50000_2.json");
+    }
+}

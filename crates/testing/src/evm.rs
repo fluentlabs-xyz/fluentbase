@@ -4,8 +4,8 @@ use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
 use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecutor};
 use fluentbase_sdk::{
     bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, Address, BytecodeOrHash, Bytes,
-    ContextReader, ExitCode, GenesisContract, MetadataAPI, RwasmCompilationResult, SharedAPI,
-    SharedContextInputV1, STATE_MAIN, U256,
+    ContextReader, ExitCode, GenesisContract, RwasmCompilationResult, SharedAPI,
+    SharedContextInputV1, SystemAPI, STATE_MAIN, U256,
 };
 use revm::{
     context::{

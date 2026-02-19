@@ -16,5 +16,6 @@ mod utils;
 pub use bytecode::AnalyzedBytecode;
 pub use evm::EthVM;
 pub use metadata::EthereumMetadata;
-pub use revm_interpreter::{gas, InterpreterAction};
+pub use revm_interpreter::{gas, InterpreterAction, InterpreterResult};
 pub use types::{ExecutionResult, InterruptingInterpreter};
+pub use utils::evm_gas_params;

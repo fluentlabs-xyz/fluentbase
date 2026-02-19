@@ -2,7 +2,7 @@
 //!
 //! EthVM executes analyzed EVM bytecode and yields on host-bound opcodes
 //! (calls, storage, logs, etc.). The surrounding runtime performs the
-//! operation and the VM resumes with identical EVM semantics and gas.
+//! operation, and the VM resumes with identical EVM semantics and gas.
 use crate::{
     bytecode::AnalyzedBytecode,
     host::{HostWrapper, HostWrapperImpl},
@@ -155,15 +155,12 @@ impl EthVM {
             &mut self.interpreter.extend.committed_gas,
         );
         let remaining_diff = committed_gas.remaining() - gas.remaining();
-        // If there is nothing to commit/charge then just ignore it
+        // If there is nothing to commit/charge, then just ignore it
         if remaining_diff == 0 {
             return;
         }
         // Charge gas from the runtime
-        sdk.charge_fuel(
-            // TODO(dmitry123): How safe to mul here? Shouldn't overwrap. Checked?
-            remaining_diff * FUEL_DENOM_RATE,
-        );
+        sdk.charge_fuel(remaining_diff.saturating_mul(FUEL_DENOM_RATE));
         // Remember new committed gas
         *committed_gas = *gas;
     }

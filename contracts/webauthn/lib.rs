@@ -4,8 +4,7 @@ extern crate alloc;
 mod webauthn;
 
 use fluentbase_sdk::{
-    alloc_slice, codec::SolidityABI, system_entrypoint, Bytes, ContextReader, ExitCode, SharedAPI,
-    B256, U256,
+    codec::SolidityABI, system_entrypoint, Bytes, ContextReader, ExitCode, SystemAPI, B256, U256,
 };
 use webauthn::{verify_webauthn, WebAuthnAuth};
 
@@ -22,7 +21,7 @@ const VERIFY_SELECTOR: [u8; 4] = [0x94, 0x51, 0x6d, 0xde];
 /// - Daimo: https://github.com/daimo-eth/p256-verifier/blob/master/src/WebAuthn.sol
 /// - Coinbase: https://github.com/base-org/webauthn-sol/blob/main/src/WebAuthn.sol
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // Read input
     let input_length = sdk.input_size();
     assert!(
@@ -30,8 +29,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         "webauthn: input should be at least 4 bytes"
     );
 
-    let mut input = alloc_slice(input_length as usize);
-    sdk.read(&mut input, 0);
+    let input = sdk.bytes_input();
 
     let (selector, params) = input.split_at(4);
     if selector != VERIFY_SELECTOR {
@@ -40,10 +38,10 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
 
     // Decode WebAuthn parameters using Solidity ABI
     let (challenge, require_user_verification, auth, x, y) =
-        SolidityABI::<(Bytes, bool, WebAuthnAuth, U256, U256)>::decode(&Bytes::from(params), 0)
+        SolidityABI::<(Bytes, bool, WebAuthnAuth, U256, U256)>::decode(&params, 0)
             .unwrap_or_else(|_| panic!("webauthn: failed to decode input parameters"));
 
-    // Get gas limit for precompile call
+    // Get gas limit for precompiled call
     let gas_limit = sdk.context().contract_gas_limit();
 
     let result = match verify_webauthn(

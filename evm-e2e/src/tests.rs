@@ -381,7 +381,7 @@ mod st_args_zero_one_balance {
 
 mod st_attack_test {
     define_tests! {
-        // fn contract_creation_spam("tests/GeneralStateTests/stAttackTest/ContractCreationSpam.json");
+        fn contract_creation_spam("tests/GeneralStateTests/stAttackTest/ContractCreationSpam.json");
         fn crashing_transaction("tests/GeneralStateTests/stAttackTest/CrashingTransaction.json");
     }
 }
@@ -1488,19 +1488,19 @@ mod st_quadratic_complexity_test {
         fn call20_kbytes_contract50_1("tests/GeneralStateTests/stQuadraticComplexityTest/Call20KbytesContract50_1.json");
         fn call20_kbytes_contract50_2("tests/GeneralStateTests/stQuadraticComplexityTest/Call20KbytesContract50_2.json");
         fn call20_kbytes_contract50_3("tests/GeneralStateTests/stQuadraticComplexityTest/Call20KbytesContract50_3.json");
-        // fn call50000("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000.json");
-        // fn call50000_ecrec("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_ecrec.json");
+        fn call50000("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000.json");
+        fn call50000_ecrec("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_ecrec.json");
         fn call50000_identity("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_identity.json");
         fn call50000_identity2("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_identity2.json");
         fn call50000_rip160("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_rip160.json");
         fn call50000_sha256("tests/GeneralStateTests/stQuadraticComplexityTest/Call50000_sha256.json");
-        // fn callcode50000("tests/GeneralStateTests/stQuadraticComplexityTest/Callcode50000.json");
+        fn callcode50000("tests/GeneralStateTests/stQuadraticComplexityTest/Callcode50000.json");
         fn create1000("tests/GeneralStateTests/stQuadraticComplexityTest/Create1000.json");
         fn create1000_byzantium("tests/GeneralStateTests/stQuadraticComplexityTest/Create1000Byzantium.json");
         fn create1000_shnghai("tests/GeneralStateTests/stQuadraticComplexityTest/Create1000Shnghai.json");
         fn quadratic_complexity_solidity_call_data_copy("tests/GeneralStateTests/stQuadraticComplexityTest/QuadraticComplexitySolidity_CallDataCopy.json");
-        // fn return50000("tests/GeneralStateTests/stQuadraticComplexityTest/Return50000.json");
-        // fn return50000_2("tests/GeneralStateTests/stQuadraticComplexityTest/Return50000_2.json");
+        fn return50000("tests/GeneralStateTests/stQuadraticComplexityTest/Return50000.json");
+        fn return50000_2("tests/GeneralStateTests/stQuadraticComplexityTest/Return50000_2.json");
     }
 }
 
@@ -2355,12 +2355,12 @@ mod st_static_call {
         fn static_call1024_pre_calls("tests/GeneralStateTests/stStaticCall/static_Call1024PreCalls.json");
         fn static_call1024_pre_calls2("tests/GeneralStateTests/stStaticCall/static_Call1024PreCalls2.json");
         fn static_call1024_pre_calls3("tests/GeneralStateTests/stStaticCall/static_Call1024PreCalls3.json");
-        // fn static_call1_mb1024_calldepth("tests/GeneralStateTests/stStaticCall/static_Call1MB1024Calldepth.json");
-        // fn static_call50000("tests/GeneralStateTests/stStaticCall/static_Call50000.json");
-        // fn static_call50000_ecrec("tests/GeneralStateTests/stStaticCall/static_Call50000_ecrec.json");
-        // fn static_call50000_identity("tests/GeneralStateTests/stStaticCall/static_Call50000_identity.json");
-        // fn static_call50000_identity2("tests/GeneralStateTests/stStaticCall/static_Call50000_identity2.json");
-        // fn static_call50000_rip160("tests/GeneralStateTests/stStaticCall/static_Call50000_rip160.json");
+        fn static_call1_mb1024_calldepth("tests/GeneralStateTests/stStaticCall/static_Call1MB1024Calldepth.json");
+        fn static_call50000("tests/GeneralStateTests/stStaticCall/static_Call50000.json");
+        fn static_call50000_ecrec("tests/GeneralStateTests/stStaticCall/static_Call50000_ecrec.json");
+        fn static_call50000_identity("tests/GeneralStateTests/stStaticCall/static_Call50000_identity.json");
+        fn static_call50000_identity2("tests/GeneralStateTests/stStaticCall/static_Call50000_identity2.json");
+        fn static_call50000_rip160("tests/GeneralStateTests/stStaticCall/static_Call50000_rip160.json");
         fn static_call50000bytes_contract50_1("tests/GeneralStateTests/stStaticCall/static_Call50000bytesContract50_1.json");
         fn static_call50000bytes_contract50_2("tests/GeneralStateTests/stStaticCall/static_Call50000bytesContract50_2.json");
         fn static_call50000bytes_contract50_3("tests/GeneralStateTests/stStaticCall/static_Call50000bytesContract50_3.json");
@@ -2440,12 +2440,12 @@ mod st_static_call {
         fn static_loop_calls_depth_then_revert("tests/GeneralStateTests/stStaticCall/static_LoopCallsDepthThenRevert.json");
         // fn static_loop_calls_depth_then_revert2("tests/GeneralStateTests/stStaticCall/static_LoopCallsDepthThenRevert2.json");
         // fn static_loop_calls_depth_then_revert3("tests/GeneralStateTests/stStaticCall/static_LoopCallsDepthThenRevert3.json");
-        // fn static_loop_calls_then_revert("tests/GeneralStateTests/stStaticCall/static_LoopCallsThenRevert.json");
+        fn static_loop_calls_then_revert("tests/GeneralStateTests/stStaticCall/static_LoopCallsThenRevert.json");
         fn static_post_to_return1("tests/GeneralStateTests/stStaticCall/static_PostToReturn1.json");
         fn static_return_bounds("tests/GeneralStateTests/stStaticCall/static_RETURN_Bounds.json");
         fn static_return_bounds_oog("tests/GeneralStateTests/stStaticCall/static_RETURN_BoundsOOG.json");
         fn static_raw_call_gas_ask("tests/GeneralStateTests/stStaticCall/static_RawCallGasAsk.json");
-        // fn static_return50000_2("tests/GeneralStateTests/stStaticCall/static_Return50000_2.json");
+        fn static_return50000_2("tests/GeneralStateTests/stStaticCall/static_Return50000_2.json");
         fn static_return_test("tests/GeneralStateTests/stStaticCall/static_ReturnTest.json");
         fn static_return_test2("tests/GeneralStateTests/stStaticCall/static_ReturnTest2.json");
         fn static_revert_depth2("tests/GeneralStateTests/stStaticCall/static_RevertDepth2.json");

@@ -2,7 +2,7 @@
 extern crate alloc;
 
 use fluentbase_sdk::{
-    system_entrypoint, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BLS12_381_G1_ADD,
+    system_entrypoint, ContextReader, ExitCode, SystemAPI, PRECOMPILE_BLS12_381_G1_ADD,
     PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM,
     PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
 };
@@ -21,31 +21,31 @@ use revm_precompile::{
     PrecompileError, PrecompileOutput,
 };
 
-fn g1_add_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+fn g1_add_checked<SDK: SystemAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
     let gas_limit = sdk.context().contract_gas_limit();
     if G1_ADD_BASE_GAS_FEE > gas_limit {
         return Err(ExitCode::OutOfFuel);
     }
-    let input = sdk.input();
-    g1_add(input, gas_limit).map_err(|err| match err {
+    let input = sdk.bytes_input();
+    g1_add(input.as_ref(), gas_limit).map_err(|err| match err {
         PrecompileError::OutOfGas => ExitCode::OutOfFuel,
         _ => ExitCode::PrecompileError,
     })
 }
 
-fn g2_add_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+fn g2_add_checked<SDK: SystemAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
     let gas_limit = sdk.context().contract_gas_limit();
     if G2_ADD_BASE_GAS_FEE > gas_limit {
         return Err(ExitCode::OutOfFuel);
     }
-    let input = sdk.input();
-    g2_add(input, gas_limit).map_err(|err| match err {
+    let input = sdk.bytes_input();
+    g2_add(input.as_ref(), gas_limit).map_err(|err| match err {
         PrecompileError::OutOfGas => ExitCode::OutOfFuel,
         _ => ExitCode::PrecompileError,
     })
 }
 
-fn g1_msm_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+fn g1_msm_checked<SDK: SystemAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
     let gas_limit = sdk.context().contract_gas_limit();
     let input_size = sdk.input_size() as usize;
     if input_size == 0 || !input_size.is_multiple_of(G1_MSM_INPUT_LENGTH) {
@@ -56,14 +56,14 @@ fn g1_msm_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, Exi
     if required_gas > gas_limit {
         return Err(ExitCode::OutOfFuel);
     }
-    let input = sdk.input();
-    g1_msm(input, gas_limit).map_err(|err| match err {
+    let input = sdk.bytes_input();
+    g1_msm(input.as_ref(), gas_limit).map_err(|err| match err {
         PrecompileError::OutOfGas => ExitCode::OutOfFuel,
         _ => ExitCode::PrecompileError,
     })
 }
 
-fn g2_msm_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+fn g2_msm_checked<SDK: SystemAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
     let gas_limit = sdk.context().contract_gas_limit();
     let input_size = sdk.input_size() as usize;
     if input_size == 0 || !input_size.is_multiple_of(G2_MSM_INPUT_LENGTH) {
@@ -74,14 +74,14 @@ fn g2_msm_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, Exi
     if required_gas > gas_limit {
         return Err(ExitCode::OutOfFuel);
     }
-    let input = sdk.input();
-    g2_msm(input, gas_limit).map_err(|err| match err {
+    let input = sdk.bytes_input();
+    g2_msm(input.as_ref(), gas_limit).map_err(|err| match err {
         PrecompileError::OutOfGas => ExitCode::OutOfFuel,
         _ => ExitCode::PrecompileError,
     })
 }
 
-fn pairing_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+fn pairing_checked<SDK: SystemAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
     let gas_limit = sdk.context().contract_gas_limit();
     let input_size = sdk.input_size() as usize;
     if input_size == 0 || !input_size.is_multiple_of(PAIRING_INPUT_LENGTH) {
@@ -92,14 +92,14 @@ fn pairing_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, Ex
     if required_gas > gas_limit {
         return Err(ExitCode::OutOfFuel);
     }
-    let input = sdk.input();
-    pairing(input, gas_limit).map_err(|err| match err {
+    let input = sdk.bytes_input();
+    pairing(input.as_ref(), gas_limit).map_err(|err| match err {
         PrecompileError::OutOfGas => ExitCode::OutOfFuel,
         _ => ExitCode::PrecompileError,
     })
 }
 
-fn map_fp_to_g1_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+fn map_fp_to_g1_checked<SDK: SystemAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
     let gas_limit = sdk.context().contract_gas_limit();
     if MAP_FP_TO_G1_BASE_GAS_FEE > gas_limit {
         return Err(ExitCode::OutOfFuel);
@@ -108,14 +108,14 @@ fn map_fp_to_g1_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutpu
     if input_size != PADDED_FP_LENGTH {
         return Err(ExitCode::PrecompileError);
     }
-    let input = sdk.input();
-    map_fp_to_g1(input, gas_limit).map_err(|err| match err {
+    let input = sdk.bytes_input();
+    map_fp_to_g1(input.as_ref(), gas_limit).map_err(|err| match err {
         PrecompileError::OutOfGas => ExitCode::OutOfFuel,
         _ => ExitCode::PrecompileError,
     })
 }
 
-fn map_fp2_to_g2_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
+fn map_fp2_to_g2_checked<SDK: SystemAPI>(sdk: &mut SDK) -> Result<PrecompileOutput, ExitCode> {
     let gas_limit = sdk.context().contract_gas_limit();
     if MAP_FP2_TO_G2_BASE_GAS_FEE > gas_limit {
         return Err(ExitCode::OutOfFuel);
@@ -124,14 +124,14 @@ fn map_fp2_to_g2_checked<SDK: SharedAPI>(sdk: &mut SDK) -> Result<PrecompileOutp
     if input_size != PADDED_FP2_LENGTH {
         return Err(ExitCode::PrecompileError);
     }
-    let input = sdk.input();
-    map_fp2_to_g2(input, gas_limit).map_err(|err| match err {
+    let input = sdk.bytes_input();
+    map_fp2_to_g2(input.as_ref(), gas_limit).map_err(|err| match err {
         PrecompileError::OutOfGas => ExitCode::OutOfFuel,
         _ => ExitCode::PrecompileError,
     })
 }
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let bytecode_address = sdk.context().contract_bytecode_address();
     // dispatch to SDK-backed implementation (w/ pre-gas/input checks)
     let result = match bytecode_address {

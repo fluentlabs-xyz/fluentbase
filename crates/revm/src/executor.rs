@@ -682,7 +682,7 @@ fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     let mut exit_code = ExitCode::from(exit_code);
     match exit_code {
-        // System runtime v2 path: decode and apply structured outcome.
+        // System runtime v2 path: decode and apply a structured outcome.
         exit_code if is_execute_using_system_runtime(&effective_bytecode_address) => {
             process_runtime_execution_outcome(
                 &target_address,
@@ -731,7 +731,11 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     // Decode syscall invocation parameters from return data.
     let Some(syscall_params) = SyscallInvocationParams::decode(&return_data) else {
-        unreachable!("revm: can't decode invocation params");
+        unreachable!(
+            "revm: can't decode invocation params: exit_code={}, return_data={}",
+            exit_code,
+            return_data.len()
+        );
     };
 
     let gas = frame.interpreter.gas;

@@ -13,15 +13,18 @@ use fluentbase_evm::{
     EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
 };
 use fluentbase_sdk::{
-    crypto::crypto_keccak256, system::RuntimeInterruptionOutcomeV1, system_entrypoint, Bytes,
-    ExitCode, HashMap, SystemAPI, B256, EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
+    crypto::crypto_keccak256, rwasm_core::N_MAX_RECURSION_DEPTH,
+    system::RuntimeInterruptionOutcomeV1, Bytes, ExitCode, HashMap, SystemAPI, B256,
+    EVM_MAX_CODE_SIZE, FUEL_DENOM_RATE,
 };
 use spin::{Mutex, MutexGuard, Once};
 
 /// A saved EthVM context we store between calls
+#[inline(never)]
 fn lock_evm_context<'a>() -> MutexGuard<'a, HashMap<u32, EthVM>> {
     static SAVED_EVM_CONTEXT: Once<Mutex<HashMap<u32, EthVM>>> = Once::new();
-    let mutex = SAVED_EVM_CONTEXT.call_once(|| Mutex::new(HashMap::new()));
+    let mutex =
+        SAVED_EVM_CONTEXT.call_once(|| Mutex::new(HashMap::with_capacity(N_MAX_RECURSION_DEPTH)));
     if mutex.is_locked() {
         unreachable!("runtime corruption, can't restore evm context");
     }
@@ -189,4 +192,43 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     }
 }
 
-system_entrypoint!(main_entry, deploy_entry);
+// system_entrypoint!(main_entry, deploy_entry);
+
+#[cfg(target_arch = "wasm32")]
+mod _fluentbase_entrypoint {
+    use ::fluentbase_sdk::{system::SystemContextImpl, RwasmContext};
+    #[no_mangle]
+    extern "C" fn main() {
+        // TODO(dmitry123): How we can run some sort of pre-warmup to init resources?
+        _ = crate::lock_evm_context();
+        _ = fluentbase_evm::evm_gas_params();
+        let mut sdk = SystemContextImpl::new(RwasmContext {});
+        let result = super::main_entry(&mut sdk);
+        sdk.finalize(result);
+        ::fluentbase_sdk::BlockListAllocator::gc();
+    }
+    #[no_mangle]
+    extern "C" fn deploy() {
+        _ = crate::lock_evm_context();
+        _ = fluentbase_evm::evm_gas_params();
+        let mut sdk = SystemContextImpl::new(RwasmContext {});
+        let result = super::deploy_entry(&mut sdk);
+        sdk.finalize(result);
+        ::fluentbase_sdk::BlockListAllocator::gc();
+    }
+}
+#[cfg(target_arch = "wasm32")]
+#[panic_handler]
+#[inline(always)]
+unsafe fn panic(info: &core::panic::PanicInfo) -> ! {
+    use ::fluentbase_sdk::{ExitCode, NativeAPI, RwasmContext};
+    let panic_message = alloc::format!("{}", info.message());
+    ::fluentbase_sdk::debug_log!("panic: {}", panic_message);
+    let native_sdk = RwasmContext {};
+    native_sdk.exit(ExitCode::UnreachableCodeReached)
+}
+#[cfg(target_arch = "wasm32")]
+#[global_allocator]
+static ALLOCATOR: ::fluentbase_sdk::BlockListAllocator = ::fluentbase_sdk::BlockListAllocator {};
+#[cfg(not(target_arch = "wasm32"))]
+fn main() {}

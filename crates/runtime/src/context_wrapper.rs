@@ -1,5 +1,5 @@
 use crate::{syscall_handler::*, RuntimeContext};
-use fluentbase_types::{BytecodeOrHash, Bytes, BytesOrRef, ExitCode, NativeAPI, UnwrapExitCode};
+use fluentbase_types::{BytecodeOrHash, BytesOrRef, ExitCode, NativeAPI, UnwrapExitCode};
 use std::cell::RefCell;
 
 #[derive(Default)]
@@ -118,10 +118,5 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn write_fd(&self, fd: u32, slice: &[u8]) {
         syscall_write_fd_impl(&mut self.ctx.borrow_mut(), fd, slice).unwrap_exit_code();
-    }
-
-    fn return_data(&self) -> Bytes {
-        let ctx = self.ctx.borrow();
-        ctx.execution_result.return_data.clone().into()
     }
 }
