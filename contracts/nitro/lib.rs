@@ -6,9 +6,9 @@ extern crate fluentbase_sdk;
 
 mod attestation;
 
-use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SystemAPI};
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input = sdk.bytes_input();
     let current_timestamp = sdk.context().block_timestamp();
     _ = attestation::parse_and_verify(input.as_ref(), current_timestamp);

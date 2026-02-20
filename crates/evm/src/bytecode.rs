@@ -2,7 +2,9 @@
 //!
 //! Stores padded bytecode, original length, jump table, and code hash for
 //! fast interpreter setup and inexpensive serialization.
-use bincode::{de::read::SliceReader, enc::write::SliceWriter, error};
+use bincode::{
+    de::read::SliceReader, decode_from_reader, enc::write::SliceWriter, encode_into_writer, error,
+};
 use bitvec::vec::BitVec;
 use fluentbase_sdk::{Bytes, B256};
 use revm_bytecode::{legacy::analyze_legacy, JumpTable};
@@ -20,7 +22,7 @@ pub struct AnalyzedBytecode {
     /// A padded bytecode (length might be different)
     pub bytecode: Bytes,
     /// An original bytecode len (w/o padding)
-    pub len: usize,
+    pub len: u32,
     /// Jump table for JUMPDEST checks
     pub jump_table: JumpTable,
     /// Code hash of bytecode (non-padded version)
@@ -34,9 +36,9 @@ impl Default for AnalyzedBytecode {
 }
 
 impl AnalyzedBytecode {
-    /// Analyze legacy bytecode, compute jump table, and keep original length and hash.
+    /// Analyze legacy bytecode, compute jump table, and keep orthe iginal length and hash.
     pub fn new(bytecode: Bytes, hash: B256) -> Self {
-        let len = bytecode.len();
+        let len = bytecode.len() as u32;
         let (jump_table, bytecode) = analyze_legacy(bytecode);
         Self {
             bytecode,
@@ -47,13 +49,12 @@ impl AnalyzedBytecode {
     }
 
     pub fn hint_size(&self) -> usize {
-        32 // code hash
-            + size_of::<usize>() // original bytecode len
-            + 8 // padded bytecode len
-            + self.bytecode.len() // padded bytecode
-            + 8 // jump table len
-            + self.jump_table.as_slice().len() // jump table
-            + 8
+        8 // padded bytecode len
+        + self.bytecode.len() // padded bytecode
+        + size_of::<u32>() // original bytecode len
+        + 8 // jump table len
+        + self.jump_table.as_slice().len() // jump table
+        + 32 // code hash
     }
 
     /// Serialize into a contiguous buffer suitable for metadata storage.
@@ -61,10 +62,10 @@ impl AnalyzedBytecode {
         debug_assert!(buffer.len() >= self.hint_size());
         let mut writer = SliceWriter::new(buffer);
         let config = bincode::config::legacy();
-        bincode::encode_into_writer(&self.hash.0, &mut writer, config)?;
-        bincode::encode_into_writer(self.len, &mut writer, config)?;
-        bincode::encode_into_writer(&self.bytecode[..], &mut writer, config)?;
-        bincode::encode_into_writer(self.jump_table.as_slice(), &mut writer, config)?;
+        encode_into_writer(&self.hash.0, &mut writer, config)?;
+        encode_into_writer(self.len, &mut writer, config)?;
+        encode_into_writer(&self.bytecode[..], &mut writer, config)?;
+        encode_into_writer(self.jump_table.as_slice(), &mut writer, config)?;
         Ok(())
     }
 
@@ -73,10 +74,10 @@ impl AnalyzedBytecode {
         use alloc::vec::Vec;
         let config = bincode::config::legacy();
         let mut reader = SliceReader::new(&bytes);
-        let hash: [u8; 32] = bincode::decode_from_reader(&mut reader, config)?;
-        let len: usize = bincode::decode_from_reader(&mut reader, config)?;
-        let bytecode: Vec<u8> = bincode::decode_from_reader(&mut reader, config)?;
-        let jump_table: Vec<u8> = bincode::decode_from_reader(&mut reader, config)?;
+        let hash: [u8; 32] = decode_from_reader(&mut reader, config)?;
+        let len: u32 = decode_from_reader(&mut reader, config)?;
+        let bytecode: Vec<u8> = decode_from_reader(&mut reader, config)?;
+        let jump_table: Vec<u8> = decode_from_reader(&mut reader, config)?;
         Ok(Self {
             bytecode: bytecode.into(),
             len,
@@ -88,13 +89,13 @@ impl AnalyzedBytecode {
     /// Return the original (unpadded) bytecode slice.
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
-        &self.bytecode[..self.len]
+        &self.bytecode[..self.len as usize]
     }
 
     /// Original bytecode length (before padding).
     #[inline]
     pub fn len(&self) -> usize {
-        self.len
+        self.len as usize
     }
 }
 

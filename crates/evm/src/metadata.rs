@@ -53,7 +53,7 @@ impl EthereumMetadata {
     pub fn code_size(&self) -> usize {
         match self {
             EthereumMetadata::Legacy(bytecode) => bytecode.bytecode.len(),
-            EthereumMetadata::Analyzed(bytecode) => bytecode.len,
+            EthereumMetadata::Analyzed(bytecode) => bytecode.len(),
         }
     }
 
@@ -67,7 +67,7 @@ impl EthereumMetadata {
     pub fn code_copy(&self) -> Bytes {
         match self {
             EthereumMetadata::Legacy(bytecode) => bytecode.bytecode.clone(),
-            EthereumMetadata::Analyzed(bytecode) => bytecode.bytecode.slice(0..bytecode.len),
+            EthereumMetadata::Analyzed(bytecode) => bytecode.bytecode.slice(0..bytecode.len()),
         }
     }
 }

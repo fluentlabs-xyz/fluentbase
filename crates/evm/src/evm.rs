@@ -50,7 +50,7 @@ impl EthVM {
             Bytecode::LegacyAnalyzed(
                 LegacyAnalyzedBytecode::new(
                     analyzed_bytecode.bytecode,
-                    analyzed_bytecode.len,
+                    analyzed_bytecode.len as usize,
                     analyzed_bytecode.jump_table,
                 )
                 .into(),
@@ -154,7 +154,7 @@ impl EthVM {
             &self.interpreter.gas,
             &mut self.interpreter.extend.committed_gas,
         );
-        let remaining_diff = committed_gas.remaining() - gas.remaining();
+        let remaining_diff = committed_gas.remaining().saturating_sub(gas.remaining());
         // If there is nothing to commit/charge, then just ignore it
         if remaining_diff == 0 {
             return;

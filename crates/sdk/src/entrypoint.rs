@@ -154,11 +154,8 @@ macro_rules! system_entrypoint {
         #[panic_handler]
         #[inline(always)]
         unsafe fn panic(info: &core::panic::PanicInfo) -> ! {
-            use $crate::{ExitCode, NativeAPI, RwasmContext};
-            let panic_message = alloc::format!("{}", info.message());
-            $crate::debug_log!("panic: {}", panic_message);
-            let native_sdk = RwasmContext {};
-            native_sdk.exit(ExitCode::UnreachableCodeReached)
+            use $crate::{system::SystemContextImpl, RwasmContext};
+            SystemContextImpl::<RwasmContext>::panic_handler(info)
         }
         $crate::define_block_list_allocator!();
         #[cfg(not(target_arch = "wasm32"))]

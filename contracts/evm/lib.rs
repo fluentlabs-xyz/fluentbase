@@ -221,11 +221,8 @@ mod _fluentbase_entrypoint {
 #[panic_handler]
 #[inline(always)]
 unsafe fn panic(info: &core::panic::PanicInfo) -> ! {
-    use ::fluentbase_sdk::{ExitCode, NativeAPI, RwasmContext};
-    let panic_message = alloc::format!("{}", info.message());
-    ::fluentbase_sdk::debug_log!("panic: {}", panic_message);
-    let native_sdk = RwasmContext {};
-    native_sdk.exit(ExitCode::UnreachableCodeReached)
+    use ::fluentbase_sdk::{system::SystemContextImpl, RwasmContext};
+    SystemContextImpl::<RwasmContext>::panic_handler(info)
 }
 #[cfg(target_arch = "wasm32")]
 #[global_allocator]

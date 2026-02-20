@@ -168,7 +168,10 @@ pub struct ExecutionResult {
 impl ExecutionResult {
     /// Fuel/refund delta to settle at the host based on committed vs. final gas.
     pub fn chargeable_fuel(&self) -> u64 {
-        let remaining_diff = self.committed_gas.remaining() - self.gas.remaining();
+        let remaining_diff = self
+            .committed_gas
+            .remaining()
+            .saturating_sub(self.gas.remaining());
         remaining_diff.saturating_mul(FUEL_DENOM_RATE)
     }
 }

@@ -64,6 +64,16 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn panic_handler(info: &core::panic::PanicInfo) -> ! {
+        use crate::{ExitCode, NativeAPI, RwasmContext};
+        crate::debug_log!("panic: {}", info.message());
+        let native_sdk = RwasmContext {};
+        // We can't forward any errors here into output because we already have corrupted
+        // memory state (because of unwinding), so the best we can do is just to exit
+        native_sdk.exit(ExitCode::Panic)
+    }
+
     pub fn finalize(self, result: Result<(), ExitCode>) {
         let exit_code = result.err().unwrap_or(ExitCode::Ok);
         let SystemContextImpl {
