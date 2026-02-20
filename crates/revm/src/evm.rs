@@ -17,7 +17,8 @@ use revm::{
     inspector::{handler::frame_end, InspectorEvmTr, JournalExt, NoOpInspector},
     interpreter::{
         interpreter::{EthInterpreter, ExtBytecode},
-        return_ok, return_revert, CallInput, FrameInput, Gas, InstructionResult, InterpreterResult,
+        return_ok, return_revert, CallInput, CallOutcome, CreateOutcome, FrameInput, Gas,
+        InstructionResult, InterpreterResult,
     },
     Database, Inspector,
 };
@@ -145,16 +146,44 @@ where
 
     fn inspect_frame_run(
         &mut self,
-    ) -> Result<FrameInitOrResult<Self::Frame>, ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>>
-    {
+    ) -> Result<
+        FrameInitOrResult<Self::Frame>,
+        ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
+    > {
         let (ctx, inspector, frame) = self.ctx_inspector_frame();
-        let next_action =
-            run_rwasm_loop::<Self::Context, Self::Inspector>(frame, ctx, Some(&mut *inspector))?
-                .into_interpreter_action();
+        let next_action = match run_rwasm_loop::<Self::Context, Self::Inspector>(
+            frame,
+            ctx,
+            Some(&mut *inspector),
+        ) {
+            Ok(next_action) => next_action.into_interpreter_action(),
+            Err(err) => {
+                // Ensure call_end/create_end is dispatched even when run_rwasm_loop fails.
+                // This maintains inspector begin/end symmetry as required by the revm inspector contract.
+                let interpreter_result = InterpreterResult::new(
+                    InstructionResult::FatalExternalError,
+                    Bytes::new(),
+                    frame.interpreter.gas,
+                );
+                let mut synthetic_result = match &frame.input {
+                    FrameInput::Call(inputs) => FrameResult::Call(CallOutcome::new(
+                        interpreter_result,
+                        inputs.return_memory_offset.clone(),
+                    )),
+                    FrameInput::Create(_) => {
+                        FrameResult::Create(CreateOutcome::new(interpreter_result, None))
+                    }
+                    FrameInput::Empty => unreachable!(),
+                };
+                frame_end(ctx, inspector, &frame.input, &mut synthetic_result);
+                frame.set_finished(true);
+                return Err(err);
+            }
+        };
+
         let mut result = frame.process_next_action(ctx, next_action);
 
         if let Ok(ItemOrResult::Result(frame_result)) = &mut result {
-            let (ctx, inspector, frame) = self.ctx_inspector_frame();
             frame_end(ctx, inspector, &frame.input, frame_result);
             frame.set_finished(true);
         }
