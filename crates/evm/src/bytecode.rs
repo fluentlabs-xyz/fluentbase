@@ -22,7 +22,7 @@ pub struct AnalyzedBytecode {
     /// A padded bytecode (length might be different)
     pub bytecode: Bytes,
     /// An original bytecode len (w/o padding)
-    pub len: u32,
+    pub len: u64,
     /// Jump table for JUMPDEST checks
     pub jump_table: JumpTable,
     /// Code hash of bytecode (non-padded version)
@@ -38,7 +38,7 @@ impl Default for AnalyzedBytecode {
 impl AnalyzedBytecode {
     /// Analyze legacy bytecode, compute jump table, and keep orthe iginal length and hash.
     pub fn new(bytecode: Bytes, hash: B256) -> Self {
-        let len = bytecode.len() as u32;
+        let len = bytecode.len() as u64;
         let (jump_table, bytecode) = analyze_legacy(bytecode);
         Self {
             bytecode,
@@ -51,7 +51,7 @@ impl AnalyzedBytecode {
     pub fn hint_size(&self) -> usize {
         8 // padded bytecode len
         + self.bytecode.len() // padded bytecode
-        + size_of::<u32>() // original bytecode len
+        + 8 // original bytecode len
         + 8 // jump table len
         + self.jump_table.as_slice().len() // jump table
         + 32 // code hash
@@ -75,9 +75,15 @@ impl AnalyzedBytecode {
         let config = bincode::config::legacy();
         let mut reader = SliceReader::new(&bytes);
         let hash: [u8; 32] = decode_from_reader(&mut reader, config)?;
-        let len: u32 = decode_from_reader(&mut reader, config)?;
+        let len: u64 = decode_from_reader(&mut reader, config)?;
         let bytecode: Vec<u8> = decode_from_reader(&mut reader, config)?;
         let jump_table: Vec<u8> = decode_from_reader(&mut reader, config)?;
+        if len > bytecode.len() as u64 {
+            return Err(error::DecodeError::ArrayLengthMismatch {
+                required: len as usize,
+                found: bytecode.len(),
+            });
+        }
         Ok(Self {
             bytecode: bytecode.into(),
             len,
