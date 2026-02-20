@@ -2,16 +2,13 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, system_entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SystemAPI};
 use revm_precompile::PrecompileError;
 
-pub fn main_entry(sdk: &mut impl SharedAPI) -> Result<(), ExitCode> {
+pub fn main_entry(sdk: &mut impl SystemAPI) -> Result<(), ExitCode> {
     // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
-    let input_length = sdk.input_size();
-    let mut input = alloc_slice(input_length as usize);
-    sdk.read(&mut input, 0);
-    let input = Bytes::copy_from_slice(input);
+    let input = sdk.bytes_input();
     // call ripemd160 function
     let result =
         revm_precompile::hash::ripemd160_run(&input, gas_limit).map_err(|err| match err {
@@ -29,7 +26,7 @@ system_entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{hex, Bytes, ContractContextV1, SharedAPI, FUEL_DENOM_RATE};
     use fluentbase_testing::TestingContextImpl;
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {

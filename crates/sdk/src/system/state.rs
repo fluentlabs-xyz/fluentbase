@@ -57,9 +57,9 @@ pub(super) fn lock_state_context<'a>() -> MutexGuard<'a, Vec<RecoverableState>> 
     static SAVED_STATE_CONTEXT: Once<Mutex<Vec<RecoverableState>>> = Once::new();
     let cached_state = SAVED_STATE_CONTEXT.call_once(|| Mutex::new(Vec::new()));
     // The best we can do here is panic and fallback into `FatalExternalError`, because it means that
-    // runtime state is corrupted, and it's much safer juts to crash. If mutex is locked then we bypassed
-    // fatal handler somehow, or it's a massive memory corruption (maybe because of shared memory or incorrect
-    // system memory cleanup).
+    //  the runtime state is corrupted, and it's much safer juts to crash. If mutex is locked, then we bypassed
+    // the fatal handler somehow, or it's massive memory corruption (maybe because of shared memory or
+    // incorrect system memory cleanup).
     if cached_state.is_locked() {
         unreachable!("spin mutex is locked, looks like runtime corruption");
     }

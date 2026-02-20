@@ -1,5 +1,5 @@
 use crate::bytecode::{AnalyzedBytecode, LegacyBytecode};
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{Bytes, B256};
 
 pub enum EthereumMetadata {
@@ -35,12 +35,16 @@ impl EthereumMetadata {
                 result.into()
             }
             EthereumMetadata::Analyzed(analyzed_bytecode) => {
-                let mut result = vec![];
-                result.extend_from_slice(&ETHEREUM_METADATA_VERSION_ANALYZED[..]);
-                let raw_analyzed_bytecode = analyzed_bytecode
-                    .serialize()
-                    .unwrap_or_else(|_| unreachable!("failed to serialize analyzed bytecode"));
-                result.extend_from_slice(&raw_analyzed_bytecode);
+                let hint_size = analyzed_bytecode.hint_size();
+                let mut result = Vec::with_capacity(B256::len_bytes() + hint_size);
+                unsafe {
+                    result.set_len(B256::len_bytes() + hint_size);
+                }
+                result[0..B256::len_bytes()]
+                    .copy_from_slice(&ETHEREUM_METADATA_VERSION_ANALYZED[..]);
+                analyzed_bytecode
+                    .serialize(&mut result[B256::len_bytes()..])
+                    .unwrap_or_else(|_| unreachable!("evm: failed to serialize analyzed bytecode"));
                 result.into()
             }
         }
@@ -49,7 +53,7 @@ impl EthereumMetadata {
     pub fn code_size(&self) -> usize {
         match self {
             EthereumMetadata::Legacy(bytecode) => bytecode.bytecode.len(),
-            EthereumMetadata::Analyzed(bytecode) => bytecode.len,
+            EthereumMetadata::Analyzed(bytecode) => bytecode.len(),
         }
     }
 
@@ -63,7 +67,7 @@ impl EthereumMetadata {
     pub fn code_copy(&self) -> Bytes {
         match self {
             EthereumMetadata::Legacy(bytecode) => bytecode.bytecode.clone(),
-            EthereumMetadata::Analyzed(bytecode) => bytecode.bytecode.slice(0..bytecode.len),
+            EthereumMetadata::Analyzed(bytecode) => bytecode.bytecode.slice(0..bytecode.len()),
         }
     }
 }

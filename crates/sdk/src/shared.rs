@@ -1,10 +1,8 @@
 use crate::{
-    byteorder::{ByteOrder, LittleEndian},
-    syscall::*,
-    Address, BytecodeOrHash, Bytes, ContextReader, CryptoAPI, ExitCode, IsAccountEmpty,
-    IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI, SharedAPI,
-    SharedContextInputV1, StorageAPI, SyscallResult, B256, U256,
+    syscall::*, Address, BytecodeOrHash, Bytes, ContextReader, CryptoAPI, ExitCode, NativeAPI,
+    SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256, U256,
 };
+use alloc::{vec, vec::Vec};
 use core::cell::OnceCell;
 
 pub struct SharedContextImpl<API: NativeAPI> {
@@ -45,8 +43,7 @@ impl<API: NativeAPI> SharedContextImpl<API> {
     }
 }
 
-/// SharedContextImpl always created from input
-impl<API: NativeAPI> StorageAPI for SharedContextImpl<API> {
+impl<API: NativeAPI + CryptoAPI> StorageAPI for SharedContextImpl<API> {
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
         let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.write_storage(slot, value);
         SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
@@ -60,75 +57,6 @@ impl<API: NativeAPI> StorageAPI for SharedContextImpl<API> {
         };
         let value = U256::from_le_slice(&output);
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
-    }
-}
-
-impl<API: NativeAPI> MetadataAPI for SharedContextImpl<API> {
-    fn metadata_write(
-        &mut self,
-        address: &Address,
-        offset: u32,
-        metadata: Bytes,
-    ) -> SyscallResult<()> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.metadata_write(address, offset, metadata);
-        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn metadata_size(
-        &self,
-        address: &Address,
-    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.metadata_size(address);
-        let mut output: [u8; 7] = [0u8; 7];
-        if SyscallResult::<()>::is_ok(exit_code) {
-            self.native_sdk.read_output(&mut output, 0);
-        };
-        let value = LittleEndian::read_u32(&output[0..4]);
-        let is_account_ownable = output[4] != 0x00;
-        let is_cold_access = output[5] != 0x00;
-        let is_account_empty = output[6] != 0x00;
-        SyscallResult::new(
-            (value, is_account_ownable, is_cold_access, is_account_empty),
-            fuel_consumed,
-            fuel_refunded,
-            exit_code,
-        )
-    }
-
-    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.metadata_create(salt, metadata);
-        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.metadata_copy(address, offset, length);
-        let value = self.native_sdk.return_data();
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn metadata_account_owner(&self, address: &Address) -> SyscallResult<Address> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.metadata_account_owner(address);
-        let mut address = Address::ZERO;
-        self.native_sdk.read_output(&mut address.as_mut(), 0);
-        SyscallResult::new(address, fuel_consumed, fuel_refunded, exit_code)
-    }
-}
-
-impl<API: NativeAPI> MetadataStorageAPI for SharedContextImpl<API> {
-    fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.metadata_storage_read(slot);
-        let value = U256::from_le_slice(&self.native_sdk.return_data());
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.metadata_storage_write(slot, value);
-        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 }
 
@@ -152,7 +80,10 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn bytes_input(&self) -> Bytes {
-        self.native_sdk.input().slice(SharedContextInputV1::SIZE..)
+        let input_size = self.input_size();
+        let mut buffer = vec![0u8; input_size as usize];
+        self.read(&mut buffer, 0);
+        buffer.into()
     }
 
     fn read_context(&self, target: &mut [u8], offset: u32) {
@@ -187,7 +118,13 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn return_data(&self) -> Bytes {
-        self.native_sdk.return_data()
+        let output_size = self.native_sdk.output_size();
+        let mut result = Vec::with_capacity(output_size as usize);
+        unsafe {
+            result.set_len(output_size as usize);
+        }
+        self.native_sdk.read_output(&mut result, 0);
+        result.into()
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
@@ -271,7 +208,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk.code_copy(address, code_offset, code_length);
         let value = if SyscallResult::is_ok(exit_code) {
-            self.native_sdk.return_data()
+            self.return_data()
         } else {
             Bytes::new()
         };
@@ -286,7 +223,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     ) -> SyscallResult<Bytes> {
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk.create(salt, value, init_code);
-        let value = self.native_sdk.return_data();
+        let value = self.return_data();
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
@@ -299,7 +236,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     ) -> SyscallResult<Bytes> {
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk.call(address, value, input, gas_limit);
-        let value = self.native_sdk.return_data();
+        let value = self.return_data();
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
@@ -312,7 +249,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     ) -> SyscallResult<Bytes> {
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk.call_code(address, value, input, fuel_limit);
-        let value = self.native_sdk.return_data();
+        let value = self.return_data();
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
@@ -324,7 +261,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     ) -> SyscallResult<Bytes> {
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk.delegate_call(address, input, fuel_limit);
-        let value = self.native_sdk.return_data();
+        let value = self.return_data();
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
@@ -336,7 +273,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     ) -> SyscallResult<Bytes> {
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk.static_call(address, input, fuel_limit);
-        let value = self.native_sdk.return_data();
+        let value = self.return_data();
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 

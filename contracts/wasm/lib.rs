@@ -3,14 +3,12 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    alloc_slice, default_compilation_config, rwasm_core::RwasmModule, system_entrypoint, ExitCode,
-    SharedAPI, RWASM_MAX_CODE_SIZE,
+    default_compilation_config, rwasm_core::RwasmModule, system_entrypoint, ExitCode, SystemAPI,
+    RWASM_MAX_CODE_SIZE,
 };
 
-pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    let input_length = sdk.input_size();
-    let mut wasm_binary = alloc_slice(input_length as usize);
-    sdk.read(&mut wasm_binary, 0);
+pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    let wasm_binary = sdk.bytes_input();
     let config = default_compilation_config();
     let (result, constructor_params) = RwasmModule::compile(config, &wasm_binary).unwrap();
     let rwasm_binary = result.serialize();
@@ -23,7 +21,7 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     Ok(())
 }
 
-pub fn main_entry<SDK: SharedAPI>(_: &mut SDK) -> Result<(), ExitCode> {
+pub fn main_entry<SDK: SystemAPI>(_: &mut SDK) -> Result<(), ExitCode> {
     Err(ExitCode::UnreachableCodeReached)
 }
 

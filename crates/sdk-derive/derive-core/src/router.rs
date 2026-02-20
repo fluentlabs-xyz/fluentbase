@@ -270,7 +270,7 @@ impl Router {
                     let input_length = self.sdk.input_size();
                     #input_validation
 
-                    let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
+                    let mut call_data = alloc::vec![0u8; input_length as usize];
                     self.sdk.read(&mut call_data, 0);
 
                     let (selector, params) = call_data.split_at(4);
@@ -291,7 +291,7 @@ impl Router {
 
         let target_type = &self.impl_block.self_ty;
         let generic_params = &self.impl_block.generics;
-        
+
         let deploy_body = constructor.generate_deploy_body();
 
         Ok(quote! {

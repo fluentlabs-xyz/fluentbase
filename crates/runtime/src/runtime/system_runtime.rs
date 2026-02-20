@@ -192,10 +192,8 @@ impl SystemRuntime {
 
         // If fuel metering is enabled, set the fuel limit before execution.
         // The store is reused, so we must reset fuel for each new call.
-        if self.consume_fuel {
-            let fuel_limit = compiled_runtime.data().fuel_limit;
-            compiled_runtime.reset_fuel(fuel_limit);
-        }
+        let fuel_limit = compiled_runtime.data().fuel_limit;
+        compiled_runtime.reset_fuel(fuel_limit);
 
         // Choose an entrypoint based on the current execution state.
         let entrypoint = match compiled_runtime.data().state {

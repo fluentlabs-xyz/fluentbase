@@ -2,7 +2,7 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{crypto::crypto_sha256, system_entrypoint, ExitCode, SharedAPI};
+use fluentbase_sdk::{crypto::crypto_sha256, system_entrypoint, ExitCode, SystemAPI};
 
 /// Main entry point for the sha256 wrapper contract.
 /// This contract wraps the sha256 precompile (EIP-210) which computes the SHA-256 hash of a given input.
@@ -13,11 +13,11 @@ use fluentbase_sdk::{crypto::crypto_sha256, system_entrypoint, ExitCode, SharedA
 /// Output:
 /// - A 32-byte array representing the SHA-256 hash of the input
 ///
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input_length = sdk.input_size();
     let gas_used = estimate_gas(input_length as usize);
     sdk.sync_evm_gas(gas_used)?;
-    let input = sdk.input();
+    let input = sdk.bytes_input();
     let result = crypto_sha256(input);
     sdk.write(result);
     Ok(())
@@ -37,7 +37,7 @@ system_entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, Bytes, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{hex, Bytes, ContractContextV1, SharedAPI, FUEL_DENOM_RATE};
     use fluentbase_testing::TestingContextImpl;
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {

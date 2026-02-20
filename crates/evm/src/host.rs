@@ -2,16 +2,16 @@
 //!
 //! We do not execute Host methods directly; host-bound opcodes are routed
 //! via interruptions. The unreachable!() bodies here document that path.
+use crate::utils::evm_gas_params;
 use core::ops::{Deref, DerefMut};
 use fluentbase_sdk::{Address, Bytes, ContextReader, Log, SharedAPI, B256, U256};
-use once_cell::race::OnceBox;
 use revm_context::{
     host::LoadError,
     journaled_state::{AccountInfoLoad, AccountLoad, StateLoad},
 };
 use revm_context_interface::cfg::GasParams;
 use revm_interpreter::{Host, SStoreResult, SelfDestructResult};
-use revm_primitives::{hardfork::SpecId, StorageKey, StorageValue};
+use revm_primitives::{StorageKey, StorageValue};
 
 /// Helper trait to access the underlying SDK from opcode handlers.
 pub(crate) trait HostWrapper {
@@ -106,8 +106,7 @@ impl<'a, SDK: SharedAPI> Host for HostWrapperImpl<'a, SDK> {
     }
 
     fn gas_params(&self) -> &GasParams {
-        static PRAGUE_GAS_PARAMS: OnceBox<GasParams> = OnceBox::new();
-        PRAGUE_GAS_PARAMS.get_or_init(|| GasParams::new_spec(SpecId::PRAGUE).into())
+        evm_gas_params()
     }
 
     fn block_hash(&mut self, _number: u64) -> Option<B256> {

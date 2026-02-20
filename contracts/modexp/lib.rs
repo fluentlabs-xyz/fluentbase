@@ -3,19 +3,21 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SystemAPI};
 use revm_precompile::PrecompileError;
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
-    let input = sdk.input();
+    let input = sdk.bytes_input();
     // call modexp function
     let result =
-        revm_precompile::modexp::berlin_run(&input, gas_limit).map_err(|err| match err {
-            PrecompileError::OutOfGas => ExitCode::OutOfFuel,
-            _ => ExitCode::PrecompileError,
-        })?;
+        revm_precompile::modexp::berlin_run(input.as_ref(), gas_limit).map_err(
+            |err| match err {
+                PrecompileError::OutOfGas => ExitCode::OutOfFuel,
+                _ => ExitCode::PrecompileError,
+            },
+        )?;
     sdk.sync_evm_gas(result.gas_used)?;
     // write output
     sdk.write(result.bytes);
@@ -27,7 +29,7 @@ system_entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, Bytes, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{hex, Bytes, ContractContextV1, SharedAPI, FUEL_DENOM_RATE};
     use fluentbase_testing::TestingContextImpl;
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {

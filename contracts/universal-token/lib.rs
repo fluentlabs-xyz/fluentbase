@@ -15,7 +15,7 @@ use fluentbase_sdk::{
     codec::SolidityABI,
     evm::write_evm_exit_message,
     storage::{StorageMap, StorageU256},
-    system_entrypoint, Address, ContextReader, EvmExitCode, ExitCode, SharedAPI, StorageUtils,
+    system_entrypoint, Address, ContextReader, EvmExitCode, ExitCode, StorageUtils, SystemAPI,
     U256,
 };
 use fluentbase_universal_token::{
@@ -34,7 +34,7 @@ type BalanceStorageMap = StorageMap<Address, StorageU256>;
 type AllowanceStorageMap = StorageMap<Address, StorageMap<Address, StorageU256>>;
 
 /// Returns the ERC-20 `symbol()` as a short string stored at `SYMBOL_STORAGE_SLOT`.
-fn erc20_symbol_handler<SDK: SharedAPI>(
+fn erc20_symbol_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -47,7 +47,7 @@ fn erc20_symbol_handler<SDK: SharedAPI>(
 }
 
 /// Returns the ERC-20 `name()` as a short string stored at `NAME_STORAGE_SLOT`.
-fn erc20_name_handler<SDK: SharedAPI>(
+fn erc20_name_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -60,7 +60,7 @@ fn erc20_name_handler<SDK: SharedAPI>(
 }
 
 /// Returns the ERC-20 `decimals()` as a 32-byte big-endian U256 word.
-fn erc20_decimals_handler<SDK: SharedAPI>(
+fn erc20_decimals_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -71,7 +71,7 @@ fn erc20_decimals_handler<SDK: SharedAPI>(
 }
 
 /// Implements ERC-20 `transfer(to, amount)` using the caller as the sender.
-fn erc20_transfer_handler<SDK: SharedAPI>(
+fn erc20_transfer_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -117,7 +117,7 @@ fn erc20_transfer_handler<SDK: SharedAPI>(
 }
 
 /// Implements ERC-20 `transferFrom(from, to, amount)` using caller as the spender.
-fn erc20_transfer_from_handler<SDK: SharedAPI>(
+fn erc20_transfer_from_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -170,7 +170,7 @@ fn erc20_transfer_from_handler<SDK: SharedAPI>(
 }
 
 /// Implements ERC-20 `approve(spender, amount)` / allowance update (see note: adds to existing allowance).
-fn erc20_approve_handler<SDK: SharedAPI>(
+fn erc20_approve_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -193,7 +193,7 @@ fn erc20_approve_handler<SDK: SharedAPI>(
 }
 
 /// Returns ERC-20 `allowance(owner, spender)` as a 32-byte big-endian U256 word.
-fn erc20_allowance_handler<SDK: SharedAPI>(
+fn erc20_allowance_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -208,7 +208,7 @@ fn erc20_allowance_handler<SDK: SharedAPI>(
 }
 
 /// Returns ERC-20 `totalSupply()` as a 32-byte big-endian U256 word.
-fn erc20_total_supply_handler<SDK: SharedAPI>(
+fn erc20_total_supply_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -219,7 +219,7 @@ fn erc20_total_supply_handler<SDK: SharedAPI>(
 }
 
 /// Returns the caller's balance (convenience method) as a 32-byte big-endian U256 word.
-fn erc20_balance_handler<SDK: SharedAPI>(
+fn erc20_balance_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -233,7 +233,7 @@ fn erc20_balance_handler<SDK: SharedAPI>(
 }
 
 /// Returns `balanceOf(owner)` as a 32-byte big-endian U256 word.
-fn erc20_balance_of_handler<SDK: SharedAPI>(
+fn erc20_balance_of_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -247,7 +247,7 @@ fn erc20_balance_of_handler<SDK: SharedAPI>(
 }
 
 /// Mints tokens when the mintable plugin is enabled and the caller is the configured minter.
-fn erc20_mint_handler<SDK: SharedAPI>(
+fn erc20_mint_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -298,7 +298,7 @@ fn erc20_mint_handler<SDK: SharedAPI>(
 }
 
 /// Burns tokens from the specified address, reducing total supply.
-fn erc20_burn_handler<SDK: SharedAPI>(
+fn erc20_burn_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -356,7 +356,7 @@ fn erc20_burn_handler<SDK: SharedAPI>(
 }
 
 /// Pauses transfers/minting when the pausable plugin is enabled and the caller is the configured pauser.
-fn erc20_pause_handler<SDK: SharedAPI>(
+fn erc20_pause_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -390,7 +390,7 @@ fn erc20_pause_handler<SDK: SharedAPI>(
 }
 
 /// Unpauses the contract when the pausable plugin is enabled and the caller is the configured pauser.
-fn erc20_unpause_handler<SDK: SharedAPI>(
+fn erc20_unpause_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -424,7 +424,7 @@ fn erc20_unpause_handler<SDK: SharedAPI>(
 }
 
 /// Fallback for unknown selectors: returns `ERR_UNKNOWN_METHOD`.
-fn erc20_unknown_method<SDK: SharedAPI>(
+fn erc20_unknown_method<SDK: SystemAPI>(
     _sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -432,7 +432,7 @@ fn erc20_unknown_method<SDK: SharedAPI>(
 }
 
 /// Constructor entrypoint: decodes `InitialSettings` and initializes storage (metadata, supply, optional minter/pauser).
-fn erc20_constructor_handler<SDK: SharedAPI>(
+fn erc20_constructor_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
@@ -485,13 +485,13 @@ fn erc20_constructor_handler<SDK: SharedAPI>(
     Ok(0)
 }
 
-pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input_size = sdk.input_size();
     if input_size < SIG_LEN_BYTES as u32 {
         return Err(ExitCode::MalformedBuiltinParams);
     }
-    let input = sdk.input();
-    let evm_exit_code = erc20_constructor_handler(sdk, input)?;
+    let input = sdk.bytes_input();
+    let evm_exit_code = erc20_constructor_handler(sdk, input.as_ref())?;
     if evm_exit_code != 0 {
         write_evm_exit_message(evm_exit_code, |slice| sdk.write(slice));
         return Err(ExitCode::Panic);
@@ -499,12 +499,13 @@ pub fn deploy_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     Ok(())
 }
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input_size = sdk.input_size();
     if input_size < SIG_LEN_BYTES as u32 {
         return Err(ExitCode::MalformedBuiltinParams);
     }
-    let (sig, input) = sdk.input().split_at(SIG_LEN_BYTES);
+    let input = sdk.bytes_input();
+    let (sig, input) = input.split_at(SIG_LEN_BYTES);
     let sig = u32::from_be_bytes(sig.try_into().unwrap());
     let evm_exit_code = match sig {
         SIG_ERC20_SYMBOL => erc20_symbol_handler(sdk, input),

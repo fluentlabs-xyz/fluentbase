@@ -2,11 +2,11 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_ptr, entrypoint, SharedAPI};
+use fluentbase_sdk::{alloc_ptr_unaligned, entrypoint, SharedAPI};
 
 pub fn main_entry(_sdk: impl SharedAPI) {
     // Max allowed pages is 1024, then the max memory we can allocate is 67108864
-    let ptr = alloc_ptr(67108864);
+    let ptr = alloc_ptr_unaligned(67108864);
     core::hint::black_box(ptr);
 }
 

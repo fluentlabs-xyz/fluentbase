@@ -45,6 +45,7 @@ impl<'a> SliceWriter<'a> {
     fn as_bytes(&self) -> &[u8] {
         &self.buf[..self.len]
     }
+    #[cfg(feature = "std")]
     #[inline]
     fn as_str(&self) -> &str {
         core::str::from_utf8(self.as_bytes()).unwrap()

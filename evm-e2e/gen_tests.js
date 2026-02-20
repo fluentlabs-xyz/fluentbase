@@ -36,7 +36,7 @@ function toSnakeCase(str) {
         "use", "where", "while", "async", "await", "dyn", "abstract", "become", "box", "do",
         "final", "macro", "override", "priv", "try", "typeof", "unsized", "virtual", "yield"
     ]);
-    // If result matches a Rust keyword, prepend "_"
+    // If a result matches a Rust keyword, prepend "_"
     if (rustKeywords.has(result)) {
         result = '_' + result;
     }
@@ -63,12 +63,13 @@ const files = findJsonFiles(BASE_DIR);
 
 // These tests can't pass because of Fluent architecture (but it's not critical)
 const disabledTests = new Set([
-    // these tests can't pass because of Fluent precompiled addresses (0x01... are physical contracts)
+    // These tests can't pass because of Fluent precompiled addresses (0x01... are physical contracts)
     'ext_code_hash_dynamic_argument',
     'random_statetest650',
     'precomps_eip2929_cancun',
     'self_destruct',
-    // disable blobs (we don't support them)
+
+    // We don't support BLOBS, that's why we disable these tests
     'blobhash_list_bounds10',
     'blobhash_list_bounds3',
     'blobhash_list_bounds4',
@@ -102,30 +103,30 @@ const disabledTests = new Set([
     'sufficient_balance_blob_tx',
     'tx_entry_point',
     'valid_inputs',
-    // these tests don't pass in an official testing suite (why?)
+
+    // These tests don't pass in an official testing suite (TODO: Why?)
     'create2collision_storage_paris',
     'dynamic_account_overwrite_empty_paris',
     'init_collision_paris',
     'revert_in_create_in_init_create2_paris',
     'revert_in_create_in_init_paris',
-    // expansive tests fails with OOM (need an extra investigation)
-    'return50000',
-    'return50000_2',
-    'static_call50000',
-    'static_call50000_ecrec',
-    'static_call50000_identity2',
+
+    // These tests can't pass it passes `gas_limit=9214364837600013754` into STATICCALL, but in Fluent
+    // we pass gas though fuel by multiplying to `FUEL_DENOM_RATE` and it causes u64 overflow.
+    // Since these tests are supposed to fail in the end, it charges an incorrect amount of fuel penalty:
+    // - EVM: 9070390387012513441 gas
+    // - FLUENT: 18446744073709551615 gas
+    //  Technically, it's not possible to have enough ETH to pass 2^59 gas limit, so we can safely ignore them.
     'static_loop_calls_depth_then_revert2',
     'static_loop_calls_depth_then_revert3',
-    'static_return50000_2',
-    'contract_creation_spam',
-    'static_call50000_identity',
-    'static_call1_mb1024_calldepth',
-    'static_loop_calls_then_revert',
-    'static_call50000_rip160',
-    'call50000',
-    'callcode50000',
-    'call50000_ecrec',
-    // disabled tests (don't pass because of EIP-7951 enabled)
+
+    // These tests can't pass because of EIP-7951 enabled.
+    // EIP-7951 is a smart contract for secp256r1 signature verification that exists at
+    // address 0x0000000000000000000000000000000000000100.
+    // Since we store compiled EIP-7951 binary inside the genesis state, it also affects
+    // some gas spending if we transfer to an empty or non-empty account.
+    // Technically, it's not possible to reproduce these tests in a production environment,
+    // so we can safely disable them.
     'failed_tx_xcf416c53_paris',
     'precompile_absence',
 ]);

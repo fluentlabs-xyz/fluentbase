@@ -1,9 +1,18 @@
 #[macro_export]
-macro_rules! define_allocator {
+macro_rules! define_heap_base_allocator {
     () => {
         #[cfg(target_arch = "wasm32")]
         #[global_allocator]
         static ALLOCATOR: $crate::HeapBaseAllocator = $crate::HeapBaseAllocator {};
+    };
+}
+
+#[macro_export]
+macro_rules! define_block_list_allocator {
+    () => {
+        #[cfg(target_arch = "wasm32")]
+        #[global_allocator]
+        static ALLOCATOR: $crate::BlockListAllocator = $crate::BlockListAllocator {};
     };
 }
 

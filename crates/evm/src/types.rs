@@ -168,8 +168,10 @@ pub struct ExecutionResult {
 impl ExecutionResult {
     /// Fuel/refund delta to settle at the host based on committed vs. final gas.
     pub fn chargeable_fuel(&self) -> u64 {
-        let remaining_diff = self.committed_gas.remaining() - self.gas.remaining();
-        // TODO(dmitry123): Is it safe to mul here? What about debug mode?
-        remaining_diff * FUEL_DENOM_RATE
+        let remaining_diff = self
+            .committed_gas
+            .remaining()
+            .saturating_sub(self.gas.remaining());
+        remaining_diff.saturating_mul(FUEL_DENOM_RATE)
     }
 }

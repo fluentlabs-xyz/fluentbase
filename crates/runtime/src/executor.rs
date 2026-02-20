@@ -383,10 +383,12 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         fuel_refunded: i64,
         exit_code: i32,
     ) -> ExecutionResult {
-        let mut runtime = self
-            .recoverable_runtimes
-            .remove(&call_id)
-            .expect("runtime: can't resolve runtime by id, it should never happen");
+        let Some(mut runtime) = self.recoverable_runtimes.remove(&call_id) else {
+            unreachable!(
+                "runtime: missing recoverable runtime for resume, this should never happen: call_id={}, fuel_consumed={}, exit_code={}",
+                call_id, fuel_consumed, exit_code
+            )
+        };
         let mut fuel_remaining = runtime.remaining_fuel();
         let resume_inner = |runtime: &mut ExecutionMode| {
             // Copy return data into return data

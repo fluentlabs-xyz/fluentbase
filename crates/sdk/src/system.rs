@@ -1,10 +1,14 @@
 mod state;
 
 use crate::{
-    debug_log, system::state::RecoverableState, Address, Bytes, ContextReader, IsAccountEmpty,
-    IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, SharedAPI, StorageAPI,
-    SystemAPI, B256, U256,
+    byteorder::{ByteOrder, LittleEndian},
+    debug_log,
+    syscall::SyscallInterruptExecutor,
+    system::state::RecoverableState,
+    Address, Bytes, ContextReader, IsAccountEmpty, IsAccountOwnable, IsColdAccess, SharedAPI,
+    StorageAPI, SystemAPI, B256, U256,
 };
+use alloc::{vec, vec::Vec};
 pub use fluentbase_types::system::*;
 use fluentbase_types::{CryptoAPI, ExitCode, NativeAPI, SyscallInvocationParams, SyscallResult};
 
@@ -16,12 +20,18 @@ pub struct SystemContextImpl<API> {
 }
 
 impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
+    #[inline(never)]
     pub fn new(native_sdk: API) -> Self {
         let input_size = native_sdk.input_size() as usize;
         let output_size = native_sdk.output_size() as usize;
         if output_size > 0 {
-            // Output size greater than 0 indicates interruption outcome
-            let return_data = native_sdk.return_data();
+            // Output size greater than 0 indicates an interruption outcome
+            let output_size = native_sdk.output_size();
+            let mut return_data = Vec::with_capacity(output_size as usize);
+            unsafe {
+                return_data.set_len(output_size as usize);
+            }
+            native_sdk.read_output(&mut return_data, 0);
             let (outcome, _) = bincode::decode_from_slice::<RuntimeInterruptionOutcomeV1, _>(
                 return_data.as_ref(),
                 bincode::config::legacy(),
@@ -35,10 +45,12 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
                 metadata: None,
             }
         } else if input_size > 0 {
-            // Input size greater than 0 indicates new frame
-            let input = native_sdk.input();
+            // Input size greater than 0 indicates a new frame
+            let input_size = native_sdk.input_size();
+            let mut input = vec![0u8; input_size as usize];
+            native_sdk.read(&mut input, 0);
             let (input, _): (RuntimeNewFrameInputV1, usize) =
-                bincode::decode_from_slice(input.as_ref(), bincode::config::legacy()).unwrap();
+                bincode::decode_from_slice(&input, bincode::config::legacy()).unwrap();
             let state = RecoverableState::new(input);
             Self {
                 native_sdk,
@@ -50,6 +62,16 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
             // This should never happen
             native_sdk.exit(ExitCode::UnreachableCodeReached);
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn panic_handler(info: &core::panic::PanicInfo) -> ! {
+        use crate::{ExitCode, NativeAPI, RwasmContext};
+        crate::debug_log!("panic: {}", info.message());
+        let native_sdk = RwasmContext {};
+        // We can't forward any errors here into output because we already have corrupted
+        // memory state (because of unwinding), so the best we can do is just to exit
+        native_sdk.exit(ExitCode::Panic)
     }
 
     pub fn finalize(self, result: Result<(), ExitCode>) {
@@ -84,69 +106,6 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
     }
 }
 
-impl<API: NativeAPI + CryptoAPI> StorageAPI for SystemContextImpl<API> {
-    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
-        self.state.storage.write_storage(slot, value);
-        // Note: Storage write here can't fail, that's why we always return `Ok`
-        SyscallResult::default()
-    }
-
-    fn storage(&self, slot: &U256) -> SyscallResult<U256> {
-        if let Some(value) = self.state.storage.storage(slot) {
-            return SyscallResult::new(*value, 0, 0, ExitCode::Ok);
-        };
-        debug_log!("a missing storage slot detected at: {}", slot);
-        // We return here a `MissingStorageSlot`, but this error should be at user-level, because
-        // an attacker might intentionally pass incorrect params into the function
-        SyscallResult::new(U256::ZERO, 0, 0, ExitCode::MissingStorageSlot)
-    }
-}
-
-impl<API: NativeAPI + CryptoAPI> MetadataAPI for SystemContextImpl<API> {
-    fn metadata_write(
-        &mut self,
-        _address: &Address,
-        _offset: u32,
-        _metadata: Bytes,
-    ) -> SyscallResult<()> {
-        unimplemented!("metadata_write")
-    }
-
-    fn metadata_size(
-        &self,
-        _address: &Address,
-    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
-        unimplemented!("metadata_size")
-    }
-
-    fn metadata_create(&mut self, _salt: &U256, _metadata: Bytes) -> SyscallResult<()> {
-        unimplemented!("metadata_create")
-    }
-
-    fn metadata_copy(
-        &self,
-        _address: &Address,
-        _offset: u32,
-        _length: u32,
-    ) -> SyscallResult<Bytes> {
-        unimplemented!("metadata_copy")
-    }
-
-    fn metadata_account_owner(&self, _address: &Address) -> SyscallResult<Address> {
-        unimplemented!("metadata_account_owner")
-    }
-}
-
-impl<API: NativeAPI + CryptoAPI> MetadataStorageAPI for SystemContextImpl<API> {
-    fn metadata_storage_read(&self, _slot: &U256) -> SyscallResult<U256> {
-        unimplemented!("metadata_storage_read")
-    }
-
-    fn metadata_storage_write(&mut self, _slot: &U256, _value: U256) -> SyscallResult<()> {
-        unimplemented!("metadata_storage_write")
-    }
-}
-
 impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
     fn context(&self) -> impl ContextReader {
         &self.state.context
@@ -160,6 +119,10 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
 
     fn input_size(&self) -> u32 {
         self.state.input.len() as u32
+    }
+
+    fn bytes_input(&self) -> Bytes {
+        self.state.input.clone()
     }
 
     fn read_context(&self, _target: &mut [u8], _offset: u32) {
@@ -292,7 +255,90 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
     }
 }
 
+impl<API: NativeAPI + CryptoAPI> StorageAPI for SystemContextImpl<API> {
+    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
+        self.state.storage.write_storage(slot, value);
+        // Note: Storage write here can't fail, that's why we always return `Ok`
+        SyscallResult::default()
+    }
+
+    fn storage(&self, slot: &U256) -> SyscallResult<U256> {
+        if let Some(value) = self.state.storage.storage(slot) {
+            return SyscallResult::new(*value, 0, 0, ExitCode::Ok);
+        };
+        debug_log!("a missing storage slot detected at: {}", slot);
+        // We return here a `MissingStorageSlot`, but this error should be at user-level, because
+        // an attacker might intentionally pass incorrect params into the function
+        SyscallResult::new(U256::ZERO, 0, 0, ExitCode::MissingStorageSlot)
+    }
+}
+
 impl<API: NativeAPI + CryptoAPI> SystemAPI for SystemContextImpl<API> {
+    fn metadata_write(
+        &mut self,
+        address: &Address,
+        offset: u32,
+        metadata: Bytes,
+    ) -> SyscallResult<()> {
+        let (fuel_consumed, fuel_refunded, exit_code) =
+            self.native_sdk.metadata_write(address, offset, metadata);
+        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
+    }
+
+    fn metadata_size(
+        &self,
+        address: &Address,
+    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.metadata_size(address);
+        let mut output: [u8; 7] = [0u8; 7];
+        if SyscallResult::<()>::is_ok(exit_code) {
+            self.native_sdk.read_output(&mut output, 0);
+        };
+        let value = LittleEndian::read_u32(&output[0..4]);
+        let is_account_ownable = output[4] != 0x00;
+        let is_cold_access = output[5] != 0x00;
+        let is_account_empty = output[6] != 0x00;
+        SyscallResult::new(
+            (value, is_account_ownable, is_cold_access, is_account_empty),
+            fuel_consumed,
+            fuel_refunded,
+            exit_code,
+        )
+    }
+
+    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
+        let (fuel_consumed, fuel_refunded, exit_code) =
+            self.native_sdk.metadata_create(salt, metadata);
+        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
+    }
+
+    fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes> {
+        let (fuel_consumed, fuel_refunded, exit_code) =
+            self.native_sdk.metadata_copy(address, offset, length);
+        let value = self.return_data();
+        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+    }
+
+    fn metadata_account_owner(&self, address: &Address) -> SyscallResult<Address> {
+        let (fuel_consumed, fuel_refunded, exit_code) =
+            self.native_sdk.metadata_account_owner(address);
+        let mut address = Address::ZERO;
+        self.native_sdk.read_output(&mut address.as_mut(), 0);
+        SyscallResult::new(address, fuel_consumed, fuel_refunded, exit_code)
+    }
+
+    fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256> {
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.metadata_storage_read(slot);
+        let value = U256::from_le_slice(&self.return_data());
+        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+    }
+
+    fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()> {
+        let (fuel_consumed, fuel_refunded, exit_code) =
+            self.native_sdk.metadata_storage_write(slot, value);
+        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
+    }
+
     fn take_interruption_outcome(&mut self) -> Option<RuntimeInterruptionOutcomeV1> {
         self.state.interruption_outcome.take()
     }

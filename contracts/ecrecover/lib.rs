@@ -3,20 +3,16 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, system_entrypoint, Bytes, ExitCode, SharedAPI, B256, B512};
+use fluentbase_sdk::{system_entrypoint, ExitCode, SystemAPI, B256, B512};
 use revm_precompile::{secp256k1::ecrecover, utilities::right_pad};
 
-pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    // read full input data
-    let input_length = sdk.input_size();
-    let mut input = alloc_slice(input_length as usize);
-    sdk.read(&mut input, 0);
-    let input = Bytes::copy_from_slice(input);
-
+pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // Make sure we have enough gas for execution
     const ECRECOVER_BASE: u64 = 3_000;
     sdk.sync_evm_gas(ECRECOVER_BASE)?;
 
+    // read full input data
+    let input = sdk.bytes_input();
     let input = right_pad::<128>(input.as_ref());
 
     // `v` must be a 32-byte big-endian integer equal to 27 or 28.
@@ -31,6 +27,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     if let Ok(result) = ecrecover(sig, rec_id, msg) {
         sdk.write(result);
     }
+
     Ok(())
 
     // TODO(dmitry123): Recover signature using ecdsa library once we have unconstrainted mode
@@ -58,7 +55,7 @@ system_entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{hex, Bytes, ContractContextV1, SharedAPI, FUEL_DENOM_RATE};
     use fluentbase_testing::TestingContextImpl;
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {

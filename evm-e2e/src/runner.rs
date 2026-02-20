@@ -276,6 +276,12 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
         exec_result2.as_ref().unwrap();
     }
 
+    if cfg!(feature = "debug-print") {
+        println!(
+            "\nexec_result_1={:?}, exec_result_2={:?}\n",
+            exec_result1, exec_result2
+        );
+    }
     match (exec_result1, exec_result2) {
         (
             Ok(ExecutionResult::Halt {

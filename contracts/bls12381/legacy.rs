@@ -319,7 +319,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Bytes, ExitCode> {
     let bytecode_address = sdk.context().contract_bytecode_address();
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
-    let input = sdk.input();
+    let input = sdk.bytes_input();
     // dispatch to SDK-backed implementation
     match bytecode_address {
         PRECOMPILE_BLS12_381_G1_ADD => {
