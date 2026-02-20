@@ -78,6 +78,12 @@ impl AnalyzedBytecode {
         let len: u64 = decode_from_reader(&mut reader, config)?;
         let bytecode: Vec<u8> = decode_from_reader(&mut reader, config)?;
         let jump_table: Vec<u8> = decode_from_reader(&mut reader, config)?;
+        if len > bytecode.len() as u64 {
+            return Err(error::DecodeError::ArrayLengthMismatch {
+                required: len as usize,
+                found: bytecode.len(),
+            });
+        }
         Ok(Self {
             bytecode: bytecode.into(),
             len,
