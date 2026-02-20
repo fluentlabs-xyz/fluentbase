@@ -14,7 +14,7 @@ use revm::{
         instructions::{EthInstructions, InstructionProvider},
         EvmTr, FrameInitOrResult, FrameResult, ItemOrResult, PrecompileProvider,
     },
-    inspector::{InspectorEvmTr, JournalExt, NoOpInspector},
+    inspector::{handler::frame_end, InspectorEvmTr, JournalExt, NoOpInspector},
     interpreter::{
         interpreter::{EthInterpreter, ExtBytecode},
         return_ok, return_revert, CallInput, FrameInput, Gas, InstructionResult, InterpreterResult,
@@ -141,6 +141,25 @@ where
             self.0.frame_stack.get(),
             &mut self.0.instruction,
         )
+    }
+
+    fn inspect_frame_run(
+        &mut self,
+    ) -> Result<FrameInitOrResult<Self::Frame>, ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>>
+    {
+        let (ctx, inspector, frame) = self.ctx_inspector_frame();
+        let next_action =
+            run_rwasm_loop::<Self::Context, Self::Inspector>(frame, ctx, Some(&mut *inspector))?
+                .into_interpreter_action();
+        let mut result = frame.process_next_action(ctx, next_action);
+
+        if let Ok(ItemOrResult::Result(frame_result)) = &mut result {
+            let (ctx, inspector, frame) = self.ctx_inspector_frame();
+            frame_end(ctx, inspector, &frame.input, frame_result);
+            frame.set_finished(true);
+        }
+
+        result
     }
 }
 
