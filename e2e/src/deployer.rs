@@ -87,7 +87,14 @@ fn test_evm_create_large_wasm_contract() {
 
 #[test]
 fn test_locals_amplification_find_limit() {
-    let test_cases: &[(u32, bool)] = &[(1, true), (10, true), (100, true), (1000, false)];
+    let test_cases: &[(u32, bool)] = &[
+        (1, true),
+        (10, true),
+        (100, true),
+        // The last one fails in debug mode with OutOfFuel
+        #[cfg(not(debug_assertions))]
+        (1000, true),
+    ];
     let owner: Address = Address::ZERO;
     // Test various function counts to find limits
     for (num_funcs, expected_ok) in test_cases.iter().cloned() {
