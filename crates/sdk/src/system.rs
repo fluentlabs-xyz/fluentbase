@@ -360,6 +360,9 @@ impl<API: NativeAPI + CryptoAPI> SystemAPI for SystemContextImpl<API> {
             state,
             fuel16_ptr: 0,
         });
+        // We must save input, otherwise it will be destructed (we store it inside
+        //  the recoverable state, the one we don't free)
+        _ = self.state.intermediary_input.insert(input);
     }
 
     fn unique_key(&self) -> u32 {

@@ -15,6 +15,7 @@ pub(super) struct RecoverableState {
     pub(super) output: Vec<u8>,
     pub(super) interruption_outcome: Option<RuntimeInterruptionOutcomeV1>,
     pub(super) unique_key: u32,
+    pub(super) intermediary_input: Option<Bytes>,
 }
 
 impl RecoverableState {
@@ -35,6 +36,7 @@ impl RecoverableState {
             output: vec![],
             interruption_outcome: None,
             unique_key: next_unique_key(),
+            intermediary_input: None,
         }
     }
 
