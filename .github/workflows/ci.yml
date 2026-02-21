@@ -156,7 +156,7 @@ jobs:
             --no-default-features \
             --features "${{ matrix.features }}" \
             --no-fail-fast \
-            --frozen
+            --locked
 
       - name: Run ethereum tests (evm-e2e)
         if: matrix.kind == 'evm-e2e'
@@ -216,7 +216,7 @@ jobs:
         run: cargo fetch --locked
 
       - name: Run cargo check (offline)
-        run: cargo check --frozen
+        run: cargo check --locked
 
       - name: Generate code coverage
         run: |
