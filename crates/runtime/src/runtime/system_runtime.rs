@@ -206,33 +206,47 @@ impl SystemRuntime {
         // Always swap back immediately after the call, so we keep `self.ctx` authoritative.
         core::mem::swap(compiled_runtime.data_mut(), &mut self.ctx);
 
-        // If Wasmtime trapped, treat it as an unexpected fatal failure and degrade into a safe
+        // The application can return trap code though exit code, we should handle such cases as well
+        let exit_code = ExitCode::from(self.ctx.execution_result.exit_code);
+        if exit_code == ExitCode::Panic {
+            eprintln!(
+                "runtime: system execution panicked: {} (investigate)",
+                core::str::from_utf8(&self.ctx.execution_result.output)
+                    .unwrap_or("unable to decode UTF-8 panic message")
+            );
+            self.ctx.execution_result.exit_code =
+                ExitCode::UnexpectedFatalExecutionFailure.into_i32();
+            return Ok(());
+        } else if exit_code != ExitCode::Ok {
+            eprintln!(
+                "runtime: system execution failed with exit code: {} ({}) (investigate)",
+                exit_code, self.ctx.execution_result.exit_code
+            );
+            self.ctx.execution_result.exit_code =
+                ExitCode::UnexpectedFatalExecutionFailure.into_i32();
+            return Ok(());
+        }
+
+        // If wasmtime trapped, treat it as an unexpected fatal failure and degrade into a safe
         // error code. This avoids propagating a raw trap across the execution boundary.
         if let Err(trap_code) = result.as_ref() {
             // The trap `OutOfFuel` is expected for engine-metered precompiles when fuel is exhausted.
             if *trap_code == TrapCode::OutOfFuel {
+                // This case is tricky, because if it happens, then we might have corrupted stack and
+                // uncleaned memory. Since we can't handle it gracefully, then we can only reset the existing
+                // runtime to make sure memory and stack are clean. There is no ddos attack here because,
+                // to achieve this, the user must pay a penalty.
+                COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
+                    compiled_runtimes.remove(&self.code_hash);
+                });
+                // Forward the `OutOfFuel` trap to the outer executor, so it can handle it gracefully.
                 return Err(TrapCode::OutOfFuel);
-            }
-
-            let exit_code = ExitCode::from(self.ctx.execution_result.exit_code);
-            if exit_code == ExitCode::Panic {
-                eprintln!(
-                    "runtime: system execution panicked: {} (investigate)",
-                    core::str::from_utf8(&self.ctx.execution_result.output)
-                        .unwrap_or("unable to decode UTF-8 panic message")
-                );
-            } else if exit_code != ExitCode::Ok {
-                eprintln!(
-                    "runtime: system execution failed with exit code: {} ({}) (investigate)",
-                    exit_code, self.ctx.execution_result.exit_code
-                );
             }
 
             eprintln!(
                 "runtime: unexpected trap inside system runtime: {:?} ({}) (investigate)",
                 trap_code, trap_code,
             );
-
             self.ctx.execution_result.exit_code =
                 ExitCode::UnexpectedFatalExecutionFailure.into_i32();
             return Ok(());

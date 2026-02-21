@@ -163,13 +163,20 @@ fn init_contract(
 }
 
 fn main() {
+    // Make sure we rerun the build if the feature has changed
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_STD");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WASMTIME");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_FLUENT_TESTNET");
+    println!("cargo:rerun-if-env-changed=PROFILE");
+    println!("cargo:rerun-if-env-changed=OPT_LEVEL");
+    println!("cargo:rerun-if-env-changed=DEBUG");
+    println!("cargo:rerun-if-env-changed=TARGET");
+
     let mut alloc = BTreeMap::from([
         // default testing accounts
-        initial_devnet_balance!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3"), // dmitry
-        initial_devnet_balance!("33a831e42B24D19bf57dF73682B9a3780A0435BA"), // daniel
-        initial_devnet_balance!("B72988b6DdC94E577E98C5565E0e11E688537e73"), // faucet
-        initial_devnet_balance!("c1202e7d42655F23097476f6D48006fE56d38d4f"), // marcus
-        initial_devnet_balance!("e92c16763ba7f73a2218a5416aaa493a1f038bef"), // khasan
+        initial_devnet_balance!("0x390a4CEdBb65be7511D9E1a35b115376F39DbDF3"), // dmitry
+        initial_devnet_balance!("0x33a831e42B24D19bf57dF73682B9a3780A0435BA"), // daniel
+        initial_devnet_balance!("0xB72988b6DdC94E577E98C5565E0e11E688537e73"), // faucet
     ]);
 
     let mut code = Vec::new();

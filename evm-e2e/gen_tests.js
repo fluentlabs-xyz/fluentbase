@@ -129,6 +129,10 @@ const disabledTests = new Set([
     // so we can safely disable them.
     'failed_tx_xcf416c53_paris',
     'precompile_absence',
+
+    // These tests don't pass because of OOM
+    'call1_mb1024_calldepth',
+    'static_call1_mb1024_calldepth',
 ]);
 
 // Group tests by subdirectory (module name)

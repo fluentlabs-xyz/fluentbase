@@ -35,7 +35,6 @@ k256 = { version = "0.13.3", features = ["ecdsa"] }
 [build-dependencies]
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
-fluentbase-contracts = { path = "../crates/contracts", default-features = false }
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false, features = ["wasmtime"] }
 
 [features]
@@ -57,6 +56,10 @@ debug-print = [
 ]
 wasmtime = [
     "fluentbase-revm/wasmtime",
+]
+fluent-testnet = [
+    "fluentbase-genesis/fluent-testnet",
+    "fluentbase-sdk/fluent-testnet",
 ]
 
 [patch.crates-io]

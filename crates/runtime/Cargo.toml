@@ -42,11 +42,11 @@ std = [
 ]
 rwasm = []
 debug-print = [
-    #    "rwasm/debug-print",
+    # "rwasm/debug-print",
 ]
 wasmtime = [
     "rwasm/wasmtime",
-    "rwasm/cache-compiled-artifacts",
+    # "rwasm/cache-compiled-artifacts",
 ]
 fluent-testnet = [
     "fluentbase-types/fluent-testnet"

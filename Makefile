@@ -22,18 +22,46 @@ clean:
 	cargo clean
 	cargo clean --manifest-path=./evm-e2e/Cargo.toml
 
+PROFILE ?=
+FEATURES ?=
+
+.PHONY: run-e2e-tests
+run-e2e-tests:
+	cargo test --manifest-path=./Cargo.toml --workspace $(PROFILE) --no-default-features --features $(FEATURES)
+	cargo test --manifest-path=./evm-e2e/Cargo.toml --workspace $(PROFILE) --no-default-features --features "$(FEATURES)"
+.PHONY: run-contracts-tests
+run-contracts-tests:
+	cargo test --manifest-path=./contracts/Cargo.toml --workspace $(PROFILE) --no-default-features --features "$(FEATURES)"
+	cargo test --manifest-path=./examples/Cargo.toml --workspace $(PROFILE) --no-default-features --features "$(FEATURES)"
+
 .PHONY: test
 test:
-	# fluent devnet/mainnet
-	cargo test --manifest-path=./contracts/Cargo.toml --release
-	cargo test --manifest-path=./examples/Cargo.toml --release
-	cargo test --release
-	cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e tests --release
-	# fluent testnet
-	#cargo test --manifest-path=./contracts/Cargo.toml --release --features fluent-testnet
-	#cargo test --manifest-path=./examples/Cargo.toml --release --features fluent-testnet
-	#cargo test --release --features fluent-testnet
-	#cargo test --manifest-path=./evm-e2e/Cargo.toml --package evm-e2e --bin evm-e2e tests --release
+	# devnet/mainnet: contracts unit tests
+	$(MAKE) run-contracts-tests FEATURES=std PROFILE=release
+	# devnet/mainnet: wasmtime case
+	$(MAKE) run-e2e-tests FEATURES=std,wasmtime PROFILE=release
+	# devnet/mainnet: rwasm case
+	$(MAKE) run-e2e-tests FEATURES=std PROFILE=release
+	# testnet: contracts unit tests
+	$(MAKE) run-contracts-tests FEATURES=std,fluent-testnet PROFILE=release
+	# testnet: wasmtime case
+	$(MAKE) run-e2e-tests FEATURES=std,wasmtime,fluent-testnet PROFILE=release
+	# testnet: rwasm case
+	$(MAKE) run-e2e-tests FEATURES=std,fluent-testnet PROFILE=release
+.PHONY: test-debug
+test-debug:
+	# devnet/mainnet: contracts unit tests
+	$(MAKE) run-contracts-tests FEATURES=std PROFILE=
+	# devnet/mainnet: wasmtime case
+	$(MAKE) run-e2e-tests FEATURES=std,wasmtime PROFILE=
+	# devnet/mainnet: rwasm case
+	$(MAKE) run-e2e-tests FEATURES=std PROFILE=
+	# testnet: contracts unit tests
+	$(MAKE) run-contracts-tests FEATURES=std,fluent-testnet PROFILE=
+	# testnet: wasmtime case
+	$(MAKE) run-e2e-tests FEATURES=std,wasmtime,fluent-testnet PROFILE=
+	# testnet: rwasm case
+	$(MAKE) run-e2e-tests FEATURES=std,fluent-testnet PROFILE=
 
 .PHONY: svm_tests
 svm_tests:

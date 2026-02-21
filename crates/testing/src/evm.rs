@@ -210,7 +210,8 @@ impl EvmTestingContext {
     }
 
     pub fn deploy_evm_tx(&mut self, deployer: Address, init_bytecode: Bytes) -> Address {
-        let (contract_address, _) = self.deploy_evm_tx_with_gas(deployer, init_bytecode);
+        let (contract_address, gas_used) = self.deploy_evm_tx_with_gas(deployer, init_bytecode);
+        println!("deployment gas used: {}", gas_used);
         contract_address
     }
 
@@ -324,7 +325,7 @@ impl<'a> TxBuilder<'a> {
         tx.caller = deployer;
         tx.kind = TransactTo::Create;
         tx.data = init_code;
-        tx.gas_limit = 30_000_000;
+        tx.gas_limit = 100_000_000;
         let block = Self::block_env(ctx);
         Self { ctx, tx, block }
     }

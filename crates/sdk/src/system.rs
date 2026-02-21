@@ -22,7 +22,6 @@ pub struct SystemContextImpl<API> {
 impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
     #[inline(never)]
     pub fn new(native_sdk: API) -> Self {
-        let input_size = native_sdk.input_size() as usize;
         let output_size = native_sdk.output_size() as usize;
         if output_size > 0 {
             // Output size greater than 0 indicates an interruption outcome
@@ -38,13 +37,16 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
             )
             .unwrap();
             let state = RecoverableState::recover(outcome);
-            Self {
+            return Self {
                 native_sdk,
                 state,
                 interruption: None,
                 metadata: None,
-            }
-        } else if input_size > 0 {
+            };
+        }
+
+        let input_size = native_sdk.input_size() as usize;
+        if input_size > 0 {
             // Input size greater than 0 indicates a new frame
             let input_size = native_sdk.input_size();
             let mut input = vec![0u8; input_size as usize];
@@ -52,16 +54,16 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
             let (input, _): (RuntimeNewFrameInputV1, usize) =
                 bincode::decode_from_slice(&input, bincode::config::legacy()).unwrap();
             let state = RecoverableState::new(input);
-            Self {
+            return Self {
                 native_sdk,
                 state,
                 interruption: None,
                 metadata: None,
-            }
-        } else {
-            // This should never happen
-            native_sdk.exit(ExitCode::UnreachableCodeReached);
+            };
         }
+
+        // This should never happen
+        native_sdk.exit(ExitCode::UnreachableCodeReached);
     }
 
     #[cfg(target_arch = "wasm32")]

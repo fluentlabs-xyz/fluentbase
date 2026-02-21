@@ -19,10 +19,83 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  unit-tests:
-    name: Unit Tests
+  tests:
+    name: Tests (${{ matrix.name }})
     runs-on: ubuntu-amd64-8core
-    timeout-minutes: 30
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ---------------------------
+          # contracts/examples unit tests
+          # ---------------------------
+          - name: contracts / std
+            manifest: ./contracts/Cargo.toml
+            features: std
+            kind: workspace
+
+          - name: examples / std
+            manifest: ./examples/Cargo.toml
+            features: std
+            kind: workspace
+
+          - name: contracts / std,fluent-testnet
+            manifest: ./contracts/Cargo.toml
+            features: std,fluent-testnet
+            kind: workspace
+
+          - name: examples / std,fluent-testnet
+            manifest: ./examples/Cargo.toml
+            features: std,fluent-testnet
+            kind: workspace
+
+          # ---------------------------
+          # root e2e (workspace)
+          # ---------------------------
+          - name: root e2e / std,wasmtime
+            manifest: ./Cargo.toml
+            features: std,wasmtime
+            kind: workspace
+
+          - name: root e2e / std
+            manifest: ./Cargo.toml
+            features: std
+            kind: workspace
+
+          - name: root e2e / std,wasmtime,fluent-testnet
+            manifest: ./Cargo.toml
+            features: std,wasmtime,fluent-testnet
+            kind: workspace
+
+          - name: root e2e / std,fluent-testnet
+            manifest: ./Cargo.toml
+            features: std,fluent-testnet
+            kind: workspace
+
+          # ---------------------------
+          # evm-e2e suite (good_coverage_tests)
+          # ---------------------------
+          - name: evm-e2e / std
+            manifest: ./evm-e2e/Cargo.toml
+            features: std
+            kind: evm-e2e
+
+          - name: evm-e2e / std,wasmtime
+            manifest: ./evm-e2e/Cargo.toml
+            features: std,wasmtime
+            kind: evm-e2e
+
+          - name: evm-e2e / std,fluent-testnet
+            manifest: ./evm-e2e/Cargo.toml
+            features: std,fluent-testnet
+            kind: evm-e2e
+
+          - name: evm-e2e / std,wasmtime,fluent-testnet
+            manifest: ./evm-e2e/Cargo.toml
+            features: std,wasmtime,fluent-testnet
+            kind: evm-e2e
+
     steps:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
@@ -56,14 +129,47 @@ jobs:
           cache-all-crates: true
           cache-workspace-crates: true
           cache-on-failure: true
+          # Critical: avoid cross-feature stale artifacts ("works once until cargo clean")
+          shared-key: tests-${{ matrix.manifest }}-${{ matrix.features }}
 
       - name: Prefetch deps (root)
         run: cargo fetch --locked
 
-      - name: Run tests (offline)
+      - name: Prefetch deps (evm-e2e)
+        if: matrix.kind == 'evm-e2e'
+        working-directory: evm-e2e
+        run: cargo fetch
+
+      - name: Sync ethereum tests (evm-e2e)
+        if: matrix.kind == 'evm-e2e'
+        working-directory: evm-e2e
+        run: make sync_tests
+
+      - name: Run tests (workspace manifests)
+        if: matrix.kind == 'workspace'
         run: |
-          cargo test --release --no-fail-fast --frozen
-          cargo test --release --no-fail-fast --frozen --features=fluent-testnet
+          set -euxo pipefail
+          cargo test \
+            --manifest-path="${{ matrix.manifest }}" \
+            --workspace \
+            --release \
+            --no-default-features \
+            --features "${{ matrix.features }}" \
+            --no-fail-fast \
+            --frozen
+
+      - name: Run ethereum tests (evm-e2e)
+        if: matrix.kind == 'evm-e2e'
+        run: |
+          set -euxo pipefail
+          cargo test \
+            --manifest-path="${{ matrix.manifest }}" \
+            --release \
+            --no-default-features \
+            --features "${{ matrix.features }}" \
+            --package evm-e2e \
+            --bin evm-e2e \
+            tests::good_coverage_tests
 
       - name: Show sccache stats
         run: ${SCCACHE_PATH} --show-stats
@@ -151,7 +257,6 @@ jobs:
       - name: Install wasm32 target
         run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
 
-
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -170,119 +275,3 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
         continue-on-error: true
-
-  evm-e2e-tests-rwasm:
-    name: EVM Testing Suite (rwasm)
-    runs-on: ubuntu-amd64-8core
-    timeout-minutes: 40
-    steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: "30720"
-          remove-dotnet: "true"
-
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
-      - name: Speed up git fetches
-        run: git config --global net.git-fetch-with-cli true
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-
-      - name: Install wasm32 target
-        run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
-
-      - name: Install Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "18"
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Rust cache (registries + git)
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-targets: false
-          cache-all-crates: true
-          cache-workspace-crates: true
-          cache-on-failure: true
-
-      - name: Prefetch deps (evm-e2e)
-        working-directory: evm-e2e
-        run: cargo fetch
-
-      - name: Sync ethereum tests
-        working-directory: evm-e2e
-        run: make sync_tests
-
-      - name: Run ethereum tests (rwasm)
-        working-directory: evm-e2e
-        run: cargo test --release --package evm-e2e --bin evm-e2e tests::good_coverage_tests
-
-      - name: Show sccache stats
-        run: ${SCCACHE_PATH} --show-stats
-
-  evm-e2e-tests-wasmtime:
-    name: EVM Testing Suite (wasmtime)
-    runs-on: ubuntu-amd64-8core
-    timeout-minutes: 40
-    steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: "30720"
-          remove-dotnet: "true"
-
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
-      - name: Speed up git fetches
-        run: git config --global net.git-fetch-with-cli true
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-
-      - name: Install wasm32 target
-        run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
-
-      - name: Install Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "18"
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Rust cache (registries + git)
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-targets: false
-          cache-all-crates: true
-          cache-workspace-crates: true
-          cache-on-failure: true
-
-      - name: Prefetch deps (evm-e2e)
-        working-directory: evm-e2e
-        run: cargo fetch
-
-      - name: Sync ethereum tests
-        working-directory: evm-e2e
-        run: make sync_tests
-
-      - name: Run ethereum tests (wasmtime)
-        working-directory: evm-e2e
-        run: cargo test --release --features=wasmtime --package evm-e2e --bin evm-e2e tests::good_coverage_tests
-
-      - name: Show sccache stats
-        run: ${SCCACHE_PATH} --show-stats
