@@ -22,51 +22,51 @@ clean:
 	cargo clean
 	cargo clean --manifest-path=./evm-e2e/Cargo.toml
 
-PROFILE ?=
-FEATURES ?=
+TEST_PROFILE ?=
+TEST_FEATURES ?=
 
 .PHONY: run-e2e-tests
 run-e2e-tests:
-	cargo test --manifest-path=./Cargo.toml --workspace $(PROFILE) --no-default-features --features $(FEATURES)
-	cargo test --manifest-path=./evm-e2e/Cargo.toml --workspace $(PROFILE) --no-default-features --features "$(FEATURES)"
+	cargo test --manifest-path=./Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features $(TEST_FEATURES)
+	cargo test --manifest-path=./evm-e2e/Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)"
 .PHONY: run-contracts-tests
 run-contracts-tests:
-	cargo test --manifest-path=./contracts/Cargo.toml --workspace $(PROFILE) --no-default-features --features "$(FEATURES)"
-	cargo test --manifest-path=./examples/Cargo.toml --workspace $(PROFILE) --no-default-features --features "$(FEATURES)"
+	cargo test --manifest-path=./contracts/Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)"
+	cargo test --manifest-path=./examples/Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)"
 
 .PHONY: test
 test:
 	# devnet/mainnet: contracts unit tests
-	$(MAKE) run-contracts-tests FEATURES=std PROFILE=release
+	$(MAKE) run-contracts-tests TEST_FEATURES=std TEST_PROFILE=--release
 	# devnet/mainnet: wasmtime case
-	$(MAKE) run-e2e-tests FEATURES=std,wasmtime PROFILE=release
+	$(MAKE) run-e2e-tests TEST_FEATURES=std,wasmtime TEST_PROFILE=--release
 	# devnet/mainnet: rwasm case
-	$(MAKE) run-e2e-tests FEATURES=std PROFILE=release
+	$(MAKE) run-e2e-tests TEST_FEATURES=std TEST_PROFILE=--release
 	# testnet: contracts unit tests
-	$(MAKE) run-contracts-tests FEATURES=std,fluent-testnet PROFILE=release
+	$(MAKE) run-contracts-tests TEST_FEATURES=std,fluent-testnet TEST_PROFILE=--release
 	# testnet: wasmtime case
-	$(MAKE) run-e2e-tests FEATURES=std,wasmtime,fluent-testnet PROFILE=release
+	$(MAKE) run-e2e-tests TEST_FEATURES=std,wasmtime,fluent-testnet TEST_PROFILE=--release
 	# testnet: rwasm case
-	$(MAKE) run-e2e-tests FEATURES=std,fluent-testnet PROFILE=release
+	$(MAKE) run-e2e-tests TEST_FEATURES=std,fluent-testnet TEST_PROFILE=--release
 .PHONY: test-debug
 test-debug:
 	# devnet/mainnet: contracts unit tests
-	$(MAKE) run-contracts-tests FEATURES=std PROFILE=
+	$(MAKE) run-contracts-tests TEST_FEATURES=std TEST_PROFILE=
 	# devnet/mainnet: wasmtime case
-	$(MAKE) run-e2e-tests FEATURES=std,wasmtime PROFILE=
+	$(MAKE) run-e2e-tests TEST_FEATURES=std,wasmtime TEST_PROFILE=
 	# devnet/mainnet: rwasm case
-	$(MAKE) run-e2e-tests FEATURES=std PROFILE=
+	$(MAKE) run-e2e-tests TEST_FEATURES=std TEST_PROFILE=
 	# testnet: contracts unit tests
-	$(MAKE) run-contracts-tests FEATURES=std,fluent-testnet PROFILE=
+	$(MAKE) run-contracts-tests TEST_FEATURES=std,fluent-testnet TEST_PROFILE=
 	# testnet: wasmtime case
-	$(MAKE) run-e2e-tests FEATURES=std,wasmtime,fluent-testnet PROFILE=
+	$(MAKE) run-e2e-tests TEST_FEATURES=std,wasmtime,fluent-testnet TEST_PROFILE=
 	# testnet: rwasm case
-	$(MAKE) run-e2e-tests FEATURES=std,fluent-testnet PROFILE=
+	$(MAKE) run-e2e-tests TEST_FEATURES=std,fluent-testnet TEST_PROFILE=
 
-.PHONY: svm_tests
-svm_tests:
-	cargo test --frozen --profile test --manifest-path crates/svm/Cargo.toml --
-	cargo test --frozen --lib svm::tests --profile test --manifest-path e2e/Cargo.toml --
+#.PHONY: svm_tests
+#svm_tests:
+#	cargo test --frozen --profile test --manifest-path crates/svm/Cargo.toml --
+#	cargo test --frozen --lib svm::tests --profile test --manifest-path e2e/Cargo.toml --
 
 .PHONY: wasm_contracts_sizes
 wasm_contracts_sizes:
@@ -87,8 +87,8 @@ wasm2wat:
 		done; \
 	done
 
-
 # Heavily inspired by Lighthouse: https://github.com/sigp/lighthouse/blob/693886b94176faa4cb450f024696cb69cda2fe58/Makefile
+# Gratefully stolen from Reth: https://github.com/fluentlabs-xyz/reth/blob/v1.10-patched/Makefile
 GIT_SHA ?= $(shell git rev-parse HEAD)
 GIT_TAG ?= $(shell git describe --tags --abbrev=0)
 BIN_DIR = "dist/bin"
