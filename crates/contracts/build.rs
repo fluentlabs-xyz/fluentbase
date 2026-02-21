@@ -25,6 +25,15 @@ impl PackagesResolver {
 }
 
 fn main() {
+    // Make sure we rerun the build if the feature has changed
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_STD");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WASMTIME");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_FLUENT_TESTNET");
+    println!("cargo:rerun-if-env-changed=PROFILE");
+    println!("cargo:rerun-if-env-changed=OPT_LEVEL");
+    println!("cargo:rerun-if-env-changed=DEBUG");
+    println!("cargo:rerun-if-env-changed=TARGET");
+
     let fluentbase_root_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let root_metadata = MetadataCommand::new()
         .manifest_path(&fluentbase_root_dir.join("Cargo.toml"))
