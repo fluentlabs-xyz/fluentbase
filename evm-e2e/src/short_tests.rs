@@ -26,7 +26,8 @@ mod single_test {
         // fn create2_bounds3("tests/GeneralStateTests/stCreate2/CREATE2_Bounds3.json");
         // fn buffer_src_offset("tests/GeneralStateTests/stMemoryTest/bufferSrcOffset.json");
         // fn random_statetest647("tests/GeneralStateTests/stRandom2/randomStatetest647.json");
-        fn returndatacopy_overrun("tests/GeneralStateTests/stReturnDataTest/returndatacopy_overrun.json");
+        // fn returndatacopy_overrun("tests/GeneralStateTests/stReturnDataTest/returndatacopy_overrun.json");
+        // fn static_call1_mb1024_calldepth("tests/GeneralStateTests/stStaticCall/static_Call1MB1024Calldepth.json");
     }
 }
 

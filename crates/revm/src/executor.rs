@@ -19,7 +19,7 @@ use fluentbase_sdk::{
     system::{
         JournalLog, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
     },
-    BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode, HashMap,
+    BlockContextV1, BytecodeOrHash, Bytes, ContractContextV1, ExitCode, HashMap,
     SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
     FUEL_DENOM_RATE, PRECOMPILE_EIP2935, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY,
     STATE_MAIN, U256,
@@ -37,7 +37,7 @@ use revm::{
     },
     Database, Inspector,
 };
-use std::vec::Vec;
+use std::{borrow::Cow, vec::Vec};
 
 fn should_overwrite_delegated_bytecode<'a, CTX: ContextTr>(
     frame: &mut RwasmFrame,
@@ -400,7 +400,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     let (fuel_consumed, fuel_refunded, exit_code) = syscall_exec_impl(
         &mut runtime_context,
         bytecode_hash,
-        BytesOrRef::Bytes(contract_input.into()),
+        Cow::Owned(contract_input),
         fuel_limit,
         if is_create { STATE_DEPLOY } else { STATE_MAIN },
     );

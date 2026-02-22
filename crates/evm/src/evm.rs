@@ -5,11 +5,11 @@
 //! operation, and the VM resumes with identical EVM semantics and gas.
 use crate::{
     bytecode::AnalyzedBytecode,
-    host::{HostWrapper, HostWrapperImpl},
+    host::HostWrapperImpl,
     opcodes::interruptable_instruction_table,
-    types::{ExecutionResult, InterruptingInterpreter, InterruptionExtension, InterruptionOutcome},
+    types::{ExecutionResult, InterruptingInterpreter, InterruptionExtension},
 };
-use fluentbase_sdk::{Bytes, ContextReader, ExitCode, SharedAPI, FUEL_DENOM_RATE};
+use fluentbase_sdk::{Bytes, ContextReader, SystemAPI, FUEL_DENOM_RATE};
 use revm_bytecode::{Bytecode, LegacyAnalyzedBytecode};
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},
@@ -79,7 +79,7 @@ impl EthVM {
 
     /// Execute until completion, delegating host-bound ops via interruptions.
     /// Returns EVM result plus precise gas/fuel accounting.
-    pub fn run_the_loop<SDK: SharedAPI>(mut self, sdk: &mut SDK) -> ExecutionResult {
+    pub fn run_the_loop<SDK: SystemAPI>(mut self, sdk: &mut SDK) -> ExecutionResult {
         let instruction_table = interruptable_instruction_table();
         let mut sdk = HostWrapperImpl::wrap(sdk);
         loop {
@@ -93,13 +93,11 @@ impl EthVM {
                         gas: result.gas,
                     };
                 }
-                InterpreterAction::SystemInterruption {
-                    code_hash,
-                    input,
-                    fuel_limit,
-                    state,
-                } => {
-                    self.sync_evm_gas(sdk.sdk_mut());
+                InterpreterAction::SystemInterruption => {
+                    unimplemented!(
+                        "evm: system interruption is not yet supported in `run_the_loop` mode"
+                    );
+                    /*self.sync_evm_gas(sdk.sdk_mut());
                     let (fuel_consumed, fuel_refunded, exit_code) =
                         sdk.native_exec(code_hash, input.as_ref(), fuel_limit, state);
                     let mut gas = Gas::new_spent(fuel_consumed / FUEL_DENOM_RATE);
@@ -126,7 +124,7 @@ impl EthVM {
                             gas,
                             exit_code,
                             halted_frame: false,
-                        });
+                        });*/
                 }
                 InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
             }
@@ -142,14 +140,14 @@ impl EthVM {
         sdk: &'a mut SDK,
     ) -> InterpreterAction
     where
-        SDK: SharedAPI,
+        SDK: SystemAPI,
     {
         let mut sdk = HostWrapperImpl::wrap(sdk);
         self.interpreter.run_plain(&instruction_table, &mut sdk)
     }
 
     /// Commit interpreter gas deltas to the host (fuel) and snapshot the state.
-    pub fn sync_evm_gas<SDK: SharedAPI>(&mut self, sdk: &mut SDK) {
+    pub fn sync_evm_gas<SDK: SystemAPI>(&mut self, sdk: &mut SDK) {
         let (gas, committed_gas) = (
             &self.interpreter.gas,
             &mut self.interpreter.extend.committed_gas,

@@ -146,15 +146,9 @@ pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
                 Err(exit_code)
             }
         }
-        InterpreterAction::SystemInterruption {
-            code_hash,
-            input,
-            fuel_limit,
-            state,
-        } => {
+        InterpreterAction::SystemInterruption => {
             // Always sync gas before doing interruption
             evm.sync_evm_gas(sdk);
-            sdk.insert_interruption_income(code_hash, input, fuel_limit, state);
             Err(ExitCode::InterruptionCalled)
         }
         InterpreterAction::NewFrame(_) => unreachable!("frames can't be produced"),
@@ -177,15 +171,9 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
             sdk.write(result.output);
             Err(exit_code)
         }
-        InterpreterAction::SystemInterruption {
-            code_hash,
-            input,
-            fuel_limit,
-            state,
-        } => {
+        InterpreterAction::SystemInterruption => {
             // Always sync gas before doing interruption
             evm.sync_evm_gas(sdk);
-            sdk.insert_interruption_income(code_hash, input, fuel_limit, state);
             Err(ExitCode::InterruptionCalled)
         }
         InterpreterAction::NewFrame(_) => unreachable!("evm: frames can't be produced"),

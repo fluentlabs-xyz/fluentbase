@@ -2,8 +2,9 @@ use crate::{
     syscall::*, Address, BytecodeOrHash, Bytes, ContextReader, CryptoAPI, ExitCode, NativeAPI,
     SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256, U256,
 };
-use alloc::{vec, vec::Vec};
+use alloc::{borrow::Cow, vec, vec::Vec};
 use core::cell::OnceCell;
+use fluentbase_types::STATE_MAIN;
 
 pub struct SharedContextImpl<API: NativeAPI> {
     native_sdk: API,
@@ -45,12 +46,26 @@ impl<API: NativeAPI> SharedContextImpl<API> {
 
 impl<API: NativeAPI + CryptoAPI> StorageAPI for SharedContextImpl<API> {
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.write_storage(slot, value);
+        let mut buffer = [0u8; encode::storage_write_size_hint()];
+        encode::storage_write_into(&mut &mut buffer[..], &slot, &value);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_STORAGE_WRITE),
+            Cow::Borrowed(&buffer[..]),
+            None,
+            STATE_MAIN,
+        );
         SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn storage(&self, slot: &U256) -> SyscallResult<U256> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.storage(slot);
+        let mut buffer = [0u8; encode::storage_read_size_hint()];
+        encode::storage_read_into(&mut &mut buffer[..], slot);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_STORAGE_READ),
+            Cow::Borrowed(&buffer),
+            None,
+            STATE_MAIN,
+        );
         let mut output = [0u8; U256::BYTES];
         if SyscallResult::is_ok(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
@@ -109,7 +124,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     fn native_exec(
         &self,
         code_hash: B256,
-        input: &[u8],
+        input: Cow<'_, [u8]>,
         fuel_limit: Option<u64>,
         state: u32,
     ) -> (u64, i64, i32) {
@@ -128,13 +143,26 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.write_transient_storage(slot, value);
+        let mut buffer = [0u8; encode::transient_write_size_hint()];
+        encode::transient_write_into(&mut &mut buffer[..], &slot, &value);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_TRANSIENT_WRITE),
+            Cow::Borrowed(&buffer),
+            None,
+            STATE_MAIN,
+        );
         SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.transient_storage(slot);
+        let mut buffer = [0u8; encode::transient_read_size_hint()];
+        encode::transient_read_into(&mut &mut buffer[..], slot);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_TRANSIENT_READ),
+            Cow::Borrowed(&buffer),
+            None,
+            STATE_MAIN,
+        );
         let mut output = [0u8; U256::BYTES];
         if SyscallResult::<()>::is_ok(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
@@ -144,13 +172,26 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn emit_log<D: AsRef<[u8]>>(&mut self, topics: &[B256], data: D) -> SyscallResult<()> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.emit_log(topics, data.as_ref());
+        let mut buffer = vec![0u8; encode::emit_log_size_hint(topics.len(), data.as_ref().len(),)];
+        encode::emit_log_into(&mut &mut buffer[..], topics, data.as_ref());
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_EMIT_LOG),
+            Cow::Owned(buffer),
+            None,
+            STATE_MAIN,
+        );
         SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn self_balance(&self) -> SyscallResult<U256> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.self_balance();
+        let mut buffer = [0u8; encode::self_balance_size_hint()];
+        encode::self_balance_into(&mut &mut buffer[..]);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_SELF_BALANCE),
+            Cow::Borrowed(&buffer),
+            None,
+            STATE_MAIN,
+        );
         let mut output = [0u8; U256::BYTES];
         if SyscallResult::is_ok(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
@@ -160,7 +201,14 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn balance(&self, address: &Address) -> SyscallResult<U256> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.balance(address);
+        let mut buffer = [0u8; encode::balance_size_hint()];
+        encode::balance_into(&mut &mut buffer[..], address);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_BALANCE),
+            Cow::Borrowed(&buffer),
+            None,
+            STATE_MAIN,
+        );
         let mut output = [0u8; U256::BYTES];
         if SyscallResult::is_ok(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
@@ -170,7 +218,14 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn block_hash(&self, block_number: u64) -> SyscallResult<B256> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.block_hash(block_number);
+        let mut buffer = [0u8; encode::block_hash_size_hint()];
+        encode::block_hash_into(&mut &mut buffer[..], block_number);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_BLOCK_HASH),
+            Cow::Borrowed(&buffer),
+            None,
+            STATE_MAIN,
+        );
         let mut output = [0u8; B256::len_bytes()];
         if SyscallResult::is_ok(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
@@ -180,7 +235,14 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn code_size(&self, address: &Address) -> SyscallResult<u32> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.code_size(address);
+        let mut buffer = [0u8; encode::code_size_size_hint()];
+        encode::code_size_into(&mut &mut buffer[..], address);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_CODE_SIZE),
+            Cow::Borrowed(&buffer),
+            None,
+            STATE_MAIN,
+        );
         let mut output: [u8; 4] = [0u8; 4];
         if SyscallResult::is_ok(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
@@ -190,7 +252,14 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn code_hash(&self, address: &Address) -> SyscallResult<B256> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.code_hash(address);
+        let mut buffer = [0u8; encode::code_hash_size_hint()];
+        encode::code_hash_into(&mut &mut buffer[..], address);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_CODE_HASH),
+            Cow::Borrowed(&buffer),
+            None,
+            STATE_MAIN,
+        );
         let mut output = [0u8; B256::len_bytes()];
         if SyscallResult::is_ok(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
@@ -205,8 +274,14 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         code_offset: u64,
         code_length: u64,
     ) -> SyscallResult<Bytes> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.code_copy(address, code_offset, code_length);
+        let mut buffer = [0u8; encode::code_copy_size_hint()];
+        encode::code_copy_into(&mut &mut buffer[..], address, code_offset, code_length);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_CODE_COPY),
+            Cow::Borrowed(&buffer),
+            None,
+            STATE_MAIN,
+        );
         let value = if SyscallResult::is_ok(exit_code) {
             self.return_data()
         } else {
@@ -221,8 +296,20 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         value: &U256,
         init_code: &[u8],
     ) -> SyscallResult<Bytes> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.create(salt, value, init_code);
+        let mut buffer =
+            Vec::with_capacity(encode::create_size_hint(init_code.len(), salt.is_some()));
+        encode::create_into(&mut &mut buffer[..], salt.as_ref(), value, init_code);
+        let syscall_id = if salt.is_some() {
+            SYSCALL_ID_CREATE2
+        } else {
+            SYSCALL_ID_CREATE2
+        };
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(syscall_id),
+            Cow::Owned(buffer),
+            None,
+            STATE_MAIN,
+        );
         let value = self.return_data();
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
@@ -232,12 +319,17 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         address: Address,
         value: U256,
         input: &[u8],
-        gas_limit: Option<u64>,
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.call(address, value, input, gas_limit);
-        let value = self.return_data();
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+        let mut buffer = vec![0u8; encode::call_size_hint(input.len(), true)];
+        encode::call_into(&mut &mut buffer[..], address, Some(value), input);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_CALL),
+            Cow::Owned(buffer),
+            fuel_limit,
+            STATE_MAIN,
+        );
+        SyscallResult::new(self.return_data(), fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn call_code(
@@ -247,10 +339,15 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         input: &[u8],
         fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.call_code(address, value, input, fuel_limit);
-        let value = self.return_data();
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+        let mut buffer = vec![0u8; encode::call_size_hint(input.len(), true)];
+        encode::call_into(&mut &mut buffer[..], address, Some(value), input);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_CALL_CODE),
+            Cow::Owned(buffer),
+            fuel_limit,
+            STATE_MAIN,
+        );
+        SyscallResult::new(self.return_data(), fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn delegate_call(
@@ -259,10 +356,15 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         input: &[u8],
         fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.delegate_call(address, input, fuel_limit);
-        let value = self.return_data();
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+        let mut buffer = vec![0u8; encode::call_size_hint(input.len(), false)];
+        encode::call_into(&mut &mut buffer[..], address, None, input);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_DELEGATE_CALL),
+            Cow::Owned(buffer),
+            fuel_limit,
+            STATE_MAIN,
+        );
+        SyscallResult::new(self.return_data(), fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn static_call(
@@ -271,14 +373,26 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         input: &[u8],
         fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.static_call(address, input, fuel_limit);
-        let value = self.return_data();
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+        let mut buffer = vec![0u8; encode::call_size_hint(input.len(), false)];
+        encode::call_into(&mut &mut buffer[..], address, None, input);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_STATIC_CALL),
+            Cow::Owned(buffer),
+            fuel_limit,
+            STATE_MAIN,
+        );
+        SyscallResult::new(self.return_data(), fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn destroy_account(&mut self, address: Address) -> SyscallResult<()> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.destroy_account(address);
+        let mut buffer = [0u8; encode::destroy_account_size_hint()];
+        encode::destroy_account_into(&mut &mut buffer[..], &address);
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            BytecodeOrHash::Hash(SYSCALL_ID_DESTROY_ACCOUNT),
+            Cow::Borrowed(&buffer),
+            None,
+            STATE_MAIN,
+        );
         SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 }

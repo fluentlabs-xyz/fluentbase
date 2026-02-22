@@ -3,17 +3,18 @@
 //! The instruction table mirrors EVM semantics. For opcodes that require
 //! host interaction, we emit a SystemInterruption and resume after the host
 //! provides a result.
+
 use crate::{
     as_u64_or_fail,
     host::{HostWrapper, HostWrapperImpl},
     types::{InterruptingInterpreter, InterruptionExtension, InterruptionOutcome},
     utils::{global_memory_from_shared_buffer, interrupt_into_action},
 };
-use alloc::vec::Vec;
+use alloc::{borrow::Cow, vec, vec::Vec};
 use core::{cmp::min, mem::take, ops::Range};
 use fluentbase_sdk::{
-    syscall::SyscallInterruptExecutor, Address, Bytes, ExitCode, SharedAPI, B256,
-    EVM_MAX_INITCODE_SIZE, FUEL_DENOM_RATE, U256,
+    syscall::*, Address, Bytes, ExitCode, SystemAPI, B256, EVM_MAX_INITCODE_SIZE, FUEL_DENOM_RATE,
+    STATE_MAIN, U256,
 };
 use revm_interpreter::{
     as_u64_saturated, as_usize_or_fail, as_usize_or_fail_ret, as_usize_saturated, gas,
@@ -75,7 +76,7 @@ macro_rules! unpack_interruption {
     };
 }
 
-fn balance<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Sized>(
+fn balance<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
     popn_top!([], top, context.interpreter);
@@ -84,20 +85,36 @@ fn balance<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Si
         return;
     }
     let address = top.into_address();
-    interrupt_into_action(context, |_context, sdk| sdk.balance(&address));
+    let mut buffer = [0u8; encode::balance_size_hint()];
+    encode::balance_into(&mut &mut buffer[..], &address);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_BALANCE,
+        Cow::Borrowed(&buffer[..]),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
-fn selfbalance<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Sized>(
+fn selfbalance<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
     if let Some(interruption_outcome) = unpack_interruption!(context) {
         push!(context.interpreter, interruption_outcome.into_u256());
         return;
     }
-    interrupt_into_action(context, |_context, sdk| sdk.self_balance());
+    let mut buffer = [0u8; encode::self_balance_size_hint()];
+    encode::self_balance_into(&mut &mut buffer[..]);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_SELF_BALANCE,
+        Cow::Borrowed(&buffer[..]),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
-fn extcodesize<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Sized>(
+fn extcodesize<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
     popn_top!([], top, context.interpreter);
@@ -106,12 +123,20 @@ fn extcodesize<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host +
         return;
     }
     let address = top.into_address();
-    interrupt_into_action(context, |_context, sdk| sdk.code_size(&address));
+    let mut buffer = [0u8; encode::code_size_size_hint()];
+    encode::code_size_into(&mut &mut buffer[..], &address);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_CODE_SIZE,
+        Cow::Borrowed(&buffer[..]),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
 fn extcodecopy<
     WIRE: InterpreterTypes<Stack = Stack, Extend = InterruptionExtension>,
-    H: Host + ?Sized,
+    H: Host + HostWrapper + ?Sized,
 >(
     context: InstructionContext<'_, H, WIRE>,
 ) {
@@ -142,12 +167,18 @@ fn extcodecopy<
     let address = address.into_address();
     let len = as_usize_or_fail!(context.interpreter, len_u256);
     let offset = as_usize_saturated!(code_offset);
-    interrupt_into_action(context, |_context, sdk| {
-        sdk.code_copy(&address, offset as u64, len as u64)
-    });
+    let mut buffer = [0u8; encode::code_copy_size_hint()];
+    encode::code_copy_into(&mut &mut buffer[..], &address, offset as u64, len as u64);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_CODE_COPY,
+        Cow::Borrowed(&buffer[..]),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
-fn extcodehash<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Sized>(
+fn extcodehash<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
     popn_top!([], top, context.interpreter);
@@ -156,10 +187,18 @@ fn extcodehash<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host +
         return;
     }
     let address = top.into_address();
-    interrupt_into_action(context, |_context, sdk| sdk.code_hash(&address));
+    let mut buffer = [0u8; encode::code_hash_size_hint()];
+    encode::code_hash_into(&mut &mut buffer[..], &address);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_CODE_HASH,
+        Cow::Borrowed(&buffer[..]),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
-fn blockhash<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Sized>(
+fn blockhash<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
     popn_top!([], number, context.interpreter);
@@ -175,18 +214,25 @@ fn blockhash<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?
         return;
     };
     let diff = as_u64_saturated!(diff);
-    // blockhash should push zero if number is same as current block number.
+    // blockhash should push zero if the number is the same as the current block number.
     if diff == 0 || diff > BLOCK_HASH_HISTORY {
         *number = U256::ZERO;
         gas!(context.interpreter, gas::BLOCKHASH);
         return;
     }
-    interrupt_into_action(context, |_context, sdk| {
-        sdk.block_hash(as_u64_saturated!(requested_number))
-    });
+    let requested_number = as_u64_saturated!(requested_number);
+    let mut buffer = [0u8; encode::block_hash_size_hint()];
+    encode::block_hash_into(&mut &mut buffer[..], requested_number);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_BLOCK_HASH,
+        Cow::Borrowed(&buffer[..]),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
-fn sload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Sized>(
+fn sload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
     popn_top!([], index, context.interpreter);
@@ -195,7 +241,15 @@ fn sload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Size
         return;
     }
     let index = index.clone();
-    interrupt_into_action(context, |_context, sdk| sdk.storage(&index));
+    let mut buffer = [0u8; encode::storage_read_size_hint()];
+    encode::storage_read_into(&mut &mut buffer[..], &index);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_STORAGE_READ,
+        Cow::Borrowed(&buffer[..]),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
 fn sstore<
@@ -209,10 +263,18 @@ fn sstore<
     }
     require_non_staticcall!(context.interpreter);
     popn!([index, value], context.interpreter);
-    interrupt_into_action(context, |_context, sdk| sdk.write_storage(index, value));
+    let mut buffer = [0u8; encode::storage_write_size_hint()];
+    encode::storage_write_into(&mut &mut buffer[..], &index, &value);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_STORAGE_WRITE,
+        Cow::Borrowed(&buffer[..]),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
-fn tload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Sized>(
+fn tload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
     popn_top!([], index, context.interpreter);
@@ -221,10 +283,18 @@ fn tload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Size
         return;
     }
     let index = index.clone();
-    interrupt_into_action(context, |_context, sdk| sdk.transient_storage(&index));
+    let mut buffer = [0u8; encode::transient_read_size_hint()];
+    encode::transient_read_into(&mut &mut buffer[..], &index);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_TRANSIENT_READ,
+        Cow::Borrowed(&buffer[..]),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
-fn tstore<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Sized>(
+fn tstore<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
     if let Some(_interruption_outcome) = unpack_interruption!(context) {
@@ -232,12 +302,18 @@ fn tstore<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: Host + ?Siz
     }
     require_non_staticcall!(context.interpreter);
     popn!([index, value], context.interpreter);
-    interrupt_into_action(context, |_context, sdk| {
-        sdk.write_transient_storage(index, value)
-    });
+    let mut buffer = [0u8; encode::transient_write_size_hint()];
+    encode::transient_write_into(&mut &mut buffer[..], &index, &value);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_TRANSIENT_WRITE,
+        Cow::Borrowed(&buffer[..]),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
-fn log<const N: usize, H: Host + ?Sized>(
+fn log<const N: usize, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, impl InterpreterTypes<Extend = InterruptionExtension>>,
 ) {
     if let Some(_interruption_outcome) = unpack_interruption!(context) {
@@ -263,9 +339,15 @@ fn log<const N: usize, H: Host + ?Sized>(
         return;
     };
     let topics: Vec<B256> = topics.into_iter().map(B256::from).collect();
-    interrupt_into_action(context, |_context, sdk| {
-        sdk.emit_log(&topics, data.as_ref())
-    });
+    let mut buffer = vec![0u8; encode::emit_log_size_hint(topics.len(), data.len())];
+    encode::emit_log_into(&mut &mut buffer[..], &topics, data.as_ref());
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_EMIT_LOG,
+        Cow::Owned(buffer),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
 fn create<
@@ -356,14 +438,29 @@ fn create<
     } else {
         None
     };
-    interrupt_into_action(context, |_context, sdk| {
-        sdk.create(salt, &value, init_code.as_ref())
-    });
+    let mut buffer = vec![0u8; encode::create_size_hint(init_code.len(), salt.is_some())];
+    encode::create_into(
+        &mut &mut buffer[..],
+        salt.as_ref(),
+        &value,
+        init_code.as_ref(),
+    );
+    context.host.sdk_mut().insert_interruption_income(
+        if IS_CREATE2 {
+            SYSCALL_ID_CREATE2
+        } else {
+            SYSCALL_ID_CREATE
+        },
+        Cow::Owned(buffer),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
 fn insert_call_outcome<
     WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>,
-    H: Host + ?Sized,
+    H: HostWrapper + ?Sized,
 >(
     context: InstructionContext<'_, H, WIRE>,
     interruption_outcome: InterruptionOutcome,
@@ -472,11 +569,17 @@ fn call<
     let Some(in_range) = get_memory_input_range(&mut context) else {
         return;
     };
-    interrupt_into_action(context, |context, sdk| {
-        let input = global_memory_from_shared_buffer(&context, in_range);
-        let fuel_limit = Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE));
-        sdk.call(to, value, input.as_ref(), fuel_limit)
-    });
+    let input = global_memory_from_shared_buffer(&context, in_range);
+    let mut buffer = vec![0u8; encode::call_size_hint(input.len(), true)];
+    encode::call_into(&mut &mut buffer[..], to, Some(value), input.as_ref());
+    drop(input);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_CALL,
+        Cow::Owned(buffer),
+        Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE)),
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
 fn call_code<
@@ -496,11 +599,17 @@ fn call_code<
     let Some(in_range) = get_memory_input_range(&mut context) else {
         return;
     };
-    interrupt_into_action(context, |context, sdk| {
-        let input = global_memory_from_shared_buffer(&context, in_range);
-        let fuel_limit = Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE));
-        sdk.call_code(to, value, input.as_ref(), fuel_limit)
-    });
+    let input = global_memory_from_shared_buffer(&context, in_range);
+    let mut buffer = vec![0u8; encode::call_size_hint(input.len(), true)];
+    encode::call_into(&mut &mut buffer[..], to, Some(value), input.as_ref());
+    drop(input);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_CALL_CODE,
+        Cow::Owned(buffer),
+        Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE)),
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
 fn delegate_call<
@@ -520,11 +629,17 @@ fn delegate_call<
     let Some(in_range) = get_memory_input_range(&mut context) else {
         return;
     };
-    interrupt_into_action(context, |context, sdk| {
-        let input = global_memory_from_shared_buffer(&context, in_range);
-        let fuel_limit = Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE));
-        sdk.delegate_call(to, input.as_ref(), fuel_limit)
-    });
+    let input = global_memory_from_shared_buffer(&context, in_range);
+    let mut buffer = vec![0u8; encode::call_size_hint(input.len(), false)];
+    encode::call_into(&mut &mut buffer[..], to, None, input.as_ref());
+    drop(input);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_DELEGATE_CALL,
+        Cow::Owned(buffer),
+        Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE)),
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
 fn static_call<
@@ -544,16 +659,22 @@ fn static_call<
     let Some(in_range) = get_memory_input_range(&mut context) else {
         return;
     };
-    interrupt_into_action(context, |context, sdk| {
-        let input = global_memory_from_shared_buffer(&context, in_range);
-        let fuel_limit = Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE));
-        sdk.static_call(to, input.as_ref(), fuel_limit)
-    });
+    let input = global_memory_from_shared_buffer(&context, in_range);
+    let mut buffer = vec![0u8; encode::call_size_hint(input.len(), false)];
+    encode::call_into(&mut &mut buffer[..], to, None, input.as_ref());
+    drop(input);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_STATIC_CALL,
+        Cow::Owned(buffer),
+        Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE)),
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
 fn selfdestruct<
     WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>,
-    H: Host + ?Sized,
+    H: HostWrapper + ?Sized,
 >(
     context: InstructionContext<'_, H, WIRE>,
 ) {
@@ -564,11 +685,19 @@ fn selfdestruct<
     require_non_staticcall!(context.interpreter);
     popn!([target], context.interpreter);
     let target = target.into_address();
-    interrupt_into_action(context, |_context, sdk| sdk.destroy_account(target));
+    let mut buffer = [0u8; encode::destroy_account_size_hint()];
+    encode::destroy_account_into(&mut &mut buffer[..], &target);
+    context.host.sdk_mut().insert_interruption_income(
+        SYSCALL_ID_DESTROY_ACCOUNT,
+        Cow::Borrowed(&buffer[..]),
+        None,
+        STATE_MAIN,
+    );
+    interrupt_into_action(context);
 }
 
 /// EIP-211: New opcodes: RETURNDATASIZE and RETURNDATACOPY
-pub fn returndatacopy<WIRE: InterpreterTypes, H: Host + ?Sized>(
+fn returndatacopy<WIRE: InterpreterTypes, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
     popn!([memory_offset, offset, len], context.interpreter);
@@ -602,7 +731,7 @@ pub fn returndatacopy<WIRE: InterpreterTypes, H: Host + ?Sized>(
 }
 
 /// Build an instruction table matching EVM semantics with interruption-aware handlers.
-pub const fn interruptable_instruction_table<'a, SDK: SharedAPI>(
+pub const fn interruptable_instruction_table<'a, SDK: SystemAPI>(
 ) -> [Instruction<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>; 256] {
     let mut table = instruction_table::<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>();
     use revm_bytecode::opcode::*;

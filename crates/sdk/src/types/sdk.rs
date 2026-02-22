@@ -4,7 +4,7 @@ use crate::{
     system::RuntimeInterruptionOutcomeV1,
     Address, Bytes, ContextReader, ExitCode, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
-use alloc::vec::Vec;
+use alloc::{borrow::Cow, vec::Vec};
 use fluentbase_crypto::crypto_keccak256;
 
 pub type IsAccountOwnable = bool;
@@ -77,7 +77,7 @@ pub trait SharedAPI: StorageAPI {
     fn native_exec(
         &self,
         code_hash: B256,
-        input: &[u8],
+        input: Cow<'_, [u8]>,
         fuel_limit: Option<u64>,
         state: u32,
     ) -> (u64, i64, i32);
@@ -153,28 +153,12 @@ pub trait SharedAPI: StorageAPI {
 }
 
 pub trait SystemAPI: SharedAPI {
-    fn metadata_write(
-        &mut self,
-        address: &Address,
-        offset: u32,
-        metadata: Bytes,
-    ) -> SyscallResult<()>;
-    fn metadata_size(
-        &self,
-        address: &Address,
-    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)>;
-    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()>;
-    fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
-    fn metadata_account_owner(&self, address: &Address) -> SyscallResult<Address>;
-    fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256>;
-    fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()>;
-
     fn take_interruption_outcome(&mut self) -> Option<RuntimeInterruptionOutcomeV1>;
 
     fn insert_interruption_income(
         &mut self,
         code_hash: B256,
-        input: Bytes,
+        input: Cow<'_, [u8]>,
         fuel_limit: Option<u64>,
         state: u32,
     );

@@ -8,8 +8,6 @@ use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
 
 #[test]
-// TODO(dmitry123): This test fails with fluent-testnet, but works with devnet/mainnet.
-#[ignore]
 fn test_client_solidity() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");

@@ -240,7 +240,7 @@ impl SystemRuntime {
                     compiled_runtimes.remove(&self.code_hash);
                 });
                 // Forward the `OutOfFuel` trap to the outer executor, so it can handle it gracefully.
-                return Err(TrapCode::OutOfFuel);
+                return Err(*trap_code);
             }
 
             eprintln!(

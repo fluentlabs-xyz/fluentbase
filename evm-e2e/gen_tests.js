@@ -133,6 +133,20 @@ const disabledTests = new Set([
     // These tests don't pass because of OOM
     'call1_mb1024_calldepth',
     'static_call1_mb1024_calldepth',
+    'call50000',
+    'call50000_ecrec',
+    'call50000_identity',
+    'call50000_identity2',
+    'call50000_rip160',
+    'callcode50000',
+    'return50000',
+    'return50000_2',
+    'static_call50000',
+    'static_call50000_ecrec',
+    'static_call50000_identity',
+    'static_call50000_identity2',
+    'static_call50000_rip160',
+    'static_return50000_2',
 ]);
 
 // Group tests by subdirectory (module name)

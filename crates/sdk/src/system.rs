@@ -1,21 +1,17 @@
 mod state;
 
 use crate::{
-    byteorder::{ByteOrder, LittleEndian},
-    debug_log,
-    syscall::SyscallInterruptExecutor,
-    system::state::RecoverableState,
-    Address, Bytes, ContextReader, IsAccountEmpty, IsAccountOwnable, IsColdAccess, SharedAPI,
+    debug_log, system::state::RecoverableState, Address, Bytes, ContextReader, SharedAPI,
     StorageAPI, SystemAPI, B256, U256,
 };
-use alloc::{vec, vec::Vec};
+use alloc::{borrow::Cow, vec, vec::Vec};
 pub use fluentbase_types::system::*;
 use fluentbase_types::{CryptoAPI, ExitCode, NativeAPI, SyscallInvocationParams, SyscallResult};
 
 pub struct SystemContextImpl<API> {
     native_sdk: API,
     state: RecoverableState,
-    interruption: Option<SyscallInvocationParams>,
+    interruption: Option<Bytes>,
     metadata: Option<Bytes>,
 }
 
@@ -86,11 +82,10 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
         } = self;
         if exit_code == ExitCode::InterruptionCalled {
             let interruption = interruption.unwrap();
-            let output = interruption.encode();
             state.remember();
             let exit_code_be = exit_code.into_i32().to_le_bytes();
             native_sdk.write(&exit_code_be);
-            native_sdk.write(&output);
+            native_sdk.write(&interruption);
         } else {
             let (storage, logs) = state.storage.into_diff();
             let output = RuntimeExecutionOutcomeV1 {
@@ -150,7 +145,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
     fn native_exec(
         &self,
         _code_hash: B256,
-        _input: &[u8],
+        _input: Cow<'_, [u8]>,
         _fuel_limit: Option<u64>,
         _state: u32,
     ) -> (u64, i64, i32) {
@@ -276,71 +271,6 @@ impl<API: NativeAPI + CryptoAPI> StorageAPI for SystemContextImpl<API> {
 }
 
 impl<API: NativeAPI + CryptoAPI> SystemAPI for SystemContextImpl<API> {
-    fn metadata_write(
-        &mut self,
-        address: &Address,
-        offset: u32,
-        metadata: Bytes,
-    ) -> SyscallResult<()> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.metadata_write(address, offset, metadata);
-        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn metadata_size(
-        &self,
-        address: &Address,
-    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.metadata_size(address);
-        let mut output: [u8; 7] = [0u8; 7];
-        if SyscallResult::<()>::is_ok(exit_code) {
-            self.native_sdk.read_output(&mut output, 0);
-        };
-        let value = LittleEndian::read_u32(&output[0..4]);
-        let is_account_ownable = output[4] != 0x00;
-        let is_cold_access = output[5] != 0x00;
-        let is_account_empty = output[6] != 0x00;
-        SyscallResult::new(
-            (value, is_account_ownable, is_cold_access, is_account_empty),
-            fuel_consumed,
-            fuel_refunded,
-            exit_code,
-        )
-    }
-
-    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.metadata_create(salt, metadata);
-        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.metadata_copy(address, offset, length);
-        let value = self.return_data();
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn metadata_account_owner(&self, address: &Address) -> SyscallResult<Address> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.metadata_account_owner(address);
-        let mut address = Address::ZERO;
-        self.native_sdk.read_output(&mut address.as_mut(), 0);
-        SyscallResult::new(address, fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.metadata_storage_read(slot);
-        let value = U256::from_le_slice(&self.return_data());
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk.metadata_storage_write(slot, value);
-        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
-    }
-
     fn take_interruption_outcome(&mut self) -> Option<RuntimeInterruptionOutcomeV1> {
         self.state.interruption_outcome.take()
     }
@@ -348,18 +278,23 @@ impl<API: NativeAPI + CryptoAPI> SystemAPI for SystemContextImpl<API> {
     fn insert_interruption_income(
         &mut self,
         code_hash: B256,
-        input: Bytes,
+        input: Cow<'_, [u8]>,
         fuel_limit: Option<u64>,
         state: u32,
     ) {
+        let input = match input {
+            Cow::Borrowed(input) => Bytes::copy_from_slice(input),
+            Cow::Owned(input) => Bytes::from(input),
+        };
         let input_offset = input.as_ptr() as usize;
-        _ = self.interruption.insert(SyscallInvocationParams {
+        let syscall_params = SyscallInvocationParams {
             code_hash,
             input: input_offset..(input_offset + input.len()),
             fuel_limit: fuel_limit.unwrap_or(u64::MAX),
             state,
             fuel16_ptr: 0,
-        });
+        };
+        _ = self.interruption.insert(syscall_params.encode().into());
         // We must save input, otherwise it will be destructed (we store it inside
         //  the recoverable state, the one we don't free)
         _ = self.state.intermediary_input.insert(input);
