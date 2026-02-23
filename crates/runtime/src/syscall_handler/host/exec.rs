@@ -3,9 +3,10 @@ use crate::{
     executor::{default_runtime_executor, RuntimeExecutor},
     RuntimeContext,
 };
+use alloc::borrow::Cow;
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    BytecodeOrHash, BytesOrRef, ExitCode, SyscallInvocationParams, B256, CALL_STACK_LIMIT,
+    BytecodeOrHash, ExitCode, SyscallInvocationParams, B256, CALL_STACK_LIMIT,
 };
 use rwasm::{StoreTr, TrapCode, Value};
 use std::{
@@ -101,7 +102,7 @@ pub fn syscall_exec_continue(
 pub fn syscall_exec_impl<I: Into<BytecodeOrHash>>(
     ctx: &mut RuntimeContext,
     code_hash: I,
-    input: BytesOrRef,
+    input: Cow<'_, [u8]>,
     fuel_limit: u64,
     state: u32,
 ) -> (u64, i64, i32) {
@@ -112,7 +113,7 @@ pub fn syscall_exec_impl<I: Into<BytecodeOrHash>>(
     // create a new runtime instance with the context
     let ctx2 = RuntimeContext::default()
         .with_fuel_limit(fuel_limit)
-        .with_input(input.into_bytes())
+        .with_input(input.into_owned())
         .with_state(state)
         .with_call_depth(ctx.call_depth + 1);
 

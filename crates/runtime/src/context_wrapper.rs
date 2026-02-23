@@ -1,5 +1,6 @@
 use crate::{syscall_handler::*, RuntimeContext};
-use fluentbase_types::{BytecodeOrHash, BytesOrRef, ExitCode, NativeAPI, UnwrapExitCode};
+use alloc::borrow::Cow;
+use fluentbase_types::{BytecodeOrHash, ExitCode, NativeAPI, UnwrapExitCode};
 use std::cell::RefCell;
 
 #[derive(Default)]
@@ -57,14 +58,14 @@ impl NativeAPI for RuntimeContextWrapper {
     fn exec(
         &self,
         code_hash: BytecodeOrHash,
-        input: &[u8],
+        input: Cow<'_, [u8]>,
         fuel_limit: Option<u64>,
         state: u32,
     ) -> (u64, i64, i32) {
         let (fuel_consumed, fuel_refunded, exit_code) = syscall_exec_impl(
             &mut self.ctx.borrow_mut(),
             code_hash,
-            BytesOrRef::Ref(input),
+            input,
             fuel_limit.unwrap_or(u64::MAX),
             state,
         );

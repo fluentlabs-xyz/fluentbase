@@ -2,9 +2,10 @@
 //!
 //! We do not execute Host methods directly; host-bound opcodes are routed
 //! via interruptions. The unreachable!() bodies here document that path.
+
 use crate::utils::evm_gas_params;
 use core::ops::{Deref, DerefMut};
-use fluentbase_sdk::{Address, Bytes, ContextReader, Log, SharedAPI, B256, U256};
+use fluentbase_sdk::{Address, Bytes, ContextReader, Log, SystemAPI, B256, U256};
 use revm_context::{
     host::LoadError,
     journaled_state::{AccountInfoLoad, AccountLoad, StateLoad},
@@ -14,42 +15,42 @@ use revm_interpreter::{Host, SStoreResult, SelfDestructResult};
 use revm_primitives::{StorageKey, StorageValue};
 
 /// Helper trait to access the underlying SDK from opcode handlers.
-pub(crate) trait HostWrapper {
-    fn sdk_mut(&mut self) -> &mut impl SharedAPI;
+pub(crate) trait HostWrapper: Host {
+    fn sdk_mut(&mut self) -> &mut impl SystemAPI;
 }
 
 /// Wrapper that implements revm::Host for our SDK, but actual effects
 /// are performed through the interruption protocol.
-pub struct HostWrapperImpl<'a, SDK: SharedAPI> {
+pub struct HostWrapperImpl<'a, SDK: SystemAPI> {
     sdk: &'a mut SDK,
 }
 
-impl<'a, SDK: SharedAPI> Deref for HostWrapperImpl<'a, SDK> {
+impl<'a, SDK: SystemAPI> Deref for HostWrapperImpl<'a, SDK> {
     type Target = SDK;
 
     fn deref(&self) -> &Self::Target {
         &self.sdk
     }
 }
-impl<'a, SDK: SharedAPI> DerefMut for HostWrapperImpl<'a, SDK> {
+impl<'a, SDK: SystemAPI> DerefMut for HostWrapperImpl<'a, SDK> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.sdk
     }
 }
 
-impl<'a, SDK: SharedAPI> HostWrapperImpl<'a, SDK> {
+impl<'a, SDK: SystemAPI> HostWrapperImpl<'a, SDK> {
     pub fn wrap(sdk: &'a mut SDK) -> Self {
         Self { sdk }
     }
 }
 
-impl<'a, SDK: SharedAPI> HostWrapper for HostWrapperImpl<'a, SDK> {
-    fn sdk_mut(&mut self) -> &mut impl SharedAPI {
+impl<'a, SDK: SystemAPI> HostWrapper for HostWrapperImpl<'a, SDK> {
+    fn sdk_mut(&mut self) -> &mut impl SystemAPI {
         self.sdk
     }
 }
 
-impl<'a, SDK: SharedAPI> Host for HostWrapperImpl<'a, SDK> {
+impl<'a, SDK: SystemAPI> Host for HostWrapperImpl<'a, SDK> {
     fn basefee(&self) -> U256 {
         self.sdk.context().block_base_fee()
     }

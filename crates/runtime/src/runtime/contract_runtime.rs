@@ -12,7 +12,10 @@
 
 use crate::{syscall_handler::runtime_syscall_handler, RuntimeContext};
 use fluentbase_types::{STATE_DEPLOY, STATE_MAIN};
-use rwasm::{ImportLinker, StoreTr, StrategyDefinition, StrategyExecutor, TrapCode, Value};
+use rwasm::{
+    ImportLinker, StoreTr, StrategyDefinition, StrategyExecutor, TrapCode, Value,
+    N_DEFAULT_MAX_MEMORY_PAGES,
+};
 use std::sync::Arc;
 
 /// Runtime responsible for executing a single contract invocation.
@@ -58,8 +61,13 @@ impl ContractRuntime {
             STATE_DEPLOY => "deploy",
             _ => unreachable!(),
         };
-        let executor =
-            strategy.create_executor(import_linker, ctx, runtime_syscall_handler, fuel_limit)?;
+        let executor = strategy.create_executor(
+            import_linker,
+            ctx,
+            runtime_syscall_handler,
+            fuel_limit,
+            Some(N_DEFAULT_MAX_MEMORY_PAGES),
+        )?;
         Ok(Self {
             executor,
             entrypoint,

@@ -1,4 +1,4 @@
-use crate::{Address, Bytes, B256, RWASM_SIG, RWASM_SIG_LEN, WASM_SIG, WASM_SIG_LEN};
+use crate::{Address, B256, RWASM_SIG, RWASM_SIG_LEN, WASM_SIG, WASM_SIG_LEN};
 use core::fmt::Formatter;
 use rwasm::RwasmModule;
 
@@ -70,21 +70,6 @@ impl BytecodeOrHash {
                 hash: code_hash, ..
             } => *code_hash,
             BytecodeOrHash::Hash(hash) => *hash,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum BytesOrRef<'a> {
-    Bytes(Bytes),
-    Ref(&'a [u8]),
-}
-
-impl<'a> BytesOrRef<'a> {
-    pub fn into_bytes(self) -> Bytes {
-        match self {
-            BytesOrRef::Bytes(bytes) => bytes,
-            BytesOrRef::Ref(slice) => Bytes::copy_from_slice(slice),
         }
     }
 }

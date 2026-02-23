@@ -1,8 +1,9 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_sdk::{
     address, compile_wasm_to_rwasm_with_config, default_compilation_config,
-    is_engine_metered_precompile, keccak256, Address, Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID,
-    U256,
+    is_engine_metered_precompile, is_execute_using_system_runtime, keccak256,
+    rwasm_core::{N_DEFAULT_MAX_MEMORY_PAGES, N_MAX_ALLOWED_MEMORY_PAGES},
+    Address, Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID, U256,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -90,6 +91,7 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
         if cache.contains_key(contract.wasm_bytecode) {
             continue;
         }
+        let is_system_runtime = is_execute_using_system_runtime(address);
         // Most system precompiles manage fuel internally via `_charge_fuel` syscall.
         // However, some precompiles (NITRO_VERIFIER, OAUTH2_VERIFIER, WASM_RUNTIME,
         // WEBAUTHN_VERIFIER) don't self-meter, so they need fuel instrumentation.
@@ -97,7 +99,13 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
 
         let config = default_compilation_config()
             .with_consume_fuel(should_charge_fuel)
-            .with_builtins_consume_fuel(should_charge_fuel);
+            .with_builtins_consume_fuel(should_charge_fuel)
+            .with_max_allowed_memory_pages(if is_system_runtime {
+                N_MAX_ALLOWED_MEMORY_PAGES
+            } else {
+                N_DEFAULT_MAX_MEMORY_PAGES
+            })
+            .with_allow_malformed_entrypoint_func_type(is_system_runtime);
 
         let start = Instant::now();
         let rwasm_bytecode =
@@ -163,13 +171,20 @@ fn init_contract(
 }
 
 fn main() {
+    // Make sure we rerun the build if the feature has changed
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_STD");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WASMTIME");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_FLUENT_TESTNET");
+    println!("cargo:rerun-if-env-changed=PROFILE");
+    println!("cargo:rerun-if-env-changed=OPT_LEVEL");
+    println!("cargo:rerun-if-env-changed=DEBUG");
+    println!("cargo:rerun-if-env-changed=TARGET");
+
     let mut alloc = BTreeMap::from([
         // default testing accounts
-        initial_devnet_balance!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3"), // dmitry
-        initial_devnet_balance!("33a831e42B24D19bf57dF73682B9a3780A0435BA"), // daniel
-        initial_devnet_balance!("B72988b6DdC94E577E98C5565E0e11E688537e73"), // faucet
-        initial_devnet_balance!("c1202e7d42655F23097476f6D48006fE56d38d4f"), // marcus
-        initial_devnet_balance!("e92c16763ba7f73a2218a5416aaa493a1f038bef"), // khasan
+        initial_devnet_balance!("0x390a4CEdBb65be7511D9E1a35b115376F39DbDF3"), // dmitry
+        initial_devnet_balance!("0x33a831e42B24D19bf57dF73682B9a3780A0435BA"), // daniel
+        initial_devnet_balance!("0xB72988b6DdC94E577E98C5565E0e11E688537e73"), // faucet
     ]);
 
     let mut code = Vec::new();

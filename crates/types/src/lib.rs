@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-pub mod bincode_helpers;
+pub mod bincode;
 mod block_fuel;
 mod bytecode;
 mod crypto_api;
@@ -20,7 +20,6 @@ mod syscall;
 pub mod system;
 
 pub use alloy_primitives::*;
-pub use bincode;
 pub use block_fuel::*;
 pub use bytecode::*;
 pub use byteorder;

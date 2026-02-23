@@ -1,5 +1,5 @@
-use crate::{BytecodeOrHash, Bytes, ExitCode, B256};
-use core::cell::RefCell;
+use crate::{BytecodeOrHash, ExitCode};
+use alloc::borrow::Cow;
 
 /// A trait for providing shared API functionality.
 #[rustfmt::skip]
@@ -18,7 +18,7 @@ pub trait NativeAPI {
     fn exec(
         &self,
         code_hash: BytecodeOrHash,
-        input: &[u8],
+        input: Cow<'_, [u8]>,
         fuel_limit: Option<u64>,
         state: u32,
     ) -> (u64, i64, i32);
@@ -41,64 +41,4 @@ pub trait NativeAPI {
     fn enter_unconstrained(&self);
     fn exit_unconstrained(&self);
     fn write_fd(&self, fd: u32, slice: &[u8]);
-}
-
-pub trait InterruptAPI {
-    fn interrupt(
-        &self,
-        code_hash: BytecodeOrHash,
-        input: &[u8],
-        fuel_limit: Option<u64>,
-        state: u32,
-    ) -> (u64, i64, i32);
-}
-
-impl<T: NativeAPI + ?Sized> InterruptAPI for T {
-    #[inline(always)]
-    fn interrupt(
-        &self,
-        code_hash: BytecodeOrHash,
-        input: &[u8],
-        fuel_limit: Option<u64>,
-        state: u32,
-    ) -> (u64, i64, i32) {
-        NativeAPI::exec(self, code_hash, input, fuel_limit, state)
-    }
-}
-
-pub struct ExtractedInterruptionContext {
-    pub code_hash: B256,
-    pub input: Bytes,
-    pub fuel_limit: Option<u64>,
-    pub state: u32,
-}
-
-#[derive(Default)]
-pub struct InterruptionExtractingAdapter {
-    interruption: RefCell<Option<ExtractedInterruptionContext>>,
-}
-
-impl InterruptionExtractingAdapter {
-    pub fn extract(self) -> ExtractedInterruptionContext {
-        self.interruption.into_inner().unwrap()
-    }
-}
-
-impl InterruptAPI for InterruptionExtractingAdapter {
-    fn interrupt(
-        &self,
-        code_hash: BytecodeOrHash,
-        input: &[u8],
-        fuel_limit: Option<u64>,
-        state: u32,
-    ) -> (u64, i64, i32) {
-        let context = ExtractedInterruptionContext {
-            code_hash: code_hash.code_hash(),
-            input: Bytes::copy_from_slice(input),
-            fuel_limit,
-            state,
-        };
-        _ = self.interruption.borrow_mut().insert(context);
-        (0, 0, 0)
-    }
 }

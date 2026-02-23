@@ -5,7 +5,7 @@ use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecut
 use fluentbase_sdk::{
     bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, Address, BytecodeOrHash, Bytes,
     ContextReader, ExitCode, GenesisContract, RwasmCompilationResult, SharedAPI,
-    SharedContextInputV1, SystemAPI, STATE_MAIN, U256,
+    SharedContextInputV1, STATE_MAIN, U256,
 };
 use revm::{
     context::{
@@ -109,29 +109,29 @@ impl EvmTestingContext {
             });
     }
 
-    pub fn commit_db_to_sdk(&mut self) {
-        for (address, db_account) in &mut self.db.cache.accounts {
-            self.sdk.visit_inner_storage_mut(|storage| {
-                for (k, v) in &db_account.storage {
-                    storage.insert((*address, *k), *v);
-                }
-            });
-            self.sdk.visit_inner_metadata_storage_mut(|storage| {
-                for (k, v) in &db_account.storage {
-                    storage.insert((*address, *k), *v);
-                }
-            });
-            if let Some(code) = db_account.info.code.as_mut() {
-                match code {
-                    Bytecode::OwnableAccount(account) => {
-                        self.sdk
-                            .metadata_write(address, 0, account.metadata.clone());
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
+    // pub fn commit_db_to_sdk(&mut self) {
+    //     for (address, db_account) in &mut self.db.cache.accounts {
+    //         self.sdk.visit_inner_storage_mut(|storage| {
+    //             for (k, v) in &db_account.storage {
+    //                 storage.insert((*address, *k), *v);
+    //             }
+    //         });
+    //         self.sdk.visit_inner_metadata_storage_mut(|storage| {
+    //             for (k, v) in &db_account.storage {
+    //                 storage.insert((*address, *k), *v);
+    //             }
+    //         });
+    //         if let Some(code) = db_account.info.code.as_mut() {
+    //             match code {
+    //                 Bytecode::OwnableAccount(account) => {
+    //                     self.sdk
+    //                         .metadata_write(address, 0, account.metadata.clone());
+    //                 }
+    //                 _ => {}
+    //             }
+    //         }
+    //     }
+    // }
 
     pub fn add_wasm_contract(&mut self, address: Address, wasm_module: &[u8]) -> AccountInfo {
         let RwasmCompilationResult { rwasm_module, .. } =
@@ -210,7 +210,8 @@ impl EvmTestingContext {
     }
 
     pub fn deploy_evm_tx(&mut self, deployer: Address, init_bytecode: Bytes) -> Address {
-        let (contract_address, _) = self.deploy_evm_tx_with_gas(deployer, init_bytecode);
+        let (contract_address, gas_used) = self.deploy_evm_tx_with_gas(deployer, init_bytecode);
+        println!("deployment gas used: {}", gas_used);
         contract_address
     }
 
@@ -324,7 +325,7 @@ impl<'a> TxBuilder<'a> {
         tx.caller = deployer;
         tx.kind = TransactTo::Create;
         tx.data = init_code;
-        tx.gas_limit = 30_000_000;
+        tx.gas_limit = 100_000_000;
         let block = Self::block_env(ctx);
         Self { ctx, tx, block }
     }

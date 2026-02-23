@@ -32,16 +32,21 @@ unsafe fn ensure_pages(end: usize) {
     }
 }
 
-#[inline(never)]
 unsafe fn gc_pop_head() {
     // Rewind the bump pointer to start of this block
+    // let head_before = (*HEAD).start;
     while !HEAD.is_null() && (*HEAD).freed != 0 {
         HEAP_POS = (*HEAD).start;
         HEAD = (*HEAD).prev;
     }
+    // crate::debug_log!(
+    //     "GC: new pop_head={:p}, head_before={:p}, new_pos={:p}",
+    //     (*HEAD).start as *const u8,
+    //     head_before as *const u8,
+    //     HEAP_POS as *const u8
+    // );
 }
 
-#[inline(never)]
 unsafe fn alloc_impl(layout: core::alloc::Layout) -> *mut u8 {
     let bytes = layout.size();
     let align = layout.align().max(core::mem::align_of::<usize>());
@@ -81,6 +86,12 @@ unsafe fn alloc_impl(layout: core::alloc::Layout) -> *mut u8 {
         },
     );
 
+    // crate::debug_log!(
+    //     "GC: new block ptr={:p}, size={}",
+    //     hdr as *mut u8,
+    //     end - header_start
+    // );
+
     // Store back-pointer so dealloc can find the header
     core::ptr::write(back_ptr_addr as *mut usize, hdr as usize);
 
@@ -91,13 +102,17 @@ unsafe fn alloc_impl(layout: core::alloc::Layout) -> *mut u8 {
     payload_start as *mut u8
 }
 
-#[inline(always)]
 unsafe fn dealloc_impl(ptr: *mut u8) {
     if ptr.is_null() {
         return;
     }
     let back_ptr_addr = (ptr as usize) - core::mem::size_of::<usize>();
     let hdr = core::ptr::read(back_ptr_addr as *const usize) as *mut BlockHeader;
+    // crate::debug_log!(
+    //     "GC: freeing block ptr={:p} size={}",
+    //     hdr as *mut u8,
+    //     (*hdr).end - (*hdr).start
+    // );
     // Mark freed
     (*hdr).freed = 1;
 }
@@ -113,13 +128,13 @@ unsafe impl core::alloc::GlobalAlloc for BlockListAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: core::alloc::Layout) {
-        dealloc_impl(ptr)
+        dealloc_impl(ptr);
     }
 }
 
 impl BlockListAllocator {
-    #[cfg(feature = "debug-print")]
     pub fn dump_blocks() {
+        #[cfg(feature = "debug-print")]
         unsafe {
             let mut it = HEAD;
             while !it.is_null() {

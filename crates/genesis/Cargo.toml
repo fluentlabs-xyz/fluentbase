@@ -24,10 +24,7 @@ serde_json = { workspace = true }
 fluentbase-contracts = { workspace = true }
 
 [features]
-default = [
-    "std",
-    #    "svm"
-]
+default = []
 debug-print = []
 svm = [
     "fluentbase-contracts/svm",
@@ -41,6 +38,6 @@ std = [
 ]
 generate-genesis = [] # this feature is doing nothing now (genesis is always generated), kept it for backward compatibility, and will remove it once ready
 fluent-testnet = [
-	"fluentbase-contracts/fluent-testnet",
-	"fluentbase-sdk/fluent-testnet"
+    "fluentbase-contracts/fluent-testnet",
+    "fluentbase-sdk/fluent-testnet"
 ]

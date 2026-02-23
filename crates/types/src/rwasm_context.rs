@@ -4,6 +4,7 @@ use crate::{
     ED25519_POINT_COMPRESSED_SIZE, ED25519_POINT_DECOMPRESSED_SIZE, SECP256K1_G1_COMPRESSED_SIZE,
     SECP256K1_G1_RAW_AFFINE_SIZE, SECP256R1_G1_COMPRESSED_SIZE, SECP256R1_G1_RAW_AFFINE_SIZE,
 };
+use alloc::borrow::Cow;
 use core::convert::Into;
 
 pub mod bindings;
@@ -52,7 +53,7 @@ impl NativeAPI for RwasmContext {
     fn exec(
         &self,
         code_hash: BytecodeOrHash,
-        input: &[u8],
+        input: Cow<'_, [u8]>,
         fuel_limit: Option<u64>,
         state: u32,
     ) -> (u64, i64, i32) {

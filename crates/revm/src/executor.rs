@@ -19,7 +19,7 @@ use fluentbase_sdk::{
     system::{
         JournalLog, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
     },
-    BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode, HashMap,
+    BlockContextV1, BytecodeOrHash, Bytes, ContractContextV1, ExitCode, HashMap,
     SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
     FUEL_DENOM_RATE, PRECOMPILE_EIP2935, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY,
     STATE_MAIN, U256,
@@ -37,7 +37,7 @@ use revm::{
     },
     Database, Inspector,
 };
-use std::vec::Vec;
+use std::{borrow::Cow, vec::Vec};
 
 fn should_overwrite_delegated_bytecode<'a, CTX: ContextTr>(
     frame: &mut RwasmFrame,
@@ -400,13 +400,13 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     let (fuel_consumed, fuel_refunded, exit_code) = syscall_exec_impl(
         &mut runtime_context,
         bytecode_hash,
-        BytesOrRef::Bytes(contract_input.into()),
+        Cow::Owned(contract_input),
         fuel_limit,
         if is_create { STATE_DEPLOY } else { STATE_MAIN },
     );
 
     // Convert consumed fuel into gas to charge inside REVM.
-    // On some networks we floor vs ceil; keep the behavior feature-gated.
+    // On some networks we floor vs. ceil; keep the behavior feature-gated.
     cfg_if::cfg_if! {
         if #[cfg(feature = "fluent-testnet")] {
             let gas_consumed = fuel_consumed / FUEL_DENOM_RATE;
@@ -611,7 +611,7 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
     // so instead of print warning into output and return Ok w/o state commitment, there is nothing we can
     // do here, it's a trap)
     let Ok((runtime_output, _)): Result<(RuntimeExecutionOutcomeV1, usize), _> =
-        bincode::decode_from_slice(return_data, bincode::config::legacy())
+        bincode::decode_from_bytes(return_data.clone(), bincode::config::legacy())
     else {
         eprintln!(
             "WARN: failed to decode structured runtime execution outcome: exit_code={}",
@@ -660,7 +660,7 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
 /// For system runtime v2, the return data is a structured envelope that must be decoded and
 /// committed into the journal. For non-system contracts we also ensure fatal exit codes are
 /// not user-controllable.
-fn process_system_runtime_result<CTX: ContextTr, INSP: Inspector<CTX>>(
+fn process_execution_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
     inspector: Option<&mut INSP>,
@@ -723,7 +723,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     // Final result (success/failure) path.
     if exit_code <= 0 {
-        return process_system_runtime_result(frame, ctx, inspector, exit_code, return_data);
+        return process_execution_result(frame, ctx, inspector, exit_code, return_data);
     }
 
     // Interruption path: exit code is a call_id that identifies the saved context.
