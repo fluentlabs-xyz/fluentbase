@@ -40,10 +40,10 @@ unsafe fn gc_pop_head() {
         HEAD = (*HEAD).prev;
     }
     // crate::debug_log!(
-    //     "GC: new pop_head={:p}, head_before={}, new_pos={}",
+    //     "GC: new pop_head={:p}, head_before={:p}, new_pos={:p}",
     //     (*HEAD).start as *const u8,
-    //     head_before,
-    //     HEAP_POS
+    //     head_before as *const u8,
+    //     HEAP_POS as *const u8
     // );
 }
 
@@ -129,13 +129,12 @@ unsafe impl core::alloc::GlobalAlloc for BlockListAllocator {
 
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: core::alloc::Layout) {
         dealloc_impl(ptr);
-        gc_pop_head();
     }
 }
 
 impl BlockListAllocator {
-    #[cfg(feature = "debug-print")]
     pub fn dump_blocks() {
+        #[cfg(feature = "debug-print")]
         unsafe {
             let mut it = HEAD;
             while !it.is_null() {

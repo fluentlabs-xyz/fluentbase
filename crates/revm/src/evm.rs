@@ -465,7 +465,7 @@ impl<CTX, INSP, I, P> RwasmEvm<CTX, INSP, I, P> {
     /// including pre-execution checks (like call stipend, etc.).
     pub fn insert_interrupted_result(frame: &mut RwasmFrame, result: FrameResult) {
         let created_address = Self::result_created_address(&result);
-        // For the frame result we take gas from the result field,
+        // For the frame result we take gas from the result field
         // because it stores information about gas consumed before the call as well
         let mut result = result.into_interpreter_result();
         match result.result {
@@ -490,7 +490,7 @@ impl<CTX, INSP, I, P> RwasmEvm<CTX, INSP, I, P> {
         let interrupted_outcome = frame.interrupted_outcome.as_mut().unwrap();
         // Call how much gas we consumed.
         // For the final gas calculation, we must know that amount of gas we had before the call.
-        // It's important because we must have all call related spends to be included.
+        // It's important because we must have all call-related spending to be included.
         let mut total_gas_consumed = Gas::new_spent(
             interrupted_outcome.inputs.gas.remaining() - frame.interpreter.gas.remaining(),
         );

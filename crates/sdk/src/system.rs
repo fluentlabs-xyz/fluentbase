@@ -6,7 +6,11 @@ use crate::{
 };
 use alloc::{borrow::Cow, vec, vec::Vec};
 pub use fluentbase_types::system::*;
-use fluentbase_types::{CryptoAPI, ExitCode, NativeAPI, SyscallInvocationParams, SyscallResult};
+use fluentbase_types::{
+    bincode::decode_from_bytes, CryptoAPI, ExitCode, NativeAPI, SyscallInvocationParams,
+    SyscallResult,
+};
+pub use state::lock_state_context;
 
 pub struct SystemContextImpl<API> {
     native_sdk: API,
@@ -20,6 +24,18 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
     pub fn new(native_sdk: API) -> Self {
         let output_size = native_sdk.output_size() as usize;
         if output_size > 0 {
+            let mut state = RecoverableState::recover();
+            // If we have previously allocated intermediary state then drop it and gc, otherwise
+            // this memory blocks gc, and we never deallocate it, which leads to memory leaks.
+            // It happens because our `BlockListAllocator` uses a bump-only technique and deallocates
+            // head only.
+            if let Some(intermediary_input) = state.intermediary_input.take() {
+                drop(intermediary_input);
+                #[cfg(target_arch = "wasm32")]
+                crate::allocator::BlockListAllocator::dump_blocks();
+                #[cfg(target_arch = "wasm32")]
+                crate::allocator::BlockListAllocator::gc();
+            }
             // Output size greater than 0 indicates an interruption outcome
             let output_size = native_sdk.output_size();
             let mut return_data = Vec::with_capacity(output_size as usize);
@@ -32,7 +48,7 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
                 bincode::config::legacy(),
             )
             .unwrap();
-            let state = RecoverableState::recover(outcome);
+            _ = state.interruption_outcome.insert(outcome);
             return Self {
                 native_sdk,
                 state,
@@ -48,7 +64,7 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
             let mut input = vec![0u8; input_size as usize];
             native_sdk.read(&mut input, 0);
             let (input, _): (RuntimeNewFrameInputV1, usize) =
-                bincode::decode_from_slice(&input, bincode::config::legacy()).unwrap();
+                decode_from_bytes(input.into(), bincode::config::legacy()).unwrap();
             let state = RecoverableState::new(input);
             return Self {
                 native_sdk,
@@ -72,7 +88,7 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
         native_sdk.exit(ExitCode::Panic)
     }
 
-    pub fn finalize(self, result: Result<(), ExitCode>) {
+    pub fn finalize(self, result: Result<(), ExitCode>) -> ExitCode {
         let exit_code = result.err().unwrap_or(ExitCode::Ok);
         let SystemContextImpl {
             native_sdk,
@@ -83,9 +99,8 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
         if exit_code == ExitCode::InterruptionCalled {
             let interruption = interruption.unwrap();
             state.remember();
-            let exit_code_be = exit_code.into_i32().to_le_bytes();
-            native_sdk.write(&exit_code_be);
             native_sdk.write(&interruption);
+            exit_code
         } else {
             let (storage, logs) = state.storage.into_diff();
             let output = RuntimeExecutionOutcomeV1 {
@@ -96,10 +111,9 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
                 new_metadata: metadata,
             }
             .encode();
-            let exit_code_be = exit_code.into_i32().to_le_bytes();
-            native_sdk.write(&exit_code_be);
             native_sdk.write(&output);
-        };
+            exit_code
+        }
     }
 }
 

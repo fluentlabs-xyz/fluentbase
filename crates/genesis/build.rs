@@ -1,8 +1,9 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_sdk::{
     address, compile_wasm_to_rwasm_with_config, default_compilation_config,
-    is_engine_metered_precompile, keccak256, Address, Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID,
-    U256,
+    is_engine_metered_precompile, is_execute_using_system_runtime, keccak256,
+    rwasm_core::{N_DEFAULT_MAX_MEMORY_PAGES, N_MAX_ALLOWED_MEMORY_PAGES},
+    Address, Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID, U256,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -90,6 +91,7 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
         if cache.contains_key(contract.wasm_bytecode) {
             continue;
         }
+        let is_system_runtime = is_execute_using_system_runtime(address);
         // Most system precompiles manage fuel internally via `_charge_fuel` syscall.
         // However, some precompiles (NITRO_VERIFIER, OAUTH2_VERIFIER, WASM_RUNTIME,
         // WEBAUTHN_VERIFIER) don't self-meter, so they need fuel instrumentation.
@@ -97,7 +99,13 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
 
         let config = default_compilation_config()
             .with_consume_fuel(should_charge_fuel)
-            .with_builtins_consume_fuel(should_charge_fuel);
+            .with_builtins_consume_fuel(should_charge_fuel)
+            .with_max_allowed_memory_pages(if is_system_runtime {
+                N_MAX_ALLOWED_MEMORY_PAGES
+            } else {
+                N_DEFAULT_MAX_MEMORY_PAGES
+            })
+            .with_allow_malformed_entrypoint_func_type(is_system_runtime);
 
         let start = Instant::now();
         let rwasm_bytecode =

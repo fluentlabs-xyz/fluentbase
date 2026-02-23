@@ -34,7 +34,7 @@ use core::{cell::RefCell, mem::take};
 use fluentbase_types::{ExitCode, HashMap, SysFuncIdx, B256, STATE_DEPLOY, STATE_MAIN};
 use rwasm::{
     CompilationConfig, ImportLinker, Opcode, RwasmModule, StateRouterConfig, StoreTr,
-    StrategyDefinition, StrategyExecutor, TrapCode,
+    StrategyDefinition, StrategyExecutor, TrapCode, Value, N_MAX_ALLOWED_MEMORY_PAGES,
 };
 
 /// A system runtime instance.
@@ -132,21 +132,22 @@ impl SystemRuntime {
                     opcode: Some(Opcode::Call(SysFuncIdx::STATE as u32)),
                 })
                 .with_import_linker(import_linker.clone())
-                .with_allow_malformed_entrypoint_func_type(false)
+                .with_allow_malformed_entrypoint_func_type(true)
                 .with_consume_fuel(consume_fuel)
-                .with_builtins_consume_fuel(false);
+                .with_builtins_consume_fuel(false)
+                .with_max_allowed_memory_pages(N_MAX_ALLOWED_MEMORY_PAGES);
             // `hint_section` contains Wasmtime-compatible wasm bytes for the system runtime.
             // Any compilation failure here is fatal: genesis/runtime packaging is inconsistent.
-            let Ok(typed_module) =
+            let typed_module =
                 StrategyDefinition::new(config, &rwasm_module.hint_section, Some(code_hash.0))
-            else {
-                unreachable!("runtime: failed to compile system runtime module")
-            };
+                    .expect("runtime: failed to compile system runtime module");
             let Ok(executor) = typed_module.create_executor(
                 import_linker,
                 RuntimeContext::default(),
                 runtime_syscall_handler,
+                // We can't set a fuel limit here because it's not known until execution.
                 None,
+                Some(N_MAX_ALLOWED_MEMORY_PAGES),
             ) else {
                 unreachable!("runtime: failed to create executor for system runtime module")
             };
@@ -201,30 +202,49 @@ impl SystemRuntime {
             STATE_DEPLOY => "deploy",
             _ => unreachable!(),
         };
-        let result = compiled_runtime.execute(entrypoint, &[], &mut []);
+
+        let mut output = [Value::I32(0)];
+        // Rust generates a C-style `main(argc: i32, argv: i32) -> i32` signature for wasm targets when `main` returns `i32`.
+        // Even in `no_std`, the toolchain follows the traditional C/WASI ABI convention where `argc` and `argv` are passed
+        // as 32-bit values (wasm pointers).
+        //
+        // We do not use command-line arguments in this environment, so we pass `0, 0` as dummy values.
+        // The generated shim ignores them unless argument handling is explicitly implemented.
+        //
+        // https://reviews.llvm.org/D70700
+        let result = if entrypoint == "main" {
+            compiled_runtime.execute(entrypoint, &[Value::I32(0), Value::I32(0)], &mut output)
+        } else {
+            compiled_runtime.execute(entrypoint, &[], &mut output)
+        };
+        let exit_code = output[0].i32().unwrap();
 
         // Always swap back immediately after the call, so we keep `self.ctx` authoritative.
         core::mem::swap(compiled_runtime.data_mut(), &mut self.ctx);
 
         // The application can return trap code though exit code, we should handle such cases as well
-        let exit_code = ExitCode::from(self.ctx.execution_result.exit_code);
-        if exit_code == ExitCode::Panic {
-            eprintln!(
-                "runtime: system execution panicked: {} (investigate)",
-                core::str::from_utf8(&self.ctx.execution_result.output)
-                    .unwrap_or("unable to decode UTF-8 panic message")
-            );
-            self.ctx.execution_result.exit_code =
-                ExitCode::UnexpectedFatalExecutionFailure.into_i32();
+        if self.ctx.execution_result.exit_code != ExitCode::Ok.into_i32() {
+            // If panic happens, then we can only forward into output
+            if self.ctx.execution_result.exit_code == ExitCode::Panic.into_i32() {
+                eprintln!(
+                    "WARN: system execution panicked: {} (investigate)",
+                    core::str::from_utf8(&self.ctx.execution_result.output)
+                        .unwrap_or("unable to decode UTF-8 panic message")
+                );
+            }
+            // We assume any not `Ok` error can happen, for example, due to OOM (because our EVM runtime is limited with 64mB only),
+            // but we should handle it gracefully if it happens. When it happens, we have a corrupted state: stack and memory.
+            // Ideally, we should terminate the latest frame and expect the caller to continue its execution because we can free
+            // resources we consumed. But here we just terminate the runtime entirely. It means that all previous calls
+            // will fail because they lose their state. It's the best here because we automatically terminate all nested
+            // execution to avoid potential memory or stack access violations.
+            COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
+                compiled_runtimes.remove(&self.code_hash);
+            });
+            // We return `Ok` here because the exit code is already set
             return Ok(());
-        } else if exit_code != ExitCode::Ok {
-            eprintln!(
-                "runtime: system execution failed with exit code: {} ({}) (investigate)",
-                exit_code, self.ctx.execution_result.exit_code
-            );
-            self.ctx.execution_result.exit_code =
-                ExitCode::UnexpectedFatalExecutionFailure.into_i32();
-            return Ok(());
+        } else {
+            self.ctx.execution_result.exit_code = exit_code;
         }
 
         // If wasmtime trapped, treat it as an unexpected fatal failure and degrade into a safe
@@ -242,7 +262,6 @@ impl SystemRuntime {
                 // Forward the `OutOfFuel` trap to the outer executor, so it can handle it gracefully.
                 return Err(*trap_code);
             }
-
             eprintln!(
                 "runtime: unexpected trap inside system runtime: {:?} ({}) (investigate)",
                 trap_code, trap_code,
@@ -252,32 +271,12 @@ impl SystemRuntime {
             return Ok(());
         }
 
-        // System runtimes return output prefixed with an LE i32 exit code.
-        //
-        // Note: System runtimes avoid trapping for control flow because trapping/halt may not unwind
-        // the stack as required in this environment.
-        let output = take(&mut self.ctx.execution_result.output);
-        if output.len() < 4 {
-            eprintln!(
-                "runtime: unexpected output size from system runtime: {} (investigate)",
-                output.len()
-            );
-            self.ctx.execution_result.exit_code =
-                ExitCode::UnexpectedFatalExecutionFailure.into_i32();
-            return Ok(());
-        }
-
-        let (exit_code_le, output) = output.split_at(4);
-        self.ctx.execution_result.output = output.to_vec();
-        let exit_code = i32::from_le_bytes(exit_code_le.try_into().unwrap());
-        self.ctx.execution_result.exit_code = exit_code;
-
         // If exit code indicates an interruption, convert it into a trap that the outer executor
         // understands (`TrapCode::InterruptionCalled`).
         //
         // Safety: `InterruptionCalled` is expected only from trusted system runtimes.
         // Untrusted contracts might use the same numeric code but will not be executed here.
-        if ExitCode::from_repr(exit_code) == Some(ExitCode::InterruptionCalled) {
+        if exit_code == ExitCode::InterruptionCalled.into_i32() {
             // Move output into return_data. For system runtimes we don't expose a dedicated
             // "interrupt params" ABI, so we treat the returned output payload as the interruption
             // parameters.

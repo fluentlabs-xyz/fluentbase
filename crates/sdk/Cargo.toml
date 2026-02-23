@@ -20,8 +20,7 @@ rwasm = { workspace = true }
 hashbrown = { workspace = true }
 auto_impl = { workspace = true }
 bincode = { workspace = true }
-
-spin = { version = "0.10.0", default-features = false, features = ["mutex"] }
+spin = { workspace = true }
 
 [dev-dependencies]
 hex-literal = { workspace = true }
@@ -42,7 +41,7 @@ universal-token = ["std"]
 debug-print = []
 fast-panic = []
 fluent-testnet = [
-	"fluentbase-crypto/fluent-testnet",
-	"fluentbase-types/fluent-testnet",
-	"fluentbase-sdk-derive/fluent-testnet"
+    "fluentbase-crypto/fluent-testnet",
+    "fluentbase-types/fluent-testnet",
+    "fluentbase-sdk-derive/fluent-testnet"
 ]

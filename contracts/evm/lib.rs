@@ -186,28 +186,31 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
 mod _fluentbase_entrypoint {
     use ::fluentbase_sdk::{system::SystemContextImpl, RwasmContext};
     #[no_mangle]
-    extern "C" fn main() {
+    extern "C" fn main() -> i32 {
         // TODO(dmitry123): How we can run some sort of pre-warmup to init resources?
         _ = crate::lock_evm_context();
         _ = fluentbase_evm::evm_gas_params();
+        _ = fluentbase_sdk::system::lock_state_context();
         let mut sdk = SystemContextImpl::new(RwasmContext {});
         let result = super::main_entry(&mut sdk);
-        sdk.finalize(result);
+        let exit_code = sdk.finalize(result);
         ::fluentbase_sdk::BlockListAllocator::gc();
+        exit_code.into_i32()
     }
     #[no_mangle]
-    extern "C" fn deploy() {
+    extern "C" fn deploy() -> i32 {
         _ = crate::lock_evm_context();
         _ = fluentbase_evm::evm_gas_params();
+        _ = fluentbase_sdk::system::lock_state_context();
         let mut sdk = SystemContextImpl::new(RwasmContext {});
         let result = super::deploy_entry(&mut sdk);
-        sdk.finalize(result);
+        let exit_code = sdk.finalize(result);
         ::fluentbase_sdk::BlockListAllocator::gc();
+        exit_code.into_i32()
     }
 }
 #[cfg(target_arch = "wasm32")]
 #[panic_handler]
-#[inline(always)]
 unsafe fn panic(info: &core::panic::PanicInfo) -> ! {
     use ::fluentbase_sdk::{system::SystemContextImpl, RwasmContext};
     SystemContextImpl::<RwasmContext>::panic_handler(info)

@@ -136,18 +136,20 @@ macro_rules! system_entrypoint {
         mod _fluentbase_entrypoint {
             use $crate::{system::SystemContextImpl, RwasmContext};
             #[no_mangle]
-            extern "C" fn main() {
+            extern "C" fn main() -> i32 {
                 let mut sdk = SystemContextImpl::new(RwasmContext {});
                 let result = super::$main_func(&mut sdk);
-                sdk.finalize(result);
+                let exit_code = sdk.finalize(result);
                 $crate::BlockListAllocator::gc();
+                exit_code.into_i32()
             }
             #[no_mangle]
-            extern "C" fn deploy() {
+            extern "C" fn deploy() -> i32 {
                 let mut sdk = SystemContextImpl::new(RwasmContext {});
                 let result = super::$deploy_func(&mut sdk);
-                sdk.finalize(result);
+                let exit_code = sdk.finalize(result);
                 $crate::BlockListAllocator::gc();
+                exit_code.into_i32()
             }
         }
         #[cfg(target_arch = "wasm32")]
@@ -166,11 +168,12 @@ macro_rules! system_entrypoint {
         mod _fluentbase_entrypoint {
             use $crate::{system::SystemContextImpl, RwasmContext};
             #[no_mangle]
-            extern "C" fn main() {
+            extern "C" fn main() -> i32 {
                 let mut sdk = SystemContextImpl::new(RwasmContext {});
                 let result = super::$main_func(&mut sdk);
-                sdk.finalize(result);
+                let exit_code = sdk.finalize(result);
                 ::fluentbase_sdk::BlockListAllocator::gc();
+                exit_code.into_i32()
             }
             #[no_mangle]
             extern "C" fn deploy() {}
