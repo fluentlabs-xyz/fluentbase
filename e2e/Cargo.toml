@@ -52,7 +52,7 @@ criterion = "0.8.1"
 default = [
     "std",
     "wasmtime",
-    # "debug-print",
+    "debug-print",
     # "svm",
     # "enable-error-text-checks", # when 'fast-panic' is off
 ]
