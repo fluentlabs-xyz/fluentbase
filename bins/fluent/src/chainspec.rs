@@ -22,7 +22,7 @@ pub const SUPPORTED_CHAINS: &[&str] = &["dev", "fluent-devnet", "fluent-testnet"
 /// Example: `v0.4.11-dev` -> downloads:
 /// - `genesis-v0.4.11-dev.json.gz`
 /// - `genesis-v0.4.11-dev.json.gz.asc`
-const FLUENT_DEVNET_GENESIS_TAG: &str = "v0.5.0";
+const FLUENT_DEVNET_GENESIS_TAG: &str = "v0.5.2";
 
 /// Release tag for Fluent Testnet genesis (GitHub releases).
 ///
