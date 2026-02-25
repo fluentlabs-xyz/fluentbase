@@ -149,7 +149,7 @@ jobs:
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
           path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
-      - name: Upload devnet genesis
+      - name: Upload mainnet genesis
         if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: actions/upload-artifact@v6
         with:
