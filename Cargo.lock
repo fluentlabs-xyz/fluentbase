@@ -977,7 +977,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -988,7 +988,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3235,7 +3235,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3541,7 +3541,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3793,7 +3793,7 @@ dependencies = [
 
 [[package]]
 name = "fluent"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "alloy-evm",
  "alloy-genesis",
@@ -3924,7 +3924,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-build"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "cargo_metadata 0.19.2",
@@ -3948,7 +3948,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-chain-transition-verifier"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "alloy-genesis",
  "clap",
@@ -4075,7 +4075,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -4090,7 +4090,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "bytes",
  "convert_case 0.6.0",
@@ -4105,7 +4105,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-contracts"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "alloy-genesis",
  "cargo_metadata 0.19.2",
@@ -4119,7 +4119,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-crypto"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -4156,7 +4156,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -4172,7 +4172,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-genesis"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "alloy-genesis",
  "fluentbase-contracts",
@@ -4184,7 +4184,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-revm"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -4203,7 +4203,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -4222,7 +4222,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "alloy-rlp",
  "auto_impl",
@@ -4239,7 +4239,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -4254,7 +4254,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -4279,7 +4279,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-testing"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "bytes",
  "fluentbase-codec",
@@ -4294,7 +4294,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "alloy-primitives",
  "bincode 2.0.1",
@@ -4312,7 +4312,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-universal-token"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "fluentbase-sdk",
 ]
@@ -6411,7 +6411,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11295,7 +11295,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11353,7 +11353,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 0.26.11",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11394,7 +11394,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.3.2"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#f5c8bb2809f4b2de2db2f88021c6a7e8b52e8d8d"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#ebab72c78dc3c8f2eedff95a8b09a270e0710722"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -12396,7 +12396,7 @@ dependencies = [
  "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -13082,7 +13082,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5f7c95348f20c1c913d72157b3c6dee6ea3e30b3d19502c5a7f6d3f160dacbf"
 dependencies = [
  "cc",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -14044,7 +14044,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
