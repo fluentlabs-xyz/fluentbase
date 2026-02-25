@@ -27,6 +27,3 @@ proc-macro = true
 
 [features]
 default = []
-fluent-testnet = [
-	"fluentbase-sdk/fluent-testnet"
-]

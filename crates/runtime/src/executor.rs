@@ -313,13 +313,12 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         bytecode_or_hash: BytecodeOrHash,
         ctx: RuntimeContext,
     ) -> ExecutionResult {
-        #[allow(unused_variables)]
-        let (enable_system_runtime, consume_fuel) = match &bytecode_or_hash {
-            BytecodeOrHash::Bytecode { address, hash, .. } => (
-                fluentbase_types::is_execute_using_system_runtime(address).then_some(*hash),
-                fluentbase_types::is_engine_metered_precompile(address),
-            ),
-            BytecodeOrHash::Hash(_) => (None, false),
+        let system_runtime_params = match &bytecode_or_hash {
+            BytecodeOrHash::Bytecode { address, hash, .. } => {
+                fluentbase_types::is_execute_using_system_runtime(address)
+                    .then_some((*address, *hash))
+            }
+            BytecodeOrHash::Hash(_) => None,
         };
 
         // If we have a cached module, then use it, otherwise create a new one and cache
@@ -328,7 +327,8 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         // If there is no cached store, then construct a new one (slow)
         let fuel_limit = Some(ctx.fuel_limit);
 
-        let mut exec_mode = if let Some(code_hash) = enable_system_runtime {
+        let mut exec_mode = if let Some((address, code_hash)) = system_runtime_params {
+            let consume_fuel = fluentbase_types::is_engine_metered_precompile(&address);
             let runtime = SystemRuntime::new(
                 module,
                 self.import_linker.clone(),

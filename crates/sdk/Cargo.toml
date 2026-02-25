@@ -40,8 +40,3 @@ std = [
 universal-token = ["std"]
 debug-print = []
 fast-panic = []
-fluent-testnet = [
-    "fluentbase-crypto/fluent-testnet",
-    "fluentbase-types/fluent-testnet",
-    "fluentbase-sdk-derive/fluent-testnet"
-]

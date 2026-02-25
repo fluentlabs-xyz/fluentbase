@@ -1836,14 +1836,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-contracts-multicall"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-testing",
-]
-
-[[package]]
 name = "fluentbase-contracts-nitro"
 version = "0.1.0"
 dependencies = [
@@ -1873,6 +1865,14 @@ dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
  "revm-precompile",
+]
+
+[[package]]
+name = "fluentbase-contracts-runtime-upgrade"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-testing",
 ]
 
 [[package]]
@@ -1949,7 +1949,6 @@ name = "fluentbase-revm"
 version = "0.5.2"
 dependencies = [
  "alloy-primitives",
- "cfg-if",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",

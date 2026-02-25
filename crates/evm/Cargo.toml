@@ -37,9 +37,6 @@ serde = [
     "revm-interpreter/serde",
     "fluentbase-sdk/serde"
 ]
-fluent-testnet = [
-    "fluentbase-sdk/fluent-testnet"
-]
 debug-print = [
     "fluentbase-sdk/debug-print",
     "revm-interpreter/debug-print",

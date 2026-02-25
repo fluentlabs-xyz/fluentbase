@@ -59,16 +59,8 @@ fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult<R
 
 /// Converts fuel to gas, accounting for testnet vs mainnet behavior
 fn fuel_to_gas(fuel: u32) -> u64 {
-    #[cfg(feature = "fluent-testnet")]
-    {
-        // Testnet: floor division (allows free operations below threshold)
-        fuel as u64 / FUEL_DENOM_RATE
-    }
-    #[cfg(not(feature = "fluent-testnet"))]
-    {
-        // Mainnet: ceiling division (no free operations)
-        (fuel as u64 + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE
-    }
+    // Mainnet: ceiling division (no free operations)
+    (fuel as u64 + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE
 }
 
 /// Calculates how much gas is consumed by the builtins

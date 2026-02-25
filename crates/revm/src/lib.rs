@@ -19,8 +19,6 @@ mod syscall;
 #[cfg(test)]
 mod tests;
 mod types;
-#[cfg(feature = "fluent-testnet")]
-mod upgrade;
 
 pub use api::*;
 pub use evm::RwasmEvm;

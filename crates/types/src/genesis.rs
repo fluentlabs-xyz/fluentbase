@@ -47,6 +47,10 @@ pub const PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME: Address =
 /// Contracts that are recognized as Wasm/rWasm are dispatched here.
 pub const PRECOMPILE_WASM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520009");
 
+/// A precompile smart contract that handles runtime upgrades.
+pub const PRECOMPILE_RUNTIME_UPGRADE: Address =
+    address!("0x0000000000000000000000000000000000520010");
+
 /// EIP-2935 system contract / precompile address (as specified by the EIP).
 ///
 /// Kept as a standalone constant so fork-activation logic can include/exclude it.
@@ -98,19 +102,6 @@ pub const PRECOMPILE_BLS12_381_MAP_G1: Address = evm_address(0x10);
 /// BLS12-381 map-to-G2 precompile (EVM address 0x11).
 pub const PRECOMPILE_BLS12_381_MAP_G2: Address = evm_address(0x11);
 
-/// Address of the "native multicall" precompile.
-///
-/// Address bytes are constructed as:
-/// - prefix: ASCII "R native" (8 bytes)
-/// - suffix: `keccak256("multicall(bytes[])")[..4]`
-///
-/// The last 4 bytes double as an input selector match (see
-/// `try_resolve_precompile_account_from_input`).
-///
-/// Note: Only for Fluent Testnet, will be removed
-pub const PRECOMPILE_NATIVE_MULTICALL: Address =
-    address!("0x52206e61746976650000000000000000ac9650d8");
-
 /// The full set of addresses treated as "system precompiles" by the executor.
 ///
 /// This list is used for routing/dispatch decisions and must remain stable
@@ -141,6 +132,7 @@ pub const PRECOMPILE_ADDRESSES: &[Address] = &[
     PRECOMPILE_SHA256,
     PRECOMPILE_SVM_RUNTIME,
     PRECOMPILE_WASM_RUNTIME,
+    PRECOMPILE_RUNTIME_UPGRADE,
     PRECOMPILE_WEBAUTHN_VERIFIER,
     PRECOMPILE_WRAPPED_ETH,
 ];
@@ -244,52 +236,17 @@ pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
     }
 }
 
-/// Checks if the function call should be redirected to a native precompiled contract.
-///
-/// When the first four bytes of the input (function selector) match a precompile's address
-/// prefix, returns the corresponding precompiled account that should handle the call.
-///
-/// # Arguments
-/// * `input` - The complete calldata for the function call
-///
-/// # Returns
-/// * `Some(Account)` - The precompiled account if a match is found
-/// * `None` - If no matching precompile is found or in ut is too short
-///
-/// Note: Only for Fluent Testnet, will be removed
-pub fn try_resolve_precompile_account_from_input(input: &[u8]) -> Option<Address> {
-    if input.len() < 4 {
-        return None;
-    };
-    if input[..4] == PRECOMPILE_NATIVE_MULTICALL[16..] {
-        Some(PRECOMPILE_NATIVE_MULTICALL)
-    } else {
-        None
-    }
-}
-
 /// Authority address that is allowed to update the code of arbitrary accounts.
 ///
 /// This is the "admin" for genesis/state upgrade operations and should be
 /// treated as highly privileged.
-///
-/// Note: Only for Fluent Testnet, will be removed
 pub const UPDATE_GENESIS_AUTH: Address = address!("0xa7bf6a9168fe8a111307b7c94b8883fe02b30934");
 
-/// Transaction calldata prefix for **genesis update** (version 1).
-///
-/// The executor uses this 4-byte marker to distinguish "account update" txs
-/// from ordinary contract calls.
-///
-/// Note: Only for Fluent Testnet, will be removed
-pub const UPDATE_GENESIS_PREFIX_V1: [u8; 4] = hex!("0x69bc6f64");
-
-/// Transaction calldata prefix for **genesis update** (version 2).
-///
+/// Transaction calldata prefix for **genesis update**.
 /// Versioning allows introducing new update semantics without ambiguity.
 ///
-/// Note: Only for Fluent Testnet, will be removed
-pub const UPDATE_GENESIS_PREFIX_V2: [u8; 4] = hex!("0x69bc6f65");
+/// Hash of: `upgradeTo(address,uint256,string,bytes)`
+pub const UPDATE_GENESIS_PREFIX: [u8; 4] = hex!("0x288fb3b8");
 
 #[derive(Clone)]
 pub struct GenesisContract {

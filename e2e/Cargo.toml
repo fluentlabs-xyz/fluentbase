@@ -32,6 +32,7 @@ wat = { version = "1.223.0" }
 paste = { workspace = true }
 rand = { version = "0.9.1" }
 sha2 = { workspace = true }
+bytes = "1.11.1"
 
 [dev-dependencies]
 #fluentbase-svm = { workspace = true }
@@ -50,9 +51,8 @@ criterion = "0.8.1"
 [features]
 default = [
     "std",
-    # "fluent-testnet",
     "wasmtime",
-    # "debug-print",
+    "debug-print",
     # "svm",
     # "enable-error-text-checks", # when 'fast-panic' is off
 ]
@@ -82,17 +82,6 @@ debug-print = [
 wasmtime = [
     "fluentbase-runtime/wasmtime",
     "fluentbase-revm/wasmtime",
-]
-fluent-testnet = [
-    "fluentbase-contracts/fluent-testnet",
-    "fluentbase-genesis/fluent-testnet",
-    "fluentbase-revm/fluent-testnet",
-    "fluentbase-runtime/fluent-testnet",
-    "fluentbase-sdk/fluent-testnet",
-    #    "fluentbase-svm/fluent-testnet",
-    #    "fluentbase-svm-common/fluent-testnet",
-    "fluentbase-testing/fluent-testnet",
-    "fluentbase-universal-token/fluent-testnet"
 ]
 
 [[bench]]
