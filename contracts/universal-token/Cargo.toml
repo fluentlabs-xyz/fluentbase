@@ -24,8 +24,3 @@ std = [
     "fluentbase-universal-token/std",
     "fluentbase-testing/std",
 ]
-fluent-testnet = [
-    "fluentbase-sdk/fluent-testnet",
-    "fluentbase-universal-token/fluent-testnet",
-    "fluentbase-testing/fluent-testnet",
-]

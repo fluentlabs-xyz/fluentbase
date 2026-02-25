@@ -148,7 +148,6 @@ directories = "6.0.0"
 
 [features]
 default = []
-fluent-testnet = ["fluent/fluent-testnet"]
 
 [[bin]]
 name = "chain-transition-verifier"

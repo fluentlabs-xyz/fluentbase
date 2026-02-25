@@ -17,9 +17,10 @@ use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create_metadata_address, is_execute_using_system_runtime, is_system_precompile, Address,
-    Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME,
-    STATE_MAIN, U256,
+    calc_create_metadata_address, compile_rwasm_maybe_system, is_execute_using_system_runtime,
+    is_system_precompile, Address, Bytes, ExitCode, Log, LogData, RwasmCompilationResult, B256,
+    FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN,
+    U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -785,7 +786,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                         .map(EthereumMetadata::code_hash)
                         .unwrap_or(B256::ZERO)
                 }
-                // We return code hash only if account exists (not empty),
+                // We return code hash only if an account exists (not empty),
                 // This is a requirement from EVM.
                 _ if account_info.is_empty() => B256::ZERO,
                 _ => account_info.code_hash,
@@ -1111,6 +1112,52 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 _ => B256::ZERO,
             };
             return_result!(hash, Ok);
+        }
+
+        // ============================================================================
+        // SECURITY: CALLDATA-BASED PRECOMPILE DISPATCH VULNERABILITY
+        // ============================================================================
+        //
+        // VULNERABILITY DESCRIPTION:
+        // 1. `UPDATE_GENESIS_AUTH`: Privileged address that can deploy arbitrary bytecode
+        //    to any address via upgrade_runtime_hook
+        //
+        // SECURITY IMPACT:
+        // - If the ` UPDATE_GENESIS_AUTH` key is compromised, an attacker gains full system control
+        //
+        // AUDITOR RECOMMENDATION:
+        // - Remove functionality for mainnet deployment.
+        //
+        // CURRENT MITIGATION:
+        // - Instead of private key address, a smart contract is used that required quorum
+        //   of signatures from trusted parties.
+        //
+        // ============================================================================
+        // a special hook for runtime upgrade
+        // that is used only for testnet to upgrade genesis without forks
+        SYSCALL_ID_UPGRADE_RUNTIME => {
+            assert_halt!(!is_static, StateChangeDuringStaticCall);
+            assert_halt!(
+                current_target_address == PRECOMPILE_RUNTIME_UPGRADE,
+                MalformedBuiltinParams
+            );
+            let (input, lazy_contract_input) = get_input_validated!(>= 20);
+            let target_address = Address::from_slice(&input);
+            // P.S: We can't validate the target address here, otherwise it will require a fork
+            //  to release new contracts from genesis
+            let Ok(wasm_bytecode) = lazy_contract_input() else {
+                return_halt!(MemoryOutOfBounds);
+            };
+            let Ok(RwasmCompilationResult { rwasm_module, .. }) =
+                compile_rwasm_maybe_system(&target_address, &wasm_bytecode)
+            else {
+                return_halt!(MalformedBuiltinParams);
+            };
+            let bytecode = Bytecode::new_rwasm(rwasm_module.serialize().into());
+            // Make sure an account is loaded
+            _ = ctx.journal_mut().load_account_with_code(target_address)?;
+            ctx.journal_mut().set_code(target_address, bytecode);
+            return_result!(Ok);
         }
 
         _ => return_halt!(MalformedBuiltinParams),

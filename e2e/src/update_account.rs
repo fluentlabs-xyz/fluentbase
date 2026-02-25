@@ -1,95 +1,20 @@
 use crate::EvmTestingContextWithGenesis;
+use bytes::BytesMut;
+use fluentbase_codec::SolidityABI;
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_sdk::{
-    address, bytes, compile_wasm_to_rwasm, Address, PRECOMPILE_EVM_RUNTIME, UPDATE_GENESIS_AUTH,
-    UPDATE_GENESIS_PREFIX_V1, UPDATE_GENESIS_PREFIX_V2,
+    address, bytes, compile_rwasm_maybe_system, Address, Bytes, B256, PRECOMPILE_EVM_RUNTIME,
+    PRECOMPILE_RUNTIME_UPGRADE, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX,
 };
 use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
+use revm::context::result::ExecutionResult;
 
 #[test]
 #[should_panic(
     expected = "Encountered unexpected internal return flag: FatalExternalError with instruction result: InterpreterResult { result: FatalExternalError, output: 0x, gas: Gas { limit: 3000000, remaining: 0, refunded: 0, memory: MemoryGas { words_num: 0, expansion_cost: 0 } } }"
 )]
-fn test_update_account_code_by_auth_v1() {
-    let mut ctx = EvmTestingContext::default().with_full_genesis();
-
-    // ----------------------------------------------------
-    // 1. Deploy some random EVM bytecode
-    // ----------------------------------------------------
-
-    const DEPLOYER_ADDRESS: Address = address!("0x7777777777777777777777777777777777777777");
-    let (contract_address, _) = ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, hex!("60806040526105ae806100115f395ff3fe608060405234801561000f575f80fd5b506004361061003f575f3560e01c80633b2e97481461004357806345773e4e1461007357806348b8bcc314610091575b5f80fd5b61005d600480360381019061005891906102e5565b6100af565b60405161006a919061039a565b60405180910390f35b61007b6100dd565b604051610088919061039a565b60405180910390f35b61009961011a565b6040516100a6919061039a565b60405180910390f35b60605f8273ffffffffffffffffffffffffffffffffffffffff163190506100d58161012f565b915050919050565b60606040518060400160405280600b81526020017f48656c6c6f20576f726c64000000000000000000000000000000000000000000815250905090565b60605f4790506101298161012f565b91505090565b60605f8203610175576040518060400160405280600181526020017f30000000000000000000000000000000000000000000000000000000000000008152509050610282565b5f8290505f5b5f82146101a457808061018d906103f0565b915050600a8261019d9190610464565b915061017b565b5f8167ffffffffffffffff8111156101bf576101be610494565b5b6040519080825280601f01601f1916602001820160405280156101f15781602001600182028036833780820191505090505b5090505b5f851461027b578180610207906104c1565b925050600a8561021791906104e8565b60306102239190610518565b60f81b8183815181106102395761023861054b565b5b60200101907effffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff191690815f1a905350600a856102749190610464565b94506101f5565b8093505050505b919050565b5f80fd5b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f6102b48261028b565b9050919050565b6102c4816102aa565b81146102ce575f80fd5b50565b5f813590506102df816102bb565b92915050565b5f602082840312156102fa576102f9610287565b5b5f610307848285016102d1565b91505092915050565b5f81519050919050565b5f82825260208201905092915050565b5f5b8381101561034757808201518184015260208101905061032c565b5f8484015250505050565b5f601f19601f8301169050919050565b5f61036c82610310565b610376818561031a565b935061038681856020860161032a565b61038f81610352565b840191505092915050565b5f6020820190508181035f8301526103b28184610362565b905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f819050919050565b5f6103fa826103e7565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff820361042c5761042b6103ba565b5b600182019050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601260045260245ffd5b5f61046e826103e7565b9150610479836103e7565b92508261048957610488610437565b5b828204905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52604160045260245ffd5b5f6104cb826103e7565b91505f82036104dd576104dc6103ba565b5b600182039050919050565b5f6104f2826103e7565b91506104fd836103e7565b92508261050d5761050c610437565b5b828206905092915050565b5f610522826103e7565b915061052d836103e7565b9250828201905080821115610545576105446103ba565b5b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffdfea2646970667358221220feebf5ace29c3c3146cb63bf7ca9009c2005f349075639d267cfbd817adde3e564736f6c63430008180033").into());
-
-    let result = ctx.call_evm_tx(
-        DEPLOYER_ADDRESS,
-        contract_address,
-        bytes!("45773e4e"),
-        None,
-        None,
-    );
-    assert!(result.is_success());
-
-    let account = GENESIS_CONTRACTS_BY_ADDRESS
-        .get(&PRECOMPILE_EVM_RUNTIME)
-        .unwrap();
-    let code = ctx.get_code(PRECOMPILE_EVM_RUNTIME).unwrap();
-    assert_eq!(&code.original_bytes(), account.rwasm_bytecode.as_ref());
-
-    // ----------------------------------------------------
-    // 2. Deploy rWasm bytecode using V1
-    // ----------------------------------------------------
-
-    let rwasm_module = compile_wasm_to_rwasm(
-        &wat::parse_str(
-            r#"
-(module
-  (memory (export "memory") 1)
-  (func (export "main")
-    unreachable
-  )
-  (func (export "deploy")
-    unreachable
-  )
-)
-    "#,
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    let new_bytecode = rwasm_module.rwasm_module.serialize();
-
-    let mut upgrade_input = UPDATE_GENESIS_PREFIX_V1.to_vec();
-    upgrade_input.extend_from_slice(new_bytecode.as_ref());
-
-    let result = ctx.call_evm_tx(
-        UPDATE_GENESIS_AUTH,
-        PRECOMPILE_EVM_RUNTIME,
-        upgrade_input.into(),
-        None,
-        None,
-    );
-    assert!(result.is_success());
-
-    let new_code = ctx.get_code(PRECOMPILE_EVM_RUNTIME).unwrap();
-    assert_eq!(new_code.original_bytes().as_ref(), &new_bytecode);
-
-    let result = ctx.call_evm_tx(
-        DEPLOYER_ADDRESS,
-        contract_address,
-        bytes!("45773e4e"),
-        None,
-        None,
-    );
-    println!("result: {:?}", result);
-    assert!(result.is_halt());
-}
-
-#[test]
-#[should_panic(
-    expected = "Encountered unexpected internal return flag: FatalExternalError with instruction result: InterpreterResult { result: FatalExternalError, output: 0x, gas: Gas { limit: 3000000, remaining: 0, refunded: 0, memory: MemoryGas { words_num: 0, expansion_cost: 0 } } }"
-)]
-fn test_update_account_code_by_auth_v2() {
+fn test_update_account_code_by_auth() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 
     // ----------------------------------------------------
@@ -118,11 +43,11 @@ fn test_update_account_code_by_auth_v2() {
     // 2. Deploy Wasm bytecode using V2
     // ----------------------------------------------------
 
-    let wasm_module = wat::parse_str(
+    let wasm_module: Bytes = wat::parse_str(
         r#"
 (module
   (memory (export "memory") 1)
-  (func (export "main")
+  (func (export "main") (param i32 i32) (result i32)
     unreachable
   )
   (func (export "deploy")
@@ -131,25 +56,42 @@ fn test_update_account_code_by_auth_v2() {
 )
     "#,
     )
-    .unwrap();
+    .unwrap()
+    .into();
 
-    let mut upgrade_input = UPDATE_GENESIS_PREFIX_V2.to_vec();
-    upgrade_input.extend_from_slice(&wasm_module);
+    let mut upgrade_input = BytesMut::new();
+    SolidityABI::<(Address, B256, String, Bytes)>::encode(
+        &(
+            PRECOMPILE_EVM_RUNTIME,
+            B256::ZERO,
+            "v1.0.1".to_string(),
+            wasm_module.clone(),
+        ),
+        &mut upgrade_input,
+        0,
+    )
+    .unwrap();
+    let upgrade_input = upgrade_input.freeze();
+    let mut bytes_input = vec![];
+    bytes_input.extend_from_slice(&UPDATE_GENESIS_PREFIX);
+    bytes_input.extend_from_slice(&upgrade_input);
 
     let result = ctx.call_evm_tx(
         UPDATE_GENESIS_AUTH,
-        PRECOMPILE_EVM_RUNTIME,
-        upgrade_input.into(),
+        PRECOMPILE_RUNTIME_UPGRADE,
+        bytes_input.into(),
         None,
         None,
     );
+    println!("{:?}", result);
     assert!(result.is_success());
 
     let new_code = ctx.get_code(PRECOMPILE_EVM_RUNTIME).unwrap();
-    let rwasm_bytecode_should_be = compile_wasm_to_rwasm(&wasm_module)
-        .unwrap()
-        .rwasm_module
-        .serialize();
+    let rwasm_bytecode_should_be =
+        compile_rwasm_maybe_system(&PRECOMPILE_EVM_RUNTIME, &wasm_module)
+            .unwrap()
+            .rwasm_module
+            .serialize();
     assert_eq!(
         new_code.original_bytes().as_ref(),
         &rwasm_bytecode_should_be
@@ -163,4 +105,78 @@ fn test_update_account_code_by_auth_v2() {
         None,
     );
     assert!(result.is_halt());
+}
+
+#[test]
+fn test_cant_upgrade_from_incorrect_address() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    // ----------------------------------------------------
+    // 1. Deploy some random EVM bytecode
+    // ----------------------------------------------------
+
+    const DEPLOYER_ADDRESS: Address = address!("0x7777777777777777777777777777777777777777");
+    let (contract_address, _) = ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, hex!("60806040526105ae806100115f395ff3fe608060405234801561000f575f80fd5b506004361061003f575f3560e01c80633b2e97481461004357806345773e4e1461007357806348b8bcc314610091575b5f80fd5b61005d600480360381019061005891906102e5565b6100af565b60405161006a919061039a565b60405180910390f35b61007b6100dd565b604051610088919061039a565b60405180910390f35b61009961011a565b6040516100a6919061039a565b60405180910390f35b60605f8273ffffffffffffffffffffffffffffffffffffffff163190506100d58161012f565b915050919050565b60606040518060400160405280600b81526020017f48656c6c6f20576f726c64000000000000000000000000000000000000000000815250905090565b60605f4790506101298161012f565b91505090565b60605f8203610175576040518060400160405280600181526020017f30000000000000000000000000000000000000000000000000000000000000008152509050610282565b5f8290505f5b5f82146101a457808061018d906103f0565b915050600a8261019d9190610464565b915061017b565b5f8167ffffffffffffffff8111156101bf576101be610494565b5b6040519080825280601f01601f1916602001820160405280156101f15781602001600182028036833780820191505090505b5090505b5f851461027b578180610207906104c1565b925050600a8561021791906104e8565b60306102239190610518565b60f81b8183815181106102395761023861054b565b5b60200101907effffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff191690815f1a905350600a856102749190610464565b94506101f5565b8093505050505b919050565b5f80fd5b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f6102b48261028b565b9050919050565b6102c4816102aa565b81146102ce575f80fd5b50565b5f813590506102df816102bb565b92915050565b5f602082840312156102fa576102f9610287565b5b5f610307848285016102d1565b91505092915050565b5f81519050919050565b5f82825260208201905092915050565b5f5b8381101561034757808201518184015260208101905061032c565b5f8484015250505050565b5f601f19601f8301169050919050565b5f61036c82610310565b610376818561031a565b935061038681856020860161032a565b61038f81610352565b840191505092915050565b5f6020820190508181035f8301526103b28184610362565b905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f819050919050565b5f6103fa826103e7565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff820361042c5761042b6103ba565b5b600182019050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601260045260245ffd5b5f61046e826103e7565b9150610479836103e7565b92508261048957610488610437565b5b828204905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52604160045260245ffd5b5f6104cb826103e7565b91505f82036104dd576104dc6103ba565b5b600182039050919050565b5f6104f2826103e7565b91506104fd836103e7565b92508261050d5761050c610437565b5b828206905092915050565b5f610522826103e7565b915061052d836103e7565b9250828201905080821115610545576105446103ba565b5b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffdfea2646970667358221220feebf5ace29c3c3146cb63bf7ca9009c2005f349075639d267cfbd817adde3e564736f6c63430008180033").into());
+
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDRESS,
+        contract_address,
+        bytes!("45773e4e"),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+
+    let account = GENESIS_CONTRACTS_BY_ADDRESS
+        .get(&PRECOMPILE_EVM_RUNTIME)
+        .unwrap();
+    let code = ctx.get_code(PRECOMPILE_EVM_RUNTIME).unwrap();
+    assert_eq!(&code.original_bytes(), account.rwasm_bytecode.as_ref());
+
+    // ----------------------------------------------------
+    // 2. Deploy Wasm bytecode using V2
+    // ----------------------------------------------------
+
+    let wasm_module: Bytes = wat::parse_str(
+        r#"
+(module
+  (memory (export "memory") 1)
+  (func (export "main") (param i32 i32) (result i32)
+    unreachable
+  )
+  (func (export "deploy")
+    unreachable
+  )
+)
+    "#,
+    )
+    .unwrap()
+    .into();
+
+    let mut upgrade_input = BytesMut::new();
+    SolidityABI::<(Address, B256, String, Bytes)>::encode(
+        &(
+            PRECOMPILE_EVM_RUNTIME,
+            B256::ZERO,
+            "v1.0.1".to_string(),
+            wasm_module.clone(),
+        ),
+        &mut upgrade_input,
+        0,
+    )
+    .unwrap();
+    let upgrade_input = upgrade_input.freeze();
+    let mut bytes_input = vec![];
+    bytes_input.extend_from_slice(&UPDATE_GENESIS_PREFIX);
+    bytes_input.extend_from_slice(&upgrade_input);
+
+    let result = ctx.call_evm_tx(
+        address!("0x1111111111111111111111111111111111111111"),
+        PRECOMPILE_RUNTIME_UPGRADE,
+        upgrade_input.into(),
+        None,
+        None,
+    );
+    println!("{:?}", result);
+    assert!(!result.is_success());
 }

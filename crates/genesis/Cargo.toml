@@ -36,8 +36,3 @@ std = [
     "serde/std",
     "serde_json/std",
 ]
-generate-genesis = [] # this feature is doing nothing now (genesis is always generated), kept it for backward compatibility, and will remove it once ready
-fluent-testnet = [
-    "fluentbase-contracts/fluent-testnet",
-    "fluentbase-sdk/fluent-testnet"
-]

@@ -28,11 +28,6 @@ mod fuel;
 mod gas;
 #[cfg(test)]
 mod helpers;
-// SECURITY: Multicall tests use calldata-based precompile dispatch (testnet-only).
-// See detailed vulnerability explanation in frame_init() handler.
-#[cfg(feature = "fluent-testnet")]
-#[cfg(test)]
-mod multicall;
 // #[cfg(test)]
 // mod nitro;
 #[cfg(test)]
@@ -42,13 +37,7 @@ mod stateless;
 // #[cfg(all(test, feature = "svm"))]
 // pub mod svm;
 #[cfg(test)]
-mod universal_token;
-#[cfg(test)]
-mod universal_token_solidity;
-// Testnet-only: Runtime upgrade functionality. See frame_init() for details.
-#[cfg(test)]
 mod bench;
-#[cfg(feature = "fluent-testnet")]
 #[cfg(test)]
 mod ddos;
 #[cfg(test)]
@@ -57,7 +46,10 @@ mod exec_input;
 mod oauth2;
 #[cfg(test)]
 mod oom;
-#[cfg(feature = "fluent-testnet")]
+#[cfg(test)]
+mod universal_token;
+#[cfg(test)]
+mod universal_token_solidity;
 #[cfg(test)]
 mod update_account;
 #[cfg(test)]

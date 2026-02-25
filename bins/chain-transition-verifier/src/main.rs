@@ -9,13 +9,13 @@ use fluent::{
 use reth_chainspec::ChainSpec;
 use reth_db::{
     mdbx::{open_db, DatabaseArguments},
-    DatabaseEnv,
+    table::TableInfo,
+    tables, DatabaseEnv, TableSet, TableType, TableViewer,
 };
 use reth_ethereum_primitives::EthPrimitives;
 use reth_evm::{execute::Executor, ConfigureEvm};
 use reth_network::types::BlockHashOrNumber;
 use reth_node_api::NodeTypesWithDBAdapter;
-use reth_node_core::primitives::AlloyBlockHeader;
 use reth_node_ethereum::{EthEvmConfig, EthereumNode};
 use reth_primitives::{Block, Header, RecoveredBlock};
 use reth_provider::{
@@ -24,7 +24,7 @@ use reth_provider::{
     StaticFileProviderBuilder, TransactionVariant,
 };
 use reth_revm::database::StateProviderDatabase;
-use std::{path::PathBuf, sync::Arc};
+use std::{fmt, path::PathBuf, sync::Arc};
 
 #[derive(Parser, Debug)]
 #[command(name = "reth-transition-test")]
@@ -48,15 +48,14 @@ struct Args {
 
 type Node = NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>;
 
-// #[cfg(feature = "fluent-testnet")]
-// tables! {
-//     /// Stores generic node metadata as key-value pairs.
-//     /// Can store feature flags, configuration markers, and other node-specific data.
-//     table Metadata {
-//         type Key = String;
-//         type Value = Vec<u8>;
-//     }
-// }
+tables! {
+    /// Stores generic node metadata as key-value pairs.
+    /// Can store feature flags, configuration markers, and other node-specific data.
+    table Metadata {
+        type Key = String;
+        type Value = Vec<u8>;
+    }
+}
 
 fn main() -> Result<()> {
     let args = Args::parse();
@@ -64,10 +63,9 @@ fn main() -> Result<()> {
     let db_path = args.datadir.join("db");
     let static_file_path = args.datadir.join("static_files");
     let rocks_db_path = args.datadir.join("rocksdb");
-    let db = open_db(db_path, DatabaseArguments::default())
+    let mut db = open_db(db_path, DatabaseArguments::default())
         .map_err(|e| eyre!("failed to open database: {e}"))?;
-    // #[cfg(feature = "fluent-testnet")]
-    // db.create_and_track_tables_for::<Tables>()?;
+    db.create_and_track_tables_for::<Tables>()?;
     let db = Arc::new(db);
 
     let chain_spec: Arc<ChainSpec> = match args.chain.as_str() {
@@ -114,7 +112,7 @@ fn main() -> Result<()> {
             );
         }
 
-        let header: Header = blockchain
+        let _header: Header = blockchain
             .header_by_number(n)?
             .ok_or_else(|| eyre!("missing header for block {n}"))?;
 
@@ -147,9 +145,9 @@ fn main() -> Result<()> {
             ));
         }
 
-        if args.verbose {
-            eprintln!("✅ block {n} ok (state_root {:?})", header.state_root());
-        }
+        // if args.verbose {
+        //     eprintln!("✅ block {n} ok (state_root {:?})", header.state_root());
+        // }
     }
 
     Ok(())

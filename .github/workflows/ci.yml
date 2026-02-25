@@ -40,16 +40,6 @@ jobs:
             features: std
             kind: workspace
 
-          - name: contracts / std,fluent-testnet
-            manifest: ./contracts/Cargo.toml
-            features: std,fluent-testnet
-            kind: workspace
-
-          - name: examples / std,fluent-testnet
-            manifest: ./examples/Cargo.toml
-            features: std,fluent-testnet
-            kind: workspace
-
           # ---------------------------
           # root e2e (workspace)
           # ---------------------------
@@ -63,16 +53,6 @@ jobs:
             features: std
             kind: workspace
 
-          - name: root e2e / std,wasmtime,fluent-testnet
-            manifest: ./Cargo.toml
-            features: std,wasmtime,fluent-testnet
-            kind: workspace
-
-          - name: root e2e / std,fluent-testnet
-            manifest: ./Cargo.toml
-            features: std,fluent-testnet
-            kind: workspace
-
           # ---------------------------
           # evm-e2e suite (good_coverage_tests)
           # ---------------------------
@@ -84,16 +64,6 @@ jobs:
           - name: evm-e2e / std,wasmtime
             manifest: ./evm-e2e/Cargo.toml
             features: std,wasmtime
-            kind: evm-e2e
-
-          - name: evm-e2e / std,fluent-testnet
-            manifest: ./evm-e2e/Cargo.toml
-            features: std,fluent-testnet
-            kind: evm-e2e
-
-          - name: evm-e2e / std,wasmtime,fluent-testnet
-            manifest: ./evm-e2e/Cargo.toml
-            features: std,wasmtime,fluent-testnet
             kind: evm-e2e
 
     steps:
