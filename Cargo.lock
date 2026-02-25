@@ -266,8 +266,8 @@ dependencies = [
  "c-kzg",
  "derive_more 2.1.1",
  "either",
- "ethereum_ssz",
- "ethereum_ssz_derive",
+ "ethereum_ssz 0.9.1",
+ "ethereum_ssz_derive 0.9.1",
  "serde",
  "serde_with",
  "sha2",
@@ -276,8 +276,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-evm"
-version = "0.26.3"
-source = "git+https://github.com/fluentlabs-xyz/alloy-rwasm.git?branch=v26-patched#ef9149ef2791f7151a793c0f1883e96f57dbec3e"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2ccfe6d724ceabd5518350cfb34f17dd3a6c3cc33579eee94d98101d3a511ff"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -288,8 +289,6 @@ dependencies = [
  "alloy-sol-types",
  "auto_impl",
  "derive_more 2.1.1",
- "fluentbase-revm",
- "fluentbase-types",
  "op-alloy",
  "op-revm",
  "revm",
@@ -449,7 +448,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "auto_impl",
- "dashmap 6.1.0",
+ "dashmap",
  "either",
  "futures",
  "futures-utils-wasm",
@@ -594,8 +593,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "derive_more 2.1.1",
- "ethereum_ssz",
- "ethereum_ssz_derive",
+ "ethereum_ssz 0.9.1",
+ "ethereum_ssz_derive 0.9.1",
  "serde",
  "serde_json",
  "serde_with",
@@ -628,8 +627,8 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "derive_more 2.1.1",
- "ethereum_ssz",
- "ethereum_ssz_derive",
+ "ethereum_ssz 0.9.1",
+ "ethereum_ssz_derive 0.9.1",
  "jsonwebtoken",
  "rand 0.8.5",
  "serde",
@@ -889,7 +888,7 @@ dependencies = [
  "http",
  "serde_json",
  "tokio",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.26.2",
  "tracing",
  "ws_stream_wasm",
 ]
@@ -978,7 +977,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -989,7 +988,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1529,24 +1528,6 @@ dependencies = [
 
 [[package]]
 name = "bindgen"
-version = "0.71.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
-dependencies = [
- "bitflags 2.11.0",
- "cexpr",
- "clang-sys",
- "itertools 0.12.1",
- "proc-macro2",
- "quote",
- "regex",
- "rustc-hash",
- "shlex",
- "syn 2.0.116",
-]
-
-[[package]]
-name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
@@ -1554,7 +1535,7 @@ dependencies = [
  "bitflags 2.11.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -1717,7 +1698,7 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "cow-utils",
- "dashmap 6.1.0",
+ "dashmap",
  "dynify",
  "fast-float2",
  "float16",
@@ -1889,6 +1870,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstr"
+version = "1.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63044e1ae8e69f3b5a92c736ca6269b8d12fa7efe39bf34ddb06d102cf0e2cab"
+dependencies = [
+ "memchr",
+ "regex-automata",
+ "serde",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1902,12 +1894,6 @@ name = "byte-slice-cast"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7575182f7272186991736b70173b0ea045398f984bf5ebbb3804736ce1330c9d"
-
-[[package]]
-name = "bytecount"
-version = "0.6.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
 
 [[package]]
 name = "bytemuck"
@@ -2000,19 +1986,6 @@ dependencies = [
 
 [[package]]
 name = "cargo_metadata"
-version = "0.14.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4acbb09d9ee8e23699b9634375c72795d095bf268439da88562cf9b501f181fa"
-dependencies = [
- "camino",
- "cargo-platform 0.1.9",
- "semver 1.0.27",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "cargo_metadata"
 version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd5eb614ed4c27c5d706420e4320fbe3216ab31fa1c33cd8246ac36dae4479ba"
@@ -2038,12 +2011,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
 ]
-
-[[package]]
-name = "cassowary"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
 
 [[package]]
 name = "cast"
@@ -2292,16 +2259,16 @@ version = "7.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "958c5d6ecf1f214b4c2bbbbf6ab9523a864bd136dcf71a7e8904799acfe1ad47"
 dependencies = [
- "crossterm 0.29.0",
+ "crossterm",
  "unicode-segmentation",
- "unicode-width 0.2.0",
+ "unicode-width",
 ]
 
 [[package]]
 name = "compact_str"
-version = "0.8.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b79c4069c6cad78e2e0cdfcbd26275770669fb39fd308a752dc110e83b9af32"
+checksum = "3fdb1325a1cece981e8a296ab8f0f9b63ae357bd0784a9faaf548cc7b480707a"
 dependencies = [
  "castaway",
  "cfg-if",
@@ -2704,31 +2671,19 @@ checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "crossterm"
-version = "0.28.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "829d955a0bb380ef178a640b91779e3987da38c9aea133b20614cfed8cdea9c6"
-dependencies = [
- "bitflags 2.11.0",
- "crossterm_winapi",
- "mio",
- "parking_lot",
- "rustix 0.38.44",
- "signal-hook",
- "signal-hook-mio",
- "winapi",
-]
-
-[[package]]
-name = "crossterm"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b9f2e4c67f833b660cdb0a3523065869fb35570177239812ed4c905aeff87b"
 dependencies = [
  "bitflags 2.11.0",
  "crossterm_winapi",
+ "derive_more 2.1.1",
  "document-features",
+ "mio",
  "parking_lot",
- "rustix 1.1.3",
+ "rustix",
+ "signal-hook",
+ "signal-hook-mio",
  "winapi",
 ]
 
@@ -2934,29 +2889,18 @@ dependencies = [
 
 [[package]]
 name = "dashmap"
-version = "5.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
-dependencies = [
- "cfg-if",
- "hashbrown 0.14.5",
- "lock_api",
- "once_cell",
- "parking_lot_core",
-]
-
-[[package]]
-name = "dashmap"
 version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
 dependencies = [
+ "arbitrary",
  "cfg-if",
  "crossbeam-utils",
  "hashbrown 0.14.5",
  "lock_api",
  "once_cell",
  "parking_lot_core",
+ "serde",
 ]
 
 [[package]]
@@ -3291,7 +3235,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3597,16 +3541,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "error-chain"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d2f06b9cac1506ece98fe3231e3cc9c4410ec3d5b1f24ae1c8946f0742cdefc"
-dependencies = [
- "version_check",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3649,12 +3584,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethereum_ssz"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2128a84f7a3850d54ee343334e3392cca61f9f6aa9441eec481b9394b43c238b"
+dependencies = [
+ "alloy-primitives",
+ "ethereum_serde_utils",
+ "itertools 0.14.0",
+ "serde",
+ "serde_derive",
+ "smallvec",
+ "typenum",
+]
+
+[[package]]
 name = "ethereum_ssz_derive"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a657b6b3b7e153637dc6bdc6566ad9279d9ee11a15b12cfb24a2e04360637e9f"
 dependencies = [
  "darling 0.20.11",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.116",
+]
+
+[[package]]
+name = "ethereum_ssz_derive"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd596f91cff004fc8d02be44c21c0f9b93140a04b66027ae052f5f8e05b48eba"
+dependencies = [
+ "darling 0.23.0",
  "proc-macro2",
  "quote",
  "syn 2.0.116",
@@ -3760,6 +3722,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c41c7aa69c00ebccf06c3fa7ffe2a6cf26a58b5fe4deabfe646285ff48136a8f"
 dependencies = [
  "equivalent",
+ "rapidhash",
+ "typeid",
 ]
 
 [[package]]
@@ -3833,45 +3797,126 @@ version = "0.5.1"
 dependencies = [
  "alloy-evm",
  "alloy-genesis",
+ "alloy-primitives",
  "clap",
  "directories",
  "eyre",
  "flate2",
+ "fluentbase-genesis",
+ "fluentbase-revm",
  "reqwest",
+ "reth-basic-payload-builder",
+ "reth-chain-state",
  "reth-chainspec",
  "reth-cli",
+ "reth-cli-commands",
  "reth-cli-runner",
  "reth-cli-util",
+ "reth-codecs",
+ "reth-codecs-derive",
+ "reth-config",
  "reth-consensus",
  "reth-consensus-common",
+ "reth-consensus-debug-client",
  "reth-db",
+ "reth-db-api",
+ "reth-db-common",
+ "reth-db-models",
+ "reth-discv4",
+ "reth-discv5",
+ "reth-dns-discovery",
+ "reth-downloaders",
+ "reth-e2e-test-utils",
+ "reth-ecies",
+ "reth-engine-local",
+ "reth-engine-primitives",
+ "reth-engine-service",
+ "reth-engine-tree",
+ "reth-engine-util",
+ "reth-era",
+ "reth-era-downloader",
+ "reth-era-utils",
+ "reth-errors",
+ "reth-eth-wire",
+ "reth-eth-wire-types",
+ "reth-ethereum",
  "reth-ethereum-cli",
+ "reth-ethereum-consensus",
+ "reth-ethereum-engine-primitives",
+ "reth-ethereum-forks",
  "reth-ethereum-payload-builder",
  "reth-ethereum-primitives",
+ "reth-etl",
  "reth-evm",
+ "reth-evm-ethereum",
+ "reth-execution-errors",
+ "reth-execution-types",
+ "reth-exex",
+ "reth-exex-test-utils",
+ "reth-exex-types",
+ "reth-fs-util",
+ "reth-invalid-block-hooks",
+ "reth-ipc",
+ "reth-libmdbx",
+ "reth-mdbx-sys",
+ "reth-metrics",
+ "reth-net-banlist",
+ "reth-net-nat",
  "reth-network",
  "reth-network-api",
+ "reth-network-p2p",
+ "reth-network-peers",
+ "reth-network-types",
+ "reth-nippy-jar",
  "reth-node-api",
  "reth-node-builder",
  "reth-node-core",
  "reth-node-ethereum",
+ "reth-node-ethstats",
+ "reth-node-events",
  "reth-node-metrics",
+ "reth-node-types",
  "reth-payload-builder",
+ "reth-payload-builder-primitives",
  "reth-payload-primitives",
+ "reth-payload-util",
+ "reth-payload-validator",
  "reth-primitives",
+ "reth-primitives-traits",
  "reth-provider",
- "reth-ress-protocol",
- "reth-ress-provider",
+ "reth-prune",
+ "reth-prune-types",
  "reth-revm",
  "reth-rpc",
  "reth-rpc-api",
+ "reth-rpc-api-testing-util",
  "reth-rpc-builder",
  "reth-rpc-convert",
+ "reth-rpc-e2e-tests",
+ "reth-rpc-engine-api",
+ "reth-rpc-eth-api",
  "reth-rpc-eth-types",
+ "reth-rpc-layer",
  "reth-rpc-server-types",
+ "reth-stages",
+ "reth-stages-api",
+ "reth-stages-types",
+ "reth-static-file",
+ "reth-static-file-types",
+ "reth-storage-api",
+ "reth-storage-errors",
+ "reth-storage-rpc-provider",
  "reth-tasks",
  "reth-tokio-util",
+ "reth-tracing",
+ "reth-tracing-otlp",
  "reth-transaction-pool",
+ "reth-trie",
+ "reth-trie-common",
+ "reth-trie-db",
+ "reth-trie-parallel",
+ "reth-trie-sparse",
+ "reth-zstd-compressors",
  "serde_json",
  "tokio",
  "tracing",
@@ -3899,6 +3944,133 @@ dependencies = [
  "tempfile",
  "toml 0.8.23",
  "tracing",
+]
+
+[[package]]
+name = "fluentbase-chain-transition-verifier"
+version = "0.5.1"
+dependencies = [
+ "alloy-genesis",
+ "clap",
+ "directories",
+ "eyre",
+ "flate2",
+ "fluent",
+ "parking_lot",
+ "reqwest",
+ "reth-basic-payload-builder",
+ "reth-chain-state",
+ "reth-chainspec",
+ "reth-cli",
+ "reth-cli-commands",
+ "reth-cli-runner",
+ "reth-cli-util",
+ "reth-codecs",
+ "reth-codecs-derive",
+ "reth-config",
+ "reth-consensus",
+ "reth-consensus-common",
+ "reth-consensus-debug-client",
+ "reth-db",
+ "reth-db-api",
+ "reth-db-common",
+ "reth-db-models",
+ "reth-discv4",
+ "reth-discv5",
+ "reth-dns-discovery",
+ "reth-downloaders",
+ "reth-e2e-test-utils",
+ "reth-ecies",
+ "reth-engine-local",
+ "reth-engine-primitives",
+ "reth-engine-service",
+ "reth-engine-tree",
+ "reth-engine-util",
+ "reth-era",
+ "reth-era-downloader",
+ "reth-era-utils",
+ "reth-errors",
+ "reth-eth-wire",
+ "reth-eth-wire-types",
+ "reth-ethereum",
+ "reth-ethereum-cli",
+ "reth-ethereum-consensus",
+ "reth-ethereum-engine-primitives",
+ "reth-ethereum-forks",
+ "reth-ethereum-payload-builder",
+ "reth-ethereum-primitives",
+ "reth-etl",
+ "reth-evm",
+ "reth-evm-ethereum",
+ "reth-execution-errors",
+ "reth-execution-types",
+ "reth-exex",
+ "reth-exex-test-utils",
+ "reth-exex-types",
+ "reth-fs-util",
+ "reth-invalid-block-hooks",
+ "reth-ipc",
+ "reth-libmdbx",
+ "reth-mdbx-sys",
+ "reth-metrics",
+ "reth-net-banlist",
+ "reth-net-nat",
+ "reth-network",
+ "reth-network-api",
+ "reth-network-p2p",
+ "reth-network-peers",
+ "reth-network-types",
+ "reth-nippy-jar",
+ "reth-node-api",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-node-ethereum",
+ "reth-node-ethstats",
+ "reth-node-events",
+ "reth-node-metrics",
+ "reth-node-types",
+ "reth-payload-builder",
+ "reth-payload-builder-primitives",
+ "reth-payload-primitives",
+ "reth-payload-util",
+ "reth-payload-validator",
+ "reth-primitives",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-prune",
+ "reth-prune-types",
+ "reth-revm",
+ "reth-rpc",
+ "reth-rpc-api",
+ "reth-rpc-api-testing-util",
+ "reth-rpc-builder",
+ "reth-rpc-convert",
+ "reth-rpc-e2e-tests",
+ "reth-rpc-engine-api",
+ "reth-rpc-eth-api",
+ "reth-rpc-eth-types",
+ "reth-rpc-layer",
+ "reth-rpc-server-types",
+ "reth-stages",
+ "reth-stages-api",
+ "reth-stages-types",
+ "reth-static-file",
+ "reth-static-file-types",
+ "reth-storage-api",
+ "reth-storage-errors",
+ "reth-storage-rpc-provider",
+ "reth-tasks",
+ "reth-tokio-util",
+ "reth-tracing",
+ "reth-tracing-otlp",
+ "reth-transaction-pool",
+ "reth-trie",
+ "reth-trie-common",
+ "reth-trie-db",
+ "reth-trie-parallel",
+ "reth-trie-sparse",
+ "reth-zstd-compressors",
+ "serde_json",
 ]
 
 [[package]]
@@ -4349,7 +4521,7 @@ dependencies = [
  "log",
  "rustversion",
  "windows-link",
- "windows-result 0.4.1",
+ "windows-result",
 ]
 
 [[package]]
@@ -5574,6 +5746,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kasuari"
+version = "0.4.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fe90c1150662e858c7d5f945089b7517b0a80d8bf7ba4b1b5ffc984e7230a5b"
+dependencies = [
+ "hashbrown 0.16.1",
+ "portable-atomic",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "keccak"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5686,7 +5869,7 @@ version = "0.14.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a54ad7278b8bc5301d5ffd2a94251c004feb971feba96c971ea4063645990757"
 dependencies = [
- "bindgen 0.72.1",
+ "bindgen",
  "errno",
  "libc",
 ]
@@ -5708,7 +5891,7 @@ version = "0.17.3+10.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cef2a00ee60fe526157c9023edab23943fae1ce2ab6f4abb2a807c1746835de9"
 dependencies = [
- "bindgen 0.72.1",
+ "bindgen",
  "bzip2-sys",
  "cc",
  "libc",
@@ -5731,6 +5914,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "line-clipping"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f4de44e98ddbf09375cbf4d17714d18f39195f4f4894e8524501726fd9a8a4a"
+dependencies = [
+ "bitflags 2.11.0",
+]
+
+[[package]]
 name = "linked-hash-map"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5745,12 +5937,6 @@ dependencies = [
  "linked-hash-map",
  "serde_core",
 ]
-
-[[package]]
-name = "linux-raw-sys"
-version = "0.4.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d26c52dbd32dccf2d10cac7725f8eae5296885fb5703b261f7d0a0739ec807ab"
 
 [[package]]
 name = "linux-raw-sys"
@@ -5844,9 +6030,9 @@ dependencies = [
 
 [[package]]
 name = "lz4_flex"
-version = "0.11.5"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08ab2867e3eeeca90e844d1940eab391c9dc5228783db2ed999acbc0a9ed375a"
+checksum = "ab6473172471198271ff72e9379150e9dfd70d8e533e0752a27e515b48dd375e"
 
 [[package]]
 name = "mach2"
@@ -5956,7 +6142,7 @@ version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad38eb12aea514a0466ea40a80fd8cc83637065948eb4a426e4aa46261175227"
 dependencies = [
- "rustix 1.1.3",
+ "rustix",
 ]
 
 [[package]]
@@ -6023,7 +6209,7 @@ dependencies = [
  "mach2 0.6.0",
  "metrics",
  "once_cell",
- "procfs 0.18.0",
+ "procfs",
  "rlimit",
  "windows 0.62.2",
 ]
@@ -6061,21 +6247,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mini-moka"
-version = "0.10.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c325dfab65f261f386debee8b0969da215b3fa0037e74c8a1234db7ba986d803"
-dependencies = [
- "crossbeam-channel",
- "crossbeam-utils",
- "dashmap 5.5.3",
- "skeptic",
- "smallvec",
- "tagptr",
- "triomphe",
-]
-
-[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6105,9 +6276,9 @@ dependencies = [
 
 [[package]]
 name = "modular-bitfield"
-version = "0.11.2"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a53d79ba8304ac1c4f9eb3b9d281f21f7be9d4626f72ce7df4ad8fbde4f38a74"
+checksum = "2956e537fc68236d2aa048f55704f231cc93f1c4de42fe1ecb5bd7938061fc4a"
 dependencies = [
  "modular-bitfield-impl",
  "static_assertions",
@@ -6115,13 +6286,13 @@ dependencies = [
 
 [[package]]
 name = "modular-bitfield-impl"
-version = "0.11.2"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a7d5f7076603ebc68de2dc6a650ec331a062a13abaa346975be747bbfa4b789"
+checksum = "59b43b4fd69e3437618106f7754f34021b831a514f9e1a98ae863cabcd8d8dad"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.116",
 ]
 
 [[package]]
@@ -6240,7 +6411,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6407,6 +6578,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-core-foundation"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c10c2894a6fed806ade6027bcd50662746363a9589d3ec9d9bef30a4e4bc166"
+dependencies = [
+ "bitflags 2.11.0",
+]
+
+[[package]]
+name = "objc2-io-kit"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71c1c64d6120e51cd86033f67176b1cb66780c2efe34dec55176f77befd93c0a"
+dependencies = [
+ "libc",
+ "objc2-core-foundation",
+]
+
+[[package]]
 name = "object"
 version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6536,8 +6726,8 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-serde",
  "derive_more 2.1.1",
- "ethereum_ssz",
- "ethereum_ssz_derive",
+ "ethereum_ssz 0.9.1",
+ "ethereum_ssz_derive 0.9.1",
  "op-alloy-consensus",
  "serde",
  "sha2",
@@ -7337,38 +7527,15 @@ dependencies = [
 
 [[package]]
 name = "procfs"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc5b72d8145275d844d4b5f6d4e1eef00c8cd889edb6035c21675d1bb1f45c9f"
-dependencies = [
- "bitflags 2.11.0",
- "chrono",
- "flate2",
- "hex",
- "procfs-core 0.17.0",
- "rustix 0.38.44",
-]
-
-[[package]]
-name = "procfs"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25485360a54d6861439d60facef26de713b1e126bf015ec8f98239467a2b82f7"
 dependencies = [
  "bitflags 2.11.0",
- "procfs-core 0.18.0",
- "rustix 1.1.3",
-]
-
-[[package]]
-name = "procfs-core"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "239df02d8349b06fc07398a3a1697b06418223b1c7725085e801e7c0fc6a12ec"
-dependencies = [
- "bitflags 2.11.0",
  "chrono",
- "hex",
+ "flate2",
+ "procfs-core",
+ "rustix",
 ]
 
 [[package]]
@@ -7378,6 +7545,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6401bf7b6af22f78b563665d15a22e9aef27775b79b149a66ca022468a4e405"
 dependencies = [
  "bitflags 2.11.0",
+ "chrono",
  "hex",
 ]
 
@@ -7438,21 +7606,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.116",
-]
-
-[[package]]
-name = "pulldown-cmark"
-version = "0.9.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57206b407293d2bcd3af849ce869d52068623f19e1b5ff8e8778e3309439682b"
-dependencies = [
- "bitflags 2.11.0",
- "memchr",
- "unicase",
 ]
 
 [[package]]
@@ -7558,7 +7715,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7683,23 +7840,65 @@ dependencies = [
 
 [[package]]
 name = "ratatui"
-version = "0.29.0"
+version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eabd94c2f37801c20583fc49dd5cd6b0ba68c716787c2dd6ed18571e1e63117b"
+checksum = "d1ce67fb8ba4446454d1c8dbaeda0557ff5e94d39d5e5ed7f10a65eb4c8266bc"
+dependencies = [
+ "instability",
+ "ratatui-core",
+ "ratatui-crossterm",
+ "ratatui-widgets",
+]
+
+[[package]]
+name = "ratatui-core"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ef8dea09a92caaf73bff7adb70b76162e5937524058a7e5bff37869cbbec293"
 dependencies = [
  "bitflags 2.11.0",
- "cassowary",
  "compact_str",
- "crossterm 0.28.1",
+ "hashbrown 0.16.1",
  "indoc",
- "instability",
- "itertools 0.13.0",
- "lru 0.12.5",
- "paste",
- "strum 0.26.3",
+ "itertools 0.14.0",
+ "kasuari",
+ "lru 0.16.3",
+ "strum 0.27.2",
+ "thiserror 2.0.18",
  "unicode-segmentation",
  "unicode-truncate",
- "unicode-width 0.2.0",
+ "unicode-width",
+]
+
+[[package]]
+name = "ratatui-crossterm"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "577c9b9f652b4c121fb25c6a391dd06406d3b092ba68827e6d2f09550edc54b3"
+dependencies = [
+ "cfg-if",
+ "crossterm",
+ "instability",
+ "ratatui-core",
+]
+
+[[package]]
+name = "ratatui-widgets"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7dbfa023cd4e604c2553483820c5fe8aa9d71a42eea5aa77c6e7f35756612db"
+dependencies = [
+ "bitflags 2.11.0",
+ "hashbrown 0.16.1",
+ "indoc",
+ "instability",
+ "itertools 0.14.0",
+ "line-clipping",
+ "ratatui-core",
+ "strum 0.27.2",
+ "time",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
@@ -7910,8 +8109,8 @@ checksum = "1e061d1b48cb8d38042de4ae0a7a6401009d6143dc80d2e2d6f31f0bdd6470c7"
 
 [[package]]
 name = "reth-basic-payload-builder"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -7934,17 +8133,20 @@ dependencies = [
 
 [[package]]
 name = "reth-chain-state"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "derive_more 2.1.1",
  "metrics",
  "parking_lot",
  "pin-project",
  "rand 0.9.2",
+ "rayon",
  "reth-chainspec",
  "reth-errors",
  "reth-ethereum-primitives",
@@ -7963,8 +8165,8 @@ dependencies = [
 
 [[package]]
 name = "reth-chainspec"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -7983,8 +8185,8 @@ dependencies = [
 
 [[package]]
 name = "reth-cli"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-genesis",
  "clap",
@@ -7997,8 +8199,8 @@ dependencies = [
 
 [[package]]
 name = "reth-cli-commands"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -8009,7 +8211,7 @@ dependencies = [
  "backon",
  "clap",
  "comfy-table",
- "crossterm 0.28.1",
+ "crossterm",
  "eyre",
  "fdlimit",
  "futures",
@@ -8018,6 +8220,7 @@ dependencies = [
  "itertools 0.14.0",
  "lz4",
  "metrics",
+ "parking_lot",
  "proptest",
  "proptest-arbitrary-interop",
  "ratatui",
@@ -8063,6 +8266,7 @@ dependencies = [
  "reth-stages-types",
  "reth-static-file",
  "reth-static-file-types",
+ "reth-storage-api",
  "reth-tasks",
  "reth-trie",
  "reth-trie-common",
@@ -8073,7 +8277,7 @@ dependencies = [
  "tar",
  "tokio",
  "tokio-stream",
- "toml 0.8.23",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
  "url",
  "zstd",
@@ -8081,8 +8285,8 @@ dependencies = [
 
 [[package]]
 name = "reth-cli-runner"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "reth-tasks",
  "tokio",
@@ -8091,8 +8295,8 @@ dependencies = [
 
 [[package]]
 name = "reth-cli-util"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -8112,8 +8316,8 @@ dependencies = [
 
 [[package]]
 name = "reth-codecs"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8132,8 +8336,8 @@ dependencies = [
 
 [[package]]
 name = "reth-codecs-derive"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8142,8 +8346,8 @@ dependencies = [
 
 [[package]]
 name = "reth-config"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "eyre",
  "humantime-serde",
@@ -8152,14 +8356,14 @@ dependencies = [
  "reth-stages-types",
  "reth-static-file-types",
  "serde",
- "toml 0.8.23",
+ "toml 0.9.12+spec-1.1.0",
  "url",
 ]
 
 [[package]]
 name = "reth-consensus"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -8171,8 +8375,8 @@ dependencies = [
 
 [[package]]
 name = "reth-consensus-common"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8183,8 +8387,8 @@ dependencies = [
 
 [[package]]
 name = "reth-consensus-debug-client"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8209,14 +8413,15 @@ dependencies = [
 
 [[package]]
 name = "reth-db"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "derive_more 2.1.1",
  "eyre",
  "metrics",
  "page_size",
+ "parking_lot",
  "reth-db-api",
  "reth-fs-util",
  "reth-libmdbx",
@@ -8227,29 +8432,32 @@ dependencies = [
  "reth-tracing",
  "rustc-hash",
  "strum 0.27.2",
- "sysinfo 0.33.1",
+ "sysinfo 0.38.2",
+ "tempfile",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
 name = "reth-db-api"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-genesis",
  "alloy-primitives",
  "arbitrary",
+ "arrayvec",
  "bytes",
  "derive_more 2.1.1",
  "metrics",
  "modular-bitfield",
+ "op-alloy-consensus",
  "parity-scale-codec",
  "proptest",
  "reth-codecs",
  "reth-db-models",
  "reth-ethereum-primitives",
- "reth-optimism-primitives",
  "reth-primitives-traits",
  "reth-prune-types",
  "reth-stages-types",
@@ -8261,8 +8469,8 @@ dependencies = [
 
 [[package]]
 name = "reth-db-common"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-genesis",
@@ -8291,8 +8499,8 @@ dependencies = [
 
 [[package]]
 name = "reth-db-models"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -8306,8 +8514,8 @@ dependencies = [
 
 [[package]]
 name = "reth-discv4"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -8331,8 +8539,8 @@ dependencies = [
 
 [[package]]
 name = "reth-discv5"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -8355,15 +8563,15 @@ dependencies = [
 
 [[package]]
 name = "reth-dns-discovery"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
+ "dashmap",
  "data-encoding",
  "enr",
  "hickory-resolver",
  "linked_hash_set",
- "parking_lot",
  "reth-ethereum-forks",
  "reth-network-peers",
  "reth-tokio-util",
@@ -8379,8 +8587,8 @@ dependencies = [
 
 [[package]]
 name = "reth-downloaders"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8395,12 +8603,16 @@ dependencies = [
  "rayon",
  "reth-config",
  "reth-consensus",
+ "reth-ethereum-primitives",
  "reth-metrics",
  "reth-network-p2p",
  "reth-network-peers",
  "reth-primitives-traits",
+ "reth-provider",
  "reth-storage-api",
  "reth-tasks",
+ "reth-testing-utils",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -8409,9 +8621,67 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-e2e-test-utils"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "alloy-signer",
+ "alloy-signer-local",
+ "derive_more 2.1.1",
+ "eyre",
+ "futures-util",
+ "jsonrpsee",
+ "reth-chainspec",
+ "reth-cli-commands",
+ "reth-config",
+ "reth-consensus",
+ "reth-db",
+ "reth-db-common",
+ "reth-engine-local",
+ "reth-engine-primitives",
+ "reth-ethereum-primitives",
+ "reth-network-api",
+ "reth-network-p2p",
+ "reth-network-peers",
+ "reth-node-api",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-node-ethereum",
+ "reth-payload-builder",
+ "reth-payload-builder-primitives",
+ "reth-payload-primitives",
+ "reth-primitives",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-rpc-api",
+ "reth-rpc-builder",
+ "reth-rpc-eth-api",
+ "reth-rpc-server-types",
+ "reth-stages-types",
+ "reth-tasks",
+ "reth-tokio-util",
+ "reth-tracing",
+ "revm",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "reth-ecies"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "aes",
  "alloy-primitives",
@@ -8438,8 +8708,8 @@ dependencies = [
 
 [[package]]
 name = "reth-engine-local"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -8461,8 +8731,8 @@ dependencies = [
 
 [[package]]
 name = "reth-engine-primitives"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8486,8 +8756,8 @@ dependencies = [
 
 [[package]]
 name = "reth-engine-service"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "futures",
  "pin-project",
@@ -8495,7 +8765,6 @@ dependencies = [
  "reth-consensus",
  "reth-engine-primitives",
  "reth-engine-tree",
- "reth-ethereum-primitives",
  "reth-evm",
  "reth-network-p2p",
  "reth-node-types",
@@ -8509,8 +8778,8 @@ dependencies = [
 
 [[package]]
 name = "reth-engine-tree"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -8520,15 +8789,15 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-engine",
  "crossbeam-channel",
- "dashmap 6.1.0",
  "derive_more 2.1.1",
+ "fixed-cache",
  "futures",
  "metrics",
- "mini-moka",
  "moka",
  "parking_lot",
  "rayon",
  "reth-chain-state",
+ "reth-chainspec",
  "reth-consensus",
  "reth-db",
  "reth-engine-primitives",
@@ -8543,15 +8812,18 @@ dependencies = [
  "reth-primitives-traits",
  "reth-provider",
  "reth-prune",
+ "reth-prune-types",
  "reth-revm",
+ "reth-stages",
  "reth-stages-api",
+ "reth-static-file",
  "reth-tasks",
+ "reth-tracing",
  "reth-trie",
  "reth-trie-common",
  "reth-trie-db",
  "reth-trie-parallel",
  "reth-trie-sparse",
- "reth-trie-sparse-parallel",
  "revm",
  "revm-primitives",
  "schnellru",
@@ -8563,8 +8835,8 @@ dependencies = [
 
 [[package]]
 name = "reth-engine-util"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-rpc-types-engine",
@@ -8591,23 +8863,23 @@ dependencies = [
 
 [[package]]
 name = "reth-era"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
- "ethereum_ssz",
- "ethereum_ssz_derive",
+ "ethereum_ssz 0.10.1",
+ "ethereum_ssz_derive 0.10.1",
  "snap",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "reth-era-downloader"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "bytes",
@@ -8622,8 +8894,8 @@ dependencies = [
 
 [[package]]
 name = "reth-era-utils"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -8644,8 +8916,8 @@ dependencies = [
 
 [[package]]
 name = "reth-errors"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "reth-consensus",
  "reth-execution-errors",
@@ -8655,8 +8927,8 @@ dependencies = [
 
 [[package]]
 name = "reth-eth-wire"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -8684,8 +8956,8 @@ dependencies = [
 
 [[package]]
 name = "reth-eth-wire-types"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -8707,9 +8979,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-ethereum"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
+dependencies = [
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "reth-chainspec",
+ "reth-codecs",
+ "reth-consensus",
+ "reth-consensus-common",
+ "reth-db",
+ "reth-engine-local",
+ "reth-eth-wire",
+ "reth-ethereum-consensus",
+ "reth-ethereum-primitives",
+ "reth-evm",
+ "reth-evm-ethereum",
+ "reth-network",
+ "reth-network-api",
+ "reth-node-api",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-node-ethereum",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-revm",
+ "reth-rpc",
+ "reth-rpc-api",
+ "reth-rpc-builder",
+ "reth-rpc-eth-types",
+ "reth-storage-api",
+ "reth-tasks",
+ "reth-transaction-pool",
+ "reth-trie",
+ "reth-trie-db",
+]
+
+[[package]]
 name = "reth-ethereum-cli"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "clap",
  "eyre",
@@ -8724,14 +9034,15 @@ dependencies = [
  "reth-node-ethereum",
  "reth-node-metrics",
  "reth-rpc-server-types",
+ "reth-tasks",
  "reth-tracing",
  "tracing",
 ]
 
 [[package]]
 name = "reth-ethereum-consensus"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8746,8 +9057,8 @@ dependencies = [
 
 [[package]]
 name = "reth-ethereum-engine-primitives"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -8764,8 +9075,8 @@ dependencies = [
 
 [[package]]
 name = "reth-ethereum-forks"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-eip2124",
  "alloy-hardforks",
@@ -8778,8 +9089,8 @@ dependencies = [
 
 [[package]]
 name = "reth-ethereum-payload-builder"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8807,8 +9118,8 @@ dependencies = [
 
 [[package]]
 name = "reth-ethereum-primitives"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8827,8 +9138,8 @@ dependencies = [
 
 [[package]]
 name = "reth-etl"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "rayon",
  "reth-db-api",
@@ -8837,8 +9148,8 @@ dependencies = [
 
 [[package]]
 name = "reth-evm"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8861,8 +9172,8 @@ dependencies = [
 
 [[package]]
 name = "reth-evm-ethereum"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8870,6 +9181,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "derive_more 2.1.1",
+ "parking_lot",
  "reth-chainspec",
  "reth-ethereum-forks",
  "reth-ethereum-primitives",
@@ -8882,8 +9194,8 @@ dependencies = [
 
 [[package]]
 name = "reth-execution-errors"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -8895,8 +9207,8 @@ dependencies = [
 
 [[package]]
 name = "reth-execution-types"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8913,8 +9225,8 @@ dependencies = [
 
 [[package]]
 name = "reth-exex"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8950,9 +9262,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-exex-test-utils"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
+dependencies = [
+ "alloy-eips",
+ "eyre",
+ "futures-util",
+ "reth-chainspec",
+ "reth-config",
+ "reth-consensus",
+ "reth-db",
+ "reth-db-common",
+ "reth-ethereum-primitives",
+ "reth-evm-ethereum",
+ "reth-execution-types",
+ "reth-exex",
+ "reth-network",
+ "reth-node-api",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-node-ethereum",
+ "reth-payload-builder",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-tasks",
+ "reth-transaction-pool",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "reth-exex-types"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -8965,8 +9309,8 @@ dependencies = [
 
 [[package]]
 name = "reth-fs-util"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "serde",
  "serde_json",
@@ -8975,8 +9319,8 @@ dependencies = [
 
 [[package]]
 name = "reth-invalid-block-hooks"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -9003,8 +9347,8 @@ dependencies = [
 
 [[package]]
 name = "reth-ipc"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "bytes",
  "futures",
@@ -9023,12 +9367,12 @@ dependencies = [
 
 [[package]]
 name = "reth-libmdbx"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "bitflags 2.11.0",
  "byteorder",
- "dashmap 6.1.0",
+ "dashmap",
  "derive_more 2.1.1",
  "parking_lot",
  "reth-mdbx-sys",
@@ -9039,17 +9383,17 @@ dependencies = [
 
 [[package]]
 name = "reth-mdbx-sys"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
- "bindgen 0.71.1",
+ "bindgen",
  "cc",
 ]
 
 [[package]]
 name = "reth-metrics"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "futures",
  "metrics",
@@ -9060,8 +9404,8 @@ dependencies = [
 
 [[package]]
 name = "reth-net-banlist"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "ipnet",
@@ -9069,8 +9413,8 @@ dependencies = [
 
 [[package]]
 name = "reth-net-nat"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "futures-util",
  "if-addrs",
@@ -9083,8 +9427,8 @@ dependencies = [
 
 [[package]]
 name = "reth-network"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9113,6 +9457,7 @@ dependencies = [
  "reth-eth-wire-types",
  "reth-ethereum-forks",
  "reth-ethereum-primitives",
+ "reth-evm-ethereum",
  "reth-fs-util",
  "reth-metrics",
  "reth-net-banlist",
@@ -9139,8 +9484,8 @@ dependencies = [
 
 [[package]]
 name = "reth-network-api"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -9164,8 +9509,8 @@ dependencies = [
 
 [[package]]
 name = "reth-network-p2p"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9173,6 +9518,7 @@ dependencies = [
  "auto_impl",
  "derive_more 2.1.1",
  "futures",
+ "parking_lot",
  "reth-consensus",
  "reth-eth-wire-types",
  "reth-ethereum-primitives",
@@ -9186,8 +9532,8 @@ dependencies = [
 
 [[package]]
 name = "reth-network-peers"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -9201,8 +9547,8 @@ dependencies = [
 
 [[package]]
 name = "reth-network-types"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-eip2124",
  "humantime-serde",
@@ -9215,8 +9561,8 @@ dependencies = [
 
 [[package]]
 name = "reth-nippy-jar"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -9232,8 +9578,8 @@ dependencies = [
 
 [[package]]
 name = "reth-node-api"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-rpc-types-engine",
  "eyre",
@@ -9256,8 +9602,8 @@ dependencies = [
 
 [[package]]
 name = "reth-node-builder"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9325,8 +9671,8 @@ dependencies = [
 
 [[package]]
 name = "reth-node-core"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9356,7 +9702,6 @@ dependencies = [
  "reth-network-p2p",
  "reth-network-peers",
  "reth-primitives-traits",
- "reth-provider",
  "reth-prune-types",
  "reth-rpc-convert",
  "reth-rpc-eth-types",
@@ -9372,7 +9717,7 @@ dependencies = [
  "shellexpand",
  "strum 0.27.2",
  "thiserror 2.0.18",
- "toml 0.8.23",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
  "url",
  "vergen",
@@ -9381,8 +9726,8 @@ dependencies = [
 
 [[package]]
 name = "reth-node-ethereum"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-eips",
  "alloy-network",
@@ -9419,8 +9764,8 @@ dependencies = [
 
 [[package]]
 name = "reth-node-ethstats"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -9436,15 +9781,15 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.28.0",
  "tracing",
  "url",
 ]
 
 [[package]]
 name = "reth-node-events"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9467,8 +9812,8 @@ dependencies = [
 
 [[package]]
 name = "reth-node-metrics"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "bytes",
  "eyre",
@@ -9482,7 +9827,7 @@ dependencies = [
  "metrics-process",
  "metrics-util",
  "pprof_util",
- "procfs 0.17.0",
+ "procfs",
  "reqwest",
  "reth-fs-util",
  "reth-metrics",
@@ -9496,8 +9841,8 @@ dependencies = [
 
 [[package]]
 name = "reth-node-types"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "reth-chainspec",
  "reth-db-api",
@@ -9507,24 +9852,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-optimism-primitives"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "op-alloy-consensus",
- "reth-primitives-traits",
- "serde",
- "serde_with",
-]
-
-[[package]]
 name = "reth-payload-builder"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -9544,8 +9874,8 @@ dependencies = [
 
 [[package]]
 name = "reth-payload-builder-primitives"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "pin-project",
  "reth-payload-primitives",
@@ -9556,8 +9886,8 @@ dependencies = [
 
 [[package]]
 name = "reth-payload-primitives"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9578,9 +9908,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-payload-util"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "reth-transaction-pool",
+]
+
+[[package]]
 name = "reth-payload-validator"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-rpc-types-engine",
@@ -9589,11 +9929,11 @@ dependencies = [
 
 [[package]]
 name = "reth-primitives"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
- "c-kzg",
+ "alloy-primitives",
  "once_cell",
  "reth-ethereum-forks",
  "reth-ethereum-primitives",
@@ -9603,8 +9943,8 @@ dependencies = [
 
 [[package]]
 name = "reth-primitives-traits"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9617,6 +9957,7 @@ dependencies = [
  "auto_impl",
  "byteorder",
  "bytes",
+ "dashmap",
  "derive_more 2.1.1",
  "modular-bitfield",
  "once_cell",
@@ -9636,14 +9977,13 @@ dependencies = [
 
 [[package]]
 name = "reth-provider"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "alloy-rpc-types-engine",
- "dashmap 6.1.0",
  "eyre",
  "itertools 0.14.0",
  "metrics",
@@ -9656,8 +9996,10 @@ dependencies = [
  "reth-db",
  "reth-db-api",
  "reth-errors",
+ "reth-ethereum-engine-primitives",
  "reth-ethereum-primitives",
  "reth-execution-types",
+ "reth-fs-util",
  "reth-metrics",
  "reth-nippy-jar",
  "reth-node-types",
@@ -9667,18 +10009,21 @@ dependencies = [
  "reth-static-file-types",
  "reth-storage-api",
  "reth-storage-errors",
+ "reth-tasks",
  "reth-trie",
  "reth-trie-db",
  "revm-database",
+ "revm-state",
  "rocksdb",
  "strum 0.27.2",
+ "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "reth-prune"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9696,6 +10041,7 @@ dependencies = [
  "reth-prune-types",
  "reth-stages-types",
  "reth-static-file-types",
+ "reth-storage-api",
  "reth-tokio-util",
  "rustc-hash",
  "thiserror 2.0.18",
@@ -9705,8 +10051,8 @@ dependencies = [
 
 [[package]]
 name = "reth-prune-types"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "arbitrary",
@@ -9716,58 +10062,13 @@ dependencies = [
  "serde",
  "strum 0.27.2",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "reth-ress-protocol"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-rlp",
- "futures",
- "reth-eth-wire",
- "reth-ethereum-primitives",
- "reth-network",
- "reth-network-api",
- "reth-storage-errors",
- "tokio",
- "tokio-stream",
- "tracing",
-]
-
-[[package]]
-name = "reth-ress-provider"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "eyre",
- "futures",
- "parking_lot",
- "reth-chain-state",
- "reth-errors",
- "reth-ethereum-primitives",
- "reth-evm",
- "reth-node-api",
- "reth-primitives-traits",
- "reth-ress-protocol",
- "reth-revm",
- "reth-storage-api",
- "reth-tasks",
- "reth-tokio-util",
- "reth-trie",
- "schnellru",
- "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "reth-revm"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "reth-primitives-traits",
@@ -9779,8 +10080,8 @@ dependencies = [
 
 [[package]]
 name = "reth-rpc"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -9808,13 +10109,9 @@ dependencies = [
  "derive_more 2.1.1",
  "dyn-clone",
  "futures",
- "http",
- "http-body",
- "hyper",
  "itertools 0.14.0",
  "jsonrpsee",
  "jsonrpsee-types",
- "jsonwebtoken",
  "parking_lot",
  "pin-project",
  "reth-chain-state",
@@ -9854,15 +10151,14 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
- "tower",
  "tracing",
  "tracing-futures",
 ]
 
 [[package]]
 name = "reth-rpc-api"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-eip7928",
  "alloy-eips",
@@ -9890,9 +10186,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-rpc-api-testing-util"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rpc-types-eth",
+ "alloy-rpc-types-trace",
+ "futures",
+ "jsonrpsee",
+ "reth-ethereum-primitives",
+ "reth-rpc-api",
+ "serde_json",
+ "similar-asserts",
+]
+
+[[package]]
 name = "reth-rpc-builder"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-network",
  "alloy-provider",
@@ -9932,8 +10245,8 @@ dependencies = [
 
 [[package]]
 name = "reth-rpc-convert"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -9952,9 +10265,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-rpc-e2e-tests"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
+dependencies = [
+ "alloy-rpc-types-engine",
+ "eyre",
+ "futures-util",
+ "jsonrpsee",
+ "reth-e2e-test-utils",
+ "reth-node-api",
+ "reth-rpc-api",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "reth-rpc-engine-api"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -9983,8 +10313,8 @@ dependencies = [
 
 [[package]]
 name = "reth-rpc-eth-api"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -10029,8 +10359,8 @@ dependencies = [
 
 [[package]]
 name = "reth-rpc-eth-types"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10077,8 +10407,8 @@ dependencies = [
 
 [[package]]
 name = "reth-rpc-layer"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-rpc-types-engine",
  "http",
@@ -10091,8 +10421,8 @@ dependencies = [
 
 [[package]]
 name = "reth-rpc-server-types"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -10107,8 +10437,8 @@ dependencies = [
 
 [[package]]
 name = "reth-stages"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10120,6 +10450,7 @@ dependencies = [
  "num-traits",
  "rayon",
  "reqwest",
+ "reth-chainspec",
  "reth-codecs",
  "reth-config",
  "reth-consensus",
@@ -10128,6 +10459,7 @@ dependencies = [
  "reth-era",
  "reth-era-downloader",
  "reth-era-utils",
+ "reth-ethereum-primitives",
  "reth-etl",
  "reth-evm",
  "reth-execution-types",
@@ -10143,8 +10475,11 @@ dependencies = [
  "reth-static-file-types",
  "reth-storage-api",
  "reth-storage-errors",
+ "reth-tasks",
+ "reth-testing-utils",
  "reth-trie",
  "reth-trie-db",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -10152,8 +10487,8 @@ dependencies = [
 
 [[package]]
 name = "reth-stages-api"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -10179,8 +10514,8 @@ dependencies = [
 
 [[package]]
 name = "reth-stages-types"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "arbitrary",
@@ -10193,8 +10528,8 @@ dependencies = [
 
 [[package]]
 name = "reth-static-file"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "parking_lot",
@@ -10213,21 +10548,23 @@ dependencies = [
 
 [[package]]
 name = "reth-static-file-types"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "clap",
  "derive_more 2.1.1",
  "fixed-map",
+ "reth-stages-types",
  "serde",
  "strum 0.27.2",
+ "tracing",
 ]
 
 [[package]]
 name = "reth-storage-api"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10250,8 +10587,8 @@ dependencies = [
 
 [[package]]
 name = "reth-storage-errors"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -10266,9 +10603,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-storage-rpc-provider"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-rpc-types-engine",
+ "dashmap",
+ "reth-chainspec",
+ "reth-db-api",
+ "reth-errors",
+ "reth-execution-types",
+ "reth-node-types",
+ "reth-primitives",
+ "reth-provider",
+ "reth-prune-types",
+ "reth-rpc-convert",
+ "reth-stages-types",
+ "reth-storage-api",
+ "reth-trie",
+ "revm",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "reth-tasks"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "auto_impl",
  "dyn-clone",
@@ -10284,9 +10651,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-testing-utils"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-primitives",
+ "rand 0.8.5",
+ "rand 0.9.2",
+ "reth-ethereum-primitives",
+ "reth-primitives-traits",
+ "secp256k1 0.30.0",
+]
+
+[[package]]
 name = "reth-tokio-util"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -10295,8 +10678,8 @@ dependencies = [
 
 [[package]]
 name = "reth-tracing"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "clap",
  "eyre",
@@ -10314,8 +10697,8 @@ dependencies = [
 
 [[package]]
 name = "reth-tracing-otlp"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "clap",
  "eyre",
@@ -10332,8 +10715,8 @@ dependencies = [
 
 [[package]]
 name = "reth-transaction-pool"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10346,18 +10729,22 @@ dependencies = [
  "futures-util",
  "metrics",
  "parking_lot",
+ "paste",
  "pin-project",
  "rand 0.9.2",
  "reth-chain-state",
  "reth-chainspec",
  "reth-eth-wire-types",
  "reth-ethereum-primitives",
+ "reth-evm",
+ "reth-evm-ethereum",
  "reth-execution-types",
  "reth-fs-util",
  "reth-metrics",
  "reth-primitives-traits",
  "reth-storage-api",
  "reth-tasks",
+ "revm",
  "revm-interpreter",
  "revm-primitives",
  "rustc-hash",
@@ -10373,8 +10760,8 @@ dependencies = [
 
 [[package]]
 name = "reth-trie"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10394,12 +10781,13 @@ dependencies = [
  "reth-trie-sparse",
  "revm-database",
  "tracing",
+ "triehash",
 ]
 
 [[package]]
 name = "reth-trie-common"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -10425,8 +10813,8 @@ dependencies = [
 
 [[package]]
 name = "reth-trie-db"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "metrics",
@@ -10445,33 +10833,33 @@ dependencies = [
 
 [[package]]
 name = "reth-trie-parallel"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "crossbeam-channel",
- "dashmap 6.1.0",
  "derive_more 2.1.1",
  "itertools 0.14.0",
  "metrics",
  "rayon",
  "reth-execution-errors",
  "reth-metrics",
+ "reth-primitives-traits",
  "reth-provider",
  "reth-storage-errors",
+ "reth-tasks",
  "reth-trie",
  "reth-trie-common",
  "reth-trie-sparse",
  "thiserror 2.0.18",
- "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "reth-trie-sparse"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -10488,27 +10876,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-trie-sparse-parallel"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
-dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "alloy-trie",
- "metrics",
- "rayon",
- "reth-execution-errors",
- "reth-metrics",
- "reth-trie-common",
- "reth-trie-sparse",
- "smallvec",
- "tracing",
-]
-
-[[package]]
 name = "reth-zstd-compressors"
-version = "1.10.2"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.10-patched#1354aba2210565b94bf9e6ff5cbf446429f3ffdf"
+version = "1.11.1"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v1.11-patched#032f9f5ad074e53a2d3ad31e0f69272aedaf376c"
 dependencies = [
  "zstd",
 ]
@@ -10740,9 +11110,9 @@ dependencies = [
 
 [[package]]
 name = "ringbuffer"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3df6368f71f205ff9c33c076d170dd56ebf68e8161c733c0caa07a7a5509ed53"
+checksum = "57b0b88a509053cbfd535726dcaaceee631313cef981266119527a1d110f6d2b"
 
 [[package]]
 name = "ripemd"
@@ -10793,9 +11163,9 @@ dependencies = [
 
 [[package]]
 name = "roaring"
-version = "0.10.12"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19e8d2cfa184d94d0726d650a9f4a1be7f9b76ac9fdb954219878dc00c1c1e7b"
+checksum = "8ba9ce64a8f45d7fc86358410bb1a82e8c987504c0d4900e9141d69a9f26c885"
 dependencies = [
  "bytemuck",
  "byteorder",
@@ -10917,19 +11287,6 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "0.38.44"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdb5bc1ae2baa591800df16c9ca78619bf65c0488b41b96ccec5d11220d8c154"
-dependencies = [
- "bitflags 2.11.0",
- "errno",
- "libc",
- "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "rustix"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "146c9e247ccc180c1f61615433868c99f3de3ae256a30a43b49f67c2d9171f34"
@@ -10937,8 +11294,8 @@ dependencies = [
  "bitflags 2.11.0",
  "errno",
  "libc",
- "linux-raw-sys 0.11.0",
- "windows-sys 0.59.0",
+ "linux-raw-sys",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11559,6 +11916,21 @@ name = "similar"
 version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+dependencies = [
+ "bstr",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "similar-asserts"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5b441962c817e33508847a22bd82f03a30cff43642dc2fae8b050566121eb9a"
+dependencies = [
+ "console",
+ "serde",
+ "similar",
+]
 
 [[package]]
 name = "simple_asn1"
@@ -11586,21 +11958,6 @@ checksum = "16d69225bde7a69b235da73377861095455d298f2b970996eec25ddbb42b3d1e"
 dependencies = [
  "bitmaps",
  "typenum",
-]
-
-[[package]]
-name = "skeptic"
-version = "0.13.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16d23b015676c90a0f01c197bfdc786c20342c73a0afdda9025adb0bc42940a8"
-dependencies = [
- "bytecount",
- "cargo_metadata 0.14.2",
- "error-chain",
- "glob",
- "pulldown-cmark",
- "tempfile",
- "walkdir",
 ]
 
 [[package]]
@@ -11976,15 +12333,16 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.33.1"
+version = "0.38.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fc858248ea01b66f19d8e8a6d55f41deaf91e9d495246fd01368d99935c6c01"
+checksum = "1efc19935b4b66baa6f654ac7924c192f55b175c00a7ab72410fc24284dacda8"
 dependencies = [
- "core-foundation-sys",
  "libc",
  "memchr",
  "ntapi",
- "windows 0.57.0",
+ "objc2-core-foundation",
+ "objc2-io-kit",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -12037,8 +12395,8 @@ dependencies = [
  "fastrand",
  "getrandom 0.4.1",
  "once_cell",
- "rustix 1.1.3",
- "windows-sys 0.59.0",
+ "rustix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -12283,12 +12641,23 @@ dependencies = [
  "futures-util",
  "log",
  "rustls",
- "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
- "tungstenite",
+ "tungstenite 0.26.2",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite 0.28.0",
 ]
 
 [[package]]
@@ -12601,9 +12970,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-logfmt"
-version = "0.3.7"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a250055a3518b5efba928a18ffac8d32d42ea607a9affff4532144cd5b2e378e"
+checksum = "6b1f47d22deb79c3f59fcf2a1f00f60cbdc05462bf17d1cd356c1fefa3f444bd"
 dependencies = [
  "time",
  "tracing",
@@ -12724,7 +13093,7 @@ checksum = "ee44f4cef85f88b4dea21c0b1f58320bdf35715cf56d840969487cff00613321"
 dependencies = [
  "alloy-primitives",
  "ethereum_hashing",
- "ethereum_ssz",
+ "ethereum_ssz 0.9.1",
  "smallvec",
  "typenum",
 ]
@@ -12742,10 +13111,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "triomphe"
-version = "0.1.15"
+name = "triehash"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd69c5aa8f924c7519d6372789a74eac5b94fb0f8fcf0d4a97eb0bfc3e785f39"
+checksum = "a1631b201eb031b563d2e85ca18ec8092508e262a3196ce9bd10a67ec87b9f5c"
+dependencies = [
+ "hash-db",
+ "rlp",
+]
 
 [[package]]
 name = "try-lock"
@@ -12786,6 +13159,29 @@ dependencies = [
  "thiserror 2.0.18",
  "utf-8",
 ]
+
+[[package]]
+name = "tungstenite"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8628dcc84e5a09eb3d8423d6cb682965dea9133204e8fb3efee74c2a0c259442"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand 0.9.2",
+ "sha1",
+ "thiserror 2.0.18",
+ "utf-8",
+]
+
+[[package]]
+name = "typeid"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c"
 
 [[package]]
 name = "typenum"
@@ -12849,20 +13245,14 @@ checksum = "f6ccf251212114b54433ec949fd6a7841275f9ada20dddd2f29e9ceea4501493"
 
 [[package]]
 name = "unicode-truncate"
-version = "1.1.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3644627a5af5fa321c95b9b235a72fd24cd29c648c2c379431e6628655627bf"
+checksum = "16b380a1238663e5f8a691f9039c73e1cdae598a30e9855f541d29b08b53e9a5"
 dependencies = [
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "unicode-segmentation",
- "unicode-width 0.1.14",
+ "unicode-width",
 ]
-
-[[package]]
-name = "unicode-width"
-version = "0.1.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
 
 [[package]]
 name = "unicode-width"
@@ -13305,7 +13695,7 @@ dependencies = [
  "postcard",
  "pulley-interpreter",
  "rayon",
- "rustix 1.1.3",
+ "rustix",
  "rwasm-fuel-policy",
  "semver 1.0.27",
  "serde",
@@ -13370,7 +13760,7 @@ dependencies = [
  "directories-next",
  "log",
  "postcard",
- "rustix 1.1.3",
+ "rustix",
  "serde",
  "serde_derive",
  "sha2",
@@ -13434,7 +13824,7 @@ dependencies = [
  "cc",
  "cfg-if",
  "libc",
- "rustix 1.1.3",
+ "rustix",
  "wasmtime-environ",
  "wasmtime-internal-versioned-export-macros",
  "windows-sys 0.61.2",
@@ -13447,7 +13837,7 @@ source = "git+https://github.com/fluentlabs-xyz/wasmtime?branch=v41-patched#6299
 dependencies = [
  "cc",
  "object",
- "rustix 1.1.3",
+ "rustix",
  "wasmtime-internal-versioned-export-macros",
 ]
 
@@ -13548,7 +13938,7 @@ dependencies = [
  "bumpalo",
  "leb128fmt",
  "memchr",
- "unicode-width 0.2.0",
+ "unicode-width",
  "wasm-encoder 0.245.1",
 ]
 
@@ -13654,7 +14044,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -13694,16 +14084,6 @@ dependencies = [
 
 [[package]]
 name = "windows"
-version = "0.57.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12342cb4d8e3b046f3d80effd474a7a02447231330ef77d71daa6fbc40681143"
-dependencies = [
- "windows-core 0.57.0",
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "527fadee13e0c05939a6a05d5bd6eec6cd2e3dbd648b9f8e447c6518133d8580"
@@ -13734,26 +14114,14 @@ dependencies = [
 
 [[package]]
 name = "windows-core"
-version = "0.57.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2ed2439a290666cd67ecce2b0ffaad89c2a56b976b736e6ece670297897832d"
-dependencies = [
- "windows-implement 0.57.0",
- "windows-interface 0.57.0",
- "windows-result 0.1.2",
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-core"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
 dependencies = [
- "windows-implement 0.60.2",
- "windows-interface 0.59.3",
+ "windows-implement",
+ "windows-interface",
  "windows-link",
- "windows-result 0.4.1",
+ "windows-result",
  "windows-strings",
 ]
 
@@ -13770,31 +14138,9 @@ dependencies = [
 
 [[package]]
 name = "windows-implement"
-version = "0.57.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9107ddc059d5b6fbfbffdfa7a7fe3e22a226def0b2608f72e9d552763d3e1ad7"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.116",
-]
-
-[[package]]
-name = "windows-implement"
 version = "0.60.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.116",
-]
-
-[[package]]
-name = "windows-interface"
-version = "0.57.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29bee4b38ea3cde66011baa44dba677c432a78593e202392d1e9070cf2a7fca7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13826,15 +14172,6 @@ checksum = "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26"
 dependencies = [
  "windows-core 0.62.2",
  "windows-link",
-]
-
-[[package]]
-name = "windows-result"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e383302e8ec8515204254685643de10811af0ed97ea37210dc26fb0032647f8"
-dependencies = [
- "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -14333,7 +14670,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
- "rustix 1.1.3",
+ "rustix",
 ]
 
 [[package]]

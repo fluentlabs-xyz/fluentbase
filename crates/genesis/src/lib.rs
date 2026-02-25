@@ -3,7 +3,7 @@ use fluentbase_sdk::{Address, Bytes, GenesisContract, B256};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 
-pub fn devnet_genesis_from_file() -> Genesis {
+pub fn local_genesis_from_file() -> Genesis {
     let json_file = include_str!("../genesis-devnet.json");
     serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
 }
