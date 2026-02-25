@@ -238,6 +238,7 @@ docker-build-push-nightly-edge-profiling: ## Build and push cross-arch Docker im
 # Create a cross-arch Docker image with the given tags and push it
 define docker_build_push
 	rustup target add wasm32-unknown-unknown
+
 	$(MAKE) FEATURES="$(FEATURES)" build-x86_64-unknown-linux-gnu
 	mkdir -p $(BIN_DIR)/amd64
 	cp $(CARGO_TARGET_DIR)/x86_64-unknown-linux-gnu/$(PROFILE)/fluent $(BIN_DIR)/amd64/fluent
