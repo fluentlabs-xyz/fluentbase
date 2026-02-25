@@ -42,12 +42,6 @@ test:
 	$(MAKE) run-e2e-tests TEST_FEATURES=std,wasmtime TEST_PROFILE=--release
 	# devnet/mainnet: rwasm case
 	$(MAKE) run-e2e-tests TEST_FEATURES=std TEST_PROFILE=--release
-	# testnet: contracts unit tests
-	$(MAKE) run-contracts-tests TEST_FEATURES=std,fluent-testnet TEST_PROFILE=--release
-	# testnet: wasmtime case
-	$(MAKE) run-e2e-tests TEST_FEATURES=std,wasmtime,fluent-testnet TEST_PROFILE=--release
-	# testnet: rwasm case
-	$(MAKE) run-e2e-tests TEST_FEATURES=std,fluent-testnet TEST_PROFILE=--release
 .PHONY: test-debug
 test-debug:
 	# devnet/mainnet: contracts unit tests
@@ -56,12 +50,6 @@ test-debug:
 	$(MAKE) run-e2e-tests TEST_FEATURES=std,wasmtime TEST_PROFILE=
 	# devnet/mainnet: rwasm case
 	$(MAKE) run-e2e-tests TEST_FEATURES=std TEST_PROFILE=
-	# testnet: contracts unit tests
-	$(MAKE) run-contracts-tests TEST_FEATURES=std,fluent-testnet TEST_PROFILE=
-	# testnet: wasmtime case
-	$(MAKE) run-e2e-tests TEST_FEATURES=std,wasmtime,fluent-testnet TEST_PROFILE=
-	# testnet: rwasm case
-	$(MAKE) run-e2e-tests TEST_FEATURES=std,fluent-testnet TEST_PROFILE=
 
 #.PHONY: svm_tests
 #svm_tests:

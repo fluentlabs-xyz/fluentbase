@@ -87,9 +87,3 @@ debug-print = [
 ]
 do-not-validate-elf-on-deploy = []
 use-extended-debug-log = []
-fluent-testnet = [
-    "fluentbase-sdk/fluent-testnet",
-    "fluentbase-svm-common/fluent-testnet",
-    "fluentbase-testing/fluent-testnet",
-    "fluentbase-universal-token/fluent-testnet"
-]

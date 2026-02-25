@@ -48,6 +48,3 @@ wasmtime = [
     "rwasm/wasmtime",
     # "rwasm/cache-compiled-artifacts",
 ]
-fluent-testnet = [
-    "fluentbase-types/fluent-testnet"
-]

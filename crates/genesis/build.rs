@@ -1,10 +1,5 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
-use fluentbase_sdk::{
-    address, compile_wasm_to_rwasm_with_config, default_compilation_config,
-    is_engine_metered_precompile, is_execute_using_system_runtime, keccak256,
-    rwasm_core::{N_DEFAULT_MAX_MEMORY_PAGES, N_MAX_ALLOWED_MEMORY_PAGES},
-    Address, Bytes, B256, U256,
-};
+use fluentbase_sdk::{address, compile_rwasm_maybe_system, keccak256, Address, Bytes, B256, U256};
 use std::{
     collections::{BTreeMap, HashMap},
     env, fs,
@@ -33,10 +28,10 @@ const GENESIS_CONTRACTS: &[(Address, fluentbase_contracts::BuildOutput)] = &[
     (fluentbase_sdk::PRECOMPILE_BLS12_381_PAIRING, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
     (fluentbase_sdk::PRECOMPILE_BLS12_381_MAP_G1, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
     (fluentbase_sdk::PRECOMPILE_BLS12_381_MAP_G2, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_sdk::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts::FLUENTBASE_CONTRACTS_MULTICALL),
     (fluentbase_sdk::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_NITRO),
     (fluentbase_sdk::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_OAUTH2),
     (fluentbase_sdk::PRECOMPILE_RIPEMD160, fluentbase_contracts::FLUENTBASE_CONTRACTS_RIPEMD160),
+    (fluentbase_sdk::PRECOMPILE_RUNTIME_UPGRADE, fluentbase_contracts::FLUENTBASE_CONTRACTS_RUNTIME_UPGRADE),
     (fluentbase_sdk::PRECOMPILE_WASM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_WASM),
     (fluentbase_sdk::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts::FLUENTBASE_CONTRACTS_ECRECOVER),
     (fluentbase_sdk::PRECOMPILE_SHA256, fluentbase_contracts::FLUENTBASE_CONTRACTS_SHA256),
@@ -91,26 +86,9 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
         if cache.contains_key(contract.wasm_bytecode) {
             continue;
         }
-        let is_system_runtime = is_execute_using_system_runtime(address);
-        // Most system precompiles manage fuel internally via `_charge_fuel` syscall.
-        // However, some precompiles (NITRO_VERIFIER, OAUTH2_VERIFIER, WASM_RUNTIME,
-        // WEBAUTHN_VERIFIER) don't self-meter, so they need fuel instrumentation.
-        let should_charge_fuel = is_engine_metered_precompile(address);
-
-        let config = default_compilation_config()
-            .with_consume_fuel(should_charge_fuel)
-            .with_builtins_consume_fuel(should_charge_fuel)
-            .with_max_allowed_memory_pages(if is_system_runtime {
-                N_MAX_ALLOWED_MEMORY_PAGES
-            } else {
-                N_DEFAULT_MAX_MEMORY_PAGES
-            })
-            .with_allow_malformed_entrypoint_func_type(is_system_runtime);
-
         let start = Instant::now();
-        let rwasm_bytecode =
-            compile_wasm_to_rwasm_with_config(contract.wasm_bytecode, config.clone())
-                .expect(format!("failed to compile ({}), because of: ", contract.name).as_str());
+        let rwasm_bytecode = compile_rwasm_maybe_system(address, contract.wasm_bytecode)
+            .expect(format!("failed to compile ({}), because of: ", contract.name).as_str());
         assert_eq!(rwasm_bytecode.constructor_params.len(), 0);
         let rwasm_bytecode: Bytes = rwasm_bytecode.rwasm_module.serialize().into();
         let hash = keccak256(rwasm_bytecode.as_ref());

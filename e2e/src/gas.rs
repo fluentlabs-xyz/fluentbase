@@ -325,10 +325,6 @@ fn test_blended_gas_spend_evm_from_wasm() {
     println!("Result: {:?}", result);
     assert!(result.is_success());
 
-    #[cfg(feature = "fluent-testnet")]
-    let call_cast = 0;
-
-    #[cfg(not(feature = "fluent-testnet"))]
     let call_cast = 1;
 
     // 21064 is tx cost

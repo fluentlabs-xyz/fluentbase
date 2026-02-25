@@ -18,5 +18,4 @@ fluentbase-sdk = { workspace = true, features = [
 [features]
 default = ["std"]
 std = ["fluentbase-sdk/std"]
-fluent-testnet = ["fluentbase-sdk/fluent-testnet"]
 debug-print = ["fluentbase-sdk/debug-print"]

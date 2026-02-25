@@ -4134,6 +4134,7 @@ name = "fluentbase-e2e"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
+ "bytes",
  "criterion",
  "fluentbase-codec",
  "fluentbase-contracts",
@@ -4187,7 +4188,6 @@ version = "0.5.2"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "cfg-if",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",

@@ -34,7 +34,6 @@ default = [
     "std",
     # "debug-print",
     "wasmtime",
-    # "fluent-testnet"
 ]
 std = [
     "fluentbase-genesis/std",
@@ -49,12 +48,6 @@ debug-print = [
 ]
 wasmtime = [
     "fluentbase-revm/wasmtime",
-]
-fluent-testnet = [
-    "fluentbase-runtime/fluent-testnet",
-    "fluentbase-sdk/fluent-testnet",
-    "fluentbase-genesis/fluent-testnet",
-    "fluentbase-revm/fluent-testnet",
 ]
 
 [patch.crates-io]

@@ -60,9 +60,6 @@ pub const CALL_DEPTH_ROOT: u32 = 0;
 /// instruction.
 ///
 /// The value can be changed in the future.
-#[cfg(feature = "fluent-testnet")]
-pub const FUEL_DENOM_RATE: u64 = 1000;
-#[cfg(not(feature = "fluent-testnet"))]
 pub const FUEL_DENOM_RATE: u64 = 20;
 
 /// The maximum allowed value for the `x` parameter used in linear gas cost calculation

@@ -1884,7 +1884,6 @@ name = "fluentbase-revm"
 version = "0.5.2"
 dependencies = [
  "alloy-primitives",
- "cfg-if",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",

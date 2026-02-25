@@ -60,10 +60,6 @@ fn main() {
             "--color=always".to_string(),
             "--no-default-features".to_string(),
         ];
-        #[cfg(feature = "fluent-testnet")]
-        {
-            args.extend_from_slice(&["--features".into(), "fluent-testnet".into()]);
-        }
 
         if !is_debug_profile {
             args.push("--release".to_string());

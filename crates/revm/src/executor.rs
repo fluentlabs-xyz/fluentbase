@@ -407,13 +407,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     // Convert consumed fuel into gas to charge inside REVM.
     // On some networks we floor vs. ceil; keep the behavior feature-gated.
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "fluent-testnet")] {
-            let gas_consumed = fuel_consumed / FUEL_DENOM_RATE;
-        } else {
-            let gas_consumed = (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE;
-        }
-    }
+    let gas_consumed = (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE;
 
     // Charge gas. If we cannot, halt with out-of-fuel.
     if !interpreter.gas.record_cost(gas_consumed) {
@@ -522,13 +516,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     let return_data: Bytes = runtime_context.execution_result.return_data.into();
 
     // Convert consumed fuel into gas for REVM.
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "fluent-testnet")] {
-            let gas_consumed = fuel_consumed / FUEL_DENOM_RATE;
-        } else {
-            let gas_consumed = (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE;
-        }
-    }
+    let gas_consumed = (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE;
 
     // Charge gas for the resumed segment.
     if !frame.interpreter.gas.record_cost(gas_consumed) {

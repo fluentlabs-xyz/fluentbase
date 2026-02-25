@@ -32,7 +32,6 @@ once_cell = { workspace = true, features = ["alloc"] }
 rwasm = { workspace = true, default-features = false, features = ["serde"] }
 
 tracing = { version = "0.1" }
-cfg-if = { workspace = true }
 alloy-primitives = { workspace = true }
 
 # Optional
@@ -99,8 +98,3 @@ debug-print = [
     #    "rwasm/debug-print",
 ]
 wasmtime = ["fluentbase-runtime/wasmtime", "rwasm/wasmtime"]
-fluent-testnet = [
-    "fluentbase-runtime/fluent-testnet",
-    "fluentbase-sdk/fluent-testnet",
-    "fluentbase-evm/fluent-testnet"
-]
