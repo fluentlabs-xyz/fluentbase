@@ -24,7 +24,7 @@ use reth_provider::{
     StaticFileProviderBuilder, TransactionVariant,
 };
 use reth_revm::database::StateProviderDatabase;
-use std::{fmt, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 #[derive(Parser, Debug)]
 #[command(name = "reth-transition-test")]
