@@ -106,16 +106,6 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
     cache
 }
 
-macro_rules! initial_devnet_balance {
-    ($address:literal) => {
-        (
-            address!($address),
-            GenesisAccount::default()
-                .with_balance(U256::from(1_000_000_000_000_000000000000000000u128)),
-        )
-    };
-}
-
 fn init_contract(
     code: &mut Vec<String>,
     genesis: &mut BTreeMap<Address, GenesisAccount>,
@@ -158,12 +148,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=DEBUG");
     println!("cargo:rerun-if-env-changed=TARGET");
 
-    let mut alloc = BTreeMap::from([
-        // default testing accounts
-        initial_devnet_balance!("0x390a4CEdBb65be7511D9E1a35b115376F39DbDF3"), // dmitry
-        initial_devnet_balance!("0x33a831e42B24D19bf57dF73682B9a3780A0435BA"), // daniel
-        initial_devnet_balance!("0xB72988b6DdC94E577E98C5565E0e11E688537e73"), // faucet
-    ]);
+    let mut alloc = BTreeMap::new();
 
     let mut code = Vec::new();
     code.push("struct BuildOutput {".to_string());
@@ -195,28 +180,76 @@ fn main() {
     let timestamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
-        .as_millis() as u64;
-    let genesis = Genesis {
-        config: default_chain_config(),
-        nonce: 0,
-        timestamp,
-        extra_data: Bytes::new(),
-        // Default gas limit is 100mil
-        gas_limit: 0x5f5e100,
-        difficulty: U256::ZERO,
-        mix_hash: B256::ZERO,
-        coinbase: Address::ZERO,
-        alloc,
-        base_fee_per_gas: None,
-        excess_blob_gas: None,
-        blob_gas_used: None,
-        number: Some(0),
-        parent_hash: None,
-    };
-    let genesis_path =
-        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("genesis-devnet.json");
-    let genesis = serde_json::to_string_pretty(&genesis).unwrap();
-    fs::write(&genesis_path, &genesis).unwrap();
+        .as_secs();
+
+    // devnet/testnet genesis
+    {
+        let mut alloc = alloc.clone();
+
+        let genesis_account = GenesisAccount::default()
+            .with_balance(U256::from(1_000_000_000_000_000000000000000000u128));
+        // dmitry
+        alloc.insert(
+            address!("0x390a4CEdBb65be7511D9E1a35b115376F39DbDF3"),
+            genesis_account.clone(),
+        );
+        // daniil
+        alloc.insert(
+            address!("0x33a831e42B24D19bf57dF73682B9a3780A0435BA"),
+            genesis_account.clone(),
+        );
+        // faucet
+        alloc.insert(
+            address!("0xB72988b6DdC94E577E98C5565E0e11E688537e73"),
+            genesis_account.clone(),
+        );
+
+        let genesis = Genesis {
+            config: default_chain_config(),
+            nonce: 0,
+            timestamp,
+            extra_data: Bytes::new(),
+            // Default gas limit is 100mil
+            gas_limit: 0x5f5e100,
+            difficulty: U256::ZERO,
+            mix_hash: B256::ZERO,
+            coinbase: Address::ZERO,
+            alloc,
+            base_fee_per_gas: None,
+            excess_blob_gas: None,
+            blob_gas_used: None,
+            number: Some(0),
+            parent_hash: None,
+        };
+        let genesis_path =
+            PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("genesis-devnet.json");
+        let genesis = serde_json::to_string_pretty(&genesis).unwrap();
+        fs::write(&genesis_path, &genesis).unwrap();
+    }
+    // mainnet genesis
+    {
+        let genesis = Genesis {
+            config: default_chain_config(),
+            nonce: 0,
+            timestamp,
+            extra_data: Bytes::new(),
+            // Default gas limit is 100mil
+            gas_limit: 0x5f5e100,
+            difficulty: U256::ZERO,
+            mix_hash: B256::ZERO,
+            coinbase: Address::ZERO,
+            alloc,
+            base_fee_per_gas: None,
+            excess_blob_gas: None,
+            blob_gas_used: None,
+            number: Some(0),
+            parent_hash: None,
+        };
+        let genesis_path =
+            PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("genesis-mainnet.json");
+        let genesis = serde_json::to_string_pretty(&genesis).unwrap();
+        fs::write(&genesis_path, &genesis).unwrap();
+    }
 
     let code_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("build_output.rs");
     fs::write(&code_path, &code).unwrap();

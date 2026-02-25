@@ -22,7 +22,7 @@ pub const SUPPORTED_CHAINS: &[&str] = &["dev", "fluent-devnet", "fluent-testnet"
 /// Example: `v0.4.11-dev` -> downloads:
 /// - `genesis-v0.4.11-dev.json.gz`
 /// - `genesis-v0.4.11-dev.json.gz.asc`
-const FLUENT_DEVNET_GENESIS_TAG: &str = "v0.5.2";
+const FLUENT_DEVNET_GENESIS_TAG: &str = "v0.5.3";
 
 /// Release tag for Fluent Testnet genesis (GitHub releases).
 ///
@@ -33,10 +33,10 @@ const FLUENT_TESTNET_GENESIS_TAG: &str = "v0.3.4-dev";
 /// caches it, and verifies its detached OpenPGP signature.
 ///
 /// This is intentionally synchronous because it runs during CLI startup / chainspec selection.
-fn download_and_cache_genesis_verified(tag: &str) -> eyre::Result<Genesis> {
+fn download_and_cache_genesis_verified(tag: &str, channel: &str) -> eyre::Result<Genesis> {
     use eyre::WrapErr as _;
 
-    let (gz_url, asc_url, gz_name, asc_name) = genesis_urls(tag);
+    let (gz_url, asc_url, gz_name, asc_name) = genesis_urls(tag, channel);
 
     println!("Checking genesis for tag  {}...", tag);
     let genesis_dir = genesis_cache_dir()?;
@@ -83,9 +83,9 @@ fn genesis_cache_dir() -> eyre::Result<PathBuf> {
 }
 
 /// Build release URLs & filenames for the given tag.
-fn genesis_urls(tag: &str) -> (String, String, String, String) {
+fn genesis_urls(tag: &str, channel: &str) -> (String, String, String, String) {
     let base = format!("https://github.com/fluentlabs-xyz/fluentbase/releases/download/{tag}");
-    let gz_name = format!("genesis-{tag}.json.gz");
+    let gz_name = format!("genesis-{channel}-{tag}.json.gz");
     let asc_name = format!("{gz_name}.asc");
     let gz_url = format!("{base}/{gz_name}");
     let asc_url = format!("{base}/{asc_name}");
@@ -192,7 +192,7 @@ pub static FLUENT_LOCAL: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
 
 /// Fluent Developer Preview
 pub static FLUENT_DEVNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
-    let genesis = download_and_cache_genesis_verified(FLUENT_DEVNET_GENESIS_TAG)
+    let genesis = download_and_cache_genesis_verified(FLUENT_DEVNET_GENESIS_TAG, "")
         .expect("failed to download/verify Fluent devnet genesis");
     let hardforks = DEV_HARDFORKS.clone();
     ChainSpec {
@@ -210,7 +210,7 @@ pub static FLUENT_DEVNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
 
 /// Fluent Testnet
 pub static FLUENT_TESTNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
-    let genesis = download_and_cache_genesis_verified(FLUENT_TESTNET_GENESIS_TAG)
+    let genesis = download_and_cache_genesis_verified(FLUENT_TESTNET_GENESIS_TAG, "")
         .expect("failed to download/verify Fluent testnet genesis");
     let hardforks = ChainHardforks::new(vec![
         (EthereumHardfork::Frontier.boxed(), ForkCondition::Block(0)),
