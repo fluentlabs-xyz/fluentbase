@@ -37,7 +37,7 @@ use revm::{
     },
     Database, Inspector,
 };
-use std::{borrow::Cow, vec::Vec};
+use std::{borrow::Cow, vec, vec::Vec};
 
 fn should_overwrite_delegated_bytecode<'a, CTX: ContextTr>(
     frame: &mut RwasmFrame,
@@ -538,7 +538,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         ));
     }
 
-    // Accumulate refunds (may be forwarded through interruptions).
+    // Accumulate refunds (maybe forwarded through interruptions).
     frame
         .interpreter
         .gas
@@ -613,6 +613,7 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
     let Ok((runtime_output, _)): Result<(RuntimeExecutionOutcomeV1, usize), _> =
         bincode::decode_from_bytes(return_data.clone(), bincode::config::legacy())
     else {
+        #[cfg(feature = "std")]
         eprintln!(
             "WARN: failed to decode structured runtime execution outcome: exit_code={}",
             exit_code

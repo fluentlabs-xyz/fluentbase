@@ -1,4 +1,5 @@
 use alloy_genesis::Genesis;
+use fluentbase_genesis::local_genesis_from_file;
 use reth_chainspec::{
     make_genesis_header, BaseFeeParams, BaseFeeParamsKind, Chain, ChainHardforks, ChainSpec,
     EthereumHardfork, ForkCondition, Hardfork, DEV_HARDFORKS,
@@ -14,7 +15,7 @@ use std::{
 };
 
 /// Chains supported by reth. The first value should be used as the default.
-pub const SUPPORTED_CHAINS: &[&str] = &["fluent-devnet", "fluent-testnet"];
+pub const SUPPORTED_CHAINS: &[&str] = &["dev", "fluent-devnet", "fluent-testnet"];
 
 /// Release tag for Fluent Devnet genesis (GitHub releases).
 ///
@@ -173,6 +174,23 @@ fn verify_detached_signature(_data_path: &Path, _sig_path: &Path) -> eyre::Resul
 }
 
 /// Fluent Developer Preview
+pub static FLUENT_LOCAL: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
+    let genesis = local_genesis_from_file();
+    let hardforks = DEV_HARDFORKS.clone();
+    ChainSpec {
+        chain: Chain::from(1337),
+        genesis_header: SealedHeader::new_unhashed(make_genesis_header(&genesis, &hardforks)),
+        genesis,
+        paris_block_and_final_difficulty: Some((0, U256::from(0))),
+        hardforks,
+        base_fee_params: BaseFeeParamsKind::Constant(BaseFeeParams::ethereum()),
+        deposit_contract: None,
+        ..Default::default()
+    }
+    .into()
+});
+
+/// Fluent Developer Preview
 pub static FLUENT_DEVNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
     let genesis = download_and_cache_genesis_verified(FLUENT_DEVNET_GENESIS_TAG)
         .expect("failed to download/verify Fluent devnet genesis");
@@ -255,6 +273,7 @@ pub static FLUENT_TESTNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
 /// to a JSON file, or a JSON formatted string in-memory. The json needs to be a Genesis struct.
 pub(crate) fn chain_value_parser(s: &str) -> eyre::Result<Arc<ChainSpec>, eyre::Error> {
     Ok(match s {
+        "dev" => FLUENT_LOCAL.clone(),
         "fluent-devnet" => FLUENT_DEVNET.clone(),
         "fluent-testnet" => FLUENT_TESTNET.clone(),
         _ => Arc::new(parse_genesis(s)?.into()),

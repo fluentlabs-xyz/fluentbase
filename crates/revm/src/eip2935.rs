@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, U256};
 use fluentbase_sdk::{EIP2935_HISTORY_SERVE_WINDOW, SYSTEM_ADDRESS};
+use std::{vec, vec::Vec};
 
 pub(crate) fn eip2935_compute_storage_keys(
     input: &[u8],

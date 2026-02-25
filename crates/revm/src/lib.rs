@@ -27,5 +27,6 @@ pub use evm::RwasmEvm;
 pub use handler::*;
 pub use precompiles::*;
 pub use result::*;
+pub use revm;
 use rwasm as _;
 pub use spec::*;

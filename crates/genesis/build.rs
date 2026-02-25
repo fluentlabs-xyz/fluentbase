@@ -3,13 +3,13 @@ use fluentbase_sdk::{
     address, compile_wasm_to_rwasm_with_config, default_compilation_config,
     is_engine_metered_precompile, is_execute_using_system_runtime, keccak256,
     rwasm_core::{N_DEFAULT_MAX_MEMORY_PAGES, N_MAX_ALLOWED_MEMORY_PAGES},
-    Address, Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID, U256,
+    Address, Bytes, B256, U256,
 };
 use std::{
     collections::{BTreeMap, HashMap},
     env, fs,
     path::PathBuf,
-    time::Instant,
+    time::{Instant, SystemTime},
 };
 
 #[rustfmt::skip]
@@ -43,9 +43,9 @@ const GENESIS_CONTRACTS: &[(Address, fluentbase_contracts::BuildOutput)] = &[
     (fluentbase_sdk::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_WEBAUTHN),
 ];
 
-fn devnet_chain_config() -> ChainConfig {
+fn default_chain_config() -> ChainConfig {
     ChainConfig {
-        chain_id: DEVELOPER_PREVIEW_CHAIN_ID,
+        chain_id: 1337,
         homestead_block: Some(0u64),
         dao_fork_block: Some(0u64),
         dao_fork_support: true,
@@ -214,12 +214,17 @@ fn main() {
     code.push("];".to_string());
     let code = code.join("\n");
 
+    let timestamp = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     let genesis = Genesis {
-        config: devnet_chain_config(),
+        config: default_chain_config(),
         nonce: 0,
-        timestamp: 0x6490fdd2,
+        timestamp,
         extra_data: Bytes::new(),
-        gas_limit: 0x1c9c380,
+        // Default gas limit is 100mil
+        gas_limit: 0x5f5e100,
         difficulty: U256::ZERO,
         mix_hash: B256::ZERO,
         coinbase: Address::ZERO,
