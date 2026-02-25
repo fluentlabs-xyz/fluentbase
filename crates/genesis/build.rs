@@ -38,9 +38,9 @@ const GENESIS_CONTRACTS: &[(Address, fluentbase_contracts::BuildOutput)] = &[
     (fluentbase_sdk::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_WEBAUTHN),
 ];
 
-fn default_chain_config() -> ChainConfig {
+fn default_chain_config(chain_id: u64) -> ChainConfig {
     ChainConfig {
-        chain_id: 1337,
+        chain_id,
         homestead_block: Some(0u64),
         dao_fork_block: Some(0u64),
         dao_fork_support: true,
@@ -66,7 +66,7 @@ fn default_chain_config() -> ChainConfig {
         extra_fields: Default::default(),
         parlia: None,
         deposit_contract_address: None,
-        prague_time: None,
+        prague_time: Some(0u64),
         osaka_time: None,
         bpo1_time: None,
         bpo2_time: None,
@@ -205,7 +205,7 @@ fn main() {
         );
 
         let genesis = Genesis {
-            config: default_chain_config(),
+            config: default_chain_config(1337),
             nonce: 0,
             timestamp,
             extra_data: Bytes::new(),
@@ -229,7 +229,7 @@ fn main() {
     // mainnet genesis
     {
         let genesis = Genesis {
-            config: default_chain_config(),
+            config: default_chain_config(1993),
             nonce: 0,
             timestamp,
             extra_data: Bytes::new(),
