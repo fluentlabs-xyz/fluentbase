@@ -27,7 +27,7 @@ evm-e2e/target
 contracts/target
 examples/target
 
-genesis-devnet.json
+genesis-*.json
 node_modules
 evm-e2e/tests/
 datadir

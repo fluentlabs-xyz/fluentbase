@@ -123,8 +123,10 @@ jobs:
         run: |
           mkdir artifacts
           mv "target/${{ matrix.configs.target }}/${{ matrix.configs.profile }}/${{ matrix.build.binary }}" ./artifacts  
-          gzip ./crates/genesis/genesis-devnet.json 
+          gzip ./crates/genesis/genesis-devnet.json
+          gzip ./crates/genesis/genesis-mainnet.json
           mv ./crates/genesis/genesis-devnet.json.gz ./artifacts/genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
+          mv ./crates/genesis/genesis-mainnet.json.gz ./artifacts/genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz
       - name: Configure GPG and create artifacts
         env:
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
@@ -136,16 +138,23 @@ jobs:
           tar -czf ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz ${{ matrix.build.binary }}*
           echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz
           echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
+          echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz
           mv *json.gz* ..
           mv *tar.gz* ..
         shell: bash
 
-      - name: Upload genesis
+      - name: Upload devnet genesis
         if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: actions/upload-artifact@v6
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
           path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
+      - name: Upload devnet genesis
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz
+          path: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz
       - name: Upload fluent
         if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: actions/upload-artifact@v6
@@ -159,6 +168,12 @@ jobs:
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
           path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
+      - name: Upload genesis signature
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
+          path: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
       - name: Upload fluent signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: actions/upload-artifact@v6
