@@ -84,5 +84,8 @@ jobs:
         run: |
           docker run --privileged --rm tonistiigi/binfmt --install arm64,amd64
           docker buildx create --use --name cross-builder
+      - name: Install clang and build tools
+        run: |
+          apt-get update && apt-get install -y libclang-dev pkg-config
       - name: Build and push ${{ matrix.build.name }}
         run: ${{ matrix.build.command }}
