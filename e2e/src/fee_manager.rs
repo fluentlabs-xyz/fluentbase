@@ -77,10 +77,10 @@ fn test_fee_manager_change_owner_unauthorized() {
 #[test]
 fn test_fee_manager_withdraw() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    let recipient = address!("0000000000000000000000000000000000000001");
+    let recipient = Address::repeat_byte(0x11);
     let amount = U256::from(1000);
 
-    // Add balance to fee manager
+    // Add balance to the fee manager
     ctx.add_balance(PRECOMPILE_FEE_MANAGER, amount);
     assert_eq!(ctx.get_balance(PRECOMPILE_FEE_MANAGER), amount);
 
@@ -95,6 +95,9 @@ fn test_fee_manager_withdraw() {
         None,
     );
     assert!(result.is_success());
+
+    let new_balance = ctx.get_balance(recipient);
+    assert_eq!(new_balance, amount);
 
     // Note: The current implementation emits `FeeWithdrawn` and does not transfer; success indicates positive balance and correct auth.
 }

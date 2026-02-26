@@ -42,6 +42,9 @@ impl<SDK: SharedAPI> RouterAPI for App<SDK> {
     fn withdraw(&mut self, recipient: Address) {
         self.only_owner();
         let balance = self.only_positive_balance();
+        let Ok(_) = self.sdk.call(recipient, balance, &[], None).ok() else {
+            panic!("fee-manager: can't send funds to recipient");
+        };
         FeeWithdrawn {
             recipient,
             amount: balance,
