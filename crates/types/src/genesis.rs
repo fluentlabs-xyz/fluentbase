@@ -51,6 +51,9 @@ pub const PRECOMPILE_WASM_RUNTIME: Address = address!("0x00000000000000000000000
 pub const PRECOMPILE_RUNTIME_UPGRADE: Address =
     address!("0x0000000000000000000000000000000000520010");
 
+/// A precompile smart contract that handles fee management.
+pub const PRECOMPILE_FEE_MANAGER: Address = address!("0x0000000000000000000000000000000000520fee");
+
 /// EIP-2935 system contract / precompile address (as specified by the EIP).
 ///
 /// Kept as a standalone constant so fork-activation logic can include/exclude it.
@@ -240,7 +243,15 @@ pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
 ///
 /// This is the "admin" for genesis/state upgrade operations and should be
 /// treated as highly privileged.
+///
+/// P.S: This address is default for genesis-init, but once a chain is live, it should be
+///  reannounced or changed to smart contract (multisig). The address can be changed by upgrading
+///  the runtime.
 pub const UPDATE_GENESIS_AUTH: Address = address!("0xa7bf6a9168fe8a111307b7c94b8883fe02b30934");
+
+/// Default fee manager, should be changed after a chain is live
+pub const DEFAULT_FEE_MANAGER_AUTH: Address =
+    address!("0xa7bf6a9168fe8a111307b7c94b8883fe02b30934");
 
 /// Transaction calldata prefix for **genesis update**.
 /// Versioning allows introducing new update semantics without ambiguity.
