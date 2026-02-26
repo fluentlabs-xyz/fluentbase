@@ -1809,6 +1809,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-fee-manager"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-testing",
+]
+
+[[package]]
 name = "fluentbase-contracts-identity"
 version = "0.1.0"
 dependencies = [

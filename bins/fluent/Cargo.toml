@@ -128,12 +128,14 @@ reth-zstd-compressors = { workspace = true, default-features = false }
 # fluentbase
 fluentbase-revm = { workspace = true, features = ["std", "wasmtime"] }
 fluentbase-genesis = { workspace = true, features = ["std", "wasmtime"] }
+fluentbase-types = { workspace = true, features = ["std"] }
 
 # alloy
 alloy-primitives = { workspace = true }
 #alloy-rpc-types = { workspace = true, features = ["engine"] }
 alloy-genesis = { workspace = true }
 alloy-evm = { workspace = true }
+alloy-consensus = { workspace = true }
 
 # tracing
 tracing.workspace = true

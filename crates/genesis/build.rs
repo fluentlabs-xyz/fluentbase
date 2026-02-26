@@ -32,6 +32,7 @@ const GENESIS_CONTRACTS: &[(Address, fluentbase_contracts::BuildOutput)] = &[
     (fluentbase_sdk::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_OAUTH2),
     (fluentbase_sdk::PRECOMPILE_RIPEMD160, fluentbase_contracts::FLUENTBASE_CONTRACTS_RIPEMD160),
     (fluentbase_sdk::PRECOMPILE_RUNTIME_UPGRADE, fluentbase_contracts::FLUENTBASE_CONTRACTS_RUNTIME_UPGRADE),
+    (fluentbase_sdk::PRECOMPILE_FEE_MANAGER, fluentbase_contracts::FLUENTBASE_CONTRACTS_FEE_MANAGER),
     (fluentbase_sdk::PRECOMPILE_WASM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_WASM),
     (fluentbase_sdk::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts::FLUENTBASE_CONTRACTS_ECRECOVER),
     (fluentbase_sdk::PRECOMPILE_SHA256, fluentbase_contracts::FLUENTBASE_CONTRACTS_SHA256),

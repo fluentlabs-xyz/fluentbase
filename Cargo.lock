@@ -3795,6 +3795,7 @@ dependencies = [
 name = "fluent"
 version = "0.5.3"
 dependencies = [
+ "alloy-consensus",
  "alloy-evm",
  "alloy-genesis",
  "alloy-primitives",
@@ -3804,6 +3805,7 @@ dependencies = [
  "flate2",
  "fluentbase-genesis",
  "fluentbase-revm",
+ "fluentbase-types",
  "reqwest",
  "reth-basic-payload-builder",
  "reth-chain-state",
