@@ -1,0 +1,51 @@
+name: Clippy
+
+on:
+  push:
+    branches: [ main, devel ]
+    paths-ignore: [ "**.md", "docs/**" ]
+  pull_request:
+    branches: [ main, devel ]
+    paths-ignore: [ "**.md", "docs/**" ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  clippy:
+    name: Clippy (workspace, all-targets, all-features)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install system deps (clang/libclang)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Install wasm32 target
+        run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Prefetch deps
+        run: cargo fetch --locked
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings

@@ -79,8 +79,8 @@ pub enum SysFuncIdx {
     UINT256_X2048_MUL = 0x0802,
 }
 
-impl Into<u32> for SysFuncIdx {
-    fn into(self) -> u32 {
-        self as u32
+impl From<SysFuncIdx> for u32 {
+    fn from(value: SysFuncIdx) -> Self {
+        value as u32
     }
 }

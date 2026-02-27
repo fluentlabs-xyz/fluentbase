@@ -32,7 +32,7 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for Bytes 
         let _ = write_bytes::<B, ALIGN, true>(buf, buf.len(), self, self.len() as u32);
 
         // Add padding if necessary to ensure the buffer remains aligned
-        if buf.len() % ALIGN != 0 {
+        if !buf.len().is_multiple_of(ALIGN) {
             let padding = ALIGN - (buf.len() % ALIGN);
             buf.resize(buf.len() + padding, 0);
         }
@@ -71,7 +71,7 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false, false> for Bytes
         let _ = write_bytes::<B, ALIGN, false>(buf, offset, self, self.len() as u32);
 
         // Add padding if necessary to ensure the buffer remains aligned
-        if buf.len() % ALIGN != 0 {
+        if !buf.len().is_multiple_of(ALIGN) {
             let padding = ALIGN - (buf.len() % ALIGN);
             buf.resize(buf.len() + padding, 0);
         }

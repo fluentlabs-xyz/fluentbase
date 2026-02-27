@@ -49,7 +49,7 @@ impl<__Context> ::bincode::Decode<__Context> for SyscallInvocationParams {
         let input: Range<usize> = bincode::Decode::decode(decoder)?;
         Ok(Self {
             code_hash: B256::from(code_hash),
-            input: input.into(),
+            input,
             fuel_limit,
             state,
             fuel16_ptr,

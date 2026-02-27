@@ -229,7 +229,7 @@ pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
     if input.len() > crate::SVM_ELF_MAGIC_BYTES.len()
         && input[..crate::SVM_ELF_MAGIC_BYTES.len()] == crate::SVM_ELF_MAGIC_BYTES
     {
-        PRECOMPILE_SVM_RUNTIME
+        return PRECOMPILE_SVM_RUNTIME;
     }
     if input.len() > UNIVERSAL_TOKEN_MAGIC_BYTES.len()
         && input[..UNIVERSAL_TOKEN_MAGIC_BYTES.len()] == UNIVERSAL_TOKEN_MAGIC_BYTES

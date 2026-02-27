@@ -168,9 +168,9 @@ impl From<i32> for ExitCode {
     }
 }
 
-impl Into<i32> for ExitCode {
-    fn into(self) -> i32 {
-        self as i32
+impl From<ExitCode> for i32 {
+    fn from(value: ExitCode) -> Self {
+        value as i32
     }
 }
 
