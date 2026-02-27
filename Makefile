@@ -7,10 +7,14 @@ check:
 .PHONY: clippy
 clippy:
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
+	cargo clippy --manifest-path=./contracts/Cargo.toml --workspace --all-targets --all-features -- -D warnings
+	cargo clippy --manifest-path=./examples/Cargo.toml --workspace --all-targets --all-features -- -D warnings
 
 .PHONY: clippy-fast
 clippy-fast:
 	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy --manifest-path=./contracts/Cargo.toml --workspace --all-targets -- -D warnings
+	cargo clippy --manifest-path=./examples/Cargo.toml --workspace --all-targets -- -D warnings
 
 .PHONY: build
 build:
