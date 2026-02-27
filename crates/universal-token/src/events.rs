@@ -17,7 +17,7 @@ pub fn emit_transfer_event<SDK: SharedAPI>(
             B256::left_padding_from(from.as_slice()),
             B256::left_padding_from(to.as_slice()),
         ],
-        &amount.to_be_bytes::<{ U256::BYTES }>(),
+        amount.to_be_bytes::<{ U256::BYTES }>(),
     )
     .ok()
 }
@@ -44,7 +44,7 @@ pub fn emit_approval_event<SDK: SharedAPI>(
             B256::left_padding_from(owner.as_slice()),
             B256::left_padding_from(spender.as_slice()),
         ],
-        &amount.to_be_bytes::<{ U256::BYTES }>(),
+        amount.to_be_bytes::<{ U256::BYTES }>(),
     )
     .ok()
 }

@@ -108,11 +108,12 @@ fn main() {
 
     paths.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let mut code = Vec::new();
-    code.push("pub struct BuildOutput {".to_string());
-    code.push("    pub name: &'static str,".to_string());
-    code.push("    pub wasm_bytecode: &'static [u8],".to_string());
-    code.push("}".to_string());
+    let mut code = vec![
+        "pub struct BuildOutput {".to_string(),
+        "    pub name: &'static str,".to_string(),
+        "    pub wasm_bytecode: &'static [u8],".to_string(),
+        "}".to_string(),
+    ];
     for (name, path) in paths {
         let constant_name = name.to_uppercase().replace('-', "_");
         let path = path.to_str().unwrap();

@@ -62,7 +62,7 @@ impl AnalyzedBytecode {
         debug_assert!(buffer.len() >= self.hint_size());
         let mut writer = SliceWriter::new(buffer);
         let config = bincode::config::legacy();
-        encode_into_writer(&self.hash.0, &mut writer, config)?;
+        encode_into_writer(self.hash.0, &mut writer, config)?;
         encode_into_writer(self.len, &mut writer, config)?;
         encode_into_writer(&self.bytecode[..], &mut writer, config)?;
         encode_into_writer(self.jump_table.as_slice(), &mut writer, config)?;
@@ -73,7 +73,7 @@ impl AnalyzedBytecode {
     pub fn deserialize(bytes: &[u8]) -> Result<Self, error::DecodeError> {
         use alloc::vec::Vec;
         let config = bincode::config::legacy();
-        let mut reader = SliceReader::new(&bytes);
+        let mut reader = SliceReader::new(bytes);
         let hash: [u8; 32] = decode_from_reader(&mut reader, config)?;
         let len: u64 = decode_from_reader(&mut reader, config)?;
         let bytecode: Vec<u8> = decode_from_reader(&mut reader, config)?;

@@ -4,7 +4,7 @@ use crate::{
     debug_log, system::state::RecoverableState, Address, Bytes, ContextReader, SharedAPI,
     StorageAPI, SystemAPI, B256, U256,
 };
-use alloc::{borrow::Cow, vec, vec::Vec};
+use alloc::{borrow::Cow, vec};
 pub use fluentbase_types::system::*;
 use fluentbase_types::{
     bincode::decode_from_bytes, CryptoAPI, ExitCode, NativeAPI, SyscallInvocationParams,
@@ -38,10 +38,7 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
             }
             // Output size greater than 0 indicates an interruption outcome
             let output_size = native_sdk.output_size();
-            let mut return_data = Vec::with_capacity(output_size as usize);
-            unsafe {
-                return_data.set_len(output_size as usize);
-            }
+            let mut return_data = vec![0u8; output_size as usize];
             native_sdk.read_output(&mut return_data, 0);
             let (outcome, _) = bincode::decode_from_slice::<RuntimeInterruptionOutcomeV1, _>(
                 return_data.as_ref(),

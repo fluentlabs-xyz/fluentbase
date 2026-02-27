@@ -144,7 +144,7 @@ impl EthVM {
         SDK: SystemAPI,
     {
         let mut sdk = HostWrapperImpl::wrap(sdk);
-        self.interpreter.run_plain(&instruction_table, &mut sdk)
+        self.interpreter.run_plain(instruction_table, &mut sdk)
     }
 
     /// Commit interpreter gas deltas to the host (fuel) and snapshot the state.

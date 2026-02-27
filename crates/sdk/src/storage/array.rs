@@ -102,7 +102,7 @@ impl<T: StorageLayout, const N: usize> StorageLayout for StorageArray<T, N> {
     };
 
     const SLOTS: usize = if T::SLOTS == 0 {
-        (T::BYTES * N + 31) / 32
+        (T::BYTES * N).div_ceil(32)
     } else {
         T::SLOTS * N
     };

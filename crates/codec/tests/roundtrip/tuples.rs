@@ -223,7 +223,7 @@ fn test_nested_tuple_dynamic() {
             bytes_val: nested_tuple.0 .1.clone(),
             vec_val: nested_tuple.0 .2.clone(),
         },
-        fixed_bytes: nested_tuple.1.clone(),
+        fixed_bytes: nested_tuple.1,
         uint_val: nested_tuple.2,
         vec_val: nested_tuple.3.clone(),
     };

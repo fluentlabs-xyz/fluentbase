@@ -47,7 +47,7 @@ where
         SolidityABI::<T>::encode(&value, &mut encoded_buffer, 0).expect("Encoding failed");
 
         let chunk_size = 32;
-        let num_chunks = (encoded_buffer.len() + chunk_size - 1) / chunk_size;
+        let num_chunks = encoded_buffer.len().div_ceil(chunk_size);
 
         for i in 0..num_chunks {
             let start = i * chunk_size;
@@ -92,7 +92,7 @@ where
             .unwrap_or_else(|_| unreachable!("ABI encoding failure"));
 
         let chunk_size = 32;
-        let num_chunks = (encoded_buffer.len() + chunk_size - 1) / chunk_size;
+        let num_chunks = encoded_buffer.len().div_ceil(chunk_size);
 
         for i in 0..num_chunks {
             let start = i * chunk_size;

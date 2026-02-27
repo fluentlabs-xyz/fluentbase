@@ -134,10 +134,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
 
     fn return_data(&self) -> Bytes {
         let output_size = self.native_sdk.output_size();
-        let mut result = Vec::with_capacity(output_size as usize);
-        unsafe {
-            result.set_len(output_size as usize);
-        }
+        let mut result = vec![0u8; output_size as usize];
         self.native_sdk.read_output(&mut result, 0);
         result.into()
     }
@@ -299,11 +296,7 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         let mut buffer =
             Vec::with_capacity(encode::create_size_hint(init_code.len(), salt.is_some()));
         encode::create_into(&mut &mut buffer[..], salt.as_ref(), value, init_code);
-        let syscall_id = if salt.is_some() {
-            SYSCALL_ID_CREATE2
-        } else {
-            SYSCALL_ID_CREATE2
-        };
+        let syscall_id = SYSCALL_ID_CREATE2;
         let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
             BytecodeOrHash::Hash(syscall_id),
             Cow::Owned(buffer),

@@ -71,7 +71,7 @@ impl StorageBytes {
         } else {
             // Long form
             let data_base = self.data_slot();
-            for i in 0..(len + 31) / 32 {
+            for i in 0..len.div_ceil(32) {
                 let slot = data_base + U256::from(i);
                 let word = sdk.sload(slot)?;
                 let start = i * 32;
@@ -91,7 +91,7 @@ impl StorageBytes {
         // Clear old long form data if needed
         if was_long && old_len > 31 {
             let data_base = self.data_slot();
-            for i in 0..(old_len + 31) / 32 {
+            for i in 0..old_len.div_ceil(32) {
                 sdk.sstore(data_base + U256::from(i), B256::ZERO)?;
             }
         }
@@ -156,7 +156,7 @@ impl StorageBytes {
 
         if is_long && len > 31 {
             let data_base = self.data_slot();
-            for i in 0..(len + 31) / 32 {
+            for i in 0..len.div_ceil(32) {
                 sdk.sstore(data_base + U256::from(i), B256::ZERO)?;
             }
         }

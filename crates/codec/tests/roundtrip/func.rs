@@ -75,7 +75,8 @@ fn test_empty_and_single_args() {
     assert_eq!(buf.len(), 0);
 
     let decoded: () = SolidityABI::decode_function_args(&buf).unwrap();
-    assert_eq!(decoded, empty);
+    let _: () = decoded;
+    assert_eq!(empty, ());
 
     // Single dynamic arg
     let single = (Bytes::from("data"),);

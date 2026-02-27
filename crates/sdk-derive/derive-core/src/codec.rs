@@ -210,7 +210,6 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
 mod tests {
     use super::*;
     use insta::assert_snapshot;
-    use prettyplease;
     use proc_macro2::TokenStream as TokenStream2;
     use syn::{parse_file, parse_quote, ImplItemFn};
 
