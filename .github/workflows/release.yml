@@ -145,38 +145,38 @@ jobs:
 
       - name: Upload devnet genesis
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
           path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
       - name: Upload mainnet genesis
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz
           path: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz
       - name: Upload fluent
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz
           path: ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz
 
       - name: Upload genesis signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
           path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
       - name: Upload genesis signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
           path: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
       - name: Upload fluent signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz.asc
           path: ${{ matrix.build.binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz.asc

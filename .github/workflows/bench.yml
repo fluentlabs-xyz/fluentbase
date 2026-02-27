@@ -42,7 +42,7 @@ jobs:
           cd e2e && cargo bench | grep -v ignored | tee bench_output.txt
 
       - name: Upload full report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: criterion-report-${{ github.sha }}
           path: target/criterion
