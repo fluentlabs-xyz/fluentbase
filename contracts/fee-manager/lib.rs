@@ -22,7 +22,6 @@ struct FeeWithdrawn {
     amount: U256,
 }
 
-#[allow(clippy::assign_op_pattern)]
 #[derive(Contract)]
 struct App<SDK> {
     sdk: SDK,

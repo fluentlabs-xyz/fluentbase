@@ -375,7 +375,6 @@ fn find_mount_dir(work_dir: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn generate_artifacts(
     args: &BuildArgs,
     contract_dir: &Path,
