@@ -4,53 +4,17 @@ all: check build
 check:
 	cargo check --all
 
-CLIPPY_ALLOW_LEGACY := \
-	-A clippy::uninit_vec \
-	-A clippy::manual_div_ceil \
-	-A clippy::manual_saturating_arithmetic \
-	-A clippy::needless_borrows_for_generic_args \
-	-A clippy::needless_borrow \
-	-A clippy::needless_as_bytes \
-	-A clippy::if_same_then_else \
-	-A clippy::clone_on_copy \
-	-A clippy::identity_op \
-	-A clippy::arc_with_non_send_sync \
-	-A clippy::large_enum_variant \
-	-A clippy::unnecessary_literal_unwrap \
-	-A clippy::let_and_return \
-	-A clippy::suspicious_doc_comments \
-	-A clippy::let_unit_value \
-	-A clippy::explicit_auto_deref \
-	-A clippy::useless_conversion \
-	-A clippy::result_unit_err \
-	-A clippy::vec_init_then_push \
-	-A clippy::int_plus_one \
-	-A clippy::unit_arg \
-	-A clippy::type_complexity \
-	-A clippy::single_match \
-	-A clippy::empty_docs \
-	-A clippy::extra_unused_type_parameters \
-	-A clippy::match_single_binding \
-	-A clippy::len_zero \
-	-A clippy::slow_vector_initialization \
-	-A clippy::single_element_loop \
-	-A clippy::unnecessary_mut_passed \
-	-A clippy::single_component_path_imports \
-	-A clippy::bool_assert_comparison \
-	-A clippy::unit_cmp \
-	-A clippy::field_reassign_with_default
-
 .PHONY: clippy
 clippy:
-	cargo clippy --workspace --all-targets --all-features -- -D warnings $(CLIPPY_ALLOW_LEGACY)
-	cargo clippy --manifest-path=./contracts/Cargo.toml --workspace --all-targets --all-features -- -D warnings $(CLIPPY_ALLOW_LEGACY)
-	cargo clippy --manifest-path=./examples/Cargo.toml --workspace --all-targets --all-features -- -D warnings $(CLIPPY_ALLOW_LEGACY)
+	cargo clippy-ci
+	cargo clippy-ci --manifest-path=./contracts/Cargo.toml
+	cargo clippy-ci --manifest-path=./examples/Cargo.toml
 
 .PHONY: clippy-fast
 clippy-fast:
-	cargo clippy --workspace --all-targets -- -D warnings $(CLIPPY_ALLOW_LEGACY)
-	cargo clippy --manifest-path=./contracts/Cargo.toml --workspace --all-targets -- -D warnings $(CLIPPY_ALLOW_LEGACY)
-	cargo clippy --manifest-path=./examples/Cargo.toml --workspace --all-targets -- -D warnings $(CLIPPY_ALLOW_LEGACY)
+	cargo clippy-ci-fast
+	cargo clippy-ci-fast --manifest-path=./contracts/Cargo.toml
+	cargo clippy-ci-fast --manifest-path=./examples/Cargo.toml
 
 .PHONY: build
 build:
