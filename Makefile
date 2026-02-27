@@ -6,15 +6,9 @@ check:
 
 .PHONY: clippy
 clippy:
-	cargo clippy-ci
-	cargo clippy-ci-contracts
-	cargo clippy-ci-examples
-
-.PHONY: clippy-fast
-clippy-fast:
-	cargo clippy-ci-fast
-	cargo clippy-ci-fast-contracts
-	cargo clippy-ci-fast-examples
+	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy --manifest-path=./contracts/Cargo.toml --workspace --all-targets -- -D warnings
+	cargo clippy --manifest-path=./examples/Cargo.toml --workspace --all-targets -- -D warnings
 
 .PHONY: build
 build:

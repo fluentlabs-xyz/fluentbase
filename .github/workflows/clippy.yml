@@ -15,19 +15,9 @@ env:
 
 jobs:
   clippy:
-    name: Clippy (${{ matrix.name }})
+    name: Clippy (make clippy)
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: root workspace
-            alias: clippy-ci
-          - name: contracts workspace
-            alias: clippy-ci-contracts
-          - name: examples workspace
-            alias: clippy-ci-examples
 
     steps:
       - uses: actions/checkout@v6
@@ -55,10 +45,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-          shared-key: clippy-${{ matrix.alias }}
+          shared-key: clippy-make
 
       - name: Prefetch deps
         run: cargo fetch --locked
 
       - name: Run clippy
-        run: cargo ${{ matrix.alias }}
+        run: make clippy
