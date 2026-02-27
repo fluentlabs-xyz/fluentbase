@@ -28,7 +28,7 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
 /// - Per word (32 bytes): 12 gas
 #[inline(always)]
 fn estimate_gas(input_len: usize) -> u64 {
-    let words = (input_len + 31) / 32;
+    let words = input_len.div_ceil(32);
     60 + (words as u64 * 12)
 }
 

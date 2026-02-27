@@ -577,10 +577,10 @@ mod tests {
 
         assert_eq!(buf.to_vec(), expected);
 
-        let mut encoded = buf.freeze();
+        let encoded = buf.freeze();
         println!("Encoded Bytes: {:?}", encoded.to_vec());
 
-        let decoded = read_bytes::<BigEndian, 8, false>(&mut encoded, 0).unwrap();
+        let decoded = read_bytes::<BigEndian, 8, false>(&encoded, 0).unwrap();
 
         println!("Decoded Bytes: {:?}", decoded.to_vec());
         assert_eq!(decoded.to_vec(), original.to_vec());
