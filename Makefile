@@ -7,14 +7,14 @@ check:
 .PHONY: clippy
 clippy:
 	cargo clippy-ci
-	cargo clippy-ci --manifest-path=./contracts/Cargo.toml
-	cargo clippy-ci --manifest-path=./examples/Cargo.toml
+	cargo clippy-ci-contracts
+	cargo clippy-ci-examples
 
 .PHONY: clippy-fast
 clippy-fast:
 	cargo clippy-ci-fast
-	cargo clippy-ci-fast --manifest-path=./contracts/Cargo.toml
-	cargo clippy-ci-fast --manifest-path=./examples/Cargo.toml
+	cargo clippy-ci-fast-contracts
+	cargo clippy-ci-fast-examples
 
 .PHONY: build
 build:
