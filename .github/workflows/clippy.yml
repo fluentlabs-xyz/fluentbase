@@ -15,9 +15,19 @@ env:
 
 jobs:
   clippy:
-    name: Clippy (make clippy)
+    name: Clippy (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: root workspace
+            command: cargo clippy --workspace --all-targets -- -D warnings
+          - name: contracts workspace
+            command: cargo clippy --manifest-path=./contracts/Cargo.toml --workspace --all-targets -- -D warnings
+          - name: examples workspace
+            command: cargo clippy --manifest-path=./examples/Cargo.toml --workspace --all-targets -- -D warnings
 
     steps:
       - uses: actions/checkout@v6
@@ -45,10 +55,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-          shared-key: clippy-make
+          shared-key: clippy-${{ matrix.name }}
 
       - name: Prefetch deps
         run: cargo fetch --locked
 
       - name: Run clippy
-        run: make clippy
+        run: ${{ matrix.command }}
