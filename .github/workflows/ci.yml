@@ -21,7 +21,7 @@ env:
 jobs:
   tests:
     name: Tests (${{ matrix.name }})
-    runs-on: ubuntu-amd64-8core
+    runs-on: self-hosted
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -146,7 +146,7 @@ jobs:
 
   coverage:
     name: Coverage
-    runs-on: ubuntu-amd64-8core
+    runs-on: self-hosted
     if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Maximize build space
@@ -207,7 +207,7 @@ jobs:
 
   rust-fmt-lint:
     name: Lint
-    runs-on: ubuntu-amd64-8core
+    runs-on: self-hosted
     if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v6

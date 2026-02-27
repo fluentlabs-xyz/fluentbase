@@ -10,7 +10,7 @@ on:
 jobs:
   compare-on-pr:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-amd64-8core
+    runs-on: self-hosted
     permissions:
       contents: read
       pull-requests: write  # needed to comment on PRs (won’t work for forks; see note below)

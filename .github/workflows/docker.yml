@@ -18,7 +18,7 @@ jobs:
   build-rc:
     if: contains(github.ref, '-rc')
     name: build and push as release candidate
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     permissions:
       packages: write
       contents: read
@@ -54,7 +54,7 @@ jobs:
   build:
     if: ${{ !contains(github.ref, '-rc') }}
     name: build and push as latest
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     permissions:
       packages: write
       contents: read

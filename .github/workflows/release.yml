@@ -22,7 +22,7 @@ env:
 jobs:
   dry-run:
     name: check dry run
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - run: |
           echo "Dry run value: ${{ github.event.inputs.dry_run }}"
@@ -31,7 +31,7 @@ jobs:
 
   extract-version:
     name: extract version
-    runs-on: ubuntu-amd64-8core
+    runs-on: self-hosted
     steps:
       - name: Extract and sanitize version
         id: extract_version
@@ -46,7 +46,7 @@ jobs:
 
   check-version:
     name: check version
-    runs-on: ubuntu-amd64-8core
+    runs-on: self-hosted
     needs: extract-version
     steps:
       - uses: actions/checkout@v6
@@ -70,7 +70,7 @@ jobs:
       matrix:
         configs:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-amd64-8core
+            os: self-hosted
             profile: maxperf
             allow_fail: false
         #  - target: x86_64-apple-darwin
@@ -185,7 +185,7 @@ jobs:
     name: draft release
     needs: [ build, extract-version ]
     if: ${{ github.event.inputs.dry_run != 'true' }}
-    runs-on: ubuntu-amd64-8core
+    runs-on: self-hosted
     env:
       VERSION: ${{ needs.extract-version.outputs.VERSION }}
     permissions:
