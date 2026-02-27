@@ -4,7 +4,7 @@ use crate::{
 };
 use fluentbase_types::CryptoAPI;
 
-/// The number of limbs in [Bls12381AffinePoint].
+/// The number of limbs in `Bls12381AffinePoint`.
 pub const N: usize = 24;
 
 /// A point on the BLS12-381 curve.
@@ -32,7 +32,7 @@ impl AffinePoint<N> for Bls12381Point {
 
     /// The generator was taken from "py_ecc" python library by the Ethereum Foundation:
     ///
-    /// https://github.com/ethereum/py_ecc/blob/7b9e1b3/py_ecc/bls12_381/bls12_381_curve.py#L38-L45
+    /// <https://github.com/ethereum/py_ecc/blob/7b9e1b3/py_ecc/bls12_381/bls12_381_curve.py#L38-L45>
     #[allow(deprecated)]
     const GENERATOR_T: Self = Self(WeierstrassPoint::Affine(Self::GENERATOR));
 

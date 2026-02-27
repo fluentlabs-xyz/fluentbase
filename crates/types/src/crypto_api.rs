@@ -8,7 +8,7 @@ use crate::{
 /// A low-level API for cryptographic primitives used across the runtime.
 #[rustfmt::skip]
 pub trait CryptoAPI {
-    /// In-place Keccak-f[1600] permutation over 25 lanes of 64-bit.
+    /// In-place `Keccak-f[1600]` permutation over 25 lanes of 64-bit.
     ///
     /// Input/Output: `state` is the 5x5x64-bit state flattened to 25 u64 words (little-endian lanes).
     fn keccak256_permute(state: &mut [u64; 25]);

@@ -44,10 +44,10 @@ pub trait StorageLayout: Sized {
     /// Runtime access interface.
     ///
     /// Different types have different accessors:
-    /// - Primitive<T>: simple get/set operations
+    /// - `Primitive<T>`: simple get/set operations
     /// - Array<T, N>: indexed access via at(index)
     /// - Map<K, V>: key-based access via entry(key)
-    /// - Vec<T>: dynamic operations (push/pop/at)
+    /// - `Vec<T>`: dynamic operations (push/pop/at)
     type Accessor;
 
     /// Size in bytes when encoded to storage.

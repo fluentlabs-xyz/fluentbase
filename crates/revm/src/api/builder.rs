@@ -1,4 +1,4 @@
-//! Optimism builder trait [`RwasmBuilder`] used to build [`OpEvm`].
+//! Optimism builder trait `RwasmBuilder` used to build the Fluentbase EVM wrapper.
 use crate::{evm::RwasmEvm, precompiles::RwasmPrecompiles, RwasmSpecId};
 use revm::context::Transaction;
 use revm::{

@@ -4,7 +4,7 @@ use crate::{
 };
 use fluentbase_types::CryptoAPI;
 
-/// The number of limbs in [Bn254AffinePoint].
+/// The number of limbs in `Bn254AffinePoint`.
 pub const N: usize = 16;
 
 /// A point on the Bn254 curve.
@@ -28,7 +28,7 @@ impl AffinePoint<N> for Bn254Point {
     #[allow(deprecated)]
     /// The generator has been taken from py_pairing python library by the Ethereum Foundation:
     ///
-    /// https://github.com/ethereum/py_pairing/blob/5f609da/py_ecc/bn128/bn128_field_elements.py
+    /// <https://github.com/ethereum/py_pairing/blob/5f609da/py_ecc/bn128/bn128_field_elements.py>
     const GENERATOR_T: Self = Self(WeierstrassPoint::Affine(Self::GENERATOR));
 
     fn new(limbs: [u32; N]) -> Self {

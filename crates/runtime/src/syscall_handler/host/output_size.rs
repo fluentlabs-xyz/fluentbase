@@ -2,7 +2,7 @@
 use crate::RuntimeContext;
 use rwasm::{StoreTr, TrapCode, Value};
 
-/// Writes the length of ctx.execution_result.return_data into result[0].
+/// Writes the length of `ctx.execution_result.return_data` into `result[0]`.
 pub fn syscall_output_size_handler(
     caller: &mut impl StoreTr<RuntimeContext>,
     _params: &[Value],

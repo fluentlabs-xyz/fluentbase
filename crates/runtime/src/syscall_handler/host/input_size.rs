@@ -2,7 +2,7 @@
 use crate::RuntimeContext;
 use rwasm::{StoreTr, TrapCode, Value};
 
-/// Writes the input length in bytes into result[0].
+/// Writes the input length in bytes into `result[0]`.
 pub fn syscall_input_size_handler(
     caller: &mut impl StoreTr<RuntimeContext>,
     _params: &[Value],

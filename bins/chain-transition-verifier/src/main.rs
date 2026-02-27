@@ -1,4 +1,5 @@
 #![allow(missing_docs, dead_code)]
+//! CLI tool for validating chain transition inputs and outputs.
 
 use clap::Parser;
 use eyre::{eyre, Result};

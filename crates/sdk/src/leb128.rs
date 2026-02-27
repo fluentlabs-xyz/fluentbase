@@ -14,7 +14,7 @@ pub fn low_bits_of_u64(val: u64) -> u8 {
 
 /// A module for writing LEB128-encoded signed and unsigned integers.
 ///
-/// Adapted from https://crates.io/crates/leb128, with references to the Rust standard
+/// Adapted from <https://crates.io/crates/leb128>, with references to the Rust standard
 /// library removed, as we do not use the standard library in the SDK crate.
 pub mod write {
     use super::{low_bits_of_u64, CONTINUATION_BIT};
