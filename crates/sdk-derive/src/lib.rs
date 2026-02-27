@@ -1,3 +1,4 @@
+//! Procedural macros for routers, clients, events, and storage layouts in Fluentbase contracts.
 use fluentbase_sdk_derive_core::{
     client, event, router, storage::process_storage_layout, storage_legacy,
 };

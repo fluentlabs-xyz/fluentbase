@@ -1,3 +1,4 @@
+//! Genesis helpers and embedded build outputs for Fluentbase system contracts.
 pub use alloy_genesis::Genesis;
 use fluentbase_sdk::{Address, Bytes, GenesisContract, B256};
 use lazy_static::lazy_static;

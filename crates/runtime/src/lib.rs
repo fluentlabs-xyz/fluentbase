@@ -1,3 +1,4 @@
+//! rWASM runtime executor, syscall dispatch, and module cache implementation for Fluentbase.
 #![allow(dead_code, unreachable_patterns, unused_macros)]
 #![warn(unused_crate_dependencies)]
 extern crate alloc;

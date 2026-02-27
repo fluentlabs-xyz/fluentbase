@@ -1,3 +1,4 @@
+//! ABI-like encoding and decoding primitives used across Fluentbase runtimes and contracts.
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(unused_imports)]
 extern crate alloc;
