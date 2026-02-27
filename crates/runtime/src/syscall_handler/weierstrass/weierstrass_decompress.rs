@@ -165,7 +165,7 @@ fn syscall_weierstrass_decompress_impl<
     // https://github.com/succinctlabs/sp1/tree/dev/crates/curves/src/weierstrass
     let computed_point = match E::CURVE_TYPE {
         CurveType::Secp256k1 => {
-            let mut x_bytes_be = x_bytes_le.clone();
+            let mut x_bytes_be = x_bytes_le;
             x_bytes_be.reverse();
             let computed_point = k256::AffinePoint::decompress(
                 x_bytes_be.as_slice().into(),
@@ -180,7 +180,7 @@ fn syscall_weierstrass_decompress_impl<
             AffinePoint::<E>::new(x, y)
         }
         CurveType::Secp256r1 => {
-            let mut x_bytes_be = x_bytes_le.clone();
+            let mut x_bytes_be = x_bytes_le;
             x_bytes_be.reverse();
             let computed_point = p256::AffinePoint::decompress(
                 x_bytes_be.as_slice().into(),
@@ -195,7 +195,7 @@ fn syscall_weierstrass_decompress_impl<
             AffinePoint::<E>::new(x, y)
         }
         CurveType::Bls12381 => {
-            let mut g1_bytes_be = x_bytes_le.clone();
+            let mut g1_bytes_be = x_bytes_le;
             g1_bytes_be.reverse();
 
             const COMPRESSION_FLAG: u8 = 0b_1000_0000;

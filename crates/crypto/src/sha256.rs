@@ -9,7 +9,7 @@ fn be_words_from_block(block: &[u8; 64]) -> [u32; 64] {
     let mut w = [0u32; 64];
     for i in 0..16 {
         w[i] = u32::from_be_bytes([
-            block[i * 4 + 0],
+            block[i * 4],
             block[i * 4 + 1],
             block[i * 4 + 2],
             block[i * 4 + 3],

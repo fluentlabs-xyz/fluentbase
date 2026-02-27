@@ -79,6 +79,7 @@ impl EthVM {
 
     /// Execute until completion, delegating host-bound ops via interruptions.
     /// Returns EVM result plus precise gas/fuel accounting.
+    #[allow(clippy::never_loop)]
     pub fn run_the_loop<SDK: SystemAPI>(mut self, sdk: &mut SDK) -> ExecutionResult {
         let instruction_table = interruptable_instruction_table();
         let mut sdk = HostWrapperImpl::wrap(sdk);

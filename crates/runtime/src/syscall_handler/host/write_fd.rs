@@ -121,8 +121,8 @@ mod ecrecover {
             }
 
             let mut result = vec![0x1];
-            result.extend_from_slice(&*y_coord.to_bytes());
-            result.extend_from_slice(&*r_inv.to_bytes());
+            result.extend_from_slice(&y_coord.to_bytes());
+            result.extend_from_slice(&r_inv.to_bytes());
             result
         } else {
             let nqr_field = K256FieldElement::from_bytes(NQR.as_ref().into()).unwrap();
@@ -131,7 +131,7 @@ mod ecrecover {
                 .sqrt()
                 .expect("if alpha is not a square, then qr should be a square");
             let mut result = vec![0x0];
-            result.extend_from_slice(&*root.to_bytes());
+            result.extend_from_slice(&root.to_bytes());
             result
         }
     }
@@ -156,8 +156,8 @@ mod ecrecover {
             }
 
             let mut result = vec![0x1];
-            result.extend_from_slice(&*y_coord.to_bytes());
-            result.extend_from_slice(&*r_inv.to_bytes());
+            result.extend_from_slice(&y_coord.to_bytes());
+            result.extend_from_slice(&r_inv.to_bytes());
             result
         } else {
             let nqr_field = P256FieldElement::from_bytes(NQR.as_ref().into()).unwrap();
@@ -166,7 +166,7 @@ mod ecrecover {
                 .sqrt()
                 .expect("if alpha is not a square, then qr should be a square");
             let mut result = vec![0x0];
-            result.extend_from_slice(&*root.to_bytes());
+            result.extend_from_slice(&root.to_bytes());
             result
         }
     }

@@ -25,6 +25,7 @@ pub use system_runtime::SystemRuntime;
 /// Both modes expose the same operational surface:
 /// execution control, memory access, fuel accounting, and context access.
 /// This enum acts as a dynamic dispatcher between them.
+#[allow(clippy::large_enum_variant)]
 pub enum ExecutionMode {
     /// Contract-level execution runtime.
     ///

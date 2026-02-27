@@ -15,7 +15,7 @@ pub fn syscall_hashing_sha256_compress_handler(
     let mut state = [0u32; 8];
     for i in 0..8 {
         state[i] = u32::from_le_bytes([
-            h_be[i * 4 + 0],
+            h_be[i * 4],
             h_be[i * 4 + 1],
             h_be[i * 4 + 2],
             h_be[i * 4 + 3],
@@ -28,7 +28,7 @@ pub fn syscall_hashing_sha256_compress_handler(
     let mut w = [0u32; 64];
     for i in 0..64 {
         w[i] = u32::from_le_bytes([
-            w_be[i * 4 + 0],
+            w_be[i * 4],
             w_be[i * 4 + 1],
             w_be[i * 4 + 2],
             w_be[i * 4 + 3],
@@ -104,7 +104,7 @@ mod tests {
         let mut w = [0u32; 64];
         for i in 0..16 {
             w[i] = u32::from_be_bytes([
-                block[i * 4 + 0],
+                block[i * 4],
                 block[i * 4 + 1],
                 block[i * 4 + 2],
                 block[i * 4 + 3],

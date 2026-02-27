@@ -28,8 +28,7 @@ pub fn syscall_charge_fuel_manually_impl(
     let new_fuel_consumed = ctx
         .execution_result
         .fuel_consumed
-        .checked_add(fuel_consumed)
-        .unwrap_or(u64::MAX);
+        .saturating_add(fuel_consumed);
     if new_fuel_consumed > ctx.fuel_limit {
         return Err(TrapCode::OutOfFuel);
     }

@@ -1,4 +1,4 @@
-///! Builtin to copy a slice of the input buffer into linear memory.
+//! Builtin to copy a slice of the input buffer into linear memory.
 use crate::syscall_handler::syscall_process_exit_code;
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
@@ -17,7 +17,7 @@ pub fn syscall_read_input_handler(
     );
     let input = syscall_read_input_impl(ctx.data_mut(), offset, length)
         .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
-    let _ = ctx.memory_write(target_ptr, &input)?;
+    ctx.memory_write(target_ptr, &input)?;
     Ok(())
 }
 

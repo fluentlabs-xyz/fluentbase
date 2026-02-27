@@ -58,8 +58,8 @@ impl AffinePoint<N> for Bn254Point {
     }
 
     fn add_assign(&mut self, other: &Self) {
-        let a: [u8; 64] = bytemuck::cast(self.limbs_mut().clone());
-        let b: [u8; 64] = bytemuck::cast(other.limbs_ref().clone());
+        let a: [u8; 64] = bytemuck::cast(*self.limbs_mut());
+        let b: [u8; 64] = bytemuck::cast(*other.limbs_ref());
         CryptoRuntime::bn254_add(a, b);
     }
 
