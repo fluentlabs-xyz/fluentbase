@@ -1,4 +1,6 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
+#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#![allow(clippy::assign_op_pattern)]
 
 extern crate alloc;
 
@@ -20,6 +22,7 @@ struct FeeWithdrawn {
     amount: U256,
 }
 
+#[allow(clippy::assign_op_pattern)]
 #[derive(Contract)]
 struct App<SDK> {
     sdk: SDK,
@@ -59,7 +62,7 @@ impl<SDK: SharedAPI> RouterAPI for App<SDK> {
     }
 
     fn owner(&mut self) -> Address {
-        let mut owner = self.owner_accessor().get(&mut self.sdk);
+        let mut owner = self.owner_accessor().get(&self.sdk);
         if owner.is_zero() {
             owner = DEFAULT_FEE_MANAGER_AUTH;
         }

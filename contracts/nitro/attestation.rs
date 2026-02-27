@@ -289,7 +289,7 @@ fn verify_certificate(subject: &Certificate, issuer: &Certificate) {
             let signature = p384::ecdsa::DerSignature::try_from(signature).unwrap();
             let verify_key = p384::ecdsa::VerifyingKey::from_sec1_bytes(verifying_key).unwrap();
 
-            verify_key.verify(signed_data, &signature).unwrap();
+            verify_key.verify(&signed_data, &signature).unwrap();
         }
         _ => {
             panic!("Unsupported ECDSA algorithm");
@@ -517,7 +517,7 @@ fn verify_cosesign1(cosesign1: &CoseSign1, certificate: &Certificate) {
         .verify_signature(&[], |signature, signed_data| {
             let signature = p384::ecdsa::Signature::from_bytes(signature.into()).unwrap();
             let verify_key = p384::ecdsa::VerifyingKey::from_sec1_bytes(verifying_key).unwrap();
-            verify_key.verify(&signed_data, &signature).unwrap();
+            verify_key.verify(signed_data, &signature).unwrap();
             Ok::<(), CoseError>(())
         })
         .unwrap();
