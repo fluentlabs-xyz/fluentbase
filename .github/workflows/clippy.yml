@@ -23,11 +23,11 @@ jobs:
       matrix:
         include:
           - name: root workspace
-            manifest: ./Cargo.toml
+            alias: clippy-ci
           - name: contracts workspace
-            manifest: ./contracts/Cargo.toml
+            alias: clippy-ci-contracts
           - name: examples workspace
-            manifest: ./examples/Cargo.toml
+            alias: clippy-ci-examples
 
     steps:
       - uses: actions/checkout@v6
@@ -55,10 +55,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-          shared-key: clippy-${{ matrix.manifest }}
+          shared-key: clippy-${{ matrix.alias }}
 
       - name: Prefetch deps
         run: cargo fetch --locked
 
       - name: Run clippy
-        run: cargo clippy-ci --manifest-path="${{ matrix.manifest }}"
+        run: cargo ${{ matrix.alias }}
