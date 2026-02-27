@@ -4,6 +4,14 @@ all: check build
 check:
 	cargo check --all
 
+.PHONY: clippy
+clippy:
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+.PHONY: clippy-fast
+clippy-fast:
+	cargo clippy --workspace --all-targets -- -D warnings
+
 .PHONY: build
 build:
 	cargo build --all
