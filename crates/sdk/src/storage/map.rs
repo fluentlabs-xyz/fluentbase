@@ -1,3 +1,4 @@
+#![allow(clippy::needless_borrows_for_generic_args)]
 use crate::{
     storage::{PackableCodec, StorageDescriptor, StorageLayout},
     U256,

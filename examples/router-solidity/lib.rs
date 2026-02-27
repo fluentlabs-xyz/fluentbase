@@ -65,7 +65,7 @@ mod tests {
         router.deploy();
         router.main();
         let encoded_output = &sdk.take_output();
-        println!("output: {:?}", hex::encode(&encoded_output));
+        println!("output: {:?}", hex::encode(encoded_output));
         let output = GreetingReturn::decode(&encoded_output.as_slice()).unwrap();
         println!("output: {:?}", &output.0);
         assert_eq!(output.0 .0, "Hello, World".to_string());
@@ -87,7 +87,7 @@ mod tests {
         router.deploy();
         router.main();
         let encoded_output = &sdk.take_output();
-        println!("output: {:?}", hex::encode(&encoded_output));
+        println!("output: {:?}", hex::encode(encoded_output));
         let output = CustomGreetingReturn::decode(&encoded_output.as_slice()).unwrap();
         println!("output: {:?}", &output.0);
         assert_eq!(output.0 .0, s);

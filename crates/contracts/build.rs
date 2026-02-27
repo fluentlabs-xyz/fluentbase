@@ -36,7 +36,7 @@ fn main() {
 
     let fluentbase_root_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let root_metadata = MetadataCommand::new()
-        .manifest_path(&fluentbase_root_dir.join("Cargo.toml"))
+        .manifest_path(fluentbase_root_dir.join("Cargo.toml"))
         .exec()
         .unwrap();
     let target2_dir: PathBuf = root_metadata.target_directory.join("contracts").into();

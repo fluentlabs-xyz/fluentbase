@@ -1,3 +1,4 @@
+#![allow(clippy::unnecessary_mut_passed)]
 //! Universal Token SDK
 //!
 //! This module provides utilities for deploying and interacting with Universal Token contracts.

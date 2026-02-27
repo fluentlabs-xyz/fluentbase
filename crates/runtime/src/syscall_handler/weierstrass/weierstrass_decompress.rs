@@ -251,10 +251,8 @@ mod tests {
         };
         let mut compressed_key: [u8; 32] = compressed_key[1..].try_into().unwrap();
         compressed_key.reverse();
-        let mut result: [u8; 64] = syscall_secp256r1_decompress_impl(compressed_key, is_odd as u32)
-            .unwrap()
-            .try_into()
-            .unwrap();
+        let mut result: [u8; 64] =
+            syscall_secp256r1_decompress_impl(compressed_key, is_odd as u32).unwrap();
         result.reverse();
         result
     }
@@ -297,10 +295,8 @@ mod tests {
         };
         let mut compressed_key: [u8; 32] = compressed_key[1..].try_into().unwrap();
         compressed_key.reverse();
-        let mut result: [u8; 64] = syscall_secp256k1_decompress_impl(compressed_key, is_odd as u32)
-            .unwrap()
-            .try_into()
-            .unwrap();
+        let mut result: [u8; 64] =
+            syscall_secp256k1_decompress_impl(compressed_key, is_odd as u32).unwrap();
         result.reverse();
         result
     }
@@ -339,10 +335,7 @@ mod tests {
         compressed_key_unsigned[0] &= 0b_0001_1111;
         compressed_key_unsigned.reverse();
         let mut result: [u8; 96] =
-            syscall_bls12381_decompress_impl(compressed_key_unsigned, sign_bit as u32)
-                .unwrap()
-                .try_into()
-                .unwrap();
+            syscall_bls12381_decompress_impl(compressed_key_unsigned, sign_bit as u32).unwrap();
         result.reverse();
         result
     }

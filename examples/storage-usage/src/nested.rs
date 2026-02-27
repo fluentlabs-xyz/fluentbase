@@ -1,3 +1,4 @@
+#![allow(clippy::assign_op_pattern)]
 #![allow(dead_code)]
 use fluentbase_sdk::{
     derive::{Contract, Storage},

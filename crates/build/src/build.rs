@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 use crate::{docker, generators, Artifact, BuildArgs, BUILD_TARGET};
 use anyhow::{Context, Result};
 use cargo_metadata::{Metadata, MetadataCommand, Package};
@@ -374,6 +375,7 @@ fn find_mount_dir(work_dir: &Path) -> PathBuf {
         .to_path_buf()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn generate_artifacts(
     args: &BuildArgs,
     contract_dir: &Path,

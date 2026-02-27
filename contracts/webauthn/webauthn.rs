@@ -1,3 +1,5 @@
+#![allow(clippy::needless_borrow)]
+
 use alloc::{format, string::String, vec::Vec};
 use fluentbase_sdk::{codec::Codec, Bytes, ExitCode, U256};
 use sha2::{Digest, Sha256};

@@ -1,3 +1,4 @@
+#![allow(clippy::unnecessary_mut_passed, clippy::needless_borrow)]
 pub const CONTINUATION_BIT: u8 = 1 << 7;
 pub const SIGN_BIT: u8 = 1 << 6;
 

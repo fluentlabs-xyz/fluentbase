@@ -1,3 +1,5 @@
+#![allow(clippy::needless_range_loop)]
+
 //! Unit tests for the EIP-2935 history storage contract.
 //!
 //! The contract has two entry paths:

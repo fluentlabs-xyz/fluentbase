@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
+#![allow(clippy::needless_borrow)]
 extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;

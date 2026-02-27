@@ -392,8 +392,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     let fuel_limit = interpreter
         .gas
         .remaining()
-        .checked_mul(FUEL_DENOM_RATE)
-        .unwrap_or(u64::MAX);
+        .saturating_mul(FUEL_DENOM_RATE);
 
     // Execute rWasm entrypoint for this frame.
     let mut runtime_context = RuntimeContext::default();
@@ -407,7 +406,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     // Convert consumed fuel into gas to charge inside REVM.
     // On some networks we floor vs. ceil; keep the behavior feature-gated.
-    let gas_consumed = (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE;
+    let gas_consumed = fuel_consumed.div_ceil(FUEL_DENOM_RATE);
 
     // Charge gas. If we cannot, halt with out-of-fuel.
     if !interpreter.gas.record_cost(gas_consumed) {
@@ -455,8 +454,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     let fuel_consumed = result
         .gas
         .spent()
-        .checked_mul(FUEL_DENOM_RATE)
-        .unwrap_or(u64::MAX);
+        .saturating_mul(FUEL_DENOM_RATE);
     let fuel_refunded = result
         .gas
         .refunded()
@@ -516,7 +514,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     let return_data: Bytes = runtime_context.execution_result.return_data.into();
 
     // Convert consumed fuel into gas for REVM.
-    let gas_consumed = (fuel_consumed + FUEL_DENOM_RATE - 1) / FUEL_DENOM_RATE;
+    let gas_consumed = fuel_consumed.div_ceil(FUEL_DENOM_RATE);
 
     // Charge gas for the resumed segment.
     if !frame.interpreter.gas.record_cost(gas_consumed) {
@@ -548,7 +546,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
 ///
 /// Note: this reads code from journal, so callers should be careful to keep journal ordering
 /// consistent with REVM semantics.
-fn get_ownable_account_mut<'a, CTX: ContextTr + 'a, INSP: Inspector<CTX>>(
+fn get_ownable_account_mut<'a, CTX: ContextTr + 'a>(
     frame: &'a mut RwasmFrame,
     ctx: &'a mut CTX,
 ) -> Result<Option<OwnableAccountBytecode>, ContextError<<CTX::Db as Database>::Error>> {
@@ -610,7 +608,7 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
     };
 
     // Replace the raw runtime bytes with the contract-visible output.
-    *return_data = runtime_output.output.into();
+    *return_data = runtime_output.output;
 
     // Optimization: if the runtime reported a non-ok exit code, we intentionally skip writing
     // state changes into the journal (they would be rolled back anyway).
@@ -663,7 +661,7 @@ fn process_execution_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         .bytecode_address
         .unwrap_or(target_address);
 
-    let ownable_account = get_ownable_account_mut::<CTX, INSP>(frame, ctx)?;
+    let ownable_account = get_ownable_account_mut::<CTX>(frame, ctx)?;
     let effective_bytecode_address = ownable_account
         .as_ref()
         .map(|v| v.owner_address)

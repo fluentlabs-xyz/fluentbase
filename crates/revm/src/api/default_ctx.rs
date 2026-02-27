@@ -20,7 +20,7 @@ impl DefaultRwasm for RwasmContext<EmptyDB> {
         Context::mainnet()
             .with_tx(TxEnv::builder().build_fill())
             .with_cfg(CfgEnv::new_with_spec(RwasmSpecId::PRAGUE))
-            .with_chain(Default::default())
+            .with_chain(())
     }
 }
 

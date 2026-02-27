@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
+#![allow(clippy::useless_conversion, clippy::vec_init_then_push)]
 #![allow(dead_code)]
 
 extern crate alloc;

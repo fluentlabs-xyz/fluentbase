@@ -1,5 +1,20 @@
 #![allow(soft_unstable)]
 #![allow(unused)]
+#![allow(
+    clippy::iter_kv_map,
+    clippy::len_zero,
+    clippy::let_and_return,
+    clippy::manual_div_ceil,
+    clippy::useless_conversion,
+    clippy::same_item_push,
+    clippy::useless_asref,
+    clippy::vec_init_then_push,
+    clippy::needless_borrow,
+    clippy::identity_op,
+    clippy::bool_assert_comparison,
+    clippy::needless_borrows_for_generic_args,
+    clippy::unnecessary_mut_passed
+)]
 
 extern crate alloc;
 extern crate core;

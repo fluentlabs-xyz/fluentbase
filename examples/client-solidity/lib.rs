@@ -3,7 +3,6 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use alloc::string::String;
-use core::u64;
 use fluentbase_sdk::{
     basic_entrypoint,
     derive::{client, router},

@@ -71,8 +71,7 @@ fn tokens_transfer_benches(c: &mut Criterion) {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         const OWNER_ADDRESS: Address = Address::ZERO;
         let bytecode: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_ERC20
-            .wasm_bytecode
-            .into();
+            .wasm_bytecode;
 
         // constructor params for ERC20:
         //     name: "TestToken"

@@ -1,3 +1,4 @@
+#![allow(clippy::assign_op_pattern)]
 #![cfg_attr(not(feature = "std"), no_std, no_main)]
 #![allow(dead_code)]
 

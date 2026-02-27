@@ -21,7 +21,7 @@ lazy_static! {
                 rwasm_bytecode_hash: B256::from_slice(&build_output.rwasm_bytecode_hash),
                 address: Address::from(&build_output.address),
             };
-            map.insert(contract.address.clone(), contract);
+            map.insert(contract.address, contract);
         }
         map
     };

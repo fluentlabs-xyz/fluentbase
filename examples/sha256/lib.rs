@@ -6,7 +6,7 @@ use fluentbase_sdk::{crypto::crypto_sha256, entrypoint, SharedAPI};
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let input = sdk.bytes_input();
     let hash = crypto_sha256(input); // calculate the hash via syscall to builtin keccak256
-    sdk.write(&hash.as_slice());
+    sdk.write(hash.as_slice());
 }
 
 entrypoint!(main_entry);

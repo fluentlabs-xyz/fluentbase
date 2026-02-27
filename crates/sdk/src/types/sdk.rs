@@ -4,7 +4,7 @@ use crate::{
     system::RuntimeInterruptionOutcomeV1,
     Address, Bytes, ContextReader, ExitCode, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
-use alloc::borrow::Cow;
+use alloc::{borrow::Cow, vec};
 use fluentbase_crypto::crypto_keccak256;
 
 pub type IsAccountOwnable = bool;

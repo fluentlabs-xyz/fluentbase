@@ -255,6 +255,7 @@ where
         &mut self.0.frame_stack
     }
 
+    #[allow(clippy::type_complexity, clippy::single_match)]
     #[tracing::instrument(level = "info", skip_all)]
     fn frame_init(
         &mut self,
@@ -321,6 +322,7 @@ where
         Ok(res)
     }
 
+    #[allow(clippy::type_complexity)]
     #[tracing::instrument(level = "info", skip_all)]
     fn frame_run(
         &mut self,
@@ -366,7 +368,6 @@ where
 }
 
 impl<CTX, INSP, I, P> RwasmEvm<CTX, INSP, I, P> {
-    ///
     fn result_created_address(result: &FrameResult) -> Option<Address> {
         let create_outcome = match &result {
             FrameResult::Create(create_outcome) => create_outcome,

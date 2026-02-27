@@ -1,3 +1,4 @@
+#![allow(clippy::single_element_loop)]
 use crate::{Address, B256, U256};
 use fluentbase_crypto::crypto_keccak256;
 
