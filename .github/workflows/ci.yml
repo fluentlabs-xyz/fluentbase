@@ -67,12 +67,6 @@ jobs:
             kind: evm-e2e
 
     steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: "30720"
-          remove-dotnet: "true"
-
       - uses: actions/checkout@v6
         with:
           submodules: recursive
@@ -149,12 +143,6 @@ jobs:
     runs-on: self-hosted
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: "30720"
-          remove-dotnet: "true"
-
       - uses: actions/checkout@v6
         with:
           submodules: recursive
