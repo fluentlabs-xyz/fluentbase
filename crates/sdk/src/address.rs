@@ -1,4 +1,3 @@
-#![allow(clippy::single_element_loop)]
 use crate::{Address, B256, U256};
 use fluentbase_crypto::crypto_keccak256;
 
@@ -76,14 +75,13 @@ mod tests {
     #[test]
     fn test_create2_address() {
         let address = Address::ZERO;
-        for (salt, hash) in [(
+        let (salt, hash) = (
             b256!("0000000000000000000000000000000000000000000000000000000000000001"),
             b256!("0000000000000000000000000000000000000000000000000000000000000002"),
-        )] {
-            assert_eq!(
-                calc_create2_address(&address, &salt.into(), &hash),
-                address.create2(salt, hash)
-            );
-        }
+        );
+        assert_eq!(
+            calc_create2_address(&address, &salt.into(), &hash),
+            address.create2(salt, hash)
+        );
     }
 }

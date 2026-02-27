@@ -1,4 +1,3 @@
-#![allow(clippy::needless_range_loop)]
 
 //! Unit tests for the EIP-2935 history storage contract.
 //!
@@ -52,9 +51,9 @@ fn pseudo_hash(tag: u8, n: u64) -> [u8; 32] {
     out[0] = tag;
     out[1..9].copy_from_slice(&n.to_be_bytes());
     // Diffuse a bit.
-    for i in 0..32 {
-        out[i] ^= (i as u8).wrapping_mul(31).wrapping_add(tag);
-        out[i] = out[i].rotate_left((i % 8) as u32);
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte ^= (i as u8).wrapping_mul(31).wrapping_add(tag);
+        *byte = byte.rotate_left((i % 8) as u32);
     }
     out
 }

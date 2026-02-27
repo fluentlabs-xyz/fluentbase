@@ -1,5 +1,4 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
-#![allow(clippy::needless_borrow)]
 extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
@@ -66,7 +65,7 @@ mod tests {
         // Test vector from secp256r1.rs tests
         exec_evm_precompile(
             &hex!("4cee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4da73bd4903f0ce3b639bbbf6e8e80d16931ff4bcf5993d58468e8fb19086e8cac36dbcd03009df8c59286b162af3bd7fcc0450c9aa81be5d10d312af6c66b1d604aebd3099c618202fcfe16ae7770b0c49ab5eadf74b754204a3bb6060e44eff37618b065f9832de4ca6ca971a7a1adc826d0f7c00181a5fb2ddf79ae00b4e10e"),
-            &&B256::with_last_byte(1)[..],
+            &B256::with_last_byte(1)[..],
             3450,
         );
     }
@@ -75,7 +74,7 @@ mod tests {
         // Test vector from secp256r1.rs tests
         exec_evm_precompile(
             &hex!("e775723953ead4a90411a02908fd1a629db584bc600664c609061f221ef6bf7cbe0aca61c884167420c8d16b6a22b5952ab46586c0fdba026cd0bf32258c500434091e9ec6503491ed0a820c38ad82c672d88c9fe8e681accdf7e26dbd2d7958b6114ed3a5b9bf7255eda3077b2c63ad476d481d979699a5d22bd030077dab338bea1ad18733e7d410649a8b09c6429ea065c9d66aaf6a8e793b0567eadd942d"),
-            &&B256::with_last_byte(1)[..],
+            &B256::with_last_byte(1)[..],
             3450,
         );
     }

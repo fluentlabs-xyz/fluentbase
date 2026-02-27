@@ -1,4 +1,3 @@
-#![allow(clippy::needless_borrows_for_generic_args)]
 use crate::{
     storage::{PackableCodec, StorageDescriptor, StorageLayout},
     U256,
@@ -380,13 +379,13 @@ mod tests {
         let mut data1 = [0u8; 64];
         data1[0..32].copy_from_slice(&U256::from(1).to_be_bytes::<32>());
         data1[32..64].copy_from_slice(&U256::from(40).to_be_bytes::<32>());
-        let slot1 = U256::from_be_bytes(crypto_keccak256(&data1).0);
+        let slot1 = U256::from_be_bytes(crypto_keccak256(data1).0);
 
         // Calculate second level slot: keccak256(2 || slot1)
         let mut data2 = [0u8; 64];
         data2[0..32].copy_from_slice(&U256::from(2).to_be_bytes::<32>());
         data2[32..64].copy_from_slice(&slot1.to_be_bytes::<32>());
-        let slot2 = U256::from_be_bytes(crypto_keccak256(&data2).0);
+        let slot2 = U256::from_be_bytes(crypto_keccak256(data2).0);
 
         // Verify value is at the correct nested slot
         assert_eq!(sdk.get_slot(slot2), U256::from(100));
@@ -433,12 +432,12 @@ mod tests {
         let mut data1 = [0u8; 64];
         data1[0..32].copy_from_slice(&U256::from(1).to_be_bytes::<32>());
         data1[32..64].copy_from_slice(&U256::from(60).to_be_bytes::<32>());
-        let slot1 = U256::from_be_bytes(crypto_keccak256(&data1).0);
+        let slot1 = U256::from_be_bytes(crypto_keccak256(data1).0);
 
         let mut data2 = [0u8; 64];
         data2[0..32].copy_from_slice(&U256::from(1).to_be_bytes::<32>());
         data2[32..64].copy_from_slice(&U256::from(61).to_be_bytes::<32>());
-        let slot2 = U256::from_be_bytes(crypto_keccak256(&data2).0);
+        let slot2 = U256::from_be_bytes(crypto_keccak256(data2).0);
 
         // Verify slots are different and contain correct values
         assert_ne!(slot1, slot2);

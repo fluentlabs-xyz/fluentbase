@@ -1,4 +1,3 @@
-#![allow(clippy::unnecessary_mut_passed, clippy::needless_borrow)]
 pub const CONTINUATION_BIT: u8 = 1 << 7;
 pub const SIGN_BIT: u8 = 1 << 6;
 
@@ -157,8 +156,8 @@ mod tests {
     fn dogfood_signed() {
         fn inner(i: i64) {
             let buf = write::signed(i);
-            let mut readable = &buf[..];
-            let result = read::signed(&mut readable).expect("Should be able to read it back again");
+            let readable = &buf[..];
+            let result = read::signed(readable).expect("Should be able to read it back again");
             assert_eq!(i, result);
         }
         for i in -513..513 {
@@ -175,9 +174,9 @@ mod tests {
         for i in 0..3999 {
             let buf = write::unsigned(i);
 
-            let mut readable = &buf[..];
+            let readable = &buf[..];
             let result =
-                read::unsigned(&mut readable).expect("Should be able to read it back again");
+                read::unsigned(readable).expect("Should be able to read it back again");
             assert_eq!(i, result);
         }
     }
