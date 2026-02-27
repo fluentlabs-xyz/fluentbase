@@ -2,10 +2,10 @@
 
 ========
 
-In this repository, we provide examples of running apps in Fluent network.
-All these apps are developed using Fluentbase SDK and can be proven to use our circuits (coming soon).
+In this repository, we provide examples of running apps on the Fluent network.
+All these apps are developed using the Fluentbase SDK and can be proven with our circuits (coming soon).
 
-To init, build and deploy these examples, you can use the [gblend cli](https://github.com/fluentlabs-xyz/gblend).
+To initialize, build, and deploy these examples, you can use the [gblend CLI](https://github.com/fluentlabs-xyz/gblend).
 
 By the way, we also have a Makefile for building examples, so you can use it as well.
 
@@ -48,7 +48,7 @@ To add Fluentbase SDK dependency add the following dep in your `Cargo.toml` file
 
 ```toml
 [dependencies]
-fluentbase-sdk = { path = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false }
+fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false }
 ```
 
 If you don't want to use EVM features then just disable `evm` feature flag.
@@ -157,7 +157,7 @@ rustup target add wasm32-unknown-unknown
 > wasm2wat target/wasm32-unknown-unknown/release/hello_world.wasm
 > ```
 
-The next step is to [deploy your contract](./deploy.md).
+The next step is to [deploy your contract](#deploy).
 
 ## Deploy
 
