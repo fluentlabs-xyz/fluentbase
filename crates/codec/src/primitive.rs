@@ -193,7 +193,7 @@ impl_int!(i16, read_i16, write_i16);
 impl_int!(i32, read_i32, write_i32);
 impl_int!(i64, read_i64, write_i64);
 
-/// Encodes and decodes Option<T> where T is an Encoder.
+/// Encodes and decodes `Option<T>` where `T` is an encoder.
 /// The encoded data is prefixed with a single byte that indicates whether the Option is Some or
 /// None. Single byte will be aligned to ALIGN.
 impl<T, B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bool>

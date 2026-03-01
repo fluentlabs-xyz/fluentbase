@@ -10,12 +10,16 @@ on:
 jobs:
   compare-on-pr:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-amd64-8core
+    runs-on: self-hosted
     permissions:
       contents: read
       pull-requests: write  # needed to comment on PRs (won’t work for forks; see note below)
     steps:
       - uses: actions/checkout@v6
+      - name: Install clang and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -60,5 +64,6 @@ jobs:
             echo "_Heads-up_: runner perf is noisy; treat deltas as a smoke check."
           } > comment.md
       - uses: marocchino/sticky-pull-request-comment@v2
+        if: ${{ !github.event.pull_request.head.repo.fork }}
         with:
           path: comment.md

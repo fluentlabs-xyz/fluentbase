@@ -1,5 +1,5 @@
 use crate::bytecode::{AnalyzedBytecode, LegacyBytecode};
-use alloc::{vec, vec::Vec};
+use alloc::vec;
 use fluentbase_sdk::{Bytes, B256};
 
 pub enum EthereumMetadata {
@@ -36,10 +36,7 @@ impl EthereumMetadata {
             }
             EthereumMetadata::Analyzed(analyzed_bytecode) => {
                 let hint_size = analyzed_bytecode.hint_size();
-                let mut result = Vec::with_capacity(B256::len_bytes() + hint_size);
-                unsafe {
-                    result.set_len(B256::len_bytes() + hint_size);
-                }
+                let mut result = vec![0u8; B256::len_bytes() + hint_size];
                 result[0..B256::len_bytes()]
                     .copy_from_slice(&ETHEREUM_METADATA_VERSION_ANALYZED[..]);
                 analyzed_bytecode

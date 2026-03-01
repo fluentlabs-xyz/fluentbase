@@ -210,6 +210,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }};
     }
 
+    #[allow(clippy::int_plus_one)]
     macro_rules! get_input_validated {
         (== $length:expr) => {{
             assert_halt!(
@@ -251,6 +252,35 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let remaining_offset = inputs.syscall_params.input.start + $length;
             let remaining_length =
                 inputs.syscall_params.input.end - inputs.syscall_params.input.start - $length;
+            let lazy_contract_input = move || -> Result<Vec<u8>, TrapCode> {
+                let mut variable_input = vec![0u8; remaining_length];
+                mr.memory_read(call_id, remaining_offset, &mut variable_input)?;
+                Ok(variable_input)
+            };
+            (input, lazy_contract_input)
+        }};
+        (> $length:expr) => {{
+            assert_halt!(
+                inputs.syscall_params.input.len() > $length
+                    && inputs.syscall_params.state == STATE_MAIN,
+                MalformedBuiltinParams
+            );
+            let len = $length + 1;
+            let mut input = vec![0u8; len];
+            if mr
+                .memory_read(
+                    inputs.call_id,
+                    inputs.syscall_params.input.start,
+                    &mut input,
+                )
+                .is_err()
+            {
+                return_result!(MemoryOutOfBounds)
+            }
+            let call_id = inputs.call_id;
+            let remaining_offset = inputs.syscall_params.input.start + len;
+            let remaining_length =
+                inputs.syscall_params.input.end - inputs.syscall_params.input.start - len;
             let lazy_contract_input = move || -> Result<Vec<u8>, TrapCode> {
                 let mut variable_input = vec![0u8; remaining_length];
                 mr.memory_read(call_id, remaining_offset, &mut variable_input)?;
@@ -395,7 +425,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Force `is_empty = false`: we are not creating this account here.
             account_load.is_empty = false;
             // EIP-150: gas cost changes for IO-heavy operations.
-            charge_gas!(call_cost(spec_id.clone(), false, account_load));
+            charge_gas!(call_cost(spec_id, false, account_load));
             let gas_limit = core::cmp::min(
                 ctx.cfg()
                     .gas_params()
@@ -612,7 +642,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Read the number of topics and ensure it does not exceed 4 (EVM LOG0..LOG4).
             // (The EVM hard-limits log topics to 4.)
             assert_halt!(
-                inputs.syscall_params.input.len() >= 1 && inputs.syscall_params.state == STATE_MAIN,
+                !inputs.syscall_params.input.is_empty() && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             let mut input = [0u8; 1];
@@ -632,7 +662,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // The payload length before allocating/reading it.
             // (This avoids extra allocations and prevents cheap OOG/DDoS vectors.)
             let mut topics = Vec::with_capacity(topics_len);
-            let (input, lazy_data_input) = get_input_validated!(>= 1 + topics_len * U256::BYTES);
+            let (input, lazy_data_input) =
+                get_input_validated!(> topics_len * U256::BYTES);
             for i in 0..topics_len {
                 let offset = 1 + i * B256::len_bytes();
                 let topic = &input[offset..(offset + B256::len_bytes())];
@@ -857,8 +888,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
             // If the offset is beyond bytecode, return all zeros.
             if code_offset_usize >= bytecode_len {
-                let mut zeros = Vec::with_capacity(code_length_usize);
-                zeros.resize(code_length_usize, 0u8);
+                let zeros = vec![0u8; code_length_usize];
                 return_result!(Bytes::from(zeros), Ok);
             }
 
@@ -873,8 +903,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             }
 
             // Slow path: Padding required to reach the requested length.
-            let mut result = Vec::with_capacity(code_length_usize);
-            result.resize(code_length_usize, 0u8);
+            let mut result = vec![0u8; code_length_usize];
             result[..to_copy].copy_from_slice(&bytecode[start..start + to_copy]);
 
             return_result!(Bytes::from(result), Ok);
@@ -1078,7 +1107,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Charge gas.
             charge_gas!(ctx.cfg().gas_params().warm_storage_read_cost());
             // Read value from storage.
-            let slot = U256::from_le_slice(&input[0..32].as_ref());
+            let slot = U256::from_le_slice(input[0..32].as_ref());
             let value = ctx.journal_mut().tload(current_target_address, slot);
             // Return value.
             let output: [u8; 32] = value.to_le_bytes();

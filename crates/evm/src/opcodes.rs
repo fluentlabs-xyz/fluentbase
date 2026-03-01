@@ -240,7 +240,7 @@ fn sload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper 
         *index = interruption_outcome.into_u256();
         return;
     }
-    let index = index.clone();
+    let index = *index;
     let mut buffer = [0u8; encode::storage_read_size_hint()];
     encode::storage_read_into(&mut &mut buffer[..], &index);
     context.host.sdk_mut().insert_interruption_income(
@@ -282,7 +282,7 @@ fn tload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper 
         *index = interruption_outcome.into_u256();
         return;
     }
-    let index = index.clone();
+    let index = *index;
     let mut buffer = [0u8; encode::transient_read_size_hint()];
     encode::transient_read_into(&mut &mut buffer[..], &index);
     context.host.sdk_mut().insert_interruption_income(
@@ -386,7 +386,7 @@ fn create<
         let code_offset = as_usize_or_fail!(context.interpreter, code_offset);
         // EIP-3860: Limit and meter initcode
         let max_initcode_size = if code_len >= 4
-            && context.interpreter.memory.size() >= code_offset.checked_add(4).unwrap_or(usize::MAX)
+            && context.interpreter.memory.size() >= code_offset.saturating_add(4)
         {
             let prefix = context.interpreter.memory.slice_len(code_offset, 4);
             wasm_max_code_size(&*prefix).unwrap_or(EVM_MAX_INITCODE_SIZE)

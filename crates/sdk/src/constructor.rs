@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 fn encode_wasm_custom_section(name: &str, payload: &[u8]) -> Vec<u8> {
     let mut section = Vec::new();
 
-    let name_length = leb128::write::unsigned(name.as_bytes().len() as u64);
+    let name_length = leb128::write::unsigned(name.len() as u64);
     let content_length =
         leb128::write::unsigned((name_length.len() + name.len() + payload.len()) as u64);
 

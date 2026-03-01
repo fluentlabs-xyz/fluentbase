@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 use crate::{docker, generators, Artifact, BuildArgs, BUILD_TARGET};
 use anyhow::{Context, Result};
 use cargo_metadata::{Metadata, MetadataCommand, Package};

@@ -24,7 +24,7 @@ env:
 
 jobs:
   cleanup:
-    runs-on: ubuntu-amd64-8core
+    runs-on: self-hosted
     permissions:
       packages: write
 

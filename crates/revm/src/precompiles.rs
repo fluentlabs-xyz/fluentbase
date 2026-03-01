@@ -25,9 +25,7 @@ impl RwasmPrecompiles {
     /// Create a new precompile provider with the given OpSpec.
     #[inline]
     pub fn new_with_spec(spec: RwasmSpecId) -> Self {
-        let precompiles = match spec {
-            _ => genesis(),
-        };
+        let precompiles = genesis();
         Self {
             inner: EthPrecompiles { precompiles, spec },
             spec,

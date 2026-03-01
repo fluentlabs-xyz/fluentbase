@@ -29,12 +29,12 @@ impl<'a, SDK: SystemAPI> Deref for HostWrapperImpl<'a, SDK> {
     type Target = SDK;
 
     fn deref(&self) -> &Self::Target {
-        &self.sdk
+        self.sdk
     }
 }
 impl<'a, SDK: SystemAPI> DerefMut for HostWrapperImpl<'a, SDK> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.sdk
+        self.sdk
     }
 }
 

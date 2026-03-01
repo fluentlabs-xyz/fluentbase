@@ -21,7 +21,7 @@ env:
 jobs:
   tests:
     name: Tests (${{ matrix.name }})
-    runs-on: ubuntu-amd64-8core
+    runs-on: self-hosted
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -67,16 +67,15 @@ jobs:
             kind: evm-e2e
 
     steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: "30720"
-          remove-dotnet: "true"
-
       - uses: actions/checkout@v6
         with:
           submodules: recursive
           fetch-depth: 1
+
+      - name: Install clang and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev pkg-config
 
       - name: Speed up git fetches
         run: git config --global net.git-fetch-with-cli true
@@ -146,19 +145,18 @@ jobs:
 
   coverage:
     name: Coverage
-    runs-on: ubuntu-amd64-8core
+    runs-on: self-hosted
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: "30720"
-          remove-dotnet: "true"
-
       - uses: actions/checkout@v6
         with:
           submodules: recursive
           fetch-depth: 1
+
+      - name: Install clang and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev pkg-config
 
       - name: Speed up git fetches
         run: git config --global net.git-fetch-with-cli true
@@ -207,7 +205,7 @@ jobs:
 
   rust-fmt-lint:
     name: Lint
-    runs-on: ubuntu-amd64-8core
+    runs-on: self-hosted
     if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v6

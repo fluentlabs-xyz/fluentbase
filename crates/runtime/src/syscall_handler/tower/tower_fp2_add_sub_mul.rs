@@ -86,10 +86,10 @@ pub(crate) fn syscall_tower_fp2_add_sub_mul_handler<
     ctx.memory_read(y_ptr as usize + NUM_BYTES, &mut bc1)?;
 
     let (res0, res1) = syscall_tower_fp2_add_sub_mul_impl::<NUM_BYTES, P, FIELD_OP>(
-        ac0.try_into().unwrap(),
-        ac1.try_into().unwrap(),
-        bc0.try_into().unwrap(),
-        bc1.try_into().unwrap(),
+        ac0,
+        ac1,
+        bc0,
+        bc1,
     )
     .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
 
@@ -199,8 +199,10 @@ pub(crate) fn syscall_tower_fp2_add_sub_mul_impl<
     res0.resize(NUM_BYTES, 0);
     let mut res1 = c1.to_bytes_le();
     res1.resize(NUM_BYTES, 0);
-    let result: ([u8; NUM_BYTES], [u8; NUM_BYTES]) =
-        (res0.try_into().unwrap(), res1.try_into().unwrap());
+    let result: ([u8; NUM_BYTES], [u8; NUM_BYTES]) = (
+        res0.try_into().expect("length checked"),
+        res1.try_into().expect("length checked"),
+    );
     Ok(result)
 }
 
@@ -222,7 +224,7 @@ mod tests {
     fn big_uint_into_bytes<const NUM_BYTES: usize>(a: &BigUint) -> [u8; NUM_BYTES] {
         let mut res = a.to_bytes_le();
         res.resize(NUM_BYTES, 0);
-        res.try_into().unwrap()
+        res.try_into().expect("length checked")
     }
 
     #[test]

@@ -1,4 +1,4 @@
-///! Builtin to append a slice of return_data to the output buffer.
+//! Builtin to append a slice of return_data to the output buffer.
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
 use rwasm::{StoreTr, TrapCode, Value};

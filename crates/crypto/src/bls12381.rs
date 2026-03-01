@@ -4,7 +4,7 @@ use crate::{
 };
 use fluentbase_types::CryptoAPI;
 
-/// The number of limbs in [Bls12381AffinePoint].
+/// The number of limbs in `Bls12381AffinePoint`.
 pub const N: usize = 24;
 
 /// A point on the BLS12-381 curve.
@@ -32,7 +32,7 @@ impl AffinePoint<N> for Bls12381Point {
 
     /// The generator was taken from "py_ecc" python library by the Ethereum Foundation:
     ///
-    /// https://github.com/ethereum/py_ecc/blob/7b9e1b3/py_ecc/bls12_381/bls12_381_curve.py#L38-L45
+    /// <https://github.com/ethereum/py_ecc/blob/7b9e1b3/py_ecc/bls12_381/bls12_381_curve.py#L38-L45>
     #[allow(deprecated)]
     const GENERATOR_T: Self = Self(WeierstrassPoint::Affine(Self::GENERATOR));
 
@@ -63,8 +63,8 @@ impl AffinePoint<N> for Bls12381Point {
     }
 
     fn add_assign(&mut self, other: &Self) {
-        let a: [u8; 96] = bytemuck::cast(self.limbs_mut().clone());
-        let b: [u8; 96] = bytemuck::cast(other.limbs_ref().clone());
+        let a: [u8; 96] = bytemuck::cast(*self.limbs_mut());
+        let b: [u8; 96] = bytemuck::cast(*other.limbs_ref());
         CryptoRuntime::bls12381_add(a, b);
     }
 
@@ -79,6 +79,7 @@ impl AffinePoint<N> for Bls12381Point {
 }
 
 /// Decompresses a compressed public key using bls12381_decompress precompile.
+#[allow(clippy::result_unit_err)]
 pub fn decompress_pubkey(_compressed_key: &[u8; 48]) -> Result<[u8; 96], ()> {
     // let mut decompressed_key = [0u8; 96];
     // decompressed_key[..48].copy_from_slice(compressed_key);

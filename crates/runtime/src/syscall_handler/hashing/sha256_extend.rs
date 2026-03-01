@@ -15,7 +15,7 @@ pub fn syscall_hashing_sha256_extend_handler(
     ctx.memory_read(w_ptr as usize, &mut block)?;
     for i in 0..16 {
         w[i] = u32::from_le_bytes([
-            block[i * 4 + 0],
+            block[i * 4],
             block[i * 4 + 1],
             block[i * 4 + 2],
             block[i * 4 + 3],

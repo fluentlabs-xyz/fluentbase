@@ -82,8 +82,8 @@ pub(crate) fn syscall_tower_fp1_add_sub_mul_handler<
     ctx.memory_read(y_ptr as usize, &mut y)?;
 
     let result = syscall_tower_fp1_add_sub_mul_impl::<NUM_BYTES, P, FIELD_OP>(
-        x.try_into().unwrap(),
-        y.try_into().unwrap(),
+        x,
+        y,
     )
     .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
 
@@ -152,7 +152,7 @@ pub(crate) fn syscall_tower_fp1_add_sub_mul_impl<
     };
     let mut result = result.to_bytes_le();
     result.resize(NUM_BYTES, 0);
-    let result: [u8; NUM_BYTES] = result.try_into().unwrap();
+    let result: [u8; NUM_BYTES] = result.try_into().expect("length checked");
     Ok(result)
 }
 
@@ -174,7 +174,7 @@ mod tests {
     fn big_uint_into_bytes<const NUM_BYTES: usize>(a: &BigUint) -> [u8; NUM_BYTES] {
         let mut res = a.to_bytes_le();
         res.resize(NUM_BYTES, 0);
-        res.try_into().unwrap()
+        res.try_into().expect("length checked")
     }
 
     /// Tests are stolen from: sp1/crates/test-artifacts/programs/bn254-fp/src/main.rs

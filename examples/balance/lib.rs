@@ -8,7 +8,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     let balance = sdk.balance(&address!("0x0000000000000000000000000000000000000001"));
     let result = balance.unwrap();
     let result = result.to_le_bytes::<32>();
-    sdk.write(&result);
+    sdk.write(result);
 }
 
 entrypoint!(main_entry);

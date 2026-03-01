@@ -32,7 +32,7 @@ pub type EthRwasmContext<DB> = Context<BlockEnv, TxEnv, CfgEnv, DB>;
 ///
 /// This is a wrapper type around the `revm` ethereum evm with optional [`Inspector`] (tracing)
 /// support. [`Inspector`] support is configurable at runtime because it's part of the underlying
-/// [`RevmEvm`] type.
+/// `RwasmEvm` type.
 #[expect(missing_debug_implementations)]
 pub struct FluentEvmExecutor<DB: Database, I, PRECOMPILE = EthPrecompiles> {
     inner: RwasmEvm<
@@ -49,7 +49,7 @@ impl<DB: Database, I, PRECOMPILE> FluentEvmExecutor<DB, I, PRECOMPILE> {
     /// Creates a new Ethereum EVM instance.
     ///
     /// The `inspect` argument determines whether the configured [`Inspector`] of the given
-    /// [`RevmEvm`] should be invoked on [`Evm::transact`].
+    /// `RwasmEvm` should be invoked on `Evm::transact`.
     pub const fn new(
         evm: RwasmEvm<
             EthRwasmContext<DB>,

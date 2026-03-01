@@ -165,7 +165,7 @@ fn syscall_weierstrass_decompress_impl<
     // https://github.com/succinctlabs/sp1/tree/dev/crates/curves/src/weierstrass
     let computed_point = match E::CURVE_TYPE {
         CurveType::Secp256k1 => {
-            let mut x_bytes_be = x_bytes_le.clone();
+            let mut x_bytes_be = x_bytes_le;
             x_bytes_be.reverse();
             let computed_point = k256::AffinePoint::decompress(
                 x_bytes_be.as_slice().into(),
@@ -180,7 +180,7 @@ fn syscall_weierstrass_decompress_impl<
             AffinePoint::<E>::new(x, y)
         }
         CurveType::Secp256r1 => {
-            let mut x_bytes_be = x_bytes_le.clone();
+            let mut x_bytes_be = x_bytes_le;
             x_bytes_be.reverse();
             let computed_point = p256::AffinePoint::decompress(
                 x_bytes_be.as_slice().into(),
@@ -195,7 +195,7 @@ fn syscall_weierstrass_decompress_impl<
             AffinePoint::<E>::new(x, y)
         }
         CurveType::Bls12381 => {
-            let mut g1_bytes_be = x_bytes_le.clone();
+            let mut g1_bytes_be = x_bytes_le;
             g1_bytes_be.reverse();
 
             const COMPRESSION_FLAG: u8 = 0b_1000_0000;
@@ -251,10 +251,8 @@ mod tests {
         };
         let mut compressed_key: [u8; 32] = compressed_key[1..].try_into().unwrap();
         compressed_key.reverse();
-        let mut result: [u8; 64] = syscall_secp256r1_decompress_impl(compressed_key, is_odd as u32)
-            .unwrap()
-            .try_into()
-            .unwrap();
+        let mut result: [u8; 64] =
+            syscall_secp256r1_decompress_impl(compressed_key, is_odd as u32).unwrap();
         result.reverse();
         result
     }
@@ -297,10 +295,8 @@ mod tests {
         };
         let mut compressed_key: [u8; 32] = compressed_key[1..].try_into().unwrap();
         compressed_key.reverse();
-        let mut result: [u8; 64] = syscall_secp256k1_decompress_impl(compressed_key, is_odd as u32)
-            .unwrap()
-            .try_into()
-            .unwrap();
+        let mut result: [u8; 64] =
+            syscall_secp256k1_decompress_impl(compressed_key, is_odd as u32).unwrap();
         result.reverse();
         result
     }
@@ -339,10 +335,7 @@ mod tests {
         compressed_key_unsigned[0] &= 0b_0001_1111;
         compressed_key_unsigned.reverse();
         let mut result: [u8; 96] =
-            syscall_bls12381_decompress_impl(compressed_key_unsigned, sign_bit as u32)
-                .unwrap()
-                .try_into()
-                .unwrap();
+            syscall_bls12381_decompress_impl(compressed_key_unsigned, sign_bit as u32).unwrap();
         result.reverse();
         result
     }

@@ -23,7 +23,7 @@ fn calc_pages_needed(pages_allocated: usize, required_bytes: usize) -> usize {
         return 0;
     }
     let missing = required_bytes - have;
-    (missing + WASM_PAGE_SIZE_IN_BYTES - 1) / WASM_PAGE_SIZE_IN_BYTES
+    missing.div_ceil(WASM_PAGE_SIZE_IN_BYTES)
 }
 
 #[test]

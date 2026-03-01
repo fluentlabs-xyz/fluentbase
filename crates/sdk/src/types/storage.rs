@@ -19,7 +19,7 @@ impl<T: StorageAPI> StorageUtils for T {
         if let Some(end) = value.iter().position(|c| *c == 0u8) {
             value = &value[..end];
         }
-        let result = str::from_utf8(&value).unwrap().to_string();
+        let result = str::from_utf8(value).unwrap().to_string();
         Ok(result)
     }
 

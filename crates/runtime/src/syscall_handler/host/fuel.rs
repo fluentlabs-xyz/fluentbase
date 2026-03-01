@@ -2,7 +2,7 @@
 use crate::RuntimeContext;
 use rwasm::{StoreTr, TrapCode, Value};
 
-/// Writes the remaining fuel (or u64::MAX if metering is disabled) into result[0].
+/// Writes the remaining fuel (or `u64::MAX` if metering is disabled) into `result[0]`.
 pub fn syscall_fuel_handler(
     caller: &mut impl StoreTr<RuntimeContext>,
     _params: &[Value],

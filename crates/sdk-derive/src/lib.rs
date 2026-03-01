@@ -1,3 +1,4 @@
+//! Procedural macros for routers, clients, events, and storage layouts in Fluentbase contracts.
 use fluentbase_sdk_derive_core::{
     client, event, router, storage::process_storage_layout, storage_legacy,
 };
@@ -503,7 +504,7 @@ pub fn derive_contract(input: TokenStream) -> TokenStream {
 /// Computes EIP-1967 storage slot at compile time.
 /// Formula: keccak256(id) - 1
 ///
-/// See: https://eips.ethereum.org/EIPS/eip-1967
+/// See: <https://eips.ethereum.org/EIPS/eip-1967>
 ///
 /// # Example
 /// ```rust,ignore
@@ -540,7 +541,7 @@ pub fn eip1967_slot(input: TokenStream) -> TokenStream {
 /// Computes ERC-7201 namespaced storage slot at compile time.
 /// Formula: keccak256(abi.encode(uint256(keccak256(id)) - 1)) & ~0xff
 ///
-/// See: https://eips.ethereum.org/EIPS/eip-7201
+/// See: <https://eips.ethereum.org/EIPS/eip-7201>
 ///
 /// # Example
 /// ```rust,ignore

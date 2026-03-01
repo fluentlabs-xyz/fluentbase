@@ -36,7 +36,7 @@ fn main() {
 
     let fluentbase_root_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let root_metadata = MetadataCommand::new()
-        .manifest_path(&fluentbase_root_dir.join("Cargo.toml"))
+        .manifest_path(fluentbase_root_dir.join("Cargo.toml"))
         .exec()
         .unwrap();
     let target2_dir: PathBuf = root_metadata.target_directory.join("contracts").into();
@@ -108,11 +108,12 @@ fn main() {
 
     paths.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let mut code = Vec::new();
-    code.push("pub struct BuildOutput {".to_string());
-    code.push("    pub name: &'static str,".to_string());
-    code.push("    pub wasm_bytecode: &'static [u8],".to_string());
-    code.push("}".to_string());
+    let mut code = vec![
+        "pub struct BuildOutput {".to_string(),
+        "    pub name: &'static str,".to_string(),
+        "    pub wasm_bytecode: &'static [u8],".to_string(),
+        "}".to_string(),
+    ];
     for (name, path) in paths {
         let constant_name = name.to_uppercase().replace('-', "_");
         let path = path.to_str().unwrap();

@@ -395,8 +395,8 @@ mod tests {
 
         // Verify the settings can be decoded
         use crate::codec::SolidityABI;
-        let mut buf: &[u8] = &tx_data[4..];
-        let settings = SolidityABI::<InitialSettings>::decode(&mut buf, 0).unwrap();
+        let buf: &[u8] = &tx_data[4..];
+        let settings = SolidityABI::<InitialSettings>::decode(&buf, 0).unwrap();
         assert_eq!(settings.minter, minter);
         assert_eq!(settings.pauser, pauser);
     }

@@ -38,6 +38,7 @@ impl From<&str> for TokenNameOrSymbol {
 }
 
 impl TokenNameOrSymbol {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(value: &str) -> Self {
         debug_assert!(value.len() <= U256::BYTES);
         let mut bytes = [0u8; U256::BYTES];
@@ -83,7 +84,7 @@ impl InitialSettings {
             return None;
         }
         let (sig, buf) = buf.split_at(4);
-        if sig != &UNIVERSAL_TOKEN_MAGIC_BYTES {
+        if sig != UNIVERSAL_TOKEN_MAGIC_BYTES {
             return None;
         }
         let result: Self = SolidityABI::decode(&buf, 0).ok()?;

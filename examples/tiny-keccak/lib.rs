@@ -13,7 +13,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     keccak256.update(input.as_ref());
     keccak256.finalize(&mut output);
     // write both hashes to output (multiple writes do append)
-    sdk.write(&output);
+    sdk.write(output);
 }
 
 entrypoint!(main_entry);

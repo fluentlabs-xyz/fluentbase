@@ -1,7 +1,7 @@
 # fluentbase-runtime
 
-> NOTE: syscall extensions: bla12381, bn254, secp256k1, secp2561 will be removed as it's
-> duplicated by weierstrass
+> NOTE: syscall extensions `bls12381`, `bn254`, `secp256k1`, and `secp256r1` are planned for
+> consolidation with the weierstrass implementation.
 
 A minimal execution environment for running rWASM smart contracts in Fluentbase. It wires the rWASM engine with
 Fluentbase host syscalls, provides deterministic fuel (gas) accounting, supports resumable execution, and caches

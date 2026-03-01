@@ -18,7 +18,7 @@ fn deploy(mut sdk: impl SharedAPI) {
 
 fn main_entry(mut sdk: impl SharedAPI) {
     let value = sdk.storage(&Value::SLOT);
-    sdk.write(&value.to_le_bytes::<32>());
+    sdk.write(value.to_le_bytes::<32>());
 }
 
 entrypoint!(main_entry, deploy);

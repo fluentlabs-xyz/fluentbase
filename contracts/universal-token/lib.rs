@@ -42,7 +42,7 @@ fn erc20_symbol_handler<SDK: SystemAPI>(
     let mut bytes = BytesMut::new();
     SolidityABI::encode(&value, &mut bytes, 0).unwrap();
     let result = bytes.freeze();
-    sdk.write(&result);
+    sdk.write(result);
     Ok(0)
 }
 
@@ -55,7 +55,7 @@ fn erc20_name_handler<SDK: SystemAPI>(
     let mut bytes = BytesMut::new();
     SolidityABI::encode(&value, &mut bytes, 0).unwrap();
     let result = bytes.freeze();
-    sdk.write(&result);
+    sdk.write(result);
     Ok(0)
 }
 
@@ -66,7 +66,7 @@ fn erc20_decimals_handler<SDK: SystemAPI>(
 ) -> Result<EvmExitCode, ExitCode> {
     let value = sdk.storage(&DECIMALS_STORAGE_SLOT).ok()?;
     let value = value.to_be_bytes::<{ U256::BYTES }>();
-    sdk.write(&value);
+    sdk.write(value);
     Ok(0)
 }
 
@@ -112,7 +112,7 @@ fn erc20_transfer_handler<SDK: SystemAPI>(
     emit_transfer_event(sdk, &from, &to, &amount)?;
 
     let output = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
-    sdk.write(&output);
+    sdk.write(output);
     Ok(0)
 }
 
@@ -165,7 +165,7 @@ fn erc20_transfer_from_handler<SDK: SystemAPI>(
     emit_transfer_event(sdk, &from, &to, &amount)?;
 
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
-    sdk.write(&result);
+    sdk.write(result);
     Ok(0)
 }
 
@@ -188,7 +188,7 @@ fn erc20_approve_handler<SDK: SystemAPI>(
     emit_approval_event(sdk, &contract_caller, &spender, &amount)?;
 
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
-    sdk.write(&result);
+    sdk.write(result);
     Ok(0)
 }
 
@@ -203,7 +203,7 @@ fn erc20_allowance_handler<SDK: SystemAPI>(
         .entry(spender)
         .get_checked(sdk)?
         .to_be_bytes::<{ U256::BYTES }>();
-    sdk.write(&result);
+    sdk.write(result);
     Ok(0)
 }
 
@@ -214,7 +214,7 @@ fn erc20_total_supply_handler<SDK: SystemAPI>(
 ) -> Result<EvmExitCode, ExitCode> {
     let value = sdk.storage(&TOTAL_SUPPLY_STORAGE_SLOT).ok()?;
     let value = value.to_be_bytes::<{ U256::BYTES }>();
-    sdk.write(&value);
+    sdk.write(value);
     Ok(0)
 }
 
@@ -228,7 +228,7 @@ fn erc20_balance_handler<SDK: SystemAPI>(
         .entry(caller)
         .get_checked(sdk)?
         .to_be_bytes::<{ U256::BYTES }>();
-    sdk.write(&balance);
+    sdk.write(balance);
     Ok(0)
 }
 
@@ -242,7 +242,7 @@ fn erc20_balance_of_handler<SDK: SystemAPI>(
         .entry(owner)
         .get_checked(sdk)?
         .to_be_bytes::<{ U256::BYTES }>();
-    sdk.write(&balance);
+    sdk.write(balance);
     Ok(0)
 }
 
@@ -293,7 +293,7 @@ fn erc20_mint_handler<SDK: SystemAPI>(
     emit_transfer_event(sdk, &Address::ZERO, &to, &amount)?;
 
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
-    sdk.write(&result);
+    sdk.write(result);
     Ok(0)
 }
 
@@ -351,7 +351,7 @@ fn erc20_burn_handler<SDK: SystemAPI>(
     emit_transfer_event(sdk, &from, &Address::ZERO, &amount)?;
 
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
-    sdk.write(&result);
+    sdk.write(result);
     Ok(0)
 }
 
@@ -385,7 +385,7 @@ fn erc20_pause_handler<SDK: SystemAPI>(
     emit_pause_event(sdk, &contract_caller)?;
     // Write output (1)
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
-    sdk.write(&result);
+    sdk.write(result);
     Ok(0)
 }
 
@@ -419,7 +419,7 @@ fn erc20_unpause_handler<SDK: SystemAPI>(
     emit_unpause_event(sdk, &contract_caller)?;
     // Write success (1)
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
-    sdk.write(&result);
+    sdk.write(result);
     Ok(0)
 }
 

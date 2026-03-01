@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
+#![allow(deprecated)]
 use fluentbase_sdk::{derive::solidity_storage, entrypoint, Address, SharedAPI, U256};
 
 solidity_storage! {

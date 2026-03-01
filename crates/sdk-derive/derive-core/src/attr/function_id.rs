@@ -481,19 +481,19 @@ mod tests {
         let attr: FunctionIDAttribute = parse_quote! {
             "transfer(address,uint256)"
         };
-        assert_eq!(attr.is_validation_enabled(), false);
+        assert!(!attr.is_validation_enabled());
 
         // Test explicit validation enabled
         let attr: FunctionIDAttribute = parse_quote! {
             "transfer(address,uint256)", validate(true)
         };
-        assert_eq!(attr.is_validation_enabled(), true);
+        assert!(attr.is_validation_enabled());
 
         // Test explicit validation disabled
         let attr: FunctionIDAttribute = parse_quote! {
             "transfer(address,uint256)", validate(false)
         };
-        assert_eq!(attr.is_validation_enabled(), false);
+        assert!(!attr.is_validation_enabled());
     }
 
     #[test]

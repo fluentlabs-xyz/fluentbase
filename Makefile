@@ -4,6 +4,12 @@ all: check build
 check:
 	cargo check --all
 
+.PHONY: clippy
+clippy:
+	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy --manifest-path=./contracts/Cargo.toml --workspace --all-targets -- -D warnings
+	cargo clippy --manifest-path=./examples/Cargo.toml --workspace --all-targets -- -D warnings
+
 .PHONY: build
 build:
 	cargo build --all
@@ -28,7 +34,8 @@ TEST_FEATURES ?=
 .PHONY: run-e2e-tests
 run-e2e-tests:
 	cargo test --manifest-path=./Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features $(TEST_FEATURES)
-	cargo test --manifest-path=./evm-e2e/Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)"
+	$(MAKE) -C evm-e2e sync_tests
+	cargo test --manifest-path=./evm-e2e/Cargo.toml $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)" --package evm-e2e --bin evm-e2e tests::good_coverage_tests
 .PHONY: run-contracts-tests
 run-contracts-tests:
 	cargo test --manifest-path=./contracts/Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)"

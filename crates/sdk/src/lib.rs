@@ -1,3 +1,4 @@
+//! Public SDK for writing Fluentbase contracts, including entrypoints, storage, and syscall helpers.
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;

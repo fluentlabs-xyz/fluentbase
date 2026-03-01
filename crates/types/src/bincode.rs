@@ -21,9 +21,9 @@ impl From<Bytes> for ZeroCopyBytes {
         ZeroCopyBytes(value)
     }
 }
-impl Into<Bytes> for ZeroCopyBytes {
-    fn into(self) -> Bytes {
-        self.0
+impl From<ZeroCopyBytes> for Bytes {
+    fn from(value: ZeroCopyBytes) -> Self {
+        value.0
     }
 }
 

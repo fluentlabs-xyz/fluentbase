@@ -132,7 +132,7 @@ mod code_copy_tests {
 
         // Copy cost: 3 gas per 32-byte word.
         // Formula: 3 * ceil(length / 32)
-        let words = (length + 31) / 32; // ceil(length / 32)
+        let words = length.div_ceil(32); // ceil(length / 32)
         let copy_gas = words as u64 * 3;
 
         base_gas + copy_gas

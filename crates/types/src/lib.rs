@@ -1,3 +1,4 @@
+//! Shared primitive types, syscall indices, and constants used across the Fluentbase stack.
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;

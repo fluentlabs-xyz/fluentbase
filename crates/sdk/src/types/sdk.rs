@@ -4,7 +4,7 @@ use crate::{
     system::RuntimeInterruptionOutcomeV1,
     Address, Bytes, ContextReader, ExitCode, SyscallResult, B256, FUEL_DENOM_RATE, U256,
 };
-use alloc::{borrow::Cow, vec::Vec};
+use alloc::{borrow::Cow, vec};
 use fluentbase_crypto::crypto_keccak256;
 
 pub type IsAccountOwnable = bool;
@@ -44,10 +44,7 @@ pub trait SharedAPI: StorageAPI {
 
     fn bytes_input(&self) -> Bytes {
         let input_size = self.input_size() as usize;
-        let mut buffer = Vec::with_capacity(input_size);
-        unsafe {
-            buffer.set_len(input_size);
-        }
+        let mut buffer = vec![0u8; input_size];
         self.read(buffer.as_mut_slice(), 0);
         buffer.into()
     }
@@ -170,9 +167,7 @@ pub trait SystemAPI: SharedAPI {
     fn contract_metadata(&self) -> Bytes;
 
     fn sync_evm_gas(&self, gas_consumed: u64) -> Result<(), ExitCode> {
-        let fuel_consumed = gas_consumed
-            .checked_mul(FUEL_DENOM_RATE)
-            .unwrap_or(u64::MAX);
+        let fuel_consumed = gas_consumed.saturating_mul(FUEL_DENOM_RATE);
         let fuel_remaining = self.fuel();
         // Important: We assume fuel remaining is always set (no matter fuel enabled or disabled)
         if fuel_consumed > fuel_remaining {

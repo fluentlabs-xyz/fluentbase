@@ -11,7 +11,6 @@ use webauthn::{verify_webauthn, WebAuthnAuth};
 /// Function selector: 0x94516dde
 /// Derived from:
 /// keccak256("verify(bytes,bool,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
-
 const VERIFY_SELECTOR: [u8; 4] = [0x94, 0x51, 0x6d, 0xde];
 
 /// WebAuthn verification contract for blockchain authentication
@@ -20,7 +19,6 @@ const VERIFY_SELECTOR: [u8; 4] = [0x94, 0x51, 0x6d, 0xde];
 /// - Solady: https://github.com/vectorized/solady/blob/main/src/utils/WebAuthn.sol
 /// - Daimo: https://github.com/daimo-eth/p256-verifier/blob/master/src/WebAuthn.sol
 /// - Coinbase: https://github.com/base-org/webauthn-sol/blob/main/src/WebAuthn.sol
-
 pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // Read input
     let input_length = sdk.input_size();
@@ -61,7 +59,7 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
                 B256::default()
             }
         }
-        Err(err) => sdk.native_exit(ExitCode::from(err)),
+        Err(err) => sdk.native_exit(err),
     };
 
     // Write the result

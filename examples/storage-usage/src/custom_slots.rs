@@ -1,3 +1,4 @@
+#![allow(clippy::assign_op_pattern)]
 // custom_slots.rs
 #![allow(dead_code)]
 use fluentbase_sdk::{
@@ -312,7 +313,7 @@ mod tests {
 
         assert_eq!(contract.get_owner(), owner);
         assert_eq!(contract.get_counter(), counter);
-        assert_eq!(contract.get_active(), true);
+        assert!(contract.get_active());
     }
 
     const NAMESPACED_EXPECTED_LAYOUT: &str = r#"{
@@ -388,7 +389,7 @@ mod tests {
         assert_eq!(contract.get_owner(), owner);
         assert_eq!(contract.get_counter(), counter);
         assert_eq!(contract.get_implementation(), impl_addr);
-        assert_eq!(contract.is_paused(), true);
+        assert!(contract.is_paused());
     }
 
     const MIXED_EXPECTED_LAYOUT: &str = r#"{

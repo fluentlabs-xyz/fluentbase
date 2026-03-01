@@ -1,4 +1,4 @@
-use alloc::{string::String, vec, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use coset::{CborSerializable, CoseError, CoseSign1};
 use der::{asn1::ObjectIdentifier, Decode, DecodePem, Encode};
 use fluentbase_sdk::crypto::crypto_keccak256;
@@ -514,10 +514,10 @@ fn verify_cosesign1(cosesign1: &CoseSign1, certificate: &Certificate) {
         .as_bytes()
         .unwrap();
     cosesign1
-        .verify_signature(&vec![], |signature, signed_data| {
+        .verify_signature(&[], |signature, signed_data| {
             let signature = p384::ecdsa::Signature::from_bytes(signature.into()).unwrap();
             let verify_key = p384::ecdsa::VerifyingKey::from_sec1_bytes(verifying_key).unwrap();
-            verify_key.verify(&signed_data, &signature).unwrap();
+            verify_key.verify(signed_data, &signature).unwrap();
             Ok::<(), CoseError>(())
         })
         .unwrap();

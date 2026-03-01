@@ -1,3 +1,4 @@
+#![allow(clippy::inconsistent_digit_grouping, clippy::expect_fun_call, clippy::format_in_format_args, clippy::clone_on_copy, clippy::useless_format, clippy::vec_init_then_push)]
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_sdk::{address, compile_rwasm_maybe_system, keccak256, Address, Bytes, B256, U256};
 use std::{

@@ -68,7 +68,6 @@ fn restore_evm_context_or_create<'a, SDK: SystemAPI>(
             }
             eth_vm.interpreter.extend.committed_gas = *dirty_gas;
         }
-        let exit_code = ExitCode::from(exit_code);
         _ = eth_vm
             .interpreter
             .extend
@@ -219,4 +218,5 @@ unsafe fn panic(info: &core::panic::PanicInfo) -> ! {
 #[global_allocator]
 static ALLOCATOR: ::fluentbase_sdk::BlockListAllocator = ::fluentbase_sdk::BlockListAllocator {};
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 fn main() {}

@@ -18,7 +18,7 @@ jobs:
   build-rc:
     if: contains(github.ref, '-rc')
     name: build and push as release candidate
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     permissions:
       packages: write
       contents: read
@@ -54,7 +54,7 @@ jobs:
   build:
     if: ${{ !contains(github.ref, '-rc') }}
     name: build and push as latest
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     permissions:
       packages: write
       contents: read
@@ -86,6 +86,6 @@ jobs:
           docker buildx create --use --name cross-builder
       - name: Install clang and build tools
         run: |
-          sudo apt-get update && sudo apt-get install -y libclang-dev pkg-config
+          sudo apt-get update && sudo apt-get install -y clang libclang-dev pkg-config
       - name: Build and push ${{ matrix.build.name }}
         run: ${{ matrix.build.command }}

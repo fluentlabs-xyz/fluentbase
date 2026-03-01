@@ -1,3 +1,4 @@
+//! Cryptographic primitives and runtime adapters used by Fluentbase contracts and host runtimes.
 #![cfg_attr(not(feature = "std"), no_std)]
 /// This library is copied from SP1 (sp1/crates/zkvm/lib/Cargo.toml),
 /// but system builtins are replaced with Fluentbase

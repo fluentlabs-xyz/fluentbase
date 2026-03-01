@@ -487,7 +487,7 @@ fn test_map_sol_simple() {
 
     assert_eq!(encoded.to_vec(), expected_encoded);
 
-    print_bytes::<BE, 32>(&encoded.chunk());
+    print_bytes::<BE, 32>(encoded.chunk());
 
     let decoded = SolidityABI::<HashMap<u32, u32>>::decode(&&encoded[..], 0).unwrap();
 

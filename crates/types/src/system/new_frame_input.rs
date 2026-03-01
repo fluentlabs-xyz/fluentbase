@@ -158,13 +158,13 @@ mod tests {
         bincode::config::legacy();
 
     pub fn encode<T: bincode::Encode>(entity: &T) -> Result<Vec<u8>, bincode::error::EncodeError> {
-        bincode::encode_to_vec(entity, BINCODE_CONFIG_DEFAULT.clone())
+        bincode::encode_to_vec(entity, BINCODE_CONFIG_DEFAULT)
     }
 
     pub fn decode<T: DecodeBytes<()>>(
         src: Bytes,
     ) -> Result<(T, usize), bincode::error::DecodeError> {
-        decode_from_bytes(src, BINCODE_CONFIG_DEFAULT.clone())
+        decode_from_bytes(src, BINCODE_CONFIG_DEFAULT)
     }
 
     #[test]

@@ -9,8 +9,8 @@ The crate exposes helpers for loading the default devnet genesis as well as for
 building custom configurations programmatically.
 
 ```rust
-use fluentbase_genesis::devnet_genesis_from_file;
-let genesis = devnet_genesis_from_file();
+use fluentbase_genesis::local_genesis_from_file;
+let genesis = local_genesis_from_file();
 ```
 
 ---

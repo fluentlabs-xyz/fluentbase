@@ -104,7 +104,6 @@ macro_rules! assert_storage_layout {
 ///   }
 /// }
 /// ```
-
 pub(crate) fn storage_from_fixture(json: &str) -> HashMap<(Address, U256), U256> {
     use core::str::FromStr;
     use serde_json::Value;

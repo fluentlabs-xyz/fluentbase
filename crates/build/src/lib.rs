@@ -1,3 +1,4 @@
+//! Build helpers and CLI primitives for compiling Fluentbase contracts into rWASM artifacts.
 mod build;
 mod docker;
 mod generators;

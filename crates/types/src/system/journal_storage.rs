@@ -122,7 +122,8 @@ impl JournalStorage {
     /// - topic count limits
     /// - gas accounting
     /// - memory bounds
-    /// are expected to be handled by the caller.
+    ///
+    /// These are expected to be handled by the caller.
     pub fn emit_log(&mut self, topics: Vec<B256>, data: Bytes) {
         self.events.push(JournalLog { topics, data });
     }

@@ -330,7 +330,7 @@ mod tests {
 
         let client_data_json_str = format!(
             "{{\"type\":\"webauthn.get\",\"challenge\":\"{}\",\"origin\":\"http://localhost:3005\"}}",
-            base64url_encode(&challenge)
+            base64url_encode(challenge)
         );
 
         let client_data_json = Bytes::copy_from_slice(client_data_json_str.as_bytes());
@@ -347,7 +347,7 @@ mod tests {
         // Sign the message
         let signature = &signing_key.sign(&msg_to_sign);
 
-        let (r, s) = extract_signature_components(&signature);
+        let (r, s) = extract_signature_components(signature);
 
         (
             WebAuthnAuth {

@@ -1,0 +1,2 @@
+# Clippy aliases removed.
+# CI and local linting are driven via `make clippy` in the project Makefile.

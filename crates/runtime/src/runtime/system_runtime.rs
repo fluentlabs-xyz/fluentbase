@@ -152,6 +152,7 @@ impl SystemRuntime {
                 unreachable!("runtime: failed to create executor for system runtime module")
             };
 
+            #[allow(clippy::arc_with_non_send_sync)]
             let compiled_runtime = Arc::new(RefCell::new(executor));
             compiled_runtimes.insert(code_hash, compiled_runtime.clone());
             compiled_runtime

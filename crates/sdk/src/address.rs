@@ -13,7 +13,7 @@ pub fn calc_create_address(deployer: &Address, nonce: u64) -> Address {
     out[2..22].copy_from_slice(deployer.as_slice());
     Encodable::encode(&nonce, &mut &mut out[22..]);
     let out = &out[..len];
-    Address::from_word(crypto_keccak256(&out))
+    Address::from_word(crypto_keccak256(out))
 }
 
 #[inline(always)]
@@ -23,7 +23,7 @@ pub fn calc_create2_address(deployer: &Address, salt: &U256, init_code_hash: &B2
     bytes[1..21].copy_from_slice(deployer.as_slice());
     bytes[21..53].copy_from_slice(&salt.to_be_bytes::<32>());
     bytes[53..85].copy_from_slice(init_code_hash.as_slice());
-    let hash = crypto_keccak256(&bytes);
+    let hash = crypto_keccak256(bytes);
     Address::from_word(hash)
 }
 
@@ -33,7 +33,7 @@ pub fn calc_create_metadata_address(owner: &Address, salt: &U256) -> Address {
     bytes[0] = 0x44;
     bytes[1..21].copy_from_slice(owner.as_slice());
     bytes[21..53].copy_from_slice(&salt.to_be_bytes::<32>());
-    let hash = crypto_keccak256(&bytes);
+    let hash = crypto_keccak256(bytes);
     Address::from_word(hash)
 }
 
@@ -75,14 +75,13 @@ mod tests {
     #[test]
     fn test_create2_address() {
         let address = Address::ZERO;
-        for (salt, hash) in [(
+        let (salt, hash) = (
             b256!("0000000000000000000000000000000000000000000000000000000000000001"),
             b256!("0000000000000000000000000000000000000000000000000000000000000002"),
-        )] {
-            assert_eq!(
-                calc_create2_address(&address, &salt.into(), &hash),
-                address.create2(salt, hash)
-            );
-        }
+        );
+        assert_eq!(
+            calc_create2_address(&address, &salt.into(), &hash),
+            address.create2(salt, hash)
+        );
     }
 }

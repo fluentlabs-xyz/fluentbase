@@ -1,3 +1,10 @@
+#![allow(
+    clippy::clone_on_copy,
+    clippy::useless_conversion,
+    clippy::field_reassign_with_default,
+    clippy::needless_borrows_for_generic_args
+)]
+
 use crate::TestingContextImpl;
 use core::{borrow::Borrow, mem::take, str::from_utf8};
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};

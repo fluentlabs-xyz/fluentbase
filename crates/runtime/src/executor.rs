@@ -325,7 +325,8 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         let module = self.module_factory.get_module_or_init(bytecode_or_hash);
 
         // If there is no cached store, then construct a new one (slow)
-        let fuel_limit = Some(ctx.fuel_limit);
+        let fuel_limit_value = ctx.fuel_limit;
+        let fuel_limit = Some(fuel_limit_value);
 
         let mut exec_mode = if let Some((address, code_hash)) = system_runtime_params {
             let consume_fuel = fluentbase_types::is_engine_metered_precompile(&address);
@@ -353,7 +354,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             if let Some(trap_code) = runtime.as_ref().err() {
                 return ExecutionResult {
                     exit_code: ExitCode::from(trap_code).into_i32(),
-                    fuel_consumed: fuel_limit.unwrap_or(0),
+                    fuel_consumed: fuel_limit_value,
                     fuel_refunded: 0,
                     output: vec![],
                     return_data: vec![],
@@ -412,8 +413,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             .and_then(|remaining_fuel| Some(fuel_remaining? - remaining_fuel));
         let runtime_result =
             self.handle_execution_result(result, fuel_consumed, runtime.context_mut());
-        let result = self.try_remember_runtime(runtime_result, runtime);
-        result
+        self.try_remember_runtime(runtime_result, runtime)
     }
 
     fn forget_runtime(&mut self, call_id: u32) {

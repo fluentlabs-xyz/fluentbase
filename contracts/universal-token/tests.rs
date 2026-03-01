@@ -1,3 +1,9 @@
+#![allow(
+    clippy::manual_is_multiple_of,
+    clippy::field_reassign_with_default,
+    clippy::useless_conversion
+)]
+
 use crate::{deploy_entry, main_entry};
 use alloc::vec::Vec;
 use fluentbase_sdk::{
