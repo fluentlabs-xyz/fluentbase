@@ -2,8 +2,8 @@
 sync_tests:
 	if [ ! -d tests ]; then \
   		git clone https://github.com/ethereum/tests; \
+		cd tests; git pull; git checkout v16.0; \
   	fi
-	cd tests; git pull; git checkout v16.0; \
 
 .PHONY: run_general_state_tests
 run_general_state_tests:

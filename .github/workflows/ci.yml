@@ -109,6 +109,9 @@ jobs:
         working-directory: evm-e2e
         run: cargo fetch
 
+      - name: Install nextest
+        run: cargo install cargo-nextest --locked
+
       - name: Sync ethereum tests (evm-e2e)
         if: matrix.kind == 'evm-e2e'
         working-directory: evm-e2e
@@ -118,7 +121,7 @@ jobs:
         if: matrix.kind == 'workspace'
         run: |
           set -euxo pipefail
-          cargo test \
+          cargo nextest run \
             --manifest-path="${{ matrix.manifest }}" \
             --workspace \
             --release \
@@ -131,7 +134,7 @@ jobs:
         if: matrix.kind == 'evm-e2e'
         run: |
           set -euxo pipefail
-          cargo test \
+          cargo nextest run \
             --manifest-path="${{ matrix.manifest }}" \
             --release \
             --no-default-features \
