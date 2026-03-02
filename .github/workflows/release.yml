@@ -196,7 +196,7 @@ jobs:
       # It has to come before "Download Artifacts" or else it deletes the artifacts.
       - uses: actions/checkout@v6
       - name: Download artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
       - name: Generate full changelog
         id: changelog
         run: |
