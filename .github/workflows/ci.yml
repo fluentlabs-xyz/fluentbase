@@ -88,6 +88,9 @@ jobs:
       - name: Install wasm32 target
         run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
 
+      - name: Install nextest
+        run: cargo install cargo-nextest --locked
+
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -118,7 +121,7 @@ jobs:
         if: matrix.kind == 'workspace'
         run: |
           set -euxo pipefail
-          cargo test \
+          cargo nextest run \
             --manifest-path="${{ matrix.manifest }}" \
             --workspace \
             --release \
@@ -131,7 +134,7 @@ jobs:
         if: matrix.kind == 'evm-e2e'
         run: |
           set -euxo pipefail
-          cargo test \
+          cargo nextest run \
             --manifest-path="${{ matrix.manifest }}" \
             --release \
             --no-default-features \
