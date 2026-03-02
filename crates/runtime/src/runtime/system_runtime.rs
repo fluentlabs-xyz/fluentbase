@@ -134,6 +134,7 @@ impl SystemRuntime {
                 .with_import_linker(import_linker.clone())
                 .with_allow_malformed_entrypoint_func_type(true)
                 .with_consume_fuel(consume_fuel)
+                .with_consume_fuel_for_params_and_locals(false)
                 .with_builtins_consume_fuel(false)
                 .with_max_allowed_memory_pages(N_MAX_ALLOWED_MEMORY_PAGES);
             // `hint_section` contains Wasmtime-compatible wasm bytes for the system runtime.
