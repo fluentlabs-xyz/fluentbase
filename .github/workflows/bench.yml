@@ -26,7 +26,7 @@ jobs:
       # Try to fetch the latest successful baseline from devel
       - name: Download baseline from devel
         id: dl
-        uses: dawidd6/action-download-artifact@v15
+        uses: dawidd6/action-download-artifact@v16
         continue-on-error: true            # allow first PRs without a baseline
         with:
           workflow: bench.yml
