@@ -3,8 +3,8 @@ use bytes::BytesMut;
 use fluentbase_codec::SolidityABI;
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_sdk::{
-    address, bytes, compile_rwasm_maybe_system, Address, Bytes, B256, PRECOMPILE_EVM_RUNTIME,
-    PRECOMPILE_RUNTIME_UPGRADE, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX,
+    address, bytes, compile_rwasm_maybe_system, Address, Bytes, B256, DEFAULT_UPDATE_GENESIS_AUTH,
+    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, UPDATE_GENESIS_PREFIX,
 };
 use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
@@ -77,7 +77,7 @@ fn test_update_account_code_by_auth() {
     bytes_input.extend_from_slice(&upgrade_input);
 
     let result = ctx.call_evm_tx(
-        UPDATE_GENESIS_AUTH,
+        DEFAULT_UPDATE_GENESIS_AUTH,
         PRECOMPILE_RUNTIME_UPGRADE,
         bytes_input.into(),
         None,

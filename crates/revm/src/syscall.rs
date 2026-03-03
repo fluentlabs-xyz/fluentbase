@@ -642,7 +642,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Read the number of topics and ensure it does not exceed 4 (EVM LOG0..LOG4).
             // (The EVM hard-limits log topics to 4.)
             assert_halt!(
-                !inputs.syscall_params.input.is_empty() && inputs.syscall_params.state == STATE_MAIN,
+                !inputs.syscall_params.input.is_empty()
+                    && inputs.syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             let mut input = [0u8; 1];
@@ -662,8 +663,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // The payload length before allocating/reading it.
             // (This avoids extra allocations and prevents cheap OOG/DDoS vectors.)
             let mut topics = Vec::with_capacity(topics_len);
-            let (input, lazy_data_input) =
-                get_input_validated!(> topics_len * U256::BYTES);
+            let (input, lazy_data_input) = get_input_validated!(> topics_len * U256::BYTES);
             for i in 0..topics_len {
                 let offset = 1 + i * B256::len_bytes();
                 let topic = &input[offset..(offset + B256::len_bytes())];
@@ -1143,27 +1143,22 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             return_result!(hash, Ok);
         }
 
-        // ============================================================================
-        // SECURITY: CALLDATA-BASED PRECOMPILE DISPATCH VULNERABILITY
-        // ============================================================================
+        // ===========================================================
+        // SECURITY-CONSIDERATIONS: CALLDATA-BASED PRECOMPILE DISPATCH
+        // ===========================================================
         //
-        // VULNERABILITY DESCRIPTION:
+        // DESCRIPTION:
         // 1. `UPDATE_GENESIS_AUTH`: Privileged address that can deploy arbitrary bytecode
         //    to any address via upgrade_runtime_hook
         //
         // SECURITY IMPACT:
-        // - If the ` UPDATE_GENESIS_AUTH` key is compromised, an attacker gains full system control
-        //
-        // AUDITOR RECOMMENDATION:
-        // - Remove functionality for mainnet deployment.
+        // - If the `UPDATE_GENESIS_AUTH` key is compromised, an attacker gains full system control
         //
         // CURRENT MITIGATION:
         // - Instead of private key address, a smart contract is used that required quorum
         //   of signatures from trusted parties.
         //
-        // ============================================================================
-        // a special hook for runtime upgrade
-        // that is used only for testnet to upgrade genesis without forks
+        // ===========================================================
         SYSCALL_ID_UPGRADE_RUNTIME => {
             assert_halt!(!is_static, StateChangeDuringStaticCall);
             assert_halt!(

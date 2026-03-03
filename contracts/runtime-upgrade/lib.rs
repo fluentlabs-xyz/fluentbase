@@ -8,8 +8,8 @@ use fluentbase_sdk::{
     derive::Event,
     entrypoint,
     syscall::{encode, SYSCALL_ID_UPGRADE_RUNTIME},
-    Address, Bytes, ContextReader, ExitCode, SharedAPI, B256, STATE_MAIN, UPDATE_GENESIS_AUTH,
-    UPDATE_GENESIS_PREFIX, WASM_MAGIC_BYTES,
+    Address, Bytes, ContextReader, ExitCode, SharedAPI, B256, DEFAULT_UPDATE_GENESIS_AUTH,
+    STATE_MAIN, UPDATE_GENESIS_PREFIX, WASM_MAGIC_BYTES,
 };
 
 #[derive(Event)]
@@ -24,7 +24,7 @@ struct RuntimeUpgraded {
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let caller = sdk.context().contract_caller();
-    if caller != UPDATE_GENESIS_AUTH {
+    if caller != DEFAULT_UPDATE_GENESIS_AUTH {
         panic!("runtime-upgrade: incorrect caller");
     }
 

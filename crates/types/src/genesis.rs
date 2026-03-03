@@ -169,7 +169,7 @@ pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[
     PRECOMPILE_BN256_ADD,
     PRECOMPILE_BN256_MUL,
     PRECOMPILE_BN256_PAIR,
-    PRECOMPILE_EIP2935,
+    // PRECOMPILE_EIP2935,
     PRECOMPILE_EIP7951,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
     PRECOMPILE_EVM_RUNTIME,
@@ -248,7 +248,8 @@ pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
 /// P.S: This address is default for genesis-init, but once a chain is live, it should be
 ///  reannounced or changed to smart contract (multisig). The address can be changed by upgrading
 ///  the runtime.
-pub const UPDATE_GENESIS_AUTH: Address = address!("0xa7bf6a9168fe8a111307b7c94b8883fe02b30934");
+pub const DEFAULT_UPDATE_GENESIS_AUTH: Address =
+    address!("0xa7bf6a9168fe8a111307b7c94b8883fe02b30934");
 
 /// Default fee manager, should be changed after a chain is live
 pub const DEFAULT_FEE_MANAGER_AUTH: Address =
