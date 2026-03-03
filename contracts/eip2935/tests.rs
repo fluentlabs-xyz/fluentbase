@@ -1,4 +1,3 @@
-
 //! Unit tests for the EIP-2935 history storage contract.
 //!
 //! The contract has two entry paths:
@@ -20,9 +19,10 @@ use crate::{
     entrypoint, GAS_BAD_BLOCK_INPUT_BRANCH, GAS_BLOCK_TOO_OLD_BRANCH, GAS_INVALID_BLOCK_BRANCH,
 };
 use fluentbase_sdk::{
-    Address, Bytes, ExitCode, EIP2935_HISTORY_SERVE_WINDOW, FUEL_DENOM_RATE, SYSTEM_ADDRESS,
+    Address, Bytes, EIP2935_HISTORY_SERVE_WINDOW, FUEL_DENOM_RATE, SYSTEM_ADDRESS,
 };
 use fluentbase_testing::TestingContextImpl;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 const USER_ADDRESS: Address = Address::repeat_byte(0x11);
 
@@ -72,34 +72,15 @@ fn hash_for_block(k: u64) -> [u8; 32] {
 /// This helper does **not** mutate the provided `sdk` in-place. Instead, it clones it,
 /// configures the call parameters (input/caller/block number), runs the entrypoint, and then
 /// extracts the output.
-fn exec_as_ctx(
-    sdk: &mut TestingContextImpl,
-    sender: Address,
-    block_number: u64,
-    input: &[u8],
-) -> (Result<Bytes, ExitCode>, TestingContextImpl) {
+fn exec_as_ctx(sdk: TestingContextImpl, sender: Address, block_number: u64, input: &[u8]) -> Bytes {
     let gas_limit = GAS_LIMIT;
-    let mut call_ctx = sdk
-        .clone()
+    let sdk = sdk
         .with_input(Bytes::copy_from_slice(input))
         .with_caller(sender)
         .with_block_number(block_number)
         .with_gas_limit(gas_limit);
-    let res = entrypoint(&mut call_ctx);
-    (res.map(|_| call_ctx.take_output().into()), call_ctx)
-}
-
-/// Execute one precompile call in a controlled context.
-fn exec_as(
-    sdk: &mut TestingContextImpl,
-    sender: Address,
-    block_number: u64,
-    input: &[u8],
-) -> Result<(Bytes, u64), ExitCode> {
-    let consumed_fuel_before = sdk.consumed_fuel();
-    let (res, call_ctx) = exec_as_ctx(sdk, sender, block_number, input);
-    let gas_consumed = (call_ctx.consumed_fuel() - consumed_fuel_before) / FUEL_DENOM_RATE;
-    res.map(|out| (out, gas_consumed))
+    entrypoint(sdk.clone());
+    sdk.take_output().into()
 }
 
 /// Execute and require the call to succeed.
@@ -111,9 +92,7 @@ fn exec_ok(
     block_number: u64,
     input: &[u8],
 ) -> Bytes {
-    let (output, _gas) =
-        exec_as(sdk, sender, block_number, input).expect("expected Ok, got revert/error");
-    output
+    exec_as_ctx(sdk.clone(), sender, block_number, input)
 }
 
 fn exec_expect_revert(
@@ -124,9 +103,11 @@ fn exec_expect_revert(
     expected_gas: u64,
 ) {
     let consumed_fuel_before = sdk.consumed_fuel();
-    let (res, call_ctx) = exec_as_ctx(sdk, sender, block_number, input);
-    assert!(res.is_err(), "expected revert/error, got Ok");
-    let gas_consumed = (call_ctx.consumed_fuel() - consumed_fuel_before) / FUEL_DENOM_RATE;
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        exec_as_ctx(sdk.clone(), sender, block_number, input)
+    }));
+    assert!(result.is_err(), "expected revert/error, got Ok");
+    let gas_consumed = (sdk.consumed_fuel() - consumed_fuel_before) / FUEL_DENOM_RATE;
     assert_eq!(
         gas_consumed, expected_gas,
         "gas mismatch on revert: expected {}, got {}",

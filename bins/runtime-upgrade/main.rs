@@ -84,50 +84,50 @@ fn parse_rwasm_module_and_get_hint(rwasm_binary: &[u8]) -> Result<Vec<u8>> {
 
 fn contracts_to_upgrade() -> HashMap<&'static str, Address> {
     HashMap::from([
-        ("PRECOMPILE_BIG_MODEXP,", PRECOMPILE_BIG_MODEXP),
-        ("PRECOMPILE_BLAKE2F,", PRECOMPILE_BLAKE2F),
-        ("PRECOMPILE_BLS12_381_G1_ADD,", PRECOMPILE_BLS12_381_G1_ADD),
-        ("PRECOMPILE_BLS12_381_G1_MSM,", PRECOMPILE_BLS12_381_G1_MSM),
-        ("PRECOMPILE_BLS12_381_G2_ADD,", PRECOMPILE_BLS12_381_G2_ADD),
-        ("PRECOMPILE_BLS12_381_G2_MSM,", PRECOMPILE_BLS12_381_G2_MSM),
-        ("PRECOMPILE_BLS12_381_MAP_G1,", PRECOMPILE_BLS12_381_MAP_G1),
-        ("PRECOMPILE_BLS12_381_MAP_G2,", PRECOMPILE_BLS12_381_MAP_G2),
+        ("PRECOMPILE_BIG_MODEXP", PRECOMPILE_BIG_MODEXP),
+        ("PRECOMPILE_BLAKE2F", PRECOMPILE_BLAKE2F),
+        ("PRECOMPILE_BLS12_381_G1_ADD", PRECOMPILE_BLS12_381_G1_ADD),
+        ("PRECOMPILE_BLS12_381_G1_MSM", PRECOMPILE_BLS12_381_G1_MSM),
+        ("PRECOMPILE_BLS12_381_G2_ADD", PRECOMPILE_BLS12_381_G2_ADD),
+        ("PRECOMPILE_BLS12_381_G2_MSM", PRECOMPILE_BLS12_381_G2_MSM),
+        ("PRECOMPILE_BLS12_381_MAP_G1", PRECOMPILE_BLS12_381_MAP_G1),
+        ("PRECOMPILE_BLS12_381_MAP_G2", PRECOMPILE_BLS12_381_MAP_G2),
         (
             "PRECOMPILE_BLS12_381_PAIRING,",
             PRECOMPILE_BLS12_381_PAIRING,
         ),
-        ("PRECOMPILE_BN256_ADD,", PRECOMPILE_BN256_ADD),
-        ("PRECOMPILE_BN256_MUL,", PRECOMPILE_BN256_MUL),
-        ("PRECOMPILE_BN256_PAIR,", PRECOMPILE_BN256_PAIR),
-        ("PRECOMPILE_EIP2935,", PRECOMPILE_EIP2935),
-        ("PRECOMPILE_EIP7951,", PRECOMPILE_EIP7951),
+        ("PRECOMPILE_BN256_ADD", PRECOMPILE_BN256_ADD),
+        ("PRECOMPILE_BN256_MUL", PRECOMPILE_BN256_MUL),
+        ("PRECOMPILE_BN256_PAIR", PRECOMPILE_BN256_PAIR),
+        ("PRECOMPILE_EIP2935", PRECOMPILE_EIP2935),
+        ("PRECOMPILE_EIP7951", PRECOMPILE_EIP7951),
         (
             "PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,",
             PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
         ),
-        ("PRECOMPILE_EVM_RUNTIME,", PRECOMPILE_EVM_RUNTIME),
-        ("PRECOMPILE_IDENTITY,", PRECOMPILE_IDENTITY),
+        ("PRECOMPILE_EVM_RUNTIME", PRECOMPILE_EVM_RUNTIME),
+        ("PRECOMPILE_IDENTITY", PRECOMPILE_IDENTITY),
         (
             "PRECOMPILE_KZG_POINT_EVALUATION,",
             PRECOMPILE_KZG_POINT_EVALUATION,
         ),
-        ("PRECOMPILE_NITRO_VERIFIER,", PRECOMPILE_NITRO_VERIFIER),
-        ("PRECOMPILE_OAUTH2_VERIFIER,", PRECOMPILE_OAUTH2_VERIFIER),
-        ("PRECOMPILE_RIPEMD160,", PRECOMPILE_RIPEMD160),
+        ("PRECOMPILE_NITRO_VERIFIER", PRECOMPILE_NITRO_VERIFIER),
+        ("PRECOMPILE_OAUTH2_VERIFIER", PRECOMPILE_OAUTH2_VERIFIER),
+        ("PRECOMPILE_RIPEMD160", PRECOMPILE_RIPEMD160),
         (
             "PRECOMPILE_SECP256K1_RECOVER,",
             PRECOMPILE_SECP256K1_RECOVER,
         ),
-        ("PRECOMPILE_SHA256,", PRECOMPILE_SHA256),
-        ("PRECOMPILE_SVM_RUNTIME,", PRECOMPILE_SVM_RUNTIME),
-        ("PRECOMPILE_WASM_RUNTIME,", PRECOMPILE_WASM_RUNTIME),
-        ("PRECOMPILE_RUNTIME_UPGRADE,", PRECOMPILE_RUNTIME_UPGRADE),
-        ("PRECOMPILE_FEE_MANAGER,", PRECOMPILE_FEE_MANAGER),
+        ("PRECOMPILE_SHA256", PRECOMPILE_SHA256),
+        ("PRECOMPILE_SVM_RUNTIME", PRECOMPILE_SVM_RUNTIME),
+        ("PRECOMPILE_WASM_RUNTIME", PRECOMPILE_WASM_RUNTIME),
+        ("PRECOMPILE_RUNTIME_UPGRADE", PRECOMPILE_RUNTIME_UPGRADE),
+        ("PRECOMPILE_FEE_MANAGER", PRECOMPILE_FEE_MANAGER),
         (
             "PRECOMPILE_WEBAUTHN_VERIFIER,",
             PRECOMPILE_WEBAUTHN_VERIFIER,
         ),
-        ("PRECOMPILE_WRAPPED_ETH,", PRECOMPILE_WRAPPED_ETH),
+        ("PRECOMPILE_WRAPPED_ETH", PRECOMPILE_WRAPPED_ETH),
     ])
 }
 
@@ -230,7 +230,7 @@ fn load_wallet(args: &Args) -> Result<LocalWallet> {
     if bytes.len() != 32 {
         bail!("private key must be 32 bytes (got {})", bytes.len());
     }
-    Ok(LocalWallet::from_bytes(&bytes).context("creating wallet")?)
+    LocalWallet::from_bytes(&bytes).context("creating wallet")
 }
 
 pub static FLUENT_HARDFORKS: LazyLock<ChainHardforks> = LazyLock::new(|| {
@@ -382,8 +382,13 @@ async fn main() -> Result<()> {
             data.extend_from_slice(buffer.as_ref());
         }
 
+        let send_to = if args.legacy_mode {
+            contract
+        } else {
+            PRECOMPILE_RUNTIME_UPGRADE
+        };
         let tx = TransactionRequest::new()
-            .to(NameOrAddress::Address((*contract.0).into()))
+            .to(NameOrAddress::Address((*send_to.0).into()))
             .gas(args.gas_limit)
             .data(data);
 

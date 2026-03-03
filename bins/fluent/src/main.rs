@@ -41,7 +41,7 @@ fn main() {
             .with_components(components_builder)
             .with_add_ons(add_ons)
             .launch_with_debug_capabilities()
-            .with_payload_attributes_builder(FluentPayloadAttributesBuilder::default())
+            .with_payload_attributes_builder(FluentPayloadAttributesBuilder {})
             .await?;
 
         node_exit_future.await
