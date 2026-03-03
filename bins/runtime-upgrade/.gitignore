@@ -1,0 +1,5 @@
+.DS_Store
+*.json
+*.json.gz
+!package.json
+*.txt

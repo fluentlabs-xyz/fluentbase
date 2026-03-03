@@ -1,9 +1,12 @@
 #![allow(missing_docs, dead_code)]
 
 use clap::Parser;
-use fluent::{chainspec::FluentChainSpecParser, evm::FluentExecutorBuilder};
+use fluent::{
+    chainspec::FluentChainSpecParser, evm::FluentExecutorBuilder,
+    payload::FluentPayloadAttributesBuilder,
+};
 use reth_ethereum_cli::Cli;
-use reth_node_builder::Node;
+use reth_node_builder::{Node, NodeHandle};
 use reth_node_ethereum::{EthereumAddOns, EthereumNode};
 use tracing::info;
 
@@ -30,13 +33,18 @@ fn main() {
             .executor(FluentExecutorBuilder::default());
         let add_ons = EthereumAddOns::default();
 
-        let handle = builder
+        let NodeHandle {
+            node: _node,
+            node_exit_future,
+        } = builder
             .with_types::<EthereumNode>()
             .with_components(components_builder)
             .with_add_ons(add_ons)
             .launch_with_debug_capabilities()
+            .with_payload_attributes_builder(FluentPayloadAttributesBuilder {})
             .await?;
-        handle.wait_for_node_exit().await
+
+        node_exit_future.await
     }) {
         eprintln!("Error: {err:?}");
         std::process::exit(1);

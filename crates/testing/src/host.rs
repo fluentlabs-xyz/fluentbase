@@ -246,11 +246,7 @@ impl SharedAPI for TestingContextImpl {
     }
 
     fn native_exit(&self, exit_code: ExitCode) -> ! {
-        unimplemented!(
-            "not allowed to do native exit: {} ({})",
-            exit_code,
-            exit_code as i32
-        )
+        panic!("native exit: {} ({})", exit_code, exit_code as i32)
     }
 
     fn native_exec(

@@ -10,6 +10,9 @@ clippy:
 	cargo clippy --manifest-path=./contracts/Cargo.toml --workspace --all-targets -- -D warnings
 	cargo clippy --manifest-path=./examples/Cargo.toml --workspace --all-targets -- -D warnings
 
+.PHONY: pr
+pr: clippy test
+
 .PHONY: build
 build:
 	cargo build --all
