@@ -21,7 +21,7 @@ impl PayloadAttributesBuilder<EthPayloadAttributes, Header> for FluentPayloadAtt
             prev_randao: B256::random(),
             suggested_fee_recipient: PRECOMPILE_FEE_MANAGER,
             withdrawals: Default::default(),
-            parent_beacon_block_root: None,
+            parent_beacon_block_root: Some(B256::ZERO),
         }
     }
 }
