@@ -27,7 +27,7 @@ hex = { workspace = true }
 alloy-sol-types = { workspace = true }
 
 # misc
-reqwest = { version = "0.12", features = ["stream", "gzip", "brotli", "deflate", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking"] }
 futures-util = "0.3"
 rpassword = "0.3.0"
 
