@@ -1,4 +1,11 @@
-#![allow(clippy::inconsistent_digit_grouping, clippy::expect_fun_call, clippy::format_in_format_args, clippy::clone_on_copy, clippy::useless_format, clippy::vec_init_then_push)]
+#![allow(
+    clippy::inconsistent_digit_grouping,
+    clippy::expect_fun_call,
+    clippy::format_in_format_args,
+    clippy::clone_on_copy,
+    clippy::useless_format,
+    clippy::vec_init_then_push
+)]
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_sdk::{address, compile_rwasm_maybe_system, keccak256, Address, Bytes, B256, U256};
 use std::{
@@ -17,6 +24,7 @@ const GENESIS_CONTRACTS: &[(Address, fluentbase_contracts::BuildOutput)] = &[
     (fluentbase_sdk::PRECOMPILE_BN256_PAIR, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
     (fluentbase_sdk::PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, fluentbase_contracts::FLUENTBASE_UNIVERSAL_TOKEN),
     (fluentbase_sdk::PRECOMPILE_EIP2935, fluentbase_contracts::FLUENTBASE_CONTRACTS_EIP2935),
+    (fluentbase_sdk::PRECOMPILE_EIP7951, fluentbase_contracts::FLUENTBASE_CONTRACTS_EIP7951),
     (fluentbase_sdk::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_EVM),
     #[cfg(feature="svm")]
     (fluentbase_sdk::PRECOMPILE_SVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_SVM),

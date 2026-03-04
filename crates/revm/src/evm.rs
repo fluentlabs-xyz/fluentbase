@@ -1,13 +1,17 @@
 //! Contains the `[RwasmEvm]` type and its implementation of the execution EVM traits.
 
 use crate::{
-    api::RwasmFrame, executor::run_rwasm_loop, precompiles::RwasmPrecompiles,
-    types::SystemInterruptionOutcome, ExecutionResult,
+    api::RwasmFrame,
+    executor::run_rwasm_loop,
+    precompiles::RwasmPrecompiles,
+    types::SystemInterruptionOutcome,
+    upgrade::{upgrade_runtime_hook_v2, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX_V2},
+    ExecutionResult,
 };
 use fluentbase_sdk::{resolve_precompiled_runtime_from_input, Address, Bytes};
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
-    context::{ContextError, ContextSetters, Evm, FrameStack, JournalTr},
+    context::{Cfg, ContextError, ContextSetters, Evm, FrameStack, JournalTr},
     context_interface::ContextTr,
     handler::{
         evm::FrameTr,
@@ -259,7 +263,7 @@ where
     #[tracing::instrument(level = "info", skip_all)]
     fn frame_init(
         &mut self,
-        frame_input: <Self::Frame as FrameTr>::FrameInit,
+        mut frame_input: <Self::Frame as FrameTr>::FrameInit,
     ) -> Result<
         ItemOrResult<&mut Self::Frame, <Self::Frame as FrameTr>::FrameResult>,
         ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
@@ -272,6 +276,48 @@ where
         };
         let ctx = &mut self.0.ctx;
         let precompiles = &mut self.0.precompiles;
+        match &mut frame_input.frame_input {
+            // Only for Fluent Testnet until it's migrated to v0.5.4 and has
+            // full support of new runtime upgrade scheme
+            FrameInput::Call(inputs)
+                if ctx.cfg().chain_id() == 0x5202
+                    && inputs.caller == UPDATE_GENESIS_AUTH
+                    && inputs
+                        .input
+                        .bytes(ctx)
+                        .starts_with(&UPDATE_GENESIS_PREFIX_V2) =>
+            {
+                // ============================================================================
+                // SECURITY: CALLDATA-BASED PRECOMPILE DISPATCH VULNERABILITY
+                // ============================================================================
+                //
+                // The following code is DISABLED for mainnet and restricted to testnet only.
+                //
+                // VULNERABILITY DESCRIPTION:
+                // 1. UPDATE_GENESIS_AUTH: Privileged address that can deploy arbitrary bytecode
+                //    to any address via upgrade_runtime_hook_v1/v2
+                // 2. Calldata-based dispatch: Precompiles invoked by calldata prefix instead of
+                //    destination address (via try_resolve_precompile_account_from_input)
+                //
+                // SECURITY IMPACT:
+                // - If UPDATE_GENESIS_AUTH key is compromised, attacker gains full system control
+                // - Calldata-based dispatch violates Ethereum standard (EIP-1352)
+                // - Any transaction with specific byte prefix unexpectedly triggers precompiles
+                // - Breaks tooling/scripts expecting standard address-based precompile behavior
+                //
+                // AUDITOR RECOMMENDATION:
+                // Remove functionality for mainnet deployment. Use standard address-based
+                // precompile dispatch as specified in EIP-1352.
+                //
+                // CURRENT MITIGATION:
+                // - Restricted to testnet via 'fluent-testnet' feature flag
+                // - Multicall tests temporarily disabled (see e2e/src/multicall.rs)
+                //
+                // ============================================================================
+                return upgrade_runtime_hook_v2(ctx, inputs);
+            }
+            _ => {}
+        }
         let res = Self::Frame::init_with_context(new_frame, ctx, precompiles, frame_input)?;
         let mut res = res.map_frame(|token| {
             if is_first_init {

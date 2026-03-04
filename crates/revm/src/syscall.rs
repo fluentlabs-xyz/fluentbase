@@ -17,10 +17,9 @@ use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create_metadata_address, compile_rwasm_maybe_system, is_execute_using_system_runtime,
-    is_system_precompile, Address, Bytes, ExitCode, Log, LogData, RwasmCompilationResult, B256,
-    FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN,
-    U256,
+    calc_create_metadata_address, hex, is_execute_using_system_runtime, is_system_precompile,
+    Address, Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY,
+    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -1161,6 +1160,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         // ===========================================================
         SYSCALL_ID_UPGRADE_RUNTIME => {
             assert_halt!(!is_static, StateChangeDuringStaticCall);
+            // This syscall can be called only by runtime upgrade smart contract
             assert_halt!(
                 current_target_address == PRECOMPILE_RUNTIME_UPGRADE,
                 MalformedBuiltinParams
@@ -1169,15 +1169,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let target_address = Address::from_slice(&input);
             // P.S: We can't validate the target address here, otherwise it will require a fork
             //  to release new contracts from genesis
-            let Ok(wasm_bytecode) = lazy_contract_input() else {
+            let Ok(rwasm_bytecode) = lazy_contract_input() else {
                 return_halt!(MemoryOutOfBounds);
             };
-            let Ok(RwasmCompilationResult { rwasm_module, .. }) =
-                compile_rwasm_maybe_system(&target_address, &wasm_bytecode)
-            else {
-                return_halt!(MalformedBuiltinParams);
-            };
-            let bytecode = Bytecode::new_rwasm(rwasm_module.serialize().into());
+            println!("input: {}", target_address);
+            println!("rwasm_bytecode: {}", hex::encode(&rwasm_bytecode[0..100]));
+            let bytecode = Bytecode::new_rwasm(rwasm_bytecode.into());
             // Make sure an account is loaded
             _ = ctx.journal_mut().load_account_with_code(target_address)?;
             ctx.journal_mut().set_code(target_address, bytecode);

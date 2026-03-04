@@ -322,12 +322,12 @@ pub fn destroy_account_into<B: BufMut>(out: &mut B, address: &Address) {
 // -------------------------
 
 #[inline(always)]
-pub const fn upgrade_runtime_size_hint(wasm_bytecode_len: usize) -> usize {
-    Address::len_bytes() + wasm_bytecode_len
+pub const fn upgrade_runtime_size_hint(rwasm_bytecode_len: usize) -> usize {
+    Address::len_bytes() + rwasm_bytecode_len
 }
 
 #[inline(always)]
-pub fn upgrade_runtime_into<B: BufMut>(out: &mut B, address: &Address, wasm_bytecode: &[u8]) {
+pub fn upgrade_runtime_into<B: BufMut>(out: &mut B, address: &Address, rwasm_bytecode: &[u8]) {
     out.put_slice(address.as_slice());
-    out.put_slice(wasm_bytecode);
+    out.put_slice(rwasm_bytecode);
 }

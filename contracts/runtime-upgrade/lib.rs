@@ -5,11 +5,12 @@ extern crate alloc;
 use alloc::{borrow::Cow, string::String, vec};
 use fluentbase_sdk::{
     codec::SolidityABI,
+    compile_rwasm_maybe_system,
     derive::Event,
     entrypoint,
     syscall::{encode, SYSCALL_ID_UPGRADE_RUNTIME},
-    Address, Bytes, ContextReader, ExitCode, SharedAPI, B256, DEFAULT_UPDATE_GENESIS_AUTH,
-    STATE_MAIN, UPDATE_GENESIS_PREFIX, WASM_MAGIC_BYTES,
+    Address, Bytes, ContextReader, ExitCode, RwasmCompilationResult, SharedAPI, B256,
+    DEFAULT_UPDATE_GENESIS_AUTH, STATE_MAIN, UPDATE_GENESIS_PREFIX, WASM_MAGIC_BYTES,
 };
 
 #[derive(Event)]
@@ -39,9 +40,15 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     if !wasm_bytecode.starts_with(&WASM_MAGIC_BYTES) {
         panic!("runtime-upgrade: malformed wasm bytecode");
     }
+    let Ok(RwasmCompilationResult { rwasm_module, .. }) =
+        compile_rwasm_maybe_system(&target_address, &wasm_bytecode)
+    else {
+        panic!("runtime-upgrade: failed to compile bytecode");
+    };
+    let rwasm_bytecode = rwasm_module.serialize();
 
-    let mut buffer = vec![0u8; encode::upgrade_runtime_size_hint(wasm_bytecode.len())];
-    encode::upgrade_runtime_into(&mut &mut buffer[..], &target_address, &wasm_bytecode);
+    let mut buffer = vec![0u8; encode::upgrade_runtime_size_hint(rwasm_bytecode.len())];
+    encode::upgrade_runtime_into(&mut &mut buffer[..], &target_address, &rwasm_bytecode);
     let (_fuel_consumed, _fuel_refunded, exit_code) = sdk.native_exec(
         SYSCALL_ID_UPGRADE_RUNTIME,
         Cow::Owned(buffer),

@@ -20,7 +20,6 @@ use fluentbase_sdk::{
     PRECOMPILE_WASM_RUNTIME, PRECOMPILE_WEBAUTHN_VERIFIER, PRECOMPILE_WRAPPED_ETH, U256,
     UPDATE_GENESIS_PREFIX, WASM_MAX_CODE_SIZE,
 };
-use futures_util::StreamExt;
 use reth_chainspec::{
     make_genesis_header, ChainHardforks, EthereumHardfork, ForkCondition, Hardfork,
 };
@@ -38,11 +37,11 @@ use std::{
 #[command(author, version, about)]
 struct Args {
     /// Genesis release tag, e.g. v0.5.3
-    #[arg(long, default_value = "v0.5.3")]
+    #[arg(long)]
     genesis: String,
 
     /// Gas limit to use for upgrade transactions
-    #[arg(long, default_value_t = 30_000_000u64)]
+    #[arg(long, default_value_t = 45_000_000u64)]
     gas_limit: u64,
 
     /// Contract key name (e.g. EVM_RUNTIME) from CONTRACTS_TO_UPGRADE.
@@ -73,13 +72,7 @@ struct Args {
 
     /// Use legacy upgrade mode
     #[arg(long, default_value_t = false)]
-    legacy_mode: bool,
-}
-
-/// Given rWasm bytecode, return the embedded WASM bytecode "hint" bytes
-fn parse_rwasm_module_and_get_hint(rwasm_binary: &[u8]) -> Result<Vec<u8>> {
-    let (module, _) = RwasmModule::new_checked(rwasm_binary)?;
-    Ok(module.hint_section.clone())
+    force_legacy: bool,
 }
 
 fn contracts_to_upgrade() -> HashMap<&'static str, Address> {
@@ -92,41 +85,32 @@ fn contracts_to_upgrade() -> HashMap<&'static str, Address> {
         ("PRECOMPILE_BLS12_381_G2_MSM", PRECOMPILE_BLS12_381_G2_MSM),
         ("PRECOMPILE_BLS12_381_MAP_G1", PRECOMPILE_BLS12_381_MAP_G1),
         ("PRECOMPILE_BLS12_381_MAP_G2", PRECOMPILE_BLS12_381_MAP_G2),
-        (
-            "PRECOMPILE_BLS12_381_PAIRING,",
-            PRECOMPILE_BLS12_381_PAIRING,
-        ),
+        ("PRECOMPILE_BLS12_381_PAIRING", PRECOMPILE_BLS12_381_PAIRING),
         ("PRECOMPILE_BN256_ADD", PRECOMPILE_BN256_ADD),
         ("PRECOMPILE_BN256_MUL", PRECOMPILE_BN256_MUL),
         ("PRECOMPILE_BN256_PAIR", PRECOMPILE_BN256_PAIR),
         ("PRECOMPILE_EIP2935", PRECOMPILE_EIP2935),
         ("PRECOMPILE_EIP7951", PRECOMPILE_EIP7951),
         (
-            "PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,",
+            "PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME",
             PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
         ),
         ("PRECOMPILE_EVM_RUNTIME", PRECOMPILE_EVM_RUNTIME),
         ("PRECOMPILE_IDENTITY", PRECOMPILE_IDENTITY),
         (
-            "PRECOMPILE_KZG_POINT_EVALUATION,",
+            "PRECOMPILE_KZG_POINT_EVALUATION",
             PRECOMPILE_KZG_POINT_EVALUATION,
         ),
         ("PRECOMPILE_NITRO_VERIFIER", PRECOMPILE_NITRO_VERIFIER),
         ("PRECOMPILE_OAUTH2_VERIFIER", PRECOMPILE_OAUTH2_VERIFIER),
         ("PRECOMPILE_RIPEMD160", PRECOMPILE_RIPEMD160),
-        (
-            "PRECOMPILE_SECP256K1_RECOVER,",
-            PRECOMPILE_SECP256K1_RECOVER,
-        ),
+        ("PRECOMPILE_SECP256K1_RECOVER", PRECOMPILE_SECP256K1_RECOVER),
         ("PRECOMPILE_SHA256", PRECOMPILE_SHA256),
         ("PRECOMPILE_SVM_RUNTIME", PRECOMPILE_SVM_RUNTIME),
         ("PRECOMPILE_WASM_RUNTIME", PRECOMPILE_WASM_RUNTIME),
         ("PRECOMPILE_RUNTIME_UPGRADE", PRECOMPILE_RUNTIME_UPGRADE),
         ("PRECOMPILE_FEE_MANAGER", PRECOMPILE_FEE_MANAGER),
-        (
-            "PRECOMPILE_WEBAUTHN_VERIFIER,",
-            PRECOMPILE_WEBAUTHN_VERIFIER,
-        ),
+        ("PRECOMPILE_WEBAUTHN_VERIFIER", PRECOMPILE_WEBAUTHN_VERIFIER),
         ("PRECOMPILE_WRAPPED_ETH", PRECOMPILE_WRAPPED_ETH),
     ])
 }
@@ -149,22 +133,18 @@ async fn download_genesis_file(genesis_version: &str) -> Result<alloy_genesis::G
     print!("Downloading genesis file from {}... ", url);
     std::io::stdout().flush().ok();
 
-    let resp = reqwest::Client::new()
+    let resp = reqwest::Client::builder()
+        .user_agent("fluent-chainspec/1.0")
+        .timeout(std::time::Duration::from_secs(60))
+        .build()?
         .get(url)
         .send()
-        .await
-        .context("fetching genesis .gz")?;
-
+        .await?
+        .error_for_status()?;
     if !resp.status().is_success() {
         bail!("HTTP error! {}", resp.status());
     }
-
-    let mut bytes = Vec::new();
-    let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("reading download chunk")?;
-        bytes.extend_from_slice(&chunk);
-    }
+    let bytes = resp.bytes().await?;
 
     let mut decoder = GzDecoder::new(&bytes[..]);
     let mut json = String::new();
@@ -287,7 +267,7 @@ async fn main() -> Result<()> {
     let genesis_header = make_genesis_header(&genesis, &FLUENT_HARDFORKS);
     let genesis_hash = genesis_header.hash_slow();
 
-    let mut bytecode_by_address: HashMap<Address, Vec<u8>> = HashMap::new();
+    let mut rwasm_module_by_address: HashMap<Address, RwasmModule> = HashMap::new();
     for (addr, entry) in genesis.alloc.iter() {
         let Some(code) = entry.code.as_ref() else {
             continue;
@@ -296,14 +276,14 @@ async fn main() -> Result<()> {
         if module.hint_section.is_empty() {
             bail!("Failed to extract WASM bytecode from {}", addr);
         }
-        bytecode_by_address.insert(*addr, module.hint_section.clone());
+        rwasm_module_by_address.insert(*addr, module);
     }
 
     // Determine which contracts to upgrade.
     let contracts = contracts_to_upgrade();
     let upgrade_list: Vec<Address> = match args.contract.as_deref() {
         None => {
-            let answer = ask_for("No --contract specified. Upgrade ALL known contracts? (y/n) ")?;
+            let answer = ask_for("Upgrade ALL known contracts? (Y/n) ")?;
             if !matches!(answer.to_lowercase().as_str(), "y" | "yes") {
                 return Ok(());
             }
@@ -334,17 +314,26 @@ async fn main() -> Result<()> {
     let signer = SignerMiddleware::new(provider.clone(), wallet);
     let signer = std::sync::Arc::new(signer);
 
+    let runtime_upgrade_bytecode = provider
+        .get_code(
+            NameOrAddress::Address((*PRECOMPILE_RUNTIME_UPGRADE.0).into()),
+            None,
+        )
+        .await?;
+    let mut is_legacy_upgrade_scheme = runtime_upgrade_bytecode.is_empty();
+    if args.force_legacy {
+        is_legacy_upgrade_scheme = true;
+    }
+
     for contract in upgrade_list {
         print!("Upgrading contract {}... ", contract);
         std::io::stdout().flush().ok();
 
-        let Some(new_wasm) = bytecode_by_address.get(&contract).cloned() else {
-            println!("DONE (empty bytecode)");
-            continue;
-        };
-        let new_wasm: Bytes = new_wasm.into();
-
-        if new_wasm.len() >= WASM_MAX_CODE_SIZE {
+        let new_rwasm: RwasmModule = rwasm_module_by_address
+            .get(&contract)
+            .cloned()
+            .unwrap_or_default();
+        if new_rwasm.hint_section.len() >= WASM_MAX_CODE_SIZE {
             println!("FAILED (contract exceeds 1MiB)");
             continue;
         }
@@ -353,17 +342,17 @@ async fn main() -> Result<()> {
             .get_code(NameOrAddress::Address((*contract.0).into()), None)
             .await
             .context("get_code")?;
-        if let Ok(existing_wasm) = parse_rwasm_module_and_get_hint(on_chain_code.as_ref()) {
-            if existing_wasm == new_wasm {
-                println!("UP-TO-DATE");
-                continue;
-            }
+        let (onchain_rwasm, _) =
+            RwasmModule::new_checked(on_chain_code.as_ref()).unwrap_or_default();
+        if onchain_rwasm == new_rwasm {
+            println!("UP-TO-DATE");
+            continue;
         }
 
         let mut data = vec![];
-        if args.legacy_mode {
+        if is_legacy_upgrade_scheme {
             data.extend_from_slice(&[0x69, 0xbc, 0x6f, 0x65]);
-            data.extend_from_slice(&new_wasm);
+            data.extend_from_slice(&new_rwasm.hint_section);
         } else {
             data.extend_from_slice(&UPDATE_GENESIS_PREFIX);
             let mut buffer = BytesMut::new();
@@ -372,7 +361,7 @@ async fn main() -> Result<()> {
                     contract,
                     genesis_hash,
                     args.genesis.clone(),
-                    new_wasm.clone(),
+                    Bytes::copy_from_slice(&new_rwasm.hint_section),
                 ),
                 &mut buffer,
                 0,
@@ -382,7 +371,7 @@ async fn main() -> Result<()> {
             data.extend_from_slice(buffer.as_ref());
         }
 
-        let send_to = if args.legacy_mode {
+        let send_to = if is_legacy_upgrade_scheme {
             contract
         } else {
             PRECOMPILE_RUNTIME_UPGRADE
@@ -433,6 +422,20 @@ async fn main() -> Result<()> {
                     println!("FAILED ({})", msg);
                 }
             }
+        }
+
+        let on_chain_code = provider
+            .get_code(NameOrAddress::Address((*contract.0).into()), None)
+            .await
+            .context("get_code")?;
+        let (onchain_rwasm, _) =
+            RwasmModule::new_checked(on_chain_code.as_ref()).unwrap_or_default();
+        if onchain_rwasm != new_rwasm {
+            println!(
+                " ~ WARNING: upgraded contract bytecode doesn't match: {}, should be {}",
+                onchain_rwasm.hint_section.len(),
+                new_rwasm.hint_section.len()
+            );
         }
     }
 
