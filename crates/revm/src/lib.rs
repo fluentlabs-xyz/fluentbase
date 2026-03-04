@@ -19,6 +19,7 @@ mod syscall;
 #[cfg(test)]
 mod tests;
 mod types;
+mod upgrade;
 
 pub use api::*;
 pub use evm::RwasmEvm;

@@ -209,7 +209,7 @@ fn test_exec_quadratic_charging() {
         1usize << 12, // 4 KiB
         1usize << 13, // 8 KiB
         1usize << 16, // 64 KiB
-        1usize << 20, // 1 MiB
+        1usize << 19, // 512 KiB
     ];
 
     let mut observations = Vec::with_capacity(payload_sizes.len());

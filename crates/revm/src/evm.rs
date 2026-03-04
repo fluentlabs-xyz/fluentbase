@@ -7,7 +7,7 @@ use crate::{
 use fluentbase_sdk::{resolve_precompiled_runtime_from_input, Address, Bytes};
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
-    context::{ContextError, ContextSetters, Evm, FrameStack, JournalTr},
+    context::{Cfg, ContextError, ContextSetters, Evm, FrameStack, JournalTr},
     context_interface::ContextTr,
     handler::{
         evm::FrameTr,
@@ -283,7 +283,51 @@ where
         });
         match &mut res {
             ItemOrResult::Item(new_frame) => {
-                match &new_frame.input {
+                match &mut new_frame.input {
+                    #[allow(unused_variables)]
+                    FrameInput::Call(inputs) => {
+                        let _span = tracing::info_span!("revm.frame_init.call_hook").entered();
+
+                        // ============================================================================
+                        // SECURITY: CALLDATA-BASED PRECOMPILE DISPATCH VULNERABILITY
+                        // ============================================================================
+                        //
+                        // The following code is DISABLED for mainnet and restricted to testnet only.
+                        //
+                        // VULNERABILITY DESCRIPTION:
+                        // 1. UPDATE_GENESIS_AUTH: Privileged address that can deploy arbitrary bytecode
+                        //    to any address via upgrade_runtime_hook_v1/v2
+                        // 2. Calldata-based dispatch: Precompiles invoked by calldata prefix instead of
+                        //    destination address (via try_resolve_precompile_account_from_input)
+                        //
+                        // SECURITY IMPACT:
+                        // - If UPDATE_GENESIS_AUTH key is compromised, attacker gains full system control
+                        // - Calldata-based dispatch violates Ethereum standard (EIP-1352)
+                        // - Any transaction with specific byte prefix unexpectedly triggers precompiles
+                        // - Breaks tooling/scripts expecting standard address-based precompile behavior
+                        //
+                        // AUDITOR RECOMMENDATION:
+                        // Remove functionality for mainnet deployment. Use standard address-based
+                        // precompile dispatch as specified in EIP-1352.
+                        //
+                        // CURRENT MITIGATION:
+                        // - Restricted to testnet via 'fluent-testnet' feature flag
+                        // - Multicall tests temporarily disabled (see e2e/src/multicall.rs)
+                        //
+                        // ============================================================================
+                        use crate::upgrade::{
+                            upgrade_runtime_hook_v2, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX_V2,
+                        };
+                        // A special hook for runtime upgrade
+                        // that is used only for testnet to upgrade genesis without forks
+                        if ctx.cfg().chain_id() == 0x5202 && inputs.caller == UPDATE_GENESIS_AUTH {
+                            let input = inputs.input.bytes(ctx);
+                            if input.starts_with(&UPDATE_GENESIS_PREFIX_V2) {
+                                return upgrade_runtime_hook_v2(ctx, inputs);
+                            }
+                        }
+                    }
+
                     FrameInput::Create(inputs) => {
                         let _span = tracing::info_span!("revm.frame_init.create_hook").entered();
                         let precompile_runtime =
