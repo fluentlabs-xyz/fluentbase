@@ -320,7 +320,7 @@ async fn main() -> Result<()> {
             None,
         )
         .await?;
-    let mut is_legacy_upgrade_scheme = runtime_upgrade_bytecode.len() == 0;
+    let mut is_legacy_upgrade_scheme = runtime_upgrade_bytecode.is_empty();
     if args.force_legacy {
         is_legacy_upgrade_scheme = true;
     }
@@ -332,8 +332,7 @@ async fn main() -> Result<()> {
         let new_rwasm: RwasmModule = rwasm_module_by_address
             .get(&contract)
             .cloned()
-            .unwrap_or_default()
-            .into();
+            .unwrap_or_default();
         if new_rwasm.hint_section.len() >= WASM_MAX_CODE_SIZE {
             println!("FAILED (contract exceeds 1MiB)");
             continue;
