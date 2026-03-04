@@ -20,7 +20,6 @@ use fluentbase_sdk::{
     PRECOMPILE_WASM_RUNTIME, PRECOMPILE_WEBAUTHN_VERIFIER, PRECOMPILE_WRAPPED_ETH, U256,
     UPDATE_GENESIS_PREFIX, WASM_MAX_CODE_SIZE,
 };
-use futures_util::StreamExt;
 use reth_chainspec::{
     make_genesis_header, ChainHardforks, EthereumHardfork, ForkCondition, Hardfork,
 };
@@ -42,7 +41,7 @@ struct Args {
     genesis: String,
 
     /// Gas limit to use for upgrade transactions
-    #[arg(long, default_value_t = 30_000_000u64)]
+    #[arg(long, default_value_t = 40_000_000u64)]
     gas_limit: u64,
 
     /// Contract key name (e.g. EVM_RUNTIME) from CONTRACTS_TO_UPGRADE.
@@ -73,7 +72,7 @@ struct Args {
 
     /// Use legacy upgrade mode
     #[arg(long, default_value_t = false)]
-    legacy_mode: bool,
+    legacy: bool,
 }
 
 /// Given rWasm bytecode, return the embedded WASM bytecode "hint" bytes
@@ -149,22 +148,18 @@ async fn download_genesis_file(genesis_version: &str) -> Result<alloy_genesis::G
     print!("Downloading genesis file from {}... ", url);
     std::io::stdout().flush().ok();
 
-    let resp = reqwest::Client::new()
+    let resp = reqwest::Client::builder()
+        .user_agent("fluent-chainspec/1.0")
+        .timeout(std::time::Duration::from_secs(60))
+        .build()?
         .get(url)
         .send()
-        .await
-        .context("fetching genesis .gz")?;
-
+        .await?
+        .error_for_status()?;
     if !resp.status().is_success() {
         bail!("HTTP error! {}", resp.status());
     }
-
-    let mut bytes = Vec::new();
-    let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("reading download chunk")?;
-        bytes.extend_from_slice(&chunk);
-    }
+    let bytes = resp.bytes().await?;
 
     let mut decoder = GzDecoder::new(&bytes[..]);
     let mut json = String::new();
@@ -303,7 +298,7 @@ async fn main() -> Result<()> {
     let contracts = contracts_to_upgrade();
     let upgrade_list: Vec<Address> = match args.contract.as_deref() {
         None => {
-            let answer = ask_for("No --contract specified. Upgrade ALL known contracts? (y/n) ")?;
+            let answer = ask_for("Upgrade ALL known contracts? (Y/n) ")?;
             if !matches!(answer.to_lowercase().as_str(), "y" | "yes") {
                 return Ok(());
             }
@@ -338,11 +333,11 @@ async fn main() -> Result<()> {
         print!("Upgrading contract {}... ", contract);
         std::io::stdout().flush().ok();
 
-        let Some(new_wasm) = bytecode_by_address.get(&contract).cloned() else {
-            println!("DONE (empty bytecode)");
-            continue;
-        };
-        let new_wasm: Bytes = new_wasm.into();
+        let new_wasm: Bytes = bytecode_by_address
+            .get(&contract)
+            .cloned()
+            .unwrap_or_default()
+            .into();
 
         if new_wasm.len() >= WASM_MAX_CODE_SIZE {
             println!("FAILED (contract exceeds 1MiB)");
@@ -353,15 +348,15 @@ async fn main() -> Result<()> {
             .get_code(NameOrAddress::Address((*contract.0).into()), None)
             .await
             .context("get_code")?;
-        if let Ok(existing_wasm) = parse_rwasm_module_and_get_hint(on_chain_code.as_ref()) {
-            if existing_wasm == new_wasm {
-                println!("UP-TO-DATE");
-                continue;
-            }
+        let existing_wasm =
+            parse_rwasm_module_and_get_hint(on_chain_code.as_ref()).unwrap_or_default();
+        if existing_wasm == new_wasm {
+            println!("UP-TO-DATE");
+            continue;
         }
 
         let mut data = vec![];
-        if args.legacy_mode {
+        if args.legacy {
             data.extend_from_slice(&[0x69, 0xbc, 0x6f, 0x65]);
             data.extend_from_slice(&new_wasm);
         } else {
@@ -382,14 +377,14 @@ async fn main() -> Result<()> {
             data.extend_from_slice(buffer.as_ref());
         }
 
-        let send_to = if args.legacy_mode {
+        let send_to = if args.legacy {
             contract
         } else {
             PRECOMPILE_RUNTIME_UPGRADE
         };
         let tx = TransactionRequest::new()
             .to(NameOrAddress::Address((*send_to.0).into()))
-            .gas(args.gas_limit)
+            // .gas(args.gas_limit)
             .data(data);
 
         if args.print_raw_tx {
@@ -407,6 +402,11 @@ async fn main() -> Result<()> {
             println!("RAW_TX=0x{}", hex::encode(raw));
             continue;
         }
+
+        let mut typed: TypedTransaction = tx.clone().into();
+        signer.fill_transaction(&mut typed, None).await?;
+        let gas_required = signer.estimate_gas(&typed, None).await?;
+        print!("gas={} ", gas_required);
 
         // Normal path: broadcast
         match signer.send_transaction(tx, None).await {
