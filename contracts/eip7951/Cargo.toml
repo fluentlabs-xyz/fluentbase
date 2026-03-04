@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-contracts-secp256r1"
+name = "fluentbase-contracts-eip7951"
 version = "0.1.0"
 edition = "2021"
 

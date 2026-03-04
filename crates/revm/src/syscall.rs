@@ -17,9 +17,9 @@ use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create_metadata_address, is_execute_using_system_runtime, is_system_precompile, Address,
-    Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME,
-    PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
+    calc_create_metadata_address, hex, is_execute_using_system_runtime, is_system_precompile,
+    Address, Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY,
+    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -1172,6 +1172,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Ok(rwasm_bytecode) = lazy_contract_input() else {
                 return_halt!(MemoryOutOfBounds);
             };
+            println!("input: {}", target_address);
+            println!("rwasm_bytecode: {}", hex::encode(&rwasm_bytecode[0..100]));
             let bytecode = Bytecode::new_rwasm(rwasm_bytecode.into());
             // Make sure an account is loaded
             _ = ctx.journal_mut().load_account_with_code(target_address)?;

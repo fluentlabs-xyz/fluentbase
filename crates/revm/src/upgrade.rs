@@ -1,5 +1,5 @@
 use alloy_primitives::{address, hex, Address};
-use fluentbase_sdk::{compile_wasm_to_rwasm, Bytes, RwasmCompilationResult};
+use fluentbase_sdk::{compile_rwasm_maybe_system, Bytes, RwasmCompilationResult};
 use revm::{
     bytecode::Bytecode,
     context::{ContextError, ContextTr, JournalTr},
@@ -26,17 +26,18 @@ pub(crate) const UPDATE_GENESIS_AUTH: Address =
 pub(crate) const UPDATE_GENESIS_PREFIX_V2: [u8; 4] = hex!("0x69bc6f65");
 
 macro_rules! upgrade_panic {
-    ($inputs:expr, $message:literal) => {{}
-    return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
-        result: InterpreterResult {
-            result: InstructionResult::Revert,
-            output: Bytes::from($message),
-            gas: Gas::new(0),
-        },
-        memory_offset: $inputs.return_memory_offset.clone(),
-        was_precompile_called: false,
-        precompile_call_logs: Vec::new(),
-    })));};
+    ($inputs:expr, $message:literal) => {{
+        return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
+            result: InterpreterResult {
+                result: InstructionResult::Revert,
+                output: Bytes::from($message),
+                gas: Gas::new(0),
+            },
+            memory_offset: $inputs.return_memory_offset.clone(),
+            was_precompile_called: false,
+            precompile_call_logs: Vec::new(),
+        })));
+    }};
 }
 
 #[allow(clippy::type_complexity)]
@@ -55,11 +56,15 @@ pub(crate) fn upgrade_runtime_hook_v2<
     let bytecode = inputs.input.bytes(ctx);
     debug_assert!(bytecode.starts_with(&UPDATE_GENESIS_PREFIX_V2));
     let wasm_bytecode = bytecode.slice(UPDATE_GENESIS_PREFIX_V2.len()..);
-    let Ok(RwasmCompilationResult { rwasm_module, .. }) = compile_wasm_to_rwasm(&wasm_bytecode)
+    let Ok(RwasmCompilationResult { rwasm_module, .. }) =
+        compile_rwasm_maybe_system(&inputs.target_address, &wasm_bytecode)
     else {
         upgrade_panic!(inputs, "malformed wasm bytecode");
     };
     let bytecode = Bytecode::new_rwasm(rwasm_module.serialize().into());
+    _ = ctx
+        .journal_mut()
+        .load_account_with_code(inputs.target_address)?;
     ctx.journal_mut().set_code(inputs.target_address, bytecode);
     Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
         result: InterpreterResult {

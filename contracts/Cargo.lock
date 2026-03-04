@@ -1799,6 +1799,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-eip7951"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-testing",
+ "hex",
+ "p256",
+ "revm-precompile",
+ "sha2",
+]
+
+[[package]]
 name = "fluentbase-contracts-evm"
 version = "0.1.0"
 dependencies = [
@@ -1881,18 +1893,6 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
-]
-
-[[package]]
-name = "fluentbase-contracts-secp256r1"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-testing",
- "hex",
- "p256",
- "revm-precompile",
- "sha2",
 ]
 
 [[package]]
