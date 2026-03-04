@@ -91,6 +91,7 @@ fn test_wasm_sha256() {
 }
 
 #[test]
+#[ignore] // secp256k1 example exceeds 1MiB wasm binary size
 fn test_wasm_secp256k1() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
