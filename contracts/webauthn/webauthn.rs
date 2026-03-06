@@ -1,6 +1,5 @@
 use alloc::{format, string::String, vec::Vec};
 use fluentbase_sdk::{codec::Codec, crypto::crypto_sha256, Bytes, ExitCode, U256};
-use sha2::{Digest, Sha256};
 
 /// WebAuthn authenticator data flag bits
 pub const AUTH_DATA_FLAGS_UP: u8 = 0x01; // User Present bit
