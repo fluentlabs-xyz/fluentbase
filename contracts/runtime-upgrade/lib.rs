@@ -13,8 +13,7 @@ use fluentbase_sdk::{
     storage::StorageAddress,
     syscall::{encode, SYSCALL_ID_UPGRADE_RUNTIME},
     Address, Bytes, ContextReader, ExitCode, RwasmCompilationResult, SharedAPI, B256,
-    DEFAULT_FEE_MANAGER_AUTH, DEFAULT_UPDATE_GENESIS_AUTH, STATE_MAIN, SYSTEM_ADDRESS,
-    WASM_MAGIC_BYTES,
+    DEFAULT_UPDATE_GENESIS_AUTH, STATE_MAIN, SYSTEM_ADDRESS, WASM_MAGIC_BYTES,
 };
 
 #[derive(Event)]
@@ -117,7 +116,7 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
     fn owner(&mut self) -> Address {
         let mut owner = self.owner_accessor().get(&self.sdk);
         if owner.is_zero() {
-            owner = DEFAULT_FEE_MANAGER_AUTH;
+            owner = DEFAULT_UPDATE_GENESIS_AUTH;
         }
         owner
     }
