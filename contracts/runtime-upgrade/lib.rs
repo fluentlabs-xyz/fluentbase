@@ -48,7 +48,13 @@ pub struct UpgradeToInput {
 
 trait RuntimeUpgradeTr {
     /// Upgrade WASM runtime smart contract
-    fn upgrade_to(&mut self, input: UpgradeToInput);
+    fn upgrade_to(
+        &mut self,
+        target_address: Address,
+        genesis_hash: B256,
+        genesis_version: String,
+        wasm_bytecode: Bytes,
+    );
 
     /// Change contract owner
     fn change_owner(&mut self, new_owner: Address);
@@ -63,14 +69,13 @@ trait RuntimeUpgradeTr {
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
     #[function_id("upgradeTo(address,uint256,string,bytes)")]
-    fn upgrade_to(&mut self, input: UpgradeToInput) {
-        let UpgradeToInput {
-            target_address,
-            genesis_hash,
-            genesis_version,
-            wasm_bytecode,
-        } = input;
-        _ = self.only_owner();
+    fn upgrade_to(
+        &mut self,
+        target_address: Address,
+        genesis_hash: B256,
+        genesis_version: String,
+        wasm_bytecode: Bytes,
+    ) {
         debug_log!("WASM bytecode: {}", hex::encode(&wasm_bytecode));
         if !wasm_bytecode.starts_with(&WASM_MAGIC_BYTES) {
             panic!("runtime-upgrade: malformed wasm bytecode");
@@ -151,3 +156,38 @@ impl<SDK: SharedAPI> App<SDK> {
 }
 
 basic_entrypoint!(App);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluentbase_sdk::{address, bytes, ContractContextV1, B256};
+    use fluentbase_testing::TestingContextImpl;
+
+    #[test]
+    fn test_upgrade_to_encoding() {
+        let target = address!("2222222222222222222222222222222222222222");
+        let genesis_hash = B256::from([0xab; 32]);
+        let genesis_version = "v1.0.0".to_string();
+        // minimal valid WASM: magic bytes + version
+        let wasm_bytecode = Bytes::from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00].as_ref());
+
+        let call = UpgradeToCall::new((
+            target,
+            genesis_hash,
+            genesis_version.clone(),
+            wasm_bytecode.clone(),
+        ));
+        let encoded = call.encode();
+
+        // first 4 bytes = function selector
+        assert_eq!(encoded.len() >= 4, true);
+        println!("Encoded call data: {}", hex::encode(&encoded));
+
+        // decode back and verify round-trip
+        let decoded = UpgradeToCall::decode(&&encoded[4..]).expect("failed to decode");
+        assert_eq!(decoded.0 .0, target, "target_address mismatch");
+        assert_eq!(decoded.0 .1, genesis_hash, "genesis_hash mismatch");
+        assert_eq!(decoded.0 .2, genesis_version, "genesis_version mismatch");
+        assert_eq!(decoded.0 .3, wasm_bytecode, "wasm_bytecode mismatch");
+    }
+}
