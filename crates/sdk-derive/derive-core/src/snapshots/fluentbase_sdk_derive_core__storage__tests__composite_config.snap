@@ -23,18 +23,18 @@ impl Config {
                     current_offset += bytes;
                     result
                 } else {
-                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_slot += fluentbase_sdk::U256::from(1);
                     let actual_offset = 32 - bytes;
                     current_offset = bytes;
                     (current_slot, actual_offset)
                 }
             } else {
                 if current_offset > 0 {
-                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_slot += fluentbase_sdk::U256::from(1);
                     current_offset = 0;
                 }
                 let result = (current_slot, 0);
-                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
+                current_slot += fluentbase_sdk::U256::from(slots);
                 result
             }
         };
@@ -52,18 +52,18 @@ impl Config {
                     current_offset += bytes;
                     result
                 } else {
-                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_slot += fluentbase_sdk::U256::from(1);
                     let actual_offset = 32 - bytes;
                     current_offset = bytes;
                     (current_slot, actual_offset)
                 }
             } else {
                 if current_offset > 0 {
-                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_slot += fluentbase_sdk::U256::from(1);
                     current_offset = 0;
                 }
                 let result = (current_slot, 0);
-                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
+                current_slot += fluentbase_sdk::U256::from(slots);
                 result
             }
         };
@@ -81,18 +81,18 @@ impl Config {
                     current_offset += bytes;
                     result
                 } else {
-                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_slot += fluentbase_sdk::U256::from(1);
                     let actual_offset = 32 - bytes;
                     current_offset = bytes;
                     (current_slot, actual_offset)
                 }
             } else {
                 if current_offset > 0 {
-                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_slot += fluentbase_sdk::U256::from(1);
                     current_offset = 0;
                 }
                 let result = (current_slot, 0);
-                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
+                current_slot += fluentbase_sdk::U256::from(slots);
                 result
             }
         };
