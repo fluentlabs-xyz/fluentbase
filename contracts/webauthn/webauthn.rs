@@ -1,5 +1,5 @@
 use alloc::{format, string::String, vec::Vec};
-use fluentbase_sdk::{codec::Codec, Bytes, ExitCode, U256};
+use fluentbase_sdk::{codec::Codec, crypto::crypto_sha256, Bytes, ExitCode, U256};
 use sha2::{Digest, Sha256};
 
 /// WebAuthn authenticator data flag bits
@@ -162,7 +162,7 @@ fn verify_authenticator_flags(authenticator_data: &Bytes, require_user_verificat
 /// sign data; verify data hash and signature
 fn compute_message_hash(authenticator_data: &[u8], client_data_json: &[u8]) -> [u8; 32] {
     // Compute SHA-256 hash of client_data_json
-    let client_data_hash = sha256_hash(client_data_json);
+    let client_data_hash = crypto_sha256(client_data_json).0;
 
     // Concatenate authenticator_data and client_data_hash
     let mut combined = Vec::with_capacity(authenticator_data.len() + client_data_hash.len());
@@ -170,7 +170,7 @@ fn compute_message_hash(authenticator_data: &[u8], client_data_json: &[u8]) -> [
     combined.extend_from_slice(&client_data_hash);
 
     // Compute SHA-256 hash of the combined data
-    sha256_hash(&combined)
+    crypto_sha256(&combined).0
 }
 
 /// Verifies the signature using the secp256r1 precompile
@@ -198,17 +198,6 @@ fn verify_signature(
 
     // Check the result: if the last byte is 1, the signature is valid
     Ok(!result.bytes.is_empty() && result.bytes[result.bytes.len() - 1] == 1)
-}
-
-/// Computes the SHA-256 hash
-fn sha256_hash(data: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    let result = hasher.finalize();
-
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&result);
-    hash
 }
 
 /// Checks if a substring exists at a specific position in a string
@@ -336,7 +325,7 @@ mod tests {
         let client_data_json = Bytes::copy_from_slice(client_data_json_str.as_bytes());
 
         // Compute SHA-256 hash of client_data_json
-        let client_data_hash = sha256_hash(&client_data_json[..]);
+        let client_data_hash = crypto_sha256(&client_data_json[..]).0;
 
         //  we sign msg = (authenticator_data || sha256(client_data_json))
         // NOTE: to verify the signature you need to use hash of the msg

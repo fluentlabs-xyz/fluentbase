@@ -41,8 +41,8 @@ struct Args {
     genesis: String,
 
     /// Gas limit to use for upgrade transactions
-    #[arg(long, default_value_t = 45_000_000u64)]
-    gas_limit: u64,
+    #[arg(long)]
+    gas_limit: Option<u64>,
 
     /// Contract key name (e.g. EVM_RUNTIME) from CONTRACTS_TO_UPGRADE.
     /// If omitted, upgrades all known contracts (with a prompt).
@@ -186,7 +186,7 @@ fn pick_rpc(args: &Args) -> Result<&'static str> {
     Ok(if args.local {
         "http://localhost:8545"
     } else if args.dev {
-        "https://rpc.devnet.fluent.xyz"
+        "http://157.230.120.98:8545"
     } else {
         "https://rpc.testnet.fluent.xyz"
     })
@@ -376,10 +376,12 @@ async fn main() -> Result<()> {
         } else {
             PRECOMPILE_RUNTIME_UPGRADE
         };
-        let tx = TransactionRequest::new()
+        let mut tx = TransactionRequest::new()
             .to(NameOrAddress::Address((*send_to.0).into()))
-            .gas(args.gas_limit)
             .data(data);
+        if let Some(gas_limit) = args.gas_limit {
+            tx = tx.gas(gas_limit);
+        }
 
         if args.print_raw_tx {
             let mut typed: TypedTransaction = tx.into();
@@ -411,6 +413,7 @@ async fn main() -> Result<()> {
                     }
                     Err(e) => {
                         println!("FAILED ({})", e);
+                        continue;
                     }
                 }
             }
@@ -421,6 +424,7 @@ async fn main() -> Result<()> {
                 } else {
                     println!("FAILED ({})", msg);
                 }
+                continue;
             }
         }
 

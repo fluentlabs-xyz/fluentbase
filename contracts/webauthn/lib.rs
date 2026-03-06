@@ -31,36 +31,27 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
 
     let (selector, params) = input.split_at(4);
     if selector != VERIFY_SELECTOR {
-        panic!("webauthn: invalid function selector; expected 0xbccf2ab7");
+        return Err(ExitCode::MalformedBuiltinParams);
     }
 
     // Decode WebAuthn parameters using Solidity ABI
     let (challenge, require_user_verification, auth, x, y) =
         SolidityABI::<(Bytes, bool, WebAuthnAuth, U256, U256)>::decode(&params, 0)
-            .unwrap_or_else(|_| panic!("webauthn: failed to decode input parameters"));
+            .map_err(|_| ExitCode::MalformedBuiltinParams)?;
 
     // Get gas limit for precompiled call
     let gas_limit = sdk.context().contract_gas_limit();
 
-    let result = match verify_webauthn(
+    let is_valid = verify_webauthn(
         &challenge,
         require_user_verification,
         &auth,
         x,
         y,
         gas_limit,
-    ) {
-        Ok(is_valid) => {
-            if is_valid {
-                // Return 32-byte output with last byte set to 1 if verification succeeds
-                B256::with_last_byte(1)
-            } else {
-                // Return empty output if verification fails
-                B256::default()
-            }
-        }
-        Err(err) => sdk.native_exit(err),
-    };
+    )?;
+    // Return 32-byte output with the last byte set to 1 if verification succeeds
+    let result = B256::with_last_byte(if is_valid { 0x01 } else { 0x00 });
 
     // Write the result
     sdk.write(&result[..]);

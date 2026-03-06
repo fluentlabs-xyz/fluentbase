@@ -22,7 +22,7 @@ pub fn syscall_debug_log_handler(
 }
 
 #[cfg(feature = "debug-print")]
-pub fn syscall_debug_log_impl(msg: &[u8]) {
+pub fn syscall_debug_log_impl(mut msg: &[u8]) {
     use std::time::SystemTime;
     let curr_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -36,11 +36,9 @@ pub fn syscall_debug_log_impl(msg: &[u8]) {
     };
     LAST_LOG_TIME.set(curr_time);
     const DEBUG_LOG_MAXIMUM_LEN: usize = 1_000;
-    let msg = if msg.len() > DEBUG_LOG_MAXIMUM_LEN {
-        &msg[..DEBUG_LOG_MAXIMUM_LEN]
-    } else {
-        &msg[..]
-    };
+    if msg.len() > DEBUG_LOG_MAXIMUM_LEN {
+        msg = &msg[..DEBUG_LOG_MAXIMUM_LEN]
+    }
     println!(
         "debug_log (diff {}us): {}",
         time_diff,
