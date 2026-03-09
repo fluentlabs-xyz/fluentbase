@@ -51,6 +51,10 @@ pub const PRECOMPILE_WASM_RUNTIME: Address = address!("0x00000000000000000000000
 pub const PRECOMPILE_RUNTIME_UPGRADE: Address =
     address!("0x0000000000000000000000000000000000520010");
 
+/// A precompile smart contract that can deploy child contracts using CREATE/CREATE2.
+pub const PRECOMPILE_CREATE2_FACTORY: Address =
+    address!("0x0000000000000000000000000000000000520011");
+
 /// A precompile smart contract that handles fee management.
 pub const PRECOMPILE_FEE_MANAGER: Address = address!("0x0000000000000000000000000000000000520fee");
 
@@ -136,6 +140,7 @@ pub const PRECOMPILE_ADDRESSES: &[Address] = &[
     PRECOMPILE_SVM_RUNTIME,
     PRECOMPILE_WASM_RUNTIME,
     PRECOMPILE_RUNTIME_UPGRADE,
+    PRECOMPILE_CREATE2_FACTORY,
     PRECOMPILE_FEE_MANAGER,
     PRECOMPILE_WEBAUTHN_VERIFIER,
     PRECOMPILE_WRAPPED_ETH,
@@ -287,4 +292,14 @@ pub fn is_delegated_runtime_address(address: &Address) -> bool {
         || address == &PRECOMPILE_SVM_RUNTIME
         || address == &PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
         || address == &PRECOMPILE_WASM_RUNTIME
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create2_factory_is_registered_in_precompile_set() {
+        assert!(is_system_precompile(&PRECOMPILE_CREATE2_FACTORY));
+    }
 }

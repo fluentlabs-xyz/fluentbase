@@ -26,3 +26,18 @@ lazy_static! {
         map
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluentbase_sdk::PRECOMPILE_CREATE2_FACTORY;
+
+    #[test]
+    fn genesis_contains_create2_factory() {
+        let contract = GENESIS_CONTRACTS_BY_ADDRESS
+            .get(&PRECOMPILE_CREATE2_FACTORY)
+            .expect("missing create2 factory in genesis");
+        assert_eq!(contract.name, "fluentbase_contracts_create2_factory");
+        assert!(!contract.rwasm_bytecode.is_empty());
+    }
+}
