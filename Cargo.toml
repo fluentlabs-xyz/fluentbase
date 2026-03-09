@@ -45,7 +45,6 @@ fluentbase-types = { path = "./crates/types", default-features = false }
 #fluentbase-svm = { path = "./crates/svm", default-features = false }
 #fluentbase-svm-shared = { path = "./crates/svm-shared", default-features = false }
 #fluentbase-svm-common = { path = "./crates/svm-common", default-features = false }
-fluentbase-universal-token = { path = "./crates/universal-token", default-features = false }
 
 # solana
 #solana-pubkey = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
@@ -348,7 +347,6 @@ fluentbase-sdk = { path = "./crates/sdk" }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive" }
 fluentbase-testing = { path = "./crates/testing" }
 fluentbase-types = { path = "./crates/types" }
-fluentbase-universal-token = { path = "./crates/universal-token" }
 
 [patch.crates-io]
 # revm

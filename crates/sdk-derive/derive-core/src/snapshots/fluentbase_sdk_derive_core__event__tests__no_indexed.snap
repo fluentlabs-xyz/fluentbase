@@ -1,5 +1,6 @@
 ---
 source: crates/sdk-derive/derive-core/src/event.rs
+assertion_line: 290
 expression: generate(input)
 ---
 impl DataStored {
@@ -12,7 +13,10 @@ impl DataStored {
         193u8, 57u8, 12u8, 32u8, 187u8, 140u8, 152u8,
     ];
     /// Emits this event as an EVM log.
-    pub fn emit<SDK: fluentbase_sdk::SharedAPI>(&self, sdk: &mut SDK) {
+    pub fn emit<SDK: fluentbase_sdk::SharedAPI>(
+        &self,
+        sdk: &mut SDK,
+    ) -> Result<(), fluentbase_sdk::ExitCode> {
         use fluentbase_sdk::codec::SolidityABI;
         let topics: [fluentbase_sdk::B256; 1usize] = [
             fluentbase_sdk::B256::new([
@@ -27,6 +31,6 @@ impl DataStored {
             SolidityABI::encode(&values, &mut buf, 0).expect("encode data fields");
             buf.freeze()
         };
-        sdk.emit_log(&topics, &data);
+        sdk.emit_log(&topics, &data).ok()
     }
 }

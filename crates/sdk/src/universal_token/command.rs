@@ -1,14 +1,10 @@
-use crate::consts::{
+use crate::universal_token::consts::{
     SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE_OF, SIG_ERC20_BURN, SIG_ERC20_MINT,
     SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM,
 };
 use alloc::vec::Vec;
-use fluentbase_sdk::{
-    byteorder::BE,
-    bytes::BytesMut,
-    codec::{Codec, Encoder, SolidityABI},
-    Address, ExitCode, U256,
-};
+use fluentbase_codec::{Codec, Encoder, SolidityABI};
+use fluentbase_types::{byteorder::BE, bytes::BytesMut, Address, ExitCode, U256};
 
 pub trait UniversalTokenCommand
 where

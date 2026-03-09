@@ -195,58 +195,7 @@ library UniversalTokenSDK {
         address minter,
         address pauser
     ) internal pure returns (bytes memory deploymentData) {
-        // 4 bytes magic + 2 * 32 (bytes) * 32 (per-byte words) + 4 * 32 (decimals, supply, minter, pauser)
-        uint256 TOTAL_LEN = 4 + 2 * 32 * 32 + 4 * 32; // 2180
-        deploymentData = new bytes(TOTAL_LEN);
-
-        uint256 offset = 0;
-
-        // Magic bytes "ERC "
-        deploymentData[0] = 0x45; // 'E'
-        deploymentData[1] = 0x52; // 'R'
-        deploymentData[2] = 0x43; // 'C'
-        deploymentData[3] = 0x20; // ' '
-        offset = 4;
-
-        // Encode token_name: 32 bytes, each as a 32-byte word with the byte in the last position
-        for (uint256 i = 0; i < 32; i++) {
-            bytes1 b = name[i];
-            uint256 wordStart = offset + i * 32;
-            deploymentData[wordStart + 31] = b;
-        }
-        offset += 32 * 32; // 1024
-
-        // Encode token_symbol: same pattern
-        for (uint256 i = 0; i < 32; i++) {
-            bytes1 b = symbol[i];
-            uint256 wordStart = offset + i * 32;
-            deploymentData[wordStart + 31] = b;
-        }
-        offset += 32 * 32; // +1024 => 2048 after magic
-
-        // Encode decimals: u8 stored in the last byte of a 32-byte word
-        deploymentData[offset + 31] = bytes1(decimals);
-        offset += 32;
-
-        // Encode initialSupply: uint256 as 32-byte big-endian word
-        bytes32 supplyBE = bytes32(initialSupply);
-        for (uint256 i = 0; i < 32; i++) {
-            deploymentData[offset + i] = supplyBE[i];
-        }
-        offset += 32;
-
-        // Encode minter: address right-aligned in 32 bytes
-        bytes32 minterBE = bytes32(uint256(uint160(minter)));
-        for (uint256 i = 0; i < 32; i++) {
-            deploymentData[offset + i] = minterBE[i];
-        }
-        offset += 32;
-
-        // Encode pauser: address right-aligned in 32 bytes
-        bytes32 pauserBE = bytes32(uint256(uint160(pauser)));
-        for (uint256 i = 0; i < 32; i++) {
-            deploymentData[offset + i] = pauserBE[i];
-        }
+        return abi.encodePacked(bytes4(0x45524320), abi.encode(name, symbol, decimals, initialSupply, minter, pauser));
     }
 
     /**

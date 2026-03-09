@@ -1,15 +1,9 @@
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall};
-use fluentbase_codec::{bytes::BytesMut, SolidityABI};
-use fluentbase_sdk::universal_token::TokenConfigBuilder;
-use fluentbase_sdk::{
-    address, bytes, calc_create_address, constructor::encode_constructor_params, Address, Bytes,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
-};
-use fluentbase_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
-use fluentbase_universal_token::storage::InitialSettings;
+use fluentbase_codec::SolidityABI;
+use fluentbase_sdk::{address, bytes, universal_token::TokenConfigBuilder, Address, Bytes, U256};
+use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use hex_literal::hex;
-use revm::context::result::ExecutionResult;
 
 fn u256_from_slice_try(value: &[u8]) -> Option<U256> {
     U256::try_from_be_slice(value)
@@ -68,7 +62,7 @@ fn test_deploy_factory_and_universal_token() {
     // We replace that 34-char hash with the 40-char library address (20 bytes = 40 hex digits),
     // which restores the expected bytecode length after filtering.
     let mut factory_hex = hex_line.clone();
-    let hash_hex = "f7bb912695101d7377bc19c7d693b1b376";
+    let hash_hex = "6df7365e1003684be2c5725c473dc4b5a7";
     let sdk_address_hex = hex::encode(sdk_address.as_slice());
 
     // Replace the library hash with the actual deployed SDK address

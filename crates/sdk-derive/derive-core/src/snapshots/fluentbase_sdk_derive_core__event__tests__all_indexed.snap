@@ -1,5 +1,6 @@
 ---
 source: crates/sdk-derive/derive-core/src/event.rs
+assertion_line: 279
 expression: generate(input)
 ---
 impl Approval {
@@ -12,7 +13,10 @@ impl Approval {
         91u8, 32u8, 10u8, 200u8, 199u8, 195u8, 185u8, 37u8,
     ];
     /// Emits this event as an EVM log.
-    pub fn emit<SDK: fluentbase_sdk::SharedAPI>(&self, sdk: &mut SDK) {
+    pub fn emit<SDK: fluentbase_sdk::SharedAPI>(
+        &self,
+        sdk: &mut SDK,
+    ) -> Result<(), fluentbase_sdk::ExitCode> {
         use fluentbase_sdk::codec::SolidityABI;
         let topics: [fluentbase_sdk::B256; 4usize] = [
             fluentbase_sdk::B256::new([
@@ -58,6 +62,6 @@ impl Approval {
             },
         ];
         let data: &[u8] = &[];
-        sdk.emit_log(&topics, &data);
+        sdk.emit_log(&topics, &data).ok()
     }
 }

@@ -1,34 +1,30 @@
 use crate::{
-    command::{
-        AllowanceCommand, ApproveCommand, BalanceOfCommand, BurnCommand, MintCommand,
-        TransferCommand, TransferFromCommand, UniversalTokenCommand,
-    },
-    consts::{
-        ALLOWANCE_STORAGE_SLOT, BALANCE_STORAGE_SLOT, CONTRACT_FROZEN_STORAGE_SLOT,
-        DECIMALS_STORAGE_SLOT, MINTER_STORAGE_SLOT, NAME_STORAGE_SLOT, PAUSER_STORAGE_SLOT,
-        SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE, SIG_ERC20_BALANCE_OF,
-        SIG_ERC20_BURN, SIG_ERC20_DECIMALS, SIG_ERC20_MINT, SIG_ERC20_NAME, SIG_ERC20_PAUSE,
-        SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM,
-        SIG_ERC20_UNPAUSE, SYMBOL_STORAGE_SLOT, TOTAL_SUPPLY_STORAGE_SLOT,
+    storage::MapKey,
+    universal_token::{
+        command::{
+            AllowanceCommand, ApproveCommand, BalanceOfCommand, BurnCommand, MintCommand,
+            TransferCommand, TransferFromCommand, UniversalTokenCommand,
+        },
+        consts::{
+            ALLOWANCE_STORAGE_SLOT, BALANCE_STORAGE_SLOT, CONTRACT_FROZEN_STORAGE_SLOT,
+            DECIMALS_STORAGE_SLOT, MINTER_STORAGE_SLOT, NAME_STORAGE_SLOT, PAUSER_STORAGE_SLOT,
+            SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE, SIG_ERC20_BALANCE_OF,
+            SIG_ERC20_BURN, SIG_ERC20_DECIMALS, SIG_ERC20_MINT, SIG_ERC20_NAME, SIG_ERC20_PAUSE,
+            SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM,
+            SIG_ERC20_UNPAUSE, SYMBOL_STORAGE_SLOT, TOTAL_SUPPLY_STORAGE_SLOT,
+        },
     },
 };
 use alloc::vec::Vec;
-use fluentbase_sdk::{
-    bytes::BytesMut,
-    codec::{Codec, SolidityABI},
-    storage::MapKey,
-    Address, Bytes, U256, UNIVERSAL_TOKEN_MAGIC_BYTES,
-};
+use fluentbase_codec::{Codec, SolidityABI};
+use fluentbase_types::{bytes::BytesMut, Address, Bytes, B256, U256, UNIVERSAL_TOKEN_MAGIC_BYTES};
 
-pub const ADDRESS_LEN_BYTES: usize = Address::len_bytes();
-pub const U256_LEN_BYTES: usize = U256::BYTES;
 pub const SIG_LEN_BYTES: usize = 4;
-pub const DECIMALS_DEFAULT: u8 = 2;
 
 #[derive(Default, Debug, PartialEq, Codec)]
 #[repr(transparent)]
 pub struct TokenNameOrSymbol {
-    bytes: [u8; U256::BYTES],
+    bytes: B256,
 }
 
 impl From<&str> for TokenNameOrSymbol {
@@ -40,9 +36,9 @@ impl From<&str> for TokenNameOrSymbol {
 impl TokenNameOrSymbol {
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(value: &str) -> Self {
-        debug_assert!(value.len() <= U256::BYTES);
-        let mut bytes = [0u8; U256::BYTES];
-        let len = core::cmp::min(U256::BYTES, value.len());
+        debug_assert!(value.len() <= B256::len_bytes());
+        let mut bytes = B256::ZERO;
+        let len = core::cmp::min(B256::len_bytes(), value.len());
         bytes[..len].copy_from_slice(value.as_bytes());
         Self { bytes }
     }
@@ -52,7 +48,7 @@ impl TokenNameOrSymbol {
             .bytes
             .iter()
             .position(|c| *c == 0u8)
-            .unwrap_or(U256::BYTES);
+            .unwrap_or(B256::len_bytes());
         str::from_utf8(&self.bytes[0..length]).ok()
     }
 }
@@ -72,7 +68,7 @@ impl InitialSettings {
         let mut bytes = BytesMut::new();
         SolidityABI::encode(self, &mut bytes, 0).unwrap();
         let result = bytes.freeze();
-        // TODO(dmitry123): Optimize allocation
+        // TODO(d1r1): Optimize allocation
         let mut output = Vec::with_capacity(UNIVERSAL_TOKEN_MAGIC_BYTES.len() + result.len());
         output.extend_from_slice(&UNIVERSAL_TOKEN_MAGIC_BYTES[..]);
         output.extend_from_slice(&result);
@@ -212,8 +208,8 @@ pub fn erc20_compute_storage_keys(
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{InitialSettings, ADDRESS_LEN_BYTES};
-    use fluentbase_sdk::{address, Address, U256};
+    use crate::universal_token::storage::{InitialSettings, TokenNameOrSymbol};
+    use fluentbase_types::{address, Address, U256};
 
     #[test]
     fn test_ops_u256_overflow() {
@@ -231,18 +227,19 @@ mod tests {
     #[test]
     fn test_ser_der() {
         let settings = InitialSettings {
-            token_name: Default::default(),
-            token_symbol: Default::default(),
+            token_name: TokenNameOrSymbol::from_str("Hello"),
+            token_symbol: TokenNameOrSymbol::from_str("World"),
             decimals: 12,
             initial_supply: U256::from(2),
             minter: address!("0303000200500020400000040000002000809020"),
             pauser: Address::ZERO,
         };
         let addr = address!("0003000200500000400000040000002000800020");
-        let addr_bytes: [u8; ADDRESS_LEN_BYTES] = addr.into();
+        let addr_bytes: [u8; Address::len_bytes()] = addr.into();
         let addr_restored: Address = addr_bytes.into();
         assert_eq!(addr, addr_restored);
         let settings_vec = settings.encode_with_prefix();
+        assert_eq!(settings_vec.len(), 4 + 32 * 6);
         let settings_restored = InitialSettings::decode_with_prefix(settings_vec.as_ref()).unwrap();
         assert_eq!(settings, settings_restored);
     }

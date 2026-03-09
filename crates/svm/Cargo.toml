@@ -12,7 +12,6 @@ categories.workspace = true
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-svm-common = { workspace = true, default-features = false }
-fluentbase-universal-token = { workspace = true, default-features = false }
 
 num-traits = { workspace = true, default-features = false }
 byteorder = { workspace = true, default-features = false }
