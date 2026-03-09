@@ -63,7 +63,13 @@ impl<SDK: SharedAPI> App<SDK> {
 fn parse_address_from_create_output(output: &[u8]) -> Option<Address> {
     match output.len() {
         20 => Some(Address::from_slice(output)),
-        32 => Some(Address::from_slice(&output[12..32])),
+        32 => {
+            let (padding, address_bytes) = output.split_at(12);
+            if padding.iter().any(|&byte| byte != 0) {
+                return None;
+            }
+            Some(Address::from_slice(address_bytes))
+        }
         _ => None,
     }
 }
@@ -95,6 +101,15 @@ mod tests {
     fn parse_address_invalid_size() {
         assert!(parse_address_from_create_output(&[1u8; 19]).is_none());
         assert!(parse_address_from_create_output(&[1u8; 21]).is_none());
+    }
+
+    #[test]
+    fn parse_address_32_bytes_rejects_non_zero_padding() {
+        let addr = address!("0x4444444444444444444444444444444444444444");
+        let mut data = [0u8; 32];
+        data[0] = 1;
+        data[12..32].copy_from_slice(addr.as_slice());
+        assert!(parse_address_from_create_output(&data).is_none());
     }
 
     #[test]
