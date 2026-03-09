@@ -2058,6 +2058,7 @@ version = "0.5.6"
 dependencies = [
  "bytes",
  "fluentbase-codec",
+ "fluentbase-evm",
  "fluentbase-revm",
  "fluentbase-runtime",
  "fluentbase-sdk",

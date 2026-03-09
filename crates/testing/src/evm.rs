@@ -7,12 +7,13 @@
 
 use crate::TestingContextImpl;
 use core::{borrow::Borrow, mem::take, str::from_utf8};
+use fluentbase_evm::EthereumMetadata;
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
 use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecutor};
 use fluentbase_sdk::{
     bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, Address, BytecodeOrHash, Bytes,
     ContextReader, ExitCode, GenesisContract, RwasmCompilationResult, SharedAPI,
-    SharedContextInputV1, STATE_MAIN, U256,
+    SharedContextInputV1, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
 };
 use revm::{
     context::{
@@ -144,6 +145,26 @@ impl EvmTestingContext {
         let RwasmCompilationResult { rwasm_module, .. } =
             compile_wasm_to_rwasm(wasm_module).unwrap();
         self.add_rwasm_contract(address, rwasm_module)
+    }
+
+    pub fn add_evm_contract<B: AsRef<[u8]>>(
+        &mut self,
+        address: Address,
+        evm_bytecode: B,
+    ) -> &mut DbAccount {
+        let metadata =
+            EthereumMetadata::new_analyzed(Bytes::copy_from_slice(evm_bytecode.as_ref()))
+                .write_to_bytes();
+        let bytecode = Bytecode::new_ownable_account(PRECOMPILE_EVM_RUNTIME, metadata);
+        let info: AccountInfo = AccountInfo {
+            balance: U256::ZERO,
+            nonce: 0,
+            code_hash: bytecode.hash_slow(),
+            account_id: None,
+            code: Some(bytecode),
+        };
+        self.db.insert_account_info(address, info.clone());
+        self.db.load_account(address).unwrap()
     }
 
     pub fn add_rwasm_contract<I: Into<RwasmModule>>(

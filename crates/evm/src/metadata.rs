@@ -1,6 +1,6 @@
 use crate::bytecode::{AnalyzedBytecode, LegacyBytecode};
 use alloc::vec;
-use fluentbase_sdk::{Bytes, B256};
+use fluentbase_sdk::{crypto::crypto_keccak256, Bytes, B256};
 
 pub enum EthereumMetadata {
     Legacy(LegacyBytecode),
@@ -10,6 +10,16 @@ pub enum EthereumMetadata {
 pub const ETHEREUM_METADATA_VERSION_ANALYZED: B256 = B256::with_last_byte(0x01);
 
 impl EthereumMetadata {
+    pub fn new_analyzed(bytecode: Bytes) -> Self {
+        let code_hash = crypto_keccak256(bytecode.as_ref());
+        Self::Analyzed(AnalyzedBytecode::new(bytecode, code_hash))
+    }
+
+    pub fn new_legacy(bytecode: Bytes) -> Self {
+        let hash = crypto_keccak256(bytecode.as_ref());
+        Self::Legacy(LegacyBytecode { hash, bytecode })
+    }
+
     pub fn read_from_bytes(metadata: &Bytes) -> Option<Self> {
         if metadata.len() < 32 {
             return None;
