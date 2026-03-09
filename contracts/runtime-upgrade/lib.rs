@@ -108,6 +108,9 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
     #[function_id("changeOwner(address)")]
     fn change_owner(&mut self, new_owner: Address) {
         _ = self.only_owner();
+        if new_owner == Address::ZERO {
+            panic!("runtime-upgrade: can't set owner to zero address");
+        }
         self.owner_accessor().set(&mut self.sdk, new_owner);
         OwnerChanged { new_owner }.emit(&mut self.sdk);
     }
