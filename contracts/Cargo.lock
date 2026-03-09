@@ -1925,6 +1925,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-create2-factory"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-testing",
+]
+
+[[package]]
 name = "fluentbase-crypto"
 version = "0.5.5"
 dependencies = [
