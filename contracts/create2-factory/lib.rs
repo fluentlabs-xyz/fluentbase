@@ -5,57 +5,61 @@ extern crate alloc;
 
 use fluentbase_sdk::{
     basic_entrypoint,
+    calc_create2_address,
     derive::{router, Contract},
-    calc_create2_address, Address, Bytes, ContextReader, SharedAPI, U256, B256,
+    Address, B256, Bytes, ContextReader, SharedAPI, U256,
 };
 
+/// Native CREATE2 factory system contract.
+///
+/// Exposes deterministic CREATE2 deployment helpers over the shared Fluentbase
+/// runtime create syscall surface.
 #[derive(Contract)]
 struct App<SDK> {
     sdk: SDK,
 }
 
+/// Public router surface for the Create2Factory contract.
 pub trait Create2FactoryTr {
-    fn deploy_create(&mut self, init_code: Bytes) -> Address;
-
+    /// Deploy a child contract using CREATE2.
+    ///
+    /// - `salt` participates in deterministic address derivation
+    /// - `init_code` is passed to CREATE2 syscall
+    /// - returns deployed address on success
     fn deploy_create2(&mut self, salt: U256, init_code: Bytes) -> Address;
 
+    /// Compute the deterministic CREATE2 address using factory address,
+    /// salt and init-code hash.
     fn compute_create2_address(&self, salt: U256, init_code_hash: B256) -> Address;
 }
 
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> Create2FactoryTr for App<SDK> {
-    #[fluentbase_sdk::derive::function_id("deployCreate(bytes)")]
-    fn deploy_create(&mut self, init_code: Bytes) -> Address {
-        let result = self.sdk.create(None, &U256::ZERO, &init_code).unwrap();
-        let deployed = parse_address_from_create_output(&result)
-            .unwrap_or_else(|| panic!("create2-factory: invalid create output"));
-        deployed
-    }
-
     #[fluentbase_sdk::derive::function_id("deployCreate2(uint256,bytes)")]
     fn deploy_create2(&mut self, salt: U256, init_code: Bytes) -> Address {
         let result = self.sdk.create(Some(salt), &U256::ZERO, &init_code).unwrap();
-        let deployed = parse_address_from_create_output(&result)
-            .unwrap_or_else(|| panic!("create2-factory: invalid create2 output"));
-        deployed
+        parse_address_from_create_output(&result)
+            .unwrap_or_else(|| panic!("create2-factory: invalid create2 output"))
     }
 
     #[fluentbase_sdk::derive::function_id("computeCreate2Address(uint256,bytes32)")]
     fn compute_create2_address(&self, salt: U256, init_code_hash: B256) -> Address {
-        calc_create2_address(
-            &self.sdk.context().contract_address(),
-            &salt,
-            &init_code_hash,
-        )
+        calc_create2_address(&self.sdk.context().contract_address(), &salt, &init_code_hash)
     }
 }
 
 impl<SDK: SharedAPI> App<SDK> {
+    /// Constructor entrypoint for system contract deployment.
     pub fn deploy(&self) {
         // System contract, constructor is not expected to be called.
     }
 }
 
+/// Parses CREATE/CREATE2 syscall return bytes into an EVM address.
+///
+/// Runtime may return either:
+/// - 20-byte raw address, or
+/// - 32-byte ABI word with address in the low 20 bytes.
 fn parse_address_from_create_output(output: &[u8]) -> Option<Address> {
     match output.len() {
         20 => Some(Address::from_slice(output)),

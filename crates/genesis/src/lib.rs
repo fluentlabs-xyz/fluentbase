@@ -37,7 +37,7 @@ mod tests {
         let contract = GENESIS_CONTRACTS_BY_ADDRESS
             .get(&PRECOMPILE_CREATE2_FACTORY)
             .expect("missing create2 factory in genesis");
-        assert_eq!(contract.name, "fluentbase_create2_factory");
+        assert_eq!(contract.name, "fluentbase_contracts_create2_factory");
         assert!(!contract.rwasm_bytecode.is_empty());
     }
 }

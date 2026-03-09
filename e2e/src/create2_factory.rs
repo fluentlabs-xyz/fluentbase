@@ -83,24 +83,3 @@ fn test_create2_factory_deploy2_collision_fails() {
     assert!(!second.is_success(), "second deploy2 should fail due to address collision");
 }
 
-#[test]
-fn test_create2_factory_deploy_create() {
-    let mut ctx = EvmTestingContext::default().with_full_genesis();
-    let caller = Address::repeat_byte(0x33);
-
-    sol! {
-        function deployCreate(bytes init_code) external returns (address);
-    }
-
-    let input = deployCreateCall {
-        init_code: minimal_init_code(),
-    }
-    .abi_encode();
-
-    let result = ctx.call_evm_tx(caller, PRECOMPILE_CREATE2_FACTORY, input.into(), None, None);
-    assert!(result.is_success(), "deploy call failed: {result:?}");
-
-    let deployed: Address =
-        deployCreateCall::abi_decode_returns_validate(result.output().unwrap()).unwrap();
-    assert!(ctx.get_code(deployed).is_some(), "deployed account has no code");
-}

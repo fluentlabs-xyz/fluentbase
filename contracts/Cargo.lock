@@ -1782,6 +1782,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-create2-factory"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-testing",
+]
+
+[[package]]
 name = "fluentbase-contracts-ecrecover"
 version = "0.1.0"
 dependencies = [
@@ -1922,14 +1930,6 @@ dependencies = [
  "p256",
  "revm-precompile",
  "sha2",
-]
-
-[[package]]
-name = "fluentbase-create2-factory"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-testing",
 ]
 
 [[package]]
