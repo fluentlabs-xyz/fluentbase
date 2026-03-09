@@ -280,7 +280,7 @@ where
             // Only for Fluent Testnet until it's migrated to v0.5.4 and has
             // full support of new runtime upgrade scheme
             FrameInput::Call(inputs)
-                if ctx.cfg().chain_id() == 0x5202
+                if (ctx.cfg().chain_id() == 0x5201 || ctx.cfg().chain_id() == 0x5202)
                     && inputs.caller == UPDATE_GENESIS_AUTH
                     && inputs
                         .input

@@ -41,8 +41,8 @@ struct Args {
     genesis: String,
 
     /// Gas limit to use for upgrade transactions
-    #[arg(long, default_value_t = 45_000_000u64)]
-    gas_limit: u64,
+    #[arg(long)]
+    gas_limit: Option<u64>,
 
     /// Contract key name (e.g. EVM_RUNTIME) from CONTRACTS_TO_UPGRADE.
     /// If omitted, upgrades all known contracts (with a prompt).
@@ -73,6 +73,10 @@ struct Args {
     /// Use legacy upgrade mode
     #[arg(long, default_value_t = false)]
     force_legacy: bool,
+
+    /// Use legacy upgrade mode
+    #[arg(long, default_value_t = false)]
+    legacy_prefix: bool,
 }
 
 fn contracts_to_upgrade() -> HashMap<&'static str, Address> {
@@ -356,17 +360,30 @@ async fn main() -> Result<()> {
         } else {
             data.extend_from_slice(&UPDATE_GENESIS_PREFIX);
             let mut buffer = BytesMut::new();
-            SolidityABI::<(Address, B256, String, Bytes)>::encode(
-                &(
-                    contract,
-                    genesis_hash,
-                    args.genesis.clone(),
-                    Bytes::copy_from_slice(&new_rwasm.hint_section),
-                ),
-                &mut buffer,
-                0,
-            )
-            .unwrap();
+            if args.legacy_prefix {
+                SolidityABI::<(Address, B256, String, Bytes)>::encode(
+                    &(
+                        contract,
+                        genesis_hash,
+                        args.genesis.clone(),
+                        Bytes::copy_from_slice(&new_rwasm.hint_section),
+                    ),
+                    &mut buffer,
+                    0,
+                )
+                .unwrap();
+            } else {
+                SolidityABI::<(Address, B256, String, Bytes)>::encode_function_args(
+                    &(
+                        contract,
+                        genesis_hash,
+                        args.genesis.clone(),
+                        Bytes::copy_from_slice(&new_rwasm.hint_section),
+                    ),
+                    &mut buffer,
+                )
+                .unwrap();
+            }
             let buffer = buffer.freeze();
             data.extend_from_slice(buffer.as_ref());
         }
@@ -376,10 +393,12 @@ async fn main() -> Result<()> {
         } else {
             PRECOMPILE_RUNTIME_UPGRADE
         };
-        let tx = TransactionRequest::new()
+        let mut tx = TransactionRequest::new()
             .to(NameOrAddress::Address((*send_to.0).into()))
-            .gas(args.gas_limit)
             .data(data);
+        if let Some(gas_limit) = args.gas_limit {
+            tx = tx.gas(gas_limit);
+        }
 
         if args.print_raw_tx {
             let mut typed: TypedTransaction = tx.into();
@@ -411,6 +430,7 @@ async fn main() -> Result<()> {
                     }
                     Err(e) => {
                         println!("FAILED ({})", e);
+                        continue;
                     }
                 }
             }
@@ -421,6 +441,7 @@ async fn main() -> Result<()> {
                 } else {
                     println!("FAILED ({})", msg);
                 }
+                continue;
             }
         }
 

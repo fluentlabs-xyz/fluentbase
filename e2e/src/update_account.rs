@@ -60,7 +60,7 @@ fn test_update_account_code_by_auth() {
     .into();
 
     let mut upgrade_input = BytesMut::new();
-    SolidityABI::<(Address, B256, String, Bytes)>::encode(
+    SolidityABI::<(Address, B256, String, Bytes)>::encode_function_args(
         &(
             PRECOMPILE_EVM_RUNTIME,
             B256::ZERO,
@@ -68,7 +68,6 @@ fn test_update_account_code_by_auth() {
             wasm_module.clone(),
         ),
         &mut upgrade_input,
-        0,
     )
     .unwrap();
     let upgrade_input = upgrade_input.freeze();
@@ -154,7 +153,7 @@ fn test_cant_upgrade_from_incorrect_address() {
     .into();
 
     let mut upgrade_input = BytesMut::new();
-    SolidityABI::<(Address, B256, String, Bytes)>::encode(
+    SolidityABI::<(Address, B256, String, Bytes)>::encode_function_args(
         &(
             PRECOMPILE_EVM_RUNTIME,
             B256::ZERO,
@@ -162,7 +161,6 @@ fn test_cant_upgrade_from_incorrect_address() {
             wasm_module.clone(),
         ),
         &mut upgrade_input,
-        0,
     )
     .unwrap();
     let upgrade_input = upgrade_input.freeze();

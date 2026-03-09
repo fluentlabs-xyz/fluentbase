@@ -1,7 +1,6 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
-use syn::{Data, DeriveInput, Fields, GenericParam};
-use syn::spanned::Spanned;
+use syn::{spanned::Spanned, Data, DeriveInput, Fields, GenericParam};
 
 /// Processes a struct with `#[derive(Storage)]` or `#[derive(Contract)]` attribute.
 ///
@@ -12,9 +11,10 @@ use syn::spanned::Spanned;
 /// - Accessor methods for each field
 pub fn process_storage_layout(input: DeriveInput) -> Result<TokenStream2, syn::Error> {
     let name = &input.ident;
-    let has_sdk = input.generics.params.iter().any(
-        |param| matches!(param, GenericParam::Type(type_param) if type_param.ident == "SDK"),
-    );
+    let has_sdk =
+        input.generics.params.iter().any(
+            |param| matches!(param, GenericParam::Type(type_param) if type_param.ident == "SDK"),
+        );
 
     let fields = extract_storage_fields(&input)?;
 
@@ -184,7 +184,6 @@ fn generate_constructor_body(
     })
 }
 
-
 /// Generates layout calculation for a single field.
 ///
 /// For explicit `#[slot(expr)]`: uses the provided slot, does not affect auto-layout state.
@@ -233,7 +232,7 @@ fn generate_layout_calculation(
                     result
                 } else {
                     // Move to next slot
-                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_slot += fluentbase_sdk::U256::from(1);
                     let actual_offset = 32 - bytes;
                     current_offset = bytes;
                     (current_slot, actual_offset)
@@ -241,11 +240,11 @@ fn generate_layout_calculation(
             } else {
                 // Full-slot type (maps, arrays, large structs)
                 if current_offset > 0 {
-                    current_slot = current_slot + fluentbase_sdk::U256::from(1);
+                    current_slot += fluentbase_sdk::U256::from(1);
                     current_offset = 0;
                 }
                 let result = (current_slot, 0);
-                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
+                current_slot += fluentbase_sdk::U256::from(slots);
                 result
             }
         };

@@ -8,7 +8,7 @@ use fluentbase_sdk::{
     basic_entrypoint,
     derive::{router, Contract, Event},
     storage::StorageAddress,
-    Address, ContextReader, SharedAPI, DEFAULT_FEE_MANAGER_AUTH, U256,
+    Address, ContextReader, SharedAPI, DEFAULT_FEE_MANAGER_AUTH, SYSTEM_ADDRESS, U256,
 };
 
 #[derive(Event)]
@@ -28,7 +28,7 @@ struct App<SDK> {
     owner: StorageAddress,
 }
 
-pub trait RouterAPI {
+pub trait FeeManagerTr {
     /// Withdraw balance from the contract
     fn withdraw(&mut self, recipient: Address);
 
@@ -37,12 +37,15 @@ pub trait RouterAPI {
 
     /// Get the current contract owner
     fn owner(&mut self) -> Address;
+
+    /// Renounce ownership (change an owner to system contract address)
+    fn renounce_ownership(&mut self);
 }
 
 #[router(mode = "solidity")]
-impl<SDK: SharedAPI> RouterAPI for App<SDK> {
+impl<SDK: SharedAPI> FeeManagerTr for App<SDK> {
     fn withdraw(&mut self, recipient: Address) {
-        self.only_owner();
+        _ = self.only_owner();
         let balance = self.only_positive_balance();
         let Ok(_) = self.sdk.call(recipient, balance, &[], None).ok() else {
             panic!("fee-manager: can't send funds to recipient");
@@ -55,7 +58,7 @@ impl<SDK: SharedAPI> RouterAPI for App<SDK> {
     }
 
     fn change_owner(&mut self, new_owner: Address) {
-        self.only_owner();
+        _ = self.only_owner();
         self.owner_accessor().set(&mut self.sdk, new_owner);
         OwnerChanged { new_owner }.emit(&mut self.sdk);
     }
@@ -67,11 +70,20 @@ impl<SDK: SharedAPI> RouterAPI for App<SDK> {
         }
         owner
     }
+
+    fn renounce_ownership(&mut self) {
+        _ = self.only_owner();
+        self.owner_accessor().set(&mut self.sdk, SYSTEM_ADDRESS);
+        OwnerChanged {
+            new_owner: SYSTEM_ADDRESS,
+        }
+        .emit(&mut self.sdk);
+    }
 }
 
 impl<SDK: SharedAPI> App<SDK> {
     /// Only owner modifier
-    fn only_owner(&self) {
+    fn only_owner(&self) -> Address {
         let mut owner = self.owner_accessor().get(&self.sdk);
         if owner.is_zero() {
             owner = DEFAULT_FEE_MANAGER_AUTH;
@@ -80,6 +92,7 @@ impl<SDK: SharedAPI> App<SDK> {
         if caller != owner {
             panic!("fee-manager: incorrect caller");
         }
+        owner
     }
 
     /// Only a positive balance modifier

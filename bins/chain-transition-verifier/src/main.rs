@@ -132,9 +132,9 @@ fn main() -> Result<()> {
         let state_provider = blockchain
             .state_by_block_number_or_tag(parent.into())
             .map_err(|e| eyre!("failed to get state provider at block {parent}: {e}"))?;
-        let db = StateProviderDatabase::new(state_provider);
+        let mut db = StateProviderDatabase::new(state_provider);
 
-        let executor = evm_config.executor(db);
+        let executor = evm_config.executor(&mut db);
         let result = executor
             .execute(&recovered)
             .map_err(|e| eyre!("❌ transition mismatch / execution error at block {n}: {e}"))?;
@@ -145,10 +145,6 @@ fn main() -> Result<()> {
                 recovered.gas_used
             ));
         }
-
-        // if args.verbose {
-        //     eprintln!("✅ block {n} ok (state_root {:?})", header.state_root());
-        // }
     }
 
     Ok(())
