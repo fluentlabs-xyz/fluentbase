@@ -28,6 +28,7 @@ std = [
     "fluentbase-codec/std",
     "fluentbase-runtime/std",
     "fluentbase-sdk/std",
+    "fluentbase-evm/std",
     "rwasm/std",
     "revm/std",
     "fluentbase-revm/std",
@@ -35,6 +36,7 @@ std = [
 debug-print = [
     "fluentbase-sdk/debug-print",
     "fluentbase-runtime/debug-print",
+    "fluentbase-evm/debug-print",
+    "fluentbase-revm/debug-print",
     "revm/debug-print",
-    #    "fluentbase-revm/debug-print",
 ]
