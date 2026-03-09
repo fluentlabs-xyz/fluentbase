@@ -7,7 +7,7 @@ use alloc::{borrow::Cow, string::String, vec};
 use fluentbase_sdk::{
     basic_entrypoint,
     codec::Codec,
-    compile_rwasm_maybe_system, debug_log,
+    compile_rwasm_maybe_system,
     derive::{function_id, router, Contract, Event},
     hex,
     storage::StorageAddress,
@@ -68,7 +68,6 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         wasm_bytecode: Bytes,
     ) {
         _ = self.only_owner();
-        debug_log!("WASM bytecode: {}", hex::encode(&wasm_bytecode));
         if !wasm_bytecode.starts_with(&WASM_MAGIC_BYTES) {
             panic!("runtime-upgrade: malformed wasm bytecode");
         }
