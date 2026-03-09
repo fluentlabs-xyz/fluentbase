@@ -5,23 +5,13 @@ extern crate alloc;
 
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{router, Contract, Event},
+    derive::{router, Contract},
     calc_create2_address, Address, Bytes, ContextReader, SharedAPI, U256, B256,
 };
 
 #[derive(Contract)]
 struct App<SDK> {
     sdk: SDK,
-}
-
-#[derive(Event, Debug)]
-struct Deployed {
-    #[indexed]
-    deployer: Address,
-    #[indexed]
-    deployed: Address,
-    salt: U256,
-    is_create2: bool,
 }
 
 pub trait Create2FactoryTr {
@@ -39,14 +29,6 @@ impl<SDK: SharedAPI> Create2FactoryTr for App<SDK> {
         let result = self.sdk.create(None, &U256::ZERO, &init_code).unwrap();
         let deployed = parse_address_from_create_output(&result)
             .unwrap_or_else(|| panic!("create2-factory: invalid create output"));
-        let deployer = self.sdk.context().contract_caller();
-        Deployed {
-            deployer,
-            deployed,
-            salt: U256::ZERO,
-            is_create2: false,
-        }
-        .emit(&mut self.sdk);
         deployed
     }
 
@@ -55,14 +37,6 @@ impl<SDK: SharedAPI> Create2FactoryTr for App<SDK> {
         let result = self.sdk.create(Some(salt), &U256::ZERO, &init_code).unwrap();
         let deployed = parse_address_from_create_output(&result)
             .unwrap_or_else(|| panic!("create2-factory: invalid create2 output"));
-        let deployer = self.sdk.context().contract_caller();
-        Deployed {
-            deployer,
-            deployed,
-            salt,
-            is_create2: true,
-        }
-        .emit(&mut self.sdk);
         deployed
     }
 

@@ -22,13 +22,6 @@ The contract exposes 3 methods:
 2. `deployCreate2(uint256 salt, bytes init_code) returns (address)`
 3. `computeCreate2Address(uint256 salt, bytes32 init_code_hash) returns (address)`
 
-It also emits a `Deployed` event with:
-
-- `deployer` (indexed)
-- `deployed` (indexed)
-- `salt`
-- `is_create2`
-
 ---
 
 ## How deployment works
