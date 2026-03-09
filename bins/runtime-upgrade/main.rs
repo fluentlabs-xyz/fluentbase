@@ -186,7 +186,7 @@ fn pick_rpc(args: &Args) -> Result<&'static str> {
     Ok(if args.local {
         "http://localhost:8545"
     } else if args.dev {
-        "http://157.230.120.98:8545"
+        "https://rpc.devnet.fluent.xyz"
     } else {
         "https://rpc.testnet.fluent.xyz"
     })
