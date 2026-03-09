@@ -2,7 +2,7 @@ use crate::{
     syscall::*, Address, BytecodeOrHash, Bytes, ContextReader, CryptoAPI, ExitCode, NativeAPI,
     SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256, U256,
 };
-use alloc::{borrow::Cow, vec, vec::Vec};
+use alloc::{borrow::Cow, vec};
 use core::cell::OnceCell;
 use fluentbase_types::STATE_MAIN;
 
@@ -293,10 +293,13 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SharedContextImpl<API> {
         value: &U256,
         init_code: &[u8],
     ) -> SyscallResult<Bytes> {
-        let mut buffer =
-            Vec::with_capacity(encode::create_size_hint(init_code.len(), salt.is_some()));
+        let mut buffer = vec![0u8; encode::create_size_hint(init_code.len(), salt.is_some())];
         encode::create_into(&mut &mut buffer[..], salt.as_ref(), value, init_code);
-        let syscall_id = SYSCALL_ID_CREATE2;
+        let syscall_id = if salt.is_some() {
+            SYSCALL_ID_CREATE2
+        } else {
+            SYSCALL_ID_CREATE
+        };
         let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
             BytecodeOrHash::Hash(syscall_id),
             Cow::Owned(buffer),

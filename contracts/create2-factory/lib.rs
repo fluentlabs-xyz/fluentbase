@@ -1,10 +1,11 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
+#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 
 extern crate alloc;
 
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{function_id, router, Contract, Event},
+    derive::{router, Contract, Event},
     calc_create2_address, Address, Bytes, ContextReader, SharedAPI, U256, B256,
 };
 
@@ -33,7 +34,7 @@ pub trait Create2FactoryTr {
 
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> Create2FactoryTr for App<SDK> {
-    #[function_id("deployContract(bytes)")]
+    #[fluentbase_sdk::derive::function_id("deployCreate(bytes)")]
     fn deploy_create(&mut self, init_code: Bytes) -> Address {
         let result = self.sdk.create(None, &U256::ZERO, &init_code).unwrap();
         let deployed = parse_address_from_create_output(&result)
@@ -49,7 +50,7 @@ impl<SDK: SharedAPI> Create2FactoryTr for App<SDK> {
         deployed
     }
 
-    #[function_id("deployContract2(uint256,bytes)")]
+    #[fluentbase_sdk::derive::function_id("deployCreate2(uint256,bytes)")]
     fn deploy_create2(&mut self, salt: U256, init_code: Bytes) -> Address {
         let result = self.sdk.create(Some(salt), &U256::ZERO, &init_code).unwrap();
         let deployed = parse_address_from_create_output(&result)
@@ -65,7 +66,7 @@ impl<SDK: SharedAPI> Create2FactoryTr for App<SDK> {
         deployed
     }
 
-    #[function_id("computeCreate2Address(uint256,bytes32)")]
+    #[fluentbase_sdk::derive::function_id("computeCreate2Address(uint256,bytes32)")]
     fn compute_create2_address(&self, salt: U256, init_code_hash: B256) -> Address {
         calc_create2_address(
             &self.sdk.context().contract_address(),

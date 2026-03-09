@@ -7,7 +7,7 @@ mod tests {
 
     #[test]
     fn contains_create2_factory_output() {
-        assert_eq!(FLUENTBASE_CREATE2_FACTORY.name, "fluentbase-create2-factory");
+        assert_eq!(FLUENTBASE_CREATE2_FACTORY.name, "fluentbase_create2_factory");
         assert!(!FLUENTBASE_CREATE2_FACTORY.wasm_bytecode.is_empty());
     }
 }

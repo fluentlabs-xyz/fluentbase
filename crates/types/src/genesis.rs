@@ -293,3 +293,13 @@ pub fn is_delegated_runtime_address(address: &Address) -> bool {
         || address == &PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
         || address == &PRECOMPILE_WASM_RUNTIME
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create2_factory_is_registered_in_precompile_set() {
+        assert!(is_system_precompile(&PRECOMPILE_CREATE2_FACTORY));
+    }
+}
