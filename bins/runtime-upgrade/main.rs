@@ -73,6 +73,10 @@ struct Args {
     /// Use legacy upgrade mode
     #[arg(long, default_value_t = false)]
     force_legacy: bool,
+
+    /// Use legacy upgrade mode
+    #[arg(long, default_value_t = false)]
+    legacy_prefix: bool,
 }
 
 fn contracts_to_upgrade() -> HashMap<&'static str, Address> {
@@ -356,17 +360,30 @@ async fn main() -> Result<()> {
         } else {
             data.extend_from_slice(&UPDATE_GENESIS_PREFIX);
             let mut buffer = BytesMut::new();
-            SolidityABI::<(Address, B256, String, Bytes)>::encode(
-                &(
-                    contract,
-                    genesis_hash,
-                    args.genesis.clone(),
-                    Bytes::copy_from_slice(&new_rwasm.hint_section),
-                ),
-                &mut buffer,
-                0,
-            )
-            .unwrap();
+            if args.legacy_prefix {
+                SolidityABI::<(Address, B256, String, Bytes)>::encode(
+                    &(
+                        contract,
+                        genesis_hash,
+                        args.genesis.clone(),
+                        Bytes::copy_from_slice(&new_rwasm.hint_section),
+                    ),
+                    &mut buffer,
+                    0,
+                )
+                .unwrap();
+            } else {
+                SolidityABI::<(Address, B256, String, Bytes)>::encode_function_args(
+                    &(
+                        contract,
+                        genesis_hash,
+                        args.genesis.clone(),
+                        Bytes::copy_from_slice(&new_rwasm.hint_section),
+                    ),
+                    &mut buffer,
+                )
+                .unwrap();
+            }
             let buffer = buffer.freeze();
             data.extend_from_slice(buffer.as_ref());
         }
