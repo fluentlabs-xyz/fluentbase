@@ -5,7 +5,7 @@ use fluentbase_sdk_derive_core::{
 use proc_macro::TokenStream;
 use proc_macro_error::proc_macro_error;
 use quote::{quote, ToTokens};
-use syn::{__private::TokenStream2, parse_macro_input};
+use syn::parse_macro_input;
 
 mod utils;
 
@@ -585,7 +585,7 @@ pub fn erc7201_slot(input: TokenStream) -> TokenStream {
 }
 
 /// Detect the crate path for the codec library
-fn get_sdk_crate_path() -> TokenStream2 {
+fn get_sdk_crate_path() -> proc_macro2::TokenStream {
     let crate_name = std::env::var("CARGO_PKG_NAME").unwrap_or_default();
     if crate_name == "fluentbase-sdk" {
         quote! { ::fluentbase_types }
