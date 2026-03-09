@@ -51,6 +51,11 @@ UNIVERSAL_TOKEN_MAGIC_BYTES (4 bytes)
 + abi.encode(InitialSettings)
 ```
 
+Current `UNIVERSAL_TOKEN_MAGIC_BYTES` value is:
+
+- hex: `0x45524320`
+- ASCII: `"ERC "`
+
 `InitialSettings` structure:
 
 ```rust
