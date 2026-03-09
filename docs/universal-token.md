@@ -55,8 +55,8 @@ UNIVERSAL_TOKEN_MAGIC_BYTES (4 bytes)
 
 ```rust
 struct InitialSettings {
-    token_name: TokenNameOrSymbol,   // fixed 32 bytes
-    token_symbol: TokenNameOrSymbol, // fixed 32 bytes
+    token_name: TokenNameOrSymbol,   // fixed 32 bytes, values longer than 32 bytes are truncated
+    token_symbol: TokenNameOrSymbol, // fixed 32 bytes, values longer than 32 bytes are truncated
     decimals: u8,
     initial_supply: U256,
     minter: Address,
@@ -66,12 +66,15 @@ struct InitialSettings {
 
 `TokenNameOrSymbol` is a fixed 32-byte field (zero-padded UTF-8 bytes), **not dynamic Solidity string**.
 
+Important: in the current implementation, `TokenNameOrSymbol::from_str` clamps input length to 32 bytes (`min(32, value.len())`).
+So if `token_name` or `token_symbol` is longer than 32 bytes, it is **silently truncated** to the first 32 bytes.
+
 ### ABI-level field layout
 
 Inside `abi.encode(InitialSettings)` (tuple), fields are encoded as static words:
 
-1. `token_name` -> `bytes32`
-2. `token_symbol` -> `bytes32`
+1. `token_name` -> `bytes32` (longer inputs are truncated to 32 bytes)
+2. `token_symbol` -> `bytes32` (longer inputs are truncated to 32 bytes)
 3. `decimals` -> `uint8` (ABI word-padded)
 4. `initial_supply` -> `uint256`
 5. `minter` -> `address` (ABI word-padded)
@@ -216,9 +219,10 @@ Slots are computed via ERC-7201-style slot derivation helpers.
 
 1. Missing 4-byte magic prefix.
 2. Using dynamic `string` ABI for name/symbol instead of fixed 32-byte representation expected by runtime.
-3. Wrong field order in `InitialSettings`.
-4. Assuming token bytecode differs per deployment (runtime is shared; storage is per-address).
-5. Forgetting that `initial_supply` mints to deployer (`contract_caller`) at deploy time.
+3. Assuming long names/symbols are preserved; in current implementation they are silently truncated to 32 bytes.
+4. Wrong field order in `InitialSettings`.
+5. Assuming token bytecode differs per deployment (runtime is shared; storage is per-address).
+6. Forgetting that `initial_supply` mints to deployer (`contract_caller`) at deploy time.
 
 ---
 
@@ -226,6 +230,6 @@ Slots are computed via ERC-7201-style slot derivation helpers.
 
 - [ ] Prefix starts with `UNIVERSAL_TOKEN_MAGIC_BYTES`
 - [ ] Params encoded as `InitialSettings` in exact order
-- [ ] Name/symbol packed to 32-byte fields
+- [ ] Name/symbol packed to 32-byte fields (anything >32 bytes will be silently truncated)
 - [ ] Role addresses set to zero if feature should be disabled
 - [ ] For deterministic deployment, use `CREATE2` with fixed salt + fixed init_code
