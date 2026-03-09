@@ -178,10 +178,10 @@ mod tests {
         let encoded = call.encode();
 
         // first 4 bytes = function selector
-        assert_eq!(encoded.len() >= 4, true);
+        assert!(encoded.len() >= 4);
         println!("Encoded call data: {}", hex::encode(&encoded));
 
-        // decode back and verify round-trip
+        // decode back and verify a round-trip
         let decoded = UpgradeToCall::decode(&&encoded[4..]).expect("failed to decode");
         assert_eq!(decoded.0 .0, target, "target_address mismatch");
         assert_eq!(decoded.0 .1, genesis_hash, "genesis_hash mismatch");
