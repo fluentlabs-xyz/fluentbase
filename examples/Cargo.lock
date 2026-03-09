@@ -1728,7 +1728,7 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1740,7 +1740,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -1752,7 +1752,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-crypto"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -1764,7 +1764,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-revm"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "alloy-primitives",
  "fluentbase-evm",
@@ -1975,7 +1975,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -1993,7 +1993,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "alloy-rlp",
  "auto_impl",
@@ -2009,7 +2009,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -2022,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -2044,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-testing"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "bytes",
  "fluentbase-codec",
@@ -2060,7 +2060,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "alloy-primitives",
  "bincode 2.0.1",
