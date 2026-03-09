@@ -13,20 +13,45 @@ mod tests;
 use fluentbase_sdk::{
     bytes::BytesMut,
     codec::SolidityABI,
+    derive::Event,
     evm::write_evm_exit_message,
     storage::{StorageMap, StorageU256},
-    system_entrypoint, Address, ContextReader, EvmExitCode, ExitCode, StorageUtils, SystemAPI,
-    U256,
+    system_entrypoint,
+    universal_token::*,
+    Address, ContextReader, EvmExitCode, ExitCode, StorageUtils, SystemAPI, U256,
 };
-use fluentbase_universal_token::{
-    command::{
-        AllowanceCommand, ApproveCommand, BalanceOfCommand, BurnCommand, MintCommand,
-        TransferCommand, TransferFromCommand, UniversalTokenCommand,
-    },
-    consts::*,
-    events::{emit_approval_event, emit_pause_event, emit_transfer_event, emit_unpause_event},
-    storage::{InitialSettings, SIG_LEN_BYTES},
-};
+
+mod events {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq, Event)]
+    pub struct Transfer {
+        #[indexed]
+        pub from: Address,
+        #[indexed]
+        pub to: Address,
+        pub amount: U256,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Event)]
+    pub struct Approval {
+        #[indexed]
+        pub owner: Address,
+        #[indexed]
+        pub spender: Address,
+        pub amount: U256,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Event)]
+    pub struct Paused {
+        pub pauser: Address,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Event)]
+    pub struct Unpaused {
+        pub pauser: Address,
+    }
+}
 
 /// Balance mapping: `owner -> balance`.
 type BalanceStorageMap = StorageMap<Address, StorageU256>;
@@ -109,7 +134,7 @@ fn erc20_transfer_handler<SDK: SystemAPI>(
         .ok_or(ExitCode::IntegerOverflow)?;
     recipient_accessor.set_checked(sdk, new_recipient_balance)?;
 
-    emit_transfer_event(sdk, &from, &to, &amount)?;
+    events::Transfer { from, to, amount }.emit(sdk)?;
 
     let output = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
     sdk.write(output);
@@ -162,7 +187,7 @@ fn erc20_transfer_from_handler<SDK: SystemAPI>(
         .ok_or(ExitCode::IntegerOverflow)?;
     recipient_accessor.set_checked(sdk, new_recipient_balance)?;
 
-    emit_transfer_event(sdk, &from, &to, &amount)?;
+    events::Transfer { from, to, amount }.emit(sdk)?;
 
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
     sdk.write(result);
@@ -185,7 +210,12 @@ fn erc20_approve_handler<SDK: SystemAPI>(
         .entry(spender);
     allowance_accessor.set_checked(sdk, amount)?;
 
-    emit_approval_event(sdk, &contract_caller, &spender, &amount)?;
+    events::Approval {
+        owner: contract_caller,
+        spender,
+        amount,
+    }
+    .emit(sdk)?;
 
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
     sdk.write(result);
@@ -290,7 +320,12 @@ fn erc20_mint_handler<SDK: SystemAPI>(
         .ok()?;
     recipient_accessor.set_checked(sdk, new_recipient_balance)?;
 
-    emit_transfer_event(sdk, &Address::ZERO, &to, &amount)?;
+    events::Transfer {
+        from: Address::ZERO,
+        to,
+        amount,
+    }
+    .emit(sdk)?;
 
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
     sdk.write(result);
@@ -348,7 +383,12 @@ fn erc20_burn_handler<SDK: SystemAPI>(
     sender_accessor.set_checked(sdk, new_sender_balance)?;
 
     // Emit ERC20 Transfer event to zero address.
-    emit_transfer_event(sdk, &from, &Address::ZERO, &amount)?;
+    events::Transfer {
+        from,
+        to: Address::ZERO,
+        amount,
+    }
+    .emit(sdk)?;
 
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
     sdk.write(result);
@@ -368,7 +408,7 @@ fn erc20_pause_handler<SDK: SystemAPI>(
     if contract_pauser.is_zero() {
         return Ok(ERR_UST_NOT_PAUSABLE);
     }
-    // Make sure contract is unpaused
+    // Make sure the contract is unpaused
     let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
     if !is_contract_frozen.is_zero() {
         return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
@@ -382,7 +422,10 @@ fn erc20_pause_handler<SDK: SystemAPI>(
     sdk.write_storage(CONTRACT_FROZEN_STORAGE_SLOT, U256::ONE)
         .ok()?;
     // Emit an event, indicating that the contract is paused
-    emit_pause_event(sdk, &contract_caller)?;
+    events::Paused {
+        pauser: contract_caller,
+    }
+    .emit(sdk)?;
     // Write output (1)
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
     sdk.write(result);
@@ -415,8 +458,11 @@ fn erc20_unpause_handler<SDK: SystemAPI>(
     // Write a paused flag
     sdk.write_storage(CONTRACT_FROZEN_STORAGE_SLOT, U256::ZERO)
         .ok()?;
-    // Emit an event indicating contract is now unpaused
-    emit_unpause_event(sdk, &contract_caller)?;
+    // Emit an event indicating a contract is now unpaused
+    events::Unpaused {
+        pauser: contract_caller,
+    }
+    .emit(sdk)?;
     // Write success (1)
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
     sdk.write(result);
@@ -472,7 +518,12 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
         sdk.write_storage(TOTAL_SUPPLY_STORAGE_SLOT, initial_supply)
             .ok()?;
         // Emit transfer event
-        emit_transfer_event(sdk, &Address::ZERO, &caller, &initial_supply)?;
+        events::Transfer {
+            from: Address::ZERO,
+            to: caller,
+            amount: initial_supply,
+        }
+        .emit(sdk)?;
     }
     // If token is mintable then minter is provided
     if !minter.is_zero() {

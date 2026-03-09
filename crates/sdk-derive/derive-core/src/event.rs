@@ -82,7 +82,11 @@ fn parse_event(input: DeriveInput) -> Result<ParsedEvent> {
         _ => return Err(Error::new(Span::call_site(), "Only structs supported")),
     };
 
-    Ok(ParsedEvent { name, fields, anonymous })
+    Ok(ParsedEvent {
+        name,
+        fields,
+        anonymous,
+    })
 }
 
 fn has_attribute(attrs: &[Attribute], name: &str) -> bool {
@@ -104,7 +108,11 @@ fn validate_event(event: &ParsedEvent) -> Result<()> {
                 "Too many indexed fields: {} (max {} for {} events)",
                 indexed_count,
                 max,
-                if event.anonymous { "anonymous" } else { "regular" }
+                if event.anonymous {
+                    "anonymous"
+                } else {
+                    "regular"
+                }
             ),
         ));
     }
@@ -155,12 +163,12 @@ fn generate_event_impl(event: &ParsedEvent) -> Result<TokenStream2> {
             pub const SELECTOR: [u8; 32] = [#(#selector),*];
 
             /// Emits this event as an EVM log.
-            pub fn emit<SDK: fluentbase_sdk::SharedAPI>(&self, sdk: &mut SDK) {
+            pub fn emit<SDK: fluentbase_sdk::SharedAPI>(&self, sdk: &mut SDK) -> Result<(), fluentbase_sdk::ExitCode> {
                 use fluentbase_sdk::codec::SolidityABI;
 
                 let topics: [fluentbase_sdk::B256; #topic_count] = #topics_code;
                 #data_code
-                sdk.emit_log(&topics, &data);
+                sdk.emit_log(&topics, &data).ok()
             }
         }
     })

@@ -17,7 +17,6 @@ readme = "README.md"
 [workspace.dependencies]
 # fluentbase
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
-fluentbase-universal-token = { path = "../crates/universal-token", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
 #fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
 #fluentbase-svm = { path = "../crates/svm", default-features = false }
@@ -60,7 +59,6 @@ tiny-keccak = { git = "https://github.com/fluentlabs-xyz/tiny-keccak.git", branc
 #revm-precompile = { path = "../../revm-rwasm/crates/precompile", default-features = false }
 # patch fluentbase
 fluentbase-sdk = { path = "../crates/sdk" }
-fluentbase-universal-token = { path = "../crates/universal-token" }
 fluentbase-evm = { path = "../crates/evm" }
 #fluentbase-svm-common = { path = "../crates/svm-common" }
 #fluentbase-svm = { path = "../crates/svm" }

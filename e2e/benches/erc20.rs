@@ -1,14 +1,11 @@
 use criterion::{criterion_main, Criterion};
 use fluentbase_e2e::EvmTestingContextWithGenesis;
 use fluentbase_sdk::{
-    constructor::encode_constructor_params, Address, Bytes, ContractContextV1,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
+    constructor::encode_constructor_params,
+    universal_token::{InitialSettings, TransferCommand, UniversalTokenCommand},
+    Address, Bytes, ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::EvmTestingContext;
-use fluentbase_universal_token::{
-    command::{TransferCommand, UniversalTokenCommand},
-    storage::{InitialSettings, DECIMALS_DEFAULT},
-};
 use hex_literal::hex;
 use std::time::Duration;
 
@@ -70,8 +67,7 @@ fn tokens_transfer_benches(c: &mut Criterion) {
     {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         const OWNER_ADDRESS: Address = Address::ZERO;
-        let bytecode: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_ERC20
-            .wasm_bytecode;
+        let bytecode: &[u8] = fluentbase_contracts::FLUENTBASE_EXAMPLES_ERC20.wasm_bytecode;
 
         // constructor params for ERC20:
         //     name: "TestToken"
@@ -119,7 +115,7 @@ fn tokens_transfer_benches(c: &mut Criterion) {
         let initial_settings = InitialSettings {
             token_name: Default::default(),
             token_symbol: Default::default(),
-            decimals: DECIMALS_DEFAULT,
+            decimals: 18,
             initial_supply: total_supply,
             minter: Address::ZERO,
             pauser: Address::ZERO,

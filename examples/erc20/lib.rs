@@ -73,7 +73,8 @@ impl<SDK: SharedAPI> ERC20<SDK> {
             to: deployer,
             value: initial_supply,
         }
-        .emit(&mut self.sdk);
+        .emit(&mut self.sdk)
+        .unwrap();
     }
 }
 
@@ -116,7 +117,7 @@ impl<SDK: SharedAPI> ERC20Interface for ERC20<SDK> {
             .entry(to)
             .set(&mut self.sdk, to_balance + value);
 
-        Transfer { from, to, value }.emit(&mut self.sdk);
+        Transfer { from, to, value }.emit(&mut self.sdk).unwrap();
         U256::from(1)
     }
 
@@ -140,7 +141,8 @@ impl<SDK: SharedAPI> ERC20Interface for ERC20<SDK> {
             spender,
             value,
         }
-        .emit(&mut self.sdk);
+        .emit(&mut self.sdk)
+        .unwrap();
         U256::from(1)
     }
 
@@ -176,7 +178,7 @@ impl<SDK: SharedAPI> ERC20Interface for ERC20<SDK> {
             .entry(to)
             .set(&mut self.sdk, to_balance + value);
 
-        Transfer { from, to, value }.emit(&mut self.sdk);
+        Transfer { from, to, value }.emit(&mut self.sdk).unwrap();
         U256::from(1)
     }
 }
@@ -435,7 +437,7 @@ mod tests {
 
             let mut sdk = TestingContextImpl::default();
 
-            Transfer { from, to, value }.emit(&mut sdk);
+            Transfer { from, to, value }.emit(&mut sdk).unwrap();
 
             let logs = sdk.take_logs();
             assert_eq!(logs.len(), 1);

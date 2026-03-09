@@ -533,8 +533,9 @@ pub fn eip1967_slot(input: TokenStream) -> TokenStream {
         }
     }
 
+    let sdk_crate_path = get_sdk_crate_path();
     TokenStream::from(quote! {
-        fluentbase_sdk::U256::from_be_bytes([#(#bytes),*])
+        #sdk_crate_path::U256::from_be_bytes([#(#bytes),*])
     })
 }
 
@@ -577,9 +578,20 @@ pub fn erc7201_slot(input: TokenStream) -> TokenStream {
     // Step 4: & ~0xff (clear last byte)
     outer[31] = 0;
 
+    let sdk_crate_path = get_sdk_crate_path();
     TokenStream::from(quote! {
-        fluentbase_sdk::U256::from_be_bytes([#(#outer),*])
+        #sdk_crate_path::U256::from_be_bytes([#(#outer),*])
     })
+}
+
+/// Detect the crate path for the codec library
+fn get_sdk_crate_path() -> proc_macro2::TokenStream {
+    let crate_name = std::env::var("CARGO_PKG_NAME").unwrap_or_default();
+    if crate_name == "fluentbase-sdk" {
+        quote! { ::fluentbase_types }
+    } else {
+        quote! { ::fluentbase_sdk }
+    }
 }
 
 /// Defines contract initialization logic.

@@ -54,13 +54,14 @@ impl<SDK: SharedAPI> FeeManagerTr for App<SDK> {
             recipient,
             amount: balance,
         }
-        .emit(&mut self.sdk);
+        .emit(&mut self.sdk)
+        .unwrap();
     }
 
     fn change_owner(&mut self, new_owner: Address) {
         _ = self.only_owner();
         self.owner_accessor().set(&mut self.sdk, new_owner);
-        OwnerChanged { new_owner }.emit(&mut self.sdk);
+        OwnerChanged { new_owner }.emit(&mut self.sdk).unwrap();
     }
 
     fn owner(&mut self) -> Address {
@@ -77,7 +78,8 @@ impl<SDK: SharedAPI> FeeManagerTr for App<SDK> {
         OwnerChanged {
             new_owner: SYSTEM_ADDRESS,
         }
-        .emit(&mut self.sdk);
+        .emit(&mut self.sdk)
+        .unwrap();
     }
 }
 

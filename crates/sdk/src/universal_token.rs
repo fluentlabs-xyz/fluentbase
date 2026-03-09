@@ -20,47 +20,19 @@
 
 extern crate alloc;
 
-use crate::{
-    bytes::BytesMut,
-    codec::{Codec, SolidityABI},
-    Address, Bytes, U256,
-};
+use crate::{bytes::BytesMut, codec::SolidityABI, Address, Bytes, U256};
 use alloc::{string::String, vec::Vec};
-
 /// Re-export the precompile address for convenience
 pub use fluentbase_types::PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME;
-
 /// Re-export the magic bytes constant
 pub use fluentbase_types::UNIVERSAL_TOKEN_MAGIC_BYTES;
 
-/// Internal structure matching `TokenNameOrSymbol` from universal-token
-/// This is a 32-byte array used for token name and symbol storage
-#[derive(Default, Debug, Clone, PartialEq, Eq, Codec)]
-#[repr(transparent)]
-struct TokenNameOrSymbol {
-    bytes: [u8; U256::BYTES],
-}
-
-impl TokenNameOrSymbol {
-    fn from_str(value: &str) -> Self {
-        let mut bytes = [0u8; U256::BYTES];
-        let len = core::cmp::min(U256::BYTES, value.len());
-        bytes[..len].copy_from_slice(value.as_bytes());
-        Self { bytes }
-    }
-}
-
-/// Internal structure matching `InitialSettings` from universal-token
-/// This matches the encoding format expected by the universal token runtime
-#[derive(Debug, Clone, Codec)]
-struct InitialSettings {
-    token_name: TokenNameOrSymbol,
-    token_symbol: TokenNameOrSymbol,
-    decimals: u8,
-    initial_supply: U256,
-    minter: Address,
-    pauser: Address,
-}
+mod command;
+pub use command::*;
+mod consts;
+pub use consts::*;
+mod storage;
+pub use storage::*;
 
 /// Builder for Universal Token deployment configuration
 #[derive(Debug, Clone)]

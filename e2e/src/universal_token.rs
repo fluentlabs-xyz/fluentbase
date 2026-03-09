@@ -1,23 +1,10 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use fluentbase_sdk::{
-    hex, storage::StorageDescriptor, Address, Bytes, ContractContextV1,
+    hex, storage::StorageDescriptor, universal_token::*, Address, Bytes, ContractContextV1,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::EvmTestingContext;
-use fluentbase_universal_token::{
-    command::{
-        AllowanceCommand, ApproveCommand, BalanceOfCommand, MintCommand, TransferCommand,
-        TransferFromCommand, UniversalTokenCommand,
-    },
-    consts::{
-        ERR_ERC20_INSUFFICIENT_ALLOWANCE, ERR_ERC20_INSUFFICIENT_BALANCE,
-        ERR_PAUSABLE_ENFORCED_PAUSE, ERR_PAUSABLE_EXPECTED_PAUSE, ERR_UST_NOT_MINTABLE,
-        ERR_UST_NOT_PAUSABLE, SIG_ERC20_DECIMALS, SIG_ERC20_NAME, SIG_ERC20_PAUSE,
-        SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_UNPAUSE,
-    },
-    storage::{InitialSettings, DECIMALS_DEFAULT},
-};
 use revm::context::result::ExecutionResult;
 use std::ops::Add;
 
@@ -70,7 +57,7 @@ fn no_plugins_enabled_test() {
     let mut initial_settings = InitialSettings {
         token_name: Default::default(),
         token_symbol: Default::default(),
-        decimals: DECIMALS_DEFAULT,
+        decimals: 18,
         initial_supply: U256::from(0xffff_ffffu64),
         minter: Address::ZERO,
         pauser: Address::ZERO,
@@ -131,7 +118,7 @@ fn mixed_test() {
     let mut initial_settings = InitialSettings {
         token_name: "NaMe".into(),
         token_symbol: "SyMbOl".into(),
-        decimals: DECIMALS_DEFAULT,
+        decimals: 18,
         initial_supply: U256::from(0xffff_ffffu64),
         minter: DEPLOYER_ADDR,
         pauser: DEPLOYER_ADDR,
@@ -139,7 +126,7 @@ fn mixed_test() {
     let total_supply = U256::from(0xffff_ffffu64);
     let token_name = "NaMe";
     let token_symbol = "SyMbOl";
-    let decimals = U256::from(DECIMALS_DEFAULT);
+    let decimals = U256::from(18);
     let deployer_1_2_transfer = 12345678;
     let deployer_2_1_allowance = 1234567;
     let deployer_2_1_transfer_from = 1234;

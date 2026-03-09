@@ -1833,7 +1833,6 @@ dependencies = [
  "cargo_metadata",
  "fluentbase-evm",
  "fluentbase-sdk",
- "fluentbase-universal-token",
  "revm-precompile",
  "serde",
  "serde_json",
@@ -1887,7 +1886,6 @@ dependencies = [
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
- "fluentbase-universal-token",
  "once_cell",
  "revm",
  "rwasm",
@@ -1980,13 +1978,6 @@ dependencies = [
  "rwasm",
  "serde",
  "strum_macros 0.27.2",
-]
-
-[[package]]
-name = "fluentbase-universal-token"
-version = "0.5.5"
-dependencies = [
- "fluentbase-sdk",
 ]
 
 [[package]]

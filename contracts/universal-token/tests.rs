@@ -10,23 +10,11 @@ use fluentbase_sdk::{
     codec::SolidityABI,
     evm::write_evm_exit_message,
     storage::{StorageMap, StorageU256},
+    universal_token::*,
     Address, Bytes, ContextReader, ContractContextV1, ExitCode, SharedAPI, B256, FUEL_DENOM_RATE,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::TestingContextImpl;
-use fluentbase_universal_token::{
-    consts::{
-        BALANCE_STORAGE_SLOT, ERR_ERC20_INSUFFICIENT_ALLOWANCE, ERR_ERC20_INSUFFICIENT_BALANCE,
-        ERR_ERC20_INVALID_APPROVER, ERR_ERC20_INVALID_RECEIVER, ERR_ERC20_INVALID_SENDER,
-        ERR_ERC20_INVALID_SPENDER, ERR_PAUSABLE_ENFORCED_PAUSE, ERR_PAUSABLE_EXPECTED_PAUSE,
-        ERR_UST_MINTER_MISMATCH, ERR_UST_NOT_MINTABLE, ERR_UST_NOT_PAUSABLE,
-        ERR_UST_PAUSER_MISMATCH, ERR_UST_UNKNOWN_METHOD, SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE,
-        SIG_ERC20_BALANCE, SIG_ERC20_BALANCE_OF, SIG_ERC20_BURN, SIG_ERC20_DECIMALS,
-        SIG_ERC20_MINT, SIG_ERC20_NAME, SIG_ERC20_PAUSE, SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY,
-        SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM, SIG_ERC20_UNPAUSE,
-    },
-    storage::InitialSettings,
-};
 
 /// Encodes a `U256` into a 32-byte big-endian ABI word.
 fn abi_word_u256(x: U256) -> [u8; 32] {

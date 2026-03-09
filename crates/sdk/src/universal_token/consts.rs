@@ -1,7 +1,5 @@
-use fluentbase_sdk::{
-    derive::{derive_evm_error, derive_keccak256_id, erc7201_slot},
-    EvmExitCode, U256,
-};
+use fluentbase_sdk_derive::{derive_evm_error, derive_keccak256_id, erc7201_slot};
+use fluentbase_types::{EvmExitCode, U256};
 
 // Custom UST (Universal Token Standard) error codes
 pub const ERR_UST_UNKNOWN_METHOD: EvmExitCode = derive_evm_error!("USTUnknownMethod(bytes4)");

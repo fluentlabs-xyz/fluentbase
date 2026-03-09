@@ -101,7 +101,8 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
             genesis_version,
             code_hash,
         }
-        .emit(&mut self.sdk);
+        .emit(&mut self.sdk)
+        .unwrap();
     }
 
     #[function_id("changeOwner(address)")]
@@ -111,7 +112,7 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
             panic!("runtime-upgrade: can't set owner to zero address");
         }
         self.owner_accessor().set(&mut self.sdk, new_owner);
-        OwnerChanged { new_owner }.emit(&mut self.sdk);
+        OwnerChanged { new_owner }.emit(&mut self.sdk).unwrap();
     }
 
     #[function_id("owner()")]
@@ -131,7 +132,8 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         OwnerChanged {
             new_owner: SYSTEM_ADDRESS,
         }
-        .emit(&mut self.sdk);
+        .emit(&mut self.sdk)
+        .unwrap();
     }
 }
 

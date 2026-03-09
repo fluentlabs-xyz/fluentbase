@@ -19,12 +19,12 @@ use fluentbase_sdk::{
     system::{
         JournalLog, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
     },
+    universal_token::erc20_compute_storage_keys,
     BlockContextV1, BytecodeOrHash, Bytes, ContractContextV1, ExitCode, HashMap,
     SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
     FUEL_DENOM_RATE, PRECOMPILE_EIP2935, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY,
     STATE_MAIN, U256,
 };
-use fluentbase_universal_token::storage::erc20_compute_storage_keys;
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, rwasm::RwasmBytecode, Bytecode},
     context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
@@ -389,10 +389,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     // Fuel is denominated later into EVM gas.
     // The multiplication can overflow in pathological cases; saturate to u64::MAX.
-    let fuel_limit = interpreter
-        .gas
-        .remaining()
-        .saturating_mul(FUEL_DENOM_RATE);
+    let fuel_limit = interpreter.gas.remaining().saturating_mul(FUEL_DENOM_RATE);
 
     // Execute rWasm entrypoint for this frame.
     let mut runtime_context = RuntimeContext::default();
@@ -451,10 +448,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     let call_id = inputs.call_id;
 
     // Convert REVM gas accounting into runtime fuel units.
-    let fuel_consumed = result
-        .gas
-        .spent()
-        .saturating_mul(FUEL_DENOM_RATE);
+    let fuel_consumed = result.gas.spent().saturating_mul(FUEL_DENOM_RATE);
     let fuel_refunded = result
         .gas
         .refunded()
