@@ -8,12 +8,7 @@ This document explains how the Universal Token contract works in Fluentbase, how
 
 `UST20` is Fluentbase’s ERC-20 style universal token runtime.
 
-Implementation surfaces:
-
-- Contract runtime: `contracts/universal-token/lib.rs`
-- Shared command/storage helpers: `crates/universal-token/*`
-- Runtime routing hook: `crates/revm/src/evm.rs` (uses `resolve_precompiled_runtime_from_input`)
-- Runtime resolution logic: `crates/types/src/genesis.rs`
+It is implemented as a shared system runtime with per-token isolated storage, so each token gets its own state while reusing the same optimized execution path.
 
 The delegated runtime address for universal token is:
 
@@ -21,11 +16,21 @@ The delegated runtime address for universal token is:
 
 UST tokens are **not deployed as unique bytecode implementations**. Instead, deployment input selects the shared runtime, and each deployed token keeps its own isolated storage.
 
+## Why UST20 is useful
+
+UST20 is designed to be both fast and composable across Fluentbase environments.
+
+- **Fast execution path:** all UST20 tokens run through one optimized runtime instead of N custom token implementations.
+- **Seamless cross-environment UX:** the same token standard can be used across EVM/SVM/WASM-facing flows in Fluentbase.
+- **Unified liquidity semantics:** users can interact with assets through familiar interfaces (e.g. ERC-20/SPL-style integrations) without VM-to-VM bridge friction inside the Fluent execution model.
+
+In practice, this gives a more native experience for cross-environment trading and app composition (e.g. ERC-20-side apps interacting with SPL-facing flows over the same underlying asset model).
+
 ---
 
 ## How deployment works
 
-When a contract is created (`CREATE` or `CREATE2`), Fluentbase runs a create hook in `crates/revm/src/evm.rs`:
+When a contract is created (`CREATE` or `CREATE2`), Fluentbase runs an internal create hook:
 
 1. Reads `init_code` from create input.
 2. Calls `resolve_precompiled_runtime_from_input(init_code)`.
@@ -46,7 +51,7 @@ UNIVERSAL_TOKEN_MAGIC_BYTES (4 bytes)
 + abi.encode(InitialSettings)
 ```
 
-`InitialSettings` structure (`crates/universal-token/src/storage.rs`):
+`InitialSettings` structure:
 
 ```rust
 struct InitialSettings {
@@ -80,7 +85,7 @@ Then prepend 4-byte universal token magic prefix.
 
 The runtime dispatches by 4-byte selectors and implements ERC-20-style methods plus optional role-based extensions.
 
-Core selectors (from `crates/universal-token/src/consts.rs`):
+Core selectors:
 
 - `symbol()`
 - `name()`
@@ -111,7 +116,7 @@ Constructor behavior (`deploy_entry`):
 
 ## CREATE deployment example
 
-## Solidity-style (raw create)
+### Solidity-style (raw create)
 
 ```solidity
 bytes memory encodedSettings = abi.encode(
@@ -135,9 +140,9 @@ assembly {
 }
 ```
 
-## Rust SDK helper (recommended)
+### Rust SDK helper (recommended)
 
-`crates/sdk/src/universal_token.rs` exposes helpers:
+SDK exposes helpers:
 
 - `create_deployment_tx(...)`
 - `create_deployment_tx_with_roles(...)`
@@ -187,13 +192,13 @@ Examples:
 - `approve(address spender, uint256 amount)`
 - `mint(address to, uint256 amount)`
 
-Helper command structs in `crates/universal-token/src/command.rs` encode this format via `encode_for_send`.
+Helper command structs encode this format via `encode_for_send`.
 
 ---
 
 ## Storage shape (high-level)
 
-Important slots (`crates/universal-token/src/consts.rs`):
+Important slots:
 
 - total supply
 - minter
