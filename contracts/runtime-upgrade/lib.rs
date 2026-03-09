@@ -37,14 +37,6 @@ struct App<SDK> {
     owner: StorageAddress,
 }
 
-#[derive(Debug, Default, Codec, PartialEq, Clone)]
-pub struct UpgradeToInput {
-    pub target_address: Address,
-    pub genesis_hash: B256,
-    pub genesis_version: String,
-    pub wasm_bytecode: Bytes,
-}
-
 trait RuntimeUpgradeTr {
     /// Upgrade WASM runtime smart contract
     fn upgrade_to(
@@ -75,6 +67,7 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         genesis_version: String,
         wasm_bytecode: Bytes,
     ) {
+        _ = self.only_owner();
         debug_log!("WASM bytecode: {}", hex::encode(&wasm_bytecode));
         if !wasm_bytecode.starts_with(&WASM_MAGIC_BYTES) {
             panic!("runtime-upgrade: malformed wasm bytecode");
@@ -112,12 +105,14 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         .emit(&mut self.sdk);
     }
 
+    #[function_id("changeOwner(address)")]
     fn change_owner(&mut self, new_owner: Address) {
         _ = self.only_owner();
         self.owner_accessor().set(&mut self.sdk, new_owner);
         OwnerChanged { new_owner }.emit(&mut self.sdk);
     }
 
+    #[function_id("owner()")]
     fn owner(&mut self) -> Address {
         let mut owner = self.owner_accessor().get(&self.sdk);
         if owner.is_zero() {
@@ -126,8 +121,10 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         owner
     }
 
+    #[function_id("renounceOwnership()")]
     fn renounce_ownership(&mut self) {
         _ = self.only_owner();
+        // We set to `SYSTEM_ADDRESS` to make a system fully maintained by forks (if it's required)
         self.owner_accessor().set(&mut self.sdk, SYSTEM_ADDRESS);
         OwnerChanged {
             new_owner: SYSTEM_ADDRESS,
