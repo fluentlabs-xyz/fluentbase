@@ -85,8 +85,7 @@ where
         let event_exists = journal
             .logs()
             .iter()
-            .find(|log| log.topics()[0] == ReceivedMessage::SIGNATURE_HASH)
-            .is_some();
+            .any(|log| log.topics()[0] == ReceivedMessage::SIGNATURE_HASH);
         debug_assert_eq!(event_exists, frame_result.interpreter_result().is_ok());
 
         // Load bridge account with its balance
@@ -107,8 +106,7 @@ where
         let event_exists = journal
             .logs()
             .iter()
-            .find(|log| log.topics()[0] == SentMessage::SIGNATURE_HASH)
-            .is_some();
+            .any(|log| log.topics()[0] == SentMessage::SIGNATURE_HASH);
         debug_assert_eq!(event_exists, frame_result.interpreter_result().is_ok());
 
         // Load bridge account with its balance
