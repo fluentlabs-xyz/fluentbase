@@ -16,6 +16,7 @@ fluentbase-sdk-derive = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-crypto = { workspace = true }
 alloy-rlp = { workspace = true }
+alloy-sol-types = { workspace = true }
 rwasm = { workspace = true }
 hashbrown = { workspace = true }
 auto_impl = { workspace = true }

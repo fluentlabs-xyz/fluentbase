@@ -61,6 +61,10 @@ struct Args {
     #[arg(long)]
     test: bool,
 
+    /// A custom RPC endpoint (overrides --local, --dev, --test)
+    #[arg(long)]
+    rpc: Option<String>,
+
     /// Private key hex (0x... or raw hex).
     /// If omitted, reads env PRIVATE_KEY. If missing, prompts via hidden input.
     #[arg(long)]
@@ -179,7 +183,10 @@ fn ask_for_secret(prompt: &str) -> Result<String> {
     Ok(s)
 }
 
-fn pick_rpc(args: &Args) -> Result<&'static str> {
+fn pick_rpc(args: &Args) -> Result<String> {
+    if let Some(rpc) = &args.rpc {
+        return Ok(rpc.clone());
+    }
     let flags = [args.local, args.dev, args.test]
         .into_iter()
         .filter(|x| *x)
@@ -188,11 +195,11 @@ fn pick_rpc(args: &Args) -> Result<&'static str> {
         bail!("You must specify exactly one of --local, --dev, or --test");
     }
     Ok(if args.local {
-        "http://localhost:8545"
+        "http://localhost:8545".to_string()
     } else if args.dev {
-        "https://rpc.devnet.fluent.xyz"
+        "https://rpc.devnet.fluent.xyz".to_string()
     } else {
-        "https://rpc.testnet.fluent.xyz"
+        "https://rpc.testnet.fluent.xyz".to_string()
     })
 }
 
@@ -301,7 +308,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Wallet from private key
+    // Wallet from a private key
     let wallet = load_wallet(&args)?;
     println!("Wallet loaded ({})", wallet.address());
 

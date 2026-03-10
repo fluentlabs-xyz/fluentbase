@@ -1,8 +1,7 @@
-//! Optimism builder trait `RwasmBuilder` used to build the Fluentbase EVM wrapper.
+//! Rwasm builder trait `RwasmBuilder` used to build the Fluentbase EVM wrapper.
 use crate::{evm::RwasmEvm, precompiles::RwasmPrecompiles, RwasmSpecId};
-use revm::context::Transaction;
 use revm::{
-    context::Cfg,
+    context::{Cfg, Transaction},
     context_interface::{Block, JournalTr},
     handler::instructions::EthInstructions,
     interpreter::interpreter::EthInterpreter,
@@ -14,7 +13,7 @@ use revm::{
 pub type DefaultRwasmEvm<CTX, INSP = ()> =
     RwasmEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, RwasmPrecompiles>;
 
-/// Trait that allows for optimism OpEvm to be built.
+/// Trait that allows for Rwasm OpEvm to be built.
 pub trait RwasmBuilder: Sized {
     /// Type of the context.
     type Context;

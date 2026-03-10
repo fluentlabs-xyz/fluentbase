@@ -430,8 +430,9 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     }
 
     fn reset_call_id_counter(&mut self) {
+        // For each transaction we reset the `call_id` counter (used to track interruptions)
         self.transaction_call_id_counter = 1;
-        self.recoverable_runtimes.clear();
+        // Clear recoverable runtimes, because they are no longer valid
         self.recoverable_runtimes.clear();
         // Note: Ideally, this shouldn't be required if there are no memory leaks, but supporting a
         //  memory allocator inside virtual runtime brings overhead.
