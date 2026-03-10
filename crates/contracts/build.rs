@@ -27,6 +27,7 @@ impl PackagesResolver {
 fn main() {
     // Make sure we rerun the build if the feature has changed
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_STD");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_DEBUG_PRINT");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WASMTIME");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_FLUENT_TESTNET");
     println!("cargo:rerun-if-env-changed=PROFILE");
@@ -60,6 +61,10 @@ fn main() {
             "--color=always".to_string(),
             "--no-default-features".to_string(),
         ];
+        if env::var("CARGO_FEATURE_DEBUG_PRINT").is_ok() {
+            args.push("--features".to_string());
+            args.push("debug-print".to_string());
+        }
 
         if !is_debug_profile {
             args.push("--release".to_string());

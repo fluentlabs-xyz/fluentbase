@@ -152,6 +152,7 @@ fn init_contract(
 fn main() {
     // Make sure we rerun the build if the feature has changed
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_STD");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_DEBUG_PRINT");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WASMTIME");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_FLUENT_TESTNET");
     println!("cargo:rerun-if-env-changed=PROFILE");

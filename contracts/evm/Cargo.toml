@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true, default-features = false, features = [] }
-fluentbase-evm = { workspace = true, default-features = false, features = [] }
+fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-evm = { workspace = true, default-features = false }
 spin = { workspace = true }
 
 [dev-dependencies]
@@ -18,3 +18,4 @@ path = "lib.rs"
 [features]
 default = ["std"]
 std = ["fluentbase-sdk/std", "fluentbase-evm/std", "fluentbase-testing/std"]
+debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print", "fluentbase-evm/debug-print"]

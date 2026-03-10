@@ -28,10 +28,8 @@ fluentbase-evm = { workspace = true }
 #fluentbase-svm = { workspace = true }
 
 [features]
-default = [
-    "std",
-    #    "svm"
-]
+default = ["std"]
+debug-print = ["fluentbase-sdk/debug-print"]
 svm = []
 wasmtime = []
 std = [

@@ -25,10 +25,8 @@ fluentbase-contracts = { workspace = true }
 
 [features]
 default = []
-debug-print = []
-svm = [
-    "fluentbase-contracts/svm",
-]
+debug-print = ["fluentbase-contracts/debug-print"]
+svm = ["fluentbase-contracts/svm"]
 wasmtime = []
 std = [
     "fluentbase-sdk/std",

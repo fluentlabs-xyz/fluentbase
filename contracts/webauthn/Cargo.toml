@@ -25,10 +25,11 @@ path = "lib.rs"
 [features]
 default = ["std"]
 std = [
-    "fluentbase-sdk/std", #   "p256/std",
+    "fluentbase-sdk/std",
     "sha2/std",
     "base64/std",
     "hex/std",
     "revm-precompile/std",
     "fluentbase-testing/std",
 ]
+debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print"]

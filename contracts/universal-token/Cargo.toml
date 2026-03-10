@@ -15,11 +15,5 @@ path = "lib.rs"
 
 [features]
 default = ["std"]
-std = [
-    "fluentbase-sdk/std",
-    "fluentbase-testing/std",
-]
-debug-print = [
-    "fluentbase-sdk/debug-print",
-    "fluentbase-testing/debug-print",
-]
+std = ["fluentbase-sdk/std", "fluentbase-testing/std"]
+debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print"]
