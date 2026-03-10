@@ -1,5 +1,5 @@
 use crate::EvmTestingContextWithGenesis;
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::{sol, SolCall, SolEvent};
 use core::str::from_utf8;
 use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
@@ -7,7 +7,10 @@ use fluentbase_sdk::{
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use hex_literal::hex;
-use revm::context::result::{ExecutionResult, Output};
+use revm::{
+    bytecode::opcode,
+    context::result::{ExecutionResult, Output},
+};
 
 #[test]
 fn test_bridge_contract() {
@@ -262,26 +265,47 @@ fn print_result_error(result: &ExecutionResult<RwasmHaltReason>) {
     }
 }
 
+sol! {
+    event ReceivedMessage(bytes32 messageHash, bool successfulCall, bytes returnData);
+
+    event SentMessage(
+        address indexed sender,
+        address indexed to,
+        uint256 value,
+        uint256 chainId,
+        uint256 blockNumber,
+        uint256 nonce,
+        bytes32 messageHash,
+        bytes data
+    );
+
+    function receiveMessage(
+        address from,
+        address to,
+        uint256 value,
+        uint256 chainId,
+        uint256 blockNumber,
+        uint256 messageNonce,
+        bytes calldata message
+    ) external payable;
+
+    function sendMessage(address to, bytes calldata message) external payable;
+}
+
 #[test]
 fn test_bridge_mint_burn() {
     // deploy greeting EVM contract
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 
-    sol! {
-        function receiveMessage(
-            address from,
-            address to,
-            uint256 value,
-            uint256 chainId,
-            uint256 blockNumber,
-            uint256 messageNonce,
-            bytes calldata message
-        ) external payable;
-
-        function sendMessage(address to, bytes calldata message) external payable;
-    }
-
     {
+        let mut bytecode = Vec::new();
+        bytecode.push(opcode::PUSH32);
+        bytecode.extend_from_slice(ReceivedMessage::SIGNATURE_HASH.as_slice());
+        bytecode.push(opcode::PUSH0);
+        bytecode.push(opcode::PUSH0);
+        bytecode.push(opcode::LOG1);
+        ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
+
         let receive_message_input = receiveMessageCall {
             from: Address::repeat_byte(0x01),
             to: Address::repeat_byte(0x01),
@@ -306,6 +330,14 @@ fn test_bridge_mint_burn() {
         assert_eq!(old_balance + U256::from(1e9), new_balance);
     }
 
+    let mut bytecode = Vec::new();
+    bytecode.push(opcode::PUSH32);
+    bytecode.extend_from_slice(SentMessage::SIGNATURE_HASH.as_slice());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::LOG1);
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
+
     let send_message_call = sendMessageCall {
         to: Address::repeat_byte(0x01),
         message: Bytes::new(),
@@ -323,5 +355,40 @@ fn test_bridge_mint_burn() {
     assert!(result.is_success());
     let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
     // Balance remains the same since we burn ETH
+    assert_eq!(old_balance, new_balance);
+}
+
+#[test]
+fn test_revert_burns_bridge_tokens() {
+    // deploy greeting EVM contract
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let mut bytecode = Vec::new();
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::REVERT);
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
+
+    let receive_message_input = receiveMessageCall {
+        from: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x01),
+        value: U256::from(1e9),
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        messageNonce: U256::ZERO,
+        message: Bytes::new(),
+    }
+    .abi_encode();
+    let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        receive_message_input.into(),
+        None,
+        None,
+    );
+    println!("result: {:?}", result);
+    assert!(!result.is_success());
+    let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
     assert_eq!(old_balance, new_balance);
 }
