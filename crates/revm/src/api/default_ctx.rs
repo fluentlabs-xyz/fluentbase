@@ -36,7 +36,7 @@ mod test {
     #[test]
     fn default_run_rwasm() {
         let ctx = Context::rwasm();
-        // convert to optimism context
+        // convert to rwasm context
         let mut evm = ctx.build_rwasm_with_inspector(NoOpInspector {});
         // execute
         let _ = evm.transact(TxEnv::builder().build_fill());

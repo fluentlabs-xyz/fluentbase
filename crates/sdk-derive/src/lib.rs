@@ -389,6 +389,15 @@ pub fn derive_keccak256(token: TokenStream) -> TokenStream {
 }
 
 #[proc_macro]
+pub fn derive_keccak256_bytes4(token: TokenStream) -> TokenStream {
+    let signature = token.to_string();
+    let method_id = &utils::calculate_keccak256(&signature)[..4];
+    TokenStream::from(quote! {
+        [#(#method_id,)*]
+    })
+}
+
+#[proc_macro]
 pub fn derive_evm_error(token: TokenStream) -> TokenStream {
     let signature = token.to_string();
     let method_id = utils::calculate_keccak256_id(&signature);

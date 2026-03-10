@@ -1,5 +1,5 @@
 //! Implementation of the [`ExecuteEvm`] trait for the [`RwasmEvm`].
-use crate::{api::RwasmFrame, evm::RwasmEvm, handler::RwasmHandler, RwasmHaltReason, RwasmSpecId};
+use crate::{evm::RwasmEvm, handler::RwasmHandler, RwasmHaltReason, RwasmSpecId};
 use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use revm::{
     context::{
@@ -21,7 +21,7 @@ use revm::{
     DatabaseCommit, ExecuteCommitEvm, ExecuteEvm,
 };
 
-/// Type alias for Optimism context
+/// Type alias for Rwasm context
 pub trait RwasmContextTr:
     ContextTr<
     Journal: JournalTr<State = EvmState>,
@@ -65,7 +65,7 @@ where
     fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
         default_runtime_executor().reset_call_id_counter();
         self.0.ctx.set_tx(tx);
-        let mut h = RwasmHandler::<_, _, RwasmFrame>::default();
+        let mut h = RwasmHandler::<_, _>::default();
         h.run(self)
     }
 
@@ -77,7 +77,7 @@ where
         &mut self,
     ) -> Result<ExecResultAndState<Self::ExecutionResult, Self::State>, Self::Error> {
         default_runtime_executor().reset_call_id_counter();
-        let mut h = RwasmHandler::<_, _, RwasmFrame>::default();
+        let mut h = RwasmHandler::<_, _>::default();
         h.run(self).map(|result| {
             let state = self.finalize();
             ExecResultAndState::new(result, state)
@@ -112,7 +112,7 @@ where
     fn inspect_one_tx(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
         default_runtime_executor().reset_call_id_counter();
         self.0.ctx.set_tx(tx);
-        let mut h = RwasmHandler::<_, _, RwasmFrame>::default();
+        let mut h = RwasmHandler::<_, _>::default();
         h.inspect_run(self)
     }
 }
@@ -144,7 +144,7 @@ where
             system_contract_address,
             data,
         ));
-        let mut h = RwasmHandler::<_, _, RwasmFrame>::default();
+        let mut h = RwasmHandler::<_, _>::default();
         h.run_system_call(self)
     }
 }

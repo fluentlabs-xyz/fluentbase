@@ -4,10 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true, features = [
-    #    "fast-panic",
-    #    "debug-print",
-] }
+fluentbase-sdk = { workspace = true }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }
@@ -19,3 +16,4 @@ path = "lib.rs"
 [features]
 default = ["std"]
 std = ["fluentbase-sdk/std", "fluentbase-testing/std"]
+debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print"]

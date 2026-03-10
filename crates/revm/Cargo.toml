@@ -32,7 +32,10 @@ once_cell = { workspace = true, features = ["alloc"] }
 rwasm = { workspace = true, default-features = false, features = ["serde"] }
 
 tracing = { version = "0.1" }
+
+# alloy
 alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
 
 # Optional
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
@@ -43,7 +46,6 @@ fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
 
 [dev-dependencies]
-alloy-sol-types.workspace = true
 sha2.workspace = true
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-primitives.workspace = true
