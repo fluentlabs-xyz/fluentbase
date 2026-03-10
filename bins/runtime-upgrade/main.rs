@@ -61,6 +61,10 @@ struct Args {
     #[arg(long)]
     test: bool,
 
+    /// A custom RPC endpoint (overrides --local, --dev, --test)
+    #[arg(long)]
+    rpc: Option<String>,
+
     /// Private key hex (0x... or raw hex).
     /// If omitted, reads env PRIVATE_KEY. If missing, prompts via hidden input.
     #[arg(long)]
@@ -179,7 +183,10 @@ fn ask_for_secret(prompt: &str) -> Result<String> {
     Ok(s)
 }
 
-fn pick_rpc(args: &Args) -> Result<&'static str> {
+fn pick_rpc(args: &Args) -> Result<String> {
+    if let Some(rpc) = &args.rpc {
+        return Ok(rpc.clone());
+    }
     let flags = [args.local, args.dev, args.test]
         .into_iter()
         .filter(|x| *x)
@@ -188,11 +195,11 @@ fn pick_rpc(args: &Args) -> Result<&'static str> {
         bail!("You must specify exactly one of --local, --dev, or --test");
     }
     Ok(if args.local {
-        "http://localhost:8545"
+        "http://localhost:8545".to_string()
     } else if args.dev {
-        "https://rpc.devnet.fluent.xyz"
+        "https://rpc.devnet.fluent.xyz".to_string()
     } else {
-        "https://rpc.testnet.fluent.xyz"
+        "https://rpc.testnet.fluent.xyz".to_string()
     })
 }
 
@@ -301,7 +308,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Wallet from private key
+    // Wallet from a private key
     let wallet = load_wallet(&args)?;
     println!("Wallet loaded ({})", wallet.address());
 
@@ -461,4 +468,44 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn intrinsic_gas(data: &[u8], is_create: bool) -> u64 {
+    const TX_GAS: u64 = 21_000;
+    const TX_DATA_ZERO_GAS: u64 = 4;
+    const TX_DATA_NON_ZERO_GAS: u64 = 16;
+
+    const CREATE_TX_GAS: u64 = 32_000;
+    const INITCODE_WORD_GAS: u64 = 2;
+
+    const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
+
+    let mut zero = 0u64;
+    let mut non_zero = 0u64;
+
+    for &b in data {
+        if b == 0 {
+            zero += 1;
+        } else {
+            non_zero += 1;
+        }
+    }
+
+    // classic intrinsic cost
+    let calldata_cost = zero * TX_DATA_ZERO_GAS + non_zero * TX_DATA_NON_ZERO_GAS;
+
+    let create_cost = if is_create {
+        let words = (data.len() as u64 + 31) / 32;
+        CREATE_TX_GAS + INITCODE_WORD_GAS * words
+    } else {
+        0
+    };
+
+    let classic = TX_GAS + calldata_cost + create_cost;
+
+    // EIP-7623 calldata floor
+    let tokens = zero + 4 * non_zero;
+    let floor = TX_GAS + TOTAL_COST_FLOOR_PER_TOKEN * tokens;
+
+    classic.max(floor)
 }
