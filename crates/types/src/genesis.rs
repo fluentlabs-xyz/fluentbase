@@ -55,6 +55,10 @@ pub const PRECOMPILE_RUNTIME_UPGRADE: Address =
 pub const PRECOMPILE_CREATE2_FACTORY: Address =
     address!("0x0000000000000000000000000000000000520011");
 
+/// A precompile smart contract that handles the bridge.
+pub const PRECOMPILE_ROLLUP_BRIDGE: Address =
+    address!("0x0000000000000000000000000000000000520012");
+
 /// A precompile smart contract that handles fee management.
 pub const PRECOMPILE_FEE_MANAGER: Address = address!("0x0000000000000000000000000000000000520fee");
 
