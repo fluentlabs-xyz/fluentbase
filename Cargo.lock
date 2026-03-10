@@ -4735,6 +4735,7 @@ name = "fluentbase-sdk"
 version = "0.5.7"
 dependencies = [
  "alloy-rlp",
+ "alloy-sol-types",
  "auto_impl",
  "bincode 2.0.1",
  "fluentbase-codec",

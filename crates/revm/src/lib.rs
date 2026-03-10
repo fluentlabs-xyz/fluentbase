@@ -1,4 +1,4 @@
-//! Optimism-specific constants, types, and helpers.
+//! Rwasm-specific constants, types, and helpers.
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -6,6 +6,7 @@
 extern crate alloc as std;
 
 mod api;
+mod bridge;
 mod eip2935;
 mod evm;
 mod executor;
@@ -14,7 +15,6 @@ mod handler;
 mod inspector;
 mod precompiles;
 mod result;
-mod spec;
 mod syscall;
 #[cfg(test)]
 mod tests;
@@ -28,4 +28,3 @@ pub use precompiles::*;
 pub use result::*;
 pub use revm;
 use rwasm as _;
-pub use spec::*;

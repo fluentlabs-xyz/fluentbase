@@ -1,4 +1,4 @@
-//! Contains Optimism specific precompiles.
+//! Contains Rwasm specific precompiles.
 use crate::RwasmSpecId;
 use fluentbase_sdk::PRECOMPILE_ADDRESSES;
 use once_cell::race::OnceBox;
@@ -12,7 +12,7 @@ use revm::{
 };
 use std::{boxed::Box, string::String};
 
-/// Optimism precompile provider
+/// Rwasm precompile provider
 #[derive(Debug, Clone)]
 pub struct RwasmPrecompiles {
     /// Inner precompile provider is the same as Ethereum.

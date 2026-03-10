@@ -247,6 +247,7 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-sol-macro",
+ "serde",
 ]
 
 [[package]]
@@ -1963,6 +1964,7 @@ name = "fluentbase-revm"
 version = "0.5.7"
 dependencies = [
  "alloy-primitives",
+ "alloy-sol-types",
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -1996,6 +1998,7 @@ name = "fluentbase-sdk"
 version = "0.5.7"
 dependencies = [
  "alloy-rlp",
+ "alloy-sol-types",
  "auto_impl",
  "bincode 2.0.1",
  "fluentbase-codec",
