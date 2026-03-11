@@ -74,12 +74,12 @@ fn hash_for_block(k: u64) -> [u8; 32] {
 /// extracts the output.
 fn exec_as_ctx(sdk: TestingContextImpl, sender: Address, block_number: u64, input: &[u8]) -> Bytes {
     let gas_limit = GAS_LIMIT;
-    let mut sdk = sdk
+    let sdk = sdk
         .with_input(Bytes::copy_from_slice(input))
         .with_caller(sender)
         .with_block_number(block_number)
         .with_gas_limit(gas_limit);
-    entrypoint(&mut sdk).unwrap();
+    entrypoint(sdk.clone());
     sdk.take_output().into()
 }
 
