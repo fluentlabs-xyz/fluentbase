@@ -1,10 +1,11 @@
 use alloc::{string::String, vec::Vec};
-use coset::{CborSerializable, CoseError, CoseSign1};
+use coset::{CborSerializable, CoseSign1};
 use der::{asn1::ObjectIdentifier, Decode, DecodePem, Encode};
 use fluentbase_sdk::crypto::crypto_keccak256;
 use p384::ecdsa::signature::Verifier;
 use x509_cert::{certificate::Certificate, ext::pkix::BasicConstraints};
 
+// AWS Nitro root certificate (exp. 2050)
 static NITRO_ROOT_CA_BYTES: &[u8] = include_bytes!("nitro.pem");
 
 // Standard X.509 certificate extension Object Identifiers (OIDs) as defined in RFC 5280
@@ -62,94 +63,57 @@ pub struct AttestationDoc {
 }
 
 impl AttestationDoc {
-    pub fn from_slice(slice: &[u8]) -> Self {
-        let value: ciborium::Value =
-            ciborium::de::from_reader(slice).expect("attestation document should be cbor encoded");
+    pub fn from_slice(slice: &[u8]) -> Option<Self> {
+        let value: ciborium::Value = ciborium::de::from_reader(slice).ok()?;
         let mut doc = Self::default();
-        for (key, value) in value
-            .into_map()
-            .expect("attestation document should be a cbor map")
-            .into_iter()
-        {
-            match key
-                .as_text()
-                .expect("attestation document key should be a cbor text")
-            {
-                "module_id" => {
-                    doc.module_id = value
-                        .into_text()
-                        .expect("attestation.module_id should be of text type");
-                }
-                "digest" => {
-                    doc.digest = value
-                        .into_text()
-                        .expect("attestation.digest should be of text type");
-                }
-                "timestamp" => {
-                    doc.timestamp = i128::from(
-                        value
-                            .into_integer()
-                            .expect("attestation.timestamp should be an integer"),
-                    ) as u64;
-                }
-                "pcrs" => {
-                    doc.pcrs = value
-                        .into_map()
-                        .expect("attestation.pcrs should be a map")
-                        .into_iter()
-                        .map(|x| {
-                            (
-                                i128::from(
-                                    x.0.into_integer()
-                                        .expect("attestation.pcrs keys should be integers"),
-                                ) as u64,
-                                x.1.into_bytes()
-                                    .expect("attestation.pcrs values should be bytes"),
-                            )
-                        })
-                        .collect();
-                }
-                "certificate" => {
-                    doc.certificate = value
-                        .into_bytes()
-                        .expect("attestation.certificate should be bytes");
-                }
-                "cabundle" => {
-                    doc.cabundle = value
-                        .into_array()
-                        .expect("attestation.cabundle should be an array")
-                        .into_iter()
-                        .map(|x| {
-                            x.into_bytes()
-                                .expect("attestation.cabundle elements should be bytes")
-                        })
-                        .collect();
-                }
-                "public_key" => {
-                    doc.public_key = match value {
-                        ciborium::Value::Bytes(b) => Some(b),
-                        ciborium::Value::Null => None,
-                        _ => panic!("attestation.public_key should be bytes or null"),
-                    };
-                }
-                "user_data" => {
-                    doc.user_data = match value {
-                        ciborium::Value::Bytes(b) => Some(b),
-                        ciborium::Value::Null => None,
-                        _ => panic!("attestation.user_data should be bytes or null"),
-                    };
-                }
-                "nonce" => {
-                    doc.nonce = match value {
-                        ciborium::Value::Bytes(b) => Some(b),
-                        ciborium::Value::Null => None,
-                        _ => panic!("attestation.nonce should be bytes or null"),
-                    };
-                }
-                _ => panic!("unexpected key encountered in attestation document"),
-            }
+        for (key, value) in value.into_map().ok()?.into_iter() {
+            doc.insert_kv(key, value)?;
         }
-        doc
+        Some(doc)
+    }
+
+    fn insert_kv(&mut self, key: ciborium::Value, value: ciborium::Value) -> Option<()> {
+        match key.as_text()? {
+            "module_id" => self.module_id = value.into_text().ok()?,
+            "digest" => self.digest = value.into_text().ok()?,
+            "timestamp" => self.timestamp = i128::from(value.into_integer().ok()?) as u64,
+            "pcrs" => {
+                for (k, v) in value.into_map().ok()?.into_iter() {
+                    let k = i128::from(k.into_integer().ok()?) as u64;
+                    let v = v.into_bytes().ok()?;
+                    self.pcrs.push((k, v));
+                }
+            }
+            "certificate" => self.certificate = value.into_bytes().ok()?,
+            "cabundle" => {
+                for x in value.into_array().ok()?.into_iter() {
+                    self.cabundle.push(x.into_bytes().ok()?);
+                }
+            }
+            "public_key" => {
+                self.public_key = match value {
+                    ciborium::Value::Bytes(b) => Some(b),
+                    ciborium::Value::Null => None,
+                    _ => return None,
+                };
+            }
+            "user_data" => {
+                self.user_data = match value {
+                    ciborium::Value::Bytes(b) => Some(b),
+                    ciborium::Value::Null => None,
+                    _ => return None,
+                };
+            }
+            "nonce" => {
+                self.nonce = match value {
+                    ciborium::Value::Bytes(b) => Some(b),
+                    ciborium::Value::Null => None,
+                    _ => return None,
+                };
+            }
+            _ => return None,
+        }
+        Some(())
     }
 }
 
@@ -158,12 +122,15 @@ impl AttestationDoc {
 /// Returns the pathLenConstraint if present (None means unlimited).
 /// Note: Critical flag is not enforced, aligning with reference:
 #[cfg_attr(test, allow(dead_code))]
-fn verify_certificate_extensions(cert: &Certificate, is_ca: bool) -> Option<u32> {
+fn verify_certificate_extensions(
+    cert: &Certificate,
+    is_ca: bool,
+) -> Result<Option<u32>, &'static str> {
     let extensions = cert
         .tbs_certificate
         .extensions
         .as_ref()
-        .expect("extensions must be present");
+        .ok_or("nitro: extensions not present")?;
 
     let mut basic_constraints_found = false;
     let mut key_usage_found = false;
@@ -176,21 +143,21 @@ fn verify_certificate_extensions(cert: &Certificate, is_ca: bool) -> Option<u32>
 
             // Decode BasicConstraints from the extension value (which is an OctetString)
             let extn_bytes = ext.extn_value.as_bytes();
-            let basic_constraints = BasicConstraints::from_der(extn_bytes)
-                .expect("failed to decode basicConstraints extension");
+            let Ok(basic_constraints) = BasicConstraints::from_der(extn_bytes) else {
+                return Err("nitro: failed to decode basicConstraints extension");
+            };
 
             // Verify CA flag matches expected value
-            assert!(
-                basic_constraints.ca == is_ca,
-                "basicConstraints CA flag mismatch"
-            );
+            if basic_constraints.ca != is_ca {
+                return Err("nitro: CA flag mismatched");
+            }
 
             // Extract pathLenConstraint if present
             if let Some(path_len) = basic_constraints.path_len_constraint {
                 max_path_len = Some(path_len as u32);
             }
         } else if ext.extn_id == KEY_USAGE_OID {
-            // KeyUsage extension found (critical flag is optional)
+            // KeyUsage extension found (a critical flag is optional)
             key_usage_found = true;
 
             // Decode KeyUsage as BitString from the extension value
@@ -201,21 +168,18 @@ fn verify_certificate_extensions(cert: &Certificate, is_ca: bool) -> Option<u32>
             // BitString DER format: [0x03] [length] [unused_bits: u8] [data...]
             // We expect tag 0x03 (BIT STRING), unused_bits should be 0x00 (full bytes)
             if extn_bytes.is_empty() {
-                panic!("keyUsage extension value is empty");
+                return Err("nitro: keyUsage extension: value is empty");
             }
 
             // Verify it's a BIT STRING (tag 0x03)
             if extn_bytes[0] != 0x03 {
-                panic!(
-                    "keyUsage extension: expected BIT STRING (0x03), got {}",
-                    extn_bytes[0]
-                );
+                return Err("nitro: keyUsage extension: expected BIT STRING (0x03)");
             }
 
             // Parse length (simple DER length encoding)
             let mut data_start = 2; // Skip tag (1 byte) and length (1 byte for short form)
             if extn_bytes.len() < data_start + 1 {
-                panic!("keyUsage extension: invalid length");
+                return Err("nitro: keyUsage extension: invalid length");
             }
 
             // Check unused bits (used bits only affect the last byte)
@@ -224,7 +188,7 @@ fn verify_certificate_extensions(cert: &Certificate, is_ca: bool) -> Option<u32>
             // Skip unused_bits byte to get the actual data
             data_start += 1;
             if extn_bytes.len() <= data_start {
-                panic!("keyUsage extension is empty");
+                return Err("nitro: keyUsage extension: invalid length");
             }
 
             // Get the first byte of KeyUsage data
@@ -238,73 +202,80 @@ fn verify_certificate_extensions(cert: &Certificate, is_ca: bool) -> Option<u32>
                 // For CA certificates: keyCertSign (bit 5) must be set
                 // In the bitstring, bit 5 means the 6th bit from the left (0-indexed: bit 5)
                 // This corresponds to: 0x04 (binary: 00000100)
-                assert!(
-                    (first_byte & 0x04) != 0,
-                    "keyCertSign bit must be set for CA certificates"
-                );
+                if (first_byte & 0x04) == 0 {
+                    return Err("nitro: keyCertSign bit must be set for CA certificates");
+                }
             } else {
                 // For leaf certificates: digitalSignature (bit 0) must be set
                 // Bit 0 is the leftmost bit, which corresponds to: 0x80 (binary: 10000000)
-                assert!(
-                    (first_byte & 0x80) != 0,
-                    "digitalSignature bit must be set for leaf certificates"
-                );
+                if (first_byte & 0x80) == 0 {
+                    return Err("nitro: digitalSignature bit must be set for leaf certificates");
+                }
             }
         }
     }
 
-    assert!(
-        basic_constraints_found,
-        "basicConstraints extension not found"
-    );
-    assert!(key_usage_found, "keyUsage extension not found");
-
-    // For leaf certificates, pathLenConstraint must not be present
-    if !is_ca {
-        assert!(
-            max_path_len.is_none(),
-            "pathLenConstraint must be undefined for client cert"
-        );
+    if !basic_constraints_found {
+        return Err("nitro: basicConstraints extension not found");
+    } else if !key_usage_found {
+        return Err("nitro: keyUsage extension not found");
     }
 
-    max_path_len
+    // For leaf certificates, pathLenConstraint must not be present
+    if !is_ca && max_path_len.is_some() {
+        return Err("nitro: pathLenConstraint must not be present for leaf certificates");
+    }
+
+    Ok(max_path_len)
 }
 
-fn verify_certificate(subject: &Certificate, issuer: &Certificate) {
-    let signed_data = subject.tbs_certificate.to_der().unwrap();
+fn verify_certificate(subject: &Certificate, issuer: &Certificate) -> Result<(), &'static str> {
+    let signed_data = subject
+        .tbs_certificate
+        .to_der()
+        .map_err(|_| "nitro: could not get signed data")?;
     let signature = subject
         .signature
         .as_bytes()
-        .ok_or("Could not get cert signature")
-        .unwrap();
+        .ok_or("nitro: could not get cert signature")?;
     let verifying_key = issuer
         .tbs_certificate
         .subject_public_key_info
         .subject_public_key
         .as_bytes()
-        .unwrap();
+        .ok_or("nitro: could not get issuer public key")?;
 
     match subject.signature_algorithm.oid {
         ecdsa::ECDSA_SHA384_OID => {
-            let signature = p384::ecdsa::DerSignature::try_from(signature).unwrap();
-            let verify_key = p384::ecdsa::VerifyingKey::from_sec1_bytes(verifying_key).unwrap();
-
-            verify_key.verify(&signed_data, &signature).unwrap();
+            let Ok(signature) = p384::ecdsa::DerSignature::try_from(signature) else {
+                return Err("nitro: invalid ECDSA signature");
+            };
+            let Ok(verify_key) = p384::ecdsa::VerifyingKey::from_sec1_bytes(verifying_key) else {
+                return Err("nitro: invalid ECDSA public key");
+            };
+            verify_key
+                .verify(&signed_data, &signature)
+                .map_err(|_| "nitro: invalid ECDSA signature")?;
         }
         _ => {
-            panic!("Unsupported ECDSA algorithm");
+            return Err("nitro: unsupported ECDSA algorithm");
         }
     };
+
+    Ok(())
 }
 
 /// Verifies that a certificate is valid at the given timestamp.
 /// Checks that notBefore <= timestamp <= notAfter.
-fn verify_certificate_validity(cert: &Certificate, current_timestamp: u64) {
+fn verify_certificate_validity(
+    cert: &Certificate,
+    current_timestamp: u64,
+) -> Result<(), &'static str> {
     let validity = &cert.tbs_certificate.validity;
 
     // Convert certificate validity times to Unix timestamps
     // x509-cert uses Time which can be UTCTime or GeneralizedTime
-    // Both represent time as seconds since Unix epoch
+    // Both have represented time as seconds since Unix epoch
     let not_before = match &validity.not_before {
         x509_cert::time::Time::UtcTime(utc) => {
             // UTCTime is seconds since 1970-01-01 00:00:00 UTC
@@ -321,112 +292,98 @@ fn verify_certificate_validity(cert: &Certificate, current_timestamp: u64) {
         x509_cert::time::Time::GeneralTime(gen) => gen.to_unix_duration().as_secs(),
     };
 
-    assert!(
-        not_before <= current_timestamp,
-        "certificate not valid yet: notBefore={}, current={}",
-        not_before,
-        current_timestamp
-    );
+    if not_before > current_timestamp {
+        return Err("nitro: certificate not valid yet");
+    } else if not_after < current_timestamp {
+        return Err("nitro: certificate not valid anymore");
+    }
 
-    assert!(
-        not_after >= current_timestamp,
-        "certificate not valid anymore: notAfter={}, current={}",
-        not_after,
-        current_timestamp
-    );
+    Ok(())
 }
 
 /// Validates attestation document fields according to the specification.
 /// This implements the validation requirements from validateAttestation in the Solidity reference.
 #[cfg_attr(test, allow(dead_code))]
-pub(crate) fn validate_attestation_document(doc: &AttestationDoc) {
-    // require(ptrs.moduleID.length() > 0, "no module id");
-    assert!(!doc.module_id.is_empty(), "no module id");
-
-    // require(ptrs.timestamp > 0, "no timestamp");
-    assert!(doc.timestamp > 0, "no timestamp");
-
-    // require(ptrs.cabundle.length > 0, "no cabundle");
-    assert!(!doc.cabundle.is_empty(), "no cabundle");
+pub(crate) fn validate_attestation_document(doc: &AttestationDoc) -> Result<(), &'static str> {
+    if doc.module_id.is_empty() {
+        return Err("nitro: missing module id");
+    } else if doc.timestamp == 0 {
+        return Err("nitro: incorrect timestamp");
+    } else if doc.cabundle.is_empty() {
+        return Err("nitro: missing cabundle");
+    }
 
     // require(attestationTbs.keccak(ptrs.digest) == ATTESTATION_DIGEST, "invalid digest");
-    // ATTESTATION_DIGEST is keccak256("SHA384")
     let digest_hash = crypto_keccak256(doc.digest.as_bytes());
-    assert!(
-        digest_hash.as_slice() == ATTESTATION_DIGEST,
-        "invalid digest: expected keccak256('SHA384'), got keccak256('{}')",
-        doc.digest
-    );
+    if digest_hash.0 != ATTESTATION_DIGEST {
+        return Err("nitro: incorrect digest");
+    }
 
     // require(1 <= ptrs.pcrs.length && ptrs.pcrs.length <= 32, "invalid pcrs");
-    assert!(
-        (1..=32).contains(&doc.pcrs.len()),
-        "invalid pcrs: length must be between 1 and 32, got {}",
-        doc.pcrs.len()
-    );
+    if !(1..=32).contains(&doc.pcrs.len()) {
+        return Err("nitro: invalid pcrs");
+    }
 
     // require(ptrs.publicKey.isNull() || (1 <= ptrs.publicKey.length() && ptrs.publicKey.length() <= 1024), "invalid pub key");
     if let Some(ref public_key) = doc.public_key {
-        assert!(
-            (1..=1024).contains(&public_key.len()),
-            "invalid pub key: length must be between 1 and 1024, got {}",
-            public_key.len()
-        );
+        if !(1..=1024).contains(&public_key.len()) {
+            return Err("nitro: invalid pub key length");
+        }
     }
 
     // require(ptrs.userData.isNull() || (ptrs.userData.length() <= 512), "invalid user data");
     if let Some(ref user_data) = doc.user_data {
-        assert!(
-            user_data.len() <= 512,
-            "invalid user data: length must be <= 512, got {}",
-            user_data.len()
-        );
+        if user_data.len() > 512 {
+            return Err("nitro: invalid user data length");
+        }
     }
 
     // require(ptrs.nonce.isNull() || (ptrs.nonce.length() <= 512), "invalid nonce");
     if let Some(ref nonce) = doc.nonce {
-        assert!(
-            nonce.len() <= 512,
-            "invalid nonce: length must be <= 512, got {}",
-            nonce.len()
-        );
+        if nonce.len() > 512 {
+            return Err("nitro: invalid nonce");
+        }
     }
 
     // Validate each PCR length
     // require(ptrs.pcrs[i].length() == 32 || ptrs.pcrs[i].length() == 48 || ptrs.pcrs[i].length() == 64, "invalid pcr");
-    for (pcr_index, (_, pcr_value)) in doc.pcrs.iter().enumerate() {
-        assert!(
-            pcr_value.len() == 32 || pcr_value.len() == 48 || pcr_value.len() == 64,
-            "invalid pcr at index {}: length must be 32, 48, or 64 bytes, got {}",
-            pcr_index,
-            pcr_value.len()
-        );
+    for (_, pcr_value) in doc.pcrs.iter() {
+        let correct_pcr = pcr_value.len() == 32 || pcr_value.len() == 48 || pcr_value.len() == 64;
+        if !correct_pcr {
+            return Err("nitro: invalid pcr data lengths");
+        }
     }
 
     // Validate each cabundle certificate length
     // require(1 <= ptrs.cabundle[i].length() && ptrs.cabundle[i].length() <= 1024, "invalid cabundle cert");
-    for (i, cert_bytes) in doc.cabundle.iter().enumerate() {
-        assert!(
-            (1..=1024).contains(&cert_bytes.len()),
-            "invalid cabundle cert at index {}: length must be between 1 and 1024, got {}",
-            i,
-            cert_bytes.len()
-        );
+    for cert_bytes in doc.cabundle.iter() {
+        if !(1..=1024).contains(&cert_bytes.len()) {
+            return Err("nitro: invalid cabundle cert length");
+        }
     }
+    Ok(())
 }
 
 fn verify_attestation_doc(
     doc: &AttestationDoc,
     root_certificate: &Certificate,
     current_timestamp: u64,
-) {
+) -> Result<(), &'static str> {
     let mut chain = Vec::new();
-    assert!(!doc.cabundle.is_empty());
-    assert_eq!(doc.cabundle[0], root_certificate.to_der().unwrap());
-    for cert in &doc.cabundle {
-        chain.push(Certificate::from_der(cert).unwrap());
+    if doc.cabundle.is_empty() {
+        return Err("nitro: missing cabundle");
     }
-    chain.push(Certificate::from_der(&doc.certificate).unwrap());
+    if doc.cabundle[0]
+        != root_certificate
+            .to_der()
+            .map_err(|_| "nitro: could not get root cert")?
+    {
+        return Err("nitro: invalid cabundle");
+    }
+    for cert in &doc.cabundle {
+        chain.push(Certificate::from_der(cert).map_err(|_| "nitro: invalid cabundle cert")?);
+    }
+    chain.push(Certificate::from_der(&doc.certificate).map_err(|_| "nitro: invalid certificate")?);
 
     let chain_size = chain.len();
     // Chain size excluding root and leaf = number of intermediate CA certificates
@@ -441,21 +398,18 @@ fn verify_attestation_doc(
         let is_ca = i < chain.len() - 1; // All certs except the last are CA certs
 
         // Verify certificate validity period (Section 3.2.3.1)
-        verify_certificate_validity(cert, current_timestamp);
+        verify_certificate_validity(cert, current_timestamp)?;
 
-        let max_path_len = verify_certificate_extensions(cert, is_ca);
+        let max_path_len = verify_certificate_extensions(cert, is_ca)?;
 
         if i == 0 {
             // Root certificate (index 0) specific validation
             // pathLenConstraint must be >= chain size (number of CA certs in chain excluding root)
             // If pathLenConstraint is undefined (None), it's unlimited, which is valid
             if let Some(root_path_len) = max_path_len {
-                assert!(
-                    root_path_len as usize >= ca_chain_length,
-                    "root certificate pathLenConstraint ({}) must be >= chain size ({})",
-                    root_path_len,
-                    ca_chain_length
-                );
+                if !(root_path_len as usize >= ca_chain_length) {
+                    return Err("nitro: root certificate pathLenConstraint too small");
+                }
             }
             // Root certificate should have keyCertSign (already validated in verify_certificate_extensions)
         } else if is_ca {
@@ -463,11 +417,10 @@ fn verify_attestation_doc(
             // Check that pathLenConstraint is not exceeded
             if let Some(parent_max) = parent_max_path_len {
                 // Parent's pathLenConstraint limits how many more CA certs can follow
-                // If parent_max is 0, no more certificates can follow (chain already too long)
-                assert!(
-                    parent_max > 0,
-                    "pathLenConstraint exceeded: parent certificate allows no more certificates"
-                );
+                // If parent_max is 0, no more certificates can follow (a chain already too long)
+                if parent_max == 0 {
+                    return Err("nitro: max certificate chain length reached");
+                }
                 // Note: a child's pathLenConstraint can be greater than its parent's.
                 // We enforce the parent's stricter constraint via the effective value computed below:
                 // min(child, parent - 1).
@@ -476,10 +429,9 @@ fn verify_attestation_doc(
             // Leaf certificate (last in chain)
             // pathLenConstraint must be undefined (already validated in verify_certificate_extensions)
             // digitalSignature bit must be set (already validated in verify_certificate_extensions)
-            assert!(
-                max_path_len.is_none(),
-                "leaf certificate pathLenConstraint must be undefined"
-            );
+            if max_path_len.is_some() {
+                return Err("nitro: leaf certificate path must be undefined");
+            }
         }
 
         // Update parent_max_path_len for the next iteration
@@ -491,7 +443,7 @@ fn verify_attestation_doc(
                     Some(child_max.min(parent_max.saturating_sub(1)))
                 }
                 (Some(parent_max), None) => {
-                    // Child has no constraint, but parent limits it to parent - 1
+                    // Child has no constraint, but a parent limits it to parent - 1
                     Some(parent_max.saturating_sub(1))
                 }
                 (None, Some(child_max)) => Some(child_max),
@@ -501,35 +453,61 @@ fn verify_attestation_doc(
 
         // Verify signature (except for root, which we trust)
         if i > 0 {
-            verify_certificate(&chain[i], &chain[i - 1]);
+            verify_certificate(&chain[i], &chain[i - 1])?;
         }
     }
+
+    Ok(())
 }
 
-fn verify_cosesign1(cosesign1: &CoseSign1, certificate: &Certificate) {
+fn verify_cosesign1(cosesign1: &CoseSign1, certificate: &Certificate) -> Result<(), &'static str> {
     let verifying_key = certificate
         .tbs_certificate
         .subject_public_key_info
         .subject_public_key
         .as_bytes()
-        .unwrap();
-    cosesign1
-        .verify_signature(&[], |signature, signed_data| {
-            let signature = p384::ecdsa::Signature::from_bytes(signature.into()).unwrap();
-            let verify_key = p384::ecdsa::VerifyingKey::from_sec1_bytes(verifying_key).unwrap();
-            verify_key.verify(signed_data, &signature).unwrap();
-            Ok::<(), CoseError>(())
-        })
-        .unwrap();
+        .ok_or("nitro: could not get issuer public key")?;
+    cosesign1.verify_signature(&[], |signature, signed_data| {
+        let Ok(signature) = p384::ecdsa::Signature::from_bytes(signature.into()) else {
+            return Err("nitro: invalid ECDSA signature");
+        };
+        let Ok(verify_key) = p384::ecdsa::VerifyingKey::from_sec1_bytes(verifying_key) else {
+            return Err("nitro: invalid ECDSA public key");
+        };
+        if !verify_key.verify(signed_data, &signature).is_ok() {
+            return Err("nitro: invalid ECDSA signature");
+        }
+        Ok(())
+    })
 }
 
-pub fn parse_and_verify(slice: &[u8], current_timestamp: u64) -> AttestationDoc {
-    let sign1 = CoseSign1::from_slice(slice).unwrap();
-    let doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
-    validate_attestation_document(&doc);
-    let root_cert = Certificate::from_pem(NITRO_ROOT_CA_BYTES).unwrap();
-    verify_attestation_doc(&doc, &root_cert, current_timestamp);
-    let cert = Certificate::from_der(doc.certificate.as_slice()).unwrap();
-    verify_cosesign1(&sign1, &cert);
-    doc
+pub fn parse_attestation_and_verify(
+    slice: &[u8],
+    current_timestamp: u64,
+) -> Result<AttestationDoc, &'static str> {
+    let Ok(sign1) = CoseSign1::from_slice(slice) else {
+        return Err("nitro: not a CoseSign1");
+    };
+    let Some(sign_payload) = sign1.payload.as_ref() else {
+        return Err("nitro: missing sign payload");
+    };
+    let Some(doc) = AttestationDoc::from_slice(sign_payload) else {
+        return Err("nitro: malformed attestation document");
+    };
+
+    if let Err(err) = validate_attestation_document(&doc) {
+        return Err(err);
+    }
+
+    let Ok(root_cert) = Certificate::from_pem(NITRO_ROOT_CA_BYTES) else {
+        return Err("nitro: failed to parse root certificate");
+    };
+    verify_attestation_doc(&doc, &root_cert, current_timestamp)?;
+
+    let Ok(cert) = Certificate::from_der(doc.certificate.as_slice()) else {
+        return Err("nitro: failed to parse certificate");
+    };
+    verify_cosesign1(&sign1, &cert)?;
+
+    Ok(doc)
 }

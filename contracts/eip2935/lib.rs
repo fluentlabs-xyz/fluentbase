@@ -13,8 +13,8 @@
 mod tests;
 
 use fluentbase_sdk::{
-    entrypoint, ContextReader, ExitCode, SharedAPI, EIP2935_HISTORY_SERVE_WINDOW, FUEL_DENOM_RATE,
-    SYSTEM_ADDRESS, U256,
+    system_entrypoint, ContextReader, ExitCode, SystemAPI, EIP2935_HISTORY_SERVE_WINDOW,
+    FUEL_DENOM_RATE, SYSTEM_ADDRESS, U256,
 };
 
 /// ------------------------------
@@ -98,7 +98,7 @@ const GAS_RETRIEVE_SUCCESS_BRANCH: u64 = 125;
 const GAS_SUBMIT_SUCCESS_BRANCH: u64 = 43;
 
 #[inline(always)]
-fn charge_and_panic<SDK: SharedAPI, T>(sdk: &mut SDK, gas: u64) -> Result<T, ExitCode> {
+fn charge_and_panic<SDK: SystemAPI, T>(sdk: &mut SDK, gas: u64) -> Result<T, ExitCode> {
     sdk.charge_fuel(gas * FUEL_DENOM_RATE);
     Err(ExitCode::Panic)
 }
@@ -108,7 +108,7 @@ fn charge_and_panic<SDK: SharedAPI, T>(sdk: &mut SDK, gas: u64) -> Result<T, Exi
 /// Your EVM contract never reverts to `submit:`; it just sstores and stops.
 /// In Rust, we still defend against malformed input and revert with the "len" cost
 /// (closest to how the EVM read path throws on bad calldata length).
-fn submit<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+fn submit<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // Make sure the input is correct
     let input_size = sdk.input_size();
     if input_size != U256::BYTES as u32 {
@@ -136,7 +136,7 @@ fn submit<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
 }
 
 /// Read path — validates calldata, range checks, then returns hash from ring buffer.
-fn retrieve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+fn retrieve<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     // Make sure the input is correct
     let input_size = sdk.input_size();
     if input_size != U256::BYTES as u32 {
@@ -179,16 +179,13 @@ fn retrieve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     Ok(())
 }
 
-pub fn entrypoint<SDK: SharedAPI>(mut sdk: SDK) {
+pub fn entrypoint<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let caller = sdk.context().contract_caller();
-    let result = if caller == SYSTEM_ADDRESS {
-        submit(&mut sdk)
+    if caller == SYSTEM_ADDRESS {
+        submit(sdk)
     } else {
-        retrieve(&mut sdk)
-    };
-    if let Err(exit_code) = result {
-        sdk.native_exit(exit_code);
+        retrieve(sdk)
     }
 }
 
-entrypoint!(entrypoint);
+system_entrypoint!(entrypoint);

@@ -5,10 +5,10 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-coset = { version = "0.3.8", default-features = false }
+coset = { version = "0.4.2", default-features = false }
 ciborium = { version = "^0.2.1", default-features = false }
 x509-cert = { version = "0.2.5", default-features = false, features = ["pem"] }
-der = { version = "0.7.9", default-features = false, features = ["alloc"] }
+der = { version = "=0.7.10", default-features = false, features = ["alloc"] }
 ecdsa = { version = "0.16.9", default-features = false, features = [
     "digest",
     "alloc",
