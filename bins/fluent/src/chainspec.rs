@@ -74,7 +74,7 @@ pub static FLUENT_TESTNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
 /// Fluent Mainnet
 pub static FLUENT_MAINNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
     let genesis = download_and_cache_genesis_verified(FLUENT_MAINNET_GENESIS_TAG, Some("mainnet"))
-        .expect("failed to download/verify Fluent testnet genesis");
+        .expect("failed to download/verify Fluent mainnet genesis");
     let hardforks = fluent_default_chain_hardforks(ForkCondition::Timestamp(0));
     ChainSpec {
         chain: Chain::from(25363),

@@ -77,8 +77,8 @@ impl LegacyInitialSettings {
     }
 }
 
-/// A size of initial settings in bytes (6 slots x 32 bytes)
-const INITIAL_SETTINGS_SIZE: usize = 6 * 32;
+/// A size of initial settings in bytes (4 + 6 slots x 32 bytes)
+const INITIAL_SETTINGS_SIZE: usize = 4 + 6 * 32;
 
 #[derive(Default, Debug, PartialEq, Codec)]
 pub struct InitialSettings {
