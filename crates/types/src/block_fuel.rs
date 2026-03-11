@@ -100,6 +100,28 @@ pub const BLS_G1_DECOMPRESS_COST: u32 = 600 * FUEL_DENOM_RATE as u32;
 pub const UINT256_MUL_MOD_COST: u32 = 8 * FUEL_DENOM_RATE as u32;
 pub const UINT256_X2048_MUL_COST: u32 = 5_000 * FUEL_DENOM_RATE as u32;
 
+/// Calldata surcharge threshold (128 KB).
+///
+/// Ethereum L1 rejects transactions above this size at the RPC level.
+/// Fluent L2 accepts large calldata but applies a quadratic surcharge above this threshold
+/// to bound block data to L1 blob capacity.
+pub const CALLDATA_QUADRATIC_THRESHOLD: u64 = 128 * 1024;
+
+/// Divisor in `surcharge = 3*words + words²/DIVISOR`.
+/// Chosen so that 14 × 128 KB exceeds 100M gas (max block gas):
+/// `DIVISOR < words²(53,248) / (100M - 7.4M linear) ≈ 30.6`
+pub const CALLDATA_QUADRATIC_DIVISOR: u64 = 30;
+
+/// Returns quadratic surcharge for `input_len` bytes above [`CALLDATA_QUADRATIC_THRESHOLD`].
+pub fn calldata_quadratic_surcharge(input_len: u64) -> u64 {
+    if input_len <= CALLDATA_QUADRATIC_THRESHOLD {
+        return 0;
+    }
+    let excess = input_len - CALLDATA_QUADRATIC_THRESHOLD;
+    let words = excess.div_ceil(32);
+    3 * words + words * words / CALLDATA_QUADRATIC_DIVISOR
+}
+
 pub(crate) fn calculate_syscall_fuel(sys_func_idx: SysFuncIdx) -> SyscallFuelParams {
     use SysFuncIdx::*;
     match sys_func_idx {
