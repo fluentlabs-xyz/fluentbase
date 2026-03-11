@@ -160,7 +160,7 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
             sdk.write(result.bytes);
             Ok(())
         }
-        _ => unreachable!("bn128: unsupported contract address"),
+        _ => Err(ExitCode::UnreachableCodeReached),
     }
 }
 
