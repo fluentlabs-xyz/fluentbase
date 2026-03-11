@@ -14,8 +14,7 @@ use fluentbase_runtime::{
     RuntimeContext, RuntimeExecutor,
 };
 use fluentbase_sdk::{
-    bincode, calldata_quadratic_surcharge, is_delegated_runtime_address,
-    is_execute_using_system_runtime, keccak256,
+    bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
     rwasm_core::RwasmModule,
     system::{
         JournalLog, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
@@ -258,16 +257,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     // Extract call data / initcode input bytes.
     let input = interpreter.input.input.bytes(ctx);
-
-    // Quadratic surcharge for top-level transactions only — nested _exec calls
-    // already pay quadratic fuel via WASM intrinsics (see block_fuel.rs).
-    let input_len = input.len() as u64;
-    if frame.depth == 0 {
-        let surcharge = calldata_quadratic_surcharge(input_len);
-        if surcharge > 0 && !interpreter.gas.record_cost(surcharge) {
-            return Ok(NextAction::error(ExitCode::OutOfFuel, interpreter.gas));
-        }
-    }
 
     let target_address = interpreter.input.target_address();
     let caller_address = interpreter.input.caller_address();
