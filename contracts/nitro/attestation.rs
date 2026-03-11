@@ -10,12 +10,20 @@
 //! - validate certificate validity against a supplied timestamp
 //! - verify the COSE signature with the leaf certificate
 //!
+//! Conformance notes against AWS attestation_process.md:
+//! - attestation timestamp is stored in milliseconds since Unix epoch
+//! - syntactic validation rejects null field contents
+//! - optional fields are optional when absent, but invalid when present as null
+//! - replay / freshness is protocol-level and typically enforced via nonce,
+//!   so this base validator does not reject "old" attestations solely by age
+//!
 //! Notes:
 //! - `AttestationDoc.timestamp` is encoded in **milliseconds since Unix epoch**
 //!   by Nitro.
 //! - X.509 validity timestamps are interpreted in **seconds since Unix epoch**.
 //! - `current_timestamp` accepted by `parse_attestation_and_verify` may be
 //!   provided either in seconds or milliseconds and is normalized internally.
+
 use alloc::{string::String, vec::Vec};
 use coset::{CborSerializable, CoseSign1};
 use der::{asn1::ObjectIdentifier, Decode, DecodePem, Encode};
@@ -37,6 +45,22 @@ const ECDSA_SHA384_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840
 
 /// Maximum PCR index supported by Nitro.
 const MAX_PCR_INDEX: u64 = 31;
+
+/// Max allowed size for `public_key`.
+const MAX_PUBLIC_KEY_LEN: usize = 1024;
+
+/// Max allowed size for `user_data`.
+///
+/// AWS documentation is inconsistent:
+/// - schema section says 0..1024
+/// - validator "Check content" section says 0..512
+///
+/// This implementation follows the validator section to match the published
+/// validation rules more closely.
+const MAX_USER_DATA_LEN: usize = 512;
+
+/// Max allowed size for `nonce`.
+const MAX_NONCE_LEN: usize = 512;
 
 /// ATTESTATION_DIGEST is keccak256("SHA384")
 /// This constant matches the Solidity reference:
@@ -90,6 +114,7 @@ impl AttestationDoc {
     /// - malformed field values are rejected
     /// - duplicate PCR indices are rejected
     /// - negative / lossy integer conversions are rejected
+    /// - present fields may not be CBOR null
     pub fn from_slice(slice: &[u8]) -> Option<Self> {
         let value: ciborium::Value = ciborium::de::from_reader(slice).ok()?;
         let mut doc = Self::default();
@@ -134,6 +159,7 @@ impl AttestationDoc {
                     self.cabundle.push(x.into_bytes().ok()?);
                 }
             }
+            // AWS validation requires that no field content be null.
             "public_key" => {
                 self.public_key = match value {
                     ciborium::Value::Bytes(b) => Some(b),
@@ -183,32 +209,6 @@ fn normalize_unix_timestamp_to_secs(timestamp: u64) -> u64 {
     } else {
         timestamp
     }
-}
-
-/// Validates attestation freshness against the provided current timestamp.
-///
-/// Nitro attestation docs encode their own timestamp in milliseconds. This
-/// function enforces:
-/// - not too far in the future
-/// - not too old
-fn verify_attestation_timestamp(
-    attestation_timestamp_ms: u64,
-    current_timestamp: u64,
-) -> Result<(), &'static str> {
-    let _attestation_secs = normalize_unix_timestamp_to_secs(attestation_timestamp_ms);
-    let _current_secs = normalize_unix_timestamp_to_secs(current_timestamp);
-
-    // /// Accept attestation documents that are at most 5 minutes old.
-    // const MAX_ATTESTATION_AGE_SECS: u64 = 5 * 60;
-    // /// Allow small clock skew into the future.
-    // const MAX_FUTURE_SKEW_SECS: u64 = 60;
-    // if attestation_secs > current_secs.saturating_add(MAX_FUTURE_SKEW_SECS) {
-    //     return Err("nitro: attestation timestamp is in the future");
-    // } else if attestation_secs.saturating_add(MAX_ATTESTATION_AGE_SECS) < current_secs {
-    //     return Err("nitro: attestation timestamp is too old");
-    // }
-
-    Ok(())
 }
 
 /// Parses a DER-encoded BIT STRING and returns `(unused_bits, data)`.
@@ -461,19 +461,19 @@ pub(crate) fn validate_attestation_document(doc: &AttestationDoc) -> Result<(), 
     }
 
     if let Some(ref public_key) = doc.public_key {
-        if !(1..=1024).contains(&public_key.len()) {
+        if !(1..=MAX_PUBLIC_KEY_LEN).contains(&public_key.len()) {
             return Err("nitro: invalid pub key length");
         }
     }
 
     if let Some(ref user_data) = doc.user_data {
-        if user_data.len() > 512 {
+        if user_data.len() > MAX_USER_DATA_LEN {
             return Err("nitro: invalid user data length");
         }
     }
 
     if let Some(ref nonce) = doc.nonce {
-        if nonce.len() > 512 {
+        if nonce.len() > MAX_NONCE_LEN {
             return Err("nitro: invalid nonce");
         }
     }
@@ -630,9 +630,13 @@ fn verify_cosesign1(cosesign1: &CoseSign1, certificate: &Certificate) -> Result<
 /// - COSE envelope structure
 /// - attestation document format
 /// - payload-level validation
-/// - freshness
 /// - certificate chain
 /// - COSE signature
+///
+/// This function intentionally does not enforce a freshness window. Replay
+/// protection is protocol-dependent and is commonly achieved by issuing a nonce,
+/// requiring that the enclave embed it into a fresh attestation document, and
+/// validating that nonce at the application layer.
 pub fn parse_attestation_and_verify(
     slice: &[u8],
     current_timestamp: u64,
@@ -648,7 +652,6 @@ pub fn parse_attestation_and_verify(
         AttestationDoc::from_slice(sign_payload).ok_or("nitro: malformed attestation document")?;
 
     validate_attestation_document(&doc)?;
-    verify_attestation_timestamp(doc.timestamp, current_timestamp)?;
 
     let root_cert = Certificate::from_pem(NITRO_ROOT_CA_BYTES)
         .map_err(|_| "nitro: failed to parse root certificate")?;
