@@ -15,9 +15,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-fluentbase-sdk = { workspace = true }
 fluentbase-testing = { workspace = true }
 
 [features]
 default = ["std"]
 std = ["fluentbase-sdk/std", "fluentbase-testing/std"]
+debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print"]
