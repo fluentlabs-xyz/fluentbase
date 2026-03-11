@@ -142,7 +142,7 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         PRECOMPILE_BLS12_381_PAIRING => pairing_checked(sdk),
         PRECOMPILE_BLS12_381_MAP_G1 => map_fp_to_g1_checked(sdk),
         PRECOMPILE_BLS12_381_MAP_G2 => map_fp2_to_g2_checked(sdk),
-        _ => unreachable!("bls12381: unsupported contract address"),
+        _ => return Err(ExitCode::UnreachableCodeReached),
     }?;
     sdk.sync_evm_gas(result.gas_used)?;
     sdk.write(result.bytes);

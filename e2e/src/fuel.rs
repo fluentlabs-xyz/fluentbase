@@ -21,10 +21,7 @@ use std::time::Instant;
 
 #[test]
 fn fuel_nitro_verifier_evm_ctx() {
-    let input = hex::decode(include_bytes!(
-        "../../contracts/nitro/attestation-example.hex"
-    ))
-    .expect("invalid hex");
+    let input = include_bytes!("../../contracts/nitro/testdata/sample.bin").to_vec();
 
     let caller = Address::ZERO;
     let mut ctx = EvmTestingContext::default().with_full_genesis();
