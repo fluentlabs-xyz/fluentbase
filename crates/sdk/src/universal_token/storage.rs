@@ -54,6 +54,33 @@ impl TokenNameOrSymbol {
 }
 
 #[derive(Default, Debug, PartialEq, Codec)]
+pub struct LegacyInitialSettings {
+    pub token_name: [u8; 32],
+    pub token_symbol: [u8; 32],
+    pub decimals: u8,
+    pub initial_supply: U256,
+    pub minter: Address,
+    pub pauser: Address,
+}
+
+impl LegacyInitialSettings {
+    pub fn decode_with_prefix(buf: &[u8]) -> Option<Self> {
+        if buf.len() < 4 {
+            return None;
+        }
+        let (sig, buf) = buf.split_at(4);
+        if sig != UNIVERSAL_TOKEN_MAGIC_BYTES {
+            return None;
+        }
+        let result: Self = SolidityABI::decode(&buf, 0).ok()?;
+        Some(result)
+    }
+}
+
+/// A size of initial settings in bytes (6 slots x 32 bytes)
+const INITIAL_SETTINGS_SIZE: usize = 6 * 32;
+
+#[derive(Default, Debug, PartialEq, Codec)]
 pub struct InitialSettings {
     pub token_name: TokenNameOrSymbol,
     pub token_symbol: TokenNameOrSymbol,
@@ -93,15 +120,23 @@ pub fn erc20_compute_deploy_storage_keys(input: &[u8], caller: &Address) -> Opti
         return None;
     }
     let mut result = Vec::with_capacity(7);
-    let Some(InitialSettings {
-        minter,
-        pauser,
-        initial_supply,
-        ..
-    }) = InitialSettings::decode_with_prefix(input)
-    else {
-        // If input is incorrect then no storage keys required
-        return None;
+    // We need this legacy check until we have a new checkpoint for Fluent Testnet
+    let (minter, pauser, initial_supply) = if input.len() > INITIAL_SETTINGS_SIZE {
+        let LegacyInitialSettings {
+            minter,
+            pauser,
+            initial_supply,
+            ..
+        } = LegacyInitialSettings::decode_with_prefix(input)?;
+        (minter, pauser, initial_supply)
+    } else {
+        let InitialSettings {
+            minter,
+            pauser,
+            initial_supply,
+            ..
+        } = InitialSettings::decode_with_prefix(input)?;
+        (minter, pauser, initial_supply)
     };
     result.push(DECIMALS_STORAGE_SLOT);
     result.push(NAME_STORAGE_SLOT);
