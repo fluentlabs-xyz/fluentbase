@@ -2,10 +2,12 @@
 
 use clap::Parser;
 use fluent::{
-    chainspec::FluentChainSpecParser, evm::FluentExecutorBuilder,
+    chainspec::FluentChainSpecParser,
+    evm::FluentExecutorBuilder,
     payload::FluentPayloadAttributesBuilder,
+    trusted_peers::{resolve_default_consensus_url, resolve_default_trusted_peers},
 };
-use reth_ethereum_cli::Cli;
+use reth_ethereum_cli::{Cli, Commands};
 use reth_node_builder::{Node, NodeHandle};
 use reth_node_ethereum::{EthereumAddOns, EthereumNode};
 use tracing::info;
@@ -25,7 +27,17 @@ fn main() {
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
     }
 
-    if let Err(err) = Cli::<FluentChainSpecParser>::parse().run(async move |builder, _| {
+    let mut cli = Cli::<FluentChainSpecParser>::parse();
+    if let Commands::Node(node) = &mut cli.command {
+        let new_trusted_peers = resolve_default_trusted_peers(node.chain.chain);
+        node.network.trusted_peers.extend(new_trusted_peers);
+        // If consensus URL is not specified, resolve default
+        if node.debug.rpc_consensus_url.is_none() {
+            node.debug.rpc_consensus_url = resolve_default_consensus_url(node.chain.chain);
+        }
+    }
+
+    if let Err(err) = cli.run(async move |builder, _| {
         info!(target: "reth::cli", "Launching node");
 
         let components_builder = EthereumNode::default()
