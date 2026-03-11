@@ -1848,7 +1848,7 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1860,7 +1860,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -1872,7 +1872,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-contracts"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "alloy-genesis",
  "cargo_metadata",
@@ -1885,7 +1885,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-crypto"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -1897,7 +1897,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -1913,7 +1913,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-genesis"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "alloy-genesis",
  "fluentbase-contracts",
@@ -1925,7 +1925,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-revm"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -1941,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -1959,7 +1959,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "alloy-rlp",
  "alloy-sol-types",
@@ -1976,7 +1976,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -1989,7 +1989,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -2011,7 +2011,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "alloy-primitives",
  "bincode 2.0.1",

@@ -15,7 +15,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "0.5.7"
+version = "0.5.8"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
