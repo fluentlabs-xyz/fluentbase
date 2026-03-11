@@ -239,3 +239,63 @@ fn test_exec_quadratic_charging() {
         );
     }
 }
+
+/// Measure gas for a direct EVM transaction with given calldata size.
+/// Uses zero bytes (0x00) for worst-case scenario: 4 gas/byte (vs 16 for non-zero),
+/// maximizing data volume per unit of gas — the exact attack vector for blob overflow.
+fn measure_calldata_gas(calldata_size: usize) -> u64 {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let deployer = Address::ZERO;
+
+    // Deploy the simple callee (reads input_size, writes 4 bytes, exits)
+    let callee_wat = callee_contract_wat();
+    let callee = deploy_contract(&mut ctx, deployer, 0, &callee_wat);
+
+    // Send direct EVM TX with zero-byte calldata (worst case: 4 gas/byte)
+    let calldata = Bytes::from(vec![0x00; calldata_size]);
+    let call = ctx.call_evm_tx(deployer, callee, calldata, Some(500_000_000), None);
+
+    assert!(
+        call.is_success(),
+        "calldata_size={}: call failed: {:?}",
+        calldata_size,
+        call
+    );
+    call.gas_used()
+}
+
+#[test]
+fn test_calldata_below_threshold() {
+    const BLOB_SIZE: usize = 128 * 1024;
+
+    // Below threshold: linear, no surcharge
+    let gas_0 = measure_calldata_gas(0);
+    let gas_half = measure_calldata_gas(BLOB_SIZE / 2);
+    let gas_full = measure_calldata_gas(BLOB_SIZE);
+
+    let delta_half = gas_half - gas_0;
+    let delta_full = gas_full - gas_0;
+    assert!(
+        delta_full.abs_diff(delta_half * 2) <= 100,
+        "below threshold must be linear: gas_0={}, gas_half={}, gas_full={}",
+        gas_0,
+        gas_half,
+        gas_full,
+    );
+}
+
+#[test]
+fn test_calldata_max_block() {
+    const BLOB_SIZE: usize = 128 * 1024;
+    const MAX_BLOCK_GAS: u64 = 100_000_000;
+
+    // 14 blobs must exceed max block gas — transaction cannot fit in a single block.
+    // This is the goal: DIVISOR=30 is chosen specifically to enforce this bound.
+    let gas_14_blobs = measure_calldata_gas(14 * BLOB_SIZE);
+    assert!(
+        gas_14_blobs > MAX_BLOCK_GAS,
+        "14 blobs should exceed 100M gas, got {} ({:.1}M)",
+        gas_14_blobs,
+        gas_14_blobs as f64 / 1e6,
+    );
+}

@@ -5,11 +5,13 @@ use crate::{
     types::SystemInterruptionOutcome,
     RwasmFrame, RwasmHaltReason,
 };
+use fluentbase_sdk::calldata_quadratic_surcharge;
 use revm::{
     context::{result::ExecutionResult, ContextTr, JournalTr},
-    handler::{EvmTr, EvmTrError, Handler},
+    context_interface::{Cfg, Transaction},
+    handler::{validation, EvmTr, EvmTrError, Handler},
     inspector::{InspectorEvmTr, InspectorHandler},
-    interpreter::interpreter::EthInterpreter,
+    interpreter::{interpreter::EthInterpreter, InitialAndFloorGas},
     state::EvmState,
     Inspector,
 };
@@ -29,6 +31,27 @@ where
     type Evm = EVM;
     type Error = ERROR;
     type HaltReason = RwasmHaltReason;
+
+    #[inline]
+    fn validate_initial_tx_gas(
+        &self,
+        evm: &mut Self::Evm,
+    ) -> Result<InitialAndFloorGas, Self::Error> {
+        let ctx = evm.ctx_ref();
+        let mut gas = validation::validate_initial_tx_gas(
+            ctx.tx(),
+            ctx.cfg().spec().into(),
+            ctx.cfg().is_eip7623_disabled(),
+            ctx.cfg().is_legacy_bytecode_enabled(),
+        )
+        .map_err(Self::Error::from)?;
+
+        // Quadratic calldata surcharge for large inputs (>128 KB)
+        let input_len = ctx.tx().input().len() as u64;
+        gas.initial_gas += calldata_quadratic_surcharge(input_len);
+
+        Ok(gas)
+    }
 
     #[inline]
     fn run_without_catch_error(
