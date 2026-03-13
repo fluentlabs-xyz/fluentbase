@@ -4,13 +4,14 @@ use core::str::from_utf8;
 use fluentbase_contracts::{FLUENTBASE_EXAMPLES_ERC20, FLUENTBASE_EXAMPLES_GREETING};
 use fluentbase_sdk::{
     address, bytes, calc_create_address, constructor::encode_constructor_params, Address,
-    PRECOMPILE_BLAKE2F, PRECOMPILE_SECP256K1_RECOVER, U256,
+    PRECOMPILE_BLAKE2F, PRECOMPILE_CREATE2_FACTORY, PRECOMPILE_SECP256K1_RECOVER, U256,
 };
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use hex_literal::hex;
 use revm::{
     bytecode::opcode, context::result::ExecutionResult::Revert, primitives::hardfork::SpecId,
 };
+use std::iter;
 
 #[test]
 fn test_evm_greeting() {
@@ -291,7 +292,6 @@ fn test_evm_balance() {
     bytecode.push(opcode::PUSH0);
     bytecode.push(opcode::RETURN);
     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    ctx.cfg.spec = SpecId::PRAGUE;
     let contract_address = ctx.deploy_evm_tx(
         Address::with_last_byte(255),
         wrap_to_init_code(&bytecode).into(),
@@ -574,4 +574,46 @@ fn test_evm_send_one_wei_to_precompile() {
         .any(|w| w == message);
     assert!(found, "Expected revert message not found");
     assert_eq!(result.gas_used(), 29015);
+}
+
+#[test]
+fn test_create2_factory() {
+    const CALLER_ADDRESS: Address = Address::repeat_byte(0x11);
+    let mut bytecode = Vec::new();
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(123);
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::MSTORE);
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(32);
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::RETURN);
+    let mut input = vec![0u8; 32]; // salt
+    input.extend(wrap_to_init_code(&bytecode));
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let result = ctx.call_evm_tx(
+        CALLER_ADDRESS,
+        PRECOMPILE_CREATE2_FACTORY,
+        input.into(),
+        Some(1_000_000),
+        None,
+    );
+    assert!(result.is_success());
+    let output = result.output().unwrap();
+    assert_eq!(output.len(), 20);
+    println!("{:?}", result);
+    let contract_address = Address::from_slice(output.as_ref());
+    let result = ctx.call_evm_tx(
+        CALLER_ADDRESS,
+        contract_address,
+        hex!("").into(),
+        None,
+        None,
+    );
+    println!("{:?}", result);
+    if !result.is_success() {
+        try_print_utf8_error(result.output().cloned().unwrap_or_default().as_ref());
+    }
+    let output = U256::from_be_slice(result.output().unwrap().as_ref());
+    assert_eq!(output, U256::from(123));
 }

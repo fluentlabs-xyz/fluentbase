@@ -32,8 +32,6 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
             if let Some(intermediary_input) = state.intermediary_input.take() {
                 drop(intermediary_input);
                 #[cfg(target_arch = "wasm32")]
-                crate::allocator::BlockListAllocator::dump_blocks();
-                #[cfg(target_arch = "wasm32")]
                 crate::allocator::BlockListAllocator::gc();
             }
             // Output size greater than 0 indicates an interruption outcome

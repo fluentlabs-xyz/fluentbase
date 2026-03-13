@@ -41,6 +41,13 @@ pub fn calc_create_metadata_address(owner: &Address, salt: &U256) -> Address {
 mod tests {
     use super::*;
     use crate::{address, b256};
+    use fluentbase_types::{PRECOMPILE_ROLLUP_BRIDGE, PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER};
+
+    #[test]
+    fn test_bridge_address_correct() {
+        let address = calc_create_address(&PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER, 1);
+        assert_eq!(address, PRECOMPILE_ROLLUP_BRIDGE);
+    }
 
     #[test]
     fn test_create_address() {

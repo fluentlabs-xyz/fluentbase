@@ -1,13 +1,12 @@
 //! Contains Rwasm specific precompiles.
 use crate::RwasmSpecId;
-use fluentbase_sdk::PRECOMPILE_ADDRESSES;
 use once_cell::race::OnceBox;
 use revm::{
     context::Cfg,
     context_interface::ContextTr,
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},
-    precompile::Precompiles,
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::Address,
 };
 use std::{boxed::Box, string::String};
@@ -25,7 +24,7 @@ impl RwasmPrecompiles {
     /// Create a new precompile provider with the given OpSpec.
     #[inline]
     pub fn new_with_spec(spec: RwasmSpecId) -> Self {
-        let precompiles = genesis();
+        let precompiles = empty_precompile_list();
         Self {
             inner: EthPrecompiles { precompiles, spec },
             spec,
@@ -40,7 +39,7 @@ impl RwasmPrecompiles {
 }
 
 /// Returns precompiles for Homestead spec.
-fn genesis() -> &'static Precompiles {
+fn empty_precompile_list() -> &'static Precompiles {
     static INSTANCE: OnceBox<Precompiles> = OnceBox::new();
     INSTANCE.get_or_init(|| {
         let precompiles = Precompiles::default();
@@ -76,7 +75,8 @@ where
 
     #[inline]
     fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
-        Box::new(PRECOMPILE_ADDRESSES.iter().cloned())
+        let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(self.spec));
+        Box::new(precompiles.addresses().cloned())
     }
 
     #[inline]

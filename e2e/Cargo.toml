@@ -73,6 +73,7 @@ debug-print = [
     "fluentbase-runtime/debug-print",
     "fluentbase-sdk/debug-print",
     "fluentbase-genesis/debug-print",
+    "fluentbase-contracts/debug-print",
     "revm/debug-print",
     "fluentbase-revm/debug-print",
     # "fluentbase-svm/debug-print",

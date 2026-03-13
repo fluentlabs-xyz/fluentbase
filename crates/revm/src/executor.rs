@@ -2,7 +2,7 @@ use crate::{
     api::RwasmFrame,
     eip2935::eip2935_compute_storage_keys,
     inspector::inspect_syscall,
-    syscall::execute_rwasm_interruption,
+    syscall::{execute_rwasm_interruption, DefaultRuntimeExecutorMemoryReader},
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
@@ -731,7 +731,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         inspector,
         ctx,
         inputs,
-        crate::syscall::DefaultRuntimeExecutorMemoryReader {},
+        DefaultRuntimeExecutorMemoryReader {},
     )
 }
 

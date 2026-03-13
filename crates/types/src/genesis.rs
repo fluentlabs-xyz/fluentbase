@@ -1,4 +1,6 @@
 use crate::{address, hex, Address, Bytes, B256, UNIVERSAL_TOKEN_MAGIC_BYTES, WASM_MAGIC_BYTES};
+use revm_precompile::{PrecompileSpecId, Precompiles};
+use revm_primitives::hardfork::SpecId;
 
 /// Address of the delegated **EVM runtime**.
 ///
@@ -58,8 +60,12 @@ pub const PRECOMPILE_CREATE2_FACTORY_DEPLOYER: Address =
     address!("0x3fab184622dc19b6109349b94811493bf2a45362");
 
 /// A precompile smart contract that handles the bridge.
+///
+/// This address is pre-calculated based on the bridge deployer.
 pub const PRECOMPILE_ROLLUP_BRIDGE: Address =
-    address!("0x0000000000000000000000000000000000520012");
+    address!("0x9CAcf613fC29015893728563f423fD26dCdB8Ddc");
+pub const PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER: Address =
+    address!("0x482582979C9125abAb5a06F0E196E8F4015bF77A");
 
 /// A precompile smart contract that handles fee management.
 pub const PRECOMPILE_FEE_MANAGER: Address = address!("0x0000000000000000000000000000000000520fee");
@@ -119,48 +125,53 @@ pub const PRECOMPILE_BLS12_381_MAP_G2: Address = evm_address(0x11);
 ///
 /// This list is used for routing/dispatch decisions and must remain stable
 /// across nodes for consensus.
-pub const PRECOMPILE_ADDRESSES: &[Address] = &[
-    PRECOMPILE_BIG_MODEXP,
-    PRECOMPILE_BLAKE2F,
-    PRECOMPILE_BLS12_381_G1_ADD,
-    PRECOMPILE_BLS12_381_G1_MSM,
-    PRECOMPILE_BLS12_381_G2_ADD,
-    PRECOMPILE_BLS12_381_G2_MSM,
-    PRECOMPILE_BLS12_381_MAP_G1,
-    PRECOMPILE_BLS12_381_MAP_G2,
-    PRECOMPILE_BLS12_381_PAIRING,
-    PRECOMPILE_BN256_ADD,
-    PRECOMPILE_BN256_MUL,
-    PRECOMPILE_BN256_PAIR,
-    PRECOMPILE_EIP2935,
-    PRECOMPILE_EIP7951,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
-    PRECOMPILE_EVM_RUNTIME,
-    PRECOMPILE_IDENTITY,
-    PRECOMPILE_KZG_POINT_EVALUATION,
-    PRECOMPILE_NITRO_VERIFIER,
-    PRECOMPILE_OAUTH2_VERIFIER,
-    PRECOMPILE_RIPEMD160,
-    PRECOMPILE_SECP256K1_RECOVER,
-    PRECOMPILE_SHA256,
-    PRECOMPILE_SVM_RUNTIME,
-    PRECOMPILE_WASM_RUNTIME,
-    PRECOMPILE_RUNTIME_UPGRADE,
-    PRECOMPILE_CREATE2_FACTORY,
-    PRECOMPILE_FEE_MANAGER,
-    PRECOMPILE_WEBAUTHN_VERIFIER,
-    PRECOMPILE_WRAPPED_ETH,
+///
+/// NOTE: DON'T EDIT, THIS LIST WILL BE REMOVED AT NEXT TESTNET SNAPSHOT!
+const TESTNET_LEGACY_PRECOMPILE_ADDRESSES: &[Address] = &[
+    PRECOMPILE_BIG_MODEXP,              // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_BLAKE2F,                 // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_BLS12_381_G1_ADD,        // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_BLS12_381_G1_MSM,        // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_BLS12_381_G2_ADD,        // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_BLS12_381_G2_MSM,        // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_BLS12_381_MAP_G1,        // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_BLS12_381_MAP_G2,        // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_BLS12_381_PAIRING,       // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_BN256_ADD,               // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_BN256_MUL,               // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_BN256_PAIR,              // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_EIP2935,                 // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_EIP7951,                 // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_EVM_RUNTIME,             // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_IDENTITY,                // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_KZG_POINT_EVALUATION,    // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_NITRO_VERIFIER,          // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_OAUTH2_VERIFIER,         // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_RIPEMD160,               // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_SECP256K1_RECOVER,       // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_SHA256,                  // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_SVM_RUNTIME,             // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_WASM_RUNTIME,            // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_RUNTIME_UPGRADE,         // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_CREATE2_FACTORY,         // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_FEE_MANAGER,             // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_WEBAUTHN_VERIFIER,       // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_WRAPPED_ETH,             // FORK ALERT: DON'T TOUCH!
 ];
 
 /// Returns `true` if `address` is part of the executor's system-precompile set.
 ///
-/// This is a pure membership check against `PRECOMPILE_ADDRESSES`.
-///
-/// Note: fork/spec gating (when introduced) should live here, so callers do not
-/// accidentally drift by re-implementing activation logic.
-pub fn is_system_precompile(address: &Address) -> bool {
-    // TODO(dmitry123): Add spec check here, once we have first fork
-    PRECOMPILE_ADDRESSES.contains(address)
+/// P.S: We exclude Fluent system precompiles from this list since it may affect
+///  future runtime upgrades and cause redundant forks, because EVM precompiles have
+///  enforced empty account state.
+pub fn is_evm_system_precompile(chain_id: u64, spec: SpecId, address: &Address) -> bool {
+    // TODO(dmitry123): Remove testnet legacy precompiles once we have new snapshot
+    if chain_id == 0x5202 {
+        return TESTNET_LEGACY_PRECOMPILE_ADDRESSES.contains(address);
+    }
+    let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(spec));
+    precompiles.contains(address)
 }
 
 /// Addresses whose execution is delegated to the **system runtime** implementation.
@@ -272,7 +283,7 @@ pub const DEFAULT_FEE_MANAGER_AUTH: Address =
 /// Hash of: `upgradeTo(address,uint256,string,bytes)`
 pub const UPDATE_GENESIS_PREFIX: [u8; 4] = hex!("0x288fb3b8");
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct GenesisContract {
     /// Human-readable name of the genesis contract (used for manifests/debugging).
     pub name: &'static str,
@@ -298,14 +309,4 @@ pub fn is_delegated_runtime_address(address: &Address) -> bool {
         || address == &PRECOMPILE_SVM_RUNTIME
         || address == &PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
         || address == &PRECOMPILE_WASM_RUNTIME
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn create2_factory_is_registered_in_precompile_set() {
-        assert!(is_system_precompile(&PRECOMPILE_CREATE2_FACTORY));
-    }
 }
