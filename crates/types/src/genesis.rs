@@ -53,7 +53,9 @@ pub const PRECOMPILE_RUNTIME_UPGRADE: Address =
 
 /// A precompile smart contract that can deploy child contracts using CREATE/CREATE2.
 pub const PRECOMPILE_CREATE2_FACTORY: Address =
-    address!("0x0000000000000000000000000000000000520011");
+    address!("0x4e59b44847b379578588920cA78FbF26c0B4956C");
+pub const PRECOMPILE_CREATE2_FACTORY_DEPLOYER: Address =
+    address!("0x3fab184622dc19b6109349b94811493bf2a45362");
 
 /// A precompile smart contract that handles the bridge.
 pub const PRECOMPILE_ROLLUP_BRIDGE: Address =
