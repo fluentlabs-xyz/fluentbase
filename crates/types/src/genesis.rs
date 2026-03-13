@@ -58,8 +58,12 @@ pub const PRECOMPILE_CREATE2_FACTORY_DEPLOYER: Address =
     address!("0x3fab184622dc19b6109349b94811493bf2a45362");
 
 /// A precompile smart contract that handles the bridge.
+///
+/// This address is pre-calculated based on the bridge deployer.
 pub const PRECOMPILE_ROLLUP_BRIDGE: Address =
-    address!("0x0000000000000000000000000000000000520012");
+    address!("0x9CAcf613fC29015893728563f423fD26dCdB8Ddc");
+pub const PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER: Address =
+    address!("0x482582979C9125abAb5a06F0E196E8F4015bF77A");
 
 /// A precompile smart contract that handles fee management.
 pub const PRECOMPILE_FEE_MANAGER: Address = address!("0x0000000000000000000000000000000000520fee");
