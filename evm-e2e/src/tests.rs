@@ -9,7 +9,7 @@ macro_rules! define_tests {
         $(
             #[test]
             fn $test_name() {
-                $crate::utils::run_e2e_test($test_path)
+                $crate::utils::run_evm_e2e_test($test_path)
             }
         )*
     };
@@ -3150,4 +3150,3 @@ mod st_zero_knowledge2 {
         fn ecmul_1_2_2_21000_96("tests/GeneralStateTests/stZeroKnowledge2/ecmul_1-2_2_21000_96.json");
     }
 }
-

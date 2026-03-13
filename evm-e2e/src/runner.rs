@@ -1,28 +1,28 @@
-use super::{
-    merkle_trie::{log_rlp_hash, state_merkle_trie_root},
-    models::{SpecName, Test, TestSuite},
-    utils::recover_address,
+use super::merkle_trie::{
+    compute_test_roots, log_rlp_hash, state_merkle_trie_root, TestValidationResult,
 };
-use crate::inspector::{InspectorEvent, TraceInspector};
-use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
+use crate::{
+    inspector::TraceInspector,
+    state::{evm_cache_state, fill_tx_env, fluent_cache_state, prepare_env, GENESIS_CONTRACTS},
+};
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm};
-use fluentbase_sdk::{Address, PRECOMPILE_EVM_RUNTIME};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use revm::{
-    bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
     context::{
-        result::ExecutionResult, transaction::AccessListItem, BlockEnv, CfgEnv, TransactTo,
-        TransactionType::Eip1559, TxEnv,
+        result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction},
+        ContextTr,
     },
-    database::{CacheState, InMemoryDB, State, StateBuilder},
+    database::{bal::EvmDatabaseError, EmptyDB, InMemoryDB, State, StateBuilder},
     handler::MainnetContext,
-    interpreter::{gas::MemoryGas, return_error, return_ok, return_revert, InstructionResult},
-    primitives::{hardfork::SpecId, keccak256, Bytes, B256, U256},
+    interpreter::InstructionResult,
+    primitives::{hardfork::SpecId, Bytes, B256, U256},
     state::AccountInfo,
     ExecuteCommitEvm, InspectCommitEvm, MainBuilder, MainnetEvm,
 };
+use revm_statetest_types::{SpecName, Test, TestSuite};
 use serde_json::json;
 use std::{
+    convert::Infallible,
     fmt::Debug,
     path::{Path, PathBuf},
     sync::{
@@ -122,146 +122,7 @@ fn skip_test(path: &Path) -> bool {
     ) || path_str.contains("stEOF")
 }
 
-#[allow(dead_code)]
-fn check_evm_trace(
-    inspector1: &mut TraceInspector,
-    inspector2: &mut TraceInspector,
-) -> Result<(), TestError> {
-    let mut it1 = inspector1.events.iter_mut().filter(|e| match e {
-        InspectorEvent::Step(step) => match step.opcode {
-            opcode::CALL
-            | opcode::STATICCALL
-            | opcode::CALLCODE
-            | opcode::DELEGATECALL
-            | opcode::CREATE
-            | opcode::CREATE2
-            | opcode::STOP
-            | opcode::RETURN
-            | opcode::REVERT => true,
-            _ => false,
-        },
-        _ => true,
-    });
-    let mut it2 = inspector2.events.iter_mut();
-    let mut e1 = it1.next().unwrap();
-    let mut e2 = it2.next().unwrap();
-    loop {
-        let (e1_next, e2_next) = match (&mut e1, &mut e2) {
-            (
-                InspectorEvent::Call {
-                    inputs: _inputs1,
-                    outcome: ref mut outcome1,
-                },
-                InspectorEvent::Call {
-                    inputs: _inputs2,
-                    outcome: ref mut outcome2,
-                },
-            ) => {
-                println!("Call == Call");
-                // assert_eq!(inputs1, inputs2);
-                *outcome1.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
-                *outcome2.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
-                match (
-                    &outcome1.as_ref().unwrap().result.result,
-                    &outcome2.as_ref().unwrap().result.result,
-                ) {
-                    (return_ok!(), return_ok!()) => {}
-                    (return_revert!(), return_revert!()) => {}
-                    (return_error!(), return_error!()) => {}
-                    (_, _) => assert_eq!(outcome1, outcome2),
-                }
-                assert_eq!(
-                    outcome1.as_ref().unwrap().gas(),
-                    outcome2.as_ref().unwrap().gas()
-                );
-                assert_eq!(
-                    outcome1.as_ref().unwrap().output(),
-                    outcome2.as_ref().unwrap().output()
-                );
-                (it1.next(), it2.next())
-            }
-            (
-                InspectorEvent::Create {
-                    inputs: _inputs1,
-                    outcome: ref mut outcome1,
-                },
-                InspectorEvent::Create {
-                    inputs: _inputs2,
-                    outcome: ref mut outcome2,
-                },
-            ) => {
-                println!("Create == Create");
-                // assert_eq!(inputs1, inputs2);
-                *outcome1.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
-                *outcome2.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
-                match (
-                    &outcome1.as_ref().unwrap().result.result,
-                    &outcome2.as_ref().unwrap().result.result,
-                ) {
-                    (return_ok!(), return_ok!()) => {}
-                    (return_revert!(), return_revert!()) => {}
-                    (return_error!(), return_error!()) => {}
-                    (_, _) => assert_eq!(outcome1, outcome2),
-                }
-                assert_eq!(
-                    outcome1.as_ref().unwrap().gas(),
-                    outcome2.as_ref().unwrap().gas()
-                );
-                // assert_eq!(
-                //     outcome1.as_ref().unwrap().output(),
-                //     outcome2.as_ref().unwrap().output()
-                // );
-                assert_eq!(
-                    outcome1.as_ref().unwrap().address,
-                    outcome2.as_ref().unwrap().address,
-                );
-                (it1.next(), it2.next())
-            }
-            (InspectorEvent::Selfdestruct { .. }, _) => {
-                // don't check selfdestruct events
-                e1 = it1.next().unwrap();
-                continue;
-            }
-            (InspectorEvent::Log(_), InspectorEvent::Log(_)) => {
-                println!("Log == Log");
-                assert_eq!(e1, e2);
-                (it1.next(), it2.next())
-            }
-            (InspectorEvent::Step(step1), InspectorEvent::Step(step2)) => {
-                println!(
-                    "Opcode({}) == Opcode({})",
-                    step1.opcode_name, step2.opcode_name
-                );
-                (it1.next(), it2.next())
-            }
-            (_, _) => {
-                eprintln!("\n{:?} == {:?}", e1, e2);
-                unreachable!()
-            }
-        };
-        match (e1_next, e2_next) {
-            (Some(e1_next), Some(e2_next)) => {
-                e1 = e1_next;
-                e2 = e2_next;
-            }
-            (None, None) => {
-                break;
-            }
-            (Some(extra), None) => {
-                eprintln!("{:?} == {:?}", e1, e2);
-                eprintln!("Extra (EVM): {:?}", extra);
-                unreachable!("oh, we have different number of events")
-            }
-            (None, Some(extra)) => {
-                eprintln!("{:?} == {:?}", e1, e2);
-                eprintln!("Extra (FLUENT): {:?}", extra);
-                unreachable!("oh, we have different number of events")
-            }
-        }
-    }
-    Ok(())
-}
-
+#[allow(clippy::too_many_arguments, clippy::single_match)]
 fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
     test: &Test,
     expected_output: Option<&Bytes>,
@@ -323,13 +184,7 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
     let logs_root1 = log_rlp_hash(exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default());
     let logs_root2 = log_rlp_hash(exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default());
 
-    let state_root1 = state_merkle_trie_root(
-        evm.journaled_state
-            .database
-            .cache
-            .trie_account()
-            .into_iter(),
-    );
+    let state_root1 = state_merkle_trie_root(evm.journaled_state.database.cache.trie_account());
 
     let print_json_output = |error: Option<String>| {
         if print_json_outcome {
@@ -396,6 +251,12 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
     }
 
     if logs_root1 != test.logs {
+        let logs1 = exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default();
+        let logs2 = exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default();
+
+        println!("EVM logs ({:?}):", logs1);
+        println!("FLUENT logs ({:?}):", logs2);
+
         let kind = TestErrorKind::LogsRootMismatch {
             got: logs_root1,
             expected: test.logs,
@@ -445,7 +306,7 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
                 " - {}: {}",
                 hex::encode(log.address),
                 log.topics()
-                    .get(0)
+                    .first()
                     .map(|v| hex::encode(&v))
                     .unwrap_or_default()
             )
@@ -457,7 +318,7 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
                 " - {}: {}",
                 hex::encode(log.address),
                 log.topics()
-                    .get(0)
+                    .first()
                     .map(|v| hex::encode(&v))
                     .unwrap_or_default()
             )
@@ -656,18 +517,153 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
     Ok(())
 }
 
-thread_local! {
-    pub static GENESIS_CONTRACTS: Arc<Vec<(Address, B256, Bytecode)>> = {
-        let mut genesis_contracts = vec![];
-        for (address, genesis_account) in GENESIS_CONTRACTS_BY_ADDRESS.iter() {
-            let bytecode = Bytecode::new_raw(genesis_account.rwasm_bytecode.clone());
-            genesis_contracts.push((*address, genesis_account.rwasm_bytecode_hash, bytecode));
-        }
-        Arc::new(genesis_contracts)
-    };
+fn format_evm_result(
+    exec_result: &Result<
+        ExecutionResult<HaltReason>,
+        EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
+    >,
+) -> String {
+    match exec_result {
+        Ok(r) => match r {
+            ExecutionResult::Success { reason, .. } => format!("Success: {reason:?}"),
+            ExecutionResult::Revert { .. } => "Revert".to_string(),
+            ExecutionResult::Halt { reason, .. } => format!("Halt: {reason:?}"),
+        },
+        Err(e) => e.to_string(),
+    }
 }
 
-pub fn execute_test_suite(
+fn build_json_output(
+    test: &Test,
+    test_name: &str,
+    exec_result: &Result<
+        ExecutionResult<HaltReason>,
+        EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
+    >,
+    validation: &TestValidationResult,
+    spec: SpecId,
+    error: Option<String>,
+) -> serde_json::Value {
+    json!({
+        "stateRoot": validation.state_root,
+        "logsRoot": validation.logs_root,
+        "output": exec_result.as_ref().ok().and_then(|r| r.output().cloned()).unwrap_or_default(),
+        "gasUsed": exec_result.as_ref().ok().map(|r| r.gas_used()).unwrap_or_default(),
+        "pass": error.is_none(),
+        "errorMsg": error.unwrap_or_default(),
+        "evmResult": format_evm_result(exec_result),
+        "postLogsHash": validation.logs_root,
+        "fork": spec,
+        "test": test_name,
+        "d": test.indexes.data,
+        "g": test.indexes.gas,
+        "v": test.indexes.value,
+    })
+}
+
+fn validate_exception(
+    test: &Test,
+    exec_result: &Result<
+        ExecutionResult<HaltReason>,
+        EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
+    >,
+) -> Result<bool, TestErrorKind> {
+    match (&test.expect_exception, exec_result) {
+        (None, Ok(_)) => Ok(false), // No exception expected, execution succeeded
+        (Some(_), Err(_)) => Ok(true), // Exception expected and occurred
+        _ => Err(TestErrorKind::UnexpectedException {
+            expected_exception: test.expect_exception.clone(),
+            got_exception: exec_result.as_ref().err().map(|e| e.to_string()),
+        }),
+    }
+}
+
+fn validate_output(
+    expected_output: Option<&Bytes>,
+    actual_result: &ExecutionResult<HaltReason>,
+) -> Result<(), TestErrorKind> {
+    if let Some((expected, actual)) = expected_output.zip(actual_result.output()) {
+        if expected != actual {
+            return Err(TestErrorKind::UnexpectedOutput {
+                expected_output: Some(expected.clone()),
+                got_output: actual_result.output().cloned(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn check_fluent_execution(
+    test: &Test,
+    expected_output: Option<&Bytes>,
+    test_name: &str,
+    exec_result: &Result<
+        ExecutionResult<HaltReason>,
+        EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
+    >,
+    db: &mut State<EmptyDB>,
+    spec: SpecId,
+    print_json_outcome: bool,
+) -> Result<(), TestErrorKind> {
+    let validation = compute_test_roots(exec_result, db);
+
+    let print_json = |error: Option<&TestErrorKind>| {
+        if print_json_outcome {
+            let json = build_json_output(
+                test,
+                test_name,
+                exec_result,
+                &validation,
+                spec,
+                error.map(|e| e.to_string()),
+            );
+            eprintln!("{json}");
+        }
+    };
+
+    // Check if exception handling is correct
+    let exception_expected = validate_exception(test, exec_result).inspect_err(|e| {
+        print_json(Some(e));
+    })?;
+
+    // If exception was expected and occurred, we're done
+    if exception_expected {
+        print_json(None);
+        return Ok(());
+    }
+
+    // Validate output if execution succeeded
+    if let Ok(result) = exec_result {
+        validate_output(expected_output, result).inspect_err(|e| {
+            print_json(Some(e));
+        })?;
+    }
+
+    // Validate logs root
+    if validation.logs_root != test.logs {
+        let error = TestErrorKind::LogsRootMismatch {
+            got: validation.logs_root,
+            expected: test.logs,
+        };
+        print_json(Some(&error));
+        return Err(error);
+    }
+
+    // Validate state root
+    if validation.state_root != test.hash {
+        let error = TestErrorKind::StateRootMismatch {
+            got: validation.state_root,
+            expected: test.hash,
+        };
+        print_json(Some(&error));
+        return Err(error);
+    }
+
+    print_json(None);
+    Ok(())
+}
+
+pub fn execute_evm_test_suite(
     path: &Path,
     elapsed: &Arc<Mutex<Duration>>,
     trace: bool,
@@ -687,24 +683,23 @@ pub fn execute_test_suite(
         kind: e.into(),
     })?;
 
-    let genesis_contracts = GENESIS_CONTRACTS.with(Clone::clone);
-
-    let selected_test_cases = vec![];
+    let selected_test_cases = Vec::new();
     for (name, unit) in suite.0 {
-        if selected_test_cases.len() > 0 && !selected_test_cases.contains(&name.as_str()) {
+        if !selected_test_cases.is_empty() && !selected_test_cases.contains(&name.as_str()) {
             continue;
         }
         if cfg!(feature = "debug-print") {
             println!("test case: {}", &name);
         }
-        // Create database and insert cache
-        let mut cache_state = CacheState::new(false);
-        let mut cache_state2 = CacheState::new(false);
+        // Create a database and insert a cache
+        let evm_cache_state = evm_cache_state(&unit);
+        let mut fluent_cache_state = fluent_cache_state(&unit);
 
+        let start = Instant::now();
         if cfg!(feature = "debug-print") {
             println!("\nloading genesis accounts:");
         }
-        let start = Instant::now();
+        let genesis_contracts = GENESIS_CONTRACTS.with(Clone::clone);
         for (address, code_hash, bytecode) in genesis_contracts.iter() {
             let acc_info = AccountInfo {
                 balance: U256::ZERO,
@@ -713,152 +708,16 @@ pub fn execute_test_suite(
                 account_id: None,
                 code: Some(bytecode.clone()),
             };
-            cache_state2.insert_account(*address, acc_info);
+            fluent_cache_state.insert_account(*address, acc_info);
         }
         if cfg!(feature = "debug-print") {
             println!("loaded genesis accounts in: {:?}", start.elapsed());
         }
 
-        if cfg!(feature = "debug-print") {
-            println!("\nloading EVM accounts:");
-        }
-        let start = Instant::now();
-        for (address, info) in &unit.pre {
-            let acc_info = AccountInfo {
-                balance: info.balance,
-                code_hash: keccak256(&info.code),
-                nonce: info.nonce,
-                code: Some(Bytecode::new_raw(info.code.clone())),
-                ..Default::default()
-            };
-            cache_state.insert_account_with_storage(*address, acc_info, info.storage.clone());
-        }
-        for (address, info) in unit.pre {
-            let mut acc_info = cache_state2
-                .accounts
-                .get(&address)
-                .and_then(|a| a.account.clone())
-                .map(|a| a.info)
-                .unwrap_or_else(AccountInfo::default);
-            if !acc_info.balance.is_zero() && !info.balance.is_zero() {
-                assert_eq!(
-                    acc_info.balance, info.balance,
-                    "genesis account balance mismatch, this test won't work"
-                );
-            }
-            acc_info.balance = info.balance;
-            acc_info.nonce = info.nonce;
-            let prev_code_len = acc_info.code.as_ref().map(|v| v.len()).unwrap_or_default();
-            if prev_code_len > 0 && info.code.len() > 0 {
-                println!(
-                    "WARN: code length collision for an account ({address}), this test might not work"
-                );
-            }
-            let evm_code_hash = keccak256(&info.code);
-            // println!(
-            //     " - address={address}, evm_code_hash={evm_code_hash}, evm_code_hash_u256={}, code_len={}",
-            //     Into::<U256>::into(evm_code_hash), info.code.len(),
-            // );
-            // write EVM code hash state
-            if info.code.len() > 0 {
-                // set account info bytecode to the proxy loader
-                let mut metadata = vec![];
-                metadata.extend_from_slice(evm_code_hash.as_slice());
-                metadata.extend_from_slice(info.code.as_ref());
-                let bytecode = Bytecode::OwnableAccount(OwnableAccountBytecode::new(
-                    PRECOMPILE_EVM_RUNTIME,
-                    metadata.into(),
-                ));
-                acc_info.code_hash = bytecode.hash_slow();
-                acc_info.code = Some(bytecode);
-            }
-            // write evm account into state
-            cache_state2.insert_account_with_storage(address, acc_info, info.storage);
-        }
-        if cfg!(feature = "debug-print") {
-            println!("loaded evm accounts in: {:?}", start.elapsed());
-        }
+        let (mut cfg_env, block_env, mut tx_env) = prepare_env(&unit, &name)?;
 
-        let mut cfg_env = CfgEnv::default();
-        let mut block_env = BlockEnv::default();
-        let mut tx_env = TxEnv::default();
-
-        // for mainnet
-        cfg_env.chain_id = 1;
-        // cfg_env.blob_target_and_max_count;
-        // env.cfg.spec_id is set down the road
-
-        // block env
-        block_env.number = unit.env.current_number.to();
-        block_env.beneficiary = unit.env.current_coinbase;
-        block_env.timestamp = unit.env.current_timestamp.to();
-        block_env.gas_limit = unit.env.current_gas_limit.to();
-        block_env.basefee = unit.env.current_base_fee.unwrap_or_default().to();
-        block_env.difficulty = unit.env.current_difficulty.to();
-        // after the Merge prevrandao replaces mix_hash field in block and replaced difficulty
-        // opcode in EVM.
-        block_env.prevrandao = unit.env.current_random;
-        // EIP-4844
-        // if let Some(current_excess_blob_gas) = unit.env.current_excess_blob_gas {
-        //     block_env.set_blob_excess_gas_and_price(
-        //         current_excess_blob_gas.to(),
-        //         BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-        //     );
-        // } else if let (Some(parent_blob_gas_used), Some(parent_excess_blob_gas)) = (
-        //     unit.env.parent_blob_gas_used,
-        //     unit.env.parent_excess_blob_gas,
-        // ) {
-        //     block_env.set_blob_excess_gas_and_price(
-        //         calc_excess_blob_gas(parent_blob_gas_used.to(), parent_excess_blob_gas.to(), 0),
-        //         BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-        //     );
-        // }
-
-        // tx env
-        tx_env.caller = if let Some(address) = unit.transaction.sender {
-            address
-        } else {
-            recover_address(unit.transaction.secret_key.as_slice()).ok_or_else(|| TestError {
-                name: name.clone(),
-                kind: TestErrorKind::UnknownPrivateKey(unit.transaction.secret_key),
-            })?
-        };
-        // Handle gas price overflow - if the gas price is too large for u128,
-        // this should result in a GASLIMIT_PRICE_PRODUCT_OVERFLOW exception
-        let gas_price_value = unit
-            .transaction
-            .gas_price
-            .or(unit.transaction.max_fee_per_gas)
-            .unwrap_or_default();
-
-        // Check if gas price is too large to fit in u128 (causes overflow)
-        if gas_price_value > U256::from(u128::MAX) {
-            // This is the case where gas price is too large to fit in u128
-            // This should result in GASLIMIT_PRICE_PRODUCT_OVERFLOW exception
-            // We'll use the maximum u128 value and let the EVM handle the overflow
-            tx_env.gas_price = u128::MAX;
-        } else {
-            tx_env.gas_price = gas_price_value.to();
-        }
-        tx_env.gas_priority_fee = unit.transaction.max_priority_fee_per_gas.map(|v| v.to());
-        // EIP-4844
-        tx_env.blob_hashes = unit.transaction.blob_versioned_hashes;
-        tx_env.max_fee_per_blob_gas = unit
-            .transaction
-            .max_fee_per_blob_gas
-            .map(|v| v.to())
-            .unwrap_or_default();
-
-        // post and execution
         for (spec_name, tests) in unit.post {
-            if matches!(
-                spec_name,
-                SpecName::ByzantiumToConstantinopleAt5
-                    | SpecName::Constantinople
-                    | SpecName::Unknown
-            ) {
-                continue;
-            }
+            // Fluent is post-PRAGUE only
             if spec_name.lt(&SpecName::Prague) {
                 continue;
             }
@@ -874,49 +733,19 @@ pub fn execute_test_suite(
                         hex::encode(test.txbytes.clone().unwrap_or_default().as_ref())
                     );
                 }
-                tx_env.gas_limit = unit.transaction.gas_limit[test.indexes.gas].saturating_to();
+                fill_tx_env(&mut tx_env, &unit.transaction, &test);
 
-                tx_env.data = unit
-                    .transaction
-                    .data
-                    .get(test.indexes.data)
-                    .unwrap()
-                    .clone();
-                tx_env.value = unit.transaction.value[test.indexes.value];
+                let mut evm_cache = evm_cache_state.clone();
+                evm_cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
+                let mut fluent_cache = fluent_cache_state.clone();
+                fluent_cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
 
-                let access_list: Vec<AccessListItem> = unit
-                    .transaction
-                    .access_lists
-                    .get(test.indexes.data)
-                    .and_then(Option::as_deref)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|item| AccessListItem {
-                        address: item.address,
-                        storage_keys: item.storage_keys.clone(),
-                    })
-                    .collect();
-                tx_env.access_list = access_list.into();
-
-                tx_env.kind = match unit.transaction.to {
-                    Some(add) => TransactTo::Call(add),
-                    None => TransactTo::Create,
-                };
-
-                tx_env.tx_type = Eip1559 as u8;
-                tx_env.nonce = unit.transaction.nonce.to();
-
-                let mut cache = cache_state.clone();
-                cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
-                let mut cache2 = cache_state2.clone();
-                cache2.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
-
-                let state: State<InMemoryDB> = StateBuilder::default()
-                    .with_cached_prestate(cache)
+                let evm_state: State<InMemoryDB> = StateBuilder::default()
+                    .with_cached_prestate(evm_cache)
                     .with_bundle_update()
                     .build();
-                let state2: State<InMemoryDB> = StateBuilder::default()
-                    .with_cached_prestate(cache2)
+                let fluent_state: State<InMemoryDB> = StateBuilder::default()
+                    .with_cached_prestate(fluent_cache)
                     .with_bundle_update()
                     .build();
                 let output = if trace {
@@ -924,7 +753,7 @@ pub fn execute_test_suite(
                     if cfg!(feature = "debug-print") {
                         print!("\n\nrunning original EVM tests... ");
                     }
-                    let mut evm = MainnetContext::new(state, spec_id)
+                    let mut evm = MainnetContext::new(evm_state, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
                         .build_mainnet_with_inspector(TraceInspector::new());
@@ -938,7 +767,7 @@ pub fn execute_test_suite(
                     if cfg!(feature = "debug-print") {
                         print!("\n\nrunning RWASM tests... ");
                     }
-                    let mut evm2 = RwasmContext::new(state2, spec_id)
+                    let mut evm2 = RwasmContext::new(fluent_state, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
                         .build_rwasm_with_inspector(TraceInspector::new());
@@ -973,7 +802,7 @@ pub fn execute_test_suite(
                     if cfg!(feature = "debug-print") {
                         print!("\n\nrunning original EVM tests... ");
                     }
-                    let mut evm = MainnetContext::new(state, spec_id)
+                    let mut evm = MainnetContext::new(evm_state, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
                         .build_mainnet();
@@ -984,7 +813,7 @@ pub fn execute_test_suite(
                         println!("{:?}", start.elapsed());
                         print!("\n\nrunning RWASM tests... ");
                     }
-                    let mut evm2 = RwasmContext::new(state2, spec_id)
+                    let mut evm2 = RwasmContext::new(fluent_state, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
                         .build_rwasm();
@@ -1027,6 +856,145 @@ pub fn execute_test_suite(
                 }
 
                 return Err(e);
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn execute_fluent_test_suite(
+    path: &Path,
+    elapsed: &Arc<Mutex<Duration>>,
+    trace: bool,
+    print_json_outcome: bool,
+) -> Result<(), TestError> {
+    if skip_test(path) {
+        return Ok(());
+    }
+
+    if cfg!(feature = "debug-print") {
+        println!("Running test: {:?}", path);
+    }
+
+    let s = std::fs::read_to_string(path).unwrap();
+    let suite: TestSuite = serde_json::from_str(&s).map_err(|e| TestError {
+        name: path.to_string_lossy().into_owned(),
+        kind: e.into(),
+    })?;
+
+    let selected_test_cases = Vec::new();
+    for (name, unit) in suite.0 {
+        if !selected_test_cases.is_empty() && !selected_test_cases.contains(&name.as_str()) {
+            continue;
+        }
+        if cfg!(feature = "debug-print") {
+            println!("test case: {}", &name);
+        }
+
+        let mut cache_state = evm_cache_state(&unit);
+        let start = Instant::now();
+        if cfg!(feature = "debug-print") {
+            println!("\nloading genesis accounts:");
+        }
+        let genesis_contracts = GENESIS_CONTRACTS.with(Clone::clone);
+        for (address, code_hash, bytecode) in genesis_contracts.iter() {
+            let acc_info = AccountInfo {
+                balance: U256::ZERO,
+                nonce: 0,
+                code_hash: *code_hash,
+                account_id: None,
+                code: Some(bytecode.clone()),
+            };
+            cache_state.insert_account(*address, acc_info);
+        }
+        if cfg!(feature = "debug-print") {
+            println!("loaded genesis accounts in: {:?}", start.elapsed());
+        }
+
+        let (mut cfg_env, block_env, mut tx_env) = prepare_env(&unit, &name)?;
+
+        for (spec_name, tests) in unit.post {
+            // Fluent is post-PRAGUE only
+            if spec_name.lt(&SpecName::Prague) {
+                continue;
+            }
+
+            let spec_id = spec_name.to_spec_id();
+            cfg_env.spec = spec_id;
+
+            for (index, test) in tests.into_iter().enumerate() {
+                if cfg!(feature = "debug-print") {
+                    println!(
+                        "\n\n\n\n\nRunning test with txdata: ({}) {}",
+                        index,
+                        hex::encode(test.txbytes.clone().unwrap_or_default().as_ref())
+                    );
+                }
+                fill_tx_env(&mut tx_env, &unit.transaction, &test);
+
+                let mut cache = cache_state.clone();
+                cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
+
+                let state: State<EmptyDB> = StateBuilder::default()
+                    .with_cached_prestate(cache)
+                    .with_bundle_update()
+                    .build();
+                let output = if trace {
+                    let start = Instant::now();
+                    let mut evm = RwasmContext::new(state, spec_id)
+                        .with_cfg(cfg_env.clone())
+                        .with_block(block_env.clone())
+                        .build_rwasm_with_inspector(TraceInspector::new());
+                    evm.0.cfg.legacy_bytecode_enabled = false;
+                    let result_fluent = evm.inspect_tx_commit(tx_env.clone());
+                    *elapsed.lock().unwrap() += start.elapsed();
+                    let output = check_fluent_execution(
+                        &test,
+                        unit.out.as_ref(),
+                        &name,
+                        &result_fluent,
+                        evm.0.db_mut(),
+                        spec_id,
+                        print_json_outcome,
+                    );
+                    output
+                } else {
+                    let mut evm = RwasmContext::new(state, spec_id)
+                        .with_cfg(cfg_env.clone())
+                        .with_block(block_env.clone())
+                        .build_rwasm();
+                    evm.0.cfg.legacy_bytecode_enabled = false;
+                    let timer = Instant::now();
+                    let result = evm.transact_commit(tx_env.clone());
+                    println!("result: {:?}", result);
+                    *elapsed.lock().unwrap() += timer.elapsed();
+                    let start = Instant::now();
+                    let output = check_fluent_execution(
+                        &test,
+                        unit.out.as_ref(),
+                        &name,
+                        &result,
+                        evm.0.db_mut(),
+                        spec_id,
+                        print_json_outcome,
+                    );
+                    if cfg!(feature = "debug-print") {
+                        println!("{:?}", start.elapsed());
+                    }
+                    output
+                };
+
+                let Err(e) = output else {
+                    continue;
+                };
+
+                // if we are already in trace mode, return error
+                static FAILED: AtomicBool = AtomicBool::new(false);
+                if trace || FAILED.swap(true, Ordering::SeqCst) {
+                    return Err(TestError { name, kind: e });
+                }
+
+                return Err(TestError { name, kind: e });
             }
         }
     }
@@ -1087,7 +1055,7 @@ pub fn run(
                 (prev_idx, test_path)
             };
 
-            let result = execute_test_suite(&test_path, &elapsed, trace, print_outcome);
+            let result = execute_evm_test_suite(&test_path, &elapsed, trace, print_outcome);
 
             // Increment after the test is done.
             console_bar.inc(1);

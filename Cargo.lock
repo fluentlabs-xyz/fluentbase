@@ -16055,3 +16055,8 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "revm-statetest-types"
+version = "14.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#4a639f805e7f59aa9559ac9b2b38025d18bdde58"

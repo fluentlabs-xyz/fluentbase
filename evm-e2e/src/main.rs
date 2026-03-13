@@ -1,9 +1,10 @@
+mod fixtures;
 mod inspector;
 pub mod merkle_trie;
-pub mod models;
 mod runner;
 #[cfg(test)]
 mod short_tests;
+mod state;
 #[cfg(test)]
 mod tests;
 pub mod utils;
