@@ -17,9 +17,9 @@ use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create_metadata_address, is_execute_using_system_runtime, is_system_precompile, Address,
-    Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME,
-    PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
+    calc_create_metadata_address, is_evm_system_precompile, is_execute_using_system_runtime,
+    Address, Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY,
+    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
@@ -369,7 +369,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Effectively stateless), but some test suites require this edge case.
             // Marking system precompiles as empty improves EVM compatibility, even though it may.
             // Cause certain unit tests to fail. We accept that trade-off.
-            if is_system_precompile(&target_address) {
+            if is_evm_system_precompile(spec_id, &target_address) {
                 account_load.is_empty = true;
             }
             // EIP-150: gas cost changes for IO-heavy operations.
@@ -713,7 +713,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 .selfdestruct(current_target_address, target, skip_cold);
             let mut result = unwrap_journal_load_error!(result);
             // System precompiles are treated as empty accounts for gas/state semantics.
-            if result.data.target_exists && is_system_precompile(&target) {
+            if result.data.target_exists && is_evm_system_precompile(spec_id, &target) {
                 result.data.target_exists = false;
             }
             // Charge gas for SELFDESTRUCT based on the current hardfork rules.
@@ -783,7 +783,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             // We store system precompile bytecode in the state trie,
             // According to EVM requirements, we should return empty code.
-            if is_system_precompile(&address) {
+            if is_evm_system_precompile(spec_id, &address) {
                 code_len = 0;
             }
             // Code size we encode as 32-bytes in LE encoding,
@@ -822,7 +822,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 _ => account_info.code_hash,
             };
 
-            if is_system_precompile(&address) {
+            if is_evm_system_precompile(spec_id, &address) {
                 // We store system precompile bytecode in the state trie,
                 // According to EVM requirements, we should return empty code.
                 code_hash = B256::ZERO;
@@ -877,7 +877,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
 
             // System precompiles return empty code per EVM requirements.
-            if is_system_precompile(&address) {
+            if is_evm_system_precompile(spec_id, &address) {
                 bytecode = Bytes::new();
             }
 

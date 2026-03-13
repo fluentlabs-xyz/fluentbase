@@ -1,4 +1,6 @@
 use crate::{address, hex, Address, Bytes, B256, UNIVERSAL_TOKEN_MAGIC_BYTES, WASM_MAGIC_BYTES};
+use revm_precompile::{PrecompileSpecId, Precompiles};
+use revm_primitives::hardfork::SpecId;
 
 /// Address of the delegated **EVM runtime**.
 ///
@@ -158,13 +160,12 @@ pub const PRECOMPILE_ADDRESSES: &[Address] = &[
 
 /// Returns `true` if `address` is part of the executor's system-precompile set.
 ///
-/// This is a pure membership check against `PRECOMPILE_ADDRESSES`.
-///
-/// Note: fork/spec gating (when introduced) should live here, so callers do not
-/// accidentally drift by re-implementing activation logic.
-pub fn is_system_precompile(address: &Address) -> bool {
-    // TODO(dmitry123): Add spec check here, once we have first fork
-    PRECOMPILE_ADDRESSES.contains(address)
+/// P.S: We exclude Fluent system precompiles from this list since it may affect
+///  future runtime upgrades and cause redundant forks, because EVM precompiles have
+///  enforced empty account state.
+pub fn is_evm_system_precompile(spec: SpecId, address: &Address) -> bool {
+    let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(spec));
+    precompiles.contains(address)
 }
 
 /// Addresses whose execution is delegated to the **system runtime** implementation.
@@ -302,14 +303,4 @@ pub fn is_delegated_runtime_address(address: &Address) -> bool {
         || address == &PRECOMPILE_SVM_RUNTIME
         || address == &PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
         || address == &PRECOMPILE_WASM_RUNTIME
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn create2_factory_is_registered_in_precompile_set() {
-        assert!(is_system_precompile(&PRECOMPILE_CREATE2_FACTORY));
-    }
 }

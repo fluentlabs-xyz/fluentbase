@@ -185,6 +185,12 @@ fn main() {
         )
     }
 
+    // Pre-mint 10 ETH to bridge deployer wallet (the same amount is sent to a mainnet bridge account)
+    alloc.insert(
+        fluentbase_sdk::PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER,
+        GenesisAccount::default().with_balance(U256::from(10_000000000000000000u128)),
+    );
+
     // Insert create2-factory EVM contract & deployer
     alloc.insert(
         fluentbase_sdk::PRECOMPILE_CREATE2_FACTORY,
