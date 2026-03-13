@@ -206,7 +206,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     macro_rules! inspect {
         ($evm_opcode:expr, $inputs:expr, $outputs:expr) => {{
             if let Some(inspector) = inspector.as_mut() {
-                crate::inspector::inspect_syscall(frame, ctx, inspector, $evm_opcode, $inputs);
+                crate::inspector::inspect_syscall(
+                    frame,
+                    ctx,
+                    inspector,
+                    $evm_opcode,
+                    $inputs,
+                    $outputs,
+                );
             }
         }};
     }
