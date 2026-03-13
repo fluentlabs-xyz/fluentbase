@@ -32,8 +32,6 @@ mod builtins;
 #[cfg(test)]
 mod constructor;
 #[cfg(test)]
-mod create2_factory;
-#[cfg(test)]
 mod deployer;
 #[cfg(test)]
 mod eip2935;
