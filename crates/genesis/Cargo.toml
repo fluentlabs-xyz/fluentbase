@@ -11,6 +11,8 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
+fluentbase-revm = { workspace = true }
+fluentbase-evm = { workspace = true }
 serde = { workspace = true, default-features = false }
 serde_json = { version = "1.0", default-features = false }
 alloy-genesis = { workspace = true, default-features = false }
@@ -18,6 +20,8 @@ lazy_static = { workspace = true }
 
 [build-dependencies]
 fluentbase-sdk = { workspace = true }
+fluentbase-revm = { workspace = true }
+fluentbase-evm = { workspace = true }
 alloy-genesis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -25,11 +29,17 @@ fluentbase-contracts = { workspace = true }
 
 [features]
 default = []
-debug-print = ["fluentbase-contracts/debug-print"]
+debug-print = [
+    "fluentbase-contracts/debug-print",
+    "fluentbase-revm/debug-print",
+    "fluentbase-evm/debug-print",
+]
 svm = ["fluentbase-contracts/svm"]
 wasmtime = []
 std = [
     "fluentbase-sdk/std",
+    "fluentbase-revm/std",
+    "fluentbase-evm/std",
     "alloy-genesis/std",
     "serde/std",
     "serde_json/std",

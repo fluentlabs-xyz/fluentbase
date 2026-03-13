@@ -7,7 +7,12 @@
     clippy::vec_init_then_push
 )]
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
-use fluentbase_sdk::{address, compile_rwasm_maybe_system, keccak256, Address, Bytes, B256, U256};
+use fluentbase_evm::EthereumMetadata;
+use fluentbase_revm::revm::bytecode::{rwasm::RWASM_MAGIC_BYTES, Bytecode};
+use fluentbase_sdk::{
+    address, compile_rwasm_maybe_system, keccak256, Address, Bytes, B256,
+    PRECOMPILE_CREATE2_FACTORY, PRECOMPILE_EVM_RUNTIME, U256,
+};
 use std::{
     collections::{BTreeMap, HashMap},
     env, fs,
@@ -120,7 +125,7 @@ fn init_contract(
     code: &mut Vec<String>,
     genesis: &mut BTreeMap<Address, GenesisAccount>,
     name: &'static str,
-    rwasm_bytecode: Bytes,
+    mut rwasm_bytecode: Bytes,
     rwasm_bytecode_hash: B256,
     address: Address,
 ) {
@@ -129,6 +134,10 @@ fn init_contract(
         .get(&address)
         .cloned()
         .unwrap_or_else(GenesisAccount::default);
+    // ALl non-rWASM bytecode we must wrap into EVM ownable account
+    if !rwasm_bytecode.starts_with(&RWASM_MAGIC_BYTES) {
+        rwasm_bytecode = wrap_evm_bytecode_into_ownable_account(rwasm_bytecode.clone());
+    }
     account.code = Some(rwasm_bytecode.clone());
     genesis.insert(address.clone(), account);
 
@@ -146,6 +155,14 @@ fn init_contract(
     code.push(format!("\t    rwasm_bytecode_hash: {rwasm_hash:?},"));
     code.push(format!("\t    address: {address:?}"));
     code.push(format!("\t}},"));
+}
+
+fn wrap_evm_bytecode_into_ownable_account(evm_bytecode: Bytes) -> Bytes {
+    let bytecode = Bytecode::new_ownable_account(
+        PRECOMPILE_EVM_RUNTIME,
+        EthereumMetadata::new_analyzed(evm_bytecode).write_to_bytes(),
+    );
+    bytecode.bytes()
 }
 
 fn main() {
@@ -192,11 +209,15 @@ fn main() {
     );
 
     // Insert create2-factory EVM contract & deployer
-    alloc.insert(
-        fluentbase_sdk::PRECOMPILE_CREATE2_FACTORY,
-        GenesisAccount::default().with_code(Some(Bytes::copy_from_slice(include_bytes!(
-            "../../contracts/create2-factory/deterministic-deployment-proxy.bin"
-        )))),
+    const CREATE2_FACTORY_EVM_CONTRACT: &[u8] =
+        include_bytes!("../../contracts/create2-factory/deterministic-deployment-proxy.bin");
+    init_contract(
+        &mut code,
+        &mut alloc,
+        "fluentbase_contracts_create2_factory",
+        Bytes::from(CREATE2_FACTORY_EVM_CONTRACT),
+        keccak256(CREATE2_FACTORY_EVM_CONTRACT),
+        PRECOMPILE_CREATE2_FACTORY,
     );
     alloc.insert(
         fluentbase_sdk::PRECOMPILE_CREATE2_FACTORY_DEPLOYER,

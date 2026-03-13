@@ -3,7 +3,8 @@
 [![codecov](https://codecov.io/github/fluentlabs-xyz/fluentbase/graph/badge.svg?token=FCA43Y60LW)](https://codecov.io/github/fluentlabs-xyz/fluentbase)
 [![Test](https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/ci.yml/badge.svg)](https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/ci.yml)
 
-**Fluentbase** is a modular framework for building execution environments and smart contracts that compile into **rWasm** and run in a unified, proof-friendly runtime.
+**Fluentbase** is a modular framework for building execution environments and smart contracts that compile into **rWasm
+** and run in a unified, proof-friendly runtime.
 
 > Fluentbase is experimental and under active development.
 > APIs, naming, and behavior can change between releases.
@@ -12,7 +13,8 @@
 
 ## Fluentbase + rWasm (TL;DR)
 
-Fluentbase uses **Blended Execution**: EVM/SVM/WASM are treated as compatibility layers, while execution converges to a single intermediate representation (**rWasm**) and one provable state transition function (STF).
+Fluentbase uses **Blended Execution**: EVM/SVM/WASM are treated as compatibility layers, while execution converges to a
+single intermediate representation (**rWasm**) and one provable state transition function (STF).
 
 ### Architecture
 
@@ -41,16 +43,16 @@ EVM / SVM / WASM adapters
 
 ### Quick comparison
 
-| Property | Fluentbase |
-| --- | --- |
-| Execution model | Unified IR |
-| VM count | 1 (rWasm) |
-| Environment support | EVM / SVM / WASM via adapters |
-| Proof target | Single STF |
-| Determinism | Strong |
-| ZK efficiency | First-class constraint |
+| Property                | Fluentbase                        |
+|-------------------------|-----------------------------------|
+| Execution model         | Unified IR                        |
+| VM count                | 1 (rWasm)                         |
+| Environment support     | EVM / SVM / WASM via adapters     |
+| Proof target            | Single STF                        |
+| Determinism             | Strong                            |
+| ZK efficiency           | First-class constraint            |
 | Cross-environment calls | Native via shared execution layer |
-| Token model | Unified (UST) |
+| Token model             | Unified (UST)                     |
 
 ### Mental model
 
@@ -106,6 +108,25 @@ The root `Makefile` builds major modules, contracts, and examples:
 
 ```bash
 make
+```
+
+### Run the Node
+
+The following chain IDs are available:
+
+* `dev` — Local development chain (`1337`)
+* `fluent-devnet` — Fluent Devnet
+* `fluent-testnet` — Fluent Testnet
+* `fluent-mainnet` — Fluent Mainnet
+
+For **Fluent Testnet**, the node must be initialized using a snapshot:
+
+`https://cdn.fluent.xyz/snapshots/fluent-testnet-20721279.tar.gz`
+
+To start the node, run:
+
+```bash
+./fluent --datadir ./datadir --chain fluent-testnet
 ```
 
 ---

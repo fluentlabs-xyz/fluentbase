@@ -1917,6 +1917,8 @@ version = "0.5.8"
 dependencies = [
  "alloy-genesis",
  "fluentbase-contracts",
+ "fluentbase-evm",
+ "fluentbase-revm",
  "fluentbase-sdk",
  "lazy_static",
  "serde",
