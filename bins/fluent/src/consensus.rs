@@ -1,5 +1,5 @@
-///! This is temporary single-node consensus that is used for block production for Fluent,
-///  it will be replaced with DPoS consensus later.
+//! This is temporary single-node consensus that is used for block production for Fluent,
+//! it will be replaced with DPoS consensus later.
 use alloy_network::AnyNetwork;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
