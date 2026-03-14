@@ -1169,16 +1169,17 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
             let (input, lazy_contract_input) = get_input_validated!(>= 20);
             let target_address = Address::from_slice(&input);
-            warn!(
-                ?target_address,
-                bytecode_size = input.len(),
-                "Upgrading genesis runtime"
-            );
             // P.S: We can't validate the target address here, otherwise it will require a fork
             //  to release new contracts from genesis
             let Ok(rwasm_bytecode) = lazy_contract_input() else {
                 return_halt!(MemoryOutOfBounds);
             };
+            #[cfg(feature = "std")]
+            warn!(
+                ?target_address,
+                bytecode_size = rwasm_bytecode.len(),
+                "Upgrading genesis runtime"
+            );
             // Make sure rWasm bytecode provided matches magic bytes
             let Ok(rwasm_bytecode) = RwasmBytecode::new(rwasm_bytecode.into()) else {
                 return_halt!(MalformedBuiltinParams);

@@ -166,6 +166,7 @@ directories = "6.0.0"
 
 [features]
 default = [
+    "wasmtime",
     "jemalloc",
     "otlp",
     "otlp-logs",
@@ -175,6 +176,11 @@ default = [
     "asm-keccak",
     "min-debug-logs",
     "rocksdb",
+]
+
+wasmtime = [
+    "fluentbase-revm/wasmtime",
+    "fluentbase-genesis/wasmtime",
 ]
 
 otlp = [
