@@ -1,4 +1,4 @@
-use crate::chainspec::{FLUENT_DEVNET, FLUENT_MAINNET, FLUENT_TESTNET};
+use crate::chainspec::{FLUENT_DEVNET_CHAIN_ID, FLUENT_MAINNET_CHAIN_ID, FLUENT_TESTNET_CHAIN_ID};
 use reth_chainspec::Chain;
 use reth_network_peers::TrustedPeer;
 
@@ -15,11 +15,11 @@ pub const MAINNET_TRUSTED_PEERS: [&str; 0] = [];
 
 #[allow(clippy::if_same_then_else)]
 pub fn resolve_default_trusted_peers(chain: Chain) -> Vec<TrustedPeer> {
-    let trusted_peers = if chain == FLUENT_DEVNET.chain {
+    let trusted_peers = if chain == Chain::from(FLUENT_DEVNET_CHAIN_ID) {
         &DEVNET_TRUSTED_PEERS[..]
-    } else if chain == FLUENT_TESTNET.chain {
+    } else if chain == Chain::from(FLUENT_TESTNET_CHAIN_ID) {
         &TESTNET_TRUSTED_PEERS[..]
-    } else if chain == FLUENT_MAINNET.chain {
+    } else if chain == Chain::from(FLUENT_MAINNET_CHAIN_ID) {
         &[]
     } else {
         &[]
@@ -32,11 +32,11 @@ pub const TESTNET_CONSENSUS_URL: &str = "wss://rpc.testnet.fluent.xyz";
 
 #[allow(clippy::if_same_then_else)]
 pub fn resolve_default_consensus_url(chain: Chain) -> Option<String> {
-    if chain == FLUENT_DEVNET.chain {
+    if chain == Chain::from(FLUENT_DEVNET_CHAIN_ID) {
         Some(DEVNET_CONSENSUS_URL.to_string())
-    } else if chain == FLUENT_TESTNET.chain {
+    } else if chain == Chain::from(FLUENT_TESTNET_CHAIN_ID) {
         Some(TESTNET_CONSENSUS_URL.to_string())
-    } else if chain == FLUENT_MAINNET.chain {
+    } else if chain == Chain::from(FLUENT_MAINNET_CHAIN_ID) {
         None
     } else {
         None
