@@ -101,6 +101,8 @@ else
     FEATURES ?= jemalloc asm-keccak min-debug-logs
 endif
 
+NO_DEFAULT_FEATURES ?=
+
 # Cargo profile for builds. Default is for local builds, CI uses an override.
 PROFILE ?= release
 
@@ -181,7 +183,7 @@ build-x86_64-pc-windows-gnu: FEATURES := $(filter-out jemalloc jemalloc-prof,$(F
 # See: https://github.com/cross-rs/cross/wiki/FAQ#undefined-reference-with-build-std
 build-%:
 	RUSTFLAGS="-C link-arg=-lgcc -Clink-arg=-static-libgcc" \
-		cross build --bin fluent --target $* --features "$(FEATURES)" --profile "$(PROFILE)"
+		cross build --bin fluent --target $* $(NO_DEFAULT_FEATURES) --features "$(FEATURES)" --profile "$(PROFILE)"
 
 # Unfortunately we can't easily use cross to build for Darwin because of licensing issues.
 # If we wanted to, we would need to build a custom Docker image with the SDK available.
