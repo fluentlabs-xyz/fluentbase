@@ -1,11 +1,10 @@
 use crate::{Bytes, B256, U256};
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 use bincode::{
     de::Decoder,
     enc::Encoder,
     error::{DecodeError, EncodeError},
 };
-use hashbrown::HashMap;
 
 /// A single EVM-style log entry recorded during execution.
 ///
@@ -61,12 +60,12 @@ impl<C> bincode::Decode<C> for JournalLog {
 #[derive(Default)]
 pub struct JournalStorage {
     /// Base storage state (read-only snapshot).
-    state: HashMap<U256, U256>,
+    state: BTreeMap<U256, U256>,
 
     /// Storage writes performed during execution.
     ///
     /// Contains only keys whose values differ from `state`.
-    dirty_values: HashMap<U256, U256>,
+    dirty_values: BTreeMap<U256, U256>,
 
     /// Accumulated event logs (LOG opcodes).
     events: Vec<JournalLog>,
@@ -77,10 +76,10 @@ impl JournalStorage {
     ///
     /// The provided `state` is treated as immutable for the lifetime
     /// of this journal instance.
-    pub fn new(state: HashMap<U256, U256>) -> Self {
+    pub fn new(state: BTreeMap<U256, U256>) -> Self {
         Self {
             state,
-            dirty_values: HashMap::new(),
+            dirty_values: BTreeMap::new(),
             events: Vec::new(),
         }
     }
@@ -135,7 +134,7 @@ impl JournalStorage {
     /// - `Vec<JournalLog>`: accumulated event logs
     ///
     /// Intended to be used at commit time (e.g. end of transaction or call).
-    pub fn into_diff(self) -> (HashMap<U256, U256>, Vec<JournalLog>) {
+    pub fn into_diff(self) -> (BTreeMap<U256, U256>, Vec<JournalLog>) {
         (self.dirty_values, self.events)
     }
 
@@ -157,11 +156,10 @@ impl JournalStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hashbrown::HashMap;
 
     #[test]
     fn storage_reads_base_and_dirty() {
-        let mut base = HashMap::new();
+        let mut base = BTreeMap::new();
         base.insert(U256::from(1u64), U256::from(10u64));
 
         let mut js = JournalStorage::new(base);
@@ -177,7 +175,7 @@ mod tests {
 
     #[test]
     fn write_storage_tracks_only_changes() {
-        let mut base = HashMap::new();
+        let mut base = BTreeMap::new();
         base.insert(U256::from(1u64), U256::from(10u64));
 
         let mut js = JournalStorage::new(base);
@@ -200,7 +198,7 @@ mod tests {
 
     #[test]
     fn into_diff_returns_dirty_and_logs() {
-        let mut base = HashMap::new();
+        let mut base = BTreeMap::new();
         base.insert(U256::from(1u64), U256::from(10u64));
 
         let mut js = JournalStorage::new(base);
@@ -213,7 +211,7 @@ mod tests {
 
     #[test]
     fn clear_resets_everything() {
-        let mut base = HashMap::new();
+        let mut base = BTreeMap::new();
         base.insert(U256::from(1u64), U256::from(10u64));
 
         let mut js = JournalStorage::new(base);

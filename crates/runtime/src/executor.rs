@@ -434,10 +434,6 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         self.transaction_call_id_counter = 1;
         // Clear recoverable runtimes, because they are no longer valid
         self.recoverable_runtimes.clear();
-        // Note: Ideally, this shouldn't be required if there are no memory leaks, but supporting a
-        //  memory allocator inside virtual runtime brings overhead.
-        // Instead, we can just re-create the store to make sure all data is pruned.
-        SystemRuntime::reset_cached_runtimes();
     }
 
     fn memory_read(

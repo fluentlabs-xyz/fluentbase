@@ -24,7 +24,7 @@ static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::ne
 #[unsafe(export_name = "_rjem_malloc_conf")]
 static MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
-#[derive(Debug, Clone, Copy, Default, Args)]
+#[derive(Debug, Clone, Default, Args)]
 #[non_exhaustive]
 pub struct FluentNodeArgs {
     #[arg(long = "validator", default_value_t = false)]
@@ -47,6 +47,7 @@ fn main() {
     }
 
     let mut consensus_url: Option<String> = None;
+    // let mut block_finalizer_sidecar_url: Option<String> = None;
     let mut block_producer: Option<Duration> = None;
 
     let mut cli = Cli::<FluentChainSpecParser, FluentNodeArgs>::parse();

@@ -1,11 +1,12 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
+use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{
-    hex, storage::StorageDescriptor, universal_token::*, Address, Bytes, ContractContextV1,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
+    address, hex, storage::StorageDescriptor, universal_token::*, Address, Bytes,
+    ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::EvmTestingContext;
-use revm::context::result::ExecutionResult;
+use revm::{bytecode::Bytecode, context::result::ExecutionResult, state::AccountInfo};
 use std::ops::Add;
 
 const DEPLOYER_ADDR: Address = Address::repeat_byte(1);
@@ -494,4 +495,78 @@ fn reverted_transaction_should_not_commit_changes() {
     assert!(result.is_success());
     let balance = U256::from_be_slice(result.into_output().unwrap_or_default().as_ref());
     assert_eq!(balance, U256::ONE);
+}
+
+#[test]
+fn invoke_ust20_transfer_multiple_times() {
+    let mut ctx = EvmTestingContext::default().with_remote_genesis("v0.5.8");
+
+    let mut initial_settings = InitialSettings {
+        token_name: "NaMe".into(),
+        token_symbol: "SyMbOl".into(),
+        decimals: 18,
+        initial_supply: U256::from(1000),
+        minter: DEPLOYER_ADDR,
+        pauser: DEPLOYER_ADDR,
+    }
+    .encode_with_prefix();
+
+    ctx.add_balance(DEPLOYER_ADDR, U256::from(100_000000000000000000u128));
+
+    let repeat_transfer_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDR,
+        hex::decode(&include_bytes!("../assets/ERC20RepeatTransfer.bin"))
+            .unwrap()
+            .into(),
+    );
+    println!("callee contract address: {:?}", repeat_transfer_address);
+    let ust20_address = ctx.deploy_evm_tx(DEPLOYER_ADDR, initial_settings);
+    println!("ust20 address: {:?}", ust20_address);
+
+    sol! {
+        function transfer(address to, uint256 amount) external;
+
+        function balanceOf(address owner) external;
+
+        function repeatTransfer(
+            address token,
+            address to,
+            uint256 amount,
+            uint256 times
+        ) external;
+    }
+
+    let input = transferCall {
+        to: repeat_transfer_address,
+        amount: U256::from(1000),
+    }
+    .abi_encode();
+    let result = ctx.call_evm_tx(DEPLOYER_ADDR, ust20_address, input.into(), None, None);
+    assert!(result.is_success());
+    println!("result: {:?}", result.gas_used());
+
+    let input = balanceOfCall {
+        owner: repeat_transfer_address,
+    }
+    .abi_encode();
+    let result = ctx.call_evm_tx(DEPLOYER_ADDR, ust20_address, input.into(), None, None);
+    assert!(result.is_success());
+
+    let input = repeatTransferCall {
+        token: ust20_address,
+        to: Address::repeat_byte(3),
+        amount: U256::from(1),
+        times: U256::from(1000),
+    }
+    .abi_encode();
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDR,
+        repeat_transfer_address,
+        input.into(),
+        Some(10_000_000),
+        None,
+    );
+    assert!(result.is_success());
+    println!("result: {:?}", result.gas_used());
+    assert_eq!(result.gas_used(), 2664623);
 }

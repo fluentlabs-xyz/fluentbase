@@ -3,17 +3,16 @@ use crate::{
     system::JournalLog,
     ExitCode,
 };
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 use alloy_primitives::{Bytes, U256};
 use bincode::de::Decoder;
-use hashbrown::HashMap;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RuntimeNewFrameInputV1 {
     pub metadata: Bytes,
     pub input: Bytes,
     pub context: Bytes,
-    pub storage: Option<HashMap<U256, U256>>,
+    pub storage: Option<BTreeMap<U256, U256>>,
 }
 
 impl bincode::Encode for RuntimeNewFrameInputV1 {
@@ -46,7 +45,7 @@ impl<Context> DecodeBytes<Context> for RuntimeNewFrameInputV1 {
         let context: ZeroCopyBytes = DecodeBytes::<Context>::decode_bytes(d)?;
         let storage_len: u32 = bincode::Decode::decode(d)?;
         let storage = if storage_len > 0 {
-            let mut storage = HashMap::<U256, U256>::with_capacity(storage_len as usize);
+            let mut storage = BTreeMap::<U256, U256>::new();
             for _ in 0..storage_len {
                 let k: [u8; 32] = bincode::Decode::decode(d)?;
                 let v: [u8; 32] = bincode::Decode::decode(d)?;
@@ -72,7 +71,7 @@ impl<Context> DecodeBytes<Context> for RuntimeNewFrameInputV1 {
 pub struct RuntimeExecutionOutcomeV1 {
     pub exit_code: ExitCode,
     pub output: Bytes,
-    pub storage: Option<HashMap<U256, U256>>,
+    pub storage: Option<BTreeMap<U256, U256>>,
     pub logs: Vec<JournalLog>,
     pub new_metadata: Option<Bytes>,
 }
@@ -118,7 +117,7 @@ impl<Context> DecodeBytes<Context> for RuntimeExecutionOutcomeV1 {
         let output: ZeroCopyBytes = DecodeBytes::decode_bytes(d)?;
         let storage_len: u32 = bincode::Decode::decode(d)?;
         let storage = if storage_len > 0 {
-            let mut storage = HashMap::<U256, U256>::with_capacity(storage_len as usize);
+            let mut storage = BTreeMap::<U256, U256>::new();
             for _ in 0..storage_len {
                 let k: [u8; 32] = bincode::Decode::decode(d)?;
                 let v: [u8; 32] = bincode::Decode::decode(d)?;
@@ -152,7 +151,7 @@ mod tests {
     };
     use alloy_primitives::{bytes, B256, U256};
     use bincode::config::{Configuration, Fixint, LittleEndian};
-    use hashbrown::HashMap;
+    use std::collections::BTreeMap;
 
     pub static BINCODE_CONFIG_DEFAULT: Configuration<LittleEndian, Fixint> =
         bincode::config::legacy();
@@ -169,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_runtime_new_frame_input_v1_encode_decode() {
-        let mut storage = HashMap::new();
+        let mut storage = BTreeMap::new();
         let mut v = RuntimeNewFrameInputV1 {
             metadata: [1, 2, 3].into(),
             input: [4, 5, 6, 7].into(),
@@ -232,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_runtime_output_v1_encode_decode() {
-        let mut storage = HashMap::new();
+        let mut storage = BTreeMap::new();
         let mut logs = Vec::new();
         let mut v = RuntimeExecutionOutcomeV1 {
             exit_code: ExitCode::PrecompileError,

@@ -4297,6 +4297,7 @@ dependencies = [
  "flate2",
  "fluentbase-genesis",
  "fluentbase-revm",
+ "fluentbase-runtime",
  "fluentbase-types",
  "humantime",
  "humantime-serde",
@@ -4501,9 +4502,13 @@ dependencies = [
 name = "fluentbase-e2e"
 version = "0.1.0"
 dependencies = [
+ "alloy-genesis",
  "alloy-sol-types",
  "bytes",
  "criterion",
+ "directories",
+ "eyre",
+ "flate2",
  "fluentbase-codec",
  "fluentbase-contracts",
  "fluentbase-genesis",
@@ -4515,8 +4520,11 @@ dependencies = [
  "hex-literal",
  "paste",
  "rand 0.9.2",
+ "reqwest 0.12.28",
  "revm",
  "rwasm",
+ "serde",
+ "serde_json",
  "sha2",
  "wat",
 ]

@@ -1,9 +1,13 @@
 //! Ethereum EVM implementation.
 
-use alloy_consensus::Header;
+use alloy_consensus::{Header, TxType};
 use alloy_evm::{
+    block::{
+        BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
+        BlockExecutorFor, ExecutableTx, OnStateHook,
+    },
     env::EvmEnv,
-    eth::{EthBlockExecutionCtx, EthBlockExecutorFactory},
+    eth::{EthBlockExecutionCtx, EthBlockExecutor, EthTxResult},
     evm::EvmFactory,
     precompiles::PrecompilesMap,
     Database, Evm,
@@ -32,10 +36,10 @@ use reth_ethereum::engine::EthPayloadAttributes;
 use reth_ethereum_engine_primitives::{
     EthBuiltPayload, EthEngineTypes, EthPayloadBuilderAttributes,
 };
-use reth_ethereum_primitives::EthPrimitives;
+use reth_ethereum_primitives::{EthPrimitives, Receipt, TransactionSigned};
 use reth_evm::{
     ConfigureEngineEvm, ConfigureEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor,
-    NextBlockEnvAttributes,
+    InspectorFor, NextBlockEnvAttributes,
 };
 use reth_evm_ethereum::{EthBlockAssembler, EthEvmConfig, RethReceiptBuilder};
 use reth_node_api::{FullNodeComponents, FullNodeTypes};
@@ -52,6 +56,7 @@ use reth_payload_primitives::{PayloadAttributesBuilder, PayloadTypes};
 use reth_primitives::{Block, SealedBlock};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::providers::ProviderFactoryBuilder;
+use reth_revm::State;
 use reth_storage_api::EthStorage;
 use std::{convert::Infallible, sync::Arc};
 
@@ -325,16 +330,45 @@ impl FluentEvmConfig {
     }
 }
 
+impl BlockExecutorFactory for FluentEvmConfig {
+    type EvmFactory = FluentEvmFactory;
+    type ExecutionCtx<'a> = EthBlockExecutionCtx<'a>;
+    type Transaction = TransactionSigned;
+    type Receipt = Receipt;
+
+    fn evm_factory(&self) -> &Self::EvmFactory {
+        self.inner.evm_factory()
+    }
+
+    fn create_executor<'a, DB, I>(
+        &'a self,
+        evm: FluentEvmExecutor<&'a mut State<DB>, I, PrecompilesMap>,
+        ctx: EthBlockExecutionCtx<'a>,
+    ) -> impl BlockExecutorFor<'a, Self, DB, I>
+    where
+        DB: Database + 'a,
+        I: InspectorFor<Self, &'a mut State<DB>> + 'a,
+    {
+        FluentBlockExecutor {
+            inner: EthBlockExecutor::new(
+                evm,
+                ctx,
+                self.inner.chain_spec(),
+                self.inner.executor_factory.receipt_builder(),
+            ),
+        }
+    }
+}
+
 impl ConfigureEvm for FluentEvmConfig {
     type Primitives = EthPrimitives;
     type Error = Infallible;
     type NextBlockEnvCtx = NextBlockEnvAttributes;
-    type BlockExecutorFactory =
-        EthBlockExecutorFactory<RethReceiptBuilder, Arc<ChainSpec>, FluentEvmFactory>;
+    type BlockExecutorFactory = Self;
     type BlockAssembler = EthBlockAssembler<ChainSpec>;
 
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
-        self.inner.block_executor_factory()
+        self
     }
 
     fn block_assembler(&self) -> &Self::BlockAssembler {
@@ -469,5 +503,62 @@ impl<N: FullNodeComponents<Types = Self>> DebugNode<N> for FluentNode {
         chain_spec: &Self::ChainSpec,
     ) -> impl PayloadAttributesBuilder<<Self::Payload as PayloadTypes>::PayloadAttributes> {
         LocalPayloadAttributesBuilder::new(Arc::new(chain_spec.clone()))
+    }
+}
+
+#[derive(Debug)]
+pub struct FluentBlockExecutor<'a, Evm> {
+    /// Inner Ethereum execution strategy.
+    inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec>, &'a RethReceiptBuilder>,
+}
+
+impl<'db, DB, E> BlockExecutor for FluentBlockExecutor<'_, E>
+where
+    DB: Database + 'db,
+    E: Evm<DB = &'db mut State<DB>, Tx = TxEnv>,
+{
+    type Transaction = TransactionSigned;
+    type Receipt = Receipt;
+    type Evm = E;
+    type Result = EthTxResult<E::HaltReason, TxType>;
+
+    fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
+        // Note: Ideally, this shouldn't be required if there are no memory leaks, but supporting a
+        //  memory allocator inside virtual runtime brings overhead.
+        // Instead, we can just re-create the store to make sure all data is pruned.
+        fluentbase_runtime::runtime::SystemRuntime::reset_cached_runtimes();
+        // Invoke parent method
+        self.inner.apply_pre_execution_changes()
+    }
+
+    fn execute_transaction_without_commit(
+        &mut self,
+        tx: impl ExecutableTx<Self>,
+    ) -> Result<Self::Result, BlockExecutionError> {
+        self.inner.execute_transaction_without_commit(tx)
+    }
+
+    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
+        self.inner.commit_transaction(output)
+    }
+
+    fn finish(self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
+        self.inner.finish()
+    }
+
+    fn set_state_hook(&mut self, _hook: Option<Box<dyn OnStateHook>>) {
+        self.inner.set_state_hook(_hook)
+    }
+
+    fn evm_mut(&mut self) -> &mut Self::Evm {
+        self.inner.evm_mut()
+    }
+
+    fn evm(&self) -> &Self::Evm {
+        self.inner.evm()
+    }
+
+    fn receipts(&self) -> &[Self::Receipt] {
+        self.inner.receipts()
     }
 }

@@ -35,8 +35,7 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
                 crate::allocator::BlockListAllocator::gc();
             }
             // Output size greater than 0 indicates an interruption outcome
-            let output_size = native_sdk.output_size();
-            let mut return_data = vec![0u8; output_size as usize];
+            let mut return_data = vec![0u8; output_size];
             native_sdk.read_output(&mut return_data, 0);
             let (outcome, _) = bincode::decode_from_slice::<RuntimeInterruptionOutcomeV1, _>(
                 return_data.as_ref(),
@@ -55,8 +54,7 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
         let input_size = native_sdk.input_size() as usize;
         if input_size > 0 {
             // Input size greater than 0 indicates a new frame
-            let input_size = native_sdk.input_size();
-            let mut input = vec![0u8; input_size as usize];
+            let mut input = vec![0u8; input_size];
             native_sdk.read(&mut input, 0);
             let (input, _): (RuntimeNewFrameInputV1, usize) =
                 decode_from_bytes(input.into(), bincode::config::legacy()).unwrap();

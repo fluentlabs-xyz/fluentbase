@@ -146,9 +146,6 @@ where
     }
 
     async fn update_forkchoice_state(&mut self) -> eyre::Result<()> {
-        if self.last_block_hash == B256::ZERO {
-            return Ok(());
-        }
         let state = ForkchoiceState::same_hash(self.last_block_hash);
         let res = self
             .to_engine

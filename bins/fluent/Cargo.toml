@@ -126,6 +126,7 @@ reth-trie-sparse = { workspace = true, default-features = false }
 reth-zstd-compressors = { workspace = true, default-features = false }
 
 # fluentbase
+fluentbase-runtime = { workspace = true, features = ["std"] }
 fluentbase-revm = { workspace = true, features = ["std"] }
 fluentbase-genesis = { workspace = true, features = ["std"] }
 fluentbase-types = { workspace = true, features = ["std"] }
@@ -179,6 +180,7 @@ default = [
 ]
 
 wasmtime = [
+    "fluentbase-runtime/wasmtime",
     "fluentbase-revm/wasmtime",
     "fluentbase-genesis/wasmtime",
 ]

@@ -20,10 +20,9 @@ use fluentbase_sdk::{
         JournalLog, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
     },
     universal_token::erc20_compute_storage_keys,
-    BlockContextV1, BytecodeOrHash, Bytes, ContractContextV1, ExitCode, HashMap,
-    SharedContextInput, SharedContextInputV1, SyscallInvocationParams, TxContextV1,
-    FUEL_DENOM_RATE, PRECOMPILE_EIP2935, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY,
-    STATE_MAIN, U256,
+    BlockContextV1, BytecodeOrHash, Bytes, ContractContextV1, ExitCode, SharedContextInput,
+    SharedContextInputV1, SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE,
+    PRECOMPILE_EIP2935, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, rwasm::RwasmBytecode, Bytecode},
@@ -37,7 +36,7 @@ use revm::{
     },
     Database, Inspector,
 };
-use std::{borrow::Cow, vec, vec::Vec};
+use std::{borrow::Cow, collections::BTreeMap, vec, vec::Vec};
 
 fn should_overwrite_delegated_bytecode<'a, CTX: ContextTr>(
     frame: &mut RwasmFrame,
@@ -315,7 +314,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         };
 
         // Prefetch storage values.
-        let mut storage = HashMap::<U256, U256>::with_capacity(storage_list.len());
+        let mut storage = BTreeMap::<U256, U256>::new();
         for k in storage_list {
             let skip_cold =
                 interpreter.gas.remaining() < ctx.cfg().gas_params().cold_storage_cost();

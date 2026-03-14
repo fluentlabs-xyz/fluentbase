@@ -10,7 +10,7 @@ mod context_wrapper;
 mod crypto;
 mod executor;
 mod module_factory;
-mod runtime;
+pub mod runtime;
 pub mod syscall_handler;
 
 pub use context::*;
