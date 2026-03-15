@@ -24,16 +24,31 @@ FLIP-20 defines a canonical fungible-token standard for Fluentbase with:
 
 ---
 
+## Canonical constants
+
+The following constants are normative for this FLIP:
+
+- `PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME = 0x0000000000000000000000000000000000520008`
+- `UNIVERSAL_TOKEN_MAGIC_BYTES = 0x45524320` (`"ERC "`)
+
+Selector/hash convention used in this document:
+
+- Function selectors and custom error codes are the first 4 bytes of `keccak256(<signature>)`.
+
+---
+
 ## Motivation
 
-Fluentbase needs one token standard that is:
+In EVM context, ERC-20 tokens are usually separate bytecode deployments even when they implement the same behavior. That fragmentation prevents deep runtime-level optimization and duplicates execution overhead.
+
+By using one shared runtime for ERC20/SPL token flows, Fluentbase can apply AOT-style optimization (e.g., Wasmtime-like strategies) and amortize it across all FLIP-20 tokens. UST20 solves this by preserving ERC-20 compatibility while standardizing execution on a single high-performance runtime path.
+
+FLIP-20 therefore targets a token standard that is:
 
 - **developer-familiar** (ERC-20 surface),
 - **cross-environment** (EVM + SVM/SPL interoperability),
 - **fast by default** (shared precompiled runtime path),
 - **operationally consistent** (uniform errors, events, and storage semantics).
-
-Per-contract custom token bytecode creates fragmentation, higher deployment costs, and inconsistent semantics. FLIP-20 standardizes behavior and interoperability while keeping isolated per-token state.
 
 ---
 
@@ -126,14 +141,23 @@ If pause extensions are implemented, they SHOULD emit:
 
 ### 6) Error and revert semantics
 
-Implementations SHOULD provide deterministic, typed errors for:
+Implementations SHOULD provide deterministic, typed errors. The reference FLIP-20/UST20 error set and selectors are:
 
-- insufficient balance,
-- insufficient allowance,
-- invalid sender/receiver,
-- unauthorized minter/pauser,
-- pause-state violations,
-- unknown method selectors.
+| Constant | Error signature | Selector |
+|---|---|---|
+| `ERR_UST_UNKNOWN_METHOD` | `USTUnknownMethod(bytes4)` | `0xb0d8e5d7` |
+| `ERR_UST_NOT_PAUSABLE` | `USTNotPausable()` | `0x0507e61c` |
+| `ERR_UST_PAUSER_MISMATCH` | `USTPauserMismatch(address)` | `0xbb8db808` |
+| `ERR_UST_NOT_MINTABLE` | `USTNotMintable()` | `0x9f1090b2` |
+| `ERR_UST_MINTER_MISMATCH` | `USTMinterMismatch(address)` | `0xf5143e51` |
+| `ERR_ERC20_INSUFFICIENT_BALANCE` | `ERC20InsufficientBalance(address,uint256,uint256)` | `0xe450d38c` |
+| `ERR_ERC20_INVALID_SENDER` | `ERC20InvalidSender(address)` | `0x96c6fd1e` |
+| `ERR_ERC20_INVALID_RECEIVER` | `ERC20InvalidReceiver(address)` | `0xec442f05` |
+| `ERR_ERC20_INSUFFICIENT_ALLOWANCE` | `ERC20InsufficientAllowance(address,uint256,uint256)` | `0xfb8f41b2` |
+| `ERR_ERC20_INVALID_APPROVER` | `ERC20InvalidApprover(address)` | `0xe602df05` |
+| `ERR_ERC20_INVALID_SPENDER` | `ERC20InvalidSpender(address)` | `0x94280d62` |
+| `ERR_PAUSABLE_ENFORCED_PAUSE` | `EnforcedPause()` | `0xd93c0665` |
+| `ERR_PAUSABLE_EXPECTED_PAUSE` | `ExpectedPause()` | `0x8dfc202b` |
 
 State mutations and logs MUST be reverted on failed execution.
 
