@@ -2,6 +2,8 @@
 
 This directory contains Fluent Improvement Proposals.
 
+(╯°□°)╯︵ ┻━┻
+
 - Proposal IDs use `FLIP-<number>`.
 - Standards-track proposals define protocol/runtime behavior and compatibility requirements.
 - Informational proposals document architecture, rationale, and guidance.
