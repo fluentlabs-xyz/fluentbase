@@ -82,6 +82,12 @@ UNIVERSAL_TOKEN_MAGIC_BYTES (4 bytes)
 5. `minter` (`address`)
 6. `pauser` (`address`)
 
+`token_name` and `token_symbol` encoding rule (normative):
+
+- Values MUST be encoded as `bytes32` with ASCII/UTF-8 bytes placed in the most-significant portion of the 32-byte word (left-aligned / big-endian orientation).
+- Remaining trailing bytes MUST be zero (`0x00`) padded.
+- Right-aligned string packing is non-compliant.
+
 If `initial_supply > 0`, constructor/deploy logic MUST mint the initial amount to the deployer (`contract_caller`) and emit `Transfer(address(0), deployer, initial_supply)`.
 
 ### 3) Required interface
