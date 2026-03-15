@@ -71,6 +71,8 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
       - name: Build Genesis
         run: cargo b --release
 
