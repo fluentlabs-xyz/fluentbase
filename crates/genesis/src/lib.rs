@@ -26,3 +26,25 @@ lazy_static! {
         map
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::local_genesis_from_file;
+    use fluentbase_revm::revm::primitives::address;
+    use fluentbase_sdk::{Address, U256};
+
+    #[test]
+    fn test_ecosystem_faucet_and_bridge_have_enough_funds() {
+        const BRIDGE_DEPLOYER: Address = address!("0x482582979C9125abAb5a06F0E196E8F4015bF77A");
+        const ECOSYSTEM_FAUCET: Address = address!("0xb58A6bdEB3387C87d55b7baE800f3C816f35DC34");
+        let genesis = local_genesis_from_file();
+        assert_eq!(
+            genesis.alloc.get(&BRIDGE_DEPLOYER).unwrap().balance,
+            U256::from(1_000000000000000000u128),
+        );
+        assert_eq!(
+            genesis.alloc.get(&ECOSYSTEM_FAUCET).unwrap().balance,
+            U256::from(9_000000000000000000u128),
+        );
+    }
+}

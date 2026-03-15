@@ -29,7 +29,7 @@ sol! {
         uint256 blockNumber,
         uint256 messageNonce,
         bytes calldata message
-    ) external payable;
+    ) external;
 
     function sendMessage(address to, bytes calldata message) external payable;
 }

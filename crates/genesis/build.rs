@@ -224,6 +224,16 @@ fn main() {
         GenesisAccount::default().with_nonce(Some(1)),
     );
 
+    // Pre-mint 10 ETH for ecosystem faucet & bridge deployer
+    alloc.insert(
+        address!("0x482582979C9125abAb5a06F0E196E8F4015bF77A"),
+        GenesisAccount::default().with_balance(U256::from(1_000000000000000000u128)),
+    );
+    alloc.insert(
+        address!("0xb58A6bdEB3387C87d55b7baE800f3C816f35DC34"),
+        GenesisAccount::default().with_balance(U256::from(9_000000000000000000u128)),
+    );
+
     code.push("];".to_string());
     let code = code.join("\n");
 
