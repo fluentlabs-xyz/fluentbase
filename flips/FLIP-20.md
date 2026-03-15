@@ -75,18 +75,22 @@ UNIVERSAL_TOKEN_MAGIC_BYTES (4 bytes)
 
 `InitialSettings` fields (in order):
 
-1. `token_name` (fixed 32-byte representation)
-2. `token_symbol` (fixed 32-byte representation)
+1. `token_name` (`bytes32`, UTF-8 canonical codec; see below)
+2. `token_symbol` (`bytes32`, UTF-8 canonical codec; see below)
 3. `decimals` (`uint8` ABI word)
 4. `initial_supply` (`uint256`)
 5. `minter` (`address`)
 6. `pauser` (`address`)
 
-`token_name` and `token_symbol` encoding rule (normative):
+Canonical `bytes32` text codec for `token_name` and `token_symbol` (normative):
 
-- Values MUST be encoded as `bytes32` with ASCII/UTF-8 bytes placed in the most-significant portion of the 32-byte word (left-aligned / big-endian orientation).
-- Remaining trailing bytes MUST be zero (`0x00`) padded.
+- Fields MUST be treated as UTF-8 encoded byte sequences stored in fixed 32-byte words.
+- Encoding MUST place bytes in the most-significant portion of the 32-byte word (left-aligned / big-endian orientation) and pad the remaining bytes with trailing `0x00`.
 - Right-aligned string packing is non-compliant.
+- Decoding to `name()` / `symbol()` MUST locate the first `0x00` byte and decode only the prefix before it as UTF-8; bytes from the first `0x00` onward are ignored.
+- For canonical payloads (no interior nulls), this is equivalent to stripping trailing `0x00` bytes; payloads with interior `0x00` are non-canonical and are truncated at the first `0x00`.
+- Non-UTF-8 decoded byte sequences MUST be rejected (no replacement policy).
+- Overflow behavior: if input text exceeds 32 bytes, encoding truncates on the right to fit 32 bytes (byte-wise); if truncation yields invalid UTF-8 at decode time, initialization MUST fail.
 
 If `initial_supply > 0`, constructor/deploy logic MUST mint the initial amount to the deployer (`contract_caller`) and emit `Transfer(address(0), deployer, initial_supply)`.
 
@@ -94,8 +98,8 @@ If `initial_supply > 0`, constructor/deploy logic MUST mint the initial amount t
 
 A FLIP-20 token MUST expose the following methods with ERC-20-compatible semantics:
 
-- `name() -> string`
-- `symbol() -> string`
+- `name() -> string` (decoded from `token_name` via the canonical `bytes32` UTF-8 codec above)
+- `symbol() -> string` (decoded from `token_symbol` via the canonical `bytes32` UTF-8 codec above)
 - `decimals() -> uint8`
 - `totalSupply() -> uint256`
 - `balanceOf(address owner) -> uint256`
@@ -147,23 +151,23 @@ If pause extensions are implemented, they SHOULD emit:
 
 ### 6) Error and revert semantics
 
-Implementations SHOULD provide deterministic, typed errors. The reference FLIP-20/UST20 error set and selectors are:
+Implementations SHOULD provide deterministic, typed errors. The reference FLIP-20/UST20 error set, selectors, and usage rules are:
 
-| Constant | Error signature | Selector |
-|---|---|---|
-| `ERR_UST_UNKNOWN_METHOD` | `USTUnknownMethod(bytes4)` | `0xb0d8e5d7` |
-| `ERR_UST_NOT_PAUSABLE` | `USTNotPausable()` | `0x0507e61c` |
-| `ERR_UST_PAUSER_MISMATCH` | `USTPauserMismatch(address)` | `0xbb8db808` |
-| `ERR_UST_NOT_MINTABLE` | `USTNotMintable()` | `0x9f1090b2` |
-| `ERR_UST_MINTER_MISMATCH` | `USTMinterMismatch(address)` | `0xf5143e51` |
-| `ERR_ERC20_INSUFFICIENT_BALANCE` | `ERC20InsufficientBalance(address,uint256,uint256)` | `0xe450d38c` |
-| `ERR_ERC20_INVALID_SENDER` | `ERC20InvalidSender(address)` | `0x96c6fd1e` |
-| `ERR_ERC20_INVALID_RECEIVER` | `ERC20InvalidReceiver(address)` | `0xec442f05` |
-| `ERR_ERC20_INSUFFICIENT_ALLOWANCE` | `ERC20InsufficientAllowance(address,uint256,uint256)` | `0xfb8f41b2` |
-| `ERR_ERC20_INVALID_APPROVER` | `ERC20InvalidApprover(address)` | `0xe602df05` |
-| `ERR_ERC20_INVALID_SPENDER` | `ERC20InvalidSpender(address)` | `0x94280d62` |
-| `ERR_PAUSABLE_ENFORCED_PAUSE` | `EnforcedPause()` | `0xd93c0665` |
-| `ERR_PAUSABLE_EXPECTED_PAUSE` | `ExpectedPause()` | `0x8dfc202b` |
+| Constant | Error signature | Selector | When to use |
+|---|---|---|---|
+| `ERR_UST_UNKNOWN_METHOD` | `USTUnknownMethod(bytes4)` | `0xb0d8e5d7` | MUST be returned when the 4-byte selector does not match any supported FLIP-20 method. |
+| `ERR_UST_NOT_PAUSABLE` | `USTNotPausable()` | `0x0507e61c` | MUST be returned when `pause()` or `unpause()` is called but pausing is disabled (no pauser configured). |
+| `ERR_UST_PAUSER_MISMATCH` | `USTPauserMismatch(address)` | `0xbb8db808` | MUST be returned when `pause()` / `unpause()` is called by an address different from the configured pauser. |
+| `ERR_UST_NOT_MINTABLE` | `USTNotMintable()` | `0x9f1090b2` | MUST be returned when `mint()` or privileged `burn()` is called but minting is disabled (no minter configured). |
+| `ERR_UST_MINTER_MISMATCH` | `USTMinterMismatch(address)` | `0xf5143e51` | MUST be returned when `mint()` or privileged `burn()` is called by an address different from the configured minter. |
+| `ERR_ERC20_INSUFFICIENT_BALANCE` | `ERC20InsufficientBalance(address,uint256,uint256)` | `0xe450d38c` | MUST be returned when the source balance (or burn source/total-supply subtraction) is smaller than the requested amount. |
+| `ERR_ERC20_INVALID_SENDER` | `ERC20InvalidSender(address)` | `0x96c6fd1e` | MUST be returned when the effective sender/source address is invalid for the operation (e.g., zero address). |
+| `ERR_ERC20_INVALID_RECEIVER` | `ERC20InvalidReceiver(address)` | `0xec442f05` | MUST be returned when a transfer/mint target address is invalid (e.g., zero address). |
+| `ERR_ERC20_INSUFFICIENT_ALLOWANCE` | `ERC20InsufficientAllowance(address,uint256,uint256)` | `0xfb8f41b2` | MUST be returned when `transferFrom` allowance is less than the requested spend amount (except unlimited allowance semantics). |
+| `ERR_ERC20_INVALID_APPROVER` | `ERC20InvalidApprover(address)` | `0xe602df05` | SHOULD be returned when an approve-style operation receives an invalid owner/approver address under the implementation policy. |
+| `ERR_ERC20_INVALID_SPENDER` | `ERC20InvalidSpender(address)` | `0x94280d62` | SHOULD be returned when an approve-style operation receives an invalid spender/delegate address under the implementation policy. |
+| `ERR_PAUSABLE_ENFORCED_PAUSE` | `EnforcedPause()` | `0xd93c0665` | MUST be returned when a state-mutating operation is attempted while the token is paused (including duplicate `pause()`). |
+| `ERR_PAUSABLE_EXPECTED_PAUSE` | `ExpectedPause()` | `0x8dfc202b` | MUST be returned when `unpause()` is called while the token is not paused. |
 
 State mutations and logs MUST be reverted on failed execution.
 
@@ -172,7 +176,7 @@ State mutations and logs MUST be reverted on failed execution.
 FLIP-20 defines cross-environment interoperability as a first-class requirement:
 
 - An implementation MUST preserve ERC-20 ABI behavior for EVM callers.
-- Implementations SHOULD support SVM/SPL interoperability adapters (e.g. Token-2022 routing paths) so SPL-side flows can consume the same underlying token state semantics.
+- Implementations MUST support SVM/SPL interoperability adapters (e.g. Token-2022 routing paths) so SPL-side flows can consume the same underlying token state semantics.
 - Interoperability MUST preserve fungibility and accounting invariants (`totalSupply`, balances, allowances/authorities).
 
 Result: FLIP-20 assets are inter-tradable across EVM and SPL-facing user flows, while keeping an ERC-20 interface for EVM tooling.
@@ -189,6 +193,28 @@ Latest benchmark snapshot (1000 measurements, transfer path):
 | Emulated EVM ERC20 | ~20.932 µs | 878,183 |
 | rWasm Contract ERC20 | ~126.39 µs | 3,769,621 |
 | Precompiled Universal Token (FLIP-20/UST20) | ~6.2704 µs | 74,122 |
+
+### Benchmark provenance
+
+For the **Latest benchmark snapshot** table above (Original EVM ERC20, Emulated EVM ERC20, rWasm Contract ERC20, Precompiled Universal Token):
+
+- Snapshot source: user-supplied benchmark image (received 2026-03-15 UTC).
+- Snapshot timestamp in artifact: not explicitly recorded in the image.
+- Code under test (repro baseline): `origin/devel` at `f9e008b6`.
+- Runtime components:
+  - EVM path: `fluentbase-revm` (workspace dependency)
+  - rWasm path: `rwasm` from `fluentlabs-xyz/rwasm` branch `devel`
+- Toolchain target (from repo): `rust-toolchain = 1.92.0`.
+- Measurement tool: Criterion `0.8.1` (`e2e/Cargo.toml`).
+- Benchmark harness knobs (`e2e/benches/erc20.rs`): warmup `500ms`, measurement `1s`, sample size `1000`.
+- Reproduction command:
+  - `cargo bench -p fluentbase-e2e --bench erc20`
+- Raw result artifact path (default Criterion output):
+  - `target/criterion/Tokens Transfer Comparison/`
+- Repro environment profile captured while preparing this FLIP update:
+  - OS/kernel: `Linux 6.8.0-90-generic`
+  - CPU: `AMD EPYC-Milan Processor` (4 vCPU)
+  - RAM: `15 GiB`
 
 Key takeaways:
 
