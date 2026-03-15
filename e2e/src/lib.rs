@@ -19,9 +19,11 @@
 extern crate alloc;
 extern crate core;
 
+use crate::utils::download_and_cache_genesis;
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
-use fluentbase_sdk::{GenesisContract, PRECOMPILE_WASM_RUNTIME};
+use fluentbase_sdk::{GenesisContract, PRECOMPILE_WASM_RUNTIME, U256};
 use fluentbase_testing::EvmTestingContext;
+use revm::{bytecode::Bytecode, state::AccountInfo};
 
 #[cfg(test)]
 mod blockhash;
@@ -69,16 +71,38 @@ mod universal_token;
 mod universal_token_solidity;
 #[cfg(test)]
 mod update_account;
+mod utils;
 #[cfg(test)]
 mod wasm;
 
 pub trait EvmTestingContextWithGenesis {
+    fn with_remote_genesis(self, genesis_version: &'static str) -> Self;
+
     fn with_full_genesis(self) -> Self;
 
     fn with_minimal_genesis(self) -> Self;
 }
 
 impl EvmTestingContextWithGenesis for EvmTestingContext {
+    fn with_remote_genesis(mut self, genesis_version: &'static str) -> EvmTestingContext {
+        let genesis = download_and_cache_genesis(genesis_version, None).unwrap();
+        for (k, v) in genesis.alloc {
+            if v.code.is_none() {
+                continue;
+            }
+            let code = Bytecode::new_raw(v.code.unwrap());
+            let info: AccountInfo = AccountInfo {
+                balance: U256::ZERO,
+                nonce: 0,
+                code_hash: code.hash_slow(),
+                account_id: None,
+                code: Some(code),
+            };
+            self.db.insert_account_info(k, info);
+        }
+        self
+    }
+
     fn with_full_genesis(self) -> EvmTestingContext {
         let contracts: Vec<GenesisContract> = GENESIS_CONTRACTS_BY_ADDRESS
             .iter()

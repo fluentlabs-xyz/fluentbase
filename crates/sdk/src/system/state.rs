@@ -12,7 +12,6 @@ pub struct RecoverableState {
     pub(super) metadata: Bytes,
     pub(super) input: Bytes,
     pub(super) context: SharedContextInputV1,
-    // pub(super) balances: HashMap<Address, U256>,
     pub(super) output: Vec<u8>,
     pub(super) interruption_outcome: Option<RuntimeInterruptionOutcomeV1>,
     pub(super) unique_key: u32,

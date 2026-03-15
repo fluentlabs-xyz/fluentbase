@@ -96,6 +96,6 @@ bn = ["revm/bn"]
 # fluentbase
 debug-print = [
     "fluentbase-runtime/debug-print",
-    #    "rwasm/debug-print",
+    # "rwasm/debug-print",
 ]
 wasmtime = ["fluentbase-runtime/wasmtime", "rwasm/wasmtime"]

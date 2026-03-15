@@ -21,17 +21,24 @@ fluentbase-testing = { workspace = true }
 fluentbase-contracts = { workspace = true }
 #curve25519-dalek = { workspace = true }
 
+alloy-genesis = { workspace = true }
 rwasm = { workspace = true }
 revm = { workspace = true }
 fluentbase-revm = { workspace = true }
 hex-literal = { workspace = true }
 hex = { workspace = true }
 alloy-sol-types = { workspace = true }
+eyre = { workspace = true }
+directories = "6.0.0"
 wat = { version = "1.223.0" }
 paste = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 rand = { version = "0.9.1" }
 sha2 = { workspace = true }
 bytes = "1.11.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+flate2 = { workspace = true }
 
 [dev-dependencies]
 #fluentbase-svm = { workspace = true }
@@ -41,8 +48,6 @@ criterion = "0.8.1"
 #solana-bn254 = { workspace = true, default-features = false }
 #solana-poseidon = { workspace = true, default-features = false }
 #solana-program-pack = { workspace = true, default-features = false }
-#serde = { workspace = true }
-#serde_json = { workspace = true }
 #array-bytes = { workspace = true }
 #ark-bn254 = { workspace = true }
 #ark-serialize = { workspace = true }
@@ -50,16 +55,12 @@ criterion = "0.8.1"
 [features]
 default = [
     "std",
-    "wasmtime",
+    #    "wasmtime",
     # "debug-print",
-    # "svm",
-    # "enable-error-text-checks", # when 'fast-panic' is off
 ]
 svm = [
     "fluentbase-genesis/svm",
-    # "fluentbase-svm/use-extended-debug-log"
 ]
-enable-error-text-checks = []
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",
@@ -77,7 +78,7 @@ debug-print = [
     "revm/debug-print",
     "fluentbase-revm/debug-print",
     # "fluentbase-svm/debug-print",
-    # "rwasm/debug-print",
+    #"rwasm/debug-print",
 ]
 wasmtime = [
     "fluentbase-runtime/wasmtime",

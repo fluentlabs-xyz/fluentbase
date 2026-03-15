@@ -22,7 +22,7 @@ use fluentbase_sdk::{
     PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
 };
 use revm::{
-    bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
+    bytecode::{opcode, ownable_account::OwnableAccountBytecode, rwasm::RwasmBytecode, Bytecode},
     context::{
         journaled_state::{AccountLoad, JournalLoadError},
         Cfg, ContextError, ContextTr, CreateScheme, JournalTr,
@@ -40,6 +40,7 @@ use revm::{
 };
 use rwasm::TrapCode;
 use std::{boxed::Box, vec, vec::Vec};
+use tracing::warn;
 
 /// Abstraction over reading guest memory for syscall handling.
 ///
@@ -1173,7 +1174,17 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Ok(rwasm_bytecode) = lazy_contract_input() else {
                 return_halt!(MemoryOutOfBounds);
             };
-            let bytecode = Bytecode::new_rwasm(rwasm_bytecode.into());
+            #[cfg(feature = "std")]
+            warn!(
+                ?target_address,
+                bytecode_size = rwasm_bytecode.len(),
+                "Upgrading genesis runtime"
+            );
+            // Make sure rWasm bytecode provided matches magic bytes
+            let Ok(rwasm_bytecode) = RwasmBytecode::new(rwasm_bytecode.into()) else {
+                return_halt!(MalformedBuiltinParams);
+            };
+            let bytecode = Bytecode::Rwasm(rwasm_bytecode);
             // Make sure an account is loaded
             _ = ctx.journal_mut().load_account_with_code(target_address)?;
             ctx.journal_mut().set_code(target_address, bytecode);
