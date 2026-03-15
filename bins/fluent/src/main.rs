@@ -33,9 +33,9 @@ pub struct FluentNodeArgs {
     #[arg(
         long = "validator.block-time",
         value_parser = parse_duration,
-        default_value = "1sec",
+        default_value = "1s",
     )]
-    pub validator_block_time: Option<Duration>,
+    pub validator_block_time: Duration,
 }
 
 fn main() {
@@ -61,7 +61,7 @@ fn main() {
             consensus_url = resolve_default_consensus_url(node.chain.chain);
         }
         if node.ext.validator {
-            block_producer = node.ext.validator_block_time;
+            block_producer = Some(node.ext.validator_block_time);
         }
     }
 

@@ -24,14 +24,19 @@ pub fn download_and_cache_genesis(tag: &str, channel: Option<&str>) -> eyre::Res
     })?;
 
     let gz_path = genesis_dir.join(&gz_name);
+    if gz_path.exists() {
+        println!("Using cached genesis from {}", gz_path.display());
+        return read_genesis_from_gz(&gz_path);
+    }
+
     println!(
         "Genesis not found in cache, downloading from {} to {}",
         gz_url,
         gz_path.display()
     );
 
-    // Download both files.
-    download_to(&gz_url, &gz_path).unwrap();
+    // Download genesis file
+    download_to(&gz_url, &gz_path)?;
 
     println!("Verifying signature genesis signature...");
 
