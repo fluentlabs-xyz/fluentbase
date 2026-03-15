@@ -63,7 +63,7 @@ jobs:
             echo
             echo "_Heads-up_: runner perf is noisy; treat deltas as a smoke check."
           } > comment.md
-      - uses: marocchino/sticky-pull-request-comment@v2
+      - uses: marocchino/sticky-pull-request-comment@v3
         if: ${{ !github.event.pull_request.head.repo.fork }}
         with:
           path: comment.md
