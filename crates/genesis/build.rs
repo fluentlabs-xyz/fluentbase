@@ -82,7 +82,7 @@ fn default_chain_config(chain_id: u64) -> ChainConfig {
         parlia: None,
         deposit_contract_address: None,
         prague_time: Some(0u64),
-        osaka_time: None,
+        osaka_time: Some(0u64),
         bpo1_time: None,
         bpo2_time: None,
         bpo3_time: None,
