@@ -3,7 +3,7 @@ use alloy_sol_types::{sol, SolCall, SolEvent};
 use core::str::from_utf8;
 use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
-    address, bytes, calc_create_address, Address, Bytes, PRECOMPILE_ROLLUP_BRIDGE, U256,
+    address, bytes, calc_create_address, Address, Bytes, B256, PRECOMPILE_ROLLUP_BRIDGE, U256,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use hex_literal::hex;
@@ -298,12 +298,30 @@ fn test_bridge_mint_burn() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 
     {
+        let log_data = ReceivedMessage {
+            messageHash: B256::ZERO,
+            successfulCall: true,
+            returnData: Bytes::new(),
+        }
+        .encode_data();
         let mut bytecode = Vec::new();
-        bytecode.push(opcode::PUSH32);
+        const LOG_DATA_OFFSET: usize = 6 + 2 + 32 + 3;
+        // copy log data (6)
+        bytecode.push(opcode::PUSH1);
+        bytecode.push(u8::try_from(log_data.len()).unwrap()); // length
+        bytecode.push(opcode::PUSH1);
+        bytecode.push(u8::try_from(LOG_DATA_OFFSET).unwrap()); // offset
+        bytecode.push(opcode::PUSH0); // data offset
+        bytecode.push(opcode::CODECOPY);
+        // call log1 (2 + 32 + 3)
+        bytecode.push(opcode::PUSH32); // topic
         bytecode.extend_from_slice(ReceivedMessage::SIGNATURE_HASH.as_slice());
-        bytecode.push(opcode::PUSH0);
-        bytecode.push(opcode::PUSH0);
+        bytecode.push(opcode::PUSH1); // data length
+        bytecode.push(u8::try_from(log_data.len()).unwrap());
+        bytecode.push(opcode::PUSH0); // data offset
         bytecode.push(opcode::LOG1);
+        assert_eq!(bytecode.len(), LOG_DATA_OFFSET);
+        bytecode.extend(log_data);
         ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
 
         let receive_message_input = receiveMessageCall {

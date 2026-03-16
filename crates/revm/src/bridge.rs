@@ -85,8 +85,15 @@ where
         let event_exists = journal
             .logs()
             .iter()
-            .any(|log| log.topics().first() == Some(&ReceivedMessage::SIGNATURE_HASH));
-        debug_assert_eq!(event_exists, frame_result.interpreter_result().is_ok());
+            .find(|log| log.topics().first() == Some(&ReceivedMessage::SIGNATURE_HASH));
+        let transfer_successful = event_exists
+            .map(|event| {
+                let Ok(received_message) = ReceivedMessage::decode_log(event) else {
+                    return false;
+                };
+                received_message.successfulCall
+            })
+            .unwrap_or(false);
 
         // Load bridge account with its balance
         let mut bridge_account = journal
@@ -94,7 +101,7 @@ where
             .data;
 
         // Decrease balance back if execution failed
-        if !event_exists || !frame_result.interpreter_result().is_ok() {
+        if !transfer_successful {
             _ = bridge_account.decr_balance(message.value);
         }
     } else if tx.input().starts_with(&sendMessageCall::SELECTOR) {

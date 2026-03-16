@@ -55,8 +55,8 @@ criterion = "0.8.1"
 [features]
 default = [
     "std",
-    #    "wasmtime",
-    # "debug-print",
+    "wasmtime",
+    "debug-print",
 ]
 svm = [
     "fluentbase-genesis/svm",
