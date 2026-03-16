@@ -11,7 +11,7 @@ use fluentbase_evm::EthereumMetadata;
 use fluentbase_revm::revm::bytecode::{rwasm::RWASM_MAGIC_BYTES, Bytecode};
 use fluentbase_sdk::{
     address, compile_rwasm_maybe_system, keccak256, Address, Bytes, B256,
-    PRECOMPILE_CREATE2_FACTORY, PRECOMPILE_EVM_RUNTIME, U256,
+    PRECOMPILE_CREATE2_FACTORY, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER, U256,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -202,12 +202,6 @@ fn main() {
         )
     }
 
-    // Pre-mint 10 ETH to bridge deployer wallet (the same amount is sent to a mainnet bridge account)
-    alloc.insert(
-        fluentbase_sdk::PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER,
-        GenesisAccount::default().with_balance(U256::from(10_000000000000000000u128)),
-    );
-
     // Insert create2-factory EVM contract & deployer
     const CREATE2_FACTORY_EVM_CONTRACT: &[u8] =
         include_bytes!("../../contracts/create2-factory/deterministic-deployment-proxy.bin");
@@ -224,9 +218,9 @@ fn main() {
         GenesisAccount::default().with_nonce(Some(1)),
     );
 
-    // Pre-mint 10 ETH for ecosystem faucet & bridge deployer
+    // Pre-mint 10 ETH for ecosystem faucet & bridge deployer (the same amount is sent to a mainnet bridge account)
     alloc.insert(
-        address!("0x482582979C9125abAb5a06F0E196E8F4015bF77A"),
+        PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER,
         GenesisAccount::default().with_balance(U256::from(1_000000000000000000u128)),
     );
     alloc.insert(
