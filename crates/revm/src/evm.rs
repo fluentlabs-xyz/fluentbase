@@ -156,7 +156,11 @@ where
         ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
     > {
         let (ctx, inspector, frame) = self.ctx_inspector_frame();
-        let next_action = match run_rwasm_loop::<Self::Context, Self::Inspector>(
+
+        // Apply fluent bridge hook that mints/burns native tokens
+        apply_bridge_pre_invocation_hook::<Self::Context>(ctx)?;
+
+        let mut next_action = match run_rwasm_loop::<Self::Context, Self::Inspector>(
             frame,
             ctx,
             Some(&mut *inspector),
@@ -185,6 +189,9 @@ where
                 return Err(err);
             }
         };
+
+        // Apply fluent bridge hook that mints/burns native tokens
+        apply_bridge_post_invocation_hook::<Self::Context>(ctx, &mut next_action)?;
 
         let mut result = frame.process_next_action(ctx, next_action);
 
