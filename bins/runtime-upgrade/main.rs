@@ -284,6 +284,7 @@ async fn main() -> Result<()> {
             continue;
         };
         let Ok((module, _)) = RwasmModule::new_checked(code.as_ref()) else {
+            println!("WARN: Skipping malformed rwasm binary");
             continue;
         };
         if module.hint_section.is_empty() {
