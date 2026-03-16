@@ -2,6 +2,7 @@
 
 use crate::{
     api::RwasmFrame,
+    bridge::{apply_bridge_post_invocation_hook, apply_bridge_pre_invocation_hook},
     executor::run_rwasm_loop,
     precompiles::RwasmPrecompiles,
     types::SystemInterruptionOutcome,
@@ -155,7 +156,11 @@ where
         ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
     > {
         let (ctx, inspector, frame) = self.ctx_inspector_frame();
-        let next_action = match run_rwasm_loop::<Self::Context, Self::Inspector>(
+
+        // Apply fluent bridge hook that mints/burns native tokens
+        apply_bridge_pre_invocation_hook::<Self::Context>(ctx)?;
+
+        let mut next_action = match run_rwasm_loop::<Self::Context, Self::Inspector>(
             frame,
             ctx,
             Some(&mut *inspector),
@@ -184,6 +189,9 @@ where
                 return Err(err);
             }
         };
+
+        // Apply fluent bridge hook that mints/burns native tokens
+        apply_bridge_post_invocation_hook::<Self::Context>(ctx, &mut next_action)?;
 
         let mut result = frame.process_next_action(ctx, next_action);
 
@@ -378,8 +386,16 @@ where
     > {
         let frame = self.0.frame_stack.get();
         let context = &mut self.0.ctx;
-        let action = run_rwasm_loop::<Self::Context, NoOpInspector>(frame, context, None)?
+
+        // Apply fluent bridge hook that mints/burns native tokens
+        apply_bridge_pre_invocation_hook::<Self::Context>(context)?;
+
+        let mut action = run_rwasm_loop::<Self::Context, NoOpInspector>(frame, context, None)?
             .into_interpreter_action();
+
+        // Apply fluent bridge hook that mints/burns native tokens
+        apply_bridge_post_invocation_hook::<Self::Context>(context, &mut action)?;
+
         frame.process_next_action(context, action).inspect(|i| {
             if i.is_result() {
                 frame.set_finished(true);

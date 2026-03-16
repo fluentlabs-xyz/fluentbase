@@ -55,7 +55,7 @@ criterion = "0.8.1"
 [features]
 default = [
     "std",
-    #    "wasmtime",
+    "wasmtime",
     # "debug-print",
 ]
 svm = [
