@@ -1,13 +1,9 @@
 //!Handler related to a Fluent chain
 
-use crate::{
-    bridge::{apply_bridge_post_invocation_hook, apply_bridge_pre_invocation_hook},
-    types::SystemInterruptionOutcome,
-    RwasmFrame, RwasmHaltReason,
-};
+use crate::{types::SystemInterruptionOutcome, RwasmFrame, RwasmHaltReason};
 use fluentbase_sdk::calldata_quadratic_surcharge;
 use revm::{
-    context::{result::ExecutionResult, ContextTr, JournalTr},
+    context::{ContextTr, JournalTr},
     context_interface::{Cfg, Transaction},
     handler::{validation, EvmTr, EvmTrError, Handler},
     inspector::{InspectorEvmTr, InspectorHandler},
@@ -52,27 +48,6 @@ where
 
         Ok(gas)
     }
-
-    #[inline]
-    fn run_without_catch_error(
-        &mut self,
-        evm: &mut Self::Evm,
-    ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
-        let init_and_floor_gas = self.validate(evm)?;
-        let eip7702_refund = self.pre_execution(evm)? as i64;
-
-        // Apply fluent bridge hook that mints/burns native tokens
-        apply_bridge_pre_invocation_hook::<EVM, ERROR>(evm)?;
-
-        let mut exec_result = self.execution(evm, &init_and_floor_gas)?;
-        self.post_execution(evm, &mut exec_result, init_and_floor_gas, eip7702_refund)?;
-
-        // Apply fluent bridge hook that mints/burns native tokens
-        apply_bridge_post_invocation_hook::<EVM, ERROR>(evm, &exec_result)?;
-
-        // Prepare the output
-        self.execution_result(evm, exec_result)
-    }
 }
 
 impl<CTX, ERROR> Default for RwasmHandler<CTX, ERROR> {
@@ -94,23 +69,4 @@ where
     ERROR: EvmTrError<EVM>,
 {
     type IT = EthInterpreter;
-
-    fn inspect_run_without_catch_error(
-        &mut self,
-        evm: &mut Self::Evm,
-    ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
-        let init_and_floor_gas = self.validate(evm)?;
-        let eip7702_refund = self.pre_execution(evm)? as i64;
-
-        // Apply fluent bridge hook that mints/burns native tokens
-        apply_bridge_pre_invocation_hook::<EVM, ERROR>(evm)?;
-
-        let mut frame_result = self.inspect_execution(evm, &init_and_floor_gas)?;
-        self.post_execution(evm, &mut frame_result, init_and_floor_gas, eip7702_refund)?;
-
-        // Apply fluent bridge hook that mints/burns native tokens
-        apply_bridge_post_invocation_hook::<EVM, ERROR>(evm, &frame_result)?;
-
-        self.execution_result(evm, frame_result)
-    }
 }
