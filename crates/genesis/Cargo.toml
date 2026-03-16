@@ -28,7 +28,7 @@ serde_json = { workspace = true }
 fluentbase-contracts = { workspace = true }
 
 [features]
-default = []
+default = ["std"]
 debug-print = [
     "fluentbase-contracts/debug-print",
     "fluentbase-revm/debug-print",

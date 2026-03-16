@@ -283,7 +283,10 @@ async fn main() -> Result<()> {
         let Some(code) = entry.code.as_ref() else {
             continue;
         };
-        let (module, _) = RwasmModule::new(code.as_ref());
+        let Ok((module, _)) = RwasmModule::new_checked(code.as_ref()) else {
+            println!("WARN: Skipping malformed rwasm binary");
+            continue;
+        };
         if module.hint_section.is_empty() {
             bail!("Failed to extract WASM bytecode from {}", addr);
         }

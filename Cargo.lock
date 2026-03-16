@@ -3379,7 +3379,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3712,7 +3712,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4282,7 +4282,7 @@ dependencies = [
 
 [[package]]
 name = "fluent"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -4421,7 +4421,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-build"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata 0.19.2",
@@ -4445,7 +4445,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -4460,7 +4460,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "convert_case 0.6.0",
@@ -4475,7 +4475,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-contracts"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "alloy-genesis",
  "cargo_metadata 0.19.2",
@@ -4488,7 +4488,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-crypto"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -4531,7 +4531,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -4547,7 +4547,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-genesis"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "alloy-genesis",
  "fluentbase-contracts",
@@ -4561,7 +4561,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-revm"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -4579,7 +4579,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -4598,7 +4598,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime-upgrade"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "alloy-genesis",
  "alloy-sol-types",
@@ -4620,7 +4620,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "alloy-rlp",
  "alloy-sol-types",
@@ -4638,7 +4638,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -4653,7 +4653,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -4678,7 +4678,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-testing"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "fluentbase-codec",
@@ -4694,7 +4694,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "alloy-primitives",
  "bincode 2.0.1",
@@ -7026,7 +7026,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7353,7 +7353,7 @@ dependencies = [
 [[package]]
 name = "op-revm"
 version = "15.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#4a639f805e7f59aa9559ac9b2b38025d18bdde58"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "auto_impl",
  "revm",
@@ -11655,7 +11655,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "34.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#db799ee17ca35c8f73b5f3d025144811845f8346"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -11673,7 +11673,7 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "8.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#db799ee17ca35c8f73b5f3d025144811845f8346"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "bitvec",
  "phf 0.13.1",
@@ -11685,7 +11685,7 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "13.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#db799ee17ca35c8f73b5f3d025144811845f8346"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "bitvec",
  "cfg-if",
@@ -11701,7 +11701,7 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "14.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#db799ee17ca35c8f73b5f3d025144811845f8346"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -11716,7 +11716,7 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "10.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#4a639f805e7f59aa9559ac9b2b38025d18bdde58"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -11729,7 +11729,7 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "9.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#4a639f805e7f59aa9559ac9b2b38025d18bdde58"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "auto_impl",
  "either",
@@ -11742,7 +11742,7 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "15.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#db799ee17ca35c8f73b5f3d025144811845f8346"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -11760,7 +11760,7 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "15.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#db799ee17ca35c8f73b5f3d025144811845f8346"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "auto_impl",
  "either",
@@ -11797,7 +11797,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "32.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#db799ee17ca35c8f73b5f3d025144811845f8346"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -11809,7 +11809,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "32.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#db799ee17ca35c8f73b5f3d025144811845f8346"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -11833,7 +11833,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "22.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#db799ee17ca35c8f73b5f3d025144811845f8346"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -11844,7 +11844,7 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "9.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#4a639f805e7f59aa9559ac9b2b38025d18bdde58"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#fb16039069c16bedf8137b78dcafd9ee23f1547a"
 dependencies = [
  "alloy-eip7928",
  "bitflags 2.11.0",
@@ -12103,7 +12103,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -12182,7 +12182,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 0.26.11",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -13345,7 +13345,7 @@ dependencies = [
  "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -14076,7 +14076,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5f7c95348f20c1c913d72157b3c6dee6ea3e30b3d19502c5a7f6d3f160dacbf"
 dependencies = [
  "cc",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -15092,7 +15092,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
