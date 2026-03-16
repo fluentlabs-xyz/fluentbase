@@ -267,26 +267,31 @@ fn test_send_message_fails_on_value_mismatch() {
         nonce: U256::ZERO,
         messageHash: B256::ZERO,
         data: Bytes::new(),
-    }
-    .encode_data();
+    };
+    let encoded_log_data = log_data.encode_data();
 
     let mut bytecode = Vec::new();
-    const LOG_DATA_OFFSET: usize = 44;
+    const LOG_DATA_OFFSET: usize = 86;
     bytecode.push(opcode::PUSH1);
-    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(u8::try_from(encoded_log_data.len()).unwrap());
     bytecode.push(opcode::PUSH1);
     bytecode.push(u8::try_from(LOG_DATA_OFFSET).unwrap());
     bytecode.push(opcode::PUSH0);
     bytecode.push(opcode::CODECOPY);
+    let (topic0, topic1, topic2) = log_data.topics();
+    bytecode.push(opcode::PUSH20);
+    bytecode.extend_from_slice(topic2.as_slice());
+    bytecode.push(opcode::PUSH20);
+    bytecode.extend_from_slice(topic1.as_slice());
     bytecode.push(opcode::PUSH32);
-    bytecode.extend_from_slice(SentMessage::SIGNATURE_HASH.as_slice());
+    bytecode.extend_from_slice(topic0.as_slice());
     bytecode.push(opcode::PUSH1);
-    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(u8::try_from(encoded_log_data.len()).unwrap());
     bytecode.push(opcode::PUSH0);
-    bytecode.push(opcode::LOG1);
+    bytecode.push(opcode::LOG3);
     bytecode.push(opcode::STOP);
     assert_eq!(bytecode.len(), LOG_DATA_OFFSET);
-    bytecode.extend(log_data);
+    bytecode.extend(encoded_log_data);
 
     ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
 
