@@ -125,6 +125,7 @@ fn read_genesis_from_gz(path: &Path) -> eyre::Result<Genesis> {
 }
 
 /// ASCII-armored OpenPGP public key used to verify genesis artifacts.
+#[allow(dead_code)]
 const FLUENT_RELEASE_PUBKEY_ASC: &str = "-----BEGIN PGP PUBLIC KEY BLOCK-----
 mDMEaEq6ORYJKwYBBAHaRw8BAQdADSciIyJRuaPogw2vJ388jlOsKRQk1c84vUpn
 NT+vmeu0J0RtaXRyaWkgU2F2b25pbiA8ZG1pdHJ5QGZsdWVudGxhYnMueHl6PoiT

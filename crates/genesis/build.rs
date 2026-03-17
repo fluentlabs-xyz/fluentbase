@@ -283,7 +283,7 @@ fn main() {
     // mainnet genesis
     {
         let genesis = Genesis {
-            config: default_chain_config(1993),
+            config: default_chain_config(25363),
             nonce: 0,
             timestamp,
             extra_data: Bytes::new(),
