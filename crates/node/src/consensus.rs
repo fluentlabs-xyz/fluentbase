@@ -22,10 +22,10 @@ where
         Types: NodeTypes<ChainSpec: EthChainSpec + EthereumHardforks, Primitives = EthPrimitives>,
     >,
 {
-    type Consensus = Arc<EthBeaconConsensus<<Node::Types as NodeTypes>::ChainSpec>>;
+    type Consensus = Arc<FluentConsensus<<Node::Types as NodeTypes>::ChainSpec>>;
 
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
-        Ok(Arc::new(EthBeaconConsensus::new(ctx.chain_spec())))
+        Ok(Arc::new(FluentConsensus::new(ctx.chain_spec())))
     }
 }
 
@@ -87,7 +87,16 @@ where
     }
 
     fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError> {
-        self.inner.validate_block_pre_execution(block)
+        self.inner.validate_block_pre_execution(block)?;
+
+        // Make sure a header has correct coinbase, all fees must be accumulated
+        // inside fee manager smart contract
+        use alloy_consensus::BlockHeader;
+        if block.header().beneficiary() != PRECOMPILE_FEE_MANAGER {
+            return Err(ConsensusError::Other("malformed beneficiary".to_owned()));
+        }
+
+        Ok(())
     }
 }
 

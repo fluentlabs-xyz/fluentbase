@@ -3,6 +3,7 @@
 use clap::{Args, Parser};
 use fluentbase_node::{
     chainspec::FluentChainSpecParser,
+    consensus::FluentConsensus,
     evm::{FluentEvmConfig, FluentExecutorBuilder, FluentNode},
     launcher::{launch_consensus_node, launch_consensus_validator},
     payload::FluentPayloadAttributesBuilder,
@@ -11,7 +12,6 @@ use fluentbase_node::{
 use humantime::parse_duration;
 use reth_chainspec::ChainSpec;
 use reth_ethereum_cli::{Cli, Commands};
-use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_node_builder::{DebugNodeLauncherFuture, Node};
 use reth_node_ethereum::EthereumAddOns;
 use std::{sync::Arc, time::Duration};
@@ -72,7 +72,7 @@ fn main() {
     let components = |spec: Arc<ChainSpec>| {
         (
             FluentEvmConfig::new_with_default_factory(spec.clone()),
-            Arc::new(EthBeaconConsensus::new(spec)),
+            Arc::new(FluentConsensus::new(spec)),
         )
     };
 
