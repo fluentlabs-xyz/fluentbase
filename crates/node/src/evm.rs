@@ -1,5 +1,6 @@
 //! Ethereum EVM implementation.
 
+use crate::{consensus::FluentConsensusBuilder, payload::FluentPayloadAttributesBuilder};
 use alloy_consensus::{Header, TxType};
 use alloy_evm::{
     block::{
@@ -31,7 +32,6 @@ use fluentbase_revm::{
     DefaultRwasm, RwasmBuilder, RwasmEvm, RwasmFrame, RwasmPrecompiles,
 };
 use reth_chainspec::ChainSpec;
-use reth_engine_local::LocalPayloadAttributesBuilder;
 use reth_ethereum::engine::EthPayloadAttributes;
 use reth_ethereum_engine_primitives::{
     EthBuiltPayload, EthEngineTypes, EthPayloadBuilderAttributes,
@@ -48,8 +48,8 @@ use reth_node_builder::{
     BuilderContext, DebugNode, Node, NodeAdapter,
 };
 use reth_node_ethereum::{
-    EthereumAddOns, EthereumConsensusBuilder, EthereumEngineValidatorBuilder,
-    EthereumEthApiBuilder, EthereumNetworkBuilder, EthereumPayloadBuilder, EthereumPoolBuilder,
+    EthereumAddOns, EthereumEngineValidatorBuilder, EthereumEthApiBuilder, EthereumNetworkBuilder,
+    EthereumPayloadBuilder, EthereumPoolBuilder,
 };
 use reth_node_types::NodeTypes;
 use reth_payload_primitives::{PayloadAttributesBuilder, PayloadTypes};
@@ -436,7 +436,7 @@ impl FluentNode {
         BasicPayloadServiceBuilder<EthereumPayloadBuilder>,
         EthereumNetworkBuilder,
         FluentExecutorBuilder,
-        EthereumConsensusBuilder,
+        FluentConsensusBuilder,
     >
     where
         Node: FullNodeTypes<Types: NodeTypes<ChainSpec = ChainSpec, Primitives = EthPrimitives>>,
@@ -452,7 +452,7 @@ impl FluentNode {
             .executor(FluentExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::default())
             .network(EthereumNetworkBuilder::default())
-            .consensus(EthereumConsensusBuilder::default())
+            .consensus(FluentConsensusBuilder::default())
     }
 
     pub fn provider_factory_builder() -> ProviderFactoryBuilder<Self> {
@@ -477,7 +477,7 @@ where
         BasicPayloadServiceBuilder<EthereumPayloadBuilder>,
         EthereumNetworkBuilder,
         FluentExecutorBuilder,
-        EthereumConsensusBuilder,
+        FluentConsensusBuilder,
     >;
 
     type AddOns =
@@ -500,9 +500,9 @@ impl<N: FullNodeComponents<Types = Self>> DebugNode<N> for FluentNode {
     }
 
     fn local_payload_attributes_builder(
-        chain_spec: &Self::ChainSpec,
+        _chain_spec: &Self::ChainSpec,
     ) -> impl PayloadAttributesBuilder<<Self::Payload as PayloadTypes>::PayloadAttributes> {
-        LocalPayloadAttributesBuilder::new(Arc::new(chain_spec.clone()))
+        FluentPayloadAttributesBuilder {}
     }
 }
 

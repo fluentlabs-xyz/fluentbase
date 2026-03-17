@@ -1,17 +1,17 @@
 #![allow(missing_docs, dead_code)]
 
 use clap::{Args, Parser};
-use fluent::{
+use fluentbase_node::{
     chainspec::FluentChainSpecParser,
-    consensus::{launch_consensus_node, launch_consensus_validator},
+    consensus::FluentConsensus,
     evm::{FluentEvmConfig, FluentExecutorBuilder, FluentNode},
+    launcher::{launch_consensus_node, launch_consensus_validator},
     payload::FluentPayloadAttributesBuilder,
     trusted_peers::{resolve_default_consensus_url, resolve_default_trusted_peers},
 };
 use humantime::parse_duration;
 use reth_chainspec::ChainSpec;
 use reth_ethereum_cli::{Cli, Commands};
-use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_node_builder::{DebugNodeLauncherFuture, Node};
 use reth_node_ethereum::EthereumAddOns;
 use std::{sync::Arc, time::Duration};
@@ -36,6 +36,9 @@ pub struct FluentNodeArgs {
         default_value = "1s",
     )]
     pub validator_block_time: Duration,
+
+    #[arg(long = "sequencer-url")]
+    pub sequencer_url: Option<String>,
 }
 
 fn main() {
@@ -47,7 +50,6 @@ fn main() {
     }
 
     let mut consensus_url: Option<String> = None;
-    // let mut block_finalizer_sidecar_url: Option<String> = None;
     let mut block_producer: Option<Duration> = None;
 
     let mut cli = Cli::<FluentChainSpecParser, FluentNodeArgs>::parse();
@@ -55,7 +57,9 @@ fn main() {
         let new_trusted_peers = resolve_default_trusted_peers(node.chain.chain);
         node.network.trusted_peers.extend(new_trusted_peers);
         // If consensus URL is not specified, resolve default
-        if let Some(debug_consensus_url) = &node.debug.rpc_consensus_url {
+        if let Some(sequencer_url) = &node.ext.sequencer_url {
+            consensus_url = Some(sequencer_url.clone());
+        } else if let Some(debug_consensus_url) = &node.debug.rpc_consensus_url {
             consensus_url = Some(debug_consensus_url.clone());
         } else {
             consensus_url = resolve_default_consensus_url(node.chain.chain);
@@ -68,7 +72,7 @@ fn main() {
     let components = |spec: Arc<ChainSpec>| {
         (
             FluentEvmConfig::new_with_default_factory(spec.clone()),
-            Arc::new(EthBeaconConsensus::new(spec)),
+            Arc::new(FluentConsensus::new(spec)),
         )
     };
 

@@ -1,0 +1,1 @@
+pub const FLUENT_MAXIMUM_EXTRA_DATA_SIZE: usize = 65;

@@ -987,7 +987,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -998,7 +998,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1560,7 +1560,7 @@ dependencies = [
  "bitflags 2.11.0",
  "cexpr",
  "clang-sys",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -3379,7 +3379,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3712,7 +3712,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4282,7 +4282,7 @@ dependencies = [
 
 [[package]]
 name = "fluent"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -4296,6 +4296,7 @@ dependencies = [
  "eyre",
  "flate2",
  "fluentbase-genesis",
+ "fluentbase-node",
  "fluentbase-revm",
  "fluentbase-runtime",
  "fluentbase-types",
@@ -4421,7 +4422,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-build"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "cargo_metadata 0.19.2",
@@ -4445,7 +4446,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -4460,7 +4461,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "bytes",
  "convert_case 0.6.0",
@@ -4475,7 +4476,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-contracts"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "alloy-genesis",
  "cargo_metadata 0.19.2",
@@ -4488,7 +4489,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-crypto"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -4531,7 +4532,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -4547,7 +4548,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-genesis"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "alloy-genesis",
  "fluentbase-contracts",
@@ -4560,8 +4561,144 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-node"
+version = "0.6.1"
+dependencies = [
+ "alloy-consensus",
+ "alloy-evm",
+ "alloy-genesis",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "directories",
+ "eyre",
+ "flate2",
+ "fluentbase-genesis",
+ "fluentbase-revm",
+ "fluentbase-runtime",
+ "fluentbase-types",
+ "reqwest 0.12.28",
+ "reth-basic-payload-builder",
+ "reth-chain-state",
+ "reth-chainspec",
+ "reth-cli",
+ "reth-cli-commands",
+ "reth-cli-runner",
+ "reth-cli-util",
+ "reth-codecs",
+ "reth-codecs-derive",
+ "reth-config",
+ "reth-consensus",
+ "reth-consensus-common",
+ "reth-consensus-debug-client",
+ "reth-db",
+ "reth-db-api",
+ "reth-db-common",
+ "reth-db-models",
+ "reth-discv4",
+ "reth-discv5",
+ "reth-dns-discovery",
+ "reth-downloaders",
+ "reth-e2e-test-utils",
+ "reth-ecies",
+ "reth-engine-local",
+ "reth-engine-primitives",
+ "reth-engine-service",
+ "reth-engine-tree",
+ "reth-engine-util",
+ "reth-era",
+ "reth-era-downloader",
+ "reth-era-utils",
+ "reth-errors",
+ "reth-eth-wire",
+ "reth-eth-wire-types",
+ "reth-ethereum",
+ "reth-ethereum-cli",
+ "reth-ethereum-consensus",
+ "reth-ethereum-engine-primitives",
+ "reth-ethereum-forks",
+ "reth-ethereum-payload-builder",
+ "reth-ethereum-primitives",
+ "reth-etl",
+ "reth-evm",
+ "reth-evm-ethereum",
+ "reth-execution-errors",
+ "reth-execution-types",
+ "reth-exex",
+ "reth-exex-test-utils",
+ "reth-exex-types",
+ "reth-fs-util",
+ "reth-invalid-block-hooks",
+ "reth-ipc",
+ "reth-libmdbx",
+ "reth-mdbx-sys",
+ "reth-metrics",
+ "reth-net-banlist",
+ "reth-net-nat",
+ "reth-network",
+ "reth-network-api",
+ "reth-network-p2p",
+ "reth-network-peers",
+ "reth-network-types",
+ "reth-nippy-jar",
+ "reth-node-api",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-node-ethereum",
+ "reth-node-ethstats",
+ "reth-node-events",
+ "reth-node-metrics",
+ "reth-node-types",
+ "reth-payload-builder",
+ "reth-payload-builder-primitives",
+ "reth-payload-primitives",
+ "reth-payload-util",
+ "reth-payload-validator",
+ "reth-primitives",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-prune",
+ "reth-prune-types",
+ "reth-revm",
+ "reth-rpc",
+ "reth-rpc-api",
+ "reth-rpc-api-testing-util",
+ "reth-rpc-builder",
+ "reth-rpc-convert",
+ "reth-rpc-e2e-tests",
+ "reth-rpc-engine-api",
+ "reth-rpc-eth-api",
+ "reth-rpc-eth-types",
+ "reth-rpc-layer",
+ "reth-rpc-server-types",
+ "reth-stages",
+ "reth-stages-api",
+ "reth-stages-types",
+ "reth-static-file",
+ "reth-static-file-types",
+ "reth-storage-api",
+ "reth-storage-errors",
+ "reth-storage-rpc-provider",
+ "reth-tasks",
+ "reth-tokio-util",
+ "reth-tracing",
+ "reth-tracing-otlp",
+ "reth-transaction-pool",
+ "reth-trie",
+ "reth-trie-common",
+ "reth-trie-db",
+ "reth-trie-parallel",
+ "reth-trie-sparse",
+ "reth-zstd-compressors",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "fluentbase-revm"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -4579,7 +4716,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -4598,7 +4735,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime-upgrade"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "alloy-genesis",
  "alloy-sol-types",
@@ -4620,7 +4757,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "alloy-rlp",
  "alloy-sol-types",
@@ -4638,7 +4775,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -4653,7 +4790,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -4678,7 +4815,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-testing"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "bytes",
  "fluentbase-codec",
@@ -4694,7 +4831,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "1.0.0"
+version = "0.6.1"
 dependencies = [
  "alloy-primitives",
  "bincode 2.0.1",
@@ -7026,7 +7163,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8335,7 +8472,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.11.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.116",
@@ -12103,7 +12240,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -13345,7 +13482,7 @@ dependencies = [
  "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -15092,7 +15229,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

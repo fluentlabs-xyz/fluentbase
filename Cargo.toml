@@ -15,7 +15,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.0.0"
+version = "0.6.1"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
@@ -36,6 +36,7 @@ fluentbase-contracts = { path = "./crates/contracts", default-features = false }
 fluentbase-crypto = { path = "./crates/crypto", default-features = false }
 fluentbase-evm = { path = "./crates/evm", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
+fluentbase-node = { path = "./crates/node", default-features = false }
 fluentbase-revm = { path = "./crates/revm", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
@@ -125,6 +126,8 @@ proptest = { version = "1.5.0" }
 unty = "0.0.4"
 humantime = "2.1"
 humantime-serde = "1.1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+directories = "6.0.0"
 
 # sp1
 sp1-curves = { version = "5.2.4" }
@@ -344,6 +347,7 @@ fluentbase-contracts = { path = "./crates/contracts" }
 fluentbase-crypto = { path = "./crates/crypto" }
 fluentbase-evm = { path = "./crates/evm" }
 fluentbase-genesis = { path = "./crates/genesis" }
+fluentbase-node = { path = "./crates/node" }
 fluentbase-revm = { path = "./crates/revm" }
 fluentbase-runtime = { path = "./crates/runtime" }
 fluentbase-sdk = { path = "./crates/sdk" }

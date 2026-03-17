@@ -1,11 +1,12 @@
 //!Handler related to a Fluent chain
 
 use crate::{types::SystemInterruptionOutcome, RwasmFrame, RwasmHaltReason};
+use alloy_primitives::U256;
 use fluentbase_sdk::calldata_quadratic_surcharge;
 use revm::{
-    context::{ContextTr, JournalTr},
+    context::{journaled_state::account::JournaledAccountTr, Block, ContextTr, JournalTr},
     context_interface::{Cfg, Transaction},
-    handler::{validation, EvmTr, EvmTrError, Handler},
+    handler::{validation, EvmTr, EvmTrError, FrameTr, Handler},
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{interpreter::EthInterpreter, InitialAndFloorGas},
     state::EvmState,
@@ -47,6 +48,37 @@ where
         gas.initial_gas += calldata_quadratic_surcharge(input_len);
 
         Ok(gas)
+    }
+
+    #[inline]
+    fn reward_beneficiary(
+        &self,
+        evm: &mut Self::Evm,
+        exec_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+    ) -> Result<(), Self::Error> {
+        let (block, tx, _cfg, journal, _, _) = evm.ctx().all_mut();
+        let basefee = block.basefee() as u128;
+        let coinbase_gas_price = tx.effective_gas_price(basefee);
+
+        // Transfer fee to coinbase/beneficiary.
+        // EIP-1559 discard basefee for coinbase transfer. Basefee amount of gas is discarded.
+        #[cfg(feature = "eip1559-full-compatibility")]
+        let coinbase_gas_price = if _cfg
+            .spec()
+            .into()
+            .is_enabled_in(revm::primitives::hardfork::SpecId::LONDON)
+        {
+            coinbase_gas_price.saturating_sub(basefee)
+        } else {
+            coinbase_gas_price
+        };
+
+        journal
+            .load_account_mut(block.beneficiary())?
+            .incr_balance(U256::from(
+                coinbase_gas_price * exec_result.gas().used() as u128,
+            ));
+        Ok(())
     }
 }
 
