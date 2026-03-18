@@ -77,6 +77,8 @@ where
         #[cfg(not(feature = "eip1559-full-compatibility"))]
         let coinbase_gas_price = if cfg.chain_id() == 0x5202 && block.number() < 21845842 {
             coinbase_gas_price.saturating_sub(basefee)
+        } else {
+            coinbase_gas_price
         };
 
         journal
