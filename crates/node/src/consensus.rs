@@ -1,4 +1,5 @@
-use crate::types::FLUENT_MAXIMUM_EXTRA_DATA_SIZE;
+use crate::{chainspec::FLUENT_TESTNET_CHAIN_ID, types::FLUENT_MAXIMUM_EXTRA_DATA_SIZE};
+use alloy_consensus::BlockHeader;
 use alloy_evm::block::BlockExecutionResult;
 use fluentbase_types::PRECOMPILE_FEE_MANAGER;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
@@ -92,7 +93,9 @@ where
         // Make sure a header has correct coinbase, all fees must be accumulated
         // inside fee manager smart contract
         use alloy_consensus::BlockHeader;
-        if block.header().beneficiary() != PRECOMPILE_FEE_MANAGER {
+        let skip_testnet_validation = self.chain_spec().chain_id() == FLUENT_TESTNET_CHAIN_ID
+            && block.header().number() < 21755352;
+        if !skip_testnet_validation && block.header().beneficiary() != PRECOMPILE_FEE_MANAGER {
             return Err(ConsensusError::Other("malformed beneficiary".to_owned()));
         }
 
@@ -110,7 +113,9 @@ where
 
         // Make sure a header has correct coinbase, all fees must be accumulated
         // inside fee manager smart contract
-        if header.header().beneficiary() != PRECOMPILE_FEE_MANAGER {
+        let skip_testnet_validation = self.chain_spec().chain_id() == FLUENT_TESTNET_CHAIN_ID
+            && header.header().number() < 21755352;
+        if !skip_testnet_validation && header.header().beneficiary() != PRECOMPILE_FEE_MANAGER {
             return Err(ConsensusError::Other("malformed beneficiary".to_owned()));
         }
 
