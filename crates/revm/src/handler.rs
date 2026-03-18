@@ -56,22 +56,25 @@ where
         evm: &mut Self::Evm,
         exec_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
     ) -> Result<(), Self::Error> {
-        let (block, tx, _cfg, journal, _, _) = evm.ctx().all_mut();
+        let (block, tx, cfg, journal, _, _) = evm.ctx().all_mut();
         let basefee = block.basefee() as u128;
-        let coinbase_gas_price = tx.effective_gas_price(basefee);
+        let mut coinbase_gas_price = tx.effective_gas_price(basefee);
 
         // Transfer fee to coinbase/beneficiary.
         // EIP-1559 discard basefee for coinbase transfer. Basefee amount of gas is discarded.
         #[cfg(feature = "eip1559-full-compatibility")]
-        let coinbase_gas_price = if _cfg
+        if cfg
             .spec()
             .into()
             .is_enabled_in(revm::primitives::hardfork::SpecId::LONDON)
         {
-            coinbase_gas_price.saturating_sub(basefee)
-        } else {
-            coinbase_gas_price
-        };
+            coinbase_gas_price = coinbase_gas_price.saturating_sub(basefee)
+        }
+
+        // A special case for Fluent Testnet, remove it once we have updated fork
+        if cfg.chain_id() == 0x5202 && block.number() < 21845842 {
+            coinbase_gas_price = coinbase_gas_price.saturating_sub(basefee);
+        }
 
         journal
             .load_account_mut(block.beneficiary())?
