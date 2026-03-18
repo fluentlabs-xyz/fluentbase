@@ -1,5 +1,4 @@
 use crate::{chainspec::FLUENT_TESTNET_CHAIN_ID, types::FLUENT_MAXIMUM_EXTRA_DATA_SIZE};
-use alloy_consensus::BlockHeader;
 use alloy_evm::block::BlockExecutionResult;
 use fluentbase_types::PRECOMPILE_FEE_MANAGER;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
