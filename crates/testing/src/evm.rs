@@ -18,6 +18,7 @@ use fluentbase_sdk::{
 use revm::{
     context::{
         result::{ExecutionResult, ExecutionResult::Success, Output},
+        transaction::SignedAuthorization,
         BlockEnv, CfgEnv, TransactTo, TxEnv,
     },
     database::{DbAccount, InMemoryDB},
@@ -372,6 +373,30 @@ impl<'a> TxBuilder<'a> {
         tx.caller = caller;
         tx.kind = TransactTo::Call(callee);
         tx.gas_limit = 3_000_000;
+        let block = Self::block_env(ctx);
+        Self { ctx, tx, block }
+    }
+
+    pub fn call7702(
+        ctx: &'a mut EvmTestingContext,
+        caller: Address,
+        callee: Address,
+        authorization_list: Vec<SignedAuthorization>,
+        value: Option<U256>,
+    ) -> Self {
+        let mut tx = TxEnv::default();
+        if let Some(value) = value {
+            tx.value = value;
+        }
+        tx.caller = caller;
+        tx.kind = TransactTo::Call(callee);
+        tx.gas_limit = 3_000_000;
+        tx.gas_price = 1;
+        tx.gas_priority_fee = Some(1);
+        tx.chain_id = Some(ctx.cfg.chain_id);
+        tx.set_signed_authorization(authorization_list);
+        tx.derive_tx_type().unwrap();
+
         let block = Self::block_env(ctx);
         Self { ctx, tx, block }
     }

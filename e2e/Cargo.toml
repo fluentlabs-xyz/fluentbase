@@ -22,6 +22,8 @@ fluentbase-contracts = { workspace = true }
 #curve25519-dalek = { workspace = true }
 
 alloy-genesis = { workspace = true }
+alloy-signer-local = "1.7.3"
+alloy-signer = "1.7.3"
 rwasm = { workspace = true }
 revm = { workspace = true }
 fluentbase-revm = { workspace = true }

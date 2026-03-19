@@ -1,17 +1,19 @@
 use crate::EvmTestingContextWithGenesis;
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{sol, SolCall};
 use core::str::from_utf8;
 use fluentbase_contracts::{FLUENTBASE_EXAMPLES_ERC20, FLUENTBASE_EXAMPLES_GREETING};
 use fluentbase_sdk::{
     address, bytes, calc_create_address, constructor::encode_constructor_params, Address,
-    PRECOMPILE_BLAKE2F, PRECOMPILE_CREATE2_FACTORY, PRECOMPILE_SECP256K1_RECOVER, U256,
+    Bytes, PRECOMPILE_BLAKE2F, PRECOMPILE_CREATE2_FACTORY, PRECOMPILE_SECP256K1_RECOVER, U256,
 };
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use hex_literal::hex;
 use revm::{
-    bytecode::opcode, context::result::ExecutionResult::Revert, primitives::hardfork::SpecId,
+    bytecode::opcode,
+    context::{result::ExecutionResult::Revert, transaction::Authorization}
 };
-use std::iter;
 
 #[test]
 fn test_evm_greeting() {
@@ -616,4 +618,98 @@ fn test_create2_factory() {
     }
     let output = U256::from_be_slice(result.output().unwrap().as_ref());
     assert_eq!(output, U256::from(123));
+}
+
+const DUMMY_BYTECODE: &str = "6080604052348015600e575f5ffd5b506102658061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610034575f3560e01c80633fa4f24514610038578063773acdef14610056575b5f5ffd5b610040610086565b60405161004d91906100f7565b60405180910390f35b610070600480360381019061006b919061013e565b61008b565b60405161007d91906100f7565b60405180910390f35b5f5481565b5f815f819055507ffd8d0c1dc3ab254ec49463a1192bb2423b3b851adedec1aa94dcd362dc063c9d33836040516100c39291906101a8565b60405180910390a16001826100d891906101fc565b9050919050565b5f819050919050565b6100f1816100df565b82525050565b5f60208201905061010a5f8301846100e8565b92915050565b5f5ffd5b61011d816100df565b8114610127575f5ffd5b50565b5f8135905061013881610114565b92915050565b5f6020828403121561015357610152610110565b5b5f6101608482850161012a565b91505092915050565b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f61019282610169565b9050919050565b6101a281610188565b82525050565b5f6040820190506101bb5f830185610199565b6101c860208301846100e8565b9392505050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f610206826100df565b9150610211836100df565b9250828201905080821115610229576102286101cf565b5b9291505056fea264697066735822122034720d2648c1a88720c07b346821e1843420d5a3a78b48866b209212ccc8e2e464736f6c634300081e0033";
+
+#[test]
+fn test_evm_eip7702_call_delegated_account() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    // TODO(dmity123): test works with `ctx.disabled_rwasm = true;`
+    ctx.disabled_rwasm = false;
+
+    let signer: PrivateKeySigner =
+        "0xf0bc949485d112791637d7eb29dea3fd1e0758e8fea3ef542a4245bc896736cc"
+            .parse()
+            .unwrap();
+
+    let sender: Address = signer.address();
+    println!("sender: {:?}", sender);
+    ctx.add_balance(sender, U256::from(10u128.pow(18)));
+
+    // 1. deploy Dummy contract
+    let delegate_to = ctx.deploy_evm_tx(sender, hex::decode(DUMMY_BYTECODE).unwrap().into());
+    println!("delegate_to: {:?}", delegate_to);
+
+    // 2. set delegation via EIP-7702
+    // after deploy nonce = 1, setup tx will use nonce=1 and increment to 2
+    // so auth_nonce must equal the nonce at the moment of auth check = 2
+    let outer_nonce = ctx.nonce(sender);
+    let auth_nonce = outer_nonce + 1;
+    println!("outer_nonce={outer_nonce}, auth_nonce={auth_nonce}");
+
+    let authorization = Authorization {
+        chain_id: U256::from(ctx.cfg.chain_id),
+        address: delegate_to,
+        nonce: auth_nonce,
+    };
+    let auth_sig = signer
+        .sign_hash_sync(&authorization.signature_hash())
+        .unwrap();
+    let signed_auth = authorization.into_signed(auth_sig);
+
+    // setup tx: send to Address::ZERO just to not trigger any code execution,
+    // authorization list is processed regardless of callee
+    let setup_result =
+        TxBuilder::call7702(&mut ctx, sender, Address::ZERO, vec![signed_auth], None)
+            .gas_limit(100_000)
+            .exec();
+    println!("setup_result: {:?}", setup_result);
+    assert!(setup_result.is_success(), "7702 setup failed");
+
+    let code = ctx.get_code(sender);
+    println!("sender code after setup: {:?}", code);
+
+    // 3. call sender.ping(0x7b) → should run DUMMY code in sender's context
+    // ping(uint256) selector = 0x773acdef
+    let ping_input = Bytes::from(
+        hex!("773acdef000000000000000000000000000000000000000000000000000000000000007b").to_vec(),
+    );
+
+    let call_result = TxBuilder::call(&mut ctx, sender, sender, None)
+        .input(ping_input)
+        .gas_limit(100_000)
+        .exec();
+    println!("call_result: {:?}", call_result);
+    assert!(
+        call_result.is_success(),
+        "ping call failed: {:?}",
+        call_result
+    );
+
+    let output = call_result.output().unwrap_or_default();
+    assert_eq!(output.len(), 32);
+    // ping returns input + 1 = 0x7c
+    assert_eq!(
+        hex::encode(output),
+        "000000000000000000000000000000000000000000000000000000000000007c"
+    );
+
+    // 4. call sender.value() → should reflect storage written in sender's context
+    // value() selector = 0x3fa4f245
+    let value_result = TxBuilder::call(&mut ctx, sender, sender, None)
+        .input(Bytes::from(hex!("3fa4f245").to_vec()))
+        .gas_limit(100_000)
+        .exec();
+    println!("value_result: {:?}", value_result);
+    assert!(value_result.is_success(), "value() call failed");
+
+    let value_output = value_result.output().unwrap_or_default();
+    assert_eq!(value_output.len(), 32);
+    // value() returns the stored value = 0x7b (written by ping)
+    assert_eq!(
+        hex::encode(value_output),
+        "000000000000000000000000000000000000000000000000000000000000007b"
+    );
 }
