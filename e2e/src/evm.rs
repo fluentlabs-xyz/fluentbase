@@ -8,10 +8,7 @@ use fluentbase_sdk::{
 };
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use hex_literal::hex;
-use revm::{
-    bytecode::opcode, context::result::ExecutionResult::Revert, primitives::hardfork::SpecId,
-};
-use std::iter;
+use revm::{bytecode::opcode, context::result::ExecutionResult::Revert};
 
 #[test]
 fn test_evm_greeting() {

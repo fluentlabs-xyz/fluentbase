@@ -58,6 +58,8 @@ mod bench;
 #[cfg(test)]
 mod ddos;
 #[cfg(test)]
+mod eip7702;
+#[cfg(test)]
 mod exec_input;
 #[cfg(test)]
 mod fee_manager;

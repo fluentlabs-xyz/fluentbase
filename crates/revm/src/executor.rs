@@ -158,6 +158,7 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
         frame.interpreter.gas = interpreter_result.gas;
         // Clear any execution leftovers: we are effectively restarting the frame.
         frame.interpreter.input.bytecode_address = None;
+        frame.interpreter.input.account_owner = None;
         frame.interpreter.stack.clear();
         frame.interpreter.return_data.clear();
         frame.interpreter.memory.free_child_context();
@@ -195,30 +196,25 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         .cloned()
         .unwrap_or_else(|| interpreter.input.target_address());
 
+    let mut ownable_account_metadata: Option<Bytes> = None;
+
     // Special case: OwnableAccount bytecode supports delegation to another runtime.
     //
     // Important: this must run after EIP-7702 resolution; otherwise delegation from EVM accounts
     // in Fluent mode will not work correctly.
     if let Bytecode::OwnableAccount(ownable_bytecode) = &*interpreter.bytecode {
-        let delegated_address = ownable_bytecode.owner_address;
-
         // Expose the delegated owner to downstream components (e.g. inspectors/tracing).
-        interpreter.input.account_owner = Some(delegated_address);
+        interpreter.input.account_owner = Some(ownable_bytecode.owner_address);
+        ownable_account_metadata = Some(ownable_bytecode.metadata.clone());
 
         // Replace the executing bytecode with the delegated account's code.
         let account = &ctx
             .journal_mut()
-            .load_account_with_code(delegated_address)?
+            .load_account_with_code(ownable_bytecode.owner_address)?
             .info;
         let bytecode = account.code.clone().unwrap_or_default();
         interpreter.bytecode = ExtBytecode::new_with_hash(bytecode, account.code_hash);
     }
-
-    // Load "meta bytecode" from the original bytecode address. This is used to:
-    // - detect ownable wrappers (metadata + effective runtime address)
-    // - decide whether to pack system-runtime context/state
-    let meta_account = ctx.journal_mut().load_account_with_code(bytecode_address)?;
-    let meta_bytecode = meta_account.info.code.clone().unwrap_or_default();
 
     // Encode the shared context (block/tx/contract) that the runtime expects.
     let context_input = SharedContextInput::V1(SharedContextInputV1 {
@@ -260,13 +256,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     let target_address = interpreter.input.target_address();
     let caller_address = interpreter.input.caller_address();
 
-    // If we're executing an ownable wrapper, system runtime selection is based on the owner,
-    // not on the wrapper address itself.
-    let (effective_bytecode_metadata, effective_bytecode_address) = match meta_bytecode {
-        Bytecode::OwnableAccount(v) => (Some(v.metadata), v.owner_address),
-        _ => (None, bytecode_address),
-    };
-
     // Disallow delegated runtime addresses as call targets or bytecode sources.
     //
     // Rationale: allowing direct interaction could enable non-standard state access patterns.
@@ -282,6 +271,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     // System runtime contracts can request preloaded state.
     // For certain known precompiles we compute a deterministic set of storage keys.
+    let effective_bytecode_address = interpreter.input.effective_bytecode_address();
     if is_execute_using_system_runtime(&effective_bytecode_address) {
         let block_number = ctx.block().number().as_limbs()[0];
 
@@ -350,7 +340,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
         // Wrap everything into the system-runtime new-frame input format.
         let new_frame_input = RuntimeNewFrameInputV1 {
-            metadata: effective_bytecode_metadata.unwrap_or_default(),
+            metadata: ownable_account_metadata.unwrap_or_default(),
             input,
             context: contract_input.into(),
             storage: Some(storage),
@@ -381,7 +371,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     // Pass bytecode by value + hash to the runtime executor.
     let bytecode_hash = BytecodeOrHash::Bytecode {
-        address: effective_bytecode_address,
+        address: interpreter.input.account_owner.unwrap_or(bytecode_address),
         bytecode: rwasm_bytecode.module,
         hash: interpreter.bytecode.hash().unwrap(),
     };
@@ -465,31 +455,21 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         err => exit_code_from_instruction_result(err),
     };
 
-    // If we are resuming a system runtime v2 contract, the resume payload must be wrapped
-    // in `RuntimeInterruptionOutcomeV1` so the runtime can reconcile state changes/logs/etc.
-    let bytecode_address = frame
-        .interpreter
-        .input
-        .bytecode_address()
-        .cloned()
-        .unwrap_or_else(|| frame.interpreter.input.target_address());
-    let meta_account = ctx.journal_mut().load_account_with_code(bytecode_address)?;
-    let meta_bytecode = meta_account.info.code.clone().unwrap_or_default();
+    let effective_bytecode_address = frame.interpreter.input.effective_bytecode_address();
 
-    let outcome: Bytes = match meta_bytecode {
-        Bytecode::OwnableAccount(v) if is_execute_using_system_runtime(&v.owner_address) => {
-            let outcome = RuntimeInterruptionOutcomeV1 {
-                halted_frame,
-                output: result.output,
-                fuel_consumed,
-                fuel_refunded,
-                exit_code,
-            };
-            bincode::encode_to_vec(&outcome, bincode::config::legacy())
-                .unwrap()
-                .into()
-        }
-        _ => result.output,
+    let outcome: Bytes = if is_execute_using_system_runtime(&effective_bytecode_address) {
+        let outcome = RuntimeInterruptionOutcomeV1 {
+            halted_frame,
+            output: result.output,
+            fuel_consumed,
+            fuel_refunded,
+            exit_code,
+        };
+        bincode::encode_to_vec(&outcome, bincode::config::legacy())
+            .unwrap()
+            .into()
+    } else {
+        result.output
     };
 
     // Resume inside the runtime.
@@ -648,41 +628,31 @@ fn process_execution_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     mut return_data: Bytes,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let target_address = frame.interpreter.input.target_address();
-    let bytecode_address = frame
-        .interpreter
-        .input
-        .bytecode_address
-        .unwrap_or(target_address);
-
-    let ownable_account = get_ownable_account_mut::<CTX>(frame, ctx)?;
-    let effective_bytecode_address = ownable_account
-        .as_ref()
-        .map(|v| v.owner_address)
-        .unwrap_or(bytecode_address);
-
     let mut exit_code = ExitCode::from(exit_code);
-    match exit_code {
-        // System runtime v2 path: decode and apply a structured outcome.
-        exit_code if is_execute_using_system_runtime(&effective_bytecode_address) => {
-            process_runtime_execution_outcome(
-                &target_address,
-                ctx,
-                &mut return_data,
-                exit_code,
-                ownable_account,
-            )?;
-        }
 
-        // Do not allow fatal exit codes to be surfaced by non-system runtime contracts.
-        //
-        // Note: we intentionally do not expose an API for user code to produce these; callers
-        // will be punished for attempting it.
-        ExitCode::UnexpectedFatalExecutionFailure | ExitCode::MissingStorageSlot => {
-            exit_code = ExitCode::UnknownError;
-        }
+    let effective_bytecode_address = frame.interpreter.input.effective_bytecode_address();
+    if is_execute_using_system_runtime(&effective_bytecode_address) {
+        let ownable_account = get_ownable_account_mut::<CTX>(frame, ctx)?;
+        process_runtime_execution_outcome(
+            &target_address,
+            ctx,
+            &mut return_data,
+            exit_code,
+            ownable_account,
+        )?;
+    } else {
+        match exit_code {
+            // Do not allow fatal exit codes to be surfaced by non-system runtime contracts.
+            //
+            // Note: we intentionally do not expose an API for user code to produce these; callers
+            // will be punished for attempting it.
+            ExitCode::UnexpectedFatalExecutionFailure | ExitCode::MissingStorageSlot => {
+                exit_code = ExitCode::UnknownError;
+            }
 
-        // Default behavior: nothing special to do.
-        _ => {}
+            // Default behavior: nothing special to do.
+            _ => {}
+        }
     }
 
     Ok(process_halt(frame, ctx, inspector, exit_code, return_data))
