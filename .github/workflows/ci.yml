@@ -109,7 +109,7 @@ jobs:
         run: cargo fetch
 
       - name: Install nextest
-        run: cargo install cargo-nextest --locked
+        run: cargo install cargo-nextest@0.9.130 --locked
 
       - name: Sync ethereum tests (evm-e2e)
         if: matrix.kind == 'evm-e2e'
