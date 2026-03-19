@@ -1,4 +1,5 @@
 use crate::utils::download_and_cache_genesis_verified;
+use alloy_primitives::b256;
 use fluentbase_genesis::local_genesis_from_file;
 use reth_chainspec::{
     make_genesis_header, BaseFeeParams, BaseFeeParamsKind, Chain, ChainHardforks, ChainSpec,
@@ -8,6 +9,7 @@ use reth_cli::chainspec::{parse_genesis, ChainSpecParser};
 use reth_primitives::SealedHeader;
 use reth_revm::primitives::U256;
 use std::sync::{Arc, LazyLock};
+use tracing::warn;
 
 /// Release tag for Fluent Mainnet genesis
 const FLUENT_MAINNET_GENESIS_TAG: &str = "v1.0.0";
@@ -81,9 +83,18 @@ pub static FLUENT_MAINNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
     let genesis = download_and_cache_genesis_verified(FLUENT_MAINNET_GENESIS_TAG, Some("mainnet"))
         .expect("failed to download/verify Fluent mainnet genesis");
     let hardforks = fluent_default_chain_hardforks(ForkCondition::Timestamp(0));
+    let genesis_header = SealedHeader::new_unhashed(make_genesis_header(&genesis, &hardforks));
+    if genesis_header.timestamp != 0x69b8194c {
+        panic!("malformed fluent mainnet genesis file specified: timestamp should be 0x69b8194c, make sure you're using correct genesis: {}", genesis_header.timestamp)
+    }
+    let genesis_hash = genesis_header.hash();
+    if genesis_hash != b256!("0x7dd092d6e2aba158839db2a264d8049e7518540b342929822aac85f550c18465") {
+        panic!("malformed fluent mainnet genesis file specified: genesis hash should be 0x7dd092d6e2aba158839db2a264d8049e7518540b342929822aac85f550c18465, make sure you're using correct genesis: {}", genesis_hash)
+    }
+    warn!("Genesis hash (Fluent Mainnet): {}", genesis_hash);
     ChainSpec {
         chain: Chain::from(FLUENT_MAINNET_CHAIN_ID),
-        genesis_header: SealedHeader::new_unhashed(make_genesis_header(&genesis, &hardforks)),
+        genesis_header,
         genesis,
         paris_block_and_final_difficulty: Some((0, U256::from(0))),
         hardforks,
