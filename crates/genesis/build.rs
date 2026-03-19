@@ -285,7 +285,8 @@ fn main() {
         let genesis = Genesis {
             config: default_chain_config(25363),
             nonce: 0,
-            timestamp,
+            // A timestamp for first Fluent mainnet genesis creation
+            timestamp: 0x69b8194c,
             extra_data: Bytes::new(),
             // Default gas limit is 100mil
             gas_limit: 0x5f5e100,
