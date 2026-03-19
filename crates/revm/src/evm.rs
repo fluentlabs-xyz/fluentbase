@@ -342,31 +342,21 @@ where
                         let _span = tracing::info_span!("revm.frame_init.create_hook").entered();
                         let precompile_runtime =
                             resolve_precompiled_runtime_from_input(inputs.init_code().as_ref());
-                        // create a new EIP-7702 account that points to the EVM runtime system precompile
+                        // create a new ownable account that points to the EVM runtime system precompile
                         let ownable_account_bytecode =
                             OwnableAccountBytecode::new(precompile_runtime, Bytes::new());
                         new_frame.interpreter.input.account_owner = Some(precompile_runtime);
                         let bytecode = Bytecode::OwnableAccount(ownable_account_bytecode);
                         ctx.journal_mut()
-                            .set_code(new_frame.interpreter.input.target_address, bytecode);
+                            .set_code(new_frame.interpreter.input.target_address, bytecode.clone());
                         // an original init code we pass as an input inside the runtime
                         // to execute deployment logic
                         let input_bytecode = inputs.init_code().clone();
                         new_frame.interpreter.input.input = CallInput::Bytes(input_bytecode);
-                        // we should reload bytecode here since it's an EIP-7702 account
-                        let bytecode = ctx.journal_mut().code(precompile_runtime)?;
-                        assert!(
-                            !bytecode.data.is_empty(),
-                            "precompile bytecode is empty, missing account"
-                        );
-                        // if it's a CREATE or CREATE2 call, then we should
-                        // to recalculate init code hash to make sure it matches runtime hash
-                        let code_hash = ctx.journal_mut().code_hash(precompile_runtime)?;
                         // write new fields into input
-                        new_frame.interpreter.bytecode = ExtBytecode::new_with_hash(
-                            Bytecode::new_raw(bytecode.data),
-                            code_hash.data,
-                        );
+                        let code_hash = bytecode.hash_slow();
+                        new_frame.interpreter.bytecode =
+                            ExtBytecode::new_with_hash(bytecode, code_hash);
                     }
                     _ => {}
                 }
