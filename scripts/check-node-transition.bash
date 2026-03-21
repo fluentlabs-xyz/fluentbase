@@ -31,7 +31,7 @@ echo "Using RPC:   $RPC_URL"
 echo "Using data:  $DATA_DIR"
 
 echo "Building Fluent node in wasmtime mode..."
-cargo b --manifest-path=../bins/fluent/Cargo.toml 2> build.log
+cargo b --release --manifest-path=../bins/fluent/Cargo.toml 2> build.log
 
 echo "Killing any existing Fluent processes..."
 pkill -INT -f fluent || true
