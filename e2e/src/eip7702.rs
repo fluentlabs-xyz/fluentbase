@@ -1,20 +1,18 @@
 use crate::EvmTestingContextWithGenesis;
+use alloy_consensus::{SignableTransaction, TxEip7702, TxEnvelope};
+use alloy_network::eip2718::Encodable2718;
+use alloy_network::TxSignerSync;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{sol, SolCall};
-use core::str::from_utf8;
-use fluentbase_contracts::{FLUENTBASE_EXAMPLES_ERC20, FLUENTBASE_EXAMPLES_GREETING};
-use fluentbase_sdk::{
-    address, bytes, calc_create_address, constructor::encode_constructor_params, Address, Bytes,
-    PRECOMPILE_BLAKE2F, PRECOMPILE_CREATE2_FACTORY, PRECOMPILE_SECP256K1_RECOVER, U256,
-};
-use fluentbase_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
+use alloy_sol_types::SolCall;
+use fluentbase_sdk::{address, keccak256, Address, Bytes, U256};
+use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use hex_literal::hex;
 use revm::{
-    bytecode::opcode,
-    context::{result::ExecutionResult::Revert, transaction::Authorization},
+    context::transaction::Authorization,
     Database,
 };
+
 
 #[test]
 fn test_evm_eip7702_call_delegated_account() {
@@ -115,4 +113,81 @@ fn test_evm_eip7702_call_delegated_account() {
 
     let ctor_value = ctx.db.storage(delegate_to, U256::ZERO).unwrap();
     assert_eq!(ctor_value, U256::ONE);
+}
+
+/// Builds a raw EIP-7702 tx that delegates EOA code to a deployed Ping contract,
+/// then calls ping(x) on the EOA itself.
+///
+/// Steps before running:
+///   1. Create a new wallet:        cast wallet new
+///   2. Fund it on testnet
+///   3. Deploy Ping:                forge create e2e/assets/Ping.sol:Ping --rpc-url https://rpc.testnet.fluent.xyz --private-key <KEY>
+///   4. Get EOA nonce:              cast nonce <EOA_ADDR> --rpc-url https://rpc.testnet.fluent.xyz
+///   5. Fill TODOs below, run test, copy printed hex
+///   6. Send:  cast rpc --rpc-url https://rpc.testnet.fluent.xyz eth_sendRawTransaction '<0x...>'
+#[test]
+fn build_raw_eip7702_ping_tx() {
+    // TODO: paste your new wallet private key
+    // 0xAFeC91d439750c5866998ad261E3c1665C584e68
+    let signer: PrivateKeySigner =
+        "0x76db4f24b30ccb392feaa35c628de261096cf077d18f44d81e03b0cc75099f22"
+            .parse()
+            .unwrap();
+
+    // TODO: paste deployed Ping contract address
+    let ping_contract = address!("0x66b4c3654193f6fd1B9331c1169C72b33EE1b4a8");
+
+    // TODO: set to current EOA nonce (from cast nonce above)
+    let current_nonce: u64 = 0;
+
+    // EIP-7702 authorization: delegate this EOA's code to Ping contract
+    let authorization = Authorization {
+        chain_id: U256::from(20994),
+        address: ping_contract,
+        nonce: current_nonce + 1, // nonce of the EOA being authorized
+    };
+
+    let auth_sig = signer
+        .sign_hash_sync(&authorization.signature_hash())
+        .unwrap();
+    let signed_auth = authorization.into_signed(auth_sig);
+
+    // Encode ping(uint256) calldata with x = 42
+    // ❯ cast sig "ping(uint256)"
+    // 0x773acdef
+    let selector = &keccak256(b"ping(uint256)")[..4];
+    let mut calldata = selector.to_vec();
+    let x = U256::from(42u64);
+    calldata.extend_from_slice(&x.to_be_bytes::<32>());
+
+    // `to` is the EOA itself — EIP-7702 makes it execute Ping's code in EOA context
+    let eoa_address = signer.address();
+
+    let mut tx = TxEip7702 {
+        chain_id: 20994,
+        nonce: current_nonce,
+        gas_limit: 200_000,
+        max_fee_per_gas: 5_000_000_007,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: eoa_address.into(),
+        value: U256::ZERO,
+        input: Bytes::from(calldata),
+        access_list: Default::default(),
+        authorization_list: vec![signed_auth],
+    };
+
+    let sig = signer.sign_transaction_sync(&mut tx).unwrap();
+    let signed = tx.into_signed(sig);
+    let envelope = TxEnvelope::Eip7702(signed);
+    let raw = envelope.encoded_2718();
+
+    let hex_tx = format!("0x{}", hex::encode(&raw));
+
+    println!("EOA address : {eoa_address}");
+    println!("Ping contract: {ping_contract}");
+    println!("Nonce used   : {current_nonce}");
+    println!("\n--- raw tx ---\n{hex_tx}\n");
+    println!(
+        "cast rpc --rpc-url https://rpc.testnet.fluent.xyz eth_sendRawTransaction '{hex_tx}'"
+    );
 }
