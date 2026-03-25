@@ -4284,25 +4284,14 @@ dependencies = [
 name = "fluent"
 version = "1.0.1"
 dependencies = [
- "alloy-consensus",
- "alloy-evm",
- "alloy-genesis",
- "alloy-network",
  "alloy-primitives",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
  "clap",
- "directories",
- "eyre",
- "flate2",
  "fluentbase-genesis",
  "fluentbase-node",
  "fluentbase-revm",
  "fluentbase-runtime",
  "fluentbase-types",
  "humantime",
- "humantime-serde",
- "reqwest 0.12.28",
  "reth-basic-payload-builder",
  "reth-chain-state",
  "reth-chainspec",
@@ -4415,8 +4404,6 @@ dependencies = [
  "reth-trie-parallel",
  "reth-trie-sparse",
  "reth-zstd-compressors",
- "serde_json",
- "tokio",
  "tracing",
 ]
 
