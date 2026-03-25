@@ -31,7 +31,7 @@ echo "Using RPC:   $RPC_URL"
 echo "Using data:  $DATA_DIR"
 
 echo "Building Fluent node in wasmtime mode..."
-cargo b --release --manifest-path=../bins/fluent/Cargo.toml 2> build.log
+cargo b --release --manifest-path=./bins/fluent/Cargo.toml 2> datadir/build.log
 
 echo "Killing any existing Fluent processes..."
 pkill -INT -f fluent || true
@@ -42,7 +42,7 @@ if pgrep -f fluent > /dev/null; then
 fi
 
 echo "Starting Fluent node (run 'tail -f ./reth.log' for logs)"
-../target/release/fluent node --chain="$CHAIN" --datadir="$DATA_DIR" --http &> reth.log &
+./target/release/fluent node --chain="$CHAIN" --datadir="$DATA_DIR" --http &> datadir/reth.log &
 RETH_PID=$!
 
 echo "Fluent started (PID $RETH_PID)"
@@ -95,13 +95,13 @@ done
 echo "Synced to the latest known state"
 
 echo "Re-executing node (wasmtime) from 1 block..."
-../target/release/fluent re-execute --datadir="$DATA_DIR" --chain="$CHAIN" --from=1
+./target/release/fluent re-execute --datadir="$DATA_DIR" --chain="$CHAIN" --from=1
 
 echo "Rebuilding Fluent node in rwasm mode..."
 cargo b --release \
   --no-default-features \
   --features=jemalloc,otlp,otlp-logs,reth-revm/portable,js-tracer,keccak-cache-global,asm-keccak,min-debug-logs,rocksdb \
-  --manifest-path=../bins/fluent/Cargo.toml 2> build.log
+  --manifest-path=./bins/fluent/Cargo.toml 2> build.log
 
 echo "Re-executing node (rwasm) from 1 block..."
-../target/release/fluent re-execute --datadir="$DATA_DIR" --chain="$CHAIN" --from=1
+./target/release/fluent re-execute --datadir="$DATA_DIR" --chain="$CHAIN" --from=1
