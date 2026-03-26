@@ -103,7 +103,7 @@ fluentbase-types = { path = "./crates/types", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 # rwasm
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.4.1", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.4.2", default-features = false }
 
 # alloy
 alloy-primitives = { version = "1.5.0", default-features = false, features = ["sha3-keccak"] }
@@ -373,7 +373,7 @@ op-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "
 tiny-keccak = { git = "https://github.com/fluentlabs-xyz/tiny-keccak.git", branch = "rwasm" }
 
 # rwasm
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.4.1" }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.4.2" }
 
 [workspace.lints]
 rust.missing_debug_implementations = "warn"
