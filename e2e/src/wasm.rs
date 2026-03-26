@@ -452,7 +452,7 @@ fn test_wasm_cant_use_fatal_exit_code() {
 }
 
 #[test]
-fn test_wasm_should_not_panic_on_malformed_wasm_binary() {
+fn test_wasm_should_not_panic_on_invalid_contract_interface() {
     let wasm_module: Bytes = wat::parse_str(
         r#"
 (module
