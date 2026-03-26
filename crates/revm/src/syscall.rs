@@ -847,7 +847,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Safety: It makes no sense to allow to copy more than a theoretical limit of bytes,
             //  otherwise it can be attacked with redundant memory allocations
             assert_halt!(
-                code_length < EXT_CODE_COPY_MAX_COPY_SIZE as u64,
+                code_length <= EXT_CODE_COPY_MAX_COPY_SIZE as u64,
                 MalformedBuiltinParams
             );
 
