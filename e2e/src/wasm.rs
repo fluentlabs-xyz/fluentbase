@@ -476,3 +476,38 @@ fn test_wasm_should_not_panic_on_invalid_contract_interface() {
         }
     )
 }
+
+#[test]
+fn test_wasm_calling_resume_takes_no_negative_effect() {
+    let wasm_module: Bytes = wat::parse_str(
+        r#"
+(module
+  (import "fluentbase_v1preview" "_resume" (func $_resume (param i32 i32 i32 i32 i32) (result i32)))
+  (func (export "main")
+    unreachable
+  )
+  (func (export "deploy")
+    i32.const 7 ;; call_id
+    i32.const 0 ;; return_data_ptr
+    i32.const 0 ;; return_data_len
+    i32.const 0 ;; exit_code
+    i32.const 0 ;; fuel16_ptr
+    call $_resume
+    drop
+  )
+  (memory (export "memory") 1)
+)
+    "#,
+    )
+    .unwrap()
+    .into();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let result = TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module).exec();
+    assert_eq!(
+        result,
+        ExecutionResult::Halt {
+            reason: HaltReason::RootCallOnly,
+            gas_used: 100_000_000
+        }
+    )
+}
