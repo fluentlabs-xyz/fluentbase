@@ -1,71 +1,88 @@
 # System Overview
 
-## Main execution crates
+## What Fluentbase is doing at runtime
 
-- `crates/revm`: EVM handler integration + journal/state application + syscall interruption handling.
-- `crates/runtime`: rWasm runtime executor (contract mode + system mode), resumable contexts.
-- `crates/evm`: interruptible EVM interpreter used by `contracts/evm` runtime.
-- `crates/sdk`: contract-facing APIs and system runtime context implementation.
-- `crates/types`: shared constants, syscall indexes, address map, runtime wire structs.
+Fluentbase does not execute every contract with one uniform engine.
+It routes execution through runtime owners and then coordinates state changes through REVM.
 
-## Two runtime modes in `crates/runtime`
+At a high level:
 
-Implemented by `ExecutionMode` (`crates/runtime/src/runtime.rs`):
+1. A call or create enters REVM.
+2. REVM determines which runtime should execute the logic.
+3. Runtime executes and may ask host for privileged/stateful actions.
+4. REVM applies final output + journal updates.
 
-1. **Contract runtime** (`ContractRuntime`)
-   - Uses rWasm strategy executor.
-   - Used for untrusted user contracts.
-2. **System runtime** (`SystemRuntime`)
-   - Wasmtime-backed cached executors.
-   - Used for selected precompile/system addresses.
+The important part is that execution and state commitment are deliberately split.
 
-Mode selection happens in `RuntimeFactoryExecutor::execute` (`crates/runtime/src/executor.rs`):
-- if `is_execute_using_system_runtime(address)` => system mode
-- else => contract mode
+---
 
-## End-to-end call flow
+## Main components and their jobs
 
-### Regular call path
+- **REVM integration layer**: frame lifecycle, journal, host syscall handling.
+- **Runtime executor**: runs rWasm modules in two modes (untrusted contract mode vs trusted system mode), tracks resumable contexts.
+- **Interruptible EVM runtime**: used by delegated EVM runtime contract.
+- **SDK/runtime context layer**: contract-facing APIs and structured envelope handling.
+- **Shared types/constants**: syscall indexes, address maps, limits, fuel/gas constants, wire structs.
 
-1. REVM frame runs via `run_rwasm_loop` (`crates/revm/src/executor.rs`).
-2. `execute_rwasm_frame` builds `SharedContextInputV1` + call input.
-3. `syscall_exec_impl` invokes runtime (`crates/runtime/src/syscall_handler/host/exec.rs`).
-4. Runtime returns either:
-   - final exit code (`<= 0`), or
-   - interruption call id (`> 0`) with encoded `SyscallInvocationParams`.
-5. REVM applies result via `process_exec_result`.
+---
 
-### Interruption path
+## Two execution modes
 
-1. Positive exit code is treated as `call_id`.
-2. REVM decodes `SyscallInvocationParams`.
-3. `execute_rwasm_interruption` executes host-side action (sload/call/create/log/etc.).
-4. REVM resumes runtime using `syscall_resume_impl`.
-5. Result is applied to REVM frame and journal.
+### 1) Contract mode
+For regular untrusted contracts.
 
-## System runtime structured envelopes
+- isolated execution context
+- strict bounds/fuel handling
+- no privileged assumptions
 
-For system runtimes, REVM and runtime exchange structured payloads (`crates/types/src/system/*`):
+### 2) System mode
+For selected system/precompile runtimes.
 
-- `RuntimeNewFrameInputV1`
-- `RuntimeInterruptionOutcomeV1`
-- `RuntimeExecutionOutcomeV1`
+- cached compiled executors
+- structured output envelopes
+- special handling on finalization and interruption
 
-REVM decodes and applies these in `process_runtime_execution_outcome` (`crates/revm/src/executor.rs`):
-- output bytes,
-- storage writes,
-- logs,
-- ownable account metadata updates.
+Mode is selected by address classification (system-runtime set vs normal contracts).
 
-## Precompile/system address map
+---
 
-Defined in `crates/types/src/genesis.rs`:
+## Normal call lifecycle
 
-- delegated runtimes: EVM/SVM/WASM/UniversalToken
-- standard EVM precompiles
-- governance/system contracts (runtime-upgrade, fee manager, etc.)
+1. REVM prepares frame input/context.
+2. Runtime is invoked with input + fuel limit.
+3. Runtime returns either final result or interruption id.
+4. If final: REVM maps exit/output into instruction result.
+5. If interruption: host action is executed and runtime is resumed.
+6. Journal updates are committed by REVM rules.
 
-Key helper sets:
-- `is_evm_system_precompile(...)`
-- `is_execute_using_system_runtime(...)`
-- `is_engine_metered_precompile(...)`
+---
+
+## Why interruption exists
+
+Some operations cannot be safely/fully done inside pure runtime execution (for example EVM journal operations, frame creation, host account/code queries).
+
+So runtime asks host to perform the operation, then continues from the saved point.
+This keeps host authority centralized while preserving deterministic runtime flow.
+
+---
+
+## Structured system-runtime envelopes
+
+System runtimes use structured payloads so REVM can apply updates deterministically:
+
+- new-frame input envelope
+- interruption outcome envelope
+- final execution outcome envelope
+
+This is how output, storage diff, logs, and metadata updates are transported across the runtime boundary.
+
+---
+
+## Address map is part of consensus surface
+
+Precompile/delegated-runtime/system addresses are fixed in shared constants.
+Changing these mappings changes execution routing and is consensus-sensitive.
+
+That includes:
+- delegated runtime owners (EVM/SVM/WASM/Universal Token)
+- governance/system contracts (runtime-upgrade, fee manager, bridge, etc.)

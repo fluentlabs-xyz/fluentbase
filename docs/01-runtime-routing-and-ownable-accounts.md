@@ -1,71 +1,91 @@
 # Runtime Routing and Ownable Accounts
 
-## Ownable account bytecode format
+## Why this model exists
 
-Defined in upstream revm bytecode crate (`revm-rwasm/.../bytecode/src/ownable_account.rs`):
+Fluentbase separates **account identity** from **execution engine**.
 
-`0xEF44 || version:u8 || owner_address:20B || metadata:bytes`
+Instead of storing one custom bytecode implementation per account for every runtime family,
+accounts can be wrapped as an ownable account that points to a delegated runtime owner.
 
-- magic: `0xEF44`
-- supported version: `0`
-- `owner_address` selects delegated runtime/account owner
-- `metadata` is runtime-controlled payload
+This gives:
+- shared runtime logic,
+- per-account isolated state,
+- deterministic routing by owner/runtime type.
+
+---
+
+## Ownable account format
+
+Ownable account bytecode carries:
+
+- a magic/version header,
+- `owner_address` (the delegated runtime address),
+- runtime metadata bytes.
+
+`owner_address` is the key field: it decides which runtime code executes the account.
+
+---
 
 ## Create-time routing
 
-Implemented in `RwasmEvm::frame_init` (`crates/revm/src/evm.rs`):
+On contract creation, init code is inspected by magic prefix.
 
-1. For every `FrameInput::Create`, the init code is inspected by
-   `resolve_precompiled_runtime_from_input(...)` (`crates/types/src/genesis.rs`).
-2. Resolver rules:
-   - wasm magic => `PRECOMPILE_WASM_RUNTIME`
-   - svm ELF magic (feature-gated) => `PRECOMPILE_SVM_RUNTIME`
-   - universal token magic => `PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME`
-   - fallback => `PRECOMPILE_EVM_RUNTIME`
-3. Created account code is replaced with `Bytecode::OwnableAccount(owner=resolved_runtime)`.
-4. Original init code is forwarded as runtime input (constructor payload).
+Resolver outcomes:
+- wasm/rwasm payload -> wasm delegated runtime
+- svm ELF payload (feature-gated) -> svm delegated runtime
+- universal token magic -> universal token delegated runtime
+- otherwise -> delegated EVM runtime
 
-## Runtime execution from ownable accounts
+After routing:
+- new account code is set as ownable wrapper,
+- original init payload is passed to delegated runtime for deploy logic.
 
-In `execute_rwasm_frame` (`crates/revm/src/executor.rs`):
+So deployment decides runtime class, not a later toggle.
 
-- If frame bytecode is `OwnableAccount`, REVM loads code of `owner_address` and executes that code.
-- `account_owner` is attached to interpreter input for downstream checks and tracing.
+---
 
-## Access restrictions enforced by host side
+## Execution-time behavior
 
-`execute_rwasm_frame` rejects direct execution where target or bytecode address is a delegated runtime address:
+When REVM executes an ownable account:
 
-- `is_delegated_runtime_address(target)` => reject
-- `is_delegated_runtime_address(bytecode_address)` => reject
+- it loads code from `owner_address` (the delegated runtime),
+- keeps current account as state owner/target,
+- forwards call input to delegated runtime logic.
 
-This prevents direct user calls into delegated runtime addresses as regular contracts.
+This is why many accounts can share one runtime implementation without sharing state.
 
-## Metadata syscalls and ownership checks
+---
 
-Metadata-related syscalls are handled in `crates/revm/src/syscall.rs`:
+## Direct-runtime-call restrictions
 
-- `SYSCALL_ID_METADATA_SIZE`
-- `SYSCALL_ID_METADATA_CREATE`
-- `SYSCALL_ID_METADATA_WRITE`
-- `SYSCALL_ID_METADATA_COPY`
-- `SYSCALL_ID_METADATA_ACCOUNT_OWNER`
-- `SYSCALL_ID_METADATA_STORAGE_READ/WRITE`
+Delegated runtime addresses are not intended to behave like normal user contracts.
+Direct execution targeting runtime-owner addresses is blocked in execution path.
 
-Security rule used by create/write/copy paths:
-- operation is allowed only when target account code is `OwnableAccount`
-- and `ownable.owner_address == caller account_owner_address`
+Reason: user flow must go through wrapped account semantics, not bypass routing/account invariants.
 
-Static-call protection:
-- metadata mutation syscalls (`CREATE/WRITE/STORAGE_WRITE`) reject `is_static`.
+---
 
-## Constructor rewrite for wasm wrapper runtime
+## Metadata ownership rules
 
-`run_rwasm_loop` has an additional deploy-time rewrite path (`crates/revm/src/executor.rs`):
+Metadata syscalls are scoped by runtime ownership.
 
-- if create output begins with `0xEF` and account is delegated runtime ownable account,
-  REVM may parse output as rWasm module + constructor tail,
-  replace deployed code with `Bytecode::Rwasm`,
-  then re-run deploy logic with remaining constructor params.
+Mutation is allowed only when:
 
-This is used by `contracts/wasm` runtime pipeline.
+1. target account is ownable account, and
+2. target owner address matches caller runtime owner.
+
+This prevents one runtime family from rewriting metadata of accounts owned by another runtime.
+
+Static-context mutations are rejected for metadata-changing operations.
+
+---
+
+## Wasm-wrapper deploy rewrite (special path)
+
+There is an additional deploy-stage rewrite path used by wasm runtime pipeline:
+
+- deploy output may contain compiled rWasm payload + constructor tail,
+- deployed code can be rewritten to direct rWasm bytecode,
+- constructor continuation is executed with remaining params.
+
+This exists to support wasm-wrapper deployment flow while keeping final account code/runtime semantics consistent.

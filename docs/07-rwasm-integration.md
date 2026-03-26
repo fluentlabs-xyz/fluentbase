@@ -1,71 +1,72 @@
-# rWasm Integration Notes
+# rWasm Integration (Fluentbase View)
 
-This document describes Fluentbase-specific integration points with `fluentlabs-xyz/rwasm`.
+This document explains what Fluentbase expects from rWasm and how the boundary is wired.
+It is not a replacement for upstream rWasm architecture docs.
 
-## Canonical rWasm docs
+## Integration contract in one sentence
 
-Use rWasm upstream docs for VM internals:
-- `rwasm/docs/architecture.md`
-- `rwasm/docs/pipeline.md`
-- `rwasm/docs/module-format.md`
-- `rwasm/docs/vm-and-fuel.md`
-- `rwasm/docs/security-considerations.md`
+Fluentbase uses rWasm as execution engine, but defines its own syscall ABI, state routing, fuel policy, and interruption protocol on top.
 
-This file only covers Fluentbase wiring.
+---
 
-## Import surface
+## Import ABI boundary
 
-Fluentbase builds `ImportLinker` in `crates/types/src/import_linker.rs`:
+Fluentbase publishes one import namespace (`fluentbase_v1preview`) containing runtime syscalls.
+Each import is mapped to:
 
-- module: `fluentbase_v1preview`
-- function names: `_read`, `_write`, `_exec`, `_resume`, hash/bn/bls ops, etc.
-- each import is assigned syscall index (`SysFuncIdx`) and fuel procedure.
+- a syscall index,
+- a fuel procedure,
+- strict parameter/result shape.
 
-## Compilation configuration used by Fluentbase
+This import table is part of protocol behavior. Changing it is not a local refactor.
 
-`crates/sdk/src/types/rwasm.rs`:
+---
 
-- state router maps:
-  - `deploy` -> `STATE_DEPLOY`
-  - `main` -> `STATE_MAIN`
-- state opcode: `Opcode::Call(SysFuncIdx::STATE as u32)`
-- for user contracts:
-  - malformed entrypoint signatures disallowed
-  - default memory-page limit (`N_DEFAULT_MAX_MEMORY_PAGES`)
-- for system runtimes:
-  - malformed entrypoint signatures allowed
-  - max memory pages raised (`N_MAX_ALLOWED_MEMORY_PAGES`)
-  - fuel metering mode depends on `is_engine_metered_precompile`
+## Compilation contract
 
-## Runtime executors used in Fluentbase
+Fluentbase compilation config defines:
 
-- `ContractRuntime`: strategy executor for untrusted contracts.
-- `SystemRuntime`: Wasmtime-backed cached executors for system runtimes.
+- deploy/main state routing,
+- state selector opcode wiring,
+- entrypoint strictness,
+- memory-page limits,
+- whether engine fuel metering is enabled.
 
-`SystemRuntime` keeps thread-local cache keyed by code hash.
-Before each call it swaps `RuntimeContext` into executor store and swaps back after execution.
+System runtimes and user contracts intentionally compile with different constraints.
 
-## Resume and memory access integration
+---
 
-`RuntimeFactoryExecutor` (`crates/runtime/src/executor.rs`) owns:
+## Execution contract
 
-- recoverable runtime map by `call_id`,
-- `execute(...)`, `resume(...)`, `memory_read(...)` bridging used by REVM interruption handler.
+Fluentbase runtime executor owns:
 
-This is the boundary used by `crates/revm/src/syscall.rs` to fetch syscall params and continue execution.
+- execution dispatch (contract mode vs system mode),
+- call-id based recoverable contexts,
+- `execute/resume/memory_read` bridge used by REVM interruption handler.
 
-## Versioning and upgrade discipline
+This is the concrete runtime-host handshake point used in every interruption cycle.
+
+---
+
+## Why version bumps are risky
 
 Fluentbase depends on exact rWasm behavior for:
 
-- syscall import ABI,
-- memory read/write semantics,
-- fuel accounting behavior,
-- trap/interrupt behavior.
+- import ABI behavior,
+- memory read/write safety semantics,
+- trap/interruption behavior,
+- fuel accounting details.
 
-When bumping rWasm:
+A dependency bump can silently change any of these.
 
-1. bump Cargo deps,
-2. re-run e2e interruption/resume tests,
-3. re-check allocation/bounds safety on memory read helpers,
-4. update these docs in same PR.
+---
+
+## Required process on rWasm upgrade
+
+1. bump dependency pins,
+2. rerun interruption/resume e2e paths,
+3. recheck allocation/bounds safety on memory helper paths,
+4. verify gas/fuel settlement remains deterministic,
+5. update docs in same PR.
+
+If one of these steps is skipped, regressions can escape into consensus path.

@@ -1,90 +1,71 @@
 # Syscall Surface (Core)
 
-Fluentbase has two syscall layers:
+Fluentbase uses two syscall layers. They are related but not identical.
 
-1. **Runtime import syscalls** (`fluentbase_v1preview`), indexed by `SysFuncIdx`.
-2. **REVM interruption syscalls** (`SYSCALL_ID_*`, `B256`) used between runtime and host handler.
+## Layer A: runtime import syscalls
 
----
+This is the public import module exposed to runtime code (`fluentbase_v1preview`).
+Examples:
 
-## 1) Runtime import syscalls (`SysFuncIdx`)
+- input/output operations,
+- state selector,
+- `exec`/`resume`,
+- fuel APIs,
+- hash/crypto builtins.
 
-Defined in:
-- `crates/types/src/sys_func_idx.rs`
-- `crates/types/src/import_linker.rs`
-
-Important control/data syscalls:
-
-- `_read`, `_input_size`
-- `_write`, `_output_size`, `_read_output`, `_forward_output`
-- `_exec`, `_resume`
-- `_fuel`, `_charge_fuel`
-- `_state`
-- `_debug_log`
-
-Notes:
-- `_write_fd` is currently disabled in linker (`import_linker_v1_preview`).
-- Fuel procedures for each imported syscall are configured by `calculate_syscall_fuel(...)` in `crates/types/src/block_fuel.rs`.
+This layer is where runtime code calls into host ABI.
+Fuel procedures for these imports are attached at compile/translation stage.
 
 ---
 
-## 2) REVM interruption syscalls (`SYSCALL_ID_*`)
+## Layer B: interruption syscall IDs
 
-Defined in `crates/sdk/src/syscall.rs`.
-Handled in `crates/revm/src/syscall.rs`.
+This is the host-side operation set handled by REVM interruption logic (`SYSCALL_ID_*`).
 
-### Storage and state
-- `SYSCALL_ID_STORAGE_READ`
-- `SYSCALL_ID_STORAGE_WRITE`
-- `SYSCALL_ID_TRANSIENT_READ`
-- `SYSCALL_ID_TRANSIENT_WRITE`
-- `SYSCALL_ID_BLOCK_HASH`
+Main groups:
 
-### Calls / creates / lifecycle
-- `SYSCALL_ID_CALL`
-- `SYSCALL_ID_STATIC_CALL`
-- `SYSCALL_ID_CALL_CODE`
-- `SYSCALL_ID_DELEGATE_CALL`
-- `SYSCALL_ID_CREATE`
-- `SYSCALL_ID_CREATE2`
-- `SYSCALL_ID_DESTROY_ACCOUNT`
+- storage/transient/block access,
+- call/create/destroy operations,
+- code/balance/account queries,
+- metadata ownership and metadata storage operations,
+- runtime-upgrade governance syscall.
 
-### Code/account queries
-- `SYSCALL_ID_BALANCE`
-- `SYSCALL_ID_SELF_BALANCE`
-- `SYSCALL_ID_CODE_SIZE`
-- `SYSCALL_ID_CODE_HASH`
-- `SYSCALL_ID_CODE_COPY`
-
-### Metadata/ownership surface
-- `SYSCALL_ID_METADATA_SIZE`
-- `SYSCALL_ID_METADATA_ACCOUNT_OWNER`
-- `SYSCALL_ID_METADATA_CREATE`
-- `SYSCALL_ID_METADATA_WRITE`
-- `SYSCALL_ID_METADATA_COPY`
-- `SYSCALL_ID_METADATA_STORAGE_READ`
-- `SYSCALL_ID_METADATA_STORAGE_WRITE`
-
-### Governance
-- `SYSCALL_ID_UPGRADE_RUNTIME`
+This layer is not a generic public API; it is part of runtime-host handshake semantics.
 
 ---
 
-## Important rules currently enforced by handler
+## Practical rule: treat syscall behavior as protocol, not helper code
 
-- Input length + state checks (`STATE_MAIN`) are validated before execution.
-- Many mutating syscalls reject static context (`StateChangeDuringStaticCall`).
-- `CODE_COPY` is hard-capped by `EXT_CODE_COPY_MAX_COPY_SIZE`.
-- Metadata mutation requires same ownable runtime owner.
-- Upgrade syscall is restricted to `PRECOMPILE_RUNTIME_UPGRADE` target.
+For each syscall, behavior must stay deterministic across nodes:
+
+- input validation,
+- static-context checks,
+- gas/fuel charging order,
+- output encoding,
+- error/exit mapping,
+- ownership checks.
+
+Changing any of these is consensus-sensitive.
 
 ---
 
-## Where to extend safely
+## High-impact constraints currently enforced
 
-When adding syscall behavior, update together:
+- mutating operations reject static context,
+- metadata mutation requires same runtime owner,
+- code copy is size-capped,
+- runtime-upgrade syscall is restricted to upgrade precompile path,
+- malformed length/state causes deterministic halt/error.
 
-1. `crates/sdk/src/syscall.rs` (ID)
-2. `crates/revm/src/syscall.rs` (host semantics)
-3. `crates/types/src/import_linker.rs` and `block_fuel.rs` (if import-level syscall)
-4. tests in `crates/revm/src/tests.rs` / `e2e/*`
+---
+
+## Safe extension checklist
+
+When adding or changing syscall behavior, update all of these together:
+
+1. ID definitions,
+2. host handler semantics,
+3. fuel schedule/import linker entries (if import-layer change),
+4. tests (unit + e2e interruption paths).
+
+If only one side is changed, protocol drift is likely.

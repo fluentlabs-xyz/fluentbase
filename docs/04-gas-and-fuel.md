@@ -1,67 +1,88 @@
-# Gas and Fuel Accounting
+# Gas and Fuel
 
-## Units
+Fluentbase uses two accounting units:
 
-- **EVM gas**: REVM-visible execution accounting.
-- **Fuel**: runtime/rWasm execution accounting.
+- **gas** for EVM-visible execution economics,
+- **fuel** for runtime (rWasm/engine) execution.
 
-Conversion constant (`crates/types/src/lib.rs`):
+They are linked by a fixed conversion ratio.
+
+---
+
+## Conversion model
+
+Current ratio:
 
 - `FUEL_DENOM_RATE = 20`
-- conversion used throughout:
-  - `fuel_limit = gas_remaining * FUEL_DENOM_RATE`
-  - `gas_consumed = ceil(fuel_consumed / FUEL_DENOM_RATE)`
-  - `gas_refund += fuel_refunded / FUEL_DENOM_RATE`
 
-## Where conversion is applied
+Operationally:
 
-In `crates/revm/src/executor.rs`:
+- runtime fuel limit is derived from available gas,
+- consumed/refunded fuel is converted back into gas settlement,
+- conversion and rounding behavior must stay deterministic.
 
-- before runtime call: gas -> fuel limit
-- after `_exec`: fuel consumed/refunded -> REVM gas charge/refund
-- after `_resume`: same conversion and settlement path
+If this ratio changes, execution economics and charging paths change everywhere.
 
-## EVM runtime internal syncing
+---
 
-`contracts/evm` uses interruptible EVM and tracks `committed_gas` vs current gas.
+## Where settlement happens
 
-- `ExecutionResult::chargeable_fuel()` (`crates/evm/src/types.rs`) computes delta fuel from remaining-gas difference.
-- `EthVM::sync_evm_gas(...)` (`crates/evm/src/evm.rs`) charges host fuel for committed delta before interruption/finalization.
+During runtime calls and resumes, host side:
 
-## Import syscall fuel schedules
+1. computes runtime fuel limit from remaining gas,
+2. executes runtime step,
+3. converts returned fuel consumption/refund back to gas,
+4. applies gas deltas to interpreter state.
 
-Runtime import-level fuel procedures are preconfigured in `crates/types/src/block_fuel.rs`:
+This is critical for keeping EVM-visible gas usage consistent with runtime work.
 
-- const/linear/quadratic fuel policies per `SysFuncIdx`
-- e.g. `_exec` uses quadratic policy
-- copy/hash/log syscalls use linear policy with per-word cost
+---
 
-This fuel is inserted in translated rWasm execution path.
+## Internal EVM runtime sync
 
-## System runtime metering modes
+Delegated EVM runtime keeps its own committed-gas tracking.
+Before interruption/final return, it synchronizes committed delta to host fuel.
 
-From `compile_rwasm_maybe_system` (`crates/sdk/src/types/rwasm.rs`) and `SystemRuntime`:
+This prevents drift between local interpreter gas and host-side charged fuel.
 
-- some system runtimes are **self-metered** (`consume_fuel=false`)
-- selected runtimes are **engine-metered** (`consume_fuel=true`) via `is_engine_metered_precompile`
+---
 
-`is_engine_metered_precompile` currently includes:
-- Nitro verifier
-- OAuth2 verifier
-- Wasm runtime
-- WebAuthn verifier
-- Universal token runtime
+## Import-level fuel schedules
 
-## Call data surcharge
+Runtime imports have explicit fuel formulas (const/linear/quadratic) attached to syscall indexes.
+Examples:
 
-`crates/types/src/block_fuel.rs` defines quadratic surcharge above 128 KiB:
+- copy/hash/log operations: linear by data size,
+- `exec`: quadratic policy,
+- some state/control calls: constant.
 
-- threshold: `CALLDATA_QUADRATIC_THRESHOLD = 128 * 1024`
-- surcharge: `3*words + words^2 / CALLDATA_QUADRATIC_DIVISOR`
-- divisor: `30`
+These formulas are part of runtime ABI behavior, not optional heuristics.
 
-## Practical invariants
+---
 
-- Never allocate host buffers from untrusted lengths before bounds/gas checks.
-- Charge REVM gas before expensive host operations where possible.
-- Keep conversion and rounding behavior deterministic (especially `div_ceil`).
+## Engine-metered vs self-metered system runtimes
+
+Not all system runtimes meter fuel the same way.
+
+- **self-metered**: runtime code charges fuel explicitly,
+- **engine-metered**: execution engine automatically meters configured precompiles.
+
+Universal Token runtime is currently in engine-metered set.
+
+---
+
+## Calldata surcharge
+
+Large calldata gets extra quadratic surcharge above threshold.
+Purpose is practical block-data pressure control.
+
+This is part of block economics, not only runtime internals.
+
+---
+
+## Operational invariants
+
+- never allocate large host buffers before validating/bounding lengths,
+- charge before expensive host work where feasible,
+- keep conversion/rounding unchanged unless explicitly coordinated,
+- treat gas/fuel mapping changes as fork-level changes.

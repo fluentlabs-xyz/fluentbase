@@ -1,136 +1,129 @@
 # Universal Token Runtime (UST20)
 
-## Runtime address and routing
+## What this runtime is
 
-- delegated runtime address: `PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME = 0x0000000000000000000000000000000000520008`
-- create-time routing is selected by init-code prefix `UNIVERSAL_TOKEN_MAGIC_BYTES` (`"ERC "`, `0x45524320`)
-- resolver is `resolve_precompiled_runtime_from_input(...)` in `crates/types/src/genesis.rs`
+Universal Token is a delegated system runtime for fungible tokens.
 
-When prefix matches, created account is wrapped as `OwnableAccount(owner = PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME)` in REVM create hook (`crates/revm/src/evm.rs`).
+The key design choice is:
+- many token instances,
+- one shared runtime implementation,
+- isolated per-token state.
+
+That gives predictable behavior and operationally simpler upgrades compared to many independent token implementations.
 
 ---
 
-## Constructor payload
+## Address and routing
+
+Runtime address:
+
+- `PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME = 0x0000000000000000000000000000000000520008`
+
+Create-time routing is selected by init payload prefix:
+
+- `UNIVERSAL_TOKEN_MAGIC_BYTES = "ERC " (0x45524320)`
+
+If prefix matches, new account is wrapped and delegated to universal-token runtime.
+
+---
+
+## Constructor input format
 
 Constructor expects:
 
-`UNIVERSAL_TOKEN_MAGIC_BYTES (4 bytes) + abi.encode(InitialSettings)`
+`magic(4 bytes) + abi.encode(InitialSettings)`
 
-`InitialSettings` (`crates/sdk/src/universal_token/storage.rs`):
+`InitialSettings` fields:
 
-1. `token_name: TokenNameOrSymbol` (`bytes32`)
-2. `token_symbol: TokenNameOrSymbol` (`bytes32`)
-3. `decimals: u8`
-4. `initial_supply: uint256`
-5. `minter: address`
-6. `pauser: address`
+1. token name (`bytes32`-style fixed text)
+2. token symbol (`bytes32`-style fixed text)
+3. decimals
+4. initial supply
+5. minter address (optional role)
+6. pauser address (optional role)
 
-### Name/symbol decoding behavior
+### Text behavior (name/symbol)
 
-`TokenNameOrSymbol::as_str()`:
-- takes bytes from start of `bytes32`
-- stops at first `0x00` (or full 32 bytes if none)
-- validates UTF-8
-- constructor returns `MalformedBuiltinParams` on invalid UTF-8
-
-Storage writes use `write_storage_short_string` (`crates/sdk/src/types/storage.rs`) with 32-byte big-endian slot representation.
+- bytes are read from start of 32-byte field,
+- decode stops at first `0x00`,
+- invalid UTF-8 is rejected,
+- constructor fails on malformed text payload.
 
 ---
 
-## Deploy behavior (`contracts/universal-token/lib.rs`)
+## Deploy behavior
 
-`deploy_entry`:
+On successful deploy:
 
-- requires input size `>= 4`
-- decodes constructor payload via `InitialSettings::decode_with_prefix`
-- writes:
-  - name, symbol, decimals
-  - optional `MINTER_STORAGE_SLOT` (if `minter != 0`)
-  - optional `PAUSER_STORAGE_SLOT` (if `pauser != 0`)
-- if `initial_supply > 0`:
-  - credits deployer balance
-  - sets total supply
-  - emits `Transfer(0x0, deployer, initial_supply)`
+- stores name/symbol/decimals,
+- stores minter/pauser only when non-zero,
+- if initial supply > 0:
+  - mints to deployer,
+  - updates total supply,
+  - emits ERC20 `Transfer(0x0 -> deployer)`.
 
-On non-zero EVM exit code from constructor logic, runtime writes ABI error payload and exits with `ExitCode::Panic`.
+If constructor logic returns non-zero EVM-style error code, runtime writes ABI error payload and exits with panic-class host exit.
 
 ---
 
-## Runtime methods (selector dispatch)
+## Supported method surface
 
-Implemented in `main_entry` by 4-byte selector switch:
+### Core ERC20-like methods
+- `name`, `symbol`, `decimals`
+- `totalSupply`
+- `balance`, `balanceOf`
+- `transfer`, `transferFrom`
+- `approve`, `allowance`
 
-### Core
-- `name()`
-- `symbol()`
-- `decimals()`
-- `totalSupply()`
-- `balance()` (caller balance convenience)
-- `balanceOf(address)`
-- `transfer(address,uint256)`
-- `transferFrom(address,address,uint256)`
-- `approve(address,uint256)`
-- `allowance(address,address)`
-
-### Optional privileged extensions
-- `mint(address,uint256)`
-- `burn(address,uint256)`
-- `pause()`
-- `unpause()`
-
-### Reserved
-- `token2022()` selector constant exists but is not dispatched in current runtime.
-
-Unknown selector path returns `ERR_UST_UNKNOWN_METHOD`.
-
----
-
-## Access control and freeze semantics
-
-### Mint/burn
-- if configured minter is zero => `ERR_UST_NOT_MINTABLE`
-- caller must equal configured minter => else `ERR_UST_MINTER_MISMATCH`
-- mint rejects zero receiver (`ERR_ERC20_INVALID_RECEIVER`)
-- burn rejects zero `from` (`ERR_ERC20_INVALID_SENDER`)
-
-### Pause/unpause
-- if configured pauser is zero => `ERR_UST_NOT_PAUSABLE`
-- caller must equal pauser => else `ERR_UST_PAUSER_MISMATCH`
-- `pause()` while already paused => `ERR_PAUSABLE_ENFORCED_PAUSE`
-- `unpause()` while not paused => `ERR_PAUSABLE_EXPECTED_PAUSE`
-
-### Frozen-state restrictions
-When frozen (`CONTRACT_FROZEN_STORAGE_SLOT != 0`), these return `ERR_PAUSABLE_ENFORCED_PAUSE`:
-- `transfer`
-- `transferFrom`
+### Optional privileged methods
 - `mint`
 - `burn`
+- `pause`
+- `unpause`
+
+Unknown selector returns `ERR_UST_UNKNOWN_METHOD`.
 
 ---
 
-## Storage layout (slots)
+## Role and freeze semantics
 
-Slot constants are in `crates/sdk/src/universal_token/consts.rs`:
+### Mint/Burn
+- no minter configured -> `ERR_UST_NOT_MINTABLE`
+- caller not minter -> `ERR_UST_MINTER_MISMATCH`
+- mint to zero -> `ERR_ERC20_INVALID_RECEIVER`
+- burn from zero -> `ERR_ERC20_INVALID_SENDER`
 
-- `TOTAL_SUPPLY_STORAGE_SLOT`
-- `MINTER_STORAGE_SLOT`
-- `PAUSER_STORAGE_SLOT`
-- `CONTRACT_FROZEN_STORAGE_SLOT`
-- `SYMBOL_STORAGE_SLOT`
-- `NAME_STORAGE_SLOT`
-- `DECIMALS_STORAGE_SLOT`
-- `ALLOWANCE_STORAGE_SLOT` (nested mapping)
-- `BALANCE_STORAGE_SLOT` (mapping)
+### Pause/Unpause
+- no pauser configured -> `ERR_UST_NOT_PAUSABLE`
+- caller not pauser -> `ERR_UST_PAUSER_MISMATCH`
+- pause while already paused -> `ERR_PAUSABLE_ENFORCED_PAUSE`
+- unpause while not paused -> `ERR_PAUSABLE_EXPECTED_PAUSE`
 
-Mapping keys use SDK map-slot derivation (`MapKey::compute_slot`).
+### Frozen-state restrictions
+When frozen, transfer/mint/burn paths are blocked with enforced-pause error.
 
 ---
 
-## Notes about compatibility paths
+## Storage model
 
-`LegacyInitialSettings` decoding remains in `erc20_compute_deploy_storage_keys(...)` for storage prefetch compatibility, but constructor path uses `InitialSettings`.
+Runtime stores:
 
-`PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME` is included in:
-- delegated runtime set,
-- system-runtime execution set,
-- engine-metered precompile set.
+- total supply,
+- role addresses (minter/pauser),
+- frozen flag,
+- name/symbol/decimals,
+- balances map,
+- allowances nested map.
+
+Slots are deterministic constants; mapping keys are derived by SDK slot derivation helpers.
+
+---
+
+## Compatibility notes
+
+- Legacy constructor payload compatibility still exists in storage prefetch helpers.
+- `token2022()` selector constant exists but is currently reserved (not dispatched).
+- Universal token runtime is part of:
+  - delegated-runtime set,
+  - system-runtime execution set,
+  - engine-metered precompile set.

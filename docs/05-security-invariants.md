@@ -1,70 +1,107 @@
 # Security Invariants
 
-This file lists invariants that must hold to avoid consensus failures, privilege breaks, and host crashes.
+These are the invariants that keep Fluentbase safe and deterministic.
+Break any of them and you risk consensus splits, privilege bugs, or host instability.
 
-## 1) Runtime routing invariants
+## 1) Routing integrity
 
-- Created contracts are wrapped as `OwnableAccount` and routed by init-code magic (`crates/revm/src/evm.rs`, `crates/types/src/genesis.rs`).
-- Direct calls targeting delegated runtime addresses are rejected in `execute_rwasm_frame`.
-- Metadata mutation is only allowed for ownable accounts owned by the same runtime owner.
+- Newly created contracts must be routed to the correct delegated runtime class.
+- User calls must not bypass routing by directly executing delegated runtime addresses.
+- Metadata ownership boundaries between runtime families must be preserved.
 
-## 2) Interruption invariants
+Why it matters: wrong routing can execute different logic for the same state.
 
-- Positive runtime exit code means interruption `call_id`; non-positive means final halt code.
-- `call_id` contexts are transaction-scoped and must be cleared on final return/reset.
-- Resume must only use recoverable contexts associated with that `call_id`.
+---
 
-## 3) Bounds and allocation invariants
+## 2) Interruption integrity
 
-- Guest-provided lengths must be validated before host allocation.
-- Memory reads from guest/runtime memory must fail gracefully on OOB.
-- `CODE_COPY` length is bounded by `EXT_CODE_COPY_MAX_COPY_SIZE`.
+- Positive exit codes are interruption call IDs, not final statuses.
+- Resume must use the exact recoverable context for that call ID.
+- Recovery state must be cleared/reset per transaction lifecycle.
 
-## 4) Static-context invariants
+Why it matters: call-id confusion can corrupt execution flow or leak state across frames.
 
-Mutating operations must reject static context, including:
-- storage writes,
-- metadata writes/creates,
-- account-destroy/upgrades,
-- token/runtime state mutations.
+---
 
-## 5) System runtime envelope invariants
+## 3) Bounds-before-allocation
 
-For system runtime addresses only:
+- Untrusted lengths must be validated before host allocations.
+- Memory reads/writes must fail safely on OOB.
+- Large copy paths must be bounded.
 
-- output is structured (`RuntimeExecutionOutcomeV1`) and decoded by REVM,
-- storage/log/metadata updates are applied only when runtime exit is `Ok`,
-- fatal runtime exits must not be interpreted as structured payloads.
+Why it matters: this is the main line of defense against memory-based DoS.
 
-## 6) Authority invariants
+---
 
-- Runtime upgrade syscall is restricted to `PRECOMPILE_RUNTIME_UPGRADE` caller path.
-- Governance owner logic is implemented in `contracts/runtime-upgrade`.
-- Any change to update authority constants requires explicit security review.
+## 4) Static-call immutability
 
-## 7) Non-user-controllable fatal codes
+State-changing operations must reject static context.
 
-Non-system contracts must not be able to surface internal fatal runtime-only exit classes into normal user flow.
-(REVM currently remaps selected fatal codes to `UnknownError` in `process_execution_result`.)
+Applies to:
+- storage mutations,
+- metadata mutations,
+- account lifecycle mutations,
+- privileged runtime state transitions.
 
-## 8) Bridge hook invariants
+Why it matters: static call semantics are part of EVM compatibility and safety.
 
-Bridge hooks (`crates/revm/src/bridge.rs`) assume strict event shapes/counts and mutate bridge balance accordingly.
-Any change in bridge event ABI or transaction flow requires synchronized updates in hooks.
+---
+
+## 5) System-runtime envelope discipline
+
+For system runtimes:
+
+- structured output must decode deterministically,
+- storage/log/metadata effects are committed only on successful runtime exit,
+- fatal exits must not be interpreted as normal structured outcomes.
+
+Why it matters: envelope mis-handling can commit invalid side effects.
+
+---
+
+## 6) Upgrade authority boundaries
+
+- runtime-upgrade path must remain tightly scoped,
+- authority defaults/owner transitions must be explicit and reviewed,
+- governance key handling is high-risk surface.
+
+Why it matters: upgrade authority compromise is full-system compromise.
+
+---
+
+## 7) Fatal-code containment
+
+Non-system user contracts must not be able to surface internal fatal runtime-only classes as normal outputs.
+
+Why it matters: prevents exposing internal failure classes as user-controlled behavior.
+
+---
+
+## 8) Bridge hook consistency
+
+Bridge hooks rely on expected event/data shape and ordering.
+Any ABI or flow change must update hook logic in sync.
+
+Why it matters: mismatch can mint/burn/settle wrong amounts.
+
+---
 
 ## 9) Panic policy
 
-`panic = "abort"` is enabled in workspace release profile.
-Do not rely on unwind-based recovery.
-Consensus-critical paths should prefer explicit error returns over panics.
+Release profile is `panic = "abort"`.
+Do not rely on unwind recovery for consensus-critical paths.
 
-## 10) Review checklist for touching `crates/revm/src/syscall.rs`
+Why it matters: abort behavior must be anticipated in error-handling design.
 
-Before merging changes to syscall handler:
+---
 
-- [ ] input/state length checks are exact
-- [ ] static-context checks for mutations exist
-- [ ] gas charging order is deterministic
-- [ ] host allocations are bounded and prevalidated
-- [ ] ownership checks are preserved for metadata/account ops
-- [ ] interruption outcome path remains symmetric (`exec`/`resume`)
+## 10) Review checklist for syscall-handler changes
+
+Before merge:
+
+- [ ] strict input/state validation preserved
+- [ ] static-call checks preserved for mutating branches
+- [ ] gas/fuel charging order remains deterministic
+- [ ] allocation safety is bounded and prevalidated
+- [ ] ownership checks remain intact
+- [ ] interruption/resume symmetry still holds

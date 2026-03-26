@@ -1,63 +1,88 @@
-# Interruption Protocol (EXEC/RESUME)
+# Interruption Protocol (`exec` / `resume`)
 
-## Core objects
+## Mental model
 
-Defined in `crates/revm/src/types.rs` and `crates/types/src/syscall.rs`:
+Runtime execution is not a single uninterrupted run.
+When runtime needs host-only capability, it yields control, host executes the requested action, then runtime resumes.
 
-- `SystemInterruptionInputs`
-  - `call_id: u32`
-  - `syscall_params: SyscallInvocationParams`
-  - `gas: Gas` snapshot
-- `SystemInterruptionOutcome`
-  - original `inputs`
-  - optional host `ExecutionResult`
-  - `halted_frame` flag
-- `SyscallInvocationParams`
-  - `code_hash`, `input` range, `fuel_limit`, `state`, `fuel16_ptr`
+Think of it as a deterministic handshake:
 
-## Producer side (`_exec`)
+- **exec**: runtime starts/continues and may request interruption,
+- **host action**: REVM handles the request,
+- **resume**: runtime continues from saved state.
 
-1. Runtime executes contract entrypoint via `syscall_exec_impl`.
-2. If runtime needs host action, it exits with positive `call_id` and encoded syscall params in return bytes.
-3. REVM (`process_exec_result`) interprets `exit_code > 0` as interruption.
+---
 
-## Host side handling
+## Signals and meaning
 
-`execute_rwasm_interruption` (`crates/revm/src/syscall.rs`) does:
+Runtime exit code is overloaded by protocol:
 
-1. decode guest syscall input from runtime memory (`default_runtime_executor().memory_read(...)`)
-2. validate length/state constraints
-3. charge REVM gas according to syscall semantics
-4. perform host action:
-   - immediate result, or
-   - create new REVM frame for CALL/CREATE-like operations
-5. store interruption outcome in frame and continue loop
+- `exit_code <= 0`: final result (success/revert/error classes)
+- `exit_code > 0`: interruption request, value is `call_id`
 
-## Resume side (`_resume`)
+Return bytes carry encoded syscall invocation parameters for interruption path.
 
-When child action/frame finishes, REVM calls `syscall_resume_impl` (`crates/runtime/src/syscall_handler/host/resume.rs`):
+---
 
-inputs:
-- `call_id`
-- returned output bytes
-- mapped exit code
-- consumed/refunded fuel
-- optional pointer for writing `(fuel_consumed, fuel_refunded)`
+## Interruption payload
 
-runtime then continues from saved resumable context associated with `call_id`.
+Core payload includes:
 
-## System runtime envelopes during interruption
+- `call_id`: resumable runtime handle,
+- syscall parameters (id/input range/fuel/state),
+- gas snapshot for deterministic settlement.
 
-For system-runtime addresses (`is_execute_using_system_runtime`):
+This payload is decoded by host side and routed to syscall handler logic.
 
-- interruption output is encoded as `RuntimeInterruptionOutcomeV1`
-- final execution output is encoded as `RuntimeExecutionOutcomeV1`
+---
 
-REVM decodes and applies these before finalizing frame result.
+## Host-side interruption handling
 
-## Lifecycle invariants
+For each interruption:
 
-- `call_id` is transaction-scoped and allocated by `RuntimeFactoryExecutor`.
-- On final return, REVM calls `forget_runtime(call_id)`.
-- `reset_call_id_counter()` is invoked per transaction and clears recoverable runtimes.
-- Positive exit code means interruption id, non-positive means final halt code.
+1. read syscall input from runtime memory,
+2. validate input length/state constraints,
+3. charge gas according to syscall semantics,
+4. execute host operation,
+5. either return immediate result or create a new frame,
+6. store interruption outcome for resume phase.
+
+This is where privileged/stateful operations happen.
+
+---
+
+## Resume path
+
+After host action/frame completes, runtime is resumed with:
+
+- `call_id`,
+- mapped exit code from host action,
+- returned data,
+- consumed/refunded fuel,
+- optional pointer for writing fuel accounting tuple.
+
+Runtime continues from the saved execution point associated with that `call_id`.
+
+---
+
+## System-runtime envelopes
+
+System runtimes use structured envelopes for interruption and final output so REVM can deterministically apply:
+
+- return data,
+- storage diff,
+- logs,
+- metadata updates.
+
+Without this envelope contract, REVM would not know how to safely commit system-runtime side effects.
+
+---
+
+## Lifecycle guarantees
+
+- `call_id` is transaction-scoped.
+- Resumable contexts are forgotten when execution finalizes.
+- Per-transaction reset clears runtime recovery state/counters.
+- Resume is root-only in current runtime flow (nested user code cannot legally drive resume directly).
+
+Protocol correctness depends on keeping these guarantees intact.
