@@ -15,8 +15,7 @@ pub fn syscall_hashing_sha256_handler(
         params[1].i32().unwrap() as usize,
         params[2].i32().unwrap() as usize,
     );
-    let mut data = vec![0u8; data_len];
-    caller.memory_read(data_offset, &mut data)?;
+    let data = caller.memory_read_into_vec(data_offset, data_len)?;
     let hash = syscall_hashing_sha256_impl(&data);
     caller.memory_write(output_offset, hash.as_slice())?;
     Ok(())

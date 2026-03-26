@@ -88,7 +88,8 @@ impl NativeAPI for RuntimeContextWrapper {
             fuel_consumed,
             fuel_refunded,
             0,
-        );
+        )
+        .unwrap_exit_code();
         (fuel_consumed, fuel_refunded, exit_code)
     }
 

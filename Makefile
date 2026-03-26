@@ -19,10 +19,10 @@ build:
 
 .PHONY: update-deps
 update-deps:
-	cargo update --manifest-path=./contracts/Cargo.toml rwasm revm
-	cargo update --manifest-path=./examples/Cargo.toml rwasm revm
-	cargo update rwasm revm
-	cargo update --manifest-path=./evm-e2e/Cargo.toml rwasm revm
+	cargo update --manifest-path=./contracts/Cargo.toml revm rwasm
+	cargo update --manifest-path=./examples/Cargo.toml revm rwasm
+	cargo update revm rwasm
+	cargo update --manifest-path=./evm-e2e/Cargo.toml revm rwasm
 
 .PHONY: clean
 clean:
