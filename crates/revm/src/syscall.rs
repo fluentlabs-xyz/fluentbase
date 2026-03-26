@@ -1063,7 +1063,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             }
 
             // Clamp the requested length to the remaining bytes after `offset`.
-            let copy_len = core::cmp::min(length, length - offset);
+            let copy_len = core::cmp::min(length, metadata_len - offset);
             let metadata = ownable_account_bytecode
                 .metadata
                 .slice(offset..(offset + copy_len));
