@@ -7,7 +7,7 @@ check:
 .PHONY: clippy
 clippy:
 	cargo clippy --workspace --all-targets -- -D warnings
-	#cargo clippy --manifest-path=./contracts/Cargo.toml --workspace --all-targets -- -D warnings
+	cargo clippy --manifest-path=./contracts/Cargo.toml --workspace --all-targets -- -D warnings
 	cargo clippy --manifest-path=./examples/Cargo.toml --workspace --all-targets -- -D warnings
 
 .PHONY: pr

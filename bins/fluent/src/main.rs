@@ -11,10 +11,11 @@ use fluentbase_node::{
 };
 use humantime::parse_duration;
 use reth_chainspec::ChainSpec;
+use reth_cli_commands::download::DownloadDefaults;
 use reth_ethereum_cli::{Cli, Commands};
 use reth_node_builder::{DebugNodeLauncherFuture, Node};
 use reth_node_ethereum::EthereumAddOns;
-use std::{sync::Arc, time::Duration};
+use std::{borrow::Cow, sync::Arc, time::Duration};
 use tracing::info;
 
 #[global_allocator]
@@ -41,6 +42,20 @@ pub struct FluentNodeArgs {
     pub sequencer_url: Option<String>,
 }
 
+fn init_downloads_defaults() {
+    let download_defaults = DownloadDefaults {
+        available_snapshots: vec![Cow::Borrowed(
+            "https://cdn.fluent.xyz/snapshots/20994/fluent-testnet-22459308.tar.gz",
+        )],
+        default_base_url: Cow::Borrowed("https://cdn.fluent.xyz/snapshots"),
+        default_chain_aware_base_url: Some(Cow::Borrowed("https://cdn.fluent.xyz/snapshots")),
+        long_help: None,
+    };
+    download_defaults
+        .try_init()
+        .expect("failed to initialize download URLs");
+}
+
 fn main() {
     reth_cli_util::sigsegv_handler::install();
 
@@ -49,13 +64,20 @@ fn main() {
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
     }
 
+    // Initialize default download URLs for snapshots
+    init_downloads_defaults();
+
     let mut consensus_url: Option<String> = None;
     let mut block_producer: Option<Duration> = None;
 
     let mut cli = Cli::<FluentChainSpecParser, FluentNodeArgs>::parse();
+
+    // Adjust several params for node execution
     if let Commands::Node(node) = &mut cli.command {
+        // Merge default public trusted peers
         let new_trusted_peers = resolve_default_trusted_peers(node.chain.chain);
         node.network.trusted_peers.extend(new_trusted_peers);
+
         // If consensus URL is not specified, resolve default
         if let Some(sequencer_url) = &node.ext.sequencer_url {
             consensus_url = Some(sequencer_url.clone());
@@ -64,6 +86,8 @@ fn main() {
         } else {
             consensus_url = resolve_default_consensus_url(node.chain.chain);
         }
+
+        // If validator mode is enabled then specify block production time
         if node.ext.validator {
             block_producer = Some(node.ext.validator_block_time);
         }

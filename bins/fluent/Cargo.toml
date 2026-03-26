@@ -134,33 +134,13 @@ fluentbase-types = { workspace = true, features = ["std"] }
 
 # alloy
 alloy-primitives = { workspace = true }
-#alloy-rpc-types = { workspace = true, features = ["engine"] }
-alloy-genesis = { workspace = true }
-alloy-evm = { workspace = true }
-alloy-consensus = { workspace = true }
-alloy-network = { workspace = true }
-alloy-rpc-types-engine = { workspace = true }
-alloy-rpc-types-eth = { workspace = true }
 
 # tracing
 tracing.workspace = true
 
-# async
-tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thread"] }
-
 # misc
 clap = { workspace = true, features = ["derive", "env"] }
-flate2 = { workspace = true }
-eyre = { workspace = true }
-serde_json = { workspace = true }
 humantime = { workspace = true }
-humantime-serde = { workspace = true }
-
-# for chainspec only
-#sequoia-sqv = { version = "1", default-features = false, features = ["crypto-openssl"] }
-#sequoia-openpgp = { version = "2.2.0", default-features = false, features = ["crypto-openssl"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking"] }
-directories = "6.0.0"
 
 [features]
 default = [

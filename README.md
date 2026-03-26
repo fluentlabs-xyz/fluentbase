@@ -115,18 +115,21 @@ make
 The following chain IDs are available:
 
 * `dev` — Local development chain (`1337`)
-* `fluent-devnet` — Fluent Devnet
-* `fluent-testnet` — Fluent Testnet
-* `fluent-mainnet` — Fluent Mainnet
+* `fluent-devnet` — Fluent Devnet (`20993`)
+* `fluent-testnet` — Fluent Testnet (`20994`)
+* `fluent-mainnet` — Fluent Mainnet (`25363`)
 
-For **Fluent Testnet**, the node must be initialized using a snapshot:
+For **Fluent Testnet**, the node must be initialized using a snapshot first:
 
-`https://cdn.fluent.xyz/snapshots/fluent-testnet-20721279.tar.gz`
+```bash
+./fluent init --datadir=./datadir --chain=fluent-testnet
+./fluent download --datadir=./datadir --chain=fluent-testnet
+```
 
 To start the node, run:
 
 ```bash
-./fluent --datadir ./datadir --chain fluent-testnet
+./fluent --datadir=./datadir --chain=fluent-testnet
 ```
 
 ---
