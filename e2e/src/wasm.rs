@@ -11,7 +11,7 @@ use fluentbase_contracts::{
 use fluentbase_sdk::{
     address, bytes, constructor::encode_constructor_params, Address, Bytes, U256,
 };
-use fluentbase_testing::EvmTestingContext;
+use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use hex_literal::hex;
 use revm::{
     bytecode::Bytecode,
@@ -449,4 +449,30 @@ fn test_wasm_cant_use_fatal_exit_code() {
             gas_used: 1_000_000
         }
     );
+}
+
+#[test]
+fn test_wasm_should_not_panic_on_malformed_wasm_binary() {
+    let wasm_module: Bytes = wat::parse_str(
+        r#"
+(module
+  (memory (export "memory") 1)
+  (func (export "main") (param i32 i32) (result i32)
+    unreachable
+  )
+  (func (export "deploy"))
+)
+    "#,
+    )
+    .unwrap()
+    .into();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let result = TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module).exec();
+    assert_eq!(
+        result,
+        ExecutionResult::Halt {
+            reason: HaltReason::MalformedBuiltinParams,
+            gas_used: 100_000_000
+        }
+    )
 }

@@ -22,8 +22,7 @@ pub fn syscall_resume_handler(
         params[3].i32().unwrap(),
         params[4].i32().unwrap() as usize,
     );
-    let mut return_data = vec![0u8; return_data_len];
-    caller.memory_read(return_data_ptr, &mut return_data)?;
+    let return_data = caller.memory_read_into_vec(return_data_ptr, return_data_len)?;
     let (fuel_consumed, fuel_refunded) = if fuel16_ptr > 0 {
         let mut fuel_buffer = [0u8; 16];
         caller.memory_read(fuel16_ptr, &mut fuel_buffer)?;
