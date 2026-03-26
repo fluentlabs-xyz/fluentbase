@@ -163,3 +163,8 @@ pub const RWASM_SIG_LEN: usize = 2;
 /// - 0xef 0x00 - EIP-3540 compatible prefix
 /// - 0x52 - rWASM version number (equal to 'R')
 pub const RWASM_SIG: [u8; RWASM_SIG_LEN] = [0xef, 0x52];
+
+/// A maximum allowed bytes to be copied using EXT_CODE_COPY instruction
+///
+/// Technically we can't store a binary that exceeds rWasm module size (12MiB)
+pub const EXT_CODE_COPY_MAX_COPY_SIZE: usize = RWASM_MAX_CODE_SIZE;
