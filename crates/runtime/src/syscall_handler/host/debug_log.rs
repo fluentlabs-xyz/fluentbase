@@ -15,8 +15,7 @@ pub fn syscall_debug_log_handler(
         params[0].i32().unwrap() as usize,
         params[1].i32().unwrap() as usize,
     );
-    let mut buffer = vec![0u8; message_len];
-    caller.memory_read(message_ptr, &mut buffer)?;
+    let buffer = caller.memory_read_into_vec(message_ptr, message_len)?;
     syscall_debug_log_impl(&buffer);
     Ok(())
 }

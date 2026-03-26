@@ -10,7 +10,8 @@ use fluentbase_sdk::{
 pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let wasm_binary = sdk.bytes_input();
     let config = default_compilation_config();
-    let (result, constructor_params) = RwasmModule::compile(config, &wasm_binary).unwrap();
+    let (result, constructor_params) =
+        RwasmModule::compile(config, &wasm_binary).map_err(|_| ExitCode::MalformedBuiltinParams)?;
     let rwasm_binary = result.serialize();
     if rwasm_binary.len() > RWASM_MAX_CODE_SIZE {
         return Err(ExitCode::CreateContractSizeLimit);

@@ -1,4 +1,5 @@
 /// Syscall entry points for resuming a previously interrupted runtime.
+use crate::syscall_handler::syscall_process_exit_code;
 use crate::{
     executor::{default_runtime_executor, RuntimeExecutor},
     RuntimeContext,
@@ -22,8 +23,7 @@ pub fn syscall_resume_handler(
         params[3].i32().unwrap(),
         params[4].i32().unwrap() as usize,
     );
-    let mut return_data = vec![0u8; return_data_len];
-    caller.memory_read(return_data_ptr, &mut return_data)?;
+    let return_data = caller.memory_read_into_vec(return_data_ptr, return_data_len)?;
     let (fuel_consumed, fuel_refunded) = if fuel16_ptr > 0 {
         let mut fuel_buffer = [0u8; 16];
         caller.memory_read(fuel16_ptr, &mut fuel_buffer)?;
@@ -41,7 +41,8 @@ pub fn syscall_resume_handler(
         fuel_consumed,
         fuel_refunded,
         fuel16_ptr as u32,
-    );
+    )
+    .map_err(|exit_code| syscall_process_exit_code(caller, exit_code))?;
     if fuel16_ptr > 0 {
         caller.memory_write(fuel16_ptr, &fuel_consumed.to_le_bytes())?;
         caller.memory_write(fuel16_ptr + 8, &fuel_refunded.to_le_bytes())?;
@@ -59,10 +60,10 @@ pub fn syscall_resume_impl(
     fuel_consumed: u64,
     fuel_refunded: i64,
     fuel16_ptr: u32,
-) -> (u64, i64, i32) {
+) -> Result<(u64, i64, i32), ExitCode> {
     // only root can use resume function
     if ctx.call_depth > 0 {
-        return (0, 0, ExitCode::RootCallOnly.into_i32());
+        return Err(ExitCode::RootCallOnly);
     }
     let result = default_runtime_executor().resume(
         call_id,
@@ -74,10 +75,10 @@ pub fn syscall_resume_impl(
     );
     // Move output into parent's return data
     ctx.execution_result.return_data = result.output;
-    (
+    Ok((
         result.fuel_consumed,
         result.fuel_refunded,
         // We return `call_id` as exit code, it's safe since exit code can't be positive
         result.exit_code,
-    )
+    ))
 }
