@@ -933,7 +933,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     if ownable_account_bytecode.owner_address == account_owner_address {
                         (ownable_account_bytecode.metadata.len() as u32, true)
                     } else {
-                        (0, true)
+                        (0, false)
                     }
                 }
                 _ => (0, false),
