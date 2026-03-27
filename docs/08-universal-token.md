@@ -54,6 +54,27 @@ Current behavior:
 
 So constructor data should encode human text in the front of the 32-byte value, with zero-padding tail.
 
+Solidity helper (mload-only) to convert `string` -> `bytes32`:
+
+```solidity
+function toBytes32Mload(string memory s) internal pure returns (bytes32 out) {
+    // UST20 expects max 32-byte fixed text fields.
+    require(bytes(s).length <= 32, "string too long");
+    assembly {
+        // string memory layout: [length (32 bytes)] [data ...]
+        // mload(add(s, 32)) reads first 32 bytes of data (right-padded with zeros).
+        out := mload(add(s, 32))
+    }
+}
+```
+
+Use it in deployment call as:
+
+```solidity
+bytes32 name32 = toBytes32Mload("My Token");
+bytes32 symbol32 = toBytes32Mload("MTK");
+```
+
 ---
 
 ## Deploy behavior
