@@ -4,59 +4,61 @@
 [![Test](https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/ci.yml/badge.svg)](https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/ci.yml)
 
 **Fluentbase** is a modular framework for building execution environments and smart contracts that compile into **rWasm
-** and run in a unified, proof-friendly runtime.
-
-> Fluentbase is experimental and under active development.
-> APIs, naming, and behavior can change between releases.
+IR** and run in a unified, proof-friendly runtime.
 
 ---
 
 ## Fluentbase + rWasm (TL;DR)
 
 Fluentbase uses **Blended Execution**: EVM/SVM/WASM are treated as compatibility layers, while execution converges to a
-single intermediate representation (**rWasm**) and one provable state transition function (STF).
+single intermediate representation (**rWasm VM**) and one provable state transition function (STF).
+
+> Note: SVM is still under development and remains in an extremely unstable state. That’s why it has been removed from
+> the genesis files and hidden behind a feature flag.
 
 ### Architecture
 
 Traditional multi-VM architecture:
 
 ```text
-EVM runtime | SVM runtime | WASM runtime
-          \   |   /
-           distinct execution semantics
-                 + distinct proving surfaces
+EVM | SVM | WASM | UST (adapters)
+   \    |    /     /
+distinct execution semantics
+ + distinct proving surfaces
 ```
 
-Fluentbase architecture:
+Fluentbase blended-VM architecture:
 
 ```text
-EVM / SVM / WASM adapters
-           ↓
-      System contracts
-           ↓
-         rWasm IR
-           ↓
-    Unified execution VM
-           ↓
-        ZK proof system
+EVM / SVM / WASM / UST (runtimes)
+          ↓
+   System contracts
+          ↓
+      rWasm IR
+          ↓
+ Unified execution VM
+          ↓
+    ZK proof system
 ```
+
+By leveraging this concept, the Fluentbase runtime supports multiple execution environments within a single account
+space.
+As a result, developers can deploy applications from EVM, SVM, WASM, and others, while enjoying seamless cross-state
+interaction.
 
 ### Quick comparison
 
 | Property                | Fluentbase                        |
 |-------------------------|-----------------------------------|
-| Execution model         | Unified IR                        |
-| VM count                | 1 (rWasm)                         |
-| Environment support     | EVM / SVM / WASM via adapters     |
-| Proof target            | Single STF                        |
+| Execution model         | Unified rWasm IR                  |
+| VM count                | 1 (rWasm VM)                      |
+| Environment support     | EVM / SVM / WASM / UST            |
+| Proof target            | Single STF (rWasm IR)             |
 | Determinism             | Strong                            |
 | ZK efficiency           | First-class constraint            |
 | Cross-environment calls | Native via shared execution layer |
-| Token model             | Unified (UST)                     |
-
-### Mental model
-
-Fluentbase is closer to **“LLVM for smart contracts + a provable runtime”** than to a traditional blockchain VM.
+| Token model             | Unified                           |
+| AOT support             | Yes (wasmtime)                    |
 
 ---
 
@@ -66,8 +68,8 @@ Fluentbase is closer to **“LLVM for smart contracts + a provable runtime”** 
 
 Binary applications:
 
-- `fluent` — Fluent CLI and utility entrypoint.
-- `chain-transition-verifier` — verifier tooling for transition validation workflows.
+- `fluent` — Fluent node CLI and utility entrypoint.
+- `runtime-upgrade` — CLI for runtime upgrades.
 
 ### `crates/`
 
@@ -84,33 +86,51 @@ Core libraries:
 - `sdk` / `sdk-derive` — developer SDK and proc-macros.
 - `testing` — testing harnesses for runtime and EVM flows.
 - `types` — shared types, constants, and syscall indices.
-- `universal-token` — Universal Token Standard primitives.
 
 > Note: some SVM-related crates are currently excluded from the top-level workspace build and may evolve independently.
 
 ### `contracts/`
 
-System contracts and builtins (EVM/SVM/WASM adapters, hashing/crypto utilities, token/system modules).
+System contracts that form the genesis file for the initial blockchain setup and runtime upgrades.
+These include runtimes for EVM, SVM, WASM, UST, and others.
 
 ### `examples/`
 
-Example contracts and demo apps.
+Example contracts and simple demo apps.
 
 ### `e2e/`
 
 End-to-end tests and benchmarks.
 
+### `flips/`
+
+A set of FLIPs (Fluent Improvement Proposals).
+
 ---
 
-## Building
+## Versioning
+
+Fluentbase uses the following versioning system: `<stage>.<major>.<minor>`, where:
+
+* **stage** — indicates a major Fluentbase release (currently v1). It changes only when Fluentbase moves to a new
+  development
+  stage.
+* **major** — used for genesis-breaking or feature-breaking updates that require a runtime upgrade to the genesis file.
+  These changes must be made through a release branch and cannot be merged directly into `devel`.
+* **minor** — for minor fixes that do not affect the genesis file (e.g., SDK fixes, documentation, etc.).
+
+## Building & Testing
 
 The root `Makefile` builds major modules, contracts, and examples:
 
 ```bash
-make
+make build # build contracts & genesis files
+make clippy # run clippy checks
+make test # run unit & e2e testing suites
+make pr # run pre-pr checks (clippy+test)
 ```
 
-### Run the Node
+## Running the Node
 
 The following chain IDs are available:
 
@@ -131,6 +151,11 @@ To start the node, run:
 ```bash
 ./fluent --datadir=./datadir --chain=fluent-testnet
 ```
+
+## Docs & Examples
+
+You can find more documentation and examples in the official Fluent docs:
+https://docs.fluent.xyz/
 
 ---
 
