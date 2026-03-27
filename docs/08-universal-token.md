@@ -1,101 +1,130 @@
 # Universal Token Runtime (UST20)
 
-## What this runtime is
+## What UST20 is
 
-Universal Token is a delegated system runtime for fungible tokens.
+UST20 is Fluentbase’s shared token runtime.
 
-The key design choice is:
-- many token instances,
-- one shared runtime implementation,
-- isolated per-token state.
+Instead of deploying a unique token implementation every time, each token instance is routed to the same runtime logic and keeps its own isolated storage.
 
-That gives predictable behavior and operationally simpler upgrades compared to many independent token implementations.
+Practical result:
+- consistent token behavior,
+- easier upgrades and audits,
+- lower operational complexity than many independent token implementations.
 
 ---
 
-## Address and routing
+## Routing and address
 
-Runtime address:
+Universal token runtime address:
 
 - `PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME = 0x0000000000000000000000000000000000520008`
 
-Create-time routing is selected by init payload prefix:
+Create-time routing is selected by constructor prefix:
 
-- `UNIVERSAL_TOKEN_MAGIC_BYTES = "ERC " (0x45524320)`
+- `UNIVERSAL_TOKEN_MAGIC_BYTES = 0x45524320` (`"ERC "`)
 
-If prefix matches, new account is wrapped and delegated to universal-token runtime.
+If init code starts with this 4-byte magic, deployment is routed to the universal token runtime.
 
 ---
 
-## Constructor input format
+## Constructor payload format
 
-Constructor expects:
+Deployment payload must be:
 
-`magic(4 bytes) + abi.encode(InitialSettings)`
+`0x45524320 ++ abi.encode(InitialSettings)`
 
-`InitialSettings` fields:
+`InitialSettings` fields (in order):
 
-1. token name (`bytes32`-style fixed text)
-2. token symbol (`bytes32`-style fixed text)
-3. decimals
-4. initial supply
-5. minter address (optional role)
-6. pauser address (optional role)
+1. `token_name` (`bytes32`)
+2. `token_symbol` (`bytes32`)
+3. `decimals` (`uint8` ABI word)
+4. `initial_supply` (`uint256`)
+5. `minter` (`address`)
+6. `pauser` (`address`)
 
-### Text behavior (name/symbol)
+### Name/symbol text rules
 
-- bytes are read from start of 32-byte field,
-- decode stops at first `0x00`,
-- invalid UTF-8 is rejected,
-- constructor fails on malformed text payload.
+Name and symbol are fixed 32-byte fields.
+
+Current behavior:
+- read from the start of `bytes32`,
+- stop at first `0x00`,
+- validate UTF-8,
+- reject malformed UTF-8.
+
+So constructor data should encode human text in the front of the 32-byte value, with zero-padding tail.
+
+Solidity helper (mload-only) to convert `string` -> `bytes32`:
+
+```solidity
+function stringToBytes32(string memory s) internal pure returns (bytes32 out) {
+    // UST20 expects max 32-byte fixed text fields.
+    require(bytes(s).length <= 32, "string too long");
+    assembly {
+        // string memory layout: [length (32 bytes)] [data ...]
+        // mload(add(s, 32)) reads first 32 bytes of data (right-padded with zeros).
+        out := mload(add(s, 32))
+    }
+}
+```
+
+Use it in deployment call as:
+
+```solidity
+bytes32 name32 = stringToBytes32("My Token");
+bytes32 symbol32 = stringToBytes32("MTK");
+```
 
 ---
 
 ## Deploy behavior
 
-On successful deploy:
+On successful deploy, runtime:
 
 - stores name/symbol/decimals,
-- stores minter/pauser only when non-zero,
-- if initial supply > 0:
-  - mints to deployer,
-  - updates total supply,
-  - emits ERC20 `Transfer(0x0 -> deployer)`.
-
-If constructor logic returns non-zero EVM-style error code, runtime writes ABI error payload and exits with panic-class host exit.
+- stores minter and pauser only if non-zero,
+- if `initial_supply > 0`:
+  - credits deployer balance,
+  - sets total supply,
+  - emits ERC20 `Transfer(address(0), deployer, initial_supply)`.
 
 ---
 
-## Supported method surface
+## Runtime method surface
 
-### Core ERC20-like methods
-- `name`, `symbol`, `decimals`
-- `totalSupply`
-- `balance`, `balanceOf`
-- `transfer`, `transferFrom`
-- `approve`, `allowance`
+### Core methods
+- `name()`
+- `symbol()`
+- `decimals()`
+- `totalSupply()`
+- `balance()`
+- `balanceOf(address)`
+- `transfer(address,uint256)`
+- `transferFrom(address,address,uint256)`
+- `approve(address,uint256)`
+- `allowance(address,address)`
 
 ### Optional privileged methods
-- `mint`
-- `burn`
-- `pause`
-- `unpause`
+- `mint(address,uint256)`
+- `burn(address,uint256)`
+- `pause()`
+- `unpause()`
 
 Unknown selector returns `ERR_UST_UNKNOWN_METHOD`.
 
 ---
 
-## Role and freeze semantics
+## Roles and freeze behavior
 
 ### Mint/Burn
 - no minter configured -> `ERR_UST_NOT_MINTABLE`
-- caller not minter -> `ERR_UST_MINTER_MISMATCH`
+- caller != minter -> `ERR_UST_MINTER_MISMATCH`
 - mint to zero -> `ERR_ERC20_INVALID_RECEIVER`
 - burn from zero -> `ERR_ERC20_INVALID_SENDER`
 
 ### Pause/Unpause
 - no pauser configured -> `ERR_UST_NOT_PAUSABLE`
-- caller not pauser -> `ERR_UST_PAUSER_MISMATCH`
+- caller != pauser -> `ERR_UST_PAUSER_MISMATCH`
 - pause while already paused -> `ERR_PAUSABLE_ENFORCED_PAUSE`
 - unpause while not paused -> `ERR_PAUSABLE_EXPECTED_PAUSE`
 
@@ -104,26 +133,147 @@ When frozen, transfer/mint/burn paths are blocked with enforced-pause error.
 
 ---
 
+## Solidity deployment examples
+
+### Example 1: CREATE deployment
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+contract UST20Deployer {
+    bytes4 constant UNIVERSAL_TOKEN_MAGIC = 0x45524320; // "ERC "
+
+    function deployUST20(
+        bytes32 name32,
+        bytes32 symbol32,
+        uint8 decimals,
+        uint256 initialSupply,
+        address minter,
+        address pauser
+    ) external returns (address token) {
+        bytes memory initCode = bytes.concat(
+            UNIVERSAL_TOKEN_MAGIC,
+            abi.encode(name32, symbol32, decimals, initialSupply, minter, pauser)
+        );
+
+        assembly {
+            token := create(0, add(initCode, 0x20), mload(initCode))
+        }
+        require(token != address(0), "UST20 deploy failed");
+    }
+}
+```
+
+Usage note:
+- `bytes32("My Token")` / `bytes32("MTK")` already produce left-aligned, zero-padded values.
+
+### Example 2: CREATE2 deployment
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+contract UST20Create2Deployer {
+    bytes4 constant UNIVERSAL_TOKEN_MAGIC = 0x45524320;
+
+    function deployUST20Create2(
+        bytes32 salt,
+        bytes32 name32,
+        bytes32 symbol32,
+        uint8 decimals,
+        uint256 initialSupply,
+        address minter,
+        address pauser
+    ) external returns (address token) {
+        bytes memory initCode = bytes.concat(
+            UNIVERSAL_TOKEN_MAGIC,
+            abi.encode(name32, symbol32, decimals, initialSupply, minter, pauser)
+        );
+
+        assembly {
+            token := create2(0, add(initCode, 0x20), mload(initCode), salt)
+        }
+        require(token != address(0), "UST20 create2 failed");
+    }
+}
+```
+
+---
+
+## Rust deployment examples
+
+### Example 1: build deployment payload
+
+```rust
+use fluentbase_sdk::universal_token::create_deployment_tx_with_roles;
+use fluentbase_sdk::{Address, U256};
+
+let init_code = create_deployment_tx_with_roles(
+    "My Token",
+    "MTK",
+    18,
+    U256::from(1_000_000u64),
+    Some(Address::with_last_byte(0x01)), // minter
+    Some(Address::with_last_byte(0x02)), // pauser
+);
+
+// `init_code` = magic prefix + ABI-encoded InitialSettings
+```
+
+### Example 2: deploy from a Fluentbase contract context
+
+```rust
+use fluentbase_sdk::universal_token::create_deployment_tx_with_roles;
+use fluentbase_sdk::{Address, ExitCode, SharedAPI, U256};
+
+fn deploy_ust20<SDK: SharedAPI>(sdk: &mut SDK) -> Result<Address, ExitCode> {
+    let init_code = create_deployment_tx_with_roles(
+        "My Token",
+        "MTK",
+        18,
+        U256::from(1_000_000u64),
+        None,
+        None,
+    );
+
+    let deployed = sdk.create(None, &U256::ZERO, &init_code).ok()?;
+    Ok(Address::from_slice(deployed.as_ref()))
+}
+
+fn deploy_ust20_create2<SDK: SharedAPI>(sdk: &mut SDK, salt: U256) -> Result<Address, ExitCode> {
+    let init_code = create_deployment_tx_with_roles(
+        "My Token",
+        "MTK",
+        18,
+        U256::from(1_000_000u64),
+        None,
+        None,
+    );
+
+    let deployed = sdk.create(Some(salt), &U256::ZERO, &init_code).ok()?;
+    Ok(Address::from_slice(deployed.as_ref()))
+}
+```
+
+---
+
 ## Storage model
 
-Runtime stores:
-
+UST20 stores:
 - total supply,
-- role addresses (minter/pauser),
+- minter/pauser addresses,
 - frozen flag,
 - name/symbol/decimals,
 - balances map,
 - allowances nested map.
 
-Slots are deterministic constants; mapping keys are derived by SDK slot derivation helpers.
+Slots are deterministic constants; mapping keys use SDK slot-derivation utilities.
 
 ---
 
 ## Compatibility notes
 
-- Legacy constructor payload compatibility still exists in storage prefetch helpers.
-- `token2022()` selector constant exists but is currently reserved (not dispatched).
-- Universal token runtime is part of:
-  - delegated-runtime set,
-  - system-runtime execution set,
-  - engine-metered precompile set.
+- legacy constructor compatibility still exists in prefetch helper paths,
+- `token2022()` selector constant is reserved (not dispatched yet),
+- universal token runtime is currently in delegated-runtime, system-runtime, and engine-metered sets.
