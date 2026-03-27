@@ -17,12 +17,16 @@ pr: clippy test
 build:
 	cargo build --all
 
-.PHONY: update-deps
-update-deps:
-	cargo update --manifest-path=./contracts/Cargo.toml revm rwasm
-	cargo update --manifest-path=./examples/Cargo.toml revm rwasm
-	cargo update revm rwasm
-	cargo update --manifest-path=./evm-e2e/Cargo.toml revm rwasm
+.PHONY: update-rwasm-deps
+update-rwasm-deps:
+	cargo update --manifest-path=./contracts/Cargo.toml revm
+	cargo update --manifest-path=./contracts/Cargo.toml rwasm
+	cargo update --manifest-path=./examples/Cargo.toml revm
+	cargo update --manifest-path=./examples/Cargo.toml rwasm
+	cargo update revm
+	cargo update rwasm
+	cargo update --manifest-path=./evm-e2e/Cargo.toml revm
+	cargo update --manifest-path=./evm-e2e/Cargo.toml rwasm
 
 .PHONY: clean
 clean:
