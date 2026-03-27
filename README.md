@@ -118,7 +118,6 @@ Fluentbase uses the following versioning system: `<stage>.<major>.<minor>`, wher
 * **major** — used for genesis-breaking or feature-breaking updates that require a runtime upgrade to the genesis file.
   These changes must be made through a release branch and cannot be merged directly into `devel`.
 * **minor** — for minor fixes that do not affect the genesis file (e.g., SDK fixes, documentation, etc.).
-  Note: Some SDK fixes may cause a new genesis generation, but in such cases we do not increment the major version.
 
 ## Building & Testing
 
