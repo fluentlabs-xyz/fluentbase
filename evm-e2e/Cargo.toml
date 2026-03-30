@@ -33,7 +33,7 @@ k256 = { version = "0.13.3", features = ["ecdsa"] }
 default = [
     "std",
     "wasmtime",
-    "debug-print",
+    # "debug-print",
 ]
 std = [
     "fluentbase-genesis/std",
@@ -48,6 +48,7 @@ debug-print = [
 ]
 wasmtime = [
     "fluentbase-revm/wasmtime",
+    "fluentbase-runtime/wasmtime",
 ]
 
 [patch.crates-io]

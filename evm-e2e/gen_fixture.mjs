@@ -7,7 +7,7 @@ import {encode as rlpEncode} from "rlp";
 
 function usage() {
     console.error(
-        "Usage: node gen_fixture.js <rpc_url> <tx_hash> [output.json]"
+        "Usage: node gen_fixture.mjs <rpc_url> <tx_hash> [output.json]"
     );
     process.exit(1);
 }
