@@ -36,6 +36,16 @@ sol! {
         bytes calldata message
     ) external payable;
 
+    function receiveFailedMessage(
+        address from,
+        address to,
+        uint256 value,
+        uint256 chainId,
+        uint256 blockNumber,
+        uint256 messageNonce,
+        bytes calldata message
+    ) external payable;
+
     function sendMessage(address to, bytes calldata message) external payable;
 }
 
@@ -424,6 +434,184 @@ fn test_receive_message_burns_balance_when_log_marks_unsuccessful_call() {
     );
 
     assert!(result.is_success());
+    let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, new_balance);
+}
+
+#[test]
+fn test_receive_failed_message_mints_on_successful_valid_log() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let log_data = ReceivedMessage {
+        messageHash: B256::ZERO,
+        successfulCall: true,
+        returnData: Bytes::new(),
+    }
+    .encode_data();
+
+    let mut bytecode = Vec::new();
+    const LOG_DATA_OFFSET: usize = 6 + 2 + 32 + 3 + 1;
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(LOG_DATA_OFFSET).unwrap());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::CODECOPY);
+    bytecode.push(opcode::PUSH32);
+    bytecode.extend_from_slice(ReceivedMessage::SIGNATURE_HASH.as_slice());
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::LOG1);
+    bytecode.push(opcode::STOP);
+    assert_eq!(bytecode.len(), LOG_DATA_OFFSET);
+    bytecode.extend(log_data);
+
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
+
+    let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    let input = receiveFailedMessageCall {
+        from: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x01),
+        value: U256::from(1_000),
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        messageNonce: U256::ZERO,
+        message: Bytes::new(),
+    }
+    .abi_encode();
+
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        input.into(),
+        None,
+        None,
+    );
+
+    assert!(result.is_success());
+    let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance + U256::from(1_000), new_balance);
+}
+
+#[test]
+fn test_receive_failed_message_unsuccessful_log_restores_balance() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let log_data = ReceivedMessage {
+        messageHash: B256::ZERO,
+        successfulCall: false,
+        returnData: Bytes::new(),
+    }
+    .encode_data();
+
+    let mut bytecode = Vec::new();
+    const LOG_DATA_OFFSET: usize = 6 + 2 + 32 + 3 + 1;
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(LOG_DATA_OFFSET).unwrap());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::CODECOPY);
+    bytecode.push(opcode::PUSH32);
+    bytecode.extend_from_slice(ReceivedMessage::SIGNATURE_HASH.as_slice());
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::LOG1);
+    bytecode.push(opcode::STOP);
+    assert_eq!(bytecode.len(), LOG_DATA_OFFSET);
+    bytecode.extend(log_data);
+
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
+
+    let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    let input = receiveFailedMessageCall {
+        from: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x01),
+        value: U256::from(1_000),
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        messageNonce: U256::ZERO,
+        message: Bytes::new(),
+    }
+    .abi_encode();
+
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        input.into(),
+        None,
+        None,
+    );
+
+    assert!(result.is_success());
+    let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, new_balance);
+}
+
+#[test]
+fn test_receive_failed_message_revert_restores_bridge_balance() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let mut bytecode = Vec::new();
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::REVERT);
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
+
+    let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    let input = receiveFailedMessageCall {
+        from: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x01),
+        value: U256::from(1_000),
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        messageNonce: U256::ZERO,
+        message: Bytes::new(),
+    }
+    .abi_encode();
+
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        input.into(),
+        None,
+        None,
+    );
+
+    assert!(!result.is_success());
+    let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, new_balance);
+}
+
+#[test]
+fn test_receive_failed_message_fails_when_success_log_missing() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, vec![opcode::STOP]);
+
+    let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    let input = receiveFailedMessageCall {
+        from: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x01),
+        value: U256::from(1_000),
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        messageNonce: U256::ZERO,
+        message: Bytes::new(),
+    }
+    .abi_encode();
+
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        input.into(),
+        None,
+        None,
+    );
+
+    assert!(!result.is_success());
     let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
     assert_eq!(old_balance, new_balance);
 }
