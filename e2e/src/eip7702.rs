@@ -11,19 +11,39 @@ use fluentbase_sdk::{
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use hex_literal::hex;
 use revm::{
-    bytecode::opcode,
+    bytecode::{opcode, Bytecode},
     context::{result::ExecutionResult::Revert, transaction::Authorization},
     Database,
 };
+
+fn new_signer() -> PrivateKeySigner {
+    "0xf0bc949485d112791637d7eb29dea3fd1e0758e8fea3ef542a4245bc896736cc"
+        .parse()
+        .unwrap()
+}
+
+fn signed_auth(
+    signer: &PrivateKeySigner,
+    chain_id: U256,
+    delegated_address: Address,
+    nonce: u64,
+) -> revm::context::transaction::SignedAuthorization {
+    let authorization = Authorization {
+        chain_id,
+        address: delegated_address,
+        nonce,
+    };
+    let auth_sig = signer
+        .sign_hash_sync(&authorization.signature_hash())
+        .unwrap();
+    authorization.into_signed(auth_sig)
+}
 
 #[test]
 fn test_evm_eip7702_call_delegated_account() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 
-    let signer: PrivateKeySigner =
-        "0xf0bc949485d112791637d7eb29dea3fd1e0758e8fea3ef542a4245bc896736cc"
-            .parse()
-            .unwrap();
+    let signer: PrivateKeySigner = new_signer();
 
     println!("-------------------");
 
@@ -49,15 +69,12 @@ fn test_evm_eip7702_call_delegated_account() {
     let auth_nonce = outer_nonce + 1;
     println!("outer_nonce={outer_nonce}, auth_nonce={auth_nonce}");
 
-    let authorization = Authorization {
-        chain_id: U256::from(ctx.cfg.chain_id),
-        address: delegate_to,
-        nonce: auth_nonce,
-    };
-    let auth_sig = signer
-        .sign_hash_sync(&authorization.signature_hash())
-        .unwrap();
-    let signed_auth = authorization.into_signed(auth_sig);
+    let signed_auth = signed_auth(
+        &signer,
+        U256::from(ctx.cfg.chain_id),
+        delegate_to,
+        auth_nonce,
+    );
 
     // setup tx: send to Address::ZERO just to not trigger any code execution,
     // authorization list is processed regardless of callee
@@ -144,4 +161,100 @@ fn test_evm_eip7702_state_override_like_estimate_gas_case() {
         .exec();
 
     assert!(result.is_success(), "estimate-like call failed: {result:?}");
+}
+
+#[test]
+fn test_evm_eip7702_auth_nonce_mismatch_is_ignored() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let signer = new_signer();
+    let authority = signer.address();
+    let caller = address!("aaaaaaaa00000000000000000000000000000000");
+    ctx.add_balance(caller, U256::from(10u128.pow(18)));
+
+    let bad_nonce_auth = signed_auth(
+        &signer,
+        U256::from(ctx.cfg.chain_id),
+        PRECOMPILE_SECP256K1_RECOVER,
+        7,
+    );
+
+    let result = TxBuilder::call7702(&mut ctx, caller, Address::ZERO, vec![bad_nonce_auth], None)
+        .gas_limit(200_000)
+        .exec();
+    assert!(result.is_success(), "tx itself should still succeed: {result:?}");
+
+    assert_eq!(ctx.get_nonce(authority), 0);
+    assert!(!matches!(ctx.get_code(authority), Some(Bytecode::Eip7702(_))));
+}
+
+#[test]
+fn test_evm_eip7702_auth_chain_id_mismatch_is_ignored() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let signer = new_signer();
+    let authority = signer.address();
+    let caller = address!("aaaaaaaa00000000000000000000000000000000");
+    ctx.add_balance(caller, U256::from(10u128.pow(18)));
+
+    let wrong_chain_auth = signed_auth(
+        &signer,
+        U256::from(ctx.cfg.chain_id + 1),
+        PRECOMPILE_SECP256K1_RECOVER,
+        0,
+    );
+
+    let result = TxBuilder::call7702(&mut ctx, caller, Address::ZERO, vec![wrong_chain_auth], None)
+        .gas_limit(200_000)
+        .exec();
+    assert!(result.is_success(), "tx itself should still succeed: {result:?}");
+
+    assert_eq!(ctx.get_nonce(authority), 0);
+    assert!(!matches!(ctx.get_code(authority), Some(Bytecode::Eip7702(_))));
+}
+
+#[test]
+fn test_evm_eip7702_zero_address_clears_delegation() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let signer = new_signer();
+    let authority = signer.address();
+    let caller = address!("aaaaaaaa00000000000000000000000000000000");
+    ctx.add_balance(caller, U256::from(10u128.pow(18)));
+
+    // first auth: set delegation to precompile 0x01
+    let set_auth = signed_auth(
+        &signer,
+        U256::from(ctx.cfg.chain_id),
+        PRECOMPILE_SECP256K1_RECOVER,
+        0,
+    );
+    let set_result = TxBuilder::call7702(&mut ctx, caller, Address::ZERO, vec![set_auth], None)
+        .gas_limit(200_000)
+        .exec();
+    assert!(set_result.is_success(), "set delegation tx failed: {set_result:?}");
+
+    match ctx.get_code(authority) {
+        Some(Bytecode::Eip7702(code)) => assert_eq!(code.address(), PRECOMPILE_SECP256K1_RECOVER),
+        other => panic!("expected Eip7702 code, got: {other:?}"),
+    }
+    assert_eq!(ctx.get_nonce(authority), 1);
+
+    // second auth: clear delegation by authorizing address(0)
+    let clear_auth = signed_auth(&signer, U256::from(ctx.cfg.chain_id), Address::ZERO, 1);
+    let clear_result =
+        TxBuilder::call7702(&mut ctx, caller, Address::ZERO, vec![clear_auth], None)
+            .gas_limit(200_000)
+            .exec();
+    assert!(
+        clear_result.is_success(),
+        "clear delegation tx failed: {clear_result:?}"
+    );
+
+    let code = ctx.get_code(authority);
+    assert!(
+        matches!(code, None) || matches!(code, Some(c) if c.is_empty()),
+        "expected empty/none code after clear, got: {code:?}"
+    );
+    assert_eq!(ctx.get_nonce(authority), 2);
 }
