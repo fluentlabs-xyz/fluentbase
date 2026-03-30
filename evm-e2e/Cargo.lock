@@ -1770,6 +1770,7 @@ dependencies = [
  "k256",
  "plain_hasher",
  "revm",
+ "revm-statetest-types",
  "serde",
  "serde_json",
  "structopt",
@@ -3808,6 +3809,24 @@ dependencies = [
  "revm-bytecode",
  "revm-primitives",
  "serde",
+]
+
+[[package]]
+name = "revm-statetest-types"
+version = "14.0.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#4a639f805e7f59aa9559ac9b2b38025d18bdde58"
+dependencies = [
+ "alloy-eip7928",
+ "k256",
+ "revm-bytecode",
+ "revm-context",
+ "revm-context-interface",
+ "revm-database",
+ "revm-primitives",
+ "revm-state",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

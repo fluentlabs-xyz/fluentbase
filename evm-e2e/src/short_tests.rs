@@ -5,7 +5,7 @@ macro_rules! define_tests {
         $(
             #[test]
             fn $test_name() {
-                $crate::utils::run_e2e_test($test_path)
+                $crate::utils::run_evm_e2e_test($test_path)
             }
         )*
     };

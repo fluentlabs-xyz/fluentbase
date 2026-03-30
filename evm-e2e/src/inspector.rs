@@ -1,9 +1,13 @@
+use crate::runner::TestError;
 use fluentbase_sdk::{Address, Log, U256};
 use revm::{
+    bytecode::opcode,
     context::ContextTr,
     interpreter::{
+        gas::MemoryGas,
         interpreter_types::{Jumps, MemoryTr},
-        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
+        return_error, return_ok, return_revert, CallInputs, CallOutcome, CreateInputs,
+        CreateOutcome, Interpreter,
     },
     state, Inspector,
 };
@@ -152,4 +156,144 @@ impl<CTX: ContextTr> Inspector<CTX> for TraceInspector {
         //     value,
         // });
     }
+}
+
+#[allow(dead_code)]
+pub fn check_evm_trace(
+    inspector1: &mut TraceInspector,
+    inspector2: &mut TraceInspector,
+) -> Result<(), TestError> {
+    let mut it1 = inspector1.events.iter_mut().filter(|e| match e {
+        InspectorEvent::Step(step) => match step.opcode {
+            opcode::CALL
+            | opcode::STATICCALL
+            | opcode::CALLCODE
+            | opcode::DELEGATECALL
+            | opcode::CREATE
+            | opcode::CREATE2
+            | opcode::STOP
+            | opcode::RETURN
+            | opcode::REVERT => true,
+            _ => false,
+        },
+        _ => true,
+    });
+    let mut it2 = inspector2.events.iter_mut();
+    let mut e1 = it1.next().unwrap();
+    let mut e2 = it2.next().unwrap();
+    loop {
+        let (e1_next, e2_next) = match (&mut e1, &mut e2) {
+            (
+                InspectorEvent::Call {
+                    inputs: _inputs1,
+                    outcome: ref mut outcome1,
+                },
+                InspectorEvent::Call {
+                    inputs: _inputs2,
+                    outcome: ref mut outcome2,
+                },
+            ) => {
+                println!("Call == Call");
+                // assert_eq!(inputs1, inputs2);
+                *outcome1.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
+                *outcome2.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
+                match (
+                    &outcome1.as_ref().unwrap().result.result,
+                    &outcome2.as_ref().unwrap().result.result,
+                ) {
+                    (return_ok!(), return_ok!()) => {}
+                    (return_revert!(), return_revert!()) => {}
+                    (return_error!(), return_error!()) => {}
+                    (_, _) => assert_eq!(outcome1, outcome2),
+                }
+                assert_eq!(
+                    outcome1.as_ref().unwrap().gas(),
+                    outcome2.as_ref().unwrap().gas()
+                );
+                assert_eq!(
+                    outcome1.as_ref().unwrap().output(),
+                    outcome2.as_ref().unwrap().output()
+                );
+                (it1.next(), it2.next())
+            }
+            (
+                InspectorEvent::Create {
+                    inputs: _inputs1,
+                    outcome: ref mut outcome1,
+                },
+                InspectorEvent::Create {
+                    inputs: _inputs2,
+                    outcome: ref mut outcome2,
+                },
+            ) => {
+                println!("Create == Create");
+                // assert_eq!(inputs1, inputs2);
+                *outcome1.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
+                *outcome2.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
+                match (
+                    &outcome1.as_ref().unwrap().result.result,
+                    &outcome2.as_ref().unwrap().result.result,
+                ) {
+                    (return_ok!(), return_ok!()) => {}
+                    (return_revert!(), return_revert!()) => {}
+                    (return_error!(), return_error!()) => {}
+                    (_, _) => assert_eq!(outcome1, outcome2),
+                }
+                assert_eq!(
+                    outcome1.as_ref().unwrap().gas(),
+                    outcome2.as_ref().unwrap().gas()
+                );
+                // assert_eq!(
+                //     outcome1.as_ref().unwrap().output(),
+                //     outcome2.as_ref().unwrap().output()
+                // );
+                assert_eq!(
+                    outcome1.as_ref().unwrap().address,
+                    outcome2.as_ref().unwrap().address,
+                );
+                (it1.next(), it2.next())
+            }
+            (InspectorEvent::Selfdestruct { .. }, _) => {
+                // don't check selfdestruct events
+                e1 = it1.next().unwrap();
+                continue;
+            }
+            (InspectorEvent::Log(_), InspectorEvent::Log(_)) => {
+                println!("Log == Log");
+                assert_eq!(e1, e2);
+                (it1.next(), it2.next())
+            }
+            (InspectorEvent::Step(step1), InspectorEvent::Step(step2)) => {
+                println!(
+                    "Opcode({}) == Opcode({})",
+                    step1.opcode_name, step2.opcode_name
+                );
+                (it1.next(), it2.next())
+            }
+            (_, _) => {
+                eprintln!("\n{:?} == {:?}", e1, e2);
+                unreachable!()
+            }
+        };
+        match (e1_next, e2_next) {
+            (Some(e1_next), Some(e2_next)) => {
+                e1 = e1_next;
+                e2 = e2_next;
+            }
+            (None, None) => {
+                break;
+            }
+            (Some(extra), None) => {
+                eprintln!("{:?} == {:?}", e1, e2);
+                eprintln!("Extra (EVM): {:?}", extra);
+                unreachable!("oh, we have different number of events")
+            }
+            (None, Some(extra)) => {
+                eprintln!("{:?} == {:?}", e1, e2);
+                eprintln!("Extra (FLUENT): {:?}", extra);
+                unreachable!("oh, we have different number of events")
+            }
+        }
+    }
+    Ok(())
 }

@@ -1,0 +1,9 @@
+{
+  "name": "evm-e2e",
+  "packageManager": "yarn@4.4.1",
+  "dependencies": {
+    "ethers": "^6.16.0",
+    "rlp": "^3.0.0"
+  },
+  "type": "module"
+}

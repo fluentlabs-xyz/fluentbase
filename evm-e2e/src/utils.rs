@@ -1,4 +1,4 @@
-use crate::runner::execute_test_suite;
+use crate::runner::{execute_evm_test_suite, execute_fluent_test_suite};
 use k256::ecdsa::SigningKey;
 use revm::primitives::Address;
 use std::{
@@ -14,10 +14,16 @@ pub fn recover_address(private_key: &[u8]) -> Option<Address> {
     Some(Address::from_raw_public_key(&public_key.as_bytes()[1..]))
 }
 
-pub(crate) fn run_e2e_test(test_path: &'static str) {
+pub(crate) fn run_evm_e2e_test(test_path: &'static str) {
     let path = format!("./{}", test_path);
     let elapsed = Arc::new(Mutex::new(Duration::new(0, 0)));
-    execute_test_suite(Path::new(path.as_str()), &elapsed, false, false).unwrap();
+    execute_evm_test_suite(Path::new(path.as_str()), &elapsed, false, false).unwrap();
+}
+
+pub(crate) fn run_fluent_e2e_test(test_path: &'static str) {
+    let path = format!("./{}", test_path);
+    let elapsed = Arc::new(Mutex::new(Duration::new(0, 0)));
+    execute_fluent_test_suite(Path::new(path.as_str()), &elapsed, false, false).unwrap();
 }
 
 #[cfg(test)]

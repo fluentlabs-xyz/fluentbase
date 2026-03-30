@@ -11,7 +11,7 @@ fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 fluentbase-revm = { path = "../crates/revm", features = ["eip1559-full-compatibility"] }
 
 revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched", default-features = false, features = ["std", "serde-json", "serde"] }
-#revm = { path = "../../revm-rwasm/crates/revm", default-features = false, features = ["std", "serde-json", "serde"] }
+revm-statetest-types = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched", default-features = false }
 
 hash-db = "=0.15"
 hex = "0.4"
@@ -32,8 +32,8 @@ k256 = { version = "0.13.3", features = ["ecdsa"] }
 [features]
 default = [
     "std",
-    # "debug-print",
     "wasmtime",
+    # "debug-print",
 ]
 std = [
     "fluentbase-genesis/std",
@@ -42,11 +42,13 @@ std = [
 debug-print = [
     "revm/debug-print",
     "fluentbase-revm/debug-print",
+    "fluentbase-genesis/debug-print",
     "fluentbase-sdk/debug-print",
     "fluentbase-runtime/debug-print",
 ]
 wasmtime = [
     "fluentbase-revm/wasmtime",
+    "fluentbase-runtime/wasmtime",
 ]
 
 [patch.crates-io]
