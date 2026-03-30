@@ -1,6 +1,6 @@
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use fluentbase_evm::{InterpreterAction, InterpreterResult};
-use fluentbase_sdk::{Bytes, PRECOMPILE_ROLLUP_BRIDGE};
+use fluentbase_sdk::{Bytes, U256, PRECOMPILE_ROLLUP_BRIDGE};
 use revm::{
     context::{
         journaled_state::account::JournaledAccountTr, ContextError, ContextTr, JournalTr,
@@ -35,6 +35,16 @@ sol! {
         bytes calldata message
     ) external;
 
+    function receiveFailedMessage(
+        address from,
+        address to,
+        uint256 value,
+        uint256 chainId,
+        uint256 blockNumber,
+        uint256 messageNonce,
+        bytes calldata message
+    ) external;
+
     function sendMessage(address to, bytes calldata message) external payable;
 }
 
@@ -53,13 +63,10 @@ pub(crate) fn apply_bridge_pre_invocation_hook<CTX: ContextTr>(
         .load_account_with_code_mut(PRECOMPILE_ROLLUP_BRIDGE)?
         .data;
 
-    // Mint an extra value for bridge since these funds are required for rollup deposit
-    if tx.input().starts_with(&receiveMessageCall::SELECTOR) {
-        let Ok(message) = receiveMessageCall::abi_decode(tx.input().as_ref()) else {
-            return Ok(());
-        };
+    // Mint an extra value for bridge since these funds are required for rollup receive/re-execution
+    if let Some(message_value) = decode_receive_message_value(tx.input().as_ref()) {
         // Note: overflow here can't happen, we can't have more than 2**256 on bridge balance
-        _ = bridge_account.incr_balance(message.value)
+        _ = bridge_account.incr_balance(message_value)
     }
     Ok(())
 }
@@ -80,12 +87,7 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
         return Ok(());
     };
 
-    if tx.input().starts_with(&receiveMessageCall::SELECTOR) {
-        let Ok(message) = receiveMessageCall::abi_decode(tx.input().as_ref()) else {
-            // If we can't decode the message, it's not a valid receiveMessageCall
-            return Ok(());
-        };
-
+    if let Some(message_value) = decode_receive_message_value(tx.input().as_ref()) {
         let receive_message_logs = journal
             .logs()
             .iter()
@@ -129,12 +131,12 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
             .data;
 
         // Decrease balance back if execution failed
-        if !was_call_successful && !bridge_account.decr_balance(message.value) {
+        if !was_call_successful && !bridge_account.decr_balance(message_value) {
             let bridge_balance = bridge_account.balance();
             warn!(
                 %bridge_balance,
-                value = %message.value,
-                "Failed to decrease bridge balance on receive message"
+                value = %message_value,
+                "Failed to decrease bridge balance on receive/receiveFailed message"
             );
             *next_action = malformed_interpreter_action();
             return Ok(());
@@ -213,6 +215,24 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
     }
 
     Ok(())
+}
+
+fn decode_receive_message_value(input: &[u8]) -> Option<U256> {
+    if input.starts_with(&receiveMessageCall::SELECTOR) {
+        let Ok(message) = receiveMessageCall::abi_decode(input) else {
+            return None;
+        };
+        return Some(message.value);
+    }
+
+    if input.starts_with(&receiveFailedMessageCall::SELECTOR) {
+        let Ok(message) = receiveFailedMessageCall::abi_decode(input) else {
+            return None;
+        };
+        return Some(message.value);
+    }
+
+    None
 }
 
 fn malformed_interpreter_action() -> InterpreterAction {
