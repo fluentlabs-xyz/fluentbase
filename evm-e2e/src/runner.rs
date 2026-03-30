@@ -721,7 +721,14 @@ pub fn execute_evm_test_suite(
         }
         let genesis_contracts = GENESIS_CONTRACTS.with(Clone::clone);
         for (address, code_hash, bytecode) in genesis_contracts.iter() {
-            if fluent_cache_state.accounts.contains_key(address) {
+            // Match historical execute_test_suite merge semantics:
+            // - keep prestate balance/nonce/storage for existing accounts
+            // - but still enforce genesis runtime bytecode at known genesis addresses
+            if let Some(existing) = fluent_cache_state.accounts.get_mut(address) {
+                if let Some(account) = existing.account.as_mut() {
+                    account.info.code_hash = *code_hash;
+                    account.info.code = Some(bytecode.clone());
+                }
                 continue;
             }
             let acc_info = AccountInfo {
