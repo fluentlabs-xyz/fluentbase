@@ -55,57 +55,13 @@ function stripUndefined(obj) {
 }
 
 function logsHash(logs) {
-    console.log(logs);
     const encodedLogs = logs.map(log => [
         log.address,
         log.topics,
         log.data
     ]);
     const rlp = rlpEncode(encodedLogs);
-    const hash = keccak256(rlp);
-    console.log(`hash: ${hash}`);
-    return hash;
-}
-
-const GENESIS_EXCLUDE = new Set([
-    // EVM precompiles
-    "0x0000000000000000000000000000000000000001",
-    "0x0000000000000000000000000000000000000002",
-    "0x0000000000000000000000000000000000000003",
-    "0x0000000000000000000000000000000000000004",
-    "0x0000000000000000000000000000000000000005",
-    "0x0000000000000000000000000000000000000006",
-    "0x0000000000000000000000000000000000000007",
-    "0x0000000000000000000000000000000000000008",
-    "0x0000000000000000000000000000000000000009",
-    "0x000000000000000000000000000000000000000a",
-    "0x000000000000000000000000000000000000000b",
-    "0x000000000000000000000000000000000000000c",
-    "0x000000000000000000000000000000000000000d",
-    "0x000000000000000000000000000000000000000e",
-    "0x000000000000000000000000000000000000000f",
-    "0x0000000000000000000000000000000000000010",
-    "0x0000000000000000000000000000000000000011",
-
-    // Fluent system runtimes
-    "0x0000000000000000000000000000000000520001",
-    "0x0000000000000000000000000000000000520003",
-    "0x0000000000000000000000000000000000520008",
-    "0x0000000000000000000000000000000000520009",
-
-    // other system contracts
-    "0x0000000000000000000000000000000000520010",
-    "0x0000000000000000000000000000000000520011",
-    "0x0000000000000000000000000000000000520012",
-    "0x0000000000000000000000000000000000520fee",
-
-    // EIPs
-    "0x0000f90827f1c53a10cb7a02335b175320002935",
-    "0x0000000000000000000000000000000000000100"
-]);
-
-function shouldInclude(addr) {
-    return !GENESIS_EXCLUDE.has(addr.toLowerCase());
+    return keccak256(rlp);
 }
 
 async function main() {
@@ -134,7 +90,17 @@ async function main() {
         throw new Error(`Block not found for tx: ${txHash}`);
     }
 
-    const trace = await provider.send("debug_traceTransaction", [
+    const preStateTrace = await provider.send("debug_traceTransaction", [
+        txHash,
+        {
+            tracer: "prestateTracer",
+            tracerConfig: {
+                preStateMode: true,
+            },
+        },
+    ]);
+
+    const diffTrace = await provider.send("debug_traceTransaction", [
         txHash,
         {
             tracer: "prestateTracer",
@@ -143,13 +109,15 @@ async function main() {
             },
         },
     ]);
+    for (let [k, v] of Object.entries(diffTrace.pre)) {
+        preStateTrace[k] = mergeAccounts(preStateTrace[k], v);
+    }
 
-    const tracePre = trace?.pre ?? {};
-    const tracePost = trace?.post ?? {};
+    const tracePre = preStateTrace ?? {};
+    const tracePost = diffTrace?.post ?? {};
 
     const preState = {};
     for (const [addr, acc] of Object.entries(tracePre)) {
-        if (!shouldInclude(addr)) continue;
         preState[addr] = normalizeAccount(acc);
     }
 
@@ -160,7 +128,7 @@ async function main() {
 
     const postState = {};
     for (const addr of allTouched) {
-        if (!shouldInclude(addr)) continue;
+        console.log(`Merging account: {}`, addr);
         postState[addr] = mergeAccounts(tracePre[addr], tracePost[addr]);
     }
 
@@ -221,7 +189,7 @@ async function main() {
             post: {
                 Prague: [
                     {
-                        hash: tx.hash,
+                        hash: "0x0000000000000000000000000000000000000000000000000000000000000000",
                         indexes: {
                             data: 0,
                             gas: 0,

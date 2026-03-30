@@ -6,6 +6,7 @@ use crate::{
     state::{evm_cache_state, fill_tx_env, fluent_cache_state, prepare_env, GENESIS_CONTRACTS},
 };
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm};
+use fluentbase_sdk::{Address, PRECOMPILE_FEE_MANAGER};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use revm::{
     context::{
@@ -17,7 +18,7 @@ use revm::{
     interpreter::InstructionResult,
     primitives::{hardfork::SpecId, Bytes, B256, U256},
     state::AccountInfo,
-    ExecuteCommitEvm, InspectCommitEvm, MainBuilder, MainnetEvm,
+    Database, ExecuteCommitEvm, InspectCommitEvm, MainBuilder, MainnetEvm,
 };
 use revm_statetest_types::{SpecName, Test, TestSuite};
 use serde_json::json;
@@ -47,8 +48,6 @@ pub enum TestErrorKind {
     LogsRootMismatch { got: B256, expected: B256 },
     #[error("state root mismatch: got {got}, expected {expected}")]
     StateRootMismatch { got: B256, expected: B256 },
-    #[error("state root mismatch2: got {got}, expected {expected}")]
-    StateRootMismatch2 { got: B256, expected: B256 },
     #[error("unknown private key: {0:?}")]
     UnknownPrivateKey(B256),
     #[error("unexpected exception: got {got_exception:?}, expected {expected_exception:?}")]
@@ -65,6 +64,8 @@ pub enum TestErrorKind {
     SerdeDeserialize(#[from] serde_json::Error),
     #[error("thread panicked")]
     Panic,
+    #[error("missing account {address}")]
+    MissingAccount { address: Address },
 }
 
 pub fn find_all_json_tests(path: &Path) -> Vec<PathBuf> {
@@ -649,8 +650,30 @@ fn check_fluent_execution(
         return Err(error);
     }
 
+    for (k, account_should_be) in &test.state {
+        if k == &PRECOMPILE_FEE_MANAGER {
+            continue;
+        }
+        println!("Checking account: {k}");
+        let actual_account = db
+            .load_cache_account(*k)
+            .map_err(|_| TestErrorKind::MissingAccount { address: *k })?;
+        let actual_account = actual_account.account.clone().unwrap().info;
+        assert_eq!(actual_account.balance, account_should_be.balance);
+        if let Some(code) = actual_account.code.as_ref() {
+            assert_eq!(code.bytes(), account_should_be.code);
+        } else {
+            assert!(actual_account.code.is_none());
+        }
+        assert_eq!(actual_account.nonce, account_should_be.nonce);
+        for (sk, sv) in &account_should_be.storage {
+            let actual_value = db.storage(*k, *sk).unwrap();
+            assert_eq!(actual_value, *sv);
+        }
+    }
+
     // Validate state root
-    if validation.state_root != test.hash {
+    if test.hash != B256::ZERO && validation.state_root != test.hash {
         let error = TestErrorKind::StateRootMismatch {
             got: validation.state_root,
             expected: test.hash,
@@ -898,14 +921,20 @@ pub fn execute_fluent_test_suite(
         }
         let genesis_contracts = GENESIS_CONTRACTS.with(Clone::clone);
         for (address, code_hash, bytecode) in genesis_contracts.iter() {
-            let acc_info = AccountInfo {
-                balance: U256::ZERO,
-                nonce: 0,
-                code_hash: *code_hash,
-                account_id: None,
-                code: Some(bytecode.clone()),
-            };
-            cache_state.insert_account(*address, acc_info);
+            if let Some(acc_info) = cache_state.accounts.get_mut(address) {
+                let plain_account = acc_info.account.as_mut().unwrap();
+                plain_account.info.code_hash = *code_hash;
+                plain_account.info.code = Some(bytecode.clone());
+            } else {
+                let acc_info = AccountInfo {
+                    balance: U256::ZERO,
+                    nonce: 0,
+                    code_hash: *code_hash,
+                    account_id: None,
+                    code: Some(bytecode.clone()),
+                };
+                cache_state.insert_account(*address, acc_info);
+            }
         }
         if cfg!(feature = "debug-print") {
             println!("loaded genesis accounts in: {:?}", start.elapsed());
