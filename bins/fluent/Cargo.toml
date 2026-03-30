@@ -141,6 +141,16 @@ tracing.workspace = true
 # misc
 clap = { workspace = true, features = ["derive", "env"] }
 humantime = { workspace = true }
+humantime-serde = { workspace = true }
+
+# for chainspec only
+#sequoia-sqv = { version = "1", default-features = false, features = ["crypto-openssl"] }
+#sequoia-openpgp = { version = "2.2.0", default-features = false, features = ["crypto-openssl"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking"] }
+directories = "6.0.0"
+witness-courier = {workspace = true, default-features=false, features=["server"]}
+fluent-exex = { path = "../fluent-exex" }
+tonic = "0.14.5"
 
 [features]
 default = [
@@ -223,6 +233,8 @@ tracy = [
     "reth-ethereum-cli/tracy",
     "reth-node-core/tracy",
 ]
+
+exex = []
 
 # Because jemalloc is default and preferred over snmalloc when both features are
 # enabled, `--no-default-features` should be used when enabling snmalloc or

@@ -1,0 +1,54 @@
+[package]
+name = "witness-courier"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "gRPC witness transport layer for Fluent zkVM proving pipeline"
+
+[[bin]]
+name = "witness-courier"
+path = "src/main.rs"
+
+[dependencies]
+tokio = {workspace = true, features = ["full"]}
+bincode.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+eyre.workspace = true
+prost = "0.14.3"
+tokio-stream = "0.1.18"
+tonic = "0.14.5"
+tracing.workspace = true
+tonic-prost = "0.14.5"
+tracing-subscriber = "0.3.23"
+zstd = "0.13.3"
+reqwest.workspace = true
+url = "2"
+
+# alloy
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+alloy-rpc-types.workspace = true
+alloy-network.workspace = true
+
+# alloy — not in workspace, added directly
+alloy-provider = { version = "1.6.3", default-features = false, features = ["reqwest"] }
+alloy-signer = "1.6.3"
+alloy-signer-local = { version = "1.6.3", default-features = false }
+
+[lints]
+workspace = true
+
+[build-dependencies]
+tonic-prost-build = "0.14.5"
+
+[features]
+default = ["server", "client"]
+server = []
+client = []

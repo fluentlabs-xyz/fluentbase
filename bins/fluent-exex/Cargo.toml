@@ -1,0 +1,39 @@
+[package]
+name = "fluent-exex"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+revm-database = { version = "10.0.0", default-features = false }
+revm-database-interface = { version = "9.0.0", default-features = false }
+revm-state = { version = "9.0.0", default-features = false }
+revm-primitives = { version = "22.0.0", default-features = false }
+rsp-host-executor = {path ="/home/djadjka/Work/fluent-stf-sp1/crates/executor/host", features = ["testnet"]}
+rsp-client-executor = {path ="/home/djadjka/Work/fluent-stf-sp1/crates/executor/client"}
+rsp-primitives = {path = "/home/djadjka/Work/fluent-stf-sp1/crates/primitives"}
+futures = "0.3"
+bincode = "1.3.3"
+serde = { workspace = true, features = ["derive"] }
+witness-courier.workspace = true
+alloy-consensus = { workspace = true, features = ["default"] }
+reth-exex = { workspace = true, features = ["serde"] }
+reth-node-api.workspace = true
+reth-primitives-traits.workspace = true
+reth-provider.workspace = true
+reth-chainspec.workspace = true
+reth-evm.workspace = true
+reth-evm-ethereum.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["full"] }
+eyre.workspace = true
+alloy-eips = {version = "1.7.3", default-features = false}
+
+[lints]
+workspace = true

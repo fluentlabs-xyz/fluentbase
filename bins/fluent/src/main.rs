@@ -100,7 +100,7 @@ fn init_downloads_defaults() {
 fn main() {
     reth_cli_util::sigsegv_handler::install();
 
-    // Enable backtraces unless a RUST_BACKTRACE value has already been explicitly provided.
+    // SAFETY: single-threaded at this point.
     if std::env::var_os("RUST_BACKTRACE").is_none() {
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
     }
@@ -152,13 +152,56 @@ fn main() {
             .executor(FluentExecutorBuilder::default());
         let add_ons = EthereumAddOns::default();
 
-        let handle: DebugNodeLauncherFuture<_, _, _> = builder
-            .with_types::<FluentNode>()
-            .with_components(components_builder)
-            .with_add_ons(add_ons)
-            .launch_with_debug_capabilities();
+        #[cfg(feature = "exex")]
+        let handle = {
+            use witness_courier::hub::WitnessHub;
+            use tracing::{error};
 
-        let handle = handle.await?;
+            let hub = Arc::new(WitnessHub::new());
+
+            let addr: std::net::SocketAddr = std::env::var("FLUENT_WITNESS_ADDR")
+                .unwrap_or_else(|_| "127.0.0.1:10000".into())
+                .parse()
+                .expect("invalid FLUENT_WITNESS_ADDR");
+
+            let svc = witness_courier::server::create_service(Arc::clone(&hub));
+            let server = tonic::transport::Server::builder()
+                .add_service(svc)
+                .serve(addr);
+
+            let hub_exex = Arc::clone(&hub);
+
+            let launch: DebugNodeLauncherFuture<_, _, _> = builder
+                .with_types::<FluentNode>()
+                .with_components(components_builder)
+                .with_add_ons(add_ons)
+                .install_exex("fluent-proving", move |ctx| async move {
+                    Ok(fluent_exex::exex_main_loop(ctx, None, hub_exex))
+                })
+                .launch_with_debug_capabilities();
+
+            let handle = launch.await?;
+
+            handle.node.task_executor.spawn_task(Box::pin(async move {
+                info!(%addr, "gRPC witness server starting");
+                if let Err(e) = server.await {
+                    error!(err = %e, "gRPC witness server failed");
+                }
+            }));
+
+            handle
+        };
+
+        #[cfg(not(feature = "exex"))]
+        let handle = {
+            let launch: DebugNodeLauncherFuture<_, _, _> = builder
+                .with_types::<FluentNode>()
+                .with_components(components_builder)
+                .with_add_ons(add_ons)
+                .launch_with_debug_capabilities();
+
+            launch.await?
+        };
 
         if let Some(block_time) = block_producer {
             launch_consensus_validator(&handle, block_time, FluentPayloadAttributesBuilder {})
@@ -166,6 +209,7 @@ fn main() {
         } else if let Some(consensus_url) = consensus_url {
             launch_consensus_node(&handle, consensus_url).await?;
         }
+
         handle.node_exit_future.await
     }) {
         eprintln!("Error: {err:?}");

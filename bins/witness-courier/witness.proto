@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package fluent.witness.v1;
+
+// WitnessService streams block witnesses from the Fluent node to proving
+// infrastructure. Sidecars connect, optionally request replay of buffered
+// witnesses starting from a given block number, and then receive new
+// witnesses in real-time as the node commits blocks.
+//
+// Transport: gRPC over HTTP/2 (default 127.0.0.1:10000).
+// Encoding:  Each WitnessMessage.data field contains a bincode-serialized
+//            rsp_client_executor::io::ClientExecutorInput.
+service WitnessService {
+  // Subscribe opens a server-side stream of witnesses.
+  //
+  // The node first replays any buffered witnesses with block_number >= from_block
+  // (ring buffer holds up to 1024 recent entries), then switches to live delivery.
+  //
+  // If from_block is 0 the stream starts from the oldest buffered witness.
+  // If from_block is beyond the buffer range, only live witnesses are delivered.
+  rpc Subscribe(SubscribeRequest) returns (stream WitnessMessage) {}
+}
+
+// SubscribeRequest is sent once when the courier connects.
+message SubscribeRequest {
+  // First block number the courier wants to receive.
+  // Typically set to last_checkpoint + 1 after a restart.
+  uint64 from_block = 1;
+}
+
+// WitnessMessage carries either a block witness or a reorg notification.
+//
+// Backward compatibility: old clients that don't know about oneof will see
+// block_number = 0 and empty data for reorg messages — harmless no-op.
+message WitnessMessage {
+  oneof content {
+    // A single block witness.
+    WitnessData witness = 1;
+    // Chain reorg: these blocks are no longer canonical.
+    ReorgNotification reorg = 2;
+  }
+}
+
+message WitnessData {
+  // L2 block number this witness corresponds to.
+  uint64 block_number = 1;
+
+  // Bincode-serialized ClientExecutorInput<FluentPrimitives>.
+  // The courier forwards this payload to the proving backend as-is.
+  bytes data = 2;
+}
+
+message ReorgNotification {
+  // Block numbers that were reverted and are no longer canonical.
+  repeated uint64 reverted_block_numbers = 1;
+}
