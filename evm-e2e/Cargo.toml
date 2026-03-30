@@ -32,8 +32,8 @@ k256 = { version = "0.13.3", features = ["ecdsa"] }
 [features]
 default = [
     "std",
-    "debug-print",
     "wasmtime",
+    "debug-print",
 ]
 std = [
     "fluentbase-genesis/std",

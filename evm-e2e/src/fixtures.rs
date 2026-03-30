@@ -13,7 +13,8 @@ macro_rules! define_tests {
 
 mod fluent_testnet {
     define_tests! {
-        fn testnet_20986140_legacy_ust20_params("fixtures/testnet_20986140_legacy_ust20_params.json");
-        // fn testnet_20987069_rwasm_gas_mismatch("fixtures/testnet_20987069_rwasm_gas_mismatch.json");
+        // fn testnet_22882338_hello_world("fixtures/testnet_22882338_hello_world.json");
+        // fn testnet_20986140_legacy_ust20_params("fixtures/testnet_20986140_legacy_ust20_params.json");
+        fn testnet_20987069_rwasm_gas_mismatch("fixtures/testnet_20987069_rwasm_gas_mismatch.json");
     }
 }

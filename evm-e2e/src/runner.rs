@@ -6,7 +6,7 @@ use crate::{
     state::{evm_cache_state, fill_tx_env, fluent_cache_state, prepare_env, GENESIS_CONTRACTS},
 };
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm};
-use fluentbase_sdk::{Address, PRECOMPILE_FEE_MANAGER};
+use fluentbase_sdk::Address;
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use revm::{
     context::{
@@ -651,9 +651,6 @@ fn check_fluent_execution(
     }
 
     for (k, account_should_be) in &test.state {
-        if k == &PRECOMPILE_FEE_MANAGER {
-            continue;
-        }
         println!("Checking account: {k}");
         let actual_account = db
             .load_cache_account(*k)
@@ -661,7 +658,7 @@ fn check_fluent_execution(
         let actual_account = actual_account.account.clone().unwrap().info;
         assert_eq!(actual_account.balance, account_should_be.balance);
         if let Some(code) = actual_account.code.as_ref() {
-            assert_eq!(code.bytes(), account_should_be.code);
+            assert_eq!(code.original_bytes(), account_should_be.code);
         } else {
             assert!(actual_account.code.is_none());
         }
@@ -905,41 +902,12 @@ pub fn execute_fluent_test_suite(
         kind: e.into(),
     })?;
 
-    let selected_test_cases = Vec::new();
     for (name, unit) in suite.0 {
-        if !selected_test_cases.is_empty() && !selected_test_cases.contains(&name.as_str()) {
-            continue;
-        }
         if cfg!(feature = "debug-print") {
             println!("test case: {}", &name);
         }
 
-        let mut cache_state = evm_cache_state(&unit);
-        let start = Instant::now();
-        if cfg!(feature = "debug-print") {
-            println!("\nloading genesis accounts:");
-        }
-        let genesis_contracts = GENESIS_CONTRACTS.with(Clone::clone);
-        for (address, code_hash, bytecode) in genesis_contracts.iter() {
-            if let Some(acc_info) = cache_state.accounts.get_mut(address) {
-                let plain_account = acc_info.account.as_mut().unwrap();
-                plain_account.info.code_hash = *code_hash;
-                plain_account.info.code = Some(bytecode.clone());
-            } else {
-                let acc_info = AccountInfo {
-                    balance: U256::ZERO,
-                    nonce: 0,
-                    code_hash: *code_hash,
-                    account_id: None,
-                    code: Some(bytecode.clone()),
-                };
-                cache_state.insert_account(*address, acc_info);
-            }
-        }
-        if cfg!(feature = "debug-print") {
-            println!("loaded genesis accounts in: {:?}", start.elapsed());
-        }
-
+        let cache_state = evm_cache_state(&unit);
         let (mut cfg_env, block_env, mut tx_env) = prepare_env(&unit, &name)?;
 
         for (spec_name, tests) in unit.post {

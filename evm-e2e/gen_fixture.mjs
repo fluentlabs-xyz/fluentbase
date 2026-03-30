@@ -2,7 +2,7 @@
 
 import fs from "node:fs";
 import process from "node:process";
-import {JsonRpcProvider, Transaction, keccak256} from "ethers";
+import {JsonRpcProvider, keccak256, Transaction} from "ethers";
 import {encode as rlpEncode} from "rlp";
 
 function usage() {
@@ -13,6 +13,9 @@ function usage() {
 }
 
 function ensureHex(value, fallback = "0x0") {
+    if (typeof value == "number") {
+        return '0x' + value.toString(16);
+    }
     return typeof value === "string" && value.startsWith("0x") ? value : fallback;
 }
 
@@ -109,9 +112,10 @@ async function main() {
             },
         },
     ]);
-    for (let [k, v] of Object.entries(diffTrace.pre)) {
-        preStateTrace[k] = mergeAccounts(preStateTrace[k], v);
-    }
+
+    // for (let [k, v] of Object.entries(diffTrace.pre)) {
+    //     preStateTrace[k] = mergeAccounts(preStateTrace[k], v);
+    // }
 
     const tracePre = preStateTrace ?? {};
     const tracePost = diffTrace?.post ?? {};
@@ -120,6 +124,8 @@ async function main() {
     for (const [addr, acc] of Object.entries(tracePre)) {
         preState[addr] = normalizeAccount(acc);
     }
+
+    // preState[tx.from] = Number.parseInt(tx.nonce, 16) - 1;
 
     const allTouched = new Set([
         ...Object.keys(tracePre),
@@ -131,6 +137,7 @@ async function main() {
         console.log(`Merging account: {}`, addr);
         postState[addr] = mergeAccounts(tracePre[addr], tracePost[addr]);
     }
+    delete postState['0x0000000000000000000000000000000000520fee'];
 
     let rawTx;
     try {
@@ -209,9 +216,9 @@ async function main() {
                 gasPrice: tx.gasPrice,
                 maxFeePerGas: tx.maxFeePerGas,
                 maxPriorityFeePerGas: tx.maxPriorityFeePerGas,
-                nonce: 0, //tx.nonce,
+                nonce: tx.nonce,
                 sender: tx.from,
-                to: tx.to,
+                ...(tx.to ? {to: tx.to} : {}),
                 value: [tx.value],
                 secretKey: "0x45a915e4d060149eb4365960e6a7a45f334393093061116b197e3240065ff2d8",
             },
