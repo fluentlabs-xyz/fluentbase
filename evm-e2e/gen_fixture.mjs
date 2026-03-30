@@ -113,10 +113,6 @@ async function main() {
         },
     ]);
 
-    // for (let [k, v] of Object.entries(diffTrace.pre)) {
-    //     preStateTrace[k] = mergeAccounts(preStateTrace[k], v);
-    // }
-
     const tracePre = preStateTrace ?? {};
     const tracePost = diffTrace?.post ?? {};
 
@@ -125,8 +121,6 @@ async function main() {
         preState[addr] = normalizeAccount(acc);
     }
 
-    // preState[tx.from] = Number.parseInt(tx.nonce, 16) - 1;
-
     const allTouched = new Set([
         ...Object.keys(tracePre),
         ...Object.keys(tracePost),
@@ -134,9 +128,11 @@ async function main() {
 
     const postState = {};
     for (const addr of allTouched) {
-        console.log(`Merging account: {}`, addr);
         postState[addr] = mergeAccounts(tracePre[addr], tracePost[addr]);
     }
+
+    // Remove fee manager (it's bytecode is not executed unless runtime upgrade)
+    delete preState['0x0000000000000000000000000000000000520fee'];
     delete postState['0x0000000000000000000000000000000000520fee'];
 
     let rawTx;
