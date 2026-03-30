@@ -116,3 +116,32 @@ fn test_evm_eip7702_call_delegated_account() {
     let ctor_value = ctx.db.storage(delegate_to, U256::ZERO).unwrap();
     assert_eq!(ctor_value, U256::ONE);
 }
+
+#[test]
+fn test_evm_eip7702_state_override_like_estimate_gas_case() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let deadbeef = address!("deadbeef00000000000000000000000000000000");
+
+    // 0xef0100 ++ 20-byte delegated address (0x...01 = ecrecover precompile)
+    let delegated_code = Bytes::from(
+        hex::decode("ef01000000000000000000000000000000000000000001")
+            .unwrap()
+            .to_vec(),
+    );
+    ctx.add_bytecode(deadbeef, delegated_code);
+    ctx.add_balance(deadbeef, U256::from(10u128.pow(18)));
+
+    let input = Bytes::from(
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
+            .unwrap()
+            .to_vec(),
+    );
+
+    let result = TxBuilder::call(&mut ctx, deadbeef, deadbeef, Some(U256::ZERO))
+        .gas_limit(1_000_000)
+        .input(input)
+        .exec();
+
+    assert!(result.is_success(), "estimate-like call failed: {result:?}");
+}

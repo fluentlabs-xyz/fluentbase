@@ -326,6 +326,24 @@ where
             }
             _ => {}
         }
+
+        // Top-level tx CALL must respect EIP-7702 delegation designation as well.
+        // Internal CALL-like opcodes already resolve delegated bytecode address in interpreter helpers,
+        // but the first frame is built directly from tx.target (bytecode_address == target_address).
+        // If target has EIP-7702 code, rewrite bytecode address to designated address so precompile/code
+        // execution follows delegated account semantics.
+        if is_first_init {
+            if let FrameInput::Call(inputs) = &mut frame_input.frame_input {
+                if inputs.bytecode_address == inputs.target_address {
+                    let account = ctx
+                        .journal_mut()
+                        .load_account_with_code(inputs.target_address)?;
+                    if let Some(Bytecode::Eip7702(eip7702)) = &account.info.code {
+                        inputs.bytecode_address = eip7702.address();
+                    }
+                }
+            }
+        }
         let res = Self::Frame::init_with_context(new_frame, ctx, precompiles, frame_input)?;
         let mut res = res.map_frame(|token| {
             if is_first_init {
