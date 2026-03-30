@@ -182,10 +182,16 @@ fn test_evm_eip7702_auth_nonce_mismatch_is_ignored() {
     let result = TxBuilder::call7702(&mut ctx, caller, Address::ZERO, vec![bad_nonce_auth], None)
         .gas_limit(200_000)
         .exec();
-    assert!(result.is_success(), "tx itself should still succeed: {result:?}");
+    assert!(
+        result.is_success(),
+        "tx itself should still succeed: {result:?}"
+    );
 
     assert_eq!(ctx.get_nonce(authority), 0);
-    assert!(!matches!(ctx.get_code(authority), Some(Bytecode::Eip7702(_))));
+    assert!(!matches!(
+        ctx.get_code(authority),
+        Some(Bytecode::Eip7702(_))
+    ));
 }
 
 #[test]
@@ -204,13 +210,25 @@ fn test_evm_eip7702_auth_chain_id_mismatch_is_ignored() {
         0,
     );
 
-    let result = TxBuilder::call7702(&mut ctx, caller, Address::ZERO, vec![wrong_chain_auth], None)
-        .gas_limit(200_000)
-        .exec();
-    assert!(result.is_success(), "tx itself should still succeed: {result:?}");
+    let result = TxBuilder::call7702(
+        &mut ctx,
+        caller,
+        Address::ZERO,
+        vec![wrong_chain_auth],
+        None,
+    )
+    .gas_limit(200_000)
+    .exec();
+    assert!(
+        result.is_success(),
+        "tx itself should still succeed: {result:?}"
+    );
 
     assert_eq!(ctx.get_nonce(authority), 0);
-    assert!(!matches!(ctx.get_code(authority), Some(Bytecode::Eip7702(_))));
+    assert!(!matches!(
+        ctx.get_code(authority),
+        Some(Bytecode::Eip7702(_))
+    ));
 }
 
 #[test]
@@ -232,7 +250,10 @@ fn test_evm_eip7702_zero_address_clears_delegation() {
     let set_result = TxBuilder::call7702(&mut ctx, caller, Address::ZERO, vec![set_auth], None)
         .gas_limit(200_000)
         .exec();
-    assert!(set_result.is_success(), "set delegation tx failed: {set_result:?}");
+    assert!(
+        set_result.is_success(),
+        "set delegation tx failed: {set_result:?}"
+    );
 
     match ctx.get_code(authority) {
         Some(Bytecode::Eip7702(code)) => assert_eq!(code.address(), PRECOMPILE_SECP256K1_RECOVER),
@@ -242,10 +263,9 @@ fn test_evm_eip7702_zero_address_clears_delegation() {
 
     // second auth: clear delegation by authorizing address(0)
     let clear_auth = signed_auth(&signer, U256::from(ctx.cfg.chain_id), Address::ZERO, 1);
-    let clear_result =
-        TxBuilder::call7702(&mut ctx, caller, Address::ZERO, vec![clear_auth], None)
-            .gas_limit(200_000)
-            .exec();
+    let clear_result = TxBuilder::call7702(&mut ctx, caller, Address::ZERO, vec![clear_auth], None)
+        .gas_limit(200_000)
+        .exec();
     assert!(
         clear_result.is_success(),
         "clear delegation tx failed: {clear_result:?}"
@@ -253,7 +273,7 @@ fn test_evm_eip7702_zero_address_clears_delegation() {
 
     let code = ctx.get_code(authority);
     assert!(
-        matches!(code, None) || matches!(code, Some(c) if c.is_empty()),
+        code.is_none() || matches!(code, Some(c) if c.is_empty()),
         "expected empty/none code after clear, got: {code:?}"
     );
     assert_eq!(ctx.get_nonce(authority), 2);
