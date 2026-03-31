@@ -62,7 +62,7 @@ mod tests {
         bytecode::opcode,
         context::{BlockEnv, CfgEnv, ContextTr, TxEnv},
         database::InMemoryDB,
-        interpreter::{interpreter_types::StackTr, Interpreter},
+        interpreter::{interpreter_types::Jumps, Interpreter},
     };
 
     #[derive(Default)]
