@@ -62,7 +62,7 @@ mod tests {
         bytecode::opcode,
         context::{BlockEnv, CfgEnv, ContextTr, TxEnv},
         database::InMemoryDB,
-        interpreter::{interpreter_types::Jumps, Interpreter},
+        interpreter::{interpreter_types::{Jumps, LegacyBytecode}, Interpreter},
     };
 
     #[derive(Default)]
@@ -83,12 +83,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn inspect_syscall_restores_interpreter_state_and_preserves_io_stacks() {
+    fn test_ctx() -> RwasmContext<InMemoryDB> {
         let mut ctx: RwasmContext<InMemoryDB> = RwasmContext::new(InMemoryDB::default(), RwasmSpecId::PRAGUE);
         ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
         ctx.block = BlockEnv::default();
         ctx.tx = TxEnv::default();
+        ctx
+    }
+
+    #[test]
+    fn inspect_syscall_restores_interpreter_state_and_preserves_io_stacks() {
+        let mut ctx = test_ctx();
 
         let mut frame = RwasmFrame::default();
         _ = frame.interpreter.stack.push(U256::from(0xDEAD_BEEFu64));
@@ -115,5 +120,41 @@ mod tests {
 
         // Original frame stack must be fully restored after synthetic inspection.
         assert_eq!(frame.interpreter.stack.data(), &[U256::from(0xDEAD_BEEFu64)]);
+    }
+
+    #[test]
+    fn inspect_syscall_restores_previous_bytecode() {
+        let mut ctx = test_ctx();
+        let mut frame = RwasmFrame::default();
+
+        frame.interpreter.bytecode = ExtBytecode::new(Bytecode::new_raw([opcode::PUSH1, 0x2A].into()));
+        let prev_code = frame.interpreter.bytecode.bytecode_slice().to_vec();
+
+        let mut inspector = RecordingInspector::default();
+        inspect_syscall(&mut frame, &mut ctx, &mut inspector, opcode::SLOAD, [U256::ZERO], [U256::ZERO]);
+
+        assert_eq!(frame.interpreter.bytecode.bytecode_slice(), prev_code.as_slice());
+    }
+
+    #[test]
+    fn inspect_syscall_uses_output_stack_for_step_end_snapshot() {
+        let mut ctx = test_ctx();
+        let mut frame = RwasmFrame::default();
+        let mut inspector = RecordingInspector::default();
+
+        inspect_syscall(
+            &mut frame,
+            &mut ctx,
+            &mut inspector,
+            opcode::CALL,
+            [U256::from(1u64), U256::from(2u64)],
+            [U256::from(7u64), U256::from(8u64), U256::from(9u64)],
+        );
+
+        assert_eq!(inspector.step_stack, vec![U256::from(2u64), U256::from(1u64)]);
+        assert_eq!(
+            inspector.step_end_stack,
+            vec![U256::from(9u64), U256::from(8u64), U256::from(7u64)]
+        );
     }
 }
