@@ -11,8 +11,8 @@ use revm_interpreter::{
 use revm_primitives::hardfork::SpecId;
 
 pub fn evm_gas_params() -> &'static GasParams {
-    static PRAGUE_GAS_PARAMS: OnceBox<GasParams> = OnceBox::new();
-    PRAGUE_GAS_PARAMS.get_or_init(|| GasParams::new_spec(SpecId::PRAGUE).into())
+    static GAS_PARAMS: OnceBox<GasParams> = OnceBox::new();
+    GAS_PARAMS.get_or_init(|| GasParams::new_spec(SpecId::OSAKA).into())
 }
 
 /// Convert opcode handler logic into a SystemInterruption and set up re-dispatch.
