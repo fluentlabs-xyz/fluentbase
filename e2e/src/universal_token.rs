@@ -1,9 +1,11 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{
-    address, hex, storage::StorageDescriptor, universal_token::*, Address, Bytes,
-    ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
+    address, crypto::crypto_keccak256, hex, storage::StorageDescriptor, universal_token::*,
+    Address, Bytes, ContractContextV1, B256, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::EvmTestingContext;
 use revm::{bytecode::Bytecode, context::result::ExecutionResult, state::AccountInfo};
@@ -46,6 +48,59 @@ fn call_with_sig_revert(
 
 pub fn u256_from_slice_try(value: &[u8]) -> Option<U256> {
     U256::try_from_be_slice(value)
+}
+
+fn abi_word_addr(a: Address) -> [u8; 32] {
+    let mut w = [0u8; 32];
+    w[12..].copy_from_slice(a.as_ref());
+    w
+}
+
+fn abi_word_u256(x: U256) -> [u8; 32] {
+    x.to_be_bytes::<{ U256::BYTES }>()
+}
+
+fn permit_digest(
+    token_name: &str,
+    chain_id: u64,
+    verifying_contract: Address,
+    owner: Address,
+    spender: Address,
+    value: U256,
+    nonce: U256,
+    deadline: U256,
+) -> B256 {
+    let domain_typehash = crypto_keccak256(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+    );
+    let permit_typehash = crypto_keccak256(
+        "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)",
+    );
+    let version_hash = crypto_keccak256("1");
+    let name_hash = crypto_keccak256(token_name.as_bytes());
+
+    let mut encoded_domain = Vec::with_capacity(32 * 5);
+    encoded_domain.extend_from_slice(domain_typehash.as_slice());
+    encoded_domain.extend_from_slice(name_hash.as_slice());
+    encoded_domain.extend_from_slice(version_hash.as_slice());
+    encoded_domain.extend_from_slice(&abi_word_u256(U256::from(chain_id)));
+    encoded_domain.extend_from_slice(&abi_word_addr(verifying_contract));
+    let domain_separator = crypto_keccak256(encoded_domain);
+
+    let mut encoded_permit = Vec::with_capacity(32 * 6);
+    encoded_permit.extend_from_slice(permit_typehash.as_slice());
+    encoded_permit.extend_from_slice(&abi_word_addr(owner));
+    encoded_permit.extend_from_slice(&abi_word_addr(spender));
+    encoded_permit.extend_from_slice(&abi_word_u256(value));
+    encoded_permit.extend_from_slice(&abi_word_u256(nonce));
+    encoded_permit.extend_from_slice(&abi_word_u256(deadline));
+    let permit_hash = crypto_keccak256(encoded_permit);
+
+    let mut digest_payload = Vec::with_capacity(66);
+    digest_payload.extend_from_slice(b"\x19\x01");
+    digest_payload.extend_from_slice(domain_separator.as_slice());
+    digest_payload.extend_from_slice(permit_hash.as_slice());
+    crypto_keccak256(digest_payload)
 }
 
 #[test]
@@ -569,4 +624,162 @@ fn invoke_ust20_transfer_multiple_times() {
     assert!(result.is_success());
     println!("result: {:?}", result.gas_used());
     assert_eq!(result.gas_used(), 2664623);
+}
+
+#[test]
+fn universal_token_permit_sets_allowance_and_nonce() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let signer: PrivateKeySigner =
+        "0xf0bc949485d112791637d7eb29dea3fd1e0758e8fea3ef542a4245bc896736cc"
+            .parse()
+            .unwrap();
+    let owner = Address::from_slice(signer.address().as_ref());
+    let spender = RECIPIENT_ADDR;
+
+    let initial_settings = InitialSettings {
+        token_name: "Token".into(),
+        token_symbol: "TKN".into(),
+        decimals: 18,
+        initial_supply: U256::ZERO,
+        minter: Address::ZERO,
+        pauser: Address::ZERO,
+    }
+    .encode_with_prefix();
+
+    let token = ctx.deploy_evm_tx(DEPLOYER_ADDR, initial_settings);
+
+    sol! {
+        function permit(address owner,address spender,uint256 value,uint256 deadline,uint8 v,bytes32 r,bytes32 s) external;
+        function allowance(address owner,address spender) external view returns (uint256);
+        function nonces(address owner) external view returns (uint256);
+        function DOMAIN_SEPARATOR() external view returns (bytes32);
+    }
+
+    let domain_out = call_with_sig(
+        &mut ctx,
+        DOMAIN_SEPARATORCall {}.abi_encode().into(),
+        &DEPLOYER_ADDR,
+        &token,
+    );
+    assert_eq!(domain_out.len(), 32);
+
+    let chain_id = ctx.cfg.chain_id;
+    let nonce = U256::ZERO;
+    let value = U256::from(777u64);
+    let deadline = U256::MAX;
+
+    let digest = permit_digest(
+        "Token", chain_id, token, owner, spender, value, nonce, deadline,
+    );
+    let sig = signer.sign_hash_sync(&digest).unwrap();
+    let sig_bytes = sig.as_bytes();
+    let r = B256::from_slice(&sig_bytes[0..32]);
+    let s = B256::from_slice(&sig_bytes[32..64]);
+    let v = sig_bytes[64];
+
+    let input = permitCall {
+        owner,
+        spender,
+        value,
+        deadline,
+        v,
+        r,
+        s,
+    }
+    .abi_encode();
+    assert_eq!(input.len(), 228, "permit calldata must include selector");
+    assert_eq!(
+        u32::from_be_bytes(input[0..4].try_into().unwrap()),
+        SIG_ERC20_PERMIT,
+        "permit selector mismatch"
+    );
+
+    let result = ctx.call_evm_tx(DEPLOYER_ADDR, token, input.into(), None, None);
+    assert!(result.is_success(), "permit failed: {result:?}");
+
+    let allowance_out = call_with_sig(
+        &mut ctx,
+        allowanceCall { owner, spender }.abi_encode().into(),
+        &DEPLOYER_ADDR,
+        &token,
+    );
+    assert_eq!(U256::from_be_slice(allowance_out.as_ref()), value);
+
+    let nonces_out = call_with_sig(
+        &mut ctx,
+        noncesCall { owner }.abi_encode().into(),
+        &DEPLOYER_ADDR,
+        &token,
+    );
+    assert_eq!(U256::from_be_slice(nonces_out.as_ref()), U256::ONE);
+}
+
+#[test]
+fn universal_token_permit_rejects_invalid_signature() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let signer: PrivateKeySigner =
+        "0xf0bc949485d112791637d7eb29dea3fd1e0758e8fea3ef542a4245bc896736cc"
+            .parse()
+            .unwrap();
+    let owner = Address::from_slice(signer.address().as_ref());
+    let spender = RECIPIENT_ADDR;
+
+    let initial_settings = InitialSettings {
+        token_name: "Token".into(),
+        token_symbol: "TKN".into(),
+        decimals: 18,
+        initial_supply: U256::ZERO,
+        minter: Address::ZERO,
+        pauser: Address::ZERO,
+    }
+    .encode_with_prefix();
+
+    let token = ctx.deploy_evm_tx(DEPLOYER_ADDR, initial_settings);
+
+    sol! {
+        function permit(address owner,address spender,uint256 value,uint256 deadline,uint8 v,bytes32 r,bytes32 s) external;
+    }
+
+    let chain_id = ctx.cfg.chain_id;
+    let value = U256::from(111u64);
+    let deadline = U256::MAX;
+
+    // Sign digest for a different spender
+    let digest = permit_digest(
+        "Token",
+        chain_id,
+        token,
+        owner,
+        Address::with_last_byte(9),
+        value,
+        U256::ZERO,
+        deadline,
+    );
+    let sig = signer.sign_hash_sync(&digest).unwrap();
+    let sig_bytes = sig.as_bytes();
+    let r = B256::from_slice(&sig_bytes[0..32]);
+    let s = B256::from_slice(&sig_bytes[32..64]);
+    let v = sig_bytes[64];
+
+    let input = permitCall {
+        owner,
+        spender,
+        value,
+        deadline,
+        v,
+        r,
+        s,
+    }
+    .abi_encode();
+
+    let output = call_with_sig_revert(&mut ctx, input.into(), &DEPLOYER_ADDR, &token);
+    assert!(
+        output
+            .as_ref()
+            .ends_with(&ERR_UST_INVALID_SIGNATURE.to_be_bytes()),
+        "unexpected revert payload: 0x{}",
+        hex::encode(output.as_ref())
+    );
 }

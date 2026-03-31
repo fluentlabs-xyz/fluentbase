@@ -1,4 +1,6 @@
-use fluentbase_sdk_derive::{derive_evm_error, derive_keccak256_id, erc7201_slot};
+use fluentbase_sdk_derive::{
+    derive_evm_error, derive_keccak256, derive_keccak256_id, erc7201_slot,
+};
 use fluentbase_types::{EvmExitCode, U256};
 
 // Custom UST (Universal Token Standard) error codes
@@ -7,6 +9,8 @@ pub const ERR_UST_NOT_PAUSABLE: EvmExitCode = derive_evm_error!("USTNotPausable(
 pub const ERR_UST_PAUSER_MISMATCH: EvmExitCode = derive_evm_error!("USTPauserMismatch(address)");
 pub const ERR_UST_NOT_MINTABLE: EvmExitCode = derive_evm_error!("USTNotMintable()");
 pub const ERR_UST_MINTER_MISMATCH: EvmExitCode = derive_evm_error!("USTMinterMismatch(address)");
+pub const ERR_UST_EXPIRED_DEADLINE: EvmExitCode = derive_evm_error!("USTExpiredDeadline()");
+pub const ERR_UST_INVALID_SIGNATURE: EvmExitCode = derive_evm_error!("USTInvalidSignature()");
 
 // These errors are compliant with: @openzeppelin-contracts/contracts/interfaces/draft-IERC6093.sol
 pub const ERR_ERC20_INSUFFICIENT_BALANCE: EvmExitCode =
@@ -41,9 +45,21 @@ pub const SIG_ERC20_MINT: u32 = derive_keccak256_id!("mint(address,uint256)");
 pub const SIG_ERC20_BURN: u32 = derive_keccak256_id!("burn(address,uint256)");
 pub const SIG_ERC20_PAUSE: u32 = derive_keccak256_id!("pause()");
 pub const SIG_ERC20_UNPAUSE: u32 = derive_keccak256_id!("unpause()");
+pub const SIG_ERC20_PERMIT: u32 =
+    derive_keccak256_id!("permit(address,address,uint256,uint256,uint8,bytes32,bytes32)");
+pub const SIG_ERC20_NONCES: u32 = derive_keccak256_id!("nonces(address)");
+pub const SIG_ERC20_DOMAIN_SEPARATOR: u32 = derive_keccak256_id!("DOMAIN_SEPARATOR()");
 
 // Not in use, reserved for future use
 pub const SIG_TOKEN2022: u32 = derive_keccak256_id!("token2022()");
+
+pub const EIP712_DOMAIN_TYPEHASH: [u8; 32] = derive_keccak256!(
+    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+);
+pub const EIP2612_PERMIT_TYPEHASH: [u8; 32] = derive_keccak256!(
+    "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"
+);
+pub const EIP2612_VERSION_HASH: [u8; 32] = derive_keccak256!("1");
 
 // Storage slots (all ERC7201 complaint)
 pub const TOTAL_SUPPLY_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.total-supply");
@@ -54,6 +70,7 @@ pub const SYMBOL_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.symbol");
 pub const NAME_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.name");
 pub const DECIMALS_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.decimals");
 pub const ALLOWANCE_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.allowance");
+pub const NONCES_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.nonces");
 pub const BALANCE_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.balance");
 
 #[allow(unused)]
@@ -77,6 +94,8 @@ const _: () = assert_unique_u32([
     ERR_UST_PAUSER_MISMATCH,
     ERR_UST_NOT_MINTABLE,
     ERR_UST_MINTER_MISMATCH,
+    ERR_UST_EXPIRED_DEADLINE,
+    ERR_UST_INVALID_SIGNATURE,
     ERR_ERC20_INSUFFICIENT_BALANCE,
     ERR_ERC20_INVALID_SENDER,
     ERR_ERC20_INVALID_RECEIVER,
@@ -102,5 +121,8 @@ const _: () = assert_unique_u32([
     SIG_ERC20_BURN,
     SIG_ERC20_PAUSE,
     SIG_ERC20_UNPAUSE,
+    SIG_ERC20_PERMIT,
+    SIG_ERC20_NONCES,
+    SIG_ERC20_DOMAIN_SEPARATOR,
     SIG_TOKEN2022,
 ]);

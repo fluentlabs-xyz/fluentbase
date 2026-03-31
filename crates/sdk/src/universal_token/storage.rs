@@ -3,13 +3,15 @@ use crate::{
     universal_token::{
         command::{
             AllowanceCommand, ApproveCommand, BalanceOfCommand, BurnCommand, MintCommand,
-            TransferCommand, TransferFromCommand, UniversalTokenCommand,
+            NoncesCommand, PermitCommand, TransferCommand, TransferFromCommand,
+            UniversalTokenCommand,
         },
         consts::{
             ALLOWANCE_STORAGE_SLOT, BALANCE_STORAGE_SLOT, CONTRACT_FROZEN_STORAGE_SLOT,
-            DECIMALS_STORAGE_SLOT, MINTER_STORAGE_SLOT, NAME_STORAGE_SLOT, PAUSER_STORAGE_SLOT,
-            SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE, SIG_ERC20_BALANCE_OF,
-            SIG_ERC20_BURN, SIG_ERC20_DECIMALS, SIG_ERC20_MINT, SIG_ERC20_NAME, SIG_ERC20_PAUSE,
+            DECIMALS_STORAGE_SLOT, MINTER_STORAGE_SLOT, NAME_STORAGE_SLOT, NONCES_STORAGE_SLOT,
+            PAUSER_STORAGE_SLOT, SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE,
+            SIG_ERC20_BALANCE_OF, SIG_ERC20_BURN, SIG_ERC20_DECIMALS, SIG_ERC20_DOMAIN_SEPARATOR,
+            SIG_ERC20_MINT, SIG_ERC20_NAME, SIG_ERC20_NONCES, SIG_ERC20_PAUSE, SIG_ERC20_PERMIT,
             SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM,
             SIG_ERC20_UNPAUSE, SYMBOL_STORAGE_SLOT, TOTAL_SUPPLY_STORAGE_SLOT,
         },
@@ -201,6 +203,20 @@ pub fn erc20_compute_main_storage_keys(input: &[u8], caller: &Address) -> Option
             let ApproveCommand { spender, .. } = ApproveCommand::try_decode(input).ok()?;
             let allowance_slot = caller.compute_slot(ALLOWANCE_STORAGE_SLOT);
             result.push(spender.compute_slot(allowance_slot));
+        }
+        SIG_ERC20_PERMIT => {
+            let PermitCommand { owner, spender, .. } = PermitCommand::try_decode(input).ok()?;
+            let allowance_slot = owner.compute_slot(ALLOWANCE_STORAGE_SLOT);
+            result.push(spender.compute_slot(allowance_slot));
+            result.push(owner.compute_slot(NONCES_STORAGE_SLOT));
+            result.push(NAME_STORAGE_SLOT);
+        }
+        SIG_ERC20_NONCES => {
+            let NoncesCommand { owner } = NoncesCommand::try_decode(input).ok()?;
+            result.push(owner.compute_slot(NONCES_STORAGE_SLOT));
+        }
+        SIG_ERC20_DOMAIN_SEPARATOR => {
+            result.push(NAME_STORAGE_SLOT);
         }
         SIG_ERC20_MINT => {
             result.push(CONTRACT_FROZEN_STORAGE_SLOT);
