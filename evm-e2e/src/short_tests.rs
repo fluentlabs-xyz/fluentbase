@@ -229,7 +229,6 @@ mod new_v82_interpreter_failing_tests {
         fn internal_call_hitting_gas_limit("tests/GeneralStateTests/stTransactionTest/InternalCallHittingGasLimit.json");
         fn sstore_gas_left("tests/GeneralStateTests/stSStoreTest/sstore_gasLeft.json");
         fn call_to_name_registrator_not_much_memory1("tests/GeneralStateTests/stSystemOperationsTest/CallToNameRegistratorNotMuchMemory1.json");
-        fn all_opcodes("tests/GeneralStateTests/Pyspecs/frontier/opcodes/all_opcodes.json");
         fn opc49_diff_places("tests/GeneralStateTests/stBadOpcode/opc49DiffPlaces.json");
         fn opc4_adiff_places("tests/GeneralStateTests/stBadOpcode/opc4ADiffPlaces.json");
         fn buffer("tests/GeneralStateTests/stMemoryTest/buffer.json");

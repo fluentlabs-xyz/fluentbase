@@ -67,7 +67,7 @@ impl EthVM {
             input: inputs_impl,
             runtime_flag: RuntimeFlags {
                 is_static,
-                spec_id: SpecId::PRAGUE,
+                spec_id: SpecId::OSAKA,
             },
             extend: InterruptionExtension {
                 interruption_outcome: None,
