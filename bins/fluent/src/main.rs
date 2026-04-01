@@ -16,7 +16,7 @@ use reth_ethereum_cli::{Cli, Commands};
 use reth_node_builder::{DebugNodeLauncherFuture, Node};
 use reth_node_core::version::{default_reth_version_metadata, try_init_version_metadata};
 use reth_node_ethereum::EthereumAddOns;
-use std::{borrow::Cow, sync::Arc, time::Duration};
+use std::{borrow::Cow, sync::Arc, time::Duration, path::PathBuf};
 use tracing::info;
 
 #[global_allocator]
