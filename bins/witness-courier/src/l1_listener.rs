@@ -30,6 +30,7 @@ sol! {
     event BatchAccepted(uint256 indexed batchIndex);
 }
 
+
 // ---------------------------------------------------------------------------
 // Event types sent to orchestrator
 // ---------------------------------------------------------------------------
@@ -65,6 +66,7 @@ pub async fn run(
     contract_addr: Address,
     mut from_block: u64,
     tx: mpsc::Sender<L1Event>,
+    l1_ckpt_tx: mpsc::Sender<u64>,
 ) -> ! {
     info!(
         %contract_addr,
@@ -75,9 +77,10 @@ pub async fn run(
     loop {
         match poll_once(&l1_provider, contract_addr, from_block, &tx).await {
             Ok(latest) => {
-                if latest > from_block {
-                    from_block = latest + 1;
-                }
+                // Always advance — poll_once now guarantees latest >= from_block - 1,
+                // so latest + 1 is always ≥ from_block (no regression).
+                let _ = l1_ckpt_tx.send(latest).await;
+                from_block = latest + 1;
             }
             Err(e) => {
                 warn!(err = %e, "L1 poll failed — retrying");
@@ -101,7 +104,9 @@ async fn poll_once(
         .map_err(|e| eyre!("Failed to get latest block: {e}"))?;
 
     if from_block > latest_block {
-        return Ok(from_block);
+        // No new blocks — return (from_block - 1) so caller's `latest + 1` keeps
+        // from_block unchanged on the next tick without re-emitting old events.
+        return Ok(from_block.saturating_sub(1));
     }
 
     // Query BatchHeadersSubmitted events
@@ -124,16 +129,17 @@ async fn poll_once(
                     event.expectedBlobsCount.try_into().unwrap_or(u64::MAX);
 
                 // Fetch the transaction to determine block count from calldata length.
-                let num_blocks =
-                    fetch_block_count_from_tx(provider, log.transaction_hash).await;
-
-                if num_blocks == 0 {
-                    error!(
-                        batch_index,
-                        "Skipping BatchHeadersSubmitted: could not decode block count from calldata"
-                    );
-                    continue;
-                }
+                let num_blocks = match fetch_block_count_from_tx(provider, log.transaction_hash).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        error!(
+                            batch_index,
+                            err = %e,
+                            "Skipping BatchHeadersSubmitted: could not decode block count from calldata"
+                        );
+                        continue;
+                    }
+                };
 
                 info!(
                     batch_index,
@@ -191,53 +197,48 @@ async fn poll_once(
 /// Attempt to determine the number of block headers from the `acceptNextBatch`
 /// transaction calldata.
 ///
-/// Falls back to 0 if the transaction can't be fetched or decoded.
-async fn fetch_block_count_from_tx(
+/// Returns `Err` on network failure or malformed calldata.
+/// The caller decides whether to retry or abort.
+pub async fn fetch_block_count_from_tx(
     provider: &RootProvider,
     tx_hash: Option<B256>,
-) -> u64 {
-    let Some(hash) = tx_hash else {
-        return 0;
-    };
+) -> eyre::Result<u64> {
+    let hash = tx_hash.ok_or_else(|| eyre::eyre!("log has no transaction hash"))?;
 
-    let tx = match provider.get_transaction_by_hash(hash).await {
-        Ok(Some(tx)) => tx,
-        _ => return 0,
-    };
+    let tx = provider
+        .get_transaction_by_hash(hash)
+        .await
+        .map_err(|e| eyre::eyre!("get_transaction_by_hash failed: {e}"))?
+        .ok_or_else(|| eyre::eyre!("transaction {hash} not found"))?;
 
     let input = tx.input();
 
-    // acceptNextBatch(BlockHeader[] calldata, uint256)
-    // Selector: 4 bytes
-    // Offset to dynamic array: 32 bytes
-    // expectedBlobs: 32 bytes
-    // Array length: 32 bytes (at the offset position)
-    //
-    // We read the array length from the calldata.
-    // The offset is at bytes [4..36], then the length is at [offset+4 .. offset+4+32].
     if input.len() < 68 {
-        return 0;
+        eyre::bail!(
+            "calldata too short ({} bytes) — expected ≥68 for acceptNextBatch",
+            input.len()
+        );
     }
 
-    // Read offset (first param is dynamic array → its value is the offset)
-    let offset_bytes: [u8; 32] = match input[4..36].try_into() {
-        Ok(b) => b,
-        Err(_) => return 0,
-    };
+    let offset_bytes: [u8; 32] = input[4..36]
+        .try_into()
+        .map_err(|_| eyre::eyre!("failed to read array offset from calldata"))?;
     let offset = u256_to_u64(offset_bytes);
 
-    // Array length is at (4 + offset) .. (4 + offset + 32)
     let len_start = 4 + offset as usize;
     let len_end = len_start + 32;
     if input.len() < len_end {
-        return 0;
+        eyre::bail!(
+            "calldata too short to read array length at offset {offset} (need {len_end}, have {})",
+            input.len()
+        );
     }
 
-    let len_bytes: [u8; 32] = match input[len_start..len_end].try_into() {
-        Ok(b) => b,
-        Err(_) => return 0,
-    };
-    u256_to_u64(len_bytes)
+    let len_bytes: [u8; 32] = input[len_start..len_end]
+        .try_into()
+        .map_err(|_| eyre::eyre!("failed to read array length from calldata"))?;
+
+    Ok(u256_to_u64(len_bytes))
 }
 
 /// Convert a big-endian 32-byte uint256 to u64 (saturating).

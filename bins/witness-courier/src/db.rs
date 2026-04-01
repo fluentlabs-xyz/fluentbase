@@ -80,6 +80,56 @@ impl Db {
         }
     }
 
+    // ── L1 checkpoint ────────────────────────────────────────────────────────────
+
+    /// Last L1 block successfully polled by the L1 listener.
+    /// On restart, the listener resumes from `get_l1_checkpoint().map(|b| b + 1).unwrap_or(l1_start_block)`.
+    /// Returns `None` if never set — distinguishes "not persisted" from "persisted block 0".
+    pub fn get_l1_checkpoint(&self) -> Option<u64> {
+        self.conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'l1_checkpoint'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|s| s.parse().ok())
+    }
+
+    pub fn save_l1_checkpoint(&self, block_number: u64) {
+        if let Err(e) = self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES('l1_checkpoint', ?1)",
+            params![block_number.to_string()],
+        ) {
+            error!(err = %e, "Failed to persist l1_checkpoint");
+        }
+    }
+
+    // ── Last batch end ────────────────────────────────────────────────────────────
+
+    /// to_block of the last successfully preconfirmed batch.
+    /// Used to recover `next_batch_from_block` on restart when pending_batches is empty.
+    /// Returns None if no batch has ever been preconfirmed.
+    pub fn get_last_batch_end(&self) -> Option<u64> {
+        self.conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'last_batch_end'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|s| s.parse().ok())
+    }
+
+    pub fn save_last_batch_end(&self, block_number: u64) {
+        if let Err(e) = self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES('last_batch_end', ?1)",
+            params![block_number.to_string()],
+        ) {
+            error!(err = %e, "Failed to persist last_batch_end");
+        }
+    }
+
     // ── Responses ───────────────────────────────────────────────────────────
 
     pub fn save_response(&self, resp: &EthExecutionResponse) {

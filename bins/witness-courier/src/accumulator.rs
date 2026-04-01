@@ -138,6 +138,12 @@ impl BatchAccumulator {
         self.batches.get(&batch_index)
     }
 
+    /// Returns the highest `to_block` across all pending batches, or `None` if empty.
+    /// Used on restart to recover `next_batch_from_block` without reading a DB key.
+    pub fn max_to_block(&self) -> Option<u64> {
+        self.batches.values().map(|b| b.to_block).max()
+    }
+
     /// Remove a completed batch and drain its responses from the pool.
     pub fn take(&mut self, batch_index: u64) -> Option<PendingBatch> {
         let batch = self.batches.remove(&batch_index)?;

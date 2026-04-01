@@ -19,13 +19,12 @@
 //! gap-free stream. Slow historical blocks do not stall later blocks'
 //! computation — only their delivery is ordered.
 //!
-//! **Tip age as the only skip criterion (live mode).**
+//! **Tip age as the only skip criterion.**
 //! We do NOT skip based on batch size. On an L2 with 1s block time, the ExEx
 //! can legitimately lag by 10-50 blocks during heavy periods — these are fresh
 //! blocks with available state that must be witnessed. Only chains whose tip
 //! is older than [`MAX_TIP_AGE_SECS`] are skipped (indicates initial sync or
-//! prolonged network partition). When `start_block` is set (historical
-//! backfill), the stale check is bypassed entirely.
+//! prolonged network partition).
 //!
 //! **Revert-aware.**
 //! Witnesses for reverted blocks are removed from the hub before processing
@@ -72,7 +71,6 @@ pub type FluentPrimitives = <EthEvmConfig<ChainSpec, FluentEvmFactory> as Config
 /// Skip committed chains whose tip is older than this (seconds).
 /// Chains this stale come from initial sync or prolonged partitions — the
 /// provider won't have contiguous historical state for them.
-/// Only applied in live mode (when `start_block` is None).
 const MAX_TIP_AGE_SECS: u64 = 120;
 
 // ---------------------------------------------------------------------------
@@ -80,12 +78,6 @@ const MAX_TIP_AGE_SECS: u64 = 120;
 // ---------------------------------------------------------------------------
 
 /// Main ExEx loop: listens for committed chains, builds witnesses, pushes to hub.
-///
-/// # Parameters
-///
-/// - `start_block`: when set, blocks below this number are acked to the pruner
-///   but not witnessed. Used for historical backfill. Also bypasses the stale
-///   chain check (historical blocks are legitimately old).
 ///
 /// # Pruning safety
 ///
@@ -96,7 +88,6 @@ pub async fn exex_main_loop<Node>(
     mut ctx: ExExContext<Node>,
     custom_beneficiary: Option<Address>,
     hub: Arc<WitnessHub>,
-    start_block: Option<u64>,
 ) -> eyre::Result<()>
 where
     Node: FullNodeComponents,
@@ -176,7 +167,7 @@ where
         let now_secs = now_unix_secs(tip_timestamp);
         let tip_age = now_secs.saturating_sub(tip_timestamp);
 
-        if start_block.is_none() && tip_age > MAX_TIP_AGE_SECS {
+        if tip_age > MAX_TIP_AGE_SECS {
             info!(
                 tip = chain_tip,
                 blocks = chain_len,
@@ -206,7 +197,6 @@ where
         //    - Spawn all witness tasks immediately (they run in parallel
         //      on the blocking thread pool).
         //    - Collect results IN ORDER and deliver to hub (gap-free stream).
-        //    - Blocks < start_block are skipped (acked via post-loop ack).
         //    - `FinishedHeight` is sent AFTER the loop, not inside.
         //      This means reth's pruner cannot touch state we need.
         // ---------------------------------------------------------------
@@ -242,21 +232,13 @@ where
         }
 
         // ── Spawn all witness tasks in parallel ────────────────────────
-        // Skipped blocks (< start_block) get None. All others get a
-        // JoinHandle that starts executing immediately on the blocking
-        // thread pool.
-        let mut handles: Vec<(u64, Option<tokio::task::JoinHandle<Result<ClientExecutorInput<FluentPrimitives>, WitnessError>>>)> =
+        // All blocks get a JoinHandle that starts executing immediately
+        // on the blocking thread pool.
+        let mut handles: Vec<(u64, tokio::task::JoinHandle<Result<ClientExecutorInput<FluentPrimitives>, WitnessError>>)> =
             Vec::with_capacity(blocks.len());
-        let mut blocks_skipped: u64 = 0;
 
         for (block, parent_root) in blocks.iter().zip(parent_roots.iter().copied()) {
             let block_number = block.number();
-
-            if start_block.is_some_and(|s| block_number < s) {
-                blocks_skipped += 1;
-                handles.push((block_number, None));
-                continue;
-            }
 
             let current_block: <FluentPrimitives as NodePrimitives>::Block =
                 BlockTrait::new(block.header().clone(), block.body().clone());
@@ -273,7 +255,7 @@ where
                     .map_err(WitnessError::Execution)
                 }
             });
-            handles.push((block_number, Some(handle)));
+            handles.push((block_number, handle));
         }
 
         // ── Collect in ORDER and push to hub ──────────────────────────
@@ -283,9 +265,7 @@ where
         let mut blocks_succeeded: u64 = 0;
         let start_collect = std::time::Instant::now();
 
-        for (block_number, handle_opt) in handles {
-            let Some(handle) = handle_opt else { continue; }; // skipped
-
+        for (block_number, handle) in handles {
             let input = match handle.await {
                 Ok(Ok(input)) => input,
                 Ok(Err(e)) => {
@@ -318,7 +298,7 @@ where
             info!(
                 block_number,
                 total_ms = start_collect.elapsed().as_millis() as u64,
-                remaining = (chain_len as u64 - blocks_skipped) - blocks_succeeded,
+                remaining = chain_len as u64 - blocks_succeeded,
                 "Witness dispatched"
             );
         }
@@ -326,20 +306,18 @@ where
         // ---------------------------------------------------------------
         // 5. Log partial-batch outcomes.
         // ---------------------------------------------------------------
-        let witnessed_targets = chain_len as u64 - blocks_skipped;
+        let witnessed_targets = chain_len as u64;
         if witnessed_targets > 0 && blocks_succeeded == 0 {
             error!(
                 first = chain_first,
                 tip = chain_tip,
                 blocks = chain_len,
-                skipped = blocks_skipped,
                 "Entire witnessable batch failed — no witnesses produced"
             );
         } else if blocks_succeeded < witnessed_targets {
             warn!(
                 succeeded = blocks_succeeded,
                 total = witnessed_targets,
-                skipped = blocks_skipped,
                 first = chain_first,
                 tip = chain_tip,
                 "Batch partially processed — downstream has gap"

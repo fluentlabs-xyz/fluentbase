@@ -4808,9 +4808,9 @@ dependencies = [
  "revm-database-interface",
  "revm-primitives",
  "revm-state",
- "rsp-client-executor 0.1.0",
- "rsp-host-executor 0.1.0",
- "rsp-primitives 0.1.0",
+ "rsp-client-executor",
+ "rsp-host-executor",
+ "rsp-primitives",
  "serde",
  "tokio",
  "tracing",
@@ -13203,43 +13203,6 @@ dependencies = [
 [[package]]
 name = "rsp-client-executor"
 version = "0.1.0"
-dependencies = [
- "alloy-consensus",
- "alloy-evm",
- "alloy-network",
- "alloy-primitives",
- "alloy-rpc-types",
- "alloy-sol-types",
- "bincode 1.3.3",
- "fluentbase-revm",
- "fluentbase-runtime",
- "itertools 0.13.0",
- "reth-chainspec",
- "reth-consensus",
- "reth-consensus-common",
- "reth-errors",
- "reth-ethereum-consensus",
- "reth-ethereum-primitives",
- "reth-evm",
- "reth-evm-ethereum",
- "reth-execution-types",
- "reth-primitives",
- "reth-primitives-traits",
- "reth-revm",
- "reth-trie",
- "revm",
- "revm-primitives",
- "rsp-mpt 0.1.0",
- "rsp-primitives 0.1.0",
- "serde",
- "serde_json",
- "serde_with",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "rsp-client-executor"
-version = "0.1.0"
 source = "git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor#a457ed40b00459b438c093a5712337444229f920"
 dependencies = [
  "alloy-consensus",
@@ -13267,49 +13230,12 @@ dependencies = [
  "reth-trie",
  "revm",
  "revm-primitives",
- "rsp-mpt 0.1.0 (git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor)",
- "rsp-primitives 0.1.0 (git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor)",
+ "rsp-mpt",
+ "rsp-primitives",
  "serde",
  "serde_json",
  "serde_with",
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "rsp-host-executor"
-version = "0.1.0"
-dependencies = [
- "alloy-chains",
- "alloy-consensus",
- "alloy-network",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
- "alloy-transport",
- "bincode 1.3.3",
- "either",
- "eyre",
- "hex",
- "reth-chainspec",
- "reth-errors",
- "reth-ethereum-primitives",
- "reth-evm",
- "reth-primitives-traits",
- "reth-provider",
- "reth-trie",
- "revm",
- "revm-primitives",
- "rsp-client-executor 0.1.0",
- "rsp-mpt 0.1.0",
- "rsp-primitives 0.1.0",
- "rsp-rpc-db 0.1.0",
- "serde",
- "serde_json",
- "sp1-sdk",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "url",
 ]
 
 [[package]]
@@ -13337,10 +13263,10 @@ dependencies = [
  "reth-trie",
  "revm",
  "revm-primitives",
- "rsp-client-executor 0.1.0 (git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor)",
- "rsp-mpt 0.1.0 (git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor)",
- "rsp-primitives 0.1.0 (git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor)",
- "rsp-rpc-db 0.1.0 (git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor)",
+ "rsp-client-executor",
+ "rsp-mpt",
+ "rsp-primitives",
+ "rsp-rpc-db",
  "serde",
  "serde_json",
  "sp1-sdk",
@@ -13348,20 +13274,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "rsp-mpt"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types",
- "alloy-rpc-types-debug",
- "reth-trie",
- "rlp",
- "serde",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -13376,29 +13288,6 @@ dependencies = [
  "reth-trie",
  "rlp",
  "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "rsp-primitives"
-version = "0.1.0"
-dependencies = [
- "alloy-eips",
- "alloy-genesis",
- "alloy-primitives",
- "alloy-rpc-types",
- "alloy-serde",
- "directories",
- "flate2",
- "hex",
- "reqwest 0.12.28",
- "reth-chainspec",
- "reth-primitives",
- "reth-primitives-traits",
- "reth-trie",
- "serde",
- "serde_json",
- "serde_with",
  "thiserror 1.0.69",
 ]
 
@@ -13441,32 +13330,6 @@ dependencies = [
 [[package]]
 name = "rsp-rpc-db"
 version = "0.1.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rlp",
- "alloy-rpc-types",
- "alloy-transport",
- "alloy-trie",
- "async-trait",
- "reth-provider",
- "reth-storage-errors",
- "reth-trie",
- "revm-database",
- "revm-database-interface",
- "revm-primitives",
- "revm-state",
- "rsp-mpt 0.1.0",
- "rsp-primitives 0.1.0",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "rsp-rpc-db"
-version = "0.1.0"
 source = "git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor#a457ed40b00459b438c093a5712337444229f920"
 dependencies = [
  "alloy-consensus",
@@ -13484,8 +13347,8 @@ dependencies = [
  "revm-database-interface",
  "revm-primitives",
  "revm-state",
- "rsp-mpt 0.1.0 (git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor)",
- "rsp-primitives 0.1.0 (git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor)",
+ "rsp-mpt",
+ "rsp-primitives",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -18500,9 +18363,9 @@ dependencies = [
  "reqwest 0.12.28",
  "reth-chainspec",
  "reth-evm",
- "rsp-client-executor 0.1.0 (git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor)",
- "rsp-host-executor 0.1.0 (git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor)",
- "rsp-primitives 0.1.0 (git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor)",
+ "rsp-client-executor",
+ "rsp-host-executor",
+ "rsp-primitives",
  "rsp-provider",
  "rusqlite",
  "serde",

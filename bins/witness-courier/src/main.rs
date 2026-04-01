@@ -35,6 +35,8 @@
 //! | `L1_SUBMITTER_KEY` | — | Private key for signing `preconfirmBatch` txs |
 //! | `NITRO_VERIFIER_ADDR` | — | NitroVerifier contract address on L1 |
 //! | `L1_START_BLOCK` | `0` | L1 block to start listening for events |
+//! | `FLUENT_START_BATCH_ID`   | —  | If set (and no checkpoint in DB), scan L1 to derive L2 start checkpoint |
+//! | `FLUENT_L1_DEPLOY_BLOCK`  | `0` | L1 block where Rollup contract was deployed — lower bound for startup scan |
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -84,22 +86,16 @@ async fn main() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
+    let start_batch_id: Option<u64> = std::env::var("FLUENT_START_BATCH_ID")
+        .ok()
+        .and_then(|s| s.parse().ok());
+    let l1_deploy_block: u64 = std::env::var("FLUENT_L1_DEPLOY_BLOCK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let api_key = std::env::var("FLUENT_API_KEY").unwrap_or_default();
     let fallback_local_rpc = std::env::var("FLUENT_FALLBACK_LOCAL_RPC").ok();
     let fallback_remote_rpc = std::env::var("FLUENT_FALLBACK_REMOTE_RPC").ok();
-
-    info!(
-        %server_addr,
-        %proxy_url,
-        ?db_path,
-        http_timeout_secs,
-        %l1_contract_addr,
-        %nitro_verifier_addr,
-        l1_start_block,
-        fallback_local_rpc = ?fallback_local_rpc,
-        fallback_remote_rpc = ?fallback_remote_rpc,
-        "Starting witness courier"
-    );
 
     let http_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(http_timeout_secs))
@@ -110,6 +106,71 @@ async fn main() {
     // Build L1 provider for reading (events) — no fillers needed
     let l1_rpc_url_parsed: url::Url = l1_rpc_url.parse().expect("Invalid L1_RPC_URL");
     let l1_read_provider = RootProvider::new_http(l1_rpc_url_parsed.clone());
+
+    // ── Startup: resolve L2 checkpoint from START_BATCH_ID ───────────────────────
+    let listener_from_block: u64 = {
+        let db_startup = witness_courier::db::Db::open(&db_path)
+            .expect("Failed to open DB for startup");
+
+        if let Some(batch_id) = start_batch_id {
+            if db_startup.get_checkpoint() == 0 {
+                info!(batch_id, "FLUENT_START_BATCH_ID set — resolving L2 start checkpoint from L1");
+                let (l2_from_block, l1_event_block) = resolve_l2_start_checkpoint(
+                    &l1_read_provider,
+                    l1_contract_addr,
+                    batch_id,
+                    l1_deploy_block,
+                )
+                .await
+                .expect("Fatal: failed to resolve L2 start checkpoint from L1");
+
+                let l2_checkpoint = l2_from_block.saturating_sub(1);
+                db_startup.save_checkpoint(l2_checkpoint);
+                // Save (l1_event_block - 1) so listener resumes FROM l1_event_block
+                db_startup.save_l1_checkpoint(l1_event_block.saturating_sub(1));
+
+                info!(
+                    batch_id,
+                    l2_from_block,
+                    l2_checkpoint,
+                    l1_event_block,
+                    "L2 start checkpoint resolved and saved to DB"
+                );
+            } else {
+                info!(
+                    batch_id,
+                    checkpoint = db_startup.get_checkpoint(),
+                    "L2 checkpoint already in DB — skipping startup scan"
+                );
+            }
+        }
+
+        // Compute L1 listener start from (possibly just updated) checkpoint.
+        let lfb = if let Some(ckpt) = db_startup.get_l1_checkpoint() {
+            (ckpt + 1).max(l1_start_block)
+        } else {
+            l1_start_block
+        };
+
+        drop(db_startup);
+        lfb
+    };
+
+    info!(
+        %server_addr,
+        %proxy_url,
+        ?db_path,
+        http_timeout_secs,
+        %l1_contract_addr,
+        %nitro_verifier_addr,
+        l1_start_block,
+        listener_from_block,
+        start_batch_id,
+        l1_deploy_block,
+        fallback_local_rpc = ?fallback_local_rpc,
+        fallback_remote_rpc = ?fallback_remote_rpc,
+        "Starting witness courier"
+    );
 
     // Build L1 provider for writing (preconfirmBatch)
     let signer: PrivateKeySigner = l1_submitter_key
@@ -122,11 +183,13 @@ async fn main() {
 
     // Start L1 event listener
     let (l1_tx, l1_rx) = tokio::sync::mpsc::channel(64);
+    let (l1_ckpt_tx, l1_ckpt_rx) = tokio::sync::mpsc::channel::<u64>(32);
     tokio::spawn(l1_listener::run(
         l1_read_provider,
         l1_contract_addr,
-        l1_start_block,
+        listener_from_block,
         l1_tx,
+        l1_ckpt_tx,
     ));
 
     // Run orchestrator
@@ -143,5 +206,108 @@ async fn main() {
         fallback_remote_rpc,
     };
 
-    client::run(config, l1_rx).await;
+    client::run(config, l1_rx, l1_ckpt_rx).await;
+}
+
+/// Scan L1 `BatchHeadersSubmitted` events to find the L2 block range for `start_batch_id`.
+///
+/// Returns `(l2_from_block, l1_event_block)`:
+/// - `l2_from_block`: first L2 block in `start_batch_id`
+/// - `l1_event_block`: L1 block containing the `BatchHeadersSubmitted` event for that batch
+async fn resolve_l2_start_checkpoint(
+    provider: &alloy_provider::RootProvider,
+    contract_addr: alloy_primitives::Address,
+    start_batch_id: u64,
+    l1_deploy_block: u64,
+) -> eyre::Result<(u64, u64)> {
+    use witness_courier::l1_listener::{BatchHeadersSubmitted, fetch_block_count_from_tx};
+    use alloy_provider::Provider;
+    use alloy_rpc_types::Filter;
+    use alloy_sol_types::SolEvent;
+    use std::time::Duration;
+    use tracing::warn;
+
+    const PAGE_SIZE: u64 = 5_000;
+    const MAX_RETRIES: u32 = 3;
+
+    let latest = provider
+        .get_block_number()
+        .await
+        .map_err(|e| eyre::eyre!("Failed to get latest L1 block: {e}"))?;
+
+    let mut current = l1_deploy_block;
+    // running_l2_block tracks the first L2 block of the NEXT batch we haven't seen yet.
+    // Batch 0 starts at block 1 (L2 genesis).
+    let mut running_l2_block: u64 = 1;
+
+    while current <= latest {
+        let to = (current + PAGE_SIZE - 1).min(latest);
+
+        let filter = Filter::new()
+            .address(contract_addr)
+            .event_signature(BatchHeadersSubmitted::SIGNATURE_HASH)
+            .from_block(current)
+            .to_block(to);
+
+        let logs = provider
+            .get_logs(&filter)
+            .await
+            .map_err(|e| eyre::eyre!("eth_getLogs [{current}..{to}] failed: {e}"))?;
+
+        for log in &logs {
+            let event = match BatchHeadersSubmitted::decode_log_data(&log.inner.data) {
+                Ok(e) => e,
+                Err(e) => eyre::bail!("Failed to decode BatchHeadersSubmitted log: {e}"),
+            };
+
+            let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
+
+            if batch_index == start_batch_id {
+                let l1_block = log
+                    .block_number
+                    .ok_or_else(|| eyre::eyre!("BatchHeadersSubmitted log missing block_number"))?;
+                info!(
+                    batch_index,
+                    l2_from_block = running_l2_block,
+                    l1_block,
+                    "Found target batch in L1 logs"
+                );
+                return Ok((running_l2_block, l1_block));
+            }
+
+            // Accumulate block count with retry for transient RPC failures.
+            let mut backoff = Duration::from_millis(500);
+            let num_blocks = 'retry: {
+                for attempt in 1..=MAX_RETRIES {
+                    match fetch_block_count_from_tx(provider, log.transaction_hash).await {
+                        Ok(n) => break 'retry n,
+                        Err(e) => {
+                            if attempt == MAX_RETRIES {
+                                eyre::bail!(
+                                    "Fatal: failed to decode block count for batch {batch_index} \
+                                     after {MAX_RETRIES} attempts: {e}. \
+                                     A corrupted L2 block-to-batch mapping would invalidate proof generation."
+                                );
+                            }
+                            warn!(batch_index, attempt, err = %e, "fetch_block_count failed — retrying");
+                            tokio::time::sleep(backoff).await;
+                            backoff *= 2;
+                        }
+                    }
+                }
+                unreachable!()
+            };
+
+            running_l2_block += num_blocks;
+        }
+
+        current = to + 1;
+    }
+
+    eyre::bail!(
+        "BatchHeadersSubmitted for batch {start_batch_id} not found in L1 blocks \
+         [{l1_deploy_block}..{latest}]. \
+         Ensure FLUENT_L1_DEPLOY_BLOCK is ≤ the block where batch 0 was submitted, \
+         and that L1_RPC_URL is correct."
+    )
 }

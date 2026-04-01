@@ -67,6 +67,10 @@ const MAX_CONCURRENT_REQUESTS: usize = 32;
 /// Blocks to wait past a missing block before triggering L3/L4 fallback.
 const FALLBACK_GAP_M: u64 = 32;
 
+/// Maximum gaps dispatched to L3/L4 fallback per tick.
+/// Prevents O(N) memory and task explosion when historical gap is large.
+const FALLBACK_BATCH_SIZE: usize = 128;
+
 
 /// Configuration for the orchestrator.
 #[derive(Clone)]
@@ -92,7 +96,7 @@ struct BlockResult {
 /// Run the courier orchestrator loop forever.
 ///
 /// Merges gRPC witness stream, block execution responses, and L1 events.
-pub async fn run<P: Provider + Clone + 'static>(config: OrchestratorConfig<P>, mut l1_events: mpsc::Receiver<L1Event>) -> ! {
+pub async fn run<P: Provider + Clone + 'static>(config: OrchestratorConfig<P>, mut l1_events: mpsc::Receiver<L1Event>, mut l1_ckpt_rx: mpsc::Receiver<u64>) -> ! {
     let db = Arc::new(Db::open(&config.db_path).expect("Failed to open courier DB"));
 
     let mut accumulator = BatchAccumulator::with_db(Arc::clone(&db));
@@ -102,8 +106,10 @@ pub async fn run<P: Provider + Clone + 'static>(config: OrchestratorConfig<P>, m
     // Channel for completed block execution responses
     let (result_tx, mut result_rx) = mpsc::channel::<BlockResult>(256);
 
-    // Track sequential batch boundaries
-    let mut next_batch_from_block: Option<u64> = None;
+    // Track sequential batch boundaries — recover rightmost known batch boundary on restart
+    let mut next_batch_from_block: Option<u64> =
+        accumulator.max_to_block().map(|e| e + 1)
+            .or_else(|| db.get_last_batch_end().map(|e| e + 1));
 
     // Pre-compute the initial confirmed set from DB responses above the checkpoint.
     // This allows the watermark to advance through already-loaded responses immediately
@@ -128,6 +134,7 @@ pub async fn run<P: Provider + Clone + 'static>(config: OrchestratorConfig<P>, m
             &result_tx,
             &mut result_rx,
             &mut l1_events,
+            &mut l1_ckpt_rx,
             &mut accumulator,
             &mut next_batch_from_block,
         )
@@ -289,8 +296,10 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
     fn on_batch_done(&mut self, batch_index: u64, success: bool, accumulator: &mut BatchAccumulator) {
         self.submitting_batches.remove(&batch_index);
         if success {
-            accumulator.take(batch_index);
-            info!(batch_index, "Batch preconfirmed on L1");
+            if let Some(batch) = accumulator.take(batch_index) {
+                self.db.save_last_batch_end(batch.to_block);
+                info!(batch_index, to_block = batch.to_block, "Batch preconfirmed on L1");
+            }
         } else {
             warn!(batch_index, "Batch submission failed — will retry on next event");
         }
@@ -310,6 +319,7 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
                     && !self.fallback_active.contains(b)
                     && !self.fallback_exhausted.contains(b)
             })
+            .take(FALLBACK_BATCH_SIZE)
             .collect();
 
         for block_number in gaps {
@@ -385,6 +395,7 @@ async fn run_stream<P: Provider + Clone + 'static>(
     result_tx: &mpsc::Sender<BlockResult>,
     result_rx: &mut mpsc::Receiver<BlockResult>,
     l1_events: &mut mpsc::Receiver<L1Event>,
+    l1_ckpt_rx: &mut mpsc::Receiver<u64>,
     accumulator: &mut BatchAccumulator,
     next_batch_from_block: &mut Option<u64>,
 ) -> eyre::Result<()> {
@@ -458,6 +469,11 @@ async fn run_stream<P: Provider + Clone + 'static>(
             // ── Stream F: fallback task completions ───────────────────
             Some((block_number, success)) = fallback_done_rx.recv() =>
                 state.on_fallback_done(block_number, success),
+
+            // ── Stream G: L1 listener checkpoint persistence ─────────────────
+            Some(l1_block) = l1_ckpt_rx.recv() => {
+                db.save_l1_checkpoint(l1_block);
+            },
         }
     }
 }
