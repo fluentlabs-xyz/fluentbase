@@ -60,8 +60,8 @@ fn abi_word_u256(x: U256) -> [u8; 32] {
     x.to_be_bytes::<{ U256::BYTES }>()
 }
 
-fn permit_digest(
-    token_name: &str,
+struct PermitDigestInput<'a> {
+    token_name: &'a str,
     chain_id: u64,
     verifying_contract: Address,
     owner: Address,
@@ -69,7 +69,9 @@ fn permit_digest(
     value: U256,
     nonce: U256,
     deadline: U256,
-) -> B256 {
+}
+
+fn permit_digest(input: PermitDigestInput<'_>) -> B256 {
     let domain_typehash = crypto_keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
     );
@@ -77,23 +79,23 @@ fn permit_digest(
         "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)",
     );
     let version_hash = crypto_keccak256("1");
-    let name_hash = crypto_keccak256(token_name.as_bytes());
+    let name_hash = crypto_keccak256(input.token_name.as_bytes());
 
     let mut encoded_domain = Vec::with_capacity(32 * 5);
     encoded_domain.extend_from_slice(domain_typehash.as_slice());
     encoded_domain.extend_from_slice(name_hash.as_slice());
     encoded_domain.extend_from_slice(version_hash.as_slice());
-    encoded_domain.extend_from_slice(&abi_word_u256(U256::from(chain_id)));
-    encoded_domain.extend_from_slice(&abi_word_addr(verifying_contract));
+    encoded_domain.extend_from_slice(&abi_word_u256(U256::from(input.chain_id)));
+    encoded_domain.extend_from_slice(&abi_word_addr(input.verifying_contract));
     let domain_separator = crypto_keccak256(encoded_domain);
 
     let mut encoded_permit = Vec::with_capacity(32 * 6);
     encoded_permit.extend_from_slice(permit_typehash.as_slice());
-    encoded_permit.extend_from_slice(&abi_word_addr(owner));
-    encoded_permit.extend_from_slice(&abi_word_addr(spender));
-    encoded_permit.extend_from_slice(&abi_word_u256(value));
-    encoded_permit.extend_from_slice(&abi_word_u256(nonce));
-    encoded_permit.extend_from_slice(&abi_word_u256(deadline));
+    encoded_permit.extend_from_slice(&abi_word_addr(input.owner));
+    encoded_permit.extend_from_slice(&abi_word_addr(input.spender));
+    encoded_permit.extend_from_slice(&abi_word_u256(input.value));
+    encoded_permit.extend_from_slice(&abi_word_u256(input.nonce));
+    encoded_permit.extend_from_slice(&abi_word_u256(input.deadline));
     let permit_hash = crypto_keccak256(encoded_permit);
 
     let mut digest_payload = Vec::with_capacity(66);
@@ -669,9 +671,16 @@ fn universal_token_permit_sets_allowance_and_nonce() {
     let value = U256::from(777u64);
     let deadline = U256::MAX;
 
-    let digest = permit_digest(
-        "Token", chain_id, token, owner, spender, value, nonce, deadline,
-    );
+    let digest = permit_digest(PermitDigestInput {
+        token_name: "Token",
+        chain_id,
+        verifying_contract: token,
+        owner,
+        spender,
+        value,
+        nonce,
+        deadline,
+    });
     let sig = signer.sign_hash_sync(&digest).unwrap();
     let sig_bytes = sig.as_bytes();
     let r = B256::from_slice(&sig_bytes[0..32]);
@@ -747,16 +756,16 @@ fn universal_token_permit_rejects_invalid_signature() {
     let deadline = U256::MAX;
 
     // Sign digest for a different spender
-    let digest = permit_digest(
-        "Token",
+    let digest = permit_digest(PermitDigestInput {
+        token_name: "Token",
         chain_id,
-        token,
+        verifying_contract: token,
         owner,
-        Address::with_last_byte(9),
+        spender: Address::with_last_byte(9),
         value,
-        U256::ZERO,
+        nonce: U256::ZERO,
         deadline,
-    );
+    });
     let sig = signer.sign_hash_sync(&digest).unwrap();
     let sig_bytes = sig.as_bytes();
     let r = B256::from_slice(&sig_bytes[0..32]);
