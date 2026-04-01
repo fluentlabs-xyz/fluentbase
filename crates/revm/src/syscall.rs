@@ -114,22 +114,28 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
 
             // Load delegate code if the account uses EIP-7702 delegation.
-            if let Some(Bytecode::Eip7702(code)) = &account_info_load.code {
-                let address = code.address();
-                cost += warm_storage_read_cost;
-                if cost > frame.interpreter.gas.remaining() {
-                    return_halt!(OutOfFuel);
-                }
-                let skip_cold =
-                    frame.interpreter.gas.remaining() < cost + cold_account_additional_cost;
-                let result = ctx
-                    .journal_mut()
-                    .load_account_info_skip_cold_load(address, true, skip_cold);
-                let delegate_account = unwrap_journal_load_error!(result);
-                account_load.data.is_delegate_account_cold = Some(delegate_account.is_cold);
-            }
+            // Also resolve the bytecode address so internal CALLs execute the
+            // delegated code rather than the raw EIP-7702 designator.
+            let resolved_bytecode_address =
+                if let Some(Bytecode::Eip7702(code)) = &account_info_load.code {
+                    let address = code.address();
+                    cost += warm_storage_read_cost;
+                    if cost > frame.interpreter.gas.remaining() {
+                        return_halt!(OutOfFuel);
+                    }
+                    let skip_cold =
+                        frame.interpreter.gas.remaining() < cost + cold_account_additional_cost;
+                    let result = ctx
+                        .journal_mut()
+                        .load_account_info_skip_cold_load(address, true, skip_cold);
+                    let delegate_account = unwrap_journal_load_error!(result);
+                    account_load.data.is_delegate_account_cold = Some(delegate_account.is_cold);
+                    address
+                } else {
+                    $target_address
+                };
 
-            account_load
+            (account_load, resolved_bytecode_address)
         }};
     }
     macro_rules! return_result {
@@ -363,7 +369,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             if is_static && has_transfer {
                 return_halt!(StateChangeDuringStaticCall);
             }
-            let mut account_load = load_account_with_gas_pre_checks!(target_address);
+            let (mut account_load, bytecode_address) =
+                load_account_with_gas_pre_checks!(target_address);
             // EVM quirk: precompiles are "preloaded" and typically empty/stately-less.
             // However, a precompile can also be explicitly included in genesis, which changes.
             // Its account states and affects CALL gas accounting.
@@ -409,7 +416,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 gas_limit,
                 target_address,
                 caller: current_target_address,
-                bytecode_address: target_address,
+                bytecode_address,
                 value: CallValue::Transfer(value),
                 scheme: CallScheme::Call,
                 is_static,
@@ -422,7 +429,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_STATIC_CALL => {
             let (input, lazy_contract_input) = get_input_validated!(>= 20);
             let target_address = Address::from_slice(&input[0..20]);
-            let mut account_load = load_account_with_gas_pre_checks!(target_address);
+            let (mut account_load, bytecode_address) =
+                load_account_with_gas_pre_checks!(target_address);
             // Force `is_empty = false`: we are not creating this account here.
             account_load.is_empty = false;
             // EIP-150: gas cost changes for IO-heavy operations.
@@ -456,7 +464,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 gas_limit,
                 target_address,
                 caller: current_target_address,
-                bytecode_address: target_address,
+                bytecode_address,
                 value: CallValue::Transfer(U256::ZERO),
                 scheme: CallScheme::StaticCall,
                 is_static: true,
@@ -470,7 +478,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let (input, lazy_contract_input) = get_input_validated!(>= 20 + 32);
             let target_address = Address::from_slice(&input[0..20]);
             let value = U256::from_le_slice(&input[20..52]);
-            let mut account_load = load_account_with_gas_pre_checks!(target_address);
+            let (mut account_load, bytecode_address) =
+                load_account_with_gas_pre_checks!(target_address);
             // Set is_empty to false as we are not creating this account.
             account_load.is_empty = false;
             let has_transfer = !value.is_zero();
@@ -510,7 +519,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 gas_limit,
                 target_address: current_target_address,
                 caller: current_target_address,
-                bytecode_address: target_address,
+                bytecode_address,
                 value: CallValue::Transfer(value),
                 scheme: CallScheme::CallCode,
                 is_static,
@@ -523,7 +532,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_DELEGATE_CALL => {
             let (input, lazy_contract_input) = get_input_validated!(>= 20);
             let target_address = Address::from_slice(&input[0..20]);
-            let mut account_load = load_account_with_gas_pre_checks!(target_address);
+            let (mut account_load, bytecode_address) =
+                load_account_with_gas_pre_checks!(target_address);
             // Force `is_empty = false`: we are not creating this account here.
             account_load.is_empty = false;
             // EIP-150: gas cost changes for IO-heavy operations.
@@ -557,7 +567,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 gas_limit,
                 target_address: current_target_address,
                 caller: frame.interpreter.input.caller_address(),
-                bytecode_address: target_address,
+                bytecode_address,
                 value: CallValue::Apparent(frame.interpreter.input.call_value()),
                 scheme: CallScheme::DelegateCall,
                 is_static,

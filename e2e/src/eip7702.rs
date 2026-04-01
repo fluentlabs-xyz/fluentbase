@@ -135,6 +135,72 @@ fn test_evm_eip7702_call_delegated_account() {
 }
 
 #[test]
+fn test_evm_eip7702_internal_call_delegated_account() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let caller_eoa = address!("aaaaaaaa00000000000000000000000000000000");
+    let authority = address!("bbbbbbbb00000000000000000000000000000000");
+    ctx.add_balance(caller_eoa, U256::from(10u128.pow(18)));
+
+    // Deploy Ping contract (delegation target)
+    let delegate_to = ctx.deploy_evm_tx(
+        caller_eoa,
+        hex::decode(include_str!("../assets/Ping.bin"))
+            .unwrap()
+            .into(),
+    );
+
+    // Deploy Caller contract (wrapper that does target.call(data))
+    let caller_contract = ctx.deploy_evm_tx(
+        caller_eoa,
+        hex::decode(include_str!("../assets/Caller.bin"))
+            .unwrap()
+            .into(),
+    );
+
+    // Set EIP-7702 delegation code on authority: 0xef0100 ++ delegate_to
+    let mut delegated_code = vec![0xef, 0x01, 0x00];
+    delegated_code.extend_from_slice(delegate_to.as_slice());
+    ctx.add_bytecode(authority, Bytes::from(delegated_code));
+
+    // Prepare ping(0x7b) calldata
+    let ping_input = Bytes::from(
+        hex!("773acdef000000000000000000000000000000000000000000000000000000000000007b").to_vec(),
+    );
+
+    // Encode callExternal(authority, ping_input)
+    sol! {
+        function callExternal(address target, bytes calldata data) external returns (bool success, bytes memory result);
+    }
+    let call_input = callExternalCall {
+        target: authority,
+        data: ping_input.to_vec().into(),
+    }
+    .abi_encode();
+
+    // Call Caller.callExternal(authority, ping(0x7b)) — internal CALL to delegated account
+    let result = TxBuilder::call(&mut ctx, caller_eoa, caller_contract, None)
+        .input(Bytes::from(call_input))
+        .gas_limit(1_000_000)
+        .exec();
+    assert!(result.is_success(), "callExternal failed: {result:?}");
+
+    // Decode (bool success, bytes memory result)
+    let output = result.output().unwrap_or_default();
+    let return_data = callExternalCall::abi_decode_returns_validate(&output).unwrap();
+    assert!(
+        return_data.success,
+        "inner call to delegated account should succeed"
+    );
+
+    // ping(0x7b) returns 0x7c (input + 1), ABI-encoded as uint256
+    assert_eq!(
+        hex::encode(&return_data.result),
+        "000000000000000000000000000000000000000000000000000000000000007c"
+    );
+}
+
+#[test]
 fn test_evm_eip7702_state_override_like_estimate_gas_case() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 
