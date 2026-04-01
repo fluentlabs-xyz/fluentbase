@@ -328,7 +328,7 @@ where
         }
 
         // Top-level tx CALL must respect EIP-7702 delegation designation as well.
-        // Internal CALL-like opcodes already resolve delegated bytecode address in interpreter helpers,
+        // Internal CALL-like opcodes resolve delegated bytecode address in syscall.rs,
         // but the first frame is built directly from tx.target (bytecode_address == target_address).
         // If target has EIP-7702 code, rewrite bytecode address to designated address so precompile/code
         // execution follows delegated account semantics.
