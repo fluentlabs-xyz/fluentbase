@@ -130,7 +130,7 @@ proptest = { version = "1.5.0" }
 unty = "0.0.4"
 humantime = "2.1"
 humantime-serde = "1.1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 directories = "6.0.0"
 
 # sp1

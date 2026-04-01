@@ -9,10 +9,12 @@
 //! produced in realtime and responses typically arrive before `acceptNextBatch`
 //! is called on L1, so there is no "matching batch" yet at insertion time.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use tracing::{info, warn};
 
+use crate::db::Db;
 use crate::types::EthExecutionResponse;
 
 #[derive(Debug)]
@@ -33,6 +35,10 @@ impl PendingBatch {
 pub struct BatchAccumulator {
     batches: BTreeMap<u64, PendingBatch>,
     responses: HashMap<u64, EthExecutionResponse>,
+    /// BlobsAccepted events that arrived before BatchHeadersSubmitted.
+    /// Applied when the batch is later registered via set_batch.
+    pending_blobs_accepted: HashSet<u64>,
+    db: Option<Arc<Db>>,
 }
 
 impl BatchAccumulator {
@@ -40,8 +46,39 @@ impl BatchAccumulator {
         Self::default()
     }
 
+    /// Create accumulator backed by a DB. Loads all state from DB on construction.
+    pub fn with_db(db: Arc<Db>) -> Self {
+        let responses: HashMap<u64, EthExecutionResponse> = db
+            .load_responses()
+            .into_iter()
+            .map(|r| (r.block_number, r))
+            .collect();
+        let batches: BTreeMap<u64, PendingBatch> = db
+            .load_batches()
+            .into_iter()
+            .map(|b| (b.batch_index, b))
+            .collect();
+        let pending_blobs_accepted: HashSet<u64> = db
+            .load_pending_blobs_accepted()
+            .into_iter()
+            .collect();
+
+        Self {
+            batches,
+            responses,
+            pending_blobs_accepted,
+            db: Some(db),
+        }
+    }
+
     /// Register a new batch from `BatchHeadersSubmitted` event.
     pub fn set_batch(&mut self, batch_index: u64, from_block: u64, to_block: u64) {
+        // Consume any buffered BlobsAccepted for this batch
+        let blobs_accepted = self.pending_blobs_accepted.remove(&batch_index);
+        if blobs_accepted {
+            if let Some(db) = &self.db { db.delete_pending_blobs_accepted(batch_index); }
+        }
+
         let already = (from_block..=to_block)
             .filter(|b| self.responses.contains_key(b))
             .count();
@@ -51,21 +88,22 @@ impl BatchAccumulator {
             to_block,
             already,
             in_flight = self.batches.len(),
+            blobs_already_accepted = blobs_accepted,
             "New batch registered"
         );
-        self.batches.insert(
+        let batch = PendingBatch {
             batch_index,
-            PendingBatch {
-                batch_index,
-                from_block,
-                to_block,
-                blobs_accepted: false,
-            },
-        );
+            from_block,
+            to_block,
+            blobs_accepted,
+        };
+        if let Some(db) = &self.db { db.save_batch(&batch); }
+        self.batches.insert(batch_index, batch);
     }
 
     /// Store a block execution response. O(1).
     pub fn insert_response(&mut self, resp: EthExecutionResponse) {
+        if let Some(db) = &self.db { db.save_response(&resp); }
         let block = resp.block_number;
         self.responses.insert(block, resp);
     }
@@ -73,7 +111,13 @@ impl BatchAccumulator {
     pub fn mark_blobs_accepted(&mut self, batch_index: u64) {
         if let Some(batch) = self.batches.get_mut(&batch_index) {
             batch.blobs_accepted = true;
+            if let Some(db) = &self.db { db.update_blobs_accepted(batch_index); }
             info!(batch_index, "Blobs accepted on L1");
+        } else {
+            // BatchHeadersSubmitted not yet seen — buffer for when set_batch arrives
+            self.pending_blobs_accepted.insert(batch_index);
+            if let Some(db) = &self.db { db.save_pending_blobs_accepted(batch_index); }
+            warn!(batch_index, "BlobsAccepted arrived before BatchHeaders — buffered");
         }
     }
 
@@ -97,6 +141,10 @@ impl BatchAccumulator {
     /// Remove a completed batch and drain its responses from the pool.
     pub fn take(&mut self, batch_index: u64) -> Option<PendingBatch> {
         let batch = self.batches.remove(&batch_index)?;
+        if let Some(db) = &self.db {
+            db.delete_batch(batch_index);
+            db.delete_responses(batch.from_block, batch.to_block);
+        }
         for b in batch.from_block..=batch.to_block {
             self.responses.remove(&b);
         }
@@ -111,6 +159,7 @@ impl BatchAccumulator {
     pub fn handle_reorg(&mut self, reverted: &[u64]) {
         for &block in reverted {
             self.responses.remove(&block);
+            if let Some(db) = &self.db { db.delete_response(block); }
         }
 
         let affected: Vec<u64> = self
@@ -126,6 +175,10 @@ impl BatchAccumulator {
 
         for idx in &affected {
             let batch = self.batches.remove(idx).unwrap();
+            if let Some(db) = &self.db {
+                db.delete_batch(*idx);
+                db.delete_responses(batch.from_block, batch.to_block);
+            }
             // Also clean responses for non-reverted blocks in affected batches —
             // the entire batch is invalid, canonical replacements will re-populate.
             for b in batch.from_block..=batch.to_block {

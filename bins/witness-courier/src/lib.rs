@@ -43,6 +43,9 @@ pub mod client;
 pub mod accumulator;
 
 #[cfg(feature = "client")]
+pub mod db;
+
+#[cfg(feature = "client")]
 pub mod l1_listener;
 
 #[cfg(feature = "client")]

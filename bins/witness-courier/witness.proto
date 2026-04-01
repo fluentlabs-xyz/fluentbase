@@ -14,11 +14,15 @@ service WitnessService {
   // Subscribe opens a server-side stream of witnesses.
   //
   // The node first replays any buffered witnesses with block_number >= from_block
-  // (ring buffer holds up to 1024 recent entries), then switches to live delivery.
+  // (hot ring buffer + cold disk tier), then switches to live delivery.
   //
   // If from_block is 0 the stream starts from the oldest buffered witness.
   // If from_block is beyond the buffer range, only live witnesses are delivered.
   rpc Subscribe(SubscribeRequest) returns (stream WitnessMessage) {}
+
+  // Acknowledge notifies the node that the courier has successfully processed
+  // a block witness. The node may delete the cold-tier file for that block.
+  rpc Acknowledge(AcknowledgeRequest) returns (AcknowledgeResponse) {}
 }
 
 // SubscribeRequest is sent once when the courier connects.
@@ -54,3 +58,12 @@ message ReorgNotification {
   // Block numbers that were reverted and are no longer canonical.
   repeated uint64 reverted_block_numbers = 1;
 }
+
+message AcknowledgeRequest {
+  // Cumulative: the courier confirms it has processed all blocks up to and
+  // including this number. The node may delete cold-tier files for all
+  // blocks <= up_to_block.
+  uint64 up_to_block = 1;
+}
+
+message AcknowledgeResponse {}

@@ -13,22 +13,26 @@
 //! `history_by_block_number(N-1)` will succeed for every block we process,
 //! without needing to pin providers or use channels.
 //!
-//! **Strict sequential invariant.**
-//! If any block in a batch fails, the entire batch is aborted. Downstream
-//! consumers (provers) never see gaps in the witness stream.
+//! **Parallel processing with ordered delivery.**
+//! All witness tasks in a batch are spawned immediately on the blocking thread
+//! pool. Results are collected in block number order so the hub sees a
+//! gap-free stream. Slow historical blocks do not stall later blocks'
+//! computation — only their delivery is ordered.
 //!
-//! **Tip age as the only skip criterion.**
+//! **Tip age as the only skip criterion (live mode).**
 //! We do NOT skip based on batch size. On an L2 with 1s block time, the ExEx
 //! can legitimately lag by 10-50 blocks during heavy periods — these are fresh
 //! blocks with available state that must be witnessed. Only chains whose tip
 //! is older than [`MAX_TIP_AGE_SECS`] are skipped (indicates initial sync or
-//! prolonged network partition).
+//! prolonged network partition). When `start_block` is set (historical
+//! backfill), the stale check is bypassed entirely.
 //!
 //! **Revert-aware.**
 //! Witnesses for reverted blocks are removed from the hub before processing
 //! the replacement chain.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
@@ -68,6 +72,7 @@ pub type FluentPrimitives = <EthEvmConfig<ChainSpec, FluentEvmFactory> as Config
 /// Skip committed chains whose tip is older than this (seconds).
 /// Chains this stale come from initial sync or prolonged partitions — the
 /// provider won't have contiguous historical state for them.
+/// Only applied in live mode (when `start_block` is None).
 const MAX_TIP_AGE_SECS: u64 = 120;
 
 // ---------------------------------------------------------------------------
@@ -75,6 +80,12 @@ const MAX_TIP_AGE_SECS: u64 = 120;
 // ---------------------------------------------------------------------------
 
 /// Main ExEx loop: listens for committed chains, builds witnesses, pushes to hub.
+///
+/// # Parameters
+///
+/// - `start_block`: when set, blocks below this number are acked to the pruner
+///   but not witnessed. Used for historical backfill. Also bypasses the stale
+///   chain check (historical blocks are legitimately old).
 ///
 /// # Pruning safety
 ///
@@ -85,6 +96,7 @@ pub async fn exex_main_loop<Node>(
     mut ctx: ExExContext<Node>,
     custom_beneficiary: Option<Address>,
     hub: Arc<WitnessHub>,
+    start_block: Option<u64>,
 ) -> eyre::Result<()>
 where
     Node: FullNodeComponents,
@@ -107,6 +119,10 @@ where
     let chain_spec = Arc::new(ChainSpec::try_from(&genesis).map_err(|e| eyre::eyre!(e))?);
     let executor = Arc::new(EthHostExecutor::eth(chain_spec, None));
     let provider = ctx.provider().clone();
+
+    // Carries the last processed block's state_root across notifications to
+    // avoid a provider lookup for the first block of each batch.
+    let mut last_state_root: Option<B256> = None;
 
     while let Some(notification) = ctx.notifications.try_next().await? {
         // ---------------------------------------------------------------
@@ -150,6 +166,9 @@ where
         // ---------------------------------------------------------------
         // 3. Stale chain check.
         //
+        //    Bypassed when start_block is set: historical blocks are
+        //    legitimately old (tip_age >> MAX_TIP_AGE_SECS).
+        //
         //    `saturating_sub` + fallback on broken clock (NTP glitch,
         //    uninitialised clock in Nitro Enclave, etc).
         // ---------------------------------------------------------------
@@ -157,7 +176,7 @@ where
         let now_secs = now_unix_secs(tip_timestamp);
         let tip_age = now_secs.saturating_sub(tip_timestamp);
 
-        if tip_age > MAX_TIP_AGE_SECS {
+        if start_block.is_none() && tip_age > MAX_TIP_AGE_SECS {
             info!(
                 tip = chain_tip,
                 blocks = chain_len,
@@ -179,98 +198,127 @@ where
         }
 
         // ---------------------------------------------------------------
-        // 4. Sequential block processing.
+        // 4. Parallel block processing.
         //
-        //    - `last_state_root` carries forward within the batch.
-        //    - On any failure → break. No gaps downstream.
+        //    - Pre-compute parent state roots from block headers (no
+        //      provider needed after the first block — roots are in the
+        //      committed chain data).
+        //    - Spawn all witness tasks immediately (they run in parallel
+        //      on the blocking thread pool).
+        //    - Collect results IN ORDER and deliver to hub (gap-free stream).
+        //    - Blocks < start_block are skipped (acked via post-loop ack).
         //    - `FinishedHeight` is sent AFTER the loop, not inside.
         //      This means reth's pruner cannot touch state we need.
         // ---------------------------------------------------------------
-        let mut last_state_root: Option<B256> = None;
-        let mut blocks_succeeded: u64 = 0;
 
-        for block in new_chain.blocks_iter() {
-            let block_number = block.number();
-            let start = std::time::Instant::now();
+        // ── Pre-compute parent state roots from block headers ──────────
+        let blocks: Vec<_> = new_chain.blocks_iter().collect();
+        let mut parent_roots: Vec<B256> = Vec::with_capacity(blocks.len());
+        let mut broke_at_precompute = false;
 
-            // -- Resolve parent_state_root --
-            //
-            // For the first block in the chain (or if a previous iteration
-            // somehow didn't set last_state_root), fall back to the provider.
-            // In normal flow `last_state_root` is always `Some` after the
-            // first block because we `break` on errors.
-            let parent_state_root = match last_state_root {
-                Some(root) => root,
-                None => match resolve_parent_state_root(&provider, block_number) {
-                    Ok(root) => root,
-                    Err(e) => {
-                        error!(
-                            block_number,
-                            err = %e,
-                            "Cannot resolve parent state root — aborting batch"
-                        );
-                        break;
-                    }
-                },
+        for (i, block) in blocks.iter().enumerate() {
+            let root = if i == 0 {
+                match last_state_root {
+                    Some(r) => r,
+                    None => match resolve_parent_state_root(&provider, block.number()) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            error!(block_number = block.number(), err = %e,
+                                "Cannot resolve parent state root — aborting batch");
+                            broke_at_precompute = true;
+                            break;
+                        }
+                    },
+                }
+            } else {
+                blocks[i - 1].header().state_root()
             };
+            parent_roots.push(root);
+        }
 
-            // -- Re-execute on a blocking thread --
-            //
-            // This captures the full EVM access set (reads + writes) which
-            // is required to build a self-contained witness for the guest.
+        if broke_at_precompute {
+            ack_finished_height(&mut ctx, new_chain.tip().num_hash())?;
+            continue;
+        }
+
+        // ── Spawn all witness tasks in parallel ────────────────────────
+        // Skipped blocks (< start_block) get None. All others get a
+        // JoinHandle that starts executing immediately on the blocking
+        // thread pool.
+        let mut handles: Vec<(u64, Option<tokio::task::JoinHandle<Result<ClientExecutorInput<FluentPrimitives>, WitnessError>>>)> =
+            Vec::with_capacity(blocks.len());
+        let mut blocks_skipped: u64 = 0;
+
+        for (block, parent_root) in blocks.iter().zip(parent_roots.iter().copied()) {
+            let block_number = block.number();
+
+            if start_block.is_some_and(|s| block_number < s) {
+                blocks_skipped += 1;
+                handles.push((block_number, None));
+                continue;
+            }
+
             let current_block: <FluentPrimitives as NodePrimitives>::Block =
                 BlockTrait::new(block.header().clone(), block.body().clone());
 
-            let input = match run_witness_task(
-                Arc::clone(&executor),
-                current_block,
-                parent_state_root,
-                provider.clone(),
-                genesis.clone(),
-                custom_beneficiary,
-            )
-            .await
-            {
-                Ok(input) => input,
+            let handle = tokio::task::spawn_blocking({
+                let executor = Arc::clone(&executor);
+                let provider = provider.clone();
+                let genesis = genesis.clone();
+                move || {
+                    process_block_with_data(
+                        &executor, current_block, parent_root,
+                        provider, genesis, custom_beneficiary,
+                    )
+                    .map_err(WitnessError::Execution)
+                }
+            });
+            handles.push((block_number, Some(handle)));
+        }
+
+        // ── Collect in ORDER and push to hub ──────────────────────────
+        // Awaiting in block number order guarantees hub sees a gap-free
+        // stream. Slow blocks hold up delivery of later blocks but not
+        // their computation.
+        let mut blocks_succeeded: u64 = 0;
+        let start_collect = std::time::Instant::now();
+
+        for (block_number, handle_opt) in handles {
+            let Some(handle) = handle_opt else { continue; }; // skipped
+
+            let input = match handle.await {
+                Ok(Ok(input)) => input,
+                Ok(Err(e)) => {
+                    error!(block_number, err = %e,
+                        elapsed_ms = start_collect.elapsed().as_millis() as u64,
+                        "Witness failed — aborting batch");
+                    break;
+                }
                 Err(e) => {
-                    error!(
-                        block_number,
-                        err = %e,
-                        elapsed_ms = start.elapsed().as_millis() as u64,
-                        "Witness failed — aborting batch"
-                    );
+                    error!(block_number, "Witness task panicked: {e}");
                     break;
                 }
             };
 
-            let elapsed_exec = start.elapsed();
-
-            // -- Encode + compress --
             let encoded = match encode_witness(&input, block_number) {
                 Ok(data) => data,
                 Err(()) => break,
             };
 
-            // -- Push to hub --
-            hub.push(Arc::new(ProveRequest {
-                block_number,
-                payload: encoded,
-            }))
-            .await;
-
-            // Track state_root for the next block. We only set this AFTER
-            // successful processing + push, so a `break` on the next block
-            // leaves `last_state_root` at the correct value.
-            last_state_root = Some(block.header().state_root());
+            hub.push(Arc::new(ProveRequest { block_number, payload: encoded })).await;
+            last_state_root = Some(
+                blocks
+                    .iter()
+                    .find(|b| b.number() == block_number)
+                    .map(|b| b.header().state_root())
+                    .unwrap_or_default(),
+            );
             blocks_succeeded += 1;
-
-            ack_finished_height(&mut ctx, block.num_hash())?;
 
             info!(
                 block_number,
-                exec_ms = elapsed_exec.as_millis() as u64,
-                total_ms = start.elapsed().as_millis() as u64,
-                remaining = chain_len as u64 - blocks_succeeded,
+                total_ms = start_collect.elapsed().as_millis() as u64,
+                remaining = (chain_len as u64 - blocks_skipped) - blocks_succeeded,
                 "Witness dispatched"
             );
         }
@@ -278,17 +326,20 @@ where
         // ---------------------------------------------------------------
         // 5. Log partial-batch outcomes.
         // ---------------------------------------------------------------
-        if blocks_succeeded == 0 && chain_len > 0 {
+        let witnessed_targets = chain_len as u64 - blocks_skipped;
+        if witnessed_targets > 0 && blocks_succeeded == 0 {
             error!(
                 first = chain_first,
                 tip = chain_tip,
                 blocks = chain_len,
-                "Entire batch failed — no witnesses produced"
+                skipped = blocks_skipped,
+                "Entire witnessable batch failed — no witnesses produced"
             );
-        } else if blocks_succeeded < chain_len as u64 {
+        } else if blocks_succeeded < witnessed_targets {
             warn!(
                 succeeded = blocks_succeeded,
-                total = chain_len,
+                total = witnessed_targets,
+                skipped = blocks_skipped,
                 first = chain_first,
                 tip = chain_tip,
                 "Batch partially processed — downstream has gap"
@@ -422,6 +473,12 @@ where
     Ok(())
 }
 
+/// Run a single witness task with a slow-block warning ticker.
+///
+/// Logs a warning every 60 seconds while the task is still running.
+/// Never kills the task — historical blocks can legitimately take minutes.
+/// Not called in the main loop (which uses `spawn_blocking` directly for
+/// parallel batches); kept as a helper for single-block use cases.
 async fn run_witness_task<P>(
     executor: Arc<EthHostExecutor>,
     current_block: <FluentPrimitives as NodePrimitives>::Block,
@@ -439,32 +496,40 @@ where
         + std::fmt::Debug
         + 'static,
 {
-    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    let block_number = current_block.header().number();
+    let mut handle = std::pin::pin!(tokio::task::spawn_blocking(move || {
+        process_block_with_data(
+            &executor,
+            current_block,
+            parent_state_root,
+            provider,
+            genesis,
+            custom_beneficiary,
+        )
+    }));
 
-    let result = tokio::time::timeout(
-        TIMEOUT,
-        tokio::task::spawn_blocking(move || {
-            process_block_with_data(
-                &executor,
-                current_block,
-                parent_state_root,
-                provider,
-                genesis,
-                custom_beneficiary,
-            )
-        }),
-    )
-    .await
-    .map_err(|_| WitnessError::Timeout(TIMEOUT))? // Elapsed → flat
-    .map_err(WitnessError::TaskPanicked)? // JoinError → flat
-    .map_err(WitnessError::Execution)?; // HostError → flat
-
-    Ok(result)
+    let mut elapsed_secs = 0u64;
+    loop {
+        match tokio::time::timeout(Duration::from_secs(60), &mut handle).await {
+            Ok(join_result) => {
+                return join_result
+                    .map_err(WitnessError::TaskPanicked)?
+                    .map_err(WitnessError::Execution);
+            }
+            Err(_) => {
+                elapsed_secs += 60;
+                warn!(
+                    block_number,
+                    elapsed_secs,
+                    "Witness generation is slow — still waiting (historical revert_state cost)"
+                );
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
 enum WitnessError {
-    Timeout(std::time::Duration),
     TaskPanicked(tokio::task::JoinError),
     Execution(HostError),
 }
@@ -472,7 +537,6 @@ enum WitnessError {
 impl std::fmt::Display for WitnessError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Timeout(d) => write!(f, "witness generation timed out ({d:?})"),
             Self::TaskPanicked(e) => write!(f, "witness task panicked: {e}"),
             Self::Execution(e) => write!(f, "execution failed: {e}"),
         }

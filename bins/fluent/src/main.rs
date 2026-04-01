@@ -81,6 +81,23 @@ pub struct FluentNodeArgs {
 
     #[arg(long = "sequencer-url")]
     pub sequencer_url: Option<String>,
+
+    /// First L2 block to generate a witness for. Blocks below this are
+    /// acked to the pruner but not witnessed. Used for historical backfill.
+    #[cfg(feature = "exex")]
+    #[arg(long = "exex-start-block")]
+    pub exex_start_block: Option<u64>,
+
+    /// Maximum total payload bytes in the witness hub ring buffer. Default: 1 GiB.
+    #[cfg(feature = "exex")]
+    #[arg(long = "exex-witness-hub-max-bytes", default_value_t = 1024 * 1024 * 1024)]
+    pub exex_witness_hub_max_bytes: usize,
+
+    /// Directory for cold-tier witness files. When set, evicted witnesses are
+    /// written to disk so reconnecting couriers can replay beyond the hot buffer.
+    #[cfg(feature = "exex")]
+    #[arg(long = "exex-witness-cold-dir")]
+    pub exex_witness_cold_dir: Option<PathBuf>,
 }
 
 fn init_downloads_defaults() {
@@ -113,6 +130,12 @@ fn main() {
 
     let mut consensus_url: Option<String> = None;
     let mut block_producer: Option<Duration> = None;
+    #[cfg(feature = "exex")]
+    let mut exex_start_block: Option<u64> = None;
+    #[cfg(feature = "exex")]
+    let mut exex_witness_hub_max_bytes: usize = 1024 * 1024 * 1024;
+    #[cfg(feature = "exex")]
+    let mut exex_witness_cold_dir: Option<PathBuf> = None;
 
     let mut cli = Cli::<FluentChainSpecParser, FluentNodeArgs>::parse();
 
@@ -134,6 +157,13 @@ fn main() {
         // If validator mode is enabled then specify block production time
         if node.ext.validator {
             block_producer = Some(node.ext.validator_block_time);
+        }
+
+        #[cfg(feature = "exex")]
+        {
+            exex_start_block = node.ext.exex_start_block;
+            exex_witness_hub_max_bytes = node.ext.exex_witness_hub_max_bytes;
+            exex_witness_cold_dir = node.ext.exex_witness_cold_dir.clone();
         }
     }
 
@@ -157,7 +187,7 @@ fn main() {
             use witness_courier::hub::WitnessHub;
             use tracing::{error};
 
-            let hub = Arc::new(WitnessHub::new());
+            let hub = Arc::new(WitnessHub::new(exex_witness_hub_max_bytes, exex_witness_cold_dir));
 
             let addr: std::net::SocketAddr = std::env::var("FLUENT_WITNESS_ADDR")
                 .unwrap_or_else(|_| "127.0.0.1:10000".into())
@@ -176,7 +206,7 @@ fn main() {
                 .with_components(components_builder)
                 .with_add_ons(add_ons)
                 .install_exex("fluent-proving", move |ctx| async move {
-                    Ok(fluent_exex::exex_main_loop(ctx, None, hub_exex))
+                    Ok(fluent_exex::exex_main_loop(ctx, None, hub_exex, exex_start_block))
                 })
                 .launch_with_debug_capabilities();
 

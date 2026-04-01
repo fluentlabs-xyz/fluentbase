@@ -127,6 +127,14 @@ async fn poll_once(
                 let num_blocks =
                     fetch_block_count_from_tx(provider, log.transaction_hash).await;
 
+                if num_blocks == 0 {
+                    error!(
+                        batch_index,
+                        "Skipping BatchHeadersSubmitted: could not decode block count from calldata"
+                    );
+                    continue;
+                }
+
                 info!(
                     batch_index,
                     expected_blobs,

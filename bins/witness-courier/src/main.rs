@@ -28,7 +28,7 @@
 //! |----------|---------|-------------|
 //! | `FLUENT_WITNESS_ADDR` | `http://127.0.0.1:10000` | gRPC server address (local) |
 //! | `FLUENT_PROXY_URL` | `http://127.0.0.1:11000/sign-block-execution` | Remote proxy endpoint |
-//! | `FLUENT_CHECKPOINT_PATH` | `/tmp/witness_courier_checkpoint` | Checkpoint file |
+//! | `FLUENT_DB_PATH` | `./witness_courier.db` | SQLite DB for crash recovery |
 //! | `FLUENT_HTTP_TIMEOUT_SECS` | `120` | HTTP POST timeout (seconds) |
 //! | `L1_RPC_URL` | — | L1 Ethereum RPC URL (required for batch orchestration) |
 //! | `L1_CONTRACT_ADDR` | — | Rollup contract address on L1 |
@@ -50,7 +50,7 @@ use witness_courier::l1_listener;
 
 const DEFAULT_SERVER_ADDR: &str = "http://127.0.0.1:10000";
 const DEFAULT_PROXY_URL: &str = "http://127.0.0.1:8080/sign-block-execution";
-const DEFAULT_CHECKPOINT_PATH: &str = "/tmp/witness_courier_checkpoint";
+const DEFAULT_DB_PATH: &str = "./witness_courier.db";
 const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 120;
 
 #[tokio::main]
@@ -61,8 +61,8 @@ async fn main() {
         std::env::var("FLUENT_WITNESS_ADDR").unwrap_or_else(|_| DEFAULT_SERVER_ADDR.into());
     let proxy_url =
         std::env::var("FLUENT_PROXY_URL").unwrap_or_else(|_| DEFAULT_PROXY_URL.into());
-    let checkpoint_path = PathBuf::from(
-        std::env::var("FLUENT_CHECKPOINT_PATH").unwrap_or_else(|_| DEFAULT_CHECKPOINT_PATH.into()),
+    let db_path = PathBuf::from(
+        std::env::var("FLUENT_DB_PATH").unwrap_or_else(|_| DEFAULT_DB_PATH.into()),
     );
     let http_timeout_secs: u64 = std::env::var("FLUENT_HTTP_TIMEOUT_SECS")
         .ok()
@@ -85,15 +85,19 @@ async fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let api_key = std::env::var("FLUENT_API_KEY").unwrap_or_default();
+    let fallback_local_rpc = std::env::var("FLUENT_FALLBACK_LOCAL_RPC").ok();
+    let fallback_remote_rpc = std::env::var("FLUENT_FALLBACK_REMOTE_RPC").ok();
 
     info!(
         %server_addr,
         %proxy_url,
-        ?checkpoint_path,
+        ?db_path,
         http_timeout_secs,
         %l1_contract_addr,
         %nitro_verifier_addr,
         l1_start_block,
+        fallback_local_rpc = ?fallback_local_rpc,
+        fallback_remote_rpc = ?fallback_remote_rpc,
         "Starting witness courier"
     );
 
@@ -129,12 +133,14 @@ async fn main() {
     let config = OrchestratorConfig {
         server_addr,
         proxy_url,
-        checkpoint_path,
+        db_path,
         http_client,
         l1_contract_addr,
         nitro_verifier_addr,
         l1_provider: l1_write_provider,
         api_key,
+        fallback_local_rpc,
+        fallback_remote_rpc,
     };
 
     client::run(config, l1_rx).await;
