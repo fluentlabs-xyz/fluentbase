@@ -198,6 +198,18 @@ fn test_evm_eip7702_internal_call_delegated_account() {
         hex::encode(&return_data.result),
         "000000000000000000000000000000000000000000000000000000000000007c"
     );
+
+    // Verify storage context: ping wrote `value = 0x7b` into authority's storage, not delegate_to's
+    assert_eq!(
+        ctx.db.storage(authority, U256::ZERO).unwrap(),
+        U256::from(0x7b),
+        "authority slot 0 should hold the value written by ping"
+    );
+    assert_eq!(
+        ctx.db.storage(delegate_to, U256::ZERO).unwrap(),
+        U256::ONE,
+        "delegate_to slot 0 should be unchanged (constructor value)"
+    );
 }
 
 #[test]
