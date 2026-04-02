@@ -1,14 +1,14 @@
 //! Witness courier sidecar binary.
 //!
 //! Connects to the Fluent node's gRPC witness server (localhost), receives
-//! block witnesses, compresses with zstd, and forwards to the remote proxy
-//! over HTTP POST. Orchestrates batch signing and L1 preconfirmation.
+//! block witnesses, and forwards raw bincode to the remote proxy via HTTP POST.
+//! Orchestrates batch signing and L1 preconfirmation.
 //!
 //! ## Data flow
 //!
 //! ```text
-//! gRPC server ──raw bincode──▶ courier ──zstd + HTTP POST──▶ proxy ──▶ Nitro
-//!   (localhost)                  (this binary)                 (remote)
+//! gRPC server ──raw bincode──▶ courier ──HTTP POST──▶ proxy ──▶ Nitro
+//!   (localhost)                  (this binary)          (remote)
 //! ```
 //!
 //! ## Orchestration
@@ -96,6 +96,10 @@ async fn main() {
     let api_key = std::env::var("FLUENT_API_KEY").unwrap_or_default();
     let fallback_local_rpc = std::env::var("FLUENT_FALLBACK_LOCAL_RPC").ok();
     let fallback_remote_rpc = std::env::var("FLUENT_FALLBACK_REMOTE_RPC").ok();
+    let max_concurrent_fallbacks: usize = std::env::var("FLUENT_MAX_CONCURRENT_FALLBACKS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4);
 
     let http_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(http_timeout_secs))
@@ -204,6 +208,7 @@ async fn main() {
         api_key,
         fallback_local_rpc,
         fallback_remote_rpc,
+        max_concurrent_fallbacks,
     };
 
     client::run(config, l1_rx, l1_ckpt_rx).await;

@@ -404,7 +404,7 @@ where
         .ok_or_else(|| format!("parent header {parent_number} not found in provider"))
 }
 
-/// Serializes a witness with bincode and compresses with zstd.
+/// Serializes a witness with bincode.
 ///
 /// Returns `Err(())` on failure — errors are logged internally to keep
 /// the call site clean (caller just does `break`).

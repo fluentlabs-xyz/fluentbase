@@ -38,12 +38,8 @@ use alloy_primitives::B256;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EthExecutionResponse {
     pub block_number: u64,
-    pub parent_hash: B256,
-    pub block_hash: B256,
-    pub withdrawal_hash: B256,
-    pub deposit_hash: B256,
+    pub leaf: [u8; 32],
     pub tx_data_hash: B256,
-    pub result_hash: Vec<u8>,
     pub signature: Vec<u8>,
 }
 

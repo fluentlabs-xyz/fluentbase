@@ -28,6 +28,9 @@ sol! {
 
     /// Emitted when all blobs for a batch have been submitted via `submitBlobs`.
     event BatchAccepted(uint256 indexed batchIndex);
+
+    /// Function ABI for calldata decoding.
+    function acceptNextBatch(bytes32[] calldata versionedHashes, bytes32 batchRoot) external;
 }
 
 
@@ -91,7 +94,9 @@ pub async fn run(
     }
 }
 
-/// Single poll iteration: fetch logs from `from_block` to latest.
+const PAGE_SIZE: u64 = 2_000;
+
+/// Single poll iteration: fetch logs from `from_block` to latest, paginated.
 async fn poll_once(
     provider: &RootProvider,
     contract_addr: Address,
@@ -104,91 +109,93 @@ async fn poll_once(
         .map_err(|e| eyre!("Failed to get latest block: {e}"))?;
 
     if from_block > latest_block {
-        // No new blocks — return (from_block - 1) so caller's `latest + 1` keeps
-        // from_block unchanged on the next tick without re-emitting old events.
         return Ok(from_block.saturating_sub(1));
     }
 
-    // Query BatchHeadersSubmitted events
-    let headers_filter = Filter::new()
-        .address(contract_addr)
-        .event_signature(BatchHeadersSubmitted::SIGNATURE_HASH)
-        .from_block(from_block)
-        .to_block(latest_block);
+    let mut current = from_block;
 
-    let headers_logs = provider
-        .get_logs(&headers_filter)
-        .await
-        .map_err(|e| eyre!("BatchHeadersSubmitted log query failed: {e}"))?;
+    while current <= latest_block {
+        let page_end = (current + PAGE_SIZE - 1).min(latest_block);
 
-    for log in &headers_logs {
-        match BatchHeadersSubmitted::decode_log_data(&log.inner.data) {
-            Ok(event) => {
-                let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
-                let expected_blobs: u64 =
-                    event.expectedBlobsCount.try_into().unwrap_or(u64::MAX);
+        // Query BatchHeadersSubmitted events
+        let headers_filter = Filter::new()
+            .address(contract_addr)
+            .event_signature(BatchHeadersSubmitted::SIGNATURE_HASH)
+            .from_block(current)
+            .to_block(page_end);
 
-                // Fetch the transaction to determine block count from calldata length.
-                let num_blocks = match fetch_block_count_from_tx(provider, log.transaction_hash).await {
-                    Ok(n) => n,
-                    Err(e) => {
-                        error!(
-                            batch_index,
-                            err = %e,
-                            "Skipping BatchHeadersSubmitted: could not decode block count from calldata"
-                        );
-                        continue;
-                    }
-                };
+        let headers_logs = provider
+            .get_logs(&headers_filter)
+            .await
+            .map_err(|e| eyre!("BatchHeadersSubmitted log query failed [{current}..{page_end}]: {e}"))?;
 
-                info!(
-                    batch_index,
-                    expected_blobs,
-                    num_blocks,
-                    "BatchHeadersSubmitted event"
-                );
+        for log in &headers_logs {
+            match BatchHeadersSubmitted::decode_log_data(&log.inner.data) {
+                Ok(event) => {
+                    let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
+                    let expected_blobs: u64 =
+                        event.expectedBlobsCount.try_into().unwrap_or(u64::MAX);
 
-                let _ = tx
-                    .send(L1Event::BatchHeaders {
+                    let num_blocks = match fetch_block_count_from_tx(provider, log.transaction_hash).await {
+                        Ok(n) => n,
+                        Err(e) => {
+                            return Err(eyre!(
+                                "Failed to fetch block count for batch {batch_index}: {e}"
+                            ));
+                        }
+                    };
+
+                    info!(
                         batch_index,
-                        batch_root: event.batchRoot,
                         expected_blobs,
                         num_blocks,
-                    })
-                    .await;
-            }
-            Err(e) => {
-                error!(err = %e, "Failed to decode BatchHeadersSubmitted");
-            }
-        }
-    }
+                        "BatchHeadersSubmitted event"
+                    );
 
-    // Query BatchAccepted events
-    let accepted_filter = Filter::new()
-        .address(contract_addr)
-        .event_signature(BatchAccepted::SIGNATURE_HASH)
-        .from_block(from_block)
-        .to_block(latest_block);
-
-    let accepted_logs = provider
-        .get_logs(&accepted_filter)
-        .await
-        .map_err(|e| eyre!("BatchAccepted log query failed: {e}"))?;
-
-    for log in &accepted_logs {
-        match BatchAccepted::decode_log_data(&log.inner.data) {
-            Ok(event) => {
-                let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
-                info!(batch_index, "BatchAccepted event");
-
-                let _ = tx
-                    .send(L1Event::BlobsAccepted { batch_index })
-                    .await;
-            }
-            Err(e) => {
-                error!(err = %e, "Failed to decode BatchAccepted");
+                    let _ = tx
+                        .send(L1Event::BatchHeaders {
+                            batch_index,
+                            batch_root: event.batchRoot,
+                            expected_blobs,
+                            num_blocks,
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    error!(err = %e, "Failed to decode BatchHeadersSubmitted");
+                }
             }
         }
+
+        // Query BatchAccepted events
+        let accepted_filter = Filter::new()
+            .address(contract_addr)
+            .event_signature(BatchAccepted::SIGNATURE_HASH)
+            .from_block(current)
+            .to_block(page_end);
+
+        let accepted_logs = provider
+            .get_logs(&accepted_filter)
+            .await
+            .map_err(|e| eyre!("BatchAccepted log query failed [{current}..{page_end}]: {e}"))?;
+
+        for log in &accepted_logs {
+            match BatchAccepted::decode_log_data(&log.inner.data) {
+                Ok(event) => {
+                    let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
+                    info!(batch_index, "BatchAccepted event");
+
+                    let _ = tx
+                        .send(L1Event::BlobsAccepted { batch_index })
+                        .await;
+                }
+                Err(e) => {
+                    error!(err = %e, "Failed to decode BatchAccepted");
+                }
+            }
+        }
+
+        current = page_end + 1;
     }
 
     Ok(latest_block)
@@ -203,6 +210,8 @@ pub async fn fetch_block_count_from_tx(
     provider: &RootProvider,
     tx_hash: Option<B256>,
 ) -> eyre::Result<u64> {
+    use alloy_sol_types::SolCall;
+
     let hash = tx_hash.ok_or_else(|| eyre::eyre!("log has no transaction hash"))?;
 
     let tx = provider
@@ -213,39 +222,8 @@ pub async fn fetch_block_count_from_tx(
 
     let input = tx.input();
 
-    if input.len() < 68 {
-        eyre::bail!(
-            "calldata too short ({} bytes) — expected ≥68 for acceptNextBatch",
-            input.len()
-        );
-    }
+    let decoded = acceptNextBatchCall::abi_decode(input)
+        .map_err(|e| eyre::eyre!("Failed to decode acceptNextBatch calldata: {e}"))?;
 
-    let offset_bytes: [u8; 32] = input[4..36]
-        .try_into()
-        .map_err(|_| eyre::eyre!("failed to read array offset from calldata"))?;
-    let offset = u256_to_u64(offset_bytes);
-
-    let len_start = 4 + offset as usize;
-    let len_end = len_start + 32;
-    if input.len() < len_end {
-        eyre::bail!(
-            "calldata too short to read array length at offset {offset} (need {len_end}, have {})",
-            input.len()
-        );
-    }
-
-    let len_bytes: [u8; 32] = input[len_start..len_end]
-        .try_into()
-        .map_err(|_| eyre::eyre!("failed to read array length from calldata"))?;
-
-    Ok(u256_to_u64(len_bytes))
-}
-
-/// Convert a big-endian 32-byte uint256 to u64 (saturating).
-fn u256_to_u64(bytes: [u8; 32]) -> u64 {
-    // Check if any of the upper 24 bytes are non-zero → saturate
-    if bytes[..24].iter().any(|&b| b != 0) {
-        return u64::MAX;
-    }
-    u64::from_be_bytes(bytes[24..32].try_into().unwrap())
+    Ok(decoded.versionedHashes.len() as u64)
 }

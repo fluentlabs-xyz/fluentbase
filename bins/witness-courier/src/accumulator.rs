@@ -10,7 +10,7 @@
 //! is called on L1, so there is no "matching batch" yet at insertion time.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tracing::{info, warn};
 
@@ -38,7 +38,7 @@ pub struct BatchAccumulator {
     /// BlobsAccepted events that arrived before BatchHeadersSubmitted.
     /// Applied when the batch is later registered via set_batch.
     pending_blobs_accepted: HashSet<u64>,
-    db: Option<Arc<Db>>,
+    db: Option<Arc<Mutex<Db>>>,
 }
 
 impl BatchAccumulator {
@@ -47,21 +47,23 @@ impl BatchAccumulator {
     }
 
     /// Create accumulator backed by a DB. Loads all state from DB on construction.
-    pub fn with_db(db: Arc<Db>) -> Self {
-        let responses: HashMap<u64, EthExecutionResponse> = db
+    pub fn with_db(db: Arc<Mutex<Db>>) -> Self {
+        let guard = db.lock().unwrap();
+        let responses: HashMap<u64, EthExecutionResponse> = guard
             .load_responses()
             .into_iter()
             .map(|r| (r.block_number, r))
             .collect();
-        let batches: BTreeMap<u64, PendingBatch> = db
+        let batches: BTreeMap<u64, PendingBatch> = guard
             .load_batches()
             .into_iter()
             .map(|b| (b.batch_index, b))
             .collect();
-        let pending_blobs_accepted: HashSet<u64> = db
+        let pending_blobs_accepted: HashSet<u64> = guard
             .load_pending_blobs_accepted()
             .into_iter()
             .collect();
+        drop(guard);
 
         Self {
             batches,
@@ -72,11 +74,16 @@ impl BatchAccumulator {
     }
 
     /// Register a new batch from `BatchHeadersSubmitted` event.
-    pub fn set_batch(&mut self, batch_index: u64, from_block: u64, to_block: u64) {
+    pub async fn set_batch(&mut self, batch_index: u64, from_block: u64, to_block: u64) {
         // Consume any buffered BlobsAccepted for this batch
         let blobs_accepted = self.pending_blobs_accepted.remove(&batch_index);
         if blobs_accepted {
-            if let Some(db) = &self.db { db.delete_pending_blobs_accepted(batch_index); }
+            if let Some(db) = &self.db {
+                let db = Arc::clone(db);
+                let _ = tokio::task::spawn_blocking(move || {
+                    db.lock().unwrap().delete_pending_blobs_accepted(batch_index);
+                }).await;
+            }
         }
 
         let already = (from_block..=to_block)
@@ -97,26 +104,53 @@ impl BatchAccumulator {
             to_block,
             blobs_accepted,
         };
-        if let Some(db) = &self.db { db.save_batch(&batch); }
+        if let Some(db) = &self.db {
+            let db = Arc::clone(db);
+            let bi = batch_index;
+            let fb = from_block;
+            let tb = to_block;
+            let ba = blobs_accepted;
+            let _ = tokio::task::spawn_blocking(move || {
+                db.lock().unwrap().save_batch(&PendingBatch {
+                    batch_index: bi, from_block: fb, to_block: tb, blobs_accepted: ba,
+                });
+            }).await;
+        }
         self.batches.insert(batch_index, batch);
     }
 
     /// Store a block execution response. O(1).
-    pub fn insert_response(&mut self, resp: EthExecutionResponse) {
-        if let Some(db) = &self.db { db.save_response(&resp); }
+    pub async fn insert_response(&mut self, resp: EthExecutionResponse) {
+        if let Some(db) = &self.db {
+            let db = Arc::clone(db);
+            let resp_clone = resp.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                db.lock().unwrap().save_response(&resp_clone);
+            }).await;
+        }
         let block = resp.block_number;
         self.responses.insert(block, resp);
     }
 
-    pub fn mark_blobs_accepted(&mut self, batch_index: u64) {
+    pub async fn mark_blobs_accepted(&mut self, batch_index: u64) {
         if let Some(batch) = self.batches.get_mut(&batch_index) {
             batch.blobs_accepted = true;
-            if let Some(db) = &self.db { db.update_blobs_accepted(batch_index); }
+            if let Some(db) = &self.db {
+                let db = Arc::clone(db);
+                let _ = tokio::task::spawn_blocking(move || {
+                    db.lock().unwrap().update_blobs_accepted(batch_index);
+                }).await;
+            }
             info!(batch_index, "Blobs accepted on L1");
         } else {
             // BatchHeadersSubmitted not yet seen — buffer for when set_batch arrives
             self.pending_blobs_accepted.insert(batch_index);
-            if let Some(db) = &self.db { db.save_pending_blobs_accepted(batch_index); }
+            if let Some(db) = &self.db {
+                let db = Arc::clone(db);
+                let _ = tokio::task::spawn_blocking(move || {
+                    db.lock().unwrap().save_pending_blobs_accepted(batch_index);
+                }).await;
+            }
             warn!(batch_index, "BlobsAccepted arrived before BatchHeaders — buffered");
         }
     }
@@ -145,11 +179,17 @@ impl BatchAccumulator {
     }
 
     /// Remove a completed batch and drain its responses from the pool.
-    pub fn take(&mut self, batch_index: u64) -> Option<PendingBatch> {
+    pub async fn take(&mut self, batch_index: u64) -> Option<PendingBatch> {
         let batch = self.batches.remove(&batch_index)?;
         if let Some(db) = &self.db {
-            db.delete_batch(batch_index);
-            db.delete_responses(batch.from_block, batch.to_block);
+            let db = Arc::clone(db);
+            let fb = batch.from_block;
+            let tb = batch.to_block;
+            let _ = tokio::task::spawn_blocking(move || {
+                let guard = db.lock().unwrap();
+                guard.delete_batch(batch_index);
+                guard.delete_responses(fb, tb);
+            }).await;
         }
         for b in batch.from_block..=batch.to_block {
             self.responses.remove(&b);
@@ -162,10 +202,15 @@ impl BatchAccumulator {
     /// Removes responses for the given block numbers and drops any batch
     /// whose range overlaps with reverted blocks (a batch is atomic on L1 —
     /// if any block in it is reverted, the whole batch is invalid).
-    pub fn handle_reorg(&mut self, reverted: &[u64]) {
+    pub async fn handle_reorg(&mut self, reverted: &[u64]) {
         for &block in reverted {
             self.responses.remove(&block);
-            if let Some(db) = &self.db { db.delete_response(block); }
+            if let Some(db) = &self.db {
+                let db = Arc::clone(db);
+                let _ = tokio::task::spawn_blocking(move || {
+                    db.lock().unwrap().delete_response(block);
+                }).await;
+            }
         }
 
         let affected: Vec<u64> = self
@@ -182,11 +227,16 @@ impl BatchAccumulator {
         for idx in &affected {
             let batch = self.batches.remove(idx).unwrap();
             if let Some(db) = &self.db {
-                db.delete_batch(*idx);
-                db.delete_responses(batch.from_block, batch.to_block);
+                let db = Arc::clone(db);
+                let bi = *idx;
+                let fb = batch.from_block;
+                let tb = batch.to_block;
+                let _ = tokio::task::spawn_blocking(move || {
+                    let guard = db.lock().unwrap();
+                    guard.delete_batch(bi);
+                    guard.delete_responses(fb, tb);
+                }).await;
             }
-            // Also clean responses for non-reverted blocks in affected batches —
-            // the entire batch is invalid, canonical replacements will re-populate.
             for b in batch.from_block..=batch.to_block {
                 self.responses.remove(&b);
             }
@@ -199,6 +249,13 @@ impl BatchAccumulator {
                 "Reorg: purged stale state"
             );
         }
+    }
+
+    /// Returns cloned responses for blocks in [from, to].
+    pub fn get_responses(&self, from: u64, to: u64) -> Vec<EthExecutionResponse> {
+        (from..=to)
+            .filter_map(|b| self.responses.get(&b).cloned())
+            .collect()
     }
 
     pub fn len(&self) -> usize {
@@ -214,102 +271,98 @@ mod tests {
     fn mock_response(block_number: u64) -> EthExecutionResponse {
         EthExecutionResponse {
             block_number,
-            parent_hash: B256::ZERO,
-            block_hash: B256::ZERO,
-            withdrawal_hash: B256::ZERO,
-            deposit_hash: B256::ZERO,
+            leaf: [0u8; 32],
             tx_data_hash: B256::ZERO,
-            result_hash: vec![],
             signature: vec![],
         }
     }
 
-    #[test]
-    fn not_ready_without_blobs_accepted() {
+    #[tokio::test]
+    async fn not_ready_without_blobs_accepted() {
         let mut acc = BatchAccumulator::new();
-        acc.set_batch(1, 10, 12);
-        acc.insert_response(mock_response(10));
-        acc.insert_response(mock_response(11));
-        acc.insert_response(mock_response(12));
+        acc.set_batch(1, 10, 12).await;
+        acc.insert_response(mock_response(10)).await;
+        acc.insert_response(mock_response(11)).await;
+        acc.insert_response(mock_response(12)).await;
 
         assert!(acc.first_ready().is_none());
-        acc.mark_blobs_accepted(1);
+        acc.mark_blobs_accepted(1).await;
         assert_eq!(acc.first_ready(), Some(1));
     }
 
-    #[test]
-    fn not_ready_without_all_responses() {
+    #[tokio::test]
+    async fn not_ready_without_all_responses() {
         let mut acc = BatchAccumulator::new();
-        acc.set_batch(1, 10, 12);
-        acc.mark_blobs_accepted(1);
+        acc.set_batch(1, 10, 12).await;
+        acc.mark_blobs_accepted(1).await;
 
-        acc.insert_response(mock_response(10));
-        acc.insert_response(mock_response(11));
+        acc.insert_response(mock_response(10)).await;
+        acc.insert_response(mock_response(11)).await;
         assert!(acc.first_ready().is_none());
 
-        acc.insert_response(mock_response(12));
+        acc.insert_response(mock_response(12)).await;
         assert_eq!(acc.first_ready(), Some(1));
     }
 
-    #[test]
-    fn take_removes_batch_and_responses() {
+    #[tokio::test]
+    async fn take_removes_batch_and_responses() {
         let mut acc = BatchAccumulator::new();
-        acc.set_batch(1, 10, 10);
-        acc.insert_response(mock_response(10));
-        acc.mark_blobs_accepted(1);
+        acc.set_batch(1, 10, 10).await;
+        acc.insert_response(mock_response(10)).await;
+        acc.mark_blobs_accepted(1).await;
 
-        let batch = acc.take(1).unwrap();
+        let batch = acc.take(1).await.unwrap();
         assert_eq!(batch.batch_index, 1);
         assert!(acc.first_ready().is_none());
         assert!(acc.responses.is_empty());
     }
 
-    #[test]
-    fn concurrent_batches() {
+    #[tokio::test]
+    async fn concurrent_batches() {
         let mut acc = BatchAccumulator::new();
-        acc.set_batch(1, 10, 11);
-        acc.set_batch(2, 12, 13);
+        acc.set_batch(1, 10, 11).await;
+        acc.set_batch(2, 12, 13).await;
 
-        acc.insert_response(mock_response(10));
-        acc.insert_response(mock_response(11));
-        acc.mark_blobs_accepted(1);
+        acc.insert_response(mock_response(10)).await;
+        acc.insert_response(mock_response(11)).await;
+        acc.mark_blobs_accepted(1).await;
         assert_eq!(acc.first_ready(), Some(1));
 
-        acc.insert_response(mock_response(12));
-        acc.insert_response(mock_response(13));
-        acc.mark_blobs_accepted(2);
+        acc.insert_response(mock_response(12)).await;
+        acc.insert_response(mock_response(13)).await;
+        acc.mark_blobs_accepted(2).await;
 
-        acc.take(1);
+        acc.take(1).await;
         assert_eq!(acc.first_ready(), Some(2));
     }
 
-    #[test]
-    fn responses_before_batch_registration() {
+    #[tokio::test]
+    async fn responses_before_batch_registration() {
         let mut acc = BatchAccumulator::new();
 
         // Normal flow: responses arrive before acceptNextBatch
-        acc.insert_response(mock_response(10));
-        acc.insert_response(mock_response(11));
-        acc.insert_response(mock_response(12));
+        acc.insert_response(mock_response(10)).await;
+        acc.insert_response(mock_response(11)).await;
+        acc.insert_response(mock_response(12)).await;
 
-        acc.set_batch(1, 10, 12);
-        acc.mark_blobs_accepted(1);
+        acc.set_batch(1, 10, 12).await;
+        acc.mark_blobs_accepted(1).await;
         assert_eq!(acc.first_ready(), Some(1));
     }
 
-    #[test]
-    fn reorg_purges_responses_and_batches() {
+    #[tokio::test]
+    async fn reorg_purges_responses_and_batches() {
         let mut acc = BatchAccumulator::new();
-        acc.set_batch(1, 10, 12);
-        acc.set_batch(2, 13, 15);
-        acc.insert_response(mock_response(10));
-        acc.insert_response(mock_response(11));
-        acc.insert_response(mock_response(12));
-        acc.insert_response(mock_response(13));
-        acc.mark_blobs_accepted(1);
+        acc.set_batch(1, 10, 12).await;
+        acc.set_batch(2, 13, 15).await;
+        acc.insert_response(mock_response(10)).await;
+        acc.insert_response(mock_response(11)).await;
+        acc.insert_response(mock_response(12)).await;
+        acc.insert_response(mock_response(13)).await;
+        acc.mark_blobs_accepted(1).await;
 
         // Revert blocks 11-13 — batch 1 and batch 2 both overlap
-        acc.handle_reorg(&[11, 12, 13]);
+        acc.handle_reorg(&[11, 12, 13]).await;
 
         // Both batches dropped
         assert_eq!(acc.len(), 0);
@@ -317,18 +370,18 @@ mod tests {
         assert!(acc.responses.is_empty());
     }
 
-    #[test]
-    fn reorg_preserves_unaffected_batch() {
+    #[tokio::test]
+    async fn reorg_preserves_unaffected_batch() {
         let mut acc = BatchAccumulator::new();
-        acc.set_batch(1, 10, 11);
-        acc.set_batch(2, 12, 13);
-        acc.insert_response(mock_response(10));
-        acc.insert_response(mock_response(11));
-        acc.insert_response(mock_response(12));
-        acc.mark_blobs_accepted(1);
+        acc.set_batch(1, 10, 11).await;
+        acc.set_batch(2, 12, 13).await;
+        acc.insert_response(mock_response(10)).await;
+        acc.insert_response(mock_response(11)).await;
+        acc.insert_response(mock_response(12)).await;
+        acc.mark_blobs_accepted(1).await;
 
         // Revert only block 13 — batch 1 unaffected
-        acc.handle_reorg(&[13]);
+        acc.handle_reorg(&[13]).await;
 
         assert_eq!(acc.len(), 1);
         assert_eq!(acc.first_ready(), Some(1));
@@ -336,30 +389,30 @@ mod tests {
         assert!(!acc.responses.contains_key(&12));
     }
 
-    #[test]
-    fn reorg_cleans_orphan_responses() {
+    #[tokio::test]
+    async fn reorg_cleans_orphan_responses() {
         let mut acc = BatchAccumulator::new();
         // Responses arrived before any batch registered (normal flow)
-        acc.insert_response(mock_response(50));
-        acc.insert_response(mock_response(51));
-        acc.insert_response(mock_response(52));
+        acc.insert_response(mock_response(50)).await;
+        acc.insert_response(mock_response(51)).await;
+        acc.insert_response(mock_response(52)).await;
 
-        acc.handle_reorg(&[51, 52]);
+        acc.handle_reorg(&[51, 52]).await;
 
         assert!(acc.responses.contains_key(&50));
         assert!(!acc.responses.contains_key(&51));
         assert!(!acc.responses.contains_key(&52));
     }
 
-    #[test]
-    fn take_only_drains_own_blocks() {
+    #[tokio::test]
+    async fn take_only_drains_own_blocks() {
         let mut acc = BatchAccumulator::new();
-        acc.set_batch(1, 10, 10);
-        acc.set_batch(2, 11, 11);
-        acc.insert_response(mock_response(10));
-        acc.insert_response(mock_response(11));
+        acc.set_batch(1, 10, 10).await;
+        acc.set_batch(2, 11, 11).await;
+        acc.insert_response(mock_response(10)).await;
+        acc.insert_response(mock_response(11)).await;
 
-        acc.take(1);
+        acc.take(1).await;
         assert!(acc.responses.contains_key(&11));
         assert!(!acc.responses.contains_key(&10));
     }

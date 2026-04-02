@@ -178,7 +178,11 @@ fn main() {
             use witness_courier::hub::WitnessHub;
             use tracing::{error};
 
-            let hub = Arc::new(WitnessHub::new(exex_witness_hub_max_bytes, exex_witness_cold_dir));
+            let max_cold_bytes: u64 = std::env::var("FLUENT_WITNESS_COLD_MAX_BYTES")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10 * 1024 * 1024 * 1024); // 10 GiB default
+            let hub = Arc::new(WitnessHub::new(exex_witness_hub_max_bytes, exex_witness_cold_dir, max_cold_bytes));
 
             let addr: std::net::SocketAddr = std::env::var("FLUENT_WITNESS_ADDR")
                 .unwrap_or_else(|_| "127.0.0.1:10000".into())
