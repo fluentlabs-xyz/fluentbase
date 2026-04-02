@@ -37,6 +37,18 @@ RUN cargo chef cook --profile $BUILD_PROFILE --features "$FEATURES" --recipe-pat
 
 # Build application
 COPY --exclude=dist . .
+
+# Optional build metadata forwarded into fluent build.rs
+# (keep this after cargo-chef dependency cook to avoid cache busting)
+ARG GIT_COMMIT=""
+ARG GIT_TAG=""
+ARG BUILD_TIMESTAMP=""
+ARG SOURCE_DATE_EPOCH=""
+ENV GIT_COMMIT=$GIT_COMMIT
+ENV GIT_TAG=$GIT_TAG
+ENV BUILD_TIMESTAMP=$BUILD_TIMESTAMP
+ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
+
 RUN cargo build --profile $BUILD_PROFILE --features "$FEATURES" --locked --bin fluent
 
 # ARG is not resolved in COPY so we have to hack around it by copying the
