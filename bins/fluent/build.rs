@@ -135,9 +135,11 @@ fn main() {
         .unwrap_or_else(|| "untagged".to_string());
 
     let is_dirty = Command::new("git")
-        .args(["diff-index", "--quiet", "HEAD", "--"])
-        .status()
-        .map(|status| !status.success())
+        .args(["status", "--porcelain", "--untracked-files=no"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| !out.stdout.is_empty())
         .unwrap_or(false);
 
     let version_suffix = if is_dirty { "-dirty" } else { "" };
