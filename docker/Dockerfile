@@ -29,8 +29,17 @@ ENV RUSTFLAGS="$RUSTFLAGS"
 ARG FEATURES=""
 ENV FEATURES=$FEATURES
 
+# Make sure wasm32 target is installed
+RUN rustup target add wasm32-unknown-unknown
+
+# Builds dependencies
+RUN cargo chef cook --profile $BUILD_PROFILE --features "$FEATURES" --recipe-path recipe.json
+
+# Build application
+COPY --exclude=dist . .
+
 # Optional build metadata forwarded into fluent build.rs
-# (needed because this Dockerfile excludes `.git` from build context)
+# (keep this after cargo-chef dependency cook to avoid cache busting)
 ARG GIT_COMMIT=""
 ARG GIT_TAG=""
 ARG BUILD_TIMESTAMP=""
@@ -40,14 +49,6 @@ ENV GIT_TAG=$GIT_TAG
 ENV BUILD_TIMESTAMP=$BUILD_TIMESTAMP
 ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
 
-# Make sure wasm32 target is installed
-RUN rustup target add wasm32-unknown-unknown
-
-# Builds dependencies
-RUN cargo chef cook --profile $BUILD_PROFILE --features "$FEATURES" --recipe-path recipe.json
-
-# Build application
-COPY --exclude=dist . .
 RUN cargo build --profile $BUILD_PROFILE --features "$FEATURES" --locked --bin fluent
 
 # ARG is not resolved in COPY so we have to hack around it by copying the
