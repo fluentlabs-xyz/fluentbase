@@ -29,6 +29,17 @@ ENV RUSTFLAGS="$RUSTFLAGS"
 ARG FEATURES=""
 ENV FEATURES=$FEATURES
 
+# Optional build metadata forwarded into fluent build.rs
+# (needed because this Dockerfile excludes `.git` from build context)
+ARG GIT_COMMIT=""
+ARG GIT_TAG=""
+ARG BUILD_TIMESTAMP=""
+ARG SOURCE_DATE_EPOCH=""
+ENV GIT_COMMIT=$GIT_COMMIT
+ENV GIT_TAG=$GIT_TAG
+ENV BUILD_TIMESTAMP=$BUILD_TIMESTAMP
+ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
+
 # Make sure wasm32 target is installed
 RUN rustup target add wasm32-unknown-unknown
 
