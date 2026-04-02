@@ -14,6 +14,7 @@ use reth_chainspec::ChainSpec;
 use reth_cli_commands::download::DownloadDefaults;
 use reth_ethereum_cli::{Cli, Commands};
 use reth_node_builder::{DebugNodeLauncherFuture, Node};
+use reth_node_core::version::{default_reth_version_metadata, try_init_version_metadata};
 use reth_node_ethereum::EthereumAddOns;
 use std::{borrow::Cow, sync::Arc, time::Duration};
 use tracing::info;
@@ -24,6 +25,46 @@ static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::ne
 #[cfg(all(feature = "jemalloc-prof", unix))]
 #[unsafe(export_name = "_rjem_malloc_conf")]
 static MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
+
+fn init_fluent_version_metadata() {
+    let mut meta = default_reth_version_metadata();
+
+    let version = env!("CARGO_PKG_VERSION");
+    let version_suffix = option_env!("FLUENT_VERSION_SUFFIX").unwrap_or("");
+    let git_sha = option_env!("FLUENT_GIT_SHA").unwrap_or("unknown");
+    let git_sha_short = option_env!("FLUENT_GIT_SHA_SHORT").unwrap_or("unknown");
+    let git_tag = option_env!("FLUENT_GIT_TAG").unwrap_or("untagged");
+    let build_timestamp = option_env!("FLUENT_BUILD_TIMESTAMP").unwrap_or("unknown");
+    let target_triple = option_env!("FLUENT_CARGO_TARGET_TRIPLE").unwrap_or("unknown");
+    let build_features = option_env!("FLUENT_CARGO_FEATURES").unwrap_or("none");
+    let build_profile = option_env!("FLUENT_BUILD_PROFILE").unwrap_or("unknown");
+
+    let short_version = format!("{version}{version_suffix} ({git_sha_short})");
+    let long_version = format!(
+        "Version: {version}{version_suffix}\nTag: {git_tag}\nCommit SHA: {git_sha}\nBuild Timestamp: {build_timestamp}\nBuild Features: {build_features}\nBuild Profile: {build_profile}\nTarget: {target_triple}"
+    );
+
+    let mut extra_data = format!("fluent/v{version}/{}", std::env::consts::OS);
+    if extra_data.len() > 32 {
+        extra_data.truncate(32);
+    }
+
+    meta.name_client = Cow::Borrowed("Fluentbase");
+    meta.cargo_pkg_version = Cow::Borrowed(version);
+    meta.vergen_git_sha_long = Cow::Borrowed(git_sha);
+    meta.vergen_git_sha = Cow::Borrowed(git_sha_short);
+    meta.vergen_build_timestamp = Cow::Borrowed(build_timestamp);
+    meta.vergen_cargo_target_triple = Cow::Borrowed(target_triple);
+    meta.vergen_cargo_features = Cow::Borrowed(build_features);
+    meta.short_version = Cow::Owned(short_version);
+    meta.long_version = Cow::Owned(long_version);
+    meta.build_profile_name = Cow::Borrowed(build_profile);
+    meta.p2p_client_version =
+        Cow::Owned(format!("fluent/v{version}-{git_sha_short}/{target_triple}"));
+    meta.extra_data = Cow::Owned(extra_data);
+
+    let _ = try_init_version_metadata(meta);
+}
 
 #[derive(Debug, Clone, Default, Args)]
 #[non_exhaustive]
@@ -66,6 +107,9 @@ fn main() {
 
     // Initialize default download URLs for snapshots
     init_downloads_defaults();
+
+    // Override default reth version metadata with fluentbase-specific build metadata.
+    init_fluent_version_metadata();
 
     let mut consensus_url: Option<String> = None;
     let mut block_producer: Option<Duration> = None;
