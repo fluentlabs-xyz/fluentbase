@@ -53,8 +53,6 @@ Typical raw-account-info use cases:
 - debugging mismatches between runtime-mapped bytecode and persisted account payload,
 - fork/fork-db tooling where cache keys or bytecode identity must match storage bytes exactly.
 
-> **Current status (`v1.11-patched`):** `eth_getRawAccountInfo` is wired to `get_raw_account_info` at the RPC handler level, so raw-account-info endpoint behavior now follows the intended raw helper path.
-
 ## Difference vs upstream Reth
 
 Upstream baseline does not carry Fluent’s wrapped-account normalization behavior. Fluent extends behavior so Ethereum-facing clients receive expected EVM-compatible values on default methods, while still providing raw methods for infra/debug needs.
