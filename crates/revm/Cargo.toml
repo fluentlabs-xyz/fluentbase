@@ -1,6 +1,5 @@
 [package]
 name = "fluentbase-revm"
-description = "Fluent variant of Revm"
 version.workspace = true
 description.workspace = true
 authors.workspace = true

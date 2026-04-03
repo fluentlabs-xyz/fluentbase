@@ -1,6 +1,5 @@
 [package]
 name = "fluentbase-sdk"
-description = "Fluentbase SDK"
 version.workspace = true
 description.workspace = true
 authors.workspace = true

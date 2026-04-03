@@ -2036,8 +2036,6 @@ dependencies = [
  "fluentbase-codec-derive",
  "hashbrown 0.16.1",
  "paste",
- "revm-precompile",
- "revm-primitives",
  "rwasm",
  "serde",
  "strum_macros 0.27.2",

@@ -1,4 +1,3 @@
-use revm_precompile::PrecompileError;
 use rwasm::TrapCode;
 use strum_macros::{Display, FromRepr};
 
@@ -228,20 +227,6 @@ impl From<&TrapCode> for ExitCode {
                 eprintln!("WARN: unknown trap code: {:?}", value);
                 ExitCode::UnknownError
             }
-        }
-    }
-}
-
-impl From<PrecompileError> for ExitCode {
-    fn from(err: PrecompileError) -> Self {
-        Self::from(&err)
-    }
-}
-impl From<&PrecompileError> for ExitCode {
-    fn from(err: &PrecompileError) -> Self {
-        match err {
-            PrecompileError::OutOfGas => ExitCode::OutOfFuel,
-            _ => ExitCode::PrecompileError,
         }
     }
 }
