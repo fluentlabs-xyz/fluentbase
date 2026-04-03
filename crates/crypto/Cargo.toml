@@ -2,6 +2,7 @@
 name = "fluentbase-crypto"
 description = "Fluentbase SDK"
 version.workspace = true
+description.workspace = true
 authors.workspace = true
 repository.workspace = true
 edition.workspace = true

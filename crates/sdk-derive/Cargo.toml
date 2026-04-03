@@ -8,6 +8,7 @@ name = "fluentbase-sdk-derive"
 readme.workspace = true
 repository.workspace = true
 version.workspace = true
+description.workspace = true
 
 [dependencies]
 crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }

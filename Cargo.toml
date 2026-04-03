@@ -19,6 +19,7 @@ version = "1.0.5"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
+description = "A framework to build smart contracts on the Fluent L2 as well as blockchains and verifiable compute environments that compile to rWasm"
 repository = "https://github.com/fluentlabs-xyz/fluentbase"
 edition = "2021"
 rust-version = "1.92.0"
@@ -29,20 +30,20 @@ categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
 # fluentbase
-fluentbase-build = { path = "./crates/build", default-features = false }
-fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"] }
-fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false }
-fluentbase-contracts = { path = "./crates/contracts", default-features = false }
-fluentbase-crypto = { path = "./crates/crypto", default-features = false }
-fluentbase-evm = { path = "./crates/evm", default-features = false }
-fluentbase-genesis = { path = "./crates/genesis", default-features = false }
-fluentbase-node = { path = "./crates/node", default-features = false }
-fluentbase-revm = { path = "./crates/revm", default-features = false }
-fluentbase-runtime = { path = "./crates/runtime", default-features = false }
-fluentbase-sdk = { path = "./crates/sdk", default-features = false }
-fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
-fluentbase-testing = { path = "./crates/testing" }
-fluentbase-types = { path = "./crates/types", default-features = false }
+fluentbase-build = { path = "./crates/build", default-features = false, version = "1.0.5" }
+fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"], version = "1.0.5" }
+fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false, version = "1.0.5" }
+fluentbase-contracts = { path = "./crates/contracts", default-features = false, version = "1.0.5" }
+fluentbase-crypto = { path = "./crates/crypto", default-features = false, version = "1.0.5" }
+fluentbase-evm = { path = "./crates/evm", default-features = false, version = "1.0.5" }
+fluentbase-genesis = { path = "./crates/genesis", default-features = false, version = "1.0.5" }
+fluentbase-node = { path = "./crates/node", default-features = false, version = "1.0.5" }
+fluentbase-revm = { path = "./crates/revm", default-features = false, version = "1.0.5" }
+fluentbase-runtime = { path = "./crates/runtime", default-features = false, version = "1.0.5" }
+fluentbase-sdk = { path = "./crates/sdk", default-features = false, version = "1.0.5" }
+fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false, version = "1.0.5" }
+fluentbase-testing = { path = "./crates/testing", version = "1.0.5" }
+fluentbase-types = { path = "./crates/types", default-features = false, version = "1.0.5" }
 #fluentbase-svm = { path = "./crates/svm", default-features = false }
 #fluentbase-svm-shared = { path = "./crates/svm-shared", default-features = false }
 #fluentbase-svm-common = { path = "./crates/svm-common", default-features = false }
@@ -103,7 +104,7 @@ fluentbase-types = { path = "./crates/types", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 # rwasm
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.4.2", default-features = false }
+rwasm = { version = "0.4.3", default-features = false }
 
 # alloy
 alloy-primitives = { version = "1.5.0", default-features = false, features = ["sha3-keccak"] }
@@ -373,9 +374,6 @@ op-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "
 
 # tiny-keccak
 tiny-keccak = { git = "https://github.com/fluentlabs-xyz/tiny-keccak.git", branch = "rwasm" }
-
-# rwasm
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.4.2" }
 
 [workspace.lints]
 rust.missing_debug_implementations = "warn"

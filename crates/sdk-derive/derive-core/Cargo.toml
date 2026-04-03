@@ -1,15 +1,14 @@
 [package]
 name = "fluentbase-sdk-derive-core"
-
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true
 keywords.workspace = true
 license.workspace = true
-
 readme.workspace = true
 repository.workspace = true
 version.workspace = true
+description.workspace = true
 
 [dependencies]
 alloy-sol-macro-input = { version = "1.1.0", default-features = false, features = ["json"] }
