@@ -159,6 +159,32 @@ impl WitnessService for WitnessGrpcService {
         self.hub.acknowledge(up_to_block).await;
         Ok(Response::new(proto::AcknowledgeResponse {}))
     }
+
+    async fn get_witness(
+        &self,
+        request: Request<proto::GetWitnessRequest>,
+    ) -> Result<Response<proto::GetWitnessResponse>, Status> {
+        let block_number = request.into_inner().block_number;
+        match self.hub.get_witness(block_number).await {
+            Some(req) => Ok(Response::new(proto::GetWitnessResponse {
+                data: req.payload.clone(),
+                found: true,
+            })),
+            None => Ok(Response::new(proto::GetWitnessResponse {
+                data: vec![],
+                found: false,
+            })),
+        }
+    }
+
+    async fn acknowledge_range(
+        &self,
+        request: Request<proto::AcknowledgeRangeRequest>,
+    ) -> Result<Response<proto::AcknowledgeResponse>, Status> {
+        let req = request.into_inner();
+        self.hub.acknowledge_range(req.from_block, req.to_block).await;
+        Ok(Response::new(proto::AcknowledgeResponse {}))
+    }
 }
 
 /// Build a [`WitnessServiceServer`] ready to be added to a tonic server.

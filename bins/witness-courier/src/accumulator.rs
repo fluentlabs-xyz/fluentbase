@@ -251,6 +251,22 @@ impl BatchAccumulator {
         }
     }
 
+    /// Purge responses for specific blocks (key rotation recovery).
+    /// Unlike `handle_reorg`, this does NOT drop batches — only clears responses
+    /// so they can be re-populated with freshly signed ones.
+    pub async fn purge_responses(&mut self, blocks: &[u64]) {
+        for &block in blocks {
+            self.responses.remove(&block);
+            if let Some(db) = &self.db {
+                let db = Arc::clone(db);
+                let _ = tokio::task::spawn_blocking(move || {
+                    db.lock().unwrap().delete_response(block);
+                }).await;
+            }
+        }
+        info!(count = blocks.len(), "Purged stale responses for key rotation recovery");
+    }
+
     /// Returns cloned responses for blocks in [from, to].
     pub fn get_responses(&self, from: u64, to: u64) -> Vec<EthExecutionResponse> {
         (from..=to)
@@ -415,5 +431,35 @@ mod tests {
         acc.take(1).await;
         assert!(acc.responses.contains_key(&11));
         assert!(!acc.responses.contains_key(&10));
+    }
+
+    #[tokio::test]
+    async fn purge_responses_preserves_batches() {
+        let mut acc = BatchAccumulator::new();
+        acc.set_batch(1, 10, 12).await;
+        acc.insert_response(mock_response(10)).await;
+        acc.insert_response(mock_response(11)).await;
+        acc.insert_response(mock_response(12)).await;
+        acc.mark_blobs_accepted(1).await;
+
+        // Batch should be ready
+        assert_eq!(acc.first_ready(), Some(1));
+
+        // Purge responses for blocks 11 and 12 (key rotation)
+        acc.purge_responses(&[11, 12]).await;
+
+        // Batch is no longer ready (missing responses)
+        assert!(acc.first_ready().is_none());
+        // But the batch itself still exists
+        assert!(acc.get(1).is_some());
+        // Block 10 response is preserved
+        assert!(acc.responses.contains_key(&10));
+        assert!(!acc.responses.contains_key(&11));
+        assert!(!acc.responses.contains_key(&12));
+
+        // Re-insert responses — batch becomes ready again
+        acc.insert_response(mock_response(11)).await;
+        acc.insert_response(mock_response(12)).await;
+        assert_eq!(acc.first_ready(), Some(1));
     }
 }

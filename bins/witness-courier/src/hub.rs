@@ -381,6 +381,55 @@ impl WitnessHub {
         }
     }
 
+    /// Get a single block witness from hot buffer by block number.
+    pub async fn get_block(&self, block_number: u64) -> Option<SharedProveRequest> {
+        let buf = self.buffer.read().await;
+        buf.entries
+            .iter()
+            .find(|r| r.block_number == block_number)
+            .cloned()
+    }
+
+    /// Get a single witness by block number: tries hot buffer first, then cold tier.
+    pub async fn get_witness(&self, block_number: u64) -> Option<SharedProveRequest> {
+        if let Some(req) = self.get_block(block_number).await {
+            return Some(req);
+        }
+        self.read_cold_block(block_number).await
+    }
+
+    /// Deletes cold-tier files for blocks in [from_block, to_block].
+    pub async fn acknowledge_range(&self, from_block: u64, to_block: u64) {
+        let Some(cold) = &self.cold else { return; };
+        use std::sync::atomic::Ordering::Relaxed;
+
+        let to_delete: Vec<u64> = {
+            let idx = cold.index.read().unwrap();
+            idx.range(from_block..=to_block).copied().collect()
+        };
+
+        for block_number in to_delete {
+            let path = cold.dir.join(format!("{block_number}.bin"));
+            match tokio::fs::metadata(&path).await {
+                Ok(m) => {
+                    let file_size = m.len();
+                    match tokio::fs::remove_file(&path).await {
+                        Ok(()) => {
+                            cold.index.write().unwrap().remove(&block_number);
+                            cold.current_dir_bytes.fetch_sub(file_size, Relaxed);
+                        }
+                        Err(e) => warn!(block_number, err = %e, "Failed to acknowledge cold witness"),
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    cold.index.write().unwrap().remove(&block_number);
+                }
+                Err(e) => warn!(block_number, err = %e, "Failed to stat cold witness"),
+            }
+        }
+        info!(from_block, to_block, "Cold witnesses acknowledged (range)");
+    }
+
     /// Called by the courier (via gRPC) after checkpoint advances.
     /// Deletes all cold-tier files with block_number <= up_to_block.
     pub async fn acknowledge(&self, up_to_block: u64) {

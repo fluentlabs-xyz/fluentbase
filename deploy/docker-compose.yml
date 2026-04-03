@@ -1,0 +1,135 @@
+services:
+  # ── Fluent Node ────────────────────────────────────────────────────────
+  fluent-node:
+    image: ubuntu:22.04
+    container_name: fluent-node
+    network_mode: host
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/fluent"]
+    command: >
+      node
+      --chain fluent-testnet
+      --datadir /data
+      --http --http.addr 0.0.0.0 --http.port 8545
+      --ws --ws.addr 0.0.0.0 --ws.port 8546
+      --metrics 0.0.0.0:9001
+      --exex-witness-cold-dir /data/witness-cold
+    environment:
+      - FLUENT_WITNESS_ADDR=0.0.0.0:10000
+      - FLUENT_WITNESS_COLD_MAX_BYTES=${FLUENT_WITNESS_COLD_MAX_BYTES:-10737418240}
+      - RUST_LOG=${RUST_LOG:-info}
+      - RUST_BACKTRACE=1
+    volumes:
+      - ./bin/fluent:/usr/local/bin/fluent:ro
+      - fluent-data:/data
+    healthcheck:
+      test: >
+        curl -sf -X POST http://localhost:8545
+        -H 'Content-Type: application/json'
+        -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}'
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # ── Witness Courier ──────────────────────────────────────────────────
+  witness-courier:
+    image: ubuntu:22.04
+    container_name: witness-courier
+    network_mode: host
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/witness-courier"]
+    environment:
+      # ── Witness transport ──
+      - FLUENT_WITNESS_ADDR=http://127.0.0.1:10000
+      - FLUENT_PROXY_URL=http://127.0.0.1:8080/sign-block-execution
+      - FLUENT_HTTP_TIMEOUT_SECS=${FLUENT_HTTP_TIMEOUT_SECS:-120}
+      - FLUENT_API_KEY=${FLUENT_API_KEY:-}
+      # ── Database ──
+      - FLUENT_DB_PATH=/data/witness_courier.db
+      # ── L1 (required — fill in .env) ──
+      - L1_RPC_URL=${L1_RPC_URL:?Set L1_RPC_URL in .env}
+      - L1_CONTRACT_ADDR=${L1_CONTRACT_ADDR:?Set L1_CONTRACT_ADDR in .env}
+      - L1_SUBMITTER_KEY=${L1_SUBMITTER_KEY:?Set L1_SUBMITTER_KEY in .env}
+      - NITRO_VERIFIER_ADDR=${NITRO_VERIFIER_ADDR:?Set NITRO_VERIFIER_ADDR in .env}
+      # ── L1 optional ──
+      - L1_START_BLOCK=${L1_START_BLOCK:-0}
+      - FLUENT_START_BATCH_ID=${FLUENT_START_BATCH_ID:-}
+      - FLUENT_L1_DEPLOY_BLOCK=${FLUENT_L1_DEPLOY_BLOCK:-0}
+      # ── Fallback ──
+      - FLUENT_FALLBACK_LOCAL_RPC=${FLUENT_FALLBACK_LOCAL_RPC:-}
+      - FLUENT_FALLBACK_REMOTE_RPC=${FLUENT_FALLBACK_REMOTE_RPC:-}
+      - FLUENT_MAX_CONCURRENT_FALLBACKS=${FLUENT_MAX_CONCURRENT_FALLBACKS:-4}
+      # ── Logging ──
+      - RUST_LOG=${RUST_LOG:-info}
+      - RUST_BACKTRACE=1
+    volumes:
+      - ./bin/witness-courier:/usr/local/bin/witness-courier:ro
+      - courier-data:/data
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "witness-couri"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # ── Proxy ────────────────────────────────────────────────────────────
+  proxy:
+    build:
+      context: /home/djadjka/Work/fluent-stf-sp1
+      dockerfile: Dockerfile
+      target: rsp-proxy
+    container_name: proxy
+    network_mode: host
+    restart: unless-stopped
+    command: ["--eif_path", "${EIF_PATH:-/enclave.eif}"]
+    environment:
+      - API_KEY=${API_KEY:?Set API_KEY in .env}
+      - LISTEN_ADDR=0.0.0.0:8080
+      - RPC_URL=${RPC_URL:-http://127.0.0.1:8545}
+      # ── SP1 ──
+      - SP1_ELF_PATH=${SP1_ELF_PATH:-/app/bin/sp1.elf}
+      - SP1_PRIVATE_KEY=${SP1_PRIVATE_KEY:-}
+      # ── L1 (for blob fetching) ──
+      - L1_RPC_URL=${L1_RPC_URL:-}
+      - L1_CONTRACT_ADDR=${L1_CONTRACT_ADDR:-}
+      - L1_BEACON_URL=${L1_BEACON_URL:-}
+      - BEACON_GENESIS_TIMESTAMP=${BEACON_GENESIS_TIMESTAMP:-1606824023}
+      # ── AWS (for Nitro) ──
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      # ── Logging ──
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      - ./bin/sp1.elf:/app/bin/sp1.elf:ro
+    healthcheck:
+      test: >
+        curl -sf -o /dev/null -w '%{http_code}'
+        -X POST http://localhost:8080/sign-block-execution
+        -H 'Content-Type: application/json' -d '{}' || true
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+volumes:
+  fluent-data:
+    driver: local
+  courier-data:
+    driver: local

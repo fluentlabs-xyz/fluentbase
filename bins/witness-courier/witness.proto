@@ -23,6 +23,15 @@ service WitnessService {
   // Acknowledge notifies the node that the courier has successfully processed
   // a block witness. The node may delete the cold-tier file for that block.
   rpc Acknowledge(AcknowledgeRequest) returns (AcknowledgeResponse) {}
+
+  // GetWitness retrieves a single block witness from hot buffer or cold tier.
+  // Used for key-rotation recovery: the courier re-fetches witnesses for
+  // blocks whose signatures became stale after an enclave restart.
+  rpc GetWitness(GetWitnessRequest) returns (GetWitnessResponse) {}
+
+  // AcknowledgeRange deletes cold-tier files for blocks in [from_block, to_block].
+  // Used for deferred cleanup after a batch is successfully preconfirmed on L1.
+  rpc AcknowledgeRange(AcknowledgeRangeRequest) returns (AcknowledgeResponse) {}
 }
 
 // SubscribeRequest is sent once when the courier connects.
@@ -67,3 +76,19 @@ message AcknowledgeRequest {
 }
 
 message AcknowledgeResponse {}
+
+message GetWitnessRequest {
+  uint64 block_number = 1;
+}
+
+message GetWitnessResponse {
+  // Raw witness payload. Empty if not found.
+  bytes data = 1;
+  // Whether the witness was found in hot or cold storage.
+  bool found = 2;
+}
+
+message AcknowledgeRangeRequest {
+  uint64 from_block = 1;
+  uint64 to_block = 2;
+}

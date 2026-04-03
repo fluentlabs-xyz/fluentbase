@@ -18,6 +18,28 @@ sol! {
         uint256 batchIndex,
         bytes signature
     ) external;
+
+    /// NitroVerifier view function (auto-generated getter for mapping).
+    function verifiedPubkeys(address) external view returns (bool);
+}
+
+/// Check if an enclave address is registered in NitroVerifier.
+pub async fn is_key_registered(
+    provider: &impl Provider,
+    nitro_verifier_addr: Address,
+    enclave_address: Address,
+) -> Result<bool> {
+    let call = verifiedPubkeysCall(enclave_address);
+    let tx = TransactionRequest {
+        to: Some(nitro_verifier_addr.into()),
+        input: Bytes::from(call.abi_encode()).into(),
+        ..Default::default()
+    };
+    let result = provider.call(tx).await
+        .map_err(|e| eyre!("verifiedPubkeys call failed: {e}"))?;
+    let registered = verifiedPubkeysCall::abi_decode_returns(&result)
+        .map_err(|e| eyre!("Failed to decode verifiedPubkeys result: {e}"))?;
+    Ok(registered)
 }
 
 /// Submit `preconfirmBatch` to L1 and wait for the receipt.

@@ -52,3 +52,14 @@ pub struct SubmitBatchResponse {
     pub versioned_hashes: Vec<B256>,
     pub signature: Vec<u8>,
 }
+
+/// Response from proxy when batch signing fails due to enclave key rotation.
+///
+/// Mirror of proxy's `InvalidSignaturesResponse`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InvalidSignaturesResponse {
+    pub invalid_blocks: Vec<u64>,
+    pub enclave_address: Address,
+}
+
+use alloy_primitives::Address;

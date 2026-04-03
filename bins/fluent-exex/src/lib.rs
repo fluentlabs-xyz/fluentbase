@@ -31,7 +31,6 @@
 //! the replacement chain.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
@@ -451,60 +450,6 @@ where
     Ok(())
 }
 
-/// Run a single witness task with a slow-block warning ticker.
-///
-/// Logs a warning every 60 seconds while the task is still running.
-/// Never kills the task — historical blocks can legitimately take minutes.
-/// Not called in the main loop (which uses `spawn_blocking` directly for
-/// parallel batches); kept as a helper for single-block use cases.
-async fn run_witness_task<P>(
-    executor: Arc<EthHostExecutor>,
-    current_block: <FluentPrimitives as NodePrimitives>::Block,
-    parent_state_root: B256,
-    provider: P,
-    genesis: Genesis,
-    custom_beneficiary: Option<Address>,
-) -> Result<ClientExecutorInput<FluentPrimitives>, WitnessError>
-where
-    P: StateProviderFactory
-        + HeaderProvider<Header = alloy_consensus::Header>
-        + BlockReader<Block = <FluentPrimitives as NodePrimitives>::Block>
-        + Clone
-        + Send
-        + std::fmt::Debug
-        + 'static,
-{
-    let block_number = current_block.header().number();
-    let mut handle = std::pin::pin!(tokio::task::spawn_blocking(move || {
-        process_block_with_data(
-            &executor,
-            current_block,
-            parent_state_root,
-            provider,
-            genesis,
-            custom_beneficiary,
-        )
-    }));
-
-    let mut elapsed_secs = 0u64;
-    loop {
-        match tokio::time::timeout(Duration::from_secs(60), &mut handle).await {
-            Ok(join_result) => {
-                return join_result
-                    .map_err(WitnessError::TaskPanicked)?
-                    .map_err(WitnessError::Execution);
-            }
-            Err(_) => {
-                elapsed_secs += 60;
-                warn!(
-                    block_number,
-                    elapsed_secs,
-                    "Witness generation is slow — still waiting (historical revert_state cost)"
-                );
-            }
-        }
-    }
-}
 
 #[derive(Debug)]
 enum WitnessError {

@@ -1,36 +1,34 @@
-//! gRPC client with automatic reconnect, parallel block dispatch, and batch
+//! gRPC client with persistent MPMC worker pools, priority queues, and batch
 //! orchestration.
 //!
-//! The courier binary calls [`run`] which loops forever: connect → stream →
-//! on disconnect, read checkpoint, reconnect with exponential backoff.
+//! # Architecture
 //!
-//! # Data format
+//! The courier runs two persistent worker pools for the lifetime of the process:
 //!
-//! Witnesses flow through the pipeline as raw bincode — no compression.
-//! The courier forwards payloads to the remote proxy as-is via HTTP POST.
-//! Compression is only used in the cold-tier storage layer (hub.rs).
+//! 1. **Execution workers** (`EXECUTION_WORKERS` tasks) — read from a priority
+//!    channel pair (`high_rx` / `normal_rx`) via `biased` select, ensuring
+//!    re-execution after key rotation takes precedence over fresh witnesses.
+//!    Each worker retries with aggressive backoff (50ms → 2s).
 //!
-//! # Checkpoint file
+//! 2. **Fallback workers** (`max_concurrent_fallbacks` tasks) — recover missing
+//!    witnesses via L3 (local Reth RPC) / L4 (remote archive RPC), then feed
+//!    recovered payloads into the high-priority execution queue.
 //!
-//! After each successfully processed witness the courier writes the block
-//! number to a file (default `/tmp/witness_courier_checkpoint`). On restart
-//! it reads this file and sends `Subscribe(from_block = checkpoint + 1)`.
+//! A dedicated gRPC reader task feeds the `normal_tx` channel, providing native
+//! HTTP/2 flow-control backpressure when workers are saturated.
 //!
-//! # Orchestration
+//! # Reconnect
 //!
-//! The orchestrator merges three event streams:
-//! 1. gRPC `WitnessMessage` → spawn parallel `/sign-block-execution` tasks
-//! 2. `/sign-block-execution` responses → collect in `BatchAccumulator`
-//! 3. L1 events → set batch boundaries and mark blobs accepted
-//!
-//! When all conditions are met, triggers `/sign-batch-root` → `preconfirmBatch`.
+//! Worker pools and channels are created once in [`run`] and survive reconnects.
+//! Only the gRPC stream and per-session state are recreated on each attempt.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::{mpsc, Semaphore};
+use async_channel::{Receiver as AsyncReceiver, Sender as AsyncSender};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tokio::time::MissedTickBehavior;
 use tonic::transport::Channel;
@@ -55,14 +53,13 @@ use rsp_provider::create_provider;
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const INITIAL_BACKOFF: Duration = Duration::from_millis(500);
 
-/// Max concurrent `/sign-block-execution` requests.
-const MAX_CONCURRENT_REQUESTS: usize = 32;
+/// Number of persistent execution workers sending blocks to the Nitro proxy.
+const EXECUTION_WORKERS: usize = 32;
 
-/// Blocks to wait past a missing block before triggering L3/L4 fallback.
+/// Blocks past the head before a gap triggers L3/L4 fallback.
 const FALLBACK_GAP_M: u64 = 32;
 
-/// Maximum gaps dispatched to L3/L4 fallback per tick.
-/// Prevents O(N) memory and task explosion when historical gap is large.
+/// Maximum fallback tasks dispatched per tick (caps `fallback_active` set).
 const FALLBACK_BATCH_SIZE: usize = 128;
 
 /// Configuration for the orchestrator.
@@ -81,40 +78,181 @@ pub struct OrchestratorConfig<P: Provider + Clone + 'static> {
     pub max_concurrent_fallbacks: usize,
 }
 
+/// Task for the execution worker pool.
+struct ExecutionTask {
+    block_number: u64,
+    payload: Vec<u8>,
+}
+
 /// Response from a `/sign-block-execution` request.
 struct BlockResult {
     block_number: u64,
     response: EthExecutionResponse,
 }
 
+/// Result of a batch submission attempt.
+enum BatchOutcome {
+    /// Batch signed and preconfirmed on L1.
+    Success,
+    /// Enclave key rotated — these blocks need re-execution.
+    InvalidSignatures {
+        invalid_blocks: Vec<u64>,
+        enclave_address: Address,
+    },
+    /// Other failure (network, blob mismatch, etc.) — will retry with backoff.
+    Failed,
+}
+
+/// Error from `/sign-batch-root` call.
+enum SignBatchError {
+    InvalidSignatures {
+        invalid_blocks: Vec<u64>,
+        enclave_address: Address,
+    },
+    Other(eyre::Report),
+}
+
+/// Events from the dedicated gRPC reader task to the main orchestrator.
+enum GrpcEvent {
+    /// A witness was queued into the normal execution channel.
+    WitnessQueued(u64),
+    /// Chain reorg: these block numbers are no longer canonical.
+    Reorg(Vec<u64>),
+    /// The gRPC stream encountered an error.
+    StreamError(String),
+}
+
+// ============================================================================
+// Persistent execution worker pool
+// ============================================================================
+
+/// Reads tasks from the priority channel pair (high before normal) and sends
+/// `/sign-block-execution` requests with aggressive retry.
+async fn execution_worker(
+    worker_id: usize,
+    high_rx: AsyncReceiver<ExecutionTask>,
+    normal_rx: AsyncReceiver<ExecutionTask>,
+    result_tx: mpsc::Sender<BlockResult>,
+    http_client: reqwest::Client,
+    proxy_url: String,
+    api_key: String,
+) {
+    info!(worker_id, "Execution worker started");
+    loop {
+        // biased: always drain high-priority (re-execution) before normal
+        let task = tokio::select! {
+            biased;
+            Ok(t) = high_rx.recv() => t,
+            Ok(t) = normal_rx.recv() => t,
+            else => break, // channels closed — shutting down
+        };
+
+        let mut backoff = Duration::from_millis(50);
+        loop {
+            match send_block_request(&http_client, &proxy_url, &api_key, task.block_number, &task.payload).await {
+                Ok(response) => {
+                    let _ = result_tx.send(BlockResult { block_number: task.block_number, response }).await;
+                    break;
+                }
+                Err(e) => {
+                    warn!(worker_id, block = task.block_number, err = %e, "Execution failed, retrying");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(Duration::from_secs(2));
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Persistent fallback worker pool (L3 / L4 recovery)
+// ============================================================================
+
+/// Recovers missing witnesses via local/remote RPC and feeds them into the
+/// high-priority execution queue.
+async fn fallback_worker(
+    worker_id: usize,
+    fallback_rx: AsyncReceiver<u64>,
+    high_tx: AsyncSender<ExecutionTask>,
+    fallback_done_tx: mpsc::Sender<(u64, bool)>,
+    config: OrchestratorConfig<impl Provider + Clone + 'static>,
+) {
+    info!(worker_id, "Fallback worker started");
+    while let Ok(block_number) = fallback_rx.recv().await {
+        info!(worker_id, block_number, "Executing L3/L4 recovery");
+
+        match generate_fallback_payload(block_number, &config).await {
+            Some(payload) => {
+                info!(worker_id, block_number, "Fallback success — prioritizing execution");
+                let _ = high_tx.send(ExecutionTask { block_number, payload }).await;
+                let _ = fallback_done_tx.send((block_number, true)).await;
+            }
+            None => {
+                error!(worker_id, block_number, "Fallback exhausted — block permanently missing");
+                let _ = fallback_done_tx.send((block_number, false)).await;
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Main orchestrator loop
+// ============================================================================
+
 /// Run the courier orchestrator loop forever.
 ///
-/// Merges gRPC witness stream, block execution responses, and L1 events.
-pub async fn run<P: Provider + Clone + 'static>(config: OrchestratorConfig<P>, mut l1_events: mpsc::Receiver<L1Event>, mut l1_ckpt_rx: mpsc::Receiver<u64>) -> ! {
+/// Creates persistent worker pools and channels once, then reconnects to the
+/// gRPC witness stream on failure with exponential backoff.
+pub async fn run<P: Provider + Clone + 'static>(
+    config: OrchestratorConfig<P>,
+    mut l1_events: mpsc::Receiver<L1Event>,
+    mut l1_ckpt_rx: mpsc::Receiver<u64>,
+) -> ! {
     let db = Arc::new(Mutex::new(Db::open(&config.db_path).expect("Failed to open courier DB")));
-
     let mut accumulator = BatchAccumulator::with_db(Arc::clone(&db));
     let mut backoff = INITIAL_BACKOFF;
-    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS));
-    let fallback_semaphore = Arc::new(Semaphore::new(config.max_concurrent_fallbacks));
 
-    // Channel for block execution results
-    let (result_tx, mut result_rx) = mpsc::channel::<BlockResult>(256);
-
-    // Track sequential batch boundaries — recover rightmost known batch boundary on restart
     let mut next_batch_from_block: Option<u64> =
         accumulator.max_to_block().map(|e| e + 1)
             .or_else(|| db.lock().unwrap().get_last_batch_end().map(|e| e + 1));
 
-    // Pre-compute the initial confirmed set from DB responses above the checkpoint.
-    // This allows the watermark to advance through already-loaded responses immediately
-    // on the first run_stream call without re-requesting those blocks.
     let checkpoint = db.lock().unwrap().get_checkpoint();
     let initial_confirmed: BTreeSet<u64> = db.lock().unwrap()
         .get_all_response_block_numbers()
         .into_iter()
         .filter(|&b| b > checkpoint)
         .collect();
+
+    // Channels live for the entire process — workers survive reconnects
+    let (high_tx, high_rx) = async_channel::bounded::<ExecutionTask>(1024);
+    let (normal_tx, normal_rx) = async_channel::bounded::<ExecutionTask>(4096);
+    let (fallback_tx, fallback_rx) = async_channel::bounded::<u64>(1024);
+    let (result_tx, mut result_rx) = mpsc::channel::<BlockResult>(4096);
+    let (fallback_done_tx, mut fallback_done_rx) = mpsc::channel::<(u64, bool)>(128);
+
+    // Spawn persistent execution worker pool
+    for i in 0..EXECUTION_WORKERS {
+        tokio::spawn(execution_worker(
+            i,
+            high_rx.clone(),
+            normal_rx.clone(),
+            result_tx.clone(),
+            config.http_client.clone(),
+            config.proxy_url.clone(),
+            config.api_key.clone(),
+        ));
+    }
+
+    // Spawn persistent fallback worker pool
+    for i in 0..config.max_concurrent_fallbacks {
+        tokio::spawn(fallback_worker(
+            i,
+            fallback_rx.clone(),
+            high_tx.clone(),
+            fallback_done_tx.clone(),
+            config.clone(),
+        ));
+    }
 
     loop {
         let from_block = db.lock().unwrap().get_checkpoint() + 1;
@@ -125,10 +263,11 @@ pub async fn run<P: Provider + Clone + 'static>(config: OrchestratorConfig<P>, m
             &db,
             from_block,
             initial_confirmed.clone(),
-            &semaphore,
-            &fallback_semaphore,
-            &result_tx,
+            &normal_tx,
+            &high_tx,
+            &fallback_tx,
             &mut result_rx,
+            &mut fallback_done_rx,
             &mut l1_events,
             &mut l1_ckpt_rx,
             &mut accumulator,
@@ -154,20 +293,23 @@ pub async fn run<P: Provider + Clone + 'static>(config: OrchestratorConfig<P>, m
     }
 }
 
+// ============================================================================
+// Per-session orchestration state
+// ============================================================================
+
 /// Per-session orchestration state — lives for one gRPC connection.
 ///
 /// Created fresh on each [`run_stream`] call; dropped on disconnect.
-/// Cross-session state (`accumulator`, `next_batch_from_block`) lives in [`run`] and is
-/// passed by `&mut` so it survives reconnects.
+/// Cross-session state (`accumulator`, `next_batch_from_block`) lives in [`run`]
+/// and is passed by `&mut` so it survives reconnects.
 struct StreamState<P: Provider + Clone + 'static> {
     config: OrchestratorConfig<P>,
     db: Arc<Mutex<Db>>,
-    semaphore: Arc<Semaphore>,
-    fallback_semaphore: Arc<Semaphore>,
-    result_tx: mpsc::Sender<BlockResult>,
+    high_tx: AsyncSender<ExecutionTask>,
+    fallback_tx: AsyncSender<u64>,
     ack_client: WitnessServiceClient<Channel>,
-    batch_done_tx: mpsc::Sender<(u64, bool)>,
-    fallback_done_tx: mpsc::Sender<(u64, bool)>,
+    batch_done_tx: mpsc::Sender<(u64, BatchOutcome)>,
+    key_check_tx: mpsc::Sender<(Address, bool)>,
     checkpoint: u64,
     confirmed: BTreeSet<u64>,
     submitting_batches: HashSet<u64>,
@@ -178,73 +320,41 @@ struct StreamState<P: Provider + Clone + 'static> {
     batch_cancel_tokens: HashMap<u64, CancellationToken>,
     global_submit_attempts: u32,
     global_next_submit_allowed: Option<tokio::time::Instant>,
+    pending_key_check: Option<Address>,
 }
 
 impl<P: Provider + Clone + 'static> StreamState<P> {
-    /// Handle a gRPC message: either a reorg notification or a new witness.
-    async fn on_grpc_message(&mut self, msg: crate::proto::WitnessMessage, accumulator: &mut BatchAccumulator) {
-        use crate::proto::witness_message::Content;
-        match msg.content {
-            Some(Content::Reorg(reorg)) => {
-                let blocks = reorg.reverted_block_numbers;
-                warn!(?blocks, "Reorg received — purging stale state");
-                accumulator.handle_reorg(&blocks).await;
-                if let Some(&min) = blocks.iter().min() {
-                    let new_checkpoint = min.saturating_sub(1);
-                    {
-                        let db = Arc::clone(&self.db);
-                        let _ = tokio::task::spawn_blocking(move || {
-                            db.lock().unwrap().save_checkpoint(new_checkpoint);
-                        }).await;
-                    }
-                    self.checkpoint = new_checkpoint;
-                    self.confirmed.retain(|&b| b <= new_checkpoint);
-                    info!(new_checkpoint, "Checkpoint rolled back due to reorg");
-                }
-
-                // Cancel in-flight batch submissions for affected batches
-                let affected_batches: Vec<u64> = self.batch_cancel_tokens.keys()
-                    .filter(|&&batch_idx| {
-                        accumulator.get(batch_idx).is_none()
-                    })
-                    .copied()
-                    .collect();
-                for batch_idx in affected_batches {
-                    if let Some(token) = self.batch_cancel_tokens.remove(&batch_idx) {
-                        warn!(batch_idx, "Cancelling in-flight batch submission due to reorg");
-                        token.cancel();
-                    }
-                    self.submitting_batches.remove(&batch_idx);
-                }
+    /// Handle reorg: purge stale state, roll back checkpoint, cancel affected batches.
+    async fn on_reorg(&mut self, blocks: Vec<u64>, accumulator: &mut BatchAccumulator) {
+        accumulator.handle_reorg(&blocks).await;
+        if let Some(&min) = blocks.iter().min() {
+            let new_checkpoint = min.saturating_sub(1);
+            {
+                let db = Arc::clone(&self.db);
+                let _ = tokio::task::spawn_blocking(move || {
+                    db.lock().unwrap().save_checkpoint(new_checkpoint);
+                }).await;
             }
-            Some(Content::Witness(witness)) => {
-                let block_number = witness.block_number;
-                let raw_bytes = witness.data.len();
+            self.checkpoint = new_checkpoint;
+            self.confirmed.retain(|&b| b <= new_checkpoint);
+            info!(new_checkpoint, "Checkpoint rolled back due to reorg");
+        }
 
-                info!(
-                    block_number,
-                    raw_bytes,
-                    "Dispatching witness"
-                );
-
-                self.pending_requests.insert(block_number);
-                self.highest_witness_received = self.highest_witness_received.max(block_number);
-
-                spawn_block_request(
-                    self.config.http_client.clone(),
-                    self.config.proxy_url.clone(),
-                    self.config.api_key.clone(),
-                    block_number,
-                    witness.data,
-                    Arc::clone(&self.semaphore),
-                    self.result_tx.clone(),
-                );
+        // Cancel in-flight batch submissions for affected batches
+        let affected_batches: Vec<u64> = self.batch_cancel_tokens.keys()
+            .filter(|&&batch_idx| accumulator.get(batch_idx).is_none())
+            .copied()
+            .collect();
+        for batch_idx in affected_batches {
+            if let Some(token) = self.batch_cancel_tokens.remove(&batch_idx) {
+                warn!(batch_idx, "Cancelling in-flight batch submission due to reorg");
+                token.cancel();
             }
-            None => {}
+            self.submitting_batches.remove(&batch_idx);
         }
     }
 
-    /// Handle a completed block execution response: advance watermark, ACK, try dispatch.
+    /// Handle a completed block execution response: advance watermark, persist, try dispatch.
     async fn on_block_result(&mut self, result: BlockResult, accumulator: &mut BatchAccumulator) {
         let block_number = result.block_number;
         self.pending_requests.remove(&block_number);
@@ -263,15 +373,6 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             let _ = tokio::task::spawn_blocking(move || {
                 db.lock().unwrap().save_checkpoint(cp);
             }).await;
-        }
-
-        // Cumulative ACK — fire-and-forget; a missed ACK is cleaned up by the next one.
-        {
-            let mut ack = self.ack_client.clone();
-            let cp = self.checkpoint;
-            tokio::spawn(async move {
-                let _ = ack.acknowledge(crate::proto::AcknowledgeRequest { up_to_block: cp }).await;
-            });
         }
 
         self.dispatch_batch_if_ready(accumulator);
@@ -301,33 +402,79 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
     }
 
     /// Handle the result of a background batch submission task.
-    async fn on_batch_done(&mut self, batch_index: u64, success: bool, accumulator: &mut BatchAccumulator) {
+    async fn on_batch_done(&mut self, batch_index: u64, outcome: BatchOutcome, accumulator: &mut BatchAccumulator) {
         self.submitting_batches.remove(&batch_index);
         self.batch_cancel_tokens.remove(&batch_index);
-        if success {
-            self.global_submit_attempts = 0;
-            self.global_next_submit_allowed = None;
-            if let Some(batch) = accumulator.take(batch_index).await {
-                {
-                    let db = Arc::clone(&self.db);
-                    let block = batch.to_block;
-                    let _ = tokio::task::spawn_blocking(move || {
-                        db.lock().unwrap().save_last_batch_end(block);
-                    }).await;
+
+        match outcome {
+            BatchOutcome::Success => {
+                self.global_submit_attempts = 0;
+                self.global_next_submit_allowed = None;
+
+                if let Some(batch) = accumulator.take(batch_index).await {
+                    // Deferred acknowledge: delete cold-tier witnesses for this batch
+                    let mut ack = self.ack_client.clone();
+                    let fb = batch.from_block;
+                    let tb = batch.to_block;
+                    tokio::spawn(async move {
+                        let _ = ack.acknowledge_range(
+                            crate::proto::AcknowledgeRangeRequest {
+                                from_block: fb,
+                                to_block: tb,
+                            }
+                        ).await;
+                    });
+
+                    {
+                        let db = Arc::clone(&self.db);
+                        let block = batch.to_block;
+                        let _ = tokio::task::spawn_blocking(move || {
+                            db.lock().unwrap().save_last_batch_end(block);
+                        }).await;
+                    }
+                    info!(batch_index, to_block = batch.to_block, "Batch preconfirmed on L1");
                 }
-                info!(batch_index, to_block = batch.to_block, "Batch preconfirmed on L1");
             }
-        } else {
-            self.global_submit_attempts += 1;
-            let delay_secs = (10u64 * self.global_submit_attempts as u64).min(300);
-            self.global_next_submit_allowed = Some(
-                tokio::time::Instant::now() + Duration::from_secs(delay_secs)
-            );
-            warn!(batch_index, attempts = self.global_submit_attempts, delay_secs, "Batch failed — global backoff");
+
+            BatchOutcome::InvalidSignatures { invalid_blocks, enclave_address } => {
+                warn!(
+                    batch_index,
+                    invalid_count = invalid_blocks.len(),
+                    %enclave_address,
+                    "Key rotation detected — purging stale responses and re-executing"
+                );
+
+                accumulator.purge_responses(&invalid_blocks).await;
+
+                for &block_number in &invalid_blocks {
+                    self.spawn_re_execution(block_number);
+                }
+
+                self.pending_key_check = Some(enclave_address);
+
+                let tx = self.key_check_tx.clone();
+                let provider = self.config.l1_provider.clone();
+                let verifier = self.config.nitro_verifier_addr;
+                let addr = enclave_address;
+                tokio::spawn(async move {
+                    let ok = l1_submitter::is_key_registered(&provider, verifier, addr)
+                        .await.unwrap_or(false);
+                    let _ = tx.send((addr, ok)).await;
+                });
+            }
+
+            BatchOutcome::Failed => {
+                self.global_submit_attempts += 1;
+                let delay_secs = (10u64 * self.global_submit_attempts as u64).min(300);
+                self.global_next_submit_allowed = Some(
+                    tokio::time::Instant::now() + Duration::from_secs(delay_secs)
+                );
+                warn!(batch_index, attempts = self.global_submit_attempts, delay_secs, "Batch failed — global backoff");
+            }
         }
     }
 
-    /// Scan for witness gaps and spawn L3/L4 fallback tasks for any found.
+    /// Scan for witness gaps and dispatch to the fallback worker pool.
     fn on_fallback_tick(&mut self) {
         if self.highest_witness_received < FALLBACK_GAP_M {
             return;
@@ -351,37 +498,17 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             .collect();
 
         for block_number in gaps {
-            warn!(block_number, "Gap detected — spawning L3/L4 fallback");
+            warn!(block_number, "Gap detected — dispatching to fallback pool");
             self.fallback_active.insert(block_number);
-
-            let local_rpc = self.config.fallback_local_rpc.clone();
-            let remote_rpc = self.config.fallback_remote_rpc.clone();
-            let http = self.config.http_client.clone();
-            let proxy = self.config.proxy_url.clone();
-            let key = self.config.api_key.clone();
-            let sem = Arc::clone(&self.semaphore);
-            let fsem = Arc::clone(&self.fallback_semaphore);
-            let rtx = self.result_tx.clone();
-            let fdtx = self.fallback_done_tx.clone();
-
-            tokio::spawn(async move {
-                let _permit = match fsem.acquire().await {
-                    Ok(p) => p,
-                    Err(_) => {
-                        let _ = fdtx.send((block_number, false)).await;
-                        return;
-                    }
-                };
-                let ok = try_witness_fallback(
-                    block_number, local_rpc, remote_rpc,
-                    http, proxy, key, sem, rtx,
-                ).await;
-                let _ = fdtx.send((block_number, ok)).await;
-            });
+            // try_send is safe here: channel capacity (1024) >> FALLBACK_BATCH_SIZE (128)
+            if let Err(e) = self.fallback_tx.try_send(block_number) {
+                warn!(block_number, err = %e, "Fallback channel full — skipping");
+                self.fallback_active.remove(&block_number);
+            }
         }
     }
 
-    /// Handle a fallback task completion: clear active set, propagate into pending or exhaust.
+    /// Handle a fallback task completion.
     fn on_fallback_done(&mut self, block_number: u64, success: bool) {
         self.fallback_active.remove(&block_number);
         if success {
@@ -395,6 +522,33 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
         }
     }
 
+    /// Re-execute a block: try hub (gRPC cache) first, then fall back to L3/L4.
+    fn spawn_re_execution(&mut self, block_number: u64) {
+        self.pending_requests.insert(block_number);
+
+        let mut witness_client = self.ack_client.clone();
+        let h_tx = self.high_tx.clone();
+        let f_tx = self.fallback_tx.clone();
+
+        tokio::spawn(async move {
+            // Try hub first (gRPC GetWitness)
+            if let Ok(resp) = witness_client.get_witness(
+                crate::proto::GetWitnessRequest { block_number }
+            ).await {
+                let witness = resp.into_inner();
+                if witness.found && !witness.data.is_empty() {
+                    info!(block_number, "Re-execution: witness found in hub — prioritizing");
+                    let _ = h_tx.send(ExecutionTask { block_number, payload: witness.data }).await;
+                    return;
+                }
+            }
+
+            // Hub miss — dispatch to fallback pool for L3/L4 recovery
+            info!(block_number, "Re-execution: hub miss — dispatching to fallback pool");
+            let _ = f_tx.send(block_number).await;
+        });
+    }
+
     /// Dispatch at most one ready batch as a background task. No-op if one is already in flight.
     fn dispatch_batch_if_ready(&mut self, accumulator: &mut BatchAccumulator) {
         // Global throttle check
@@ -402,6 +556,11 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             if tokio::time::Instant::now() < allowed_at {
                 return;
             }
+        }
+
+        // Key registration check — don't submit if pending key isn't registered yet
+        if self.pending_key_check.is_some() {
+            return;
         }
 
         while let Some(batch_index) = accumulator.first_ready() {
@@ -419,30 +578,35 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             let cfg = self.config.clone();
             let dtx = self.batch_done_tx.clone();
             tokio::spawn(async move {
-                let ok = submit_batch_io(
+                let outcome = submit_batch_io(
                     &cfg.http_client, &cfg.proxy_url, &cfg.api_key,
                     &cfg.l1_provider, cfg.l1_contract_addr, cfg.nitro_verifier_addr,
                     batch_index, from_block, to_block, responses,
                     &token,
                 ).await;
-                let _ = dtx.send((batch_index, ok)).await;
+                let _ = dtx.send((batch_index, outcome)).await;
             });
             break;
         }
     }
 }
 
-/// Single stream session: connect, build state, run select! loop.
+// ============================================================================
+// Stream session
+// ============================================================================
+
+/// Single stream session: connect, spawn gRPC reader, run select! loop.
 #[allow(clippy::too_many_arguments)]
 async fn run_stream<P: Provider + Clone + 'static>(
     config: &OrchestratorConfig<P>,
     db: &Arc<Mutex<Db>>,
     from_block: u64,
-    mut confirmed: BTreeSet<u64>,  // pre-populated from DB on first call
-    semaphore: &Arc<Semaphore>,
-    fallback_semaphore: &Arc<Semaphore>,
-    result_tx: &mpsc::Sender<BlockResult>,
+    mut confirmed: BTreeSet<u64>,
+    normal_tx: &AsyncSender<ExecutionTask>,
+    high_tx: &AsyncSender<ExecutionTask>,
+    fallback_tx: &AsyncSender<u64>,
     result_rx: &mut mpsc::Receiver<BlockResult>,
+    fallback_done_rx: &mut mpsc::Receiver<(u64, bool)>,
     l1_events: &mut mpsc::Receiver<L1Event>,
     l1_ckpt_rx: &mut mpsc::Receiver<u64>,
     accumulator: &mut BatchAccumulator,
@@ -454,12 +618,8 @@ async fn run_stream<P: Provider + Clone + 'static>(
         .connect()
         .await?;
 
-    let mut client = WitnessServiceClient::new(channel)
-        .max_encoding_message_size(usize::MAX)
-        .max_decoding_message_size(usize::MAX);
-
-    let ack_client = client.clone(); // cheap clone — shares the underlying Channel
-
+    let mut client = WitnessServiceClient::new(channel);
+    let ack_client = client.clone();
     let mut stream = client.subscribe(SubscribeRequest { from_block }).await?.into_inner();
     info!(from_block, "Subscribed to witness stream");
 
@@ -470,20 +630,19 @@ async fn run_stream<P: Provider + Clone + 'static>(
         confirmed.remove(&checkpoint);
     }
 
-    let (batch_done_tx, mut batch_done_rx) = mpsc::channel::<(u64, bool)>(8);
-    let (fallback_done_tx, mut fallback_done_rx) = mpsc::channel::<(u64, bool)>(32);
+    let (batch_done_tx, mut batch_done_rx) = mpsc::channel::<(u64, BatchOutcome)>(8);
+    let (key_check_tx, mut key_check_rx) = mpsc::channel::<(Address, bool)>(4);
     let mut fallback_ticker = tokio::time::interval(Duration::from_secs(5));
     fallback_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     let mut state = StreamState {
         config: config.clone(),
         db: Arc::clone(db),
-        semaphore: Arc::clone(semaphore),
-        fallback_semaphore: Arc::clone(fallback_semaphore),
-        result_tx: result_tx.clone(),
+        high_tx: high_tx.clone(),
+        fallback_tx: fallback_tx.clone(),
         ack_client,
         batch_done_tx,
-        fallback_done_tx,
+        key_check_tx,
         checkpoint,
         confirmed,
         submitting_batches: HashSet::new(),
@@ -494,48 +653,139 @@ async fn run_stream<P: Provider + Clone + 'static>(
         batch_cancel_tokens: HashMap::new(),
         global_submit_attempts: 0,
         global_next_submit_allowed: None,
+        pending_key_check: None,
     };
 
-    loop {
-        tokio::select! {
-            // ── Stream A: gRPC witness / reorg messages ────────────────
-            msg = stream.message() => match msg? {
-                None => { info!("Witness stream ended"); return Ok(()); }
-                Some(msg) => state.on_grpc_message(msg, accumulator).await,
-            },
-
-            // ── Stream B: block execution results ──────────────────
-            Some(result) = result_rx.recv() =>
-                state.on_block_result(result, accumulator).await,
-
-            // ── Stream C: L1 events ──────────────────────────────────
-            Some(event) = l1_events.recv() =>
-                state.on_l1_event(event, accumulator, next_batch_from_block, from_block).await,
-
-            // ── Stream D: batch submission completions ────────────────
-            Some((batch_index, success)) = batch_done_rx.recv() =>
-                state.on_batch_done(batch_index, success, accumulator).await,
-
-            // ── Stream E: fallback gap checker ────────────────────────
-            _ = fallback_ticker.tick() => state.on_fallback_tick(),
-
-            // ── Stream F: fallback task completions ───────────────────
-            Some((block_number, success)) = fallback_done_rx.recv() =>
-                state.on_fallback_done(block_number, success),
-
-            // ── Stream G: L1 listener checkpoint persistence ─────────────────
-            Some(l1_block) = l1_ckpt_rx.recv() => {
-                let db = Arc::clone(&state.db);
-                let _ = tokio::task::spawn_blocking(move || {
-                    db.lock().unwrap().save_l1_checkpoint(l1_block);
-                }).await;
-            },
-        }
+    // Dedicated gRPC reader task — provides native HTTP/2 backpressure via
+    // blocking .send().await on normal_tx when workers are saturated.
+    let session_token = CancellationToken::new();
+    let (grpc_event_tx, mut grpc_event_rx) = mpsc::channel::<GrpcEvent>(1024);
+    {
+        let normal_tx = normal_tx.clone();
+        let grpc_event_tx = grpc_event_tx.clone();
+        let token = session_token.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => break,
+                    msg = stream.message() => match msg {
+                        Ok(Some(msg)) => {
+                            use crate::proto::witness_message::Content;
+                            match msg.content {
+                                Some(Content::Witness(w)) => {
+                                    let bn = w.block_number;
+                                    if normal_tx.send(ExecutionTask {
+                                        block_number: bn,
+                                        payload: w.data,
+                                    }).await.is_err() {
+                                        break;
+                                    }
+                                    let _ = grpc_event_tx.send(GrpcEvent::WitnessQueued(bn)).await;
+                                }
+                                Some(Content::Reorg(reorg)) => {
+                                    let _ = grpc_event_tx.send(
+                                        GrpcEvent::Reorg(reorg.reverted_block_numbers)
+                                    ).await;
+                                }
+                                None => {}
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            let _ = grpc_event_tx.send(
+                                GrpcEvent::StreamError(e.to_string())
+                            ).await;
+                            break;
+                        }
+                    },
+                }
+            }
+        });
     }
+
+    let result = async {
+        loop {
+            tokio::select! {
+                // ── Stream A: gRPC reader events ────────────────────────
+                event = grpc_event_rx.recv() => match event {
+                    Some(GrpcEvent::WitnessQueued(bn)) => {
+                        state.highest_witness_received = state.highest_witness_received.max(bn);
+                        state.pending_requests.insert(bn);
+                    }
+                    Some(GrpcEvent::Reorg(blocks)) => {
+                        warn!(?blocks, "Reorg received — purging stale state");
+                        state.on_reorg(blocks, accumulator).await;
+                    }
+                    Some(GrpcEvent::StreamError(e)) => {
+                        return Err(eyre::eyre!("gRPC stream error: {e}"));
+                    }
+                    None => {
+                        info!("Witness stream ended");
+                        return Ok(());
+                    }
+                },
+
+                // ── Stream B: block execution results ───────────────────
+                Some(result) = result_rx.recv() =>
+                    state.on_block_result(result, accumulator).await,
+
+                // ── Stream C: L1 events ─────────────────────────────────
+                Some(event) = l1_events.recv() =>
+                    state.on_l1_event(event, accumulator, next_batch_from_block, from_block).await,
+
+                // ── Stream D: batch submission completions ──────────────
+                Some((batch_index, outcome)) = batch_done_rx.recv() =>
+                    state.on_batch_done(batch_index, outcome, accumulator).await,
+
+                // ── Stream E: fallback gap checker ──────────────────────
+                _ = fallback_ticker.tick() => state.on_fallback_tick(),
+
+                // ── Stream F: fallback task completions ─────────────────
+                Some((block_number, success)) = fallback_done_rx.recv() =>
+                    state.on_fallback_done(block_number, success),
+
+                // ── Stream G: key registration check results ────────────
+                Some((addr, registered)) = key_check_rx.recv() => {
+                    if registered {
+                        info!(%addr, "Enclave key confirmed on L1");
+                        state.pending_key_check = None;
+                        state.dispatch_batch_if_ready(accumulator);
+                    } else {
+                        // Re-check after delay
+                        let tx = state.key_check_tx.clone();
+                        let provider = state.config.l1_provider.clone();
+                        let verifier = state.config.nitro_verifier_addr;
+                        tokio::spawn(async move {
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                            let ok = l1_submitter::is_key_registered(&provider, verifier, addr)
+                                .await.unwrap_or(false);
+                            let _ = tx.send((addr, ok)).await;
+                        });
+                    }
+                },
+
+                // ── Stream H: L1 listener checkpoint persistence ────────
+                Some(l1_block) = l1_ckpt_rx.recv() => {
+                    let db = Arc::clone(&state.db);
+                    let _ = tokio::task::spawn_blocking(move || {
+                        db.lock().unwrap().save_l1_checkpoint(l1_block);
+                    }).await;
+                },
+            }
+        }
+    }.await;
+
+    // Cancel the gRPC reader task for this session
+    session_token.cancel();
+    result
 }
 
+// ============================================================================
+// Batch submission I/O
+// ============================================================================
+
 /// Execute network I/O for batch submission — no accumulator access.
-/// Returns true if sign + preconfirm both succeeded.
 async fn submit_batch_io<P: Provider + Clone + 'static>(
     http_client: &reqwest::Client,
     proxy_url: &str,
@@ -548,8 +798,8 @@ async fn submit_batch_io<P: Provider + Clone + 'static>(
     to_block: u64,
     responses: Vec<EthExecutionResponse>,
     cancel: &CancellationToken,
-) -> bool {
-    if cancel.is_cancelled() { return false; }
+) -> BatchOutcome {
+    if cancel.is_cancelled() { return BatchOutcome::Failed; }
 
     info!(batch_index, from_block, to_block, "Batch ready — triggering /sign-batch-root");
 
@@ -559,15 +809,24 @@ async fn submit_batch_io<P: Provider + Clone + 'static>(
 
     let batch_resp = match sign_result {
         Ok(resp) => resp,
-        Err(e) => {
+        Err(SignBatchError::InvalidSignatures { invalid_blocks, enclave_address }) => {
+            warn!(
+                batch_index,
+                ?invalid_blocks,
+                %enclave_address,
+                "Batch has stale signatures — key rotation detected"
+            );
+            return BatchOutcome::InvalidSignatures { invalid_blocks, enclave_address };
+        }
+        Err(SignBatchError::Other(e)) => {
             error!(batch_index, err = %e, "Failed to sign batch root — will retry");
-            return false;
+            return BatchOutcome::Failed;
         }
     };
 
     if cancel.is_cancelled() {
         warn!(batch_index, "Batch cancelled after signing — skipping L1 submit");
-        return false;
+        return BatchOutcome::Failed;
     }
 
     info!(batch_index, "Batch root signed — submitting preconfirmBatch");
@@ -576,10 +835,10 @@ async fn submit_batch_io<P: Provider + Clone + 'static>(
         l1_provider, l1_contract_addr, nitro_verifier_addr, batch_index, batch_resp.signature,
     ).await {
         error!(batch_index, err = %e, "preconfirmBatch failed — will retry");
-        return false;
+        return BatchOutcome::Failed;
     }
 
-    true
+    BatchOutcome::Success
 }
 
 /// Call the proxy's `/sign-batch-root` endpoint.
@@ -591,7 +850,7 @@ async fn call_sign_batch_root(
     to_block: u64,
     batch_index: u64,
     responses: &[EthExecutionResponse],
-) -> eyre::Result<SubmitBatchResponse> {
+) -> Result<SubmitBatchResponse, SignBatchError> {
     // Derive base URL from proxy_url (which points to /sign-block-execution)
     let base = proxy_url
         .rfind('/')
@@ -612,56 +871,35 @@ async fn call_sign_batch_root(
         .json(&body)
         .send()
         .await
-        .map_err(|e| eyre::eyre!("sign-batch-root request failed: {e}"))?;
+        .map_err(|e| SignBatchError::Other(eyre::eyre!("sign-batch-root request failed: {e}")))?;
 
     let status = resp.status();
+
+    // Key rotation: proxy returns 409 with InvalidSignaturesResponse
+    if status == reqwest::StatusCode::CONFLICT {
+        let parsed: crate::types::InvalidSignaturesResponse = resp
+            .json()
+            .await
+            .map_err(|e| SignBatchError::Other(eyre::eyre!("Failed to parse 409: {e}")))?;
+        return Err(SignBatchError::InvalidSignatures {
+            invalid_blocks: parsed.invalid_blocks,
+            enclave_address: parsed.enclave_address,
+        });
+    }
+
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        return Err(eyre::eyre!("sign-batch-root returned {status}: {text}"));
+        return Err(SignBatchError::Other(eyre::eyre!("sign-batch-root returned {status}: {text}")));
     }
 
     resp.json::<SubmitBatchResponse>()
         .await
-        .map_err(|e| eyre::eyre!("Failed to parse SubmitBatchResponse: {e}"))
+        .map_err(|e| SignBatchError::Other(eyre::eyre!("Failed to parse SubmitBatchResponse: {e}")))
 }
 
-/// Spawn a parallel `/sign-block-execution` request with infinite retry.
-fn spawn_block_request(
-    http_client: reqwest::Client,
-    proxy_url: String,
-    api_key: String,
-    block_number: u64,
-    raw_witness: Vec<u8>,
-    semaphore: Arc<Semaphore>,
-    result_tx: mpsc::Sender<BlockResult>,
-) {
-    tokio::spawn(async move {
-        let _permit = match semaphore.acquire().await {
-            Ok(p) => p,
-            Err(_) => return,
-        };
-
-        let mut backoff = Duration::from_millis(500);
-        loop {
-            match send_block_request(&http_client, &proxy_url, &api_key, block_number, &raw_witness).await {
-                Ok(response) => {
-                    let _ = result_tx.send(BlockResult { block_number, response }).await;
-                    return;
-                }
-                Err(e) => {
-                    warn!(
-                        block_number,
-                        err = %e,
-                        backoff_ms = backoff.as_millis(),
-                        "Block request failed — retrying"
-                    );
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(Duration::from_secs(60));
-                }
-            }
-        }
-    });
-}
+// ============================================================================
+// Block execution request
+// ============================================================================
 
 /// Send a single `/sign-block-execution` request.
 async fn send_block_request(
@@ -692,46 +930,41 @@ async fn send_block_request(
         .map_err(|e| eyre::eyre!("Failed to parse response: {e}"))
 }
 
+// ============================================================================
+// L3/L4 fallback witness generation
+// ============================================================================
+
 type FallbackInput = ClientExecutorInput<<FluentEvmConfig as reth_evm::ConfigureEvm>::Primitives>;
 
-/// Attempt to recover a missing witness via local RPC (L3) then remote archive (L4).
+/// Generate a witness payload via L3 (local RPC) then L4 (remote archive RPC).
 ///
-/// On success: serializes the witness and calls `spawn_block_request`,
-/// which handles Nitro HTTP retries. Returns true if a request was dispatched.
-/// On failure: returns false — caller logs and marks block exhausted.
-async fn try_witness_fallback(
+/// Returns serialized bincode bytes on success, None if both sources fail.
+async fn generate_fallback_payload<P: Provider + Clone + 'static>(
     block_number: u64,
-    local_rpc: Option<String>,
-    remote_rpc: Option<String>,
-    http_client: reqwest::Client,
-    proxy_url: String,
-    api_key: String,
-    semaphore: Arc<Semaphore>,
-    result_tx: mpsc::Sender<BlockResult>,
-) -> bool {
+    config: &OrchestratorConfig<P>,
+) -> Option<Vec<u8>> {
     let genesis = Genesis::Fluent;
     let chain_spec = match reth_chainspec::ChainSpec::try_from(&genesis) {
         Ok(cs) => std::sync::Arc::new(cs),
         Err(e) => {
-            error!(block_number, err = %e, "L3/L4: failed to build ChainSpec");
-            return false;
+            error!(block_number, err = %e, "Failed to build ChainSpec");
+            return None;
         }
     };
     let evm_config = rsp_host_executor::create_eth_block_execution_strategy_factory(&genesis, None);
     let executor = HostExecutor::new(evm_config, chain_spec);
 
+    let mut input: Option<FallbackInput> = None;
+
     // L3 — local Reth JSON-RPC
-    if let Some(url_str) = &local_rpc {
+    if let Some(url_str) = &config.fallback_local_rpc {
         match url::Url::parse(url_str) {
             Ok(url) => {
                 let provider = create_provider::<Ethereum>(url);
                 match executor.execute(block_number, &provider, genesis.clone(), None, false).await {
-                    Ok(input) => {
+                    Ok(res) => {
                         info!(block_number, "L3 fallback succeeded");
-                        return dispatch_fallback_witness(
-                            block_number, &input,
-                            http_client, proxy_url, api_key, semaphore, result_tx,
-                        ).await;
+                        input = Some(res);
                     }
                     Err(e) => warn!(block_number, err = %e, "L3 fallback failed — trying L4"),
                 }
@@ -741,50 +974,34 @@ async fn try_witness_fallback(
     }
 
     // L4 — remote archive RPC
-    if let Some(url_str) = &remote_rpc {
-        match url::Url::parse(url_str) {
-            Ok(url) => {
-                let provider = create_provider::<Ethereum>(url);
-                match executor.execute(block_number, &provider, genesis.clone(), None, false).await {
-                    Ok(input) => {
-                        info!(block_number, "L4 fallback succeeded");
-                        return dispatch_fallback_witness(
-                            block_number, &input,
-                            http_client, proxy_url, api_key, semaphore, result_tx,
-                        ).await;
+    if input.is_none() {
+        if let Some(url_str) = &config.fallback_remote_rpc {
+            match url::Url::parse(url_str) {
+                Ok(url) => {
+                    let provider = create_provider::<Ethereum>(url);
+                    match executor.execute(block_number, &provider, genesis.clone(), None, false).await {
+                        Ok(res) => {
+                            info!(block_number, "L4 fallback succeeded");
+                            input = Some(res);
+                        }
+                        Err(e) => warn!(block_number, err = %e, "L4 fallback failed"),
                     }
-                    Err(e) => warn!(block_number, err = %e, "L4 fallback failed"),
                 }
+                Err(e) => warn!(block_number, err = %e, "L4: invalid fallback_remote_rpc URL"),
             }
-            Err(e) => warn!(block_number, err = %e, "L4: invalid fallback_remote_rpc URL"),
         }
     }
 
-    false
-}
-
-/// Serialize and dispatch a recovered witness into the normal signing pipeline.
-async fn dispatch_fallback_witness(
-    block_number: u64,
-    input: &FallbackInput,
-    http_client: reqwest::Client,
-    proxy_url: String,
-    api_key: String,
-    semaphore: Arc<Semaphore>,
-    result_tx: mpsc::Sender<BlockResult>,
-) -> bool {
-    let input_clone = input.clone();
-    let raw = match tokio::task::spawn_blocking(move || bincode::serialize(&input_clone)).await {
-        Ok(Ok(b)) => b,
+    let input = input?;
+    match tokio::task::spawn_blocking(move || bincode::serialize(&input)).await {
+        Ok(Ok(bytes)) => Some(bytes),
         Ok(Err(e)) => {
             error!(block_number, err = %e, "Fallback: bincode serialization failed");
-            return false;
+            None
         }
-        Err(_) => return false,
-    };
-
-    spawn_block_request(http_client, proxy_url, api_key, block_number, raw, semaphore, result_tx);
-    true
+        Err(e) => {
+            error!(block_number, err = %e, "Fallback: spawn_blocking panicked");
+            None
+        }
+    }
 }
-
-
