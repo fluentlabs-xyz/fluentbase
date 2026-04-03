@@ -1,6 +1,4 @@
 use crate::{address, hex, Address, Bytes, B256, UNIVERSAL_TOKEN_MAGIC_BYTES, WASM_MAGIC_BYTES};
-use revm_precompile::{PrecompileSpecId, Precompiles};
-use revm_primitives::hardfork::SpecId;
 
 /// Address of the delegated **EVM runtime**.
 ///
@@ -127,7 +125,7 @@ pub const PRECOMPILE_BLS12_381_MAP_G2: Address = evm_address(0x11);
 /// across nodes for consensus.
 ///
 /// NOTE: DON'T EDIT, THIS LIST WILL BE REMOVED AT NEXT TESTNET SNAPSHOT!
-const TESTNET_LEGACY_PRECOMPILE_ADDRESSES: &[Address] = &[
+pub const TESTNET_LEGACY_PRECOMPILE_ADDRESSES: &[Address] = &[
     PRECOMPILE_BIG_MODEXP,              // FORK ALERT: DON'T TOUCH!
     PRECOMPILE_BLAKE2F,                 // FORK ALERT: DON'T TOUCH!
     PRECOMPILE_BLS12_381_G1_ADD,        // FORK ALERT: DON'T TOUCH!
@@ -159,20 +157,6 @@ const TESTNET_LEGACY_PRECOMPILE_ADDRESSES: &[Address] = &[
     PRECOMPILE_WEBAUTHN_VERIFIER,       // FORK ALERT: DON'T TOUCH!
     PRECOMPILE_WRAPPED_ETH,             // FORK ALERT: DON'T TOUCH!
 ];
-
-/// Returns `true` if `address` is part of the executor's system-precompile set.
-///
-/// P.S: We exclude Fluent system precompiles from this list since it may affect
-///  future runtime upgrades and cause redundant forks, because EVM precompiles have
-///  enforced empty account state.
-pub fn is_evm_system_precompile(chain_id: u64, spec: SpecId, address: &Address) -> bool {
-    // TODO(dmitry123): Remove testnet legacy precompiles once we have new snapshot
-    if chain_id == 0x5202 {
-        return TESTNET_LEGACY_PRECOMPILE_ADDRESSES.contains(address);
-    }
-    let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(spec));
-    precompiles.contains(address)
-}
 
 /// Addresses whose execution is delegated to the **system runtime** implementation.
 ///

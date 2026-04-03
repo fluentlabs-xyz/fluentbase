@@ -9,7 +9,7 @@
 use crate::{
     api::RwasmFrame,
     gas::{account_warm_cold_cost, call_cost},
-    types::{SystemInterruptionInputs, SystemInterruptionOutcome},
+    types::{is_evm_system_precompile, SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
 use fluentbase_evm::{types::instruction_result_from_exit_code, EthereumMetadata};
@@ -17,9 +17,9 @@ use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create_metadata_address, is_evm_system_precompile, is_execute_using_system_runtime,
-    Address, Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY,
-    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
+    calc_create_metadata_address, is_execute_using_system_runtime, Address, Bytes, ExitCode, Log,
+    LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME,
+    PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, rwasm::RwasmBytecode, Bytecode},

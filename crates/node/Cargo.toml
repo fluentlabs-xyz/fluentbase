@@ -1,7 +1,7 @@
 [package]
 name = "fluentbase-node"
-description = "Fluent node"
 version.workspace = true
+description.workspace = true
 authors.workspace = true
 edition.workspace = true
 keywords.workspace = true

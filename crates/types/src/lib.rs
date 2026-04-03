@@ -118,9 +118,9 @@ pub const CALL_STACK_LIMIT: u32 = 1024;
 ///
 /// This value is temporary for testing purposes, requires recalculation.
 /// The limit is equal to 2Mb.
-pub const WASM_MAX_CODE_SIZE: usize = revm_primitives::wasm::WASM_MAX_CODE_SIZE;
+pub const WASM_MAX_CODE_SIZE: usize = 0x100000;
 #[cfg(feature = "svm")]
-pub const SVM_MAX_CODE_SIZE: usize = revm_primitives::wasm::SVM_MAX_CODE_SIZE;
+pub const SVM_MAX_CODE_SIZE: usize = 0x200000;
 
 /// rWasm max code size
 ///
@@ -131,17 +131,17 @@ pub const RWASM_MAX_CODE_SIZE: usize = 12 * 1024 * 1024;
 /// WebAssembly magic bytes
 ///
 /// These values are equal to \0ASM
-pub const WASM_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::WASM_MAGIC_BYTES;
+pub const WASM_MAGIC_BYTES: [u8; 4] = [0x00, 0x61, 0x73, 0x6d];
 /// Solana magic bytes
 #[cfg(feature = "svm")]
-pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::SVM_ELF_MAGIC_BYTES;
+pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
 /// ERC20 magic bytes: as char codes for "ERC" and the number 0x20
-pub const UNIVERSAL_TOKEN_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::ERC20_MAGIC_BYTES;
+pub const UNIVERSAL_TOKEN_MAGIC_BYTES: [u8; 4] = [0x45, 0x52, 0x43, 0x20];
 
 /// EIP-170: Contract code size limit
 ///
 /// By default, the limit is `0x6000` (~25kb)
-pub const EVM_MAX_CODE_SIZE: usize = revm_primitives::eip170::MAX_CODE_SIZE;
+pub const EVM_MAX_CODE_SIZE: usize = 0x6000;
 
 /// EIP-3860: Limit and meter initcode
 ///

@@ -1,6 +1,25 @@
 use crate::ExecutionResult;
-use fluentbase_sdk::SyscallInvocationParams;
-use revm::interpreter::Gas;
+use alloy_primitives::Address;
+use fluentbase_sdk::{SyscallInvocationParams, TESTNET_LEGACY_PRECOMPILE_ADDRESSES};
+use revm::{
+    interpreter::Gas,
+    precompile::{PrecompileSpecId, Precompiles},
+    primitives::hardfork::SpecId,
+};
+
+/// Returns `true` if `address` is part of the executor's system-precompile set.
+///
+/// P.S: We exclude Fluent system precompiles from this list since it may affect
+///  future runtime upgrades and cause redundant forks, because EVM precompiles have
+///  enforced empty account state.
+pub(crate) fn is_evm_system_precompile(chain_id: u64, spec: SpecId, address: &Address) -> bool {
+    // TODO(dmitry123): Remove testnet legacy precompiles once we have new snapshot
+    if chain_id == 0x5202 {
+        return TESTNET_LEGACY_PRECOMPILE_ADDRESSES.contains(address);
+    }
+    let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(spec));
+    precompiles.contains(address)
+}
 
 /// A system interruption input params
 #[derive(Clone, Debug, PartialEq, Eq)]

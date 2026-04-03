@@ -8,6 +8,7 @@ license.workspace = true
 readme.workspace = true
 repository.workspace = true
 version.workspace = true
+description.workspace = true
 
 [dependencies]
 alloy-primitives = { workspace = true }
