@@ -118,9 +118,17 @@ async fn main() {
 
         if let Some(batch_id) = start_batch_id {
             if db_startup.get_checkpoint() == 0 {
+                let l2_rpc_url: url::Url = fallback_local_rpc
+                    .as_deref()
+                    .expect("FLUENT_FALLBACK_LOCAL_RPC is required when FLUENT_START_BATCH_ID is set")
+                    .parse()
+                    .expect("Invalid FLUENT_FALLBACK_LOCAL_RPC URL");
+                let l2_provider = RootProvider::new_http(l2_rpc_url);
+
                 info!(batch_id, "FLUENT_START_BATCH_ID set — resolving L2 start checkpoint from L1");
-                let (l2_from_block, l1_event_block) = resolve_l2_start_checkpoint(
+                let (l2_from_block, l1_event_block) = l1_listener::resolve_l2_start_checkpoint(
                     &l1_read_provider,
+                    &l2_provider,
                     l1_contract_addr,
                     batch_id,
                     l1_deploy_block,
@@ -214,105 +222,3 @@ async fn main() {
     client::run(config, l1_rx, l1_ckpt_rx).await;
 }
 
-/// Scan L1 `BatchHeadersSubmitted` events to find the L2 block range for `start_batch_id`.
-///
-/// Returns `(l2_from_block, l1_event_block)`:
-/// - `l2_from_block`: first L2 block in `start_batch_id`
-/// - `l1_event_block`: L1 block containing the `BatchHeadersSubmitted` event for that batch
-async fn resolve_l2_start_checkpoint(
-    provider: &alloy_provider::RootProvider,
-    contract_addr: alloy_primitives::Address,
-    start_batch_id: u64,
-    l1_deploy_block: u64,
-) -> eyre::Result<(u64, u64)> {
-    use witness_courier::l1_listener::{BatchHeadersSubmitted, fetch_block_count_from_tx};
-    use alloy_provider::Provider;
-    use alloy_rpc_types::Filter;
-    use alloy_sol_types::SolEvent;
-    use std::time::Duration;
-    use tracing::warn;
-
-    const PAGE_SIZE: u64 = 5_000;
-    const MAX_RETRIES: u32 = 3;
-
-    let latest = provider
-        .get_block_number()
-        .await
-        .map_err(|e| eyre::eyre!("Failed to get latest L1 block: {e}"))?;
-
-    let mut current = l1_deploy_block;
-    // running_l2_block tracks the first L2 block of the NEXT batch we haven't seen yet.
-    // Batch 0 starts at block 1 (L2 genesis).
-    let mut running_l2_block: u64 = 1;
-
-    while current <= latest {
-        let to = (current + PAGE_SIZE - 1).min(latest);
-
-        let filter = Filter::new()
-            .address(contract_addr)
-            .event_signature(BatchHeadersSubmitted::SIGNATURE_HASH)
-            .from_block(current)
-            .to_block(to);
-
-        let logs = provider
-            .get_logs(&filter)
-            .await
-            .map_err(|e| eyre::eyre!("eth_getLogs [{current}..{to}] failed: {e}"))?;
-
-        for log in &logs {
-            let event = match BatchHeadersSubmitted::decode_log_data(&log.inner.data) {
-                Ok(e) => e,
-                Err(e) => eyre::bail!("Failed to decode BatchHeadersSubmitted log: {e}"),
-            };
-
-            let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
-
-            if batch_index == start_batch_id {
-                let l1_block = log
-                    .block_number
-                    .ok_or_else(|| eyre::eyre!("BatchHeadersSubmitted log missing block_number"))?;
-                info!(
-                    batch_index,
-                    l2_from_block = running_l2_block,
-                    l1_block,
-                    "Found target batch in L1 logs"
-                );
-                return Ok((running_l2_block, l1_block));
-            }
-
-            // Accumulate block count with retry for transient RPC failures.
-            let mut backoff = Duration::from_millis(500);
-            let num_blocks = 'retry: {
-                for attempt in 1..=MAX_RETRIES {
-                    match fetch_block_count_from_tx(provider, log.transaction_hash).await {
-                        Ok(n) => break 'retry n,
-                        Err(e) => {
-                            if attempt == MAX_RETRIES {
-                                eyre::bail!(
-                                    "Fatal: failed to decode block count for batch {batch_index} \
-                                     after {MAX_RETRIES} attempts: {e}. \
-                                     A corrupted L2 block-to-batch mapping would invalidate proof generation."
-                                );
-                            }
-                            warn!(batch_index, attempt, err = %e, "fetch_block_count failed — retrying");
-                            tokio::time::sleep(backoff).await;
-                            backoff *= 2;
-                        }
-                    }
-                }
-                unreachable!()
-            };
-
-            running_l2_block += num_blocks;
-        }
-
-        current = to + 1;
-    }
-
-    eyre::bail!(
-        "BatchHeadersSubmitted for batch {start_batch_id} not found in L1 blocks \
-         [{l1_deploy_block}..{latest}]. \
-         Ensure FLUENT_L1_DEPLOY_BLOCK is ≤ the block where batch 0 was submitted, \
-         and that L1_RPC_URL is correct."
-    )
-}

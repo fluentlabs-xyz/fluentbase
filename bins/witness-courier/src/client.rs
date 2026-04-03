@@ -618,7 +618,9 @@ async fn run_stream<P: Provider + Clone + 'static>(
         .connect()
         .await?;
 
-    let mut client = WitnessServiceClient::new(channel);
+    let mut client = WitnessServiceClient::new(channel)
+        .max_decoding_message_size(usize::MAX)
+        .max_encoding_message_size(usize::MAX);
     let ack_client = client.clone();
     let mut stream = client.subscribe(SubscribeRequest { from_block }).await?.into_inner();
     info!(from_block, "Subscribed to witness stream");
