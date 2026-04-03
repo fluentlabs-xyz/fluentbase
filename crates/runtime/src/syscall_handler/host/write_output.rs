@@ -9,8 +9,7 @@ pub fn syscall_write_output_handler(
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
     let (offset, length) = (params[0].i32().unwrap(), params[1].i32().unwrap());
-    let mut data = vec![0u8; length as usize];
-    caller.memory_read(offset as usize, &mut data)?;
+    let data = caller.memory_read_into_vec(offset as usize, length as usize)?;
     syscall_write_output_impl(caller.data_mut(), &data);
     Ok(())
 }

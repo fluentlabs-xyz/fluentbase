@@ -147,26 +147,34 @@ fn extcodecopy<
         );
         let code = interruption_outcome.output;
         let len = as_usize_or_fail!(context.interpreter, len_u256);
-        let memory_offset = as_usize_or_fail!(context.interpreter, memory_offset);
-        resize_memory!(
-            context.interpreter,
-            context.host.gas_params(),
-            memory_offset,
-            len
-        );
+        let memory_offset_usize = as_usize_or_fail!(context.interpreter, memory_offset);
         context
             .interpreter
             .memory
-            .set_data(memory_offset, 0, len, &code);
+            .set_data(memory_offset_usize, 0, len, &code);
         return;
     }
     peekn!(
-        [address, _memory_offset, code_offset, len_u256],
+        [address, memory_offset, code_offset, len_u256],
         context.interpreter
     );
     let address = address.into_address();
     let len = as_usize_or_fail!(context.interpreter, len_u256);
     let offset = as_usize_saturated!(code_offset);
+
+    // Resize memory before interruption to make sure we have enough gas for the call
+    if len != 0 {
+        // Fail on casting of memory_offset only if len is not zero.
+        let memory_offset_usize = as_usize_or_fail!(context.interpreter, memory_offset);
+        // Resize memory to fit the code
+        resize_memory!(
+            context.interpreter,
+            context.host.gas_params(),
+            memory_offset_usize,
+            len
+        );
+    }
+
     let mut buffer = [0u8; encode::code_copy_size_hint()];
     encode::code_copy_into(&mut &mut buffer[..], &address, offset as u64, len as u64);
     context.host.sdk_mut().insert_interruption_income(

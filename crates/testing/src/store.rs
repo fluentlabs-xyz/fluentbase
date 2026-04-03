@@ -18,9 +18,11 @@ impl StoreTr<RuntimeContext> for TestingStore {
     }
 
     fn memory_read_into_vec(&mut self, offset: usize, length: usize) -> Result<Vec<u8>, TrapCode> {
-        let mut buffer = vec![0u8; length];
-        self.memory_read(offset, &mut buffer)?;
-        Ok(buffer)
+        Ok(self
+            .memory
+            .get(offset..(offset + length))
+            .ok_or(TrapCode::MemoryOutOfBounds)?
+            .to_vec())
     }
 
     fn memory_write(&mut self, offset: usize, buffer: &[u8]) -> Result<(), TrapCode> {

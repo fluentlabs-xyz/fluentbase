@@ -474,7 +474,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     // Resume inside the runtime.
     let mut runtime_context = RuntimeContext::default();
-    let (fuel_consumed, fuel_refunded, exit_code) = syscall_resume_impl(
+    let Ok((fuel_consumed, fuel_refunded, exit_code)) = syscall_resume_impl(
         &mut runtime_context,
         inputs.call_id,
         outcome.as_ref(),
@@ -482,7 +482,11 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         fuel_consumed,
         fuel_refunded,
         inputs.syscall_params.fuel16_ptr,
-    );
+    ) else {
+        // Note: this should never happen, because we always call resume here at 0 depth level, but
+        //  it's the only error that can be triggered inside
+        unreachable!("revm: received exit code from resume, this should never happen");
+    };
 
     let return_data: Bytes = runtime_context.execution_result.return_data.into();
 
