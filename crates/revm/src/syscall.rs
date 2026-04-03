@@ -18,8 +18,8 @@ use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
     calc_create_metadata_address, is_execute_using_system_runtime, Address, Bytes, ExitCode, Log,
-    LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME,
-    PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
+    LogData, B256, EXT_CODE_COPY_MAX_COPY_SIZE, FUEL_DENOM_RATE,
+    KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, rwasm::RwasmBytecode, Bytecode},
@@ -854,6 +854,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let code_offset = reader.read_u64::<LittleEndian>().unwrap();
             let code_length = reader.read_u64::<LittleEndian>().unwrap();
 
+            // Safety: It makes no sense to allow to copy more than a theoretical limit of bytes,
+            //  otherwise it can be attacked with redundant memory allocations
+            assert_halt!(
+                code_length <= EXT_CODE_COPY_MAX_COPY_SIZE as u64,
+                MalformedBuiltinParams
+            );
+
             // Invariant: gas is charged for the requested length, not the actual returned length.
             // This prevents gas abuse where an attacker requests a small length but expects the full bytecode.
             charge_gas!(ctx.cfg().gas_params().extcodecopy(code_length as usize));
@@ -936,7 +943,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     if ownable_account_bytecode.owner_address == account_owner_address {
                         (ownable_account_bytecode.metadata.len() as u32, true)
                     } else {
-                        (0, true)
+                        (0, false)
                     }
                 }
                 _ => (0, false),
@@ -1066,7 +1073,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             }
 
             // Clamp the requested length to the remaining bytes after `offset`.
-            let copy_len = core::cmp::min(length, length - offset);
+            let copy_len = core::cmp::min(length, metadata_len - offset);
             let metadata = ownable_account_bytecode
                 .metadata
                 .slice(offset..(offset + copy_len));
