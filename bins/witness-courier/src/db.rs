@@ -18,7 +18,7 @@ use rusqlite::{params, Connection, Result};
 use tracing::error;
 
 use crate::accumulator::PendingBatch;
-use crate::types::EthExecutionResponse;
+use crate::types::{EthExecutionResponse, SubmitBatchResponse};
 
 pub struct Db {
     conn: Connection,
@@ -48,6 +48,10 @@ impl Db {
             );
             CREATE TABLE IF NOT EXISTS pending_blobs_accepted (
                 batch_index INTEGER PRIMARY KEY
+            );
+            CREATE TABLE IF NOT EXISTS batch_signatures (
+                batch_index INTEGER PRIMARY KEY,
+                response    BLOB NOT NULL
             );
             CREATE TABLE IF NOT EXISTS meta (
                 key   TEXT PRIMARY KEY,
@@ -248,6 +252,55 @@ impl Db {
         })
         .map(|rows| rows.filter_map(|r| r.ok()).collect())
         .unwrap_or_default()
+    }
+
+    // ── Batch signatures ─────────────────────────────────────────────────────
+
+    pub fn save_batch_signature(&self, batch_index: u64, resp: &SubmitBatchResponse) {
+        let blob = match bincode::serialize(resp) {
+            Ok(b) => b,
+            Err(e) => {
+                error!(err = %e, batch_index, "Failed to serialize SubmitBatchResponse");
+                return;
+            }
+        };
+        if let Err(e) = self.conn.execute(
+            "INSERT OR REPLACE INTO batch_signatures(batch_index, response) VALUES(?1, ?2)",
+            params![batch_index, blob],
+        ) {
+            error!(err = %e, batch_index, "Failed to persist batch signature");
+        }
+    }
+
+    pub fn get_batch_signature(&self, batch_index: u64) -> Option<SubmitBatchResponse> {
+        let blob: Vec<u8> = self
+            .conn
+            .query_row(
+                "SELECT response FROM batch_signatures WHERE batch_index = ?1",
+                params![batch_index],
+                |row| row.get(0),
+            )
+            .ok()?;
+        bincode::deserialize(&blob).ok()
+    }
+
+    pub fn has_batch_signature(&self, batch_index: u64) -> bool {
+        self.conn
+            .query_row(
+                "SELECT 1 FROM batch_signatures WHERE batch_index = ?1",
+                params![batch_index],
+                |_| Ok(()),
+            )
+            .is_ok()
+    }
+
+    pub fn delete_batch_signature(&self, batch_index: u64) {
+        if let Err(e) = self.conn.execute(
+            "DELETE FROM batch_signatures WHERE batch_index = ?1",
+            params![batch_index],
+        ) {
+            error!(err = %e, batch_index, "Failed to delete batch signature");
+        }
     }
 
     // ── Pending blobs accepted ───────────────────────────────────────────────

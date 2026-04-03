@@ -22,15 +22,15 @@
 //! Worker pools and channels are created once in [`run`] and survive reconnects.
 //! Only the gRPC stream and per-session state are recreated on each attempt.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_channel::{Receiver as AsyncReceiver, Sender as AsyncSender};
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 use tokio::time::MissedTickBehavior;
+use tokio_util::sync::CancellationToken;
 use tonic::transport::Channel;
 use tracing::{error, info, warn};
 
@@ -90,16 +90,22 @@ struct BlockResult {
     response: EthExecutionResponse,
 }
 
-/// Result of a batch submission attempt.
-enum BatchOutcome {
-    /// Batch signed and preconfirmed on L1.
-    Success,
+/// Result of a batch signing attempt.
+enum SignOutcome {
+    /// Batch signed and persisted to DB.
+    Signed,
     /// Enclave key rotated — these blocks need re-execution.
     InvalidSignatures {
         invalid_blocks: Vec<u64>,
         enclave_address: Address,
     },
-    /// Other failure (network, blob mismatch, etc.) — will retry with backoff.
+}
+
+/// Result of an L1 dispatch attempt.
+enum DispatchOutcome {
+    /// Batch preconfirmed on L1.
+    Success,
+    /// L1 transaction failed — will retry with backoff.
     Failed,
 }
 
@@ -308,18 +314,19 @@ struct StreamState<P: Provider + Clone + 'static> {
     high_tx: AsyncSender<ExecutionTask>,
     fallback_tx: AsyncSender<u64>,
     ack_client: WitnessServiceClient<Channel>,
-    batch_done_tx: mpsc::Sender<(u64, BatchOutcome)>,
+    sign_done_tx: mpsc::Sender<(u64, SignOutcome)>,
+    dispatch_done_tx: mpsc::Sender<(u64, DispatchOutcome)>,
     key_check_tx: mpsc::Sender<(Address, bool)>,
     checkpoint: u64,
     confirmed: BTreeSet<u64>,
-    submitting_batches: HashSet<u64>,
+    signing_batch: Option<u64>,
+    dispatching_batch: Option<u64>,
     pending_requests: BTreeSet<u64>,
     highest_witness_received: u64,
     fallback_active: BTreeSet<u64>,
     fallback_exhausted: BTreeSet<u64>,
-    batch_cancel_tokens: HashMap<u64, CancellationToken>,
-    global_submit_attempts: u32,
-    global_next_submit_allowed: Option<tokio::time::Instant>,
+    global_dispatch_attempts: u32,
+    global_next_dispatch_allowed: Option<tokio::time::Instant>,
     pending_key_check: Option<Address>,
 }
 
@@ -340,17 +347,18 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             info!(new_checkpoint, "Checkpoint rolled back due to reorg");
         }
 
-        // Cancel in-flight batch submissions for affected batches
-        let affected_batches: Vec<u64> = self.batch_cancel_tokens.keys()
-            .filter(|&&batch_idx| accumulator.get(batch_idx).is_none())
-            .copied()
-            .collect();
-        for batch_idx in affected_batches {
-            if let Some(token) = self.batch_cancel_tokens.remove(&batch_idx) {
-                warn!(batch_idx, "Cancelling in-flight batch submission due to reorg");
-                token.cancel();
+        // Clear in-flight tracking so new work can be picked up.
+        // Orphaned task results are simply ignored in on_sign_done / on_dispatch_done
+        // because the batch_index won't exist in the accumulator.
+        if let Some(idx) = self.signing_batch {
+            if accumulator.get(idx).is_none() {
+                self.signing_batch = None;
             }
-            self.submitting_batches.remove(&batch_idx);
+        }
+        if let Some(idx) = self.dispatching_batch {
+            if accumulator.get(idx).is_none() {
+                self.dispatching_batch = None;
+            }
         }
     }
 
@@ -375,7 +383,8 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             }).await;
         }
 
-        self.dispatch_batch_if_ready(accumulator);
+        self.try_sign_next_batch(accumulator);
+        self.try_dispatch_next_batch(accumulator);
     }
 
     /// Handle an L1 event: register a new batch or mark blobs accepted.
@@ -396,80 +405,8 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             }
             L1Event::BlobsAccepted { batch_index } => {
                 accumulator.mark_blobs_accepted(batch_index).await;
-                self.dispatch_batch_if_ready(accumulator);
-            }
-        }
-    }
-
-    /// Handle the result of a background batch submission task.
-    async fn on_batch_done(&mut self, batch_index: u64, outcome: BatchOutcome, accumulator: &mut BatchAccumulator) {
-        self.submitting_batches.remove(&batch_index);
-        self.batch_cancel_tokens.remove(&batch_index);
-
-        match outcome {
-            BatchOutcome::Success => {
-                self.global_submit_attempts = 0;
-                self.global_next_submit_allowed = None;
-
-                if let Some(batch) = accumulator.take(batch_index).await {
-                    // Deferred acknowledge: delete cold-tier witnesses for this batch
-                    let mut ack = self.ack_client.clone();
-                    let fb = batch.from_block;
-                    let tb = batch.to_block;
-                    tokio::spawn(async move {
-                        let _ = ack.acknowledge_range(
-                            crate::proto::AcknowledgeRangeRequest {
-                                from_block: fb,
-                                to_block: tb,
-                            }
-                        ).await;
-                    });
-
-                    {
-                        let db = Arc::clone(&self.db);
-                        let block = batch.to_block;
-                        let _ = tokio::task::spawn_blocking(move || {
-                            db.lock().unwrap().save_last_batch_end(block);
-                        }).await;
-                    }
-                    info!(batch_index, to_block = batch.to_block, "Batch preconfirmed on L1");
-                }
-            }
-
-            BatchOutcome::InvalidSignatures { invalid_blocks, enclave_address } => {
-                warn!(
-                    batch_index,
-                    invalid_count = invalid_blocks.len(),
-                    %enclave_address,
-                    "Key rotation detected — purging stale responses and re-executing"
-                );
-
-                accumulator.purge_responses(&invalid_blocks).await;
-
-                for &block_number in &invalid_blocks {
-                    self.spawn_re_execution(block_number);
-                }
-
-                self.pending_key_check = Some(enclave_address);
-
-                let tx = self.key_check_tx.clone();
-                let provider = self.config.l1_provider.clone();
-                let verifier = self.config.nitro_verifier_addr;
-                let addr = enclave_address;
-                tokio::spawn(async move {
-                    let ok = l1_submitter::is_key_registered(&provider, verifier, addr)
-                        .await.unwrap_or(false);
-                    let _ = tx.send((addr, ok)).await;
-                });
-            }
-
-            BatchOutcome::Failed => {
-                self.global_submit_attempts += 1;
-                let delay_secs = (10u64 * self.global_submit_attempts as u64).min(300);
-                self.global_next_submit_allowed = Some(
-                    tokio::time::Instant::now() + Duration::from_secs(delay_secs)
-                );
-                warn!(batch_index, attempts = self.global_submit_attempts, delay_secs, "Batch failed — global backoff");
+                self.try_sign_next_batch(accumulator);
+                self.try_dispatch_next_batch(accumulator);
             }
         }
     }
@@ -549,44 +486,180 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
         });
     }
 
-    /// Dispatch at most one ready batch as a background task. No-op if one is already in flight.
-    fn dispatch_batch_if_ready(&mut self, accumulator: &mut BatchAccumulator) {
-        // Global throttle check
-        if let Some(allowed_at) = self.global_next_submit_allowed {
+    /// Pick the next ready-but-unsigned batch and spawn a signing task.
+    /// No-op if a signing task is already in flight.
+    fn try_sign_next_batch(&mut self, accumulator: &BatchAccumulator) {
+        if self.signing_batch.is_some() {
+            return;
+        }
+
+        let db_ref = self.db.lock().unwrap();
+        let batch_index = accumulator.first_ready_unsigned(&db_ref);
+        drop(db_ref);
+
+        let Some(batch_index) = batch_index else { return };
+        let Some(batch) = accumulator.get(batch_index) else { return };
+
+        let responses = accumulator.get_responses(batch.from_block, batch.to_block);
+        self.signing_batch = Some(batch_index);
+
+        let cfg = self.config.clone();
+        let tx = self.sign_done_tx.clone();
+        let db = Arc::clone(&self.db);
+        let from_block = batch.from_block;
+        let to_block = batch.to_block;
+
+        tokio::spawn(async move {
+            let outcome = sign_batch_io(
+                &cfg.http_client, &cfg.proxy_url, &cfg.api_key,
+                batch_index, from_block, to_block, responses, db,
+            ).await;
+            let _ = tx.send((batch_index, outcome)).await;
+        });
+    }
+
+    /// Handle the result of a background batch signing task.
+    async fn on_sign_done(
+        &mut self,
+        batch_index: u64,
+        outcome: SignOutcome,
+        accumulator: &mut BatchAccumulator,
+    ) {
+        self.signing_batch = None;
+
+        match outcome {
+            SignOutcome::Signed => {
+                info!(batch_index, "Batch signed — available for dispatch");
+                self.try_sign_next_batch(accumulator);
+                self.try_dispatch_next_batch(accumulator);
+            }
+            SignOutcome::InvalidSignatures { invalid_blocks, enclave_address } => {
+                warn!(
+                    batch_index,
+                    invalid_count = invalid_blocks.len(),
+                    %enclave_address,
+                    "Key rotation detected — purging stale responses and re-executing"
+                );
+
+                accumulator.purge_responses(&invalid_blocks).await;
+                accumulator.delete_batch_signature(batch_index).await;
+
+                for &block_number in &invalid_blocks {
+                    self.spawn_re_execution(block_number);
+                }
+
+                self.pending_key_check = Some(enclave_address);
+
+                let tx = self.key_check_tx.clone();
+                let provider = self.config.l1_provider.clone();
+                let verifier = self.config.nitro_verifier_addr;
+                let addr = enclave_address;
+                tokio::spawn(async move {
+                    let ok = l1_submitter::is_key_registered(&provider, verifier, addr)
+                        .await.unwrap_or(false);
+                    let _ = tx.send((addr, ok)).await;
+                });
+            }
+        }
+    }
+
+    /// Pick the next sequential signed batch and spawn a dispatch task.
+    /// No-op if a dispatch is already in flight or blocked by key check / backoff.
+    fn try_dispatch_next_batch(&mut self, accumulator: &BatchAccumulator) {
+        if self.dispatching_batch.is_some() {
+            return;
+        }
+
+        if let Some(allowed_at) = self.global_next_dispatch_allowed {
             if tokio::time::Instant::now() < allowed_at {
                 return;
             }
         }
 
-        // Key registration check — don't submit if pending key isn't registered yet
         if self.pending_key_check.is_some() {
             return;
         }
 
-        while let Some(batch_index) = accumulator.first_ready() {
-            if self.submitting_batches.contains(&batch_index) {
-                break;
+        let db_ref = self.db.lock().unwrap();
+        let result = accumulator.first_sequential_signed(&db_ref);
+        drop(db_ref);
+
+        let Some((batch_index, signature)) = result else { return };
+
+        self.dispatching_batch = Some(batch_index);
+
+        let provider = self.config.l1_provider.clone();
+        let contract = self.config.l1_contract_addr;
+        let verifier = self.config.nitro_verifier_addr;
+        let tx = self.dispatch_done_tx.clone();
+
+        tokio::spawn(async move {
+            let outcome = match l1_submitter::submit_preconfirmation(
+                &provider, contract, verifier, batch_index, signature,
+            ).await {
+                Ok(()) => DispatchOutcome::Success,
+                Err(e) => {
+                    error!(batch_index, err = %e, "preconfirmBatch failed — will retry");
+                    DispatchOutcome::Failed
+                }
+            };
+            let _ = tx.send((batch_index, outcome)).await;
+        });
+    }
+
+    /// Handle the result of a background L1 dispatch task.
+    async fn on_dispatch_done(
+        &mut self,
+        batch_index: u64,
+        outcome: DispatchOutcome,
+        accumulator: &mut BatchAccumulator,
+    ) {
+        self.dispatching_batch = None;
+
+        match outcome {
+            DispatchOutcome::Success => {
+                self.global_dispatch_attempts = 0;
+                self.global_next_dispatch_allowed = None;
+
+                if let Some(batch) = accumulator.take(batch_index).await {
+                    let mut ack = self.ack_client.clone();
+                    let fb = batch.from_block;
+                    let tb = batch.to_block;
+                    tokio::spawn(async move {
+                        let _ = ack.acknowledge_range(
+                            crate::proto::AcknowledgeRangeRequest {
+                                from_block: fb,
+                                to_block: tb,
+                            }
+                        ).await;
+                    });
+
+                    {
+                        let db = Arc::clone(&self.db);
+                        let block = batch.to_block;
+                        let _ = tokio::task::spawn_blocking(move || {
+                            db.lock().unwrap().save_last_batch_end(block);
+                        }).await;
+                    }
+                    info!(batch_index, to_block = batch.to_block, "Batch preconfirmed on L1");
+                }
+
+                self.try_dispatch_next_batch(accumulator);
             }
-            let Some(batch) = accumulator.get(batch_index) else { break; };
-            let (from_block, to_block) = (batch.from_block, batch.to_block);
-            let responses = accumulator.get_responses(from_block, to_block);
 
-            let token = CancellationToken::new();
-            self.batch_cancel_tokens.insert(batch_index, token.clone());
-            self.submitting_batches.insert(batch_index);
-
-            let cfg = self.config.clone();
-            let dtx = self.batch_done_tx.clone();
-            tokio::spawn(async move {
-                let outcome = submit_batch_io(
-                    &cfg.http_client, &cfg.proxy_url, &cfg.api_key,
-                    &cfg.l1_provider, cfg.l1_contract_addr, cfg.nitro_verifier_addr,
-                    batch_index, from_block, to_block, responses,
-                    &token,
-                ).await;
-                let _ = dtx.send((batch_index, outcome)).await;
-            });
-            break;
+            DispatchOutcome::Failed => {
+                self.global_dispatch_attempts += 1;
+                let delay_secs = (10u64 * self.global_dispatch_attempts as u64).min(300);
+                self.global_next_dispatch_allowed = Some(
+                    tokio::time::Instant::now() + Duration::from_secs(delay_secs)
+                );
+                warn!(
+                    batch_index,
+                    attempts = self.global_dispatch_attempts,
+                    delay_secs,
+                    "Dispatch failed — global backoff"
+                );
+            }
         }
     }
 }
@@ -632,7 +705,8 @@ async fn run_stream<P: Provider + Clone + 'static>(
         confirmed.remove(&checkpoint);
     }
 
-    let (batch_done_tx, mut batch_done_rx) = mpsc::channel::<(u64, BatchOutcome)>(8);
+    let (sign_done_tx, mut sign_done_rx) = mpsc::channel::<(u64, SignOutcome)>(8);
+    let (dispatch_done_tx, mut dispatch_done_rx) = mpsc::channel::<(u64, DispatchOutcome)>(8);
     let (key_check_tx, mut key_check_rx) = mpsc::channel::<(Address, bool)>(4);
     let mut fallback_ticker = tokio::time::interval(Duration::from_secs(5));
     fallback_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -643,18 +717,19 @@ async fn run_stream<P: Provider + Clone + 'static>(
         high_tx: high_tx.clone(),
         fallback_tx: fallback_tx.clone(),
         ack_client,
-        batch_done_tx,
+        sign_done_tx,
+        dispatch_done_tx,
         key_check_tx,
         checkpoint,
         confirmed,
-        submitting_batches: HashSet::new(),
+        signing_batch: None,
+        dispatching_batch: None,
         pending_requests: BTreeSet::new(),
         highest_witness_received: from_block.saturating_sub(1),
         fallback_active: BTreeSet::new(),
         fallback_exhausted: BTreeSet::new(),
-        batch_cancel_tokens: HashMap::new(),
-        global_submit_attempts: 0,
-        global_next_submit_allowed: None,
+        global_dispatch_attempts: 0,
+        global_next_dispatch_allowed: None,
         pending_key_check: None,
     };
 
@@ -736,9 +811,13 @@ async fn run_stream<P: Provider + Clone + 'static>(
                 Some(event) = l1_events.recv() =>
                     state.on_l1_event(event, accumulator, next_batch_from_block, from_block).await,
 
-                // ── Stream D: batch submission completions ──────────────
-                Some((batch_index, outcome)) = batch_done_rx.recv() =>
-                    state.on_batch_done(batch_index, outcome, accumulator).await,
+                // ── Stream D1: batch signing completions ──────────────
+                Some((batch_index, outcome)) = sign_done_rx.recv() =>
+                    state.on_sign_done(batch_index, outcome, accumulator).await,
+
+                // ── Stream D2: batch dispatch completions ─────────────
+                Some((batch_index, outcome)) = dispatch_done_rx.recv() =>
+                    state.on_dispatch_done(batch_index, outcome, accumulator).await,
 
                 // ── Stream E: fallback gap checker ──────────────────────
                 _ = fallback_ticker.tick() => state.on_fallback_tick(),
@@ -752,7 +831,8 @@ async fn run_stream<P: Provider + Clone + 'static>(
                     if registered {
                         info!(%addr, "Enclave key confirmed on L1");
                         state.pending_key_check = None;
-                        state.dispatch_batch_if_ready(accumulator);
+                        state.try_sign_next_batch(accumulator);
+                        state.try_dispatch_next_batch(accumulator);
                     } else {
                         // Re-check after delay
                         let tx = state.key_check_tx.clone();
@@ -784,63 +864,68 @@ async fn run_stream<P: Provider + Clone + 'static>(
 }
 
 // ============================================================================
-// Batch submission I/O
+// Batch signing I/O
 // ============================================================================
 
-/// Execute network I/O for batch submission — no accumulator access.
-async fn submit_batch_io<P: Provider + Clone + 'static>(
+/// Sign a batch root via the proxy with retry until definitive result.
+///
+/// Returns `SignOutcome::Signed` on success (signature persisted to DB),
+/// or `SignOutcome::InvalidSignatures` on key rotation (409).
+/// Transient errors are retried with exponential backoff (50ms → 2s).
+async fn sign_batch_io(
     http_client: &reqwest::Client,
     proxy_url: &str,
     api_key: &str,
-    l1_provider: &P,
-    l1_contract_addr: Address,
-    nitro_verifier_addr: Address,
     batch_index: u64,
     from_block: u64,
     to_block: u64,
     responses: Vec<EthExecutionResponse>,
-    cancel: &CancellationToken,
-) -> BatchOutcome {
-    if cancel.is_cancelled() { return BatchOutcome::Failed; }
-
-    info!(batch_index, from_block, to_block, "Batch ready — triggering /sign-batch-root");
-
-    let sign_result = call_sign_batch_root(
-        http_client, proxy_url, api_key, from_block, to_block, batch_index, &responses,
-    ).await;
-
-    let batch_resp = match sign_result {
-        Ok(resp) => resp,
-        Err(SignBatchError::InvalidSignatures { invalid_blocks, enclave_address }) => {
-            warn!(
-                batch_index,
-                ?invalid_blocks,
-                %enclave_address,
-                "Batch has stale signatures — key rotation detected"
-            );
-            return BatchOutcome::InvalidSignatures { invalid_blocks, enclave_address };
+    db: Arc<Mutex<Db>>,
+) -> SignOutcome {
+    // Check for a cached signature from a previous attempt (survived crash).
+    {
+        let db_check = Arc::clone(&db);
+        let cached = tokio::task::spawn_blocking(move || {
+            db_check.lock().unwrap().has_batch_signature(batch_index)
+        }).await.unwrap_or(false);
+        if cached {
+            info!(batch_index, "Batch already signed (cached) — skipping /sign-batch-root");
+            return SignOutcome::Signed;
         }
-        Err(SignBatchError::Other(e)) => {
-            error!(batch_index, err = %e, "Failed to sign batch root — will retry");
-            return BatchOutcome::Failed;
-        }
-    };
-
-    if cancel.is_cancelled() {
-        warn!(batch_index, "Batch cancelled after signing — skipping L1 submit");
-        return BatchOutcome::Failed;
     }
 
-    info!(batch_index, "Batch root signed — submitting preconfirmBatch");
+    info!(batch_index, from_block, to_block, "Signing batch root");
 
-    if let Err(e) = l1_submitter::submit_preconfirmation(
-        l1_provider, l1_contract_addr, nitro_verifier_addr, batch_index, batch_resp.signature,
-    ).await {
-        error!(batch_index, err = %e, "preconfirmBatch failed — will retry");
-        return BatchOutcome::Failed;
+    let mut backoff = Duration::from_millis(50);
+    loop {
+        match call_sign_batch_root(
+            http_client, proxy_url, api_key, from_block, to_block, batch_index, &responses,
+        ).await {
+            Ok(resp) => {
+                let db = Arc::clone(&db);
+                let resp_clone = resp.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    db.lock().unwrap().save_batch_signature(batch_index, &resp_clone);
+                }).await;
+                info!(batch_index, "Batch root signed and persisted");
+                return SignOutcome::Signed;
+            }
+            Err(SignBatchError::InvalidSignatures { invalid_blocks, enclave_address }) => {
+                warn!(
+                    batch_index,
+                    ?invalid_blocks,
+                    %enclave_address,
+                    "Batch has stale signatures — key rotation detected"
+                );
+                return SignOutcome::InvalidSignatures { invalid_blocks, enclave_address };
+            }
+            Err(SignBatchError::Other(e)) => {
+                warn!(batch_index, err = %e, ?backoff, "sign-batch-root failed — retrying");
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_secs(2));
+            }
+        }
     }
-
-    BatchOutcome::Success
 }
 
 /// Call the proxy's `/sign-batch-root` endpoint.

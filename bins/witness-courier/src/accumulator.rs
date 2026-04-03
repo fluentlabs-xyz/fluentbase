@@ -168,6 +168,26 @@ impl BatchAccumulator {
             .map(|b| b.batch_index)
     }
 
+    /// Returns the first ready batch (in BTreeMap order) that does NOT have
+    /// a cached signature in the DB. Used by the eager signer.
+    pub fn first_ready_unsigned(&self, db: &Db) -> Option<u64> {
+        self.batches
+            .values()
+            .filter(|b| self.is_batch_ready(b))
+            .find(|b| db.get_batch_signature(b.batch_index).is_none())
+            .map(|b| b.batch_index)
+    }
+
+    /// Returns the first batch in BTreeMap order that has a cached signature
+    /// in the DB, along with the signature bytes. Used by the sequential dispatcher.
+    ///
+    /// Returns `None` if the first pending batch is not yet signed (strict ordering).
+    pub fn first_sequential_signed(&self, db: &Db) -> Option<(u64, Vec<u8>)> {
+        let first = self.batches.values().next()?;
+        let resp = db.get_batch_signature(first.batch_index)?;
+        Some((first.batch_index, resp.signature))
+    }
+
     pub fn get(&self, batch_index: u64) -> Option<&PendingBatch> {
         self.batches.get(&batch_index)
     }
@@ -189,6 +209,7 @@ impl BatchAccumulator {
                 let guard = db.lock().unwrap();
                 guard.delete_batch(batch_index);
                 guard.delete_responses(fb, tb);
+                guard.delete_batch_signature(batch_index);
             }).await;
         }
         for b in batch.from_block..=batch.to_block {
@@ -235,6 +256,7 @@ impl BatchAccumulator {
                     let guard = db.lock().unwrap();
                     guard.delete_batch(bi);
                     guard.delete_responses(fb, tb);
+                    guard.delete_batch_signature(bi);
                 }).await;
             }
             for b in batch.from_block..=batch.to_block {
@@ -265,6 +287,16 @@ impl BatchAccumulator {
             }
         }
         info!(count = blocks.len(), "Purged stale responses for key rotation recovery");
+    }
+
+    /// Delete a cached batch signature (e.g. after key rotation invalidation).
+    pub async fn delete_batch_signature(&mut self, batch_index: u64) {
+        if let Some(db) = &self.db {
+            let db = Arc::clone(db);
+            let _ = tokio::task::spawn_blocking(move || {
+                db.lock().unwrap().delete_batch_signature(batch_index);
+            }).await;
+        }
     }
 
     /// Returns cloned responses for blocks in [from, to].
@@ -461,5 +493,99 @@ mod tests {
         acc.insert_response(mock_response(11)).await;
         acc.insert_response(mock_response(12)).await;
         assert_eq!(acc.first_ready(), Some(1));
+    }
+
+    fn temp_db() -> Arc<Mutex<Db>> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("courier_test_{id}_{}.db", std::process::id()));
+        let db = Db::open(&path).unwrap();
+        Arc::new(Mutex::new(db))
+    }
+
+    #[tokio::test]
+    async fn first_ready_unsigned_skips_signed() {
+        let db = temp_db();
+        let mut acc = BatchAccumulator::with_db(Arc::clone(&db));
+
+        acc.set_batch(1, 10, 10).await;
+        acc.set_batch(2, 11, 11).await;
+        acc.insert_response(mock_response(10)).await;
+        acc.insert_response(mock_response(11)).await;
+        acc.mark_blobs_accepted(1).await;
+        acc.mark_blobs_accepted(2).await;
+
+        // Both ready, neither signed
+        let guard = db.lock().unwrap();
+        assert_eq!(acc.first_ready_unsigned(&guard), Some(1));
+        drop(guard);
+
+        // Sign batch 1
+        let sig_resp = crate::types::SubmitBatchResponse {
+            batch_root: vec![0u8; 32],
+            versioned_hashes: vec![],
+            signature: vec![1, 2, 3],
+        };
+        db.lock().unwrap().save_batch_signature(1, &sig_resp);
+
+        // Now first_ready_unsigned should skip batch 1 and return batch 2
+        let guard = db.lock().unwrap();
+        assert_eq!(acc.first_ready_unsigned(&guard), Some(2));
+        drop(guard);
+
+        // Sign batch 2 as well
+        db.lock().unwrap().save_batch_signature(2, &sig_resp);
+
+        // No unsigned batches left
+        let guard = db.lock().unwrap();
+        assert_eq!(acc.first_ready_unsigned(&guard), None);
+    }
+
+    #[tokio::test]
+    async fn first_sequential_signed_strict_ordering() {
+        let db = temp_db();
+        let mut acc = BatchAccumulator::with_db(Arc::clone(&db));
+
+        acc.set_batch(1, 10, 10).await;
+        acc.set_batch(2, 11, 11).await;
+        acc.insert_response(mock_response(10)).await;
+        acc.insert_response(mock_response(11)).await;
+        acc.mark_blobs_accepted(1).await;
+        acc.mark_blobs_accepted(2).await;
+
+        // No signatures yet — returns None
+        let guard = db.lock().unwrap();
+        assert!(acc.first_sequential_signed(&guard).is_none());
+        drop(guard);
+
+        // Sign only batch 2 (not the first)
+        let sig_resp = crate::types::SubmitBatchResponse {
+            batch_root: vec![0u8; 32],
+            versioned_hashes: vec![],
+            signature: vec![4, 5, 6],
+        };
+        db.lock().unwrap().save_batch_signature(2, &sig_resp);
+
+        // Batch 1 is first in BTreeMap but unsigned — returns None (strict ordering)
+        let guard = db.lock().unwrap();
+        assert!(acc.first_sequential_signed(&guard).is_none());
+        drop(guard);
+
+        // Sign batch 1
+        let sig1 = crate::types::SubmitBatchResponse {
+            batch_root: vec![0u8; 32],
+            versioned_hashes: vec![],
+            signature: vec![7, 8, 9],
+        };
+        db.lock().unwrap().save_batch_signature(1, &sig1);
+
+        // Now batch 1 is first and signed — returns it
+        let guard = db.lock().unwrap();
+        let result = acc.first_sequential_signed(&guard);
+        assert!(result.is_some());
+        let (idx, sig) = result.unwrap();
+        assert_eq!(idx, 1);
+        assert_eq!(sig, vec![7, 8, 9]);
     }
 }
