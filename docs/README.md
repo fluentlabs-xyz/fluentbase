@@ -15,6 +15,7 @@ The goal is practical understanding for contributors and auditors, not API marke
 7. [`06-runtime-upgrade.md`](./06-runtime-upgrade.md) — runtime-upgrade governance and host enforcement.
 8. [`07-rwasm-integration.md`](./07-rwasm-integration.md) — Fluentbase integration contract with rWasm.
 9. [`08-universal-token.md`](./08-universal-token.md) — UST20 runtime behavior and constraints.
+10. [`09-rpc-compatibility-vs-reth.md`](./09-rpc-compatibility-vs-reth.md) — Fluent RPC behavior differences from upstream Reth for account code APIs.
 
 ## Source-of-truth rule
 
