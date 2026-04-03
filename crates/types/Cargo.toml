@@ -24,7 +24,7 @@ fluentbase-codec-derive = { workspace = true }
 
 [features]
 default = ["std"]
-serde = []
+serde = ["alloy-primitives/serde"]
 std = [
     "rwasm/std",
     "alloy-primitives/std",
