@@ -53,7 +53,7 @@ Typical raw-account-info use cases:
 - debugging mismatches between runtime-mapped bytecode and persisted account payload,
 - fork/fork-db tooling where cache keys or bytecode identity must match storage bytes exactly.
 
-> **Known bug (current `v1.11-patched`):** helper implementations are correctly split (`get_account_info` vs `get_raw_account_info`), but the top-level RPC handler for `eth_getRawAccountInfo` is mistakenly wired to `get_account_info` (normalized path). As a result, `eth_getRawAccountInfo` currently mirrors normalized behavior instead of true raw behavior until the handler wiring is fixed.
+> **Current status (`v1.11-patched`):** helper implementations are already split (`get_account_info` vs `get_raw_account_info`), while the top-level RPC handler is still aligned to the normalized path. This is being updated so `eth_getRawAccountInfo` maps to the raw helper path as intended.
 
 ## Difference vs upstream Reth
 
