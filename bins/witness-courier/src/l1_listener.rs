@@ -68,6 +68,7 @@ pub enum L1Event {
 // ---------------------------------------------------------------------------
 
 const POLL_INTERVAL_SECS: u64 = 6;
+const MAX_POLL_BACKOFF_SECS: u64 = 120;
 
 /// Run the L1 event listener loop.
 ///
@@ -86,20 +87,22 @@ pub async fn run(
         "L1 listener started"
     );
 
+    let mut backoff_secs = POLL_INTERVAL_SECS;
+
     loop {
         match poll_once(&l1_provider, contract_addr, from_block, &tx).await {
             Ok(latest) => {
-                // Always advance — poll_once now guarantees latest >= from_block - 1,
-                // so latest + 1 is always ≥ from_block (no regression).
                 let _ = l1_ckpt_tx.send(latest).await;
                 from_block = latest + 1;
+                backoff_secs = POLL_INTERVAL_SECS; // reset on success
             }
             Err(e) => {
-                warn!(err = %e, "L1 poll failed — retrying");
+                warn!(err = %e, backoff_secs, "L1 poll failed — retrying");
+                backoff_secs = (backoff_secs * 2).min(MAX_POLL_BACKOFF_SECS);
             }
         }
 
-        tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
     }
 }
 
@@ -130,6 +133,7 @@ async fn retry_fetch_block_count(
 }
 
 /// Single poll iteration: fetch logs from `from_block` to latest, paginated.
+/// Returns the last fully-processed block on success, or partial progress on page failure.
 async fn poll_once(
     provider: &RootProvider,
     contract_addr: Address,
@@ -146,85 +150,104 @@ async fn poll_once(
     }
 
     let mut current = from_block;
+    // Track last fully-processed page so we can return partial progress on error.
+    let mut last_ok = from_block.saturating_sub(1);
 
     while current <= latest_block {
         let page_end = (current + PAGE_SIZE - 1).min(latest_block);
 
-        // Query BatchHeadersSubmitted events
-        let headers_filter = Filter::new()
-            .address(contract_addr)
-            .event_signature(BatchHeadersSubmitted::SIGNATURE_HASH)
-            .from_block(current)
-            .to_block(page_end);
-
-        let headers_logs = provider
-            .get_logs(&headers_filter)
-            .await
-            .map_err(|e| eyre!("BatchHeadersSubmitted log query failed [{current}..{page_end}]: {e}"))?;
-
-        for log in &headers_logs {
-            match BatchHeadersSubmitted::decode_log_data(&log.inner.data) {
-                Ok(event) => {
-                    let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
-                    let expected_blobs: u64 =
-                        event.expectedBlobsCount.try_into().unwrap_or(u64::MAX);
-
-                    let num_blocks = retry_fetch_block_count(provider, log.transaction_hash, batch_index).await?;
-
-                    info!(
-                        batch_index,
-                        expected_blobs,
-                        num_blocks,
-                        "BatchHeadersSubmitted event"
-                    );
-
-                    let _ = tx
-                        .send(L1Event::BatchHeaders {
-                            batch_index,
-                            batch_root: event.batchRoot,
-                            expected_blobs,
-                            num_blocks,
-                        })
-                        .await;
-                }
-                Err(e) => {
-                    error!(err = %e, "Failed to decode BatchHeadersSubmitted");
-                }
-            }
+        if let Err(e) = process_page(provider, contract_addr, current, page_end, tx).await {
+            warn!(err = %e, current, page_end, "Page failed — returning partial progress");
+            return Ok(last_ok);
         }
 
-        // Query BatchAccepted events
-        let accepted_filter = Filter::new()
-            .address(contract_addr)
-            .event_signature(BatchAccepted::SIGNATURE_HASH)
-            .from_block(current)
-            .to_block(page_end);
-
-        let accepted_logs = provider
-            .get_logs(&accepted_filter)
-            .await
-            .map_err(|e| eyre!("BatchAccepted log query failed [{current}..{page_end}]: {e}"))?;
-
-        for log in &accepted_logs {
-            match BatchAccepted::decode_log_data(&log.inner.data) {
-                Ok(event) => {
-                    let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
-                    info!(batch_index, "BatchAccepted event");
-
-                    let _ = tx
-                        .send(L1Event::BlobsAccepted { batch_index })
-                        .await;
-                }
-                Err(e) => {
-                    error!(err = %e, "Failed to decode BatchAccepted");
-                }
-            }
-        }
-
+        last_ok = page_end;
         current = page_end + 1;
     }
 
     Ok(latest_block)
+}
+
+/// Process a single page of blocks: fetch and emit both event types.
+async fn process_page(
+    provider: &RootProvider,
+    contract_addr: Address,
+    from: u64,
+    to: u64,
+    tx: &mpsc::Sender<L1Event>,
+) -> Result<()> {
+    // Query BatchHeadersSubmitted events
+    let headers_filter = Filter::new()
+        .address(contract_addr)
+        .event_signature(BatchHeadersSubmitted::SIGNATURE_HASH)
+        .from_block(from)
+        .to_block(to);
+
+    let headers_logs = provider
+        .get_logs(&headers_filter)
+        .await
+        .map_err(|e| eyre!("BatchHeadersSubmitted log query failed [{from}..{to}]: {e}"))?;
+
+    for log in &headers_logs {
+        match BatchHeadersSubmitted::decode_log_data(&log.inner.data) {
+            Ok(event) => {
+                let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
+                let expected_blobs: u64 =
+                    event.expectedBlobsCount.try_into().unwrap_or(u64::MAX);
+
+                let num_blocks = retry_fetch_block_count(provider, log.transaction_hash, batch_index).await?;
+
+                info!(
+                    batch_index,
+                    expected_blobs,
+                    num_blocks,
+                    "BatchHeadersSubmitted event"
+                );
+
+                let _ = tx
+                    .send(L1Event::BatchHeaders {
+                        batch_index,
+                        batch_root: event.batchRoot,
+                        expected_blobs,
+                        num_blocks,
+                    })
+                    .await;
+            }
+            Err(e) => {
+                error!(err = %e, "Failed to decode BatchHeadersSubmitted");
+            }
+        }
+    }
+
+    // Query BatchAccepted events
+    let accepted_filter = Filter::new()
+        .address(contract_addr)
+        .event_signature(BatchAccepted::SIGNATURE_HASH)
+        .from_block(from)
+        .to_block(to);
+
+    let accepted_logs = provider
+        .get_logs(&accepted_filter)
+        .await
+        .map_err(|e| eyre!("BatchAccepted log query failed [{from}..{to}]: {e}"))?;
+
+    for log in &accepted_logs {
+        match BatchAccepted::decode_log_data(&log.inner.data) {
+            Ok(event) => {
+                let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
+                info!(batch_index, "BatchAccepted event");
+
+                let _ = tx
+                    .send(L1Event::BlobsAccepted { batch_index })
+                    .await;
+            }
+            Err(e) => {
+                error!(err = %e, "Failed to decode BatchAccepted");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Decode `acceptNextBatch` calldata from a transaction hash.
@@ -365,8 +388,9 @@ async fn find_batch_log(
         Err(e) => warn!(err = %e, "Full-range eth_getLogs failed — falling back to paginated scan"),
     }
 
-    // Slow path: paginated.
+    // Slow path: paginated with throttle to avoid rate limiting.
     const PAGE: u64 = 50_000;
+    const SCAN_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
     let mut current = from;
     while current <= to {
         let page_end = (current + PAGE - 1).min(to);
@@ -378,6 +402,9 @@ async fn find_batch_log(
             return Ok(Some(log));
         }
         current = page_end + 1;
+        if current <= to {
+            tokio::time::sleep(SCAN_DELAY).await;
+        }
     }
 
     Ok(None)

@@ -107,9 +107,9 @@ async fn main() {
         .build()
         .expect("failed to build HTTP client");
 
-    // Build L1 provider for reading (events) — no fillers needed
+    // Build L1 provider for reading (events) — with retry layer for 429/5xx
     let l1_rpc_url_parsed: url::Url = l1_rpc_url.parse().expect("Invalid L1_RPC_URL");
-    let l1_read_provider = RootProvider::new_http(l1_rpc_url_parsed.clone());
+    let l1_read_provider: RootProvider = rsp_provider::create_provider(l1_rpc_url_parsed.clone());
 
     // ── Startup: resolve L2 checkpoint from START_BATCH_ID ───────────────────────
     let listener_from_block: u64 = {
@@ -123,7 +123,7 @@ async fn main() {
                     .expect("FLUENT_FALLBACK_LOCAL_RPC is required when FLUENT_START_BATCH_ID is set")
                     .parse()
                     .expect("Invalid FLUENT_FALLBACK_LOCAL_RPC URL");
-                let l2_provider = RootProvider::new_http(l2_rpc_url);
+                let l2_provider: RootProvider = rsp_provider::create_provider(l2_rpc_url);
 
                 info!(batch_id, "FLUENT_START_BATCH_ID set — resolving L2 start checkpoint from L1");
                 let (l2_from_block, l1_event_block) = l1_listener::resolve_l2_start_checkpoint(
