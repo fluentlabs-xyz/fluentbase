@@ -1,115 +1,59 @@
-# Fluent RPC vs Upstream Reth RPC (EVM code semantics)
+# Fluent RPC vs Upstream Reth RPC (code retrieval behavior)
 
-This doc explains the RPC behavior differences between:
+This note explains how Fluent’s RPC behavior differs from upstream Reth when clients read account code.
 
-- **Upstream Reth** (`paradigmxyz/reth`, e.g. `release/v1.11.1`), and
-- **Fluent Reth fork** (`fluentlabs-xyz/reth`, `v1.11-patched`)
+## Context
 
-for account code retrieval in Fluent's runtime model.
+In Fluent, some accounts are stored in a wrapped form used by the runtime (often called an Ownable account layout). That wrapper contains metadata plus payload.
 
----
+Most Ethereum tools, however, expect `eth_getCode` to return the contract’s executable EVM bytecode directly.
 
-## TL;DR
+If an RPC server returns wrapper bytes to those tools, integrations can break or behave incorrectly.
 
-On Fluent, some accounts store an **OwnableAccount wrapper** in state (runtime-managed metadata + payload), not plain EVM bytecode.
+## What is different
 
-If RPC returns raw stored bytes for those accounts, EVM clients can read wrapper bytes instead of runtime bytecode.
+### 1) `eth_getCode` in Fluent is compatibility-oriented
 
-So Fluent changed behavior to keep EVM-facing APIs compatible:
+- **Upstream Reth (baseline):** returns the stored code bytes as-is.
+- **Fluent fork:** for Fluent runtime-owned wrapped accounts, it returns the extracted EVM bytecode instead of wrapper bytes.
 
-- `eth_getCode` → returns **runtime EVM bytecode** for Fluent runtime-owned Ownable accounts.
-- `eth_getRawCode` (Fluent-added) → returns **raw stored bytes** (wrapper-preserving) for tooling that needs exact storage bytes.
+In plain terms: Fluent makes `eth_getCode` behave the way Ethereum tooling expects, even when internal storage is wrapped.
 
----
+### 2) Fluent adds `eth_getRawCode`
 
-## What changed vs upstream
+Fluent added `eth_getRawCode` as a separate endpoint for infrastructure users who need the exact bytes from storage (including wrapper form).
 
-## 1) `eth_getCode` semantics differ
+So you now have two views:
 
-### Upstream Reth behavior
-`eth_getCode` returns `account_code(...).original_bytes()`.
+- **Normalized EVM view:** `eth_getCode`
+- **Raw storage view:** `eth_getRawCode`
 
-### Fluent fork behavior
-`eth_getCode` checks whether the bytecode is:
+### 3) `eth_getAccountInfo` remains a low-level payload view
 
-- `Bytecode::OwnableAccount(acc)`, and
-- `acc.owner_address == fluentbase_types::PRECOMPILE_EVM_RUNTIME`
+`eth_getAccountInfo` is present in both upstream and Fluent at this base level. It returns balance, nonce, and code payload.
 
-If yes, Fluent decodes `EthereumMetadata` and returns `code_copy()` (the EVM runtime bytecode).
-Otherwise it falls back to original bytes.
+For wrapped runtime accounts, that code field can still reflect raw/stored representation.
 
-**Implementation location (Fluent fork):**
-- `reth/crates/rpc/rpc-eth-api/src/helpers/state.rs` (`LoadState::get_code`)
+So do not assume `getAccountInfo.code` is always equivalent to Fluent’s normalized `getCode` output.
 
-This is the compatibility-critical change.
+### 4) About `eth_getRawAccountInfo`
 
----
+At the current patched baseline, there is no separate `eth_getRawAccountInfo` method.
 
-## 2) New method: `eth_getRawCode`
+## Why Fluent implemented this
 
-Fluent added `eth_getRawCode` to preserve access to unmodified stored bytes.
+Fluent added these semantics to preserve practical EVM compatibility for wallets, SDKs, tooling, and indexers that rely on `eth_getCode` behaving like “runtime bytecode”.
 
-Added in:
-- `reth/crates/rpc/rpc-eth-api/src/core.rs`
-- `reth/crates/rpc/rpc-api/src/engine.rs`
-- `reth/crates/rpc/rpc/src/engine.rs`
+Without this split:
 
-Behavior:
-- returns raw `account_code(...).original_bytes()`
-- no Ownable-account unwrapping
+- clients may read wrapper bytes as if they were contract bytecode,
+- bytecode matching/fingerprinting can fail,
+- downstream execution assumptions can be wrong.
 
----
+`eth_getRawCode` exists so low-level tooling still has a direct path to storage-accurate bytes.
 
-## 3) `eth_getAccountInfo`
+## Recommended usage
 
-`eth_getAccountInfo` exists in both upstream and Fluent fork at this base line.
-It returns `balance`, `nonce`, and `code` where `code` is read from `original_bytes()`.
-
-So for Fluent Ownable runtime accounts, `getAccountInfo.code` can still be wrapper/raw bytes.
-That is intentional for low-level state consumers and matches the method's current implementation.
-
----
-
-## 4) `eth_getRawAccountInfo`
-
-At time of writing, there is **no** `eth_getRawAccountInfo` method in `v1.11-patched`.
-
-If you need a split:
-- normalized EVM code: use `eth_getCode`
-- raw stored code: use `eth_getRawCode`
-- balance/nonce (+raw code bundle): use `eth_getAccountInfo`
-
----
-
-## Why this exists
-
-Fluent runtime uses Ownable account wrappers for routing/runtime ownership.
-For EVM API compatibility, tooling expects `eth_getCode` to return executable/runtime bytecode, not wrapper envelopes.
-
-Without Fluent's `eth_getCode` adjustment, clients can mis-handle contract code (e.g. decode failures, wrong bytecode fingerprinting, incorrect downstream assumptions).
-
-`eth_getRawCode` is the escape hatch for infra/debug/indexers that need exact stored bytes.
-
----
-
-## Recommended client usage
-
-- For standard Ethereum compatibility: **prefer `eth_getCode`**.
-- For forensic/indexing/storage-level inspection: **use `eth_getRawCode`**.
-- Do not assume `eth_getAccountInfo.code` is equivalent to Fluent-normalized `eth_getCode` for Ownable runtime accounts.
-
----
-
-## Quick check example
-
-```bash
-# EVM-compatible view
-curl -s -X POST "$RPC" -H 'content-type: application/json' \
-  --data '{"jsonrpc":"2.0","id":1,"method":"eth_getCode","params":["0x...","latest"]}'
-
-# Raw storage view
-curl -s -X POST "$RPC" -H 'content-type: application/json' \
-  --data '{"jsonrpc":"2.0","id":2,"method":"eth_getRawCode","params":["0x...","latest"]}'
-```
-
-If the account is Fluent runtime-owned Ownable, these can differ by design.
+- Use **`eth_getCode`** for normal Ethereum-compatible app behavior.
+- Use **`eth_getRawCode`** for debugging, indexing internals, and storage-level inspection.
+- Treat **`eth_getAccountInfo.code`** as low-level account payload, not guaranteed normalized runtime bytecode.
