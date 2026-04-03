@@ -11,7 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-sdk-derive-core = { path = "../sdk-derive/derive-core", default-features = false }
+fluentbase-sdk-derive-core = { workspace = true, default-features = false }
 anyhow = { workspace = true }
 cargo_metadata = "0.19.1"
 fluentbase-sdk = { workspace = true }

@@ -4781,7 +4781,6 @@ version = "1.0.5"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
- "fluentbase-sdk",
  "fluentbase-sdk-derive-core",
  "proc-macro-error",
  "proc-macro2",
