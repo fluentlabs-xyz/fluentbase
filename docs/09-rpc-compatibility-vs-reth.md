@@ -37,10 +37,23 @@ Because of that, Fluent exposes **two views** in RPC:
 
 ### AccountInfo endpoints
 
-- **`eth_getAccountInfo`**: compatibility-oriented in Fluent’s state helper logic (normalized code for runtime-owned wrapped accounts).
-- **`eth_getRawAccountInfo`**: exists in Fluent fork as a separate RPC method.
+- **`eth_getAccountInfo`**: compatibility-oriented view. For runtime-owned wrapped accounts, the returned code payload is intended to reflect EVM-facing semantics.
+- **`eth_getRawAccountInfo`**: raw/storage-oriented view, intended for users who need account data without EVM compatibility mapping.
 
-> Note: in the current patched baseline, the `eth_getRawAccountInfo` RPC handler is wired to the same backend call path as `eth_getAccountInfo`, so behavior can currently match. The method itself does exist and is part of the Fluent RPC surface.
+Why keep both:
+
+- compatibility consumers (wallets, app SDKs, generic Ethereum tooling) generally want normalized EVM semantics,
+- infra/verification consumers often need storage-truth semantics.
+
+Typical raw-account-info use cases:
+
+- building or validating account/state proofs against storage-level representation,
+- cross-checking state root / witness pipelines,
+- indexer pipelines that must preserve canonical stored bytes,
+- debugging mismatches between runtime-mapped bytecode and persisted account payload,
+- fork/fork-db tooling where cache keys or bytecode identity must match storage bytes exactly.
+
+> Note: in the current patched baseline, the `eth_getRawAccountInfo` RPC handler is wired to the same backend call path as `eth_getAccountInfo`, so behavior can currently match. The method exists and documents the intended raw-vs-normalized API split; wiring should follow that split consistently.
 
 ## Difference vs upstream Reth
 
