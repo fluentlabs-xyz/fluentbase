@@ -76,6 +76,7 @@ pub struct OrchestratorConfig<P: Provider + Clone + 'static> {
     pub fallback_local_rpc: Option<String>,
     pub fallback_remote_rpc: Option<String>,
     pub max_concurrent_fallbacks: usize,
+    pub l2_provider: alloy_provider::RootProvider,
 }
 
 /// Task for the execution worker pool.
@@ -509,10 +510,12 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
         let from_block = batch.from_block;
         let to_block = batch.to_block;
 
+        let l2_provider = cfg.l2_provider.clone();
         tokio::spawn(async move {
             let outcome = sign_batch_io(
                 &cfg.http_client, &cfg.proxy_url, &cfg.api_key,
                 batch_index, from_block, to_block, responses, db,
+                &l2_provider,
             ).await;
             let _ = tx.send((batch_index, outcome)).await;
         });
@@ -881,6 +884,7 @@ async fn sign_batch_io(
     to_block: u64,
     responses: Vec<EthExecutionResponse>,
     db: Arc<Mutex<Db>>,
+    l2_provider: &alloy_provider::RootProvider,
 ) -> SignOutcome {
     // Check for a cached signature from a previous attempt (survived crash).
     {
@@ -896,10 +900,27 @@ async fn sign_batch_io(
 
     info!(batch_index, from_block, to_block, "Signing batch root");
 
-    let mut backoff = Duration::from_millis(50);
+    // Build blobs from L2 tx data (with retry — L2 data is immutable so build once)
+    let blobs = {
+        let mut backoff = Duration::from_secs(1);
+        loop {
+            match crate::blob_builder::build_blobs_from_l2(l2_provider, from_block, to_block).await {
+                Ok(blobs) => break blobs,
+                Err(e) => {
+                    warn!(batch_index, err = %e, ?backoff, "Blob construction failed — retrying");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(Duration::from_secs(30));
+                }
+            }
+        }
+    };
+
+    info!(batch_index, num_blobs = blobs.len(), "Blobs built from L2 tx data");
+
+    let mut backoff = Duration::from_secs(1);
     loop {
         match call_sign_batch_root(
-            http_client, proxy_url, api_key, from_block, to_block, batch_index, &responses,
+            http_client, proxy_url, api_key, from_block, to_block, batch_index, &responses, &blobs,
         ).await {
             Ok(resp) => {
                 let db = Arc::clone(&db);
@@ -922,7 +943,7 @@ async fn sign_batch_io(
             Err(SignBatchError::Other(e)) => {
                 warn!(batch_index, err = %e, ?backoff, "sign-batch-root failed — retrying");
                 tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(Duration::from_secs(2));
+                backoff = (backoff * 2).min(Duration::from_secs(30));
             }
         }
     }
@@ -937,6 +958,7 @@ async fn call_sign_batch_root(
     to_block: u64,
     batch_index: u64,
     responses: &[EthExecutionResponse],
+    blobs: &[Vec<u8>],
 ) -> Result<SubmitBatchResponse, SignBatchError> {
     // Derive base URL from proxy_url (which points to /sign-block-execution)
     let base = proxy_url
@@ -950,6 +972,7 @@ async fn call_sign_batch_root(
         "to_block": to_block,
         "batch_index": batch_index,
         "responses": responses,
+        "blobs": blobs,
     });
 
     let resp = http_client
@@ -958,7 +981,27 @@ async fn call_sign_batch_root(
         .json(&body)
         .send()
         .await
-        .map_err(|e| SignBatchError::Other(eyre::eyre!("sign-batch-root request failed: {e}")))?;
+        .map_err(|e| {
+            use std::error::Error;
+            let kind = if e.is_connect() {
+                "connect"
+            } else if e.is_timeout() {
+                "timeout"
+            } else if e.is_request() {
+                "request"
+            } else {
+                "unknown"
+            };
+            let mut chain = format!("{e}");
+            let mut source = e.source();
+            while let Some(cause) = source {
+                chain.push_str(&format!(" → {cause}"));
+                source = cause.source();
+            }
+            SignBatchError::Other(eyre::eyre!(
+                "sign-batch-root failed ({kind}): {chain}"
+            ))
+        })?;
 
     let status = resp.status();
 

@@ -44,6 +44,14 @@ alloy-network.workspace = true
 alloy-provider = { version = "1.6.3", default-features = false, features = ["reqwest"] }
 alloy-signer = "1.6.3"
 alloy-signer-local = { version = "1.6.3", default-features = false }
+alloy-eips = "1.8.3"
+alloy-consensus = { workspace = true }
+
+# blob construction
+brotli = "8.0"
+c-kzg = { version = "2", features = ["std"] }
+sha2 = "0.10"
+futures = "0.3"
 
 # L3/L4 witness fallback
 rsp-host-executor   = { git = "https://github.com/fluentlabs-xyz/fluent-stf-sp1", branch = "djadjka/aws-nitro-refactor", features = ["testnet"] }

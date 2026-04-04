@@ -70,6 +70,14 @@ pub enum L1Event {
 const POLL_INTERVAL_SECS: u64 = 6;
 const MAX_POLL_BACKOFF_SECS: u64 = 120;
 
+/// Result of a single poll iteration.
+enum PollOutcome {
+    /// All pages processed successfully up to this block.
+    Complete(u64),
+    /// Some pages failed; progress saved up to this block.
+    Partial(u64),
+}
+
 /// Run the L1 event listener loop.
 ///
 /// Polls L1 logs starting from `from_block` and sends parsed events to `tx`.
@@ -91,10 +99,17 @@ pub async fn run(
 
     loop {
         match poll_once(&l1_provider, contract_addr, from_block, &tx).await {
-            Ok(latest) => {
+            Ok(PollOutcome::Complete(latest)) => {
                 let _ = l1_ckpt_tx.send(latest).await;
                 from_block = latest + 1;
-                backoff_secs = POLL_INTERVAL_SECS; // reset on success
+                backoff_secs = POLL_INTERVAL_SECS; // reset on full success
+            }
+            Ok(PollOutcome::Partial(last_ok)) => {
+                let _ = l1_ckpt_tx.send(last_ok).await;
+                from_block = last_ok + 1;
+                // Escalate backoff — don't reset, we hit rate limits
+                backoff_secs = (backoff_secs * 2).min(MAX_POLL_BACKOFF_SECS);
+                warn!(from_block, backoff_secs, "Partial progress — backing off");
             }
             Err(e) => {
                 warn!(err = %e, backoff_secs, "L1 poll failed — retrying");
@@ -133,20 +148,20 @@ async fn retry_fetch_block_count(
 }
 
 /// Single poll iteration: fetch logs from `from_block` to latest, paginated.
-/// Returns the last fully-processed block on success, or partial progress on page failure.
+/// Returns `Complete` on full success, `Partial` on page failure with progress saved.
 async fn poll_once(
     provider: &RootProvider,
     contract_addr: Address,
     from_block: u64,
     tx: &mpsc::Sender<L1Event>,
-) -> Result<u64> {
+) -> Result<PollOutcome> {
     let latest_block = provider
         .get_block_number()
         .await
         .map_err(|e| eyre!("Failed to get latest block: {e}"))?;
 
     if from_block > latest_block {
-        return Ok(from_block.saturating_sub(1));
+        return Ok(PollOutcome::Complete(from_block.saturating_sub(1)));
     }
 
     let mut current = from_block;
@@ -158,17 +173,17 @@ async fn poll_once(
 
         if let Err(e) = process_page(provider, contract_addr, current, page_end, tx).await {
             warn!(err = %e, current, page_end, "Page failed — returning partial progress");
-            return Ok(last_ok);
+            return Ok(PollOutcome::Partial(last_ok));
         }
 
         last_ok = page_end;
         current = page_end + 1;
     }
 
-    Ok(latest_block)
+    Ok(PollOutcome::Complete(latest_block))
 }
 
-/// Process a single page of blocks: fetch and emit both event types.
+/// Process a single page of blocks: fetch and emit both event types in one query.
 async fn process_page(
     provider: &RootProvider,
     contract_addr: Address,
@@ -176,73 +191,55 @@ async fn process_page(
     to: u64,
     tx: &mpsc::Sender<L1Event>,
 ) -> Result<()> {
-    // Query BatchHeadersSubmitted events
-    let headers_filter = Filter::new()
+    let filter = Filter::new()
         .address(contract_addr)
-        .event_signature(BatchHeadersSubmitted::SIGNATURE_HASH)
+        .event_signature(vec![
+            BatchHeadersSubmitted::SIGNATURE_HASH,
+            BatchAccepted::SIGNATURE_HASH,
+        ])
         .from_block(from)
         .to_block(to);
 
-    let headers_logs = provider
-        .get_logs(&headers_filter)
+    let logs = provider
+        .get_logs(&filter)
         .await
-        .map_err(|e| eyre!("BatchHeadersSubmitted log query failed [{from}..{to}]: {e}"))?;
+        .map_err(|e| eyre!("Log query failed [{from}..{to}]: {e}"))?;
 
-    for log in &headers_logs {
-        match BatchHeadersSubmitted::decode_log_data(&log.inner.data) {
-            Ok(event) => {
-                let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
-                let expected_blobs: u64 =
-                    event.expectedBlobsCount.try_into().unwrap_or(u64::MAX);
+    for log in &logs {
+        let topic0 = log.topic0().copied().unwrap_or_default();
 
-                let num_blocks = retry_fetch_block_count(provider, log.transaction_hash, batch_index).await?;
+        if topic0 == BatchHeadersSubmitted::SIGNATURE_HASH {
+            match BatchHeadersSubmitted::decode_log_data(&log.inner.data) {
+                Ok(event) => {
+                    let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
+                    let expected_blobs: u64 =
+                        event.expectedBlobsCount.try_into().unwrap_or(u64::MAX);
 
-                info!(
-                    batch_index,
-                    expected_blobs,
-                    num_blocks,
-                    "BatchHeadersSubmitted event"
-                );
+                    let num_blocks = retry_fetch_block_count(
+                        provider, log.transaction_hash, batch_index,
+                    ).await?;
 
-                let _ = tx
-                    .send(L1Event::BatchHeaders {
-                        batch_index,
-                        batch_root: event.batchRoot,
-                        expected_blobs,
-                        num_blocks,
-                    })
-                    .await;
+                    info!(batch_index, expected_blobs, num_blocks, "BatchHeadersSubmitted event");
+
+                    let _ = tx
+                        .send(L1Event::BatchHeaders {
+                            batch_index,
+                            batch_root: event.batchRoot,
+                            expected_blobs,
+                            num_blocks,
+                        })
+                        .await;
+                }
+                Err(e) => error!(err = %e, "Failed to decode BatchHeadersSubmitted"),
             }
-            Err(e) => {
-                error!(err = %e, "Failed to decode BatchHeadersSubmitted");
-            }
-        }
-    }
-
-    // Query BatchAccepted events
-    let accepted_filter = Filter::new()
-        .address(contract_addr)
-        .event_signature(BatchAccepted::SIGNATURE_HASH)
-        .from_block(from)
-        .to_block(to);
-
-    let accepted_logs = provider
-        .get_logs(&accepted_filter)
-        .await
-        .map_err(|e| eyre!("BatchAccepted log query failed [{from}..{to}]: {e}"))?;
-
-    for log in &accepted_logs {
-        match BatchAccepted::decode_log_data(&log.inner.data) {
-            Ok(event) => {
-                let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
-                info!(batch_index, "BatchAccepted event");
-
-                let _ = tx
-                    .send(L1Event::BlobsAccepted { batch_index })
-                    .await;
-            }
-            Err(e) => {
-                error!(err = %e, "Failed to decode BatchAccepted");
+        } else if topic0 == BatchAccepted::SIGNATURE_HASH {
+            match BatchAccepted::decode_log_data(&log.inner.data) {
+                Ok(event) => {
+                    let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
+                    info!(batch_index, "BatchAccepted event");
+                    let _ = tx.send(L1Event::BlobsAccepted { batch_index }).await;
+                }
+                Err(e) => error!(err = %e, "Failed to decode BatchAccepted"),
             }
         }
     }
@@ -390,7 +387,7 @@ async fn find_batch_log(
 
     // Slow path: paginated with throttle to avoid rate limiting.
     const PAGE: u64 = 50_000;
-    const SCAN_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+    const SCAN_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
     let mut current = from;
     while current <= to {
         let page_end = (current + PAGE - 1).min(to);

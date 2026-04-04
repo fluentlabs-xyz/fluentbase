@@ -204,6 +204,17 @@ async fn main() {
         l1_ckpt_tx,
     ));
 
+    // Build L2 provider for blob construction
+    let l2_provider: RootProvider = {
+        let l2_rpc_url: url::Url = fallback_local_rpc
+            .as_deref()
+            .or(fallback_remote_rpc.as_deref())
+            .expect("FLUENT_FALLBACK_LOCAL_RPC or FLUENT_FALLBACK_REMOTE_RPC required for blob construction")
+            .parse()
+            .expect("Invalid L2 RPC URL for blob construction");
+        rsp_provider::create_provider(l2_rpc_url)
+    };
+
     // Run orchestrator
     let config = OrchestratorConfig {
         server_addr,
@@ -217,6 +228,7 @@ async fn main() {
         fallback_local_rpc,
         fallback_remote_rpc,
         max_concurrent_fallbacks,
+        l2_provider,
     };
 
     client::run(config, l1_rx, l1_ckpt_rx).await;

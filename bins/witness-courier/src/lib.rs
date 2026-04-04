@@ -37,6 +37,9 @@ pub mod hub;
 pub mod server;
 
 #[cfg(feature = "client")]
+pub mod blob_builder;
+
+#[cfg(feature = "client")]
 pub mod client;
 
 #[cfg(feature = "client")]

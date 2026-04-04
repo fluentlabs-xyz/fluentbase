@@ -18456,6 +18456,8 @@ dependencies = [
 name = "witness-courier"
 version = "1.0.5"
 dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
  "alloy-network",
  "alloy-primitives",
  "alloy-provider",
@@ -18465,7 +18467,10 @@ dependencies = [
  "alloy-sol-types",
  "async-channel",
  "bincode 1.3.3",
+ "brotli",
+ "c-kzg",
  "eyre",
+ "futures",
  "prost 0.14.3",
  "reqwest 0.12.28",
  "reth-chainspec",
@@ -18477,6 +18482,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tokio-stream",
  "tokio-util",
