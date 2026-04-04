@@ -59,6 +59,7 @@ pub fn compile_rwasm_maybe_system(
 
     let config = default_compilation_config()
         .with_consume_fuel(should_charge_fuel)
+        .with_consume_fuel_for_params_and_locals(!is_system_runtime)
         .with_builtins_consume_fuel(should_charge_fuel)
         .with_max_allowed_memory_pages(if is_system_runtime {
             N_MAX_ALLOWED_MEMORY_PAGES
