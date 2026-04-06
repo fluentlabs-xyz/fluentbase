@@ -94,7 +94,7 @@ struct BlockResult {
 /// Result of a batch signing attempt.
 enum SignOutcome {
     /// Batch signed and persisted to DB.
-    Signed,
+    Signed { response: SubmitBatchResponse },
     /// Enclave key rotated — these blocks need re-execution.
     InvalidSignatures {
         invalid_blocks: Vec<u64>,
@@ -155,14 +155,38 @@ async fn execution_worker(
         };
 
         let mut backoff = Duration::from_millis(50);
+        let mut attempts: u32 = 0;
+        let started = tokio::time::Instant::now();
         loop {
+            attempts += 1;
             match send_block_request(&http_client, &proxy_url, &api_key, task.block_number, &task.payload).await {
                 Ok(response) => {
+                    if attempts > 1 {
+                        info!(worker_id, block = task.block_number, attempts, elapsed = ?started.elapsed(), "Block succeeded after retries");
+                    }
                     let _ = result_tx.send(BlockResult { block_number: task.block_number, response }).await;
                     break;
                 }
                 Err(e) => {
-                    warn!(worker_id, block = task.block_number, err = %e, "Execution failed, retrying");
+                    let elapsed = started.elapsed();
+                    if attempts >= 50 {
+                        error!(
+                            worker_id,
+                            block = task.block_number,
+                            attempts,
+                            elapsed_secs = elapsed.as_secs(),
+                            err = %e,
+                            "Block execution stuck — proxy may be down"
+                        );
+                    } else {
+                        warn!(
+                            worker_id,
+                            block = task.block_number,
+                            attempt = attempts,
+                            err = %e,
+                            "Execution failed, retrying"
+                        );
+                    }
                     tokio::time::sleep(backoff).await;
                     backoff = (backoff * 2).min(Duration::from_secs(2));
                 }
@@ -223,13 +247,6 @@ pub async fn run<P: Provider + Clone + 'static>(
         accumulator.max_to_block().map(|e| e + 1)
             .or_else(|| db.lock().unwrap().get_last_batch_end().map(|e| e + 1));
 
-    let checkpoint = db.lock().unwrap().get_checkpoint();
-    let initial_confirmed: BTreeSet<u64> = db.lock().unwrap()
-        .get_all_response_block_numbers()
-        .into_iter()
-        .filter(|&b| b > checkpoint)
-        .collect();
-
     // Channels live for the entire process — workers survive reconnects
     let (high_tx, high_rx) = async_channel::bounded::<ExecutionTask>(1024);
     let (normal_tx, normal_rx) = async_channel::bounded::<ExecutionTask>(4096);
@@ -263,13 +280,18 @@ pub async fn run<P: Provider + Clone + 'static>(
 
     loop {
         let from_block = db.lock().unwrap().get_checkpoint() + 1;
-        info!(from_block, "Connecting to witness server");
+        let confirmed: BTreeSet<u64> = db.lock().unwrap()
+            .get_all_response_block_numbers()
+            .into_iter()
+            .filter(|&b| b >= from_block)
+            .collect();
+        info!(from_block, confirmed_count = confirmed.len(), "Connecting to witness server");
 
         match run_stream(
             &config,
             &db,
             from_block,
-            initial_confirmed.clone(),
+            confirmed,
             &normal_tx,
             &high_tx,
             &fallback_tx,
@@ -345,6 +367,18 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             }
             self.checkpoint = new_checkpoint;
             self.confirmed.retain(|&b| b <= new_checkpoint);
+            for &b in &blocks {
+                self.pending_requests.remove(&b);
+                self.fallback_active.remove(&b);
+                self.fallback_exhausted.remove(&b);
+            }
+
+            // Recalculate highest_witness_received: cannot exceed new checkpoint
+            // (witnesses for reverted blocks are no longer valid)
+            if self.highest_witness_received > new_checkpoint {
+                self.highest_witness_received = new_checkpoint;
+            }
+
             info!(new_checkpoint, "Checkpoint rolled back due to reorg");
         }
 
@@ -367,6 +401,13 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
     async fn on_block_result(&mut self, result: BlockResult, accumulator: &mut BatchAccumulator) {
         let block_number = result.block_number;
         self.pending_requests.remove(&block_number);
+
+        // Ignore stale results from orphaned tasks (e.g. after L2 reorg)
+        if block_number <= self.checkpoint {
+            warn!(block_number, checkpoint = self.checkpoint, "Ignoring stale block result (orphaned task)");
+            return;
+        }
+
         info!(block_number, "Block execution response received");
         accumulator.insert_response(result.response).await;
 
@@ -494,9 +535,7 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             return;
         }
 
-        let db_ref = self.db.lock().unwrap();
-        let batch_index = accumulator.first_ready_unsigned(&db_ref);
-        drop(db_ref);
+        let batch_index = accumulator.first_ready_unsigned();
 
         let Some(batch_index) = batch_index else { return };
         let Some(batch) = accumulator.get(batch_index) else { return };
@@ -531,8 +570,9 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
         self.signing_batch = None;
 
         match outcome {
-            SignOutcome::Signed => {
+            SignOutcome::Signed { response } => {
                 info!(batch_index, "Batch signed — available for dispatch");
+                accumulator.cache_signature(batch_index, response);
                 self.try_sign_next_batch(accumulator);
                 self.try_dispatch_next_batch(accumulator);
             }
@@ -583,9 +623,7 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             return;
         }
 
-        let db_ref = self.db.lock().unwrap();
-        let result = accumulator.first_sequential_signed(&db_ref);
-        drop(db_ref);
+        let result = accumulator.first_sequential_signed();
 
         let Some((batch_index, signature)) = result else { return };
 
@@ -629,12 +667,27 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
                     let fb = batch.from_block;
                     let tb = batch.to_block;
                     tokio::spawn(async move {
-                        let _ = ack.acknowledge_range(
-                            crate::proto::AcknowledgeRangeRequest {
-                                from_block: fb,
-                                to_block: tb,
+                        let mut backoff = Duration::from_secs(1);
+                        const MAX_ACK_RETRIES: u32 = 10;
+                        for attempt in 1..=MAX_ACK_RETRIES {
+                            match ack.acknowledge_range(
+                                crate::proto::AcknowledgeRangeRequest {
+                                    from_block: fb,
+                                    to_block: tb,
+                                }
+                            ).await {
+                                Ok(_) => break,
+                                Err(e) => {
+                                    if attempt == MAX_ACK_RETRIES {
+                                        error!(fb, tb, attempt, err = %e, "acknowledge_range failed after all retries — cold files may leak");
+                                    } else {
+                                        warn!(fb, tb, attempt, err = %e, "acknowledge_range failed — retrying");
+                                    }
+                                    tokio::time::sleep(backoff).await;
+                                    backoff = (backoff * 2).min(Duration::from_secs(30));
+                                }
                             }
-                        ).await;
+                        }
                     });
 
                     {
@@ -889,12 +942,12 @@ async fn sign_batch_io(
     // Check for a cached signature from a previous attempt (survived crash).
     {
         let db_check = Arc::clone(&db);
-        let cached = tokio::task::spawn_blocking(move || {
-            db_check.lock().unwrap().has_batch_signature(batch_index)
-        }).await.unwrap_or(false);
-        if cached {
+        let sig = tokio::task::spawn_blocking(move || {
+            db_check.lock().unwrap().get_batch_signature(batch_index)
+        }).await.unwrap_or(None);
+        if let Some(resp) = sig {
             info!(batch_index, "Batch already signed (cached) — skipping /sign-batch-root");
-            return SignOutcome::Signed;
+            return SignOutcome::Signed { response: resp };
         }
     }
 
@@ -929,7 +982,7 @@ async fn sign_batch_io(
                     db.lock().unwrap().save_batch_signature(batch_index, &resp_clone);
                 }).await;
                 info!(batch_index, "Batch root signed and persisted");
-                return SignOutcome::Signed;
+                return SignOutcome::Signed { response: resp };
             }
             Err(SignBatchError::InvalidSignatures { invalid_blocks, enclave_address }) => {
                 warn!(

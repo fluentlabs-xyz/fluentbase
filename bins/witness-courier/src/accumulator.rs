@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
 use crate::db::Db;
-use crate::types::EthExecutionResponse;
+use crate::types::{EthExecutionResponse, SubmitBatchResponse};
 
 #[derive(Debug)]
 pub struct PendingBatch {
@@ -39,6 +39,9 @@ pub struct BatchAccumulator {
     /// Applied when the batch is later registered via set_batch.
     pending_blobs_accepted: HashSet<u64>,
     db: Option<Arc<Mutex<Db>>>,
+    /// In-memory cache of batch signatures: batch_index → SubmitBatchResponse.
+    /// Mirrors the `batch_signatures` DB table. Eliminates sync SQL on the hot path.
+    signatures: HashMap<u64, SubmitBatchResponse>,
 }
 
 impl BatchAccumulator {
@@ -63,6 +66,15 @@ impl BatchAccumulator {
             .load_pending_blobs_accepted()
             .into_iter()
             .collect();
+        let signatures: HashMap<u64, SubmitBatchResponse> = {
+            let mut map = HashMap::new();
+            for batch in batches.values() {
+                if let Some(sig) = guard.get_batch_signature(batch.batch_index) {
+                    map.insert(batch.batch_index, sig);
+                }
+            }
+            map
+        };
         drop(guard);
 
         Self {
@@ -70,6 +82,7 @@ impl BatchAccumulator {
             responses,
             pending_blobs_accepted,
             db: Some(db),
+            signatures,
         }
     }
 
@@ -169,23 +182,23 @@ impl BatchAccumulator {
     }
 
     /// Returns the first ready batch (in BTreeMap order) that does NOT have
-    /// a cached signature in the DB. Used by the eager signer.
-    pub fn first_ready_unsigned(&self, db: &Db) -> Option<u64> {
+    /// a cached signature. Used by the eager signer.
+    pub fn first_ready_unsigned(&self) -> Option<u64> {
         self.batches
             .values()
             .filter(|b| self.is_batch_ready(b))
-            .find(|b| db.get_batch_signature(b.batch_index).is_none())
+            .find(|b| !self.signatures.contains_key(&b.batch_index))
             .map(|b| b.batch_index)
     }
 
-    /// Returns the first batch in BTreeMap order that has a cached signature
-    /// in the DB, along with the signature bytes. Used by the sequential dispatcher.
+    /// Returns the first batch in BTreeMap order that has a cached signature,
+    /// along with the signature bytes. Used by the sequential dispatcher.
     ///
     /// Returns `None` if the first pending batch is not yet signed (strict ordering).
-    pub fn first_sequential_signed(&self, db: &Db) -> Option<(u64, Vec<u8>)> {
+    pub fn first_sequential_signed(&self) -> Option<(u64, Vec<u8>)> {
         let first = self.batches.values().next()?;
-        let resp = db.get_batch_signature(first.batch_index)?;
-        Some((first.batch_index, resp.signature))
+        let resp = self.signatures.get(&first.batch_index)?;
+        Some((first.batch_index, resp.signature.clone()))
     }
 
     pub fn get(&self, batch_index: u64) -> Option<&PendingBatch> {
@@ -200,11 +213,14 @@ impl BatchAccumulator {
 
     /// Remove a completed batch and drain its responses from the pool.
     pub async fn take(&mut self, batch_index: u64) -> Option<PendingBatch> {
-        let batch = self.batches.remove(&batch_index)?;
+        let batch = self.batches.get(&batch_index)?;
+        let fb = batch.from_block;
+        let tb = batch.to_block;
+
+        // DB first — if we crash after this, the batch is gone from DB (safe).
+        // If we crash before, batch stays in both DB and memory (consistent).
         if let Some(db) = &self.db {
             let db = Arc::clone(db);
-            let fb = batch.from_block;
-            let tb = batch.to_block;
             let _ = tokio::task::spawn_blocking(move || {
                 let guard = db.lock().unwrap();
                 guard.delete_batch(batch_index);
@@ -212,6 +228,10 @@ impl BatchAccumulator {
                 guard.delete_batch_signature(batch_index);
             }).await;
         }
+
+        // Memory second — only after DB deletion confirmed
+        let batch = self.batches.remove(&batch_index).unwrap();
+        self.signatures.remove(&batch_index);
         for b in batch.from_block..=batch.to_block {
             self.responses.remove(&b);
         }
@@ -246,12 +266,12 @@ impl BatchAccumulator {
             .collect();
 
         for idx in &affected {
-            let batch = self.batches.remove(idx).unwrap();
+            let batch = self.batches.get(idx).unwrap();
+            let fb = batch.from_block;
+            let tb = batch.to_block;
             if let Some(db) = &self.db {
                 let db = Arc::clone(db);
                 let bi = *idx;
-                let fb = batch.from_block;
-                let tb = batch.to_block;
                 let _ = tokio::task::spawn_blocking(move || {
                     let guard = db.lock().unwrap();
                     guard.delete_batch(bi);
@@ -259,6 +279,8 @@ impl BatchAccumulator {
                     guard.delete_batch_signature(bi);
                 }).await;
             }
+            let batch = self.batches.remove(idx).unwrap();
+            self.signatures.remove(idx);
             for b in batch.from_block..=batch.to_block {
                 self.responses.remove(&b);
             }
@@ -289,8 +311,14 @@ impl BatchAccumulator {
         info!(count = blocks.len(), "Purged stale responses for key rotation recovery");
     }
 
+    /// Cache a signature in memory (called after successful signing).
+    pub fn cache_signature(&mut self, batch_index: u64, resp: SubmitBatchResponse) {
+        self.signatures.insert(batch_index, resp);
+    }
+
     /// Delete a cached batch signature (e.g. after key rotation invalidation).
     pub async fn delete_batch_signature(&mut self, batch_index: u64) {
+        self.signatures.remove(&batch_index);
         if let Some(db) = &self.db {
             let db = Arc::clone(db);
             let _ = tokio::task::spawn_blocking(move || {
@@ -517,9 +545,7 @@ mod tests {
         acc.mark_blobs_accepted(2).await;
 
         // Both ready, neither signed
-        let guard = db.lock().unwrap();
-        assert_eq!(acc.first_ready_unsigned(&guard), Some(1));
-        drop(guard);
+        assert_eq!(acc.first_ready_unsigned(), Some(1));
 
         // Sign batch 1
         let sig_resp = crate::types::SubmitBatchResponse {
@@ -527,19 +553,16 @@ mod tests {
             versioned_hashes: vec![],
             signature: vec![1, 2, 3],
         };
-        db.lock().unwrap().save_batch_signature(1, &sig_resp);
+        acc.cache_signature(1, sig_resp.clone());
 
         // Now first_ready_unsigned should skip batch 1 and return batch 2
-        let guard = db.lock().unwrap();
-        assert_eq!(acc.first_ready_unsigned(&guard), Some(2));
-        drop(guard);
+        assert_eq!(acc.first_ready_unsigned(), Some(2));
 
         // Sign batch 2 as well
-        db.lock().unwrap().save_batch_signature(2, &sig_resp);
+        acc.cache_signature(2, sig_resp);
 
         // No unsigned batches left
-        let guard = db.lock().unwrap();
-        assert_eq!(acc.first_ready_unsigned(&guard), None);
+        assert_eq!(acc.first_ready_unsigned(), None);
     }
 
     #[tokio::test]
@@ -555,9 +578,7 @@ mod tests {
         acc.mark_blobs_accepted(2).await;
 
         // No signatures yet — returns None
-        let guard = db.lock().unwrap();
-        assert!(acc.first_sequential_signed(&guard).is_none());
-        drop(guard);
+        assert!(acc.first_sequential_signed().is_none());
 
         // Sign only batch 2 (not the first)
         let sig_resp = crate::types::SubmitBatchResponse {
@@ -565,12 +586,10 @@ mod tests {
             versioned_hashes: vec![],
             signature: vec![4, 5, 6],
         };
-        db.lock().unwrap().save_batch_signature(2, &sig_resp);
+        acc.cache_signature(2, sig_resp);
 
         // Batch 1 is first in BTreeMap but unsigned — returns None (strict ordering)
-        let guard = db.lock().unwrap();
-        assert!(acc.first_sequential_signed(&guard).is_none());
-        drop(guard);
+        assert!(acc.first_sequential_signed().is_none());
 
         // Sign batch 1
         let sig1 = crate::types::SubmitBatchResponse {
@@ -578,11 +597,10 @@ mod tests {
             versioned_hashes: vec![],
             signature: vec![7, 8, 9],
         };
-        db.lock().unwrap().save_batch_signature(1, &sig1);
+        acc.cache_signature(1, sig1);
 
         // Now batch 1 is first and signed — returns it
-        let guard = db.lock().unwrap();
-        let result = acc.first_sequential_signed(&guard);
+        let result = acc.first_sequential_signed();
         assert!(result.is_some());
         let (idx, sig) = result.unwrap();
         assert_eq!(idx, 1);

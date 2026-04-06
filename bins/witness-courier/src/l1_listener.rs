@@ -70,6 +70,9 @@ pub enum L1Event {
 const POLL_INTERVAL_SECS: u64 = 6;
 const MAX_POLL_BACKOFF_SECS: u64 = 120;
 
+/// Number of blocks to lag behind `latest` to avoid L1 reorgs.
+const L1_SAFE_BLOCKS: u64 = 3;
+
 /// Result of a single poll iteration.
 enum PollOutcome {
     /// All pages processed successfully up to this block.
@@ -155,10 +158,11 @@ async fn poll_once(
     from_block: u64,
     tx: &mpsc::Sender<L1Event>,
 ) -> Result<PollOutcome> {
-    let latest_block = provider
+    let raw_latest = provider
         .get_block_number()
         .await
         .map_err(|e| eyre!("Failed to get latest block: {e}"))?;
+    let latest_block = raw_latest.saturating_sub(L1_SAFE_BLOCKS);
 
     if from_block > latest_block {
         return Ok(PollOutcome::Complete(from_block.saturating_sub(1)));

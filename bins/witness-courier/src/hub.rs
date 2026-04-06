@@ -310,12 +310,16 @@ impl WitnessHub {
 
         if let Some(cold) = &self.cold {
             for &block_number in &reverted_blocks {
-                let path = cold.dir.join(format!("{}.bin", block_number));
-                match tokio::fs::remove_file(&path).await {
+                // Remove .bin file
+                let bin_path = cold.dir.join(format!("{block_number}.bin"));
+                match tokio::fs::remove_file(&bin_path).await {
                     Ok(()) => { cold.index.write().unwrap().remove(&block_number); }
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                     Err(e) => warn!(block_number, err = %e, "Failed to remove cold witness on reorg"),
                 }
+                // Remove .bin.tmp file (race with run_cold_writer)
+                let tmp_path = cold.dir.join(format!("{block_number}.bin.tmp"));
+                let _ = tokio::fs::remove_file(&tmp_path).await;
             }
         }
 
