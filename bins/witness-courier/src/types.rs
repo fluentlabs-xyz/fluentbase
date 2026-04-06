@@ -17,15 +17,6 @@ pub struct ProveRequest {
 /// Arc-wrapped prove request for cheap cloning across broadcast subscribers.
 pub type SharedProveRequest = Arc<ProveRequest>;
 
-/// Events sent through the hub broadcast channel.
-#[derive(Debug, Clone)]
-pub enum HubEvent {
-    /// A new witness is available.
-    Witness(SharedProveRequest),
-    /// Blocks were reverted due to a chain reorg.
-    Reorg { reverted_blocks: Vec<u64> },
-}
-
 // ---------------------------------------------------------------------------
 // Mirror types from `fluent-nitro-types` (different workspace)
 // ---------------------------------------------------------------------------

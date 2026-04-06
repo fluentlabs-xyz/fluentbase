@@ -33,8 +33,6 @@ use crate::proto::{
     self,
     witness_service_server::{WitnessService, WitnessServiceServer},
 };
-use crate::types::HubEvent;
-
 /// gRPC service implementation backed by a [`WitnessHub`].
 pub struct WitnessGrpcService {
     hub: Arc<WitnessHub>,
@@ -104,7 +102,7 @@ impl WitnessService for WitnessGrpcService {
             // the overlap window.
             loop {
                 match broadcast_rx.recv().await {
-                    Ok(HubEvent::Witness(req)) => {
+                    Ok(req) => {
                         if req.block_number <= last_sent {
                             continue;
                         }
@@ -120,24 +118,6 @@ impl WitnessService for WitnessGrpcService {
                             return;
                         }
                         last_sent = req.block_number;
-                    }
-                    Ok(HubEvent::Reorg { reverted_blocks }) => {
-                        // Reset dedup cursor so replacement blocks pass through
-                        if let Some(&min) = reverted_blocks.iter().min() {
-                            if min > 0 {
-                                last_sent = min - 1;
-                            }
-                        }
-                        let msg = proto::WitnessMessage {
-                            content: Some(proto::witness_message::Content::Reorg(
-                                proto::ReorgNotification {
-                                    reverted_block_numbers: reverted_blocks,
-                                },
-                            )),
-                        };
-                        if tx.send(Ok(msg)).await.is_err() {
-                            return;
-                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!(skipped = n, last_sent, "Courier subscriber lagged — terminating stream to force cold replay");

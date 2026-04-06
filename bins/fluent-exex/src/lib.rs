@@ -26,10 +26,6 @@
 //! is older than [`MAX_TIP_AGE_SECS`] are skipped (indicates initial sync or
 //! prolonged network partition).
 //!
-//! **Revert-aware.**
-//! Witnesses for reverted blocks are removed from the hub before processing
-//! the replacement chain.
-
 use std::sync::Arc;
 
 use alloy_consensus::BlockHeader;
@@ -116,28 +112,13 @@ where
 
     while let Some(notification) = ctx.notifications.try_next().await? {
         // ---------------------------------------------------------------
-        // 1. Handle reverts: remove stale witnesses BEFORE processing the
-        //    replacement chain, so downstream never picks up orphans.
-        // ---------------------------------------------------------------
-        if let Some(reverted_chain) = notification.reverted_chain() {
-            let reverted_numbers: Vec<u64> =
-                reverted_chain.blocks_iter().map(|b| b.number()).collect();
-
-            warn!(
-                blocks = ?reverted_numbers,
-                "Chain reverted — removing invalidated witnesses"
-            );
-
-            hub.remove_and_notify(reverted_numbers).await;
-        }
-
-        // ---------------------------------------------------------------
-        // 2. Process new committed chain (if any).
+        // 1. Process new committed chain (if any).
         // ---------------------------------------------------------------
         let Some(new_chain) = notification.committed_chain() else {
-            // Revert-only notification: ack the parent of the first reverted
-            // block so reth's pruner can advance. Without this, FinishedHeight
-            // stalls and historical state accumulates in memory → OOM.
+            // No committed chain. This can happen after a hard restart when
+            // Reth rolls back a few blocks to restore DB consistency.
+            // Ack the parent of the first reverted block so the pruner
+            // does not retain stale state above the rollback point.
             if let Some(reverted) = notification.reverted_chain() {
                 let first = reverted.first();
                 let safe_height = BlockNumHash::new(
@@ -154,7 +135,7 @@ where
         let chain_len = new_chain.len();
 
         // ---------------------------------------------------------------
-        // 3. Stale chain check.
+        // 2. Stale chain check.
         //
         //    Bypassed when start_block is set: historical blocks are
         //    legitimately old (tip_age >> MAX_TIP_AGE_SECS).
@@ -188,7 +169,7 @@ where
         }
 
         // ---------------------------------------------------------------
-        // 4. Parallel block processing.
+        // 3. Parallel block processing.
         //
         //    - Pre-compute parent state roots from block headers (no
         //      provider needed after the first block — roots are in the
@@ -303,7 +284,7 @@ where
         }
 
         // ---------------------------------------------------------------
-        // 5. Log partial-batch outcomes.
+        // 4. Log partial-batch outcomes.
         // ---------------------------------------------------------------
         let witnessed_targets = chain_len as u64;
         if witnessed_targets > 0 && blocks_succeeded == 0 {
@@ -324,7 +305,7 @@ where
         }
 
         // ---------------------------------------------------------------
-        // 6. Ack FinishedHeight.
+        // 5. Ack FinishedHeight.
         //
         //    ALWAYS ack the tip regardless of partial failure. If we don't,
         //    reth's ExEx pipeline stalls — it won't send more notifications,

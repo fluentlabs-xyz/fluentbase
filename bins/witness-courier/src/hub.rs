@@ -24,7 +24,7 @@ use std::sync::{Arc as StdArc, RwLock as StdRwLock};
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{error, info, warn};
 
-use crate::types::{HubEvent, ProveRequest, SharedProveRequest};
+use crate::types::{ProveRequest, SharedProveRequest};
 
 /// Broadcast channel capacity for live subscribers.
 /// This only holds `Arc` clones (~8 bytes each), not data copies.
@@ -121,7 +121,7 @@ async fn run_cold_writer(
 /// Thread-safe: the ring buffer is behind a [`RwLock`], the broadcast
 /// channel is lock-free for subscribers.\
 pub struct WitnessHub {
-    tx: broadcast::Sender<HubEvent>,
+    tx: broadcast::Sender<SharedProveRequest>,
     buffer: RwLock<RingBuffer>,
     cold: Option<ColdTier>,
 }
@@ -161,29 +161,6 @@ impl RingBuffer {
         self.total_bytes += entry_bytes;
         self.entries.push_back(req);
         evicted
-    }
-
-    /// Remove all entries for a given block number (revert cleanup).
-    fn remove(&mut self, block_number: u64) {
-        let before = self.entries.len();
-        self.entries.retain(|req| {
-            if req.block_number == block_number {
-                self.total_bytes -= req.payload.len();
-                false
-            } else {
-                true
-            }
-        });
-        let removed = before - self.entries.len();
-        if removed > 0 {
-            info!(
-                block_number,
-                removed,
-                remaining = self.entries.len(),
-                total_bytes = self.total_bytes,
-                "Evicted witness from ring buffer"
-            );
-        }
     }
 
     /// Return all entries with `block_number >= from_block`.
@@ -293,37 +270,7 @@ impl WitnessHub {
         }
 
         // Broadcast to live subscribers. Err means no active receivers — fine.
-        let _ = self.tx.send(HubEvent::Witness(req));
-    }
-
-    /// Remove reverted blocks from the buffer and notify live subscribers.
-    ///
-    /// Called on chain reverts. Cleans the ring buffer, removes cold-tier files,
-    /// and broadcasts a [`HubEvent::Reorg`] so live subscribers can purge stale state.
-    pub async fn remove_and_notify(&self, reverted_blocks: Vec<u64>) {
-        {
-            let mut buf = self.buffer.write().await;
-            for &block_number in &reverted_blocks {
-                buf.remove(block_number);
-            }
-        }
-
-        if let Some(cold) = &self.cold {
-            for &block_number in &reverted_blocks {
-                // Remove .bin file
-                let bin_path = cold.dir.join(format!("{block_number}.bin"));
-                match tokio::fs::remove_file(&bin_path).await {
-                    Ok(()) => { cold.index.write().unwrap().remove(&block_number); }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => warn!(block_number, err = %e, "Failed to remove cold witness on reorg"),
-                }
-                // Remove .bin.tmp file (race with run_cold_writer)
-                let tmp_path = cold.dir.join(format!("{block_number}.bin.tmp"));
-                let _ = tokio::fs::remove_file(&tmp_path).await;
-            }
-        }
-
-        let _ = self.tx.send(HubEvent::Reorg { reverted_blocks });
+        let _ = self.tx.send(req);
     }
 
     /// Subscribe to live witness broadcasts.
@@ -331,7 +278,7 @@ impl WitnessHub {
     /// Returns a [`broadcast::Receiver`] that yields every witness pushed
     /// after this call. Use [`snapshot_from`](Self::snapshot_from) first
     /// to replay buffered history.
-    pub fn subscribe(&self) -> broadcast::Receiver<HubEvent> {
+    pub fn subscribe(&self) -> broadcast::Receiver<SharedProveRequest> {
         self.tx.subscribe()
     }
 
@@ -504,19 +451,6 @@ mod tests {
         assert!(buf.total_bytes <= TEST_MAX_BYTES);
         // Block 0 should be evicted.
         assert!(buf.entries.iter().all(|r| r.block_number != 0));
-    }
-
-    #[test]
-    fn remove_updates_bytes() {
-        let mut buf = RingBuffer::new(TEST_MAX_BYTES);
-        let _ = buf.push(make_req(1, 1000));
-        let _ = buf.push(make_req(2, 2000));
-        let _ = buf.push(make_req(3, 3000));
-        assert_eq!(buf.total_bytes, 6000);
-
-        buf.remove(2);
-        assert_eq!(buf.total_bytes, 4000);
-        assert_eq!(buf.entries.len(), 2);
     }
 
     #[test]

@@ -238,66 +238,9 @@ impl BatchAccumulator {
         Some(batch)
     }
 
-    /// Purge stale state for reverted blocks.
-    ///
-    /// Removes responses for the given block numbers and drops any batch
-    /// whose range overlaps with reverted blocks (a batch is atomic on L1 —
-    /// if any block in it is reverted, the whole batch is invalid).
-    pub async fn handle_reorg(&mut self, reverted: &[u64]) {
-        for &block in reverted {
-            self.responses.remove(&block);
-            if let Some(db) = &self.db {
-                let db = Arc::clone(db);
-                let _ = tokio::task::spawn_blocking(move || {
-                    db.lock().unwrap().delete_response(block);
-                }).await;
-            }
-        }
-
-        let affected: Vec<u64> = self
-            .batches
-            .iter()
-            .filter(|(_, b)| {
-                reverted
-                    .iter()
-                    .any(|&r| r >= b.from_block && r <= b.to_block)
-            })
-            .map(|(&idx, _)| idx)
-            .collect();
-
-        for idx in &affected {
-            let batch = self.batches.get(idx).unwrap();
-            let fb = batch.from_block;
-            let tb = batch.to_block;
-            if let Some(db) = &self.db {
-                let db = Arc::clone(db);
-                let bi = *idx;
-                let _ = tokio::task::spawn_blocking(move || {
-                    let guard = db.lock().unwrap();
-                    guard.delete_batch(bi);
-                    guard.delete_responses(fb, tb);
-                    guard.delete_batch_signature(bi);
-                }).await;
-            }
-            let batch = self.batches.remove(idx).unwrap();
-            self.signatures.remove(idx);
-            for b in batch.from_block..=batch.to_block {
-                self.responses.remove(&b);
-            }
-        }
-
-        if !reverted.is_empty() {
-            warn!(
-                reverted_blocks = ?reverted,
-                dropped_batches = affected.len(),
-                "Reorg: purged stale state"
-            );
-        }
-    }
-
     /// Purge responses for specific blocks (key rotation recovery).
-    /// Unlike `handle_reorg`, this does NOT drop batches — only clears responses
-    /// so they can be re-populated with freshly signed ones.
+    /// Clears responses so they can be re-populated with freshly signed ones.
+    /// Batches are preserved — only responses are removed.
     pub async fn purge_responses(&mut self, blocks: &[u64]) {
         for &block in blocks {
             self.responses.remove(&block);
@@ -424,60 +367,6 @@ mod tests {
         acc.set_batch(1, 10, 12).await;
         acc.mark_blobs_accepted(1).await;
         assert_eq!(acc.first_ready(), Some(1));
-    }
-
-    #[tokio::test]
-    async fn reorg_purges_responses_and_batches() {
-        let mut acc = BatchAccumulator::new();
-        acc.set_batch(1, 10, 12).await;
-        acc.set_batch(2, 13, 15).await;
-        acc.insert_response(mock_response(10)).await;
-        acc.insert_response(mock_response(11)).await;
-        acc.insert_response(mock_response(12)).await;
-        acc.insert_response(mock_response(13)).await;
-        acc.mark_blobs_accepted(1).await;
-
-        // Revert blocks 11-13 — batch 1 and batch 2 both overlap
-        acc.handle_reorg(&[11, 12, 13]).await;
-
-        // Both batches dropped
-        assert_eq!(acc.len(), 0);
-        // All responses for affected batches cleaned (including 10 from batch 1)
-        assert!(acc.responses.is_empty());
-    }
-
-    #[tokio::test]
-    async fn reorg_preserves_unaffected_batch() {
-        let mut acc = BatchAccumulator::new();
-        acc.set_batch(1, 10, 11).await;
-        acc.set_batch(2, 12, 13).await;
-        acc.insert_response(mock_response(10)).await;
-        acc.insert_response(mock_response(11)).await;
-        acc.insert_response(mock_response(12)).await;
-        acc.mark_blobs_accepted(1).await;
-
-        // Revert only block 13 — batch 1 unaffected
-        acc.handle_reorg(&[13]).await;
-
-        assert_eq!(acc.len(), 1);
-        assert_eq!(acc.first_ready(), Some(1));
-        // Block 12 was in batch 2, which got dropped — response removed
-        assert!(!acc.responses.contains_key(&12));
-    }
-
-    #[tokio::test]
-    async fn reorg_cleans_orphan_responses() {
-        let mut acc = BatchAccumulator::new();
-        // Responses arrived before any batch registered (normal flow)
-        acc.insert_response(mock_response(50)).await;
-        acc.insert_response(mock_response(51)).await;
-        acc.insert_response(mock_response(52)).await;
-
-        acc.handle_reorg(&[51, 52]).await;
-
-        assert!(acc.responses.contains_key(&50));
-        assert!(!acc.responses.contains_key(&51));
-        assert!(!acc.responses.contains_key(&52));
     }
 
     #[tokio::test]

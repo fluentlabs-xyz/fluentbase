@@ -80,9 +80,13 @@ pub struct OrchestratorConfig<P: Provider + Clone + 'static> {
 }
 
 /// Task for the execution worker pool.
+///
+/// `payload` is `None` for lazy (re-execution) tasks: the worker fetches the
+/// witness JIT via gRPC `GetWitness`, avoiding upfront memory allocation for
+/// hundreds of blocks during key rotation recovery.
 struct ExecutionTask {
     block_number: u64,
-    payload: Vec<u8>,
+    payload: Option<Vec<u8>>,
 }
 
 /// Response from a `/sign-block-execution` request.
@@ -123,8 +127,6 @@ enum SignBatchError {
 enum GrpcEvent {
     /// A witness was queued into the normal execution channel.
     WitnessQueued(u64),
-    /// Chain reorg: these block numbers are no longer canonical.
-    Reorg(Vec<u64>),
     /// The gRPC stream encountered an error.
     StreamError(String),
 }
@@ -135,6 +137,10 @@ enum GrpcEvent {
 
 /// Reads tasks from the priority channel pair (high before normal) and sends
 /// `/sign-block-execution` requests with aggressive retry.
+///
+/// For lazy tasks (`payload: None`), fetches the witness JIT via gRPC
+/// `GetWitness` — this avoids holding large payloads in memory while
+/// waiting in the channel queue.
 async fn execution_worker(
     worker_id: usize,
     high_rx: AsyncReceiver<ExecutionTask>,
@@ -143,6 +149,8 @@ async fn execution_worker(
     http_client: reqwest::Client,
     proxy_url: String,
     api_key: String,
+    mut witness_client: WitnessServiceClient<Channel>,
+    fallback_tx: AsyncSender<FallbackTask>,
 ) {
     info!(worker_id, "Execution worker started");
     loop {
@@ -154,12 +162,39 @@ async fn execution_worker(
             else => break, // channels closed — shutting down
         };
 
+        // Resolve payload: eager (from stream/fallback) or lazy (re-execution)
+        let payload = match task.payload {
+            Some(p) => p,
+            None => {
+                // JIT fetch — only allocates memory when a worker is ready
+                match witness_client.get_witness(
+                    crate::proto::GetWitnessRequest { block_number: task.block_number }
+                ).await {
+                    Ok(resp) => {
+                        let w = resp.into_inner();
+                        if w.found && !w.data.is_empty() {
+                            w.data
+                        } else {
+                            warn!(worker_id, block = task.block_number, "Lazy fetch: witness not found in hub — dispatching to fallback");
+                            let _ = fallback_tx.send(FallbackTask { block_number: task.block_number }).await;
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        warn!(worker_id, block = task.block_number, err = %e, "Lazy fetch: gRPC GetWitness failed — dispatching to fallback");
+                        let _ = fallback_tx.send(FallbackTask { block_number: task.block_number }).await;
+                        continue;
+                    }
+                }
+            }
+        };
+
         let mut backoff = Duration::from_millis(50);
         let mut attempts: u32 = 0;
         let started = tokio::time::Instant::now();
         loop {
             attempts += 1;
-            match send_block_request(&http_client, &proxy_url, &api_key, task.block_number, &task.payload).await {
+            match send_block_request(&http_client, &proxy_url, &api_key, task.block_number, &payload).await {
                 Ok(response) => {
                     if attempts > 1 {
                         info!(worker_id, block = task.block_number, attempts, elapsed = ?started.elapsed(), "Block succeeded after retries");
@@ -199,23 +234,28 @@ async fn execution_worker(
 // Persistent fallback worker pool (L3 / L4 recovery)
 // ============================================================================
 
+struct FallbackTask {
+    block_number: u64,
+}
+
 /// Recovers missing witnesses via local/remote RPC and feeds them into the
 /// high-priority execution queue.
 async fn fallback_worker(
     worker_id: usize,
-    fallback_rx: AsyncReceiver<u64>,
+    fallback_rx: AsyncReceiver<FallbackTask>,
     high_tx: AsyncSender<ExecutionTask>,
     fallback_done_tx: mpsc::Sender<(u64, bool)>,
     config: OrchestratorConfig<impl Provider + Clone + 'static>,
 ) {
     info!(worker_id, "Fallback worker started");
-    while let Ok(block_number) = fallback_rx.recv().await {
+    while let Ok(task) = fallback_rx.recv().await {
+        let block_number = task.block_number;
         info!(worker_id, block_number, "Executing L3/L4 recovery");
 
         match generate_fallback_payload(block_number, &config).await {
             Some(payload) => {
                 info!(worker_id, block_number, "Fallback success — prioritizing execution");
-                let _ = high_tx.send(ExecutionTask { block_number, payload }).await;
+                let _ = high_tx.send(ExecutionTask { block_number, payload: Some(payload) }).await;
                 let _ = fallback_done_tx.send((block_number, true)).await;
             }
             None => {
@@ -247,12 +287,25 @@ pub async fn run<P: Provider + Clone + 'static>(
         accumulator.max_to_block().map(|e| e + 1)
             .or_else(|| db.lock().unwrap().get_last_batch_end().map(|e| e + 1));
 
-    // Channels live for the entire process — workers survive reconnects
-    let (high_tx, high_rx) = async_channel::bounded::<ExecutionTask>(1024);
-    let (normal_tx, normal_rx) = async_channel::bounded::<ExecutionTask>(4096);
-    let (fallback_tx, fallback_rx) = async_channel::bounded::<u64>(1024);
-    let (result_tx, mut result_rx) = mpsc::channel::<BlockResult>(4096);
+    // Channels live for the entire process — workers survive reconnects.
+    // Capacities are tied to EXECUTION_WORKERS to bound memory: each queued
+    // ExecutionTask may hold a 30-80 MB payload, so large buffers cause OOM.
+    let (high_tx, high_rx) = async_channel::bounded::<ExecutionTask>(EXECUTION_WORKERS);
+    let (normal_tx, normal_rx) = async_channel::bounded::<ExecutionTask>(EXECUTION_WORKERS * 2);
+    let (fallback_tx, fallback_rx) = async_channel::bounded::<FallbackTask>(1024);
+    let (result_tx, mut result_rx) = mpsc::channel::<BlockResult>(EXECUTION_WORKERS * 2);
     let (fallback_done_tx, mut fallback_done_rx) = mpsc::channel::<(u64, bool)>(128);
+
+    // Persistent gRPC channel for execution workers (lazy witness fetch).
+    // Workers use this to call GetWitness JIT for re-execution tasks.
+    let worker_grpc_channel = Channel::from_shared(config.server_addr.clone())
+        .expect("invalid server address")
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(600))
+        .connect_lazy();
+    let worker_witness_client = WitnessServiceClient::new(worker_grpc_channel)
+        .max_decoding_message_size(usize::MAX)
+        .max_encoding_message_size(usize::MAX);
 
     // Spawn persistent execution worker pool
     for i in 0..EXECUTION_WORKERS {
@@ -264,6 +317,8 @@ pub async fn run<P: Provider + Clone + 'static>(
             config.http_client.clone(),
             config.proxy_url.clone(),
             config.api_key.clone(),
+            worker_witness_client.clone(),
+            fallback_tx.clone(),
         ));
     }
 
@@ -335,7 +390,7 @@ struct StreamState<P: Provider + Clone + 'static> {
     config: OrchestratorConfig<P>,
     db: Arc<Mutex<Db>>,
     high_tx: AsyncSender<ExecutionTask>,
-    fallback_tx: AsyncSender<u64>,
+    fallback_tx: AsyncSender<FallbackTask>,
     ack_client: WitnessServiceClient<Channel>,
     sign_done_tx: mpsc::Sender<(u64, SignOutcome)>,
     dispatch_done_tx: mpsc::Sender<(u64, DispatchOutcome)>,
@@ -354,55 +409,12 @@ struct StreamState<P: Provider + Clone + 'static> {
 }
 
 impl<P: Provider + Clone + 'static> StreamState<P> {
-    /// Handle reorg: purge stale state, roll back checkpoint, cancel affected batches.
-    async fn on_reorg(&mut self, blocks: Vec<u64>, accumulator: &mut BatchAccumulator) {
-        accumulator.handle_reorg(&blocks).await;
-        if let Some(&min) = blocks.iter().min() {
-            let new_checkpoint = min.saturating_sub(1);
-            {
-                let db = Arc::clone(&self.db);
-                let _ = tokio::task::spawn_blocking(move || {
-                    db.lock().unwrap().save_checkpoint(new_checkpoint);
-                }).await;
-            }
-            self.checkpoint = new_checkpoint;
-            self.confirmed.retain(|&b| b <= new_checkpoint);
-            for &b in &blocks {
-                self.pending_requests.remove(&b);
-                self.fallback_active.remove(&b);
-                self.fallback_exhausted.remove(&b);
-            }
-
-            // Recalculate highest_witness_received: cannot exceed new checkpoint
-            // (witnesses for reverted blocks are no longer valid)
-            if self.highest_witness_received > new_checkpoint {
-                self.highest_witness_received = new_checkpoint;
-            }
-
-            info!(new_checkpoint, "Checkpoint rolled back due to reorg");
-        }
-
-        // Clear in-flight tracking so new work can be picked up.
-        // Orphaned task results are simply ignored in on_sign_done / on_dispatch_done
-        // because the batch_index won't exist in the accumulator.
-        if let Some(idx) = self.signing_batch {
-            if accumulator.get(idx).is_none() {
-                self.signing_batch = None;
-            }
-        }
-        if let Some(idx) = self.dispatching_batch {
-            if accumulator.get(idx).is_none() {
-                self.dispatching_batch = None;
-            }
-        }
-    }
-
     /// Handle a completed block execution response: advance watermark, persist, try dispatch.
     async fn on_block_result(&mut self, result: BlockResult, accumulator: &mut BatchAccumulator) {
         let block_number = result.block_number;
         self.pending_requests.remove(&block_number);
 
-        // Ignore stale results from orphaned tasks (e.g. after L2 reorg)
+        // Ignore stale results (e.g. from orphaned tasks after reconnect)
         if block_number <= self.checkpoint {
             warn!(block_number, checkpoint = self.checkpoint, "Ignoring stale block result (orphaned task)");
             return;
@@ -480,7 +492,7 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             warn!(block_number, "Gap detected — dispatching to fallback pool");
             self.fallback_active.insert(block_number);
             // try_send is safe here: channel capacity (1024) >> FALLBACK_BATCH_SIZE (128)
-            if let Err(e) = self.fallback_tx.try_send(block_number) {
+            if let Err(e) = self.fallback_tx.try_send(FallbackTask { block_number }) {
                 warn!(block_number, err = %e, "Fallback channel full — skipping");
                 self.fallback_active.remove(&block_number);
             }
@@ -501,30 +513,16 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
         }
     }
 
-    /// Re-execute a block: try hub (gRPC cache) first, then fall back to L3/L4.
+    /// Queue a block for re-execution with lazy payload fetch.
+    ///
+    /// Sends a task with `payload: None` to the high-priority queue.
+    /// The execution worker will fetch the witness JIT via gRPC when ready,
+    /// avoiding upfront memory allocation for large batches of invalidated blocks.
     fn spawn_re_execution(&mut self, block_number: u64) {
         self.pending_requests.insert(block_number);
-
-        let mut witness_client = self.ack_client.clone();
         let h_tx = self.high_tx.clone();
-        let f_tx = self.fallback_tx.clone();
-
         tokio::spawn(async move {
-            // Try hub first (gRPC GetWitness)
-            if let Ok(resp) = witness_client.get_witness(
-                crate::proto::GetWitnessRequest { block_number }
-            ).await {
-                let witness = resp.into_inner();
-                if witness.found && !witness.data.is_empty() {
-                    info!(block_number, "Re-execution: witness found in hub — prioritizing");
-                    let _ = h_tx.send(ExecutionTask { block_number, payload: witness.data }).await;
-                    return;
-                }
-            }
-
-            // Hub miss — dispatch to fallback pool for L3/L4 recovery
-            info!(block_number, "Re-execution: hub miss — dispatching to fallback pool");
-            let _ = f_tx.send(block_number).await;
+            let _ = h_tx.send(ExecutionTask { block_number, payload: None }).await;
         });
     }
 
@@ -738,7 +736,7 @@ async fn run_stream<P: Provider + Clone + 'static>(
     mut confirmed: BTreeSet<u64>,
     normal_tx: &AsyncSender<ExecutionTask>,
     high_tx: &AsyncSender<ExecutionTask>,
-    fallback_tx: &AsyncSender<u64>,
+    fallback_tx: &AsyncSender<FallbackTask>,
     result_rx: &mut mpsc::Receiver<BlockResult>,
     fallback_done_rx: &mut mpsc::Receiver<(u64, bool)>,
     l1_events: &mut mpsc::Receiver<L1Event>,
@@ -815,16 +813,11 @@ async fn run_stream<P: Provider + Clone + 'static>(
                                     let bn = w.block_number;
                                     if normal_tx.send(ExecutionTask {
                                         block_number: bn,
-                                        payload: w.data,
+                                        payload: Some(w.data),
                                     }).await.is_err() {
                                         break;
                                     }
                                     let _ = grpc_event_tx.send(GrpcEvent::WitnessQueued(bn)).await;
-                                }
-                                Some(Content::Reorg(reorg)) => {
-                                    let _ = grpc_event_tx.send(
-                                        GrpcEvent::Reorg(reorg.reverted_block_numbers)
-                                    ).await;
                                 }
                                 None => {}
                             }
@@ -850,10 +843,6 @@ async fn run_stream<P: Provider + Clone + 'static>(
                     Some(GrpcEvent::WitnessQueued(bn)) => {
                         state.highest_witness_received = state.highest_witness_received.max(bn);
                         state.pending_requests.insert(bn);
-                    }
-                    Some(GrpcEvent::Reorg(blocks)) => {
-                        warn!(?blocks, "Reorg received — purging stale state");
-                        state.on_reorg(blocks, accumulator).await;
                     }
                     Some(GrpcEvent::StreamError(e)) => {
                         return Err(eyre::eyre!("gRPC stream error: {e}"));
@@ -1099,6 +1088,7 @@ async fn send_block_request(
 ) -> eyre::Result<EthExecutionResponse> {
     let resp = http_client
         .post(proxy_url)
+        .timeout(Duration::from_secs(15))
         .header("content-type", "application/octet-stream")
         .header("x-block-number", block_number.to_string())
         .header("x-api-key", api_key)
