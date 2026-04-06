@@ -573,6 +573,38 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             SignOutcome::Signed { response } => {
                 info!(batch_index, "Batch signed — available for dispatch");
                 accumulator.cache_signature(batch_index, response);
+
+                // Acknowledge cold storage immediately after signing —
+                // the signature is durable in DB, so raw witnesses are no longer needed.
+                if let Some(batch) = accumulator.get(batch_index) {
+                    let mut ack = self.ack_client.clone();
+                    let fb = batch.from_block;
+                    let tb = batch.to_block;
+                    tokio::spawn(async move {
+                        let mut backoff = Duration::from_secs(1);
+                        const MAX_ACK_RETRIES: u32 = 10;
+                        for attempt in 1..=MAX_ACK_RETRIES {
+                            match ack.acknowledge_range(
+                                crate::proto::AcknowledgeRangeRequest {
+                                    from_block: fb,
+                                    to_block: tb,
+                                }
+                            ).await {
+                                Ok(_) => break,
+                                Err(e) => {
+                                    if attempt == MAX_ACK_RETRIES {
+                                        error!(fb, tb, attempt, err = %e, "acknowledge_range failed after all retries — cold files may leak");
+                                    } else {
+                                        warn!(fb, tb, attempt, err = %e, "acknowledge_range failed — retrying");
+                                    }
+                                    tokio::time::sleep(backoff).await;
+                                    backoff = (backoff * 2).min(Duration::from_secs(30));
+                                }
+                            }
+                        }
+                    });
+                }
+
                 self.try_sign_next_batch(accumulator);
                 self.try_dispatch_next_batch(accumulator);
             }
@@ -663,33 +695,6 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
                 self.global_next_dispatch_allowed = None;
 
                 if let Some(batch) = accumulator.take(batch_index).await {
-                    let mut ack = self.ack_client.clone();
-                    let fb = batch.from_block;
-                    let tb = batch.to_block;
-                    tokio::spawn(async move {
-                        let mut backoff = Duration::from_secs(1);
-                        const MAX_ACK_RETRIES: u32 = 10;
-                        for attempt in 1..=MAX_ACK_RETRIES {
-                            match ack.acknowledge_range(
-                                crate::proto::AcknowledgeRangeRequest {
-                                    from_block: fb,
-                                    to_block: tb,
-                                }
-                            ).await {
-                                Ok(_) => break,
-                                Err(e) => {
-                                    if attempt == MAX_ACK_RETRIES {
-                                        error!(fb, tb, attempt, err = %e, "acknowledge_range failed after all retries — cold files may leak");
-                                    } else {
-                                        warn!(fb, tb, attempt, err = %e, "acknowledge_range failed — retrying");
-                                    }
-                                    tokio::time::sleep(backoff).await;
-                                    backoff = (backoff * 2).min(Duration::from_secs(30));
-                                }
-                            }
-                        }
-                    });
-
                     {
                         let db = Arc::clone(&self.db);
                         let block = batch.to_block;
