@@ -15,7 +15,7 @@ pub const PRECOMPILE_SVM_RUNTIME: Address = address!("0x000000000000000000000000
 /// Address of the **Wrapped ETH** contract (ERC-20 compatible representation of native ETH).
 ///
 /// Note: Not in use
-pub const PRECOMPILE_WRAPPED_ETH: Address = address!("0x0000000000000000000000000000000000520004");
+pub const PRECOMPILE_UNUSED_4: Address = address!("0x0000000000000000000000000000000000520004");
 
 /// Address of the **WebAuthn verifier** runtime.
 ///
@@ -155,7 +155,7 @@ pub const TESTNET_LEGACY_PRECOMPILE_ADDRESSES: &[Address] = &[
     PRECOMPILE_CREATE2_FACTORY,         // FORK ALERT: DON'T TOUCH!
     PRECOMPILE_FEE_MANAGER,             // FORK ALERT: DON'T TOUCH!
     PRECOMPILE_WEBAUTHN_VERIFIER,       // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_WRAPPED_ETH,             // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_UNUSED_4,                // FORK ALERT: DON'T TOUCH!
 ];
 
 /// Addresses whose execution is delegated to the **system runtime** implementation.
