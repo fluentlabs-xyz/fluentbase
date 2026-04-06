@@ -983,7 +983,6 @@ pub fn execute_fluent_test_suite(
                     evm.0.cfg.legacy_bytecode_enabled = false;
                     let timer = Instant::now();
                     let result = evm.transact_commit(tx_env.clone());
-                    println!("result: {:?}", result);
                     *elapsed.lock().unwrap() += timer.elapsed();
                     let start = Instant::now();
                     let output = check_fluent_execution(
