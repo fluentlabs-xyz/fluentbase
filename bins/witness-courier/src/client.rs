@@ -42,6 +42,7 @@ use crate::proto::witness_service_client::WitnessServiceClient;
 use crate::proto::SubscribeRequest;
 use crate::types::{EthExecutionResponse, SubmitBatchResponse};
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_network::Ethereum;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
@@ -108,8 +109,11 @@ enum SignOutcome {
 
 /// Result of an L1 dispatch attempt.
 enum DispatchOutcome {
-    /// Batch preconfirmed on L1.
-    Success,
+    /// TX included in L1 block — awaiting finalization.
+    Submitted {
+        tx_hash: alloy_primitives::B256,
+        l1_block: u64,
+    },
     /// L1 transaction failed — will retry with backoff.
     Failed,
 }
@@ -286,6 +290,12 @@ pub async fn run<P: Provider + Clone + 'static>(
     let mut next_batch_from_block: Option<u64> =
         accumulator.max_to_block().map(|e| e + 1)
             .or_else(|| db.lock().unwrap().get_last_batch_end().map(|e| e + 1));
+
+    // Check dispatched batches from previous run
+    if accumulator.has_dispatched() {
+        info!("Checking dispatched batches from previous run...");
+        check_finalized_batches(&config.l1_provider, &db, &mut accumulator).await;
+    }
 
     // Channels live for the entire process — workers survive reconnects.
     // Capacities are tied to EXECUTION_WORKERS to bound memory: each queued
@@ -668,7 +678,10 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             let outcome = match l1_submitter::submit_preconfirmation(
                 &provider, contract, verifier, batch_index, signature,
             ).await {
-                Ok(()) => DispatchOutcome::Success,
+                Ok(receipt) => DispatchOutcome::Submitted {
+                    tx_hash: receipt.tx_hash,
+                    l1_block: receipt.l1_block,
+                },
                 Err(e) => {
                     error!(batch_index, err = %e, "preconfirmBatch failed — will retry");
                     DispatchOutcome::Failed
@@ -688,20 +701,17 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
         self.dispatching_batch = None;
 
         match outcome {
-            DispatchOutcome::Success => {
+            DispatchOutcome::Submitted { tx_hash, l1_block } => {
                 self.global_dispatch_attempts = 0;
                 self.global_next_dispatch_allowed = None;
 
-                if let Some(batch) = accumulator.take(batch_index).await {
-                    {
-                        let db = Arc::clone(&self.db);
-                        let block = batch.to_block;
-                        let _ = tokio::task::spawn_blocking(move || {
-                            db.lock().unwrap().save_last_batch_end(block);
-                        }).await;
-                    }
-                    info!(batch_index, to_block = batch.to_block, "Batch preconfirmed on L1");
-                }
+                accumulator.mark_dispatched(batch_index, tx_hash, l1_block).await;
+                info!(
+                    batch_index,
+                    %tx_hash,
+                    l1_block,
+                    "Batch submitted to L1 — awaiting finalization"
+                );
 
                 self.try_dispatch_next_batch(accumulator);
             }
@@ -721,6 +731,87 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             }
         }
     }
+
+    /// Check finalized batches and process results.
+    async fn on_finalization_tick(&mut self, accumulator: &mut BatchAccumulator) {
+        let changed = check_finalized_batches(
+            &self.config.l1_provider, &self.db, accumulator,
+        ).await;
+
+        if changed {
+            self.try_sign_next_batch(accumulator);
+            self.try_dispatch_next_batch(accumulator);
+        }
+    }
+}
+
+/// Fetch L1 finalized block, then process dispatched batches contiguously:
+/// finalized + receipt present → cleanup; receipt missing → undispatch (reorg).
+async fn check_finalized_batches<P: Provider + Clone + 'static>(
+    provider: &P,
+    db: &Arc<Mutex<Db>>,
+    accumulator: &mut BatchAccumulator,
+) -> bool {
+    if !accumulator.has_dispatched() {
+        return false;
+    }
+
+    let finalized_block = match provider
+        .get_block_by_number(BlockNumberOrTag::Finalized)
+        .await
+    {
+        Ok(Some(block)) => block.header.number,
+        Ok(None) => {
+            warn!("Finalized block not available from RPC");
+            return false;
+        }
+        Err(e) => {
+            warn!(err = %e, "Failed to fetch finalized block");
+            return false;
+        }
+    };
+
+    let candidates = accumulator.dispatched_finalization_candidates(finalized_block);
+    if candidates.is_empty() {
+        return false;
+    }
+
+    let mut changed = false;
+
+    for batch_index in candidates {
+        let Some(tx_hash) = accumulator.dispatched_tx_hash(batch_index) else {
+            continue;
+        };
+
+        match provider.get_transaction_receipt(tx_hash).await {
+            Ok(Some(_receipt)) => {
+                let Some(dispatched) = accumulator.finalize_dispatched(batch_index).await else {
+                    continue;
+                };
+                {
+                    let db = Arc::clone(db);
+                    let block = dispatched.to_block;
+                    let _ = tokio::task::spawn_blocking(move || {
+                        db.lock().unwrap().save_last_batch_end(block);
+                    }).await;
+                }
+                info!(batch_index, %tx_hash, to_block = dispatched.to_block, "Batch finalized on L1 — cleaned up");
+                changed = true;
+            }
+            Ok(None) => {
+                warn!(batch_index, %tx_hash, "TX not found after finalization — reorg detected, re-dispatching");
+                accumulator.undispatch(batch_index).await;
+                changed = true;
+                break;
+            }
+            Err(e) => {
+                warn!(batch_index, %tx_hash, err = %e, "Receipt check failed — will retry");
+                break;
+            }
+        }
+    }
+
+    changed
 }
 
 // ============================================================================
@@ -769,6 +860,8 @@ async fn run_stream<P: Provider + Clone + 'static>(
     let (key_check_tx, mut key_check_rx) = mpsc::channel::<(Address, bool)>(4);
     let mut fallback_ticker = tokio::time::interval(Duration::from_secs(5));
     fallback_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut finalization_ticker = tokio::time::interval(Duration::from_secs(30));
+    finalization_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     let mut state = StreamState {
         config: config.clone(),
@@ -904,6 +997,10 @@ async fn run_stream<P: Provider + Clone + 'static>(
                         db.lock().unwrap().save_l1_checkpoint(l1_block);
                     }).await;
                 },
+
+                // ── Stream I: finalization checker ─────────────────────
+                _ = finalization_ticker.tick() =>
+                    state.on_finalization_tick(accumulator).await,
             }
         }
     }.await;

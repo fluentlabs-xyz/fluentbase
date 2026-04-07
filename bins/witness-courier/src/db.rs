@@ -53,6 +53,13 @@ impl Db {
                 batch_index INTEGER PRIMARY KEY,
                 response    BLOB NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS dispatched_batches (
+                batch_index INTEGER PRIMARY KEY,
+                from_block  INTEGER NOT NULL,
+                to_block    INTEGER NOT NULL,
+                tx_hash     BLOB NOT NULL,
+                l1_block    INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS meta (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -333,5 +340,122 @@ impl Db {
         stmt.query_map([], |row| row.get::<_, i64>(0))
             .map(|rows| rows.filter_map(|r| r.ok()).map(|n| n as u64).collect())
             .unwrap_or_default()
+    }
+
+    // ── Dispatched batches ──────────────────────────────────────────────────
+
+    /// Atomically move a batch from pending to dispatched.
+    /// Single transaction: DELETE from pending + INSERT into dispatched.
+    pub fn move_to_dispatched(
+        &self,
+        batch_index: u64,
+        from_block: u64,
+        to_block: u64,
+        tx_hash: &[u8],
+        l1_block: u64,
+    ) {
+        if let Err(e) = self.conn.execute_batch("BEGIN") {
+            error!(err = %e, batch_index, "Failed to begin move_to_dispatched tx");
+            return;
+        }
+        let ok = self.conn.execute(
+            "DELETE FROM pending_batches WHERE batch_index = ?1",
+            params![batch_index],
+        ).and_then(|_| self.conn.execute(
+            "INSERT OR REPLACE INTO dispatched_batches(batch_index, from_block, to_block, tx_hash, l1_block)
+             VALUES(?1, ?2, ?3, ?4, ?5)",
+            params![batch_index, from_block, to_block, tx_hash, l1_block],
+        ));
+        match ok {
+            Ok(_) => { let _ = self.conn.execute_batch("COMMIT"); }
+            Err(e) => {
+                error!(err = %e, batch_index, "Failed to move batch to dispatched — rolling back");
+                let _ = self.conn.execute_batch("ROLLBACK");
+            }
+        }
+    }
+
+    /// Atomically clean up a finalized dispatched batch.
+    /// Single transaction: DELETE dispatched + DELETE responses + DELETE signature.
+    pub fn finalize_dispatched_batch(
+        &self,
+        batch_index: u64,
+        from_block: u64,
+        to_block: u64,
+    ) {
+        if let Err(e) = self.conn.execute_batch("BEGIN") {
+            error!(err = %e, batch_index, "Failed to begin finalize tx");
+            return;
+        }
+        let ok = self.conn.execute(
+            "DELETE FROM dispatched_batches WHERE batch_index = ?1",
+            params![batch_index],
+        ).and_then(|_| self.conn.execute(
+            "DELETE FROM block_responses WHERE block_number BETWEEN ?1 AND ?2",
+            params![from_block, to_block],
+        )).and_then(|_| self.conn.execute(
+            "DELETE FROM batch_signatures WHERE batch_index = ?1",
+            params![batch_index],
+        ));
+        match ok {
+            Ok(_) => { let _ = self.conn.execute_batch("COMMIT"); }
+            Err(e) => {
+                error!(err = %e, batch_index, "Failed to finalize dispatched batch — rolling back");
+                let _ = self.conn.execute_batch("ROLLBACK");
+            }
+        }
+    }
+
+    /// Move a dispatched batch back to pending (reorg recovery).
+    /// Single transaction: DELETE from dispatched + INSERT into pending.
+    pub fn undispatch_batch(
+        &self,
+        batch_index: u64,
+        from_block: u64,
+        to_block: u64,
+    ) {
+        if let Err(e) = self.conn.execute_batch("BEGIN") {
+            error!(err = %e, batch_index, "Failed to begin undispatch tx");
+            return;
+        }
+        let ok = self.conn.execute(
+            "DELETE FROM dispatched_batches WHERE batch_index = ?1",
+            params![batch_index],
+        ).and_then(|_| self.conn.execute(
+            "INSERT OR REPLACE INTO pending_batches(batch_index, from_block, to_block, blobs_accepted)
+             VALUES(?1, ?2, ?3, 1)",
+            params![batch_index, from_block, to_block],
+        ));
+        match ok {
+            Ok(_) => { let _ = self.conn.execute_batch("COMMIT"); }
+            Err(e) => {
+                error!(err = %e, batch_index, "Failed to undispatch batch — rolling back");
+                let _ = self.conn.execute_batch("ROLLBACK");
+            }
+        }
+    }
+
+    pub fn load_dispatched_batches(&self) -> Vec<(u64, u64, u64, Vec<u8>, u64)> {
+        let mut stmt = match self.conn.prepare(
+            "SELECT batch_index, from_block, to_block, tx_hash, l1_block
+             FROM dispatched_batches ORDER BY batch_index",
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                error!(err = %e, "Failed to prepare load_dispatched_batches");
+                return vec![];
+            }
+        };
+        stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)? as u64,
+                row.get::<_, i64>(1)? as u64,
+                row.get::<_, i64>(2)? as u64,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, i64>(4)? as u64,
+            ))
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
     }
 }

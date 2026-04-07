@@ -4832,7 +4832,7 @@ dependencies = [
 
 [[package]]
 name = "fluent-exex"
-version = "1.0.5"
+version = "1.1.1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -18390,7 +18390,7 @@ dependencies = [
 
 [[package]]
 name = "witness-courier"
-version = "1.0.5"
+version = "1.1.1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",

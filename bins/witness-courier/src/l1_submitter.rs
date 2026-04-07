@@ -4,12 +4,18 @@
 //! `preconfirmBatch(nitroVerifier, batchIndex, signature)` to the L1 rollup
 //! contract. This transitions the batch from `Accepted` → `Preconfirmed`.
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, Result};
 use tracing::info;
+
+/// Metadata from a confirmed L1 transaction, used for finalization tracking.
+pub struct SubmitReceipt {
+    pub tx_hash: B256,
+    pub l1_block: u64,
+}
 
 sol! {
     /// Submit enclave signature to L1, proving batch validity.
@@ -49,7 +55,7 @@ pub async fn submit_preconfirmation(
     nitro_verifier_addr: Address,
     batch_index: u64,
     signature: Vec<u8>,
-) -> Result<()> {
+) -> Result<SubmitReceipt> {
     let call = preconfirmBatchCall {
         nitroVerifier: nitro_verifier_addr,
         batchIndex: U256::from(batch_index),
@@ -81,12 +87,16 @@ pub async fn submit_preconfirmation(
         ));
     }
 
+    let l1_block = receipt.block_number
+        .ok_or_else(|| eyre!("receipt missing block_number (tx {tx_hash})"))?;
+
     info!(
         %tx_hash,
         batch_index,
+        l1_block,
         gas_used = receipt.gas_used,
         "preconfirmBatch confirmed"
     );
 
-    Ok(())
+    Ok(SubmitReceipt { tx_hash, l1_block })
 }
