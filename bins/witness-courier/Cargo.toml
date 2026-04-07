@@ -30,6 +30,7 @@ tracing.workspace = true
 tonic-prost = "0.14.5"
 tracing-subscriber = "0.3.23"
 zstd = "0.13.3"
+bytes.workspace = true
 reqwest.workspace = true
 url = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -49,7 +50,6 @@ alloy-consensus = { workspace = true }
 
 # blob construction
 brotli = "8.0"
-c-kzg = { version = "2", features = ["std"] }
 sha2 = "0.10"
 futures = "0.3"
 

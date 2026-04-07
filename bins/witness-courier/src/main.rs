@@ -27,7 +27,7 @@
 //! | Variable | Default | Description |
 //! |----------|---------|-------------|
 //! | `FLUENT_WITNESS_ADDR` | `http://127.0.0.1:10000` | gRPC server address (local) |
-//! | `FLUENT_PROXY_URL` | `http://127.0.0.1:11000/sign-block-execution` | Remote proxy endpoint |
+//! | `FLUENT_PROXY_URL` | `http://127.0.0.1:8080` | Remote proxy base URL |
 //! | `FLUENT_DB_PATH` | `./witness_courier.db` | SQLite DB for crash recovery |
 //! | `FLUENT_HTTP_TIMEOUT_SECS` | `120` | HTTP POST timeout (seconds) |
 //! | `L1_RPC_URL` | — | L1 Ethereum RPC URL (required for batch orchestration) |
@@ -51,7 +51,7 @@ use witness_courier::client::{self, OrchestratorConfig};
 use witness_courier::l1_listener;
 
 const DEFAULT_SERVER_ADDR: &str = "http://127.0.0.1:10000";
-const DEFAULT_PROXY_URL: &str = "http://127.0.0.1:8080/sign-block-execution";
+const DEFAULT_PROXY_URL: &str = "http://127.0.0.1:8080";
 const DEFAULT_DB_PATH: &str = "./witness_courier.db";
 const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 120;
 

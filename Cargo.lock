@@ -18404,7 +18404,7 @@ dependencies = [
  "async-channel",
  "bincode 1.3.3",
  "brotli",
- "c-kzg",
+ "bytes",
  "eyre",
  "futures",
  "prost 0.14.3",

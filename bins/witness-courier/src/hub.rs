@@ -15,11 +15,9 @@
 //! holds ~12-30 blocks — more than enough for a co-located courier restart
 //! (typically 1-3 seconds).
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::collections::BTreeSet;
-use std::sync::{Arc as StdArc, RwLock as StdRwLock};
+use std::sync::{Arc, RwLock as StdRwLock};
 
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{error, info, warn};
@@ -34,18 +32,18 @@ const BROADCAST_CAPACITY: usize = 1024;
 
 struct ColdTier {
     dir: PathBuf,
-    index: StdArc<StdRwLock<BTreeSet<u64>>>,
+    index: Arc<StdRwLock<BTreeSet<u64>>>,
     tx: mpsc::Sender<SharedProveRequest>,
     max_dir_bytes: u64,
-    current_dir_bytes: StdArc<std::sync::atomic::AtomicU64>,
+    current_dir_bytes: Arc<std::sync::atomic::AtomicU64>,
 }
 
 async fn run_cold_writer(
     mut rx: mpsc::Receiver<SharedProveRequest>,
     dir: PathBuf,
-    index: StdArc<StdRwLock<BTreeSet<u64>>>,
+    index: Arc<StdRwLock<BTreeSet<u64>>>,
     max_dir_bytes: u64,
-    current_dir_bytes: StdArc<std::sync::atomic::AtomicU64>,
+    current_dir_bytes: Arc<std::sync::atomic::AtomicU64>,
 ) {
     use std::sync::atomic::Ordering::Relaxed;
 
@@ -219,15 +217,15 @@ impl WitnessHub {
                 }
             }
 
-            let current_dir_bytes = StdArc::new(std::sync::atomic::AtomicU64::new(initial_bytes));
-            let index = StdArc::new(StdRwLock::new(existing));
+            let current_dir_bytes = Arc::new(std::sync::atomic::AtomicU64::new(initial_bytes));
+            let index = Arc::new(StdRwLock::new(existing));
             let (cold_tx, cold_rx) = mpsc::channel(1000);
             tokio::spawn(run_cold_writer(
                 cold_rx,
                 dir.clone(),
-                StdArc::clone(&index),
+                Arc::clone(&index),
                 max_cold_bytes,
-                StdArc::clone(&current_dir_bytes),
+                Arc::clone(&current_dir_bytes),
             ));
 
             ColdTier { dir, index, tx: cold_tx, max_dir_bytes: max_cold_bytes, current_dir_bytes }
@@ -349,17 +347,12 @@ impl WitnessHub {
         self.read_cold_block(block_number).await
     }
 
-    /// Deletes cold-tier files for blocks in [from_block, to_block].
-    pub async fn acknowledge_range(&self, from_block: u64, to_block: u64) {
+    /// Delete cold-tier files for the given block numbers.
+    async fn delete_cold_blocks(&self, blocks: Vec<u64>) {
         let Some(cold) = &self.cold else { return; };
         use std::sync::atomic::Ordering::Relaxed;
 
-        let to_delete: Vec<u64> = {
-            let idx = cold.index.read().unwrap();
-            idx.range(from_block..=to_block).copied().collect()
-        };
-
-        for block_number in to_delete {
+        for block_number in blocks {
             let path = cold.dir.join(format!("{block_number}.bin"));
             match tokio::fs::metadata(&path).await {
                 Ok(m) => {
@@ -369,7 +362,7 @@ impl WitnessHub {
                             cold.index.write().unwrap().remove(&block_number);
                             cold.current_dir_bytes.fetch_sub(file_size, Relaxed);
                         }
-                        Err(e) => warn!(block_number, err = %e, "Failed to acknowledge cold witness"),
+                        Err(e) => warn!(block_number, err = %e, "Failed to delete cold witness"),
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -378,39 +371,24 @@ impl WitnessHub {
                 Err(e) => warn!(block_number, err = %e, "Failed to stat cold witness"),
             }
         }
+    }
+
+    /// Deletes cold-tier files for blocks in [from_block, to_block].
+    pub async fn acknowledge_range(&self, from_block: u64, to_block: u64) {
+        let blocks = self.cold.as_ref().map(|c| {
+            c.index.read().unwrap().range(from_block..=to_block).copied().collect()
+        }).unwrap_or_default();
+        self.delete_cold_blocks(blocks).await;
         info!(from_block, to_block, "Cold witnesses acknowledged (range)");
     }
 
     /// Called by the courier (via gRPC) after checkpoint advances.
     /// Deletes all cold-tier files with block_number <= up_to_block.
     pub async fn acknowledge(&self, up_to_block: u64) {
-        let Some(cold) = &self.cold else { return; };
-        use std::sync::atomic::Ordering::Relaxed;
-
-        let to_delete: Vec<u64> = {
-            let idx = cold.index.read().unwrap();
-            idx.range(..=up_to_block).copied().collect()
-        };
-
-        for block_number in to_delete {
-            let path = cold.dir.join(format!("{block_number}.bin"));
-            match tokio::fs::metadata(&path).await {
-                Ok(m) => {
-                    let file_size = m.len();
-                    match tokio::fs::remove_file(&path).await {
-                        Ok(()) => {
-                            cold.index.write().unwrap().remove(&block_number);
-                            cold.current_dir_bytes.fetch_sub(file_size, Relaxed);
-                        }
-                        Err(e) => warn!(block_number, err = %e, "Failed to acknowledge cold witness"),
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    cold.index.write().unwrap().remove(&block_number);
-                }
-                Err(e) => warn!(block_number, err = %e, "Failed to stat cold witness for acknowledge"),
-            }
-        }
+        let blocks = self.cold.as_ref().map(|c| {
+            c.index.read().unwrap().range(..=up_to_block).copied().collect()
+        }).unwrap_or_default();
+        self.delete_cold_blocks(blocks).await;
         info!(up_to_block, "Cold witnesses acknowledged");
     }
 }

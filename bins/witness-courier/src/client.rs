@@ -28,6 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_channel::{Receiver as AsyncReceiver, Sender as AsyncSender};
+use bytes::Bytes;
 use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
@@ -50,6 +51,10 @@ use rsp_client_executor::{evm::FluentEvmConfig, io::ClientExecutorInput};
 use rsp_host_executor::HostExecutor;
 use rsp_primitives::genesis::Genesis;
 use rsp_provider::create_provider;
+
+/// 512 MB — generous headroom for the largest witnesses while preventing
+/// catastrophic OOM from malformed length-prefixed frames.
+const MAX_GRPC_MESSAGE_SIZE: usize = 512 * 1024 * 1024;
 
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const INITIAL_BACKOFF: Duration = Duration::from_millis(500);
@@ -193,12 +198,13 @@ async fn execution_worker(
             }
         };
 
+        let payload = Bytes::from(payload);
         let mut backoff = Duration::from_millis(50);
         let mut attempts: u32 = 0;
         let started = tokio::time::Instant::now();
         loop {
             attempts += 1;
-            match send_block_request(&http_client, &proxy_url, &api_key, task.block_number, &payload).await {
+            match send_block_request(&http_client, &proxy_url, &api_key, task.block_number, payload.clone()).await {
                 Ok(response) => {
                     if attempts > 1 {
                         info!(worker_id, block = task.block_number, attempts, elapsed = ?started.elapsed(), "Block succeeded after retries");
@@ -314,8 +320,8 @@ pub async fn run<P: Provider + Clone + 'static>(
         .timeout(Duration::from_secs(600))
         .connect_lazy();
     let worker_witness_client = WitnessServiceClient::new(worker_grpc_channel)
-        .max_decoding_message_size(usize::MAX)
-        .max_encoding_message_size(usize::MAX);
+        .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
+        .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE);
 
     // Spawn persistent execution worker pool
     for i in 0..EXECUTION_WORKERS {
@@ -344,12 +350,16 @@ pub async fn run<P: Provider + Clone + 'static>(
     }
 
     loop {
-        let from_block = db.lock().unwrap().get_checkpoint() + 1;
-        let confirmed: BTreeSet<u64> = db.lock().unwrap()
-            .get_all_response_block_numbers()
-            .into_iter()
-            .filter(|&b| b >= from_block)
-            .collect();
+        let (from_block, confirmed) = {
+            let db_guard = db.lock().unwrap();
+            let from = db_guard.get_checkpoint() + 1;
+            let confirmed: BTreeSet<u64> = db_guard
+                .get_all_response_block_numbers()
+                .into_iter()
+                .filter(|&b| b >= from)
+                .collect();
+            (from, confirmed)
+        };
         info!(from_block, confirmed_count = confirmed.len(), "Connecting to witness server");
 
         match run_stream(
@@ -842,8 +852,8 @@ async fn run_stream<P: Provider + Clone + 'static>(
         .await?;
 
     let mut client = WitnessServiceClient::new(channel)
-        .max_decoding_message_size(usize::MAX)
-        .max_encoding_message_size(usize::MAX);
+        .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
+        .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE);
     let ack_client = client.clone();
     let mut stream = client.subscribe(SubscribeRequest { from_block }).await?.into_inner();
     info!(from_block, "Subscribed to witness stream");
@@ -904,13 +914,13 @@ async fn run_stream<P: Provider + Clone + 'static>(
                             match msg.content {
                                 Some(Content::Witness(w)) => {
                                     let bn = w.block_number;
+                                    let _ = grpc_event_tx.send(GrpcEvent::WitnessQueued(bn)).await;
                                     if normal_tx.send(ExecutionTask {
                                         block_number: bn,
                                         payload: Some(w.data),
                                     }).await.is_err() {
                                         break;
                                     }
-                                    let _ = grpc_event_tx.send(GrpcEvent::WitnessQueued(bn)).await;
                                 }
                                 None => {}
                             }
@@ -1104,12 +1114,7 @@ async fn call_sign_batch_root(
     responses: &[EthExecutionResponse],
     blobs: &[Vec<u8>],
 ) -> Result<SubmitBatchResponse, SignBatchError> {
-    // Derive base URL from proxy_url (which points to /sign-block-execution)
-    let base = proxy_url
-        .rfind('/')
-        .map(|i| &proxy_url[..i])
-        .unwrap_or(proxy_url);
-    let url = format!("{base}/sign-batch-root");
+    let url = format!("{proxy_url}/sign-batch-root");
 
     let body = serde_json::json!({
         "from_block": from_block,
@@ -1181,15 +1186,16 @@ async fn send_block_request(
     proxy_url: &str,
     api_key: &str,
     block_number: u64,
-    payload: &[u8],
+    payload: Bytes,
 ) -> eyre::Result<EthExecutionResponse> {
+    let url = format!("{proxy_url}/sign-block-execution");
     let resp = http_client
-        .post(proxy_url)
-        .timeout(Duration::from_secs(15))
+        .post(&url)
+        .timeout(Duration::from_secs(30))
         .header("content-type", "application/octet-stream")
         .header("x-block-number", block_number.to_string())
         .header("x-api-key", api_key)
-        .body(payload.to_vec())
+        .body(payload)
         .send()
         .await
         .map_err(|e| eyre::eyre!("HTTP POST failed: {e}"))?;

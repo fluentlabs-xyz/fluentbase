@@ -167,12 +167,13 @@ impl WitnessService for WitnessGrpcService {
     }
 }
 
+/// 512 MB — generous headroom for the largest witnesses while preventing
+/// catastrophic OOM from malformed length-prefixed frames.
+const MAX_GRPC_MESSAGE_SIZE: usize = 512 * 1024 * 1024;
+
 /// Build a [`WitnessServiceServer`] ready to be added to a tonic server.
-///
-/// Sets max message sizes to `usize::MAX` because witness payloads can be
-/// large (tens of MB for heavy blocks).
 pub fn create_service(hub: Arc<WitnessHub>) -> WitnessServiceServer<WitnessGrpcService> {
     WitnessServiceServer::new(WitnessGrpcService { hub })
-        .max_encoding_message_size(usize::MAX)
-        .max_decoding_message_size(usize::MAX)
+        .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
 }

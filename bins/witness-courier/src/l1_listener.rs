@@ -134,20 +134,19 @@ async fn retry_fetch_block_count(
     batch_index: u64,
 ) -> Result<u64> {
     let mut backoff = std::time::Duration::from_millis(500);
+    let mut last_err = None;
     for attempt in 1..=MAX_RPC_RETRIES {
         match fetch_block_count_from_tx(provider, tx_hash).await {
             Ok(n) => return Ok(n),
-            Err(e) if attempt == MAX_RPC_RETRIES => {
-                return Err(eyre!("Failed to fetch block count for batch {batch_index} after {MAX_RPC_RETRIES} attempts: {e}"));
-            }
             Err(e) => {
                 warn!(batch_index, attempt, err = %e, ?backoff, "fetch_block_count failed — retrying");
+                last_err = Some(e);
                 tokio::time::sleep(backoff).await;
                 backoff *= 2;
             }
         }
     }
-    unreachable!()
+    Err(last_err.unwrap_or_else(|| eyre!("fetch_block_count failed with 0 retries")))
 }
 
 /// Single poll iteration: fetch logs from `from_block` to latest, paginated.

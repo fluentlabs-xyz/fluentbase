@@ -4,17 +4,11 @@
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_provider::{Provider, RootProvider};
-use c_kzg::BYTES_PER_BLOB;
 use eyre::{eyre, Result};
-use std::sync::LazyLock;
 use tracing::info;
 
-const TRUSTED_SETUP_BYTES: &[u8] = include_bytes!("trusted_setup.txt");
-
-static _KZG_SETTINGS: LazyLock<c_kzg::KzgSettings> = LazyLock::new(|| {
-    let s = std::str::from_utf8(TRUSTED_SETUP_BYTES).expect("trusted setup not valid UTF-8");
-    c_kzg::KzgSettings::parse_kzg_trusted_setup(s, 0).expect("failed to load KZG trusted setup")
-});
+/// EIP-4844 blob size: 4096 field elements × 32 bytes = 131072 bytes.
+const BYTES_PER_BLOB: usize = 131_072;
 
 const BYTES_PER_FIELD_ELEMENT: usize = 31;
 const FIELD_ELEMENTS_PER_BLOB: usize = BYTES_PER_BLOB / 32;

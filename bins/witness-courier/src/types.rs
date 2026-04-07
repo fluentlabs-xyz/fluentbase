@@ -21,7 +21,7 @@ pub type SharedProveRequest = Arc<ProveRequest>;
 // Mirror types from `fluent-nitro-types` (different workspace)
 // ---------------------------------------------------------------------------
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 
 /// Per-block execution response from the Nitro enclave.
 ///
@@ -52,5 +52,3 @@ pub struct InvalidSignaturesResponse {
     pub invalid_blocks: Vec<u64>,
     pub enclave_address: Address,
 }
-
-use alloy_primitives::Address;

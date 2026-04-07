@@ -347,30 +347,36 @@ impl Db {
     /// Atomically move a batch from pending to dispatched.
     /// Single transaction: DELETE from pending + INSERT into dispatched.
     pub fn move_to_dispatched(
-        &self,
+        &mut self,
         batch_index: u64,
         from_block: u64,
         to_block: u64,
         tx_hash: &[u8],
         l1_block: u64,
     ) {
-        if let Err(e) = self.conn.execute_batch("BEGIN") {
-            error!(err = %e, batch_index, "Failed to begin move_to_dispatched tx");
-            return;
-        }
-        let ok = self.conn.execute(
+        let tx = match self.conn.transaction() {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!(err = %e, batch_index, "Failed to begin move_to_dispatched tx");
+                return;
+            }
+        };
+        let ok = tx.execute(
             "DELETE FROM pending_batches WHERE batch_index = ?1",
             params![batch_index],
-        ).and_then(|_| self.conn.execute(
+        ).and_then(|_| tx.execute(
             "INSERT OR REPLACE INTO dispatched_batches(batch_index, from_block, to_block, tx_hash, l1_block)
              VALUES(?1, ?2, ?3, ?4, ?5)",
             params![batch_index, from_block, to_block, tx_hash, l1_block],
         ));
         match ok {
-            Ok(_) => { let _ = self.conn.execute_batch("COMMIT"); }
+            Ok(_) => {
+                if let Err(e) = tx.commit() {
+                    error!(err = %e, batch_index, "Failed to commit move_to_dispatched");
+                }
+            }
             Err(e) => {
                 error!(err = %e, batch_index, "Failed to move batch to dispatched — rolling back");
-                let _ = self.conn.execute_batch("ROLLBACK");
             }
         }
     }
@@ -378,30 +384,36 @@ impl Db {
     /// Atomically clean up a finalized dispatched batch.
     /// Single transaction: DELETE dispatched + DELETE responses + DELETE signature.
     pub fn finalize_dispatched_batch(
-        &self,
+        &mut self,
         batch_index: u64,
         from_block: u64,
         to_block: u64,
     ) {
-        if let Err(e) = self.conn.execute_batch("BEGIN") {
-            error!(err = %e, batch_index, "Failed to begin finalize tx");
-            return;
-        }
-        let ok = self.conn.execute(
+        let tx = match self.conn.transaction() {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!(err = %e, batch_index, "Failed to begin finalize tx");
+                return;
+            }
+        };
+        let ok = tx.execute(
             "DELETE FROM dispatched_batches WHERE batch_index = ?1",
             params![batch_index],
-        ).and_then(|_| self.conn.execute(
+        ).and_then(|_| tx.execute(
             "DELETE FROM block_responses WHERE block_number BETWEEN ?1 AND ?2",
             params![from_block, to_block],
-        )).and_then(|_| self.conn.execute(
+        )).and_then(|_| tx.execute(
             "DELETE FROM batch_signatures WHERE batch_index = ?1",
             params![batch_index],
         ));
         match ok {
-            Ok(_) => { let _ = self.conn.execute_batch("COMMIT"); }
+            Ok(_) => {
+                if let Err(e) = tx.commit() {
+                    error!(err = %e, batch_index, "Failed to commit finalize_dispatched_batch");
+                }
+            }
             Err(e) => {
                 error!(err = %e, batch_index, "Failed to finalize dispatched batch — rolling back");
-                let _ = self.conn.execute_batch("ROLLBACK");
             }
         }
     }
@@ -409,28 +421,34 @@ impl Db {
     /// Move a dispatched batch back to pending (reorg recovery).
     /// Single transaction: DELETE from dispatched + INSERT into pending.
     pub fn undispatch_batch(
-        &self,
+        &mut self,
         batch_index: u64,
         from_block: u64,
         to_block: u64,
     ) {
-        if let Err(e) = self.conn.execute_batch("BEGIN") {
-            error!(err = %e, batch_index, "Failed to begin undispatch tx");
-            return;
-        }
-        let ok = self.conn.execute(
+        let tx = match self.conn.transaction() {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!(err = %e, batch_index, "Failed to begin undispatch tx");
+                return;
+            }
+        };
+        let ok = tx.execute(
             "DELETE FROM dispatched_batches WHERE batch_index = ?1",
             params![batch_index],
-        ).and_then(|_| self.conn.execute(
+        ).and_then(|_| tx.execute(
             "INSERT OR REPLACE INTO pending_batches(batch_index, from_block, to_block, blobs_accepted)
              VALUES(?1, ?2, ?3, 1)",
             params![batch_index, from_block, to_block],
         ));
         match ok {
-            Ok(_) => { let _ = self.conn.execute_batch("COMMIT"); }
+            Ok(_) => {
+                if let Err(e) = tx.commit() {
+                    error!(err = %e, batch_index, "Failed to commit undispatch_batch");
+                }
+            }
             Err(e) => {
                 error!(err = %e, batch_index, "Failed to undispatch batch — rolling back");
-                let _ = self.conn.execute_batch("ROLLBACK");
             }
         }
     }
