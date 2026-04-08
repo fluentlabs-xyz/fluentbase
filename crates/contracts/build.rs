@@ -71,21 +71,38 @@ fn contracts_build_args(fluentbase_root_dir: &Path) -> BuildArgs {
     args
 }
 
+fn map_path_for_docker(path: &Path, mount_dir: &Path) -> Option<PathBuf> {
+    path.strip_prefix(mount_dir)
+        .ok()
+        .map(|relative| PathBuf::from("/workspace").join(relative))
+}
+
 fn run_workspace_build(
     build_args: &BuildArgs,
     workspace_manifest_path: &Path,
     target_dir: &Path,
     is_debug_profile: bool,
 ) {
+    let work_dir = workspace_manifest_path.parent().unwrap();
+    let mount_dir = build_args
+        .mount_dir
+        .as_deref()
+        .unwrap_or_else(|| work_dir.parent().unwrap_or(work_dir));
+
+    let effective_target_dir = if build_args.docker {
+        map_path_for_docker(target_dir, mount_dir)
+            .unwrap_or_else(|| PathBuf::from("/workspace/target/contracts"))
+    } else {
+        target_dir.to_path_buf()
+    };
+
     let mut cargo_args = vec![
         "cargo".to_string(),
         "build".to_string(),
         "--target".to_string(),
         "wasm32-unknown-unknown".to_string(),
-        "--manifest-path".to_string(),
-        workspace_manifest_path.to_string_lossy().to_string(),
         "--target-dir".to_string(),
-        target_dir.to_string_lossy().to_string(),
+        effective_target_dir.to_string_lossy().to_string(),
         "--color=always".to_string(),
     ];
 
@@ -113,16 +130,11 @@ fn run_workspace_build(
         vec![("CARGO_ENCODED_RUSTFLAGS".to_string(), rust_flags)]
     };
 
-    let work_dir = workspace_manifest_path.parent().unwrap();
     if build_args.docker {
         let image_ref = format!("{}:{}", build_args.docker_image, build_args.docker_tag);
         let image = docker::ensure_rust_image(&image_ref)
             .expect(format!("failed to ensure docker image {image_ref}").as_str());
 
-        let mount_dir = build_args
-            .mount_dir
-            .as_deref()
-            .unwrap_or_else(|| work_dir.parent().unwrap_or(work_dir));
         let rust_toolchain = build_args.toolchain_version(work_dir);
 
         docker::run_in_docker(
