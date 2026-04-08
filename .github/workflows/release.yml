@@ -83,6 +83,10 @@ jobs:
             echo "tag=dry-run-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
             echo "source=local" >> "$GITHUB_OUTPUT"
           else
+            if [[ "${{ github.ref_type }}" != "tag" ]]; then
+              echo "Non-dry-run executions must run from a tag ref" >&2
+              exit 1
+            fi
             echo "image=ghcr.io/${{ github.repository_owner }}/fluentbase-build" >> "$GITHUB_OUTPUT"
             echo "tag=${{ needs.extract-version.outputs.VERSION }}" >> "$GITHUB_OUTPUT"
             echo "source=registry" >> "$GITHUB_OUTPUT"

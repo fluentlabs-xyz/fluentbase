@@ -22,6 +22,7 @@ contracts/**/lib.wasm
 contracts/**/lib.rwasm
 contracts/**/foundry.json
 contracts/out
+/out/
 examples/**/lib.wasm
 examples/**/lib.rwasm
 

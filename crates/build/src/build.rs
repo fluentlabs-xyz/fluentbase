@@ -146,7 +146,7 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
 
     // Check if artifacts requested without output directory
     if args.output_path.is_none() {
-        anyhow::bail!("--output is required when using --generate");
+        anyhow::bail!("--output-path is required when using --generate");
     }
 
     // From here we know output is Some

@@ -119,7 +119,12 @@ pub struct BuildArgs {
     pub generate: Vec<Artifact>,
 
     /// Output directory for artifacts
-    #[arg(short, long)]
+    #[arg(
+        short,
+        long,
+        alias = "output",
+        default_value = "./out/{contract_name}/"
+    )]
     pub output_path: Option<String>,
 
     /// Post process wasm for size optimization
