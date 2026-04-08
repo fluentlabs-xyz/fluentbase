@@ -44,8 +44,7 @@ fn env_bool(name: &str) -> Option<bool> {
 fn contracts_build_args(fluentbase_root_dir: &Path) -> BuildArgs {
     let mut args = BuildArgs::default();
 
-    let default_docker = env_bool("CI").unwrap_or(false);
-    args.docker = env_bool("FLUENTBASE_CONTRACTS_DOCKER").unwrap_or(default_docker);
+    args.docker = env_bool("FLUENTBASE_CONTRACTS_DOCKER").unwrap_or(false);
 
     args.docker_image = env::var("FLUENTBASE_BUILD_DOCKER_IMAGE")
         .unwrap_or_else(|_| DEFAULT_DOCKER_IMAGE.to_string());
