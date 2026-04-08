@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm", default-features = false, features = ["groups", "alloc", "pairings"] }
+#bls12_381 = { git = "https://github.com/rwasm-patches/bls12_381.git", branch = "rwasm", default-features = false, features = ["groups", "alloc", "pairings"] }
 revm-precompile = { workspace = true }
 
 [dev-dependencies]
@@ -15,7 +15,7 @@ serde_json = "1.0.145"
 
 [lib]
 crate-type = ["cdylib"]
-path = "lib.rs"
+path = "src/lib.rs"
 
 [features]
 default = ["std"]

@@ -17,6 +17,7 @@ fluentbase-sdk = { workspace = true }
 path = "lib.rs"
 
 [build-dependencies]
+fluentbase-build = { workspace = true }
 fluentbase-sdk = { workspace = true }
 alloy-genesis = { workspace = true }
 serde = { workspace = true }
