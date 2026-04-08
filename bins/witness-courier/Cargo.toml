@@ -43,7 +43,6 @@ alloy-network.workspace = true
 
 # alloy — not in workspace, added directly
 alloy-provider = { version = "1.6.3", default-features = false, features = ["reqwest"] }
-alloy-json-rpc = "1.6.3"
 alloy-signer = "1.6.3"
 alloy-signer-local = { version = "1.6.3", default-features = false }
 alloy-eips = "1.8.3"

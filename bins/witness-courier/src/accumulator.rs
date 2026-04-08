@@ -371,27 +371,6 @@ impl BatchAccumulator {
         true
     }
 
-    /// Atomically remove a pending batch that was already preconfirmed on-chain.
-    /// Cleans up batches, signatures, responses and persists last_batch_end in one DB transaction.
-    pub async fn skip_already_dispatched(&mut self, batch_index: u64) {
-        let Some(batch) = self.batches.remove(&batch_index) else { return };
-        self.signatures.remove(&batch_index);
-
-        let fb = batch.from_block;
-        let tb = batch.to_block;
-
-        if let Some(db) = &self.db {
-            let db = Arc::clone(db);
-            let _ = tokio::task::spawn_blocking(move || {
-                db.lock().unwrap().skip_pending_batch(batch_index, fb, tb);
-            }).await;
-        }
-
-        for b in fb..=tb {
-            self.responses.remove(&b);
-        }
-    }
-
     /// Returns dispatched batch indices where l1_block <= finalized.
     pub fn dispatched_finalization_candidates(&self, finalized_block: u64) -> Vec<u64> {
         self.dispatched

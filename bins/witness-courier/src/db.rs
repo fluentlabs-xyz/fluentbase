@@ -418,47 +418,6 @@ impl Db {
         }
     }
 
-    /// Atomically skip a pending batch that was already preconfirmed on-chain.
-    /// Deletes from pending_batches, block_responses, batch_signatures and updates last_batch_end.
-    /// Does NOT go through dispatched_batches — there is no real tx_hash to track.
-    pub fn skip_pending_batch(
-        &mut self,
-        batch_index: u64,
-        from_block: u64,
-        to_block: u64,
-    ) {
-        let tx = match self.conn.transaction() {
-            Ok(tx) => tx,
-            Err(e) => {
-                error!(err = %e, batch_index, "Failed to begin skip_pending_batch tx");
-                return;
-            }
-        };
-        let ok = tx.execute(
-            "DELETE FROM pending_batches WHERE batch_index = ?1",
-            params![batch_index],
-        ).and_then(|_| tx.execute(
-            "DELETE FROM block_responses WHERE block_number BETWEEN ?1 AND ?2",
-            params![from_block, to_block],
-        )).and_then(|_| tx.execute(
-            "DELETE FROM batch_signatures WHERE batch_index = ?1",
-            params![batch_index],
-        )).and_then(|_| tx.execute(
-            "INSERT OR REPLACE INTO meta(key, value) VALUES('last_batch_end', ?1)",
-            params![to_block],
-        ));
-        match ok {
-            Ok(_) => {
-                if let Err(e) = tx.commit() {
-                    error!(err = %e, batch_index, "Failed to commit skip_pending_batch");
-                }
-            }
-            Err(e) => {
-                error!(err = %e, batch_index, "Failed to skip pending batch — rolling back");
-            }
-        }
-    }
-
     /// Move a dispatched batch back to pending (reorg recovery).
     /// Single transaction: DELETE from dispatched + INSERT into pending.
     pub fn undispatch_batch(
