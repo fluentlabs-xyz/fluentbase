@@ -2,29 +2,12 @@
 //!
 //! Pipeline: fetch blocks → encode payload → brotli compress → canonicalize
 
-use std::ffi::c_int;
-
 use alloy_eips::eip2718::Encodable2718;
 use alloy_provider::{Provider, RootProvider};
+use brotlic::{BrotliEncoderOptions, CompressorWriter, Quality, WindowSize};
 use eyre::{eyre, Result};
+use std::io::Write;
 use tracing::info;
-
-// ── C reference libbrotli FFI ───────────────────────────────────────────────
-// Linked via pkg-config in build.rs. Guarantees byte-identical output with the
-// Go sequencer (andybalholm/brotli, a c2go translation of the same C reference).
-// The pure-Rust brotli crate produces different output on real transaction data.
-
-extern "C" {
-    fn BrotliEncoderCompress(
-        quality: c_int,
-        lgwin: c_int,
-        mode: c_int,
-        input_size: usize,
-        input_buffer: *const u8,
-        encoded_size: *mut usize,
-        encoded_buffer: *mut u8,
-    ) -> c_int;
-}
 
 /// EIP-4844 blob size: 4096 field elements × 32 bytes = 131072 bytes.
 const BYTES_PER_BLOB: usize = 131_072;
@@ -129,28 +112,22 @@ fn encode_blob_payload(from_block: u64, tx_data_per_block: &[Vec<u8>]) -> Vec<u8
 }
 
 /// Brotli compress via C reference libbrotli (quality=6, lgwin=22, mode=Generic).
+///
+/// Uses `brotlic` which compiles the C reference libbrotli from source, guaranteeing
+/// byte-identical output with the Go sequencer (andybalholm/brotli is a c2go
+/// translation of the same C reference). The pure-Rust brotli crate produces
+/// different output on real transaction data.
 fn brotli_compress(data: &[u8]) -> Result<Vec<u8>> {
-    let max_out = data.len() + (data.len() >> 14) + 11 + 1024;
-    let mut out = vec![0u8; max_out];
-    let mut out_size = out.len();
+    let encoder = BrotliEncoderOptions::new()
+        .quality(Quality::new(6).map_err(|e| eyre!("invalid quality: {e}"))?)
+        .window_size(WindowSize::new(22).map_err(|e| eyre!("invalid window size: {e}"))?)
+        .build()
+        .map_err(|e| eyre!("encoder build failed: {e}"))?;
 
-    let ok = unsafe {
-        BrotliEncoderCompress(
-            6,  // quality
-            22, // lgwin
-            0,  // mode: Generic
-            data.len(),
-            data.as_ptr(),
-            &mut out_size,
-            out.as_mut_ptr(),
-        )
-    };
-
-    if ok != 1 {
-        return Err(eyre!("BrotliEncoderCompress failed"));
-    }
-    out.truncate(out_size);
-    Ok(out)
+    let mut writer = CompressorWriter::with_encoder(encoder, Vec::new());
+    writer.write_all(data).map_err(|e| eyre!("brotli compress failed: {e}"))?;
+    let compressed = writer.into_inner().map_err(|e| eyre!("brotli finalize failed: {e}"))?;
+    Ok(compressed)
 }
 
 /// Canonicalize raw bytes and build a blob buffer.
