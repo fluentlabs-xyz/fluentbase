@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7-labs
-ARG RUST_TOOLCHAIN=1.88
+ARG RUST_TOOLCHAIN=1.92.0
 ARG SDK_VERSION_BRANCH=""
 ARG SDK_VERSION_TAG=""
 
@@ -10,7 +10,7 @@ FROM rust:${RUST_TOOLCHAIN}-slim AS base
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config libssl-dev git ca-certificates curl \
+    pkg-config libssl-dev git ca-certificates curl clang \
     && rm -rf /var/lib/apt/lists/*
 
 RUN rustup target add wasm32-unknown-unknown
@@ -56,7 +56,7 @@ WORKDIR /workspace
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
+    git clang \
     && rm -rf /var/lib/apt/lists/*
 
 RUN rustup target add wasm32-unknown-unknown
