@@ -1,5 +1,4 @@
-use crate::utils::parse_rustc_version;
-use crate::{DOCKER_PLATFORM, CARGO_CACHE_VOLUME};
+use crate::{utils::parse_rustc_version, CARGO_CACHE_VOLUME, DOCKER_PLATFORM};
 use anyhow::{bail, Context, Result};
 use std::{path::Path, process::Command};
 
@@ -55,6 +54,8 @@ pub fn run_in_docker(
 
     cmd.arg(image);
     cmd.args(args);
+
+    eprintln!("Docker command: {:?}", cmd);
 
     let status = cmd.status().context("Failed to execute Docker command")?;
 

@@ -243,7 +243,7 @@ mod tests {
             #[test]
             fn $fn_name() {
                 run_bls_file(
-                    include_str!(concat!("testcases/", $file_stem, ".json")),
+                    include_str!(concat!("../testcases/", $file_stem, ".json")),
                     $addr,
                 );
             }

@@ -1,5 +1,5 @@
 #![allow(clippy::too_many_arguments)]
-use crate::{docker, generators, Artifact, BuildArgs, BUILD_TARGET};
+use crate::{docker, generators, Artifact, BuildArgs, BUILD_TARGET, DEFAULT_DOCKER_TAG};
 use anyhow::{Context, Result};
 use cargo_metadata::{Metadata, MetadataCommand, Package};
 use std::{
@@ -59,7 +59,7 @@ pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
     // Canonicalize the path
     let contract_dir = match contract_dir.canonicalize() {
         Ok(path) => path,
-        Err(_) => match std::env::current_dir() {
+        Err(_) => match env::current_dir() {
             Ok(cwd) => cwd.join(contract_dir),
             Err(e) => panic!("Failed to determine contract directory: {e}"),
         },
@@ -75,6 +75,12 @@ pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
 
     // Execute build
     let args = args.unwrap_or_default();
+
+    if args.docker {
+        eprintln!("Docker build version {}", DEFAULT_DOCKER_TAG);
+    } else {
+        eprintln!("WARN: Building w/o docker (non-reproducible build)");
+    }
 
     match execute_build(&args, Some(contract_dir.to_path_buf())) {
         Ok(result) => {
@@ -131,7 +137,7 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
     let target_wasm_path = build_wasm(args, &contract_dir, package, &docker_image, &mount_dir)?;
 
     // Early return if no output directory and no artifacts
-    if args.output.is_none() && args.generate.is_empty() {
+    if args.generate.is_empty() {
         return Ok(BuildResult {
             wasm_path: target_wasm_path,
             ..Default::default()
@@ -139,20 +145,18 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
     }
 
     // Check if artifacts requested without output directory
-    if args.output.is_none() && !args.generate.is_empty() {
-        anyhow::bail!("--output is required when using --generate");
+    if args.output_path.is_none() {
+        anyhow::bail!("--output-path is required when using --generate");
     }
 
     // From here we know output is Some
     let contract_name = args.contract_name.as_ref().unwrap_or(&package.name);
-    let output_dir = args.output.as_ref().unwrap().join(contract_name);
-
-    // Clean the output directory if it exists
-    if output_dir.exists() {
-        fs::remove_dir_all(&output_dir).with_context(|| {
-            format!("Failed to clean output directory: {}", output_dir.display())
-        })?;
-    }
+    let output_dir: PathBuf = args
+        .output_path
+        .as_ref()
+        .unwrap()
+        .replace("{contract_name}", contract_name)
+        .into();
 
     // Create fresh output directory
     fs::create_dir_all(&output_dir)?;
@@ -192,10 +196,10 @@ fn build_wasm(
     docker_image: &Option<String>,
     mount_dir: &Path,
 ) -> Result<PathBuf> {
-    let target_dir = contract_dir
-        .join("target")
-        .join(crate::HELPER_TARGET_SUBDIR);
-    fs::create_dir_all(&target_dir)?;
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
+    let target_dir = out_dir.ancestors().nth(4).unwrap();
+    eprintln!("Detected target dir: {}", target_dir.display());
+    fs::create_dir_all(target_dir)?;
 
     // Build cargo command
     let mut cargo_args = args.cargo_build_command();
@@ -217,6 +221,7 @@ fn build_wasm(
         .map(|image| (image.as_str(), mount_dir));
 
     let rust_toolchain = args.toolchain_version(contract_dir);
+    eprintln!("Detected toolchain: {:?}", rust_toolchain);
 
     run_command(
         &cargo_args,
@@ -227,7 +232,7 @@ fn build_wasm(
     )?;
 
     // Find the built WASM file
-    let wasm_path = find_wasm_artifact(&target_dir, package)?;
+    let wasm_path = find_wasm_artifact(target_dir, package)?;
 
     if args.wasm_opt {
         optimize_wasm(&wasm_path, docker_config, &rust_toolchain)?;
@@ -354,6 +359,9 @@ fn run_command<S: AsRef<str>>(
             for (key, value) in env_vars {
                 command.env(key, value);
             }
+
+            eprintln!("Command workdir: {}", work_dir.display());
+            eprintln!("Executing build command: {:?}", command);
 
             let status = command.status()?;
             if !status.success() {
@@ -532,7 +540,7 @@ fn generate_artifacts(
 
 fn cargo_rerun_if_changed(metadata: &Metadata, contract_dir: &Path) {
     // Watch source files
-    for path in &["src", "Cargo.toml", "build.rs"] {
+    for path in &["src", "lib.rs", "Cargo.toml", "build.rs"] {
         let full_path = contract_dir.join(path);
         if full_path.exists() {
             println!("cargo:rerun-if-changed={}", full_path.display());

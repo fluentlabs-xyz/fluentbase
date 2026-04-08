@@ -1,5 +1,11 @@
 use cargo_metadata::{CrateType, MetadataCommand, Package, PackageId, TargetKind};
-use std::{collections::HashSet, env, fs, path::PathBuf, process::Command};
+use fluentbase_build::{docker, BuildArgs, DEFAULT_DOCKER_IMAGE, DEFAULT_DOCKER_TAG};
+use std::{
+    collections::HashSet,
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 #[derive(Default, Debug)]
 struct PackagesResolver {
@@ -24,6 +30,147 @@ impl PackagesResolver {
     }
 }
 
+fn env_bool(name: &str) -> Option<bool> {
+    env::var(name).ok().and_then(|value| {
+        let normalized = value.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        }
+    })
+}
+
+fn contracts_build_args(fluentbase_root_dir: &Path) -> BuildArgs {
+    let mut features = vec![];
+    if env::var("CARGO_FEATURE_DEBUG_PRINT").is_ok() {
+        features.push("debug-print".to_string());
+    }
+
+    let has_contracts_cargo_config = fluentbase_root_dir
+        .join("contracts/.cargo/config.toml")
+        .exists()
+        || fluentbase_root_dir.join("contracts/.cargo/config").exists();
+
+    BuildArgs {
+        docker: env_bool("FLUENTBASE_CONTRACTS_DOCKER").unwrap_or(false),
+        docker_image: env::var("FLUENTBASE_BUILD_DOCKER_IMAGE")
+            .unwrap_or_else(|_| DEFAULT_DOCKER_IMAGE.to_string()),
+        docker_tag: env::var("FLUENTBASE_BUILD_DOCKER_TAG")
+            .unwrap_or_else(|_| DEFAULT_DOCKER_TAG.to_string()),
+        mount_dir: Some(fluentbase_root_dir.to_path_buf()),
+        features,
+        no_default_features: true,
+        locked: true,
+        ignore_default_rust_flags: env_bool("FLUENTBASE_CONTRACTS_IGNORE_DEFAULT_RUST_FLAGS")
+            .unwrap_or(has_contracts_cargo_config),
+        ..BuildArgs::default()
+    }
+}
+
+fn map_path_for_docker(path: &Path, mount_dir: &Path) -> Option<PathBuf> {
+    path.strip_prefix(mount_dir)
+        .ok()
+        .map(|relative| PathBuf::from("/workspace").join(relative))
+}
+
+fn run_workspace_build(
+    build_args: &BuildArgs,
+    workspace_manifest_path: &Path,
+    target_dir: &Path,
+    is_debug_profile: bool,
+) {
+    let work_dir = workspace_manifest_path.parent().unwrap();
+    let mount_dir = build_args
+        .mount_dir
+        .as_deref()
+        .unwrap_or_else(|| work_dir.parent().unwrap_or(work_dir));
+
+    let effective_target_dir = if build_args.docker {
+        map_path_for_docker(target_dir, mount_dir)
+            .unwrap_or_else(|| PathBuf::from("/workspace/target/contracts"))
+    } else {
+        target_dir.to_path_buf()
+    };
+
+    let effective_manifest_path = if build_args.docker {
+        map_path_for_docker(workspace_manifest_path, mount_dir)
+            .unwrap_or_else(|| PathBuf::from("/workspace/contracts/Cargo.toml"))
+    } else {
+        workspace_manifest_path.to_path_buf()
+    };
+
+    let mut cargo_args = vec![
+        "cargo".to_string(),
+        "build".to_string(),
+        "--target".to_string(),
+        "wasm32-unknown-unknown".to_string(),
+        "--manifest-path".to_string(),
+        effective_manifest_path.to_string_lossy().to_string(),
+        "--target-dir".to_string(),
+        effective_target_dir.to_string_lossy().to_string(),
+        "--color=always".to_string(),
+    ];
+
+    if !is_debug_profile {
+        cargo_args.push("--release".to_string());
+    }
+
+    if build_args.no_default_features {
+        cargo_args.push("--no-default-features".to_string());
+    }
+
+    if !build_args.features.is_empty() {
+        cargo_args.push("--features".to_string());
+        cargo_args.push(build_args.features.join(","));
+    }
+
+    if build_args.locked {
+        cargo_args.push("--locked".to_string());
+    }
+
+    let rust_flags = build_args.rust_flags();
+    let env_vars = if rust_flags.is_empty() {
+        vec![]
+    } else {
+        vec![("CARGO_ENCODED_RUSTFLAGS".to_string(), rust_flags)]
+    };
+
+    if build_args.docker {
+        let image_ref = format!("{}:{}", build_args.docker_image, build_args.docker_tag);
+        let image = docker::ensure_rust_image(&image_ref)
+            .unwrap_or_else(|_| panic!("failed to ensure docker image {image_ref}"));
+
+        let rust_toolchain = build_args.toolchain_version(work_dir);
+
+        docker::run_in_docker(
+            &image,
+            &cargo_args,
+            mount_dir,
+            mount_dir,
+            &env_vars,
+            &rust_toolchain,
+        )
+        .expect("WASM compilation failure in docker");
+    } else {
+        let mut command = Command::new("cargo");
+        command.current_dir(work_dir).args(&cargo_args[1..]);
+        for (key, value) in &env_vars {
+            command.env(key, value);
+        }
+
+        let status = command
+            .status()
+            .expect("WASM compilation failure: failed to run cargo build");
+        if !status.success() {
+            panic!(
+                "WASM compilation failure: cargo exited with code: {}",
+                status.code().unwrap_or(1)
+            );
+        }
+    }
+}
+
 fn main() {
     // Make sure we rerun the build if the feature has changed
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_STD");
@@ -34,6 +181,11 @@ fn main() {
     println!("cargo:rerun-if-env-changed=OPT_LEVEL");
     println!("cargo:rerun-if-env-changed=DEBUG");
     println!("cargo:rerun-if-env-changed=TARGET");
+    println!("cargo:rerun-if-env-changed=CI");
+    println!("cargo:rerun-if-env-changed=FLUENTBASE_CONTRACTS_DOCKER");
+    println!("cargo:rerun-if-env-changed=FLUENTBASE_BUILD_DOCKER_IMAGE");
+    println!("cargo:rerun-if-env-changed=FLUENTBASE_BUILD_DOCKER_TAG");
+    println!("cargo:rerun-if-env-changed=FLUENTBASE_CONTRACTS_IGNORE_DEFAULT_RUST_FLAGS");
 
     let fluentbase_root_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let root_metadata = MetadataCommand::new()
@@ -42,43 +194,21 @@ fn main() {
         .unwrap();
     let target2_dir: PathBuf = root_metadata.target_directory.join("contracts").into();
 
+    let build_args = contracts_build_args(&fluentbase_root_dir);
+
     let mut packages_resolver = PackagesResolver::default();
     packages_resolver.find_packages(fluentbase_root_dir.join("contracts"));
     packages_resolver.find_packages(fluentbase_root_dir.join("examples"));
 
     let is_debug_profile = env::var("PROFILE").unwrap() == "debug";
 
-    for contracts_manifest_path in packages_resolver.manifest_dirs {
-        let contracts_manifest_path = contracts_manifest_path.to_str().unwrap().to_string();
-        let mut args = vec![
-            "build".to_string(),
-            "--target".to_string(),
-            "wasm32-unknown-unknown".to_string(),
-            "--manifest-path".to_string(),
-            contracts_manifest_path.clone(),
-            "--target-dir".to_string(),
-            target2_dir.to_str().unwrap().to_string(),
-            "--color=always".to_string(),
-            "--no-default-features".to_string(),
-        ];
-        if env::var("CARGO_FEATURE_DEBUG_PRINT").is_ok() {
-            args.push("--features".to_string());
-            args.push("debug-print".to_string());
-        }
-
-        if !is_debug_profile {
-            args.push("--release".to_string());
-        }
-        let status = Command::new("cargo")
-            .args(args)
-            .status()
-            .expect("WASM compilation failure: failed to run cargo build");
-        if !status.success() {
-            panic!(
-                "WASM compilation failure: cargo exited with code: {}",
-                status.code().unwrap_or(1)
-            );
-        }
+    for contracts_manifest_path in &packages_resolver.manifest_dirs {
+        run_workspace_build(
+            &build_args,
+            contracts_manifest_path,
+            &target2_dir,
+            is_debug_profile,
+        );
     }
 
     let artifacts_dir = target2_dir

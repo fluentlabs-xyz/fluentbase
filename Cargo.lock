@@ -4480,6 +4480,7 @@ version = "1.1.7"
 dependencies = [
  "alloy-genesis",
  "cargo_metadata 0.19.2",
+ "fluentbase-build",
  "fluentbase-evm",
  "fluentbase-sdk",
  "revm-precompile",

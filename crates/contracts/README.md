@@ -4,9 +4,9 @@ This crate contains the system precompiled contracts that are bundled with the
 Fluentbase runtimes. They expose compatibility layers for the EVM and SVM, along
 with utilities such as hashing functions and token standards.
 
-The build script compiles each contract to rWASM and embeds the resulting binaries
-under `assets/`. These artifacts are later included in genesis files so that
-clients can deploy them automatically.
+The build script compiles contract WASM artifacts and embeds the resulting binaries
+for genesis assembly. In CI/release flows this script can run deterministically
+through `fluentbase-build` Docker tooling.
 
 Contracts include:
 
