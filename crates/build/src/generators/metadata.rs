@@ -175,7 +175,7 @@ pub fn generate(
     };
 
     // Get lockfile hash for reproducibility
-    let lockfile_hash = get_lockfile_hash(contract_dir)?;
+    let lockfile_hash = get_lockfile_hash(&cargo_metadata, contract_dir)?;
 
     // Get SDK info from dependencies
     let fluentbase_sdk = get_sdk_info(&cargo_metadata)?;
@@ -254,16 +254,29 @@ pub fn generate(
 }
 
 /// Get SHA256 hash of Cargo.lock for reproducibility
-fn get_lockfile_hash(contract_dir: &Path) -> Result<String> {
-    let lockfile_path = contract_dir.join("Cargo.lock");
-    if !lockfile_path.exists() {
+fn get_lockfile_hash(metadata: &cargo_metadata::Metadata, contract_dir: &Path) -> Result<String> {
+    let workspace_lock_path = metadata
+        .workspace_root
+        .join("Cargo.lock")
+        .into_std_path_buf();
+    let contract_lock_path = contract_dir.join("Cargo.lock");
+
+    let lockfile_path = if contract_lock_path.exists() {
+        eprintln!("Using contract lock path: {}", contract_lock_path.display());
+        contract_lock_path
+    } else if workspace_lock_path.exists() {
+        eprintln!(
+            "Using workspace lock path: {}",
+            workspace_lock_path.display()
+        );
+        workspace_lock_path
+    } else {
         anyhow::bail!(
             "Cargo.lock not found. Run 'cargo generate-lockfile' first for reproducible builds"
         );
-    }
+    };
 
     let lock_content = std::fs::read(&lockfile_path).context("Failed to read Cargo.lock")?;
-
     Ok(calculate_hash(&lock_content))
 }
 

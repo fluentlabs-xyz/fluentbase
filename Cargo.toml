@@ -22,6 +22,7 @@ authors = [
 description = "A framework to build smart contracts on the Fluent L2 as well as blockchains and verifiable compute environments that compile to rWasm"
 repository = "https://github.com/fluentlabs-xyz/fluentbase"
 edition = "2021"
+# If you change it, don't forget to change in Dockerfile (fluentbase-build)
 rust-version = "1.92.0"
 readme = "README.md"
 license = "MIT"
