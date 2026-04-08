@@ -96,11 +96,20 @@ fn run_workspace_build(
         target_dir.to_path_buf()
     };
 
+    let effective_manifest_path = if build_args.docker {
+        map_path_for_docker(workspace_manifest_path, mount_dir)
+            .unwrap_or_else(|| PathBuf::from("/workspace/contracts/Cargo.toml"))
+    } else {
+        workspace_manifest_path.to_path_buf()
+    };
+
     let mut cargo_args = vec![
         "cargo".to_string(),
         "build".to_string(),
         "--target".to_string(),
         "wasm32-unknown-unknown".to_string(),
+        "--manifest-path".to_string(),
+        effective_manifest_path.to_string_lossy().to_string(),
         "--target-dir".to_string(),
         effective_target_dir.to_string_lossy().to_string(),
         "--color=always".to_string(),
@@ -141,7 +150,7 @@ fn run_workspace_build(
             &image,
             &cargo_args,
             mount_dir,
-            work_dir,
+            mount_dir,
             &env_vars,
             &rust_toolchain,
         )
