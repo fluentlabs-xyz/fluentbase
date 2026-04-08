@@ -49,7 +49,6 @@ alloy-eips = "1.8.3"
 alloy-consensus = { workspace = true }
 
 # blob construction
-brotli = "8.0"
 sha2 = "0.10"
 futures = "0.3"
 
@@ -66,6 +65,7 @@ workspace = true
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"
+pkg-config = "0.3"
 
 [features]
 default = ["server", "client"]
