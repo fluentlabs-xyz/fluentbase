@@ -1,16 +1,18 @@
 name: Publish to crates.io
 
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+*"
   workflow_dispatch:
     inputs:
       dry_run:
         description: "Dry run only (verify without publishing)"
         required: false
-        default: false
+        default: true
         type: boolean
+      confirm_publish:
+        description: "Type 'publish' to allow real crates.io publishing"
+        required: false
+        default: ""
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,6 +41,13 @@ jobs:
         with:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Ensure workflow runs from release tag
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            echo "This workflow must be run from a release tag ref (e.g. v1.2.3)."
+            exit 1
+          fi
+
       - name: Verify crate version matches tag
         run: |
           tag="${{ steps.extract_version.outputs.version }}"
@@ -49,8 +58,14 @@ jobs:
             exit 1
           }
 
+      - name: Confirm publish gate
+        if: ${{ !inputs.dry_run && inputs.confirm_publish != 'publish' }}
+        run: |
+          echo "Refusing publish: set confirm_publish=publish for non-dry-run execution."
+          exit 1
+
       - name: Publish to crates.io
-        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && inputs.confirm_publish == 'publish' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
