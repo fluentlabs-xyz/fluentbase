@@ -1,6 +1,6 @@
 use crate::universal_token::consts::{
     SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE_OF, SIG_ERC20_BURN, SIG_ERC20_MINT,
-    SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM,
+    SIG_ERC20_NONCES, SIG_ERC20_PERMIT, SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM,
 };
 use alloc::vec::Vec;
 use fluentbase_codec::{Codec, Encoder, SolidityABI};
@@ -72,6 +72,14 @@ impl UniversalTokenCommand for BalanceOfCommand {
 }
 
 #[derive(Default, Debug, Codec)]
+pub struct NoncesCommand {
+    pub owner: Address,
+}
+impl UniversalTokenCommand for NoncesCommand {
+    const SIGNATURE: u32 = SIG_ERC20_NONCES;
+}
+
+#[derive(Default, Debug, Codec)]
 pub struct MintCommand {
     pub to: Address,
     pub amount: U256,
@@ -87,4 +95,18 @@ pub struct BurnCommand {
 }
 impl UniversalTokenCommand for BurnCommand {
     const SIGNATURE: u32 = SIG_ERC20_BURN;
+}
+
+#[derive(Default, Debug, Codec)]
+pub struct PermitCommand {
+    pub owner: Address,
+    pub spender: Address,
+    pub value: U256,
+    pub deadline: U256,
+    pub v: u8,
+    pub r: U256,
+    pub s: U256,
+}
+impl UniversalTokenCommand for PermitCommand {
+    const SIGNATURE: u32 = SIG_ERC20_PERMIT;
 }

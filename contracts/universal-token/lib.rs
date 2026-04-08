@@ -10,16 +10,19 @@ extern crate core;
 #[cfg(test)]
 mod tests;
 
+use alloc::vec::Vec;
 use fluentbase_sdk::{
     bytes::BytesMut,
     codec::SolidityABI,
+    crypto::crypto_keccak256,
     derive::Event,
     evm::write_evm_exit_message,
     storage::{StorageMap, StorageU256},
     system_entrypoint,
     universal_token::*,
-    Address, ContextReader, EvmExitCode, ExitCode, StorageUtils, SystemAPI, U256,
+    Address, B256, B512, ContextReader, EvmExitCode, ExitCode, StorageUtils, SystemAPI, U256,
 };
+use revm_precompile::secp256k1::ecrecover;
 
 mod events {
     use super::*;
@@ -57,6 +60,20 @@ mod events {
 type BalanceStorageMap = StorageMap<Address, StorageU256>;
 /// Allowance mapping: `owner -> (spender -> allowance)`.
 type AllowanceStorageMap = StorageMap<Address, StorageMap<Address, StorageU256>>;
+/// Permit nonce mapping: `owner -> nonce`.
+type NonceStorageMap = StorageMap<Address, StorageU256>;
+
+#[inline(always)]
+fn nonce_get<SDK: SystemAPI>(sdk: &mut SDK, owner: Address) -> Result<U256, ExitCode> {
+    Ok(NonceStorageMap::new(NONCES_STORAGE_SLOT).entry(owner).get(sdk))
+}
+
+#[inline(always)]
+fn nonce_set<SDK: SystemAPI>(sdk: &mut SDK, owner: Address, nonce: U256) -> Result<(), ExitCode> {
+    NonceStorageMap::new(NONCES_STORAGE_SLOT)
+        .entry(owner)
+        .set_checked(sdk, nonce)
+}
 
 /// Returns the ERC-20 `symbol()` as a short string stored at `SYMBOL_STORAGE_SLOT`.
 fn erc20_symbol_handler<SDK: SystemAPI>(
@@ -234,6 +251,139 @@ fn erc20_allowance_handler<SDK: SystemAPI>(
         .get_checked(sdk)?
         .to_be_bytes::<{ U256::BYTES }>();
     sdk.write(result);
+    Ok(0)
+}
+
+fn abi_word_addr(a: Address) -> [u8; 32] {
+    let mut w = [0u8; 32];
+    w[12..].copy_from_slice(a.as_ref());
+    w
+}
+
+fn abi_word_u256(x: U256) -> [u8; 32] {
+    x.to_be_bytes::<{ U256::BYTES }>()
+}
+
+fn erc20_domain_separator_value<SDK: SystemAPI>(sdk: &mut SDK) -> Result<B256, ExitCode> {
+    let token_name = sdk.storage_short_string(&NAME_STORAGE_SLOT)?;
+    let name_hash = crypto_keccak256(token_name.as_bytes());
+
+    let mut encoded = Vec::with_capacity(32 * 5);
+    encoded.extend_from_slice(&EIP712_DOMAIN_TYPEHASH);
+    encoded.extend_from_slice(name_hash.as_slice());
+    encoded.extend_from_slice(&EIP2612_VERSION_HASH);
+    encoded.extend_from_slice(&abi_word_u256(U256::from(sdk.context().block_chain_id())));
+    encoded.extend_from_slice(&abi_word_addr(sdk.context().contract_address()));
+
+    Ok(crypto_keccak256(&encoded))
+}
+
+fn ecrecover_address(digest: B256, v: u8, r: U256, s: U256) -> Option<Address> {
+    let rec_id = match v {
+        27 | 28 => v - 27,
+        0 | 1 => v,
+        _ => return None,
+    };
+
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes[0..32].copy_from_slice(&abi_word_u256(r));
+    sig_bytes[32..64].copy_from_slice(&abi_word_u256(s));
+    let sig = <&B512>::try_from(&sig_bytes[..]).ok()?;
+
+    let recovered = ecrecover(sig, rec_id, &digest).ok()?;
+    let mut recovered_addr = [0u8; 20];
+    recovered_addr.copy_from_slice(&recovered[12..32]);
+    let recovered_addr = Address::from_slice(&recovered_addr);
+
+    if recovered_addr == Address::ZERO {
+        return None;
+    }
+
+    Some(recovered_addr)
+}
+
+fn erc20_domain_separator_handler<SDK: SystemAPI>(
+    sdk: &mut SDK,
+    _input: &[u8],
+) -> Result<EvmExitCode, ExitCode> {
+    let domain_separator = erc20_domain_separator_value(sdk)?;
+    sdk.write(*domain_separator);
+    Ok(0)
+}
+
+fn erc20_nonces_handler<SDK: SystemAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<EvmExitCode, ExitCode> {
+    let NoncesCommand { owner } = NoncesCommand::try_decode(input)?;
+    let nonce = nonce_get(sdk, owner)?;
+    sdk.write(abi_word_u256(nonce));
+    Ok(0)
+}
+
+fn erc20_permit_handler<SDK: SystemAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<EvmExitCode, ExitCode> {
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
+
+    let PermitCommand {
+        owner,
+        spender,
+        value,
+        deadline,
+        v,
+        r,
+        s,
+    } = PermitCommand::try_decode(input)?;
+
+    let now = U256::from(sdk.context().block_timestamp());
+    if deadline < now {
+        return Ok(ERR_UST_EXPIRED_DEADLINE);
+    }
+
+    let nonce = nonce_get(sdk, owner)?;
+
+    let mut permit_encoded = Vec::with_capacity(32 * 6);
+    permit_encoded.extend_from_slice(&EIP2612_PERMIT_TYPEHASH);
+    permit_encoded.extend_from_slice(&abi_word_addr(owner));
+    permit_encoded.extend_from_slice(&abi_word_addr(spender));
+    permit_encoded.extend_from_slice(&abi_word_u256(value));
+    permit_encoded.extend_from_slice(&abi_word_u256(nonce));
+    permit_encoded.extend_from_slice(&abi_word_u256(deadline));
+    let permit_hash = crypto_keccak256(&permit_encoded);
+
+    let domain_separator = erc20_domain_separator_value(sdk)?;
+    let mut digest_payload = Vec::with_capacity(66);
+    digest_payload.extend_from_slice(b"\x19\x01");
+    digest_payload.extend_from_slice(domain_separator.as_slice());
+    digest_payload.extend_from_slice(permit_hash.as_slice());
+    let digest = crypto_keccak256(&digest_payload);
+    let Some(recovered) = ecrecover_address(digest, v, r, s) else {
+        return Ok(ERR_UST_INVALID_SIGNATURE);
+    };
+
+    if recovered != owner {
+        return Ok(ERR_UST_INVALID_SIGNATURE);
+    }
+
+    AllowanceStorageMap::new(ALLOWANCE_STORAGE_SLOT)
+        .entry(owner)
+        .entry(spender)
+        .set_checked(sdk, value)?;
+
+    let next_nonce = nonce.checked_add(U256::ONE).ok_or(ExitCode::IntegerOverflow)?;
+    nonce_set(sdk, owner, next_nonce)?;
+
+    events::Approval {
+        owner,
+        spender,
+        amount: value,
+    }
+    .emit(sdk)?;
+
     Ok(0)
 }
 
@@ -573,6 +723,9 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_ERC20_BURN => erc20_burn_handler(sdk, input),
         SIG_ERC20_PAUSE => erc20_pause_handler(sdk, input),
         SIG_ERC20_UNPAUSE => erc20_unpause_handler(sdk, input),
+        SIG_ERC20_PERMIT => erc20_permit_handler(sdk, input),
+        SIG_ERC20_NONCES => erc20_nonces_handler(sdk, input),
+        SIG_ERC20_DOMAIN_SEPARATOR => erc20_domain_separator_handler(sdk, input),
         _ => erc20_unknown_method(sdk, input),
     }?;
     if evm_exit_code != 0 {
