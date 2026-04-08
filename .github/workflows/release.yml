@@ -63,6 +63,9 @@ jobs:
     name: build genesis
     runs-on: ubuntu-amd64-8core
     needs: extract-version
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -71,9 +74,44 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Resolve fluentbase-build image tag
+        id: build_image
+        run: |
+          if [[ "${{ github.event.inputs.dry_run }}" == "true" ]]; then
+            TAG="latest"
+          else
+            TAG="${{ needs.extract-version.outputs.VERSION }}"
+          fi
+          echo "image=ghcr.io/${{ github.repository_owner }}/fluentbase-build" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Wait for fluentbase-build image
+        run: |
+          IMAGE="${{ steps.build_image.outputs.image }}:${{ steps.build_image.outputs.tag }}"
+          echo "Waiting for builder image: $IMAGE"
+          for i in $(seq 1 40); do
+            if docker pull "$IMAGE"; then
+              echo "Builder image is available"
+              exit 0
+            fi
+            echo "[$i/40] image not ready yet, retrying in 30s"
+            sleep 30
+          done
+          echo "Builder image is unavailable: $IMAGE"
+          exit 1
+
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
+
       - name: Build Genesis
+        env:
+          FLUENTBASE_CONTRACTS_DOCKER: "true"
+          FLUENTBASE_BUILD_DOCKER_IMAGE: ${{ steps.build_image.outputs.image }}
+          FLUENTBASE_BUILD_DOCKER_TAG: ${{ steps.build_image.outputs.tag }}
         run: cargo b --release
 
       - name: Package genesis files
@@ -83,6 +121,7 @@ jobs:
           gzip -c ./crates/genesis/genesis-mainnet.json > ./artifacts/genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz
 
       - name: Configure GPG and sign genesis artifacts
+        if: ${{ github.event.inputs.dry_run != 'true' }}
         env:
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
