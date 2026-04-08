@@ -1,6 +1,6 @@
 //! Build helpers and CLI primitives for compiling Fluentbase contracts into rWASM artifacts.
 mod build;
-mod docker;
+pub mod docker;
 mod generators;
 mod internal;
 mod utils;
@@ -108,6 +108,12 @@ pub struct BuildArgs {
     #[arg(long, value_delimiter = ',')]
     pub rustflags: Vec<String>,
 
+    /// Ignore fluentbase-build default rust flags and only use custom rustflags.
+    ///
+    /// Useful when project-level `.cargo/config.toml` already defines target rustflags.
+    #[arg(long)]
+    pub ignore_default_rust_flags: bool,
+
     /// Additional artifacts to generate
     #[arg(short = 'g', long, value_enum, value_delimiter = ',')]
     pub generate: Vec<Artifact>,
@@ -136,6 +142,7 @@ impl Default for BuildArgs {
             locked: true,
             stack_size: DEFAULT_STACK_SIZE,
             rustflags: vec![],
+            ignore_default_rust_flags: false,
             generate: vec![],
             output_path: Some("./out/{contract_name}/".to_string()),
             wasm_opt: false,
@@ -285,13 +292,17 @@ impl BuildArgs {
 
     /// Generate RUST FLAGS for WASM compilation
     pub fn rust_flags(&self) -> String {
-        let mut flags = vec![
-            format!("-Clink-arg=-zstack-size={}", self.stack_size),
-            "-Cpanic=abort".to_string(),
-            "-Ctarget-feature=+bulk-memory".to_string(),
-        ];
+        let mut flags = if self.ignore_default_rust_flags {
+            Vec::new()
+        } else {
+            vec![
+                format!("-Clink-arg=-zstack-size={}", self.stack_size),
+                "-Cpanic=abort".to_string(),
+                "-Ctarget-feature=+bulk-memory".to_string(),
+            ]
+        };
 
-        if self.wasm_opt {
+        if self.wasm_opt && !self.ignore_default_rust_flags {
             flags.push("-Copt-level=z".to_string());
             // TODO: should we actually use this optimizations?
             flags.push("-Clto=fat".to_string());
@@ -300,10 +311,13 @@ impl BuildArgs {
 
         // Custom flags
         for flag in &self.rustflags {
-            if flag.contains("panic=") && !flag.contains("panic=abort") {
+            if !self.ignore_default_rust_flags
+                && flag.contains("panic=")
+                && !flag.contains("panic=abort")
+            {
                 eprintln!("Warning: Overriding panic=abort may cause issues with WASM");
             }
-            if flag.contains("link-arg=-zstack-size") {
+            if !self.ignore_default_rust_flags && flag.contains("link-arg=-zstack-size") {
                 eprintln!("Warning: Stack size flag may override configured value");
             }
             flags.push(flag.to_string());

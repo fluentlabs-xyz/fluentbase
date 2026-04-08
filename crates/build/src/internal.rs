@@ -1,4 +1,8 @@
-#![allow(clippy::unnecessary_unwrap, clippy::unnecessary_to_owned, clippy::ptr_arg)]
+#![allow(
+    clippy::unnecessary_unwrap,
+    clippy::unnecessary_to_owned,
+    clippy::ptr_arg
+)]
 //! Internal build utilities for workspace contracts.
 //! This module is not intended for external use.
 
