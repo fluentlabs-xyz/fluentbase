@@ -734,7 +734,7 @@ fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
         };
 
         if let Some(evm_opcode) = evm_opcode {
-            inspect_syscall(frame, ctx, inspector, evm_opcode, []);
+            inspect_syscall(frame, ctx, inspector, evm_opcode, [], []);
         }
     }
 
