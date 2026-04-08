@@ -119,6 +119,8 @@ enum DispatchOutcome {
         tx_hash: alloy_primitives::B256,
         l1_block: u64,
     },
+    /// Batch already progressed past Accepted on-chain — skip it.
+    AlreadyPreconfirmed,
     /// L1 transaction failed — will retry with backoff.
     Failed,
 }
@@ -716,10 +718,14 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             let outcome = match l1_submitter::submit_preconfirmation(
                 &provider, contract, verifier, batch_index, signature,
             ).await {
-                Ok(receipt) => DispatchOutcome::Submitted {
+                Ok(l1_submitter::SubmitOutcome::Submitted(receipt)) => DispatchOutcome::Submitted {
                     tx_hash: receipt.tx_hash,
                     l1_block: receipt.l1_block,
                 },
+                Ok(l1_submitter::SubmitOutcome::AlreadyPreconfirmed { status, .. }) => {
+                    warn!(batch_index, status, "Batch already preconfirmed on-chain — skipping");
+                    DispatchOutcome::AlreadyPreconfirmed
+                }
                 Err(e) => {
                     error!(batch_index, err = %e, "preconfirmBatch failed — will retry");
                     DispatchOutcome::Failed
@@ -750,6 +756,16 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
                     l1_block,
                     "Batch submitted to L1 — awaiting finalization"
                 );
+
+                self.try_dispatch_next_batch(accumulator);
+            }
+
+            DispatchOutcome::AlreadyPreconfirmed => {
+                self.global_dispatch_attempts = 0;
+                self.global_next_dispatch_allowed = None;
+
+                accumulator.skip_already_dispatched(batch_index).await;
+                info!(batch_index, "Batch already preconfirmed — skipped");
 
                 self.try_dispatch_next_batch(accumulator);
             }
