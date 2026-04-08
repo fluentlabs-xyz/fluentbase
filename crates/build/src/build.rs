@@ -199,7 +199,7 @@ fn build_wasm(
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
     let target_dir = out_dir.ancestors().nth(4).unwrap();
     eprintln!("Detected target dir: {}", target_dir.display());
-    fs::create_dir_all(&target_dir)?;
+    fs::create_dir_all(target_dir)?;
 
     // Build cargo command
     let mut cargo_args = args.cargo_build_command();
@@ -232,7 +232,7 @@ fn build_wasm(
     )?;
 
     // Find the built WASM file
-    let wasm_path = find_wasm_artifact(&target_dir, package)?;
+    let wasm_path = find_wasm_artifact(target_dir, package)?;
 
     if args.wasm_opt {
         optimize_wasm(&wasm_path, docker_config, &rust_toolchain)?;

@@ -270,7 +270,7 @@ fn test_attestation_validation_invalid_cabundle_cert_length() {
 #[test]
 fn test_certificate_extensions_present_and_critical() {
     // Load the root certificate
-    let root_cert_pem = include_bytes!("nitro.pem");
+    let root_cert_pem = include_bytes!("../nitro.pem");
     let root_cert = Certificate::from_pem(root_cert_pem).unwrap();
 
     // Verify that root certificate has both extensions
@@ -329,7 +329,7 @@ fn test_certificate_chain_extension_validation() {
 #[test]
 fn test_root_certificate_basic_constraints_ca_flag() {
     // Load the root certificate
-    let root_cert_pem = include_bytes!("nitro.pem");
+    let root_cert_pem = include_bytes!("../nitro.pem");
     let root_cert = Certificate::from_pem(root_cert_pem).unwrap();
 
     // Verify extensions exist
@@ -367,7 +367,7 @@ fn test_root_certificate_basic_constraints_ca_flag() {
 #[test]
 fn test_root_certificate_key_usage_bits() {
     // Load the root certificate
-    let root_cert_pem = include_bytes!("nitro.pem");
+    let root_cert_pem = include_bytes!("../nitro.pem");
     let root_cert = Certificate::from_pem(root_cert_pem).unwrap();
 
     // Verify extensions exist
@@ -491,7 +491,7 @@ fn test_certificate_chain_structure() {
 #[test]
 fn test_path_len_constraint_validation_logic() {
     // Load the root certificate
-    let root_cert_pem = include_bytes!("nitro.pem");
+    let root_cert_pem = include_bytes!("../nitro.pem");
     let root_cert = Certificate::from_pem(root_cert_pem).unwrap();
 
     // Verify extensions exist
@@ -578,7 +578,7 @@ fn test_verify_cert_bundle_reference() {
     );
 
     // Verify root certificate (first in cabundle) matches our trusted root
-    let root_cert_pem = include_bytes!("nitro.pem");
+    let root_cert_pem = include_bytes!("../nitro.pem");
     let trusted_root = Certificate::from_pem(root_cert_pem).unwrap();
     assert_eq!(
         cabundle[0],
@@ -625,7 +625,7 @@ fn test_verify_ca_cert_reference() {
 
     // Verify parent certificate is a CA (root certificate)
     // This is the AWS Nitro root certificate
-    let root_cert_pem = include_bytes!("nitro.pem");
+    let root_cert_pem = include_bytes!("../nitro.pem");
     let trusted_root = Certificate::from_pem(root_cert_pem).unwrap();
     assert_eq!(
         parent,

@@ -133,7 +133,7 @@ fn run_workspace_build(
     if build_args.docker {
         let image_ref = format!("{}:{}", build_args.docker_image, build_args.docker_tag);
         let image = docker::ensure_rust_image(&image_ref)
-            .expect(format!("failed to ensure docker image {image_ref}").as_str());
+            .unwrap_or_else(|_| panic!("failed to ensure docker image {image_ref}"));
 
         let rust_toolchain = build_args.toolchain_version(work_dir);
 
