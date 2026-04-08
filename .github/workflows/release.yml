@@ -45,6 +45,7 @@ jobs:
 
   check-version:
     name: check version
+    if: ${{ github.event.inputs.dry_run != 'true' }}
     runs-on: ubuntu-amd64-8core
     needs: extract-version
     steps:
@@ -78,18 +79,33 @@ jobs:
         id: build_image
         run: |
           if [[ "${{ github.event.inputs.dry_run }}" == "true" ]]; then
-            TAG="latest"
+            echo "image=fluentbase-build-local" >> "$GITHUB_OUTPUT"
+            echo "tag=dry-run-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+            echo "source=local" >> "$GITHUB_OUTPUT"
           else
-            TAG="${{ needs.extract-version.outputs.VERSION }}"
+            echo "image=ghcr.io/${{ github.repository_owner }}/fluentbase-build" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ needs.extract-version.outputs.VERSION }}" >> "$GITHUB_OUTPUT"
+            echo "source=registry" >> "$GITHUB_OUTPUT"
           fi
-          echo "image=ghcr.io/${{ github.repository_owner }}/fluentbase-build" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build local fluentbase-build image (dry-run)
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          docker build \
+            --file Dockerfile \
+            --build-arg RUST_TOOLCHAIN=1.92 \
+            --build-arg SDK_VERSION_BRANCH=${{ github.ref_name }} \
+            --build-arg SDK_VERSION_TAG= \
+            --tag ${{ steps.build_image.outputs.image }}:${{ steps.build_image.outputs.tag }} \
+            .
 
       - name: Login to GHCR
+        if: ${{ github.event.inputs.dry_run != 'true' }}
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
 
       - name: Wait for fluentbase-build image
+        if: ${{ github.event.inputs.dry_run != 'true' }}
         run: |
           IMAGE="${{ steps.build_image.outputs.image }}:${{ steps.build_image.outputs.tag }}"
           echo "Waiting for builder image: $IMAGE"
