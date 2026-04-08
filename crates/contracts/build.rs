@@ -42,32 +42,30 @@ fn env_bool(name: &str) -> Option<bool> {
 }
 
 fn contracts_build_args(fluentbase_root_dir: &Path) -> BuildArgs {
-    let mut args = BuildArgs::default();
-
-    args.docker = env_bool("FLUENTBASE_CONTRACTS_DOCKER").unwrap_or(false);
-
-    args.docker_image = env::var("FLUENTBASE_BUILD_DOCKER_IMAGE")
-        .unwrap_or_else(|_| DEFAULT_DOCKER_IMAGE.to_string());
-    args.docker_tag =
-        env::var("FLUENTBASE_BUILD_DOCKER_TAG").unwrap_or_else(|_| DEFAULT_DOCKER_TAG.to_string());
-    args.mount_dir = Some(fluentbase_root_dir.to_path_buf());
-
-    args.features = vec![];
-    args.no_default_features = true;
-    args.locked = true;
-
+    let mut features = vec![];
     if env::var("CARGO_FEATURE_DEBUG_PRINT").is_ok() {
-        args.features.push("debug-print".to_string());
+        features.push("debug-print".to_string());
     }
 
     let has_contracts_cargo_config = fluentbase_root_dir
         .join("contracts/.cargo/config.toml")
         .exists()
         || fluentbase_root_dir.join("contracts/.cargo/config").exists();
-    args.ignore_default_rust_flags = env_bool("FLUENTBASE_CONTRACTS_IGNORE_DEFAULT_RUST_FLAGS")
-        .unwrap_or(has_contracts_cargo_config);
 
-    args
+    BuildArgs {
+        docker: env_bool("FLUENTBASE_CONTRACTS_DOCKER").unwrap_or(false),
+        docker_image: env::var("FLUENTBASE_BUILD_DOCKER_IMAGE")
+            .unwrap_or_else(|_| DEFAULT_DOCKER_IMAGE.to_string()),
+        docker_tag: env::var("FLUENTBASE_BUILD_DOCKER_TAG")
+            .unwrap_or_else(|_| DEFAULT_DOCKER_TAG.to_string()),
+        mount_dir: Some(fluentbase_root_dir.to_path_buf()),
+        features,
+        no_default_features: true,
+        locked: true,
+        ignore_default_rust_flags: env_bool("FLUENTBASE_CONTRACTS_IGNORE_DEFAULT_RUST_FLAGS")
+            .unwrap_or(has_contracts_cargo_config),
+        ..BuildArgs::default()
+    }
 }
 
 fn map_path_for_docker(path: &Path, mount_dir: &Path) -> Option<PathBuf> {
