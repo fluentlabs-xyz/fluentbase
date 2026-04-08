@@ -241,28 +241,54 @@ async fn execution_worker(
 }
 
 // ============================================================================
-// Persistent fallback worker pool (L3 / L4 recovery)
+// Persistent fallback worker pool (GetWitness / L3 / L4 recovery)
 // ============================================================================
 
 struct FallbackTask {
     block_number: u64,
 }
 
-/// Recovers missing witnesses via local/remote RPC and feeds them into the
-/// high-priority execution queue.
+/// Recovers missing witnesses via GetWitness (hub), then L3/L4 RPC,
+/// and feeds recovered payloads into the high-priority execution queue.
 async fn fallback_worker(
     worker_id: usize,
     fallback_rx: AsyncReceiver<FallbackTask>,
     high_tx: AsyncSender<ExecutionTask>,
     fallback_done_tx: mpsc::Sender<(u64, bool)>,
+    mut witness_client: WitnessServiceClient<Channel>,
     config: OrchestratorConfig<impl Provider + Clone + 'static>,
 ) {
     info!(worker_id, "Fallback worker started");
     while let Ok(task) = fallback_rx.recv().await {
         let block_number = task.block_number;
-        info!(worker_id, block_number, "Executing L3/L4 recovery");
 
-        match generate_fallback_payload(block_number, &config).await {
+        // L2: try GetWitness from hub (hot buffer + cold tier)
+        let hub_payload = match witness_client.get_witness(
+            crate::proto::GetWitnessRequest { block_number }
+        ).await {
+            Ok(resp) => {
+                let w = resp.into_inner();
+                if w.found && !w.data.is_empty() {
+                    info!(worker_id, block_number, "GetWitness hit — skipping L3/L4");
+                    Some(w.data)
+                } else {
+                    None
+                }
+            }
+            Err(e) => {
+                warn!(worker_id, block_number, err = %e, "GetWitness failed — trying L3/L4");
+                None
+            }
+        };
+
+        let payload = if let Some(p) = hub_payload {
+            Some(p)
+        } else {
+            info!(worker_id, block_number, "Executing L3/L4 recovery");
+            generate_fallback_payload(block_number, &config).await
+        };
+
+        match payload {
             Some(payload) => {
                 info!(worker_id, block_number, "Fallback success — prioritizing execution");
                 let _ = high_tx.send(ExecutionTask { block_number, payload: Some(payload) }).await;
@@ -312,8 +338,9 @@ pub async fn run<P: Provider + Clone + 'static>(
     let (result_tx, mut result_rx) = mpsc::channel::<BlockResult>(EXECUTION_WORKERS * 2);
     let (fallback_done_tx, mut fallback_done_rx) = mpsc::channel::<(u64, bool)>(128);
 
-    // Persistent gRPC channel for execution workers (lazy witness fetch).
-    // Workers use this to call GetWitness JIT for re-execution tasks.
+    // Persistent gRPC channel for execution and fallback workers.
+    // Execution workers use this for GetWitness JIT (re-execution tasks).
+    // Fallback workers use this to try GetWitness before L3/L4 RPC recovery.
     let worker_grpc_channel = Channel::from_shared(config.server_addr.clone())
         .expect("invalid server address")
         .connect_timeout(Duration::from_secs(5))
@@ -345,6 +372,7 @@ pub async fn run<P: Provider + Clone + 'static>(
             fallback_rx.clone(),
             high_tx.clone(),
             fallback_done_tx.clone(),
+            worker_witness_client.clone(),
             config.clone(),
         ));
     }
@@ -528,7 +556,7 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
             self.fallback_exhausted.insert(block_number);
             error!(
                 block_number,
-                "Witness fallback exhausted (L3 + L4 failed) — block permanently missing, batch will stall"
+                "Witness fallback exhausted (GetWitness + L3 + L4 failed) — block permanently missing, batch will stall"
             );
         }
     }
