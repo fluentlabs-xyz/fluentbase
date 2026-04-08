@@ -20,7 +20,7 @@ p256 = { version = "0.13.2", default-features = false, features = [
 
 [lib]
 crate-type = ["cdylib"]
-path = "lib.rs"
+path = "src/lib.rs"
 
 [features]
 default = ["std"]

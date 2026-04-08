@@ -12,7 +12,7 @@ use x509_cert::certificate::Certificate;
 /// Example from: https://github.com/evervault/attestation-doc-validation/blob/main/test-data/valid-attestation-doc-base64
 #[test]
 fn test_nitro_attestation_verification() {
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
 
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
@@ -43,7 +43,7 @@ fn test_nitro_attestation_verification() {
 
 #[test]
 fn test_nitro_attestation_stf_keygen() {
-    let data: Vec<u8> = include_bytes!("testdata/stf-keygen.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/stf-keygen.bin").to_vec();
 
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
@@ -88,7 +88,7 @@ fn test_nitro_attestation_stf_keygen() {
 #[test]
 fn test_attestation_document_validation() {
     // Load a valid attestation document to use as a base
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
     let valid_doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
@@ -134,7 +134,7 @@ fn test_attestation_document_validation() {
 #[test]
 #[should_panic(expected = "nitro: missing module id")]
 fn test_attestation_validation_empty_module_id() {
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
     let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
@@ -146,7 +146,7 @@ fn test_attestation_validation_empty_module_id() {
 #[test]
 #[should_panic(expected = "nitro: incorrect timestamp")]
 fn test_attestation_validation_zero_timestamp() {
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
     let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
@@ -158,7 +158,7 @@ fn test_attestation_validation_zero_timestamp() {
 #[test]
 #[should_panic(expected = "nitro: incorrect digest")]
 fn test_attestation_validation_invalid_digest() {
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
     let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
@@ -170,7 +170,7 @@ fn test_attestation_validation_invalid_digest() {
 #[test]
 #[should_panic(expected = "nitro: missing cabundle")]
 fn test_attestation_validation_empty_cabundle() {
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
     let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
@@ -182,7 +182,7 @@ fn test_attestation_validation_empty_cabundle() {
 #[test]
 #[should_panic(expected = "invalid pcrs")]
 fn test_attestation_validation_invalid_pcr_count() {
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
     let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
@@ -194,7 +194,7 @@ fn test_attestation_validation_invalid_pcr_count() {
 #[test]
 #[should_panic(expected = "invalid pcr")]
 fn test_attestation_validation_invalid_pcr_length() {
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
     let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
@@ -209,7 +209,7 @@ fn test_attestation_validation_invalid_pcr_length() {
 #[test]
 #[should_panic(expected = "invalid pub key")]
 fn test_attestation_validation_invalid_public_key_length() {
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
     let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
@@ -222,7 +222,7 @@ fn test_attestation_validation_invalid_public_key_length() {
 #[test]
 #[should_panic(expected = "invalid user data")]
 fn test_attestation_validation_invalid_user_data_length() {
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
     let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
@@ -235,7 +235,7 @@ fn test_attestation_validation_invalid_user_data_length() {
 #[test]
 #[should_panic(expected = "invalid nonce")]
 fn test_attestation_validation_invalid_nonce_length() {
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
     let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
@@ -248,7 +248,7 @@ fn test_attestation_validation_invalid_nonce_length() {
 #[test]
 #[should_panic(expected = "invalid cabundle cert")]
 fn test_attestation_validation_invalid_cabundle_cert_length() {
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
     use coset::CoseSign1;
     let sign1 = CoseSign1::from_slice(&data).unwrap();
     let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
@@ -310,7 +310,7 @@ fn test_certificate_chain_extension_validation() {
     // The actual validation logic is tested implicitly through the full verification flow.
 
     // Load test attestation document
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
 
     // Parse the attestation document
     use coset::CoseSign1;
@@ -422,7 +422,7 @@ fn test_root_certificate_key_usage_bits() {
 #[test]
 fn test_certificate_chain_structure() {
     // Load test attestation document
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
 
     // Parse the attestation document
     use coset::CoseSign1;
@@ -641,7 +641,7 @@ fn test_verify_ca_cert_reference() {
 #[test]
 fn test_all_certificates_have_required_extensions() {
     // Load test attestation document
-    let data: Vec<u8> = include_bytes!("testdata/sample.bin").to_vec();
+    let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
 
     // Parse the attestation document
     use coset::CoseSign1;

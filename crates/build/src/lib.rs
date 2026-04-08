@@ -24,7 +24,7 @@ pub const CARGO_CACHE_VOLUME: &str = "fluentbase-cargo-cache";
 pub const DEFAULT_STACK_SIZE: u32 = 128 * 1024; // 128 KB
 pub const BUILD_TARGET: &str = "wasm32-unknown-unknown";
 pub const HELPER_TARGET_SUBDIR: &str = "wasm-compilation";
-pub const DEFAULT_RUST_TOOLCHAIN: &str = "1.88";
+pub const DEFAULT_RUST_TOOLCHAIN: &str = "1.92.0";
 
 /// Build contract at specified path
 ///
@@ -114,7 +114,7 @@ pub struct BuildArgs {
 
     /// Output directory for artifacts
     #[arg(short, long)]
-    pub output: Option<PathBuf>,
+    pub output_path: Option<String>,
 
     /// Post process wasm for size optimization
     #[arg(long)]
@@ -137,8 +137,8 @@ impl Default for BuildArgs {
             stack_size: DEFAULT_STACK_SIZE,
             rustflags: vec![],
             generate: vec![],
-            output: Some(PathBuf::from("./out")),
-            wasm_opt: true,
+            output_path: Some("./out/{contract_name}/".to_string()),
+            wasm_opt: false,
         }
     }
 }
@@ -153,6 +153,7 @@ impl BuildArgs {
         }
         Some(DEFAULT_RUST_TOOLCHAIN.to_string())
     }
+
     /// Finds and parses the toolchain version by checking `rust-toolchain.toml`
     /// and then the legacy `rust-toolchain` file.
     ///
