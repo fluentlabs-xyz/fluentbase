@@ -1,6 +1,6 @@
 [workspace]
 members = ["*"]
-exclude = [".cargo", "target", "svm", "create2-factory"]
+exclude = [".cargo", "target", "svm", "create2-factory", "out"]
 resolver = "2"
 
 [workspace.package]
@@ -16,6 +16,7 @@ readme = "README.md"
 
 [workspace.dependencies]
 # fluentbase
+fluentbase-build = { path = "../crates/build" }
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
 #fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }

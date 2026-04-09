@@ -12,7 +12,7 @@ fluentbase-testing = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]
-path = "lib.rs"
+path = "src/lib.rs"
 
 [features]
 default = ["std"]
