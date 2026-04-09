@@ -159,6 +159,62 @@ build-%-reproducible:
 build-debug: ## Build the fluent binary into `target/debug` directory.
 	cargo build --bin fluent --features "$(FEATURES)"
 
+.PHONY: reproduce-genesis-build
+reproduce-genesis-build: ## Reproduce genesis build with local fluentbase-build image and compare against release hashes.
+	@set -euo pipefail; \
+	TAG="$${TAG:-}"; \
+	if [ -z "$$TAG" ]; then \
+		VER="$$(sed -nE 's/^version *= *"([^"]+)".*/\1/p' Cargo.toml | head -n1)"; \
+		if [ -z "$$VER" ]; then \
+			echo "Cannot extract version from Cargo.toml"; \
+			exit 1; \
+		fi; \
+		TAG="v$$VER"; \
+		echo "TAG not provided; using $$TAG from Cargo.toml"; \
+		if git rev-parse -q --verify "refs/tags/$$TAG" >/dev/null; then \
+			HEAD_SHA="$$(git rev-parse HEAD)"; \
+			TAG_SHA="$$(git rev-list -n1 "$$TAG")"; \
+			if [ "$$HEAD_SHA" != "$$TAG_SHA" ]; then \
+				echo "WARNING: HEAD ($$HEAD_SHA) does not match $$TAG ($$TAG_SHA)"; \
+				if [ "$${CONTINUE_ON_TAG_MISMATCH:-}" != "1" ]; then \
+					printf "Continue anyway? [y/N] "; \
+					read -r ans; \
+					case "$$ans" in y|Y|yes|YES) ;; *) exit 1;; esac; \
+				fi; \
+			fi; \
+		else \
+			echo "WARNING: local git tag $$TAG not found"; \
+		fi; \
+	fi; \
+	echo "Using TAG=$$TAG"; \
+	docker build --platform=linux/amd64 -t fluentbase-build:local \
+		--build-arg SDK_VERSION_TAG="$$TAG" \
+		--build-arg RUST_TOOLCHAIN=1.92.0 \
+		.; \
+	FLUENTBASE_CONTRACTS_DOCKER=true \
+	FLUENTBASE_BUILD_DOCKER_IMAGE=fluentbase-build \
+	FLUENTBASE_BUILD_DOCKER_TAG=local \
+	FLUENTBASE_CONTRACTS_IGNORE_DEFAULT_RUST_FLAGS=true \
+	cargo b --release; \
+	TMP_DIR="$$(mktemp -d)"; \
+	trap 'rm -rf "$$TMP_DIR"' EXIT; \
+	BASE_URL="https://github.com/fluentlabs-xyz/fluentbase/releases/download/$$TAG"; \
+	curl -fL "$$BASE_URL/genesis-$$TAG.json.gz" -o "$$TMP_DIR/remote-devnet.json.gz"; \
+	curl -fL "$$BASE_URL/genesis-mainnet-$$TAG.json.gz" -o "$$TMP_DIR/remote-mainnet.json.gz"; \
+	gunzip -c "$$TMP_DIR/remote-devnet.json.gz" > "$$TMP_DIR/remote-devnet.json"; \
+	gunzip -c "$$TMP_DIR/remote-mainnet.json.gz" > "$$TMP_DIR/remote-mainnet.json"; \
+	REMOTE_DEVNET_SHA="$$(sha256sum "$$TMP_DIR/remote-devnet.json" | awk '{print $$1}')"; \
+	REMOTE_MAINNET_SHA="$$(sha256sum "$$TMP_DIR/remote-mainnet.json" | awk '{print $$1}')"; \
+	LOCAL_DEVNET_SHA="$$(sha256sum target/release/genesis-devnet.json | awk '{print $$1}')"; \
+	LOCAL_MAINNET_SHA="$$(sha256sum target/release/genesis-mainnet.json | awk '{print $$1}')"; \
+	echo "remote devnet : $$REMOTE_DEVNET_SHA"; \
+	echo "local  devnet : $$LOCAL_DEVNET_SHA"; \
+	echo "remote mainnet: $$REMOTE_MAINNET_SHA"; \
+	echo "local  mainnet: $$LOCAL_MAINNET_SHA"; \
+	test "$$REMOTE_DEVNET_SHA" = "$$LOCAL_DEVNET_SHA"; \
+	test "$$REMOTE_MAINNET_SHA" = "$$LOCAL_MAINNET_SHA"; \
+	echo "OK: remote genesis hashes match local reproduced hashes";
+
 # Builds the fluent binary natively.
 build-native-%:
 	cargo build --bin fluent --target $* --features "$(FEATURES)" --profile "$(PROFILE)"
