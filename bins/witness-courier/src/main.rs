@@ -195,13 +195,11 @@ async fn main() {
 
     // Start L1 event listener
     let (l1_tx, l1_rx) = tokio::sync::mpsc::channel(64);
-    let (l1_ckpt_tx, l1_ckpt_rx) = tokio::sync::mpsc::channel::<u64>(32);
     tokio::spawn(l1_listener::run(
         l1_read_provider,
         l1_contract_addr,
         listener_from_block,
         l1_tx,
-        l1_ckpt_tx,
     ));
 
     // Build L2 provider for blob construction
@@ -231,6 +229,6 @@ async fn main() {
         l2_provider,
     };
 
-    client::run(config, l1_rx, l1_ckpt_rx).await;
+    client::run(config, l1_rx).await;
 }
 

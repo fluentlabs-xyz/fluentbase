@@ -57,6 +57,20 @@ pub struct BatchAccumulator {
 }
 
 impl BatchAccumulator {
+    async fn persist<F>(&self, f: F)
+    where
+        F: FnOnce(&mut Db) + Send + 'static,
+    {
+        if let Some(db) = &self.db {
+            let db = Arc::clone(db);
+            if let Err(e) = tokio::task::spawn_blocking(move || {
+                f(&mut db.lock().unwrap_or_else(|e| e.into_inner()));
+            }).await {
+                warn!(err = %e, "persist: spawn_blocking failed");
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             batches: BTreeMap::new(),
@@ -70,7 +84,7 @@ impl BatchAccumulator {
 
     /// Create accumulator backed by a DB. Loads all state from DB on construction.
     pub fn with_db(db: Arc<Mutex<Db>>) -> Self {
-        let guard = db.lock().unwrap();
+        let guard = db.lock().unwrap_or_else(|e| e.into_inner());
         let responses: HashMap<u64, EthExecutionResponse> = guard
             .load_responses()
             .into_iter()
@@ -128,12 +142,7 @@ impl BatchAccumulator {
         // Consume any buffered BlobsAccepted for this batch
         let blobs_accepted = self.pending_blobs_accepted.remove(&batch_index);
         if blobs_accepted {
-            if let Some(db) = &self.db {
-                let db = Arc::clone(db);
-                let _ = tokio::task::spawn_blocking(move || {
-                    db.lock().unwrap().delete_pending_blobs_accepted(batch_index);
-                }).await;
-            }
+            self.persist(move |db| db.delete_pending_blobs_accepted(batch_index)).await;
         }
 
         let already = (from_block..=to_block)
@@ -154,30 +163,18 @@ impl BatchAccumulator {
             to_block,
             blobs_accepted,
         };
-        if let Some(db) = &self.db {
-            let db = Arc::clone(db);
-            let bi = batch_index;
-            let fb = from_block;
-            let tb = to_block;
-            let ba = blobs_accepted;
-            let _ = tokio::task::spawn_blocking(move || {
-                db.lock().unwrap().save_batch(&PendingBatch {
-                    batch_index: bi, from_block: fb, to_block: tb, blobs_accepted: ba,
-                });
-            }).await;
-        }
+        self.persist(move |db| {
+            db.save_batch(&PendingBatch {
+                batch_index, from_block, to_block, blobs_accepted,
+            });
+        }).await;
         self.batches.insert(batch_index, batch);
     }
 
     /// Store a block execution response. O(1).
     pub async fn insert_response(&mut self, resp: EthExecutionResponse) {
-        if let Some(db) = &self.db {
-            let db = Arc::clone(db);
-            let resp_clone = resp.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                db.lock().unwrap().save_response(&resp_clone);
-            }).await;
-        }
+        let resp_clone = resp.clone();
+        self.persist(move |db| db.save_response(&resp_clone)).await;
         let block = resp.block_number;
         self.responses.insert(block, resp);
     }
@@ -185,22 +182,11 @@ impl BatchAccumulator {
     pub async fn mark_blobs_accepted(&mut self, batch_index: u64) {
         if let Some(batch) = self.batches.get_mut(&batch_index) {
             batch.blobs_accepted = true;
-            if let Some(db) = &self.db {
-                let db = Arc::clone(db);
-                let _ = tokio::task::spawn_blocking(move || {
-                    db.lock().unwrap().update_blobs_accepted(batch_index);
-                }).await;
-            }
+            self.persist(move |db| db.update_blobs_accepted(batch_index)).await;
             info!(batch_index, "Blobs accepted on L1");
         } else {
-            // BatchHeadersSubmitted not yet seen — buffer for when set_batch arrives
             self.pending_blobs_accepted.insert(batch_index);
-            if let Some(db) = &self.db {
-                let db = Arc::clone(db);
-                let _ = tokio::task::spawn_blocking(move || {
-                    db.lock().unwrap().save_pending_blobs_accepted(batch_index);
-                }).await;
-            }
+            self.persist(move |db| db.save_pending_blobs_accepted(batch_index)).await;
             warn!(batch_index, "BlobsAccepted arrived before BatchHeaders — buffered");
         }
     }
@@ -256,12 +242,7 @@ impl BatchAccumulator {
     pub async fn purge_responses(&mut self, blocks: &[u64]) {
         for &block in blocks {
             self.responses.remove(&block);
-            if let Some(db) = &self.db {
-                let db = Arc::clone(db);
-                let _ = tokio::task::spawn_blocking(move || {
-                    db.lock().unwrap().delete_response(block);
-                }).await;
-            }
+            self.persist(move |db| db.delete_response(block)).await;
         }
         info!(count = blocks.len(), "Purged stale responses for key rotation recovery");
     }
@@ -274,12 +255,7 @@ impl BatchAccumulator {
     /// Delete a cached batch signature (e.g. after key rotation invalidation).
     pub async fn delete_batch_signature(&mut self, batch_index: u64) {
         self.signatures.remove(&batch_index);
-        if let Some(db) = &self.db {
-            let db = Arc::clone(db);
-            let _ = tokio::task::spawn_blocking(move || {
-                db.lock().unwrap().delete_batch_signature(batch_index);
-            }).await;
-        }
+        self.persist(move |db| db.delete_batch_signature(batch_index)).await;
     }
 
     /// Returns cloned responses for blocks in [from, to].
@@ -312,15 +288,10 @@ impl BatchAccumulator {
             l1_block,
         };
 
-        if let Some(db) = &self.db {
-            let db = Arc::clone(db);
-            let fb = batch.from_block;
-            let tb = batch.to_block;
-            let tx_h = tx_hash.0.to_vec();
-            let _ = tokio::task::spawn_blocking(move || {
-                db.lock().unwrap().move_to_dispatched(batch_index, fb, tb, &tx_h, l1_block);
-            }).await;
-        }
+        let fb = batch.from_block;
+        let tb = batch.to_block;
+        let tx_h = tx_hash.0.to_vec();
+        self.persist(move |db| db.move_to_dispatched(batch_index, fb, tb, &tx_h, l1_block)).await;
 
         self.dispatched.insert(batch_index, dispatched);
     }
@@ -331,12 +302,7 @@ impl BatchAccumulator {
         let fb = dispatched.from_block;
         let tb = dispatched.to_block;
 
-        if let Some(db) = &self.db {
-            let db = Arc::clone(db);
-            let _ = tokio::task::spawn_blocking(move || {
-                db.lock().unwrap().finalize_dispatched_batch(batch_index, fb, tb);
-            }).await;
-        }
+        self.persist(move |db| db.finalize_dispatched_batch(batch_index, fb, tb)).await;
 
         for b in fb..=tb {
             self.responses.remove(&b);
@@ -358,14 +324,9 @@ impl BatchAccumulator {
             blobs_accepted: true,
         };
 
-        if let Some(db) = &self.db {
-            let db = Arc::clone(db);
-            let fb = dispatched.from_block;
-            let tb = dispatched.to_block;
-            let _ = tokio::task::spawn_blocking(move || {
-                db.lock().unwrap().undispatch_batch(batch_index, fb, tb);
-            }).await;
-        }
+        let fb = dispatched.from_block;
+        let tb = dispatched.to_block;
+        self.persist(move |db| db.undispatch_batch(batch_index, fb, tb)).await;
 
         self.batches.insert(batch_index, batch);
         true

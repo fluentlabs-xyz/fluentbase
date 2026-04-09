@@ -29,6 +29,13 @@ sol! {
     /// Emitted when all blobs for a batch have been submitted via `submitBlobs`.
     event BatchAccepted(uint256 indexed batchIndex);
 
+    /// Emitted when `preconfirmBatch` succeeds.
+    event BatchPreconfirmed(
+        uint256 indexed batchIndex,
+        address indexed verifierContract,
+        address indexed verifier
+    );
+
     /// L2 block header committed in `acceptNextBatch` calldata.
     struct L2BlockHeader {
         bytes32 previousBlockHash;
@@ -61,6 +68,15 @@ pub enum L1Event {
     },
     /// All blobs for the batch have been accepted.
     BlobsAccepted { batch_index: u64 },
+    /// Batch was preconfirmed on L1 — carries the real tx_hash and l1_block.
+    Preconfirmed {
+        batch_index: u64,
+        tx_hash: B256,
+        l1_block: u64,
+    },
+    /// All events up to this L1 block have been sent.
+    /// Orchestrator persists this as the L1 checkpoint.
+    Checkpoint(u64),
 }
 
 // ---------------------------------------------------------------------------
@@ -90,7 +106,6 @@ pub async fn run(
     contract_addr: Address,
     mut from_block: u64,
     tx: mpsc::Sender<L1Event>,
-    l1_ckpt_tx: mpsc::Sender<u64>,
 ) -> ! {
     info!(
         %contract_addr,
@@ -103,12 +118,16 @@ pub async fn run(
     loop {
         match poll_once(&l1_provider, contract_addr, from_block, &tx).await {
             Ok(PollOutcome::Complete(latest)) => {
-                let _ = l1_ckpt_tx.send(latest).await;
+                if tx.send(L1Event::Checkpoint(latest)).await.is_err() {
+                    warn!(latest, "L1 event channel closed");
+                }
                 from_block = latest + 1;
                 backoff_secs = POLL_INTERVAL_SECS; // reset on full success
             }
             Ok(PollOutcome::Partial(last_ok)) => {
-                let _ = l1_ckpt_tx.send(last_ok).await;
+                if tx.send(L1Event::Checkpoint(last_ok)).await.is_err() {
+                    warn!(last_ok, "L1 event channel closed");
+                }
                 from_block = last_ok + 1;
                 // Escalate backoff — don't reset, we hit rate limits
                 backoff_secs = (backoff_secs * 2).min(MAX_POLL_BACKOFF_SECS);
@@ -199,6 +218,7 @@ async fn process_page(
         .event_signature(vec![
             BatchHeadersSubmitted::SIGNATURE_HASH,
             BatchAccepted::SIGNATURE_HASH,
+            BatchPreconfirmed::SIGNATURE_HASH,
         ])
         .from_block(from)
         .to_block(to);
@@ -214,9 +234,10 @@ async fn process_page(
         if topic0 == BatchHeadersSubmitted::SIGNATURE_HASH {
             match BatchHeadersSubmitted::decode_log_data(&log.inner.data) {
                 Ok(event) => {
-                    let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
-                    let expected_blobs: u64 =
-                        event.expectedBlobsCount.try_into().unwrap_or(u64::MAX);
+                    let batch_index: u64 = event.batchIndex.try_into()
+                        .map_err(|_| eyre!("batchIndex overflow: {}", event.batchIndex))?;
+                    let expected_blobs: u64 = event.expectedBlobsCount.try_into()
+                        .map_err(|_| eyre!("expectedBlobsCount overflow: {}", event.expectedBlobsCount))?;
 
                     let num_blocks = retry_fetch_block_count(
                         provider, log.transaction_hash, batch_index,
@@ -224,25 +245,48 @@ async fn process_page(
 
                     info!(batch_index, expected_blobs, num_blocks, "BatchHeadersSubmitted event");
 
-                    let _ = tx
+                    if tx
                         .send(L1Event::BatchHeaders {
                             batch_index,
                             batch_root: event.batchRoot,
                             expected_blobs,
                             num_blocks,
                         })
-                        .await;
+                        .await
+                        .is_err()
+                    {
+                        warn!(batch_index, "L1 event channel closed");
+                    }
                 }
                 Err(e) => error!(err = %e, "Failed to decode BatchHeadersSubmitted"),
             }
         } else if topic0 == BatchAccepted::SIGNATURE_HASH {
             match BatchAccepted::decode_log_data(&log.inner.data) {
                 Ok(event) => {
-                    let batch_index: u64 = event.batchIndex.try_into().unwrap_or(u64::MAX);
+                    let batch_index: u64 = event.batchIndex.try_into()
+                        .map_err(|_| eyre!("batchIndex overflow: {}", event.batchIndex))?;
                     info!(batch_index, "BatchAccepted event");
-                    let _ = tx.send(L1Event::BlobsAccepted { batch_index }).await;
+                    if tx.send(L1Event::BlobsAccepted { batch_index }).await.is_err() {
+                        warn!(batch_index, "L1 event channel closed");
+                    }
                 }
                 Err(e) => error!(err = %e, "Failed to decode BatchAccepted"),
+            }
+        } else if topic0 == BatchPreconfirmed::SIGNATURE_HASH {
+            match BatchPreconfirmed::decode_log_data(&log.inner.data) {
+                Ok(event) => {
+                    let batch_index: u64 = event.batchIndex.try_into()
+                        .map_err(|_| eyre!("batchIndex overflow: {}", event.batchIndex))?;
+                    let tx_hash = log.transaction_hash
+                        .ok_or_else(|| eyre!("BatchPreconfirmed log missing transaction_hash"))?;
+                    let l1_block = log.block_number
+                        .ok_or_else(|| eyre!("BatchPreconfirmed log missing block_number"))?;
+                    info!(batch_index, %tx_hash, l1_block, "BatchPreconfirmed event");
+                    if tx.send(L1Event::Preconfirmed { batch_index, tx_hash, l1_block }).await.is_err() {
+                        warn!(batch_index, "L1 event channel closed");
+                    }
+                }
+                Err(e) => error!(err = %e, "Failed to decode BatchPreconfirmed"),
             }
         }
     }

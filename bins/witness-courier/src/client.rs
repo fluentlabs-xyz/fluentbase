@@ -22,7 +22,7 @@
 //! Worker pools and channels are created once in [`run`] and survive reconnects.
 //! Only the gRPC stream and per-session state are recreated on each attempt.
 
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -185,13 +185,17 @@ async fn execution_worker(
                             w.data
                         } else {
                             warn!(worker_id, block = task.block_number, "Lazy fetch: witness not found in hub — dispatching to fallback");
-                            let _ = fallback_tx.send(FallbackTask { block_number: task.block_number }).await;
+                            if fallback_tx.send(FallbackTask { block_number: task.block_number }).await.is_err() {
+                                warn!(worker_id, block = task.block_number, "Fallback channel closed");
+                            }
                             continue;
                         }
                     }
                     Err(e) => {
                         warn!(worker_id, block = task.block_number, err = %e, "Lazy fetch: gRPC GetWitness failed — dispatching to fallback");
-                        let _ = fallback_tx.send(FallbackTask { block_number: task.block_number }).await;
+                        if fallback_tx.send(FallbackTask { block_number: task.block_number }).await.is_err() {
+                            warn!(worker_id, block = task.block_number, "Fallback channel closed");
+                        }
                         continue;
                     }
                 }
@@ -209,7 +213,9 @@ async fn execution_worker(
                     if attempts > 1 {
                         info!(worker_id, block = task.block_number, attempts, elapsed = ?started.elapsed(), "Block succeeded after retries");
                     }
-                    let _ = result_tx.send(BlockResult { block_number: task.block_number, response }).await;
+                    if result_tx.send(BlockResult { block_number: task.block_number, response }).await.is_err() {
+                        warn!(worker_id, block = task.block_number, "Result channel closed");
+                    }
                     break;
                 }
                 Err(e) => {
@@ -291,12 +297,18 @@ async fn fallback_worker(
         match payload {
             Some(payload) => {
                 info!(worker_id, block_number, "Fallback success — prioritizing execution");
-                let _ = high_tx.send(ExecutionTask { block_number, payload: Some(payload) }).await;
-                let _ = fallback_done_tx.send((block_number, true)).await;
+                if high_tx.send(ExecutionTask { block_number, payload: Some(payload) }).await.is_err() {
+                    warn!(worker_id, block_number, "High-priority channel closed");
+                }
+                if fallback_done_tx.send((block_number, true)).await.is_err() {
+                    warn!(worker_id, block_number, "Fallback done channel closed");
+                }
             }
             None => {
                 error!(worker_id, block_number, "Fallback exhausted — block permanently missing");
-                let _ = fallback_done_tx.send((block_number, false)).await;
+                if fallback_done_tx.send((block_number, false)).await.is_err() {
+                    warn!(worker_id, block_number, "Fallback done channel closed");
+                }
             }
         }
     }
@@ -313,7 +325,6 @@ async fn fallback_worker(
 pub async fn run<P: Provider + Clone + 'static>(
     config: OrchestratorConfig<P>,
     mut l1_events: mpsc::Receiver<L1Event>,
-    mut l1_ckpt_rx: mpsc::Receiver<u64>,
 ) -> ! {
     let db = Arc::new(Mutex::new(Db::open(&config.db_path).expect("Failed to open courier DB")));
     let mut accumulator = BatchAccumulator::with_db(Arc::clone(&db));
@@ -321,12 +332,12 @@ pub async fn run<P: Provider + Clone + 'static>(
 
     let mut next_batch_from_block: Option<u64> =
         accumulator.max_to_block().map(|e| e + 1)
-            .or_else(|| db.lock().unwrap().get_last_batch_end().map(|e| e + 1));
+            .or_else(|| db.lock().unwrap_or_else(|e| e.into_inner()).get_last_batch_end().map(|e| e + 1));
 
     // Check dispatched batches from previous run
     if accumulator.has_dispatched() {
         info!("Checking dispatched batches from previous run...");
-        check_finalized_batches(&config.l1_provider, &db, &mut accumulator).await;
+        let _ = check_finalized_batches(&config.l1_provider, &db, &mut accumulator).await;
     }
 
     // Channels live for the entire process — workers survive reconnects.
@@ -379,9 +390,9 @@ pub async fn run<P: Provider + Clone + 'static>(
 
     loop {
         let (from_block, confirmed) = {
-            let db_guard = db.lock().unwrap();
+            let db_guard = db.lock().unwrap_or_else(|e| e.into_inner());
             let from = db_guard.get_checkpoint() + 1;
-            let confirmed: BTreeSet<u64> = db_guard
+            let confirmed: HashSet<u64> = db_guard
                 .get_all_response_block_numbers()
                 .into_iter()
                 .filter(|&b| b >= from)
@@ -401,7 +412,6 @@ pub async fn run<P: Provider + Clone + 'static>(
             &mut result_rx,
             &mut fallback_done_rx,
             &mut l1_events,
-            &mut l1_ckpt_rx,
             &mut accumulator,
             &mut next_batch_from_block,
         )
@@ -444,13 +454,13 @@ struct StreamState<P: Provider + Clone + 'static> {
     dispatch_done_tx: mpsc::Sender<(u64, DispatchOutcome)>,
     key_check_tx: mpsc::Sender<(Address, bool)>,
     checkpoint: u64,
-    confirmed: BTreeSet<u64>,
+    confirmed: HashSet<u64>,
     signing_batch: Option<u64>,
     dispatching_batch: Option<u64>,
-    pending_requests: BTreeSet<u64>,
+    pending_requests: HashSet<u64>,
     highest_witness_received: u64,
-    fallback_active: BTreeSet<u64>,
-    fallback_exhausted: BTreeSet<u64>,
+    fallback_active: HashSet<u64>,
+    fallback_exhausted: HashSet<u64>,
     global_dispatch_attempts: u32,
     global_next_dispatch_allowed: Option<tokio::time::Instant>,
     pending_key_check: Option<Address>,
@@ -480,9 +490,11 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
         {
             let db = Arc::clone(&self.db);
             let cp = self.checkpoint;
-            let _ = tokio::task::spawn_blocking(move || {
-                db.lock().unwrap().save_checkpoint(cp);
-            }).await;
+            if let Err(e) = tokio::task::spawn_blocking(move || {
+                db.lock().unwrap_or_else(|e| e.into_inner()).save_checkpoint(cp);
+            }).await {
+                warn!(cp, err = %e, "save_checkpoint: spawn_blocking failed");
+            }
         }
 
         self.try_sign_next_batch(accumulator);
@@ -509,6 +521,26 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
                 accumulator.mark_blobs_accepted(batch_index).await;
                 self.try_sign_next_batch(accumulator);
                 self.try_dispatch_next_batch(accumulator);
+            }
+            L1Event::Preconfirmed { batch_index, tx_hash, l1_block } => {
+                accumulator.mark_dispatched(batch_index, tx_hash, l1_block).await;
+                self.global_dispatch_attempts = 0;
+                self.global_next_dispatch_allowed = None;
+                info!(
+                    batch_index,
+                    %tx_hash,
+                    l1_block,
+                    "BatchPreconfirmed — marked dispatched via L1 event"
+                );
+                self.try_dispatch_next_batch(accumulator);
+            }
+            L1Event::Checkpoint(l1_block) => {
+                let db = Arc::clone(&self.db);
+                if let Err(e) = tokio::task::spawn_blocking(move || {
+                    db.lock().unwrap_or_else(|e| e.into_inner()).save_l1_checkpoint(l1_block);
+                }).await {
+                    warn!(l1_block, err = %e, "save_l1_checkpoint: spawn_blocking failed");
+                }
             }
         }
     }
@@ -570,7 +602,9 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
         self.pending_requests.insert(block_number);
         let h_tx = self.high_tx.clone();
         tokio::spawn(async move {
-            let _ = h_tx.send(ExecutionTask { block_number, payload: None }).await;
+            if h_tx.send(ExecutionTask { block_number, payload: None }).await.is_err() {
+                warn!(block_number, "High-priority channel closed during re-execution");
+            }
         });
     }
 
@@ -602,7 +636,9 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
                 batch_index, from_block, to_block, responses, db,
                 &l2_provider,
             ).await;
-            let _ = tx.send((batch_index, outcome)).await;
+            if tx.send((batch_index, outcome)).await.is_err() {
+                warn!(batch_index, "Sign done channel closed");
+            }
         });
     }
 
@@ -670,18 +706,28 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
                 }
 
                 self.pending_key_check = Some(enclave_address);
-
-                let tx = self.key_check_tx.clone();
-                let provider = self.config.l1_provider.clone();
-                let verifier = self.config.nitro_verifier_addr;
-                let addr = enclave_address;
-                tokio::spawn(async move {
-                    let ok = l1_submitter::is_key_registered(&provider, verifier, addr)
-                        .await.unwrap_or(false);
-                    let _ = tx.send((addr, ok)).await;
-                });
+                self.spawn_key_check(enclave_address, None);
             }
         }
+    }
+
+    /// Spawn an async task that checks whether `addr` is registered on L1.
+    /// If `delay` is provided, sleeps before checking.
+    fn spawn_key_check(&self, addr: Address, delay: Option<Duration>) {
+        let tx = self.key_check_tx.clone();
+        let provider = self.config.l1_provider.clone();
+        let verifier = self.config.nitro_verifier_addr;
+        tokio::spawn(async move {
+            if let Some(d) = delay {
+                tokio::time::sleep(d).await;
+            }
+            let ok = l1_submitter::is_key_registered(&provider, verifier, addr)
+                .await
+                .unwrap_or(false);
+            if tx.send((addr, ok)).await.is_err() {
+                warn!(%addr, "Key check channel closed");
+            }
+        });
     }
 
     /// Pick the next sequential signed batch and spawn a dispatch task.
@@ -725,7 +771,9 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
                     DispatchOutcome::Failed
                 }
             };
-            let _ = tx.send((batch_index, outcome)).await;
+            if tx.send((batch_index, outcome)).await.is_err() {
+                warn!(batch_index, "Dispatch done channel closed");
+            }
         });
     }
 
@@ -772,9 +820,24 @@ impl<P: Provider + Clone + 'static> StreamState<P> {
 
     /// Check finalized batches and process results.
     async fn on_finalization_tick(&mut self, accumulator: &mut BatchAccumulator) {
-        let changed = check_finalized_batches(
+        let (changed, finalized_ranges) = check_finalized_batches(
             &self.config.l1_provider, &self.db, accumulator,
         ).await;
+
+        // Safety net: acknowledge cold files for finalized batches
+        for (fb, tb) in finalized_ranges {
+            let mut ack = self.ack_client.clone();
+            tokio::spawn(async move {
+                if let Err(e) = ack.acknowledge_range(
+                    crate::proto::AcknowledgeRangeRequest {
+                        from_block: fb,
+                        to_block: tb,
+                    }
+                ).await {
+                    warn!(fb, tb, err = %e, "Safety-net acknowledge_range failed");
+                }
+            });
+        }
 
         if changed {
             self.try_sign_next_batch(accumulator);
@@ -789,9 +852,9 @@ async fn check_finalized_batches<P: Provider + Clone + 'static>(
     provider: &P,
     db: &Arc<Mutex<Db>>,
     accumulator: &mut BatchAccumulator,
-) -> bool {
+) -> (bool, Vec<(u64, u64)>) {
     if !accumulator.has_dispatched() {
-        return false;
+        return (false, vec![]);
     }
 
     let finalized_block = match provider
@@ -801,20 +864,21 @@ async fn check_finalized_batches<P: Provider + Clone + 'static>(
         Ok(Some(block)) => block.header.number,
         Ok(None) => {
             warn!("Finalized block not available from RPC");
-            return false;
+            return (false, vec![]);
         }
         Err(e) => {
             warn!(err = %e, "Failed to fetch finalized block");
-            return false;
+            return (false, vec![]);
         }
     };
 
     let candidates = accumulator.dispatched_finalization_candidates(finalized_block);
     if candidates.is_empty() {
-        return false;
+        return (false, vec![]);
     }
 
     let mut changed = false;
+    let mut finalized_ranges = Vec::new();
 
     for batch_index in candidates {
         let Some(tx_hash) = accumulator.dispatched_tx_hash(batch_index) else {
@@ -829,11 +893,14 @@ async fn check_finalized_batches<P: Provider + Clone + 'static>(
                 {
                     let db = Arc::clone(db);
                     let block = dispatched.to_block;
-                    let _ = tokio::task::spawn_blocking(move || {
-                        db.lock().unwrap().save_last_batch_end(block);
-                    }).await;
+                    if let Err(e) = tokio::task::spawn_blocking(move || {
+                        db.lock().unwrap_or_else(|e| e.into_inner()).save_last_batch_end(block);
+                    }).await {
+                        warn!(block, err = %e, "save_last_batch_end: spawn_blocking failed");
+                    }
                 }
                 info!(batch_index, %tx_hash, to_block = dispatched.to_block, "Batch finalized on L1 — cleaned up");
+                finalized_ranges.push((dispatched.from_block, dispatched.to_block));
                 changed = true;
             }
             Ok(None) => {
@@ -849,7 +916,7 @@ async fn check_finalized_batches<P: Provider + Clone + 'static>(
         }
     }
 
-    changed
+    (changed, finalized_ranges)
 }
 
 // ============================================================================
@@ -862,14 +929,13 @@ async fn run_stream<P: Provider + Clone + 'static>(
     config: &OrchestratorConfig<P>,
     db: &Arc<Mutex<Db>>,
     from_block: u64,
-    mut confirmed: BTreeSet<u64>,
+    mut confirmed: HashSet<u64>,
     normal_tx: &AsyncSender<ExecutionTask>,
     high_tx: &AsyncSender<ExecutionTask>,
     fallback_tx: &AsyncSender<FallbackTask>,
     result_rx: &mut mpsc::Receiver<BlockResult>,
     fallback_done_rx: &mut mpsc::Receiver<(u64, bool)>,
     l1_events: &mut mpsc::Receiver<L1Event>,
-    l1_ckpt_rx: &mut mpsc::Receiver<u64>,
     accumulator: &mut BatchAccumulator,
     next_batch_from_block: &mut Option<u64>,
 ) -> eyre::Result<()> {
@@ -914,10 +980,10 @@ async fn run_stream<P: Provider + Clone + 'static>(
         confirmed,
         signing_batch: None,
         dispatching_batch: None,
-        pending_requests: BTreeSet::new(),
+        pending_requests: HashSet::new(),
         highest_witness_received: from_block.saturating_sub(1),
-        fallback_active: BTreeSet::new(),
-        fallback_exhausted: BTreeSet::new(),
+        fallback_active: HashSet::new(),
+        fallback_exhausted: HashSet::new(),
         global_dispatch_attempts: 0,
         global_next_dispatch_allowed: None,
         pending_key_check: None,
@@ -942,7 +1008,9 @@ async fn run_stream<P: Provider + Clone + 'static>(
                             match msg.content {
                                 Some(Content::Witness(w)) => {
                                     let bn = w.block_number;
-                                    let _ = grpc_event_tx.send(GrpcEvent::WitnessQueued(bn)).await;
+                                    if grpc_event_tx.send(GrpcEvent::WitnessQueued(bn)).await.is_err() {
+                                        warn!(bn, "gRPC event channel closed");
+                                    }
                                     if normal_tx.send(ExecutionTask {
                                         block_number: bn,
                                         payload: Some(w.data),
@@ -955,9 +1023,11 @@ async fn run_stream<P: Provider + Clone + 'static>(
                         }
                         Ok(None) => break,
                         Err(e) => {
-                            let _ = grpc_event_tx.send(
+                            if grpc_event_tx.send(
                                 GrpcEvent::StreamError(e.to_string())
-                            ).await;
+                            ).await.is_err() {
+                                warn!("gRPC event channel closed");
+                            }
                             break;
                         }
                     },
@@ -1015,28 +1085,11 @@ async fn run_stream<P: Provider + Clone + 'static>(
                         state.try_sign_next_batch(accumulator);
                         state.try_dispatch_next_batch(accumulator);
                     } else {
-                        // Re-check after delay
-                        let tx = state.key_check_tx.clone();
-                        let provider = state.config.l1_provider.clone();
-                        let verifier = state.config.nitro_verifier_addr;
-                        tokio::spawn(async move {
-                            tokio::time::sleep(Duration::from_secs(10)).await;
-                            let ok = l1_submitter::is_key_registered(&provider, verifier, addr)
-                                .await.unwrap_or(false);
-                            let _ = tx.send((addr, ok)).await;
-                        });
+                        state.spawn_key_check(addr, Some(Duration::from_secs(10)));
                     }
                 },
 
-                // ── Stream H: L1 listener checkpoint persistence ────────
-                Some(l1_block) = l1_ckpt_rx.recv() => {
-                    let db = Arc::clone(&state.db);
-                    let _ = tokio::task::spawn_blocking(move || {
-                        db.lock().unwrap().save_l1_checkpoint(l1_block);
-                    }).await;
-                },
-
-                // ── Stream I: finalization checker ─────────────────────
+                // ── Stream H: finalization checker ─────────────────────
                 _ = finalization_ticker.tick() =>
                     state.on_finalization_tick(accumulator).await,
             }
@@ -1072,7 +1125,7 @@ async fn sign_batch_io(
     {
         let db_check = Arc::clone(&db);
         let sig = tokio::task::spawn_blocking(move || {
-            db_check.lock().unwrap().get_batch_signature(batch_index)
+            db_check.lock().unwrap_or_else(|e| e.into_inner()).get_batch_signature(batch_index)
         }).await.unwrap_or(None);
         if let Some(resp) = sig {
             info!(batch_index, "Batch already signed (cached) — skipping /sign-batch-root");
@@ -1107,9 +1160,11 @@ async fn sign_batch_io(
             Ok(resp) => {
                 let db = Arc::clone(&db);
                 let resp_clone = resp.clone();
-                let _ = tokio::task::spawn_blocking(move || {
-                    db.lock().unwrap().save_batch_signature(batch_index, &resp_clone);
-                }).await;
+                if let Err(e) = tokio::task::spawn_blocking(move || {
+                    db.lock().unwrap_or_else(|e| e.into_inner()).save_batch_signature(batch_index, &resp_clone);
+                }).await {
+                    warn!(batch_index, err = %e, "save_batch_signature: spawn_blocking failed");
+                }
                 info!(batch_index, "Batch root signed and persisted");
                 return SignOutcome::Signed { response: resp };
             }
