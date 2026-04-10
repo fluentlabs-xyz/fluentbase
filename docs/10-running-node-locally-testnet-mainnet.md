@@ -21,6 +21,13 @@ Binary path used below:
 ./target/release/fluent
 ```
 
+## Prebuilt distribution options
+
+If you do not want to build from source:
+
+- Binaries (GitHub Releases): https://github.com/fluentlabs-xyz/fluentbase/releases
+- Docker image (`fluent` package): https://github.com/fluentlabs-xyz/fluent/pkgs/container/fluent
+
 ## Chain names
 
 - `fluent-testnet` (chain id `20994`)
