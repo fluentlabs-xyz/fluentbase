@@ -16,6 +16,7 @@ The goal is practical understanding for contributors and auditors, not API marke
 8. [`07-rwasm-integration.md`](./07-rwasm-integration.md) — Fluentbase integration contract with rWasm.
 9. [`08-universal-token.md`](./08-universal-token.md) — UST20 runtime behavior and constraints.
 10. [`09-rpc-compatibility-vs-reth.md`](./09-rpc-compatibility-vs-reth.md) — Fluent RPC behavior differences from upstream Reth for account code APIs.
+11. [`10-running-node-locally-testnet-mainnet.md`](./10-running-node-locally-testnet-mainnet.md) — practical local node runbook for Fluent testnet and mainnet.
 
 ## Source-of-truth rule
 
