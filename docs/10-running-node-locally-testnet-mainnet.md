@@ -26,7 +26,7 @@ Binary path used below:
 If you do not want to build from source:
 
 - Binaries (GitHub Releases): https://github.com/fluentlabs-xyz/fluentbase/releases
-- Docker image (`fluent` package): https://github.com/fluentlabs-xyz/fluent/pkgs/container/fluent
+- Docker image (`fluent` package): https://github.com/fluentlabs-xyz/fluentbase/pkgs/container/fluent
 
 ## Chain names
 
