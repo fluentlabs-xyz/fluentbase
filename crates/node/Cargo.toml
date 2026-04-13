@@ -153,6 +153,17 @@ directories = { workspace = true }
 flate2 = { workspace = true }
 reqwest = { workspace = true }
 
+# exex (optional — heavy deps for witness generation)
+revm-primitives = { version = "22.0.0", default-features = false, optional = true }
+rsp-host-executor = { git = "https://github.com/fluentlabs-xyz/fluent-stf-sp1", branch = "djadjka/aws-nitro-refactor", features = ["testnet"], optional = true }
+rsp-client-executor = { git = "https://github.com/fluentlabs-xyz/fluent-stf-sp1", branch = "djadjka/aws-nitro-refactor", optional = true }
+rsp-primitives = { git = "https://github.com/fluentlabs-xyz/fluent-stf-sp1", branch = "djadjka/aws-nitro-refactor", optional = true }
+witness-orchestrator = { path = "../../../fluent-stf-sp1/crates/witness-orchestrator", optional = true }
+bincode = { version = "1.3.3", optional = true }
+futures = { version = "0.3", optional = true }
+alloy-eips = { version = "1.7.3", default-features = false, optional = true }
+serde = { workspace = true, optional = true }
+
 [features]
 default = ["std"]
 std = [
@@ -165,4 +176,17 @@ wasmtime = [
     "fluentbase-runtime/wasmtime",
     "fluentbase-revm/wasmtime",
     "fluentbase-genesis/wasmtime",
+]
+exex = [
+    "dep:revm-primitives",
+    "dep:rsp-host-executor",
+    "dep:rsp-client-executor",
+    "dep:rsp-primitives",
+    "dep:witness-orchestrator",
+    "dep:bincode",
+    "dep:futures",
+    "dep:alloy-eips",
+    "dep:serde",
+    "reth-exex/serde",
+    "tokio/full",
 ]

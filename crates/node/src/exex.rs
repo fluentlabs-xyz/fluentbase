@@ -48,8 +48,8 @@ use reth_evm_ethereum::EthEvmConfig;
 use rsp_client_executor::evm::FluentEvmFactory;
 use rsp_host_executor::{EthHostExecutor, HostError};
 
-use witness_courier::hub::WitnessHub;
-use witness_courier::types::ProveRequest;
+use witness_orchestrator::hub::WitnessHub;
+use witness_orchestrator::types::ProveRequest;
 
 
 // ---------------------------------------------------------------------------

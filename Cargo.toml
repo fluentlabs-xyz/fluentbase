@@ -49,8 +49,6 @@ fluentbase-types = { path = "./crates/types", default-features = false, version 
 #fluentbase-svm-shared = { path = "./crates/svm-shared", default-features = false }
 #fluentbase-svm-common = { path = "./crates/svm-common", default-features = false }
 
-witness-courier = { path = "bins/witness-courier", default-features = false }
-
 # solana
 #solana-pubkey = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 #solana-instruction = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }

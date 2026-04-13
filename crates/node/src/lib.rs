@@ -1,6 +1,8 @@
 pub mod chainspec;
 pub mod consensus;
 pub mod evm;
+#[cfg(feature = "exex")]
+pub mod exex;
 pub mod launcher;
 pub mod payload;
 pub mod trusted_peers;

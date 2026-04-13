@@ -175,7 +175,7 @@ fn main() {
 
         #[cfg(feature = "exex")]
         let handle = {
-            use witness_courier::hub::WitnessHub;
+            use witness_orchestrator::hub::WitnessHub;
             use tracing::{error};
 
             let max_cold_bytes: u64 = std::env::var("FLUENT_WITNESS_COLD_MAX_BYTES")
@@ -189,7 +189,7 @@ fn main() {
                 .parse()
                 .expect("invalid FLUENT_WITNESS_ADDR");
 
-            let svc = witness_courier::server::create_service(Arc::clone(&hub));
+            let svc = witness_orchestrator::server::create_service(Arc::clone(&hub));
             let server = tonic::transport::Server::builder()
                 .add_service(svc)
                 .serve(addr);
@@ -201,7 +201,7 @@ fn main() {
                 .with_components(components_builder)
                 .with_add_ons(add_ons)
                 .install_exex("fluent-proving", move |ctx| async move {
-                    Ok(fluent_exex::exex_main_loop(ctx, None, hub_exex))
+                    Ok(fluentbase_node::exex::exex_main_loop(ctx, None, hub_exex))
                 })
                 .launch_with_debug_capabilities();
 

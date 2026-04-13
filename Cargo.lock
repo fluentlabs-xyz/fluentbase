@@ -1371,18 +1371,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4858a9d740c5007a9069007c3b4e91152d0506f13c1b31dd49051fd537656156"
 
 [[package]]
-name = "async-channel"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "924ed96dd52d1b75e9c1a3e6275715fd320f5f9439fb5a4a11fa51f4221158d2"
-dependencies = [
- "concurrent-queue",
- "event-listener-strategy",
- "futures-core",
- "pin-project-lite",
-]
-
-[[package]]
 name = "async-compression"
 version = "0.4.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2110,24 +2098,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "brotlic"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f552f56f302af0006c32b50bfa2bdb4696fd6ba33c3ab9f6225fefdb1efdc680"
-dependencies = [
- "brotlic-sys",
-]
-
-[[package]]
-name = "brotlic-sys"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afdec5c62bc97b56349053cf66ba503af5c2448591be61c3ad70a5f11b57e574"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "bs58"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2649,15 +2619,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d72c1252426a83be2092dd5884a5f6e3b8e7180f6891b6263d2c21b92ec8816"
 dependencies = [
  "digest 0.10.7",
-]
-
-[[package]]
-name = "concurrent-queue"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
-dependencies = [
- "crossbeam-utils",
 ]
 
 [[package]]
@@ -3696,7 +3657,7 @@ dependencies = [
  "enr 0.13.0",
  "fnv",
  "futures",
- "hashlink 0.11.0",
+ "hashlink",
  "hex",
  "hkdf",
  "lazy_static",
@@ -4473,27 +4434,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "event-listener"
-version = "5.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"
-dependencies = [
- "concurrent-queue",
- "parking",
- "pin-project-lite",
-]
-
-[[package]]
-name = "event-listener-strategy"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
-dependencies = [
- "event-listener",
- "pin-project-lite",
-]
-
-[[package]]
 name = "eventsource-stream"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4519,12 +4459,6 @@ name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
-
-[[package]]
-name = "fallible-streaming-iterator"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fast-float2"
@@ -4715,7 +4649,6 @@ dependencies = [
  "alloy-primitives",
  "clap",
  "directories",
- "fluent-exex",
  "fluentbase-genesis",
  "fluentbase-node",
  "fluentbase-revm",
@@ -4838,36 +4771,7 @@ dependencies = [
  "reth-zstd-compressors",
  "tonic 0.14.5",
  "tracing",
- "witness-courier",
-]
-
-[[package]]
-name = "fluent-exex"
-version = "1.1.3"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "bincode 1.3.3",
- "eyre",
- "futures",
- "reth-chainspec",
- "reth-evm",
- "reth-evm-ethereum",
- "reth-exex",
- "reth-node-api",
- "reth-primitives-traits",
- "reth-provider",
- "revm-database",
- "revm-database-interface",
- "revm-primitives",
- "revm-state",
- "rsp-client-executor",
- "rsp-host-executor",
- "rsp-primitives",
- "serde",
- "tokio",
- "tracing",
- "witness-courier",
+ "witness-orchestrator",
 ]
 
 [[package]]
@@ -5017,12 +4921,14 @@ name = "fluentbase-node"
 version = "1.1.3"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-evm",
  "alloy-genesis",
  "alloy-network",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
+ "bincode 1.3.3",
  "directories",
  "eyre",
  "flate2",
@@ -5030,6 +4936,7 @@ dependencies = [
  "fluentbase-revm",
  "fluentbase-runtime",
  "fluentbase-types",
+ "futures",
  "reqwest 0.12.28",
  "reth-basic-payload-builder",
  "reth-chain-state",
@@ -5143,9 +5050,15 @@ dependencies = [
  "reth-trie-parallel",
  "reth-trie-sparse",
  "reth-zstd-compressors",
+ "revm-primitives",
+ "rsp-client-executor",
+ "rsp-host-executor",
+ "rsp-primitives",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",
+ "witness-orchestrator",
 ]
 
 [[package]]
@@ -5866,15 +5779,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2bca93b15ea5a746f220e56587f71e73c6165eab783df9e26590069953e3c30"
 dependencies = [
  "fxhash",
-]
-
-[[package]]
-name = "hashlink"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ba4ff7128dee98c7dc9794b6a411377e1404dba1c97deb8d1a55297bd25d8af"
-dependencies = [
- "hashbrown 0.14.5",
 ]
 
 [[package]]
@@ -7202,17 +7106,6 @@ dependencies = [
  "lz4-sys",
  "tikv-jemalloc-sys",
  "zstd-sys",
-]
-
-[[package]]
-name = "libsqlite3-sys"
-version = "0.30.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
-dependencies = [
- "cc",
- "pkg-config",
- "vcpkg",
 ]
 
 [[package]]
@@ -13425,18 +13318,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rsp-provider"
-version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor#7f505421d5aca9a7385b55ecf700980598fbadd1"
-dependencies = [
- "alloy-json-rpc",
- "alloy-provider",
- "alloy-rpc-client",
- "alloy-transport",
- "url",
-]
-
-[[package]]
 name = "rsp-rpc-db"
 version = "0.1.0"
 source = "git+https://github.com/fluentlabs-xyz/fluent-stf-sp1?branch=djadjka%2Faws-nitro-refactor#7f505421d5aca9a7385b55ecf700980598fbadd1"
@@ -13497,20 +13378,6 @@ name = "ruint-macro"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48fd7bd8a6377e15ad9d42a8ec25371b94ddc67abe7c8b9127bec79bebaaae18"
-
-[[package]]
-name = "rusqlite"
-version = "0.32.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7753b721174eb8ff87a9a0e799e2d7bc3749323e773db92e0984debb00019d6e"
-dependencies = [
- "bitflags 2.11.0",
- "fallible-iterator",
- "fallible-streaming-iterator",
- "hashlink 0.9.1",
- "libsqlite3-sys",
- "smallvec",
-]
 
 [[package]]
 name = "rustc-demangle"
@@ -18471,45 +18338,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "witness-courier"
-version = "1.1.3"
+name = "witness-orchestrator"
+version = "0.1.0"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-network",
  "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
- "alloy-signer",
- "alloy-signer-local",
  "alloy-sol-types",
- "async-channel",
  "bincode 1.3.3",
- "brotlic",
- "bytes",
- "eyre",
- "futures",
  "prost 0.14.3",
- "reqwest 0.12.28",
- "reth-chainspec",
- "reth-evm",
- "rsp-client-executor",
- "rsp-host-executor",
- "rsp-primitives",
- "rsp-provider",
- "rusqlite",
  "serde",
- "serde_json",
- "sha2",
  "tokio",
  "tokio-stream",
- "tokio-util",
  "tonic 0.14.5",
  "tonic-prost",
  "tonic-prost-build",
  "tracing",
- "tracing-subscriber 0.3.23",
- "url",
  "zstd 0.13.3",
 ]
 
