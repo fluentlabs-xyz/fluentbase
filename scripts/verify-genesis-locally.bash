@@ -5,7 +5,24 @@ set -euo pipefail
 # Verification works only after v1.2.0-rc.1 version
 TAG="${1:-v1.2.0-rc.1}"
 
-docker build --platform=linux/amd64 -t fluentbase-build:local \
+CURRENT_REV="$(git rev-parse HEAD)"
+TAG_REV="$(git rev-list -n 1 "$TAG")"
+``
+if [[ "$CURRENT_REV" != "$TAG_REV" ]]; then
+  echo "Revision mismatch:"
+  echo "  HEAD: $CURRENT_REV"
+  echo "  TAG : $TAG_REV"
+  read -r -p "Current checkout does not match (${TAG}). This may cause a genesis hash mismatch! Continue anyway? [y/N]: " reply
+  case "$reply" in
+    [yY]|[yY][eE][sS]) ;;
+    *)
+      echo "Aborted."
+      exit 1
+      ;;
+  esac
+fi
+
+docker build -f ./docker/Dockerfile.build --platform=linux/amd64 -t fluentbase-build:local \
   --build-arg SDK_VERSION_TAG="${TAG}" \
   --build-arg RUST_TOOLCHAIN=1.92.0 .
 
