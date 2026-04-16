@@ -157,9 +157,6 @@ where
     > {
         let (ctx, inspector, frame) = self.ctx_inspector_frame();
 
-        // Apply fluent bridge hook that mints/burns native tokens
-        apply_bridge_pre_invocation_hook::<Self::Context>(ctx)?;
-
         let mut next_action = match run_rwasm_loop::<Self::Context, Self::Inspector>(
             frame,
             ctx,
@@ -191,7 +188,7 @@ where
         };
 
         // Apply fluent bridge hook that mints/burns native tokens
-        apply_bridge_post_invocation_hook::<Self::Context>(ctx, &mut next_action)?;
+        apply_bridge_post_invocation_hook::<Self::Context>(frame, ctx, &mut next_action)?;
 
         let mut result = frame.process_next_action(ctx, next_action);
 
@@ -376,6 +373,10 @@ where
                         new_frame.interpreter.bytecode =
                             ExtBytecode::new_with_hash(bytecode, code_hash);
                     }
+                    FrameInput::Call(inputs) => {
+                        // Apply fluent bridge hook that mints/burns native tokens
+                        apply_bridge_pre_invocation_hook::<Self::Context>(inputs, ctx)?;
+                    }
                     _ => {}
                 }
             }
@@ -395,14 +396,11 @@ where
         let frame = self.0.frame_stack.get();
         let context = &mut self.0.ctx;
 
-        // Apply fluent bridge hook that mints/burns native tokens
-        apply_bridge_pre_invocation_hook::<Self::Context>(context)?;
-
         let mut action = run_rwasm_loop::<Self::Context, NoOpInspector>(frame, context, None)?
             .into_interpreter_action();
 
         // Apply fluent bridge hook that mints/burns native tokens
-        apply_bridge_post_invocation_hook::<Self::Context>(context, &mut action)?;
+        apply_bridge_post_invocation_hook::<Self::Context>(frame, context, &mut action)?;
 
         frame.process_next_action(context, action).inspect(|i| {
             if i.is_result() {
