@@ -51,7 +51,7 @@ sol! {
 }
 
 pub(crate) fn apply_bridge_pre_invocation_hook<CTX: ContextTr>(
-    inputs: &Box<CallInputs>,
+    inputs: &CallInputs,
     ctx: &mut CTX,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
     // Make sure the recipient and prefix are correct
@@ -169,7 +169,7 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
             *next_action = malformed_interpreter_action();
             return Ok(());
         }
-    } else if let Some(_) = try_decode_send_message_value(input) {
+    } else if try_decode_send_message_value(input).is_some() {
         let send_message_logs = ctx
             .journal()
             .logs()
