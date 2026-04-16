@@ -1,12 +1,14 @@
+use crate::RwasmFrame;
+use alloy_primitives::address;
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use fluentbase_evm::{InterpreterAction, InterpreterResult};
-use fluentbase_sdk::{Bytes, U256, PRECOMPILE_ROLLUP_BRIDGE};
+use fluentbase_sdk::{Bytes, PRECOMPILE_ROLLUP_BRIDGE, U256};
 use revm::{
     context::{
         journaled_state::account::JournaledAccountTr, ContextError, ContextTr, JournalTr,
         Transaction,
     },
-    interpreter::{Gas, InstructionResult},
+    interpreter::{CallInputs, Gas, InstructionResult},
     Database,
 };
 use tracing::warn;
@@ -49,46 +51,71 @@ sol! {
 }
 
 pub(crate) fn apply_bridge_pre_invocation_hook<CTX: ContextTr>(
+    inputs: &CallInputs,
     ctx: &mut CTX,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
-    let (tx, journal) = ctx.tx_journal_mut();
-
     // Make sure the recipient and prefix are correct
-    let Some(_) = tx.kind().to().filter(|to| **to == PRECOMPILE_ROLLUP_BRIDGE) else {
+    if inputs.target_address != PRECOMPILE_ROLLUP_BRIDGE {
         return Ok(());
-    };
+    }
 
-    // Load bridge account and it's balance
-    let mut bridge_account = journal
-        .load_account_with_code_mut(PRECOMPILE_ROLLUP_BRIDGE)?
-        .data;
+    let input = inputs.input.bytes(ctx);
 
     // Mint an extra value for bridge since these funds are required for rollup receive/re-execution
-    if let Some(message_value) = decode_receive_message_value(tx.input().as_ref()) {
+    if let Some(message_value) = try_decode_receive_message_value(input) {
+        // Load bridge account and it's balance
+        let mut bridge_account = ctx
+            .journal_mut()
+            .load_account_with_code_mut(PRECOMPILE_ROLLUP_BRIDGE)?
+            .data;
+
         // Note: overflow here can't happen, we can't have more than 2**256 on bridge balance
         _ = bridge_account.incr_balance(message_value)
     }
+
     Ok(())
 }
 
 pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
+    frame: &mut RwasmFrame,
     ctx: &mut CTX,
     next_action: &mut InterpreterAction,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
-    let (tx, journal) = ctx.tx_journal_mut();
+    // A special case for corrupted bridge transaction on testnet, where we issued 3
+    // transactions from relayer that caused execution failure. We keep it here only to
+    // make blockchain syncable for testnet.
+    //
+    // Note: it can be removed once we have new snapshot for testnet
+    if ctx.tx().chain_id() == Some(0x5202)
+        && ctx.tx().caller() == address!("0x1C92DffBCe76670F69007F22A54e31ff3Ab45d5E")
+        && [537u64, 538u64, 539u64].contains(&ctx.tx().nonce())
+        && ctx.journal().depth() == 3
+    {
+        *next_action = malformed_interpreter_action();
+        return Ok(());
+    }
+
+    // Proceed post-invocation hook only if frame is closed
+    match next_action {
+        InterpreterAction::Return(_) => {}
+        _ => return Ok(()),
+    };
 
     // Make sure this is the message and recipient we're looking for
-    let Some(_) = tx.kind().to().filter(|to| **to == PRECOMPILE_ROLLUP_BRIDGE) else {
+    if frame.interpreter.input.target_address != PRECOMPILE_ROLLUP_BRIDGE {
         return Ok(());
-    };
+    }
 
     // Don't proceed if it's new frame creation (technically not possible, but just in case)
     let Some(instruction_result) = next_action.instruction_result() else {
         return Ok(());
     };
 
-    if let Some(message_value) = decode_receive_message_value(tx.input().as_ref()) {
-        let receive_message_logs = journal
+    let input = frame.interpreter.input.input.bytes(ctx);
+
+    if let Some(message_value) = try_decode_receive_message_value(&input) {
+        let receive_message_logs = ctx
+            .journal()
             .logs()
             .iter()
             .filter_map(|log| {
@@ -126,7 +153,8 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
         };
 
         // Load bridge account with its balance
-        let mut bridge_account = journal
+        let mut bridge_account = ctx
+            .journal_mut()
             .load_account_with_code_mut(PRECOMPILE_ROLLUP_BRIDGE)?
             .data;
 
@@ -141,13 +169,9 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
             *next_action = malformed_interpreter_action();
             return Ok(());
         }
-    } else if tx.input().starts_with(&sendMessageCall::SELECTOR) {
-        // Decode an ABI message (it should be correct)
-        let Ok(_message) = sendMessageCall::abi_decode(tx.input().as_ref()) else {
-            return Ok(());
-        };
-
-        let send_message_logs = journal
+    } else if try_decode_send_message_value(input).is_some() {
+        let send_message_logs = ctx
+            .journal()
             .logs()
             .iter()
             .filter_map(|log| {
@@ -185,23 +209,25 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
         };
 
         // Load bridge account with its balance
-        let mut bridge_account = journal
+        let mut bridge_account = ctx
+            .journal_mut()
             .load_account_with_code_mut(PRECOMPILE_ROLLUP_BRIDGE)?
             .data;
 
+        let msg_value = frame.interpreter.input.call_value;
+
         // Burn extra eth for bridge since these funds are required for rollup withdrawal
         if let Some(amount_to_be_burned) = amount_to_be_burned {
-            if amount_to_be_burned != tx.value() {
-                let tx_value = tx.value();
+            if amount_to_be_burned != msg_value {
                 warn!(
-                    %tx_value,
+                    %msg_value,
                     value = %amount_to_be_burned,
-                    "Amount to be burned doesn't match passed transaction value"
+                    "Amount to be burned doesn't match passed message value"
                 );
                 *next_action = malformed_interpreter_action();
                 return Ok(());
             }
-            if !bridge_account.decr_balance(tx.value()) {
+            if !bridge_account.decr_balance(msg_value) {
                 let bridge_balance = bridge_account.balance();
                 warn!(
                     %bridge_balance,
@@ -217,7 +243,9 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
     Ok(())
 }
 
-fn decode_receive_message_value(input: &[u8]) -> Option<U256> {
+fn try_decode_receive_message_value<T: AsRef<[u8]>>(input: T) -> Option<U256> {
+    let input = input.as_ref();
+
     if input.starts_with(&receiveMessageCall::SELECTOR) {
         let Ok(message) = receiveMessageCall::abi_decode(input) else {
             return None;
@@ -230,6 +258,19 @@ fn decode_receive_message_value(input: &[u8]) -> Option<U256> {
             return None;
         };
         return Some(message.value);
+    }
+
+    None
+}
+
+fn try_decode_send_message_value<T: AsRef<[u8]>>(input: T) -> Option<()> {
+    let input = input.as_ref();
+
+    if input.starts_with(&sendMessageCall::SELECTOR) {
+        // Decode an ABI message (it should be correct)
+        if let Ok(_message) = sendMessageCall::abi_decode(input) {
+            return Some(());
+        };
     }
 
     None
