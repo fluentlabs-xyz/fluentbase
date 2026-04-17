@@ -96,7 +96,7 @@ jobs:
         if: ${{ github.event.inputs.dry_run == 'true' }}
         run: |
           docker build \
-            --file Dockerfile \
+            --file ./docker/Dockerfile.build \
             --build-arg RUST_TOOLCHAIN=1.92 \
             --build-arg SDK_VERSION_BRANCH=${{ github.ref_name }} \
             --build-arg SDK_VERSION_TAG= \
