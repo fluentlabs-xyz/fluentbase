@@ -16,6 +16,8 @@ use tracing::warn;
 sol! {
     event ReceivedMessage(bytes32 messageHash, bool successfulCall, bytes returnData);
 
+    event RetriedFailedMessage(bytes32 messageHash, bool successfulCall, bytes returnData);
+
     event SentMessage(
         address indexed sender,
         address indexed to,
@@ -124,10 +126,13 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
                     return None;
                 }
                 // If input data can't be decoded
-                let Ok(received_message) = ReceivedMessage::decode_log(log) else {
-                    return None;
-                };
-                Some(received_message)
+                if let Ok(received_message) = ReceivedMessage::decode_log(log) {
+                    Some(received_message.successfulCall)
+                } else if let Ok(received_message) = RetriedFailedMessage::decode_log(log) {
+                    Some(received_message.successfulCall)
+                } else {
+                    None
+                }
             })
             .collect::<Vec<_>>();
 
@@ -142,7 +147,7 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
                 return Ok(());
             }
             // We count call as successful only if it executes w/o error and we have correct log
-            receive_message_logs.first().unwrap().successfulCall
+            receive_message_logs.first().copied().unwrap()
         } else {
             // It can't happen, better to just terminate execution here
             assert!(
