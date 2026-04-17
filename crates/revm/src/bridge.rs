@@ -8,7 +8,7 @@ use revm::{
         journaled_state::account::JournaledAccountTr, ContextError, ContextTr, JournalTr,
         Transaction,
     },
-    interpreter::{CallInputs, Gas, InstructionResult},
+    interpreter::{CallInputs, CallScheme, Gas, InstructionResult},
     Database,
 };
 use tracing::warn;
@@ -58,6 +58,15 @@ pub(crate) fn apply_bridge_pre_invocation_hook<CTX: ContextTr>(
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
     // Make sure the recipient and prefix are correct
     if inputs.target_address != PRECOMPILE_ROLLUP_BRIDGE {
+        return Ok(());
+    }
+
+    // Do not apply mint/burn accounting on delegatecall-style execution where bridge storage
+    // is reused with another execution context. Otherwise nested delegatecalls can mint twice.
+    if matches!(
+        inputs.scheme,
+        CallScheme::DelegateCall | CallScheme::CallCode
+    ) {
         return Ok(());
     }
 
@@ -115,6 +124,14 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
     // Make sure this is the message and recipient we're looking for
     if frame.interpreter.input.target_address != PRECOMPILE_ROLLUP_BRIDGE {
         return Ok(());
+    }
+
+    // Do not apply bridge accounting on delegatecall-style execution where bridge storage is
+    // reused with another execution context.
+    if let Some(bytecode_address) = frame.interpreter.input.bytecode_address {
+        if bytecode_address != PRECOMPILE_ROLLUP_BRIDGE {
+            return Ok(());
+        }
     }
 
     // Don't proceed if it's new frame creation (technically not possible, but just in case)
@@ -381,24 +398,43 @@ mod tests {
         .into()
     }
 
-    fn make_call_inputs(target: Address, input: Bytes, value: U256) -> CallInputs {
+    fn make_call_inputs_with_bytecode(
+        target: Address,
+        bytecode_address: Address,
+        scheme: CallScheme,
+        input: Bytes,
+        value: U256,
+    ) -> CallInputs {
         CallInputs {
             input: CallInput::Bytes(input),
             return_memory_offset: Default::default(),
             gas_limit: 1_000_000,
-            bytecode_address: target,
+            bytecode_address,
             known_bytecode: None,
             target_address: target,
             caller: address!("0x4000000000000000000000000000000000000004"),
             value: CallValue::Transfer(value),
-            scheme: CallScheme::Call,
+            scheme,
             is_static: false,
         }
     }
 
+    fn make_call_inputs(target: Address, input: Bytes, value: U256) -> CallInputs {
+        make_call_inputs_with_bytecode(target, target, CallScheme::Call, input, value)
+    }
+
     fn make_bridge_frame(input: Bytes, msg_value: U256) -> crate::RwasmFrame {
+        make_bridge_frame_with_bytecode(input, msg_value, None)
+    }
+
+    fn make_bridge_frame_with_bytecode(
+        input: Bytes,
+        msg_value: U256,
+        bytecode_address: Option<Address>,
+    ) -> crate::RwasmFrame {
         let mut frame = crate::RwasmFrame::default();
         frame.interpreter.input.target_address = PRECOMPILE_ROLLUP_BRIDGE;
+        frame.interpreter.input.bytecode_address = bytecode_address;
         frame.interpreter.input.input = CallInput::Bytes(input);
         frame.interpreter.input.call_value = msg_value;
         frame
@@ -545,6 +581,24 @@ mod tests {
 
         assert!(matches!(err, ContextError::Custom(_)));
         assert_eq!(bridge_balance(&mut ctx), U256::MAX);
+    }
+
+    #[test]
+    fn pre_hook_ignores_delegatecall_into_bridge() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(10));
+
+        let inputs = make_call_inputs_with_bytecode(
+            PRECOMPILE_ROLLUP_BRIDGE,
+            address!("0x9000000000000000000000000000000000000009"),
+            CallScheme::DelegateCall,
+            receive_message_input(U256::from(7)),
+            U256::ZERO,
+        );
+
+        apply_bridge_pre_invocation_hook(&inputs, &mut ctx).unwrap();
+
+        assert_eq!(bridge_balance(&mut ctx), U256::from(10));
     }
 
     #[test]
@@ -780,6 +834,28 @@ mod tests {
         let mut frame = make_bridge_frame(receive_message_input(U256::from(7)), U256::ZERO);
         frame.interpreter.input.target_address =
             address!("0x6000000000000000000000000000000000000006");
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_eq!(
+            next_action.instruction_result(),
+            Some(InstructionResult::Return)
+        );
+        assert_eq!(bridge_balance(&mut ctx), U256::from(10));
+    }
+
+    #[test]
+    fn post_hook_ignores_delegatecall_into_bridge() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(10));
+        push_received_message_log(&mut ctx, false);
+
+        let mut frame = make_bridge_frame_with_bytecode(
+            receive_message_input(U256::from(7)),
+            U256::ZERO,
+            Some(address!("0x9000000000000000000000000000000000000009")),
+        );
         let mut next_action = ok_action();
 
         apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
