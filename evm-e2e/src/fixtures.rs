@@ -19,5 +19,6 @@ mod fluent_testnet {
         fn testnet_24293147_bridge_malformed_params_1("fixtures/testnet_24293144_bridge_malformed_params_1.json");
         fn testnet_24293147_bridge_malformed_params_2("fixtures/testnet_24293146_bridge_malformed_params_2.json");
         fn testnet_24293147_bridge_malformed_params_3("fixtures/testnet_24293147_bridge_malformed_params_3.json");
+        fn testnet_24293147_bridge_malformed_params_4("fixtures/testnet_24363142_bridge_malformed_params_4.json");
     }
 }
