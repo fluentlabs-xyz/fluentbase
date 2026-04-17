@@ -15,6 +15,8 @@ use revm::{
 sol! {
     event ReceivedMessage(bytes32 messageHash, bool successfulCall, bytes returnData);
 
+    event RetriedFailedMessage(bytes32 messageHash, bool successfulCall, bytes returnData);
+
     event SentMessage(
         address indexed sender,
         address indexed to,
@@ -495,6 +497,62 @@ fn test_receive_failed_message_mints_on_successful_valid_log() {
 }
 
 #[test]
+fn test_receive_failed_message_mints_on_successful_retried_failed_log() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let log_data = RetriedFailedMessage {
+        messageHash: B256::ZERO,
+        successfulCall: true,
+        returnData: Bytes::new(),
+    }
+    .encode_data();
+
+    let mut bytecode = Vec::new();
+    const LOG_DATA_OFFSET: usize = 6 + 2 + 32 + 3 + 1;
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(LOG_DATA_OFFSET).unwrap());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::CODECOPY);
+    bytecode.push(opcode::PUSH32);
+    bytecode.extend_from_slice(RetriedFailedMessage::SIGNATURE_HASH.as_slice());
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::LOG1);
+    bytecode.push(opcode::STOP);
+    assert_eq!(bytecode.len(), LOG_DATA_OFFSET);
+    bytecode.extend(log_data);
+
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
+
+    let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    let input = receiveFailedMessageCall {
+        from: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x01),
+        value: U256::from(1_000),
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        messageNonce: U256::ZERO,
+        message: Bytes::new(),
+    }
+    .abi_encode();
+
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        input.into(),
+        None,
+        None,
+    );
+
+    assert!(result.is_success());
+    let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance + U256::from(1_000), new_balance);
+}
+
+#[test]
 fn test_receive_failed_message_unsuccessful_log_restores_balance() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 
@@ -515,6 +573,62 @@ fn test_receive_failed_message_unsuccessful_log_restores_balance() {
     bytecode.push(opcode::CODECOPY);
     bytecode.push(opcode::PUSH32);
     bytecode.extend_from_slice(ReceivedMessage::SIGNATURE_HASH.as_slice());
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::LOG1);
+    bytecode.push(opcode::STOP);
+    assert_eq!(bytecode.len(), LOG_DATA_OFFSET);
+    bytecode.extend(log_data);
+
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
+
+    let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    let input = receiveFailedMessageCall {
+        from: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x01),
+        value: U256::from(1_000),
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        messageNonce: U256::ZERO,
+        message: Bytes::new(),
+    }
+    .abi_encode();
+
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        input.into(),
+        None,
+        None,
+    );
+
+    assert!(result.is_success());
+    let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, new_balance);
+}
+
+#[test]
+fn test_receive_failed_message_unsuccessful_retried_failed_log_restores_balance() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let log_data = RetriedFailedMessage {
+        messageHash: B256::ZERO,
+        successfulCall: false,
+        returnData: Bytes::new(),
+    }
+    .encode_data();
+
+    let mut bytecode = Vec::new();
+    const LOG_DATA_OFFSET: usize = 6 + 2 + 32 + 3 + 1;
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(LOG_DATA_OFFSET).unwrap());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::CODECOPY);
+    bytecode.push(opcode::PUSH32);
+    bytecode.extend_from_slice(RetriedFailedMessage::SIGNATURE_HASH.as_slice());
     bytecode.push(opcode::PUSH1);
     bytecode.push(u8::try_from(log_data.len()).unwrap());
     bytecode.push(opcode::PUSH0);
@@ -646,6 +760,73 @@ fn test_nested_call_inside_bridge_cant_fail_execution() {
 
     // Deploy an empty bytecode at zero address (to trigger new frame)
     ctx.add_evm_contract(Address::ZERO, vec![opcode::STOP]);
+
+    let log_data = ReceivedMessage {
+        messageHash: B256::ZERO,
+        successfulCall: true,
+        returnData: Bytes::new(),
+    }
+    .encode_data();
+    let mut bytecode = Vec::new();
+    bytecode.push(opcode::PUSH0); // ret length
+    bytecode.push(opcode::PUSH0); // ret offset
+    bytecode.push(opcode::PUSH0); // args length
+    bytecode.push(opcode::PUSH0); // args offset
+    bytecode.push(opcode::PUSH0); // value
+    bytecode.push(opcode::PUSH0); // addr
+    bytecode.push(opcode::GAS); // gas
+    bytecode.push(opcode::CALL); // just a new dummy frame before log
+    const LOG_DATA_OFFSET: usize = 8 + 6 + 2 + 32 + 3;
+    // copy log data (6)
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(log_data.len()).unwrap()); // length
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(LOG_DATA_OFFSET).unwrap()); // offset
+    bytecode.push(opcode::PUSH0); // data offset
+    bytecode.push(opcode::CODECOPY);
+    // call log1 (2 + 32 + 3)
+    bytecode.push(opcode::PUSH32); // topic
+    bytecode.extend_from_slice(ReceivedMessage::SIGNATURE_HASH.as_slice());
+    bytecode.push(opcode::PUSH1); // data length
+    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(opcode::PUSH0); // data offset
+    bytecode.push(opcode::LOG1);
+    assert_eq!(bytecode.len(), LOG_DATA_OFFSET);
+    bytecode.extend(log_data);
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
+
+    let receive_message_input = receiveMessageCall {
+        from: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x01),
+        value: U256::from(1e9),
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        messageNonce: U256::ZERO,
+        message: Bytes::new(),
+    }
+    .abi_encode();
+    let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        receive_message_input.into(),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+    let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance + U256::from(1e9), new_balance);
+}
+
+#[test]
+fn test_halted_nested_call_inside_bridge_cant_fail_execution() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    // Deploy an empty bytecode at zero address (to trigger new frame)
+    ctx.add_evm_contract(
+        Address::ZERO,
+        vec![opcode::PUSH0, 0x01, opcode::PUSH1, opcode::DIV, opcode::POP],
+    );
 
     let log_data = ReceivedMessage {
         messageHash: B256::ZERO,

@@ -2,7 +2,8 @@
 
 import fs from "node:fs";
 import process from "node:process";
-import {JsonRpcProvider, keccak256, Transaction} from "ethers";
+import path from "node:path";
+import {JsonRpcProvider, keccak256, Transaction, getAddress} from "ethers";
 import {encode as rlpEncode} from "rlp";
 
 function usage() {
@@ -13,8 +14,8 @@ function usage() {
 }
 
 function ensureHex(value, fallback = "0x0") {
-    if (typeof value == "number") {
-        return '0x' + value.toString(16);
+    if (typeof value === "number") {
+        return "0x" + value.toString(16);
     }
     return typeof value === "string" && value.startsWith("0x") ? value : fallback;
 }
@@ -58,13 +59,78 @@ function stripUndefined(obj) {
 }
 
 function logsHash(logs) {
-    const encodedLogs = logs.map(log => [
+    const encodedLogs = logs.map((log) => [
         log.address,
         log.topics,
-        log.data
+        log.data,
     ]);
     const rlp = rlpEncode(encodedLogs);
     return keccak256(rlp);
+}
+
+function canonicalAddress(addr) {
+    try {
+        return getAddress(addr).toLowerCase();
+    } catch {
+        return String(addr).toLowerCase();
+    }
+}
+
+function evmPrecompileAddress(value) {
+    return "0x" + value.toString(16).padStart(40, "0");
+}
+
+// Taken from genesis.rs TESTNET_LEGACY_PRECOMPILE_ADDRESSES and related constants. :contentReference[oaicite:1]{index=1}
+const SYSTEM_CONTRACT_ADDRESSES = new Set([
+    canonicalAddress("0x0000000000000000000000000000000000520001"), // PRECOMPILE_EVM_RUNTIME
+    canonicalAddress("0x0000000000000000000000000000000000520003"), // PRECOMPILE_SVM_RUNTIME
+    canonicalAddress("0x0000000000000000000000000000000000520004"), // PRECOMPILE_UNUSED_4
+    canonicalAddress("0x0000000000000000000000000000000000520005"), // PRECOMPILE_WEBAUTHN_VERIFIER
+    canonicalAddress("0x0000000000000000000000000000000000520006"), // PRECOMPILE_OAUTH2_VERIFIER
+    canonicalAddress("0x0000000000000000000000000000000000520007"), // PRECOMPILE_NITRO_VERIFIER
+    canonicalAddress("0x0000000000000000000000000000000000520008"), // PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
+    canonicalAddress("0x0000000000000000000000000000000000520009"), // PRECOMPILE_WASM_RUNTIME
+    canonicalAddress("0x0000000000000000000000000000000000520010"), // PRECOMPILE_RUNTIME_UPGRADE
+    canonicalAddress("0x4e59b44847b379578588920cA78FbF26c0B4956C"), // PRECOMPILE_CREATE2_FACTORY
+    canonicalAddress("0x9CAcf613fC29015893728563f423fD26dCdB8Ddc"), // PRECOMPILE_ROLLUP_BRIDGE
+    canonicalAddress("0x0000000000000000000000000000000000520fee"), // PRECOMPILE_FEE_MANAGER
+    canonicalAddress("0x0000F90827F1C53a10cb7A02335B175320002935"), // PRECOMPILE_EIP2935
+    canonicalAddress("0x0000000000000000000000000000000000000100"), // PRECOMPILE_EIP7951
+
+    // EVM precompiles 0x01..0x11
+    ...Array.from({length: 0x11}, (_, i) => canonicalAddress(evmPrecompileAddress(i + 1))),
+]);
+
+function isSystemContractAddress(address) {
+    return SYSTEM_CONTRACT_ADDRESSES.has(canonicalAddress(address));
+}
+
+function externalizeCodeToFile(address, code, reusableDir) {
+    if (typeof code !== "string" || !code.startsWith("0x") || code === "0x") {
+        return code;
+    }
+
+    const hash = keccak256(code).slice(2);
+    const fileName = `${address.toLowerCase()}_${hash}.bin`;
+    const filePath = path.join(reusableDir, fileName);
+
+    if (!fs.existsSync(filePath)) {
+        fs.writeFileSync(filePath, Buffer.from(code.slice(2), "hex"));
+    }
+
+    return `file://fixtures/reusable-bytecode/${fileName}`;
+}
+
+function externalizeSystemContractBytecodes(state, reusableDir) {
+    for (const [address, account] of Object.entries(state)) {
+        if (!account || typeof account !== "object") {
+            continue;
+        }
+        if (!isSystemContractAddress(address)) {
+            continue;
+        }
+        account.code = externalizeCodeToFile(address, account.code, reusableDir);
+    }
 }
 
 async function main() {
@@ -72,6 +138,9 @@ async function main() {
     if (!rpcUrl || !txHash) usage();
 
     const outputFile = outputFileArg ?? `testcases/fixture_${txHash.slice(2, 10)}.json`;
+    const reusableDir = path.resolve("./fixtures/reusable-bytecode");
+    fs.mkdirSync(reusableDir, {recursive: true});
+
     const provider = new JsonRpcProvider(rpcUrl);
 
     const tx = await provider.send("eth_getTransactionByHash", [txHash]);
@@ -135,6 +204,10 @@ async function main() {
     delete preState['0x0000000000000000000000000000000000520fee'];
     delete postState['0x0000000000000000000000000000000000520fee'];
 
+    // Externalize bytecode for all known system contracts
+    externalizeSystemContractBytecodes(preState, reusableDir);
+    externalizeSystemContractBytecodes(postState, reusableDir);
+
     let rawTx;
     try {
         rawTx = Transaction.from({
@@ -167,7 +240,7 @@ async function main() {
     const fixture = stripUndefined({
         [`tx_${txHash.slice(2, 10)}`]: {
             _info: {
-                comment: "Auto-generated from RPC using eth_getTransaction*, eth_getBlock*, and debug_traceTransaction(prestateTracer diffMode=true).",
+                comment: "Auto-generated fixture",
                 sourceTxHash: txHash,
                 sourceBlockHash: tx.blockHash,
                 sourceBlockNumber: tx.blockNumber,

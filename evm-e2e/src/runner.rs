@@ -21,10 +21,11 @@ use revm::{
     Database, ExecuteCommitEvm, InspectCommitEvm, MainBuilder, MainnetEvm,
 };
 use revm_statetest_types::{SpecName, Test, TestSuite};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::{
     convert::Infallible,
     fmt::Debug,
+    fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -892,6 +893,29 @@ pub fn execute_evm_test_suite(
     Ok(())
 }
 
+pub fn resolve_externalized_bytecodes(v: &mut Value, base_dir: &Path) {
+    match v {
+        Value::Array(arr) => {
+            for item in arr {
+                resolve_externalized_bytecodes(item, base_dir);
+            }
+        }
+        Value::Object(map) => {
+            for (_, value) in map.iter_mut() {
+                resolve_externalized_bytecodes(value, base_dir);
+            }
+        }
+        Value::String(s) => {
+            if let Some(file) = s.strip_prefix("file://fixtures/reusable-bytecode/") {
+                let path: PathBuf = base_dir.join("reusable-bytecode").join(file);
+                let bytes = fs::read(&path).unwrap();
+                *s = format!("0x{}", hex::encode(bytes));
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn execute_fluent_test_suite(
     path: &Path,
     elapsed: &Arc<Mutex<Duration>>,
@@ -906,8 +930,10 @@ pub fn execute_fluent_test_suite(
         println!("Running test: {:?}", path);
     }
 
-    let s = std::fs::read_to_string(path).unwrap();
-    let suite: TestSuite = serde_json::from_str(&s).map_err(|e| TestError {
+    let mut fixture: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    resolve_externalized_bytecodes(&mut fixture, path.parent().unwrap());
+
+    let suite: TestSuite = serde_json::from_value(fixture).map_err(|e| TestError {
         name: path.to_string_lossy().into_owned(),
         kind: e.into(),
     })?;
