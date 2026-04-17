@@ -71,8 +71,17 @@ pub(crate) fn apply_bridge_pre_invocation_hook<CTX: ContextTr>(
             .load_account_with_code_mut(PRECOMPILE_ROLLUP_BRIDGE)?
             .data;
 
-        // Note: overflow here can't happen, we can't have more than 2**256 on bridge balance
-        _ = bridge_account.incr_balance(message_value)
+        if !bridge_account.incr_balance(message_value) {
+            let bridge_balance = bridge_account.balance();
+            warn!(
+                %bridge_balance,
+                value = %message_value,
+                "Failed to increase bridge balance on receive/receiveFailed message"
+            );
+            return Err(ContextError::Custom(
+                "bridge pre-hook: failed to increase bridge balance".to_string(),
+            ));
+        }
     }
 
     Ok(())
@@ -519,6 +528,23 @@ mod tests {
         apply_bridge_pre_invocation_hook(&inputs, &mut ctx).unwrap();
 
         assert_eq!(bridge_balance(&mut ctx), U256::from(9));
+    }
+
+    #[test]
+    fn pre_hook_fails_on_balance_overflow() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::MAX);
+
+        let inputs = make_call_inputs(
+            PRECOMPILE_ROLLUP_BRIDGE,
+            receive_message_input(U256::from(1)),
+            U256::ZERO,
+        );
+
+        let err = apply_bridge_pre_invocation_hook(&inputs, &mut ctx).unwrap_err();
+
+        assert!(matches!(err, ContextError::Custom(_)));
+        assert_eq!(bridge_balance(&mut ctx), U256::MAX);
     }
 
     #[test]
