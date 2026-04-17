@@ -149,11 +149,15 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
             // We count call as successful only if it executes w/o error and we have correct log
             receive_message_logs.first().copied().unwrap()
         } else {
-            // It can't happen, better to just terminate execution here
-            assert!(
-                receive_message_logs.is_empty(),
-                "revm: found non-zero receive message logs on failed transaction, it can't happen"
-            );
+            // Defensive guard: failed calls must not emit persistent bridge message logs.
+            if !receive_message_logs.is_empty() {
+                warn!(
+                    num_logs = receive_message_logs.len(),
+                    "Found receive message events on failed transaction"
+                );
+                *next_action = malformed_interpreter_action();
+                return Ok(());
+            }
             false
         };
 
@@ -205,11 +209,15 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
             // We count call as successful only if it executes w/o error and we have correct log
             Some(send_message_logs.first().unwrap().value)
         } else {
-            // It can't happen, better to just terminate execution here
-            assert!(
-                send_message_logs.is_empty(),
-                "revm: found non-zero sent message logs on failed transaction, it can't happen"
-            );
+            // Defensive guard: failed calls must not emit persistent bridge message logs.
+            if !send_message_logs.is_empty() {
+                warn!(
+                    num_logs = send_message_logs.len(),
+                    "Found sent message events on failed transaction"
+                );
+                *next_action = malformed_interpreter_action();
+                return Ok(());
+            }
             None
         };
 
@@ -287,4 +295,501 @@ fn malformed_interpreter_action() -> InterpreterAction {
         Bytes::new(),
         Gas::new(0),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::{Address, Log, B256};
+    use revm::{
+        context::{
+            journaled_state::account::JournaledAccountTr, BlockEnv, CfgEnv, JournalTr, TxEnv,
+        },
+        database::InMemoryDB,
+        interpreter::{CallInput, CallScheme, CallValue},
+    };
+
+    fn new_ctx() -> crate::RwasmContext<InMemoryDB> {
+        let db = InMemoryDB::default();
+        let mut ctx: crate::RwasmContext<InMemoryDB> =
+            crate::RwasmContext::new(db, crate::RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(crate::RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        ctx
+    }
+
+    fn set_bridge_balance(ctx: &mut crate::RwasmContext<InMemoryDB>, balance: U256) {
+        let mut bridge = ctx
+            .journal_mut()
+            .load_account_with_code_mut(PRECOMPILE_ROLLUP_BRIDGE)
+            .unwrap();
+        bridge.set_balance(balance);
+    }
+
+    fn bridge_balance(ctx: &mut crate::RwasmContext<InMemoryDB>) -> U256 {
+        let bridge = ctx
+            .journal_mut()
+            .load_account_with_code_mut(PRECOMPILE_ROLLUP_BRIDGE)
+            .unwrap();
+        *bridge.balance()
+    }
+
+    fn receive_message_input(value: U256) -> Bytes {
+        receiveMessageCall {
+            from: address!("0x1000000000000000000000000000000000000001"),
+            to: address!("0x2000000000000000000000000000000000000002"),
+            value,
+            chainId: U256::from(1),
+            blockNumber: U256::from(10),
+            messageNonce: U256::from(7),
+            message: vec![0xAA, 0xBB].into(),
+        }
+        .abi_encode()
+        .into()
+    }
+
+    fn receive_failed_message_input(value: U256) -> Bytes {
+        receiveFailedMessageCall {
+            from: address!("0x1000000000000000000000000000000000000001"),
+            to: address!("0x2000000000000000000000000000000000000002"),
+            value,
+            chainId: U256::from(1),
+            blockNumber: U256::from(10),
+            messageNonce: U256::from(9),
+            message: vec![0xCC].into(),
+        }
+        .abi_encode()
+        .into()
+    }
+
+    fn send_message_input() -> Bytes {
+        sendMessageCall {
+            to: address!("0x3000000000000000000000000000000000000003"),
+            message: vec![0x11, 0x22].into(),
+        }
+        .abi_encode()
+        .into()
+    }
+
+    fn make_call_inputs(target: Address, input: Bytes, value: U256) -> CallInputs {
+        CallInputs {
+            input: CallInput::Bytes(input),
+            return_memory_offset: Default::default(),
+            gas_limit: 1_000_000,
+            bytecode_address: target,
+            known_bytecode: None,
+            target_address: target,
+            caller: address!("0x4000000000000000000000000000000000000004"),
+            value: CallValue::Transfer(value),
+            scheme: CallScheme::Call,
+            is_static: false,
+        }
+    }
+
+    fn make_bridge_frame(input: Bytes, msg_value: U256) -> crate::RwasmFrame {
+        let mut frame = crate::RwasmFrame::default();
+        frame.interpreter.input.target_address = PRECOMPILE_ROLLUP_BRIDGE;
+        frame.interpreter.input.input = CallInput::Bytes(input);
+        frame.interpreter.input.call_value = msg_value;
+        frame
+    }
+
+    fn ok_action() -> InterpreterAction {
+        InterpreterAction::Return(InterpreterResult::new(
+            InstructionResult::Return,
+            Bytes::new(),
+            Gas::new(100_000),
+        ))
+    }
+
+    fn revert_action() -> InterpreterAction {
+        InterpreterAction::Return(InterpreterResult::new(
+            InstructionResult::Revert,
+            Bytes::new(),
+            Gas::new(100_000),
+        ))
+    }
+
+    fn assert_malformed(action: &InterpreterAction) {
+        assert_eq!(
+            action.instruction_result(),
+            Some(InstructionResult::MalformedBuiltinParams)
+        );
+    }
+
+    fn push_received_message_log(ctx: &mut crate::RwasmContext<InMemoryDB>, successful_call: bool) {
+        let event = ReceivedMessage {
+            messageHash: B256::ZERO,
+            successfulCall: successful_call,
+            returnData: Bytes::new(),
+        };
+        ctx.journal_mut().log(Log {
+            address: PRECOMPILE_ROLLUP_BRIDGE,
+            data: event.encode_log_data(),
+        });
+    }
+
+    fn push_retried_failed_message_log(
+        ctx: &mut crate::RwasmContext<InMemoryDB>,
+        successful_call: bool,
+    ) {
+        let event = RetriedFailedMessage {
+            messageHash: B256::ZERO,
+            successfulCall: successful_call,
+            returnData: Bytes::new(),
+        };
+        ctx.journal_mut().log(Log {
+            address: PRECOMPILE_ROLLUP_BRIDGE,
+            data: event.encode_log_data(),
+        });
+    }
+
+    fn push_sent_message_log(ctx: &mut crate::RwasmContext<InMemoryDB>, value: U256) {
+        let event = SentMessage {
+            sender: address!("0x4000000000000000000000000000000000000004"),
+            to: address!("0x3000000000000000000000000000000000000003"),
+            value,
+            chainId: U256::from(1),
+            blockNumber: U256::from(10),
+            nonce: U256::from(1),
+            messageHash: B256::ZERO,
+            data: vec![0xAB].into(),
+        };
+        ctx.journal_mut().log(Log {
+            address: PRECOMPILE_ROLLUP_BRIDGE,
+            data: event.encode_log_data(),
+        });
+    }
+
+    #[test]
+    fn pre_hook_mints_on_receive_message() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(10));
+
+        let inputs = make_call_inputs(
+            PRECOMPILE_ROLLUP_BRIDGE,
+            receive_message_input(U256::from(7)),
+            U256::ZERO,
+        );
+        apply_bridge_pre_invocation_hook(&inputs, &mut ctx).unwrap();
+
+        assert_eq!(bridge_balance(&mut ctx), U256::from(17));
+    }
+
+    #[test]
+    fn pre_hook_mints_on_receive_failed_message() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(2));
+
+        let inputs = make_call_inputs(
+            PRECOMPILE_ROLLUP_BRIDGE,
+            receive_failed_message_input(U256::from(5)),
+            U256::ZERO,
+        );
+        apply_bridge_pre_invocation_hook(&inputs, &mut ctx).unwrap();
+
+        assert_eq!(bridge_balance(&mut ctx), U256::from(7));
+    }
+
+    #[test]
+    fn pre_hook_ignores_non_bridge_target() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(9));
+
+        let inputs = make_call_inputs(
+            address!("0x5000000000000000000000000000000000000005"),
+            receive_message_input(U256::from(7)),
+            U256::ZERO,
+        );
+        apply_bridge_pre_invocation_hook(&inputs, &mut ctx).unwrap();
+
+        assert_eq!(bridge_balance(&mut ctx), U256::from(9));
+    }
+
+    #[test]
+    fn pre_hook_ignores_malformed_receive_payload() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(9));
+
+        let mut malformed = Vec::from(receiveMessageCall::SELECTOR);
+        malformed.extend_from_slice(&[0x01, 0x02]);
+
+        let inputs = make_call_inputs(PRECOMPILE_ROLLUP_BRIDGE, malformed.into(), U256::ZERO);
+        apply_bridge_pre_invocation_hook(&inputs, &mut ctx).unwrap();
+
+        assert_eq!(bridge_balance(&mut ctx), U256::from(9));
+    }
+
+    #[test]
+    fn post_hook_short_circuits_known_corrupted_testnet_tx() {
+        let mut ctx = new_ctx();
+        ctx.tx.chain_id = Some(0x5202);
+        ctx.tx.caller = address!("0x1C92DffBCe76670F69007F22A54e31ff3Ab45d5E");
+        ctx.tx.nonce = 537;
+
+        let _ = ctx.journal_mut().checkpoint();
+        let _ = ctx.journal_mut().checkpoint();
+        let _ = ctx.journal_mut().checkpoint();
+
+        let mut frame = make_bridge_frame(receive_message_input(U256::from(1)), U256::ZERO);
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+        assert_malformed(&next_action);
+    }
+
+    #[test]
+    fn post_hook_receive_success_keeps_balance() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(30));
+        push_received_message_log(&mut ctx, true);
+
+        let mut frame = make_bridge_frame(receive_message_input(U256::from(7)), U256::ZERO);
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_eq!(
+            next_action.instruction_result(),
+            Some(InstructionResult::Return)
+        );
+        assert_eq!(bridge_balance(&mut ctx), U256::from(30));
+    }
+
+    #[test]
+    fn post_hook_receive_failed_decreases_balance() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(30));
+        push_received_message_log(&mut ctx, false);
+
+        let mut frame = make_bridge_frame(receive_message_input(U256::from(7)), U256::ZERO);
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_eq!(bridge_balance(&mut ctx), U256::from(23));
+    }
+
+    #[test]
+    fn post_hook_accepts_retried_failed_message_event() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(25));
+        push_retried_failed_message_log(&mut ctx, false);
+
+        let mut frame = make_bridge_frame(receive_failed_message_input(U256::from(5)), U256::ZERO);
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_eq!(bridge_balance(&mut ctx), U256::from(20));
+    }
+
+    #[test]
+    fn post_hook_receive_with_missing_event_is_malformed() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(20));
+
+        let mut frame = make_bridge_frame(receive_message_input(U256::from(5)), U256::ZERO);
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_malformed(&next_action);
+        assert_eq!(bridge_balance(&mut ctx), U256::from(20));
+    }
+
+    #[test]
+    fn post_hook_receive_event_from_non_bridge_address_is_ignored_and_malformed() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(20));
+
+        let event = ReceivedMessage {
+            messageHash: B256::ZERO,
+            successfulCall: true,
+            returnData: Bytes::new(),
+        };
+        ctx.journal_mut().log(Log {
+            address: address!("0x7000000000000000000000000000000000000007"),
+            data: event.encode_log_data(),
+        });
+
+        let mut frame = make_bridge_frame(receive_message_input(U256::from(5)), U256::ZERO);
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_malformed(&next_action);
+        assert_eq!(bridge_balance(&mut ctx), U256::from(20));
+    }
+
+    #[test]
+    fn post_hook_receive_with_multiple_events_is_malformed() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(20));
+        push_received_message_log(&mut ctx, true);
+        push_retried_failed_message_log(&mut ctx, true);
+
+        let mut frame = make_bridge_frame(receive_message_input(U256::from(5)), U256::ZERO);
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_malformed(&next_action);
+        assert_eq!(bridge_balance(&mut ctx), U256::from(20));
+    }
+
+    #[test]
+    fn post_hook_send_message_decreases_balance_when_log_value_matches() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(100));
+        push_sent_message_log(&mut ctx, U256::from(11));
+
+        let mut frame = make_bridge_frame(send_message_input(), U256::from(11));
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_eq!(
+            next_action.instruction_result(),
+            Some(InstructionResult::Return)
+        );
+        assert_eq!(bridge_balance(&mut ctx), U256::from(89));
+    }
+
+    #[test]
+    fn post_hook_send_message_with_mismatch_value_is_malformed() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(100));
+        push_sent_message_log(&mut ctx, U256::from(12));
+
+        let mut frame = make_bridge_frame(send_message_input(), U256::from(11));
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_malformed(&next_action);
+        assert_eq!(bridge_balance(&mut ctx), U256::from(100));
+    }
+
+    #[test]
+    fn post_hook_send_message_with_missing_event_is_malformed() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(100));
+
+        let mut frame = make_bridge_frame(send_message_input(), U256::from(11));
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_malformed(&next_action);
+        assert_eq!(bridge_balance(&mut ctx), U256::from(100));
+    }
+
+    #[test]
+    fn post_hook_send_event_from_non_bridge_address_is_ignored_and_malformed() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(100));
+
+        let event = SentMessage {
+            sender: address!("0x4000000000000000000000000000000000000004"),
+            to: address!("0x3000000000000000000000000000000000000003"),
+            value: U256::from(11),
+            chainId: U256::from(1),
+            blockNumber: U256::from(10),
+            nonce: U256::from(1),
+            messageHash: B256::ZERO,
+            data: vec![0xAB].into(),
+        };
+        ctx.journal_mut().log(Log {
+            address: address!("0x7000000000000000000000000000000000000007"),
+            data: event.encode_log_data(),
+        });
+
+        let mut frame = make_bridge_frame(send_message_input(), U256::from(11));
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_malformed(&next_action);
+        assert_eq!(bridge_balance(&mut ctx), U256::from(100));
+    }
+
+    #[test]
+    fn post_hook_send_message_with_insufficient_bridge_balance_is_malformed() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(5));
+        push_sent_message_log(&mut ctx, U256::from(11));
+
+        let mut frame = make_bridge_frame(send_message_input(), U256::from(11));
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_malformed(&next_action);
+        assert_eq!(bridge_balance(&mut ctx), U256::from(5));
+    }
+
+    #[test]
+    fn post_hook_ignores_non_return_action() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(10));
+        push_received_message_log(&mut ctx, false);
+
+        let mut frame = make_bridge_frame(receive_message_input(U256::from(7)), U256::ZERO);
+        let mut next_action = InterpreterAction::SystemInterruption;
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert!(matches!(next_action, InterpreterAction::SystemInterruption));
+        assert_eq!(bridge_balance(&mut ctx), U256::from(10));
+    }
+
+    #[test]
+    fn post_hook_ignores_non_bridge_target() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(10));
+        push_received_message_log(&mut ctx, false);
+
+        let mut frame = make_bridge_frame(receive_message_input(U256::from(7)), U256::ZERO);
+        frame.interpreter.input.target_address =
+            address!("0x6000000000000000000000000000000000000006");
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_eq!(
+            next_action.instruction_result(),
+            Some(InstructionResult::Return)
+        );
+        assert_eq!(bridge_balance(&mut ctx), U256::from(10));
+    }
+
+    #[test]
+    fn post_hook_marks_malformed_if_receive_logs_exist_on_failed_tx() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(20));
+        push_received_message_log(&mut ctx, true);
+
+        let mut frame = make_bridge_frame(receive_message_input(U256::from(5)), U256::ZERO);
+        let mut next_action = revert_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_malformed(&next_action);
+    }
+
+    #[test]
+    fn post_hook_marks_malformed_if_send_logs_exist_on_failed_tx() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(20));
+        push_sent_message_log(&mut ctx, U256::from(5));
+
+        let mut frame = make_bridge_frame(send_message_input(), U256::from(5));
+        let mut next_action = revert_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_malformed(&next_action);
+    }
 }
