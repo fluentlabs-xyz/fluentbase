@@ -29,6 +29,18 @@ sol! {
         bytes data
     );
 
+    event SentMessage(
+        address indexed sender,
+        address indexed to,
+        uint256 value,
+        uint256 fee,
+        uint256 chainId,
+        uint256 blockNumber,
+        uint256 nonce,
+        bytes32 messageHash,
+        bytes data
+    );
+
     function receiveMessage(
         address from,
         address to,
@@ -198,10 +210,17 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
                     return None;
                 }
                 // If input data can't be decoded
-                let Ok(sent_message) = SentMessage::decode_log(log) else {
-                    return None;
-                };
-                Some(sent_message)
+                if let Ok(sent_message) = SentMessage_0::decode_log(log) {
+                    Some((sent_message.value, U256::ZERO))
+                } else if let Ok(sent_message) = SentMessage_1::decode_log(log) {
+                    if sent_message.value < sent_message.fee {
+                        warn!("Malfunctioning bridge emitted event where fee greater than total amount: value={}, fee={}", sent_message.value, sent_message.fee);
+                        return None;
+                    }
+                    Some((sent_message.value - sent_message.fee, sent_message.fee))
+                } else {
+                    None
+                }
             })
             .collect::<Vec<_>>();
 
@@ -216,7 +235,7 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
                 return Ok(());
             }
             // We count call as successful only if it executes w/o error and we have correct log
-            Some(send_message_logs.first().unwrap().value)
+            Some(send_message_logs.first().copied().unwrap())
         } else {
             // Defensive guard: failed calls must not emit persistent bridge message logs.
             if !send_message_logs.is_empty() {
@@ -239,8 +258,8 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
         let msg_value = frame.interpreter.input.call_value;
 
         // Burn extra eth for bridge since these funds are required for rollup withdrawal
-        if let Some(amount_to_be_burned) = amount_to_be_burned {
-            if amount_to_be_burned != msg_value {
+        if let Some((amount_to_be_burned, relayer_fee)) = amount_to_be_burned {
+            if amount_to_be_burned + relayer_fee != msg_value {
                 warn!(
                     %msg_value,
                     value = %amount_to_be_burned,
@@ -249,7 +268,7 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
                 *next_action = malformed_interpreter_action();
                 return Ok(());
             }
-            if !bridge_account.decr_balance(msg_value) {
+            if !bridge_account.decr_balance(amount_to_be_burned) {
                 let bridge_balance = bridge_account.balance();
                 warn!(
                     %bridge_balance,
@@ -455,7 +474,7 @@ mod tests {
     }
 
     fn push_sent_message_log(ctx: &mut crate::RwasmContext<InMemoryDB>, value: U256) {
-        let event = SentMessage {
+        let event = SentMessage_0 {
             sender: address!("0x4000000000000000000000000000000000000004"),
             to: address!("0x3000000000000000000000000000000000000003"),
             value,
@@ -717,7 +736,7 @@ mod tests {
         let mut ctx = new_ctx();
         set_bridge_balance(&mut ctx, U256::from(100));
 
-        let event = SentMessage {
+        let event = SentMessage_0 {
             sender: address!("0x4000000000000000000000000000000000000004"),
             to: address!("0x3000000000000000000000000000000000000003"),
             value: U256::from(11),

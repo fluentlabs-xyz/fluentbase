@@ -28,6 +28,18 @@ sol! {
         bytes data
     );
 
+    event SentMessage(
+        address indexed sender,
+        address indexed to,
+        uint256 value,
+        uint256 fee,
+        uint256 chainId,
+        uint256 blockNumber,
+        uint256 nonce,
+        bytes32 messageHash,
+        bytes data
+    );
+
     function receiveMessage(
         address from,
         address to,
@@ -112,7 +124,7 @@ fn test_failed_send_message_does_not_burn_bridge_balance() {
 
     let mut bytecode = Vec::new();
     bytecode.push(opcode::PUSH32);
-    bytecode.extend_from_slice(SentMessage::SIGNATURE_HASH.as_slice());
+    bytecode.extend_from_slice(SentMessage_0::SIGNATURE_HASH.as_slice());
     bytecode.push(opcode::PUSH0);
     bytecode.push(opcode::PUSH0);
     bytecode.push(opcode::LOG1);
@@ -144,7 +156,7 @@ fn test_bridge_transaction_fails_on_zero_topics_emitted() {
 
     let mut bytecode = Vec::new();
     bytecode.push(opcode::PUSH32);
-    bytecode.extend_from_slice(SentMessage::SIGNATURE_HASH.as_slice());
+    bytecode.extend_from_slice(SentMessage_0::SIGNATURE_HASH.as_slice());
     bytecode.push(opcode::PUSH0);
     bytecode.push(opcode::PUSH0);
     bytecode.push(opcode::LOG1);
@@ -208,7 +220,7 @@ fn test_receive_message_revert_restores_bridge_balance() {
 fn test_send_message_burns_balance_on_successful_valid_log() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 
-    let log_data = SentMessage {
+    let log_data = SentMessage_0 {
         sender: Address::repeat_byte(0x01),
         to: Address::repeat_byte(0x02),
         value: U256::from(123),
@@ -267,10 +279,74 @@ fn test_send_message_burns_balance_on_successful_valid_log() {
 }
 
 #[test]
+fn test_send_message_burns_balance_on_successful_send_with_fee() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let log_data = SentMessage_1 {
+        sender: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x02),
+        value: U256::from(123),
+        fee: U256::from(3),
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        nonce: U256::ZERO,
+        messageHash: B256::ZERO,
+        data: Bytes::new(),
+    };
+    let encoded_log_data = log_data.encode_data();
+
+    let mut bytecode = Vec::new();
+    const LOG_DATA_OFFSET: usize = 88;
+    bytecode.push(opcode::PUSH2);
+    bytecode.extend_from_slice(&u16::try_from(encoded_log_data.len()).unwrap().to_be_bytes());
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(LOG_DATA_OFFSET).unwrap());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::CODECOPY);
+    let (topic0, topic1, topic2) = log_data.topics();
+    bytecode.push(opcode::PUSH20);
+    bytecode.extend_from_slice(topic2.as_slice());
+    bytecode.push(opcode::PUSH20);
+    bytecode.extend_from_slice(topic1.as_slice());
+    bytecode.push(opcode::PUSH32);
+    bytecode.extend_from_slice(topic0.as_slice());
+    bytecode.push(opcode::PUSH2);
+    bytecode.extend_from_slice(&u16::try_from(encoded_log_data.len()).unwrap().to_be_bytes());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::LOG3);
+    bytecode.push(opcode::STOP);
+    assert_eq!(bytecode.len(), LOG_DATA_OFFSET);
+    bytecode.extend(encoded_log_data);
+
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
+
+    let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, U256::ZERO);
+    let input = sendMessageCall {
+        to: Address::repeat_byte(0x02),
+        message: Bytes::new(),
+    }
+    .abi_encode();
+
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        input.into(),
+        None,
+        Some(U256::from(123)),
+    );
+    println!("status: {:?}", result);
+    assert!(result.is_success());
+
+    let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(new_balance, U256::from(3));
+}
+
+#[test]
 fn test_send_message_fails_on_value_mismatch() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 
-    let log_data = SentMessage {
+    let log_data = SentMessage_0 {
         sender: Address::repeat_byte(0x01),
         to: Address::repeat_byte(0x02),
         value: U256::from(999), // mismatch
