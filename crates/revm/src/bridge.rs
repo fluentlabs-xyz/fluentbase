@@ -61,6 +61,11 @@ pub(crate) fn apply_bridge_pre_invocation_hook<CTX: ContextTr>(
         return Ok(());
     }
 
+    // Static calls must not mutate accounting.
+    if inputs.is_static {
+        return Ok(());
+    }
+
     // Do not apply mint/burn accounting on delegatecall-style execution where bridge storage
     // is reused with another execution context. Otherwise nested delegatecalls can mint twice.
     if matches!(
@@ -123,6 +128,11 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
 
     // Make sure this is the message and recipient we're looking for
     if frame.interpreter.input.target_address != PRECOMPILE_ROLLUP_BRIDGE {
+        return Ok(());
+    }
+
+    // Static calls must not mutate accounting.
+    if frame.interpreter.runtime_flag.is_static {
         return Ok(());
     }
 
@@ -602,6 +612,24 @@ mod tests {
     }
 
     #[test]
+    fn pre_hook_ignores_staticcall_into_bridge() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(10));
+
+        let mut inputs = make_call_inputs(
+            PRECOMPILE_ROLLUP_BRIDGE,
+            receive_message_input(U256::from(7)),
+            U256::ZERO,
+        );
+        inputs.is_static = true;
+        inputs.scheme = CallScheme::StaticCall;
+
+        apply_bridge_pre_invocation_hook(&inputs, &mut ctx).unwrap();
+
+        assert_eq!(bridge_balance(&mut ctx), U256::from(10));
+    }
+
+    #[test]
     fn post_hook_short_circuits_known_corrupted_testnet_tx() {
         let mut ctx = new_ctx();
         ctx.tx.chain_id = Some(0x5202);
@@ -856,6 +884,25 @@ mod tests {
             U256::ZERO,
             Some(address!("0x9000000000000000000000000000000000000009")),
         );
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_eq!(
+            next_action.instruction_result(),
+            Some(InstructionResult::Return)
+        );
+        assert_eq!(bridge_balance(&mut ctx), U256::from(10));
+    }
+
+    #[test]
+    fn post_hook_ignores_staticcall_into_bridge() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(10));
+        push_received_message_log(&mut ctx, false);
+
+        let mut frame = make_bridge_frame(receive_message_input(U256::from(7)), U256::ZERO);
+        frame.interpreter.runtime_flag.is_static = true;
         let mut next_action = ok_action();
 
         apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
