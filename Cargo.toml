@@ -15,7 +15,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.1.4"
+version = "1.1.5"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
@@ -30,21 +30,21 @@ categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
 # fluentbase
-fluentbase-build = { path = "./crates/build", default-features = false, version = "1.1.4" }
-fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"], version = "1.1.4" }
-fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false, version = "1.1.4" }
-fluentbase-contracts = { path = "./crates/contracts", default-features = false, version = "1.1.4" }
-fluentbase-crypto = { path = "./crates/crypto", default-features = false, version = "1.1.4" }
-fluentbase-evm = { path = "./crates/evm", default-features = false, version = "1.1.4" }
-fluentbase-genesis = { path = "./crates/genesis", default-features = false, version = "1.1.4" }
-fluentbase-node = { path = "./crates/node", default-features = false, version = "1.1.4" }
-fluentbase-revm = { path = "./crates/revm", default-features = false, version = "1.1.4" }
-fluentbase-runtime = { path = "./crates/runtime", default-features = false, version = "1.1.4" }
-fluentbase-sdk = { path = "./crates/sdk", default-features = false, version = "1.1.4" }
-fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false, version = "1.1.4" }
-fluentbase-sdk-derive-core = { path = "./crates/sdk-derive/derive-core", default-features = false, version = "1.1.4" }
-fluentbase-testing = { path = "./crates/testing", version = "1.1.4" }
-fluentbase-types = { path = "./crates/types", default-features = false, version = "1.1.4" }
+fluentbase-build = { path = "./crates/build", default-features = false, version = "1.1.5" }
+fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"], version = "1.1.5" }
+fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false, version = "1.1.5" }
+fluentbase-contracts = { path = "./crates/contracts", default-features = false, version = "1.1.5" }
+fluentbase-crypto = { path = "./crates/crypto", default-features = false, version = "1.1.5" }
+fluentbase-evm = { path = "./crates/evm", default-features = false, version = "1.1.5" }
+fluentbase-genesis = { path = "./crates/genesis", default-features = false, version = "1.1.5" }
+fluentbase-node = { path = "./crates/node", default-features = false, version = "1.1.5" }
+fluentbase-revm = { path = "./crates/revm", default-features = false, version = "1.1.5" }
+fluentbase-runtime = { path = "./crates/runtime", default-features = false, version = "1.1.5" }
+fluentbase-sdk = { path = "./crates/sdk", default-features = false, version = "1.1.5" }
+fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false, version = "1.1.5" }
+fluentbase-sdk-derive-core = { path = "./crates/sdk-derive/derive-core", default-features = false, version = "1.1.5" }
+fluentbase-testing = { path = "./crates/testing", version = "1.1.5" }
+fluentbase-types = { path = "./crates/types", default-features = false, version = "1.1.5" }
 #fluentbase-svm = { path = "./crates/svm", default-features = false }
 #fluentbase-svm-shared = { path = "./crates/svm-shared", default-features = false }
 #fluentbase-svm-common = { path = "./crates/svm-common", default-features = false }
