@@ -8,7 +8,7 @@ use revm::{
         journaled_state::account::JournaledAccountTr, ContextError, ContextTr, JournalTr,
         Transaction,
     },
-    interpreter::{CallInputs, Gas, InstructionResult},
+    interpreter::{CallInputs, CallScheme, FrameInput, Gas, InstructionResult},
     Database,
 };
 use tracing::warn;
@@ -68,8 +68,18 @@ pub(crate) fn apply_bridge_pre_invocation_hook<CTX: ContextTr>(
     inputs: &CallInputs,
     ctx: &mut CTX,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
-    // Make sure the recipient and prefix are correct
-    if inputs.target_address != PRECOMPILE_ROLLUP_BRIDGE {
+    // Don't allow to proceed if target address doesn't match rollup bridge address
+    if inputs.target_address != PRECOMPILE_ROLLUP_BRIDGE || inputs.is_static {
+        return Ok(());
+    }
+
+    if ctx.tx().chain_id() == Some(0x5202) && ctx.block_number() <= 24457093 {
+        // Before block 24457093 double mints happened. Keep the same behavior
+        // to satisfy fixture tests.
+        //
+        // Note: remove this check once we have new testnet snapshot
+    } else if inputs.scheme != CallScheme::Call {
+        // Don't mint extra ether to rollup bridge in case of delegate call
         return Ok(());
     }
 
@@ -124,8 +134,24 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
         _ => return Ok(()),
     };
 
+    // Skip if it's not a call
+    let inputs = match &frame.input {
+        FrameInput::Call(call_inputs) => call_inputs,
+        _ => return Ok(()),
+    };
+
     // Make sure this is the message and recipient we're looking for
-    if frame.interpreter.input.target_address != PRECOMPILE_ROLLUP_BRIDGE {
+    if frame.interpreter.input.target_address != PRECOMPILE_ROLLUP_BRIDGE || inputs.is_static {
+        return Ok(());
+    }
+
+    if ctx.tx().chain_id() == Some(0x5202) && ctx.block_number() <= 24457093 {
+        // Before block 24457093 double mints happened. Keep the same behavior
+        // to satisfy fixture tests.
+        //
+        // Note: remove this check once we have new testnet snapshot
+    } else if inputs.scheme != CallScheme::Call {
+        // Don't mint extra ether to rollup bridge in case of delegate call
         return Ok(());
     }
 
@@ -415,11 +441,23 @@ mod tests {
         }
     }
 
-    fn make_bridge_frame(input: Bytes, msg_value: U256) -> crate::RwasmFrame {
-        let mut frame = crate::RwasmFrame::default();
+    fn make_bridge_frame(input: Bytes, msg_value: U256) -> RwasmFrame {
+        let mut frame = RwasmFrame::default();
         frame.interpreter.input.target_address = PRECOMPILE_ROLLUP_BRIDGE;
-        frame.interpreter.input.input = CallInput::Bytes(input);
+        frame.interpreter.input.input = CallInput::Bytes(input.clone());
         frame.interpreter.input.call_value = msg_value;
+        frame.input = FrameInput::Call(Box::new(CallInputs {
+            input: CallInput::Bytes(input),
+            return_memory_offset: Default::default(),
+            gas_limit: 0,
+            bytecode_address: Default::default(),
+            known_bytecode: None,
+            target_address: PRECOMPILE_ROLLUP_BRIDGE,
+            caller: Default::default(),
+            value: Default::default(),
+            scheme: CallScheme::Call,
+            is_static: false,
+        }));
         frame
     }
 

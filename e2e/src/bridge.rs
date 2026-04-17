@@ -960,3 +960,80 @@ fn test_halted_nested_call_inside_bridge_cant_fail_execution() {
     let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
     assert_eq!(old_balance + U256::from(1e9), new_balance);
 }
+
+#[test]
+fn test_bridge_mint_once_for_delegate_call() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    // Deploy an empty bytecode at zero address (to trigger new frame)
+    ctx.add_evm_contract(
+        Address::ZERO,
+        vec![opcode::PUSH0, 0x01, opcode::PUSH1, opcode::DIV, opcode::POP],
+    );
+
+    const IMPL_ADDRESS: Address = Address::repeat_byte(0x77);
+
+    let log_data = ReceivedMessage {
+        messageHash: B256::ZERO,
+        successfulCall: true,
+        returnData: Bytes::new(),
+    }
+    .encode_data();
+    let mut impl_bytecode = Vec::new();
+    const LOG_DATA_OFFSET: usize = 6 + 2 + 32 + 3;
+    // copy log data (6)
+    impl_bytecode.push(opcode::PUSH1);
+    impl_bytecode.push(u8::try_from(log_data.len()).unwrap()); // length
+    impl_bytecode.push(opcode::PUSH1);
+    impl_bytecode.push(u8::try_from(LOG_DATA_OFFSET).unwrap()); // offset
+    impl_bytecode.push(opcode::PUSH0); // data offset
+    impl_bytecode.push(opcode::CODECOPY);
+    // call log1 (2 + 32 + 3)
+    impl_bytecode.push(opcode::PUSH32); // topic
+    impl_bytecode.extend_from_slice(ReceivedMessage::SIGNATURE_HASH.as_slice());
+    impl_bytecode.push(opcode::PUSH1); // data length
+    impl_bytecode.push(u8::try_from(log_data.len()).unwrap());
+    impl_bytecode.push(opcode::PUSH0); // data offset
+    impl_bytecode.push(opcode::LOG1);
+    assert_eq!(impl_bytecode.len(), LOG_DATA_OFFSET);
+    impl_bytecode.extend(log_data);
+    ctx.add_evm_contract(IMPL_ADDRESS, impl_bytecode);
+
+    let mut proxy_bytecode = Vec::new();
+    proxy_bytecode.push(opcode::CALLDATASIZE); // length
+    proxy_bytecode.push(opcode::PUSH0); // offset
+    proxy_bytecode.push(opcode::PUSH0); // destOffset
+    proxy_bytecode.push(opcode::CALLDATACOPY);
+    proxy_bytecode.push(opcode::PUSH0); // ret length
+    proxy_bytecode.push(opcode::PUSH0); // ret offset
+    proxy_bytecode.push(opcode::CALLDATASIZE); // args length
+    proxy_bytecode.push(opcode::PUSH0); // args offset
+    proxy_bytecode.push(opcode::PUSH20); // addr
+    proxy_bytecode.extend_from_slice(IMPL_ADDRESS.as_slice());
+    proxy_bytecode.push(opcode::GAS); // gas
+    proxy_bytecode.push(opcode::DELEGATECALL);
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, proxy_bytecode);
+
+    let receive_message_input = receiveMessageCall {
+        from: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x01),
+        value: U256::from(1e9),
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        messageNonce: U256::ZERO,
+        message: Bytes::new(),
+    }
+    .abi_encode();
+    let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(U256::ZERO, old_balance);
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        receive_message_input.into(),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+    let new_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance + U256::from(1e9), new_balance);
+}
