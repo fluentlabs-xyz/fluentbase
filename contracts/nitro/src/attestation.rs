@@ -32,7 +32,7 @@ use p384::ecdsa::signature::Verifier;
 use x509_cert::{certificate::Certificate, ext::pkix::BasicConstraints};
 
 // AWS Nitro root certificate (exp. 2050)
-static NITRO_ROOT_CA_BYTES: &[u8] = include_bytes!("nitro.pem");
+static NITRO_ROOT_CA_BYTES: &[u8] = include_bytes!("../nitro.pem");
 
 /// BasicConstraints (OID: 2.5.29.19)
 const BASIC_CONSTRAINTS_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.19");

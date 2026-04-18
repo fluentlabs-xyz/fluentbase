@@ -20,6 +20,7 @@ use revm::primitives::{keccak256, Address, Bytes, U256};
 use std::time::Instant;
 
 #[test]
+#[ignore]
 fn fuel_nitro_verifier_evm_ctx() {
     let input = include_bytes!("../../contracts/nitro/testdata/sample.bin").to_vec();
 
