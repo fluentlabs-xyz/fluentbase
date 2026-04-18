@@ -48,3 +48,45 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
 }
 
 entrypoint!(main_entry);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::{Address, U256, keccak256};
+    use fluentbase_testing::TestingContextImpl;
+
+    #[test]
+    fn test_dev_registration() {
+        // Simulate a repo hash (32 bytes)
+        let repo_hash = [42u8; 32];
+        // Simulate a caller address
+        let caller = Address::from([1u8; 20]);
+
+        let sdk = TestingContextImpl::default()
+            .with_caller(caller)
+            .with_input(repo_hash);
+
+        main_entry(sdk.clone());
+
+        // Compute the expected storage key
+        let mut extended_input = [0u8; 61];
+        extended_input[0..29].copy_from_slice(STORAGE_NAMESPACE_PREFIX);
+        extended_input[29..61].copy_from_slice(&repo_hash);
+        let secure_slot_hash = keccak256(extended_input);
+        let storage_key = U256::from_be_bytes(secure_slot_hash.0);
+
+        // Compute the expected storage value (caller address padded to U256)
+        let mut val_bytes = [0u8; 32];
+        val_bytes[12..32].copy_from_slice(caller.as_slice());
+        let expected_value = U256::from_be_bytes(val_bytes);
+
+        // Check storage
+        let contract_addr = sdk.context().contract_address();
+        let storage = sdk.dump_storage();
+        assert_eq!(storage.get(&(contract_addr, storage_key)), Some(&expected_value));
+
+        // Check output
+        let output = sdk.take_output();
+        assert_eq!(output, b"Secure Dev Registration via FreeDropOracle");
+    }
+}
