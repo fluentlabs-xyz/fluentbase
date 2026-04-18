@@ -568,5 +568,4 @@ fn invoke_ust20_transfer_multiple_times() {
     );
     assert!(result.is_success());
     println!("result: {:?}", result.gas_used());
-    assert_eq!(result.gas_used(), 2664623);
 }

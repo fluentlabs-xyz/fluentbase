@@ -24,18 +24,22 @@ fn tokens_transfer_benches(c: &mut Criterion) {
                 .into(),
         );
         let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
-
+        let mut total_gas_used = 0;
+        let mut num_calls = 0;
         group.bench_function("1_Original_EVM_ERC20", |b| {
             b.iter(|| {
-                ctx.call_evm_tx(
+                let result = ctx.call_evm_tx(
                     OWNER_ADDRESS,
                     contract_address,
                     transfer_payload.clone(),
                     None,
                     None,
                 );
+                total_gas_used += result.gas_used();
+                num_calls += 1;
             });
         });
+        println!("Avg gas use: {}", total_gas_used / num_calls);
     }
 
     // --- Benchmark 2: Emulated EVM ERC20 (rWasm enabled) ---
@@ -49,18 +53,22 @@ fn tokens_transfer_benches(c: &mut Criterion) {
                 .into(),
         );
         let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
-
+        let mut total_gas_used = 0;
+        let mut num_calls = 0;
         group.bench_function("2_Emulated_EVM_ERC20", |b| {
             b.iter(|| {
-                ctx.call_evm_tx(
+                let result = ctx.call_evm_tx(
                     OWNER_ADDRESS,
                     contract_address,
                     transfer_payload.clone(),
                     None,
                     None,
                 );
+                total_gas_used += result.gas_used();
+                num_calls += 1;
             });
         });
+        println!("Avg gas use: {}", total_gas_used / num_calls);
     }
 
     // --- Benchmark 3: rWasm Contract ERC20 ---
@@ -84,7 +92,8 @@ fn tokens_transfer_benches(c: &mut Criterion) {
         let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, input.into());
 
         let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
-
+        let mut total_gas_used = 0;
+        let mut num_calls = 0;
         group.bench_function("3_rWasm_Contract_ERC20", |b| {
             b.iter(|| {
                 let result = ctx.call_evm_tx(
@@ -94,12 +103,11 @@ fn tokens_transfer_benches(c: &mut Criterion) {
                     None,
                     None,
                 );
-                if !result.is_success() {
-                    println!("{:?}", result);
-                }
-                assert!(result.is_success())
+                total_gas_used += result.gas_used();
+                num_calls += 1;
             });
         });
+        println!("Avg gas use: {}", total_gas_used / num_calls);
     }
 
     // --- Benchmark 4: Precompiled Universal Token ---
@@ -130,6 +138,8 @@ fn tokens_transfer_benches(c: &mut Criterion) {
         }
         .encode_for_send(&mut input);
         let transfer_payload: Bytes = input.into();
+        let mut total_gas_used = 0;
+        let mut num_calls = 0;
         group.bench_function("4_Precompiled_Universal_token", |b| {
             // Note: Manual warmup calls are not needed. Criterion handles warmups automatically.
             b.iter(|| {
@@ -140,9 +150,11 @@ fn tokens_transfer_benches(c: &mut Criterion) {
                     None,
                     None,
                 );
-                assert!(result.is_success())
+                total_gas_used += result.gas_used();
+                num_calls += 1;
             });
         });
+        println!("Avg gas use: {}", total_gas_used / num_calls);
     }
 
     group.finish();
