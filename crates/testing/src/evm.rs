@@ -13,7 +13,7 @@ use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecut
 use fluentbase_sdk::{
     bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, Address, BytecodeOrHash, Bytes,
     ContextReader, ExitCode, GenesisContract, RwasmCompilationResult, SharedAPI,
-    SharedContextInputV1, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
+    SharedContextInputV1, PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256, WASM_SIG,
 };
 use revm::{
     context::{
@@ -239,8 +239,16 @@ impl EvmTestingContext {
     }
 
     pub fn deploy_evm_tx(&mut self, deployer: Address, init_bytecode: Bytes) -> Address {
-        let (contract_address, gas_used) = self.deploy_evm_tx_with_gas(deployer, init_bytecode);
-        println!("deployment gas used: {}", gas_used);
+        let (contract_address, gas_used) =
+            self.deploy_evm_tx_with_gas(deployer, init_bytecode.clone());
+
+        if init_bytecode.starts_with(&WASM_SIG) {
+            println!(
+                "deployment finished: initcode_size={}, gas_used={}",
+                init_bytecode.len(),
+                gas_used
+            );
+        }
         contract_address
     }
 
