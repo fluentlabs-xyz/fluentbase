@@ -58,7 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git clang jq \
     && rm -rf /var/lib/apt/lists/*
 
-RUN rustup target add wasm32-unknown-unknown
+RUN +1.92 rustup target add wasm32-unknown-unknown
 
 RUN git config --global submodule.fetchJobs 8 && \
     git config --global fetch.parallel 8
