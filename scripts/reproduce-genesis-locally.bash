@@ -7,7 +7,7 @@ TAG="${1:-v1.2.0-rc.1}"
 
 CURRENT_REV="$(git rev-parse HEAD)"
 TAG_REV="$(git rev-list -n 1 "$TAG")"
-``
+
 if [[ "$CURRENT_REV" != "$TAG_REV" ]]; then
   echo "Revision mismatch:"
   echo "  HEAD: $CURRENT_REV"
