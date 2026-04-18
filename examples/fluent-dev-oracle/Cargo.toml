@@ -1,0 +1,14 @@
+[package]
+name = "fluent-dev-oracle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# تأكد من أننا نستخدم النسخة المحلية دون std
+fluentbase-sdk = { path = "../../crates/sdk", default-features = false }
+codec = { package = "fluentbase-codec", path = "../../crates/codec", default-features = false }
+# استخدام نسخة محددة من alloy-primitives تدعم no_std
+alloy-primitives = { workspace = true }
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
