@@ -7,7 +7,7 @@ use fluentbase_sdk::{
     FUEL_DENOM_RATE, RWASM_MAX_CODE_SIZE,
 };
 
-/// An average overhead per each Wasm byte in fuel cost (~2.5 gas per byte).
+/// An average overhead per each Wasm byte in fuel cost (~50 gas per byte).
 const WASM_COMPILATION_OVERHEAD_FUEL_PER_BYTE: u32 = (50 * FUEL_DENOM_RATE) as u32;
 
 pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
