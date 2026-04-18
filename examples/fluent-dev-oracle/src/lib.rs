@@ -26,8 +26,7 @@ use alloy_primitives::U256;
 pub fn main_entry(mut sdk: impl SharedAPI) {
     let input = sdk.bytes_input();
     
-    // تأكد من أن المدخلات كافية لتحويلها لـ U256 (32 بايت)
-    if input.len() >= 32 {
+// Make sure the input is sufficient to convert it to U256 (32 bytes)    if input.len() >= 32 {
         let caller_address = sdk.context().contract_caller();
         
         // Convert the first 32 bytes of input to the storage key
