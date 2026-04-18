@@ -204,12 +204,15 @@ pub fn is_execute_using_system_runtime(address: &Address) -> bool {
 ///
 /// These contracts should be compiled with `consume_fuel=true` and
 /// `builtins_consume_fuel=true`.
+///
+/// P.S: Engine metered precompiles are temporarily disabled, will
+///  be re-enabled in the next releases
 pub const ENGINE_METERED_PRECOMPILES: &[Address] = &[
-    PRECOMPILE_NITRO_VERIFIER,
-    PRECOMPILE_OAUTH2_VERIFIER,
-    PRECOMPILE_WASM_RUNTIME,
-    PRECOMPILE_WEBAUTHN_VERIFIER,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
+    // PRECOMPILE_NITRO_VERIFIER,
+    // PRECOMPILE_OAUTH2_VERIFIER,
+    // PRECOMPILE_WASM_RUNTIME,
+    // PRECOMPILE_WEBAUTHN_VERIFIER,
+    // PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
 ];
 
 /// Returns `true` if the contract at `address` should be charged fuel by the runtime.

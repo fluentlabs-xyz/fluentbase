@@ -2,10 +2,10 @@ name: Test
 
 on:
   push:
-    branches: [ main, devel ]
+    branches: [ main, devel, "release/*" ]
     paths-ignore: [ "**.md", "docs/**" ]
   pull_request:
-    branches: [ main, devel ]
+    branches: [ main, devel, "release/*" ]
     paths-ignore: [ "**.md", "docs/**" ]
   workflow_dispatch:
 
