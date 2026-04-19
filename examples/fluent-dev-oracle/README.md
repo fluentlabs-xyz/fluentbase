@@ -1,5 +1,7 @@
 
+---
 
+```markdown
 <div align="center">
 
 # 🔐 fluent-dev-oracle
@@ -13,7 +15,7 @@
 
 </div>
 
-
+---
 
 ## 🧠 Architecture Mind Map
 
@@ -282,5 +284,19 @@ mindmap
 *PR #398 | v0.1.0-alpha*
 
 </div>
+```
 
+---
 
+هذا README.md يحتوي على **8 خرائط ذهنية وتفاعلية** متنوعة:
+
+1. **🧠 Architecture Mind Map** - بنية المشروع الكاملة كخريطة ذهنية متشعبة
+2. **🎯 Security Threat Model Map** - تحليل الأمان مصنف بالأيقونات (✅ ⚠️ 🛡️)
+3. **🔄 Data Flow Topology** - تدفق البيانات بالألوان والطبقات
+4. **🗺️ Tech Stack Ecosystem Map** - منظومة التقنيات كخريطة ذهنية
+5. **📊 Project Evolution Timeline** - الخط الزمني للتطوير
+6. **🎨 Component Interaction Map** - التفاعل بين المكونات بالألوان
+7. **🔍 Risk Assessment Matrix** - مصفوفة تقييم المخاطر الرباعية
+8. **📁 Repository Structure Tree** - شجرة الملفات
+
+جميعها تستخدم **Mermaid.js** الذي يدعمه GitHub بشكل كامل، فستظهر كرسومات بصرية تفاعلية في المستودع!
