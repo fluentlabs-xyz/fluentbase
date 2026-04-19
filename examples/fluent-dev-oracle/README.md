@@ -1,15 +1,17 @@
-
 # 📊 fluent-dev-oracle
 
-> Developer Identity Registry for Fluent Network
+> **Secure Developer Identity Registry** for the Fluent Network leveraging rWasm and Blended Execution.
 
-**Author:** @freedroporacle
+**Author:** [@freedroporacle](https://github.com/freedroporacle)  
+**Project Status:** PR #398 | v0.1.0-alpha
 
 ---
 
 ## 🎯 Executive Summary
 
-The `fluent-dev-oracle` project is a reference implementation of a **developer identity registry** designed for the Fluent Network. Its core goal is to provide a decentralized mapping between repository hashes (used as keys) and developer wallet addresses (used as values), enabling on-chain verification of developer identities.
+The `fluent-dev-oracle` is a high-performance reference implementation of a decentralized identity registry. It bridges the gap between software development and blockchain by creating an immutable, verifiable mapping between **Repository Hashes** and **Developer Wallet Addresses**. 
+
+Designed for the Fluent L2 ecosystem, it optimizes state transitions for ZK-proving while ensuring cryptographic isolation between different Virtual Machine environments.
 
 ---
 
@@ -18,154 +20,87 @@ The `fluent-dev-oracle` project is a reference implementation of a **developer i
 | Component | Technology |
 |-----------|-------------|
 | **Language** | Rust (Edition 2021) |
-| **Target** | `wasm32` (compiled to rWasm IR via `cdylib`/`staticlib`) |
-| **Core Libraries** | `fluentbase-sdk`, `alloy-primitives` |
-| **Environment** | `no_std` (standard library disabled for blockchain runtime compatibility) |
-
-### Dependencies
-- **fluentbase-sdk**: Runtime interface for storage, context, and I/O
-- **fluentbase-codec**: Serialization/deserialization
-- **alloy-primitives**: High-precision 256-bit integer handling (U256)
+| **Runtime Target** | `wasm32-unknown-unknown` (compiled to rWasm IR) |
+| **Core SDK** | `fluentbase-sdk` v1.1.7 |
+| **Cryptography** | `alloy-primitives` (U256), `keccak256` |
+| **Environment** | `no_std` (Zero OS-dependency for deterministic execution) |
 
 ---
 
 ## 📁 Project Structure
 
-```
+```bash
 fluent-dev-oracle/
-├── Cargo.toml          # Package manifest and dependency configuration
+├── Cargo.toml          # Manifest with strict dependency isolation
 └── src/
-    └── lib.rs          # Main contract logic and entry point
-```
+    └── lib.rs          # Secure registry logic & entrypoint
 
-### File Details
 
-| File | Purpose |
-|------|---------|
-| `Cargo.toml` | Defines project metadata, build targets (`cdylib`, `staticlib`), and external dependencies for rWasm VM compatibility |
-| `src/lib.rs` | Implements registry logic: extracts 32-byte repo hash from input, retrieves caller address, and saves mapping to blockchain storage |
+🔄 Secure Data Flow & Architecture
+Application Lifecycle (Secure Edition)
+The contract implements a specialized hashing step to ensure that storage slots remain isolated and collision-free.
+code Mermaid
+downloadcontent_copy
+expand_less
+graph TD
+    A[VM Invocation] --> B[main_entry]
+    B --> C[sdk.bytes_input]
+    C --> D{Input >= 32 bytes?}
+    D -- Yes --> E[Derive Secure Storage Key]
+    E --> F[keccak256: Prefix + InputHash]
+    F --> G[Get Caller Address]
+    G --> H[Write Storage: U256 Slot]
+    H --> I[Emit Secure Log]
+Data Movement Matrix
+Stage
+Transformation
+Security Benefit
+Input → Hash
+keccak256(Prefix + RepoHash)
+Namespace Separation: Prevents EVM/Wasm storage collisions
+Context → Logic
+contract_caller() → U256
+Verifiable origin identification
+Logic → Database
+sdk.write_storage(key, value)
+Commits identity to the global state
+Logic → Output
+Standardized String Output
+Facilitates off-chain indexing for oracles
 
----
+🛡️ Security Features (Implemented)
+Based on our initial Red-Teaming Analysis, the following protections were integrated:
+Namespace Isolation: Uses a unique domain prefix (fluent.oracle.dev_identity.v1) to salt the repository hashes. This ensures that the Oracle’s storage slots cannot overlap with standard ERC-20 or other contract storage slots in the Unified Account Space.
+Deterministic Mapping: All keys are derived using standard keccak256, making them provable and predictable for ZK-provers.
 
-## 🔄 Data Flow & Architecture
+⚠️ Known Risks & Future Roadmap
+Risk
+Description
+Mitigation Strategy
+Access Control
+Ownership of the Repo Hash is not currently verified
+Integrate cryptographic challenges (signed messages)
+Event Structure
+Current logs are raw strings
+Standardize events via the codec crate for indexers
 
-### Application Lifecycle
+🧠 Evolution of the Project (Mind Maps)
+The project began with a comprehensive risk analysis, which led to the current secure implementation. These mind maps represent the architectural and security assessment phases.
 
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   VM Invocation │────▶│  main_entry()    │────▶│  sdk.bytes_input│
-│  (entrypoint!)  │     │                  │     │                 │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-                                                          │
-                              ┌─────────────────────────┘
-                              ▼
-                    ┌──────────────────┐
-                    │  Extract first 32  │
-                    │  bytes as repo_hash│
-                    └──────────────────┘
-                              │
-                              ▼
-                    ┌──────────────────┐
-                    │ sdk.context()    │
-                    │ .contract_caller()│
-                    └──────────────────┘
-                              │
-                              ▼
-                    ┌──────────────────┐
-                    │  Convert to U256  │
-                    │  (Repository Hash)│
-                    └──────────────────┘
-                              │
-                              ▼
-                    ┌──────────────────┐
-                    │  Wallet Address   │
-                    │  ──▶ U256         │
-                    └──────────────────┘
-                              │
-                              ▼
-                    ┌──────────────────┐
-                    │ sdk.write_storage()│
-                    │ (Commit to state)  │
-                    └──────────────────┘
-                              │
-                              ▼
-                    ┌──────────────────┐
-                    │  sdk.write()     │
-                    │  (Log output)    │
-                    └──────────────────┘
-```
+![alt text](sandbox:///mnt/agents/output/fluent_dev_oracle_mindmaps.png)
 
-### Data Movement
-| Stage | Transformation |
-|-------|----------------|
-| **Input → Logic** | Raw bytes → U256 (Repository Hash) |
-| **Context → Logic** | Wallet Address → U256 (Developer Address) |
-| **Logic → Database** | `sdk.write_storage(key, value)` commits mapping to global state |
-| **Logic → Output** | `sdk.write(...)` emits string to execution logs for off-chain indexing |
 
----
+📝 Key Observations
+rWasm Optimized: The project utilizes the NativeCasAllocator, specifically tuned for rWasm execution, avoiding the overhead of a full standard library.
+ZK-Proof Friendly: The flattened Key-Value structure minimizes execution trace complexity, reducing proving costs for Fluent's L2 validators.
 
-## ⚠️ Security Vulnerabilities & Risks
-
-### 🔴 Critical Issues
-
-| Risk | Description | Severity |
-|------|-------------|----------|
-| **No Access Control** | Any user can register any repository hash without verification of ownership | 🔴 High |
-| **Overwriting Risk** | Existing mappings can be overwritten by any caller, enabling identity theft | 🔴 High |
-
-### Attack Scenarios
-1. **Identity Theft**: A malicious actor could register their own address to a known repository hash
-2. **Unauthorized Registration**: No verification that the caller actually owns the repository being registered
-
----
-
-## ✅ Suggestions for Improvement
-
-### 1. Ownership Verification
-Implement cryptographic challenge requiring users to sign a message with a key linked to the repository before allowing registration.
-
-### 2. Collision Prevention
-Add a check to ensure a `repo_hash` is not already registered before calling `write_storage`.
-
-### 3. Event Standardization
-Replace raw string logs (`"Dev Registered..."`) with structured event format via the codec crate for easier indexer parsing.
-
----
-
-## 🧠 Mind Maps Overview
-
-The following visual representations help understand the project architecture:
-
-1. **Project Architecture** - Core components and their relationships
-2. **Data Flow** - How data moves through the system
-3. **Security Analysis** - Vulnerabilities and mitigation strategies
-4. **Tech Stack** - Technology dependencies
-5. **File Structure** - Project organization
-
-![Project Mind Maps](sandbox:///mnt/agents/output/fluent_dev_oracle_mindmaps.png)
-
----
-
-## 📝 Key Observations
-
-- **Symmetry with SDK**: The project strictly adheres to `no_std` requirements, utilizing `alloc` and `fluentbase-sdk` to avoid OS dependencies
-- **Simple Mapping**: The architecture is a straightforward Key-Value store, making it highly efficient for ZK-proving
-- **rWasm Compatibility**: Configured as `cdylib` and `staticlib` for seamless integration with the Fluent rWasm VM
-
----
-
-## 🔗 References
-
-- [Fluent Network Documentation](https://fluent.network)
-- [fluentbase-sdk](https://github.com/fluentlabs-xyz/fluentbase)
-- [Rust WASM Target](https://rustwasm.github.io/)
-
----
+🔗 Official Links
+Fluent Network Docs
+Fluentbase Repository
 
 <div align="center">
-
-**Developed by** @freedroporacle
-
+Developed by @freedroporacle
+Architecting Truth on the Fluent Layer.
 </div>
+```
 
