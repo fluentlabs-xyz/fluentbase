@@ -1,5 +1,4 @@
 
-markdown
 
 <div align="center">
 
@@ -14,7 +13,7 @@ markdown
 
 </div>
 
----
+
 
 ## 🧠 Architecture Mind Map
 
