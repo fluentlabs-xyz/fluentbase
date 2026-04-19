@@ -1,14 +1,34 @@
-# Fluent Dev Oracle
+---
 
-This example demonstrates a developer identity registry with strict namespace separation to prevent storage collisions between Wasm and EVM storage slots.
+## ⚠️ Known Risks & Future Improvements
 
-The contract allows developers to register their identity for a given repository hash by calling the contract with a 32-byte input representing the repo hash. The caller's address is stored in a securely namespaced storage slot.
+### 🟡 Current Limitations
+*   **Ownership Verification**: While storage is secure, the registry currently lacks a cryptographic challenge (signature check) to prove the caller actually owns the repository hash.
 
-## Security Features
+### ✅ Roadmap for Production
+1. **Challenge-Response Auth**: Require a signed message from the developer to prevent unauthorized registrations.
+2. **Event Standardization**: Transition from raw string logs to structured events via `fluentbase-codec` for improved off-chain indexing.
+3. **Multi-Repo Support**: Enable developers to link multiple repositories to a single identity.
 
-- **Namespace Separation**: Uses a unique prefix hashed with the input to create isolated storage keys, preventing collisions with EVM contracts.
-- **Secure Hashing**: Employs keccak256 to generate deterministic, collision-resistant storage slots.
+---
 
-## Usage
+## 📝 Technical Observations
 
-Deploy the contract and call it with a 32-byte repository hash as input. The caller's address will be registered as the developer for that repository.
+- **ZK-Efficiency**: The flattened Key-Value store architecture is specifically optimized for ZK-proving cycles, minimizing the overhead of the execution trace.
+- **Memory Management**: Utilizes a custom `NativeCasAllocator` to manage memory within the rWasm execution environment without `std`.
+
+---
+
+## 🔗 References
+
+- [Fluent Network Official Docs](https://fluent.network)
+- [Fluentbase Framework Repository](https://github.com/fluentlabs-xyz/fluentbase)
+
+---
+
+<div align="center">
+
+**Crafted with 🦀 and ☕ by @freedroporacle**
+*Building the future of Blended Execution.*
+
+</div>
