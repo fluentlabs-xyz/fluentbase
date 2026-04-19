@@ -35,13 +35,10 @@ fluent-dev-oracle/
 └── src/
     └── lib.rs          # Secure registry logic & entrypoint
 
-
 🔄 Secure Data Flow & Architecture
 Application Lifecycle (Secure Edition)
 The contract implements a specialized hashing step to ensure that storage slots remain isolated and collision-free.
-code Mermaid
-downloadcontent_copy
-expand_less
+
 graph TD
     A[VM Invocation] --> B[main_entry]
     B --> C[sdk.bytes_input]
@@ -51,56 +48,31 @@ graph TD
     F --> G[Get Caller Address]
     G --> H[Write Storage: U256 Slot]
     H --> I[Emit Secure Log]
-Data Movement Matrix
-Stage
-Transformation
-Security Benefit
-Input → Hash
-keccak256(Prefix + RepoHash)
-Namespace Separation: Prevents EVM/Wasm storage collisions
-Context → Logic
-contract_caller() → U256
-Verifiable origin identification
-Logic → Database
-sdk.write_storage(key, value)
-Commits identity to the global state
-Logic → Output
-Standardized String Output
-Facilitates off-chain indexing for oracles
 
+Data Movement Matrix
+Stage	Transformation	Security Benefit
+Input → Hash	keccak256(Prefix + RepoHash)	Namespace Separation: Prevents EVM/Wasm storage collisions
+Context → Logic	contract_caller() → U256	Verifiable origin identification
+Logic → Database	sdk.write_storage(key, value)	Commits identity to the global state
+Logic → Output	Standardized String Output	Facilitates off-chain indexing for oracles
 🛡️ Security Features (Implemented)
 Based on our initial Red-Teaming Analysis, the following protections were integrated:
 Namespace Isolation: Uses a unique domain prefix (fluent.oracle.dev_identity.v1) to salt the repository hashes. This ensures that the Oracle’s storage slots cannot overlap with standard ERC-20 or other contract storage slots in the Unified Account Space.
 Deterministic Mapping: All keys are derived using standard keccak256, making them provable and predictable for ZK-provers.
-
 ⚠️ Known Risks & Future Roadmap
-Risk
-Description
-Mitigation Strategy
-Access Control
-Ownership of the Repo Hash is not currently verified
-Integrate cryptographic challenges (signed messages)
-Event Structure
-Current logs are raw strings
-Standardize events via the codec crate for indexers
-
+Risk	Description	Mitigation Strategy
+Access Control	Ownership of the Repo Hash is not currently verified	Integrate cryptographic challenges (signed messages)
+Event Structure	Current logs are raw strings	Standardize events via the codec crate for indexers
 🧠 Evolution of the Project (Mind Maps)
 The project began with a comprehensive risk analysis, which led to the current secure implementation. These mind maps represent the architectural and security assessment phases.
-
-![alt text](sandbox:///mnt/agents/output/fluent_dev_oracle_mindmaps.png)
-
-
+![alt text](https://raw.githubusercontent.com/FreeDropOracle/fluentbase/devel/examples/fluent-dev-oracle/docs/mindmaps.png)
 📝 Key Observations
 rWasm Optimized: The project utilizes the NativeCasAllocator, specifically tuned for rWasm execution, avoiding the overhead of a full standard library.
 ZK-Proof Friendly: The flattened Key-Value structure minimizes execution trace complexity, reducing proving costs for Fluent's L2 validators.
-
 🔗 Official Links
-Fluent Network Docs
+Fluent Network Official Docs
 Fluentbase Repository
-
 <div align="center">
 Developed by @freedroporacle
 Architecting Truth on the Fluent Layer.
 </div>
-```
-
