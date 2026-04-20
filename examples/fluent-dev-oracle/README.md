@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://iili.io/BgpTM4n.jpg" alt="Fluent Dev Oracle" width="100%"/>
+<img src="https://iili.io/BgpTM4n.jpg" alt="Fluent Dev Oracle" width="120" height="120" style="border-radius: 16px;"/>
 
 # 🔮 fluent-dev-oracle
 
