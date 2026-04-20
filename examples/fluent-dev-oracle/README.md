@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/FreeDropOracle/fluentbase/devel/examples/fluent-dev-oracle/docs/mindmaps.png" alt="Fluent Dev Oracle" width="100%"/>
+<img src="https://iili.io/BgpTM4n.jpg" alt="Fluent Dev Oracle" width="100%"/>
 
 # 🔮 fluent-dev-oracle
 
