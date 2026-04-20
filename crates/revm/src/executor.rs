@@ -36,7 +36,12 @@ use revm::{
     },
     Database, Inspector,
 };
-use std::{borrow::Cow, collections::BTreeMap, vec, vec::Vec};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+    vec,
+    vec::Vec,
+};
 
 fn should_overwrite_delegated_bytecode<'a, CTX: ContextTr>(
     frame: &mut RwasmFrame,
@@ -272,13 +277,14 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     // System runtime contracts can request preloaded state.
     // For certain known precompiles we compute a deterministic set of storage keys.
     let effective_bytecode_address = interpreter.input.effective_bytecode_address();
+    let mut preloaded_slot_costs: Vec<(U256, u64)> = vec![];
     if is_execute_using_system_runtime(&effective_bytecode_address) {
         let block_number = ctx.block().number().as_limbs()[0];
 
         // Collect EVM access list information (addresses, storage slots).
         // Note: the runtime does not yet fully support EVM access lists; we only use the
         // address list for balance prefetch and use custom per-precompile storage keys below.
-        let storage_list: Vec<U256> = match effective_bytecode_address {
+        let mut storage_list: Vec<U256> = match effective_bytecode_address {
             // Override storage keys for known system runtimes, based on calldata and context.
             PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME => {
                 erc20_compute_storage_keys(input.as_ref(), &caller_address, is_create)
@@ -303,6 +309,10 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             }
         };
 
+        // Charge and preload each storage slot only once.
+        let mut unique_storage_keys = BTreeSet::new();
+        storage_list.retain(|key| unique_storage_keys.insert(*key));
+
         // Prefetch storage values.
         let mut storage = BTreeMap::<U256, U256>::new();
         for k in storage_list {
@@ -325,7 +335,8 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                             interpreter.gas.remaining(),
                         )));
                     }
-                    _ = storage.insert(k, data.data)
+                    _ = storage.insert(k, data.data);
+                    preloaded_slot_costs.push((k, gas_cost));
                 }
                 // We need more gas to execute the cold sload
                 Err(JournalLoadError::ColdLoadSkipped) => {
@@ -407,7 +418,14 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     // Extract return data from the execution context.
     let return_data: Bytes = runtime_context.execution_result.return_data.into();
 
-    process_exec_result(frame, ctx, inspector, exit_code, return_data)
+    process_exec_result(
+        frame,
+        ctx,
+        inspector,
+        exit_code,
+        return_data,
+        Some(preloaded_slot_costs),
+    )
 }
 
 /// Resume execution after a host-serviced interruption.
@@ -435,6 +453,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     // `result` is expected to exist if we got here; interruption plumbing guarantees it.
     let result = result.unwrap();
     let call_id = inputs.call_id;
+    let preloaded_slot_costs = inputs.preloaded_slot_costs.clone();
 
     // Convert REVM gas accounting into runtime fuel units.
     let fuel_consumed = result.gas.spent().saturating_mul(FUEL_DENOM_RATE);
@@ -507,7 +526,14 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         .gas
         .record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
 
-    let result = process_exec_result::<CTX, INSP>(frame, ctx, inspector, exit_code, return_data)?;
+    let result = process_exec_result::<CTX, INSP>(
+        frame,
+        ctx,
+        inspector,
+        exit_code,
+        return_data,
+        preloaded_slot_costs,
+    )?;
 
     // If the interruption resolves to a final return, forget the saved runtime state;
     // otherwise we risk retaining contexts longer than necessary.
@@ -560,9 +586,11 @@ fn get_ownable_account_mut<'a, CTX: ContextTr + 'a>(
 fn process_runtime_execution_outcome<CTX: ContextTr>(
     target_address: &Address,
     ctx: &mut CTX,
+    gas: &mut Gas,
     return_data: &mut Bytes,
     exit_code: ExitCode,
     ownable_account_bytecode: Option<OwnableAccountBytecode>,
+    preloaded_slot_costs: Option<&[(U256, u64)]>,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
     // If we have a fatal exit code, execution halted/panicked, and output may be corrupted,
     // so we must not attempt to decode structured outcome bytes.
@@ -584,27 +612,51 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
         return Ok(());
     };
 
+    let RuntimeExecutionOutcomeV1 {
+        exit_code: runtime_exit_code,
+        output,
+        storage,
+        logs,
+        new_metadata,
+        touched_storage_slots,
+    } = runtime_output;
+
     // Replace the raw runtime bytes with the contract-visible output.
-    *return_data = runtime_output.output;
+    *return_data = output;
+
+    if let (Some(preloaded_slot_costs), Some(touched_storage_slots)) =
+        (preloaded_slot_costs, touched_storage_slots)
+    {
+        let touched_slots: BTreeSet<U256> = touched_storage_slots.into_iter().collect();
+
+        let refunded_cost = preloaded_slot_costs
+            .iter()
+            .filter_map(|(slot, gas_cost)| (!touched_slots.contains(slot)).then_some(*gas_cost))
+            .sum::<u64>();
+
+        if refunded_cost > 0 {
+            gas.erase_cost(refunded_cost);
+        }
+    }
 
     // Optimization: if the runtime reported a non-ok exit code, we intentionally skip writing
     // state changes into the journal (they would be rolled back anyway).
-    if !runtime_output.exit_code.is_ok() {
+    if !runtime_exit_code.is_ok() {
         return Ok(());
     }
 
-    for (k, v) in runtime_output.storage.unwrap_or_default() {
+    for (k, v) in storage.unwrap_or_default() {
         ctx.journal_mut().sstore(*target_address, k, v)?;
     }
 
-    for JournalLog { topics, data } in runtime_output.logs {
+    for JournalLog { topics, data } in logs {
         ctx.journal_mut().log(Log {
             address: *target_address,
             data: LogData::new_unchecked(topics, data),
         });
     }
 
-    if let Some(new_metadata) = runtime_output.new_metadata {
+    if let Some(new_metadata) = new_metadata {
         // Safety: `new_metadata` should only be set by ownable accounts. If a non-ownable system
         // contract sets it, that indicates a severe invariant break.
         let mut ownable_account_bytecode = ownable_account_bytecode.unwrap();
@@ -630,6 +682,7 @@ fn process_execution_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     inspector: Option<&mut INSP>,
     exit_code: i32,
     mut return_data: Bytes,
+    preloaded_slot_costs: Option<Vec<(U256, u64)>>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let target_address = frame.interpreter.input.target_address();
     let mut exit_code = ExitCode::from(exit_code);
@@ -640,9 +693,11 @@ fn process_execution_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         process_runtime_execution_outcome(
             &target_address,
             ctx,
+            &mut frame.interpreter.gas,
             &mut return_data,
             exit_code,
             ownable_account,
+            preloaded_slot_costs.as_deref(),
         )?;
     } else {
         match exit_code {
@@ -674,10 +729,18 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     inspector: Option<&mut INSP>,
     exit_code: i32,
     return_data: Bytes,
+    preloaded_slot_costs: Option<Vec<(U256, u64)>>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     // Final result (success/failure) path.
     if exit_code <= 0 {
-        return process_execution_result(frame, ctx, inspector, exit_code, return_data);
+        return process_execution_result(
+            frame,
+            ctx,
+            inspector,
+            exit_code,
+            return_data,
+            preloaded_slot_costs,
+        );
     }
 
     // Interruption path: exit code is a call_id that identifies the saved context.
@@ -697,6 +760,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         call_id,
         syscall_params,
         gas,
+        preloaded_slot_costs,
     };
 
     execute_rwasm_interruption::<CTX, INSP>(

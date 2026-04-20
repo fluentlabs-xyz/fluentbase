@@ -337,7 +337,9 @@ impl SharedAPI for TestingContextImpl {
         _input: &[u8],
         _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        unimplemented!("not supported for testing context")
+        // Test host does not emulate nested execution or native-value transfer.
+        // Return success so contracts can exercise happy-path call flows in unit tests.
+        SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
     }
 
     fn call_code(
