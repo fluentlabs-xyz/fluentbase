@@ -41,6 +41,8 @@ pub const SIG_ERC20_MINT: u32 = derive_keccak256_id!("mint(address,uint256)");
 pub const SIG_ERC20_BURN: u32 = derive_keccak256_id!("burn(address,uint256)");
 pub const SIG_ERC20_PAUSE: u32 = derive_keccak256_id!("pause()");
 pub const SIG_ERC20_UNPAUSE: u32 = derive_keccak256_id!("unpause()");
+pub const SIG_ERC20_DEPOSIT: u32 = derive_keccak256_id!("deposit()");
+pub const SIG_ERC20_WITHDRAW: u32 = derive_keccak256_id!("withdraw(uint256)");
 
 // Not in use, reserved for future use
 pub const SIG_TOKEN2022: u32 = derive_keccak256_id!("token2022()");

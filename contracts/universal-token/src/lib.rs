@@ -469,6 +469,28 @@ fn erc20_unpause_handler<SDK: SystemAPI>(
     Ok(0)
 }
 
+fn erc20_deposit_handler<SDK: SystemAPI>(
+    sdk: &mut SDK,
+    _input: &[u8],
+) -> Result<EvmExitCode, ExitCode> {
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
+
+    Ok(0)
+}
+
+fn erc20_withdraw_handler<SDK: SystemAPI>(
+    sdk: &mut SDK,
+    _input: &[u8],
+) -> Result<EvmExitCode, ExitCode> {
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
+    // Implement me
+    Ok(0)
+}
+
 /// Fallback for unknown selectors: returns `ERR_UNKNOWN_METHOD`.
 fn erc20_unknown_method<SDK: SystemAPI>(
     _sdk: &mut SDK,
@@ -573,6 +595,9 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_ERC20_BURN => erc20_burn_handler(sdk, input),
         SIG_ERC20_PAUSE => erc20_pause_handler(sdk, input),
         SIG_ERC20_UNPAUSE => erc20_unpause_handler(sdk, input),
+        // Wrapper extension
+        SIG_ERC20_DEPOSIT => erc20_deposit_handler(sdk, input),
+        SIG_ERC20_WITHDRAW => erc20_withdraw_handler(sdk, input),
         _ => erc20_unknown_method(sdk, input),
     }?;
     if evm_exit_code != 0 {
