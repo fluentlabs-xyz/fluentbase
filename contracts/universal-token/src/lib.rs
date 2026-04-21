@@ -18,7 +18,7 @@ use fluentbase_sdk::{
     storage::{StorageMap, StorageU256},
     system_entrypoint,
     universal_token::*,
-    Address, ContextReader, EvmExitCode, ExitCode, StorageUtils, SystemAPI, U256,
+    Address, Bytes, ContextReader, EvmExitCode, ExitCode, StorageUtils, SystemAPI, U256,
 };
 
 mod events {
@@ -512,7 +512,9 @@ fn erc20_deposit_handler<SDK: SystemAPI>(
     let new_balance = balance.checked_add(wad).ok_or(ExitCode::IntegerOverflow)?;
 
     let total_supply = sdk.storage(&TOTAL_SUPPLY_STORAGE_SLOT).ok()?;
-    let new_total_supply = total_supply.checked_add(wad).ok_or(ExitCode::IntegerOverflow)?;
+    let new_total_supply = total_supply
+        .checked_add(wad)
+        .ok_or(ExitCode::IntegerOverflow)?;
 
     balance_accessor.set_checked(sdk, new_balance)?;
     sdk.write_storage(TOTAL_SUPPLY_STORAGE_SLOT, new_total_supply)
@@ -595,7 +597,7 @@ fn erc20_unknown_method<SDK: SystemAPI>(
 /// Constructor entrypoint: decodes `InitialSettings` and initializes storage (metadata, supply, optional minter/pauser).
 fn erc20_constructor_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
-    input: &[u8],
+    input: Bytes,
 ) -> Result<EvmExitCode, ExitCode> {
     // Decode initial settings parameters (SolidityABI)
     let InitialSettings {
@@ -606,7 +608,7 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
         minter,
         pauser,
         wrapped,
-    } = InitialSettings::decode_with_prefix(input).ok_or(ExitCode::MalformedBuiltinParams)?;
+    } = InitialSettings::decode_with_prefix(&input).ok_or(ExitCode::MalformedBuiltinParams)?;
     // Write token name and token decimals (make sure both are properly UTF-8 encoded)
     sdk.write_storage_short_string(
         NAME_STORAGE_SLOT,
@@ -642,16 +644,16 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
         .emit(sdk)?;
     }
     // If token is mintable then minter is provided
-    if !minter.is_zero() {
-        sdk.write_storage_address(MINTER_STORAGE_SLOT, minter)?;
-    }
+    sdk.write_storage_address(MINTER_STORAGE_SLOT, minter)?;
     // If token is pausable then pauser is provided
-    if !pauser.is_zero() {
-        sdk.write_storage_address(PAUSER_STORAGE_SLOT, pauser)?;
+    sdk.write_storage_address(PAUSER_STORAGE_SLOT, pauser)?;
+    // If token is wrapped then always write even false to touch storage slot
+    if let Some(wrapped) = wrapped {
+        sdk.write_storage(WRAPPED_STORAGE_SLOT, U256::from(wrapped))
+            .ok()?;
     }
-    if wrapped {
-        sdk.write_storage(WRAPPED_STORAGE_SLOT, U256::ONE).ok()?;
-    }
+    // Copy initial settings into metadata
+    sdk.write_contract_metadata(input);
     Ok(0)
 }
 
@@ -661,7 +663,7 @@ pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         return Err(ExitCode::MalformedBuiltinParams);
     }
     let input = sdk.bytes_input();
-    let evm_exit_code = erc20_constructor_handler(sdk, input.as_ref())?;
+    let evm_exit_code = erc20_constructor_handler(sdk, input)?;
     if evm_exit_code != 0 {
         write_evm_exit_message(evm_exit_code, |slice| sdk.write(slice));
         return Err(ExitCode::Panic);
@@ -693,8 +695,12 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_ERC20_PAUSE => erc20_pause_handler(sdk, input),
         SIG_ERC20_UNPAUSE => erc20_unpause_handler(sdk, input),
         // Wrapper extension
-        SIG_ERC20_DEPOSIT => erc20_deposit_handler(sdk, input),
-        SIG_ERC20_WITHDRAW => erc20_withdraw_handler(sdk, input),
+        SIG_ERC20_DEPOSIT if sdk.contract_metadata().len() >= INITIAL_SETTINGS_V2_SIZE => {
+            erc20_deposit_handler(sdk, input)
+        }
+        SIG_ERC20_WITHDRAW if sdk.contract_metadata().len() >= INITIAL_SETTINGS_V2_SIZE => {
+            erc20_withdraw_handler(sdk, input)
+        }
         _ => erc20_unknown_method(sdk, input),
     }?;
     if evm_exit_code != 0 {

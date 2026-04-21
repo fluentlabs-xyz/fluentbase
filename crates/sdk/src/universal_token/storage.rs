@@ -79,8 +79,8 @@ impl LegacyInitialSettings {
 }
 
 /// Initial settings payload sizes including magic prefix.
-const INITIAL_SETTINGS_V1_SIZE: usize = 4 + 6 * 32;
-const INITIAL_SETTINGS_V2_SIZE: usize = 4 + 7 * 32;
+pub const INITIAL_SETTINGS_V1_SIZE: usize = 4 + 6 * 32;
+pub const INITIAL_SETTINGS_V2_SIZE: usize = 4 + 7 * 32;
 
 #[derive(Default, Debug, PartialEq, Codec)]
 struct InitialSettingsV1 {
@@ -112,13 +112,13 @@ pub struct InitialSettings {
     pub minter: Address,
     pub pauser: Address,
     /// Enables wrapped-token extension (`deposit()` / `withdraw(uint256)`).
-    pub wrapped: bool,
+    pub wrapped: Option<bool>,
 }
 
 impl InitialSettings {
     pub fn encode_with_prefix(&self) -> Bytes {
         let mut bytes = BytesMut::new();
-        if self.wrapped {
+        if let Some(wrapped) = self.wrapped {
             let settings = InitialSettingsV2 {
                 token_name: self.token_name,
                 token_symbol: self.token_symbol,
@@ -126,7 +126,7 @@ impl InitialSettings {
                 initial_supply: self.initial_supply,
                 minter: self.minter,
                 pauser: self.pauser,
-                wrapped: true,
+                wrapped,
             };
             SolidityABI::encode(&settings, &mut bytes, 0).unwrap();
         } else {
@@ -167,7 +167,7 @@ impl InitialSettings {
                     initial_supply: settings.initial_supply,
                     minter: settings.minter,
                     pauser: settings.pauser,
-                    wrapped: false,
+                    wrapped: None,
                 })
             }
             INITIAL_SETTINGS_V2_SIZE => {
@@ -179,7 +179,7 @@ impl InitialSettings {
                     initial_supply: settings.initial_supply,
                     minter: settings.minter,
                     pauser: settings.pauser,
-                    wrapped: settings.wrapped,
+                    wrapped: Some(settings.wrapped),
                 })
             }
             _ if buf.len() > INITIAL_SETTINGS_V1_SIZE => {
@@ -196,7 +196,7 @@ impl InitialSettings {
                     initial_supply: settings.initial_supply,
                     minter: settings.minter,
                     pauser: settings.pauser,
-                    wrapped: false,
+                    wrapped: None,
                 })
             }
             _ => None,
@@ -230,7 +230,8 @@ pub fn erc20_compute_deploy_storage_keys(input: &[u8], caller: &Address) -> Opti
     if !pauser.is_zero() {
         result.push(PAUSER_STORAGE_SLOT);
     }
-    if wrapped {
+    // Push wrapped flag only if we use V1 settings
+    if wrapped.is_some() {
         result.push(WRAPPED_STORAGE_SLOT);
     }
     Some(result)
@@ -362,7 +363,7 @@ mod tests {
             initial_supply: U256::from(2),
             minter: address!("0303000200500020400000040000002000809020"),
             pauser: Address::ZERO,
-            wrapped: false,
+            wrapped: None,
         };
         let addr = address!("0003000200500000400000040000002000800020");
         let addr_bytes: [u8; Address::len_bytes()] = addr.into();
@@ -383,7 +384,7 @@ mod tests {
             initial_supply: U256::ZERO,
             minter: Address::ZERO,
             pauser: Address::ZERO,
-            wrapped: true,
+            wrapped: Some(true),
         };
 
         let settings_vec = settings.encode_with_prefix();

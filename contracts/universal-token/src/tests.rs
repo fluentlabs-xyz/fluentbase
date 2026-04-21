@@ -1783,7 +1783,7 @@ fn wrapped_methods_reject_when_wrapped_extension_is_disabled() {
     s.token_name = "Token".into();
     s.token_symbol = "TKN".into();
     s.decimals = 18;
-    s.wrapped = false;
+    s.wrapped = Some(false);
     let _ = h.deploy(s.encode_with_prefix(), deployer);
 
     h.set_caller(caller);
@@ -1809,7 +1809,7 @@ fn wrapped_deposit_mints_supply_and_emits_events() {
     s.token_name = "Wrapped Token".into();
     s.token_symbol = "WTKN".into();
     s.decimals = 18;
-    s.wrapped = true;
+    s.wrapped = Some(true);
     let _ = h.deploy(s.encode_with_prefix(), deployer);
     let _ = h.take_logs();
 
@@ -1828,7 +1828,11 @@ fn wrapped_deposit_mints_supply_and_emits_events() {
     assert_eq!(logs[0].data, data_u256(wad), "wrong Deposit amount");
 
     assert_eq!(logs[1].topics[0], TOPIC_TRANSFER, "wrong Transfer topic0");
-    assert_eq!(logs[1].topics[1], topic_addr(Address::ZERO), "wrong Transfer from");
+    assert_eq!(
+        logs[1].topics[1],
+        topic_addr(Address::ZERO),
+        "wrong Transfer from"
+    );
     assert_eq!(logs[1].topics[2], topic_addr(caller), "wrong Transfer to");
     assert_eq!(logs[1].data, data_u256(wad), "wrong Transfer amount");
 
@@ -1852,7 +1856,7 @@ fn wrapped_withdraw_burns_supply_and_emits_events() {
     s.token_name = "Wrapped Token".into();
     s.token_symbol = "WTKN".into();
     s.decimals = 18;
-    s.wrapped = true;
+    s.wrapped = Some(true);
     let _ = h.deploy(s.encode_with_prefix(), deployer);
     let _ = h.take_logs();
 
@@ -1872,13 +1876,20 @@ fn wrapped_withdraw_burns_supply_and_emits_events() {
     let logs = h.take_logs();
     assert_eq!(logs.len(), 2, "expected Withdrawal + Transfer logs");
 
-    assert_eq!(logs[0].topics[0], TOPIC_WITHDRAWAL, "wrong Withdrawal topic0");
+    assert_eq!(
+        logs[0].topics[0], TOPIC_WITHDRAWAL,
+        "wrong Withdrawal topic0"
+    );
     assert_eq!(logs[0].topics[1], topic_addr(caller), "wrong indexed src");
     assert_eq!(logs[0].data, data_u256(wad), "wrong Withdrawal amount");
 
     assert_eq!(logs[1].topics[0], TOPIC_TRANSFER, "wrong Transfer topic0");
     assert_eq!(logs[1].topics[1], topic_addr(caller), "wrong Transfer from");
-    assert_eq!(logs[1].topics[2], topic_addr(Address::ZERO), "wrong Transfer to");
+    assert_eq!(
+        logs[1].topics[2],
+        topic_addr(Address::ZERO),
+        "wrong Transfer to"
+    );
     assert_eq!(logs[1].data, data_u256(wad), "wrong Transfer amount");
 
     let expected_remaining = U256::from(18u64);

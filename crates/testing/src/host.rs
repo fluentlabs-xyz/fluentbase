@@ -151,6 +151,7 @@ struct TestingContextInner {
     exit_code: i32,
     consumed_fuel: u64,
     fuel_limit: Option<u64>,
+    contract_metadata: Option<Bytes>,
 }
 
 impl Default for TestingContextImpl {
@@ -169,6 +170,7 @@ impl Default for TestingContextImpl {
                 exit_code: 0,
                 consumed_fuel: 0,
                 fuel_limit: None,
+                contract_metadata: None,
             })),
         }
     }
@@ -394,11 +396,15 @@ impl SystemAPI for TestingContextImpl {
         unimplemented!("unique_key")
     }
 
-    fn write_contract_metadata(&mut self, _metadata: Bytes) {
-        unimplemented!("write_contract_metadata")
+    fn write_contract_metadata(&mut self, metadata: Bytes) {
+        _ = self.inner.borrow_mut().contract_metadata.insert(metadata);
     }
 
     fn contract_metadata(&self) -> Bytes {
-        unimplemented!("contract_metadata")
+        self.inner
+            .borrow_mut()
+            .contract_metadata
+            .clone()
+            .unwrap_or_default()
     }
 }

@@ -50,7 +50,7 @@ pub struct TokenConfig {
     /// Optional pauser address (enables pause/unpause functionality)
     pub pauser: Option<Address>,
     /// Enable wrapped-token extension (`deposit` / `withdraw`)
-    pub wrapped: bool,
+    pub wrapped: Option<bool>,
 }
 
 impl TokenConfig {
@@ -173,7 +173,7 @@ impl TokenConfigBuilder {
             initial_supply: self.initial_supply.unwrap_or(U256::ZERO),
             minter: self.minter,
             pauser: self.pauser,
-            wrapped: self.wrapped.unwrap_or(false),
+            wrapped: self.wrapped,
         }
     }
 
@@ -186,7 +186,7 @@ impl TokenConfigBuilder {
             initial_supply: self.initial_supply.unwrap_or(U256::ZERO),
             minter: self.minter,
             pauser: self.pauser,
-            wrapped: self.wrapped.unwrap_or(false),
+            wrapped: self.wrapped,
         })
     }
 }
@@ -322,7 +322,7 @@ mod tests {
         assert_eq!(config.initial_supply, U256::ZERO);
         assert_eq!(config.minter, None);
         assert_eq!(config.pauser, None);
-        assert!(!config.wrapped);
+        assert_eq!(config.wrapped, None);
     }
 
     #[test]
@@ -373,6 +373,6 @@ mod tests {
         let settings = InitialSettings::decode_with_prefix(&tx_data).unwrap();
         assert_eq!(settings.minter, minter);
         assert_eq!(settings.pauser, pauser);
-        assert!(!settings.wrapped);
+        assert_eq!(settings.wrapped, None);
     }
 }
