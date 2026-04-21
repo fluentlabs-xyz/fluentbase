@@ -34,7 +34,7 @@ impl bincode::Encode for RuntimeNewFrameInputV1 {
             bincode::Encode::encode(&0u32, e)?;
         }
         if let Some(balance) = self.balance {
-            bincode::Encode::encode(balance.as_le_slice(), e)?;
+            bincode::Encode::encode(&balance.to_le_bytes::<{ U256::BYTES }>(), e)?;
         }
         Ok(())
     }
@@ -243,7 +243,7 @@ mod tests {
             input: [4, 5, 6, 7].into(),
             context: [8, 9, 10, 11, 12].into(),
             storage: Some(storage.clone()),
-            balance: None,
+            balance: Some(U256::from(13u64)),
         };
         let v_encoded: Bytes = encode(&v).unwrap().into();
         let (v_decoded, bytes_count): (RuntimeNewFrameInputV1, usize) =
@@ -259,7 +259,7 @@ mod tests {
             input: [4, 5, 6, 7].into(),
             context: [8, 9, 10, 11, 12].into(),
             storage: Some(storage.clone()),
-            balance: None,
+            balance: Some(U256::from(42u64)),
         };
         let v_encoded: Bytes = encode(&v).unwrap().into();
         let (v_decoded, read_count) = decode::<RuntimeNewFrameInputV1>(v_encoded.clone()).unwrap();

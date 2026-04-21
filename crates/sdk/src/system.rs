@@ -322,6 +322,9 @@ impl<API: NativeAPI + CryptoAPI> SystemAPI for SystemContextImpl<API> {
     }
 
     fn transfer_value_to(&mut self, address: Address, value: U256) -> Result<(), ExitCode> {
+        if self.state.context.contract_is_static() {
+            return Err(ExitCode::StateChangeDuringStaticCall);
+        }
         // Deduct current contract balance to make sure we have enough balance
         let new_balance = self
             .state
