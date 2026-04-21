@@ -1,6 +1,6 @@
 use crate::{import_linker_v1_preview, SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use fluentbase_types::{is_engine_metered_precompile, is_execute_using_system_runtime, Address};
+use fluentbase_types::{is_execute_using_system_runtime, Address};
 use rwasm::{
     CompilationConfig, CompilationError, ImportLinker, Opcode, RwasmModule, StateRouterConfig,
 };
@@ -55,7 +55,9 @@ pub fn compile_rwasm_maybe_system(
     // Most system precompiles manage fuel internally via `_charge_fuel` syscall.
     // However, some precompiles (NITRO_VERIFIER, OAUTH2_VERIFIER, WASM_RUNTIME,
     // WEBAUTHN_VERIFIER) don't self-meter, so they need fuel instrumentation.
-    let should_charge_fuel = is_engine_metered_precompile(contract_address);
+    //
+    // P.S: Disabled since we don't want to charge fuel instructions
+    let should_charge_fuel = false; // is_engine_metered_precompile(contract_address);
 
     let config = default_compilation_config()
         .with_consume_fuel(should_charge_fuel)

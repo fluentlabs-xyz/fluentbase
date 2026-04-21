@@ -27,3 +27,9 @@ mod fluent_testnet {
         fn testnet_24457093_bridge_double_mint("fixtures/testnet_24457093_bridge_double_mint.json");
     }
 }
+
+mod fluent_mainnet {
+    define_tests! {
+        fn mainnet_2697535_bridge_token_deployment("fixtures/mainnet_2697535_bridge_token_deployment.json");
+    }
+}

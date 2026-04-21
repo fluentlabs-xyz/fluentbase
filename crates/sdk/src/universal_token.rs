@@ -20,8 +20,8 @@
 
 extern crate alloc;
 
-use crate::{bytes::BytesMut, codec::SolidityABI, Address, Bytes, U256};
-use alloc::{string::String, vec::Vec};
+use crate::{Address, Bytes, U256};
+use alloc::string::String;
 /// Re-export the precompile address for convenience
 pub use fluentbase_types::PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME;
 /// Re-export the magic bytes constant
@@ -49,6 +49,8 @@ pub struct TokenConfig {
     pub minter: Option<Address>,
     /// Optional pauser address (enables pause/unpause functionality)
     pub pauser: Option<Address>,
+    /// Enable wrapped-token extension (`deposit` / `withdraw`)
+    pub wrapped: Option<bool>,
 }
 
 impl TokenConfig {
@@ -88,18 +90,10 @@ impl TokenConfig {
             initial_supply: self.initial_supply,
             minter: self.minter.unwrap_or(Address::ZERO),
             pauser: self.pauser.unwrap_or(Address::ZERO),
+            wrapped: self.wrapped,
         };
 
-        // Encode using Solidity ABI
-        let mut bytes = BytesMut::new();
-        SolidityABI::encode(&settings, &mut bytes, 0).unwrap();
-        let encoded = bytes.freeze();
-
-        // Prepend magic bytes
-        let mut output = Vec::with_capacity(UNIVERSAL_TOKEN_MAGIC_BYTES.len() + encoded.len());
-        output.extend_from_slice(&UNIVERSAL_TOKEN_MAGIC_BYTES[..]);
-        output.extend_from_slice(encoded.as_ref());
-        output.into()
+        settings.encode_with_prefix()
     }
 }
 
@@ -112,6 +106,7 @@ pub struct TokenConfigBuilder {
     initial_supply: Option<U256>,
     minter: Option<Address>,
     pauser: Option<Address>,
+    wrapped: Option<bool>,
 }
 
 impl TokenConfigBuilder {
@@ -159,6 +154,12 @@ impl TokenConfigBuilder {
         self
     }
 
+    /// Enable wrapped-token extension.
+    pub fn wrapped(mut self, wrapped: bool) -> Self {
+        self.wrapped = Some(wrapped);
+        self
+    }
+
     /// Build the `TokenConfig`
     ///
     /// # Panics
@@ -172,6 +173,7 @@ impl TokenConfigBuilder {
             initial_supply: self.initial_supply.unwrap_or(U256::ZERO),
             minter: self.minter,
             pauser: self.pauser,
+            wrapped: self.wrapped,
         }
     }
 
@@ -184,6 +186,7 @@ impl TokenConfigBuilder {
             initial_supply: self.initial_supply.unwrap_or(U256::ZERO),
             minter: self.minter,
             pauser: self.pauser,
+            wrapped: self.wrapped,
         })
     }
 }
@@ -319,6 +322,7 @@ mod tests {
         assert_eq!(config.initial_supply, U256::ZERO);
         assert_eq!(config.minter, None);
         assert_eq!(config.pauser, None);
+        assert_eq!(config.wrapped, None);
     }
 
     #[test]
@@ -366,10 +370,9 @@ mod tests {
         assert_eq!(&tx_data[..4], UNIVERSAL_TOKEN_MAGIC_BYTES);
 
         // Verify the settings can be decoded
-        use crate::codec::SolidityABI;
-        let buf: &[u8] = &tx_data[4..];
-        let settings = SolidityABI::<InitialSettings>::decode(&buf, 0).unwrap();
+        let settings = InitialSettings::decode_with_prefix(&tx_data).unwrap();
         assert_eq!(settings.minter, minter);
         assert_eq!(settings.pauser, pauser);
+        assert_eq!(settings.wrapped, None);
     }
 }

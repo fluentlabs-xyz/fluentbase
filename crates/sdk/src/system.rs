@@ -95,13 +95,14 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
             native_sdk.write(&interruption);
             exit_code
         } else {
-            let (storage, logs) = state.storage.into_diff();
+            let (storage, logs, touched_storage_slots) = state.storage.into_diff();
             let output = RuntimeExecutionOutcomeV1 {
                 exit_code,
                 output: state.output.into(),
                 storage: Some(storage),
                 logs,
                 new_metadata: metadata,
+                touched_storage_slots: Some(touched_storage_slots),
             }
             .encode();
             native_sdk.write(&output);
