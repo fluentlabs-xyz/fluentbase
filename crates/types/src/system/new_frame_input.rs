@@ -129,7 +129,8 @@ impl bincode::Encode for RuntimeExecutionOutcomeV1 {
         if let Some(transfers) = self.transfers.as_ref() {
             bincode::Encode::encode(&(transfers.len() as u32), e)?;
             for (recipient, amount) in transfers.iter() {
-                bincode::Encode::encode(recipient.as_slice(), e)?;
+                let recipient_bytes: [u8; 20] = recipient.as_slice().try_into().unwrap();
+                bincode::Encode::encode(&recipient_bytes, e)?;
                 bincode::Encode::encode(&amount.to_le_bytes::<{ U256::BYTES }>(), e)?;
             }
         } else {
