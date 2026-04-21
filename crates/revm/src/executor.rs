@@ -26,7 +26,9 @@ use fluentbase_sdk::{
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, rwasm::RwasmBytecode, Bytecode},
-    context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
+    context::{
+        journaled_state::TransferError, Block, Cfg, ContextError, ContextTr, JournalTr, Transaction,
+    },
     context_interface::journaled_state::JournalLoadError,
     handler::FrameData,
     interpreter::{
@@ -42,6 +44,7 @@ use std::{
     vec,
     vec::Vec,
 };
+use tracing::warn;
 
 fn should_overwrite_delegated_bytecode<'a, CTX: ContextTr>(
     frame: &mut RwasmFrame,
@@ -349,12 +352,30 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             }
         }
 
+        // Extract target account balance
+        let target_balance =
+            match ctx
+                .journal_mut()
+                .load_account_info_skip_cold_load(target_address, false, false)
+            {
+                Ok(target_account) => target_account.balance,
+                // We need more gas to execute the cold sload
+                Err(JournalLoadError::ColdLoadSkipped) => {
+                    return Ok(NextAction::out_of_fuel(Gas::new_spent(
+                        interpreter.gas.remaining(),
+                    )))
+                }
+                // Return database error
+                Err(JournalLoadError::DBError(err)) => return Err(ContextError::Db(err)),
+            };
+
         // Wrap everything into the system-runtime new-frame input format.
         let new_frame_input = RuntimeNewFrameInputV1 {
             metadata: ownable_account_metadata.unwrap_or_default(),
             input,
             context: contract_input.into(),
             storage: Some(storage),
+            balance: Some(target_balance),
         };
         let new_frame_input =
             bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
@@ -588,7 +609,7 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
     ctx: &mut CTX,
     gas: &mut Gas,
     return_data: &mut Bytes,
-    exit_code: ExitCode,
+    exit_code: &mut ExitCode,
     ownable_account_bytecode: Option<OwnableAccountBytecode>,
     preloaded_slot_costs: Option<&[(U256, u64)]>,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
@@ -619,6 +640,7 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
         logs,
         new_metadata,
         touched_storage_slots,
+        transfers,
     } = runtime_output;
 
     // Replace the raw runtime bytes with the contract-visible output.
@@ -668,6 +690,41 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
         );
     }
 
+    if let Some(transfers) = transfers {
+        // Make sure contract can't overspend its balance
+        let balance_required = transfers
+            .iter()
+            .fold(U256::ZERO, |result, (_, amount)| result + amount);
+        let target_account = ctx.journal_mut().load_account(*target_address)?;
+        if target_account.info.balance < balance_required {
+            warn!(?target_account, ?balance_required, "Balance overspent detected, it should not happen, unless there is a bug in system contract");
+            *exit_code = ExitCode::InsufficientBalance;
+            return Ok(());
+        }
+
+        // Transfer funds from target address to recipients
+        for (recipient, amount) in transfers {
+            let transfer_error = ctx
+                .journal_mut()
+                .transfer(*target_address, recipient, amount)?;
+            match transfer_error {
+                Some(TransferError::OutOfFunds) => {
+                    *exit_code = ExitCode::InsufficientBalance;
+                    return Ok(());
+                }
+                Some(TransferError::OverflowPayment) => {
+                    *exit_code = ExitCode::IntegerOverflow;
+                    return Ok(());
+                }
+                Some(TransferError::CreateCollision) => {
+                    *exit_code = ExitCode::CreateContractCollision;
+                    return Ok(());
+                }
+                None => {}
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -695,7 +752,7 @@ fn process_execution_result<CTX: ContextTr, INSP: Inspector<CTX>>(
             ctx,
             &mut frame.interpreter.gas,
             &mut return_data,
-            exit_code,
+            &mut exit_code,
             ownable_account,
             preloaded_slot_costs.as_deref(),
         )?;

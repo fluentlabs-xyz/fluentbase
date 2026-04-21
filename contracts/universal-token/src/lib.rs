@@ -539,47 +539,51 @@ fn erc20_withdraw_handler<SDK: SystemAPI>(
         return Err(ExitCode::StateChangeDuringStaticCall);
     }
 
+    // Make sure wrapped extension is supported
     let is_wrapped = sdk.storage(&WRAPPED_STORAGE_SLOT).ok()?;
     if is_wrapped.is_zero() {
         return Ok(ERR_UST_NOT_WRAPPED);
     }
 
+    // Don't allow to withdraw from frozen account
     let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
     if !is_contract_frozen.is_zero() {
         return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
     }
 
     let caller = sdk.context().contract_caller();
-    if caller.is_zero() {
-        return Ok(ERR_ERC20_INVALID_SENDER);
-    }
 
-    let WithdrawCommand { wad } = WithdrawCommand::try_decode(input)?;
+    let WithdrawCommand { amount } = WithdrawCommand::try_decode(input)?;
 
+    // Write new balance
     let balance_accessor = BalanceStorageMap::new(BALANCE_STORAGE_SLOT).entry(caller);
     let balance = balance_accessor.get_checked(sdk)?;
-    let Some(new_balance) = balance.checked_sub(wad) else {
+    let Some(new_balance) = balance.checked_sub(amount) else {
         return Ok(ERR_ERC20_INSUFFICIENT_BALANCE);
     };
 
+    // Write new total supply
     let total_supply = sdk.storage(&TOTAL_SUPPLY_STORAGE_SLOT).ok()?;
-    let Some(new_total_supply) = total_supply.checked_sub(wad) else {
+    let Some(new_total_supply) = total_supply.checked_sub(amount) else {
         return Ok(ERR_ERC20_INSUFFICIENT_BALANCE);
     };
-
     balance_accessor.set_checked(sdk, new_balance)?;
     sdk.write_storage(TOTAL_SUPPLY_STORAGE_SLOT, new_total_supply)
         .ok()?;
 
-    let Ok(_) = sdk.call(caller, wad, &[], None).ok() else {
-        return Ok(ERR_ERC20_INSUFFICIENT_BALANCE);
-    };
+    // Optimistically send required amount to caller
+    sdk.transfer_value_to(caller, amount)?;
 
-    events::Withdrawal { src: caller, wad }.emit(sdk)?;
+    // Emit events (withdrawal + transfer)
+    events::Withdrawal {
+        src: caller,
+        wad: amount,
+    }
+    .emit(sdk)?;
     events::Transfer {
         from: caller,
         to: Address::ZERO,
-        amount: wad,
+        amount,
     }
     .emit(sdk)?;
 

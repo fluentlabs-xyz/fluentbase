@@ -2,7 +2,7 @@ use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{
-    address, hex, storage::StorageDescriptor, universal_token::*, Address, Bytes,
+    address, bytes, hex, storage::StorageDescriptor, universal_token::*, Address, Bytes,
     ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::EvmTestingContext;
@@ -572,4 +572,20 @@ fn invoke_ust20_transfer_multiple_times() {
     );
     assert!(result.is_success());
     println!("result: {:?}", result.gas_used());
+}
+
+#[test]
+fn test_ust20_deploy_wrapped() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let input = bytes!("0x455243205772617070656420457468657200000000000000000000000000000000000000574554480000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000000000000000000000000000911d15011b3358344d2b4a9a01a20a16ff4274a2000000000000000000000000911d15011b3358344d2b4a9a01a20a16ff4274a20000000000000000000000000000000000000000000000000000000000000001");
+    let new_contract = ctx.deploy_evm_tx(Address::repeat_byte(0x11), input);
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x11),
+        new_contract,
+        bytes!("0xd0e30db0"),
+        None,
+        Some(U256::from(1)),
+    );
+    println!("result: {:?}", result);
+    assert!(result.is_success());
 }

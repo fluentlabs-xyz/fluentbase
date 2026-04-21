@@ -107,6 +107,8 @@ pub enum ExitCode {
     CreateContractStartingWithEF = -1013,
     /// A program runs out of memory (max memory pages reached)
     OutOfMemory = -1014,
+    /// Out of funds
+    InsufficientBalance = -1015,
 
     /* Trap Error Codes */
     /// Execution reached a code path marked as unreachable

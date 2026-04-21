@@ -4,7 +4,7 @@ use crate::{
     ExitCode,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use bincode::de::{read::Reader, Decoder};
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -13,6 +13,7 @@ pub struct RuntimeNewFrameInputV1 {
     pub input: Bytes,
     pub context: Bytes,
     pub storage: Option<BTreeMap<U256, U256>>,
+    pub balance: Option<U256>,
 }
 
 impl bincode::Encode for RuntimeNewFrameInputV1 {
@@ -31,6 +32,9 @@ impl bincode::Encode for RuntimeNewFrameInputV1 {
             }
         } else {
             bincode::Encode::encode(&0u32, e)?;
+        }
+        if let Some(balance) = self.balance {
+            bincode::Encode::encode(balance.as_le_slice(), e)?;
         }
         Ok(())
     }
@@ -58,11 +62,18 @@ impl<Context> DecodeBytes<Context> for RuntimeNewFrameInputV1 {
         } else {
             None
         };
+        let balance: Option<U256> = match bincode::Decode::decode(d) {
+            Ok(bytes) => Some(bytes),
+            Err(bincode::error::DecodeError::UnexpectedEnd { .. }) => None,
+            Err(err) => return Err(err),
+        }
+        .map(|value| U256::from_le_bytes::<32>(value));
         Ok(Self {
             metadata: metadata.into(),
             input: input.into(),
             context: context.into(),
             storage,
+            balance,
         })
     }
 }
@@ -75,6 +86,7 @@ pub struct RuntimeExecutionOutcomeV1 {
     pub logs: Vec<JournalLog>,
     pub new_metadata: Option<Bytes>,
     pub touched_storage_slots: Option<Vec<U256>>,
+    pub transfers: Option<Vec<(Address, U256)>>,
 }
 
 impl RuntimeExecutionOutcomeV1 {
@@ -110,6 +122,15 @@ impl bincode::Encode for RuntimeExecutionOutcomeV1 {
             bincode::Encode::encode(&(touched_storage_slots.len() as u32), e)?;
             for slot in touched_storage_slots.iter() {
                 bincode::Encode::encode(&slot.to_le_bytes::<{ U256::BYTES }>(), e)?;
+            }
+        } else {
+            bincode::Encode::encode(&0u32, e)?;
+        }
+        if let Some(transfers) = self.transfers.as_ref() {
+            bincode::Encode::encode(&(transfers.len() as u32), e)?;
+            for (recipient, amount) in transfers.iter() {
+                bincode::Encode::encode(recipient.as_slice(), e)?;
+                bincode::Encode::encode(&amount.to_le_bytes::<{ U256::BYTES }>(), e)?;
             }
         } else {
             bincode::Encode::encode(&0u32, e)?;
@@ -156,6 +177,24 @@ impl<Context> DecodeBytes<Context> for RuntimeExecutionOutcomeV1 {
             None
         };
 
+        // Backward compatibility: older outcomes do not have this trailing field.
+        let transfers = if d.reader().peek_read(1).is_some() {
+            let transfers_len: u32 = bincode::Decode::decode(d)?;
+            if transfers_len > 0 {
+                let mut transfers = Vec::with_capacity(transfers_len as usize);
+                for _ in 0..transfers_len {
+                    let recipient: [u8; 20] = bincode::Decode::decode(d)?;
+                    let amount: [u8; 32] = bincode::Decode::decode(d)?;
+                    transfers.push((Address::from(recipient), U256::from_le_bytes(amount)));
+                }
+                Some(transfers)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             exit_code: ExitCode::from(exit_code),
             output: output.into(),
@@ -163,6 +202,7 @@ impl<Context> DecodeBytes<Context> for RuntimeExecutionOutcomeV1 {
             logs,
             new_metadata: new_metadata.map(Into::into),
             touched_storage_slots,
+            transfers,
         })
     }
 }
@@ -177,7 +217,7 @@ mod tests {
         },
         Bytes, ExitCode,
     };
-    use alloy_primitives::{bytes, B256, U256};
+    use alloy_primitives::{bytes, Address, B256, U256};
     use bincode::config::{Configuration, Fixint, LittleEndian};
     use std::collections::BTreeMap;
 
@@ -202,6 +242,7 @@ mod tests {
             input: [4, 5, 6, 7].into(),
             context: [8, 9, 10, 11, 12].into(),
             storage: Some(storage.clone()),
+            balance: None,
         };
         let v_encoded: Bytes = encode(&v).unwrap().into();
         let (v_decoded, bytes_count): (RuntimeNewFrameInputV1, usize) =
@@ -217,6 +258,7 @@ mod tests {
             input: [4, 5, 6, 7].into(),
             context: [8, 9, 10, 11, 12].into(),
             storage: Some(storage.clone()),
+            balance: None,
         };
         let v_encoded: Bytes = encode(&v).unwrap().into();
         let (v_decoded, read_count) = decode::<RuntimeNewFrameInputV1>(v_encoded.clone()).unwrap();
@@ -252,6 +294,7 @@ mod tests {
             logs: vec![],
             new_metadata: None,
             touched_storage_slots: None,
+            transfers: None,
         };
         let v_encoded = v.encode();
         let v_decoded = RuntimeExecutionOutcomeV1::decode(v_encoded.into()).unwrap();
@@ -269,6 +312,7 @@ mod tests {
             logs: logs.clone(),
             new_metadata: Some(bytes!("112233")),
             touched_storage_slots: Some(vec![U256::from(1u64)]),
+            transfers: Some(vec![(Address::repeat_byte(0x22), U256::from(234))]),
         };
         let v_encoded: Bytes = encode(&v).unwrap().into();
         let (v_decoded, read_count) =
@@ -298,6 +342,7 @@ mod tests {
             logs,
             new_metadata: None,
             touched_storage_slots: None,
+            transfers: None,
         };
         let v_encoded: Bytes = encode(&v).unwrap().into();
         let (v_decoded, read_count) =

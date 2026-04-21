@@ -4,7 +4,7 @@ use crate::{
     debug_log, system::state::RecoverableState, Address, Bytes, ContextReader, SharedAPI,
     StorageAPI, SystemAPI, B256, U256,
 };
-use alloc::{borrow::Cow, vec};
+use alloc::{borrow::Cow, vec, vec::Vec};
 pub use fluentbase_types::system::*;
 use fluentbase_types::{
     bincode::decode_from_bytes, CryptoAPI, ExitCode, NativeAPI, SyscallInvocationParams,
@@ -103,6 +103,7 @@ impl<API: NativeAPI + CryptoAPI> SystemContextImpl<API> {
                 logs,
                 new_metadata: metadata,
                 touched_storage_slots: Some(touched_storage_slots),
+                transfers: state.transfers,
             }
             .encode();
             native_sdk.write(&output);
@@ -317,6 +318,20 @@ impl<API: NativeAPI + CryptoAPI> SystemAPI for SystemContextImpl<API> {
     }
 
     fn contract_metadata(&self) -> Bytes {
-        self.state.metadata.clone()
+        self.state.contract_metadata.clone()
+    }
+
+    fn transfer_value_to(&mut self, address: Address, value: U256) -> Result<(), ExitCode> {
+        // Deduct current contract balance to make sure we have enough balance
+        let new_balance = self
+            .state
+            .balance
+            .checked_sub(value)
+            .ok_or(ExitCode::InsufficientBalance)?;
+        self.state.balance = new_balance;
+        // Record list of transfers made during execution
+        let transfers = self.state.transfers.get_or_insert_with(Vec::new);
+        transfers.push((address, value));
+        Ok(())
     }
 }

@@ -339,9 +339,7 @@ impl SharedAPI for TestingContextImpl {
         _input: &[u8],
         _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        // Test host does not emulate nested execution or native-value transfer.
-        // Return success so contracts can exercise happy-path call flows in unit tests.
-        SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
+        unimplemented!("not supported for testing context")
     }
 
     fn call_code(
@@ -406,5 +404,11 @@ impl SystemAPI for TestingContextImpl {
             .contract_metadata
             .clone()
             .unwrap_or_default()
+    }
+
+    fn transfer_value_to(&mut self, _address: Address, _value: U256) -> Result<(), ExitCode> {
+        // Test host does not emulate nested execution or native-value transfer.
+        // Return success so contracts can exercise happy-path call flows in unit tests.
+        Ok(())
     }
 }
