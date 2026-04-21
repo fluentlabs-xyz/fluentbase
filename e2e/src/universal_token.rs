@@ -62,6 +62,7 @@ fn no_plugins_enabled_test() {
         initial_supply: U256::from(0xffff_ffffu64),
         minter: Address::ZERO,
         pauser: Address::ZERO,
+        wrapped: None,
     };
     let total_supply = U256::from(0xffff_ffffu64);
     let amount_to_mint = 93842;
@@ -123,6 +124,7 @@ fn mixed_test() {
         initial_supply: U256::from(0xffff_ffffu64),
         minter: DEPLOYER_ADDR,
         pauser: DEPLOYER_ADDR,
+        wrapped: None,
     };
     let total_supply = U256::from(0xffff_ffffu64);
     let token_name = "NaMe";
@@ -442,6 +444,7 @@ fn reverted_transaction_should_not_commit_changes() {
         initial_supply: U256::from(10),
         minter: ACC1_ADDRESS,
         pauser: Address::ZERO,
+        wrapped: None,
     }
     .encode_with_prefix();
     let contract_address = ctx.deploy_evm_tx(ACC1_ADDRESS, initial_settings);
@@ -508,6 +511,7 @@ fn invoke_ust20_transfer_multiple_times() {
         initial_supply: U256::from(1000),
         minter: DEPLOYER_ADDR,
         pauser: DEPLOYER_ADDR,
+        wrapped: None,
     }
     .encode_with_prefix();
 

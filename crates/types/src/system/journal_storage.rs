@@ -1,10 +1,14 @@
 use crate::{Bytes, B256, U256};
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec::Vec,
+};
 use bincode::{
     de::Decoder,
     enc::Encoder,
     error::{DecodeError, EncodeError},
 };
+use core::cell::RefCell;
 
 /// A single EVM-style log entry recorded during execution.
 ///
@@ -69,6 +73,9 @@ pub struct JournalStorage {
 
     /// Accumulated event logs (LOG opcodes).
     events: Vec<JournalLog>,
+
+    /// Storage slots that were actually touched (read/write) by runtime execution.
+    touched_slots: RefCell<BTreeSet<U256>>,
 }
 
 impl JournalStorage {
@@ -81,6 +88,7 @@ impl JournalStorage {
             state,
             dirty_values: BTreeMap::new(),
             events: Vec::new(),
+            touched_slots: RefCell::new(BTreeSet::new()),
         }
     }
 
@@ -93,7 +101,11 @@ impl JournalStorage {
     ///
     /// This matches EVM `SLOAD` behavior within a transaction.
     pub fn storage(&self, slot: &U256) -> Option<&U256> {
-        self.dirty_values.get(slot).or_else(|| self.state.get(slot))
+        let value = self.dirty_values.get(slot).or_else(|| self.state.get(slot));
+        if value.is_some() {
+            self.touched_slots.borrow_mut().insert(*slot);
+        }
+        value
     }
 
     /// Write a storage slot with journaling semantics.
@@ -104,6 +116,7 @@ impl JournalStorage {
     ///
     /// This ensures the diff contains *only real changes*.
     pub fn write_storage(&mut self, key: U256, value: U256) {
+        self.touched_slots.get_mut().insert(key);
         let equals_base = self.state.get(&key).filter(|v| *v == &value).is_some();
         if !equals_base {
             self.dirty_values.insert(key, value);
@@ -134,8 +147,12 @@ impl JournalStorage {
     /// - `Vec<JournalLog>`: accumulated event logs
     ///
     /// Intended to be used at commit time (e.g. end of transaction or call).
-    pub fn into_diff(self) -> (BTreeMap<U256, U256>, Vec<JournalLog>) {
-        (self.dirty_values, self.events)
+    pub fn into_diff(self) -> (BTreeMap<U256, U256>, Vec<JournalLog>, Vec<U256>) {
+        (
+            self.dirty_values,
+            self.events,
+            self.touched_slots.into_inner().into_iter().collect(),
+        )
     }
 
     /// Clear all stored state.
@@ -150,6 +167,7 @@ impl JournalStorage {
         self.state.clear();
         self.dirty_values.clear();
         self.events.clear();
+        self.touched_slots.get_mut().clear();
     }
 }
 
@@ -204,9 +222,10 @@ mod tests {
         let mut js = JournalStorage::new(base);
         js.write_storage(U256::from(1u64), U256::from(11u64));
 
-        let (diff, logs) = js.into_diff();
+        let (diff, logs, touched_slots) = js.into_diff();
         assert_eq!(diff.get(&U256::from(1u64)), Some(&U256::from(11u64)));
         assert!(logs.is_empty());
+        assert_eq!(touched_slots, vec![U256::from(1u64)]);
     }
 
     #[test]

@@ -7,6 +7,7 @@ pub const ERR_UST_NOT_PAUSABLE: EvmExitCode = derive_evm_error!("USTNotPausable(
 pub const ERR_UST_PAUSER_MISMATCH: EvmExitCode = derive_evm_error!("USTPauserMismatch(address)");
 pub const ERR_UST_NOT_MINTABLE: EvmExitCode = derive_evm_error!("USTNotMintable()");
 pub const ERR_UST_MINTER_MISMATCH: EvmExitCode = derive_evm_error!("USTMinterMismatch(address)");
+pub const ERR_UST_NOT_WRAPPED: EvmExitCode = derive_evm_error!("USTNotWrapped()");
 
 // These errors are compliant with: @openzeppelin-contracts/contracts/interfaces/draft-IERC6093.sol
 pub const ERR_ERC20_INSUFFICIENT_BALANCE: EvmExitCode =
@@ -41,6 +42,8 @@ pub const SIG_ERC20_MINT: u32 = derive_keccak256_id!("mint(address,uint256)");
 pub const SIG_ERC20_BURN: u32 = derive_keccak256_id!("burn(address,uint256)");
 pub const SIG_ERC20_PAUSE: u32 = derive_keccak256_id!("pause()");
 pub const SIG_ERC20_UNPAUSE: u32 = derive_keccak256_id!("unpause()");
+pub const SIG_ERC20_DEPOSIT: u32 = derive_keccak256_id!("deposit()");
+pub const SIG_ERC20_WITHDRAW: u32 = derive_keccak256_id!("withdraw(uint256)");
 
 // Not in use, reserved for future use
 pub const SIG_TOKEN2022: u32 = derive_keccak256_id!("token2022()");
@@ -55,6 +58,7 @@ pub const NAME_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.name");
 pub const DECIMALS_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.decimals");
 pub const ALLOWANCE_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.allowance");
 pub const BALANCE_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.balance");
+pub const WRAPPED_STORAGE_SLOT: U256 = erc7201_slot!("universal-token.wrapped");
 
 #[allow(unused)]
 const fn assert_unique_u32<const N: usize>(values: [u32; N]) {
@@ -77,6 +81,7 @@ const _: () = assert_unique_u32([
     ERR_UST_PAUSER_MISMATCH,
     ERR_UST_NOT_MINTABLE,
     ERR_UST_MINTER_MISMATCH,
+    ERR_UST_NOT_WRAPPED,
     ERR_ERC20_INSUFFICIENT_BALANCE,
     ERR_ERC20_INVALID_SENDER,
     ERR_ERC20_INVALID_RECEIVER,
@@ -102,5 +107,7 @@ const _: () = assert_unique_u32([
     SIG_ERC20_BURN,
     SIG_ERC20_PAUSE,
     SIG_ERC20_UNPAUSE,
+    SIG_ERC20_DEPOSIT,
+    SIG_ERC20_WITHDRAW,
     SIG_TOKEN2022,
 ]);

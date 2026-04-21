@@ -127,6 +127,7 @@ fn tokens_transfer_benches(c: &mut Criterion) {
             initial_supply: total_supply,
             minter: Address::ZERO,
             pauser: Address::ZERO,
+            wrapped: Some(false),
         };
         let contract_address =
             ctx.deploy_evm_tx(DEPLOYER_ADDR, initial_settings.encode_with_prefix());

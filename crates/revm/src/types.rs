@@ -1,11 +1,12 @@
 use crate::ExecutionResult;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use fluentbase_sdk::{SyscallInvocationParams, TESTNET_LEGACY_PRECOMPILE_ADDRESSES};
 use revm::{
     interpreter::Gas,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
 };
+use std::vec::Vec;
 
 /// Returns `true` if `address` is part of the executor's system-precompile set.
 ///
@@ -31,6 +32,9 @@ pub struct SystemInterruptionInputs {
     /// A gas snapshot assigned before the interruption.
     /// We need this to calculate the final amount of gas charged for the entire interruption.
     pub gas: Gas,
+    /// Precharged system-runtime storage slots (slot, gas_cost) from frame preloading.
+    /// Used to return gas for slots that were preloaded but never touched.
+    pub preloaded_slot_costs: Option<Vec<(U256, u64)>>,
 }
 
 /// An interruption outcome.

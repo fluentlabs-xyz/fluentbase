@@ -1,6 +1,6 @@
 use crate::universal_token::consts::{
     SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE_OF, SIG_ERC20_BURN, SIG_ERC20_MINT,
-    SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM,
+    SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM, SIG_ERC20_WITHDRAW,
 };
 use alloc::vec::Vec;
 use fluentbase_codec::{Codec, Encoder, SolidityABI};
@@ -87,4 +87,12 @@ pub struct BurnCommand {
 }
 impl UniversalTokenCommand for BurnCommand {
     const SIGNATURE: u32 = SIG_ERC20_BURN;
+}
+
+#[derive(Default, Debug, Codec)]
+pub struct WithdrawCommand {
+    pub wad: U256,
+}
+impl UniversalTokenCommand for WithdrawCommand {
+    const SIGNATURE: u32 = SIG_ERC20_WITHDRAW;
 }

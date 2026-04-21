@@ -3,15 +3,16 @@ use crate::{
     universal_token::{
         command::{
             AllowanceCommand, ApproveCommand, BalanceOfCommand, BurnCommand, MintCommand,
-            TransferCommand, TransferFromCommand, UniversalTokenCommand,
+            TransferCommand, TransferFromCommand, UniversalTokenCommand, WithdrawCommand,
         },
         consts::{
             ALLOWANCE_STORAGE_SLOT, BALANCE_STORAGE_SLOT, CONTRACT_FROZEN_STORAGE_SLOT,
             DECIMALS_STORAGE_SLOT, MINTER_STORAGE_SLOT, NAME_STORAGE_SLOT, PAUSER_STORAGE_SLOT,
             SIG_ERC20_ALLOWANCE, SIG_ERC20_APPROVE, SIG_ERC20_BALANCE, SIG_ERC20_BALANCE_OF,
-            SIG_ERC20_BURN, SIG_ERC20_DECIMALS, SIG_ERC20_MINT, SIG_ERC20_NAME, SIG_ERC20_PAUSE,
-            SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_TRANSFER, SIG_ERC20_TRANSFER_FROM,
-            SIG_ERC20_UNPAUSE, SYMBOL_STORAGE_SLOT, TOTAL_SUPPLY_STORAGE_SLOT,
+            SIG_ERC20_BURN, SIG_ERC20_DECIMALS, SIG_ERC20_DEPOSIT, SIG_ERC20_MINT, SIG_ERC20_NAME,
+            SIG_ERC20_PAUSE, SIG_ERC20_SYMBOL, SIG_ERC20_TOTAL_SUPPLY, SIG_ERC20_TRANSFER,
+            SIG_ERC20_TRANSFER_FROM, SIG_ERC20_UNPAUSE, SIG_ERC20_WITHDRAW, SYMBOL_STORAGE_SLOT,
+            TOTAL_SUPPLY_STORAGE_SLOT, WRAPPED_STORAGE_SLOT,
         },
     },
 };
@@ -21,7 +22,7 @@ use fluentbase_types::{bytes::BytesMut, Address, Bytes, B256, U256, UNIVERSAL_TO
 
 pub const SIG_LEN_BYTES: usize = 4;
 
-#[derive(Default, Debug, PartialEq, Codec)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Codec)]
 #[repr(transparent)]
 pub struct TokenNameOrSymbol {
     bytes: B256,
@@ -77,11 +78,12 @@ impl LegacyInitialSettings {
     }
 }
 
-/// A size of initial settings in bytes (4 + 6 slots x 32 bytes)
-const INITIAL_SETTINGS_SIZE: usize = 4 + 6 * 32;
+/// Initial settings payload sizes including magic prefix.
+pub const INITIAL_SETTINGS_V1_SIZE: usize = 4 + 6 * 32;
+pub const INITIAL_SETTINGS_V2_SIZE: usize = 4 + 7 * 32;
 
 #[derive(Default, Debug, PartialEq, Codec)]
-pub struct InitialSettings {
+struct InitialSettingsV1 {
     pub token_name: TokenNameOrSymbol,
     pub token_symbol: TokenNameOrSymbol,
     pub decimals: u8,
@@ -90,10 +92,54 @@ pub struct InitialSettings {
     pub pauser: Address,
 }
 
+#[derive(Default, Debug, PartialEq, Codec)]
+struct InitialSettingsV2 {
+    pub token_name: TokenNameOrSymbol,
+    pub token_symbol: TokenNameOrSymbol,
+    pub decimals: u8,
+    pub initial_supply: U256,
+    pub minter: Address,
+    pub pauser: Address,
+    pub wrapped: bool,
+}
+
+#[derive(Default, Debug, PartialEq)]
+pub struct InitialSettings {
+    pub token_name: TokenNameOrSymbol,
+    pub token_symbol: TokenNameOrSymbol,
+    pub decimals: u8,
+    pub initial_supply: U256,
+    pub minter: Address,
+    pub pauser: Address,
+    /// Enables wrapped-token extension (`deposit()` / `withdraw(uint256)`).
+    pub wrapped: Option<bool>,
+}
+
 impl InitialSettings {
     pub fn encode_with_prefix(&self) -> Bytes {
         let mut bytes = BytesMut::new();
-        SolidityABI::encode(self, &mut bytes, 0).unwrap();
+        if let Some(wrapped) = self.wrapped {
+            let settings = InitialSettingsV2 {
+                token_name: self.token_name,
+                token_symbol: self.token_symbol,
+                decimals: self.decimals,
+                initial_supply: self.initial_supply,
+                minter: self.minter,
+                pauser: self.pauser,
+                wrapped,
+            };
+            SolidityABI::encode(&settings, &mut bytes, 0).unwrap();
+        } else {
+            let settings = InitialSettingsV1 {
+                token_name: self.token_name,
+                token_symbol: self.token_symbol,
+                decimals: self.decimals,
+                initial_supply: self.initial_supply,
+                minter: self.minter,
+                pauser: self.pauser,
+            };
+            SolidityABI::encode(&settings, &mut bytes, 0).unwrap();
+        }
         let result = bytes.freeze();
         // TODO(d1r1): Optimize allocation
         let mut output = Vec::with_capacity(UNIVERSAL_TOKEN_MAGIC_BYTES.len() + result.len());
@@ -106,12 +152,55 @@ impl InitialSettings {
         if buf.len() < 4 {
             return None;
         }
-        let (sig, buf) = buf.split_at(4);
+        let (sig, payload) = buf.split_at(4);
         if sig != UNIVERSAL_TOKEN_MAGIC_BYTES {
             return None;
         }
-        let result: Self = SolidityABI::decode(&buf, 0).ok()?;
-        Some(result)
+
+        match buf.len() {
+            INITIAL_SETTINGS_V1_SIZE => {
+                let settings: InitialSettingsV1 = SolidityABI::decode(&payload, 0).ok()?;
+                Some(Self {
+                    token_name: settings.token_name,
+                    token_symbol: settings.token_symbol,
+                    decimals: settings.decimals,
+                    initial_supply: settings.initial_supply,
+                    minter: settings.minter,
+                    pauser: settings.pauser,
+                    wrapped: None,
+                })
+            }
+            INITIAL_SETTINGS_V2_SIZE => {
+                let settings: InitialSettingsV2 = SolidityABI::decode(&payload, 0).ok()?;
+                Some(Self {
+                    token_name: settings.token_name,
+                    token_symbol: settings.token_symbol,
+                    decimals: settings.decimals,
+                    initial_supply: settings.initial_supply,
+                    minter: settings.minter,
+                    pauser: settings.pauser,
+                    wrapped: Some(settings.wrapped),
+                })
+            }
+            _ if buf.len() > INITIAL_SETTINGS_V1_SIZE => {
+                // Legacy format uses a different layout and larger payload.
+                let settings = LegacyInitialSettings::decode_with_prefix(buf)?;
+                Some(Self {
+                    token_name: TokenNameOrSymbol {
+                        bytes: settings.token_name.into(),
+                    },
+                    token_symbol: TokenNameOrSymbol {
+                        bytes: settings.token_symbol.into(),
+                    },
+                    decimals: settings.decimals,
+                    initial_supply: settings.initial_supply,
+                    minter: settings.minter,
+                    pauser: settings.pauser,
+                    wrapped: None,
+                })
+            }
+            _ => None,
+        }
     }
 }
 
@@ -119,25 +208,14 @@ pub fn erc20_compute_deploy_storage_keys(input: &[u8], caller: &Address) -> Opti
     if input.len() < SIG_LEN_BYTES {
         return None;
     }
-    let mut result = Vec::with_capacity(7);
-    // We need this legacy check until we have a new checkpoint for Fluent Testnet
-    let (minter, pauser, initial_supply) = if input.len() > INITIAL_SETTINGS_SIZE {
-        let LegacyInitialSettings {
-            minter,
-            pauser,
-            initial_supply,
-            ..
-        } = LegacyInitialSettings::decode_with_prefix(input)?;
-        (minter, pauser, initial_supply)
-    } else {
-        let InitialSettings {
-            minter,
-            pauser,
-            initial_supply,
-            ..
-        } = InitialSettings::decode_with_prefix(input)?;
-        (minter, pauser, initial_supply)
-    };
+    let mut result = Vec::with_capacity(8);
+    let InitialSettings {
+        minter,
+        pauser,
+        initial_supply,
+        wrapped,
+        ..
+    } = InitialSettings::decode_with_prefix(input)?;
     result.push(DECIMALS_STORAGE_SLOT);
     result.push(NAME_STORAGE_SLOT);
     result.push(SYMBOL_STORAGE_SLOT);
@@ -152,6 +230,10 @@ pub fn erc20_compute_deploy_storage_keys(input: &[u8], caller: &Address) -> Opti
     if !pauser.is_zero() {
         result.push(PAUSER_STORAGE_SLOT);
     }
+    // Push wrapped flag only if we use V1 settings
+    if wrapped.is_some() {
+        result.push(WRAPPED_STORAGE_SLOT);
+    }
     Some(result)
 }
 
@@ -159,7 +241,7 @@ pub fn erc20_compute_main_storage_keys(input: &[u8], caller: &Address) -> Option
     if input.len() < SIG_LEN_BYTES {
         return None;
     }
-    let mut result = Vec::with_capacity(7);
+    let mut result = Vec::with_capacity(8);
     let (sig, input) = input.split_at(SIG_LEN_BYTES);
     let sig = u32::from_be_bytes(sig.try_into().unwrap());
     match sig {
@@ -224,6 +306,17 @@ pub fn erc20_compute_main_storage_keys(input: &[u8], caller: &Address) -> Option
             result.push(CONTRACT_FROZEN_STORAGE_SLOT);
             result.push(PAUSER_STORAGE_SLOT);
         }
+        SIG_ERC20_DEPOSIT => {
+            result.push(WRAPPED_STORAGE_SLOT);
+            result.push(caller.compute_slot(BALANCE_STORAGE_SLOT));
+            result.push(TOTAL_SUPPLY_STORAGE_SLOT);
+        }
+        SIG_ERC20_WITHDRAW => {
+            result.push(WRAPPED_STORAGE_SLOT);
+            let WithdrawCommand { .. } = WithdrawCommand::try_decode(input).ok()?;
+            result.push(caller.compute_slot(BALANCE_STORAGE_SLOT));
+            result.push(TOTAL_SUPPLY_STORAGE_SLOT);
+        }
         _ => {}
     }
     Some(result)
@@ -243,7 +336,9 @@ pub fn erc20_compute_storage_keys(
 
 #[cfg(test)]
 mod tests {
-    use crate::universal_token::storage::{InitialSettings, TokenNameOrSymbol};
+    use crate::universal_token::storage::{
+        InitialSettings, TokenNameOrSymbol, INITIAL_SETTINGS_V1_SIZE, INITIAL_SETTINGS_V2_SIZE,
+    };
     use fluentbase_types::{address, Address, U256};
 
     #[test]
@@ -268,13 +363,32 @@ mod tests {
             initial_supply: U256::from(2),
             minter: address!("0303000200500020400000040000002000809020"),
             pauser: Address::ZERO,
+            wrapped: None,
         };
         let addr = address!("0003000200500000400000040000002000800020");
         let addr_bytes: [u8; Address::len_bytes()] = addr.into();
         let addr_restored: Address = addr_bytes.into();
         assert_eq!(addr, addr_restored);
         let settings_vec = settings.encode_with_prefix();
-        assert_eq!(settings_vec.len(), 4 + 32 * 6);
+        assert_eq!(settings_vec.len(), INITIAL_SETTINGS_V1_SIZE);
+        let settings_restored = InitialSettings::decode_with_prefix(settings_vec.as_ref()).unwrap();
+        assert_eq!(settings, settings_restored);
+    }
+
+    #[test]
+    fn test_ser_der_wrapped_settings() {
+        let settings = InitialSettings {
+            token_name: TokenNameOrSymbol::from_str("WETH"),
+            token_symbol: TokenNameOrSymbol::from_str("WETH"),
+            decimals: 18,
+            initial_supply: U256::ZERO,
+            minter: Address::ZERO,
+            pauser: Address::ZERO,
+            wrapped: Some(true),
+        };
+
+        let settings_vec = settings.encode_with_prefix();
+        assert_eq!(settings_vec.len(), INITIAL_SETTINGS_V2_SIZE);
         let settings_restored = InitialSettings::decode_with_prefix(settings_vec.as_ref()).unwrap();
         assert_eq!(settings, settings_restored);
     }

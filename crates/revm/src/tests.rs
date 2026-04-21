@@ -92,6 +92,7 @@ mod code_copy_tests {
             call_id: 0,
             syscall_params,
             gas: Gas::new(initial_gas),
+            preloaded_slot_costs: None,
         };
 
         // === Execute: Call the syscall ===
@@ -275,6 +276,7 @@ mod metadata_write_tests {
             call_id: 0,
             syscall_params,
             gas: Gas::new(1_000_000),
+            preloaded_slot_costs: None,
         };
 
         let result = execute_rwasm_interruption::<_, NoOpInspector>(
@@ -350,6 +352,7 @@ mod metadata_write_tests {
             call_id: 0,
             syscall_params,
             gas: Gas::new(1_000_000), // Sufficient gas for the operation
+            preloaded_slot_costs: None,
         };
 
         // === Execute: Call the syscall ===
@@ -461,6 +464,7 @@ mod block_hash_tests {
             call_id: 0,
             syscall_params,
             gas: Gas::new(10_000_000),
+            preloaded_slot_costs: None,
         };
 
         execute_rwasm_interruption::<_, NoOpInspector>(
@@ -511,6 +515,7 @@ mod block_hash_tests {
                 ..Default::default()
             },
             gas: Gas::new(10_000_000),
+            preloaded_slot_costs: None,
         };
 
         // Execute the syscall - should return Err, not Ok.
@@ -607,6 +612,7 @@ mod block_hash_tests {
                 ..Default::default()
             },
             gas: Gas::new(10_000_000),
+            preloaded_slot_costs: None,
         };
         execute_rwasm_interruption::<_, NoOpInspector>(
             &mut frame,
@@ -656,6 +662,7 @@ mod block_hash_tests {
                 ..Default::default()
             },
             gas: Gas::new(10_000_000),
+            preloaded_slot_costs: None,
         };
         let result = execute_rwasm_interruption::<_, NoOpInspector>(
             &mut frame,

@@ -54,6 +54,10 @@ fn abi_encode_1_addr(a: Address) -> Vec<u8> {
     abi_word_addr(a).to_vec()
 }
 
+fn abi_encode_1_u256(x: U256) -> Vec<u8> {
+    abi_word_u256(x).to_vec()
+}
+
 /// Decode a single 32-byte ABI word as U256.
 fn abi_decode_u256_word(bytes: &[u8]) -> U256 {
     assert_eq!(bytes.len(), 32, "expected exactly 32 bytes ABI word");
@@ -143,6 +147,18 @@ const TOPIC_PAUSED: [u8; 32] = [
 const TOPIC_UNPAUSED: [u8; 32] = [
     0x5d, 0xb9, 0xee, 0x0a, 0x49, 0x5b, 0xf2, 0xe6, 0xff, 0x9c, 0x91, 0xa7, 0x83, 0x4c, 0x1b, 0xa4,
     0xfd, 0xd2, 0x44, 0xa5, 0xe8, 0xaa, 0x4e, 0x53, 0x7b, 0xd3, 0x8a, 0xea, 0xe4, 0xb0, 0x73, 0xaa,
+];
+
+// keccak256("Deposit(address,uint256)")
+const TOPIC_DEPOSIT: [u8; 32] = [
+    0xe1, 0xff, 0xfc, 0xc4, 0x92, 0x3d, 0x04, 0xb5, 0x59, 0xf4, 0xd2, 0x9a, 0x8b, 0xfc, 0x6c, 0xda,
+    0x04, 0xeb, 0x5b, 0x0d, 0x3c, 0x46, 0x07, 0x51, 0xc2, 0x40, 0x2c, 0x5c, 0x5c, 0xc9, 0x10, 0x9c,
+];
+
+// keccak256("Withdrawal(address,uint256)")
+const TOPIC_WITHDRAWAL: [u8; 32] = [
+    0x7f, 0xcf, 0x53, 0x2c, 0x15, 0xf0, 0xa6, 0xdb, 0x0b, 0xd6, 0xd0, 0xe0, 0x38, 0xbe, 0xa7, 0x1d,
+    0x30, 0xd8, 0x08, 0xc7, 0xd9, 0x8c, 0xb3, 0xbf, 0x72, 0x68, 0xa9, 0x5b, 0xf5, 0x08, 0x1b, 0x65,
 ];
 
 fn topic_addr(a: Address) -> [u8; 32] {
@@ -273,6 +289,11 @@ impl Harness {
     fn set_static(&mut self, is_static: bool) {
         let mut ctx = self.sdk.context_mut();
         ctx.is_static = is_static;
+    }
+
+    fn set_call_value(&mut self, value: U256) {
+        let mut ctx = self.sdk.context_mut();
+        ctx.value = value;
     }
 
     fn call<I: Into<Bytes>>(&mut self, input: I) -> (ExitCode, Vec<u8>) {
@@ -1749,4 +1770,134 @@ fn transfer_from_does_not_decrease_allowance_when_allowance_is_u256_max() {
     let (ec, bal_to) = h.call(with_sig(SIG_ERC20_BALANCE_OF, &abi_encode_1_addr(to)));
     assert_eq!(ec, ExitCode::Ok);
     assert_eq!(bal_to, abi_word_u256(amount).to_vec());
+}
+
+#[test]
+fn wrapped_methods_reject_when_wrapped_extension_is_disabled() {
+    let token = Address::with_last_byte(1);
+    let deployer = Address::with_last_byte(2);
+    let caller = Address::with_last_byte(3);
+    let mut h = Harness::new(token);
+
+    let mut s = InitialSettings::default();
+    s.token_name = "Token".into();
+    s.token_symbol = "TKN".into();
+    s.decimals = 18;
+    s.wrapped = Some(false);
+    let _ = h.deploy(s.encode_with_prefix(), deployer);
+
+    h.set_caller(caller);
+    h.set_call_value(U256::from(10u64));
+    let (ec, out) = h.call(with_sig(SIG_ERC20_DEPOSIT, &[]));
+    assert_eq!(ec, ExitCode::Panic);
+    assert_eq!(out, evm_exit_bytes(ERR_UST_NOT_WRAPPED));
+
+    h.set_call_value(U256::ZERO);
+    let (ec, out) = h.call(with_sig(SIG_ERC20_WITHDRAW, &abi_encode_1_u256(U256::ONE)));
+    assert_eq!(ec, ExitCode::Panic);
+    assert_eq!(out, evm_exit_bytes(ERR_UST_NOT_WRAPPED));
+}
+
+#[test]
+fn wrapped_deposit_mints_supply_and_emits_events() {
+    let token = Address::with_last_byte(1);
+    let deployer = Address::with_last_byte(2);
+    let caller = Address::with_last_byte(3);
+    let mut h = Harness::new(token);
+
+    let mut s = InitialSettings::default();
+    s.token_name = "Wrapped Token".into();
+    s.token_symbol = "WTKN".into();
+    s.decimals = 18;
+    s.wrapped = Some(true);
+    let _ = h.deploy(s.encode_with_prefix(), deployer);
+    let _ = h.take_logs();
+
+    let wad = U256::from(25u64);
+    h.set_caller(caller);
+    h.set_call_value(wad);
+    let (ec, out) = h.call(with_sig(SIG_ERC20_DEPOSIT, &[]));
+    assert_eq!(ec, ExitCode::Ok);
+    assert!(out.is_empty());
+
+    let logs = h.take_logs();
+    assert_eq!(logs.len(), 2, "expected Deposit + Transfer logs");
+
+    assert_eq!(logs[0].topics[0], TOPIC_DEPOSIT, "wrong Deposit topic0");
+    assert_eq!(logs[0].topics[1], topic_addr(caller), "wrong indexed dst");
+    assert_eq!(logs[0].data, data_u256(wad), "wrong Deposit amount");
+
+    assert_eq!(logs[1].topics[0], TOPIC_TRANSFER, "wrong Transfer topic0");
+    assert_eq!(
+        logs[1].topics[1],
+        topic_addr(Address::ZERO),
+        "wrong Transfer from"
+    );
+    assert_eq!(logs[1].topics[2], topic_addr(caller), "wrong Transfer to");
+    assert_eq!(logs[1].data, data_u256(wad), "wrong Transfer amount");
+
+    let (ec, bal) = h.call(with_sig(SIG_ERC20_BALANCE_OF, &abi_encode_1_addr(caller)));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(bal, abi_word_u256(wad).to_vec());
+
+    let (ec, ts) = h.call(with_sig(SIG_ERC20_TOTAL_SUPPLY, &[]));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(ts, abi_word_u256(wad).to_vec());
+}
+
+#[test]
+fn wrapped_withdraw_burns_supply_and_emits_events() {
+    let token = Address::with_last_byte(1);
+    let deployer = Address::with_last_byte(2);
+    let caller = Address::with_last_byte(3);
+    let mut h = Harness::new(token);
+
+    let mut s = InitialSettings::default();
+    s.token_name = "Wrapped Token".into();
+    s.token_symbol = "WTKN".into();
+    s.decimals = 18;
+    s.wrapped = Some(true);
+    let _ = h.deploy(s.encode_with_prefix(), deployer);
+    let _ = h.take_logs();
+
+    h.set_caller(caller);
+    h.set_call_value(U256::from(30u64));
+    let (ec, out) = h.call(with_sig(SIG_ERC20_DEPOSIT, &[]));
+    assert_eq!(ec, ExitCode::Ok);
+    assert!(out.is_empty());
+    let _ = h.take_logs();
+
+    let wad = U256::from(12u64);
+    h.set_call_value(U256::ZERO);
+    let (ec, out) = h.call(with_sig(SIG_ERC20_WITHDRAW, &abi_encode_1_u256(wad)));
+    assert_eq!(ec, ExitCode::Ok);
+    assert!(out.is_empty());
+
+    let logs = h.take_logs();
+    assert_eq!(logs.len(), 2, "expected Withdrawal + Transfer logs");
+
+    assert_eq!(
+        logs[0].topics[0], TOPIC_WITHDRAWAL,
+        "wrong Withdrawal topic0"
+    );
+    assert_eq!(logs[0].topics[1], topic_addr(caller), "wrong indexed src");
+    assert_eq!(logs[0].data, data_u256(wad), "wrong Withdrawal amount");
+
+    assert_eq!(logs[1].topics[0], TOPIC_TRANSFER, "wrong Transfer topic0");
+    assert_eq!(logs[1].topics[1], topic_addr(caller), "wrong Transfer from");
+    assert_eq!(
+        logs[1].topics[2],
+        topic_addr(Address::ZERO),
+        "wrong Transfer to"
+    );
+    assert_eq!(logs[1].data, data_u256(wad), "wrong Transfer amount");
+
+    let expected_remaining = U256::from(18u64);
+    let (ec, bal) = h.call(with_sig(SIG_ERC20_BALANCE_OF, &abi_encode_1_addr(caller)));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(bal, abi_word_u256(expected_remaining).to_vec());
+
+    let (ec, ts) = h.call(with_sig(SIG_ERC20_TOTAL_SUPPLY, &[]));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(ts, abi_word_u256(expected_remaining).to_vec());
 }

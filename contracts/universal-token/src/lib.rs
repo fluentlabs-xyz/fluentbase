@@ -18,7 +18,7 @@ use fluentbase_sdk::{
     storage::{StorageMap, StorageU256},
     system_entrypoint,
     universal_token::*,
-    Address, ContextReader, EvmExitCode, ExitCode, StorageUtils, SystemAPI, U256,
+    Address, Bytes, ContextReader, EvmExitCode, ExitCode, StorageUtils, SystemAPI, U256,
 };
 
 mod events {
@@ -50,6 +50,20 @@ mod events {
     #[derive(Debug, Clone, PartialEq, Eq, Event)]
     pub struct Unpaused {
         pub pauser: Address,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Event)]
+    pub struct Deposit {
+        #[indexed]
+        pub dst: Address,
+        pub wad: U256,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Event)]
+    pub struct Withdrawal {
+        #[indexed]
+        pub src: Address,
+        pub wad: U256,
     }
 }
 
@@ -469,6 +483,109 @@ fn erc20_unpause_handler<SDK: SystemAPI>(
     Ok(0)
 }
 
+fn erc20_deposit_handler<SDK: SystemAPI>(
+    sdk: &mut SDK,
+    _input: &[u8],
+) -> Result<EvmExitCode, ExitCode> {
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
+
+    let is_wrapped = sdk.storage(&WRAPPED_STORAGE_SLOT).ok()?;
+    if is_wrapped.is_zero() {
+        return Ok(ERR_UST_NOT_WRAPPED);
+    }
+
+    let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
+    if !is_contract_frozen.is_zero() {
+        return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
+    }
+
+    let caller = sdk.context().contract_caller();
+    if caller.is_zero() {
+        return Ok(ERR_ERC20_INVALID_SENDER);
+    }
+
+    let wad = sdk.context().contract_value();
+    let balance_accessor = BalanceStorageMap::new(BALANCE_STORAGE_SLOT).entry(caller);
+    let balance = balance_accessor.get_checked(sdk)?;
+    let new_balance = balance.checked_add(wad).ok_or(ExitCode::IntegerOverflow)?;
+
+    let total_supply = sdk.storage(&TOTAL_SUPPLY_STORAGE_SLOT).ok()?;
+    let new_total_supply = total_supply
+        .checked_add(wad)
+        .ok_or(ExitCode::IntegerOverflow)?;
+
+    balance_accessor.set_checked(sdk, new_balance)?;
+    sdk.write_storage(TOTAL_SUPPLY_STORAGE_SLOT, new_total_supply)
+        .ok()?;
+
+    events::Deposit { dst: caller, wad }.emit(sdk)?;
+    events::Transfer {
+        from: Address::ZERO,
+        to: caller,
+        amount: wad,
+    }
+    .emit(sdk)?;
+
+    Ok(0)
+}
+
+fn erc20_withdraw_handler<SDK: SystemAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<EvmExitCode, ExitCode> {
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
+
+    let is_wrapped = sdk.storage(&WRAPPED_STORAGE_SLOT).ok()?;
+    if is_wrapped.is_zero() {
+        return Ok(ERR_UST_NOT_WRAPPED);
+    }
+
+    let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
+    if !is_contract_frozen.is_zero() {
+        return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
+    }
+
+    let caller = sdk.context().contract_caller();
+    if caller.is_zero() {
+        return Ok(ERR_ERC20_INVALID_SENDER);
+    }
+
+    let WithdrawCommand { wad } = WithdrawCommand::try_decode(input)?;
+
+    let balance_accessor = BalanceStorageMap::new(BALANCE_STORAGE_SLOT).entry(caller);
+    let balance = balance_accessor.get_checked(sdk)?;
+    let Some(new_balance) = balance.checked_sub(wad) else {
+        return Ok(ERR_ERC20_INSUFFICIENT_BALANCE);
+    };
+
+    let total_supply = sdk.storage(&TOTAL_SUPPLY_STORAGE_SLOT).ok()?;
+    let Some(new_total_supply) = total_supply.checked_sub(wad) else {
+        return Ok(ERR_ERC20_INSUFFICIENT_BALANCE);
+    };
+
+    balance_accessor.set_checked(sdk, new_balance)?;
+    sdk.write_storage(TOTAL_SUPPLY_STORAGE_SLOT, new_total_supply)
+        .ok()?;
+
+    let Ok(_) = sdk.call(caller, wad, &[], None).ok() else {
+        return Ok(ERR_ERC20_INSUFFICIENT_BALANCE);
+    };
+
+    events::Withdrawal { src: caller, wad }.emit(sdk)?;
+    events::Transfer {
+        from: caller,
+        to: Address::ZERO,
+        amount: wad,
+    }
+    .emit(sdk)?;
+
+    Ok(0)
+}
+
 /// Fallback for unknown selectors: returns `ERR_UNKNOWN_METHOD`.
 fn erc20_unknown_method<SDK: SystemAPI>(
     _sdk: &mut SDK,
@@ -480,7 +597,7 @@ fn erc20_unknown_method<SDK: SystemAPI>(
 /// Constructor entrypoint: decodes `InitialSettings` and initializes storage (metadata, supply, optional minter/pauser).
 fn erc20_constructor_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
-    input: &[u8],
+    input: Bytes,
 ) -> Result<EvmExitCode, ExitCode> {
     // Decode initial settings parameters (SolidityABI)
     let InitialSettings {
@@ -490,7 +607,8 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
         initial_supply,
         minter,
         pauser,
-    } = InitialSettings::decode_with_prefix(input).ok_or(ExitCode::MalformedBuiltinParams)?;
+        wrapped,
+    } = InitialSettings::decode_with_prefix(&input).ok_or(ExitCode::MalformedBuiltinParams)?;
     // Write token name and token decimals (make sure both are properly UTF-8 encoded)
     sdk.write_storage_short_string(
         NAME_STORAGE_SLOT,
@@ -526,13 +644,16 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
         .emit(sdk)?;
     }
     // If token is mintable then minter is provided
-    if !minter.is_zero() {
-        sdk.write_storage_address(MINTER_STORAGE_SLOT, minter)?;
-    }
+    sdk.write_storage_address(MINTER_STORAGE_SLOT, minter)?;
     // If token is pausable then pauser is provided
-    if !pauser.is_zero() {
-        sdk.write_storage_address(PAUSER_STORAGE_SLOT, pauser)?;
+    sdk.write_storage_address(PAUSER_STORAGE_SLOT, pauser)?;
+    // If token is wrapped then always write even false to touch storage slot
+    if let Some(wrapped) = wrapped {
+        sdk.write_storage(WRAPPED_STORAGE_SLOT, U256::from(wrapped))
+            .ok()?;
     }
+    // Copy initial settings into metadata
+    sdk.write_contract_metadata(input);
     Ok(0)
 }
 
@@ -542,7 +663,7 @@ pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         return Err(ExitCode::MalformedBuiltinParams);
     }
     let input = sdk.bytes_input();
-    let evm_exit_code = erc20_constructor_handler(sdk, input.as_ref())?;
+    let evm_exit_code = erc20_constructor_handler(sdk, input)?;
     if evm_exit_code != 0 {
         write_evm_exit_message(evm_exit_code, |slice| sdk.write(slice));
         return Err(ExitCode::Panic);
@@ -573,6 +694,13 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_ERC20_BURN => erc20_burn_handler(sdk, input),
         SIG_ERC20_PAUSE => erc20_pause_handler(sdk, input),
         SIG_ERC20_UNPAUSE => erc20_unpause_handler(sdk, input),
+        // Wrapper extension
+        SIG_ERC20_DEPOSIT if sdk.contract_metadata().len() >= INITIAL_SETTINGS_V2_SIZE => {
+            erc20_deposit_handler(sdk, input)
+        }
+        SIG_ERC20_WITHDRAW if sdk.contract_metadata().len() >= INITIAL_SETTINGS_V2_SIZE => {
+            erc20_withdraw_handler(sdk, input)
+        }
         _ => erc20_unknown_method(sdk, input),
     }?;
     if evm_exit_code != 0 {
