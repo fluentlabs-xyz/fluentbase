@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Verification works only after v1.2.0-rc.1 version
-TAG="${1:-v1.2.0-rc.1}"
+TAG="${1:-v1.2.0}"
 
 CURRENT_REV="$(git rev-parse HEAD)"
 TAG_REV="$(git rev-list -n 1 "$TAG")"
