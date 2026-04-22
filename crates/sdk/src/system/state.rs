@@ -1,4 +1,4 @@
-use crate::{Bytes, SharedContextInputV1};
+use crate::{Address, Bytes, SharedContextInputV1, U256};
 use alloc::{vec, vec::Vec};
 use core::sync::atomic::{AtomicU32, Ordering};
 use fluentbase_types::system::{
@@ -9,13 +9,15 @@ use spin::{Mutex, MutexGuard, Once};
 
 pub struct RecoverableState {
     pub(super) storage: JournalStorage,
-    pub(super) metadata: Bytes,
+    pub(super) contract_metadata: Bytes,
     pub(super) input: Bytes,
     pub(super) context: SharedContextInputV1,
     pub(super) output: Vec<u8>,
     pub(super) interruption_outcome: Option<RuntimeInterruptionOutcomeV1>,
     pub(super) unique_key: u32,
     pub(super) intermediary_input: Option<Bytes>,
+    // pub(super) balance: U256,
+    pub(super) transfers: Option<Vec<(Address, U256)>>,
 }
 
 impl RecoverableState {
@@ -25,18 +27,22 @@ impl RecoverableState {
             input,
             context,
             storage,
+            // balance,
             ..
         } = input;
         let context = SharedContextInputV1::decode_from_slice(context.as_ref()).unwrap();
         Self {
             storage: JournalStorage::new(storage.unwrap_or_default()),
-            metadata,
+            contract_metadata: metadata,
             input,
             context,
             output: vec![],
             interruption_outcome: None,
             unique_key: next_unique_key(),
             intermediary_input: None,
+            // If balance is not passed then we assume it's ZERO (aka not supported or legacy contract)
+            // balance: balance.unwrap_or(U256::ZERO),
+            transfers: None,
         }
     }
 

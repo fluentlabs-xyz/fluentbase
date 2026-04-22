@@ -308,11 +308,13 @@ pub fn erc20_compute_main_storage_keys(input: &[u8], caller: &Address) -> Option
         }
         SIG_ERC20_DEPOSIT => {
             result.push(WRAPPED_STORAGE_SLOT);
+            result.push(CONTRACT_FROZEN_STORAGE_SLOT);
             result.push(caller.compute_slot(BALANCE_STORAGE_SLOT));
             result.push(TOTAL_SUPPLY_STORAGE_SLOT);
         }
         SIG_ERC20_WITHDRAW => {
             result.push(WRAPPED_STORAGE_SLOT);
+            result.push(CONTRACT_FROZEN_STORAGE_SLOT);
             let WithdrawCommand { .. } = WithdrawCommand::try_decode(input).ok()?;
             result.push(caller.compute_slot(BALANCE_STORAGE_SLOT));
             result.push(TOTAL_SUPPLY_STORAGE_SLOT);

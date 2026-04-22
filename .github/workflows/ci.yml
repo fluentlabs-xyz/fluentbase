@@ -65,6 +65,19 @@ jobs:
             features: std,wasmtime
             kind: evm-e2e
 
+          # ---------------------------
+          # evm-e2e suite (fixture)
+          # ---------------------------
+          - name: fixture / std
+            manifest: ./evm-e2e/Cargo.toml
+            features: std
+            kind: fixture
+
+          - name: fixture / std,wasmtime
+            manifest: ./evm-e2e/Cargo.toml
+            features: std,wasmtime
+            kind: fixture
+
     steps:
       - uses: actions/checkout@v6
         with:
@@ -141,6 +154,19 @@ jobs:
             --package evm-e2e \
             --bin evm-e2e \
             tests::good_coverage_tests
+
+      - name: Run ethereum tests (fixture)
+        if: matrix.kind == 'fixture'
+        run: |
+          set -euxo pipefail
+          cargo nextest run \
+            --manifest-path="${{ matrix.manifest }}" \
+            --release \
+            --no-default-features \
+            --features "${{ matrix.features }}" \
+            --package evm-e2e \
+            --bin evm-e2e \
+            fixture
 
       - name: Show sccache stats
         run: ${SCCACHE_PATH} --show-stats

@@ -91,7 +91,7 @@ impl UniversalTokenCommand for BurnCommand {
 
 #[derive(Default, Debug, Codec)]
 pub struct WithdrawCommand {
-    pub wad: U256,
+    pub amount: U256,
 }
 impl UniversalTokenCommand for WithdrawCommand {
     const SIGNATURE: u32 = SIG_ERC20_WITHDRAW;

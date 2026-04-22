@@ -45,6 +45,7 @@ pub fn instruction_result_from_exit_code(
         ExitCode::CreateContractCollision => InstructionResult::CreateCollision,
         ExitCode::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
         ExitCode::OutOfMemory => InstructionResult::MemoryOutOfBounds,
+        ExitCode::InsufficientBalance => InstructionResult::OutOfFunds,
         /* Trap Error Codes */
         ExitCode::UnreachableCodeReached => InstructionResult::UnreachableCodeReached,
         ExitCode::MemoryOutOfBounds => InstructionResult::MemoryOutOfBounds,
