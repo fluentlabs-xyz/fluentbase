@@ -31,5 +31,6 @@ mod fluent_testnet {
 mod fluent_mainnet {
     define_tests! {
         fn mainnet_2697535_bridge_token_deployment("fixtures/mainnet_2697535_bridge_token_deployment.json");
+        fn mainnet_2698630_bridge_token_deployment("fixtures/mainnet_2698630_bridge_token_deployment.json");
     }
 }

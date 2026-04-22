@@ -13,7 +13,7 @@ pub struct RuntimeNewFrameInputV1 {
     pub input: Bytes,
     pub context: Bytes,
     pub storage: Option<BTreeMap<U256, U256>>,
-    pub balance: Option<U256>,
+    // pub balance: Option<U256>,
 }
 
 impl bincode::Encode for RuntimeNewFrameInputV1 {
@@ -33,9 +33,9 @@ impl bincode::Encode for RuntimeNewFrameInputV1 {
         } else {
             bincode::Encode::encode(&0u32, e)?;
         }
-        if let Some(balance) = self.balance {
-            bincode::Encode::encode(&balance.to_le_bytes::<{ U256::BYTES }>(), e)?;
-        }
+        // if let Some(balance) = self.balance {
+        //     bincode::Encode::encode(&balance.to_le_bytes::<{ U256::BYTES }>(), e)?;
+        // }
         Ok(())
     }
 }
@@ -62,18 +62,20 @@ impl<Context> DecodeBytes<Context> for RuntimeNewFrameInputV1 {
         } else {
             None
         };
-        let balance: Option<U256> = match bincode::Decode::decode(d) {
-            Ok(bytes) => Some(bytes),
-            Err(bincode::error::DecodeError::UnexpectedEnd { .. }) => None,
-            Err(err) => return Err(err),
-        }
-        .map(|value| U256::from_le_bytes::<32>(value));
+
+        // let balance: Option<U256> = if d.reader().peek_read(1).is_some() {
+        //     let value: [u8; 32] = bincode::Decode::decode(d)?;
+        //     Some(U256::from_le_bytes::<{ U256::BYTES }>(value))
+        // } else {
+        //     None
+        // };
+
         Ok(Self {
             metadata: metadata.into(),
             input: input.into(),
             context: context.into(),
             storage,
-            balance,
+            // balance,
         })
     }
 }
@@ -243,7 +245,7 @@ mod tests {
             input: [4, 5, 6, 7].into(),
             context: [8, 9, 10, 11, 12].into(),
             storage: Some(storage.clone()),
-            balance: Some(U256::from(13u64)),
+            // balance: Some(U256::from(13u64)),
         };
         let v_encoded: Bytes = encode(&v).unwrap().into();
         let (v_decoded, bytes_count): (RuntimeNewFrameInputV1, usize) =
@@ -259,7 +261,7 @@ mod tests {
             input: [4, 5, 6, 7].into(),
             context: [8, 9, 10, 11, 12].into(),
             storage: Some(storage.clone()),
-            balance: Some(U256::from(42u64)),
+            // balance: Some(U256::from(42u64)),
         };
         let v_encoded: Bytes = encode(&v).unwrap().into();
         let (v_decoded, read_count) = decode::<RuntimeNewFrameInputV1>(v_encoded.clone()).unwrap();

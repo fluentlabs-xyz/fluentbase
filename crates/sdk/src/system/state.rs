@@ -16,7 +16,7 @@ pub struct RecoverableState {
     pub(super) interruption_outcome: Option<RuntimeInterruptionOutcomeV1>,
     pub(super) unique_key: u32,
     pub(super) intermediary_input: Option<Bytes>,
-    pub(super) balance: U256,
+    // pub(super) balance: U256,
     pub(super) transfers: Option<Vec<(Address, U256)>>,
 }
 
@@ -27,7 +27,7 @@ impl RecoverableState {
             input,
             context,
             storage,
-            balance,
+            // balance,
             ..
         } = input;
         let context = SharedContextInputV1::decode_from_slice(context.as_ref()).unwrap();
@@ -41,7 +41,7 @@ impl RecoverableState {
             unique_key: next_unique_key(),
             intermediary_input: None,
             // If balance is not passed then we assume it's ZERO (aka not supported or legacy contract)
-            balance: balance.unwrap_or(U256::ZERO),
+            // balance: balance.unwrap_or(U256::ZERO),
             transfers: None,
         }
     }

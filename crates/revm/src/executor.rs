@@ -353,21 +353,21 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         // Extract target account balance
-        let target_balance =
-            match ctx
-                .journal_mut()
-                .load_account_info_skip_cold_load(target_address, false, false)
-            {
-                Ok(target_account) => target_account.balance,
-                // We need more gas to execute the cold sload
-                Err(JournalLoadError::ColdLoadSkipped) => {
-                    return Ok(NextAction::out_of_fuel(Gas::new_spent(
-                        interpreter.gas.remaining(),
-                    )))
-                }
-                // Return database error
-                Err(JournalLoadError::DBError(err)) => return Err(ContextError::Db(err)),
-            };
+        // let target_balance =
+        //     match ctx
+        //         .journal_mut()
+        //         .load_account_info_skip_cold_load(target_address, false, false)
+        //     {
+        //         Ok(target_account) => Some(target_account.balance),
+        //         // We need more gas to execute the cold sload
+        //         Err(JournalLoadError::ColdLoadSkipped) => {
+        //             return Ok(NextAction::out_of_fuel(Gas::new_spent(
+        //                 interpreter.gas.remaining(),
+        //             )))
+        //         }
+        //         // Return database error
+        //         Err(JournalLoadError::DBError(err)) => return Err(ContextError::Db(err)),
+        //     };
 
         // Wrap everything into the system-runtime new-frame input format.
         let new_frame_input = RuntimeNewFrameInputV1 {
@@ -375,7 +375,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             input,
             context: contract_input.into(),
             storage: Some(storage),
-            balance: Some(target_balance),
+            // balance: target_balance,
         };
         let new_frame_input =
             bincode::encode_to_vec(&new_frame_input, bincode::config::legacy()).unwrap();
@@ -412,7 +412,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     // The multiplication can overflow in pathological cases; saturate to u64::MAX.
     let fuel_limit = interpreter.gas.remaining().saturating_mul(FUEL_DENOM_RATE);
 
-    // Execute rWasm entrypoint for this frame.
+    // Execute rwasm entrypoint for this frame.
     let mut runtime_context = RuntimeContext::default();
     let (fuel_consumed, fuel_refunded, exit_code) = syscall_exec_impl(
         &mut runtime_context,
@@ -681,9 +681,11 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
     if let Some(new_metadata) = new_metadata {
         // Safety: `new_metadata` should only be set by ownable accounts. If a non-ownable system
         // contract sets it, that indicates a severe invariant break.
-        let mut ownable_account_bytecode = ownable_account_bytecode.unwrap();
-        ownable_account_bytecode =
-            OwnableAccountBytecode::new(ownable_account_bytecode.owner_address, new_metadata);
+        let owner_address = ownable_account_bytecode
+            .as_ref()
+            .map(|v| v.owner_address)
+            .unwrap();
+        let ownable_account_bytecode = OwnableAccountBytecode::new(owner_address, new_metadata);
         ctx.journal_mut().set_code(
             *target_address,
             Bytecode::OwnableAccount(ownable_account_bytecode),

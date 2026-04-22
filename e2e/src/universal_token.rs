@@ -1,6 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use alloy_sol_types::{sol, SolCall};
+use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
     address, bytes, hex, storage::StorageDescriptor, universal_token::*, Address, Bytes,
     ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
@@ -793,7 +794,7 @@ fn wrapped_withdraw_when_paused_reverts_without_state_changes() {
 }
 
 #[test]
-fn wrapped_withdraw_reverts_with_insufficient_balance_on_native_underflow() {
+fn wrapped_withdraw_halts_on_native_balance_underflow_and_preserves_storage() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     let deployer = Address::repeat_byte(0x11);
     let user = Address::repeat_byte(0x22);
@@ -813,10 +814,17 @@ fn wrapped_withdraw_reverts_with_insufficient_balance_on_native_underflow() {
 
     let mut input = Vec::new();
     WithdrawCommand { amount: U256::ONE }.encode_for_send(&mut input);
-    let output = call_with_sig_revert_no_funding(&mut ctx, input.into(), &user, &token);
-    assert_eq!(output[0..4], [0x4e, 0x48, 0x7b, 0x71]);
-    let evm_exit_code = u32::from_be_bytes(output[32..].try_into().unwrap());
-    assert_eq!(ERR_ERC20_INSUFFICIENT_BALANCE, evm_exit_code);
+    let mut tx = TxBuilder::call(&mut ctx, user, token, None)
+        .input(input.into())
+        .gas_price(0);
+    let result = tx.exec();
+
+    match result {
+        ExecutionResult::Halt { reason, .. } => {
+            assert_eq!(reason, RwasmHaltReason::OutOfFunds);
+        }
+        _ => panic!("expected halt(OutOfFunds), got: {:?}", result),
+    }
 
     let mut input = Vec::new();
     BalanceOfCommand { owner: user }.encode_for_send(&mut input);
@@ -828,3 +836,40 @@ fn wrapped_withdraw_reverts_with_insufficient_balance_on_native_underflow() {
     let output = call_with_sig_no_funding(&mut ctx, input.into(), &user, &token);
     assert_eq!(u256_from_slice_try(output.as_ref()).unwrap(), minted);
 }
+
+// #[test]
+// fn wrapped_withdraw_reverts_with_insufficient_balance_on_native_underflow() {
+//     let mut ctx = EvmTestingContext::default().with_full_genesis();
+//     let deployer = Address::repeat_byte(0x11);
+//     let user = Address::repeat_byte(0x22);
+//     let token = deploy_wrapped_ust20_with_minter(&mut ctx, deployer, deployer, deployer);
+//
+//     let minted = U256::from(9u64);
+//
+//     let mut mint = Vec::new();
+//     MintCommand {
+//         to: user,
+//         amount: minted,
+//     }
+//     .encode_for_send(&mut mint);
+//     let _ = call_with_sig_no_funding(&mut ctx, mint.into(), &deployer, &token);
+//
+//     assert_eq!(ctx.get_balance(token), U256::ZERO);
+//
+//     let mut input = Vec::new();
+//     WithdrawCommand { amount: U256::ONE }.encode_for_send(&mut input);
+//     let output = call_with_sig_revert_no_funding(&mut ctx, input.into(), &user, &token);
+//     assert_eq!(output[0..4], [0x4e, 0x48, 0x7b, 0x71]);
+//     let evm_exit_code = u32::from_be_bytes(output[32..].try_into().unwrap());
+//     assert_eq!(ERR_ERC20_INSUFFICIENT_BALANCE, evm_exit_code);
+//
+//     let mut input = Vec::new();
+//     BalanceOfCommand { owner: user }.encode_for_send(&mut input);
+//     let output = call_with_sig_no_funding(&mut ctx, input.into(), &user, &token);
+//     assert_eq!(u256_from_slice_try(output.as_ref()).unwrap(), minted);
+//
+//     let mut input = Vec::new();
+//     input.extend(SIG_ERC20_TOTAL_SUPPLY.to_be_bytes());
+//     let output = call_with_sig_no_funding(&mut ctx, input.into(), &user, &token);
+//     assert_eq!(u256_from_slice_try(output.as_ref()).unwrap(), minted);
+// }

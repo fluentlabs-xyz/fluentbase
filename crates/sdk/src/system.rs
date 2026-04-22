@@ -326,12 +326,12 @@ impl<API: NativeAPI + CryptoAPI> SystemAPI for SystemContextImpl<API> {
             return Err(ExitCode::StateChangeDuringStaticCall);
         }
         // Deduct current contract balance to make sure we have enough balance
-        let new_balance = self
-            .state
-            .balance
-            .checked_sub(value)
-            .ok_or(ExitCode::InsufficientBalance)?;
-        self.state.balance = new_balance;
+        // let new_balance = self
+        //     .state
+        //     .balance
+        //     .checked_sub(value)
+        //     .ok_or(ExitCode::InsufficientBalance)?;
+        // self.state.balance = new_balance;
         // Record list of transfers made during execution
         let transfers = self.state.transfers.get_or_insert_with(Vec::new);
         transfers.push((address, value));

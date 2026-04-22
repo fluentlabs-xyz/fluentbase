@@ -574,12 +574,7 @@ fn erc20_withdraw_handler<SDK: SystemAPI>(
     // Optimistically send required amount to caller.
     // If native backing is insufficient, surface a standard ERC20 insufficient-balance
     // revert instead of bubbling a runtime halt code.
-    if let Err(err) = sdk.transfer_value_to(caller, amount) {
-        return match err {
-            ExitCode::InsufficientBalance => Ok(ERR_ERC20_INSUFFICIENT_BALANCE),
-            _ => Err(err),
-        };
-    }
+    sdk.transfer_value_to(caller, amount)?;
 
     // Emit events (withdrawal + transfer)
     events::Withdrawal {
