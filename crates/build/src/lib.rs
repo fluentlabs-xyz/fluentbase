@@ -127,6 +127,11 @@ pub struct BuildArgs {
     )]
     pub output_path: Option<String>,
 
+    /// Custom target directory for WASM compilation output.
+    /// Falls back to OUT_DIR (in build.rs) or contract_dir/target otherwise.
+    #[arg(long)]
+    pub target_dir: Option<PathBuf>,
+
     /// Post process wasm for size optimization
     #[arg(long)]
     pub wasm_opt: bool,
@@ -150,6 +155,7 @@ impl Default for BuildArgs {
             ignore_default_rust_flags: false,
             generate: vec![],
             output_path: Some("./out/{contract_name}/".to_string()),
+            target_dir: None,
             wasm_opt: false,
         }
     }
