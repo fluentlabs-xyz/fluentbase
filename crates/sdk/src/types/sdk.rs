@@ -166,6 +166,8 @@ pub trait SystemAPI: SharedAPI {
 
     fn contract_metadata(&self) -> Bytes;
 
+    fn transfer_value_to(&mut self, address: Address, value: U256) -> Result<(), ExitCode>;
+
     fn sync_evm_gas(&self, gas_consumed: u64) -> Result<(), ExitCode> {
         let fuel_consumed = gas_consumed.saturating_mul(FUEL_DENOM_RATE);
         let fuel_remaining = self.fuel();

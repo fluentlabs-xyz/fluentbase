@@ -1,11 +1,12 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use alloy_sol_types::{sol, SolCall};
+use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
-    address, hex, storage::StorageDescriptor, universal_token::*, Address, Bytes,
+    address, bytes, hex, storage::StorageDescriptor, universal_token::*, Address, Bytes,
     ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
-use fluentbase_testing::EvmTestingContext;
+use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use revm::{bytecode::Bytecode, context::result::ExecutionResult, state::AccountInfo};
 use std::ops::Add;
 
@@ -42,6 +43,77 @@ fn call_with_sig_revert(
             panic!("expected revert, got: {:?}", &result)
         }
     }
+}
+
+fn call_with_sig_no_funding(
+    ctx: &mut EvmTestingContext,
+    input: Bytes,
+    caller: &Address,
+    callee: &Address,
+) -> Vec<u8> {
+    let mut tx = TxBuilder::call(ctx, *caller, *callee, None)
+        .input(input)
+        .gas_price(0);
+    let result = tx.exec();
+    println!("result: {:?}", result);
+    assert!(result.is_success());
+    result.output().unwrap().to_vec()
+}
+
+fn call_with_sig_revert_no_funding(
+    ctx: &mut EvmTestingContext,
+    input: Bytes,
+    caller: &Address,
+    callee: &Address,
+) -> Bytes {
+    let mut tx = TxBuilder::call(ctx, *caller, *callee, None)
+        .input(input)
+        .gas_price(0);
+    let result = tx.exec();
+    match result {
+        ExecutionResult::Revert {
+            gas_used: _,
+            output,
+        } => output,
+        _ => panic!("expected revert, got: {:?}", &result),
+    }
+}
+
+fn deploy_wrapped_ust20(
+    ctx: &mut EvmTestingContext,
+    deployer: Address,
+    pauser: Address,
+) -> Address {
+    let init = InitialSettings {
+        token_name: "Wrapped Ether".into(),
+        token_symbol: "WETH".into(),
+        decimals: 18,
+        initial_supply: U256::ZERO,
+        minter: Address::ZERO,
+        pauser,
+        wrapped: Some(true),
+    }
+    .encode_with_prefix();
+    ctx.deploy_evm_tx(deployer, init)
+}
+
+fn deploy_wrapped_ust20_with_minter(
+    ctx: &mut EvmTestingContext,
+    deployer: Address,
+    minter: Address,
+    pauser: Address,
+) -> Address {
+    let init = InitialSettings {
+        token_name: "Wrapped Ether".into(),
+        token_symbol: "WETH".into(),
+        decimals: 18,
+        initial_supply: U256::ZERO,
+        minter,
+        pauser,
+        wrapped: Some(true),
+    }
+    .encode_with_prefix();
+    ctx.deploy_evm_tx(deployer, init)
 }
 
 pub fn u256_from_slice_try(value: &[u8]) -> Option<U256> {
@@ -573,3 +645,231 @@ fn invoke_ust20_transfer_multiple_times() {
     assert!(result.is_success());
     println!("result: {:?}", result.gas_used());
 }
+
+#[test]
+fn test_ust20_deploy_wrapped() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let input = bytes!("0x455243205772617070656420457468657200000000000000000000000000000000000000574554480000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000000000000000000000000000911d15011b3358344d2b4a9a01a20a16ff4274a2000000000000000000000000911d15011b3358344d2b4a9a01a20a16ff4274a20000000000000000000000000000000000000000000000000000000000000001");
+    let new_contract = ctx.deploy_evm_tx(Address::repeat_byte(0x11), input);
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x11),
+        new_contract,
+        bytes!("0xd0e30db0"),
+        None,
+        Some(U256::from(1)),
+    );
+    println!("result: {:?}", result);
+    assert!(result.is_success());
+}
+
+#[test]
+fn wrapped_withdraw_transfers_native_and_updates_supply_consistently() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let deployer = Address::repeat_byte(0x11);
+    let user = Address::repeat_byte(0x22);
+    let token = deploy_wrapped_ust20(&mut ctx, deployer, deployer);
+
+    let deposit = U256::from(100u64);
+    let withdraw = U256::from(40u64);
+
+    ctx.add_balance(user, U256::from(1_000u64));
+    let user_before = ctx.get_balance(user);
+    let token_before = ctx.get_balance(token);
+
+    let mut deposit_tx = TxBuilder::call(&mut ctx, user, token, Some(deposit))
+        .input(bytes!("0xd0e30db0"))
+        .gas_price(0);
+    let deposit_result = deposit_tx.exec();
+    assert!(deposit_result.is_success());
+
+    assert_eq!(ctx.get_balance(user), user_before - deposit);
+    assert_eq!(ctx.get_balance(token), token_before + deposit);
+
+    let mut input = Vec::new();
+    WithdrawCommand { amount: withdraw }.encode_for_send(&mut input);
+    let mut withdraw_tx = TxBuilder::call(&mut ctx, user, token, None)
+        .input(input.into())
+        .gas_price(0);
+    let withdraw_result = withdraw_tx.exec();
+    assert!(withdraw_result.is_success());
+
+    assert_eq!(ctx.get_balance(user), user_before - deposit + withdraw);
+    assert_eq!(ctx.get_balance(token), token_before + deposit - withdraw);
+
+    let mut input = Vec::new();
+    BalanceOfCommand { owner: user }.encode_for_send(&mut input);
+    let output = call_with_sig_no_funding(&mut ctx, input.into(), &user, &token);
+    assert_eq!(
+        u256_from_slice_try(output.as_ref()).unwrap(),
+        deposit - withdraw
+    );
+
+    let mut input = Vec::new();
+    input.extend(SIG_ERC20_TOTAL_SUPPLY.to_be_bytes());
+    let output = call_with_sig_no_funding(&mut ctx, input.into(), &user, &token);
+    assert_eq!(
+        u256_from_slice_try(output.as_ref()).unwrap(),
+        deposit - withdraw
+    );
+}
+
+#[test]
+fn wrapped_withdraw_insufficient_balance_reverts_without_state_changes() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let deployer = Address::repeat_byte(0x11);
+    let user = Address::repeat_byte(0x22);
+    let token = deploy_wrapped_ust20(&mut ctx, deployer, deployer);
+
+    let deposit = U256::from(7u64);
+    let withdraw = U256::from(9u64);
+
+    ctx.add_balance(user, U256::from(100u64));
+    let mut deposit_tx = TxBuilder::call(&mut ctx, user, token, Some(deposit))
+        .input(bytes!("0xd0e30db0"))
+        .gas_price(0);
+    assert!(deposit_tx.exec().is_success());
+
+    let user_before = ctx.get_balance(user);
+    let token_before = ctx.get_balance(token);
+
+    let mut input = Vec::new();
+    WithdrawCommand { amount: withdraw }.encode_for_send(&mut input);
+    let output = call_with_sig_revert_no_funding(&mut ctx, input.into(), &user, &token);
+    assert_eq!(output[0..4], [0x4e, 0x48, 0x7b, 0x71]);
+    let evm_exit_code = u32::from_be_bytes(output[32..].try_into().unwrap());
+    assert_eq!(ERR_ERC20_INSUFFICIENT_BALANCE, evm_exit_code);
+
+    assert_eq!(ctx.get_balance(user), user_before);
+    assert_eq!(ctx.get_balance(token), token_before);
+
+    let mut input = Vec::new();
+    BalanceOfCommand { owner: user }.encode_for_send(&mut input);
+    let output = call_with_sig_no_funding(&mut ctx, input.into(), &user, &token);
+    assert_eq!(u256_from_slice_try(output.as_ref()).unwrap(), deposit);
+
+    let mut input = Vec::new();
+    input.extend(SIG_ERC20_TOTAL_SUPPLY.to_be_bytes());
+    let output = call_with_sig_no_funding(&mut ctx, input.into(), &user, &token);
+    assert_eq!(u256_from_slice_try(output.as_ref()).unwrap(), deposit);
+}
+
+#[test]
+fn wrapped_withdraw_when_paused_reverts_without_state_changes() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let deployer = Address::repeat_byte(0x11);
+    let user = Address::repeat_byte(0x22);
+    let token = deploy_wrapped_ust20(&mut ctx, deployer, deployer);
+
+    let deposit = U256::from(11u64);
+    ctx.add_balance(user, U256::from(100u64));
+    let mut deposit_tx = TxBuilder::call(&mut ctx, user, token, Some(deposit))
+        .input(bytes!("0xd0e30db0"))
+        .gas_price(0);
+    assert!(deposit_tx.exec().is_success());
+
+    let mut pause = Vec::new();
+    pause.extend(SIG_ERC20_PAUSE.to_be_bytes());
+    let _ = call_with_sig_no_funding(&mut ctx, pause.into(), &deployer, &token);
+
+    let user_before = ctx.get_balance(user);
+    let token_before = ctx.get_balance(token);
+
+    let mut input = Vec::new();
+    WithdrawCommand {
+        amount: U256::from(1u64),
+    }
+    .encode_for_send(&mut input);
+    let output = call_with_sig_revert_no_funding(&mut ctx, input.into(), &user, &token);
+    assert_eq!(output[0..4], [0x4e, 0x48, 0x7b, 0x71]);
+    let evm_exit_code = u32::from_be_bytes(output[32..].try_into().unwrap());
+    assert_eq!(ERR_PAUSABLE_ENFORCED_PAUSE, evm_exit_code);
+
+    assert_eq!(ctx.get_balance(user), user_before);
+    assert_eq!(ctx.get_balance(token), token_before);
+
+    let mut input = Vec::new();
+    BalanceOfCommand { owner: user }.encode_for_send(&mut input);
+    let output = call_with_sig_no_funding(&mut ctx, input.into(), &user, &token);
+    assert_eq!(u256_from_slice_try(output.as_ref()).unwrap(), deposit);
+}
+
+#[test]
+fn wrapped_withdraw_halts_on_native_balance_underflow_and_preserves_storage() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let deployer = Address::repeat_byte(0x11);
+    let user = Address::repeat_byte(0x22);
+    let token = deploy_wrapped_ust20_with_minter(&mut ctx, deployer, deployer, deployer);
+
+    let minted = U256::from(9u64);
+
+    let mut mint = Vec::new();
+    MintCommand {
+        to: user,
+        amount: minted,
+    }
+    .encode_for_send(&mut mint);
+    let _ = call_with_sig_no_funding(&mut ctx, mint.into(), &deployer, &token);
+
+    assert_eq!(ctx.get_balance(token), U256::ZERO);
+
+    let mut input = Vec::new();
+    WithdrawCommand { amount: U256::ONE }.encode_for_send(&mut input);
+    let mut tx = TxBuilder::call(&mut ctx, user, token, None)
+        .input(input.into())
+        .gas_price(0);
+    let result = tx.exec();
+
+    match result {
+        ExecutionResult::Halt { reason, .. } => {
+            assert_eq!(reason, RwasmHaltReason::OutOfFunds);
+        }
+        _ => panic!("expected halt(OutOfFunds), got: {:?}", result),
+    }
+
+    let mut input = Vec::new();
+    BalanceOfCommand { owner: user }.encode_for_send(&mut input);
+    let output = call_with_sig_no_funding(&mut ctx, input.into(), &user, &token);
+    assert_eq!(u256_from_slice_try(output.as_ref()).unwrap(), minted);
+
+    let mut input = Vec::new();
+    input.extend(SIG_ERC20_TOTAL_SUPPLY.to_be_bytes());
+    let output = call_with_sig_no_funding(&mut ctx, input.into(), &user, &token);
+    assert_eq!(u256_from_slice_try(output.as_ref()).unwrap(), minted);
+}
+
+// #[test]
+// fn wrapped_withdraw_reverts_with_insufficient_balance_on_native_underflow() {
+//     let mut ctx = EvmTestingContext::default().with_full_genesis();
+//     let deployer = Address::repeat_byte(0x11);
+//     let user = Address::repeat_byte(0x22);
+//     let token = deploy_wrapped_ust20_with_minter(&mut ctx, deployer, deployer, deployer);
+//
+//     let minted = U256::from(9u64);
+//
+//     let mut mint = Vec::new();
+//     MintCommand {
+//         to: user,
+//         amount: minted,
+//     }
+//     .encode_for_send(&mut mint);
+//     let _ = call_with_sig_no_funding(&mut ctx, mint.into(), &deployer, &token);
+//
+//     assert_eq!(ctx.get_balance(token), U256::ZERO);
+//
+//     let mut input = Vec::new();
+//     WithdrawCommand { amount: U256::ONE }.encode_for_send(&mut input);
+//     let output = call_with_sig_revert_no_funding(&mut ctx, input.into(), &user, &token);
+//     assert_eq!(output[0..4], [0x4e, 0x48, 0x7b, 0x71]);
+//     let evm_exit_code = u32::from_be_bytes(output[32..].try_into().unwrap());
+//     assert_eq!(ERR_ERC20_INSUFFICIENT_BALANCE, evm_exit_code);
+//
+//     let mut input = Vec::new();
+//     BalanceOfCommand { owner: user }.encode_for_send(&mut input);
+//     let output = call_with_sig_no_funding(&mut ctx, input.into(), &user, &token);
+//     assert_eq!(u256_from_slice_try(output.as_ref()).unwrap(), minted);
+//
+//     let mut input = Vec::new();
+//     input.extend(SIG_ERC20_TOTAL_SUPPLY.to_be_bytes());
+//     let output = call_with_sig_no_funding(&mut ctx, input.into(), &user, &token);
+//     assert_eq!(u256_from_slice_try(output.as_ref()).unwrap(), minted);
+// }
