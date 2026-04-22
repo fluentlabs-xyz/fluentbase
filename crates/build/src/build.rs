@@ -196,10 +196,21 @@ fn build_wasm(
     docker_image: &Option<String>,
     mount_dir: &Path,
 ) -> Result<PathBuf> {
-    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
-    let target_dir = out_dir.ancestors().nth(4).unwrap();
+    let target_dir = if let Some(dir) = &args.target_dir {
+        dir.clone()
+    } else if let Ok(out_dir) = env::var("OUT_DIR") {
+        PathBuf::from(out_dir)
+            .ancestors()
+            .nth(4)
+            .unwrap()
+            .to_path_buf()
+    } else {
+        contract_dir
+            .join("target")
+            .join(crate::HELPER_TARGET_SUBDIR)
+    };
     eprintln!("Detected target dir: {}", target_dir.display());
-    fs::create_dir_all(target_dir)?;
+    fs::create_dir_all(&target_dir)?;
 
     // Build cargo command
     let mut cargo_args = args.cargo_build_command();
@@ -232,7 +243,7 @@ fn build_wasm(
     )?;
 
     // Find the built WASM file
-    let wasm_path = find_wasm_artifact(target_dir, package)?;
+    let wasm_path = find_wasm_artifact(&target_dir, package)?;
 
     if args.wasm_opt {
         optimize_wasm(&wasm_path, docker_config, &rust_toolchain)?;
