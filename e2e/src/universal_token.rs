@@ -1,13 +1,12 @@
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use alloy_sol_types::{sol, SolCall};
-use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
-    address, bytes, hex, storage::StorageDescriptor, universal_token::*, Address, Bytes,
-    ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
+    bytes, hex, storage::StorageDescriptor, universal_token::*, Address, Bytes, ContractContextV1,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
-use revm::{bytecode::Bytecode, context::result::ExecutionResult, state::AccountInfo};
+use revm::context::result::ExecutionResult;
 use std::ops::Add;
 
 const DEPLOYER_ADDR: Address = Address::repeat_byte(1);
@@ -53,6 +52,23 @@ fn call_with_sig_no_funding(
 ) -> Vec<u8> {
     let mut tx = TxBuilder::call(ctx, *caller, *callee, None)
         .input(input)
+        .gas_price(0);
+    let result = tx.exec();
+    println!("result: {:?}", result);
+    assert!(result.is_success());
+    result.output().unwrap().to_vec()
+}
+
+fn call_with_sig_funding(
+    ctx: &mut EvmTestingContext,
+    input: Bytes,
+    caller: &Address,
+    callee: &Address,
+    value: U256,
+) -> Vec<u8> {
+    let mut tx = TxBuilder::call(ctx, *caller, *callee, None)
+        .input(input)
+        .value(value)
         .gas_price(0);
     let result = tx.exec();
     println!("result: {:?}", result);
@@ -647,19 +663,17 @@ fn invoke_ust20_transfer_multiple_times() {
 }
 
 #[test]
-fn test_ust20_deploy_wrapped() {
+fn test_ust20_wrapped_token_cant_be_mintable() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     let input = bytes!("0x455243205772617070656420457468657200000000000000000000000000000000000000574554480000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000000000000000000000000000911d15011b3358344d2b4a9a01a20a16ff4274a2000000000000000000000000911d15011b3358344d2b4a9a01a20a16ff4274a20000000000000000000000000000000000000000000000000000000000000001");
-    let new_contract = ctx.deploy_evm_tx(Address::repeat_byte(0x11), input);
-    let result = ctx.call_evm_tx(
-        Address::repeat_byte(0x11),
-        new_contract,
-        bytes!("0xd0e30db0"),
-        None,
-        Some(U256::from(1)),
-    );
-    println!("result: {:?}", result);
-    assert!(result.is_success());
+    let result = TxBuilder::create(&mut ctx, Address::repeat_byte(0x11), input).exec();
+    let output = match result {
+        ExecutionResult::Revert { output, .. } => output,
+        _ => panic!("unexpected return value: {:?}", result),
+    };
+    assert_eq!(output[0..4], [0x4e, 0x48, 0x7b, 0x71]);
+    let evm_exit_code = u32::from_be_bytes(output[32..].try_into().unwrap());
+    assert_eq!(ERR_UST_NOT_MINTABLE, evm_exit_code);
 }
 
 #[test]
@@ -798,32 +812,34 @@ fn wrapped_withdraw_halts_on_native_balance_underflow_and_preserves_storage() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     let deployer = Address::repeat_byte(0x11);
     let user = Address::repeat_byte(0x22);
-    let token = deploy_wrapped_ust20_with_minter(&mut ctx, deployer, deployer, deployer);
+    let token = deploy_wrapped_ust20_with_minter(&mut ctx, deployer, Address::ZERO, deployer);
 
-    let minted = U256::from(9u64);
+    ctx.add_balance(user, U256::from(1000));
 
-    let mut mint = Vec::new();
-    MintCommand {
-        to: user,
-        amount: minted,
-    }
-    .encode_for_send(&mut mint);
-    let _ = call_with_sig_no_funding(&mut ctx, mint.into(), &deployer, &token);
+    let minted = U256::from(100);
 
-    assert_eq!(ctx.get_balance(token), U256::ZERO);
+    let user_balance_before = ctx.get_balance(user);
+    let mut deposit = Vec::new();
+    DepositCommand {}.encode_for_send(&mut deposit);
+    let _ = call_with_sig_funding(&mut ctx, deposit.into(), &user, &token, minted);
+    assert_eq!(ctx.get_balance(token), minted);
+    assert_eq!(user_balance_before - ctx.get_balance(user), minted);
 
     let mut input = Vec::new();
-    WithdrawCommand { amount: U256::ONE }.encode_for_send(&mut input);
+    WithdrawCommand {
+        amount: U256::from(200),
+    }
+    .encode_for_send(&mut input);
     let mut tx = TxBuilder::call(&mut ctx, user, token, None)
         .input(input.into())
         .gas_price(0);
     let result = tx.exec();
 
     match result {
-        ExecutionResult::Halt { reason, .. } => {
-            assert_eq!(reason, RwasmHaltReason::OutOfFunds);
+        ExecutionResult::Revert { output, .. } => {
+            assert_eq!(output[32..36], ERR_ERC20_INSUFFICIENT_BALANCE.to_be_bytes());
         }
-        _ => panic!("expected halt(OutOfFunds), got: {:?}", result),
+        _ => panic!("expected revert(0xe450d38c), got: {:?}", result),
     }
 
     let mut input = Vec::new();
