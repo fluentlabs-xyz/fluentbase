@@ -42,7 +42,7 @@ TEST_FEATURES ?=
 run-e2e-tests:
 	cargo nextest run --manifest-path=./Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features $(TEST_FEATURES)
 	$(MAKE) -C evm-e2e sync_tests
-	cargo nextest run --manifest-path=./evm-e2e/Cargo.toml $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)" --package evm-e2e --bin evm-e2e tests
+	cargo nextest run --manifest-path=./evm-e2e/Cargo.toml $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)" --package evm-e2e --bin evm-e2e
 .PHONY: run-contracts-tests
 run-contracts-tests:
 	cargo nextest run --manifest-path=./contracts/Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)"
