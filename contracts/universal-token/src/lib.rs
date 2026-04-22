@@ -655,6 +655,10 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
     sdk.write_storage_address(PAUSER_STORAGE_SLOT, pauser)?;
     // If token is wrapped then always write even false to touch storage slot
     if let Some(wrapped) = wrapped {
+        // Wrapped tokens can't be mintable, since their supply should match locked amount
+        if !minter.is_zero() {
+            return Ok(ERR_UST_NOT_MINTABLE);
+        }
         sdk.write_storage(WRAPPED_STORAGE_SLOT, U256::from(wrapped))
             .ok()?;
     }
