@@ -1,13 +1,15 @@
 # Fluentbase Core Docs
 
-This folder explains how Fluentbase execution actually works: routing, runtime boundaries, interruption flow, gas/fuel accounting, and upgrade controls.
+This folder explains how Fluentbase execution actually works: routing, runtime boundaries, interruption flow, gas/fuel
+accounting, and upgrade controls.
 
 The goal is practical understanding for contributors and auditors, not API marketing.
 
 ## Reading order
 
 1. [`00-system-overview.md`](./00-system-overview.md) — end-to-end picture of execution.
-2. [`01-runtime-routing-and-ownable-accounts.md`](./01-runtime-routing-and-ownable-accounts.md) — why contracts are wrapped and how runtime owner routing works.
+2. [`01-runtime-routing-and-ownable-accounts.md`](./01-runtime-routing-and-ownable-accounts.md) — why contracts are
+   wrapped and how runtime owner routing works.
 3. [`02-interruption-protocol.md`](./02-interruption-protocol.md) — `exec/resume` handshake and call-id lifecycle.
 4. [`03-syscall-reference-core.md`](./03-syscall-reference-core.md) — syscall layers and behavioral rules.
 5. [`04-gas-and-fuel.md`](./04-gas-and-fuel.md) — gas/fuel conversion and metering model.
@@ -15,8 +17,10 @@ The goal is practical understanding for contributors and auditors, not API marke
 7. [`06-runtime-upgrade.md`](./06-runtime-upgrade.md) — runtime-upgrade governance and host enforcement.
 8. [`07-rwasm-integration.md`](./07-rwasm-integration.md) — Fluentbase integration contract with rWasm.
 9. [`08-universal-token.md`](./08-universal-token.md) — UST20 runtime behavior and constraints.
-10. [`09-rpc-compatibility-vs-reth.md`](./09-rpc-compatibility-vs-reth.md) — Fluent RPC behavior differences from upstream Reth for account code APIs.
-11. [`10-running-node-locally-testnet-mainnet.md`](./10-running-node-locally-testnet-mainnet.md) — practical local node runbook for Fluent testnet and mainnet.
+10. [`09-rpc-compatibility-vs-reth.md`](./09-rpc-compatibility-vs-reth.md) — Fluent RPC behavior differences from
+    upstream Reth for account code APIs.
+11. [`10-running-node-locally.md`](10-running-node-locally.md) — practical local node runbook for Fluent testnet and
+    mainnet.
 
 ## Source-of-truth rule
 
