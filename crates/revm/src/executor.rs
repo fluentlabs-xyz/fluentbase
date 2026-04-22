@@ -694,9 +694,13 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
 
     if let Some(transfers) = transfers {
         // Make sure contract can't overspend its balance
-        let balance_required = transfers
-            .iter()
-            .fold(U256::ZERO, |result, (_, amount)| result + amount);
+        let balance_required = transfers.iter().fold(U256::ZERO, |result, (_, amount)| {
+            result.saturating_add(*amount)
+        });
+        if balance_required == U256::MAX {
+            *exit_code = ExitCode::IntegerOverflow;
+            return Ok(());
+        }
         let target_account = ctx.journal_mut().load_account(*target_address)?;
         if target_account.info.balance < balance_required {
             warn!(?target_account, ?balance_required, "Balance overspent detected, it should not happen, unless there is a bug in system contract");

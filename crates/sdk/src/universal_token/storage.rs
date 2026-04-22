@@ -230,7 +230,7 @@ pub fn erc20_compute_deploy_storage_keys(input: &[u8], caller: &Address) -> Opti
     if !pauser.is_zero() {
         result.push(PAUSER_STORAGE_SLOT);
     }
-    // Push wrapped flag only if we use V1 settings
+    // Push wrapped flag only if we use V2 settings
     if wrapped.is_some() {
         result.push(WRAPPED_STORAGE_SLOT);
     }

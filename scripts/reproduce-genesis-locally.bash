@@ -33,6 +33,7 @@ FLUENTBASE_CONTRACTS_IGNORE_DEFAULT_RUST_FLAGS=true \
 cargo b --release
 
 TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
 BASE_URL="https://github.com/fluentlabs-xyz/fluentbase/releases/download/${TAG}"
 
 curl -fL "$BASE_URL/genesis-mainnet-${TAG}.json.gz" -o "$TMP_DIR/remote-mainnet.json.gz"
