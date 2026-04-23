@@ -1819,6 +1819,7 @@ fn wrapped_deposit_mints_supply_and_emits_events() {
     let (ec, out) = h.call(with_sig(SIG_ERC20_DEPOSIT, &[]));
     assert_eq!(ec, ExitCode::Ok);
     assert!(out.is_empty());
+    h.set_call_value(U256::ZERO);
 
     let logs = h.take_logs();
     assert_eq!(logs.len(), 2, "expected Deposit + Transfer logs");
