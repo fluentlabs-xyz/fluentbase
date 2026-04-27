@@ -72,11 +72,52 @@ type BalanceStorageMap = StorageMap<Address, StorageU256>;
 /// Allowance mapping: `owner -> (spender -> allowance)`.
 type AllowanceStorageMap = StorageMap<Address, StorageMap<Address, StorageU256>>;
 
+macro_rules! when_non_payable {
+    ($sdk:ident) => {
+        if !$sdk.context().contract_value().is_zero() {
+            return Err(ExitCode::Panic);
+        }
+    };
+}
+macro_rules! when_non_static {
+    ($sdk:ident) => {
+        if $sdk.context().contract_is_static() {
+            return Err(ExitCode::StateChangeDuringStaticCall);
+        }
+    };
+}
+macro_rules! when_wrapped_enabled {
+    ($sdk:ident) => {
+        let is_wrapped = $sdk.storage(&WRAPPED_STORAGE_SLOT).ok()?;
+        if is_wrapped.is_zero() {
+            return Ok(ERR_UST_NOT_WRAPPED);
+        }
+    };
+}
+macro_rules! when_pausable_enabled {
+    ($sdk:ident) => {{
+        let contract_pauser = $sdk.storage_address(&PAUSER_STORAGE_SLOT)?;
+        if contract_pauser.is_zero() {
+            return Ok(ERR_UST_NOT_PAUSABLE);
+        }
+        contract_pauser
+    }};
+}
+macro_rules! when_non_frozen {
+    ($sdk:ident) => {
+        let is_contract_frozen = $sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
+        if !is_contract_frozen.is_zero() {
+            return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
+        }
+    };
+}
+
 /// Returns the ERC-20 `symbol()` as a short string stored at `SYMBOL_STORAGE_SLOT`.
 fn erc20_symbol_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    when_non_payable!(sdk);
     let value = sdk.storage_short_string(&SYMBOL_STORAGE_SLOT)?;
     let mut bytes = BytesMut::new();
     SolidityABI::encode(&value, &mut bytes, 0).unwrap();
@@ -90,6 +131,7 @@ fn erc20_name_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    when_non_payable!(sdk);
     let value = sdk.storage_short_string(&NAME_STORAGE_SLOT)?;
     let mut bytes = BytesMut::new();
     SolidityABI::encode(&value, &mut bytes, 0).unwrap();
@@ -103,6 +145,7 @@ fn erc20_decimals_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    when_non_payable!(sdk);
     let value = sdk.storage(&DECIMALS_STORAGE_SLOT).ok()?;
     let value = value.to_be_bytes::<{ U256::BYTES }>();
     sdk.write(value);
@@ -114,18 +157,12 @@ fn erc20_transfer_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
-    if sdk.context().contract_is_static() {
-        return Err(ExitCode::StateChangeDuringStaticCall);
-    }
-    let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
-    if !is_contract_frozen.is_zero() {
-        return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
-    }
+    when_non_payable!(sdk);
+    when_non_static!(sdk);
+    when_non_frozen!(sdk);
 
     let from = sdk.context().contract_caller();
-    if from.is_zero() {
-        return Ok(ERR_ERC20_INVALID_SENDER);
-    }
+
     let TransferCommand { to, amount } = TransferCommand::try_decode(input)?;
     if to.is_zero() {
         return Ok(ERR_ERC20_INVALID_RECEIVER);
@@ -160,13 +197,9 @@ fn erc20_transfer_from_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
-    if sdk.context().contract_is_static() {
-        return Err(ExitCode::StateChangeDuringStaticCall);
-    }
-    let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
-    if !is_contract_frozen.is_zero() {
-        return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
-    }
+    when_non_payable!(sdk);
+    when_non_static!(sdk);
+    when_non_frozen!(sdk);
 
     let spender = sdk.context().contract_caller();
     let TransferFromCommand { from, to, amount } = TransferFromCommand::try_decode(input)?;
@@ -213,9 +246,9 @@ fn erc20_approve_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
-    if sdk.context().contract_is_static() {
-        return Err(ExitCode::StateChangeDuringStaticCall);
-    }
+    when_non_payable!(sdk);
+    when_non_static!(sdk);
+
     let contract_caller = sdk.context().contract_caller();
     let ApproveCommand { spender, amount } = ApproveCommand::try_decode(input)?;
 
@@ -241,6 +274,7 @@ fn erc20_allowance_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    when_non_payable!(sdk);
     let AllowanceCommand { owner, spender } = AllowanceCommand::try_decode(input)?;
     let result = AllowanceStorageMap::new(ALLOWANCE_STORAGE_SLOT)
         .entry(owner)
@@ -256,6 +290,7 @@ fn erc20_total_supply_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    when_non_payable!(sdk);
     let value = sdk.storage(&TOTAL_SUPPLY_STORAGE_SLOT).ok()?;
     let value = value.to_be_bytes::<{ U256::BYTES }>();
     sdk.write(value);
@@ -267,6 +302,7 @@ fn erc20_balance_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    when_non_payable!(sdk);
     let caller = sdk.context().contract_caller();
     let balance = BalanceStorageMap::new(BALANCE_STORAGE_SLOT)
         .entry(caller)
@@ -281,6 +317,7 @@ fn erc20_balance_of_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
+    when_non_payable!(sdk);
     let BalanceOfCommand { owner } = BalanceOfCommand::try_decode(input)?;
     let balance = BalanceStorageMap::new(BALANCE_STORAGE_SLOT)
         .entry(owner)
@@ -295,9 +332,9 @@ fn erc20_mint_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
-    if sdk.context().contract_is_static() {
-        return Err(ExitCode::StateChangeDuringStaticCall);
-    }
+    when_non_payable!(sdk);
+    when_non_static!(sdk);
+
     let contract_minter = sdk.storage_address(&MINTER_STORAGE_SLOT)?;
     if contract_minter == Address::ZERO {
         return Ok(ERR_UST_NOT_MINTABLE);
@@ -351,9 +388,8 @@ fn erc20_burn_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
-    if sdk.context().contract_is_static() {
-        return Err(ExitCode::StateChangeDuringStaticCall);
-    }
+    when_non_payable!(sdk);
+    when_non_static!(sdk);
 
     let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
     if !is_contract_frozen.is_zero() {
@@ -414,14 +450,12 @@ fn erc20_pause_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
-    if sdk.context().contract_is_static() {
-        return Err(ExitCode::StateChangeDuringStaticCall);
-    }
+    when_non_payable!(sdk);
+    when_non_static!(sdk);
+
     // Make sure contract is pausable (pauser is provided)
-    let contract_pauser = sdk.storage_address(&PAUSER_STORAGE_SLOT)?;
-    if contract_pauser.is_zero() {
-        return Ok(ERR_UST_NOT_PAUSABLE);
-    }
+    let contract_pauser = when_pausable_enabled!(sdk);
+
     // Make sure the contract is unpaused
     let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
     if !is_contract_frozen.is_zero() {
@@ -451,32 +485,32 @@ fn erc20_unpause_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
-    if sdk.context().contract_is_static() {
-        return Err(ExitCode::StateChangeDuringStaticCall);
-    }
-    // Make sure contract is pausable (pauser is provided)
-    let contract_pauser = sdk.storage_address(&PAUSER_STORAGE_SLOT)?;
-    if contract_pauser.is_zero() {
-        return Ok(ERR_UST_NOT_PAUSABLE);
-    }
+    when_non_payable!(sdk);
+    when_non_static!(sdk);
+    let contract_pauser = when_pausable_enabled!(sdk);
+
     // Make sure the contract is paused
     let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
     if is_contract_frozen.is_zero() {
         return Ok(ERR_PAUSABLE_EXPECTED_PAUSE);
     }
+
     // Check if caller (sender) is pauser, because only pauser can pause/unpause the contract
     let contract_caller = sdk.context().contract_caller();
     if contract_caller != contract_pauser {
         return Ok(ERR_UST_PAUSER_MISMATCH);
     }
+
     // Write a paused flag
     sdk.write_storage(CONTRACT_FROZEN_STORAGE_SLOT, U256::ZERO)
         .ok()?;
+
     // Emit an event indicating a contract is now unpaused
     events::Unpaused {
         pauser: contract_caller,
     }
     .emit(sdk)?;
+
     // Write success (1)
     let result = U256::ONE.to_be_bytes::<{ U256::BYTES }>();
     sdk.write(result);
@@ -487,19 +521,9 @@ fn erc20_deposit_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     _input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
-    if sdk.context().contract_is_static() {
-        return Err(ExitCode::StateChangeDuringStaticCall);
-    }
-
-    let is_wrapped = sdk.storage(&WRAPPED_STORAGE_SLOT).ok()?;
-    if is_wrapped.is_zero() {
-        return Ok(ERR_UST_NOT_WRAPPED);
-    }
-
-    let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
-    if !is_contract_frozen.is_zero() {
-        return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
-    }
+    when_non_static!(sdk);
+    when_wrapped_enabled!(sdk);
+    when_non_frozen!(sdk);
 
     let caller = sdk.context().contract_caller();
     if caller.is_zero() {
@@ -535,21 +559,10 @@ fn erc20_withdraw_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<EvmExitCode, ExitCode> {
-    if sdk.context().contract_is_static() {
-        return Err(ExitCode::StateChangeDuringStaticCall);
-    }
-
-    // Make sure wrapped extension is supported
-    let is_wrapped = sdk.storage(&WRAPPED_STORAGE_SLOT).ok()?;
-    if is_wrapped.is_zero() {
-        return Ok(ERR_UST_NOT_WRAPPED);
-    }
-
-    // Don't allow to withdraw from frozen account
-    let is_contract_frozen = sdk.storage(&CONTRACT_FROZEN_STORAGE_SLOT).ok()?;
-    if !is_contract_frozen.is_zero() {
-        return Ok(ERR_PAUSABLE_ENFORCED_PAUSE);
-    }
+    when_non_payable!(sdk);
+    when_non_static!(sdk);
+    when_wrapped_enabled!(sdk);
+    when_non_frozen!(sdk);
 
     let caller = sdk.context().contract_caller();
 
@@ -571,9 +584,18 @@ fn erc20_withdraw_handler<SDK: SystemAPI>(
     sdk.write_storage(TOTAL_SUPPLY_STORAGE_SLOT, new_total_supply)
         .ok()?;
 
-    // Optimistically send required amount to caller.
-    // If native backing is insufficient, surface a standard ERC20 insufficient-balance
-    // revert instead of bubbling a runtime halt code.
+    // Log transferred to value to caller.
+    //
+    // Safety: We send it optimistically, but balance is checked since wrapped token can't be
+    //  minted. Also, we have additional checks after contract execution with caller panishment
+    //  if the final amount won't match.
+    //
+    // Compatibility: We intentionally don't trigger CALL here since in the original WETH9 implementation
+    //  it uses `transfer` that passes only 2300 STIPEND gas that is not enough for writing any
+    //  data into storage (the cheapest w/ preloaded slot is 2900 gas). Developers might want to
+    //  emit an event, but this event doesn't reveal any extra information comparing to the one
+    //  that is emitted by WETH9. The only option is reading state and emitting event, but this is
+    //  quite custom case we might support in the future. But STIPEND s almost no-op.
     sdk.transfer_value_to(caller, amount)?;
 
     // Emit events (withdrawal + transfer)
@@ -605,6 +627,9 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
     sdk: &mut SDK,
     input: Bytes,
 ) -> Result<EvmExitCode, ExitCode> {
+    when_non_payable!(sdk);
+    when_non_static!(sdk);
+
     // Decode initial settings parameters (SolidityABI)
     let InitialSettings {
         token_name,
@@ -615,6 +640,7 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
         pauser,
         wrapped,
     } = InitialSettings::decode_with_prefix(&input).ok_or(ExitCode::MalformedBuiltinParams)?;
+
     // Write token name and token decimals (make sure both are properly UTF-8 encoded)
     sdk.write_storage_short_string(
         NAME_STORAGE_SLOT,
@@ -632,16 +658,22 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
     sdk.write_storage(DECIMALS_STORAGE_SLOT, U256::from(decimals))
         .ok()?;
     // Mint required tokens to sender based on the initial supply
+    let caller = sdk.context().contract_caller();
+
+    // Don't allow to mint tokens during creation
+    if wrapped.filter(|v| *v).is_some() && !initial_supply.is_zero() {
+        return Ok(ERR_UST_NOT_MINTABLE);
+    }
+
+    // Assign caller balance
+    BalanceStorageMap::new(BALANCE_STORAGE_SLOT)
+        .entry(caller)
+        .set_checked(sdk, initial_supply)?;
+    // Increase token supply
+    sdk.write_storage(TOTAL_SUPPLY_STORAGE_SLOT, initial_supply)
+        .ok()?;
+    // Emit transfer event
     if initial_supply > 0 {
-        let caller = sdk.context().contract_caller();
-        // Assign caller balance
-        BalanceStorageMap::new(BALANCE_STORAGE_SLOT)
-            .entry(caller)
-            .set_checked(sdk, initial_supply)?;
-        // Increase token supply
-        sdk.write_storage(TOTAL_SUPPLY_STORAGE_SLOT, initial_supply)
-            .ok()?;
-        // Emit transfer event
         events::Transfer {
             from: Address::ZERO,
             to: caller,
@@ -649,6 +681,7 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
         }
         .emit(sdk)?;
     }
+
     // If token is mintable then minter is provided
     sdk.write_storage_address(MINTER_STORAGE_SLOT, minter)?;
     // If token is pausable then pauser is provided
@@ -702,6 +735,7 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_ERC20_BALANCE_OF => erc20_balance_of_handler(sdk, input),
         SIG_ERC20_MINT => erc20_mint_handler(sdk, input),
         SIG_ERC20_BURN => erc20_burn_handler(sdk, input),
+        // Pausable extension
         SIG_ERC20_PAUSE => erc20_pause_handler(sdk, input),
         SIG_ERC20_UNPAUSE => erc20_unpause_handler(sdk, input),
         // Wrapper extension
