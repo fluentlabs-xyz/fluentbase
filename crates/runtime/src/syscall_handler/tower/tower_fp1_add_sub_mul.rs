@@ -81,11 +81,8 @@ pub(crate) fn syscall_tower_fp1_add_sub_mul_handler<
     let mut y = [0u8; NUM_BYTES];
     ctx.memory_read(y_ptr as usize, &mut y)?;
 
-    let result = syscall_tower_fp1_add_sub_mul_impl::<NUM_BYTES, P, FIELD_OP>(
-        x,
-        y,
-    )
-    .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
+    let result = syscall_tower_fp1_add_sub_mul_impl::<NUM_BYTES, P, FIELD_OP>(x, y)
+        .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
 
     ctx.memory_write(x_ptr as usize, &result)?;
     Ok(())
