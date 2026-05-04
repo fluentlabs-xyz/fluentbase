@@ -16,6 +16,7 @@ use reth_payload_primitives::{
 };
 use reth_primitives_traits::{HeaderTy, NodePrimitives, SealedBlock, SealedHeaderFor};
 use reth_storage_api::BlockReader;
+use reth_tasks::shutdown::GracefulShutdown;
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::mpsc, time::Interval};
 use tracing::{error, info};
@@ -45,9 +46,12 @@ where
     handle
         .node
         .task_executor
-        .spawn_critical_task("consensus validator worker", async move {
-            block_producer.run(block_time).await;
-        });
+        .spawn_critical_with_graceful_shutdown_signal(
+            "consensus validator worker",
+            move |shutdown| async move {
+                block_producer.run(block_time, shutdown).await;
+            },
+        );
     Ok(())
 }
 
@@ -87,11 +91,22 @@ where
         }
     }
 
-    pub async fn run(mut self, mut block_time: Interval) {
+    pub async fn run(mut self, mut block_time: Interval, shutdown: GracefulShutdown) {
         let mut fcu_interval = tokio::time::interval(Duration::from_secs(1));
+        tokio::pin!(shutdown);
+
         loop {
             tokio::select! {
-                // Wait for the interval or the pool to receive a transaction
+                biased;
+
+                guard = &mut shutdown => {
+                    info!(target: "engine::local", "Shutting down consensus validator worker");
+                    drop(guard);
+                    break;
+                }
+                // Wait for the interval or the pool to receive a transaction.
+                // If shutdown arrives while this future is in progress, shutdown will wait
+                // until `advance_forkchoice_state()` finishes and only then exit the loop.
                 _ = block_time.tick() => {
                     if let Err(e) = self.advance_forkchoice_state().await {
                         error!(target: "engine::local", "Error advancing the chain: {:?}", e);
