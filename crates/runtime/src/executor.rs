@@ -1,4 +1,5 @@
 use crate::{
+    metrics::{self, RuntimeModeLabel, RuntimeTimer},
     module_factory::ModuleFactory,
     runtime::{ContractRuntime, ExecutionMode, SystemRuntime},
     RuntimeContext,
@@ -230,6 +231,7 @@ impl RuntimeFactoryExecutor {
         self.transaction_call_id_counter += 1;
         let prev = self.recoverable_runtimes.insert(call_id, runtime);
         debug_assert!(prev.is_none());
+        metrics::set_recoverable_runtimes(self.recoverable_runtimes.len());
 
         ExecutionResult {
             // We return `call_id` as exit code (it's safe because exit code can't be positive)
@@ -313,6 +315,8 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         bytecode_or_hash: BytecodeOrHash,
         ctx: RuntimeContext,
     ) -> ExecutionResult {
+        let timer = RuntimeTimer::start();
+        let state = metrics::state_label(ctx.state);
         let system_runtime_params = match &bytecode_or_hash {
             BytecodeOrHash::Bytecode { address, hash, .. } => {
                 fluentbase_types::is_execute_using_system_runtime(address)
@@ -352,16 +356,20 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             //
             // Ideally, it should never happen.
             if let Some(trap_code) = runtime.as_ref().err() {
-                return ExecutionResult {
+                metrics::record_initialization_error(RuntimeModeLabel::Contract, state, *trap_code);
+                let result = ExecutionResult {
                     exit_code: ExitCode::from(trap_code).into_i32(),
                     fuel_consumed: fuel_limit_value,
                     fuel_refunded: 0,
                     output: vec![],
                     return_data: vec![],
                 };
+                metrics::record_execution(RuntimeModeLabel::Contract, state, &timer, &result);
+                return result;
             }
             ExecutionMode::Contract(runtime.unwrap())
         };
+        let mode = runtime_mode_label(&exec_mode);
 
         // Execute program
         let result = exec_mode.execute();
@@ -372,7 +380,10 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
 
         let runtime_result =
             self.handle_execution_result(result, fuel_consumed, exec_mode.context_mut());
-        self.try_remember_runtime(runtime_result, exec_mode)
+        let result = self.try_remember_runtime(runtime_result, exec_mode);
+        metrics::record_execution(mode, state, &timer, &result);
+        metrics::set_recoverable_runtimes(self.recoverable_runtimes.len());
+        result
     }
 
     fn resume(
@@ -384,12 +395,15 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         fuel_refunded: i64,
         exit_code: i32,
     ) -> ExecutionResult {
+        let timer = RuntimeTimer::start();
         let Some(mut runtime) = self.recoverable_runtimes.remove(&call_id) else {
             unreachable!(
                 "runtime: missing recoverable runtime for resume, this should never happen: call_id={}, fuel_consumed={}, exit_code={}",
                 call_id, fuel_consumed, exit_code
             )
         };
+        metrics::set_recoverable_runtimes(self.recoverable_runtimes.len());
+        let (mode, state) = runtime_labels(&runtime);
         let mut fuel_remaining = runtime.remaining_fuel();
         let resume_inner = |runtime: &mut ExecutionMode| {
             // Copy return data into return data
@@ -413,11 +427,18 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             .and_then(|remaining_fuel| Some(fuel_remaining? - remaining_fuel));
         let runtime_result =
             self.handle_execution_result(result, fuel_consumed, runtime.context_mut());
-        self.try_remember_runtime(runtime_result, runtime)
+        let result = self.try_remember_runtime(runtime_result, runtime);
+        metrics::record_resume(mode, state, &timer, &result);
+        metrics::set_recoverable_runtimes(self.recoverable_runtimes.len());
+        result
     }
 
     fn forget_runtime(&mut self, call_id: u32) {
-        _ = self.recoverable_runtimes.remove(&call_id);
+        if let Some(runtime) = self.recoverable_runtimes.remove(&call_id) {
+            let (mode, state) = runtime_labels(&runtime);
+            metrics::record_forget_runtime(mode, state);
+        }
+        metrics::set_recoverable_runtimes(self.recoverable_runtimes.len());
     }
 
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {
@@ -434,6 +455,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         self.transaction_call_id_counter = 1;
         // Clear recoverable runtimes, because they are no longer valid
         self.recoverable_runtimes.clear();
+        metrics::set_recoverable_runtimes(0);
     }
 
     fn memory_read(
@@ -447,6 +469,20 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         );
         runtime_ref.memory_read(offset, buffer)
     }
+}
+
+fn runtime_mode_label(runtime: &ExecutionMode) -> RuntimeModeLabel {
+    match runtime {
+        ExecutionMode::Contract(_) => RuntimeModeLabel::Contract,
+        ExecutionMode::System(_) => RuntimeModeLabel::System,
+    }
+}
+
+fn runtime_labels(runtime: &ExecutionMode) -> (RuntimeModeLabel, &'static str) {
+    (
+        runtime_mode_label(runtime),
+        metrics::state_label(runtime.context().state),
+    )
 }
 
 #[cfg(test)]
