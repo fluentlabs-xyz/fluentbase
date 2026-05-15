@@ -1,0 +1,33 @@
+[package]
+name = "fluentbase-bls"
+version.workspace = true
+description = "BLS12-381 multisig wrapper for Fluent DPoS consensus signing"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+commonware-cryptography = { workspace = true, features = ["std"] }
+# commonware-consensus has no `std` feature — it is unconditionally std
+# (only `mocks`/`arbitrary` features exist). Adding features=["std"] errors.
+commonware-consensus = { workspace = true }
+commonware-utils = { workspace = true, features = ["std"] }
+commonware-codec = { workspace = true, features = ["std"] }
+rand_core = { workspace = true }
+thiserror = { workspace = true }
+blst = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+rand_08 = { workspace = true }
+hex = { workspace = true }
+commonware-math = { workspace = true, features = ["std"] }
+commonware-cryptography = { workspace = true, features = ["std", "mocks"] }
+
+[features]
+default = ["std"]
+std = []

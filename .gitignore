@@ -36,3 +36,4 @@ genesis-*.json
 node_modules
 evm-e2e/tests/
 datadir
+.claude
