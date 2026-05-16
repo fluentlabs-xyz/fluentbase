@@ -18,8 +18,8 @@ use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
     calc_create_metadata_address, is_execute_using_system_runtime, Address, Bytes, ExitCode, Log,
-    LogData, B256, EXT_CODE_COPY_MAX_COPY_SIZE, FUEL_DENOM_RATE,
-    KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
+    LogData, B256, EXT_CODE_COPY_MAX_COPY_SIZE, FUEL_DENOM_RATE, KECCAK_EMPTY,
+    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, rwasm::RwasmBytecode, Bytecode},
@@ -336,13 +336,45 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let new_value = U256::from_le_slice(&input[32..64]);
             let skip_cold =
                 frame.interpreter.gas.remaining() < ctx.cfg().gas_params().cold_storage_cost();
+            let inspection_state = inspector.as_mut().map(|inspector| {
+                crate::inspector::inspect_syscall_start(
+                    frame,
+                    ctx,
+                    inspector,
+                    opcode::SSTORE,
+                    [slot, new_value],
+                )
+            });
             let result = ctx.journal_mut().sstore_skip_cold_load(
                 current_target_address,
                 slot,
                 new_value,
                 skip_cold,
             );
-            let state_load = unwrap_journal_load_error!(result);
+            let state_load = match result {
+                Ok(v) => v,
+                Err(e) => {
+                    if let (Some(inspector), Some(inspection_state)) =
+                        (inspector.as_mut(), inspection_state)
+                    {
+                        crate::inspector::inspect_syscall_end(
+                            frame,
+                            ctx,
+                            inspector,
+                            inspection_state,
+                        );
+                    }
+                    match e {
+                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
+                        JournalLoadError::DBError(e) => return Err(ContextError::Db(e)),
+                    }
+                }
+            };
+            if let (Some(inspector), Some(inspection_state)) =
+                (inspector.as_mut(), inspection_state)
+            {
+                crate::inspector::inspect_syscall_end(frame, ctx, inspector, inspection_state);
+            }
             assert_halt!(
                 frame.interpreter.gas.remaining() > ctx.cfg().gas_params().call_stipend(),
                 OutOfFuel
@@ -356,7 +388,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             charge_gas!(gas_cost);
             let gas_refund = ctx.cfg().gas_params().sstore_refund(true, &state_load.data);
             frame.interpreter.gas.record_refund(gas_refund);
-            inspect!(opcode::SSTORE, [slot, new_value], []);
             return_result!(Ok)
         }
 
