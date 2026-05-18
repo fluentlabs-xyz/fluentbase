@@ -7,6 +7,7 @@
 extern crate alloc;
 extern crate core;
 
+mod erc2612;
 #[cfg(test)]
 mod tests;
 
@@ -282,6 +283,81 @@ fn erc20_allowance_handler<SDK: SystemAPI>(
         .get_checked(sdk)?
         .to_be_bytes::<{ U256::BYTES }>();
     sdk.write(result);
+    Ok(0)
+}
+
+fn erc20_domain_separator_handler<SDK: SystemAPI>(
+    sdk: &mut SDK,
+    _input: &[u8],
+) -> Result<EvmExitCode, ExitCode> {
+    when_non_payable!(sdk);
+    let domain_separator = erc2612::domain_separator_value(sdk)?;
+    sdk.write(*domain_separator);
+    Ok(0)
+}
+
+fn erc20_nonces_handler<SDK: SystemAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<EvmExitCode, ExitCode> {
+    when_non_payable!(sdk);
+    let NoncesCommand { owner } = NoncesCommand::try_decode(input)?;
+    let nonce = erc2612::nonce_get(sdk, owner)?;
+    sdk.write(nonce.to_be_bytes::<{ U256::BYTES }>());
+    Ok(0)
+}
+
+fn erc20_permit_handler<SDK: SystemAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<EvmExitCode, ExitCode> {
+    when_non_payable!(sdk);
+    if sdk.context().contract_is_static() {
+        return Err(ExitCode::StateChangeDuringStaticCall);
+    }
+
+    let PermitCommand {
+        owner,
+        spender,
+        value,
+        deadline,
+        v,
+        r,
+        s,
+    } = PermitCommand::try_decode(input)?;
+
+    let now = U256::from(sdk.context().block_timestamp());
+    if deadline < now {
+        return Ok(ERR_UST_EXPIRED_DEADLINE);
+    }
+
+    let nonce = erc2612::nonce_get(sdk, owner)?;
+    let digest = erc2612::permit_digest(sdk, owner, spender, value, nonce, deadline)?;
+    let Some(recovered) = erc2612::ecrecover_address(digest, v, r, s) else {
+        return Ok(ERR_UST_INVALID_SIGNATURE);
+    };
+
+    if recovered != owner {
+        return Ok(ERR_UST_INVALID_SIGNATURE);
+    }
+
+    AllowanceStorageMap::new(ALLOWANCE_STORAGE_SLOT)
+        .entry(owner)
+        .entry(spender)
+        .set_checked(sdk, value)?;
+
+    let next_nonce = nonce
+        .checked_add(U256::ONE)
+        .ok_or(ExitCode::IntegerOverflow)?;
+    erc2612::nonce_set(sdk, owner, next_nonce)?;
+
+    events::Approval {
+        owner,
+        spender,
+        amount: value,
+    }
+    .emit(sdk)?;
+
     Ok(0)
 }
 
@@ -738,6 +814,9 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         // Pausable extension
         SIG_ERC20_PAUSE => erc20_pause_handler(sdk, input),
         SIG_ERC20_UNPAUSE => erc20_unpause_handler(sdk, input),
+        SIG_ERC20_PERMIT => erc20_permit_handler(sdk, input),
+        SIG_ERC20_NONCES => erc20_nonces_handler(sdk, input),
+        SIG_ERC20_DOMAIN_SEPARATOR => erc20_domain_separator_handler(sdk, input),
         // Wrapper extension
         SIG_ERC20_DEPOSIT if sdk.contract_metadata().len() >= INITIAL_SETTINGS_V2_SIZE => {
             erc20_deposit_handler(sdk, input)
