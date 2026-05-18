@@ -2,8 +2,8 @@ use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{
-    bytes, hex, storage::StorageDescriptor, universal_token::*, Address, Bytes, ContractContextV1,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
+    address, bytes, hex, storage::StorageDescriptor, universal_token::*, Address, Bytes,
+    ContractContextV1, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use revm::context::result::ExecutionResult;
