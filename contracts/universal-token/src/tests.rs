@@ -1799,6 +1799,28 @@ fn wrapped_methods_reject_when_wrapped_extension_is_disabled() {
 }
 
 #[test]
+fn erc2612_entrypoints_reject_native_value_before_decoding() {
+    let token = Address::with_last_byte(1);
+    let caller = Address::with_last_byte(2);
+    let mut h = Harness::new(token);
+
+    h.set_caller(caller);
+    h.set_call_value(U256::ONE);
+
+    let calls = [
+        with_sig(SIG_ERC20_DOMAIN_SEPARATOR, &[]),
+        with_sig(SIG_ERC20_NONCES, &[]),
+        with_sig(SIG_ERC20_PERMIT, &[]),
+    ];
+
+    for input in calls {
+        let (ec, out) = h.call(input);
+        assert_eq!(ec, ExitCode::Panic);
+        assert!(out.is_empty());
+    }
+}
+
+#[test]
 fn wrapped_deposit_mints_supply_and_emits_events() {
     let token = Address::with_last_byte(1);
     let deployer = Address::with_last_byte(2);
@@ -1901,4 +1923,30 @@ fn wrapped_withdraw_burns_supply_and_emits_events() {
     let (ec, ts) = h.call(with_sig(SIG_ERC20_TOTAL_SUPPLY, &[]));
     assert_eq!(ec, ExitCode::Ok);
     assert_eq!(ts, abi_word_u256(expected_remaining).to_vec());
+}
+
+#[test]
+fn ecrecover_rejects_s_above_secp256k1_half_order() {
+    let digest = B256::ZERO;
+    let r = U256::ONE;
+    let high_s = crate::erc2612::SECP256K1N_HALF + U256::ONE;
+
+    assert_eq!(
+        crate::erc2612::ecrecover_address(digest, 27, r, high_s),
+        None
+    );
+}
+
+#[test]
+fn secp256k1_half_order_constant_matches_eip2_boundary() {
+    let expected = U256::from_limbs([
+        0xdfe9_2f46_681b_20a0,
+        0x5d57_6e73_57a4_501d,
+        0xffff_ffff_ffff_ffff,
+        0x7fff_ffff_ffff_ffff,
+    ]);
+    let high_s = crate::erc2612::SECP256K1N_HALF + U256::ONE;
+
+    assert_eq!(crate::erc2612::SECP256K1N_HALF, expected);
+    assert!(crate::erc2612::SECP256K1N_HALF < high_s);
 }
