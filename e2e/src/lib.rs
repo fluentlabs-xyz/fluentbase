@@ -38,6 +38,8 @@ mod deployer;
 #[cfg(test)]
 mod eip2935;
 #[cfg(test)]
+mod erc2612;
+#[cfg(test)]
 mod evm;
 #[cfg(test)]
 mod fuel;
