@@ -91,7 +91,7 @@ TIP_DEC="$(hex_to_dec "$TIP_HEX")"
 echo "Waiting to reach chain tip... $TIP_DEC"
 
 while true; do
-  sleep 10
+  sleep 30
 
   CURRENT_HEX="$(get_block_number "http://127.0.0.1:8545")"
 
