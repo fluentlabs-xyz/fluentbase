@@ -83,12 +83,14 @@ fn default_chain_config(chain_id: u64) -> ChainConfig {
         deposit_contract_address: None,
         prague_time: Some(0u64),
         osaka_time: Some(0u64),
+        amsterdam_time: None,
         bpo1_time: None,
         bpo2_time: None,
         bpo3_time: None,
         bpo4_time: None,
         blob_schedule: Default::default(),
         bpo5_time: None,
+        _non_exhaustive: (),
     }
 }
 

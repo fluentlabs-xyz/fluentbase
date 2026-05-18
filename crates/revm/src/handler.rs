@@ -39,13 +39,14 @@ where
             ctx.tx(),
             ctx.cfg().spec().into(),
             ctx.cfg().is_eip7623_disabled(),
+            ctx.cfg().is_amsterdam_eip8037_enabled(),
+            ctx.cfg().tx_gas_limit_cap(),
             ctx.cfg().is_legacy_bytecode_enabled(),
-        )
-        .map_err(Self::Error::from)?;
+        )?;
 
         // Quadratic calldata surcharge for large inputs (>128 KB)
         let input_len = ctx.tx().input().len() as u64;
-        gas.initial_gas += calldata_quadratic_surcharge(input_len);
+        gas.initial_total_gas += calldata_quadratic_surcharge(input_len);
 
         Ok(gas)
     }

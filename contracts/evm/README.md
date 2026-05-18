@@ -54,7 +54,6 @@ Relevant functions in lib.rs:
 
 - metadata_write, metadata_copy, metadata_size for persisting bytecode and its hash.
 - context() for addresses and limits; bytes_input()/input() for calldata and initcode.
-- charge_fuel_manually and native_exit for accounting and termination.
 
 ## Usage
 

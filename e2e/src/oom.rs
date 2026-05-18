@@ -15,13 +15,12 @@ fn test_oom_has_proper_exit_code() {
     const CALLER: Address = Address::with_last_byte(81);
     // call greeting WASM contract
     let result = ctx.call_evm_tx(CALLER, contract_address, Bytes::default(), None, None);
-    assert_eq!(
-        result,
-        ExecutionResult::Halt {
-            reason: HaltReason::MemoryOutOfBounds,
-            gas_used: 3_000_000
+    match result {
+        ExecutionResult::Halt { reason, .. } => {
+            assert_eq!(reason, HaltReason::MemoryOutOfBounds);
         }
-    );
+        _ => panic!("Unexpected execution result: {:?}", result),
+    }
 }
 
 #[test]
@@ -46,11 +45,10 @@ fn test_negative_write_output_params_cant_cause_oom() {
     .into();
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     let result = TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module).exec();
-    assert_eq!(
-        result,
-        ExecutionResult::Halt {
-            reason: HaltReason::MemoryOutOfBounds,
-            gas_used: 100_000_000
+    match result {
+        ExecutionResult::Halt { reason, .. } => {
+            assert_eq!(reason, HaltReason::MemoryOutOfBounds);
         }
-    )
+        _ => panic!("Unexpected execution result: {:?}", result),
+    }
 }

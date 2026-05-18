@@ -136,7 +136,6 @@ pub(crate) fn calculate_syscall_fuel(sys_func_idx: SysFuncIdx) -> SyscallFuelPar
         EXEC => quadratic_fuel!(3, QUADRATIC_WORD_FUEL_COST, QUADRATIC_DIVISOR),
         RESUME => no_fuel!(),
         FORWARD_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
-        CHARGE_FUEL_MANUALLY => no_fuel!(),
         FUEL => const_fuel!(STATE_FUEL_COST),
         DEBUG_LOG => linear_fuel!(1, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST),
         CHARGE_FUEL => const_fuel!(CHARGE_FUEL_BASE_COST),

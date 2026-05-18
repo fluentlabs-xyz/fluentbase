@@ -10,7 +10,6 @@ mod bridge;
 mod eip2935;
 mod evm;
 mod executor;
-mod gas;
 mod handler;
 mod inspector;
 mod precompiles;
@@ -19,7 +18,6 @@ mod syscall;
 #[cfg(test)]
 mod tests;
 mod types;
-mod upgrade;
 
 pub use api::*;
 pub use evm::RwasmEvm;

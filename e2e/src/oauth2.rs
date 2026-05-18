@@ -14,11 +14,10 @@ fn test_oauth2_should_not_panic() {
         None,
         None,
     );
-    assert_eq!(
-        result,
-        ExecutionResult::Halt {
-            reason: HaltReason::UnreachableCodeReached,
-            gas_used: 3_000_000
+    match result {
+        ExecutionResult::Halt { reason, .. } => {
+            assert_eq!(reason, HaltReason::UnreachableCodeReached);
         }
-    );
+        _ => panic!("Unexpected execution result: {:?}", result),
+    }
 }

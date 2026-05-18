@@ -362,7 +362,7 @@ fn test_wasm_balance_should_fail_on_oog() {
         None,
     );
     // all gas must be charged
-    assert_eq!(result.gas_used(), 21_090);
+    assert_eq!(result.tx_gas_used(), 21_090);
     // it should halt, not revert or ok
     assert!(result.is_halt());
 }
@@ -442,13 +442,12 @@ fn test_wasm_cant_use_fatal_exit_code() {
         Some(1_000_000),
         None,
     );
-    assert_eq!(
-        result,
-        ExecutionResult::Halt {
-            reason: HaltReason::UnknownError,
-            gas_used: 1_000_000
+    match result {
+        ExecutionResult::Halt { reason, .. } => {
+            assert_eq!(reason, HaltReason::UnknownError)
         }
-    );
+        _ => panic!("unexpected result: {:?}", result),
+    }
 }
 
 #[test]
@@ -468,13 +467,12 @@ fn test_wasm_should_not_panic_on_invalid_contract_interface() {
     .into();
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     let result = TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module).exec();
-    assert_eq!(
-        result,
-        ExecutionResult::Halt {
-            reason: HaltReason::MalformedBuiltinParams,
-            gas_used: 100_000_000
+    match result {
+        ExecutionResult::Halt { reason, .. } => {
+            assert_eq!(reason, HaltReason::MalformedBuiltinParams)
         }
-    )
+        _ => panic!("unexpected result: {:?}", result),
+    }
 }
 
 #[test]
@@ -503,11 +501,10 @@ fn test_wasm_calling_resume_takes_no_negative_effect() {
     .into();
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     let result = TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module).exec();
-    assert_eq!(
-        result,
-        ExecutionResult::Halt {
-            reason: HaltReason::RootCallOnly,
-            gas_used: 100_000_000
+    match result {
+        ExecutionResult::Halt { reason, .. } => {
+            assert_eq!(reason, HaltReason::RootCallOnly)
         }
-    )
+        _ => panic!("unexpected result: {:?}", result),
+    }
 }

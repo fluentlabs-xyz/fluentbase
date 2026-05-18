@@ -13,7 +13,7 @@ case "$CHAIN" in
   fluent-testnet)
     RPC_URL="https://rpc.testnet.fluent.xyz"
     DATA_DIR="./datadir/testnet"
-    FROM_BLOCK=22459308
+    FROM_BLOCK=26669041
     ;;
   fluent-devnet)
     RPC_URL="https://rpc.devnet.fluent.xyz"
@@ -27,7 +27,15 @@ case "$CHAIN" in
     ;;
 esac
 
-# for fluent testnet make sure we use only snapshot sync
+if [[ "$CHAIN" == "fluent-mainnet" && ! -d "$DATA_DIR" ]]; then
+  echo "Downloading mainnet from snapshot"
+  LATEST_SNAPSHOT=$(curl -s https://cdn.fluent.xyz/snapshots/25363/latest.txt)
+  echo "Latest snapshot: $LATEST_SNAPSHOT"
+  SNAPSHOT_URL="https://cdn.fluent.xyz/snapshots/25363/$LATEST_SNAPSHOT"
+  mkdir -p $DATA_DIR
+  curl -L "$SNAPSHOT_URL" | lz4 -d | tar -x -C $DATA_DIR
+fi
+
 if [[ "$CHAIN" == "fluent-testnet" && ! -d "$DATA_DIR" ]]; then
   echo "Downloading testnet from snapshot"
   LATEST_SNAPSHOT=$(curl -s https://cdn.fluent.xyz/snapshots/20994/latest.txt)
@@ -113,7 +121,7 @@ echo "Re-executing node (wasmtime) from 1 block..."
 echo "Rebuilding Fluent node in rwasm mode..."
 cargo b --release \
   --no-default-features \
-  --features=jemalloc,otlp,otlp-logs,reth-revm/portable,js-tracer,keccak-cache-global,asm-keccak,min-debug-logs,rocksdb \
+  --features=jemalloc,otlp,otlp-logs,reth-revm/portable,js-tracer,keccak-cache-global,asm-keccak,min-debug-logs \
   --manifest-path=./bins/fluent/Cargo.toml 2> datadir/build.log
 
 echo "Re-executing node (rwasm) from 1 block..."

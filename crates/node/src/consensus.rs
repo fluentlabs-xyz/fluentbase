@@ -93,7 +93,7 @@ where
         // inside fee manager smart contract
         use alloy_consensus::BlockHeader;
         if block.header().beneficiary() != PRECOMPILE_FEE_MANAGER {
-            return Err(ConsensusError::Other("malformed beneficiary".to_owned()));
+            return Err(ConsensusError::msg("malformed beneficiary".to_owned()));
         }
 
         Ok(())
@@ -111,7 +111,7 @@ where
         // Make sure a header has correct coinbase, all fees must be accumulated
         // inside fee manager smart contract
         if header.header().beneficiary() != PRECOMPILE_FEE_MANAGER {
-            return Err(ConsensusError::Other("malformed beneficiary".to_owned()));
+            return Err(ConsensusError::msg("malformed beneficiary".to_owned()));
         }
 
         Ok(())

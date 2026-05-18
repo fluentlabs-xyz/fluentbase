@@ -34,10 +34,7 @@ fn call_with_sig_revert(
 ) -> Bytes {
     let result = ctx.call_evm_tx(*caller, *callee, input, None, None);
     match result {
-        ExecutionResult::Revert {
-            gas_used: _,
-            output,
-        } => output,
+        ExecutionResult::Revert { output, .. } => output,
         _ => {
             panic!("expected revert, got: {:?}", &result)
         }
@@ -87,10 +84,7 @@ fn call_with_sig_revert_no_funding(
         .gas_price(0);
     let result = tx.exec();
     match result {
-        ExecutionResult::Revert {
-            gas_used: _,
-            output,
-        } => output,
+        ExecutionResult::Revert { output, .. } => output,
         _ => panic!("expected revert, got: {:?}", &result),
     }
 }
@@ -635,7 +629,7 @@ fn invoke_ust20_transfer_multiple_times() {
     .abi_encode();
     let result = ctx.call_evm_tx(DEPLOYER_ADDR, ust20_address, input.into(), None, None);
     assert!(result.is_success());
-    println!("result: {:?}", result.gas_used());
+    println!("result: {:?}", result.tx_gas_used());
 
     let input = balanceOfCall {
         owner: repeat_transfer_address,
@@ -659,7 +653,7 @@ fn invoke_ust20_transfer_multiple_times() {
         None,
     );
     assert!(result.is_success());
-    println!("result: {:?}", result.gas_used());
+    println!("result: {:?}", result.tx_gas_used());
 }
 
 #[test]

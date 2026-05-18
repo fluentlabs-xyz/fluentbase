@@ -1,7 +1,7 @@
 use alloy_consensus::{BlockHeader, Header};
 use alloy_primitives::B256;
+use alloy_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
 use fluentbase_types::PRECOMPILE_FEE_MANAGER;
-use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_payload_primitives::PayloadAttributesBuilder;
 use reth_primitives_traits::SealedHeader;
 
@@ -22,6 +22,7 @@ impl PayloadAttributesBuilder<EthPayloadAttributes, Header> for FluentPayloadAtt
             suggested_fee_recipient: PRECOMPILE_FEE_MANAGER,
             withdrawals: Default::default(),
             parent_beacon_block_root: Some(B256::ZERO),
+            slot_number: None,
         }
     }
 }

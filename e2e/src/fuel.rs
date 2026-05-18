@@ -47,7 +47,7 @@ fn fuel_nitro_verifier_evm_ctx() {
     let runtime = "rwasm";
 
     println!("=== nitro_verifier ({}) ===", runtime);
-    println!("  gas_used:  {:>12}", result.gas_used());
+    println!("  gas_used:  {:>12}", result.tx_gas_used());
     println!("  time:      {:>12.2?}", elapsed);
     println!("  success:   {:>12}", result.is_success());
 
@@ -56,5 +56,5 @@ fn fuel_nitro_verifier_evm_ctx() {
     }
 
     assert!(result.is_success(), "execution failed: {:?}", result);
-    assert!(result.gas_used() > 0, "no gas consumed");
+    assert!(result.tx_gas_used() > 0, "no gas consumed");
 }

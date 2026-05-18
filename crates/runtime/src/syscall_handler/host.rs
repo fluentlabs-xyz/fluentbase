@@ -1,7 +1,5 @@
 mod charge_fuel;
 pub use charge_fuel::*;
-mod charge_fuel_manually;
-pub use charge_fuel_manually::*;
 mod debug_log;
 pub use debug_log::*;
 mod exec;

@@ -16,7 +16,7 @@ use fluentbase_sdk::{
     Address, Bytes, SyscallInvocationParams, PRECOMPILE_WASM_RUNTIME, STATE_MAIN, U256,
 };
 use revm::{
-    bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
+    bytecode::Bytecode,
     context::{BlockEnv, CfgEnv, ContextError, ContextTr, Host, JournalTr, TxEnv},
     database::{DBErrorMarker, InMemoryDB},
     inspector::NoOpInspector,
@@ -115,7 +115,7 @@ mod code_copy_tests {
         let output_data = returned_data.result.as_ref().unwrap().output.clone();
 
         // Get gas_used from the interruption result directly.
-        let gas_used = returned_data.result.as_ref().unwrap().gas.spent();
+        let gas_used = returned_data.result.as_ref().unwrap().gas.total_gas_spent();
 
         (output_data, gas_used)
     }
@@ -248,10 +248,7 @@ mod metadata_write_tests {
         // Pre-create the ownable account with initial metadata.
         ctx.journal_mut().set_code(
             test_address,
-            Bytecode::OwnableAccount(OwnableAccountBytecode::new(
-                owner_address,
-                initial_metadata.clone(),
-            )),
+            Bytecode::new_ownable_account(owner_address, initial_metadata.clone()),
         );
 
         let new_data = vec![0x11, 0x22, 0x33, 0x44];

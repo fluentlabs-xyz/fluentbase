@@ -24,7 +24,7 @@ fi
 
 docker build -f ./docker/Dockerfile.build --platform=linux/amd64 -t fluentbase-build:local \
   --build-arg SDK_VERSION_TAG="${TAG}" \
-  --build-arg RUST_TOOLCHAIN=1.92.0 .
+  --build-arg RUST_TOOLCHAIN=1.93.1 .
 
 FLUENTBASE_CONTRACTS_DOCKER=true \
 FLUENTBASE_BUILD_DOCKER_IMAGE=fluentbase-build \

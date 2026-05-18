@@ -97,7 +97,7 @@ jobs:
         run: |
           docker build \
             --file ./docker/Dockerfile.build \
-            --build-arg RUST_TOOLCHAIN=1.92 \
+            --build-arg RUST_TOOLCHAIN=1.93.1 \
             --build-arg SDK_VERSION_BRANCH=${{ github.ref_name }} \
             --build-arg SDK_VERSION_TAG= \
             --tag ${{ steps.build_image.outputs.image }}:${{ steps.build_image.outputs.tag }} \
@@ -233,7 +233,7 @@ jobs:
       - name: Install cross main
         id: cross_main
         run: |
-          cargo +1.92.0 install cross --git https://github.com/cross-rs/cross
+          cargo +1.93.1 install cross --git https://github.com/cross-rs/cross
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true

@@ -3,7 +3,7 @@ use crate::runner::{TestError, TestErrorKind};
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_sdk::{Address, PRECOMPILE_EVM_RUNTIME};
 use revm::{
-    bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
+    bytecode::Bytecode,
     context::{BlockEnv, CfgEnv, TransactTo, TransactionType::Eip1559, TxEnv},
     database::CacheState,
     primitives::{keccak256, B256, U256},
@@ -24,7 +24,7 @@ thread_local! {
 }
 
 pub(crate) fn evm_cache_state(unit: &TestUnit) -> CacheState {
-    let mut cache_state = CacheState::new(false);
+    let mut cache_state = CacheState::new();
     for (address, info) in &unit.pre {
         let acc_info = AccountInfo {
             balance: info.balance,
@@ -39,7 +39,7 @@ pub(crate) fn evm_cache_state(unit: &TestUnit) -> CacheState {
 }
 
 pub(crate) fn fluent_cache_state(unit: &TestUnit) -> CacheState {
-    let mut cache_state = CacheState::new(false);
+    let mut cache_state = CacheState::new();
 
     if cfg!(feature = "debug-print") {
         println!("\nloading EVM accounts:");
@@ -74,10 +74,7 @@ pub(crate) fn fluent_cache_state(unit: &TestUnit) -> CacheState {
             let mut metadata = vec![];
             metadata.extend_from_slice(evm_code_hash.as_slice());
             metadata.extend_from_slice(info.code.as_ref());
-            let bytecode = Bytecode::OwnableAccount(OwnableAccountBytecode::new(
-                PRECOMPILE_EVM_RUNTIME,
-                metadata.into(),
-            ));
+            let bytecode = Bytecode::new_ownable_account(PRECOMPILE_EVM_RUNTIME, metadata.into());
             acc_info.code_hash = bytecode.hash_slow();
             acc_info.code = Some(bytecode);
         }

@@ -266,10 +266,7 @@ fn test_evm_eip7702_auth_nonce_mismatch_is_ignored() {
     );
 
     assert_eq!(ctx.get_nonce(authority), 0);
-    assert!(!matches!(
-        ctx.get_code(authority),
-        Some(Bytecode::Eip7702(_))
-    ));
+    assert!(!ctx.get_code(authority).unwrap().is_eip7702());
 }
 
 #[test]
@@ -303,10 +300,7 @@ fn test_evm_eip7702_auth_chain_id_mismatch_is_ignored() {
     );
 
     assert_eq!(ctx.get_nonce(authority), 0);
-    assert!(!matches!(
-        ctx.get_code(authority),
-        Some(Bytecode::Eip7702(_))
-    ));
+    assert!(!ctx.get_code(authority).unwrap().is_eip7702());
 }
 
 #[test]
@@ -333,10 +327,10 @@ fn test_evm_eip7702_zero_address_clears_delegation() {
         "set delegation tx failed: {set_result:?}"
     );
 
-    match ctx.get_code(authority) {
-        Some(Bytecode::Eip7702(code)) => assert_eq!(code.address(), PRECOMPILE_SECP256K1_RECOVER),
-        other => panic!("expected Eip7702 code, got: {other:?}"),
-    }
+    assert_eq!(
+        ctx.get_code(authority).unwrap().eip7702_address(),
+        Some(PRECOMPILE_SECP256K1_RECOVER)
+    );
     assert_eq!(ctx.get_nonce(authority), 1);
 
     // second auth: clear delegation by authorizing address(0)
