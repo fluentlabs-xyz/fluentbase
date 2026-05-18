@@ -161,11 +161,10 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
     };
 
     let input = frame.interpreter.input.input.bytes(ctx);
+    let frame_logs = &ctx.journal().logs()[frame.checkpoint.log_i..];
 
     if let Some(message_value) = try_decode_receive_message_value(&input) {
-        let receive_message_logs = ctx
-            .journal()
-            .logs()
+        let receive_message_logs = frame_logs
             .iter()
             .filter_map(|log| {
                 // Make sure event and emitter are correct
@@ -226,9 +225,7 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
             return Ok(());
         }
     } else if try_decode_send_message_value(input).is_some() {
-        let send_message_logs = ctx
-            .journal()
-            .logs()
+        let send_message_logs = frame_logs
             .iter()
             .filter_map(|log| {
                 // Make sure event and emitter are correct
@@ -720,6 +717,46 @@ mod tests {
 
         assert_malformed(&next_action);
         assert_eq!(bridge_balance(&mut ctx), U256::from(20));
+    }
+
+    #[test]
+    fn post_hook_receive_ignores_logs_before_current_frame_checkpoint() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(30));
+        push_received_message_log(&mut ctx, true);
+
+        let mut frame = make_bridge_frame(receive_message_input(U256::from(7)), U256::ZERO);
+        frame.checkpoint.log_i = ctx.journal().logs().len();
+        push_received_message_log(&mut ctx, true);
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_eq!(
+            next_action.instruction_result(),
+            Some(InstructionResult::Return)
+        );
+        assert_eq!(bridge_balance(&mut ctx), U256::from(30));
+    }
+
+    #[test]
+    fn post_hook_send_ignores_logs_before_current_frame_checkpoint() {
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(100));
+        push_sent_message_log(&mut ctx, U256::from(99));
+
+        let mut frame = make_bridge_frame(send_message_input(), U256::from(11));
+        frame.checkpoint.log_i = ctx.journal().logs().len();
+        push_sent_message_log(&mut ctx, U256::from(11));
+        let mut next_action = ok_action();
+
+        apply_bridge_post_invocation_hook(&mut frame, &mut ctx, &mut next_action).unwrap();
+
+        assert_eq!(
+            next_action.instruction_result(),
+            Some(InstructionResult::Return)
+        );
+        assert_eq!(bridge_balance(&mut ctx), U256::from(89));
     }
 
     #[test]
