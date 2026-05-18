@@ -604,6 +604,13 @@ fn call_code<
     let to = to.into_address();
     // Max gas limit is not possible in a real ethereum situation.
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
+    let has_transfer = !value.is_zero();
+    if context.interpreter.runtime_flag.is_static() && has_transfer {
+        context
+            .interpreter
+            .halt(InstructionResult::CallNotAllowedInsideStatic);
+        return;
+    }
     let Some(in_range) = get_memory_input_range(&mut context) else {
         return;
     };
