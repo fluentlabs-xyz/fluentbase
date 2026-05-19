@@ -18,8 +18,8 @@ use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
     calc_create_metadata_address, is_execute_using_system_runtime, Address, Bytes, ExitCode, Log,
-    LogData, B256, EXT_CODE_COPY_MAX_COPY_SIZE, FUEL_DENOM_RATE,
-    KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
+    LogData, B256, EXT_CODE_COPY_MAX_COPY_SIZE, FUEL_DENOM_RATE, KECCAK_EMPTY,
+    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, ownable_account::OwnableAccountBytecode, rwasm::RwasmBytecode, Bytecode},
@@ -478,11 +478,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let (input, lazy_contract_input) = get_input_validated!(>= 20 + 32);
             let target_address = Address::from_slice(&input[0..20]);
             let value = U256::from_le_slice(&input[20..52]);
+            let has_transfer = !value.is_zero();
+            if is_static && has_transfer {
+                return_halt!(StateChangeDuringStaticCall);
+            }
             let (mut account_load, bytecode_address) =
                 load_account_with_gas_pre_checks!(target_address);
             // Set is_empty to false as we are not creating this account.
             account_load.is_empty = false;
-            let has_transfer = !value.is_zero();
             // EIP-150: gas cost changes for IO-heavy operations.
             charge_gas!(call_cost(spec_id, has_transfer, account_load));
             let mut gas_limit = core::cmp::min(
