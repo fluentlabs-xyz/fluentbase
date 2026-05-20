@@ -1,6 +1,5 @@
 use crate::{
     syscall::{execute_rwasm_interruption, MemoryReaderTr},
-    types::SystemInterruptionInputs,
     NextAction, RwasmContext, RwasmFrame, RwasmSpecId,
 };
 use alloy_primitives::{address, bytes, StorageValue, B256};
@@ -13,7 +12,7 @@ use fluentbase_sdk::{
         SYSCALL_ID_BLOCK_HASH, SYSCALL_ID_CODE_COPY, SYSCALL_ID_METADATA_COPY,
         SYSCALL_ID_METADATA_CREATE, SYSCALL_ID_METADATA_WRITE,
     },
-    Address, Bytes, SyscallInvocationParams, PRECOMPILE_WASM_RUNTIME, STATE_MAIN, U256,
+    Address, Bytes, PRECOMPILE_WASM_RUNTIME, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::Bytecode,
@@ -43,7 +42,10 @@ impl MemoryReaderTr for ForwardInputMemoryReader {
 #[cfg(test)]
 mod code_copy_tests {
     use super::*;
-    use revm::context::journaled_state::account::JournaledAccountTr;
+    use revm::{
+        context::journaled_state::account::JournaledAccountTr,
+        handler::system_interruption::SystemInterruptionInputs,
+    };
 
     /// Helper function to test code_copy syscall
     /// Returns (output_data, gas_used)
@@ -81,16 +83,13 @@ mod code_copy_tests {
         syscall_input[28..36].copy_from_slice(&code_length.to_le_bytes());
         let mr = ForwardInputMemoryReader(syscall_input.into());
 
-        let syscall_params = SyscallInvocationParams {
-            code_hash: SYSCALL_ID_CODE_COPY,
-            input: 0..mr.0.len(),
-            state: STATE_MAIN,
-            ..Default::default()
-        };
-
         let interruption_inputs = SystemInterruptionInputs {
             call_id: 0,
-            syscall_params,
+            code_hash: SYSCALL_ID_CODE_COPY,
+            input: 0..mr.0.len(),
+            fuel_limit: 0,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
             gas: Gas::new(initial_gas),
             preloaded_slot_costs: None,
         };
@@ -223,7 +222,10 @@ mod code_copy_tests {
 #[cfg(test)]
 mod metadata_write_tests {
     use super::*;
-    use revm::context::journaled_state::account::JournaledAccountTr;
+    use revm::{
+        context::journaled_state::account::JournaledAccountTr,
+        handler::system_interruption::SystemInterruptionInputs,
+    };
 
     #[test]
     fn test_metadata_write_truncates_existing_data() {
@@ -261,19 +263,15 @@ mod metadata_write_tests {
         syscall_input.extend_from_slice(&new_data);
         let mr = ForwardInputMemoryReader(syscall_input.into());
 
-        let syscall_params = SyscallInvocationParams {
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
             code_hash: SYSCALL_ID_METADATA_WRITE,
             input: 0..mr.0.len(),
             state: STATE_MAIN,
             fuel_limit: 1_000_000,
-            ..Default::default()
-        };
-
-        let interruption_inputs = SystemInterruptionInputs {
-            call_id: 0,
-            syscall_params,
             gas: Gas::new(1_000_000),
             preloaded_slot_costs: None,
+            fuel16_ptr: 0,
         };
 
         let result = execute_rwasm_interruption::<_, NoOpInspector>(
@@ -338,18 +336,15 @@ mod metadata_write_tests {
         syscall_input.extend_from_slice(&metadata);
         let mr = ForwardInputMemoryReader(syscall_input.into());
 
-        let syscall_params = SyscallInvocationParams {
-            code_hash: SYSCALL_ID_METADATA_CREATE,
-            input: 0..mr.0.len(),
-            state: STATE_MAIN,
-            ..Default::default()
-        };
-
         let interruption_inputs = SystemInterruptionInputs {
             call_id: 0,
-            syscall_params,
+            code_hash: SYSCALL_ID_METADATA_CREATE,
+            input: 0..mr.0.len(),
+            fuel_limit: 0,
+            state: STATE_MAIN,
             gas: Gas::new(1_000_000), // Sufficient gas for the operation
             preloaded_slot_costs: None,
+            fuel16_ptr: 0,
         };
 
         // === Execute: Call the syscall ===
@@ -393,6 +388,7 @@ mod metadata_write_tests {
 #[cfg(test)]
 mod block_hash_tests {
     use super::*;
+    use revm::handler::system_interruption::SystemInterruptionInputs;
 
     #[derive(Debug, Clone)]
     pub(super) struct MockDbError(pub String);
@@ -450,16 +446,13 @@ mod block_hash_tests {
         syscall_input[0..8].copy_from_slice(&requested_block.to_le_bytes());
         let mr = ForwardInputMemoryReader(syscall_input.into());
 
-        let syscall_params = SyscallInvocationParams {
-            code_hash: SYSCALL_ID_BLOCK_HASH,
-            input: 0..mr.0.len(),
-            state: STATE_MAIN,
-            ..Default::default()
-        };
-
         let interruption_inputs = SystemInterruptionInputs {
             call_id: 0,
-            syscall_params,
+            code_hash: SYSCALL_ID_BLOCK_HASH,
+            input: 0..mr.0.len(),
+            fuel_limit: 0,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
             gas: Gas::new(10_000_000),
             preloaded_slot_costs: None,
         };
@@ -505,12 +498,11 @@ mod block_hash_tests {
 
         let interruption_inputs = SystemInterruptionInputs {
             call_id: 0,
-            syscall_params: SyscallInvocationParams {
-                code_hash: SYSCALL_ID_BLOCK_HASH,
-                input: 0..mr.0.len(),
-                state: STATE_MAIN,
-                ..Default::default()
-            },
+            code_hash: SYSCALL_ID_BLOCK_HASH,
+            input: 0..mr.0.len(),
+            fuel_limit: 0,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
             gas: Gas::new(10_000_000),
             preloaded_slot_costs: None,
         };
@@ -602,12 +594,11 @@ mod block_hash_tests {
 
         let interruption_inputs = SystemInterruptionInputs {
             call_id: 0,
-            syscall_params: SyscallInvocationParams {
-                code_hash: SYSCALL_ID_METADATA_COPY,
-                input: 0..mr.0.len(),
-                state: STATE_MAIN,
-                ..Default::default()
-            },
+            code_hash: SYSCALL_ID_METADATA_COPY,
+            input: 0..mr.0.len(),
+            fuel_limit: 0,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
             gas: Gas::new(10_000_000),
             preloaded_slot_costs: None,
         };
@@ -652,12 +643,11 @@ mod block_hash_tests {
 
         let interruption_inputs = SystemInterruptionInputs {
             call_id: 0,
-            syscall_params: SyscallInvocationParams {
-                code_hash: SYSCALL_ID_METADATA_WRITE,
-                input: 0..mr.0.len(),
-                state: STATE_MAIN,
-                ..Default::default()
-            },
+            code_hash: SYSCALL_ID_METADATA_WRITE,
+            input: 0..mr.0.len(),
+            fuel_limit: 0,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
             gas: Gas::new(10_000_000),
             preloaded_slot_costs: None,
         };

@@ -3,7 +3,6 @@ use crate::{
     eip2935::eip2935_compute_storage_keys,
     inspector::inspect_syscall,
     syscall::{execute_rwasm_interruption, DefaultRuntimeExecutorMemoryReader},
-    types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
 use alloy_primitives::{Address, Log, LogData};
@@ -30,7 +29,10 @@ use revm::{
         journaled_state::TransferError, Block, Cfg, ContextError, ContextTr, JournalTr, Transaction,
     },
     context_interface::journaled_state::JournalLoadError,
-    handler::FrameData,
+    handler::{
+        system_interruption::{SystemInterruptionInputs, SystemInterruptionOutcome},
+        FrameData,
+    },
     interpreter::{
         interpreter::ExtBytecode,
         interpreter_types::{InputsTr, ReturnData, RuntimeFlag, StackTr},
@@ -525,7 +527,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         exit_code.into_i32(),
         fuel_consumed,
         fuel_refunded,
-        inputs.syscall_params.fuel16_ptr,
+        inputs.fuel16_ptr,
     ) else {
         // Note: this should never happen, because we always call resume here at 0 depth level, but
         //  it's the only error that can be triggered inside
@@ -824,7 +826,11 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     let gas = frame.interpreter.gas;
     let inputs = SystemInterruptionInputs {
         call_id,
-        syscall_params,
+        code_hash: syscall_params.code_hash,
+        input: syscall_params.input,
+        fuel_limit: syscall_params.fuel_limit,
+        state: syscall_params.state,
+        fuel16_ptr: syscall_params.fuel16_ptr,
         gas,
         preloaded_slot_costs,
     };

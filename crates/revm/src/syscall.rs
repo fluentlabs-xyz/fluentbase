@@ -8,10 +8,7 @@
 
 use crate::{
     api::RwasmFrame,
-    types::{
-        is_evm_system_precompile, load_account_delegated, SystemInterruptionInputs,
-        SystemInterruptionOutcome,
-    },
+    types::{is_evm_system_precompile, load_account_delegated},
     ExecutionResult, NextAction,
 };
 use fluentbase_evm::{types::instruction_result_from_exit_code, EthereumMetadata};
@@ -28,6 +25,7 @@ use revm::{
     context::{
         journaled_state::JournalLoadError, Cfg, ContextError, ContextTr, CreateScheme, JournalTr,
     },
+    handler::system_interruption::{SystemInterruptionInputs, SystemInterruptionOutcome},
     interpreter::{
         gas, interpreter_types::InputsTr, CallInput, CallInputs, CallScheme, CallValue,
         CreateInputs, FrameInput, Gas, Host, StateLoad,
@@ -181,7 +179,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 $name,
                 current_target_address,
                 account_owner_address,
-                inputs.syscall_params.fuel_limit,
+                inputs.fuel_limit,
             );
         }};
         ($name:expr, $($arg:tt)*) => {{
@@ -190,7 +188,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 $name,
                 current_target_address,
                 account_owner_address,
-                inputs.syscall_params.fuel_limit,
+                inputs.fuel_limit,
                 format_args!($($arg)*)
             );
         }};
@@ -200,17 +198,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     macro_rules! get_input_validated {
         (== $length:expr) => {{
             assert_halt!(
-                inputs.syscall_params.input.len() == $length
-                    && inputs.syscall_params.state == STATE_MAIN,
+                inputs.input.len() == $length && inputs.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             let mut input = [0u8; $length];
             if mr
-                .memory_read(
-                    inputs.call_id,
-                    inputs.syscall_params.input.start,
-                    &mut input,
-                )
+                .memory_read(inputs.call_id, inputs.input.start, &mut input)
                 .is_err()
             {
                 return_result!(MemoryOutOfBounds)
@@ -219,25 +212,19 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }};
         (>= $length:expr) => {{
             assert_halt!(
-                inputs.syscall_params.input.len() >= $length
-                    && inputs.syscall_params.state == STATE_MAIN,
+                inputs.input.len() >= $length && inputs.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             let mut input = vec![0u8; $length];
             if mr
-                .memory_read(
-                    inputs.call_id,
-                    inputs.syscall_params.input.start,
-                    &mut input,
-                )
+                .memory_read(inputs.call_id, inputs.input.start, &mut input)
                 .is_err()
             {
                 return_result!(MemoryOutOfBounds)
             }
             let call_id = inputs.call_id;
-            let remaining_offset = inputs.syscall_params.input.start + $length;
-            let remaining_length =
-                inputs.syscall_params.input.end - inputs.syscall_params.input.start - $length;
+            let remaining_offset = inputs.input.start + $length;
+            let remaining_length = inputs.input.end - inputs.input.start - $length;
             let lazy_contract_input = move || -> Result<Vec<u8>, TrapCode> {
                 let mut variable_input = vec![0u8; remaining_length];
                 mr.memory_read(call_id, remaining_offset, &mut variable_input)?;
@@ -247,26 +234,20 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }};
         (> $length:expr) => {{
             assert_halt!(
-                inputs.syscall_params.input.len() > $length
-                    && inputs.syscall_params.state == STATE_MAIN,
+                inputs.input.len() > $length && inputs.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             let len = $length + 1;
             let mut input = vec![0u8; len];
             if mr
-                .memory_read(
-                    inputs.call_id,
-                    inputs.syscall_params.input.start,
-                    &mut input,
-                )
+                .memory_read(inputs.call_id, inputs.input.start, &mut input)
                 .is_err()
             {
                 return_result!(MemoryOutOfBounds)
             }
             let call_id = inputs.call_id;
-            let remaining_offset = inputs.syscall_params.input.start + len;
-            let remaining_length =
-                inputs.syscall_params.input.end - inputs.syscall_params.input.start - len;
+            let remaining_offset = inputs.input.start + len;
+            let remaining_length = inputs.input.end - inputs.input.start - len;
             let lazy_contract_input = move || -> Result<Vec<u8>, TrapCode> {
                 let mut variable_input = vec![0u8; remaining_length];
                 mr.memory_read(call_id, remaining_offset, &mut variable_input)?;
@@ -288,7 +269,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     }
 
     use fluentbase_sdk::syscall::*;
-    match inputs.syscall_params.code_hash {
+    match inputs.code_hash {
         SYSCALL_ID_STORAGE_READ => {
             let input = get_input_validated!(== 32);
             let slot = U256::from_le_slice(&input[0..32]);
@@ -365,7 +346,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 ctx.cfg()
                     .gas_params()
                     .call_stipend_reduction(frame.interpreter.gas.remaining()),
-                inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
+                inputs.fuel_limit / FUEL_DENOM_RATE,
             );
             charge_regular_gas!(gas_limit);
             if has_transfer {
@@ -421,7 +402,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 ctx.cfg()
                     .gas_params()
                     .call_stipend_reduction(frame.interpreter.gas.remaining()),
-                inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
+                inputs.fuel_limit / FUEL_DENOM_RATE,
             );
             charge_regular_gas!(gas_limit);
             inspect!(
@@ -481,7 +462,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 ctx.cfg()
                     .gas_params()
                     .call_stipend_reduction(frame.interpreter.gas.remaining()),
-                inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
+                inputs.fuel_limit / FUEL_DENOM_RATE,
             );
             charge_regular_gas!(gas_limit);
             // Add a call stipend if there is a value to be transferred.
@@ -538,7 +519,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 ctx.cfg()
                     .gas_params()
                     .call_stipend_reduction(frame.interpreter.gas.remaining()),
-                inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
+                inputs.fuel_limit / FUEL_DENOM_RATE,
             );
             charge_regular_gas!(gas_limit);
             inspect!(
@@ -579,13 +560,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
             // Enforce a hard upper bound on the syscall input size.
             const HARD_CAP: usize = WASM_MAX_CODE_SIZE + U256::BYTES + U256::BYTES;
-            assert_halt!(
-                inputs.syscall_params.input.len() <= HARD_CAP,
-                MalformedBuiltinParams
-            );
+            assert_halt!(inputs.input.len() <= HARD_CAP, MalformedBuiltinParams);
 
             // CREATE2 uses a different address derivation scheme and gas calculation.
-            let is_create2 = inputs.syscall_params.code_hash == SYSCALL_ID_CREATE2;
+            let is_create2 = inputs.code_hash == SYSCALL_ID_CREATE2;
             debug_syscall!(if is_create2 { "CREATE2" } else { "CREATE" });
 
             let (input, lazy_init_code) = get_input_validated!(>= if is_create2 {
@@ -605,7 +583,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
 
             // Enforce initcode size limits (EIP-3860 / Wasm-specific caps).
-            let init_code_length = inputs.syscall_params.input.len() - input.len();
+            let init_code_length = inputs.input.len() - input.len();
             if init_code_length > 0 {
                 charge_regular_gas!(ctx.cfg().gas_params().initcode_cost(init_code_length));
             }
@@ -652,17 +630,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Read the number of topics and ensure it does not exceed 4 (EVM LOG0..LOG4).
             // (The EVM hard-limits log topics to 4.)
             assert_halt!(
-                !inputs.syscall_params.input.is_empty()
-                    && inputs.syscall_params.state == STATE_MAIN,
+                !inputs.input.is_empty() && inputs.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             let mut input = [0u8; 1];
             if mr
-                .memory_read(
-                    inputs.call_id,
-                    inputs.syscall_params.input.start,
-                    &mut input,
-                )
+                .memory_read(inputs.call_id, inputs.input.start, &mut input)
                 .is_err()
             {
                 return_result!(MemoryOutOfBounds)
@@ -680,7 +653,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 let topic = &input[offset..(offset + B256::len_bytes())];
                 topics.push(B256::from_slice(topic));
             }
-            let data_length = inputs.syscall_params.input.len() - 1 - topics_len * U256::BYTES;
+            let data_length = inputs.input.len() - 1 - topics_len * U256::BYTES;
             // Ensure we have enough gas before reading the data payload; otherwise a DDoS vector.
             // Exists via forced allocation/reads.
             charge_regular_gas!(
@@ -1217,22 +1190,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             return_result!(hash, Ok);
         }
 
-        // ===========================================================
-        // SECURITY-CONSIDERATIONS: CALLDATA-BASED PRECOMPILE DISPATCH
-        // ===========================================================
-        //
-        // DESCRIPTION:
-        // 1. `UPDATE_GENESIS_AUTH`: Privileged address that can deploy arbitrary bytecode
-        //    to any address via upgrade_runtime_hook
-        //
-        // SECURITY IMPACT:
-        // - If the `UPDATE_GENESIS_AUTH` key is compromised, an attacker gains full system control
-        //
-        // CURRENT MITIGATION:
-        // - Instead of private key address, a smart contract is used that required quorum
-        //   of signatures from trusted parties.
-        //
-        // ===========================================================
         SYSCALL_ID_UPGRADE_RUNTIME => {
             assert_halt!(!is_static, StateChangeDuringStaticCall);
             // This syscall can be called only by runtime upgrade smart contract

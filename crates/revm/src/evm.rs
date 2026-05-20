@@ -5,7 +5,6 @@ use crate::{
     bridge::{apply_bridge_post_invocation_hook, apply_bridge_pre_invocation_hook},
     executor::run_rwasm_loop,
     precompiles::RwasmPrecompiles,
-    types::SystemInterruptionOutcome,
     ExecutionResult,
 };
 use fluentbase_sdk::{resolve_precompiled_runtime_from_input, Address, Bytes};
@@ -73,7 +72,7 @@ impl<CTX, INSP, I, P> RwasmEvm<CTX, INSP, I, P> {
     }
 }
 
-impl<CTX, INSP, I, P> InspectorEvmTr<SystemInterruptionOutcome> for RwasmEvm<CTX, INSP, I, P>
+impl<CTX, INSP, I, P> InspectorEvmTr for RwasmEvm<CTX, INSP, I, P>
 where
     CTX: ContextTr<Journal: JournalExt> + ContextSetters,
     I: InstructionProvider<Context = CTX, InterpreterTypes = EthInterpreter>,

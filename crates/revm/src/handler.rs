@@ -1,6 +1,6 @@
 //!Handler related to a Fluent chain
 
-use crate::{types::SystemInterruptionOutcome, RwasmFrame, RwasmHaltReason};
+use crate::{RwasmFrame, RwasmHaltReason};
 use alloy_primitives::U256;
 use fluentbase_sdk::calldata_quadratic_surcharge;
 use revm::{
@@ -91,10 +91,9 @@ impl<CTX, ERROR> Default for RwasmHandler<CTX, ERROR> {
     }
 }
 
-impl<EVM, ERROR> InspectorHandler<SystemInterruptionOutcome> for RwasmHandler<EVM, ERROR>
+impl<EVM, ERROR> InspectorHandler for RwasmHandler<EVM, ERROR>
 where
     EVM: InspectorEvmTr<
-        SystemInterruptionOutcome,
         Context: ContextTr<Journal: JournalTr<State = EvmState>>,
         Frame = RwasmFrame,
         Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context, EthInterpreter>,
