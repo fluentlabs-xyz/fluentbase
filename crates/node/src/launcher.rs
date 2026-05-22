@@ -11,8 +11,7 @@ use reth_node_builder::{rpc::RethRpcAddOns, DebugNode, NodeHandle};
 use reth_node_types::PayloadAttrTy;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_payload_primitives::{
-    BuiltPayload, EngineApiMessageVersion, ExecutionPayload, PayloadAttributesBuilder, PayloadKind,
-    PayloadTypes,
+    BuiltPayload, ExecutionPayload, PayloadAttributesBuilder, PayloadKind, PayloadTypes,
 };
 use reth_primitives_traits::{HeaderTy, NodePrimitives, SealedBlock, SealedHeaderFor};
 use reth_storage_api::BlockReader;
@@ -128,7 +127,6 @@ where
             .fork_choice_updated(
                 ForkchoiceState::same_hash(self.last_block_hash),
                 Some(self.payload_attributes_builder.build(&self.last_header)),
-                EngineApiMessageVersion::default(),
             )
             .await?;
 
@@ -162,10 +160,7 @@ where
 
     async fn update_forkchoice_state(&mut self) -> eyre::Result<()> {
         let state = ForkchoiceState::same_hash(self.last_block_hash);
-        let res = self
-            .to_engine
-            .fork_choice_updated(state, None, EngineApiMessageVersion::default())
-            .await?;
+        let res = self.to_engine.fork_choice_updated(state, None).await?;
         if !res.is_valid() {
             eyre::bail!("Invalid fork choice update {state:?}: {res:?}")
         }
@@ -224,8 +219,6 @@ async fn new_block_fetcher<
         // Send new events to execution client
         let _ = engine_handle.new_payload(payload).await;
         let state = ForkchoiceState::same_hash(block_hash);
-        let _ = engine_handle
-            .fork_choice_updated(state, None, EngineApiMessageVersion::V3)
-            .await;
+        let _ = engine_handle.fork_choice_updated(state, None).await;
     }
 }

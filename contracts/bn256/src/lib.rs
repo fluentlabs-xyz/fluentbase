@@ -15,7 +15,7 @@ use revm_precompile::{
         pair::{ISTANBUL_PAIR_BASE, ISTANBUL_PAIR_PER_POINT},
         PAIR_ELEMENT_LEN,
     },
-    PrecompileError,
+    PrecompileHalt,
 };
 
 const BN254_ADD_INPUT_SIZE: usize = BN254_G1_RAW_AFFINE_SIZE * 2;
@@ -136,7 +136,7 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
             let result =
                 bn254::run_mul(input.as_ref(), ISTANBUL_MUL_GAS_COST, u64::MAX).map_err(|err| {
                     match err {
-                        PrecompileError::OutOfGas => ExitCode::OutOfFuel,
+                        PrecompileHalt::OutOfGas => ExitCode::OutOfFuel,
                         _ => ExitCode::PrecompileError,
                     }
                 })?;
@@ -154,7 +154,7 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
                 u64::MAX,
             )
             .map_err(|err| match err {
-                PrecompileError::OutOfGas => ExitCode::OutOfFuel,
+                PrecompileHalt::OutOfGas => ExitCode::OutOfFuel,
                 _ => ExitCode::PrecompileError,
             })?;
             sdk.write(result.bytes);

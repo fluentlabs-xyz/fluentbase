@@ -23,7 +23,7 @@ use revm::{
     },
     database::{DbAccount, InMemoryDB},
     handler::MainnetContext,
-    primitives::{hardfork::PRAGUE, keccak256, HashMap},
+    primitives::{hardfork::PRAGUE, keccak256, AddressMap},
     state::{Account, AccountInfo, Bytecode},
     DatabaseCommit, ExecuteCommitEvm, MainBuilder,
 };
@@ -225,7 +225,11 @@ impl EvmTestingContext {
             Bytecode::Rwasm(rwasm_bytecode) => rwasm_bytecode.clone(),
             _ => unreachable!(),
         };
-        default_runtime_executor().warmup(rwasm_bytecode.module, bytecode.hash_slow(), address);
+        default_runtime_executor().warmup(
+            rwasm_bytecode.module.clone(),
+            bytecode.hash_slow(),
+            address,
+        );
     }
 
     pub fn add_balance(&mut self, address: Address, value: U256) {
@@ -233,7 +237,7 @@ impl EvmTestingContext {
         account.info.balance += value;
         let mut revm_account = Account::from(account.info.clone());
         revm_account.mark_touch();
-        let mut changes: HashMap<Address, Account> = HashMap::default();
+        let mut changes: AddressMap<Account> = AddressMap::default();
         changes.insert(address, revm_account);
         self.db.commit(changes);
     }
@@ -280,7 +284,7 @@ impl EvmTestingContext {
             "deploy transaction didn't return expected address: {:?}",
             result
         );
-        (contract_address, result.gas_used())
+        (contract_address, result.tx_gas_used())
     }
 
     pub fn deploy_evm_tx_result(
@@ -304,7 +308,7 @@ impl EvmTestingContext {
             return Err(result);
         }
         #[cfg(feature = "debug-print")]
-        println!("deployment gas used: {}", result.gas_used());
+        println!("deployment gas used: {}", result.tx_gas_used());
         let contract_address = calc_create_address(&deployer, nonce);
         assert_eq!(contract_address, deployer.create(nonce));
 
@@ -313,7 +317,7 @@ impl EvmTestingContext {
             "deploy transaction didn't return expected address: {:?}",
             result
         );
-        Ok((contract_address, result.gas_used()))
+        Ok((contract_address, result.tx_gas_used()))
     }
 
     pub fn call_evm_tx_simple(

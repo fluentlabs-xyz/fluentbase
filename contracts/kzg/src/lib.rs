@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SystemAPI};
-use revm_precompile::PrecompileError;
+use revm_precompile::PrecompileHalt;
 
 pub fn main_entry(sdk: &mut impl SystemAPI) -> Result<(), ExitCode> {
     // read full input data
@@ -12,7 +12,7 @@ pub fn main_entry(sdk: &mut impl SystemAPI) -> Result<(), ExitCode> {
     // call blake2 function
     let result =
         revm_precompile::kzg_point_evaluation::run(&input, gas_limit).map_err(|err| match err {
-            PrecompileError::OutOfGas => ExitCode::OutOfFuel,
+            PrecompileHalt::OutOfGas => ExitCode::OutOfFuel,
             _ => ExitCode::PrecompileError,
         })?;
     sdk.sync_evm_gas(result.gas_used)?;

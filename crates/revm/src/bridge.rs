@@ -1,13 +1,9 @@
 use crate::RwasmFrame;
-use alloy_primitives::address;
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use fluentbase_evm::{InterpreterAction, InterpreterResult};
 use fluentbase_sdk::{Bytes, PRECOMPILE_ROLLUP_BRIDGE, U256};
 use revm::{
-    context::{
-        journaled_state::account::JournaledAccountTr, ContextError, ContextTr, JournalTr,
-        Transaction,
-    },
+    context::{journaled_state::account::JournaledAccountTr, ContextError, ContextTr, JournalTr},
     interpreter::{CallInputs, CallScheme, FrameInput, Gas, InstructionResult},
     Database,
 };
@@ -68,17 +64,12 @@ pub(crate) fn apply_bridge_pre_invocation_hook<CTX: ContextTr>(
     inputs: &CallInputs,
     ctx: &mut CTX,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
-    // Don't allow to proceed if target address doesn't match rollup bridge address
+    // Don't allow proceeding if target address doesn't match rollup bridge address
     if inputs.target_address != PRECOMPILE_ROLLUP_BRIDGE || inputs.is_static {
         return Ok(());
     }
 
-    if ctx.tx().chain_id() == Some(0x5202) && ctx.block_number() <= 24457093 {
-        // Before block 24457093 double mints happened. Keep the same behavior
-        // to satisfy fixture tests.
-        //
-        // Note: remove this check once we have new testnet snapshot
-    } else if inputs.scheme != CallScheme::Call {
+    if inputs.scheme != CallScheme::Call {
         // Don't mint extra ether to rollup bridge in case of delegate call
         return Ok(());
     }
@@ -114,21 +105,7 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
     ctx: &mut CTX,
     next_action: &mut InterpreterAction,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
-    // A special case for corrupted bridge transaction on testnet, where we issued 3
-    // transactions from relayer that caused execution failure. We keep it here only to
-    // make blockchain syncable for testnet.
-    //
-    // Note: it can be removed once we have new snapshot for testnet
-    if ctx.tx().chain_id() == Some(0x5202)
-        && ctx.tx().caller() == address!("0x1C92DffBCe76670F69007F22A54e31ff3Ab45d5E")
-        && [537u64, 538u64, 539u64].contains(&ctx.tx().nonce())
-        && ctx.journal().depth() == 3
-    {
-        *next_action = malformed_interpreter_action();
-        return Ok(());
-    }
-
-    // Proceed post-invocation hook only if frame is closed
+    // Process post-invocation hook only if frame is closed
     match next_action {
         InterpreterAction::Return(_) => {}
         _ => return Ok(()),
@@ -145,12 +122,7 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
         return Ok(());
     }
 
-    if ctx.tx().chain_id() == Some(0x5202) && ctx.block_number() <= 24457093 {
-        // Before block 24457093 double mints happened. Keep the same behavior
-        // to satisfy fixture tests.
-        //
-        // Note: remove this check once we have new testnet snapshot
-    } else if inputs.scheme != CallScheme::Call {
+    if inputs.scheme != CallScheme::Call {
         // Don't mint extra ether to rollup bridge in case of delegate call
         return Ok(());
     }
@@ -282,7 +254,7 @@ pub(crate) fn apply_bridge_post_invocation_hook<CTX: ContextTr>(
 
         // Burn extra eth for bridge since these funds are required for rollup withdrawal
         if let Some((amount_to_be_burned, relayer_fee)) = amount_to_be_burned {
-            if amount_to_be_burned + relayer_fee != msg_value {
+            if amount_to_be_burned.checked_add(relayer_fee) != Some(msg_value) {
                 warn!(
                     %msg_value,
                     value = %amount_to_be_burned,
@@ -351,8 +323,10 @@ fn malformed_interpreter_action() -> InterpreterAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Address, Log, B256};
+    use alloy_primitives::{address, Address, Log, B256};
+    use fluentbase_sdk::KECCAK_EMPTY;
     use revm::{
+        bytecode::Bytecode,
         context::{
             journaled_state::account::JournaledAccountTr, BlockEnv, CfgEnv, JournalTr, TxEnv,
         },
@@ -428,8 +402,9 @@ mod tests {
             input: CallInput::Bytes(input),
             return_memory_offset: Default::default(),
             gas_limit: 1_000_000,
+            reservoir: 0,
             bytecode_address: target,
-            known_bytecode: None,
+            known_bytecode: (KECCAK_EMPTY, Bytecode::new()),
             target_address: target,
             caller: address!("0x4000000000000000000000000000000000000004"),
             value: CallValue::Transfer(value),
@@ -447,8 +422,9 @@ mod tests {
             input: CallInput::Bytes(input),
             return_memory_offset: Default::default(),
             gas_limit: 0,
+            reservoir: 0,
             bytecode_address: Default::default(),
-            known_bytecode: None,
+            known_bytecode: (KECCAK_EMPTY, Bytecode::new()),
             target_address: PRECOMPILE_ROLLUP_BRIDGE,
             caller: Default::default(),
             value: Default::default(),

@@ -18,10 +18,7 @@ pub fn call_with_sig(
 ) -> Result<Vec<u8>, (u32, Vec<u8>)> {
     let result = ctx.call_evm_tx(*caller, *callee, input, None, None);
     match &result {
-        ExecutionResult::Revert {
-            gas_used: _,
-            output,
-        } => {
+        ExecutionResult::Revert { gas: _, output, .. } => {
             let output_vec = output.to_vec();
             try_print_utf8_error(&output_vec);
             const ERROR_OFFSET: usize = 32;

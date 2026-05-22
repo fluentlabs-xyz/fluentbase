@@ -6,13 +6,7 @@ use quote::{format_ident, quote};
 use syn::{Ident, Type};
 use syn_solidity::{
     visit::{visit_file, Visit},
-    File,
-    Item,
-    ItemFunction,
-    ItemStruct,
-    Mutability,
-    Spanned,
-    VariableDeclaration,
+    File, Item, ItemFunction, ItemStruct, Mutability, Spanned, VariableDeclaration,
 };
 
 /// A visitor that collects Solidity functions and structs

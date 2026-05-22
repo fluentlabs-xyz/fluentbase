@@ -540,8 +540,7 @@ mod tests {
     use super::*;
     use crate::{
         byteorder::{BE, LE},
-        CompactABI,
-        SolidityABI,
+        CompactABI, SolidityABI,
     };
     #[cfg(test)]
     use alloy_primitives::{Address, U256};

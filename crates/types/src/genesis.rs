@@ -119,45 +119,6 @@ pub const PRECOMPILE_BLS12_381_MAP_G1: Address = evm_address(0x10);
 /// BLS12-381 map-to-G2 precompile (EVM address 0x11).
 pub const PRECOMPILE_BLS12_381_MAP_G2: Address = evm_address(0x11);
 
-/// The full set of addresses treated as "system precompiles" by the executor.
-///
-/// This list is used for routing/dispatch decisions and must remain stable
-/// across nodes for consensus.
-///
-/// NOTE: DON'T EDIT, THIS LIST WILL BE REMOVED AT NEXT TESTNET SNAPSHOT!
-pub const TESTNET_LEGACY_PRECOMPILE_ADDRESSES: &[Address] = &[
-    PRECOMPILE_BIG_MODEXP,              // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_BLAKE2F,                 // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_BLS12_381_G1_ADD,        // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_BLS12_381_G1_MSM,        // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_BLS12_381_G2_ADD,        // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_BLS12_381_G2_MSM,        // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_BLS12_381_MAP_G1,        // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_BLS12_381_MAP_G2,        // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_BLS12_381_PAIRING,       // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_BN256_ADD,               // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_BN256_MUL,               // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_BN256_PAIR,              // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_EIP2935,                 // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_EIP7951,                 // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_EVM_RUNTIME,             // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_IDENTITY,                // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_KZG_POINT_EVALUATION,    // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_NITRO_VERIFIER,          // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_OAUTH2_VERIFIER,         // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_RIPEMD160,               // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_SECP256K1_RECOVER,       // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_SHA256,                  // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_SVM_RUNTIME,             // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_WASM_RUNTIME,            // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_RUNTIME_UPGRADE,         // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_CREATE2_FACTORY,         // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_FEE_MANAGER,             // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_WEBAUTHN_VERIFIER,       // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_UNUSED_4,                // FORK ALERT: DON'T TOUCH!
-];
-
 /// Addresses whose execution is delegated to the **system runtime** implementation.
 ///
 /// This is a narrower set than `PRECOMPILE_ADDRESSES`: some system contracts may

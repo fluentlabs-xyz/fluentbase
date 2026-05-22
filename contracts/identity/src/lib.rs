@@ -5,7 +5,7 @@ extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SystemAPI};
 use revm_precompile::{
-    calc_linear_cost_u32,
+    calc_linear_cost,
     identity::{IDENTITY_BASE, IDENTITY_PER_WORD},
 };
 
@@ -13,7 +13,7 @@ pub fn main_entry(sdk: &mut impl SystemAPI) -> Result<(), ExitCode> {
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     // fail fast if we don't have enough fuel for the call
-    let gas_used = calc_linear_cost_u32(input_length as usize, IDENTITY_BASE, IDENTITY_PER_WORD);
+    let gas_used = calc_linear_cost(input_length as usize, IDENTITY_BASE, IDENTITY_PER_WORD);
     if gas_used > gas_limit {
         return Err(ExitCode::OutOfFuel);
     }

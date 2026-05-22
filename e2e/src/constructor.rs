@@ -25,7 +25,7 @@ fn test_deploy_with_constructor_params() {
         None,
         None,
     );
-    println!("gas used: {:?}", result.gas_used());
+    println!("gas used: {:?}", result.tx_gas_used());
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
     assert_eq!(constructor_params, bytes.to_vec());
