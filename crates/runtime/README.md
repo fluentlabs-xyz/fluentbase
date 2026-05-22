@@ -40,7 +40,7 @@ Fuel model
 
 - Fuel corresponds to deterministic metering used by rWASM. RuntimeContext.fuel_limit bounds execution. disable_fuel
   lets builtins manage fuel manually.
-- Syscalls include CHARGE_FUEL and CHARGE_FUEL_MANUALLY, plus FUEL to query remaining fuel.
+- Syscalls include CHARGE_FUEL, plus FUEL to query remaining fuel.
 - ExecutionResult exposes fuel_consumed and fuel_refunded (in fuel units). Gas conversion is the caller’s
   responsibility.
 
@@ -49,7 +49,7 @@ Grouped by SysFuncIdx categories exposed to rWASM modules:
 
 - Control/IO: EXIT, STATE, READ_INPUT, INPUT_SIZE, WRITE_OUTPUT, OUTPUT_SIZE, READ_OUTPUT, EXEC, RESUME, FORWARD_OUTPUT,
   DEBUG_LOG
-- Fuel: CHARGE_FUEL, CHARGE_FUEL_MANUALLY, FUEL
+- Fuel: CHARGE_FUEL, FUEL
 - Preimage: PREIMAGE_SIZE, PREIMAGE_COPY
 - Hashing: KECCAK256, KECCAK256_PERMUTE, SHA256, SHA256_EXTEND, SHA256_COMPRESS, BLAKE3, POSEIDON
 - Curves/crypto: ed25519 (add, sub, mul, msm, decompress), ristretto255, secp256k1 (recover, add, double, decompress),

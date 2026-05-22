@@ -6,7 +6,7 @@ use reth_chainspec::{
     EthereumHardfork, ForkCondition, Hardfork, DEV_HARDFORKS,
 };
 use reth_cli::chainspec::{parse_genesis, ChainSpecParser};
-use reth_primitives::SealedHeader;
+use reth_primitives_traits::SealedHeader;
 use reth_revm::primitives::U256;
 use std::sync::{Arc, LazyLock};
 use tracing::warn;

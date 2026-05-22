@@ -9,8 +9,8 @@ use bitvec::vec::BitVec;
 use fluentbase_sdk::{Bytes, B256};
 use revm_bytecode::{legacy::analyze_legacy, JumpTable};
 
-#[derive(Debug)]
 /// A legacy bytecode
+#[derive(Debug)]
 pub struct LegacyBytecode {
     pub hash: B256,
     pub bytecode: Bytes,

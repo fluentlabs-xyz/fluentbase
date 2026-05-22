@@ -69,7 +69,7 @@ fn run_twice_and_find_gas_difference(wat: &str, call_data_size: usize) -> u64 {
     assert!(result1.is_success());
     let init_gas =
         calculate_initial_tx_gas(SpecId::PRAGUE, &vec![0u8; call_data_size], false, 0, 0, 0);
-    result1.gas_used() - init_gas.initial_gas
+    result1.tx_gas_used() - init_gas.initial_total_gas
 }
 
 #[test]

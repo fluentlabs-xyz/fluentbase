@@ -3,7 +3,6 @@ use crate::{
     eip2935::eip2935_compute_storage_keys,
     inspector::inspect_syscall,
     syscall::{execute_rwasm_interruption, DefaultRuntimeExecutorMemoryReader},
-    types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
 use alloy_primitives::{Address, Log, LogData};
@@ -14,7 +13,7 @@ use fluentbase_runtime::{
     RuntimeContext, RuntimeExecutor,
 };
 use fluentbase_sdk::{
-    bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
+    bincode, debug_log, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
     rwasm_core::RwasmModule,
     system::{
         JournalLog, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
@@ -25,12 +24,15 @@ use fluentbase_sdk::{
     PRECOMPILE_EIP2935, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, STATE_DEPLOY, STATE_MAIN, U256,
 };
 use revm::{
-    bytecode::{opcode, ownable_account::OwnableAccountBytecode, rwasm::RwasmBytecode, Bytecode},
+    bytecode::{opcode, ownable_account::OwnableAccountBytecode, Bytecode},
     context::{
         journaled_state::TransferError, Block, Cfg, ContextError, ContextTr, JournalTr, Transaction,
     },
     context_interface::journaled_state::JournalLoadError,
-    handler::FrameData,
+    handler::{
+        system_interruption::{SystemInterruptionInputs, SystemInterruptionOutcome},
+        FrameData,
+    },
     interpreter::{
         interpreter::ExtBytecode,
         interpreter_types::{InputsTr, ReturnData, RuntimeFlag, StackTr},
@@ -41,6 +43,7 @@ use revm::{
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
+    sync::Arc,
     vec,
     vec::Vec,
 };
@@ -152,10 +155,7 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
 
         // Replace the deployed bytecode with rWasm.
         let bytecode_hash = keccak256(rwasm_module_raw.as_ref());
-        let bytecode = Bytecode::Rwasm(RwasmBytecode {
-            module: rwasm_module,
-            raw: rwasm_module_raw,
-        });
+        let bytecode = Bytecode::new_rwasm(rwasm_module, Some(rwasm_module_raw));
         ctx.journal_mut()
             .set_code(created_address, bytecode.clone());
 
@@ -333,7 +333,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                         ctx.cfg().gas_params().warm_storage_read_cost()
                     };
                     // We charge for gas in advance because we don't charge inside system contracts
-                    if !interpreter.gas.record_cost(gas_cost) {
+                    if !interpreter.gas.record_regular_cost(gas_cost) {
                         return Ok(NextAction::out_of_fuel(Gas::new_spent(
                             interpreter.gas.remaining(),
                         )));
@@ -404,7 +404,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     // Pass bytecode by value + hash to the runtime executor.
     let bytecode_hash = BytecodeOrHash::Bytecode {
         address: interpreter.input.account_owner.unwrap_or(bytecode_address),
-        bytecode: rwasm_bytecode.module,
+        bytecode: rwasm_bytecode.module.clone(),
         hash: interpreter.bytecode.hash().unwrap(),
     };
 
@@ -422,12 +422,18 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         if is_create { STATE_DEPLOY } else { STATE_MAIN },
     );
 
+    debug_log!(
+        "revm: syscall_exec_impl exit_code={} fuel_consumed={}",
+        exit_code,
+        fuel_consumed
+    );
+
     // Convert consumed fuel into gas to charge inside REVM.
     // On some networks we floor vs. ceil; keep the behavior feature-gated.
     let gas_consumed = fuel_consumed.div_ceil(FUEL_DENOM_RATE);
 
     // Charge gas. If we cannot, halt with out-of-fuel.
-    if !interpreter.gas.record_cost(gas_consumed) {
+    if !interpreter.gas.record_regular_cost(gas_consumed) {
         return Ok(NextAction::error(ExitCode::OutOfFuel, interpreter.gas));
     }
 
@@ -476,8 +482,8 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     let call_id = inputs.call_id;
     let preloaded_slot_costs = inputs.preloaded_slot_costs.clone();
 
-    // Convert REVM gas accounting into runtime fuel units.
-    let fuel_consumed = result.gas.spent().saturating_mul(FUEL_DENOM_RATE);
+    // Convert REVM gas accounts into runtime fuel units.
+    let fuel_consumed = result.gas.total_gas_spent().saturating_mul(FUEL_DENOM_RATE);
     let fuel_refunded = result
         .gas
         .refunded()
@@ -521,7 +527,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         exit_code.into_i32(),
         fuel_consumed,
         fuel_refunded,
-        inputs.syscall_params.fuel16_ptr,
+        inputs.fuel16_ptr,
     ) else {
         // Note: this should never happen, because we always call resume here at 0 depth level, but
         //  it's the only error that can be triggered inside
@@ -534,7 +540,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     let gas_consumed = fuel_consumed.div_ceil(FUEL_DENOM_RATE);
 
     // Charge gas for the resumed segment.
-    if !frame.interpreter.gas.record_cost(gas_consumed) {
+    if !frame.interpreter.gas.record_regular_cost(gas_consumed) {
         return Ok(NextAction::error(
             ExitCode::OutOfFuel,
             frame.interpreter.gas,
@@ -573,7 +579,7 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
 fn get_ownable_account_mut<'a, CTX: ContextTr + 'a>(
     frame: &'a mut RwasmFrame,
     ctx: &'a mut CTX,
-) -> Result<Option<OwnableAccountBytecode>, ContextError<<CTX::Db as Database>::Error>> {
+) -> Result<Option<Arc<OwnableAccountBytecode>>, ContextError<<CTX::Db as Database>::Error>> {
     let bytecode_address = frame
         .interpreter
         .input
@@ -610,7 +616,7 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
     gas: &mut Gas,
     return_data: &mut Bytes,
     exit_code: &mut ExitCode,
-    ownable_account_bytecode: Option<OwnableAccountBytecode>,
+    ownable_account_bytecode: Option<Arc<OwnableAccountBytecode>>,
     preloaded_slot_costs: Option<&[(U256, u64)]>,
 ) -> Result<(), ContextError<<CTX::Db as Database>::Error>> {
     // If we have a fatal exit code, execution halted/panicked, and output may be corrupted,
@@ -685,10 +691,9 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
             .as_ref()
             .map(|v| v.owner_address)
             .unwrap();
-        let ownable_account_bytecode = OwnableAccountBytecode::new(owner_address, new_metadata);
         ctx.journal_mut().set_code(
             *target_address,
-            Bytecode::OwnableAccount(ownable_account_bytecode),
+            Bytecode::new_ownable_account(owner_address, new_metadata),
         );
     }
 
@@ -821,7 +826,11 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     let gas = frame.interpreter.gas;
     let inputs = SystemInterruptionInputs {
         call_id,
-        syscall_params,
+        code_hash: syscall_params.code_hash,
+        input: syscall_params.input,
+        fuel_limit: syscall_params.fuel_limit,
+        state: syscall_params.state,
+        fuel16_ptr: syscall_params.fuel16_ptr,
         gas,
         preloaded_slot_costs,
     };

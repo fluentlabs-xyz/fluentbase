@@ -35,8 +35,6 @@ pub trait NativeAPI {
     fn fuel(&self) -> u64;
     fn debug_log(message: &str);
     /// Charges specified amount of fuel.
-    /// In contrast to `_charge_fuel_manually`, can be called from untrusted code since it can only
-    /// charge fuel.
     fn charge_fuel(&self, fuel_consumed: u64);
     fn enter_unconstrained(&self);
     fn exit_unconstrained(&self);

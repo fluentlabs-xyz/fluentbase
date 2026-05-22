@@ -6,7 +6,7 @@ extern crate fluentbase_sdk;
 use fluentbase_sdk::{system_entrypoint, ExitCode, SystemAPI};
 use revm_precompile::{
     secp256r1::{p256_verify, P256VERIFY_BASE_GAS_FEE},
-    PrecompileError,
+    PrecompileHalt,
 };
 
 /// Main entry point for the secp256r1 wrapper contract.
@@ -25,7 +25,7 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input = sdk.bytes_input();
     sdk.sync_evm_gas(P256VERIFY_BASE_GAS_FEE)?;
     let result = p256_verify(input.as_ref(), u64::MAX).map_err(|err| match err {
-        PrecompileError::OutOfGas => ExitCode::OutOfFuel,
+        PrecompileHalt::OutOfGas => ExitCode::OutOfFuel,
         _ => ExitCode::PrecompileError,
     })?;
     sdk.write(result.bytes);

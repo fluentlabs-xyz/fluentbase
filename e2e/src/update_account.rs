@@ -12,7 +12,7 @@ use revm::context::result::ExecutionResult;
 
 #[test]
 #[should_panic(
-    expected = "Encountered unexpected internal return flag: FatalExternalError with instruction result: InterpreterResult { result: FatalExternalError, output: 0x, gas: Gas { limit: 3000000, remaining: 0, refunded: 0, memory: MemoryGas { words_num: 0, expansion_cost: 0 } } }"
+    expected = "Encountered unexpected internal return flag: FatalExternalError with instruction result: InterpreterResult { result: FatalExternalError, output: 0x, gas: Gas { tracker: GasTracker { gas_limit: 3000000, remaining: 0, reservoir: 0, state_gas_spent: 0, refunded: 0 }, memory: MemoryGas { words_num: 0, expansion_cost: 0 } } }"
 )]
 fn test_update_account_code_by_auth() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();

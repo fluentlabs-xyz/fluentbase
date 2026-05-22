@@ -175,8 +175,7 @@ mod tests {
             let buf = write::unsigned(i);
 
             let readable = &buf[..];
-            let result =
-                read::unsigned(readable).expect("Should be able to read it back again");
+            let result = read::unsigned(readable).expect("Should be able to read it back again");
             assert_eq!(i, result);
         }
     }
