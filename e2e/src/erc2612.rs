@@ -292,7 +292,8 @@ fn universal_token_permit_rejects_expired_deadline_without_state_change() {
     }
     .abi_encode();
 
-    let mut tx = TxBuilder::call(&mut ctx, DEPLOYER_ADDR, token, None)
+    let mut tx = TxBuilder::call(&mut ctx, token)
+        .caller(DEPLOYER_ADDR)
         .input(input.into())
         .timestamp(2)
         .gas_price(0);

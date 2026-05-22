@@ -325,7 +325,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             if !frame
                 .interpreter
                 .gas
-                .record_cost(ctx.cfg().gas_params().sstore_static_gas())
+                .record_regular_cost(ctx.cfg().gas_params().sstore_static_gas())
             {
                 finish_inspection!();
                 return_halt!(OutOfFuel);
@@ -354,7 +354,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 &state_load.data,
                 state_load.is_cold,
             );
-            if !frame.interpreter.gas.record_cost(gas_cost) {
+            if !frame.interpreter.gas.record_regular_cost(gas_cost) {
                 finish_inspection!();
                 return_halt!(OutOfFuel);
             }

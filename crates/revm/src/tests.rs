@@ -675,6 +675,7 @@ mod storage_inspector_tests {
     use revm::{
         bytecode::opcode,
         context::JournalEntry,
+        handler::system_interruption::SystemInterruptionInputs,
         interpreter::{interpreter_types::Jumps, Interpreter},
         state::{Account, EvmStorageSlot},
         Inspector,
@@ -768,12 +769,11 @@ mod storage_inspector_tests {
 
         let interruption_inputs = SystemInterruptionInputs {
             call_id: 0,
-            syscall_params: SyscallInvocationParams {
-                code_hash: SYSCALL_ID_STORAGE_WRITE,
-                input: 0..mr.0.len(),
-                state: STATE_MAIN,
-                ..Default::default()
-            },
+            code_hash: SYSCALL_ID_STORAGE_WRITE,
+            input: 0..mr.0.len(),
+            fuel_limit: 0,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
             gas: Gas::new(10_000_000),
             preloaded_slot_costs: None,
         };
