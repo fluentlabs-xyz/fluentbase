@@ -1,4 +1,4 @@
-use crate::abi::{error::ABIError, function::FunctionABI, constructor::ConstructorABI};
+use crate::abi::{constructor::ConstructorABI, error::ABIError, function::FunctionABI};
 use crate::method::CONSTRUCTOR_METHOD;
 use convert_case::{Case, Casing};
 use quote::ToTokens;
@@ -112,7 +112,6 @@ impl ParsedSignature {
     pub fn is_constructor(&self) -> bool {
         self.0.ident == CONSTRUCTOR_METHOD
     }
-
 
     /// Get span information for the signature for error reporting
     pub fn span(&self) -> proc_macro2::Span {

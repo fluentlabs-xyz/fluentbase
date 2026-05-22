@@ -94,6 +94,7 @@ blst = ["revm/blst"]
 bn = ["revm/bn"]
 
 # fluentbase
+debug-log = ["debug-print"]
 debug-print = [
     "fluentbase-runtime/debug-print",
     # "rwasm/debug-print",

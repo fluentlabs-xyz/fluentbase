@@ -16,6 +16,8 @@ env:
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
   CARGO_INCREMENTAL: "0"
+  CC: clang
+  CXX: clang++
 
 jobs:
   tests:

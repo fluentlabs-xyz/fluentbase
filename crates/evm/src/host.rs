@@ -10,8 +10,8 @@ use revm_context::{
     host::LoadError,
     journaled_state::{AccountInfoLoad, AccountLoad, StateLoad},
 };
-use revm_context_interface::cfg::GasParams;
-use revm_interpreter::{Host, SStoreResult, SelfDestructResult};
+use revm_context_interface::{cfg::GasParams, Host};
+use revm_interpreter::{SStoreResult, SelfDestructResult};
 use revm_primitives::{StorageKey, StorageValue};
 
 /// Helper trait to access the underlying SDK from opcode handlers.
@@ -190,5 +190,13 @@ impl<'a, SDK: SystemAPI> Host for HostWrapperImpl<'a, SDK> {
 
     fn load_account_code_hash(&mut self, _address: Address) -> Option<StateLoad<B256>> {
         unreachable!()
+    }
+
+    fn is_amsterdam_eip8037_enabled(&self) -> bool {
+        false
+    }
+
+    fn slot_num(&self) -> U256 {
+        U256::ZERO
     }
 }

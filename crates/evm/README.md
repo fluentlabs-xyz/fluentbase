@@ -109,7 +109,7 @@ host boundary, not on network rules enforcement.
 - The interpreter tracks EVM Gas as usual.
 - The host may operate in a different “fuel” unit; we use a constant `FUEL_DENOM_RATE` to convert between units.
 - Before host calls, we “commit” the difference between the interpreter’s gas state and the last committed snapshot by
-  calling `sdk.charge_fuel_manually(remaining_diff * FUEL_DENOM_RATE, refund_diff * FUEL_DENOM_RATE)`.
+  calling `sdk.charge_fuel(remaining_diff * FUEL_DENOM_RATE)`.
 - After a host operation completes, we convert the host fuel usage back into an EVM Gas and set it as the current gas so
   the loop remains consistent.
 - ExecutionResult exposes `chargeable_fuel_and_refund` so the embedding layer can settle cost precisely.

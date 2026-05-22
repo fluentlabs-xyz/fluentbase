@@ -100,6 +100,7 @@ pub fn exit_code_from_instruction_result(result: InstructionResult) -> ExitCode 
         InstructionResult::CreateContractStartingWithEF => ExitCode::CreateContractStartingWithEF,
         InstructionResult::CreateInitCodeSizeLimit => ExitCode::CreateContractSizeLimit,
         InstructionResult::FatalExternalError => ExitCode::UnexpectedFatalExecutionFailure,
+        InstructionResult::InvalidImmediateEncoding => ExitCode::UnreachableCodeReached,
         InstructionResult::RootCallOnly => ExitCode::RootCallOnly,
         InstructionResult::MalformedBuiltinParams => ExitCode::MalformedBuiltinParams,
         InstructionResult::CallDepthOverflow => ExitCode::CallDepthOverflow,

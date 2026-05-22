@@ -35,7 +35,7 @@ fn tokens_transfer_benches(c: &mut Criterion) {
                     None,
                     None,
                 );
-                total_gas_used += result.gas_used();
+                total_gas_used += result.tx_gas_used();
                 num_calls += 1;
             });
         });
@@ -64,7 +64,7 @@ fn tokens_transfer_benches(c: &mut Criterion) {
                     None,
                     None,
                 );
-                total_gas_used += result.gas_used();
+                total_gas_used += result.tx_gas_used();
                 num_calls += 1;
             });
         });
@@ -103,7 +103,7 @@ fn tokens_transfer_benches(c: &mut Criterion) {
                     None,
                     None,
                 );
-                total_gas_used += result.gas_used();
+                total_gas_used += result.tx_gas_used();
                 num_calls += 1;
             });
         });
@@ -151,7 +151,7 @@ fn tokens_transfer_benches(c: &mut Criterion) {
                     None,
                     None,
                 );
-                total_gas_used += result.gas_used();
+                total_gas_used += result.tx_gas_used();
                 num_calls += 1;
             });
         });

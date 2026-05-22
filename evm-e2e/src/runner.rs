@@ -194,7 +194,7 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
                     "stateRoot": state_root1,
                     "logsRoot": logs_root1,
                     "output": exec_result1.as_ref().ok().and_then(|r| r.output().cloned()).unwrap_or_default(),
-                    "gasUsed": exec_result1.as_ref().ok().map(|r| r.gas_used()).unwrap_or_default(),
+                    "gasUsed": exec_result1.as_ref().ok().map(|r| r.tx_gas_used()).unwrap_or_default(),
                     "pass": error.is_none(),
                     "errorMsg": error.unwrap_or_default(),
                     "evmResult": exec_result1.as_ref().err().map(|e| e.to_string()).unwrap_or("Ok".to_string()),
@@ -331,8 +331,8 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
     let exec_result1_res = exec_result1.as_ref().unwrap();
     let exec_result2_res = exec_result2.as_ref().unwrap();
     error_eq!(
-        exec_result1_res.gas_used(),
-        exec_result2_res.gas_used(),
+        exec_result1_res.tx_gas_used(),
+        exec_result2_res.tx_gas_used(),
         "EVM <> FLUENT gas used mismatch"
     );
 
@@ -550,7 +550,7 @@ fn build_json_output(
         "stateRoot": validation.state_root,
         "logsRoot": validation.logs_root,
         "output": exec_result.as_ref().ok().and_then(|r| r.output().cloned()).unwrap_or_default(),
-        "gasUsed": exec_result.as_ref().ok().map(|r| r.gas_used()).unwrap_or_default(),
+        "gasUsed": exec_result.as_ref().ok().map(|r| r.tx_gas_used()).unwrap_or_default(),
         "pass": error.is_none(),
         "errorMsg": error.unwrap_or_default(),
         "evmResult": format_evm_result(exec_result),
@@ -766,10 +766,10 @@ pub fn execute_evm_test_suite(
                 }
                 fill_tx_env(&mut tx_env, &unit.transaction, &test);
 
-                let mut evm_cache = evm_cache_state.clone();
-                evm_cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
-                let mut fluent_cache = fluent_cache_state.clone();
-                fluent_cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
+                let evm_cache = evm_cache_state.clone();
+                // evm_cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
+                let fluent_cache = fluent_cache_state.clone();
+                // fluent_cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
 
                 let evm_state: State<InMemoryDB> = StateBuilder::default()
                     .with_cached_prestate(evm_cache)
@@ -975,8 +975,8 @@ pub fn execute_fluent_test_suite(
                 fill_tx_env(&mut tx_env, &unit.transaction, &test);
                 tx_env.chain_id = Some(cfg_env.chain_id);
 
-                let mut cache = cache_state.clone();
-                cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
+                let cache = cache_state.clone();
+                // cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
 
                 let state: State<EmptyDB> = StateBuilder::default()
                     .with_cached_prestate(cache)

@@ -8,8 +8,7 @@
 
 use crate::{
     api::RwasmFrame,
-    gas::{account_warm_cold_cost, call_cost},
-    types::{is_evm_system_precompile, SystemInterruptionInputs, SystemInterruptionOutcome},
+    types::{is_evm_system_precompile, load_account_delegated},
     ExecutionResult, NextAction,
 };
 use fluentbase_evm::{types::instruction_result_from_exit_code, EthereumMetadata};
@@ -22,11 +21,11 @@ use fluentbase_sdk::{
     PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
 };
 use revm::{
-    bytecode::{opcode, ownable_account::OwnableAccountBytecode, rwasm::RwasmBytecode, Bytecode},
+    bytecode::{opcode, rwasm::RwasmBytecode, Bytecode},
     context::{
-        journaled_state::{AccountLoad, JournalLoadError},
-        Cfg, ContextError, ContextTr, CreateScheme, JournalTr,
+        journaled_state::JournalLoadError, Cfg, ContextError, ContextTr, CreateScheme, JournalTr,
     },
+    handler::system_interruption::{SystemInterruptionInputs, SystemInterruptionOutcome},
     interpreter::{
         gas, interpreter_types::InputsTr, CallInput, CallInputs, CallScheme, CallValue,
         CreateInputs, FrameInput, Gas, Host, StateLoad,
@@ -76,75 +75,21 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     mr: impl MemoryReaderTr,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let spec_id: SpecId = ctx.cfg().spec().into();
-    let chain_id = ctx.cfg().chain_id();
 
     let current_target_address = frame.interpreter.input.target_address();
     let account_owner_address = frame.interpreter.input.account_owner_address();
 
     let is_static = frame.interpreter.runtime_flag.is_static;
 
-    // Modified `Journal::load_account_delegated()` logic, with extra pre-checks to support.
-    // A "skip cold load" fast-path when we are close to running out of gas.
-    macro_rules! load_account_with_gas_pre_checks {
-        ($target_address:expr) => {{
-            let mut cost = 0;
-            let warm_storage_read_cost = ctx.cfg().gas_params().warm_storage_read_cost();
-            let cold_account_additional_cost =
-                ctx.cfg().gas_params().cold_account_additional_cost();
-            let skip_cold = frame.interpreter.gas.remaining() < cold_account_additional_cost;
-            let is_eip7702_enabled = spec_id.is_enabled_in(SpecId::PRAGUE);
-            let result = ctx.journal_mut().load_account_info_skip_cold_load(
-                $target_address,
-                is_eip7702_enabled,
-                skip_cold,
-            );
-            let account_info_load = unwrap_journal_load_error!(result);
-
-            let is_empty = account_info_load.is_empty();
-            if account_info_load.is_cold {
-                cost += cold_account_additional_cost;
-            }
-
-            let mut account_load = StateLoad::new(
-                AccountLoad {
-                    is_delegate_account_cold: None,
-                    is_empty,
-                },
-                account_info_load.is_cold,
-            );
-
-            // Load delegate code if the account uses EIP-7702 delegation.
-            // Also resolve the bytecode address so internal CALLs execute the
-            // delegated code rather than the raw EIP-7702 designator.
-            let resolved_bytecode_address =
-                if let Some(Bytecode::Eip7702(code)) = &account_info_load.code {
-                    let address = code.address();
-                    cost += warm_storage_read_cost;
-                    if cost > frame.interpreter.gas.remaining() {
-                        return_halt!(OutOfFuel);
-                    }
-                    let skip_cold =
-                        frame.interpreter.gas.remaining() < cost + cold_account_additional_cost;
-                    let result = ctx
-                        .journal_mut()
-                        .load_account_info_skip_cold_load(address, true, skip_cold);
-                    let delegate_account = unwrap_journal_load_error!(result);
-                    account_load.data.is_delegate_account_cold = Some(delegate_account.is_cold);
-                    address
-                } else {
-                    $target_address
-                };
-
-            (account_load, resolved_bytecode_address)
-        }};
-    }
     macro_rules! return_result {
         ($output:expr, $result:ident) => {{
             let output: Bytes = $output.into();
             let result = ExecutionResult {
                 result: instruction_result_from_exit_code(ExitCode::$result, output.is_empty()),
                 output,
-                gas: Gas::new_spent(frame.interpreter.gas.spent() - inputs.gas.spent()),
+                gas: Gas::new_spent(
+                    frame.interpreter.gas.total_gas_spent() - inputs.gas.total_gas_spent(),
+                ),
             };
             frame.insert_interrupted_outcome(SystemInterruptionOutcome {
                 inputs,
@@ -168,7 +113,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 let result = ExecutionResult {
                     result: instruction_result_from_exit_code(ExitCode::$result, true),
                     output: Bytes::new(),
-                    gas: Gas::new_spent(frame.interpreter.gas.spent() - inputs.gas.spent()),
+                    gas: Gas::new_spent(
+                        frame.interpreter.gas.total_gas_spent() - inputs.gas.total_gas_spent(),
+                    ),
                 };
                 frame.insert_interrupted_outcome(SystemInterruptionOutcome {
                     inputs,
@@ -180,7 +127,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let result = ExecutionResult {
                 result: instruction_result_from_exit_code(ExitCode::$result, true),
                 output: Bytes::new(),
-                gas: Gas::new_spent(frame.interpreter.gas.spent() - inputs.gas.spent()),
+                gas: Gas::new_spent(
+                    frame.interpreter.gas.total_gas_spent() - inputs.gas.total_gas_spent(),
+                ),
             };
             return Ok(NextAction::Return(result));
         }};
@@ -202,9 +151,16 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             }
         };
     }
-    macro_rules! charge_gas {
+    macro_rules! charge_regular_gas {
         ($value:expr) => {{
-            if !frame.interpreter.gas.record_cost($value) {
+            if !frame.interpreter.gas.record_regular_cost($value) {
+                return_halt!(OutOfFuel);
+            }
+        }};
+    }
+    macro_rules! charge_state_gas {
+        ($value:expr) => {{
+            if !frame.interpreter.gas.record_state_cost($value) {
                 return_halt!(OutOfFuel);
             }
         }};
@@ -216,22 +172,38 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             }
         }};
     }
+    macro_rules! debug_syscall {
+        ($name:expr) => {{
+            fluentbase_sdk::debug_log!(
+                "syscall: {} target={:?} owner={:?} fuel_limit={}",
+                $name,
+                current_target_address,
+                account_owner_address,
+                inputs.fuel_limit,
+            );
+        }};
+        ($name:expr, $($arg:tt)*) => {{
+            fluentbase_sdk::debug_log!(
+                "syscall: {} target={:?} owner={:?} fuel_limit={} {}",
+                $name,
+                current_target_address,
+                account_owner_address,
+                inputs.fuel_limit,
+                format_args!($($arg)*)
+            );
+        }};
+    }
 
     #[allow(clippy::int_plus_one)]
     macro_rules! get_input_validated {
         (== $length:expr) => {{
             assert_halt!(
-                inputs.syscall_params.input.len() == $length
-                    && inputs.syscall_params.state == STATE_MAIN,
+                inputs.input.len() == $length && inputs.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             let mut input = [0u8; $length];
             if mr
-                .memory_read(
-                    inputs.call_id,
-                    inputs.syscall_params.input.start,
-                    &mut input,
-                )
+                .memory_read(inputs.call_id, inputs.input.start, &mut input)
                 .is_err()
             {
                 return_result!(MemoryOutOfBounds)
@@ -240,25 +212,19 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }};
         (>= $length:expr) => {{
             assert_halt!(
-                inputs.syscall_params.input.len() >= $length
-                    && inputs.syscall_params.state == STATE_MAIN,
+                inputs.input.len() >= $length && inputs.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             let mut input = vec![0u8; $length];
             if mr
-                .memory_read(
-                    inputs.call_id,
-                    inputs.syscall_params.input.start,
-                    &mut input,
-                )
+                .memory_read(inputs.call_id, inputs.input.start, &mut input)
                 .is_err()
             {
                 return_result!(MemoryOutOfBounds)
             }
             let call_id = inputs.call_id;
-            let remaining_offset = inputs.syscall_params.input.start + $length;
-            let remaining_length =
-                inputs.syscall_params.input.end - inputs.syscall_params.input.start - $length;
+            let remaining_offset = inputs.input.start + $length;
+            let remaining_length = inputs.input.end - inputs.input.start - $length;
             let lazy_contract_input = move || -> Result<Vec<u8>, TrapCode> {
                 let mut variable_input = vec![0u8; remaining_length];
                 mr.memory_read(call_id, remaining_offset, &mut variable_input)?;
@@ -268,26 +234,20 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }};
         (> $length:expr) => {{
             assert_halt!(
-                inputs.syscall_params.input.len() > $length
-                    && inputs.syscall_params.state == STATE_MAIN,
+                inputs.input.len() > $length && inputs.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             let len = $length + 1;
             let mut input = vec![0u8; len];
             if mr
-                .memory_read(
-                    inputs.call_id,
-                    inputs.syscall_params.input.start,
-                    &mut input,
-                )
+                .memory_read(inputs.call_id, inputs.input.start, &mut input)
                 .is_err()
             {
                 return_result!(MemoryOutOfBounds)
             }
             let call_id = inputs.call_id;
-            let remaining_offset = inputs.syscall_params.input.start + len;
-            let remaining_length =
-                inputs.syscall_params.input.end - inputs.syscall_params.input.start - len;
+            let remaining_offset = inputs.input.start + len;
+            let remaining_length = inputs.input.end - inputs.input.start - len;
             let lazy_contract_input = move || -> Result<Vec<u8>, TrapCode> {
                 let mut variable_input = vec![0u8; remaining_length];
                 mr.memory_read(call_id, remaining_offset, &mut variable_input)?;
@@ -309,17 +269,18 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     }
 
     use fluentbase_sdk::syscall::*;
-    match inputs.syscall_params.code_hash {
+    match inputs.code_hash {
         SYSCALL_ID_STORAGE_READ => {
             let input = get_input_validated!(== 32);
             let slot = U256::from_le_slice(&input[0..32]);
+            debug_syscall!("STORAGE_READ", "slot={:?}", slot);
             let skip_cold =
                 frame.interpreter.gas.remaining() < ctx.cfg().gas_params().cold_storage_cost();
             let result =
                 ctx.journal_mut()
                     .sload_skip_cold_load(current_target_address, slot, skip_cold);
             let value = unwrap_journal_load_error!(result);
-            charge_gas!(if value.is_cold {
+            charge_regular_gas!(if value.is_cold {
                 ctx.cfg().gas_params().cold_storage_cost()
             } else {
                 ctx.cfg().gas_params().warm_storage_read_cost()
@@ -334,6 +295,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let input = get_input_validated!(== 64);
             let slot = U256::from_le_slice(&input[0..32]);
             let new_value = U256::from_le_slice(&input[32..64]);
+            debug_syscall!("STORAGE_WRITE", "slot={:?} value={:?}", slot, new_value);
             let mut inspection_state = inspector.as_mut().map(|inspector| {
                 crate::inspector::inspect_syscall_start(
                     frame,
@@ -406,32 +368,29 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let (input, lazy_contract_input) = get_input_validated!(>= 20 + 32);
             let target_address = Address::from_slice(&input[0..20]);
             let value = U256::from_le_slice(&input[20..52]);
-            // For STATICCALL-like semantics, a non-zero value transfer is forbidden (revert).
+            debug_syscall!("CALL", "to={:?} value={:?}", target_address, value);
             let has_transfer = !value.is_zero();
             if is_static && has_transfer {
                 return_halt!(StateChangeDuringStaticCall);
             }
-            let (mut account_load, bytecode_address) =
-                load_account_with_gas_pre_checks!(target_address);
-            // EVM quirk: precompiles are "preloaded" and typically empty/stately-less.
-            // However, a precompile can also be explicitly included in genesis, which changes.
-            // Its account states and affects CALL gas accounting.
-            // Using CALL to invoke a precompile is usually pointless (precompiles are.
-            // Effectively stateless), but some test suites require this edge case.
-            // Marking system precompiles as empty improves EVM compatibility, even though it may.
-            // Cause certain unit tests to fail. We accept that trade-off.
-            if is_evm_system_precompile(chain_id, spec_id, &target_address) {
-                account_load.is_empty = true;
+            charge_regular_gas!(gas::WARM_STORAGE_READ_COST);
+            if has_transfer {
+                charge_regular_gas!(ctx.gas_params().transfer_value_cost());
             }
+            let (gas_cost, state_gas_cost, bytecode, code_hash, bytecode_address) = unwrap_journal_load_error!(
+                load_account_delegated::<CTX>(frame, ctx, target_address, has_transfer, true)
+            );
             // EIP-150: gas cost changes for IO-heavy operations.
-            charge_gas!(call_cost(spec_id, has_transfer, account_load));
+            charge_regular_gas!(gas_cost);
+            // EIP-8037: deduct state gas cost.
+            charge_state_gas!(state_gas_cost);
             let mut gas_limit = core::cmp::min(
                 ctx.cfg()
                     .gas_params()
                     .call_stipend_reduction(frame.interpreter.gas.remaining()),
-                inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
+                inputs.fuel_limit / FUEL_DENOM_RATE,
             );
-            charge_gas!(gas_limit);
+            charge_regular_gas!(gas_limit);
             if has_transfer {
                 gas_limit = gas_limit.saturating_add(ctx.cfg().gas_params().call_stipend());
             }
@@ -455,15 +414,16 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Build `CallInputs` for the new frame.
             let call_inputs = Box::new(CallInputs {
                 input: CallInput::Bytes(contract_input.into()),
+                return_memory_offset: Default::default(),
                 gas_limit,
+                reservoir: frame.interpreter.gas.reservoir(),
+                bytecode_address,
+                known_bytecode: (code_hash, bytecode),
                 target_address,
                 caller: current_target_address,
-                bytecode_address,
                 value: CallValue::Transfer(value),
                 scheme: CallScheme::Call,
                 is_static,
-                return_memory_offset: Default::default(),
-                known_bytecode: None,
             });
             return_frame!(NextAction::NewFrame(FrameInput::Call(call_inputs)));
         }
@@ -471,19 +431,22 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_STATIC_CALL => {
             let (input, lazy_contract_input) = get_input_validated!(>= 20);
             let target_address = Address::from_slice(&input[0..20]);
-            let (mut account_load, bytecode_address) =
-                load_account_with_gas_pre_checks!(target_address);
-            // Force `is_empty = false`: we are not creating this account here.
-            account_load.is_empty = false;
+            debug_syscall!("STATIC_CALL", "to={:?}", target_address);
+            charge_regular_gas!(gas::WARM_STORAGE_READ_COST);
+            let (gas_cost, state_gas_cost, bytecode, code_hash, bytecode_address) = unwrap_journal_load_error!(
+                load_account_delegated::<CTX>(frame, ctx, target_address, false, false)
+            );
             // EIP-150: gas cost changes for IO-heavy operations.
-            charge_gas!(call_cost(spec_id, false, account_load));
+            charge_regular_gas!(gas_cost);
+            // EIP-8037: deduct state gas cost.
+            charge_state_gas!(state_gas_cost);
             let gas_limit = core::cmp::min(
                 ctx.cfg()
                     .gas_params()
                     .call_stipend_reduction(frame.interpreter.gas.remaining()),
-                inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
+                inputs.fuel_limit / FUEL_DENOM_RATE,
             );
-            charge_gas!(gas_limit);
+            charge_regular_gas!(gas_limit);
             inspect!(
                 opcode::STATICCALL,
                 [
@@ -503,15 +466,16 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Build `CallInputs` for the new frame.
             let call_inputs = Box::new(CallInputs {
                 input: CallInput::Bytes(contract_input.into()),
+                return_memory_offset: Default::default(),
                 gas_limit,
+                reservoir: frame.interpreter.gas.reservoir(),
+                bytecode_address,
+                known_bytecode: (code_hash, bytecode),
                 target_address,
                 caller: current_target_address,
-                bytecode_address,
                 value: CallValue::Transfer(U256::ZERO),
                 scheme: CallScheme::StaticCall,
                 is_static: true,
-                return_memory_offset: Default::default(),
-                known_bytecode: None,
             });
             return_frame!(NextAction::NewFrame(FrameInput::Call(call_inputs)));
         }
@@ -521,22 +485,28 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let target_address = Address::from_slice(&input[0..20]);
             let value = U256::from_le_slice(&input[20..52]);
             let has_transfer = !value.is_zero();
+            debug_syscall!("CALL_CODE", "to={:?} value={:?}", target_address, value);
             if is_static && has_transfer {
                 return_halt!(StateChangeDuringStaticCall);
             }
-            let (mut account_load, bytecode_address) =
-                load_account_with_gas_pre_checks!(target_address);
-            // Set is_empty to false as we are not creating this account.
-            account_load.is_empty = false;
+            charge_regular_gas!(gas::WARM_STORAGE_READ_COST);
+            if has_transfer {
+                charge_regular_gas!(ctx.gas_params().transfer_value_cost());
+            }
+            let (gas_cost, state_gas_cost, bytecode, code_hash, bytecode_address) = unwrap_journal_load_error!(
+                load_account_delegated::<CTX>(frame, ctx, target_address, has_transfer, false)
+            );
             // EIP-150: gas cost changes for IO-heavy operations.
-            charge_gas!(call_cost(spec_id, has_transfer, account_load));
+            charge_regular_gas!(gas_cost);
+            // EIP-8037: deduct state gas cost.
+            charge_state_gas!(state_gas_cost);
             let mut gas_limit = core::cmp::min(
                 ctx.cfg()
                     .gas_params()
                     .call_stipend_reduction(frame.interpreter.gas.remaining()),
-                inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
+                inputs.fuel_limit / FUEL_DENOM_RATE,
             );
-            charge_gas!(gas_limit);
+            charge_regular_gas!(gas_limit);
             // Add a call stipend if there is a value to be transferred.
             if !value.is_zero() {
                 gas_limit = gas_limit.saturating_add(ctx.cfg().gas_params().call_stipend());
@@ -562,6 +532,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let call_inputs = Box::new(CallInputs {
                 input: CallInput::Bytes(contract_input.into()),
                 gas_limit,
+                reservoir: frame.interpreter.gas.reservoir(),
                 target_address: current_target_address,
                 caller: current_target_address,
                 bytecode_address,
@@ -569,7 +540,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 scheme: CallScheme::CallCode,
                 is_static,
                 return_memory_offset: Default::default(),
-                known_bytecode: None,
+                known_bytecode: (code_hash, bytecode),
             });
             return_frame!(NextAction::NewFrame(FrameInput::Call(call_inputs)));
         }
@@ -577,19 +548,22 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_DELEGATE_CALL => {
             let (input, lazy_contract_input) = get_input_validated!(>= 20);
             let target_address = Address::from_slice(&input[0..20]);
-            let (mut account_load, bytecode_address) =
-                load_account_with_gas_pre_checks!(target_address);
-            // Force `is_empty = false`: we are not creating this account here.
-            account_load.is_empty = false;
+            debug_syscall!("DELEGATE_CALL", "to={:?}", target_address);
+            charge_regular_gas!(gas::WARM_STORAGE_READ_COST);
+            let (gas_cost, state_gas_cost, bytecode, code_hash, bytecode_address) = unwrap_journal_load_error!(
+                load_account_delegated::<CTX>(frame, ctx, target_address, false, false)
+            );
             // EIP-150: gas cost changes for IO-heavy operations.
-            charge_gas!(call_cost(spec_id, false, account_load));
+            charge_regular_gas!(gas_cost);
+            // EIP-8037: deduct state gas cost.
+            charge_state_gas!(state_gas_cost);
             let gas_limit = core::cmp::min(
                 ctx.cfg()
                     .gas_params()
                     .call_stipend_reduction(frame.interpreter.gas.remaining()),
-                inputs.syscall_params.fuel_limit / FUEL_DENOM_RATE,
+                inputs.fuel_limit / FUEL_DENOM_RATE,
             );
-            charge_gas!(gas_limit);
+            charge_regular_gas!(gas_limit);
             inspect!(
                 opcode::DELEGATECALL,
                 [
@@ -610,6 +584,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let call_inputs = Box::new(CallInputs {
                 input: CallInput::Bytes(contract_input.into()),
                 gas_limit,
+                reservoir: frame.interpreter.gas.reservoir(),
                 target_address: current_target_address,
                 caller: frame.interpreter.input.caller_address(),
                 bytecode_address,
@@ -617,7 +592,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 scheme: CallScheme::DelegateCall,
                 is_static,
                 return_memory_offset: Default::default(),
-                known_bytecode: None,
+                known_bytecode: (code_hash, bytecode),
             });
             return_frame!(NextAction::NewFrame(FrameInput::Call(call_inputs)));
         }
@@ -627,13 +602,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
             // Enforce a hard upper bound on the syscall input size.
             const HARD_CAP: usize = WASM_MAX_CODE_SIZE + U256::BYTES + U256::BYTES;
-            assert_halt!(
-                inputs.syscall_params.input.len() <= HARD_CAP,
-                MalformedBuiltinParams
-            );
+            assert_halt!(inputs.input.len() <= HARD_CAP, MalformedBuiltinParams);
 
             // CREATE2 uses a different address derivation scheme and gas calculation.
-            let is_create2 = inputs.syscall_params.code_hash == SYSCALL_ID_CREATE2;
+            let is_create2 = inputs.code_hash == SYSCALL_ID_CREATE2;
+            debug_syscall!(if is_create2 { "CREATE2" } else { "CREATE" });
 
             let (input, lazy_init_code) = get_input_validated!(>= if is_create2 {
                 U256::BYTES + U256::BYTES
@@ -652,9 +625,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
 
             // Enforce initcode size limits (EIP-3860 / Wasm-specific caps).
-            let init_code_length = inputs.syscall_params.input.len() - input.len();
+            let init_code_length = inputs.input.len() - input.len();
             if init_code_length > 0 {
-                charge_gas!(ctx.cfg().gas_params().initcode_cost(init_code_length));
+                charge_regular_gas!(ctx.cfg().gas_params().initcode_cost(init_code_length));
             }
             let Ok(init_code) = lazy_init_code() else {
                 return_halt!(MemoryOutOfBounds);
@@ -665,14 +638,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 CreateContractSizeLimit
             );
             if is_create2 {
-                charge_gas!(ctx.cfg().gas_params().create2_cost(init_code_length));
+                charge_regular_gas!(ctx.cfg().gas_params().create2_cost(init_code_length));
             } else {
-                charge_gas!(ctx.cfg().gas_params().create_cost());
+                charge_regular_gas!(ctx.cfg().gas_params().create_cost());
             };
 
             let mut gas_limit = frame.interpreter.gas.remaining();
             gas_limit -= gas_limit / 64;
-            charge_gas!(gas_limit);
+            charge_regular_gas!(gas_limit);
 
             match scheme {
                 CreateScheme::Create => {
@@ -689,6 +662,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 value,
                 init_code.into(),
                 gas_limit,
+                frame.interpreter.gas.reservoir(),
             ));
             return_frame!(NextAction::NewFrame(FrameInput::Create(create_inputs)));
         }
@@ -698,23 +672,19 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Read the number of topics and ensure it does not exceed 4 (EVM LOG0..LOG4).
             // (The EVM hard-limits log topics to 4.)
             assert_halt!(
-                !inputs.syscall_params.input.is_empty()
-                    && inputs.syscall_params.state == STATE_MAIN,
+                !inputs.input.is_empty() && inputs.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
             let mut input = [0u8; 1];
             if mr
-                .memory_read(
-                    inputs.call_id,
-                    inputs.syscall_params.input.start,
-                    &mut input,
-                )
+                .memory_read(inputs.call_id, inputs.input.start, &mut input)
                 .is_err()
             {
                 return_result!(MemoryOutOfBounds)
             }
             let topics_len = input[0] as usize;
             assert_halt!(topics_len <= 4, MalformedBuiltinParams);
+            debug_syscall!("EMIT_LOG", "topics={}", topics_len);
             // Read topics without reading the data payload yet, so we can charge gas for.
             // The payload length before allocating/reading it.
             // (This avoids extra allocations and prevents cheap OOG/DDoS vectors.)
@@ -725,10 +695,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 let topic = &input[offset..(offset + B256::len_bytes())];
                 topics.push(B256::from_slice(topic));
             }
-            let data_length = inputs.syscall_params.input.len() - 1 - topics_len * U256::BYTES;
+            let data_length = inputs.input.len() - 1 - topics_len * U256::BYTES;
             // Ensure we have enough gas before reading the data payload; otherwise a DDoS vector.
             // Exists via forced allocation/reads.
-            charge_gas!(
+            charge_regular_gas!(
                 gas::LOG
                     + ctx
                         .cfg()
@@ -762,6 +732,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             assert_halt!(!is_static, StateChangeDuringStaticCall);
             // Self-destruct the current contract, sending any remaining balance to `target`.
             let target = Address::from_slice(&input[0..20]);
+            debug_syscall!("DESTROY_ACCOUNT", "beneficiary={:?}", target);
             let skip_cold = frame.interpreter.gas.remaining()
                 < ctx.cfg().gas_params().cold_account_additional_cost()
                     + ctx.cfg().gas_params().warm_storage_read_cost();
@@ -770,12 +741,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 .selfdestruct(current_target_address, target, skip_cold);
             let mut result = unwrap_journal_load_error!(result);
             // System precompiles are treated as empty accounts for gas/state semantics.
-            if result.data.target_exists && is_evm_system_precompile(chain_id, spec_id, &target) {
+            if result.data.target_exists && is_evm_system_precompile(spec_id, &target) {
                 result.data.target_exists = false;
             }
             // Charge gas for SELFDESTRUCT based on the current hardfork rules.
             let should_charge_top_up = result.data.had_value && !result.data.target_exists;
-            charge_gas!(
+            charge_regular_gas!(
                 5000 + ctx
                     .cfg()
                     .gas_params()
@@ -788,6 +759,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_BALANCE => {
             let input = get_input_validated!(== 20);
             let address = Address::from_slice(&input[0..20]);
+            debug_syscall!("BALANCE", "address={:?}", address);
             // Load account info (and optionally code) with Berlin warm/cold accounting.
             let skip_cold = frame.interpreter.gas.remaining()
                 < ctx.cfg().gas_params().cold_account_additional_cost();
@@ -796,7 +768,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 .load_account_info_skip_cold_load(address, false, skip_cold));
             let balance_load = StateLoad::new(account_info_load.balance, account_info_load.is_cold);
             // Charge gas for BALANCE according to the active hardfork.
-            charge_gas!(account_warm_cold_cost(balance_load.is_cold));
+            charge_regular_gas!(if balance_load.is_cold {
+                gas::COLD_ACCOUNT_ACCESS_COST
+            } else {
+                gas::WARM_STORAGE_READ_COST
+            });
             // Return the balance as a 32-byte little-endian word.
             let output: [u8; 32] = balance_load.data.to_le_bytes();
             return_result!(output, Ok);
@@ -804,11 +780,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
         SYSCALL_ID_SELF_BALANCE => {
             let _ = get_input_validated!(== 0);
+            debug_syscall!("SELF_BALANCE");
             let value = ctx
                 .journal_mut()
                 .load_account(current_target_address)
                 .map(|acc| acc.map(|a| a.info.balance))?;
-            charge_gas!(gas::LOW);
+            charge_regular_gas!(gas::LOW);
             let output: [u8; 32] = value.data.to_le_bytes();
             return_result!(output, Ok)
         }
@@ -816,6 +793,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_CODE_SIZE => {
             let input = get_input_validated!(== 20);
             let address = Address::from_slice(&input[0..20]);
+            debug_syscall!("CODE_SIZE", "address={:?}", address);
             let skip_cold = frame.interpreter.gas.remaining()
                 < ctx.cfg().gas_params().cold_account_additional_cost();
             // Load account info (and optionally code) with Berlin warm/cold accounting.
@@ -823,7 +801,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 .journal_mut()
                 .load_account_info_skip_cold_load(address, true, skip_cold);
             let account_info = unwrap_journal_load_error!(result);
-            charge_gas!(account_warm_cold_cost(account_info.is_cold));
+            charge_regular_gas!(if account_info.is_cold {
+                gas::COLD_ACCOUNT_ACCESS_COST
+            } else {
+                gas::WARM_STORAGE_READ_COST
+            });
             // A special case for precompiled runtimes, where the way of extracting bytecode might be different.
             // We keep this condition here and moved away from the runtime because Rust applications.
             // Might also request EVM bytecode and initiating extra interruptions to fetch the data might be redundant.
@@ -840,7 +822,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             // We store system precompile bytecode in the state trie,
             // According to EVM requirements, we should return empty code.
-            if is_evm_system_precompile(chain_id, spec_id, &address) {
+            if is_evm_system_precompile(spec_id, &address) {
                 code_len = 0;
             }
             // Code size we encode as 32-bytes in LE encoding,
@@ -852,6 +834,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_CODE_HASH => {
             let input = get_input_validated!(== 20);
             let address = Address::from_slice(&input[0..20]);
+            debug_syscall!("CODE_HASH", "address={:?}", address);
             let skip_cold = frame.interpreter.gas.remaining()
                 < ctx.cfg().gas_params().cold_account_additional_cost();
             // Load account info (and optionally code) with Berlin warm/cold accounting.
@@ -859,7 +842,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 .journal_mut()
                 .load_account_info_skip_cold_load(address, false, skip_cold);
             let account_info = unwrap_journal_load_error!(result);
-            charge_gas!(account_warm_cold_cost(account_info.is_cold));
+            charge_regular_gas!(if account_info.is_cold {
+                gas::COLD_ACCOUNT_ACCESS_COST
+            } else {
+                gas::WARM_STORAGE_READ_COST
+            });
 
             // Extract code hash for an account for a delegated account.
             // For EVM, we extract code hash from the metadata to satisfy EVM requirements.
@@ -879,7 +866,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 _ => account_info.code_hash,
             };
 
-            if is_evm_system_precompile(chain_id, spec_id, &address) {
+            if is_evm_system_precompile(spec_id, &address) {
                 // We store system precompile bytecode in the state trie,
                 // According to EVM requirements, we should return empty code.
                 code_hash = B256::ZERO;
@@ -898,8 +885,15 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let mut reader = input[20..].reader();
             let code_offset = reader.read_u64::<LittleEndian>().unwrap();
             let code_length = reader.read_u64::<LittleEndian>().unwrap();
+            debug_syscall!(
+                "CODE_COPY",
+                "address={:?} offset={} length={}",
+                address,
+                code_offset,
+                code_length
+            );
 
-            // Safety: It makes no sense to allow to copy more than a theoretical limit of bytes,
+            // Safety: It makes no sense to allow copying more than a theoretical limit of bytes,
             //  otherwise it can be attacked with redundant memory allocations
             assert_halt!(
                 code_length <= EXT_CODE_COPY_MAX_COPY_SIZE as u64,
@@ -908,7 +902,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
             // Invariant: gas is charged for the requested length, not the actual returned length.
             // This prevents gas abuse where an attacker requests a small length but expects the full bytecode.
-            charge_gas!(ctx.cfg().gas_params().extcodecopy(code_length as usize));
+            charge_regular_gas!(ctx.cfg().gas_params().extcodecopy(code_length as usize));
 
             let skip_cold = frame.interpreter.gas.remaining()
                 < ctx.cfg().gas_params().cold_account_additional_cost();
@@ -917,7 +911,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 .journal_mut()
                 .load_account_info_skip_cold_load(address, true, skip_cold);
             let account_info = unwrap_journal_load_error!(result);
-            charge_gas!(account_warm_cold_cost(account_info.is_cold));
+            charge_regular_gas!(if account_info.is_cold {
+                gas::COLD_ACCOUNT_ACCESS_COST
+            } else {
+                gas::WARM_STORAGE_READ_COST
+            });
 
             // Early return for zero-length request.
             if code_length == 0 {
@@ -941,7 +939,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
 
             // System precompiles return empty code per EVM requirements.
-            if is_evm_system_precompile(chain_id, spec_id, &address) {
+            if is_evm_system_precompile(spec_id, &address) {
                 bytecode = Bytes::new();
             }
 
@@ -979,6 +977,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let input = get_input_validated!(== 20);
             // Read an account from its address.
             let address = Address::from_slice(&input[..20]);
+            debug_syscall!("METADATA_SIZE", "address={:?}", address);
             let account = ctx.journal_mut().load_account_with_code(address)?;
             // To make sure this account is ownable and owner by the same runtime, that allows.
             // A runtime to modify any account it owns.
@@ -1008,6 +1007,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             let input = get_input_validated!(== Address::len_bytes());
             let address = Address::from_slice(&input[..Address::len_bytes()]);
+            debug_syscall!("METADATA_ACCOUNT_OWNER", "address={:?}", address);
             if address == current_target_address {
                 return_result!(account_owner_address.0, Ok);
             }
@@ -1029,6 +1029,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let salt = U256::from_be_slice(&input);
             let derived_metadata_address =
                 calc_create_metadata_address(&account_owner_address, &salt);
+            debug_syscall!(
+                "METADATA_CREATE",
+                "salt={:?} derived={:?}",
+                salt,
+                derived_metadata_address
+            );
             let account = ctx
                 .journal_mut()
                 .load_account_with_code(derived_metadata_address)?;
@@ -1045,10 +1051,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             ctx.journal_mut().set_code(
                 derived_metadata_address,
-                Bytecode::OwnableAccount(OwnableAccountBytecode::new(
-                    account_owner_address,
-                    metadata_input.into(),
-                )),
+                Bytecode::new_ownable_account(account_owner_address, metadata_input.into()),
             );
             return_result!(Bytes::new(), Ok)
         }
@@ -1062,6 +1065,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Read an account from its address.
             let address = Address::from_slice(&input[..20]);
             let _offset = LittleEndian::read_u32(&input[20..24]) as usize;
+            debug_syscall!("METADATA_WRITE", "address={:?} offset={}", address, _offset);
             let account = ctx.journal_mut().load_account_with_code(address)?;
             // To make sure this account is ownable and owner by the same runtime, that allows.
             // A runtime to modify any account it owns.
@@ -1079,10 +1083,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 return_halt!(MemoryOutOfBounds);
             };
             // Code might change, rewrite it with a new hash.
-            let new_bytecode = Bytecode::OwnableAccount(OwnableAccountBytecode::new(
+            let new_bytecode = Bytecode::new_ownable_account(
                 ownable_account_bytecode.owner_address,
                 new_metadata.into(),
-            ));
+            );
             ctx.journal_mut().set_code(address, new_bytecode);
             return_result!(Bytes::new(), Ok)
         }
@@ -1094,6 +1098,15 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let input = get_input_validated!(== 28);
             // Read an account from its address.
             let address = Address::from_slice(&input[..20]);
+            let offset = LittleEndian::read_u32(&input[20..24]) as usize;
+            let length = LittleEndian::read_u32(&input[24..28]) as usize;
+            debug_syscall!(
+                "METADATA_COPY",
+                "address={:?} offset={} length={}",
+                address,
+                offset,
+                length
+            );
             let account = ctx.journal_mut().load_account_with_code(address)?;
             // To make sure this account is ownable and owner by the same runtime, that allows.
             // A runtime to modify any account it owns.
@@ -1107,8 +1120,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     return_halt!(MalformedBuiltinParams)
                 }
             };
-            let offset = LittleEndian::read_u32(&input[20..24]) as usize;
-            let length = LittleEndian::read_u32(&input[24..28]) as usize;
             // Take min.
             let metadata_len = ownable_account_bytecode.metadata.len();
 
@@ -1136,6 +1147,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 return_halt!(MalformedBuiltinParams)
             };
             let slot_u256 = U256::from_le_bytes(slot);
+            debug_syscall!("METADATA_STORAGE_READ", "slot={:?}", slot_u256);
             let value = ctx.journal_mut().sload(account_owner_address, slot_u256)?;
             let output: [u8; U256::BYTES] = value.to_le_bytes();
             return_result!(output, Ok);
@@ -1158,6 +1170,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
             let slot_u256 = U256::from_le_bytes(slot);
             let value_u256 = U256::from_le_bytes(value);
+            debug_syscall!(
+                "METADATA_STORAGE_WRITE",
+                "slot={:?} value={:?}",
+                slot_u256,
+                value_u256
+            );
             ctx.journal_mut()
                 .sstore(account_owner_address, slot_u256, value_u256)?;
             ctx.journal_mut().touch_account(account_owner_address);
@@ -1168,9 +1186,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         SYSCALL_ID_TRANSIENT_READ => {
             let input = get_input_validated!(== 32);
             // Charge gas.
-            charge_gas!(ctx.cfg().gas_params().warm_storage_read_cost());
+            charge_regular_gas!(ctx.cfg().gas_params().warm_storage_read_cost());
             // Read value from storage.
             let slot = U256::from_le_slice(input[0..32].as_ref());
+            debug_syscall!("TRANSIENT_READ", "slot={:?}", slot);
             let value = ctx.journal_mut().tload(current_target_address, slot);
             // Return value.
             let output: [u8; 32] = value.to_le_bytes();
@@ -1183,8 +1202,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Read input.
             let slot = U256::from_le_slice(&input[0..32]);
             let value = U256::from_le_slice(&input[32..64]);
+            debug_syscall!("TRANSIENT_WRITE", "slot={:?} value={:?}", slot, value);
             // Charge gas.
-            charge_gas!(ctx.cfg().gas_params().warm_storage_read_cost());
+            charge_regular_gas!(ctx.cfg().gas_params().warm_storage_read_cost());
             ctx.journal_mut()
                 .tstore(current_target_address, slot, value);
             // Empty result.
@@ -1193,9 +1213,15 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
 
         SYSCALL_ID_BLOCK_HASH => {
             let input = get_input_validated!(== 8);
-            charge_gas!(gas::BLOCKHASH);
+            charge_regular_gas!(gas::BLOCKHASH);
             let requested_block = LittleEndian::read_u64(&input[0..8]);
             let current_block = ctx.block_number().as_limbs()[0];
+            debug_syscall!(
+                "BLOCK_HASH",
+                "requested_block={} current_block={}",
+                requested_block,
+                current_block
+            );
             // TODO: Why do we return in big-endian here? :facepalm:
             let hash = match current_block.checked_sub(requested_block) {
                 Some(diff) if diff > 0 && diff <= 256 => {
@@ -1206,22 +1232,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             return_result!(hash, Ok);
         }
 
-        // ===========================================================
-        // SECURITY-CONSIDERATIONS: CALLDATA-BASED PRECOMPILE DISPATCH
-        // ===========================================================
-        //
-        // DESCRIPTION:
-        // 1. `UPDATE_GENESIS_AUTH`: Privileged address that can deploy arbitrary bytecode
-        //    to any address via upgrade_runtime_hook
-        //
-        // SECURITY IMPACT:
-        // - If the `UPDATE_GENESIS_AUTH` key is compromised, an attacker gains full system control
-        //
-        // CURRENT MITIGATION:
-        // - Instead of private key address, a smart contract is used that required quorum
-        //   of signatures from trusted parties.
-        //
-        // ===========================================================
         SYSCALL_ID_UPGRADE_RUNTIME => {
             assert_halt!(!is_static, StateChangeDuringStaticCall);
             // This syscall can be called only by runtime upgrade smart contract
@@ -1231,22 +1241,24 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
             let (input, lazy_contract_input) = get_input_validated!(>= 20);
             let target_address = Address::from_slice(&input);
+            debug_syscall!("UPGRADE_RUNTIME", "target={:?}", target_address);
             // P.S: We can't validate the target address here, otherwise it will require a fork
             //  to release new contracts from genesis
-            let Ok(rwasm_bytecode) = lazy_contract_input() else {
+            let Ok(rwasm_binary) = lazy_contract_input() else {
                 return_halt!(MemoryOutOfBounds);
             };
+            let rwasm_binary: Bytes = rwasm_binary.into();
             #[cfg(feature = "std")]
             warn!(
                 ?target_address,
-                bytecode_size = rwasm_bytecode.len(),
+                bytecode_size = rwasm_binary.len(),
                 "Upgrading genesis runtime"
             );
             // Make sure rWasm bytecode provided matches magic bytes
-            let Ok(rwasm_bytecode) = RwasmBytecode::new(rwasm_bytecode.into()) else {
+            let Ok(rwasm_bytecode) = RwasmBytecode::new(rwasm_binary.clone()) else {
                 return_halt!(MalformedBuiltinParams);
             };
-            let bytecode = Bytecode::Rwasm(rwasm_bytecode);
+            let bytecode = Bytecode::Rwasm(rwasm_bytecode.into());
             // Make sure an account is loaded
             _ = ctx.journal_mut().load_account_with_code(target_address)?;
             ctx.journal_mut().set_code(target_address, bytecode);

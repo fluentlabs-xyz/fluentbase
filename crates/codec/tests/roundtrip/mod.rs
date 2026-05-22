@@ -8,6 +8,6 @@ use fluentbase_codec::{
     Codec,
 };
 
+mod func;
 mod structs;
 mod tuples;
-mod func;
