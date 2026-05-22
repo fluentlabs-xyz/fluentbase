@@ -28,9 +28,49 @@ SVM-related crates are currently unstable and excluded from the top-level worksp
 - Preserve `no_std` constraints where crates are configured for it.
 - Be careful with genesis/runtime changes: they may be chain-breaking and require release/upgrade planning.
 
+## Linear Task Tracking
+
+Agents must track assigned work in Linear. If Linear access is not connected, stop before task work
+and ask the user to connect it:
+
+- Codex: connect the Linear MCP/app integration for this workspace, then restart or refresh the agent
+  session so Linear tools are available.
+- Claude: connect Linear through the MCP connector configured for Claude, then restart or refresh the
+  session so Linear tools are available.
+
+If the requested work has no Linear task, create one with a clear title, description, expected
+outcome, and links to any relevant issue, branch, or PR.
+
+Linear status rules:
+
+- `Todo`: manager-only. The task has been created and assigned. When an agent first picks it up,
+  move it to `Research`.
+- `Research`: the agent researches the task, gathers constraints, and prepares a development plan
+  with open questions and missing information. Every time an agent works on research, the task must
+  be in this status. When research is complete, move it to `Research Review`.
+- `Research Review`: the agent is waiting for manager input. The manager provides answers,
+  corrections, or missing details as Linear comments. After comments are provided, update the plan
+  in Linear. Do not begin implementation until the manager moves the task to `In Progress`.
+- `In Progress`: manager-only. The agent may implement the task and open a PR based on the configured
+  base branch. When implementation is complete, move the task to `Final Review`.
+- `Final Review`: the manager manually reviews the PR. If changes are requested, move the task back
+  to `In Progress`, address the comments, and repeat until review is complete.
+- `Done`: the task is complete and the work should be merged, rebased, or squashed into the base
+  branch according to the branch rules below.
+
+When a task is in `Todo`, the assigned agent must provide a working plan and ask any extra questions
+from the author in Linear comments before implementation.
+
 ## Branch and Git Standards
 
-- Default remote base branch is `origin/devel` in this repo. Rebase/start branch work from latest remote base before implementation unless the issue/PR targets another branch.
+- Default remote base branch is `origin/devel` in this repo. Rebase/start branch work from the latest
+  remote base before implementation unless the issue/PR targets another branch.
+- Always keep the working branch rebased on the latest remote base before opening or updating a PR to
+  avoid conflicts and merge commits.
+- Branches named `release/*` are release branches. They may only be rebased into the base branch
+  (`devel` by default); do not squash them and do not create merge commits for them.
+- Non-release branches should be squashed into the base branch unless the maintainer explicitly
+  requests a different integration strategy.
 - Use Conventional Commits for commits and PR titles:
   - `feat: ...`
   - `fix: ...`
@@ -38,7 +78,7 @@ SVM-related crates are currently unstable and excluded from the top-level worksp
   - `refactor: ...`
   - `test: ...`
   - `chore: ...`
-- Branch names should be short and typed, for example:
+- Branch names must use Conventional Commit types only, and should be short and typed, for example:
   - `fix/evm-gas-accounting`
   - `feat/fixture-tx-export`
   - `docs/runtime-upgrade-notes`
