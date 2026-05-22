@@ -54,6 +54,17 @@ pub(crate) fn inspect_syscall_end<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame.interpreter.stack = state.prev_stack;
 }
 
+pub(crate) fn inspect_syscall_end_if_started<CTX: ContextTr, INSP: Inspector<CTX>>(
+    frame: &mut RwasmFrame,
+    ctx: &mut CTX,
+    inspector: Option<&mut INSP>,
+    state: &mut Option<SyscallInspectionState>,
+) {
+    if let (Some(inspector), Some(state)) = (inspector, state.take()) {
+        inspect_syscall_end(frame, ctx, inspector, state);
+    }
+}
+
 pub(crate) fn inspect_syscall<CTX: ContextTr, INSP: Inspector<CTX>, IN: IntoIterator<Item = U256>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,

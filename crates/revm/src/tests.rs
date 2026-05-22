@@ -687,6 +687,7 @@ mod storage_inspector_tests {
     use super::*;
     use revm::{
         bytecode::opcode,
+        context::JournalEntry,
         interpreter::{interpreter_types::Jumps, Interpreter},
         state::{Account, EvmStorageSlot},
         Inspector,
@@ -724,6 +725,20 @@ mod storage_inspector_tests {
                 return;
             }
             self.step_end_value = self.read_cached_present_value(context);
+            let Some(JournalEntry::StorageChanged {
+                address,
+                key,
+                had_value,
+            }) = context.journal_ref().inner.journal.last()
+            else {
+                panic!("SSTORE step_end must see the storage journal entry");
+            };
+            let present_value =
+                context.journal_ref().inner.state[address].storage[key].present_value();
+            assert_eq!(*address, self.target);
+            assert_eq!(*key, self.slot);
+            assert_eq!(Some(*had_value), self.step_value);
+            assert_eq!(Some(present_value), self.step_end_value);
         }
     }
 
