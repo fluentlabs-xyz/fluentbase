@@ -2,7 +2,7 @@ use super::*;
 use crate::attestation::AttestationDoc;
 use coset::CborSerializable;
 use der::{Decode, DecodePem, Encode};
-use fluentbase_sdk::SharedContextInputV1;
+use fluentbase_sdk::{Bytes, SharedContextInputV1};
 use fluentbase_testing::TestingContextImpl;
 use x509_cert::certificate::Certificate;
 
@@ -35,9 +35,14 @@ fn test_nitro_attestation_verification() {
 
     let mut sdk = TestingContextImpl::default()
         .with_shared_context_input(shared_ctx)
-        .with_input(data.clone());
+        .with_input(data.clone())
+        .with_gas_limit(NITRO_VERIFY_GAS);
 
     main_entry(&mut sdk).unwrap();
+    assert_eq!(
+        sdk.consumed_fuel(),
+        NITRO_VERIFY_GAS * fluentbase_sdk::FUEL_DENOM_RATE
+    );
     _ = sdk.take_output();
 }
 
@@ -66,10 +71,78 @@ fn test_nitro_attestation_stf_keygen() {
 
     let mut sdk = TestingContextImpl::default()
         .with_shared_context_input(shared_ctx)
-        .with_input(data.clone());
+        .with_input(data.clone())
+        .with_gas_limit(NITRO_VERIFY_GAS);
 
     main_entry(&mut sdk).unwrap();
+    assert_eq!(
+        sdk.consumed_fuel(),
+        NITRO_VERIFY_GAS * fluentbase_sdk::FUEL_DENOM_RATE
+    );
     _ = sdk.take_output();
+}
+
+#[test]
+#[ignore = "local fuel estimate benchmark"]
+fn bench_nitro_fuel_estimate() {
+    for (name, data) in [
+        (
+            "sample",
+            include_bytes!("../testdata/sample.bin").as_slice(),
+        ),
+        (
+            "stf_keygen",
+            include_bytes!("../testdata/stf-keygen.bin").as_slice(),
+        ),
+    ] {
+        let sign1 = coset::CoseSign1::from_slice(data).unwrap();
+        let payload = sign1.payload.as_ref().unwrap();
+        let doc = AttestationDoc::from_slice(payload).unwrap();
+        let current_timestamp = if doc.timestamp >= 1_000_000_000_000 {
+            doc.timestamp / 1000
+        } else {
+            doc.timestamp
+        };
+
+        let mut shared_ctx = SharedContextInputV1::default();
+        shared_ctx.block.timestamp = current_timestamp;
+
+        let started = std::time::Instant::now();
+        let iterations = 10u32;
+        for _ in 0..iterations {
+            let mut sdk = TestingContextImpl::default()
+                .with_shared_context_input(shared_ctx.clone())
+                .with_input(data.to_vec())
+                .with_gas_limit(NITRO_VERIFY_GAS);
+
+            main_entry(&mut sdk).unwrap();
+            assert_eq!(
+                sdk.consumed_fuel(),
+                NITRO_VERIFY_GAS * fluentbase_sdk::FUEL_DENOM_RATE
+            );
+        }
+
+        println!(
+            "nitro {name}: gas={NITRO_VERIFY_GAS}, fuel={}, iterations={iterations}, elapsed={:?}",
+            NITRO_VERIFY_GAS * fluentbase_sdk::FUEL_DENOM_RATE,
+            started.elapsed()
+        );
+    }
+}
+
+#[test]
+fn oversized_input_is_rejected_before_copying_full_payload() {
+    let mut sdk = TestingContextImpl::default()
+        .with_input(Bytes::from(vec![0u8; NITRO_MAX_INPUT_SIZE as usize + 1]))
+        .with_gas_limit(NITRO_VERIFY_GAS);
+
+    let err = main_entry(&mut sdk).unwrap_err();
+    assert_eq!(err, ExitCode::MalformedBuiltinParams);
+    assert_eq!(
+        sdk.consumed_fuel(),
+        NITRO_VERIFY_GAS * fluentbase_sdk::FUEL_DENOM_RATE
+    );
+    assert!(sdk.take_output().is_empty());
 }
 
 /// Test that validates attestation document field requirements.
