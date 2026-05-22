@@ -11,7 +11,7 @@ use fluentbase_sdk::{
     calc_create_metadata_address,
     syscall::{
         SYSCALL_ID_BLOCK_HASH, SYSCALL_ID_CODE_COPY, SYSCALL_ID_METADATA_COPY,
-        SYSCALL_ID_METADATA_CREATE, SYSCALL_ID_METADATA_WRITE,
+        SYSCALL_ID_METADATA_CREATE, SYSCALL_ID_METADATA_WRITE, SYSCALL_ID_STORAGE_WRITE,
     },
     Address, Bytes, SyscallInvocationParams, PRECOMPILE_WASM_RUNTIME, STATE_MAIN, U256,
 };
@@ -679,5 +679,134 @@ mod block_hash_tests {
                 .unwrap(),
             InstructionResult::StateChangeDuringStaticCall
         );
+    }
+}
+
+#[cfg(test)]
+mod storage_inspector_tests {
+    use super::*;
+    use revm::{
+        bytecode::opcode,
+        context::JournalEntry,
+        interpreter::{interpreter_types::Jumps, Interpreter},
+        state::{Account, EvmStorageSlot},
+        Inspector,
+    };
+
+    struct StorageWriteInspector {
+        target: Address,
+        slot: U256,
+        step_value: Option<U256>,
+        step_end_value: Option<U256>,
+    }
+
+    impl StorageWriteInspector {
+        fn read_cached_present_value(&self, context: &RwasmContext<InMemoryDB>) -> Option<U256> {
+            context
+                .journaled_state
+                .inner
+                .state
+                .get(&self.target)
+                .and_then(|account| account.storage.get(&self.slot))
+                .map(|slot| slot.present_value)
+        }
+    }
+
+    impl Inspector<RwasmContext<InMemoryDB>> for StorageWriteInspector {
+        fn step(&mut self, interp: &mut Interpreter, context: &mut RwasmContext<InMemoryDB>) {
+            if interp.bytecode.opcode() != opcode::SSTORE {
+                return;
+            }
+            self.step_value = self.read_cached_present_value(context);
+        }
+
+        fn step_end(&mut self, interp: &mut Interpreter, context: &mut RwasmContext<InMemoryDB>) {
+            if interp.bytecode.opcode() != opcode::SSTORE {
+                return;
+            }
+            self.step_end_value = self.read_cached_present_value(context);
+            let Some(JournalEntry::StorageChanged {
+                address,
+                key,
+                had_value,
+            }) = context.journal_ref().inner.journal.last()
+            else {
+                panic!("SSTORE step_end must see the storage journal entry");
+            };
+            let present_value =
+                context.journal_ref().inner.state[address].storage[key].present_value();
+            assert_eq!(*address, self.target);
+            assert_eq!(*key, self.slot);
+            assert_eq!(Some(*had_value), self.step_value);
+            assert_eq!(Some(present_value), self.step_end_value);
+        }
+    }
+
+    #[test]
+    fn storage_write_syscall_inspector_sees_non_zero_prestate_before_zeroing_slot() {
+        let target = address!("1111111111111111111111111111111111111111");
+        let slot = U256::from(7);
+        let old_value = U256::from(0xbeefu64);
+        let new_value = U256::ZERO;
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(target, AccountInfo::default());
+        db.insert_account_storage(target, slot, old_value).unwrap();
+
+        let mut ctx: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        let transaction_id = ctx.journaled_state.inner.transaction_id;
+        let mut account = Account {
+            info: AccountInfo::default(),
+            original_info: Box::<AccountInfo>::default(),
+            transaction_id,
+            storage: Default::default(),
+            status: Default::default(),
+        };
+        account
+            .storage
+            .insert(slot, EvmStorageSlot::new(old_value, transaction_id));
+        ctx.journaled_state.inner.state.insert(target, account);
+
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.target_address = target;
+        frame.interpreter.gas = Gas::new(10_000_000);
+
+        let mut syscall_input = vec![0u8; 64];
+        syscall_input[0..32].copy_from_slice(&slot.to_le_bytes::<32>());
+        syscall_input[32..64].copy_from_slice(&new_value.to_le_bytes::<32>());
+        let mr = ForwardInputMemoryReader(syscall_input.into());
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            syscall_params: SyscallInvocationParams {
+                code_hash: SYSCALL_ID_STORAGE_WRITE,
+                input: 0..mr.0.len(),
+                state: STATE_MAIN,
+                ..Default::default()
+            },
+            gas: Gas::new(10_000_000),
+            preloaded_slot_costs: None,
+        };
+
+        let mut inspector = StorageWriteInspector {
+            target,
+            slot,
+            step_value: None,
+            step_end_value: None,
+        };
+        execute_rwasm_interruption(
+            &mut frame,
+            Some(&mut inspector),
+            &mut ctx,
+            interruption_inputs,
+            mr,
+        )
+        .unwrap();
+
+        assert_eq!(inspector.step_value, Some(old_value));
+        assert_eq!(inspector.step_end_value, Some(new_value));
     }
 }

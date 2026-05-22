@@ -1,5 +1,5 @@
 use crate::RwasmFrame;
-use core::mem::take;
+use core::mem::{replace, take};
 use fluentbase_sdk::U256;
 use revm::{
     bytecode::Bytecode,
@@ -7,6 +7,63 @@ use revm::{
     interpreter::{interpreter::ExtBytecode, Stack},
     Inspector,
 };
+
+pub(crate) struct SyscallInspectionState {
+    prev_bytecode: ExtBytecode,
+    prev_stack: Stack,
+}
+
+pub(crate) fn inspect_syscall_start<
+    CTX: ContextTr,
+    INSP: Inspector<CTX>,
+    IN: IntoIterator<Item = U256>,
+>(
+    frame: &mut RwasmFrame,
+    ctx: &mut CTX,
+    inspector: &mut INSP,
+    evm_opcode: u8,
+    input: IN,
+) -> SyscallInspectionState
+where
+    <IN as IntoIterator>::IntoIter: DoubleEndedIterator,
+{
+    let prev_bytecode = take(&mut frame.interpreter.bytecode);
+    let prev_stack = replace(&mut frame.interpreter.stack, Stack::new());
+
+    let bytecode = Bytecode::new_raw([evm_opcode].into());
+    frame.interpreter.bytecode = ExtBytecode::new(bytecode);
+    for x in input.into_iter().rev() {
+        _ = frame.interpreter.stack.push(x);
+    }
+    inspector.step(&mut frame.interpreter, ctx);
+
+    SyscallInspectionState {
+        prev_bytecode,
+        prev_stack,
+    }
+}
+
+pub(crate) fn inspect_syscall_end<CTX: ContextTr, INSP: Inspector<CTX>>(
+    frame: &mut RwasmFrame,
+    ctx: &mut CTX,
+    inspector: &mut INSP,
+    state: SyscallInspectionState,
+) {
+    inspector.step_end(&mut frame.interpreter, ctx);
+    frame.interpreter.bytecode = state.prev_bytecode;
+    frame.interpreter.stack = state.prev_stack;
+}
+
+pub(crate) fn inspect_syscall_end_if_started<CTX: ContextTr, INSP: Inspector<CTX>>(
+    frame: &mut RwasmFrame,
+    ctx: &mut CTX,
+    inspector: Option<&mut INSP>,
+    state: &mut Option<SyscallInspectionState>,
+) {
+    if let (Some(inspector), Some(state)) = (inspector, state.take()) {
+        inspect_syscall_end(frame, ctx, inspector, state);
+    }
+}
 
 pub(crate) fn inspect_syscall<CTX: ContextTr, INSP: Inspector<CTX>, IN: IntoIterator<Item = U256>>(
     frame: &mut RwasmFrame,
@@ -17,18 +74,6 @@ pub(crate) fn inspect_syscall<CTX: ContextTr, INSP: Inspector<CTX>, IN: IntoIter
 ) where
     <IN as IntoIterator>::IntoIter: DoubleEndedIterator,
 {
-    // Save previous bytecode (we return it after)
-    let prev_bytecode = take(&mut frame.interpreter.bytecode);
-    // Execute inspector steps with modified bytecode and stack
-    let bytecode = Bytecode::new_raw([evm_opcode].into());
-    frame.interpreter.bytecode = ExtBytecode::new(bytecode);
-    frame.interpreter.stack = Stack::new();
-    for x in input.into_iter().rev() {
-        _ = frame.interpreter.stack.push(x);
-    }
-    inspector.step(&mut frame.interpreter, ctx);
-    // TODO: We should call `step_end` once instruction is over for proper gas & output stack calculation.
-    inspector.step_end(&mut frame.interpreter, ctx);
-    // Return original bytecode back
-    frame.interpreter.bytecode = prev_bytecode;
+    let state = inspect_syscall_start(frame, ctx, inspector, evm_opcode, input);
+    inspect_syscall_end(frame, ctx, inspector, state);
 }

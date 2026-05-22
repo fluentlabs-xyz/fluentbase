@@ -334,6 +334,41 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let input = get_input_validated!(== 64);
             let slot = U256::from_le_slice(&input[0..32]);
             let new_value = U256::from_le_slice(&input[32..64]);
+            let mut inspection_state = inspector.as_mut().map(|inspector| {
+                crate::inspector::inspect_syscall_start(
+                    frame,
+                    ctx,
+                    inspector,
+                    opcode::SSTORE,
+                    [slot, new_value],
+                )
+            });
+
+            macro_rules! finish_inspection {
+                () => {{
+                    crate::inspector::inspect_syscall_end_if_started(
+                        frame,
+                        ctx,
+                        inspector.as_mut().map(|inspector| &mut **inspector),
+                        &mut inspection_state,
+                    );
+                }};
+            }
+
+            if frame.interpreter.gas.remaining() <= ctx.cfg().gas_params().call_stipend() {
+                finish_inspection!();
+                return_halt!(OutOfFuel);
+            }
+
+            if !frame
+                .interpreter
+                .gas
+                .record_cost(ctx.cfg().gas_params().sstore_static_gas())
+            {
+                finish_inspection!();
+                return_halt!(OutOfFuel);
+            }
+
             let skip_cold =
                 frame.interpreter.gas.remaining() < ctx.cfg().gas_params().cold_storage_cost();
             let result = ctx.journal_mut().sstore_skip_cold_load(
@@ -342,21 +377,28 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 new_value,
                 skip_cold,
             );
-            let state_load = unwrap_journal_load_error!(result);
-            assert_halt!(
-                frame.interpreter.gas.remaining() > ctx.cfg().gas_params().call_stipend(),
-                OutOfFuel
+            let state_load = match result {
+                Ok(v) => v,
+                Err(e) => {
+                    finish_inspection!();
+                    match e {
+                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
+                        JournalLoadError::DBError(e) => return Err(ContextError::Db(e)),
+                    }
+                }
+            };
+            let gas_cost = ctx.cfg().gas_params().sstore_dynamic_gas(
+                true,
+                &state_load.data,
+                state_load.is_cold,
             );
-            let gas_cost = ctx.cfg().gas_params().sstore_static_gas()
-                + ctx.cfg().gas_params().sstore_dynamic_gas(
-                    true,
-                    &state_load.data,
-                    state_load.is_cold,
-                );
-            charge_gas!(gas_cost);
+            if !frame.interpreter.gas.record_cost(gas_cost) {
+                finish_inspection!();
+                return_halt!(OutOfFuel);
+            }
             let gas_refund = ctx.cfg().gas_params().sstore_refund(true, &state_load.data);
             frame.interpreter.gas.record_refund(gas_refund);
-            inspect!(opcode::SSTORE, [slot, new_value], []);
+            finish_inspection!();
             return_result!(Ok)
         }
 
