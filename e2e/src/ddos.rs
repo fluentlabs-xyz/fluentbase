@@ -68,7 +68,8 @@ fn call_with_len(
     len: u32,
 ) -> revm::context::result::ExecutionResult<fluentbase_revm::RwasmHaltReason> {
     let calldata = Bytes::from(len.to_le_bytes().to_vec());
-    TxBuilder::call(ctx, Address::ZERO, contract, None)
+    TxBuilder::call(ctx, contract)
+        .caller(Address::ZERO)
         .gas_price(0)
         .gas_limit(22_000)
         .input(calldata)

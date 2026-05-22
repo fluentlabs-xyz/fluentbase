@@ -50,7 +50,8 @@ fn call_with_sig_no_funding(
     caller: &Address,
     callee: &Address,
 ) -> Vec<u8> {
-    let mut tx = TxBuilder::call(ctx, *caller, *callee, None)
+    let mut tx = TxBuilder::call(ctx, *callee)
+        .caller(*caller)
         .input(input)
         .gas_price(0);
     let result = tx.exec();
@@ -66,7 +67,8 @@ fn call_with_sig_funding(
     callee: &Address,
     value: U256,
 ) -> Vec<u8> {
-    let mut tx = TxBuilder::call(ctx, *caller, *callee, None)
+    let mut tx = TxBuilder::call(ctx, *callee)
+        .caller(*caller)
         .input(input)
         .value(value)
         .gas_price(0);
@@ -82,7 +84,8 @@ fn call_with_sig_revert_no_funding(
     caller: &Address,
     callee: &Address,
 ) -> Bytes {
-    let mut tx = TxBuilder::call(ctx, *caller, *callee, None)
+    let mut tx = TxBuilder::call(ctx, *callee)
+        .caller(*caller)
         .input(input)
         .gas_price(0);
     let result = tx.exec();
@@ -690,7 +693,9 @@ fn wrapped_withdraw_transfers_native_and_updates_supply_consistently() {
     let user_before = ctx.get_balance(user);
     let token_before = ctx.get_balance(token);
 
-    let mut deposit_tx = TxBuilder::call(&mut ctx, user, token, Some(deposit))
+    let mut deposit_tx = TxBuilder::call(&mut ctx, token)
+        .caller(user)
+        .value(deposit)
         .input(bytes!("0xd0e30db0"))
         .gas_price(0);
     let deposit_result = deposit_tx.exec();
@@ -701,7 +706,8 @@ fn wrapped_withdraw_transfers_native_and_updates_supply_consistently() {
 
     let mut input = Vec::new();
     WithdrawCommand { amount: withdraw }.encode_for_send(&mut input);
-    let mut withdraw_tx = TxBuilder::call(&mut ctx, user, token, None)
+    let mut withdraw_tx = TxBuilder::call(&mut ctx, token)
+        .caller(user)
         .input(input.into())
         .gas_price(0);
     let withdraw_result = withdraw_tx.exec();
@@ -738,7 +744,9 @@ fn wrapped_withdraw_insufficient_balance_reverts_without_state_changes() {
     let withdraw = U256::from(9u64);
 
     ctx.add_balance(user, U256::from(100u64));
-    let mut deposit_tx = TxBuilder::call(&mut ctx, user, token, Some(deposit))
+    let mut deposit_tx = TxBuilder::call(&mut ctx, token)
+        .caller(user)
+        .value(deposit)
         .input(bytes!("0xd0e30db0"))
         .gas_price(0);
     assert!(deposit_tx.exec().is_success());
@@ -776,7 +784,9 @@ fn wrapped_withdraw_when_paused_reverts_without_state_changes() {
 
     let deposit = U256::from(11u64);
     ctx.add_balance(user, U256::from(100u64));
-    let mut deposit_tx = TxBuilder::call(&mut ctx, user, token, Some(deposit))
+    let mut deposit_tx = TxBuilder::call(&mut ctx, token)
+        .caller(user)
+        .value(deposit)
         .input(bytes!("0xd0e30db0"))
         .gas_price(0);
     assert!(deposit_tx.exec().is_success());
@@ -830,7 +840,8 @@ fn wrapped_withdraw_halts_on_native_balance_underflow_and_preserves_storage() {
         amount: U256::from(200),
     }
     .encode_for_send(&mut input);
-    let mut tx = TxBuilder::call(&mut ctx, user, token, None)
+    let mut tx = TxBuilder::call(&mut ctx, token)
+        .caller(user)
         .input(input.into())
         .gas_price(0);
     let result = tx.exec();

@@ -1,8 +1,8 @@
 use crate::EvmTestingContextWithGenesis;
 use fluentbase_contracts::FLUENTBASE_EXAMPLES_MEMORY_OOM;
-use fluentbase_sdk::{Address, Bytes, ExitCode::MalformedBuiltinParams};
+use fluentbase_sdk::{Address, Bytes, ExitCode::MalformedBuiltinParams, U256};
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
-use revm::context::result::{ExecutionResult, HaltReason};
+use revm::context::result::HaltReason;
 
 #[test]
 fn test_oom_has_proper_exit_code() {
@@ -13,15 +13,15 @@ fn test_oom_has_proper_exit_code() {
         FLUENTBASE_EXAMPLES_MEMORY_OOM.wasm_bytecode,
     );
     const CALLER: Address = Address::with_last_byte(81);
-    // call greeting WASM contract
-    let result = ctx.call_evm_tx(CALLER, contract_address, Bytes::default(), None, None);
-    assert_eq!(
-        result,
-        ExecutionResult::Halt {
-            reason: HaltReason::MemoryOutOfBounds,
-            gas_used: 3_000_000
-        }
-    );
+    ctx.add_balance(CALLER, U256::from(1e18));
+
+    TxBuilder::call(&mut ctx, contract_address)
+        .caller(CALLER)
+        .input(Bytes::default())
+        .execute()
+        .expect_halt()
+        .expect_reason(HaltReason::MemoryOutOfBounds)
+        .expect_gas_used(3_000_000);
 }
 
 #[test]
@@ -45,12 +45,9 @@ fn test_negative_write_output_params_cant_cause_oom() {
     .unwrap()
     .into();
     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    let result = TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module).exec();
-    assert_eq!(
-        result,
-        ExecutionResult::Halt {
-            reason: HaltReason::MemoryOutOfBounds,
-            gas_used: 100_000_000
-        }
-    )
+    TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module)
+        .execute()
+        .expect_halt()
+        .expect_reason(HaltReason::MemoryOutOfBounds)
+        .expect_gas_used(100_000_000);
 }

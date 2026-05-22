@@ -94,7 +94,8 @@ fn test_evm_eip7702_call_delegated_account() {
         hex!("773acdef000000000000000000000000000000000000000000000000000000000000007b").to_vec(),
     );
 
-    let call_result = TxBuilder::call(&mut ctx, sender, sender, None)
+    let call_result = TxBuilder::call(&mut ctx, sender)
+        .caller(sender)
         .input(ping_input)
         .gas_limit(100_000)
         .exec();
@@ -115,7 +116,8 @@ fn test_evm_eip7702_call_delegated_account() {
 
     // 4. call sender.value() → should reflect storage written in sender's context
     // value() selector = 0x3fa4f245
-    let value_result = TxBuilder::call(&mut ctx, sender, sender, None)
+    let value_result = TxBuilder::call(&mut ctx, sender)
+        .caller(sender)
         .input(Bytes::from(hex!("3fa4f245").to_vec()))
         .gas_limit(100_000)
         .exec();
@@ -179,7 +181,8 @@ fn test_evm_eip7702_internal_call_delegated_account() {
     .abi_encode();
 
     // Call Caller.callExternal(authority, ping(0x7b)) — internal CALL to delegated account
-    let result = TxBuilder::call(&mut ctx, caller_eoa, caller_contract, None)
+    let result = TxBuilder::call(&mut ctx, caller_contract)
+        .caller(caller_eoa)
         .input(Bytes::from(call_input))
         .gas_limit(1_000_000)
         .exec();
@@ -233,7 +236,9 @@ fn test_evm_eip7702_state_override_like_estimate_gas_case() {
             .to_vec(),
     );
 
-    let result = TxBuilder::call(&mut ctx, deadbeef, deadbeef, Some(U256::ZERO))
+    let result = TxBuilder::call(&mut ctx, deadbeef)
+        .caller(deadbeef)
+        .value(U256::ZERO)
         .gas_limit(1_000_000)
         .input(input)
         .exec();
