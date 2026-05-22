@@ -1,111 +1,209 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
-use fluentbase_sdk::{system_entrypoint, ExitCode, SystemAPI};
+extern crate alloc;
+extern crate fluentbase_sdk;
 
-pub fn main_entry<SDK: SystemAPI>(_sdk: &mut SDK) -> Result<(), ExitCode> {
-    // Temporarily disabled
-    Err(ExitCode::UnreachableCodeReached)
+mod webauthn;
+
+use fluentbase_sdk::{
+    codec::SolidityABI, system_entrypoint, Bytes, ContextReader, ExitCode, SystemAPI, B256, U256,
+};
+use webauthn::{verify_webauthn, WebAuthnAuth};
+
+/// Function selector: 0x94516dde
+/// Derived from:
+/// keccak256("verify(bytes,bool,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
+const VERIFY_SELECTOR: [u8; 4] = [0x94, 0x51, 0x6d, 0xde];
+
+/// Estimated verification cost, in EVM gas units.
+const WEBAUTHN_VERIFY_GAS: u64 = 22_000;
+
+/// WebAuthn verification contract for blockchain authentication.
+///
+/// Based on reference implementations:
+/// - Solady: https://github.com/vectorized/solady/blob/main/src/utils/WebAuthn.sol
+/// - Daimo: https://github.com/daimo-eth/p256-verifier/blob/master/src/WebAuthn.sol
+/// - Coinbase: https://github.com/base-org/webauthn-sol/blob/main/src/WebAuthn.sol
+pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    sdk.sync_evm_gas(WEBAUTHN_VERIFY_GAS)?;
+
+    if sdk.input_size() < 4 {
+        return Err(ExitCode::MalformedBuiltinParams);
+    }
+
+    let input = sdk.bytes_input();
+    let (selector, params) = input.split_at(4);
+    if selector != VERIFY_SELECTOR {
+        return Err(ExitCode::MalformedBuiltinParams);
+    }
+
+    let (challenge, require_user_verification, auth, x, y) =
+        SolidityABI::<(Bytes, bool, WebAuthnAuth, U256, U256)>::decode(&params, 0)
+            .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+
+    let gas_limit = sdk.context().contract_gas_limit();
+    let is_valid = verify_webauthn(
+        &challenge,
+        require_user_verification,
+        &auth,
+        x,
+        y,
+        gas_limit,
+    )?;
+    let result = B256::with_last_byte(if is_valid { 0x01 } else { 0x00 });
+    sdk.write(&result[..]);
+
+    Ok(())
 }
-
-// mod webauthn;
-//
-// use fluentbase_sdk::{
-//     codec::SolidityABI, system_entrypoint, Bytes, ContextReader, ExitCode, SystemAPI, B256, U256,
-// };
-// use webauthn::{verify_webauthn, WebAuthnAuth};
-//
-// /// Function selector: 0x94516dde
-// /// Derived from:
-// /// keccak256("verify(bytes,bool,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
-// const VERIFY_SELECTOR: [u8; 4] = [0x94, 0x51, 0x6d, 0xde];
-//
-// /// WebAuthn verification contract for blockchain authentication
-// ///
-// /// Based on reference implementations:
-// /// - Solady: https://github.com/vectorized/solady/blob/main/src/utils/WebAuthn.sol
-// /// - Daimo: https://github.com/daimo-eth/p256-verifier/blob/master/src/WebAuthn.sol
-// /// - Coinbase: https://github.com/base-org/webauthn-sol/blob/main/src/WebAuthn.sol
-// pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-//     // Read input
-//     let input_length = sdk.input_size();
-//     assert!(
-//         input_length >= 4,
-//         "webauthn: input should be at least 4 bytes"
-//     );
-//
-//     let input = sdk.bytes_input();
-//
-//     let (selector, params) = input.split_at(4);
-//     if selector != VERIFY_SELECTOR {
-//         return Err(ExitCode::MalformedBuiltinParams);
-//     }
-//
-//     // Decode WebAuthn parameters using Solidity ABI
-//     let (challenge, require_user_verification, auth, x, y) =
-//         SolidityABI::<(Bytes, bool, WebAuthnAuth, U256, U256)>::decode(&params, 0)
-//             .map_err(|_| ExitCode::MalformedBuiltinParams)?;
-//
-//     // Get gas limit for precompiled call
-//     let gas_limit = sdk.context().contract_gas_limit();
-//
-//     let is_valid = verify_webauthn(
-//         &challenge,
-//         require_user_verification,
-//         &auth,
-//         x,
-//         y,
-//         gas_limit,
-//     )?;
-//     // Return 32-byte output with the last byte set to 1 if verification succeeds
-//     let result = B256::with_last_byte(if is_valid { 0x01 } else { 0x00 });
-//
-//     // Write the result
-//     sdk.write(&result[..]);
-//
-//     Ok(())
-// }
 
 system_entrypoint!(main_entry);
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use fluentbase_sdk::{Bytes, ContractContextV1, B256};
-//     use fluentbase_testing::TestingContextImpl;
-//
-//     fn assert_call_eq(input: &[u8], expected: &[u8]) {
-//         let gas_limit = 100_000;
-//         let mut sdk = TestingContextImpl::default()
-//             .with_input(Bytes::copy_from_slice(input))
-//             .with_contract_context(ContractContextV1 {
-//                 gas_limit,
-//                 ..Default::default()
-//             });
-//
-//         main_entry(&mut sdk).unwrap();
-//
-//         let output = sdk.take_output();
-//         assert_eq!(output.len(), expected.len(), "Output length mismatch");
-//         println!("Output: {:?}", hex::encode(&output));
-//
-//         assert_eq!(output, expected, "Verification result mismatch");
-//     }
-//
-//     #[test]
-//     fn test_valid_signature() {
-//         // Create test parameters with valid WebAuthn data
-//         let input = hex::decode("94516dde000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000e0e867625216bc4bbd847780a7647c1e1cf1c6b036f1cc917a189f85789914329ee7eaf13acb291279c9a974a1f12209924f61e9731d74f56bdb0d0b49ae3658b80000000000000000000000000000000000000000000000000000000000000020f631058a3ba1116acce12396fad0a125b5041c43f8e15723709f81aa8d5f4ccf00000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000000170000000000000000000000000000000000000000000000000000000000000001041d2ba6320443e34a94700c83f8a65a49c647a679cd481b4756445e7994d3a26b9513bd0a2bf00fbf11973f7cd435fb62d529aeeb78243f84889deb6e4b5995000000000000000000000000000000000000000000000000000000000000002549960de5880e8c687434170f6476605b8fe4aeb9a28632c7995cf3ba831d9763050000010100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000727b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a22396a4546696a75684557724d34534f572d7443684a625545484550343456636a634a2d42716f3166544d38222c226f726967696e223a22687474703a2f2f6c6f63616c686f73743a33303035227d0000000000000000000000000000").expect("Failed to decode webauthn params from hex");
-//
-//         println!("Input: {:?}", hex::encode(&input));
-//
-//         // Execute precompile with valid input
-//         assert_call_eq(&input, &B256::with_last_byte(1)[..]);
-//     }
-//
-//     #[test]
-//     fn test_invalid_signature() {
-//         // Create test parameters with invalid WebAuthn data
-//         let input = hex::decode("94516dde000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000e02c15fa3dcecbd28795321d8e14f30c0a09cb0a5fbb02b6860c264514502672ba513136f66506523bd369730ef1274b0e95f2d03b5bf26808921b5d97fff8f7de0000000000000000000000000000000000000000000000000000000000000020f631058a3ba1116acce12396fad0a125b5041c43f8e15723709f81aa8d5f4ccf00000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000001200000000000000000000000000000000000000000000000000000000000000017000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002549960de5880e8c687434170f6476605b8fe4aeb9a28632c7995cf3ba831d9763050000010100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000727b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a22396a4546696a75684557724d34534f572d7443684a625545484550343456636a634a2d42716f3166544d38222c226f726967696e223a22687474703a2f2f6c6f63616c686f73743a33303035227d0000000000000000000000000000").unwrap();
-//
-//         assert_call_eq(&input, &B256::default()[..]);
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluentbase_sdk::{
+        codec::bytes::BytesMut, crypto::crypto_sha256, Bytes, ContractContextV1, FUEL_DENOM_RATE,
+    };
+    use fluentbase_testing::TestingContextImpl;
+    use p256::{
+        ecdsa::{signature::SignerMut, SigningKey, VerifyingKey},
+        elliptic_curve::rand_core::OsRng,
+    };
+
+    fn valid_call_params(
+        require_user_verification: bool,
+    ) -> (Bytes, bool, WebAuthnAuth, U256, U256) {
+        let challenge = Bytes::copy_from_slice(
+            &hex::decode("f631058a3ba1116acce12396fad0a125b5041c43f8e15723709f81aa8d5f4ccf")
+                .unwrap(),
+        );
+        let authenticator_data = Bytes::copy_from_slice(
+            &hex::decode(
+                "49960de5880e8c687434170f6476605b8fe4aeb9a28632c7995cf3ba831d97630500000101",
+            )
+            .unwrap(),
+        );
+        let client_data_json = Bytes::copy_from_slice(
+            format!(
+                "{{\"type\":\"webauthn.get\",\"challenge\":\"{}\",\"origin\":\"http://localhost:3005\"}}",
+                webauthn::base64url_encode(&challenge)
+            )
+            .as_bytes(),
+        );
+
+        let mut signing_key = SigningKey::random(&mut OsRng);
+        let verifying_key = VerifyingKey::from(&signing_key);
+        let public_key = verifying_key.to_encoded_point(false);
+        let public_key = public_key.as_bytes();
+
+        let client_data_hash = crypto_sha256(&client_data_json).0;
+        let mut signed_message =
+            Vec::with_capacity(authenticator_data.len() + client_data_hash.len());
+        signed_message.extend_from_slice(&authenticator_data);
+        signed_message.extend_from_slice(&client_data_hash);
+        let signature: p256::ecdsa::Signature = signing_key.sign(&signed_message);
+        let signature = signature.to_bytes();
+
+        (
+            challenge,
+            require_user_verification,
+            WebAuthnAuth {
+                authenticator_data,
+                client_data_json,
+                challenge_index: U256::from(23),
+                type_index: U256::from(1),
+                r: U256::from_be_slice(&signature[..32]),
+                s: U256::from_be_slice(&signature[32..]),
+            },
+            U256::from_be_slice(&public_key[1..33]),
+            U256::from_be_slice(&public_key[33..65]),
+        )
+    }
+
+    fn encode_call(params_tuple: &(Bytes, bool, WebAuthnAuth, U256, U256)) -> Vec<u8> {
+        let mut params = BytesMut::new();
+        SolidityABI::<(Bytes, bool, WebAuthnAuth, U256, U256)>::encode(
+            params_tuple,
+            &mut params,
+            0,
+        )
+        .unwrap();
+
+        let mut input = VERIFY_SELECTOR.to_vec();
+        input.extend_from_slice(&params);
+        input
+    }
+
+    fn valid_call_input(require_user_verification: bool) -> Vec<u8> {
+        encode_call(&valid_call_params(require_user_verification))
+    }
+
+    fn exec(input: &[u8], gas_limit: u64) -> Result<(Vec<u8>, u64), ExitCode> {
+        let mut sdk = TestingContextImpl::default()
+            .with_input(Bytes::copy_from_slice(input))
+            .with_contract_context(ContractContextV1 {
+                gas_limit,
+                ..Default::default()
+            })
+            .with_gas_limit(gas_limit);
+        let result = main_entry(&mut sdk);
+        Ok((sdk.take_output(), sdk.consumed_fuel())).and_then(|success| result.map(|_| success))
+    }
+
+    #[test]
+    fn valid_signature_returns_true_and_charges_fuel() {
+        let (output, fuel) = exec(&valid_call_input(true), WEBAUTHN_VERIFY_GAS).unwrap();
+        assert_eq!(output, B256::with_last_byte(1)[..]);
+        assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+    }
+
+    #[test]
+    fn missing_user_verification_returns_false_when_required() {
+        let mut params = valid_call_params(true);
+        let mut authenticator_data = params.2.authenticator_data.to_vec();
+        authenticator_data[webauthn::AUTH_DATA_FLAGS_INDEX] = webauthn::AUTH_DATA_FLAGS_UP;
+        params.2.authenticator_data = Bytes::copy_from_slice(&authenticator_data);
+
+        let (output, fuel) = exec(&encode_call(&params), WEBAUTHN_VERIFY_GAS).unwrap();
+        assert_eq!(output, B256::default()[..]);
+        assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+    }
+
+    #[test]
+    fn malformed_selector_is_rejected_after_fuel_charge() {
+        let mut input = valid_call_input(true);
+        input[0] ^= 0xff;
+
+        let err = exec(&input, WEBAUTHN_VERIFY_GAS).unwrap_err();
+        assert_eq!(err, ExitCode::MalformedBuiltinParams);
+    }
+
+    #[test]
+    fn insufficient_fuel_fails_before_verification() {
+        let err = exec(&valid_call_input(true), WEBAUTHN_VERIFY_GAS - 1).unwrap_err();
+        assert_eq!(err, ExitCode::OutOfFuel);
+    }
+
+    #[test]
+    #[ignore = "local fuel estimate benchmark"]
+    fn bench_webauthn_fuel_estimate() {
+        let valid_input = valid_call_input(true);
+        let mut invalid_params = valid_call_params(true);
+        invalid_params.2.r = U256::ZERO;
+        invalid_params.2.s = U256::ZERO;
+        let invalid_input = encode_call(&invalid_params);
+
+        for (name, input) in [("valid", valid_input), ("invalid_signature", invalid_input)] {
+            let started = std::time::Instant::now();
+            let iterations = 100u32;
+            for _ in 0..iterations {
+                let (_, fuel) = exec(&input, WEBAUTHN_VERIFY_GAS).unwrap();
+                assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+            }
+            println!(
+                "webauthn {name}: gas={WEBAUTHN_VERIFY_GAS}, fuel={}, iterations={iterations}, elapsed={:?}",
+                WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE,
+                started.elapsed()
+            );
+        }
+    }
+}
