@@ -20,7 +20,8 @@ fn test_evm_greeting() {
     // call greeting EVM contract
     println!("\n\n\n");
     ctx.add_balance(DEPLOYER_ADDRESS, U256::from(1e18));
-    let result = TxBuilder::call(&mut ctx, DEPLOYER_ADDRESS, contract_address, None)
+    let result = TxBuilder::call(&mut ctx, contract_address)
+        .caller(DEPLOYER_ADDRESS)
         .input(bytes!("45773e4e"))
         .exec();
     println!("{:?}", result);
@@ -106,7 +107,8 @@ fn test_evm_simple_send() {
     const RECIPIENT_ADDRESS: Address = address!("1092381297182319023812093812312309123132");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
     let gas_price = 1e9 as u128;
-    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, RECIPIENT_ADDRESS, None)
+    let result = TxBuilder::call(&mut ctx, RECIPIENT_ADDRESS)
+        .caller(SENDER_ADDRESS)
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
@@ -194,7 +196,8 @@ fn test_evm_self_destruct() {
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
     // call self-destructed contract
-    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, contract_address, None)
+    let result = TxBuilder::call(&mut ctx, contract_address)
+        .caller(SENDER_ADDRESS)
         .gas_price(gas_price)
         .exec();
     if !result.is_success() {

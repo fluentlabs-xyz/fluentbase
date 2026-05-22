@@ -277,7 +277,8 @@ fn test_deploy_factory_and_universal_token() {
     );
 
     // Step 5: Verify token was deployed by calling totalSupply()
-    let result = TxBuilder::call(&mut ctx, DEPLOYER, deployed_address, None)
+    let result = TxBuilder::call(&mut ctx, deployed_address)
+        .caller(DEPLOYER)
         .input(bytes!("18160ddd")) // totalSupply() selector
         .exec();
     assert!(
@@ -293,7 +294,8 @@ fn test_deploy_factory_and_universal_token() {
     );
 
     // Step 6: Verify token name
-    let result = TxBuilder::call(&mut ctx, DEPLOYER, deployed_address, None)
+    let result = TxBuilder::call(&mut ctx, deployed_address)
+        .caller(DEPLOYER)
         .input(bytes!("06fdde03")) // name() selector
         .exec();
     assert!(result.is_success(), "name() call failed: {:?}", result);
@@ -302,7 +304,8 @@ fn test_deploy_factory_and_universal_token() {
     assert_eq!(name, TOKEN_NAME, "Token name mismatch");
 
     // Step 7: Verify token symbol
-    let result = TxBuilder::call(&mut ctx, DEPLOYER, deployed_address, None)
+    let result = TxBuilder::call(&mut ctx, deployed_address)
+        .caller(DEPLOYER)
         .input(bytes!("95d89b41")) // symbol() selector
         .exec();
     assert!(result.is_success(), "symbol() call failed: {:?}", result);
@@ -311,7 +314,8 @@ fn test_deploy_factory_and_universal_token() {
     assert_eq!(symbol, TOKEN_SYMBOL, "Token symbol mismatch");
 
     // Step 8: Verify token decimals
-    let result = TxBuilder::call(&mut ctx, DEPLOYER, deployed_address, None)
+    let result = TxBuilder::call(&mut ctx, deployed_address)
+        .caller(DEPLOYER)
         .input(bytes!("313ce567")) // decimals() selector
         .exec();
     assert!(result.is_success(), "decimals() call failed: {:?}", result);
@@ -320,7 +324,8 @@ fn test_deploy_factory_and_universal_token() {
     assert_eq!(decimals, TOKEN_DECIMALS, "Token decimals mismatch");
 
     // Step 9: Verify token totalSupply
-    let result = TxBuilder::call(&mut ctx, DEPLOYER, deployed_address, None)
+    let result = TxBuilder::call(&mut ctx, deployed_address)
+        .caller(DEPLOYER)
         .input(bytes!("18160ddd")) // totalSupply() selector
         .exec();
     assert!(

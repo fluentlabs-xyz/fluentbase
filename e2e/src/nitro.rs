@@ -16,7 +16,8 @@ fn test_nitro_verifier_precompiled_version() {
     let start = Instant::now();
     let mut total_gas = 0;
     let attestation_doc: Vec<u8> = hex::decode(ATTESTATION_EXAMPLE).unwrap().into();
-    let result = TxBuilder::call(&mut ctx, caller, PRECOMPILE_NITRO_VERIFIER, None)
+    let result = TxBuilder::call(&mut ctx, PRECOMPILE_NITRO_VERIFIER)
+        .caller(caller)
         .input(attestation_doc.into())
         .gas_limit(1_000_000_000)
         .exec();
@@ -74,7 +75,8 @@ fn test_nitro_verifier_original_version() {
         attestation: attestation_bytes.into(),
     }
     .abi_encode();
-    let result = TxBuilder::call(&mut ctx, OWNER_ADDRESS, nitro_validator_address, None)
+    let result = TxBuilder::call(&mut ctx, nitro_validator_address)
+        .caller(OWNER_ADDRESS)
         .input(input.into())
         .exec();
     if !result.is_success() {
@@ -105,7 +107,8 @@ fn test_nitro_verifier_original_version() {
         signature: parsed_attestation.signature.into(),
     }
     .abi_encode();
-    let result = TxBuilder::call(&mut ctx, OWNER_ADDRESS, nitro_validator_address, None)
+    let result = TxBuilder::call(&mut ctx, nitro_validator_address)
+        .caller(OWNER_ADDRESS)
         .gas_limit(70_000_000)
         .input(input.into())
         .timestamp(1695050165) // ensure correct block timestamp to match certificate time window.
@@ -166,7 +169,8 @@ fn test_nitro_verifier_solidity_version() {
         attestation: attestation_bytes.into(),
     }
     .abi_encode();
-    let result = TxBuilder::call(&mut ctx, OWNER_ADDRESS, nitro_validator_address, None)
+    let result = TxBuilder::call(&mut ctx, nitro_validator_address)
+        .caller(OWNER_ADDRESS)
         .input(input.into())
         .exec();
     if !result.is_success() {
@@ -197,7 +201,8 @@ fn test_nitro_verifier_solidity_version() {
         signature: parsed_attestation.signature.into(),
     }
     .abi_encode();
-    let result = TxBuilder::call(&mut ctx, OWNER_ADDRESS, nitro_validator_address, None)
+    let result = TxBuilder::call(&mut ctx, nitro_validator_address)
+        .caller(OWNER_ADDRESS)
         .gas_limit(70_000_000)
         .input(input.into())
         .timestamp(1695050165) // ensure correct block timestamp to match certificate time window.

@@ -131,7 +131,8 @@ fn test_simple_nested_call() {
             ..Default::default()
         },
     );
-    let result = TxBuilder::call(&mut ctx, Address::ZERO, ACCOUNT3_ADDRESS, None)
+    let result = TxBuilder::call(&mut ctx, ACCOUNT3_ADDRESS)
+        .caller(Address::ZERO)
         .gas_price(0)
         .gas_limit(26219)
         .exec();
@@ -224,14 +225,10 @@ fn test_blended_gas_spend_wasm_from_evm() {
         _ => panic!("expected 'success'"),
     };
     println!("Contract address: {:?}", address);
-    let result = TxBuilder::call(
-        &mut ctx,
-        address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
-        address,
-        None,
-    )
-    .input(bytes!("65becaf3"))
-    .exec();
+    let result = TxBuilder::call(&mut ctx, address)
+        .caller(address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"))
+        .input(bytes!("65becaf3"))
+        .exec();
 
     assert!(result.is_success());
     println!("Result: {:?}", result);
@@ -313,14 +310,10 @@ fn test_blended_gas_spend_evm_from_wasm() {
             ..Default::default()
         },
     );
-    let result = TxBuilder::call(
-        &mut ctx,
-        address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
-        ACCOUNT3_ADDRESS,
-        None,
-    )
-    .gas_price(0)
-    .exec();
+    let result = TxBuilder::call(&mut ctx, ACCOUNT3_ADDRESS)
+        .caller(address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"))
+        .gas_price(0)
+        .exec();
 
     println!("Result: {:?}", result);
     assert!(result.is_success());

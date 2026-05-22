@@ -175,7 +175,8 @@ fn measure_call_gas(payload_size: usize) -> (u64, Duration) {
 
     // Execute and measure
     let start = Instant::now();
-    let call = TxBuilder::call(&mut ctx, deployer, caller, None)
+    let call = TxBuilder::call(&mut ctx, caller)
+        .caller(deployer)
         .gas_limit(500_000_000)
         .exec();
     let elapsed = start.elapsed();

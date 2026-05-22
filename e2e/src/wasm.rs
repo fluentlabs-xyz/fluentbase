@@ -11,7 +11,7 @@ use fluentbase_contracts::{
 use fluentbase_sdk::{
     address, bytes, constructor::encode_constructor_params, Address, Bytes, U256,
 };
-use fluentbase_testing::{EvmTestingContext, TxBuilder};
+use fluentbase_testing::{EvmTestingContext, TxBuilder, TxResultExt};
 use hex_literal::hex;
 use revm::{
     bytecode::Bytecode,
@@ -442,13 +442,10 @@ fn test_wasm_cant_use_fatal_exit_code() {
         Some(1_000_000),
         None,
     );
-    assert_eq!(
-        result,
-        ExecutionResult::Halt {
-            reason: HaltReason::UnknownError,
-            gas_used: 1_000_000
-        }
-    );
+    result
+        .expect_halt()
+        .expect_reason(HaltReason::UnknownError)
+        .expect_gas_used(1_000_000);
 }
 
 #[test]
@@ -467,14 +464,11 @@ fn test_wasm_should_not_panic_on_invalid_contract_interface() {
     .unwrap()
     .into();
     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    let result = TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module).exec();
-    assert_eq!(
-        result,
-        ExecutionResult::Halt {
-            reason: HaltReason::MalformedBuiltinParams,
-            gas_used: 100_000_000
-        }
-    )
+    TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module)
+        .execute()
+        .expect_halt()
+        .expect_reason(HaltReason::MalformedBuiltinParams)
+        .expect_gas_used(100_000_000);
 }
 
 #[test]
@@ -502,12 +496,9 @@ fn test_wasm_calling_resume_takes_no_negative_effect() {
     .unwrap()
     .into();
     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    let result = TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module).exec();
-    assert_eq!(
-        result,
-        ExecutionResult::Halt {
-            reason: HaltReason::RootCallOnly,
-            gas_used: 100_000_000
-        }
-    )
+    TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module)
+        .execute()
+        .expect_halt()
+        .expect_reason(HaltReason::RootCallOnly)
+        .expect_gas_used(100_000_000);
 }

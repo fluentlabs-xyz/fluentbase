@@ -324,7 +324,10 @@ impl EvmTestingContext {
         gas_limit: Option<u64>,
         value: Option<U256>,
     ) -> ExecutionResult<RwasmHaltReason> {
-        let mut tx_builder = TxBuilder::call(self, caller, callee, value).input(input);
+        let mut tx_builder = TxBuilder::call(self, callee).caller(caller).input(input);
+        if let Some(value) = value {
+            tx_builder = tx_builder.value(value);
+        }
         if let Some(gas_limit) = gas_limit {
             tx_builder = tx_builder.gas_limit(gas_limit);
         }
@@ -367,18 +370,9 @@ impl<'a> TxBuilder<'a> {
         Self { ctx, tx, block }
     }
 
-    pub fn call(
-        ctx: &'a mut EvmTestingContext,
-        caller: Address,
-        callee: Address,
-        value: Option<U256>,
-    ) -> Self {
+    pub fn call(ctx: &'a mut EvmTestingContext, callee: Address) -> Self {
         let mut tx = TxEnv::default();
-        if let Some(value) = value {
-            tx.value = value;
-        }
         tx.gas_price = 1;
-        tx.caller = caller;
         tx.kind = TransactTo::Call(callee);
         tx.gas_limit = 3_000_000;
         let block = Self::block_env(ctx);
@@ -418,6 +412,11 @@ impl<'a> TxBuilder<'a> {
 
     pub fn input(mut self, input: Bytes) -> Self {
         self.tx.data = input;
+        self
+    }
+
+    pub fn caller(mut self, caller: Address) -> Self {
+        self.tx.caller = caller;
         self
     }
 
@@ -471,6 +470,312 @@ impl<'a> TxBuilder<'a> {
             let new_db = &mut evm.0.journaled_state.database;
             self.ctx.db = take(new_db);
             result.map_haltreason(RwasmHaltReason::from)
+        }
+    }
+
+    pub fn execute(mut self) -> TxExecution {
+        let expected_created_address = match self.tx.kind {
+            TransactTo::Create => Some(calc_create_address(
+                &self.tx.caller,
+                self.ctx.nonce(self.tx.caller),
+            )),
+            TransactTo::Call(_) => None,
+        };
+        let result = self.exec();
+        let created_address = match &result {
+            Success {
+                output: Output::Create(_, address),
+                ..
+            } => *address,
+            _ => None,
+        };
+        TxExecution {
+            result,
+            expected_created_address,
+            created_address,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxExecution {
+    result: ExecutionResult<RwasmHaltReason>,
+    expected_created_address: Option<Address>,
+    created_address: Option<Address>,
+}
+
+impl TxExecution {
+    pub fn result(&self) -> &ExecutionResult<RwasmHaltReason> {
+        &self.result
+    }
+
+    pub fn into_result(self) -> ExecutionResult<RwasmHaltReason> {
+        self.result
+    }
+
+    pub fn gas_used(&self) -> u64 {
+        self.result.gas_used()
+    }
+
+    pub fn output(&self) -> Option<&Bytes> {
+        self.result.output()
+    }
+
+    pub fn created_address(&self) -> Option<Address> {
+        self.created_address
+    }
+
+    pub fn expect_ok(&self) -> TxSuccess<'_> {
+        match &self.result {
+            Success { .. } => TxSuccess { tx: self },
+            _ => panic!("expected successful transaction, got: {:?}", self.result),
+        }
+    }
+
+    pub fn expect_halt(&self) -> TxHalt<'_> {
+        match &self.result {
+            ExecutionResult::Halt { .. } => TxHalt { tx: self },
+            _ => panic!("expected halted transaction, got: {:?}", self.result),
+        }
+    }
+
+    pub fn expect_revert(&self) -> TxRevert<'_> {
+        match &self.result {
+            ExecutionResult::Revert { .. } => TxRevert { tx: self },
+            _ => panic!("expected reverted transaction, got: {:?}", self.result),
+        }
+    }
+
+    pub fn expect_gas_used(&self, expected: u64) -> &Self {
+        assert_eq!(
+            self.result.gas_used(),
+            expected,
+            "unexpected transaction gas used: {:?}",
+            self.result
+        );
+        self
+    }
+}
+
+pub trait TxResultExt {
+    fn expect_ok(&self) -> TxResultSuccess<'_>;
+    fn expect_halt(&self) -> TxResultHalt<'_>;
+    fn expect_revert(&self) -> TxResultRevert<'_>;
+    fn expect_gas_used(&self, expected: u64) -> &Self;
+}
+
+impl TxResultExt for ExecutionResult<RwasmHaltReason> {
+    fn expect_ok(&self) -> TxResultSuccess<'_> {
+        match self {
+            Success { .. } => TxResultSuccess { result: self },
+            _ => panic!("expected successful transaction, got: {:?}", self),
+        }
+    }
+
+    fn expect_halt(&self) -> TxResultHalt<'_> {
+        match self {
+            ExecutionResult::Halt { .. } => TxResultHalt { result: self },
+            _ => panic!("expected halted transaction, got: {:?}", self),
+        }
+    }
+
+    fn expect_revert(&self) -> TxResultRevert<'_> {
+        match self {
+            ExecutionResult::Revert { .. } => TxResultRevert { result: self },
+            _ => panic!("expected reverted transaction, got: {:?}", self),
+        }
+    }
+
+    fn expect_gas_used(&self, expected: u64) -> &Self {
+        assert_eq!(
+            self.gas_used(),
+            expected,
+            "unexpected transaction gas used: {:?}",
+            self
+        );
+        self
+    }
+}
+
+pub struct TxResultSuccess<'a> {
+    result: &'a ExecutionResult<RwasmHaltReason>,
+}
+
+impl<'a> TxResultSuccess<'a> {
+    pub fn expect_gas_used(self, expected: u64) -> Self {
+        self.result.expect_gas_used(expected);
+        self
+    }
+
+    pub fn expect_output(self, expected: impl AsRef<[u8]>) -> Self {
+        let output = self.result.output().unwrap_or_default();
+        assert_eq!(
+            output.as_ref(),
+            expected.as_ref(),
+            "unexpected transaction output: {:?}",
+            self.result
+        );
+        self
+    }
+
+    pub fn output(&self) -> Option<&'a Bytes> {
+        self.result.output()
+    }
+}
+
+pub struct TxResultHalt<'a> {
+    result: &'a ExecutionResult<RwasmHaltReason>,
+}
+
+impl TxResultHalt<'_> {
+    pub fn expect_reason(self, expected: RwasmHaltReason) -> Self {
+        match self.result {
+            ExecutionResult::Halt { reason, .. } => assert_eq!(
+                *reason, expected,
+                "unexpected transaction halt reason: {:?}",
+                self.result
+            ),
+            _ => unreachable!(),
+        }
+        self
+    }
+
+    pub fn expect_gas_used(self, expected: u64) -> Self {
+        self.result.expect_gas_used(expected);
+        self
+    }
+}
+
+pub struct TxResultRevert<'a> {
+    result: &'a ExecutionResult<RwasmHaltReason>,
+}
+
+impl<'a> TxResultRevert<'a> {
+    pub fn expect_gas_used(self, expected: u64) -> Self {
+        self.result.expect_gas_used(expected);
+        self
+    }
+
+    pub fn expect_output(self, expected: impl AsRef<[u8]>) -> Self {
+        match self.result {
+            ExecutionResult::Revert { output, .. } => assert_eq!(
+                output.as_ref(),
+                expected.as_ref(),
+                "unexpected revert output: {:?}",
+                self.result
+            ),
+            _ => unreachable!(),
+        }
+        self
+    }
+
+    pub fn output(&self) -> &'a Bytes {
+        match self.result {
+            ExecutionResult::Revert { output, .. } => output,
+            _ => unreachable!(),
+        }
+    }
+}
+
+pub struct TxSuccess<'a> {
+    tx: &'a TxExecution,
+}
+
+impl<'a> TxSuccess<'a> {
+    pub fn expect_gas_used(self, expected: u64) -> Self {
+        self.tx.expect_gas_used(expected);
+        self
+    }
+
+    pub fn expect_output(self, expected: impl AsRef<[u8]>) -> Self {
+        let output = self.tx.result.output().unwrap_or_default();
+        assert_eq!(
+            output.as_ref(),
+            expected.as_ref(),
+            "unexpected transaction output: {:?}",
+            self.tx.result
+        );
+        self
+    }
+
+    pub fn expect_created_address(self, expected: Address) -> Self {
+        assert_eq!(
+            self.tx.created_address,
+            Some(expected),
+            "unexpected created address: {:?}",
+            self.tx.result
+        );
+        self
+    }
+
+    pub fn expect_expected_created_address(self) -> Self {
+        assert_eq!(
+            self.tx.created_address, self.tx.expected_created_address,
+            "created address did not match caller nonce prediction: {:?}",
+            self.tx.result
+        );
+        self
+    }
+
+    pub fn output(&self) -> Option<&'a Bytes> {
+        self.tx.output()
+    }
+
+    pub fn created_address(&self) -> Option<Address> {
+        self.tx.created_address()
+    }
+}
+
+pub struct TxHalt<'a> {
+    tx: &'a TxExecution,
+}
+
+impl TxHalt<'_> {
+    pub fn expect_reason(self, expected: RwasmHaltReason) -> Self {
+        match &self.tx.result {
+            ExecutionResult::Halt { reason, .. } => assert_eq!(
+                *reason, expected,
+                "unexpected transaction halt reason: {:?}",
+                self.tx.result
+            ),
+            _ => unreachable!(),
+        }
+        self
+    }
+
+    pub fn expect_gas_used(self, expected: u64) -> Self {
+        self.tx.expect_gas_used(expected);
+        self
+    }
+}
+
+pub struct TxRevert<'a> {
+    tx: &'a TxExecution,
+}
+
+impl<'a> TxRevert<'a> {
+    pub fn expect_gas_used(self, expected: u64) -> Self {
+        self.tx.expect_gas_used(expected);
+        self
+    }
+
+    pub fn expect_output(self, expected: impl AsRef<[u8]>) -> Self {
+        match &self.tx.result {
+            ExecutionResult::Revert { output, .. } => assert_eq!(
+                output.as_ref(),
+                expected.as_ref(),
+                "unexpected revert output: {:?}",
+                self.tx.result
+            ),
+            _ => unreachable!(),
+        }
+        self
+    }
+
+    pub fn output(&self) -> &'a Bytes {
+        match &self.tx.result {
+            ExecutionResult::Revert { output, .. } => output,
+            _ => unreachable!(),
         }
     }
 }
