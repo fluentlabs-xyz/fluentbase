@@ -90,6 +90,7 @@ fn init_downloads_defaults() {
         )],
         default_base_url: Cow::Borrowed("https://cdn.fluent.xyz/snapshots"),
         default_chain_aware_base_url: Some(Cow::Borrowed("https://cdn.fluent.xyz/snapshots")),
+        snapshot_api_url: Cow::Borrowed("https://api.fluent.xyz/snapshots"),
         long_help: None,
     };
     download_defaults

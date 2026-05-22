@@ -150,8 +150,8 @@ fn test_simple_nested_call() {
     // + account3 call 1024 (mem) + 1000 + 2000 + 3000 + 4000 = 12 gas
     // Result: 21000+2600*2 + 3+4+12 = 26219
     // TODO(dmitry123): "we don't do ceil rounding for consumed fuel"
-    assert_eq!(result.gas_used(), 26213);
-    // assert_eq!(result.gas_used(), 26219);
+    assert_eq!(result.tx_gas_used(), 26213);
+    // assert_eq!(result.tx_gas_used(), 26219);
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn test_deploy_gas_spend() {
     // 62030 - init contract cost
     // 67400 - store space cost in fuel
     // 5126 - opcode cost in fuel
-    assert_eq!(result.gas_used(), 62030 + (67400 + 5126) / 1000 + 1);
+    assert_eq!(result.tx_gas_used(), 62030 + (67400 + 5126) / 1000 + 1);
 }
 
 #[test]
@@ -236,7 +236,7 @@ fn test_blended_gas_spend_wasm_from_evm() {
     // + 2600 call cost
     // + 1 call wasm code
     // + 255 evm opcodes cost
-    assert_eq!(result.gas_used(), 21064 + 1 + 2600 + 255);
+    assert_eq!(result.tx_gas_used(), 21064 + 1 + 2600 + 255);
 }
 
 #[test]
@@ -327,7 +327,7 @@ fn test_blended_gas_spend_evm_from_wasm() {
     // + 637 evm opcodes cost
     // + 1 call wasm code
     assert_eq!(
-        result.gas_used(),
+        result.tx_gas_used(),
         21000 + 2600 + 637 + 100 + 637 + call_cast
     );
     // TODO(dmitry123): "wasm code cost should be 2, not 1"

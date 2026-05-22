@@ -10,7 +10,7 @@ use crate::{
     types::{ExecutionResult, InterruptingInterpreter, InterruptionExtension},
 };
 use fluentbase_sdk::{Bytes, ContextReader, SystemAPI, FUEL_DENOM_RATE};
-use revm_bytecode::{Bytecode, LegacyAnalyzedBytecode};
+use revm_bytecode::Bytecode;
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},
     CallInput, Gas, InputsImpl, InstructionTable, Interpreter, InterpreterAction, SharedMemory,
@@ -47,13 +47,10 @@ impl EthVM {
         let gas_limit = context_input.contract_gas_limit();
         // Initialize EVM bytecode and interpreter
         let bytecode = ExtBytecode::new_with_hash(
-            Bytecode::LegacyAnalyzed(
-                LegacyAnalyzedBytecode::new(
-                    analyzed_bytecode.bytecode,
-                    analyzed_bytecode.len as usize,
-                    analyzed_bytecode.jump_table,
-                )
-                .into(),
+            Bytecode::new_analyzed(
+                analyzed_bytecode.bytecode,
+                analyzed_bytecode.len as usize,
+                analyzed_bytecode.jump_table,
             ),
             analyzed_bytecode.hash,
         );
