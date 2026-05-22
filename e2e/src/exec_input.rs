@@ -191,7 +191,7 @@ fn measure_call_gas(payload_size: usize) -> (u64, Duration) {
     let expected_input = payload_size + 1024; // payload + SharedContext
     assert_eq!(input_size, expected_input as u32, "input size mismatch");
 
-    let gas_used = call.gas_used();
+    let gas_used = call.tx_gas_used();
 
     (gas_used, elapsed)
 }
@@ -262,7 +262,7 @@ fn measure_calldata_gas(calldata_size: usize) -> u64 {
         calldata_size,
         call
     );
-    call.gas_used()
+    call.tx_gas_used()
 }
 
 #[test]

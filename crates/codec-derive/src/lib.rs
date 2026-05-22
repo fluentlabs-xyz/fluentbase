@@ -3,16 +3,8 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, ToTokens};
 use syn::{
-    parse_macro_input,
-    parse_quote,
-    Data,
-    DeriveInput,
-    Fields,
-    GenericParam,
-    Ident,
-    Type,
-    WhereClause,
-    WherePredicate,
+    parse_macro_input, parse_quote, Data, DeriveInput, Fields, GenericParam, Ident, Type,
+    WhereClause, WherePredicate,
 };
 
 /// Holds information about a struct field

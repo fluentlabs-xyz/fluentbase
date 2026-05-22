@@ -7,10 +7,7 @@ use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
-    Lit,
-    LitStr,
-    Result,
-    Token,
+    Lit, LitStr, Result, Token,
 };
 
 /// Basic type for a function selector - just 4 bytes

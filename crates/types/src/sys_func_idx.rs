@@ -15,7 +15,7 @@ pub enum SysFuncIdx {
     EXEC = 0x0009,
     RESUME = 0x000a,
     FORWARD_OUTPUT = 0x000b,
-    CHARGE_FUEL_MANUALLY = 0x000c,
+    // CHARGE_FUEL_MANUALLY = 0x000c,
     FUEL = 0x000d,
     // PREIMAGE_SIZE = 0x000e,
     // PREIMAGE_COPY = 0x000f,

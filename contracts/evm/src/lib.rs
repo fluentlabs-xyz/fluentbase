@@ -68,7 +68,7 @@ fn try_restore_interrupted_evm_context<'a, SDK: SystemAPI>(
     gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
     {
         let dirty_gas = &mut eth_vm.interpreter.gas;
-        if !dirty_gas.record_cost(gas.spent()) {
+        if !dirty_gas.record_regular_cost(gas.total_gas_spent()) {
             unreachable!("evm: a fatal gas mis-sync between runtimes, this should never happen");
         }
         eth_vm.interpreter.extend.committed_gas = *dirty_gas;
@@ -128,7 +128,7 @@ pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
                     return Err(ExitCode::CreateContractSizeLimit);
                 }
                 let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
-                if !result.gas.record_cost(gas_for_code) {
+                if !result.gas.record_regular_cost(gas_for_code) {
                     return Err(ExitCode::OutOfFuel);
                 }
                 let consumed_diff = result.chargeable_fuel();

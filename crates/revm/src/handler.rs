@@ -1,6 +1,6 @@
 //!Handler related to a Fluent chain
 
-use crate::{types::SystemInterruptionOutcome, RwasmFrame, RwasmHaltReason};
+use crate::{RwasmFrame, RwasmHaltReason};
 use alloy_primitives::U256;
 use fluentbase_sdk::calldata_quadratic_surcharge;
 use revm::{
@@ -39,13 +39,14 @@ where
             ctx.tx(),
             ctx.cfg().spec().into(),
             ctx.cfg().is_eip7623_disabled(),
+            ctx.cfg().is_amsterdam_eip8037_enabled(),
+            ctx.cfg().tx_gas_limit_cap(),
             ctx.cfg().is_legacy_bytecode_enabled(),
-        )
-        .map_err(Self::Error::from)?;
+        )?;
 
         // Quadratic calldata surcharge for large inputs (>128 KB)
         let input_len = ctx.tx().input().len() as u64;
-        gas.initial_gas += calldata_quadratic_surcharge(input_len);
+        gas.initial_total_gas += calldata_quadratic_surcharge(input_len);
 
         Ok(gas)
     }
@@ -90,10 +91,9 @@ impl<CTX, ERROR> Default for RwasmHandler<CTX, ERROR> {
     }
 }
 
-impl<EVM, ERROR> InspectorHandler<SystemInterruptionOutcome> for RwasmHandler<EVM, ERROR>
+impl<EVM, ERROR> InspectorHandler for RwasmHandler<EVM, ERROR>
 where
     EVM: InspectorEvmTr<
-        SystemInterruptionOutcome,
         Context: ContextTr<Journal: JournalTr<State = EvmState>>,
         Frame = RwasmFrame,
         Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context, EthInterpreter>,

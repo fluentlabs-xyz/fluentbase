@@ -4,8 +4,8 @@ use crate::{consensus::FluentConsensusBuilder, payload::FluentPayloadAttributesB
 use alloy_consensus::{Header, TxType};
 use alloy_evm::{
     block::{
-        BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
-        BlockExecutorFor, ExecutableTx, OnStateHook,
+        BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory, GasOutput,
+        OnStateHook, StateDB,
     },
     env::EvmEnv,
     eth::{EthBlockExecutionCtx, EthBlockExecutor, EthTxResult},
@@ -14,7 +14,7 @@ use alloy_evm::{
     Database, Evm,
 };
 use alloy_primitives::{Address, Bytes};
-use alloy_rpc_types_engine::ExecutionData;
+use alloy_rpc_types_engine::{ExecutionData, PayloadAttributes as EthPayloadAttributes};
 use core::{
     fmt::Debug,
     ops::{Deref, DerefMut},
@@ -32,14 +32,11 @@ use fluentbase_revm::{
     DefaultRwasm, RwasmBuilder, RwasmEvm, RwasmFrame, RwasmPrecompiles,
 };
 use reth_chainspec::ChainSpec;
-use reth_ethereum::engine::EthPayloadAttributes;
-use reth_ethereum_engine_primitives::{
-    EthBuiltPayload, EthEngineTypes, EthPayloadBuilderAttributes,
-};
+use reth_ethereum_engine_primitives::{EthBuiltPayload, EthEngineTypes};
 use reth_ethereum_primitives::{EthPrimitives, Receipt, TransactionSigned};
 use reth_evm::{
-    ConfigureEngineEvm, ConfigureEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor,
-    InspectorFor, NextBlockEnvAttributes,
+    block::ExecutableTx, ConfigureEngineEvm, ConfigureEvm, EvmEnvFor, ExecutableTxIterator,
+    ExecutionCtxFor, NextBlockEnvAttributes,
 };
 use reth_evm_ethereum::{EthBlockAssembler, EthEvmConfig, RethReceiptBuilder};
 use reth_node_api::{FullNodeComponents, FullNodeTypes};
@@ -53,10 +50,8 @@ use reth_node_ethereum::{
 };
 use reth_node_types::NodeTypes;
 use reth_payload_primitives::{PayloadAttributesBuilder, PayloadTypes};
-use reth_primitives::{Block, SealedBlock};
-use reth_primitives_traits::SealedHeader;
+use reth_primitives_traits::{BlockTy, SealedBlock, SealedHeader};
 use reth_provider::providers::ProviderFactoryBuilder;
-use reth_revm::State;
 use reth_storage_api::EthStorage;
 use std::{convert::Infallible, sync::Arc};
 
@@ -157,6 +152,10 @@ where
 
     fn block(&self) -> &BlockEnv {
         &self.block
+    }
+
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        &self.cfg
     }
 
     fn chain_id(&self) -> u64 {
@@ -332,9 +331,12 @@ impl FluentEvmConfig {
 
 impl BlockExecutorFactory for FluentEvmConfig {
     type EvmFactory = FluentEvmFactory;
+    type TxExecutionResult = EthTxResult<HaltReason, TxType>;
     type ExecutionCtx<'a> = EthBlockExecutionCtx<'a>;
     type Transaction = TransactionSigned;
     type Receipt = Receipt;
+    type Executor<'a, DB: StateDB, I: Inspector<<Self::EvmFactory as EvmFactory>::Context<DB>>> =
+        FluentBlockExecutor<'a, FluentEvmExecutor<DB, I, PrecompilesMap>>;
 
     fn evm_factory(&self) -> &Self::EvmFactory {
         self.inner.evm_factory()
@@ -342,12 +344,12 @@ impl BlockExecutorFactory for FluentEvmConfig {
 
     fn create_executor<'a, DB, I>(
         &'a self,
-        evm: FluentEvmExecutor<&'a mut State<DB>, I, PrecompilesMap>,
+        evm: FluentEvmExecutor<DB, I, PrecompilesMap>,
         ctx: EthBlockExecutionCtx<'a>,
-    ) -> impl BlockExecutorFor<'a, Self, DB, I>
+    ) -> Self::Executor<'a, DB, I>
     where
-        DB: Database + 'a,
-        I: InspectorFor<Self, &'a mut State<DB>> + 'a,
+        DB: StateDB,
+        I: Inspector<<Self::EvmFactory as EvmFactory>::Context<DB>>,
     {
         FluentBlockExecutor {
             inner: EthBlockExecutor::new(
@@ -389,7 +391,7 @@ impl ConfigureEvm for FluentEvmConfig {
 
     fn context_for_block<'a>(
         &self,
-        block: &'a SealedBlock<Block>,
+        block: &'a SealedBlock<BlockTy<Self::Primitives>>,
     ) -> Result<EthBlockExecutionCtx<'a>, Self::Error> {
         self.inner.context_for_block(block)
     }
@@ -440,11 +442,8 @@ impl FluentNode {
     >
     where
         Node: FullNodeTypes<Types: NodeTypes<ChainSpec = ChainSpec, Primitives = EthPrimitives>>,
-        <Node::Types as NodeTypes>::Payload: PayloadTypes<
-            BuiltPayload = EthBuiltPayload,
-            PayloadAttributes = EthPayloadAttributes,
-            PayloadBuilderAttributes = EthPayloadBuilderAttributes,
-        >,
+        <Node::Types as NodeTypes>::Payload:
+            PayloadTypes<BuiltPayload = EthBuiltPayload, PayloadAttributes = EthPayloadAttributes>,
     {
         ComponentsBuilder::default()
             .node_types::<Node>()
@@ -512,10 +511,15 @@ pub struct FluentBlockExecutor<'a, Evm> {
     inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec>, &'a RethReceiptBuilder>,
 }
 
-impl<'db, DB, E> BlockExecutor for FluentBlockExecutor<'_, E>
+impl<'a, E> BlockExecutor for FluentBlockExecutor<'a, E>
 where
-    DB: Database + 'db,
-    E: Evm<DB = &'db mut State<DB>, Tx = TxEnv>,
+    E: Evm<Tx = TxEnv>,
+    EthBlockExecutor<'a, E, &'a Arc<ChainSpec>, &'a RethReceiptBuilder>: BlockExecutor<
+        Transaction = TransactionSigned,
+        Receipt = Receipt,
+        Evm = E,
+        Result = EthTxResult<E::HaltReason, TxType>,
+    >,
 {
     type Transaction = TransactionSigned;
     type Receipt = Receipt;
@@ -538,7 +542,7 @@ where
         self.inner.execute_transaction_without_commit(tx)
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
+    fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
         self.inner.commit_transaction(output)
     }
 

@@ -5,14 +5,12 @@ use crate::{
     bridge::{apply_bridge_post_invocation_hook, apply_bridge_pre_invocation_hook},
     executor::run_rwasm_loop,
     precompiles::RwasmPrecompiles,
-    types::SystemInterruptionOutcome,
-    upgrade::{upgrade_runtime_hook_v2, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX_V2},
     ExecutionResult,
 };
 use fluentbase_sdk::{resolve_precompiled_runtime_from_input, Address, Bytes};
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
-    context::{Cfg, ContextError, ContextSetters, Evm, FrameStack, JournalTr},
+    context::{ContextError, ContextSetters, Evm, FrameStack, JournalTr},
     context_interface::ContextTr,
     handler::{
         evm::FrameTr,
@@ -25,6 +23,7 @@ use revm::{
         return_ok, return_revert, CallInput, CallOutcome, CreateOutcome, FrameInput, Gas,
         InstructionResult, InterpreterResult,
     },
+    primitives::hardfork::SpecId,
     Database, Inspector,
 };
 
@@ -49,7 +48,7 @@ impl<CTX: ContextTr, INSP>
         Self(Evm {
             ctx,
             inspector,
-            instruction: EthInstructions::new_mainnet(),
+            instruction: EthInstructions::new_mainnet_with_spec(SpecId::OSAKA),
             precompiles: RwasmPrecompiles::default(),
             frame_stack: FrameStack::new(),
         })
@@ -73,7 +72,7 @@ impl<CTX, INSP, I, P> RwasmEvm<CTX, INSP, I, P> {
     }
 }
 
-impl<CTX, INSP, I, P> InspectorEvmTr<SystemInterruptionOutcome> for RwasmEvm<CTX, INSP, I, P>
+impl<CTX, INSP, I, P> InspectorEvmTr for RwasmEvm<CTX, INSP, I, P>
 where
     CTX: ContextTr<Journal: JournalExt> + ContextSetters,
     I: InstructionProvider<Context = CTX, InterpreterTypes = EthInterpreter>,
@@ -281,53 +280,11 @@ where
         };
         let ctx = &mut self.0.ctx;
         let precompiles = &mut self.0.precompiles;
-        match &mut frame_input.frame_input {
-            // Only for Fluent Testnet until it's migrated to v0.5.4 and has
-            // full support of new runtime upgrade scheme
-            FrameInput::Call(inputs)
-                if (ctx.cfg().chain_id() == 0x5201 || ctx.cfg().chain_id() == 0x5202)
-                    && inputs.caller == UPDATE_GENESIS_AUTH
-                    && inputs
-                        .input
-                        .bytes(ctx)
-                        .starts_with(&UPDATE_GENESIS_PREFIX_V2) =>
-            {
-                // ============================================================================
-                // SECURITY: CALLDATA-BASED PRECOMPILE DISPATCH VULNERABILITY
-                // ============================================================================
-                //
-                // The following code is DISABLED for mainnet and restricted to testnet only.
-                //
-                // VULNERABILITY DESCRIPTION:
-                // 1. UPDATE_GENESIS_AUTH: Privileged address that can deploy arbitrary bytecode
-                //    to any address via upgrade_runtime_hook_v1/v2
-                // 2. Calldata-based dispatch: Precompiles invoked by calldata prefix instead of
-                //    destination address (via try_resolve_precompile_account_from_input)
-                //
-                // SECURITY IMPACT:
-                // - If UPDATE_GENESIS_AUTH key is compromised, attacker gains full system control
-                // - Calldata-based dispatch violates Ethereum standard (EIP-1352)
-                // - Any transaction with specific byte prefix unexpectedly triggers precompiles
-                // - Breaks tooling/scripts expecting standard address-based precompile behavior
-                //
-                // AUDITOR RECOMMENDATION:
-                // Remove functionality for mainnet deployment. Use standard address-based
-                // precompile dispatch as specified in EIP-1352.
-                //
-                // CURRENT MITIGATION:
-                // - Restricted to testnet via 'fluent-testnet' feature flag
-                // - Multicall tests temporarily disabled (see e2e/src/multicall.rs)
-                //
-                // ============================================================================
-                return upgrade_runtime_hook_v2(ctx, inputs);
-            }
-            _ => {}
-        }
 
         // Top-level tx CALL must respect EIP-7702 delegation designation as well.
         // Internal CALL-like opcodes resolve delegated bytecode address in syscall.rs,
         // but the first frame is built directly from tx.target (bytecode_address == target_address).
-        // If target has EIP-7702 code, rewrite bytecode address to designated address so precompile/code
+        // If the target has EIP-7702 code, rewrite the bytecode address to the designated address so precompile/code
         // execution follows delegated account semantics.
         if is_first_init {
             if let FrameInput::Call(inputs) = &mut frame_input.frame_input {
@@ -335,14 +292,16 @@ where
                     let account = ctx
                         .journal_mut()
                         .load_account_with_code(inputs.target_address)?;
-                    if let Some(Bytecode::Eip7702(eip7702)) = &account.info.code {
-                        inputs.bytecode_address = eip7702.address();
+                    if let Some(eip7702_address) =
+                        account.info.code.as_ref().and_then(|v| v.eip7702_address())
+                    {
+                        inputs.bytecode_address = eip7702_address;
                     }
                 }
             }
         }
         let res = Self::Frame::init_with_context(new_frame, ctx, precompiles, frame_input)?;
-        let mut res = res.map_frame(|token| {
+        let mut res = res.map_item(|token| {
             if is_first_init {
                 unsafe { self.0.frame_stack.end_init(token) };
             } else {
@@ -361,7 +320,7 @@ where
                         let ownable_account_bytecode =
                             OwnableAccountBytecode::new(precompile_runtime, Bytes::new());
                         new_frame.interpreter.input.account_owner = Some(precompile_runtime);
-                        let bytecode = Bytecode::OwnableAccount(ownable_account_bytecode);
+                        let bytecode = Bytecode::OwnableAccount(ownable_account_bytecode.into());
                         ctx.journal_mut()
                             .set_code(new_frame.interpreter.input.target_address, bytecode.clone());
                         // an original init code we pass as an input inside the runtime

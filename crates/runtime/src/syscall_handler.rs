@@ -49,7 +49,6 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::EXEC => syscall_exec_handler(caller, params, result),
         SysFuncIdx::RESUME => syscall_resume_handler(caller, params, result),
         SysFuncIdx::FORWARD_OUTPUT => syscall_forward_output_handler(caller, params, result),
-        SysFuncIdx::CHARGE_FUEL_MANUALLY => syscall_charge_fuel_manually_handler(caller, params, result),
         SysFuncIdx::FUEL => syscall_fuel_handler(caller, params, result),
         SysFuncIdx::DEBUG_LOG => syscall_debug_log_handler(caller, params, result),
         SysFuncIdx::CHARGE_FUEL => syscall_charge_fuel_handler(caller, params, result),
