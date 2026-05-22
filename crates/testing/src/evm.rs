@@ -518,7 +518,7 @@ impl TxExecution {
     }
 
     pub fn gas_used(&self) -> u64 {
-        self.result.gas_used()
+        self.result.tx_gas_used()
     }
 
     pub fn output(&self) -> Option<&Bytes> {
@@ -552,7 +552,7 @@ impl TxExecution {
 
     pub fn expect_gas_used(&self, expected: u64) -> &Self {
         assert_eq!(
-            self.result.gas_used(),
+            self.result.tx_gas_used(),
             expected,
             "unexpected transaction gas used: {:?}",
             self.result
@@ -592,7 +592,7 @@ impl TxResultExt for ExecutionResult<RwasmHaltReason> {
 
     fn expect_gas_used(&self, expected: u64) -> &Self {
         assert_eq!(
-            self.gas_used(),
+            self.tx_gas_used(),
             expected,
             "unexpected transaction gas used: {:?}",
             self
