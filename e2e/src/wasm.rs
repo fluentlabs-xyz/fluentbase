@@ -362,7 +362,7 @@ fn test_wasm_balance_should_fail_on_oog() {
         None,
     );
     // all gas must be charged
-    assert_eq!(result.gas_used(), 21_090);
+    assert_eq!(result.tx_gas_used(), 21_090);
     // it should halt, not revert or ok
     assert!(result.is_halt());
 }
