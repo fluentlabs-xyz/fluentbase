@@ -80,6 +80,38 @@ fn run_workspace_build(
     target_dir: &Path,
     is_debug_profile: bool,
 ) {
+    run_cargo_build(
+        build_args,
+        workspace_manifest_path,
+        target_dir,
+        is_debug_profile,
+        None,
+    );
+}
+
+fn run_package_build(
+    build_args: &BuildArgs,
+    workspace_manifest_path: &Path,
+    target_dir: &Path,
+    is_debug_profile: bool,
+    package: &str,
+) {
+    run_cargo_build(
+        build_args,
+        workspace_manifest_path,
+        target_dir,
+        is_debug_profile,
+        Some(package),
+    );
+}
+
+fn run_cargo_build(
+    build_args: &BuildArgs,
+    workspace_manifest_path: &Path,
+    target_dir: &Path,
+    is_debug_profile: bool,
+    package: Option<&str>,
+) {
     let work_dir = workspace_manifest_path.parent().unwrap();
     let mount_dir = build_args
         .mount_dir
@@ -111,6 +143,11 @@ fn run_workspace_build(
         effective_target_dir.to_string_lossy().to_string(),
         "--color=always".to_string(),
     ];
+
+    if let Some(package) = package {
+        cargo_args.push("--package".to_string());
+        cargo_args.push(package.to_string());
+    }
 
     if !is_debug_profile {
         cargo_args.push("--release".to_string());
@@ -211,7 +248,23 @@ fn main() {
         );
     }
 
+    let permissive_target_dir = target2_dir.join("permissive");
+    let mut permissive_build_args = build_args.clone();
+    permissive_build_args
+        .features
+        .push("permissive-contract-size".to_string());
+    run_package_build(
+        &permissive_build_args,
+        &fluentbase_root_dir.join("contracts/Cargo.toml"),
+        &permissive_target_dir,
+        is_debug_profile,
+        "fluentbase-contracts-evm",
+    );
+
     let artifacts_dir = target2_dir
+        .join("wasm32-unknown-unknown")
+        .join(if is_debug_profile { "debug" } else { "release" });
+    let permissive_artifacts_dir = permissive_target_dir
         .join("wasm32-unknown-unknown")
         .join(if is_debug_profile { "debug" } else { "release" });
 
@@ -259,6 +312,16 @@ fn main() {
         code.push(format!("    wasm_bytecode: include_bytes!(\"{path}\"),"));
         code.push("};".to_string());
     }
+    let permissive_evm_path = permissive_artifacts_dir.join("fluentbase_contracts_evm.wasm");
+    code.push(
+        "pub const FLUENTBASE_CONTRACTS_EVM_PERMISSIVE: BuildOutput = BuildOutput {".to_string(),
+    );
+    code.push("    name: \"fluentbase-contracts-evm-permissive\",".to_string());
+    code.push(format!(
+        "    wasm_bytecode: include_bytes!(\"{}\"),",
+        permissive_evm_path.to_str().unwrap()
+    ));
+    code.push("};".to_string());
     let code = code.join("\n");
     let build_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("build_output.rs");
 

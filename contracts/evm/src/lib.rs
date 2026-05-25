@@ -12,10 +12,12 @@ use fluentbase_evm::{
     types::{exit_code_from_instruction_result, InterruptionOutcome},
     EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
 };
+#[cfg(not(feature = "permissive-contract-size"))]
+use fluentbase_sdk::EVM_MAX_CODE_SIZE;
 use fluentbase_sdk::{
     crypto::crypto_keccak256, rwasm_core::N_MAX_RECURSION_DEPTH,
     system::RuntimeInterruptionOutcomeV1, Bytes, ExitCode, HashMap, SystemAPI, B256,
-    EVM_MAX_CODE_SIZE, EVM_MAX_INITCODE_SIZE, FUEL_DENOM_RATE,
+    EVM_MAX_INITCODE_SIZE, FUEL_DENOM_RATE,
 };
 use spin::{Mutex, MutexGuard, Once};
 
@@ -120,7 +122,9 @@ pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
                 // EIP-3541 and EIP-170 checks
                 if result.output.first() == Some(&0xEF) {
                     return Err(ExitCode::CreateContractStartingWithEF);
-                } else if result.output.len() > EVM_MAX_CODE_SIZE {
+                }
+                #[cfg(not(feature = "permissive-contract-size"))]
+                if result.output.len() > EVM_MAX_CODE_SIZE {
                     return Err(ExitCode::CreateContractSizeLimit);
                 }
                 let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
