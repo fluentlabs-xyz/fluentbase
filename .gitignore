@@ -18,6 +18,7 @@ libzktrie.so
 
 # exclude all wat, wasm and genesis files
 *.wat
+crates/genesis/evm-runtime-permissive.rwasm
 contracts/**/lib.wasm
 contracts/**/lib.rwasm
 contracts/**/foundry.json

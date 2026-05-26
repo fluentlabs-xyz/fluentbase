@@ -19,3 +19,4 @@ path = "src/lib.rs"
 default = ["std"]
 std = ["fluentbase-sdk/std", "fluentbase-evm/std", "fluentbase-testing/std"]
 debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print", "fluentbase-evm/debug-print"]
+permissive-contract-size = []

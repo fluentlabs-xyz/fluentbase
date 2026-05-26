@@ -121,6 +121,19 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
     cache
 }
 
+fn write_permissive_evm_runtime() {
+    let rwasm_bytecode = compile_rwasm_maybe_system(
+        &PRECOMPILE_EVM_RUNTIME,
+        fluentbase_contracts::FLUENTBASE_CONTRACTS_EVM_PERMISSIVE.wasm_bytecode,
+    )
+    .expect("failed to compile permissive EVM runtime");
+    assert_eq!(rwasm_bytecode.constructor_params.len(), 0);
+    let rwasm_bytecode: Bytes = rwasm_bytecode.rwasm_module.serialize().into();
+    let runtime_path =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("evm-runtime-permissive.rwasm");
+    fs::write(&runtime_path, rwasm_bytecode.as_ref()).unwrap();
+}
+
 fn init_contract(
     code: &mut Vec<String>,
     genesis: &mut BTreeMap<Address, GenesisAccount>,
@@ -188,6 +201,7 @@ fn main() {
     code.push("static BUILD_OUTPUTS: &[BuildOutput] = &[".to_string());
 
     let rwasm_artifacts = compile_all_contracts();
+    write_permissive_evm_runtime();
 
     for (address, contract) in GENESIS_CONTRACTS {
         let (rwasm_bytecode_hash, rwasm_bytecode) =
