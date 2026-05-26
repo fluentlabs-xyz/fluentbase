@@ -43,6 +43,11 @@ outcome, and links to any relevant issue, branch, or PR.
 
 Linear status rules:
 
+- `Backlog`: manager-owned intake. If an agent is assigned a Backlog issue, do not implement it.
+  Read and analyze the issue, expand or rewrite the description with concrete context, expected
+  outcome, acceptance criteria, open questions, estimated story points when available, and the best
+  matching labels. Then move it to `Todo` and remove the assignee so it is ready for manager
+  prioritization.
 - `Todo`: manager-only. The task has been created and assigned. When an agent first picks it up,
   move it to `Research`.
 - `Research`: the agent researches the task, gathers constraints, and prepares a development plan
@@ -58,8 +63,15 @@ Linear status rules:
 - `Done`: the task is complete and the work should be merged, rebased, or squashed into the base
   branch according to the branch rules below.
 
+When multiple assigned issues exist, prioritize the highest-progress work first: `In Progress`,
+`Final Review` follow-up, `Research Review` with manager comments, `Research`, then `Backlog` or
+`Todo`. Backlog and Todo are intake/planning states and should be handled after active or
+review-blocked work.
+
 When a task is in `Todo`, the assigned agent must provide a working plan and ask any extra questions
-from the author in Linear comments before implementation.
+from the author in Linear comments before implementation. When a task is in `Backlog`, the assigned
+agent must refine the task, label and estimate it where possible, move it to `Todo`, and unassign it
+before implementation.
 
 ## Branch and Git Standards
 
