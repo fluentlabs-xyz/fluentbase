@@ -8,15 +8,13 @@ use fluentbase_contracts::{
     FLUENTBASE_EXAMPLES_SHA256, FLUENTBASE_EXAMPLES_SIMPLE_STORAGE,
     FLUENTBASE_EXAMPLES_TINY_KECCAK, FLUENTBASE_EXAMPLES_UNWIPED_OUTPUT,
 };
+use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
     address, bytes, constructor::encode_constructor_params, Address, Bytes, U256,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder, TxResultExt};
 use hex_literal::hex;
-use revm::{
-    bytecode::Bytecode,
-    context::result::{ExecutionResult, HaltReason},
-};
+use revm::{bytecode::Bytecode, context::result::ExecutionResult};
 use rwasm::RwasmModule;
 use std::str::from_utf8_unchecked;
 
@@ -444,7 +442,7 @@ fn test_wasm_cant_use_fatal_exit_code() {
     );
     result
         .expect_halt()
-        .expect_reason(HaltReason::UnknownError)
+        .expect_reason(RwasmHaltReason::UnknownError)
         .expect_gas_used(1_000_000);
 }
 
@@ -467,7 +465,7 @@ fn test_wasm_should_not_panic_on_invalid_contract_interface() {
     TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module)
         .execute()
         .expect_halt()
-        .expect_reason(HaltReason::MalformedBuiltinParams)
+        .expect_reason(RwasmHaltReason::MalformedBuiltinParams)
         .expect_gas_used(100_000_000);
 }
 
@@ -499,6 +497,6 @@ fn test_wasm_calling_resume_takes_no_negative_effect() {
     TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module)
         .execute()
         .expect_halt()
-        .expect_reason(HaltReason::RootCallOnly)
+        .expect_reason(RwasmHaltReason::RootCallOnly)
         .expect_gas_used(100_000_000);
 }

@@ -1,8 +1,8 @@
 use crate::EvmTestingContextWithGenesis;
 use fluentbase_contracts::FLUENTBASE_EXAMPLES_MEMORY_OOM;
+use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{Address, Bytes, ExitCode::MalformedBuiltinParams, U256};
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
-use revm::context::result::HaltReason;
 
 #[test]
 fn test_oom_has_proper_exit_code() {
@@ -20,7 +20,7 @@ fn test_oom_has_proper_exit_code() {
         .input(Bytes::default())
         .execute()
         .expect_halt()
-        .expect_reason(HaltReason::MemoryOutOfBounds)
+        .expect_reason(RwasmHaltReason::MemoryOutOfBounds)
         .expect_gas_used(3_000_000);
 }
 
@@ -48,6 +48,6 @@ fn test_negative_write_output_params_cant_cause_oom() {
     TxBuilder::create(&mut ctx, Address::repeat_byte(0x01), wasm_module)
         .execute()
         .expect_halt()
-        .expect_reason(HaltReason::MemoryOutOfBounds)
+        .expect_reason(RwasmHaltReason::MemoryOutOfBounds)
         .expect_gas_used(100_000_000);
 }
