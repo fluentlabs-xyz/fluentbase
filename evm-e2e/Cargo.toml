@@ -10,8 +10,8 @@ fluentbase-sdk = { path = "../crates/sdk" }
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 fluentbase-revm = { path = "../crates/revm", features = ["eip1559-full-compatibility"] }
 
-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched", default-features = false, features = ["std", "serde-json", "serde"] }
-revm-statetest-types = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched", default-features = false }
+revm = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason", default-features = false, features = ["std", "serde-json", "serde"] }
+revm-statetest-types = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason", default-features = false }
 
 hash-db = "=0.15"
 hex = "0.4"
@@ -53,3 +53,18 @@ wasmtime = [
 
 [patch.crates-io]
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.4.2" }
+
+[patch."https://github.com/fluentlabs-xyz/revm-rwasm.git"]
+op-revm = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
+revm = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
+revm-bytecode = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
+revm-context = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
+revm-context-interface = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
+revm-database = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
+revm-database-interface = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
+revm-inspector = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
+revm-interpreter = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
+revm-precompile = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
+revm-primitives = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
+revm-state = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
+revm-statetest-types = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }

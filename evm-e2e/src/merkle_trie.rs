@@ -2,7 +2,7 @@ use alloy_rlp::{RlpEncodable, RlpMaxEncodedLen};
 use hash_db::Hasher;
 use plain_hasher::PlainHasher;
 use revm::{
-    context::result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction},
+    context::result::{EVMError, ExecutionResult, InvalidTransaction},
     database::{bal::EvmDatabaseError, EmptyDB, PlainAccount, State},
     primitives::{keccak256, Address, Log, B256, U256},
 };
@@ -14,9 +14,9 @@ pub struct TestValidationResult {
     pub state_root: B256,
 }
 
-pub fn compute_test_roots(
+pub fn compute_test_roots<HaltReasonT>(
     exec_result: &Result<
-        ExecutionResult<HaltReason>,
+        ExecutionResult<HaltReasonT>,
         EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
     >,
     db: &State<EmptyDB>,

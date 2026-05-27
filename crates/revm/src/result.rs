@@ -3,7 +3,7 @@ use fluentbase_evm::types::instruction_result_from_exit_code;
 use fluentbase_sdk::{Bytes, ExitCode};
 use revm::{
     context_interface::result::{HaltReason, HaltReasonTr},
-    interpreter::{FrameInput, Gas, InterpreterAction, InterpreterResult},
+    interpreter::{FrameInput, Gas, InstructionResult, InterpreterAction, InterpreterResult},
 };
 
 pub type ExecutionResult = InterpreterResult;
@@ -90,6 +90,30 @@ pub enum RwasmHaltReason {
 impl From<HaltReason> for RwasmHaltReason {
     fn from(value: HaltReason) -> Self {
         Self::Base(value)
+    }
+}
+
+impl From<RwasmHaltReason> for InstructionResult {
+    fn from(value: RwasmHaltReason) -> Self {
+        match value {
+            RwasmHaltReason::Base(reason) => reason.into(),
+            RwasmHaltReason::RootCallOnly => Self::RootCallOnly,
+            RwasmHaltReason::MalformedBuiltinParams => Self::MalformedBuiltinParams,
+            RwasmHaltReason::CallDepthOverflow => Self::CallDepthOverflow,
+            RwasmHaltReason::NonNegativeExitCode => Self::NonNegativeExitCode,
+            RwasmHaltReason::UnknownError => Self::UnknownError,
+            RwasmHaltReason::InputOutputOutOfBounds => Self::InputOutputOutOfBounds,
+            RwasmHaltReason::UnreachableCodeReached => Self::UnreachableCodeReached,
+            RwasmHaltReason::MemoryOutOfBounds => Self::MemoryOutOfBounds,
+            RwasmHaltReason::TableOutOfBounds => Self::TableOutOfBounds,
+            RwasmHaltReason::IndirectCallToNull => Self::IndirectCallToNull,
+            RwasmHaltReason::IntegerDivisionByZero => Self::IntegerDivisionByZero,
+            RwasmHaltReason::IntegerOverflow => Self::IntegerOverflow,
+            RwasmHaltReason::BadConversionToInteger => Self::BadConversionToInteger,
+            RwasmHaltReason::BadSignature => Self::BadSignature,
+            RwasmHaltReason::OutOfFuel => Self::OutOfFuel,
+            RwasmHaltReason::UnknownExternalFunction => Self::UnknownExternalFunction,
+        }
     }
 }
 

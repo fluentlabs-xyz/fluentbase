@@ -3789,7 +3789,7 @@ checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
 [[package]]
 name = "revm"
 version = "34.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -3807,7 +3807,7 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "8.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "bitvec",
  "phf",
@@ -3819,7 +3819,7 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "13.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "bitvec",
  "cfg-if",
@@ -3835,7 +3835,7 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "14.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -3850,7 +3850,7 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "10.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -3863,7 +3863,7 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "9.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "auto_impl",
  "either",
@@ -3876,7 +3876,7 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "15.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -3894,7 +3894,7 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "15.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "auto_impl",
  "either",
@@ -3911,7 +3911,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "32.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -3923,7 +3923,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "32.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -3946,7 +3946,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "22.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -3957,7 +3957,7 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "9.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "alloy-eip7928",
  "bitflags 2.11.0",
@@ -3969,7 +3969,7 @@ dependencies = [
 [[package]]
 name = "revm-statetest-types"
 version = "14.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v103-patched#0912c9c885e40be9fc3e289ca666f67c9407c6c4"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 dependencies = [
  "alloy-eip7928",
  "k256",
@@ -6121,3 +6121,8 @@ dependencies = [
 name = "rwasm"
 version = "0.3.2"
 source = "git+https://github.com/fluentlabs-xyz/rwasm?tag=v0.4.2#2096fdd4e5d8f244798974b6a9da77d025485099"
+
+[[patch.unused]]
+name = "op-revm"
+version = "15.0.0"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"

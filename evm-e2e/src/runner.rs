@@ -5,7 +5,7 @@ use crate::{
     inspector::TraceInspector,
     state::{evm_cache_state, fill_tx_env, fluent_cache_state, prepare_env, GENESIS_CONTRACTS},
 };
-use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm};
+use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm, RwasmHaltReason};
 use fluentbase_sdk::Address;
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use revm::{
@@ -129,8 +129,8 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
     test: &Test,
     expected_output: Option<&Bytes>,
     test_name: &str,
-    exec_result1: &Result<ExecutionResult, ERROR>,
-    exec_result2: &Result<ExecutionResult, ERROR>,
+    exec_result1: &Result<ExecutionResult<HaltReason>, ERROR>,
+    exec_result2: &Result<ExecutionResult<RwasmHaltReason>, ERROR>,
     evm: &mut MainnetEvm<MainnetContext<State<InMemoryDB>>, INSP>,
     evm2: &mut RwasmEvm<RwasmContext<State<InMemoryDB>>, INSP>,
     print_json_outcome: bool,
@@ -521,7 +521,7 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
 
 fn format_evm_result(
     exec_result: &Result<
-        ExecutionResult<HaltReason>,
+        ExecutionResult<RwasmHaltReason>,
         EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
     >,
 ) -> String {
@@ -539,7 +539,7 @@ fn build_json_output(
     test: &Test,
     test_name: &str,
     exec_result: &Result<
-        ExecutionResult<HaltReason>,
+        ExecutionResult<RwasmHaltReason>,
         EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
     >,
     validation: &TestValidationResult,
@@ -566,7 +566,7 @@ fn build_json_output(
 fn validate_exception(
     test: &Test,
     exec_result: &Result<
-        ExecutionResult<HaltReason>,
+        ExecutionResult<RwasmHaltReason>,
         EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
     >,
 ) -> Result<bool, TestErrorKind> {
@@ -580,9 +580,9 @@ fn validate_exception(
     }
 }
 
-fn validate_output(
+fn validate_output<HaltReasonT>(
     expected_output: Option<&Bytes>,
-    actual_result: &ExecutionResult<HaltReason>,
+    actual_result: &ExecutionResult<HaltReasonT>,
 ) -> Result<(), TestErrorKind> {
     if let Some((expected, actual)) = expected_output.zip(actual_result.output()) {
         if expected != actual {
@@ -600,7 +600,7 @@ fn check_fluent_execution(
     expected_output: Option<&Bytes>,
     test_name: &str,
     exec_result: &Result<
-        ExecutionResult<HaltReason>,
+        ExecutionResult<RwasmHaltReason>,
         EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
     >,
     db: &mut State<EmptyDB>,
