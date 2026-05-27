@@ -29,7 +29,7 @@ use fluentbase_revm::{
         primitives::hardfork::SpecId,
         Context, ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
     },
-    DefaultRwasm, RwasmBuilder, RwasmEvm, RwasmFrame, RwasmPrecompiles,
+    DefaultRwasm, RwasmBuilder, RwasmEvm, RwasmFrame, RwasmHaltReason, RwasmPrecompiles,
 };
 use reth_chainspec::ChainSpec;
 use reth_ethereum::engine::EthPayloadAttributes;
@@ -140,6 +140,20 @@ impl<DB: Database, I, PRECOMPILE> DerefMut for FluentEvmExecutor<DB, I, PRECOMPI
     }
 }
 
+fn map_rwasm_result_and_state(result: ResultAndState<RwasmHaltReason>) -> ResultAndState {
+    ResultAndState::new(
+        result.result.map_haltreason(map_rwasm_halt_reason),
+        result.state,
+    )
+}
+
+fn map_rwasm_halt_reason(reason: RwasmHaltReason) -> HaltReason {
+    match reason {
+        RwasmHaltReason::Base(reason) => reason,
+        reason => HaltReason::PrecompileErrorWithContext(format!("{reason:?}")),
+    }
+}
+
 impl<DB, I, PRECOMPILE> Evm for FluentEvmExecutor<DB, I, PRECOMPILE>
 where
     DB: Database,
@@ -164,11 +178,12 @@ where
     }
 
     fn transact_raw(&mut self, tx: Self::Tx) -> Result<ResultAndState, Self::Error> {
-        if self.inspect {
+        let result = if self.inspect {
             self.inner.inspect_tx(tx)
         } else {
             self.inner.transact(tx)
-        }
+        };
+        result.map(map_rwasm_result_and_state)
     }
 
     fn transact_system_call(
@@ -177,7 +192,9 @@ where
         contract: Address,
         data: Bytes,
     ) -> Result<ResultAndState, Self::Error> {
-        self.inner.system_call_with_caller(caller, contract, data)
+        self.inner
+            .system_call_with_caller(caller, contract, data)
+            .map(map_rwasm_result_and_state)
     }
 
     fn db_mut(&mut self) -> &mut Self::DB {
