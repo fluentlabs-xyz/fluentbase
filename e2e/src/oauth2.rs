@@ -1,7 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
+use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{Address, Bytes, PRECOMPILE_OAUTH2_VERIFIER};
 use fluentbase_testing::{EvmTestingContext, TxResultExt};
-use revm::context::result::HaltReason;
 
 #[test]
 fn test_oauth2_should_not_panic() {
@@ -16,6 +16,6 @@ fn test_oauth2_should_not_panic() {
     );
     result
         .expect_halt()
-        .expect_reason(HaltReason::UnreachableCodeReached)
+        .expect_reason(RwasmHaltReason::UnreachableCodeReached)
         .expect_gas_used(3_000_000);
 }

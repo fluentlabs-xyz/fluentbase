@@ -10,8 +10,8 @@ fluentbase-sdk = { path = "../crates/sdk" }
 fluentbase-genesis = { path = "../crates/genesis", default-features = false }
 fluentbase-revm = { path = "../crates/revm", features = ["eip1559-full-compatibility"] }
 
-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v107-patched", default-features = false, features = ["std", "serde-json", "serde"] }
-revm-statetest-types = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v107-patched", default-features = false }
+revm = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107", default-features = false, features = ["std", "serde-json", "serde"] }
+revm-statetest-types = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107", default-features = false }
 
 hash-db = "=0.15"
 hex = "0.4"
@@ -50,3 +50,17 @@ wasmtime = [
     "fluentbase-revm/wasmtime",
     "fluentbase-runtime/wasmtime",
 ]
+
+[patch."https://github.com/fluentlabs-xyz/revm-rwasm.git"]
+revm = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107" }
+revm-bytecode = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107" }
+revm-context = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107" }
+revm-context-interface = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107" }
+revm-database = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107" }
+revm-database-interface = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107" }
+revm-inspector = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107" }
+revm-interpreter = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107" }
+revm-precompile = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107" }
+revm-primitives = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107" }
+revm-state = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107" }
+revm-statetest-types = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason-v107" }

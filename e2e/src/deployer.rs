@@ -1,6 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall, SolValue};
 use fluentbase_contracts::{FLUENTBASE_EXAMPLES_ERC20, FLUENTBASE_EXAMPLES_GREETING};
+use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{constructor::encode_constructor_params, hex, Address, Bytes};
 use fluentbase_testing::EvmTestingContext;
 use revm::context::result::ExecutionResult;
@@ -108,7 +109,7 @@ fn test_locals_amplification_find_limit() {
     }
 }
 
-fn try_deploy(owner: Address, num_funcs: u32) -> Result<(), ExecutionResult> {
+fn try_deploy(owner: Address, num_funcs: u32) -> Result<(), ExecutionResult<RwasmHaltReason>> {
     let wasm = build_max_locals_module(num_funcs);
     let wasm_len = wasm.len();
 

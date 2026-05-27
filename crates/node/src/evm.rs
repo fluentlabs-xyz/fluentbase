@@ -29,7 +29,7 @@ use fluentbase_revm::{
         primitives::hardfork::SpecId,
         Context, ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
     },
-    DefaultRwasm, RwasmBuilder, RwasmEvm, RwasmFrame, RwasmPrecompiles,
+    DefaultRwasm, RwasmBuilder, RwasmEvm, RwasmFrame, RwasmHaltReason, RwasmPrecompiles,
 };
 use reth_chainspec::ChainSpec;
 use reth_ethereum_engine_primitives::{EthBuiltPayload, EthEngineTypes};
@@ -57,6 +57,13 @@ use std::{convert::Infallible, sync::Arc};
 
 /// The Ethereum EVM context type.
 pub type EthRwasmContext<DB> = Context<BlockEnv, TxEnv, CfgEnv, DB>;
+
+fn rwasm_halt_to_eth_halt(halt: RwasmHaltReason) -> HaltReason {
+    match halt {
+        RwasmHaltReason::Base(halt) => halt,
+        halt => HaltReason::PrecompileErrorWithContext(format!("rwasm halt: {halt:?}")),
+    }
+}
 
 /// Ethereum EVM implementation.
 ///
@@ -163,11 +170,18 @@ where
     }
 
     fn transact_raw(&mut self, tx: Self::Tx) -> Result<ResultAndState, Self::Error> {
-        if self.inspect {
+        let result_and_state = if self.inspect {
             self.inner.inspect_tx(tx)
         } else {
             self.inner.transact(tx)
-        }
+        }?;
+
+        Ok(ResultAndState {
+            result: result_and_state
+                .result
+                .map_haltreason(rwasm_halt_to_eth_halt),
+            state: result_and_state.state,
+        })
     }
 
     fn transact_system_call(
@@ -176,7 +190,14 @@ where
         contract: Address,
         data: Bytes,
     ) -> Result<ResultAndState, Self::Error> {
-        self.inner.system_call_with_caller(caller, contract, data)
+        let result_and_state = self.inner.system_call_with_caller(caller, contract, data)?;
+
+        Ok(ResultAndState {
+            result: result_and_state
+                .result
+                .map_haltreason(rwasm_halt_to_eth_halt),
+            state: result_and_state.state,
+        })
     }
 
     fn db_mut(&mut self) -> &mut Self::DB {

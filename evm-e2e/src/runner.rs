@@ -5,7 +5,7 @@ use crate::{
     inspector::TraceInspector,
     state::{evm_cache_state, fill_tx_env, fluent_cache_state, prepare_env, GENESIS_CONTRACTS},
 };
-use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm};
+use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm, RwasmHaltReason};
 use fluentbase_sdk::Address;
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use revm::{
@@ -35,6 +35,40 @@ use std::{
 };
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
+
+trait ToInstructionResult {
+    fn to_instruction_result(&self) -> InstructionResult;
+}
+
+impl ToInstructionResult for HaltReason {
+    fn to_instruction_result(&self) -> InstructionResult {
+        self.clone().into()
+    }
+}
+
+impl ToInstructionResult for RwasmHaltReason {
+    fn to_instruction_result(&self) -> InstructionResult {
+        match self {
+            RwasmHaltReason::Base(reason) => reason.clone().into(),
+            RwasmHaltReason::RootCallOnly => InstructionResult::RootCallOnly,
+            RwasmHaltReason::MalformedBuiltinParams => InstructionResult::MalformedBuiltinParams,
+            RwasmHaltReason::CallDepthOverflow => InstructionResult::CallDepthOverflow,
+            RwasmHaltReason::NonNegativeExitCode => InstructionResult::NonNegativeExitCode,
+            RwasmHaltReason::UnknownError => InstructionResult::UnknownError,
+            RwasmHaltReason::InputOutputOutOfBounds => InstructionResult::InputOutputOutOfBounds,
+            RwasmHaltReason::UnreachableCodeReached => InstructionResult::UnreachableCodeReached,
+            RwasmHaltReason::MemoryOutOfBounds => InstructionResult::MemoryOutOfBounds,
+            RwasmHaltReason::TableOutOfBounds => InstructionResult::TableOutOfBounds,
+            RwasmHaltReason::IndirectCallToNull => InstructionResult::IndirectCallToNull,
+            RwasmHaltReason::IntegerDivisionByZero => InstructionResult::IntegerDivisionByZero,
+            RwasmHaltReason::IntegerOverflow => InstructionResult::IntegerOverflow,
+            RwasmHaltReason::BadConversionToInteger => InstructionResult::BadConversionToInteger,
+            RwasmHaltReason::BadSignature => InstructionResult::BadSignature,
+            RwasmHaltReason::OutOfFuel => InstructionResult::OutOfFuel,
+            RwasmHaltReason::UnknownExternalFunction => InstructionResult::UnknownExternalFunction,
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 #[error("Test {name} failed: {kind}")]
@@ -125,12 +159,17 @@ fn skip_test(path: &Path) -> bool {
 }
 
 #[allow(clippy::too_many_arguments, clippy::single_match)]
-fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
+fn check_evm_execution<
+    ERROR: Debug + ToString + Clone + PartialEq,
+    INSP,
+    HR1: Debug + ToInstructionResult,
+    HR2: Debug + ToInstructionResult,
+>(
     test: &Test,
     expected_output: Option<&Bytes>,
     test_name: &str,
-    exec_result1: &Result<ExecutionResult, ERROR>,
-    exec_result2: &Result<ExecutionResult, ERROR>,
+    exec_result1: &Result<ExecutionResult<HR1>, ERROR>,
+    exec_result2: &Result<ExecutionResult<HR2>, ERROR>,
     evm: &mut MainnetEvm<MainnetContext<State<InMemoryDB>>, INSP>,
     evm2: &mut RwasmEvm<RwasmContext<State<InMemoryDB>>, INSP>,
     print_json_outcome: bool,
@@ -154,8 +193,8 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
                 reason: reason2, ..
             }),
         ) => {
-            let reason1: InstructionResult = reason1.clone().into();
-            let reason2: InstructionResult = reason2.clone().into();
+            let reason1 = reason1.to_instruction_result();
+            let reason2 = reason2.to_instruction_result();
             use InstructionResult::*;
             match (reason1, reason2) {
                 (
@@ -242,7 +281,7 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
         _ => {
             let kind = TestErrorKind::UnexpectedException {
                 expected_exception: test.expect_exception.clone(),
-                got_exception: exec_result1.clone().err().map(|e| e.to_string()),
+                got_exception: exec_result1.as_ref().err().map(|e| e.to_string()),
             };
             print_json_output(Some(kind.to_string()));
             return Err(TestError {
@@ -519,9 +558,9 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
     Ok(())
 }
 
-fn format_evm_result(
+fn format_evm_result<HR: Debug>(
     exec_result: &Result<
-        ExecutionResult<HaltReason>,
+        ExecutionResult<HR>,
         EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
     >,
 ) -> String {
@@ -535,11 +574,11 @@ fn format_evm_result(
     }
 }
 
-fn build_json_output(
+fn build_json_output<HR: Debug>(
     test: &Test,
     test_name: &str,
     exec_result: &Result<
-        ExecutionResult<HaltReason>,
+        ExecutionResult<HR>,
         EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
     >,
     validation: &TestValidationResult,
@@ -563,10 +602,10 @@ fn build_json_output(
     })
 }
 
-fn validate_exception(
+fn validate_exception<HR>(
     test: &Test,
     exec_result: &Result<
-        ExecutionResult<HaltReason>,
+        ExecutionResult<HR>,
         EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
     >,
 ) -> Result<bool, TestErrorKind> {
@@ -580,9 +619,9 @@ fn validate_exception(
     }
 }
 
-fn validate_output(
+fn validate_output<HR>(
     expected_output: Option<&Bytes>,
-    actual_result: &ExecutionResult<HaltReason>,
+    actual_result: &ExecutionResult<HR>,
 ) -> Result<(), TestErrorKind> {
     if let Some((expected, actual)) = expected_output.zip(actual_result.output()) {
         if expected != actual {
@@ -595,12 +634,12 @@ fn validate_output(
     Ok(())
 }
 
-fn check_fluent_execution(
+fn check_fluent_execution<HR: Debug>(
     test: &Test,
     expected_output: Option<&Bytes>,
     test_name: &str,
     exec_result: &Result<
-        ExecutionResult<HaltReason>,
+        ExecutionResult<HR>,
         EVMError<EvmDatabaseError<Infallible>, InvalidTransaction>,
     >,
     db: &mut State<EmptyDB>,
