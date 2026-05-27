@@ -16145,11 +16145,11 @@ version = "14.0.0"
 source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
 
 [[patch.unused]]
-name = "revm-statetest-types"
-version = "14.0.0"
-source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
-
-[[patch.unused]]
 name = "tiny-keccak"
 version = "2.0.2"
 source = "git+https://github.com/fluentlabs-xyz/tiny-keccak.git?branch=rwasm#8cc319a6f53f3275b90871a2037a7a7999940995"
+
+[[patch.unused]]
+name = "revm-statetest-types"
+version = "14.0.0"
+source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
