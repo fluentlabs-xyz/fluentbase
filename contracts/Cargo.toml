@@ -67,7 +67,6 @@ fluentbase-testing = { path = "../crates/testing" }
 #ecdsa = { path = "../../signatures/ecdsa" }
 
 [patch."https://github.com/fluentlabs-xyz/revm-rwasm.git"]
-op-revm = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
 revm = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
 revm-bytecode = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
 revm-context = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
@@ -79,4 +78,3 @@ revm-interpreter = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch 
 revm-precompile = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
 revm-primitives = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
 revm-state = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }
-revm-statetest-types = { git = "https://github.com/hedwig0x/revm-rwasm.git", branch = "fix/extend-rwasm-halt-reason" }

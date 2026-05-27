@@ -6116,13 +6116,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "rwasm"
-version = "0.3.2"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?tag=v0.4.2#2096fdd4e5d8f244798974b6a9da77d025485099"
-
-[[patch.unused]]
-name = "op-revm"
-version = "15.0.0"
-source = "git+https://github.com/hedwig0x/revm-rwasm.git?branch=fix%2Fextend-rwasm-halt-reason#2072a2448bfc55c4a2b74a14deb4c3fe83e2e249"
