@@ -287,7 +287,7 @@ impl EvmTestingContext {
         &mut self,
         deployer: Address,
         init_bytecode: Bytes,
-    ) -> Result<Address, ExecutionResult> {
+    ) -> Result<Address, ExecutionResult<RwasmHaltReason>> {
         let (contract_address, _) = self.deploy_evm_tx_with_gas_result(deployer, init_bytecode)?;
         Ok(contract_address)
     }
@@ -296,7 +296,7 @@ impl EvmTestingContext {
         &mut self,
         deployer: Address,
         init_bytecode: Bytes,
-    ) -> Result<(Address, u64), ExecutionResult> {
+    ) -> Result<(Address, u64), ExecutionResult<RwasmHaltReason>> {
         let nonce = self.nonce(deployer);
         let result = TxBuilder::create(self, deployer, init_bytecode.clone().into()).exec();
         if !result.is_success() {
@@ -458,7 +458,7 @@ impl<'a> TxBuilder<'a> {
             let result = evm.transact_commit(self.tx.clone()).unwrap();
             let new_db = &mut evm.journaled_state.database;
             self.ctx.db = take(new_db);
-            result
+            result.map_haltreason(RwasmHaltReason::from)
         } else {
             let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, PRAGUE);
             context.cfg = self.ctx.cfg.clone();
