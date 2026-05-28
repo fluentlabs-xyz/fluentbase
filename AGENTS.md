@@ -28,6 +28,20 @@ SVM-related crates are currently unstable and excluded from the top-level worksp
 - Preserve `no_std` constraints where crates are configured for it.
 - Be careful with genesis/runtime changes: they may be chain-breaking and require release/upgrade planning.
 
+## Security Policy
+
+This project maintains a security policy in [SECURITY.md](./SECURITY.md).
+All AI coding agents must read and follow `SECURITY.md` before making security-sensitive changes.
+It covers:
+
+- Vulnerability reporting procedures
+- Supported branches for security reports
+- Threat model and trust boundaries
+- Secure coding guidelines for Fluentbase runtime and contract work
+- Constraints for AI coding agents
+
+Do not duplicate the full security rules here; keep `SECURITY.md` as the single source of truth.
+
 ## Linear Task Tracking
 
 Agents must track assigned work in Linear. If Linear access is not connected, stop before task work
