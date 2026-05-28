@@ -2,7 +2,7 @@
 use fluentbase_evm::types::instruction_result_from_exit_code;
 use fluentbase_sdk::{Bytes, ExitCode};
 use revm::{
-    context_interface::result::HaltReason,
+    context_interface::result::{HaltReason, OutOfGasError},
     interpreter::{FrameInput, Gas, InstructionResult, InterpreterAction, InterpreterResult},
 };
 
@@ -112,7 +112,90 @@ impl From<InstructionResult> for RwasmHaltReason {
             InstructionResult::BadSignature => Self::BadSignature,
             InstructionResult::OutOfFuel => Self::OutOfFuel,
             InstructionResult::UnknownExternalFunction => Self::UnknownExternalFunction,
-            result => Self::Base(result.into()),
+            result => Self::Base(base_halt_reason_from_instruction_result(result)),
         }
+    }
+}
+
+fn base_halt_reason_from_instruction_result(value: InstructionResult) -> HaltReason {
+    match value {
+        InstructionResult::CallTooDeep => HaltReason::CallTooDeep,
+        InstructionResult::OutOfFunds => HaltReason::OutOfFunds,
+        InstructionResult::OutOfGas => HaltReason::OutOfGas(OutOfGasError::Basic),
+        InstructionResult::MemoryLimitOOG => HaltReason::OutOfGas(OutOfGasError::MemoryLimit),
+        InstructionResult::MemoryOOG => HaltReason::OutOfGas(OutOfGasError::Memory),
+        InstructionResult::PrecompileOOG => HaltReason::OutOfGas(OutOfGasError::Precompile),
+        InstructionResult::InvalidOperandOOG => HaltReason::OutOfGas(OutOfGasError::InvalidOperand),
+        InstructionResult::ReentrancySentryOOG => {
+            HaltReason::OutOfGas(OutOfGasError::ReentrancySentry)
+        }
+        InstructionResult::OpcodeNotFound | InstructionResult::InvalidImmediateEncoding => {
+            HaltReason::OpcodeNotFound
+        }
+        InstructionResult::CallNotAllowedInsideStatic => HaltReason::CallNotAllowedInsideStatic,
+        InstructionResult::StateChangeDuringStaticCall => HaltReason::StateChangeDuringStaticCall,
+        InstructionResult::InvalidFEOpcode => HaltReason::InvalidFEOpcode,
+        InstructionResult::InvalidJump => HaltReason::InvalidJump,
+        InstructionResult::NotActivated => HaltReason::NotActivated,
+        InstructionResult::StackUnderflow => HaltReason::StackUnderflow,
+        InstructionResult::StackOverflow => HaltReason::StackOverflow,
+        InstructionResult::OutOfOffset | InstructionResult::InputOutputOutOfBounds => {
+            HaltReason::OutOfOffset
+        }
+        InstructionResult::CreateCollision => HaltReason::CreateCollision,
+        InstructionResult::OverflowPayment | InstructionResult::IntegerOverflow => {
+            HaltReason::OverflowPayment
+        }
+        InstructionResult::PrecompileError => HaltReason::PrecompileError,
+        InstructionResult::NonceOverflow => HaltReason::NonceOverflow,
+        InstructionResult::CreateContractSizeLimit => HaltReason::CreateContractSizeLimit,
+        InstructionResult::CreateContractStartingWithEF => HaltReason::CreateContractStartingWithEF,
+        InstructionResult::CreateInitCodeSizeLimit => HaltReason::CreateInitCodeSizeLimit,
+        InstructionResult::RootCallOnly => {
+            HaltReason::PrecompileErrorWithContext("RootCallOnly".into())
+        }
+        InstructionResult::MalformedBuiltinParams => {
+            HaltReason::PrecompileErrorWithContext("MalformedBuiltinParams".into())
+        }
+        InstructionResult::CallDepthOverflow => HaltReason::CallTooDeep,
+        InstructionResult::NonNegativeExitCode => {
+            HaltReason::PrecompileErrorWithContext("NonNegativeExitCode".into())
+        }
+        InstructionResult::UnknownError => {
+            HaltReason::PrecompileErrorWithContext("UnknownError".into())
+        }
+        InstructionResult::UnreachableCodeReached => {
+            HaltReason::PrecompileErrorWithContext("UnreachableCodeReached".into())
+        }
+        InstructionResult::MemoryOutOfBounds => {
+            HaltReason::PrecompileErrorWithContext("MemoryOutOfBounds".into())
+        }
+        InstructionResult::TableOutOfBounds => {
+            HaltReason::PrecompileErrorWithContext("TableOutOfBounds".into())
+        }
+        InstructionResult::IndirectCallToNull => {
+            HaltReason::PrecompileErrorWithContext("IndirectCallToNull".into())
+        }
+        InstructionResult::IntegerDivisionByZero => {
+            HaltReason::PrecompileErrorWithContext("IntegerDivisionByZero".into())
+        }
+        InstructionResult::BadConversionToInteger => {
+            HaltReason::PrecompileErrorWithContext("BadConversionToInteger".into())
+        }
+        InstructionResult::BadSignature => {
+            HaltReason::PrecompileErrorWithContext("BadSignature".into())
+        }
+        InstructionResult::OutOfFuel => HaltReason::OutOfGas(OutOfGasError::Basic),
+        InstructionResult::UnknownExternalFunction => {
+            HaltReason::PrecompileErrorWithContext("UnknownExternalFunction".into())
+        }
+        InstructionResult::Stop
+        | InstructionResult::Return
+        | InstructionResult::SelfDestruct
+        | InstructionResult::Revert
+        | InstructionResult::CreateInitCodeStartingEF00
+        | InstructionResult::InvalidEOFInitCode
+        | InstructionResult::FatalExternalError
+        | InstructionResult::InvalidExtDelegateCallTarget => HaltReason::PrecompileError,
     }
 }
