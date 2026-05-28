@@ -361,6 +361,9 @@ fluentbase-testing = { path = "./crates/testing" }
 fluentbase-types = { path = "./crates/types" }
 
 [patch.crates-io]
+# rwasm
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm.git", rev = "be1dd30c9f632d9c385d0066980de0db7229b079" }
+
 # revm
 revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched" }
 revm-bytecode = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v103-patched" }
