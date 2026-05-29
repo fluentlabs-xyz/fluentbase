@@ -17,4 +17,34 @@ pub enum Error {
 
     #[error("proof of possession verification failed")]
     InvalidPoP,
+
+    #[error("failed reading key file from disk: {0}")]
+    IoRead(#[from] std::io::Error),
+
+    #[error("file contents not valid hex")]
+    InvalidHex,
+
+    #[error("file contents wrong length (expected 32 bytes after hex-decode)")]
+    InvalidLength,
+
+    #[error("signer_idx {signer_idx} is out of range for committee of {committee_len} validators")]
+    SignerIndexOutOfRange {
+        signer_idx: u32,
+        committee_len: usize,
+    },
+
+    #[error("evidence epoch {evidence_epoch} does not match committee epoch {committee_epoch}")]
+    EpochMismatch {
+        evidence_epoch: u64,
+        committee_epoch: u64,
+    },
+
+    #[error("EIP-2335 keystore: malformed JSON or unsupported version")]
+    InvalidKeystore,
+
+    #[error("EIP-2335 keystore: KDF derivation failed")]
+    KeystoreKdf,
+
+    #[error("EIP-2335 keystore: checksum mismatch (wrong password or tampered file)")]
+    KeystoreChecksum,
 }

@@ -4,17 +4,61 @@
 //! of the *key* type (`PeerPubkey` = `ed25519::PublicKey`). The resulting
 //! `Participant` index in every Attestation/Certificate/evidence equals the
 //! validator's position in this sorted list. Downstream consumers
-//! (`01_staking_sol/signer_index_resolution`) MUST mirror this ordering.
+//! (the on-chain signer-index resolution in `Staking.sol`) MUST mirror
+//! this ordering.
 
-use commonware_utils::ordered::BiMap;
+use commonware_utils::{ordered::BiMap, TryCollect};
 
 use crate::{keys::ValidatorBlsKeypair, BlsPubkey, PeerPubkey, Scheme};
+
+/// Per-epoch consensus committee: an epoch identifier paired with the
+/// commonware-sorted `BiMap<PeerPubkey, BlsPubkey>` that defines the
+/// Simplex Participant index for that epoch.
+///
+/// Invariant carried by [`Self::from_pairs`]: every pubkey in the resulting
+/// BiMap has had its Proof-of-Possession verified on-chain at
+/// `Staking.setConsensusKeys` time. This type trusts the on-chain contract
+/// and does not re-verify PoP at construction. The test-only
+/// [`Self::from_unverified`] constructor relaxes this contract.
+#[derive(Clone, Debug)]
+pub struct EpochCommittee {
+    /// On-chain epoch identifier — used by `evidence::extract_from_*`
+    /// to assert the evidence's claimed epoch matches the committee.
+    pub epoch: u64,
+    /// Commonware-sorted participant BiMap; signer indices in
+    /// `Activity::Conflicting*` reference slots in this BiMap.
+    pub bimap: BiMap<PeerPubkey, BlsPubkey>,
+}
+
+impl EpochCommittee {
+    /// Trusted constructor: caller guarantees the pubkeys passed PoP
+    /// on-chain. Production callers go through
+    /// `fluentbase_consensus::scheme::epoch_committee_from_snapshot`
+    /// (reads a frozen on-chain committee at a finalized hash).
+    pub fn from_pairs<I>(
+        epoch: u64,
+        pairs: I,
+    ) -> Result<Self, commonware_utils::ordered::Error>
+    where
+        I: IntoIterator<Item = (PeerPubkey, BlsPubkey)>,
+    {
+        let bimap: BiMap<PeerPubkey, BlsPubkey> = pairs.into_iter().try_collect()?;
+        Ok(Self { epoch, bimap })
+    }
+
+    /// Test-only constructor — does NOT carry the PoP-verified invariant.
+    /// Marked `doc(hidden)` to discourage production use.
+    #[doc(hidden)]
+    pub fn from_unverified(epoch: u64, bimap: BiMap<PeerPubkey, BlsPubkey>) -> Self {
+        Self { epoch, bimap }
+    }
+}
 
 /// Build a signer-capable scheme.
 ///
 /// Takes `&ValidatorBlsKeypair` rather than a raw `Private` so the secret never
 /// leaves this crate's encapsulation: the scalar clone happens internally and
-/// `ValidatorBlsKeypair::secret()` stays `pub(crate)` (Q-PL-1 resolution).
+/// `ValidatorBlsKeypair::secret()` stays `pub(crate)`.
 ///
 /// Returns `None` if the keypair's public key is not present in `participants`
 /// — Commonware uses this case to express “you're not a member of this

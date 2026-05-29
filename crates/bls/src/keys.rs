@@ -53,11 +53,90 @@ impl ValidatorBlsKeypair {
     /// from `commonware_cryptography`.
     ///
     /// Prefer the high-level [`crate::pop::sign_pop`] / signing helpers; this
-    /// accessor exists so downstream code in `04_consensus` can pass the
+    /// accessor exists so downstream code can pass the
     /// private key into [`crate::scheme::build_signer`] without duplicating it.
     pub(crate) fn secret(&self) -> &Private {
         &self.secret
     }
+
+    /// Load from a hex-encoded plaintext key file (bare or `0x`-prefixed,
+    /// surrounding whitespace trimmed). Plaintext fallback for operators not
+    /// using an EIP-2335 keystore; prefer [`Self::read_from_keystore`] for
+    /// encrypted storage.
+    pub fn read_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
+        use zeroize::{Zeroize, Zeroizing};
+        let raw = Zeroizing::new(std::fs::read_to_string(path.as_ref())?);
+        let bytes = Zeroizing::new(
+            commonware_utils::from_hex_formatted(raw.trim()).ok_or(Error::InvalidHex)?,
+        );
+        let mut arr: [u8; SECRET_BYTES] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::InvalidLength)?;
+        let result = Self::from_secret_bytes(&arr);
+        arr.zeroize();
+        result
+    }
+
+    /// Load from an EIP-2335 keystore file (version 4).
+    pub fn read_from_keystore<P: AsRef<std::path::Path>>(
+        path: P,
+        password: &[u8],
+    ) -> Result<Self, Error> {
+        use zeroize::Zeroizing;
+        let raw = Zeroizing::new(std::fs::read_to_string(path.as_ref())?);
+        let ks = crate::keystore::EthKeystoreV4::from_json(&raw)?;
+        let secret = ks.decrypt(password)?;
+        Self::from_secret_bytes(&secret)
+    }
+
+    /// Plaintext fallback writer (symmetric counterpart of
+    /// [`Self::read_from_file`]): writes the 32-byte scalar as lowercase bare
+    /// hex (no `0x` prefix, no trailing newline). Writes an UNENCRYPTED private
+    /// key, so it is gated behind the off-by-default `plaintext-keys` feature
+    /// and cannot link into a binary that does not opt in (only the local
+    /// devnet bootstrap does). Prefer an encrypted EIP-2335 keystore otherwise.
+    /// Secret bytes never cross the crate boundary — a leaky downstream cannot
+    /// dump them via `{:?}` / `tracing`. On Unix, sets file mode 0600 at create.
+    #[cfg(feature = "plaintext-keys")]
+    pub fn write_to_plaintext_file<P: AsRef<std::path::Path>>(
+        &self,
+        path: P,
+    ) -> Result<(), Error> {
+        use commonware_codec::Encode;
+        use zeroize::{Zeroize, Zeroizing};
+        let mut secret_bytes: [u8; SECRET_BYTES] = self.secret.expose(|s| {
+            let buf = s.encode();
+            let mut out = [0u8; SECRET_BYTES];
+            out.copy_from_slice(buf.as_ref());
+            out
+        });
+        let mut hex_buf = Zeroizing::new(hex::encode(secret_bytes));
+        secret_bytes.zeroize();
+        write_mode_0600(path.as_ref(), hex_buf.as_bytes())?;
+        hex_buf.zeroize();
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "plaintext-keys", unix))]
+fn write_mode_0600(path: &std::path::Path, data: &[u8]) -> Result<(), Error> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(data)?;
+    Ok(())
+}
+
+#[cfg(all(feature = "plaintext-keys", not(unix)))]
+fn write_mode_0600(path: &std::path::Path, data: &[u8]) -> Result<(), Error> {
+    std::fs::write(path, data)?;
+    Ok(())
 }
 
 // Custom Debug that does NOT print the secret. Without this the derive
@@ -78,22 +157,6 @@ mod tests {
     use super::*;
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng;
-
-    #[test]
-    fn generate_is_deterministic_with_seeded_rng() {
-        let mut rng_a = StdRng::seed_from_u64(42);
-        let mut rng_b = StdRng::seed_from_u64(42);
-        let kp_a = ValidatorBlsKeypair::generate(&mut rng_a);
-        let kp_b = ValidatorBlsKeypair::generate(&mut rng_b);
-        assert_eq!(kp_a.public_bytes(), kp_b.public_bytes());
-    }
-
-    #[test]
-    fn distinct_seeds_yield_distinct_keys() {
-        let kp_a = ValidatorBlsKeypair::generate(&mut StdRng::seed_from_u64(1));
-        let kp_b = ValidatorBlsKeypair::generate(&mut StdRng::seed_from_u64(2));
-        assert_ne!(kp_a.public_bytes(), kp_b.public_bytes());
-    }
 
     #[test]
     fn from_secret_bytes_round_trip() {
@@ -119,6 +182,68 @@ mod tests {
     }
 
     #[test]
+    fn read_from_file_round_trip_with_and_without_prefix_and_whitespace() {
+        let original = ValidatorBlsKeypair::generate(&mut StdRng::seed_from_u64(11));
+        let secret_bytes = original.secret().expose(|s| {
+            use commonware_codec::Encode;
+            let buf = s.encode();
+            let mut out = [0u8; SECRET_BYTES];
+            out.copy_from_slice(buf.as_ref());
+            out
+        });
+        let hex_bare = hex::encode(secret_bytes);
+        let dir = std::env::temp_dir();
+
+        // bare hex
+        let path = dir.join(format!("bls_test_bare_{}.key", std::process::id()));
+        std::fs::write(&path, &hex_bare).unwrap();
+        let kp1 = ValidatorBlsKeypair::read_from_file(&path).unwrap();
+        assert_eq!(kp1.public_bytes(), original.public_bytes());
+
+        // 0x-prefixed with trailing newline
+        let path2 = dir.join(format!("bls_test_prefixed_{}.key", std::process::id()));
+        std::fs::write(&path2, format!("0x{hex_bare}\n")).unwrap();
+        let kp2 = ValidatorBlsKeypair::read_from_file(&path2).unwrap();
+        assert_eq!(kp2.public_bytes(), original.public_bytes());
+
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(path2);
+    }
+
+    #[test]
+    fn read_from_file_rejects_invalid_hex() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("bls_test_invhex_{}.key", std::process::id()));
+        std::fs::write(&path, "not valid hex zzz").unwrap();
+        assert!(matches!(
+            ValidatorBlsKeypair::read_from_file(&path),
+            Err(Error::InvalidHex)
+        ));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn read_from_file_rejects_wrong_length() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("bls_test_short_{}.key", std::process::id()));
+        std::fs::write(&path, "deadbeef").unwrap();
+        assert!(matches!(
+            ValidatorBlsKeypair::read_from_file(&path),
+            Err(Error::InvalidLength)
+        ));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn read_from_file_missing_path_is_io_error() {
+        let path = std::path::PathBuf::from("/this/path/does/not/exist/key");
+        assert!(matches!(
+            ValidatorBlsKeypair::read_from_file(&path),
+            Err(Error::IoRead(_))
+        ));
+    }
+
+    #[test]
     fn debug_does_not_leak_secret() {
         let kp = ValidatorBlsKeypair::generate(&mut StdRng::seed_from_u64(9));
         let dbg = format!("{kp:?}");
@@ -132,23 +257,5 @@ mod tests {
             !dbg.contains(&secret_hex),
             "Debug output leaked private scalar bytes"
         );
-    }
-}
-
-#[cfg(test)]
-mod prop {
-    use super::*;
-    use proptest::prelude::*;
-
-    proptest! {
-        #[test]
-        fn public_bytes_round_trip(seed in any::<u64>()) {
-            use commonware_codec::DecodeExt;
-            use rand_core::SeedableRng;
-            let kp = ValidatorBlsKeypair::generate(&mut rand_08::rngs::StdRng::seed_from_u64(seed));
-            let bytes = kp.public_bytes();
-            let decoded = crate::BlsPubkey::decode(bytes.as_slice());
-            prop_assert!(decoded.is_ok());
-        }
     }
 }

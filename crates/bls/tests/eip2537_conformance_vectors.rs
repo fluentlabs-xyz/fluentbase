@@ -11,6 +11,9 @@
 //!   cargo test -p fluentbase-bls --test eip2537_conformance_vectors \
 //!       -- --ignored print_corpus --nocapture
 
+mod common;
+
+use common::{pubkey_eip2537_to_compressed, signature_eip2537_to_compressed};
 use commonware_codec::Encode;
 use commonware_cryptography::bls12381::primitives::{
     ops,
@@ -21,7 +24,7 @@ use fluentbase_bls::{
     encoding::{pubkey_compressed_to_eip2537, signature_compressed_to_eip2537},
     fluent_namespace,
     keys::ValidatorBlsKeypair,
-    pop::sign_pop,
+    pop::{sign_pop, verify_pop},
 };
 use rand_08::rngs::StdRng;
 use rand_core::SeedableRng;
@@ -126,11 +129,9 @@ fn build(r: &Recipe) -> ([u8; 256], [u8; 128], [u8; 128], bool) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // COMMITTED CONSTANTS — single source of truth, hand-mirrored into Solidity.
 // Lowercase, no 0x prefix (so they paste directly into Solidity `hex"..."`).
-// (Filled by running the `print_corpus` ignored test once; reviewed in PR.)
-// ─────────────────────────────────────────────────────────────────────────────
+// (Filled by running the `print_corpus` ignored test once.)
 
 const NEG_G2_GENERATOR_EIP2537: &str = "00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000d1b3cc2c7027888be51d9ef691d77bcb679afda66c73f17f9ee3837a55024f78c71363275a75d75d86bab79f74782aa0000000000000000000000000000000013fa4d4a0ad8b1ce186ed5061789213d993923066dddaf1040bc3ff59f825c78df74f2d75467e25e0f55f8a00fa030ed";
 
@@ -171,6 +172,22 @@ fn conformance_corpus_matches_committed_constants() {
         assert_eq!(sig, dehex::<128>(e.2), "sig drift: {}", r.label);
         assert_eq!(hm, dehex::<128>(e.3), "hm drift: {}", r.label);
         assert_eq!(valid, e.4, "expected_valid mismatch: {}", r.label);
+
+        // The TamperedNamespace recipe signs under ns(chain_id) but encodes
+        // `hm` under ns(chain_id + 1); to make verify_pop diverge equally,
+        // verify against the same tampered namespace.
+        let ns = match r.kind {
+            Kind::TamperedNamespace => fluent_namespace(r.chain_id + 1),
+            _ => fluent_namespace(r.chain_id),
+        };
+        let pk_comp = pubkey_eip2537_to_compressed(&pk).expect("pinned pk must convert");
+        let sig_comp = signature_eip2537_to_compressed(&sig).expect("pinned sig must convert");
+        let verify_ok = verify_pop(&pk_comp, &ns, &sig_comp).is_ok();
+        assert_eq!(
+            verify_ok, valid,
+            "verify_pop disagrees with recipe `{}`: got={}, expected={}",
+            r.label, verify_ok, valid,
+        );
     }
 }
 

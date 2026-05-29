@@ -2,11 +2,13 @@
 //!
 //! We use the stock Commonware function `ops::sign_proof_of_possession::<MinSig>`
 //! unchanged. The signed message body is `union_unique(namespace, pubkey.encode())`
-//! under the DST `BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_`. The Solidity
-//! mirror in `01_staking_sol/on_chain_pop` reconstructs this byte layout exactly.
+//! under the DST `BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_`. The on-chain
+//! Solidity verifier reconstructs this byte layout exactly (pinned by
+//! `crates/bls/tests/hash_to_g1_conformance.rs`).
 //!
 //! Address-binding (Sui-style `PoP_msg = pubkey || validator_address`) was
-//! considered and rejected — see `02_bls/research_questions.md` Q-NEW-2.
+//! considered and rejected: rogue-key safety already comes from PoP, and
+//! address binding adds no security here.
 
 use commonware_codec::{DecodeExt, Encode};
 use commonware_cryptography::bls12381::primitives::ops;

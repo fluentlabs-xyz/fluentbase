@@ -1,10 +1,12 @@
-//! Conversion between blst compressed (z-cash) and EIP-2537 uncompressed
-//! BLS12-381 point encodings, for the MinSig variant.
+//! Forward conversion from blst compressed (z-cash) to EIP-2537 uncompressed
+//! BLS12-381 point encodings, for the MinSig variant. This is the direction the
+//! slasher needs to build `slashEquivocation*` calldata. The inverse
+//! (EIP-2537 → compressed) is test-only and lives in `tests/common/mod.rs`.
 //!
-//! - Pubkey ∈ G2: 96 B compressed (Commonware `.encode()`) ↔ 256 B EIP-2537.
-//! - Signature ∈ G1: 48 B compressed ↔ 128 B EIP-2537.
+//! - Pubkey ∈ G2: 96 B compressed (Commonware `.encode()`) → 256 B EIP-2537.
+//! - Signature ∈ G1: 48 B compressed → 128 B EIP-2537.
 //!
-//! # Byte-order facts (see `research.md`)
+//! # Byte-order facts
 //!
 //! blst `serialize` emits **G1 = `X || Y`** and
 //! **G2 = `X.c1 || X.c0 || Y.c1 || Y.c0`** (imaginary coefficient first,
@@ -34,18 +36,6 @@ fn put_padded(dst: &mut [u8], slot: usize, fp: &[u8]) {
     dst[slot * 64 + PAD..slot * 64 + 64].copy_from_slice(fp);
 }
 
-/// Read a 48-byte Fp out of an EIP-2537 64-byte slot, rejecting non-zero pad.
-#[inline]
-fn get_padded(src: &[u8], slot: usize) -> Result<&[u8], ()> {
-    let base = slot * 64;
-    if src[base..base + PAD].iter().any(|&b| b != 0) {
-        return Err(()); // malformed EIP-2537: top 16 bytes must be zero
-    }
-    Ok(&src[base + PAD..base + 64])
-}
-
-// ---------- Signature (G1) ----------
-
 /// G1 compressed (48 B, z-cash) → EIP-2537 uncompressed (128 B).
 pub fn signature_compressed_to_eip2537(
     sig: &[u8; SIGNATURE_BYTES],
@@ -59,22 +49,6 @@ pub fn signature_compressed_to_eip2537(
     put_padded(&mut out, 1, &ser[FP..2 * FP]); // y
     Ok(out)
 }
-
-/// EIP-2537 uncompressed (128 B) → G1 compressed (48 B, z-cash).
-pub fn signature_eip2537_to_compressed(
-    eip: &[u8; SIGNATURE_EIP2537_BYTES],
-) -> Result<[u8; SIGNATURE_BYTES], Error> {
-    let x = get_padded(eip, 0).map_err(|_| Error::InvalidSignature)?;
-    let y = get_padded(eip, 1).map_err(|_| Error::InvalidSignature)?;
-    let mut ser = [0u8; 96];
-    ser[0..FP].copy_from_slice(x);
-    ser[FP..2 * FP].copy_from_slice(y);
-    let point = Signature::deserialize(&ser).map_err(|_| Error::InvalidSignature)?;
-    point.validate(true).map_err(|_| Error::InvalidSignature)?;
-    Ok(point.compress())
-}
-
-// ---------- PublicKey (G2) ----------
 
 /// G2 compressed (96 B, z-cash) → EIP-2537 uncompressed (256 B).
 pub fn pubkey_compressed_to_eip2537(
@@ -90,24 +64,6 @@ pub fn pubkey_compressed_to_eip2537(
     put_padded(&mut out, 2, &ser[3 * FP..4 * FP]); // y.c0  ← blst[144..192]
     put_padded(&mut out, 3, &ser[2 * FP..3 * FP]); // y.c1  ← blst[96..144]
     Ok(out)
-}
-
-/// EIP-2537 uncompressed (256 B) → G2 compressed (96 B, z-cash).
-pub fn pubkey_eip2537_to_compressed(
-    eip: &[u8; PUBKEY_EIP2537_BYTES],
-) -> Result<[u8; PUBKEY_BYTES], Error> {
-    let xc0 = get_padded(eip, 0).map_err(|_| Error::InvalidPubkey)?;
-    let xc1 = get_padded(eip, 1).map_err(|_| Error::InvalidPubkey)?;
-    let yc0 = get_padded(eip, 2).map_err(|_| Error::InvalidPubkey)?;
-    let yc1 = get_padded(eip, 3).map_err(|_| Error::InvalidPubkey)?;
-    let mut ser = [0u8; 192]; // blst order: X.c1 X.c0 Y.c1 Y.c0
-    ser[0..FP].copy_from_slice(xc1);
-    ser[FP..2 * FP].copy_from_slice(xc0);
-    ser[2 * FP..3 * FP].copy_from_slice(yc1);
-    ser[3 * FP..4 * FP].copy_from_slice(yc0);
-    let point = PublicKey::deserialize(&ser).map_err(|_| Error::InvalidPubkey)?;
-    point.validate().map_err(|_| Error::InvalidPubkey)?;
-    Ok(point.compress())
 }
 
 #[cfg(test)]
@@ -148,39 +104,9 @@ mod tests {
     }
 
     #[test]
-    fn pubkey_roundtrip() {
-        for seed in 0..64u64 {
-            let comp = kp(seed).public_bytes();
-            let eip = pubkey_compressed_to_eip2537(&comp).unwrap();
-            let back = pubkey_eip2537_to_compressed(&eip).unwrap();
-            assert_eq!(comp, back, "seed {seed}");
-        }
-    }
-
-    #[test]
-    fn signature_roundtrip() {
-        use crate::{namespace::fluent_namespace, pop::sign_pop};
-        for seed in 0..64u64 {
-            let k = kp(seed);
-            let sig = sign_pop(&k, &fluent_namespace(20994));
-            let eip = signature_compressed_to_eip2537(&sig).unwrap();
-            let back = signature_eip2537_to_compressed(&eip).unwrap();
-            assert_eq!(sig, back, "seed {seed}");
-        }
-    }
-
-    #[test]
-    fn rejects_garbage_and_bad_pad() {
+    fn rejects_garbage_pubkey() {
         assert!(matches!(
             pubkey_compressed_to_eip2537(&[0xFFu8; PUBKEY_BYTES]),
-            Err(Error::InvalidPubkey)
-        ));
-        // non-zero pad in an otherwise-valid EIP-2537 buffer is rejected
-        let k = kp(1);
-        let mut eip = pubkey_compressed_to_eip2537(&k.public_bytes()).unwrap();
-        eip[0] = 0x01; // dirty the leading pad of slot 0
-        assert!(matches!(
-            pubkey_eip2537_to_compressed(&eip),
             Err(Error::InvalidPubkey)
         ));
     }
@@ -194,24 +120,5 @@ mod tests {
         let mut inf_g1 = [0u8; SIGNATURE_BYTES];
         inf_g1[0] = 0xC0;
         assert!(signature_compressed_to_eip2537(&inf_g1).is_err());
-    }
-}
-
-#[cfg(test)]
-mod prop {
-    use super::*;
-    use crate::keys::ValidatorBlsKeypair;
-    use proptest::prelude::*;
-    use rand_08::rngs::StdRng;
-    use rand_core::SeedableRng;
-
-    proptest! {
-        #[test]
-        fn pubkey_roundtrip_prop(seed in any::<u64>()) {
-            let comp = ValidatorBlsKeypair::generate(
-                &mut StdRng::seed_from_u64(seed)).public_bytes();
-            let eip = pubkey_compressed_to_eip2537(&comp).unwrap();
-            prop_assert_eq!(comp, pubkey_eip2537_to_compressed(&eip).unwrap());
-        }
     }
 }

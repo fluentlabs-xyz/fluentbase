@@ -48,7 +48,7 @@ fn registration_to_signing_happy_path() {
 
     // Phase 2: build a signer scheme for validator 0 — proves the scheme
     // wraps the same key material that produced the PoP. Note we pass
-    // `&blses[0]` — the secret never leaves the crate (Q-PL-1 resolution).
+    // `&blses[0]` — the secret never leaves the crate.
     let _signer: Scheme = scheme::build_signer(&ns, bimap.clone(), &blses[0])
         .expect("validator 0 must be able to sign in committee");
 

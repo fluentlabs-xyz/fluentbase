@@ -13,7 +13,7 @@
 //!   field and must never be re-exported.
 //! - **Stock PoP**: [`pop::sign_pop`] delegates straight to
 //!   `ops::sign_proof_of_possession::<MinSig>`. Address binding was considered
-//!   and explicitly rejected (see `02_bls/research_questions.md` Q-NEW-2).
+//!   and explicitly rejected.
 //! - **Attestation handling**: `Attestation<S>` is *not* exposed by this crate.
 //!   The Simplex Engine pipeline calls `verify_attestations` (with subgroup
 //!   check) before any attestation contributes to a `Certificate`. If a future
@@ -33,7 +33,9 @@ use commonware_cryptography::ed25519;
 
 pub mod encoding;
 pub mod error;
+pub mod evidence;
 pub mod keys;
+pub mod keystore;
 pub mod pop;
 pub mod scheme;
 
@@ -41,6 +43,7 @@ mod namespace;
 
 pub use error::Error;
 pub use namespace::fluent_namespace;
+pub use scheme::EpochCommittee;
 
 /// BLS variant fixed to MinSig.
 pub type Variant = MinSig;
