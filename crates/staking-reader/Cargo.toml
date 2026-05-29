@@ -1,0 +1,39 @@
+[package]
+name = "fluentbase-staking-reader"
+version.workspace = true
+description = "In-process reader for the Fluent staking system contract (DPoS validator set + epoch committee)"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+fluentbase-bls = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-sol-types = { workspace = true }
+commonware-codec = { workspace = true, features = ["std"] }
+commonware-utils = { workspace = true, features = ["std"] }
+commonware-storage = { workspace = true }
+commonware-runtime = { workspace = true }
+bytes = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+# reth read/exec surface (already workspace deps used by crates/node)
+reth-storage-api = { workspace = true, default-features = false }
+reth-evm = { workspace = true, default-features = false }
+reth-revm = { workspace = true, default-features = false }
+reth-primitives-traits = { workspace = true, default-features = false }
+alloy-evm = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+commonware-cryptography = { workspace = true, features = ["std"] }
+commonware-math = { workspace = true, features = ["std"] }
+rand_08 = { workspace = true }
+rand_core = { workspace = true }
