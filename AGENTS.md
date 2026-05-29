@@ -87,6 +87,13 @@ from the author in Linear comments before implementation. When a task is in `Bac
 agent must refine the task, label and estimate it where possible, move it to `Todo`, and unassign it
 before implementation.
 
+If a Linear issue is estimated greater than 5 story points, decompose it before implementation.
+Do this during Backlog intake or Research, before any `In Progress` implementation work begins.
+Each child issue should include concrete context, expected outcome, acceptance criteria, relevant
+links, labels, and an estimate no greater than 5 where possible. Link the child issues from the
+parent, summarize the split in a Linear comment, and leave the parent in the appropriate planning or
+review status until the manager moves the approved implementation work to `In Progress`.
+
 ## Branch and Git Standards
 
 - Default remote base branch is `origin/devel` in this repo. Rebase/start branch work from the latest
