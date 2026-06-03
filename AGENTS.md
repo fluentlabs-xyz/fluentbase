@@ -1,10 +1,12 @@
 # AGENTS.md - Fluentbase Development Guide
 
-This file is for coding agents working in this repository. Follow it unless a more specific user instruction or a nested `AGENTS.md` overrides it.
+This file is for coding agents working in this repository. Follow it unless a more specific user instruction or a nested
+`AGENTS.md` overrides it.
 
 ## Project Snapshot
 
-Fluentbase is a Rust workspace for the Fluent L2 execution stack. The core idea is blended execution: EVM/SVM/WASM/UST compatibility layers converge into rWasm IR and a single proof-friendly runtime/STF.
+Fluentbase is a Rust workspace for the Fluent L2 execution stack. The core idea is blended execution: EVM/SVM/WASM/UST
+compatibility layers converge into rWasm IR and a single proof-friendly runtime/STF.
 
 Important areas:
 
@@ -105,27 +107,27 @@ review status until the manager moves the approved implementation work to `In Pr
 - Non-release branches should be squashed into the base branch unless the maintainer explicitly
   requests a different integration strategy.
 - Use Conventional Commits for commits and PR titles:
-  - `feat: ...`
-  - `fix: ...`
-  - `docs: ...`
-  - `refactor: ...`
-  - `test: ...`
-  - `chore: ...`
+    - `feat: ...`
+    - `fix: ...`
+    - `docs: ...`
+    - `refactor: ...`
+    - `test: ...`
+    - `chore: ...`
 - Branch names must use Conventional Commit types only, and should be short and typed, for example:
-  - `fix/evm-gas-accounting`
-  - `feat/fixture-tx-export`
-  - `docs/runtime-upgrade-notes`
+    - `fix/evm-gas-accounting`
+    - `feat/fixture-tx-export`
+    - `docs/runtime-upgrade-notes`
 - After opening/updating a PR, check CI until it is green or clearly report pending/failing checks as a blocker.
 
 ## Rust Style
 
 - Rust edition: 2021.
-- Workspace rust version in `Cargo.toml`: `1.92.0`; CI currently installs stable.
+- Workspace rust version in `Cargo.toml`: `1.93.1`; CI currently installs stable.
 - Formatting is controlled by `.rustfmt.toml`:
-  - max width 100
-  - crate-level import granularity
-  - grouped imports
-  - Unix newlines
+    - max width 100
+    - crate-level import granularity
+    - grouped imports
+    - Unix newlines
 - Run `cargo fmt`/`cargo fmt --check` for touched Rust code.
 - Clippy warnings are errors in CI (`-D warnings`).
 - Prefer explicit, deterministic behavior. Fluentbase code often runs in VM/proving/runtime-sensitive contexts.
@@ -182,14 +184,17 @@ Use targeted versions of these commands when full suites are too expensive, and 
 
 - `evm-e2e` is a separate crate. Do not assume root workspace commands include it.
 - Reuse existing fixture plumbing instead of duplicating parsing logic:
-  - `resolve_externalized_bytecodes`
-  - `prepare_env`
-  - `fill_tx_env`
-  - `execute_fluent_test_suite`
-  - `execute_evm_test_suite`
-- Many fixture transaction fields are computed after environment preparation and post-index selection. If exporting/replaying transactions, derive from the final `TxEnv`, not raw JSON alone.
-- Ethereum state-test `post` cases usually start from the same prestate independently; do not treat all post entries as one sequential blockchain script unless explicitly modeled that way.
-- For reproducibility, include chain id, fork/spec, block env, prestate assumptions, raw signed txs if available, and expected state/log/output roots.
+    - `resolve_externalized_bytecodes`
+    - `prepare_env`
+    - `fill_tx_env`
+    - `execute_fluent_test_suite`
+    - `execute_evm_test_suite`
+- Many fixture transaction fields are computed after environment preparation and post-index selection. If
+  exporting/replaying transactions, derive from the final `TxEnv`, not raw JSON alone.
+- Ethereum state-test `post` cases usually start from the same prestate independently; do not treat all post entries as
+  one sequential blockchain script unless explicitly modeled that way.
+- For reproducibility, include chain id, fork/spec, block env, prestate assumptions, raw signed txs if available, and
+  expected state/log/output roots.
 
 ## Node / Reth Integration Work
 
@@ -206,9 +211,11 @@ Expand to tests/clippy if behavior or public interfaces changed.
 
 ## Dependencies and Generated Artifacts
 
-- Use `cargo update` only when dependency updates are the task. The Makefile has an `update-deps` target for revm/rwasm across root, contracts, examples, and evm-e2e.
+- Use `cargo update` only when dependency updates are the task. The Makefile has an `update-deps` target for revm/rwasm
+  across root, contracts, examples, and evm-e2e.
 - Do not edit lockfiles casually.
-- Be cautious with generated contract/genesis artifacts. If a build script or checked-in generated file changes, explain why and how it was regenerated.
+- Be cautious with generated contract/genesis artifacts. If a build script or checked-in generated file changes, explain
+  why and how it was regenerated.
 
 ## PR Reporting Checklist
 
