@@ -159,7 +159,7 @@ review status until the manager moves the approved implementation work to `In Pr
 ## Rust Style
 
 - Rust edition: 2021.
-- Workspace rust version in `Cargo.toml`: `1.92.0`; CI currently installs stable.
+- Workspace rust version in `Cargo.toml`: `1.93.1`; CI currently installs stable.
 - Formatting is controlled by `.rustfmt.toml`:
     - max width 100
     - crate-level import granularity
