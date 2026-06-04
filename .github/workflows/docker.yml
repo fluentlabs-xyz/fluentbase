@@ -13,6 +13,8 @@ env:
   DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/fluent
   DOCKER_USERNAME: ${{ github.actor }}
   CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CC: clang
+  CXX: clang++
 
 jobs:
   build-rc:
