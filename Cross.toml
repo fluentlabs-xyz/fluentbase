@@ -26,4 +26,4 @@ env.passthrough = [
 ]
 
 [build.env]
-passthrough = ["JEMALLOC_SYS_WITH_LG_PAGE"]
+passthrough = ["JEMALLOC_SYS_WITH_LG_PAGE", "CC", "CXX"]
