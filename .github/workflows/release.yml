@@ -31,7 +31,7 @@ jobs:
 
   extract-version:
     name: extract version
-    runs-on: ubuntu-amd64-8core
+    runs-on: ubuntu-latest
     steps:
       - name: Extract and sanitize version
         id: extract_version
@@ -46,7 +46,7 @@ jobs:
   check-version:
     name: check version
     if: ${{ github.event.inputs.dry_run != 'true' }}
-    runs-on: ubuntu-amd64-8core
+    runs-on: ubuntu-latest
     needs: extract-version
     steps:
       - uses: actions/checkout@v6
@@ -62,7 +62,8 @@ jobs:
 
   build-genesis:
     name: build genesis
-    runs-on: ubuntu-amd64-8core
+    runs-on: ubuntu-latest
+
     needs: extract-version
     permissions:
       contents: read
@@ -191,7 +192,7 @@ jobs:
       matrix:
         configs:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-amd64-8core
+            os: ubuntu-latest
             profile: maxperf
             allow_fail: false
         #  - target: x86_64-apple-darwin
@@ -216,13 +217,13 @@ jobs:
             artifact_binary: fluent
             features: >-
               wasmtime,jemalloc,otlp,otlp-logs,reth-revm/portable,js-tracer,
-              keccak-cache-global,asm-keccak,min-debug-logs,rocksdb
+              keccak-cache-global,asm-keccak,min-debug-logs
           - command: build
             binary: fluent
             artifact_binary: fluent-rwasm
             features: >-
               jemalloc,otlp,otlp-logs,reth-revm/portable,js-tracer,
-              keccak-cache-global,asm-keccak,min-debug-logs,rocksdb
+              keccak-cache-global,asm-keccak,min-debug-logs
     steps:
       - uses: actions/checkout@v6
       - uses: rui314/setup-mold@v1
@@ -285,7 +286,7 @@ jobs:
     name: draft release
     needs: [ build, build-genesis, extract-version ]
     if: ${{ github.event.inputs.dry_run != 'true' }}
-    runs-on: ubuntu-amd64-8core
+    runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.extract-version.outputs.VERSION }}
     permissions:
