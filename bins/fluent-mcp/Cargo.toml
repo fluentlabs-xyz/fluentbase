@@ -1,0 +1,18 @@
+[package]
+name = "fluent-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Read-only Model Context Protocol adapter for Fluent developer context"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["derive", "env"] }
+reqwest = { workspace = true, features = ["blocking", "json"] }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }

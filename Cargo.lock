@@ -4421,6 +4421,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluent-mcp"
+version = "1.2.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fluentbase-build"
 version = "1.2.1"
 dependencies = [
