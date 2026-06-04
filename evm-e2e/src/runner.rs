@@ -916,6 +916,30 @@ pub fn resolve_externalized_bytecodes(v: &mut Value, base_dir: &Path) {
     }
 }
 
+fn parse_u64_json(value: &Value) -> Option<u64> {
+    match value {
+        Value::Number(number) => number.as_u64(),
+        Value::String(value) => {
+            if let Some(hex_value) = value.strip_prefix("0x") {
+                u64::from_str_radix(hex_value, 16).ok()
+            } else {
+                value.parse().ok()
+            }
+        }
+        _ => None,
+    }
+}
+
+fn fixture_chain_id(fixture: &Value) -> Option<u64> {
+    fixture.as_object()?.values().find_map(|unit| {
+        let config = unit.get("config")?;
+        config
+            .get("chainid")
+            .or_else(|| config.get("chainId"))
+            .and_then(parse_u64_json)
+    })
+}
+
 pub fn execute_fluent_test_suite(
     path: &Path,
     elapsed: &Arc<Mutex<Duration>>,
@@ -932,6 +956,7 @@ pub fn execute_fluent_test_suite(
 
     let mut fixture: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     resolve_externalized_bytecodes(&mut fixture, path.parent().unwrap());
+    let fixture_chain_id = fixture_chain_id(&fixture);
 
     let suite: TestSuite = serde_json::from_value(fixture).map_err(|e| TestError {
         name: path.to_string_lossy().into_owned(),
@@ -946,8 +971,9 @@ pub fn execute_fluent_test_suite(
         let cache_state = evm_cache_state(&unit);
         let (mut cfg_env, block_env, mut tx_env) = prepare_env(&unit, &name)?;
 
-        // TODO(dmitry123): Once revm testing unit has config use it instead of path check
-        if path.to_str().unwrap().contains("testnet") {
+        if let Some(chain_id) = fixture_chain_id {
+            cfg_env.chain_id = chain_id;
+        } else if path.to_str().unwrap().contains("testnet") {
             cfg_env.chain_id = 20994;
         } else if path.to_str().unwrap().contains("devnet") {
             cfg_env.chain_id = 20993;
