@@ -18,6 +18,8 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/fluent
   DOCKER_IMAGE_NAME_URL: https://ghcr.io/${{ github.repository_owner }}/fluent
   RUSTC_WRAPPER: "sccache"
+  CC: clang
+  CXX: clang++
 
 jobs:
   dry-run:
