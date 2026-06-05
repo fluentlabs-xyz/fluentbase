@@ -50,15 +50,12 @@ use commonware_consensus::{
 use commonware_cryptography::{certificate, Digest as DigestTrait};
 use commonware_parallel::Sequential;
 use commonware_utils::ordered::BiMap;
-use rand_core::CryptoRngCore;
-
-use crate::{
+use fluentbase_bls::{
     encoding::{pubkey_compressed_to_eip2537, signature_compressed_to_eip2537},
-    error::Error,
-    scheme::EpochCommittee,
-    BlsPubkey, PeerPubkey, Scheme, PUBKEY_BYTES, PUBKEY_EIP2537_BYTES, SIGNATURE_BYTES,
-    SIGNATURE_EIP2537_BYTES,
+    BlsPubkey, EpochCommittee, Error, PeerPubkey, Scheme, PUBKEY_BYTES, PUBKEY_EIP2537_BYTES,
+    SIGNATURE_BYTES, SIGNATURE_EIP2537_BYTES,
 };
+use rand_core::CryptoRngCore;
 
 /// Discriminator for the three `slashEquivocation*` entry points.
 ///
@@ -152,10 +149,7 @@ fn pk_compressed(
 /// before extracting — protects against passing a mis-aligned committee
 /// to the per-variant extractors.
 #[inline]
-fn check_epoch_match(
-    ev: &impl Epochable,
-    committee: &EpochCommittee,
-) -> Result<(), Error> {
+fn check_epoch_match(ev: &impl Epochable, committee: &EpochCommittee) -> Result<(), Error> {
     let evidence_epoch = ev.epoch().get();
     if evidence_epoch != committee.epoch {
         return Err(Error::EpochMismatch {
@@ -182,10 +176,17 @@ where
     // private; Write/Read traits are public — round-trip is the only
     // path to the inner sig material).
     let mut buf: &[u8] = &evidence;
-    let n1 = Notarize::<Scheme, D>::read_cfg(&mut buf, &())
-        .map_err(|_| Error::InvalidSignature)?;
-    let n2 = Notarize::<Scheme, D>::read_cfg(&mut buf, &())
-        .map_err(|_| Error::InvalidSignature)?;
+    let n1 = Notarize::<Scheme, D>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
+    let n2 = Notarize::<Scheme, D>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
+
+    // Re-establish the equivocation structural invariant before paying gas
+    // (mirrors commonware `ConflictingNotarize::new`/`read_cfg`, which `verify`
+    // does NOT re-check). Defends against a future non-`read_cfg` ingress (e.g.
+    // `Arbitrary`/direct construction) slashing an honest validator. Compare
+    // `round` (epoch+view), not just view.
+    if n1.signer() != n2.signer() || n1.round() != n2.round() || n1.proposal == n2.proposal {
+        return Err(Error::NonConflictingEvidence);
+    }
 
     let sig1_g1 = n1
         .attestation
@@ -224,10 +225,13 @@ where
     let evidence = ev.encode().to_vec();
 
     let mut buf: &[u8] = &evidence;
-    let f1 = Finalize::<Scheme, D>::read_cfg(&mut buf, &())
-        .map_err(|_| Error::InvalidSignature)?;
-    let f2 = Finalize::<Scheme, D>::read_cfg(&mut buf, &())
-        .map_err(|_| Error::InvalidSignature)?;
+    let f1 = Finalize::<Scheme, D>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
+    let f2 = Finalize::<Scheme, D>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
+
+    // Structural invariant (mirrors `ConflictingFinalize::new`/`read_cfg`).
+    if f1.signer() != f2.signer() || f1.round() != f2.round() || f1.proposal == f2.proposal {
+        return Err(Error::NonConflictingEvidence);
+    }
 
     let sig1_g1 = f1
         .attestation
@@ -266,10 +270,17 @@ where
     let evidence = ev.encode().to_vec();
 
     let mut buf: &[u8] = &evidence;
-    let nullify = Nullify::<Scheme>::read_cfg(&mut buf, &())
-        .map_err(|_| Error::InvalidSignature)?;
-    let finalize = Finalize::<Scheme, D>::read_cfg(&mut buf, &())
-        .map_err(|_| Error::InvalidSignature)?;
+    let nullify =
+        Nullify::<Scheme>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
+    let finalize =
+        Finalize::<Scheme, D>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
+
+    // Structural invariant (mirrors `NullifyFinalize::new`/`read_cfg`): same
+    // signer + same round. NO proposals-differ check — a Nullify has no
+    // proposal; adding one would over-reject valid evidence.
+    if nullify.signer() != finalize.signer() || nullify.round != finalize.round() {
+        return Err(Error::NonConflictingEvidence);
+    }
 
     let sig1_g1 = nullify
         .attestation
@@ -326,15 +337,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_signer};
     use commonware_codec::DecodeExt as _;
-    use commonware_consensus::simplex::types::Proposal;
-    use commonware_consensus::types::{Epoch, Round, View};
+    use commonware_consensus::{
+        simplex::types::Proposal,
+        types::{Epoch, Round, View},
+    };
     use commonware_cryptography::{
         ed25519::PrivateKey as Ed25519PrivateKey, sha256::Digest as Sha256Digest, Signer,
     };
     use commonware_math::algebra::Random;
     use commonware_utils::TryCollect;
+    use fluentbase_bls::{fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_signer};
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng;
 
@@ -345,7 +358,9 @@ mod tests {
         n: usize,
     ) -> (Vec<ValidatorBlsKeypair>, BiMap<PeerPubkey, BlsPubkey>) {
         let mut rng = StdRng::seed_from_u64(seed);
-        let peer_sks: Vec<_> = (0..n).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
+        let peer_sks: Vec<_> = (0..n)
+            .map(|_| Ed25519PrivateKey::random(&mut rng))
+            .collect();
         let bls_kps: Vec<_> = (0..n)
             .map(|_| ValidatorBlsKeypair::generate(&mut rng))
             .collect();
@@ -417,7 +432,13 @@ mod tests {
         let err = extract_from_conflicting_notarize(&ev, &empty_committee)
             .expect_err("must reject signer_idx >= empty bimap");
         assert!(
-            matches!(err, Error::SignerIndexOutOfRange { committee_len: 0, .. }),
+            matches!(
+                err,
+                Error::SignerIndexOutOfRange {
+                    committee_len: 0,
+                    ..
+                }
+            ),
             "got: {err:?}"
         );
     }
@@ -434,7 +455,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::EpochMismatch { evidence_epoch: 7, committee_epoch: 8 }
+                Error::EpochMismatch {
+                    evidence_epoch: 7,
+                    committee_epoch: 8
+                }
             ),
             "got: {err:?}"
         );
@@ -447,7 +471,8 @@ mod tests {
 
         // Build a verifier scheme over the same committee so the activity
         // is verifiable in principle.
-        let scheme = crate::scheme::build_verifier(&fluent_namespace(TEST_CHAIN_ID), bimap);
+        let scheme =
+            fluentbase_bls::scheme::build_verifier(&fluent_namespace(TEST_CHAIN_ID), bimap);
         let mut rng = StdRng::seed_from_u64(0xdeadbeef);
 
         // Sanity: clean activity must verify.

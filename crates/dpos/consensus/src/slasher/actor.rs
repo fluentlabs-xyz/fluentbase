@@ -11,33 +11,29 @@
 //! re-delivered ONLY after a process restart — `recv` advances `read_pos`
 //! unconditionally, so there is no automatic in-session retry.
 
-use std::{collections::HashSet, sync::Arc};
-
-use alloy_primitives::{Address, Bytes, B256};
-use alloy_sol_types::SolCall;
-use commonware_consensus::types::Epoch as ConsensusEpoch;
-use commonware_consensus::{
-    simplex::types::{Activity, Attributable},
-    Epochable,
+use super::evidence::{
+    extract_from_conflicting_finalize, extract_from_conflicting_notarize,
+    extract_from_nullify_finalize, verify_pre_submit, SlashCallArgs, SlashKind,
 };
-use commonware_cryptography::certificate::Provider as CertProvider;
-use commonware_runtime::{spawn_cell, Clock, ContextCell, Handle, Metrics, Spawner, Storage};
-use commonware_storage::queue::shared as wal_queue;
-use fluentbase_bls::{
-    evidence::{
-        extract_from_conflicting_finalize, extract_from_conflicting_notarize,
-        extract_from_nullify_finalize, verify_pre_submit, SlashCallArgs, SlashKind,
-    },
-    Scheme as BlsScheme,
-};
-use tokio::sync::{mpsc, Mutex as TokioMutex};
-use tracing::{debug, error, info, instrument, warn};
-
 use crate::{
     digest::Digest,
     scheme::epoch_committee_from_snapshot,
     slasher::ingress::{Mailbox, Message},
 };
+use alloy_primitives::{Address, Bytes, B256};
+use alloy_sol_types::SolCall;
+use commonware_consensus::{
+    simplex::types::{Activity, Attributable},
+    types::Epoch as ConsensusEpoch,
+    Epochable,
+};
+use commonware_cryptography::certificate::Provider as CertProvider;
+use commonware_runtime::{spawn_cell, Clock, ContextCell, Handle, Metrics, Spawner, Storage};
+use commonware_storage::queue::shared as wal_queue;
+use fluentbase_bls::Scheme as BlsScheme;
+use std::{collections::HashSet, sync::Arc};
+use tokio::sync::{mpsc, Mutex as TokioMutex};
+use tracing::{debug, error, info, instrument, warn};
 
 // Solidity ABI bindings for the three slash entry points.
 alloy_sol_types::sol! {
@@ -89,27 +85,37 @@ pub trait StaleEpochFallback: Send + Sync + 'static {
 /// trait object so its `Config` doesn't need to carry the cache's
 /// storage-backend generic. dpos.rs constructs this wrapper over the
 /// same `Arc<Mutex<...>>` instance threaded into `EpochTransition`.
-/// **** перепроверь where мне кажется можно сделать красивее
-pub struct SharedCacheFallback<EStorage>(
-    pub Arc<TokioMutex<fluentbase_staking_reader::ValidatorSetCache<EStorage>>>,
-)
-where
-    EStorage: commonware_runtime::Storage
-        + commonware_runtime::Metrics
-        + commonware_runtime::BufferPooler
-        + Send
-        + Sync
-        + 'static;
-
-impl<EStorage> StaleEpochFallback for SharedCacheFallback<EStorage>
-where
-    EStorage: commonware_runtime::Storage
-        + commonware_runtime::Metrics
-        + commonware_runtime::BufferPooler
-        + Send
-        + Sync
-        + 'static,
+/// Storage backend usable by [`fluentbase_staking_reader::ValidatorSetCache`]
+/// (`Storage + Metrics + BufferPooler`) AND shareable across the slasher's
+/// async task (the `Send + Sync + 'static` the boxed `get_by_epoch` future
+/// needs). Collapses the otherwise-repeated six-line bound into one name; the
+/// blanket impl makes any qualifying runtime context satisfy it automatically,
+/// so the `dpos.rs` construction site needs no annotation.
+pub trait CacheBackend:
+    commonware_runtime::Storage
+    + commonware_runtime::Metrics
+    + commonware_runtime::BufferPooler
+    + Send
+    + Sync
+    + 'static
 {
+}
+
+impl<T> CacheBackend for T where
+    T: commonware_runtime::Storage
+        + commonware_runtime::Metrics
+        + commonware_runtime::BufferPooler
+        + Send
+        + Sync
+        + 'static
+{
+}
+
+pub struct SharedCacheFallback<EStorage: CacheBackend>(
+    pub Arc<TokioMutex<fluentbase_staking_reader::ValidatorSetCache<EStorage>>>,
+);
+
+impl<EStorage: CacheBackend> StaleEpochFallback for SharedCacheFallback<EStorage> {
     fn get_by_epoch<'a>(
         &'a self,
         epoch: u64,
@@ -339,7 +345,11 @@ where
             // so this is unreachable today; degrade gracefully (log + skip) rather
             // than panic the accountability actor if a future variant desyncs
             // `from_activity` from this match.
-            _ => return Err(eyre::eyre!("SlashKind/Activity variant mismatch ({kind:?}); skipping")),
+            _ => {
+                return Err(eyre::eyre!(
+                    "SlashKind/Activity variant mismatch ({kind:?}); skipping"
+                ))
+            }
         };
 
         let signer_idx = activity_signer_idx(&activity)
@@ -562,7 +572,6 @@ fn decode_wal_payload(bytes: &[u8]) -> Result<(Address, Vec<u8>), eyre::Report> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_bls::evidence::SlashKind;
 
     fn make_address(byte: u8) -> Address {
         let mut a = [0u8; 20];

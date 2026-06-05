@@ -12,19 +12,20 @@
 //! is mirrored by-hand into the Solidity test in the SAME PR.
 //!
 //! Regenerate after a deliberate Commonware/blst bump:
-//! `cargo test -p fluentbase-bls --test equivocation_evidence_conformance -- --ignored print_corpus --nocapture`
+//! `cargo test -p fluentbase-consensus --test equivocation_evidence_conformance -- --ignored print_corpus --nocapture`
 
 use commonware_codec::{DecodeExt, Encode};
-use commonware_consensus::simplex::types::{
-    ConflictingFinalize, ConflictingNotarize, Finalize, Notarize, NullifyFinalize, Proposal,
+use commonware_consensus::{
+    simplex::types::{
+        ConflictingFinalize, ConflictingNotarize, Finalize, Notarize, NullifyFinalize, Proposal,
+    },
+    types::{Epoch, Round, View},
 };
-use commonware_consensus::types::{Epoch, Round, View};
-use commonware_cryptography::ed25519::PrivateKey as Ed25519PrivateKey;
-use commonware_cryptography::sha256::Digest as Sha256Digest;
-use commonware_cryptography::Signer;
+use commonware_cryptography::{
+    ed25519::PrivateKey as Ed25519PrivateKey, sha256::Digest as Sha256Digest, Signer,
+};
 use commonware_math::algebra::Random;
-use commonware_utils::ordered::BiMap;
-use commonware_utils::TryCollect;
+use commonware_utils::{ordered::BiMap, TryCollect};
 use fluentbase_bls::{
     encoding::{pubkey_compressed_to_eip2537, signature_compressed_to_eip2537},
     fluent_namespace,
@@ -53,7 +54,12 @@ fn committee(seed: u64) -> (Vec<ValidatorBlsKeypair>, BiMap<PeerPubkey, BlsPubke
     let bimap: BiMap<_, _> = peer_sks
         .iter()
         .zip(bls_kps.iter())
-        .map(|(p, b)| (p.public_key(), BlsPubkey::decode(b.public_bytes().as_slice()).unwrap()))
+        .map(|(p, b)| {
+            (
+                p.public_key(),
+                BlsPubkey::decode(b.public_bytes().as_slice()).unwrap(),
+            )
+        })
         .try_collect()
         .unwrap();
     (bls_kps, bimap)
@@ -359,14 +365,22 @@ fn assert_row(v: &Vector, e: &Expected) {
 #[test]
 fn conformance_corpus_matches_committed_constants() {
     let got = all();
-    assert_eq!(got.len(), EXPECTED.len(), "EXPECTED and recipes out of sync");
+    assert_eq!(
+        got.len(),
+        EXPECTED.len(),
+        "EXPECTED and recipes out of sync"
+    );
     for (v, e) in got.iter().zip(EXPECTED.iter()) {
         assert_row(v, e);
     }
     let cm = committee_dump();
     assert_eq!(cm.len(), COMMITTEE.len(), "COMMITTEE out of sync");
     for (i, ((p, b), e)) in cm.iter().zip(COMMITTEE.iter()).enumerate() {
-        assert_eq!((p.as_str(), b.as_str()), (e.0, e.1), "committee drift at {i}");
+        assert_eq!(
+            (p.as_str(), b.as_str()),
+            (e.0, e.1),
+            "committee drift at {i}"
+        );
     }
     let pop = committee_pop_dump();
     assert_eq!(pop.len(), COMMITTEE_POP.len(), "COMMITTEE_POP out of sync");
@@ -381,21 +395,25 @@ fn conformance_corpus_matches_committed_constants() {
 
 #[test]
 fn helper_extract_args_matches_pinned_corpus() {
-    use fluentbase_bls::evidence::{
+    use fluentbase_consensus::slasher::evidence::{
         extract_from_conflicting_finalize, extract_from_conflicting_notarize,
         extract_from_nullify_finalize, SlashKind,
     };
 
     let (v_cn, cn, bimap_cn) = conflicting_notarize();
     let committee_cn = fluentbase_bls::EpochCommittee::from_unverified(EPOCH, bimap_cn);
-    let args_cn =
-        extract_from_conflicting_notarize(&cn, &committee_cn).expect("extract conflicting_notarize");
+    let args_cn = extract_from_conflicting_notarize(&cn, &committee_cn)
+        .expect("extract conflicting_notarize");
     assert_eq!(
         hex::encode(&args_cn.evidence),
         v_cn.evidence,
         "evidence drift (conflicting_notarize)"
     );
-    assert_eq!(hex::encode(args_cn.pk_uncompressed), v_cn.pk_unc, "pk_unc drift");
+    assert_eq!(
+        hex::encode(args_cn.pk_uncompressed),
+        v_cn.pk_unc,
+        "pk_unc drift"
+    );
     assert_eq!(
         hex::encode(args_cn.sig1_uncompressed),
         v_cn.sig1_unc,
@@ -410,8 +428,8 @@ fn helper_extract_args_matches_pinned_corpus() {
 
     let (v_cf, cf, bimap_cf) = conflicting_finalize();
     let committee_cf = fluentbase_bls::EpochCommittee::from_unverified(EPOCH, bimap_cf);
-    let args_cf =
-        extract_from_conflicting_finalize(&cf, &committee_cf).expect("extract conflicting_finalize");
+    let args_cf = extract_from_conflicting_finalize(&cf, &committee_cf)
+        .expect("extract conflicting_finalize");
     assert_eq!(hex::encode(&args_cf.evidence), v_cf.evidence);
     assert_eq!(hex::encode(args_cf.pk_uncompressed), v_cf.pk_unc);
     assert_eq!(hex::encode(args_cf.sig1_uncompressed), v_cf.sig1_unc);
@@ -438,15 +456,15 @@ fn helper_extract_args_matches_pinned_corpus() {
 fn helper_extract_then_abi_encode_matches_pinned_calldata() {
     use alloy_primitives::Bytes as AlloyBytes;
     use alloy_sol_types::{sol, SolCall};
-    use fluentbase_bls::evidence::{
+    use fluentbase_consensus::slasher::evidence::{
         extract_from_conflicting_finalize, extract_from_conflicting_notarize,
         extract_from_nullify_finalize, SlashCallArgs, SlashKind,
     };
 
     // Mirror of the bindings in `crates/consensus/src/slasher/actor.rs` — pinned
-    // here so a future signature change in the consensus crate is caught at the
-    // bls boundary too (the slasher is the only on-chain caller, but the
-    // contract ABI must move in lockstep with `SlashCallArgs`).
+    // here so a future Solidity signature change is caught at the conformance
+    // boundary (the slasher is the only on-chain caller, but the contract ABI
+    // must move in lockstep with `SlashCallArgs`).
     sol! {
         function slashEquivocationNotarize(bytes evidence, bytes pkUncompressed,
             bytes sig1Uncompressed, bytes sig2Uncompressed) external;
@@ -495,12 +513,20 @@ fn helper_extract_then_abi_encode_matches_pinned_calldata() {
         &slashEquivocationNotarizeCall::SELECTOR,
         "conflicting_notarize selector drift",
     );
-    let decoded_cn =
-        slashEquivocationNotarizeCall::abi_decode(&calldata_cn).expect("decode cn");
+    let decoded_cn = slashEquivocationNotarizeCall::abi_decode(&calldata_cn).expect("decode cn");
     assert_eq!(decoded_cn.evidence.as_ref(), &args_cn.evidence[..]);
-    assert_eq!(decoded_cn.pkUncompressed.as_ref(), &args_cn.pk_uncompressed[..]);
-    assert_eq!(decoded_cn.sig1Uncompressed.as_ref(), &args_cn.sig1_uncompressed[..]);
-    assert_eq!(decoded_cn.sig2Uncompressed.as_ref(), &args_cn.sig2_uncompressed[..]);
+    assert_eq!(
+        decoded_cn.pkUncompressed.as_ref(),
+        &args_cn.pk_uncompressed[..]
+    );
+    assert_eq!(
+        decoded_cn.sig1Uncompressed.as_ref(),
+        &args_cn.sig1_uncompressed[..]
+    );
+    assert_eq!(
+        decoded_cn.sig2Uncompressed.as_ref(),
+        &args_cn.sig2_uncompressed[..]
+    );
 
     let (_v_cf, cf, bimap_cf) = conflicting_finalize();
     let committee_cf = fluentbase_bls::EpochCommittee::from_unverified(EPOCH, bimap_cf);
@@ -511,12 +537,20 @@ fn helper_extract_then_abi_encode_matches_pinned_calldata() {
         &slashEquivocationFinalizeCall::SELECTOR,
         "conflicting_finalize selector drift",
     );
-    let decoded_cf =
-        slashEquivocationFinalizeCall::abi_decode(&calldata_cf).expect("decode cf");
+    let decoded_cf = slashEquivocationFinalizeCall::abi_decode(&calldata_cf).expect("decode cf");
     assert_eq!(decoded_cf.evidence.as_ref(), &args_cf.evidence[..]);
-    assert_eq!(decoded_cf.pkUncompressed.as_ref(), &args_cf.pk_uncompressed[..]);
-    assert_eq!(decoded_cf.sig1Uncompressed.as_ref(), &args_cf.sig1_uncompressed[..]);
-    assert_eq!(decoded_cf.sig2Uncompressed.as_ref(), &args_cf.sig2_uncompressed[..]);
+    assert_eq!(
+        decoded_cf.pkUncompressed.as_ref(),
+        &args_cf.pk_uncompressed[..]
+    );
+    assert_eq!(
+        decoded_cf.sig1Uncompressed.as_ref(),
+        &args_cf.sig1_uncompressed[..]
+    );
+    assert_eq!(
+        decoded_cf.sig2Uncompressed.as_ref(),
+        &args_cf.sig2_uncompressed[..]
+    );
 
     let (_v_nf, nf, bimap_nf) = nullify_finalize();
     let committee_nf = fluentbase_bls::EpochCommittee::from_unverified(EPOCH, bimap_nf);
@@ -530,9 +564,18 @@ fn helper_extract_then_abi_encode_matches_pinned_calldata() {
     let decoded_nf =
         slashEquivocationNullifyFinalizeCall::abi_decode(&calldata_nf).expect("decode nf");
     assert_eq!(decoded_nf.evidence.as_ref(), &args_nf.evidence[..]);
-    assert_eq!(decoded_nf.pkUncompressed.as_ref(), &args_nf.pk_uncompressed[..]);
-    assert_eq!(decoded_nf.sig1Uncompressed.as_ref(), &args_nf.sig1_uncompressed[..]);
-    assert_eq!(decoded_nf.sig2Uncompressed.as_ref(), &args_nf.sig2_uncompressed[..]);
+    assert_eq!(
+        decoded_nf.pkUncompressed.as_ref(),
+        &args_nf.pk_uncompressed[..]
+    );
+    assert_eq!(
+        decoded_nf.sig1Uncompressed.as_ref(),
+        &args_nf.sig1_uncompressed[..]
+    );
+    assert_eq!(
+        decoded_nf.sig2Uncompressed.as_ref(),
+        &args_nf.sig2_uncompressed[..]
+    );
 
     // All three selectors must be distinct (a name collision would route
     // to the wrong Solidity branch).

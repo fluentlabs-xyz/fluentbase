@@ -20,8 +20,6 @@
 //!      pre-submit fails → no sink call.
 //!    - `slasher_dedup_skips_already_submitted_victim`.
 
-use std::sync::Arc;
-
 use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolCall as _;
 use commonware_codec::DecodeExt;
@@ -40,17 +38,15 @@ use commonware_math::algebra::Random;
 use commonware_runtime::Runner as _;
 use commonware_utils::{ordered::BiMap, TryCollect};
 use fluentbase_bls::{
-    evidence::{extract_from_conflicting_notarize, SlashKind},
-    fluent_namespace,
-    keys::ValidatorBlsKeypair,
-    scheme::build_signer,
-    BlsPubkey, PeerPubkey, Scheme as BlsScheme,
+    fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_signer, BlsPubkey, PeerPubkey,
+    Scheme as BlsScheme,
 };
 use fluentbase_consensus::{
     outer::EpochSchemeProvider,
     slasher::{
         self,
         actor::{SlasherTxSink, StaleEpochFallback, SubmitOutcome},
+        evidence::{extract_from_conflicting_notarize, SlashKind},
     },
 };
 use fluentbase_staking_reader::{
@@ -60,6 +56,7 @@ use fluentbase_staking_reader::{
 };
 use rand_08::rngs::StdRng;
 use rand_core::SeedableRng;
+use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex as TokioMutex};
 
 const C_MAIN: u64 = 20_994;
@@ -186,6 +183,9 @@ impl StakingStateRead for StubReader {
     fn epoch_block_interval(&self, _at: B256) -> Result<u32, ReadError> {
         Ok(100)
     }
+    fn dpos_activation_block(&self, _at: B256) -> Result<u64, ReadError> {
+        Ok(0)
+    }
 }
 
 #[derive(Default)]
@@ -304,7 +304,6 @@ fn reporter_multiplex_routes_conflicting_notarize_to_slasher() {
         assert!(m_count_rx.try_recv().is_err(), "exactly 1 event");
     });
 }
-
 
 /// Build the slasher Actor with stub dependencies and start it under the
 /// deterministic context. Returns:
@@ -541,8 +540,8 @@ mod slash_abi {
 /// proposals) over consensus digests.
 fn build_conflicting_finalize() -> ConflictingFinalize<BlsScheme, fluentbase_consensus::Digest> {
     let (kps, bimap) = committee(1);
-    let s =
-        build_signer(&fluent_namespace(C_MAIN), bimap, &kps[OFFENDER]).expect("offender in committee");
+    let s = build_signer(&fluent_namespace(C_MAIN), bimap, &kps[OFFENDER])
+        .expect("offender in committee");
     let round = Round::new(Epoch::new(EPOCH), View::new(VIEW));
     let p1 = Proposal::new(
         round,
@@ -562,11 +561,10 @@ fn build_conflicting_finalize() -> ConflictingFinalize<BlsScheme, fluentbase_con
 /// A `NullifyFinalize` by OFFENDER (nullify + finalize for the same round).
 fn build_nullify_finalize() -> NullifyFinalize<BlsScheme, fluentbase_consensus::Digest> {
     let (kps, bimap) = committee(1);
-    let s =
-        build_signer(&fluent_namespace(C_MAIN), bimap, &kps[OFFENDER]).expect("offender in committee");
+    let s = build_signer(&fluent_namespace(C_MAIN), bimap, &kps[OFFENDER])
+        .expect("offender in committee");
     let round = Round::new(Epoch::new(EPOCH), View::new(VIEW));
-    let nullify =
-        Nullify::sign::<fluentbase_consensus::Digest>(&s, round).expect("sign nullify");
+    let nullify = Nullify::sign::<fluentbase_consensus::Digest>(&s, round).expect("sign nullify");
     let p = Proposal::new(
         round,
         View::new(VIEW - 1),
@@ -595,7 +593,8 @@ fn dedup_call_count(outcome: SubmitOutcomeKind, partition: &'static str) -> usiz
         };
         let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
         let (mailbox, calls, handle) =
-            spawn_actor_with_stubs(ctx.clone(), reader, fallback, outcome, &partition, &bimap).await;
+            spawn_actor_with_stubs(ctx.clone(), reader, fallback, outcome, &partition, &bimap)
+                .await;
         let mut mb = mailbox;
         use commonware_consensus::Reporter as _;
 

@@ -6,12 +6,11 @@
 
 // **** наверное можно пренести в больший файл
 
+use crate::digest::Digest;
 use commonware_consensus::{simplex::types::Activity, Reporter};
 use fluentbase_bls::Scheme as BlsScheme;
 use tokio::sync::mpsc;
 use tracing::error;
-
-use crate::digest::Digest;
 
 /// One Activity event delivered from the simplex engine.
 pub type Message = Activity<BlsScheme, Digest>;
