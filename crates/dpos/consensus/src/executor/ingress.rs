@@ -4,14 +4,12 @@
 //! `futures::channel::mpsc`). Sync `send`; trivially convertible to async
 //! for `Reporter::report`.
 
-use alloy_primitives::Bytes;
+use crate::{block::Block, digest::Digest};
 use alloy_rpc_types_engine::PayloadId;
 use commonware_consensus::{marshal::Update, types::Height};
 use futures::channel::oneshot;
 use tokio::sync::mpsc;
 use tracing::Span;
-
-use crate::{block::Block, digest::Digest};
 
 /// Typed error returned by the executor on canonicalize commands.
 /// Replaces the previous opaque `eyre::Result` so callers can
@@ -47,17 +45,6 @@ pub struct CanonicalizeAndBuild<Attrs> {
     pub height: Height,
     pub digest: Digest,
     pub attributes: Box<Attrs>,
-    /// Liveness-cert bytes to insert into the shared registry against
-    /// the engine-assigned PayloadId, atomically between FCU return and
-    /// the response.send. Empty → skip insert (cold-start / non-DPoS).
-    /// Closes the race window: the FluentPayloadBuilder's
-    /// try_build runs on a `tokio::task::spawn_blocking` worker
-    /// (reth basic/lib.rs:352) that may begin executing before this
-    /// command's response is delivered to FluentApp::propose; inserting
-    /// on the FCU-await task itself shrinks the race to microseconds.
-    /// `MissingPayloadBehaviour::RaceEmptyPayload` (payload.rs:183-188)
-    /// bounds the worst case to one Nullify view per lost race.
-    pub extra_data: Bytes,
     pub response: oneshot::Sender<Result<PayloadId, CanonicalizeError>>,
 }
 

@@ -4,13 +4,10 @@
 //! hash already commits the header (hence `state_root`); non-leader
 //! execution verifies it.
 
-// **** мне кажется для этого должна быть дефолтная имплементация где-то
-
-use std::ops::Deref;
-
 use alloy_primitives::B256;
 use commonware_codec::{FixedSize, Read, ReadExt as _, Write};
 use commonware_utils::{Array, Span};
+use std::ops::Deref;
 
 /// Wrapper around [`B256`] to use it where [`commonware_cryptography::Digest`]
 /// is required.

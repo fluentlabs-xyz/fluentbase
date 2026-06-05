@@ -10,13 +10,17 @@
 //! - **per-epoch**: `simplex::Engine` + `Inline` wrapper (inside
 //!   `EpochEngine` via `EpochManager`).
 
-use std::{
-    collections::BTreeMap,
-    num::{NonZeroU64, NonZeroUsize},
-    sync::{atomic::AtomicU64, Arc, Mutex},
-    time::Duration,
+use crate::{
+    application::{BeaconEngineLike, FluentApp, PayloadAttrsBuilderLike, PayloadBuilderLike},
+    block::Block,
+    digest::Digest,
+    epoch_manager,
+    epocher::OriginEpocher,
+    executor,
+    feed_sink::FeedSink,
+    slasher,
+    timeouts::ConsensusTimeouts,
 };
-
 use alloy_consensus::Header;
 use alloy_primitives::{Bytes, B256};
 use alloy_rpc_types_engine::PayloadId;
@@ -26,12 +30,10 @@ use commonware_consensus::{
         self, core::Actor as MarshalActor, resolver::p2p as marshal_p2p, standard::Standard,
     },
     simplex::types::Finalization,
-    types::{Epoch, FixedEpocher, Height, Round, ViewDelta},
+    types::{Epoch, Height, ViewDelta},
+    Reporters,
 };
-use commonware_cryptography::{
-    certificate::{Provider as CertProvider, Scheme as CertScheme},
-    ed25519::PublicKey,
-};
+use commonware_cryptography::{certificate::Provider as CertProvider, ed25519::PublicKey};
 use commonware_p2p::{Blocker, Provider as PeerProvider, Receiver, Sender};
 use commonware_parallel::Sequential;
 use commonware_runtime::{
@@ -46,15 +48,13 @@ use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::CryptoRngCore;
 use reth_ethereum_primitives::Block as RethBlock;
 use reth_primitives_traits::SealedBlock;
-use tokio::sync::mpsc;
-
-use crate::{
-    application::{BeaconEngineLike, FluentApp, PayloadAttrsBuilderLike, PayloadBuilderLike},
-    block::Block,
-    digest::Digest,
-    epoch_manager, executor, slasher,
-    timeouts::ConsensusTimeouts,
+use std::{
+    collections::BTreeMap,
+    num::{NonZeroU64, NonZeroUsize},
+    sync::{atomic::AtomicU64, Arc, Mutex},
+    time::Duration,
 };
+use tokio::sync::mpsc;
 
 const REPLAY_BUFFER: NonZeroUsize = NZUsize!(8 * 1024 * 1024);
 const WRITE_BUFFER: NonZeroUsize = NZUsize!(1024 * 1024);
@@ -136,6 +136,13 @@ impl EpochSchemeProvider {
             }
         }
     }
+
+    /// Highest epoch with a registered scheme. Registrations are contiguous and
+    /// monotonic (the anchor epoch at cold-start, then one per crossed boundary),
+    /// so this is the highest epoch the follower can currently verify a cert for.
+    pub fn highest_epoch(&self) -> Option<Epoch> {
+        self.map.lock().unwrap().keys().next_back().copied()
+    }
 }
 
 impl Default for EpochSchemeProvider {
@@ -156,7 +163,129 @@ impl CertProvider for EpochSchemeProvider {
 
 type FinalizationsArchive<E> = immutable::Archive<E, Digest, Finalization<BlsScheme, Digest>>;
 type FinalizedBlocksArchive<E> = immutable::Archive<E, Digest, Block>;
-type MarshalMailbox = marshal::core::Mailbox<BlsScheme, Standard<Block>>;
+pub type MarshalMailbox = marshal::core::Mailbox<BlsScheme, Standard<Block>>;
+
+/// Open the marshal's `finalized_blocks` immutable archive for a given
+/// `partition_prefix`. Single source of the archive config so the cold-start
+/// crash-survivor recovery (`dpos.rs`, opens it standalone before the engine is
+/// built) and the marshal itself (`build`, below) never drift on partition names
+/// or codec.
+pub(crate) async fn init_finalized_blocks_archive<E>(
+    context: &E,
+    partition_prefix: &str,
+) -> FinalizedBlocksArchive<E>
+where
+    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
+{
+    let page_cache = CacheRef::from_pooler(context, PAGE_CACHE_PAGE_SIZE, PAGE_CACHE_CAPACITY);
+    immutable::Archive::init(
+        context.with_label("finalized_blocks"),
+        immutable::Config {
+            metadata_partition: format!("{partition_prefix}-finalized-blocks-metadata"),
+            freezer_table_partition: format!("{partition_prefix}-finalized-blocks-freezer-table"),
+            freezer_table_initial_size: 1 << 16,
+            freezer_table_resize_frequency: FREEZER_TABLE_RESIZE_FREQUENCY,
+            freezer_table_resize_chunk_size: FREEZER_TABLE_RESIZE_CHUNK_SIZE,
+            freezer_key_partition: format!("{partition_prefix}-finalized-blocks-freezer-key"),
+            freezer_key_page_cache: page_cache.clone(),
+            freezer_key_write_buffer: WRITE_BUFFER,
+            freezer_value_partition: format!("{partition_prefix}-finalized-blocks-freezer-value"),
+            freezer_value_write_buffer: WRITE_BUFFER,
+            freezer_value_target_size: FREEZER_VALUE_TARGET_SIZE,
+            freezer_value_compression: FREEZER_VALUE_COMPRESSION,
+            ordinal_partition: format!("{partition_prefix}-finalized-blocks-ordinal"),
+            ordinal_write_buffer: WRITE_BUFFER,
+            items_per_section: IMMUTABLE_ITEMS_PER_SECTION,
+            codec_config: (),
+            replay_buffer: REPLAY_BUFFER,
+        },
+    )
+    .await
+    .expect("init finalized blocks archive")
+}
+
+/// Init the by-height finalizations (certificate) archive. Shared by the
+/// validator [`OuterBuilder::build`] and the cert-follower engine so the two
+/// open byte-identical partitions with the same unbounded certificate codec
+/// config — a follower started on a validator's data dir (or vice-versa) reads
+/// the same archive without migration.
+pub(crate) async fn init_finalizations_archive<E>(
+    context: &E,
+    partition_prefix: &str,
+    page_cache: CacheRef,
+) -> FinalizationsArchive<E>
+where
+    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
+{
+    use commonware_cryptography::certificate::Scheme as _;
+    immutable::Archive::init(
+        context.with_label("finalizations_by_height"),
+        immutable::Config {
+            metadata_partition: format!("{partition_prefix}-finalizations-by-height-metadata"),
+            freezer_table_partition: format!(
+                "{partition_prefix}-finalizations-by-height-freezer-table"
+            ),
+            freezer_table_initial_size: 1 << 16,
+            freezer_table_resize_frequency: FREEZER_TABLE_RESIZE_FREQUENCY,
+            freezer_table_resize_chunk_size: FREEZER_TABLE_RESIZE_CHUNK_SIZE,
+            freezer_key_partition: format!(
+                "{partition_prefix}-finalizations-by-height-freezer-key"
+            ),
+            freezer_key_page_cache: page_cache,
+            freezer_key_write_buffer: WRITE_BUFFER,
+            freezer_value_partition: format!(
+                "{partition_prefix}-finalizations-by-height-freezer-value"
+            ),
+            freezer_value_write_buffer: WRITE_BUFFER,
+            freezer_value_target_size: FREEZER_VALUE_TARGET_SIZE,
+            freezer_value_compression: FREEZER_VALUE_COMPRESSION,
+            ordinal_partition: format!("{partition_prefix}-finalizations-by-height-ordinal"),
+            ordinal_write_buffer: WRITE_BUFFER,
+            items_per_section: IMMUTABLE_ITEMS_PER_SECTION,
+            codec_config: BlsScheme::certificate_codec_config_unbounded(),
+            replay_buffer: REPLAY_BUFFER,
+        },
+    )
+    .await
+    .expect("init finalizations archive")
+}
+
+/// Page cache sized identically to the validator marshal (same constants), so a
+/// follower built on a validator's data dir reads the same archives.
+pub(crate) fn new_page_cache<E: BufferPooler>(context: &E) -> CacheRef {
+    CacheRef::from_pooler(context, PAGE_CACHE_PAGE_SIZE, PAGE_CACHE_CAPACITY)
+}
+
+/// Marshal config for the cert-follower — same storage tuning as the validator
+/// [`OuterBuilder::build`] (shared archive format) with the follower-only
+/// difference that no views are retained for re-proposal (`view_retention_timeout
+/// = 1`): a follower never proposes, it only verifies + applies. Keeping the
+/// constants here (rather than re-declaring them in `cert_follow`) prevents
+/// archive-format drift between validator and follower.
+pub(crate) fn follower_marshal_config(
+    partition_prefix: String,
+    mailbox_size: usize,
+    page_cache: CacheRef,
+    scheme_provider: EpochSchemeProvider,
+    epocher: OriginEpocher,
+) -> marshal::Config<Block, EpochSchemeProvider, OriginEpocher, Sequential> {
+    marshal::Config {
+        provider: scheme_provider,
+        epocher,
+        partition_prefix,
+        mailbox_size,
+        view_retention_timeout: ViewDelta::new(1),
+        prunable_items_per_section: PRUNABLE_ITEMS_PER_SECTION,
+        replay_buffer: REPLAY_BUFFER,
+        key_write_buffer: WRITE_BUFFER,
+        value_write_buffer: WRITE_BUFFER,
+        block_codec_config: (),
+        max_repair: MAX_REPAIR,
+        max_pending_acks: MAX_PENDING_ACKS,
+        page_cache,
+        strategy: Sequential,
+    }
+}
 
 type ExecutorActor<E, BE, Attrs> = executor::Actor<E, BE, Attrs, MarshalMailbox>;
 
@@ -179,6 +308,9 @@ pub struct OuterBuilder<
     pub provider: P,
     pub chain_id: u64,
     pub epoch_length_blocks: NonZeroU64,
+    /// `dposActivationBlock` — origin for the relative epoch numbering
+    /// (`OriginEpocher`). Zero ⇒ absolute (non-migration / pristine genesis).
+    pub dpos_activation_block: u64,
     pub signer_keypair: Option<ValidatorBlsKeypair>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
@@ -199,6 +331,12 @@ pub struct OuterBuilder<
     /// epoch-boundary detection (fires `boundary_tx` for `EpochManager::enter`).
     /// Required at the type level — tests pass `Arc::new(|_| {})`.
     pub boundary_hook: Arc<dyn Fn(Block) + Send + Sync>,
+
+    /// Optional cert-feed sink: a second marshal application-`Reporter`
+    /// ([`Reporters::from((app, feed))`]) that forwards finalized heights to a
+    /// node-side feed actor serving the `consensus` RPC. `None` for nodes that
+    /// do not serve the cert feed (e.g. tests); set on every production node.
+    pub feed: Option<FeedSink>,
 
     // Executor cold-start state (read from the reth provider).
     pub last_execution_finalized_height: u64,
@@ -270,10 +408,15 @@ where
         EpochSchemeProvider,
         FinalizationsArchive<E>,
         FinalizedBlocksArchive<E>,
-        FixedEpocher,
+        OriginEpocher,
         Sequential,
     >,
     marshal_reporter_app: FluentApp<PB, BE, AB, Attrs>,
+    /// Clone of the marshal mailbox, exposed via [`OuterEngine::marshal_mailbox`]
+    /// for the node-side cert feed/RPC (by-height `get_finalization`+`get_block`).
+    cert_mailbox: MarshalMailbox,
+    /// Optional cert-feed sink, composed with `marshal_reporter_app` at `start`.
+    feed: Option<FeedSink>,
     executor: ExecutorActor<E, BE, Attrs>,
     epoch_manager: epoch_manager::Actor<E, B, PB, BE, AB, Attrs>,
     slasher: slasher::Actor<E, R>,
@@ -332,21 +475,6 @@ where
              to u16 BE before bumping",
             fluentbase_p2p::constants::MAX_PEER_SET_SIZE,
         );
-        // round_index in FluentApp::report must retain at least
-        // marshal's view_retention_timeout window (= activity * 10);
-        // otherwise verify can request a cert for a round marshal still
-        // archives but round_index has already evicted, returning false
-        // → Nullify → liveness loss.
-        assert!(
-            crate::application::ROUND_INDEX_RETENTION
-                >= self.timeouts.activity.get().saturating_mul(10),
-            "ROUND_INDEX_RETENTION ({}) must be >= marshal view_retention_timeout \
-             (activity * 10 = {}); a future bump of timeouts.activity past {} \
-             requires widening ROUND_INDEX_RETENTION",
-            crate::application::ROUND_INDEX_RETENTION,
-            self.timeouts.activity.get().saturating_mul(10),
-            crate::application::ROUND_INDEX_RETENTION / 10,
-        );
         let (buffered, buffer_mailbox) = buffered::Engine::new(
             context.with_label("buffered"),
             buffered::Config {
@@ -361,79 +489,11 @@ where
 
         let page_cache = CacheRef::from_pooler(&context, PAGE_CACHE_PAGE_SIZE, PAGE_CACHE_CAPACITY);
 
-        let finalizations_by_height = immutable::Archive::init(
-            context.with_label("finalizations_by_height"),
-            immutable::Config {
-                metadata_partition: format!(
-                    "{}-finalizations-by-height-metadata",
-                    self.partition_prefix
-                ),
-                freezer_table_partition: format!(
-                    "{}-finalizations-by-height-freezer-table",
-                    self.partition_prefix
-                ),
-                freezer_table_initial_size: 1 << 16,
-                freezer_table_resize_frequency: FREEZER_TABLE_RESIZE_FREQUENCY,
-                freezer_table_resize_chunk_size: FREEZER_TABLE_RESIZE_CHUNK_SIZE,
-                freezer_key_partition: format!(
-                    "{}-finalizations-by-height-freezer-key",
-                    self.partition_prefix
-                ),
-                freezer_key_page_cache: page_cache.clone(),
-                freezer_key_write_buffer: WRITE_BUFFER,
-                freezer_value_partition: format!(
-                    "{}-finalizations-by-height-freezer-value",
-                    self.partition_prefix
-                ),
-                freezer_value_write_buffer: WRITE_BUFFER,
-                freezer_value_target_size: FREEZER_VALUE_TARGET_SIZE,
-                freezer_value_compression: FREEZER_VALUE_COMPRESSION,
-                ordinal_partition: format!(
-                    "{}-finalizations-by-height-ordinal",
-                    self.partition_prefix
-                ),
-                ordinal_write_buffer: WRITE_BUFFER,
-                items_per_section: IMMUTABLE_ITEMS_PER_SECTION,
-                codec_config: BlsScheme::certificate_codec_config_unbounded(),
-                replay_buffer: REPLAY_BUFFER,
-            },
-        )
-        .await
-        .expect("init finalizations archive");
+        let finalizations_by_height =
+            init_finalizations_archive(&context, &self.partition_prefix, page_cache.clone()).await;
 
-        let finalized_blocks = immutable::Archive::init(
-            context.with_label("finalized_blocks"),
-            immutable::Config {
-                metadata_partition: format!("{}-finalized-blocks-metadata", self.partition_prefix),
-                freezer_table_partition: format!(
-                    "{}-finalized-blocks-freezer-table",
-                    self.partition_prefix
-                ),
-                freezer_table_initial_size: 1 << 16,
-                freezer_table_resize_frequency: FREEZER_TABLE_RESIZE_FREQUENCY,
-                freezer_table_resize_chunk_size: FREEZER_TABLE_RESIZE_CHUNK_SIZE,
-                freezer_key_partition: format!(
-                    "{}-finalized-blocks-freezer-key",
-                    self.partition_prefix
-                ),
-                freezer_key_page_cache: page_cache.clone(),
-                freezer_key_write_buffer: WRITE_BUFFER,
-                freezer_value_partition: format!(
-                    "{}-finalized-blocks-freezer-value",
-                    self.partition_prefix
-                ),
-                freezer_value_write_buffer: WRITE_BUFFER,
-                freezer_value_target_size: FREEZER_VALUE_TARGET_SIZE,
-                freezer_value_compression: FREEZER_VALUE_COMPRESSION,
-                ordinal_partition: format!("{}-finalized-blocks-ordinal", self.partition_prefix),
-                ordinal_write_buffer: WRITE_BUFFER,
-                items_per_section: IMMUTABLE_ITEMS_PER_SECTION,
-                codec_config: (),
-                replay_buffer: REPLAY_BUFFER,
-            },
-        )
-        .await
-        .expect("init finalized blocks archive");
+        let finalized_blocks =
+            init_finalized_blocks_archive(&context, &self.partition_prefix).await;
 
         // Single cross-epoch FixedEpocher + scheme provider. The same
         // instance is threaded into marshal::Config below AND into
@@ -441,7 +501,7 @@ where
         // one source of truth — no risk of divergent epoch math after a
         // hypothetical interval re-read (defense-in-depth).
         let scheme_provider = EpochSchemeProvider::new();
-        let epocher = FixedEpocher::new(self.epoch_length_blocks);
+        let epocher = OriginEpocher::new(self.dpos_activation_block, self.epoch_length_blocks);
 
         let (marshal, marshal_mailbox, last_consensus_finalized_height) = MarshalActor::init(
             context.with_label("marshal"),
@@ -499,24 +559,52 @@ where
             let backfill_start_epoch = fluentbase_staking_reader::reader::epoch_of_block(
                 self.last_execution_finalized_height,
                 epoch_interval,
+                self.dpos_activation_block,
             );
             let backfill_end_epoch = fluentbase_staking_reader::reader::epoch_of_block(
                 last_consensus_finalized_height.get(),
                 epoch_interval,
+                self.dpos_activation_block,
             );
             if backfill_start_epoch != backfill_end_epoch {
-                eyre::bail!(
-                    "DPoS init: backfill range {:?} crosses epoch boundary \
-                     ({backfill_start_epoch} -> {backfill_end_epoch}). \
-                     Per-epoch BLS scheme rotation across backfill is not \
-                     yet supported. Operator action: snapshot-restore EL \
-                     disk to the most recent epoch-boundary finalized \
-                     block, or wipe commonware marshal storage and re-sync \
-                     from peers.",
-                    backfill_range,
+                // Cross-epoch backfill: the lazy self-healing scheme cascade
+                // handles the rotation. The marshal transiently ack-drops an
+                // unregistered-epoch height and re-requests it via try_repair_gaps
+                // once the boundary block's execution exposes the next committee
+                // and the boundary hook registers scheme(E+1) (dpos.rs cold-start
+                // registers the resumed epoch so the cascade starts at the right
+                // epoch). Warn rather than bail so the reliance stays observable
+                // if catch-up ever stalls.
+                tracing::warn!(
+                    backfill_range = ?backfill_range,
+                    backfill_start_epoch,
+                    backfill_end_epoch,
+                    "DPoS init: backfill range crosses an epoch boundary; relying on \
+                     the lazy scheme cascade to register each epoch as catch-up \
+                     crosses it"
                 );
             }
         }
+
+        // Resume-vs-migrate executor seed. This
+        // uses the SAME consensus-archive discriminator that `dpos.rs` now uses to
+        // resolve the cold-start anchor (`is_fresh_migration =
+        // last_consensus_finalized <= activation`): a genuine first migration has
+        // an empty archive (`== 0`, well below the activation block), whereas a
+        // restart restores it to the last DPoS finalized height. When
+        // already-migrated, seed the executor from reth's actual head (which the
+        // node still holds on disk) rather than the finalized anchor, so it never
+        // attempts a backward FCU to a stale point — reth spec-skips a backward
+        // FCU to an ancestor, which would wedge the node instead of letting it
+        // catch up to the live chain.
+        let (initial_finalized, initial_head) =
+            if last_consensus_finalized_height.get() > self.dpos_activation_block {
+                let info = self.canonical_state.chain_info();
+                let seed = (Height::new(info.best_number), info.best_hash);
+                (seed, seed)
+            } else {
+                (self.initial_finalized, self.initial_head)
+            };
 
         // Executor — depends on marshal_mailbox.
         let (executor, executor_mailbox) = executor::Actor::init(
@@ -527,17 +615,15 @@ where
                 fcu_heartbeat_interval: self.fcu_heartbeat_interval,
                 last_consensus_finalized_height,
                 last_execution_finalized_height: self.last_execution_finalized_height,
-                initial_finalized: self.initial_finalized,
-                initial_head: self.initial_head,
+                initial_finalized,
+                initial_head,
                 fcu_pace: self.fcu_pace,
-                extra_data_registry: self.extra_data_registry.clone(),
                 canonical_state: self.canonical_state.clone(),
             },
         );
 
         // FluentApp (needs executor_mailbox + marshal_mailbox + sidecar state).
         let latest_finalized_height = Arc::new(AtomicU64::new(0));
-        let round_index = Arc::new(Mutex::new(BTreeMap::<Round, Height>::new()));
         let app = FluentApp::new(
             self.genesis,
             self.payload_builder,
@@ -548,7 +634,6 @@ where
             self.payload_resolve_time,
             Some(marshal_mailbox.clone()),
             latest_finalized_height,
-            round_index,
             self.extra_data_registry,
         );
         let marshal_reporter_app = app.clone();
@@ -602,7 +687,7 @@ where
                 app,
                 timeouts: self.timeouts,
                 mailbox_size: self.mailbox_size,
-                marshal_mailbox,
+                marshal_mailbox: marshal_mailbox.clone(),
                 slasher_mailbox,
                 page_cache,
                 register_scheme,
@@ -615,6 +700,8 @@ where
             buffer_mailbox,
             marshal,
             marshal_reporter_app,
+            cert_mailbox: marshal_mailbox.clone(),
+            feed: self.feed,
             executor,
             epoch_manager,
             slasher,
@@ -649,6 +736,13 @@ where
     /// Sender held by 03's `EpochTransition` to fire boundary triggers.
     pub fn boundary_sender(&self) -> mpsc::Sender<(Epoch, ValidatorSetSnapshot)> {
         self.boundary_tx.clone()
+    }
+
+    /// Clone of the marshal mailbox for the node-side cert feed/RPC. Call before
+    /// [`OuterEngine::start`] (which consumes `self`) and hand it up to the node
+    /// so its feed actor can answer `get_finalization`+`get_block` by height.
+    pub fn marshal_mailbox(&self) -> MarshalMailbox {
+        self.cert_mailbox.clone()
     }
 
     /// Cold-start: register the initial (pre-finalization) scheme.
@@ -747,9 +841,17 @@ where
         let mut em_handle = self.epoch_manager.start(votes, certs, resolver);
         let mut buffered_handle = self.buffered.start(broadcast);
         let mut executor_handle = self.executor.start();
+        // Compose the cert-feed sink as a second application-Reporter so it
+        // observes every finalization alongside `FluentApp` (the executor path).
+        // `From<(R1, Option<R2>)>` makes the feed optional; absent → app-only.
+        let app_reporter: Reporters<
+            marshal::Update<Block>,
+            FluentApp<PB, BE, AB, Attrs>,
+            FeedSink,
+        > = Reporters::from((self.marshal_reporter_app, self.feed));
         let mut marshal_handle =
             self.marshal
-                .start(self.marshal_reporter_app, self.buffer_mailbox, marshal_chan);
+                .start(app_reporter, self.buffer_mailbox, marshal_chan);
         let mut slasher_handle = self.slasher.start();
 
         // Supervisor: on first subsystem exit (clean or panic), abort the

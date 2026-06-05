@@ -7,6 +7,7 @@
 //! not have. The marshal `Inline` wrapper only needs the `Block` trait
 //! (inline.rs:128-130).
 
+use crate::digest::Digest;
 use alloy_consensus::BlockHeader as _;
 use alloy_primitives::B256;
 use bytes::{Buf, BufMut};
@@ -15,8 +16,6 @@ use commonware_consensus::{types::Height, Heightable};
 use commonware_cryptography::{Committable, Digestible};
 use reth_ethereum_primitives::Block as RethBlock;
 use reth_primitives_traits::SealedBlock;
-
-use crate::digest::Digest;
 
 /// Per-block RLP decode cap (defense-in-depth + channel-specific bound).
 ///

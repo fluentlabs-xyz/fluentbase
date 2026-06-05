@@ -8,14 +8,13 @@
 //! `PB: PayloadBuilderLike` etc. as generic params; without these production
 //! impls, only the test `Fake*` types would satisfy the bounds.
 
+use crate::application::{BeaconEngineLike, PayloadBuilderLike};
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
 use reth_engine_primitives::ConsensusEngineHandle;
 use reth_ethereum_primitives::Block as RethBlock;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_payload_primitives::{BuiltPayload, EngineApiMessageVersion, PayloadKind, PayloadTypes};
 use reth_primitives_traits::{NodePrimitives, SealedBlock};
-
-use crate::application::{BeaconEngineLike, PayloadBuilderLike};
 
 impl<T> PayloadBuilderLike for PayloadBuilderHandle<T>
 where

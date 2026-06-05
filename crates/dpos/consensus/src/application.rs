@@ -13,16 +13,8 @@
 //! NOT implemented: `Relay`. The `marshal::standard::Inline` wrapper
 //! provides `Relay` (inline.rs:471); `FluentApp` does not.
 
-use std::{
-    collections::BTreeMap,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
-    },
-    time::Duration,
-};
-
-use alloy_primitives::Bytes;
+use crate::{block::Block, digest::Digest, executor, extra_data};
+use alloy_primitives::{Bytes, B256};
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 use commonware_consensus::{
     marshal::{
@@ -38,22 +30,20 @@ use commonware_consensus::{
 use commonware_cryptography::{certificate::Signers, ed25519::PublicKey};
 use commonware_runtime::{Clock, Metrics, Spawner};
 use dashmap::DashMap;
+/// The signing scheme bound for this Application.
+pub use fluentbase_bls::Scheme as BlsScheme;
 use futures::StreamExt as _;
 use rand_08::Rng;
 use reth_ethereum_primitives::Block as RethBlock;
 use reth_payload_primitives::PayloadKind;
 use reth_primitives_traits::SealedBlock;
-
-use crate::{block::Block, digest::Digest, executor, extra_data};
-
-/// The signing scheme bound for this Application.
-pub use fluentbase_bls::Scheme as BlsScheme;
-
-/// Retention window for `round_index` entries, in rounds. Liveness only
-/// needs cert metadata for rounds embedded in blocks currently in flight
-/// (last finalized + a small lookback); the bound is generous and bounds
-/// memory at ~40 KiB at ~40 B/entry × 1024 entries.
-pub const ROUND_INDEX_RETENTION: u64 = 1024;
+use std::{
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 /// The Fluent consensus application.
 ///
@@ -90,10 +80,6 @@ pub struct FluentApp<PB, BE, AB, Attrs> {
     /// `0` = no finalization seen yet (cold-start). Read by
     /// `latest_finalized_cert`.
     latest_finalized_height: Arc<AtomicU64>,
-    /// `round → height` index built from observed `Update::Tip` events.
-    /// Trimmed in-place to [`ROUND_INDEX_RETENTION`] entries per epoch.
-    /// Read by `cert_for_round` (height → marshal cert query).
-    round_index: Arc<Mutex<BTreeMap<Round, Height>>>,
     /// Shared with `FluentPayloadBuilder`: FluentApp::propose pre-registers
     /// `extra_data` keyed by engine-returned `PayloadId`; builder reads on
     /// `try_build`; app removes on cleanup after `resolve_kind`.
@@ -117,7 +103,6 @@ where
             payload_resolve_time: self.payload_resolve_time,
             marshal: self.marshal.clone(),
             latest_finalized_height: self.latest_finalized_height.clone(),
-            round_index: self.round_index.clone(),
             extra_data_registry: self.extra_data_registry.clone(),
         }
     }
@@ -135,7 +120,6 @@ impl<PB, BE, AB, Attrs> FluentApp<PB, BE, AB, Attrs> {
         payload_resolve_time: Duration,
         marshal: Option<MarshalMailbox<BlsScheme, Standard<Block>>>,
         latest_finalized_height: Arc<AtomicU64>,
-        round_index: Arc<Mutex<BTreeMap<Round, Height>>>,
         extra_data_registry: Arc<DashMap<PayloadId, Bytes>>,
     ) -> Self {
         Self {
@@ -148,7 +132,6 @@ impl<PB, BE, AB, Attrs> FluentApp<PB, BE, AB, Attrs> {
             payload_resolve_time,
             marshal,
             latest_finalized_height,
-            round_index,
             extra_data_registry,
         }
     }
@@ -167,19 +150,6 @@ impl<PB, BE, AB, Attrs> FluentApp<PB, BE, AB, Attrs> {
         let h = stored - 1;
         let fin = marshal.get_finalization(Height::new(h)).await?;
         Some((fin.proposal.round, fin.certificate.signers.clone()))
-    }
-
-    /// Returns local cert's signers for `round`, if marshal still has the
-    /// corresponding finalization. `None` when marshal isn't wired.
-    pub async fn cert_for_round(&self, round: Round) -> Option<Signers> {
-        let marshal = self.marshal.as_ref()?;
-        let h = *self
-            .round_index
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&round)?;
-        let fin = marshal.get_finalization(h).await?;
-        Some(fin.certificate.signers.clone())
     }
 }
 
@@ -214,20 +184,31 @@ where
     ) -> Option<Block> {
         let parent = ancestry.next().await?;
 
-        // Encode the previous-finalized cert into extra_data
-        // (cold-start: empty → executor / validator no-op decode to None).
-        let extra_data_bytes: Vec<u8> = match self.latest_finalized_cert().await {
+        // Encode the previous-finalized cert into extra_data (cold-start:
+        // empty → no registry entry → builder ships empty extra_data →
+        // on-chain decode no-ops to None).
+        let extra_data = Bytes::from(match self.latest_finalized_cert().await {
             Some((round, signers)) => extra_data::encode_simplex_attestation(round, &signers),
             None => Vec::new(),
-        };
+        });
 
         let attrs = self.payload_attrs_builder.build(parent.header());
 
-        // The executor inserts extra_data into the registry between
-        // FCU return and the oneshot send (closing the race window
-        // — see executor/ingress.rs CanonicalizeAndBuild::extra_data
-        // for the threading-model analysis). FluentApp still owns the
-        // post-`resolve_kind` cleanup removal below.
+        // Pre-register extra_data under the PayloadId reth derives for this
+        // (parent, attrs), BEFORE the FCU. reth spawns the seeding build
+        // synchronously inside fork_choice_updated and only that build can
+        // establish best_payload from Missing; later fee-neutral rebuilds are
+        // dropped as Aborted. Inserting after the FCU (the prior design) always
+        // lost. The proposer key matches the engine's whenever the FCU head is
+        // this parent (the normal case); a mismatch degrades to empty
+        // extra_data (fail-safe — the executor warns on it).
+        let pid = self
+            .payload_attrs_builder
+            .payload_id(parent.digest().0, &attrs);
+        if !extra_data.is_empty() {
+            self.extra_data_registry.insert(pid, extra_data);
+        }
+
         let (tx, rx) = futures::channel::oneshot::channel();
         self.executor
             .send(executor::Message {
@@ -236,7 +217,6 @@ where
                     height: <Block as commonware_consensus::Heightable>::height(&parent),
                     digest: parent.digest(),
                     attributes: Box::new(attrs),
-                    extra_data: Bytes::from(extra_data_bytes),
                     response: tx,
                 }),
             })
@@ -245,13 +225,18 @@ where
             Ok(Ok(id)) => id,
             Ok(Err(executor::CanonicalizeError::BackfillInProgress)) => {
                 // Expected when EL is catching up; skip this view's propose.
+                self.extra_data_registry.remove(&pid);
                 return None;
             }
             Ok(Err(e)) => {
+                self.extra_data_registry.remove(&pid);
                 tracing::warn!(?e, "canonicalize failed; skipping propose");
                 return None;
             }
-            Err(_) => return None,
+            Err(_) => {
+                self.extra_data_registry.remove(&pid);
+                return None;
+            }
         };
 
         let resolved = self
@@ -259,13 +244,10 @@ where
             .resolve_kind(payload_id, PayloadKind::WaitForPending)
             .await;
 
-        // Reclaim the registry entry on EVERY exit once the build is resolved.
-        // The executor inserted it keyed by payload_id; reth has already consumed
-        // it by the time resolve_kind(WaitForPending) returns (the build job is
-        // removed on resolve, and the consumed read happens-before). Running
-        // remove here, before the `?`/`.ok()?` early returns, prevents a leak
-        // when resolve_kind yields None/Err.
-        self.extra_data_registry.remove(&payload_id);
+        // Reclaim the pre-registered entry on every exit, keyed by the
+        // proposer-derived pid (== the engine's in the normal case). The
+        // engine-returned payload_id is used only to resolve the build.
+        self.extra_data_registry.remove(&pid);
 
         let sealed = resolved?.ok()?;
 
@@ -301,28 +283,18 @@ where
             return false;
         };
 
-        // Defensive cert byte-equal
-        // check against local state. Reject ⇒ no notarize vote ⇒ graceful
-        // view skip via Nullify. Empty extra_data is the cold-start /
-        // no-prev-cert case and passes through to the payload validity
-        // check unchanged.
-        //
-        // Immediate-only cert lookup: if marshal doesn't yet
-        // have the cert, return false → Nullify → view skip; resolver
-        // catches up before the next view. A wall-clock wait inside
-        // verify fights Simplex's view-skip recovery model.
-        let extra = &block.header().extra_data;
-        match extra_data::decode_simplex_attestation(extra) {
-            Ok(None) => { /* cold-start / no-prev-cert: skip cert check */ }
-            Ok(Some(d)) => {
-                let Some(local) = self.cert_for_round(d.round).await else {
-                    return false;
-                };
-                if extra_data::encode_bitmap_only(&local) != d.bitmap {
-                    return false;
-                }
-            }
-            Err(_) => return false,
+        // Structural-only guard on the embedded prev-finalized attestation:
+        // reject MALFORMED extra_data (a pure, deterministic function of the
+        // block's bytes). We deliberately do NOT compare the signer bitmap
+        // against this node's local finalization cert: that cert's signer set is
+        // non-deterministic across honest nodes (commonware aggregates whatever
+        // quorum-or-more finalize votes it saw first), so a byte-equal gate makes
+        // honest nodes disagree on the same block → Nullify → crash-fault
+        // liveness loss. The bitmap is liveness-slashing accounting, consumed
+        // deterministically on-chain from the agreed block (processBitmap); its
+        // signer-set integrity is not a consensus-safety property.
+        if extra_data::decode_simplex_attestation(&block.header().extra_data).is_err() {
+            return false;
         }
 
         let sealed = block.into_inner();
@@ -343,12 +315,9 @@ where
     type Activity = Update<Block>;
 
     async fn report(&mut self, activity: Update<Block>) {
-        // Sidecar update on each reported activity:
-        // - `Update::Block` advances `latest_finalized_height` (height
-        //   comes from the block).
-        // - `Update::Tip` populates `round_index[round] = height` with
-        //   in-place retention trimming so memory stays bounded
-        //   (~40 KiB worst-case at `ROUND_INDEX_RETENTION = 1024`).
+        // `Update::Block` advances `latest_finalized_height`. `Update::Tip`
+        // carries no sidecar state any more (the verify cert-index was removed)
+        // and is only forwarded to the executor below.
         match &activity {
             Update::Block(block, _) => {
                 let h = block.height().get();
@@ -358,25 +327,7 @@ where
                 self.latest_finalized_height
                     .fetch_max(h.saturating_add(1), Ordering::Release);
             }
-            Update::Tip(round, height, _digest) => {
-                let mut idx = self.round_index.lock().unwrap_or_else(|e| e.into_inner());
-                idx.insert(*round, *height);
-                let view_cutoff = round.view().get().saturating_sub(ROUND_INDEX_RETENTION);
-                let current_epoch = round.epoch().get();
-                // EPOCH_RETENTION_WINDOW = N means N concurrent epochs are
-                // alive (current + N-1 prior). Retain entries from those N
-                // epochs; within current epoch, drop views older than
-                // ROUND_INDEX_RETENTION. Prior-epoch entries are kept until
-                // the retention window slides past them — verifier may still
-                // see blocks referencing the prior epoch's cert during the
-                // two-epochs-alive overlap (epoch_manager.rs).
-                let cutoff_epoch =
-                    current_epoch.saturating_sub(crate::epoch_manager::EPOCH_RETENTION_WINDOW - 1);
-                idx.retain(|r, _| {
-                    let re = r.epoch().get();
-                    re >= cutoff_epoch && (re < current_epoch || r.view().get() >= view_cutoff)
-                });
-            }
+            Update::Tip(..) => {}
         }
 
         // Boundary hook fires for `Update::Block` only — it's the 03
@@ -451,6 +402,11 @@ pub trait PayloadAttrsBuilderLike: Send + Sync + 'static {
     type Header;
 
     fn build(&self, parent_header: &Self::Header) -> Self::Attrs;
+
+    /// Reproduce the engine's `PayloadId` derivation for `attrs` built on
+    /// `parent_hash`, so the proposer can pre-register `extra_data` under the
+    /// key reth's build job reads. Concrete impls call reth's `payload_id`.
+    fn payload_id(&self, parent_hash: B256, attrs: &Self::Attrs) -> PayloadId;
 }
 
 #[cfg(test)]
@@ -475,6 +431,9 @@ mod tests {
         type Header = Header;
         fn build(&self, _h: &Header) -> FakeAttrs {
             FakeAttrs
+        }
+        fn payload_id(&self, _parent_hash: B256, _attrs: &FakeAttrs) -> PayloadId {
+            PayloadId::new([0u8; 8])
         }
     }
 
@@ -531,18 +490,10 @@ mod tests {
         Block::from_execution_block(sample_sealed(parent, number))
     }
 
-    type FreshSidecar = (
-        Arc<AtomicU64>,
-        Arc<Mutex<BTreeMap<Round, Height>>>,
-        Arc<DashMap<PayloadId, Bytes>>,
-    );
+    type FreshSidecar = (Arc<AtomicU64>, Arc<DashMap<PayloadId, Bytes>>);
 
     fn fresh_sidecar() -> FreshSidecar {
-        (
-            Arc::new(AtomicU64::new(0)),
-            Arc::new(Mutex::new(BTreeMap::new())),
-            Arc::new(DashMap::new()),
-        )
+        (Arc::new(AtomicU64::new(0)), Arc::new(DashMap::new()))
     }
 
     fn build_app(
@@ -555,7 +506,7 @@ mod tests {
         executor: executor::Mailbox<FakeAttrs>,
         hook: Arc<dyn Fn(Block) + Send + Sync>,
     ) -> FluentApp<FakePayloadBuilder, FakeBeaconEngine, FakeAttrsBuilder, FakeAttrs> {
-        let (h, ri, reg) = fresh_sidecar();
+        let (h, reg) = fresh_sidecar();
         FluentApp::new(
             sample_block(B256::ZERO, 0),
             FakePayloadBuilder,
@@ -566,7 +517,6 @@ mod tests {
             Duration::from_millis(300),
             None,
             h,
-            ri,
             reg,
         )
     }
@@ -766,109 +716,6 @@ mod tests {
     }
 
     #[test]
-    fn report_tip_populates_round_index() {
-        use commonware_consensus::types::{Epoch, Height, Round, View};
-
-        let runtime = commonware_runtime::deterministic::Runner::default();
-        runtime.start(|_ctx| async move {
-            let (mailbox, _rx) = fresh_mailbox();
-            let mut app = build_app(mailbox);
-
-            let round = Round::new(Epoch::new(7), View::new(42));
-            <FluentApp<FakePayloadBuilder, FakeBeaconEngine, FakeAttrsBuilder, FakeAttrs> as Reporter>::report(
-                &mut app,
-                Update::Tip(round, Height::new(123), Digest(B256::ZERO)),
-            )
-            .await;
-
-            let idx = app.round_index.lock().unwrap();
-            assert_eq!(idx.get(&round), Some(&Height::new(123)));
-        });
-    }
-
-    #[test]
-    fn report_tip_trims_round_index_to_retention_window() {
-        use commonware_consensus::types::{Epoch, Height, Round, View};
-
-        let runtime = commonware_runtime::deterministic::Runner::default();
-        runtime.start(|_ctx| async move {
-            let (mailbox, _rx) = fresh_mailbox();
-            let mut app = build_app(mailbox);
-
-            // Insert epoch 7 view 0 — should be pruned once view advances
-            // past ROUND_INDEX_RETENTION (= 1024).
-            let old = Round::new(Epoch::new(7), View::new(0));
-            <FluentApp<FakePayloadBuilder, FakeBeaconEngine, FakeAttrsBuilder, FakeAttrs> as Reporter>::report(
-                &mut app,
-                Update::Tip(old, Height::new(1), Digest(B256::ZERO)),
-            )
-            .await;
-            assert!(app.round_index.lock().unwrap().contains_key(&old));
-
-            // Now advance well past the retention window.
-            let new = Round::new(Epoch::new(7), View::new(2000));
-            <FluentApp<FakePayloadBuilder, FakeBeaconEngine, FakeAttrsBuilder, FakeAttrs> as Reporter>::report(
-                &mut app,
-                Update::Tip(new, Height::new(2001), Digest(B256::ZERO)),
-            )
-            .await;
-            let idx = app.round_index.lock().unwrap();
-            assert!(!idx.contains_key(&old), "old view should be pruned");
-            assert!(idx.contains_key(&new), "new view should remain");
-        });
-    }
-
-    #[test]
-    fn report_tip_retains_entries_within_epoch_retention_window() {
-        use commonware_consensus::types::{Epoch, Height, Round, View};
-        // EPOCH_RETENTION_WINDOW = 2 (epoch_manager). Prior-epoch
-        // entries must be preserved during the two-epochs-alive overlap;
-        // a verifier may see a block in epoch N+1 whose extra_data
-        // references a round from epoch N. Wiping on first new-epoch Tip
-        // caused liveness loss at every boundary.
-
-        let runtime = commonware_runtime::deterministic::Runner::default();
-        runtime.start(|_ctx| async move {
-            let (mailbox, _rx) = fresh_mailbox();
-            let mut app = build_app(mailbox);
-
-            let epoch_6 = Round::new(Epoch::new(6), View::new(100));
-            <FluentApp<FakePayloadBuilder, FakeBeaconEngine, FakeAttrsBuilder, FakeAttrs> as Reporter>::report(
-                &mut app,
-                Update::Tip(epoch_6, Height::new(100), Digest(B256::ZERO)),
-            )
-            .await;
-            assert!(app.round_index.lock().unwrap().contains_key(&epoch_6));
-
-            // Epoch 7 (current - 1 still inside window=2) — keep epoch 6.
-            let epoch_7 = Round::new(Epoch::new(7), View::new(0));
-            <FluentApp<FakePayloadBuilder, FakeBeaconEngine, FakeAttrsBuilder, FakeAttrs> as Reporter>::report(
-                &mut app,
-                Update::Tip(epoch_7, Height::new(101), Digest(B256::ZERO)),
-            )
-            .await;
-            {
-                let idx = app.round_index.lock().unwrap();
-                assert!(idx.contains_key(&epoch_6), "prior-epoch entry retained within EPOCH_RETENTION_WINDOW");
-                assert!(idx.contains_key(&epoch_7));
-            }
-
-            // Epoch 8 — window=2 slides past epoch 6, now evicted; epoch 7
-            // still inside window.
-            let epoch_8 = Round::new(Epoch::new(8), View::new(0));
-            <FluentApp<FakePayloadBuilder, FakeBeaconEngine, FakeAttrsBuilder, FakeAttrs> as Reporter>::report(
-                &mut app,
-                Update::Tip(epoch_8, Height::new(102), Digest(B256::ZERO)),
-            )
-            .await;
-            let idx = app.round_index.lock().unwrap();
-            assert!(!idx.contains_key(&epoch_6), "epoch 6 evicted after window slid past");
-            assert!(idx.contains_key(&epoch_7));
-            assert!(idx.contains_key(&epoch_8));
-        });
-    }
-
-    #[test]
     fn latest_finalized_cert_returns_none_when_marshal_unwired() {
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|_ctx| async move {
@@ -878,23 +725,6 @@ mod tests {
             // the method must return None instead of touching marshal.
             app.latest_finalized_height.store(10, Ordering::Release);
             assert_eq!(app.latest_finalized_cert().await, None);
-        });
-    }
-
-    #[test]
-    fn cert_for_round_returns_none_when_marshal_unwired() {
-        use commonware_consensus::types::{Epoch, Height, Round, View};
-
-        let runtime = commonware_runtime::deterministic::Runner::default();
-        runtime.start(|_ctx| async move {
-            let (mailbox, _rx) = fresh_mailbox();
-            let app = build_app(mailbox);
-            let round = Round::new(Epoch::new(7), View::new(42));
-            app.round_index
-                .lock()
-                .unwrap()
-                .insert(round, Height::new(1));
-            assert_eq!(app.cert_for_round(round).await, None);
         });
     }
 }

@@ -2,20 +2,17 @@
 //! and 05 (p2p) given operator keys, reth handles, and config. Spawned
 //! by the host adapter at `crates/node/src/dpos.rs`.
 
-use std::{
-    marker::PhantomData,
-    net::SocketAddr,
-    num::NonZeroU64,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
-    time::Duration,
+use crate::{
+    application::{BeaconEngineLike, PayloadAttrsBuilderLike, PayloadBuilderLike},
+    block::Block as ConsensusBlock,
+    scheme::epoch_committee_from_snapshot,
+    slasher::actor::{SharedCacheFallback, SlasherTxSink, StaleEpochFallback},
+    timeouts::ConsensusTimeouts,
+    OuterBuilder,
 };
-
 use alloy_consensus::Header;
 use alloy_primitives::{Bytes, B256};
-use alloy_rpc_types_engine::PayloadId;
+use alloy_rpc_types_engine::{ForkchoiceState, PayloadId};
 use commonware_consensus::{
     types::{Epoch, Height},
     Heightable as _,
@@ -23,8 +20,13 @@ use commonware_consensus::{
 use commonware_cryptography::Signer;
 use commonware_p2p::{authenticated::discovery::Bootstrapper, Ingress};
 use commonware_runtime::{tokio::Context, Clock as _, Handle, Metrics as _, Spawner as _};
+use commonware_storage::{
+    archive::{Archive as _, Identifier},
+    metadata::{self, Metadata},
+};
+use commonware_utils::sequence::U64;
 use dashmap::DashMap;
-use eyre::{eyre, OptionExt as _, WrapErr as _};
+use eyre::{ensure, eyre, OptionExt as _, WrapErr as _};
 use fluentbase_bls::{
     fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_verifier, PeerPubkey,
 };
@@ -41,24 +43,31 @@ use reth_storage_api::{
     BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider,
     StateProviderFactory,
 };
+use std::{
+    marker::PhantomData,
+    net::SocketAddr,
+    num::NonZeroU64,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
-
-use crate::{
-    application::{BeaconEngineLike, PayloadAttrsBuilderLike, PayloadBuilderLike},
-    block::Block as ConsensusBlock,
-    scheme::epoch_committee_from_snapshot,
-    slasher::actor::{SharedCacheFallback, SlasherTxSink, StaleEpochFallback},
-    timeouts::ConsensusTimeouts,
-    OuterBuilder,
-};
 
 /// Threshold for consecutive `on_finalized` errors before initiating shutdown.
 /// At 1 block/sec finalization, 3 = ~3 seconds tolerance. Survives transient
 /// errors (single bad read, reorg edge); fails fast on persistent (disk full,
 /// chain config error, DB corruption). Production posture.
 const MAX_CONSECUTIVE_ON_FINALIZED_ERRORS: u32 = 3;
+
+/// Partition prefix for the commonware marshal's durable storage (finalizations,
+/// finalized blocks, application-metadata). Shared between the cold-start
+/// discriminator peek (`read_consensus_archive_last_finalized`) and the marshal
+/// itself (`OuterBuilder.partition_prefix`) so the two never drift.
+const MARSHAL_PARTITION_PREFIX: &str = "consensus_marshal";
 
 /// Reth handles needed by the DPoS layer. The host adapter at
 /// `crates/node/src/dpos.rs` assembles this from `FullNode<N, AddOns>`;
@@ -87,36 +96,6 @@ pub struct RethHandle<Provider, EvmConfig, PayloadBuilder, BeaconEngine> {
     pub genesis_hash: B256,
 }
 
-/// Operator-supplied per-launch configuration. Keys + JSON-parsed
-/// configs arrive pre-loaded (the host crate owns filesystem syscalls
-/// and permission checks); the slasher transport arrives pre-built
-/// because `PoolTxSink<P, Provider>` carries concrete
-/// `reth-transaction-pool` trait bounds that can't compile in this crate.
-/// Operator/chainspec-supplied Tempo→DPoS swap anchor, supplied IDENTICALLY to
-/// every validator. Pins the consensus genesis to one network-agreed block
-/// instead of each node reading its own reth finalized marker — that marker is
-/// persisted lazily (flushed only on the next block-save), so a post-restart
-/// read is racily stale and validators would otherwise diverge.
-#[derive(Debug, Clone, Copy)]
-pub struct MigrationAnchor {
-    pub height: u64,
-    pub hash: B256,
-}
-
-enum AnchorCheck {
-    Present,
-    NotYet,
-    Mismatch(B256),
-}
-
-fn check_anchor_block(local_hash_at_height: Option<B256>, expected: B256) -> AnchorCheck {
-    match local_hash_at_height {
-        Some(h) if h == expected => AnchorCheck::Present,
-        Some(h) => AnchorCheck::Mismatch(h),
-        None => AnchorCheck::NotYet,
-    }
-}
-
 /// Cold-start `(finalized_num, finalized_hash, head_num, head_hash)` derived
 /// purely from reth's `canonical_state` + `genesis_hash` (the non-migration
 /// path). Reth's `BlockchainProvider::with_latest` repopulates
@@ -141,58 +120,194 @@ pub fn derive_cold_start_heights(
     )
 }
 
-/// Verify reth holds exactly the operator-supplied anchor block before adopting
-/// it as the consensus anchor. Bounded wait covers reth still loading on
-/// restart; a hash mismatch or timeout is fatal — never adopt a divergent
-/// anchor silently (that is the divergence this guards against).
-async fn resolve_migration_anchor<Provider>(
+/// Bounded wait for reth to hold the DPoS activation block before adopting it as
+/// the fresh-migration consensus anchor; returns the block's local-canonical
+/// hash. Covers reth still replaying MDBX on restart. A timeout is fatal: the
+/// sequencer must have finalized the activation block before DPoS starts. No
+/// operator-hash compare — the activation height comes from the on-chain
+/// `ChainConfig.dposActivationBlock` and the hash is local-canonical at a
+/// finalized height (every honest node derives the same hash).
+pub(crate) async fn wait_for_activation_block<Provider>(
     ctx: &Context,
     provider: &Provider,
-    anchor: MigrationAnchor,
-) -> eyre::Result<(u64, B256)>
+    activation: u64,
+) -> eyre::Result<B256>
 where
     Provider: BlockHashReader,
 {
-    const ANCHOR_WAIT: Duration = Duration::from_secs(30);
+    // Generous enough to cover reth finishing its MDBX/static-file replay on a
+    // cold restart even under multi-node resource contention (a first-run devnet
+    // brings several reth instances up at once, and one can lose a tight startup
+    // race while the activation block IS present — it's just not queryable yet).
+    // 30s was too tight and produced a spurious fatal "activation block missing".
+    const ANCHOR_WAIT: Duration = Duration::from_secs(120);
     let deadline = ctx.current() + ANCHOR_WAIT;
     loop {
-        let local = provider
-            .block_hash(anchor.height)
-            .wrap_err("provider.block_hash failed during migration-anchor verification")?;
-        match check_anchor_block(local, anchor.hash) {
-            AnchorCheck::Present => {
-                tracing::info!(
-                    height = anchor.height,
-                    hash = ?anchor.hash,
-                    "DPoS migration anchor verified present in reth"
-                );
-                return Ok((anchor.height, anchor.hash));
-            }
-            AnchorCheck::Mismatch(local_hash) => {
-                return Err(eyre!(
-                    "DPoS migration anchor mismatch at height {}: operator-supplied {:?} != \
-                     reth-local {:?} — wrong anchor or wrong fork; refusing to start",
-                    anchor.height,
-                    anchor.hash,
-                    local_hash
-                ));
-            }
-            AnchorCheck::NotYet => {
-                if ctx.current() >= deadline {
-                    return Err(eyre!(
-                        "reth does not have migration anchor block {} after {:?}; cannot \
-                         cold-start DPoS (ensure validators graceful-shutdown before the swap \
-                         so blocks persist to MDBX)",
-                        anchor.height,
-                        ANCHOR_WAIT
-                    ));
-                }
-                ctx.sleep(Duration::from_secs(2)).await;
-            }
+        if let Some(hash) = provider
+            .block_hash(activation)
+            .wrap_err("provider.block_hash failed during activation-block wait")?
+        {
+            tracing::info!(height = activation, hash = ?hash, "DPoS activation block present in reth");
+            return Ok(hash);
         }
+        if ctx.current() >= deadline {
+            return Err(eyre!(
+                "reth does not have DPoS activation block {activation} after {ANCHOR_WAIT:?}; \
+                 wait for the sequencer to finalize it before starting DPoS (ensure graceful \
+                 shutdown so blocks persist to MDBX)"
+            ));
+        }
+        ctx.sleep(Duration::from_secs(2)).await;
     }
 }
 
+/// Peek the marshal's last consensus-finalized height from its durable
+/// application-metadata store WITHOUT building the marshal/engine — the
+/// restart-vs-fresh-migration discriminator. An empty store (fresh migration)
+/// returns 0; a populated store (restart, already migrated) returns the last
+/// DPoS-finalized height so the cold-start resumes at the correct epoch.
+///
+/// Reads the SAME `{partition_prefix}-application-metadata` Metadata store and
+/// key that commonware `MarshalActor::init` returns as `last_processed_height`
+/// (monorepo `consensus/src/marshal/core/actor.rs:305-317`), so the value is
+/// byte-identical to the one the executor-seed path already consumes. The peek
+/// opens the store, reads, and drops it before `MarshalActor::init` re-opens it.
+pub(crate) async fn read_consensus_archive_last_finalized(
+    ctx: &Context,
+    partition_prefix: &str,
+) -> eyre::Result<u64> {
+    // Wire-format invariant: must match commonware marshal `core/actor.rs:58`
+    // `const LATEST_KEY: U64 = U64::new(0xFF)` (a private const there). It is a
+    // storage-layout constant pinned with the commonware rev in `Cargo.lock`.
+    const LATEST_KEY: U64 = U64::new(0xFF);
+    let metadata: Metadata<Context, U64, Height> = Metadata::init(
+        ctx.with_label("cold_start_archive_peek"),
+        metadata::Config {
+            partition: format!("{partition_prefix}-application-metadata"),
+            codec_config: (),
+        },
+    )
+    .await
+    .wrap_err("opening marshal application-metadata for cold-start discriminator")?;
+    Ok(metadata
+        .get(&LATEST_KEY)
+        .copied()
+        .unwrap_or(Height::zero())
+        .get())
+}
+
+/// Crash-survivor cold-start recovery: reth is missing the
+/// consensus-finalized block at `target` (an ungraceful crash lost reth's
+/// unflushed tail while the marshal persisted the finalization). Read the missing
+/// block(s) from the marshal's own `finalized_blocks` archive and `new_payload`
+/// them into reth, walking ancestors oldest-ward until reth reconnects; return the
+/// recovered `target`'s local hash. Standalone archive open (before the engine is
+/// built), like the metadata peek — dropped before `MarshalActor::init` re-opens it.
+async fn recover_finalized_tail_into_reth<Provider, BeaconEngine>(
+    ctx: &Context,
+    beacon_engine: &BeaconEngine,
+    provider: &Provider,
+    target: u64,
+) -> eyre::Result<B256>
+where
+    Provider: BlockHashReader,
+    BeaconEngine: BeaconEngineLike<
+        PayloadAttrs = EthPayloadAttributes,
+        ExecutionData = SealedBlock<RethBlock>,
+    >,
+{
+    // An ungraceful crash loses only reth's unflushed tail (typically 1-2 blocks).
+    // A larger gap is real EL data loss, not a recoverable flush race.
+    const MAX_COLD_RECOVER: u64 = 64;
+
+    let archive = crate::outer::init_finalized_blocks_archive(ctx, MARSHAL_PARTITION_PREFIX).await;
+
+    // Collect blocks reth is missing, from `target` downward, until reth holds the
+    // parent (the reconnect point).
+    let mut to_apply: Vec<ConsensusBlock> = Vec::new();
+    let mut h = target;
+    while provider
+        .block_hash(h)
+        .wrap_err("provider.block_hash during crash-survivor recovery")?
+        .is_none()
+    {
+        if to_apply.len() as u64 >= MAX_COLD_RECOVER {
+            return Err(eyre!(
+                "crash-survivor recovery: reth missing > {MAX_COLD_RECOVER} blocks below \
+                 finalized {target} — real EL data loss; re-sync the EL disk from a snapshot"
+            ));
+        }
+        let block = archive
+            .get(Identifier::Index(h))
+            .await
+            .map_err(|e| eyre!("reading marshal finalized_blocks at height {h}: {e}"))?
+            .ok_or_else(|| {
+                eyre!(
+                    "crash-survivor recovery: marshal finalized_blocks has no block at height \
+                     {h} (gap exceeds marshal retention); re-sync the EL disk from a snapshot"
+                )
+            })?;
+        to_apply.push(block);
+        if h == 0 {
+            break;
+        }
+        h -= 1;
+    }
+
+    // The target block was pushed first; capture its EL hash for the canonicalizing
+    // FCU below before the vec is consumed.
+    let target_hash = to_apply
+        .first()
+        .expect("recovery loop ran at least once (target was missing)")
+        .block_hash();
+
+    // Apply oldest-first so each block's parent is already present in reth.
+    for block in to_apply.into_iter().rev() {
+        let bh = block.height();
+        let status = beacon_engine
+            .new_payload(block.into_inner())
+            .await
+            .wrap_err("crash-survivor recovery new_payload failed")?;
+        ensure!(
+            status.is_valid() || status.is_syncing(),
+            "EL rejected recovered finalized block {bh}: {status:?}"
+        );
+    }
+    drop(archive); // release so MarshalActor::init can re-open the same partition.
+
+    // `new_payload` only buffers/validates; an FCU is required to make the recovered
+    // tail canonical so `block_hash(target)` (and the committee/genesis reads that
+    // follow) actually see it.
+    let resp = beacon_engine
+        .fork_choice_updated(
+            ForkchoiceState {
+                head_block_hash: target_hash,
+                safe_block_hash: target_hash,
+                finalized_block_hash: target_hash,
+            },
+            None,
+        )
+        .await
+        .wrap_err("crash-survivor recovery FCU failed")?;
+    ensure!(
+        resp.is_valid(),
+        "EL rejected crash-survivor recovery FCU (target={target}): {:?}",
+        resp.payload_status
+    );
+
+    provider
+        .block_hash(target)
+        .wrap_err("provider.block_hash after crash-survivor recovery")?
+        .ok_or_else(|| {
+            eyre!("crash-survivor recovery: block {target} still missing from reth after replay")
+        })
+}
+
+/// Operator-supplied per-launch configuration. Keys + JSON-parsed
+/// configs arrive pre-loaded (the host crate owns filesystem syscalls
+/// and permission checks); the slasher transport arrives pre-built
+/// because `PoolTxSink<P, Provider>` carries concrete
+/// `reth-transaction-pool` trait bounds that can't compile in this crate.
 pub struct DposLayerConfig<AB> {
     pub bls_keypair: ValidatorBlsKeypair,
     pub peer_keypair: commonware_cryptography::ed25519::PrivateKey,
@@ -202,21 +317,24 @@ pub struct DposLayerConfig<AB> {
     pub p2p: P2pParams,
     pub payload_attrs_builder: AB,
     pub extra_data_registry: Arc<DashMap<PayloadId, Bytes>>,
-    /// `Some` → override the local finalized read as the consensus anchor (after
-    /// a has-block assertion). `None` → fall back to `get_finalized_num_hash()`
-    /// (pristine genesis-start / graceful single-node restart).
-    pub migration_anchor: Option<MigrationAnchor>,
+    /// Cert-feed sink (node-built): wired as the marshal's second
+    /// application-`Reporter` so a node-side feed actor can serve the
+    /// `consensus` RPC. `None` for nodes that don't serve the cert feed.
+    pub feed: Option<crate::feed_sink::FeedSink>,
 }
 
 pub struct P2pParams {
     pub listen: SocketAddr,
     pub dialable: Option<SocketAddr>,
-    pub allow_private_ips: bool,
 }
 
 pub struct DposLayerHandle {
     pub consensus_handle: Handle<()>,
     pub network_handle: Handle<()>,
+    /// Marshal mailbox clone for the node-side cert feed/RPC (by-height
+    /// `get_finalization`+`get_block`). The node calls `feed_handle.set_marshal`
+    /// with this once `launch` returns — keeping node types out of consensus.
+    pub cert_mailbox: crate::outer::MarshalMailbox,
 }
 
 /// Namespace type for the launch entry point.
@@ -274,15 +392,10 @@ impl DposLayer {
             slasher_sink,
             staking_config,
             bootstrappers,
-            p2p:
-                P2pParams {
-                    listen,
-                    dialable,
-                    allow_private_ips,
-                },
+            p2p: P2pParams { listen, dialable },
             payload_attrs_builder,
             extra_data_registry,
-            migration_anchor: _,
+            feed,
         } = cfg;
 
         let RethHandle {
@@ -322,28 +435,108 @@ impl DposLayer {
             .wrap_err("provider failed to report chain head block number at startup")?;
         let (cs_finalized, cs_finalized_hash, head_num, head_hash) =
             derive_cold_start_heights(&canonical_state, genesis_hash);
-        let (latest_finalized, latest_finalized_hash) = match cfg.migration_anchor {
-            Some(anchor) => resolve_migration_anchor(&ctx, &provider, anchor).await?,
-            None => (cs_finalized, cs_finalized_hash),
+
+        // Activation origin + epoch length, read EARLY (at the reth-restored
+        // finalized hash) — the cold-start discriminator below needs them before
+        // `initial_epoch`. `dposActivationBlock` is immutable and
+        // `epochBlockInterval` is governance-stable across the short
+        // migration/restart window, so reading at `cs_finalized_hash` matches
+        // reading at the resumed height.
+        let dpos_activation_block = reader.dpos_activation_block(cs_finalized_hash)?;
+        let interval = reader.epoch_block_interval(cs_finalized_hash)?;
+        let epoch_length_blocks =
+            NonZeroU64::new(interval as u64).ok_or_eyre("epoch_block_interval must be > 0")?;
+
+        // Two-way cold-start discriminator (restart vs fresh migration). The
+        // marshal's durable application-metadata is the signal: an empty store
+        // (height <= activation) is a fresh Tempo→DPoS migration; a populated
+        // store (> activation) is a restart of an already-migrated node, which
+        // MUST resume at its real finalized height so the scheme cascade starts
+        // at the correct epoch.
+        let archive_finalized =
+            read_consensus_archive_last_finalized(&ctx, MARSHAL_PARTITION_PREFIX).await?;
+        let is_fresh_migration = archive_finalized <= dpos_activation_block;
+        let (latest_finalized, latest_finalized_hash) = if is_fresh_migration {
+            // FRESH MIGRATION: anchor ≡ block@dposActivationBlock; wait for reth
+            // to hold it, hash derived locally (canonical at a finalized height).
+            // Checkpoint-provisioned EL-ahead start is deferred to Phase 2/β — a
+            // node-local EL head as genesis would diverge cross-node.
+            let hash = wait_for_activation_block(&ctx, &provider, dpos_activation_block).await?;
+            // fail-loud: the sequencer must not have overshot epoch 0 entirely
+            // (finalized into epoch 1+) — DPoS would otherwise sibling-fork
+            // already-finalized blocks → finalized rollback → split.
+            ensure!(
+                cs_finalized < dpos_activation_block + interval as u64,
+                "sequencer overshot epoch 0 (finalized {cs_finalized} >= activation \
+                 {dpos_activation_block} + interval {interval}); refusing to anchor DPoS"
+            );
+            (dpos_activation_block, hash)
+        } else {
+            // RESTART (already migrated): resume at the consensus archive's
+            // finalized height.
+            let hash = match provider.block_hash(archive_finalized)? {
+                Some(hash) => hash,
+                None => {
+                    // CRASH SURVIVOR: an ungraceful crash lost reth's
+                    // unflushed finalized tail while the marshal persisted the
+                    // finalization (the two stores flush independently). reth is
+                    // behind the consensus archive. Recover the missing block(s)
+                    // from the marshal's OWN finalized_blocks archive into reth —
+                    // the cold-start analog of the executor gap-heal, and how tempo
+                    // backfills marshal→reth. fluentbase needs this at cold-start
+                    // (not just in the executor backfill) because the committee
+                    // read at `latest_finalized_hash` and the genesis read both
+                    // require reth to hold the resume block. The later executor
+                    // backfill then becomes a no-op.
+                    recover_finalized_tail_into_reth(
+                        &ctx,
+                        &beacon_engine_handle,
+                        &provider,
+                        archive_finalized,
+                    )
+                    .await?
+                }
+            };
+            (archive_finalized, hash)
         };
 
         tracing::info!(
             last_execution_finalized_height,
+            archive_finalized,
+            is_fresh_migration,
             finalized = latest_finalized,
             finalized_hash = ?latest_finalized_hash,
             head_num,
             head_hash = ?head_hash,
-            "DPoS init: cold-start canonical state read from reth provider"
+            "DPoS init: cold-start discriminator resolved"
         );
 
-        let interval = reader.epoch_block_interval(latest_finalized_hash)?;
-        let epoch_length_blocks =
-            NonZeroU64::new(interval as u64).ok_or_eyre("epoch_block_interval must be > 0")?;
+        // Clean-halt migration invariant: the pre-DPoS sequencer is production-gated
+        // at `dposActivationBlock` (bins/fluent launcher), so on a fresh migration
+        // reth's canonical head MUST already equal the activation anchor — there is
+        // no orphaned Tempo tail to reconcile. A mismatch means the gate did not run
+        // (mis-set chain-config, an ungated node, or a hand-rolled migration): fail
+        // loud at cold-start rather than wedge silently in the executor ancestor-FCU
+        // guard.
+        if is_fresh_migration {
+            ensure!(
+                head_hash == latest_finalized_hash,
+                "fresh migration but reth head {head_num} ({head_hash:?}) != activation \
+                 anchor {latest_finalized} ({latest_finalized_hash:?}); the Tempo sequencer \
+                 was not production-gated at dposActivationBlock — refusing to anchor DPoS \
+                 on an orphaned tail"
+            );
+        }
+        let (initial_head_num, initial_head_hash) = (head_num, head_hash);
+
         let undelegate = reader.undelegate_period(latest_finalized_hash)?;
         let retention =
             undelegate as u64 + fluentbase_staking_reader::reader::EPOCH_COMMITTEE_RETENTION_MARGIN;
-        let initial_epoch_u64 =
-            fluentbase_staking_reader::reader::epoch_of_block(latest_finalized, interval);
+        let initial_epoch_u64 = fluentbase_staking_reader::reader::epoch_of_block(
+            latest_finalized,
+            interval,
+            dpos_activation_block,
+        );
 
         // Enforce Rust ↔ Solidity invariant
         //   `ChainConfig.activeValidatorsLength <= fluentbase_p2p::MAX_PEER_SET_SIZE`.
@@ -411,7 +604,6 @@ impl DposLayer {
             listen,
             dialable: Ingress::Socket(dialable_addr),
             bootstrappers,
-            allow_private_ips,
         };
         let (p2p, handles) = FluentP2P::build(ctx.clone(), p2p_cfg);
         let network_handle = p2p.start();
@@ -459,14 +651,16 @@ impl DposLayer {
         // to reth `new_payload` against MDBX-loaded state(hash_N).
         let genesis_unsealed = provider
             .block_by_number(latest_finalized)
-            .map_err(|e| eyre!(
-                "consensus genesis block read at height {latest_finalized} failed: {e}"
-            ))?
-            .ok_or_else(|| eyre!(
-                "consensus genesis block missing from MDBX at height {latest_finalized} \
+            .map_err(|e| {
+                eyre!("consensus genesis block read at height {latest_finalized} failed: {e}")
+            })?
+            .ok_or_else(|| {
+                eyre!(
+                    "consensus genesis block missing from MDBX at height {latest_finalized} \
                  (canonical_state.finalized claimed it exists). Graceful shutdown must \
                  persist this block before DPoS restart."
-            ))?;
+                )
+            })?;
         let genesis_sealed: SealedBlock<RethBlock> = SealedBlock::seal_slow(genesis_unsealed);
         let genesis_block = ConsensusBlock::from_execution_block(genesis_sealed);
 
@@ -594,11 +788,12 @@ impl DposLayer {
             provider: handles.oracle.clone(),
             chain_id,
             epoch_length_blocks,
+            dpos_activation_block,
             signer_keypair: Some(bls_keypair),
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             deque_size: 64,
-            partition_prefix: "consensus_marshal".into(),
+            partition_prefix: MARSHAL_PARTITION_PREFIX.into(),
             resolver_initial: Duration::from_secs(1),
             resolver_timeout: Duration::from_secs(2),
             resolver_fetch_retry: Duration::from_millis(100),
@@ -614,8 +809,11 @@ impl DposLayer {
             // Executor cold-start state.
             last_execution_finalized_height,
             initial_finalized: (Height::new(latest_finalized), latest_finalized_hash),
-            initial_head: (Height::new(head_num), head_hash),
-            marshal_floor: cfg.migration_anchor.map(|a| Height::new(a.height)),
+            initial_head: (Height::new(initial_head_num), initial_head_hash),
+            // DPoS-era floor: the marshal never dispatches pre-activation history
+            // (no DPoS node holds it). Seeds a fresh migration to anchor+1; a
+            // no-op raise on restart (the archive's floor is already higher).
+            marshal_floor: Some(Height::new(dpos_activation_block)),
             fcu_heartbeat_interval: Duration::from_secs(8),
             fcu_pace: Duration::from_millis(20),
             canonical_state: canonical_state.clone(),
@@ -630,6 +828,7 @@ impl DposLayer {
             slasher_wal_partition: "slasher-wal".into(),
 
             extra_data_registry: extra_data_registry.clone(),
+            feed,
         }
         .build(ctx.with_label("outer_engine"))
         .await?;
@@ -660,6 +859,10 @@ impl DposLayer {
             }
         }));
 
+        // Grab the marshal mailbox for the node-side cert feed/RPC BEFORE
+        // `start` consumes the engine.
+        let cert_mailbox = outer.marshal_mailbox();
+
         // Start OuterEngine — 6-arg start: ctx + 5 raw channels.
         let consensus_handle = outer.start(
             ctx.with_label("marshal_resolver"),
@@ -673,37 +876,7 @@ impl DposLayer {
         Ok(DposLayerHandle {
             consensus_handle,
             network_handle,
+            cert_mailbox,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn anchor_present_on_exact_match() {
-        let h = B256::repeat_byte(0x11);
-        assert!(matches!(
-            check_anchor_block(Some(h), h),
-            AnchorCheck::Present
-        ));
-    }
-
-    #[test]
-    fn anchor_mismatch_on_different_hash() {
-        let expected = B256::repeat_byte(0x11);
-        let local = B256::repeat_byte(0x22);
-        assert!(
-            matches!(check_anchor_block(Some(local), expected), AnchorCheck::Mismatch(h) if h == local)
-        );
-    }
-
-    #[test]
-    fn anchor_not_yet_when_block_absent() {
-        assert!(matches!(
-            check_anchor_block(None, B256::repeat_byte(0x11)),
-            AnchorCheck::NotYet
-        ));
     }
 }

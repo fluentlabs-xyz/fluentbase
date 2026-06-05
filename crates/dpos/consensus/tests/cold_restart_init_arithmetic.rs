@@ -39,7 +39,11 @@ fn cs_head_ahead(
     fin_h: u64,
     fin_hash: B256,
 ) -> CanonicalInMemoryState<EthPrimitives> {
-    CanonicalInMemoryState::with_head(sealed(head_h, head_hash), Some(sealed(fin_h, fin_hash)), None)
+    CanonicalInMemoryState::with_head(
+        sealed(head_h, head_hash),
+        Some(sealed(fin_h, fin_hash)),
+        None,
+    )
 }
 
 #[test]
@@ -48,7 +52,10 @@ fn pristine_network_falls_back_to_genesis() {
     let genesis = B256::repeat_byte(0xAA);
     let (fin_num, fin_hash, head_num, head_hash) = derive_cold_start_heights(&cs, genesis);
     assert_eq!(fin_num, 0, "pristine: finalized number = genesis");
-    assert_eq!(fin_hash, genesis, "pristine: finalized hash = genesis fallback");
+    assert_eq!(
+        fin_hash, genesis,
+        "pristine: finalized hash = genesis fallback"
+    );
     assert_eq!(head_num, 0, "pristine: head number = 0 (empty chain_info)");
     // head_hash comes from chain_info (an empty-state default-header hash), NOT
     // the genesis fallback used for `finalized` — proving the two are sourced
@@ -66,7 +73,10 @@ fn graceful_restart_reads_canonical_finalized() {
     let genesis = B256::repeat_byte(0xAA);
     let (fin_num, fh, head_num, head_hash) = derive_cold_start_heights(&cs, genesis);
     assert_eq!(fin_num, 6, "graceful: finalized from canonical_state");
-    assert_eq!(fh, fin_hash, "graceful: finalized hash from canonical_state");
+    assert_eq!(
+        fh, fin_hash,
+        "graceful: finalized hash from canonical_state"
+    );
     assert_eq!(head_num, 6, "graceful: head from chain_info");
     assert_eq!(head_hash, fin_hash, "graceful: head == finalized");
 }

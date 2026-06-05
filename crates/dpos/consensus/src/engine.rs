@@ -4,15 +4,18 @@
 //! buffered::Engine, archives, and EpochSchemeProvider are global singletons
 //! living in [`crate::outer::OuterEngine`].
 
-use std::sync::Arc;
-
+use crate::{
+    application::FluentApp, block::Block, digest::Digest, elector_seed::epoch_leader_seed,
+    epocher::OriginEpocher, scheme::epoch_committee_from_snapshot,
+    slasher::Mailbox as SlasherMailbox, timeouts::ConsensusTimeouts,
+};
 use commonware_consensus::{
     marshal::{
         core::Mailbox as MarshalMailbox,
         standard::{Inline, Standard},
     },
     simplex::{self, config::ForwardingPolicy, elector::RoundRobin, types::Activity},
-    types::{Epoch, FixedEpocher},
+    types::Epoch,
     Reporters,
 };
 use commonware_cryptography::{ed25519, Sha256};
@@ -30,19 +33,14 @@ use fluentbase_bls::{
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::CryptoRngCore;
-
-use crate::{
-    application::FluentApp, block::Block, digest::Digest, elector_seed::epoch_leader_seed,
-    scheme::epoch_committee_from_snapshot, slasher::Mailbox as SlasherMailbox,
-    timeouts::ConsensusTimeouts,
-};
+use std::sync::Arc;
 
 const REPLAY_BUFFER: std::num::NonZeroUsize = NZUsize!(8 * 1024 * 1024);
 const WRITE_BUFFER: std::num::NonZeroUsize = NZUsize!(1024 * 1024);
 const FETCH_CONCURRENT: usize = 4;
 
 type InlineFor<E, PB, BE, AB, Attrs> =
-    Inline<E, BlsScheme, FluentApp<PB, BE, AB, Attrs>, Block, FixedEpocher>;
+    Inline<E, BlsScheme, FluentApp<PB, BE, AB, Attrs>, Block, OriginEpocher>;
 
 type ConsensusEngine<E, B, PB, BE, AB, Attrs> = simplex::Engine<
     E,
@@ -69,10 +67,10 @@ pub struct EpochEngineConfig<B, PB, BE, AB, Attrs> {
     pub blocker: B,
     pub snapshot: ValidatorSetSnapshot,
     pub epoch: Epoch,
-    /// Single cross-epoch `FixedEpocher` instance threaded from
+    /// Single cross-epoch `OriginEpocher` instance threaded from
     /// [`crate::outer::OuterBuilder::build`] (no per-epoch re-construction;
-    /// marshal and engine share the same instance).
-    pub epocher: FixedEpocher,
+    /// marshal and engine share the same instance). `origin = dposActivationBlock`.
+    pub epocher: OriginEpocher,
     pub chain_id: u64,
     pub signer_keypair: Option<ValidatorBlsKeypair>,
     pub app: FluentApp<PB, BE, AB, Attrs>,
@@ -188,7 +186,7 @@ where
 
         (cfg.register_scheme)(cfg.epoch, scheme.clone());
 
-        // Use the cross-epoch FixedEpocher threaded in via config,
+        // Use the cross-epoch OriginEpocher threaded in via config,
         // not a per-epoch local re-construction.
         let inline = Inline::new(
             context.with_label("inline"),

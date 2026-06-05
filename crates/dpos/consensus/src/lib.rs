@@ -14,13 +14,16 @@
 
 pub mod application;
 pub mod block;
+pub mod cert_follow;
 pub mod digest;
 pub mod dpos;
 pub mod elector_seed;
 pub mod engine;
 pub mod epoch_manager;
+pub mod epocher;
 pub mod executor;
 pub mod extra_data;
+pub mod feed_sink;
 pub mod outer;
 pub mod reth_adapters;
 pub mod scheme;
@@ -29,8 +32,14 @@ pub mod timeouts;
 
 pub use application::{BeaconEngineLike, FluentApp, PayloadAttrsBuilderLike, PayloadBuilderLike};
 pub use block::Block;
+pub use cert_follow::{
+    CertFollowConfig, CertFollowHandle, CertFollowLayer, CertFollowRethHandle, CertUpstream,
+    UpstreamFinalized,
+};
 pub use digest::Digest;
 pub use dpos::{DposLayer, DposLayerConfig, DposLayerHandle, P2pParams, RethHandle};
 pub use elector_seed::epoch_leader_seed;
-pub use outer::{OuterBuilder, OuterEngine};
+pub use epocher::OriginEpocher;
+pub use feed_sink::FeedSink;
+pub use outer::{MarshalMailbox, OuterBuilder, OuterEngine};
 pub use timeouts::ConsensusTimeouts;
