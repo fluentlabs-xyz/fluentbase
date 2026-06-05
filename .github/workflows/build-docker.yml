@@ -77,8 +77,18 @@ jobs:
           SDK_VERSION_TAG=""
           fi
           
+          IS_RC=false
+          if [[ "$VERSION" == *-rc* ]]; then
+          IS_RC=true
+          fi
+
+          PUSH_LATEST=false
+          if [[ "$IS_RC" != "true" ]] && { [[ "$EVENT" == "workflow_dispatch" && "${{ inputs.push_latest }}" == "true" ]] || [[ "$REF_TYPE" == "tag" ]]; }; then
+          PUSH_LATEST=true
+          fi
+
           TAGS="${IMAGE}:${VERSION}"
-          if [[ ("$EVENT" == "workflow_dispatch" && "${{ inputs.push_latest }}" == "true") || "$REF_TYPE" == "tag" ]]; then
+          if [[ "$PUSH_LATEST" == "true" ]]; then
           TAGS+=",${IMAGE}:latest"
           fi
           
@@ -91,6 +101,8 @@ jobs:
           
           echo "Resolved metadata:"
           echo "  VERSION=${VERSION}"
+          echo "  IS_RC=${IS_RC}"
+          echo "  PUSH_LATEST=${PUSH_LATEST}"
           echo "  BRANCH=${SDK_VERSION_BRANCH}"
           echo "  TAG=${SDK_VERSION_TAG}"
           echo "  TAGS=${TAGS}"
