@@ -129,6 +129,19 @@ fluentbase-runtime = { workspace = true }
 fluentbase-revm = { workspace = true }
 fluentbase-genesis = { workspace = true }
 fluentbase-types = { workspace = true }
+fluentbase-bls = { workspace = true }
+fluentbase-consensus = { workspace = true }
+fluentbase-staking-reader = { workspace = true }
+fluentbase-p2p = { workspace = true }
+
+# commonware (DPoS runtime + p2p types used by dpos module)
+commonware-runtime = { workspace = true }
+commonware-p2p = { workspace = true }
+commonware-consensus = { workspace = true }
+commonware-cryptography = { workspace = true, features = ["std"] }
+commonware-utils = { workspace = true, features = ["std"] }
+commonware-codec = { workspace = true }
+jsonrpsee = { workspace = true }
 
 # alloy
 alloy-primitives = { workspace = true }
@@ -139,19 +152,31 @@ alloy-consensus = { workspace = true }
 alloy-network = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
+alloy-signer-local = { workspace = true }
+alloy-signer = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-sol-types = { workspace = true, default-features = false, features = ["json"] }
 
 # async
-tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thread", "net", "io-util"] }
+tokio-util = { workspace = true }
 
 # tracing
 tracing.workspace = true
 
+# metrics
+metrics = { workspace = true }
+
 # misc
+futures = "0.3"
+serde = { workspace = true }
 serde_json = { workspace = true }
+hex = { workspace = true }
 eyre = { workspace = true }
 directories = { workspace = true }
 flate2 = { workspace = true }
 reqwest = { workspace = true }
+dashmap = { workspace = true }
 
 [features]
 default = ["std"]
@@ -161,6 +186,10 @@ std = [
     "fluentbase-genesis/std",
     "fluentbase-types/std",
 ]
+# DEVNET-ONLY: compiles in the unauthenticated commonware-metrics HTTP
+# endpoint (smoke regression suite). Off by default so prod binaries can
+# never serve it regardless of `--dpos.metrics-port`.
+dpos-devnet-metrics = []
 wasmtime = [
     "fluentbase-runtime/wasmtime",
     "fluentbase-revm/wasmtime",

@@ -1,5 +1,6 @@
 //! This is temporary single-node consensus that is used for block production for Fluent,
 //! it will be replaced with DPoS consensus later.
+use alloy_consensus::BlockHeader;
 use alloy_network::AnyNetwork;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
@@ -25,6 +26,7 @@ pub async fn launch_consensus_validator<N, AddOns: RethRpcAddOns<N>, B>(
     handle: &NodeHandle<N, AddOns>,
     block_time: Duration,
     payload_attributes_builder: B,
+    activation_gate: Option<u64>,
 ) -> eyre::Result<()>
 where
     N: FullNodeComponents<Types: DebugNode<N>>,
@@ -41,6 +43,7 @@ where
         payload_attributes_builder,
         payload_builder_handle,
         beacon_engine_handle,
+        activation_gate,
     );
 
     handle
@@ -62,6 +65,11 @@ pub struct BlockProducer<T: PayloadTypes, B> {
     payload_builder: PayloadBuilderHandle<T>,
     last_header: SealedHeaderFor<<T::BuiltPayload as BuiltPayload>::Primitives>,
     last_block_hash: B256,
+    // Tempo→DPoS clean-halt: stop producing once the head reaches this block, so the
+    // last pre-DPoS block is exactly `dposActivationBlock` and DPoS anchors on it with
+    // no orphaned tail. `None` ⇒ no migration configured (absolute numbering).
+    activation_gate: Option<u64>,
+    halted: bool,
 }
 
 impl<T: PayloadTypes, B> BlockProducer<T, B>
@@ -76,6 +84,7 @@ where
         payload_attributes_builder: B,
         payload_builder: PayloadBuilderHandle<T>,
         to_engine: ConsensusEngineHandle<T>,
+        activation_gate: Option<u64>,
     ) -> Self {
         let last_header = provider
             .sealed_header(provider.best_block_number().unwrap())
@@ -88,6 +97,8 @@ where
             payload_builder,
             last_header,
             last_block_hash,
+            activation_gate,
+            halted: false,
         }
     }
 
@@ -108,6 +119,20 @@ where
                 // If shutdown arrives while this future is in progress, shutdown will wait
                 // until `advance_forkchoice_state()` finishes and only then exit the loop.
                 _ = block_time.tick() => {
+                    if let Some(act) = self.activation_gate {
+                        if self.last_header.number() >= act {
+                            if !self.halted {
+                                info!(
+                                    target: "engine::local",
+                                    activation = act,
+                                    "reached DPoS activation block; halting Tempo block \
+                                     production (DPoS consensus produces from activation+1)"
+                                );
+                                self.halted = true;
+                            }
+                            continue;
+                        }
+                    }
                     if let Err(e) = self.advance_forkchoice_state().await {
                         error!(target: "engine::local", "Error advancing the chain: {:?}", e);
                     }
