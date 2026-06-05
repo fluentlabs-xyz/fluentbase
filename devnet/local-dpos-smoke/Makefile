@@ -1,0 +1,62 @@
+SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
+
+.PHONY: regen-contracts smoke smoke-swap up down logs clean \
+        smoke-tx smoke-epoch smoke-peers smoke-liveness smoke-crash-survivor smoke-byzantine \
+        smoke-gov-interval smoke-full-restart smoke-all
+
+regen-contracts:
+	@test -d $(SOLIDITY_CONTRACTS_DIR) || \
+	  (echo "ERROR: solidity-contracts not found at $(SOLIDITY_CONTRACTS_DIR); set SOLIDITY_CONTRACTS_DIR" && exit 1)
+	cd $(SOLIDITY_CONTRACTS_DIR) && forge build
+	cp $(SOLIDITY_CONTRACTS_DIR)/out/Staking.sol/Staking.json                       contracts/
+	cp $(SOLIDITY_CONTRACTS_DIR)/out/ChainConfig.sol/ChainConfig.json               contracts/
+	cp $(SOLIDITY_CONTRACTS_DIR)/out/StakingPool.sol/StakingPool.json               contracts/
+	cp $(SOLIDITY_CONTRACTS_DIR)/out/SystemReward.sol/SystemReward.json             contracts/
+	cp $(SOLIDITY_CONTRACTS_DIR)/out/FluentGovernance.sol/FluentGovernance.json     contracts/
+	cp $(SOLIDITY_CONTRACTS_DIR)/out/LivenessSlashing.sol/LivenessSlashing.json     contracts/
+	cp $(SOLIDITY_CONTRACTS_DIR)/out/MockBlendToken.sol/MockBlendToken.json         contracts/
+	git -C $(SOLIDITY_CONTRACTS_DIR) rev-parse HEAD > contracts/.vendor-sha
+	@echo "Vendored contracts updated; SHA recorded in contracts/.vendor-sha; remember to commit."
+
+up:
+	docker compose up --build
+
+down:
+	docker compose down -v
+
+logs:
+	docker compose logs -f
+
+smoke:
+	@./scripts/assert-smoke.sh phase1
+
+smoke-swap:
+	@./scripts/assert-smoke.sh phase2
+
+clean:
+	docker compose down -v --remove-orphans
+
+# --- regression cases (each self-contained: brings up + tears down its own stack) ---
+smoke-tx:
+	@./scripts/case-tx.sh
+smoke-epoch:
+	@EPOCH_MIN_CROSS=1 ./scripts/case-epoch.sh
+smoke-peers:
+	@./scripts/case-peers.sh
+smoke-liveness:
+	@./scripts/case-liveness.sh
+smoke-crash-survivor:
+	@./scripts/case-crash-survivor.sh
+smoke-byzantine:
+	@./scripts/case-byzantine.sh
+# Additional NOW-tier cases (Phase 6).
+smoke-gov-interval:
+	@./scripts/case-gov-interval.sh
+smoke-full-restart:
+	@./scripts/case-full-restart.sh
+# Trustless cert-follower: subscribe-align + gap back-fill + tampered-cert reject.
+smoke-cert-follow:
+	@./scripts/case-cert-follow.sh
+# Aggregate (CI entry point).
+smoke-all:
+	@./scripts/run-all.sh

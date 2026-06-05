@@ -1,0 +1,48 @@
+[package]
+name = "fluentbase-genesis-bootstrap"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "genesis-bootstrap"
+path = "src/main.rs"
+
+[dependencies]
+fluentbase-bls = { workspace = true, features = ["plaintext-keys"] }
+fluentbase-genesis = { workspace = true, features = ["std"] }
+fluentbase-testing = { workspace = true }
+fluentbase-types = { workspace = true, features = ["std"] }
+# Enables CfgEnv.disable_eip3607 in the patched revm fork — the bootstrap
+# spoofs caller = GOVERNANCE_ADDR (predeploy with code) to satisfy the
+# `onlyFromGovernance` modifier in ChainConfig, and caller = SYSTEM_CALLER
+# similarly for `onlySystemCall`. Without this feature, EIP-3607 rejects
+# both transactions with `RejectCallerWithCode`.
+fluentbase-revm = { workspace = true, features = ["optional_eip3607"] }
+fluentbase-evm = { workspace = true, features = ["std"] }
+
+secp256k1 = { workspace = true, features = ["std", "alloc", "global-context", "recovery"] }
+
+alloy-genesis = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-signer = { workspace = true }
+alloy-signer-local = { workspace = true }
+alloy-sol-types = { workspace = true }
+
+commonware-codec = { workspace = true }
+commonware-cryptography = { workspace = true }
+
+coins-bip39 = "0.12"
+
+clap = { workspace = true, features = ["env"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std"] }
+hex = { workspace = true, features = ["std"] }
+sha2 = { workspace = true, features = ["std"] }
+rand_08 = { workspace = true }
+rand_core = { workspace = true }
+eyre = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
+tracing-subscriber = "0.3"

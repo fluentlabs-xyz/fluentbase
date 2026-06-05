@@ -1,0 +1,106 @@
+# Pipeline 2 phase-2 override: cold-restart validators 0-3 in
+# `--dpos` mode after Tempo (validator-0 with --validator) has
+# produced a few finalized blocks. Apply with:
+#   docker compose -f docker-compose.yml -f docker-compose.dpos.yml \
+#     up -d --force-recreate validator-0 validator-1 validator-2 validator-3
+# full-node is intentionally left in follower mode (--sequencer-url
+# stays valid because validator-0's WS server keeps running under
+# DPoS).
+
+services:
+  validator-0:
+    command:
+      - node
+      - --chain=/runtime/genesis-local.json
+      - --datadir=/runtime/reth-data/v0
+      - --dpos
+      - --dpos.bls-key-path=/runtime/keys/validator-0/bls.hex
+      - --dpos.peer-key-path=/runtime/keys/validator-0/peer.hex
+      - --dpos.staking-config=/runtime/staking-reader.json
+      - --dpos.bootstrappers=/runtime/peers.json
+      - --dpos.dialable=172.20.0.10:9000
+      - --dpos.metrics-port=9100
+      - --dpos.slasher-keystore-path=/runtime/keys/validator-0/slasher.json
+      - --dpos.slasher-keystore-password-file=/runtime/keys/validator-0/slasher.pwd
+      - --builder.extradata=
+      # Deterministic enode identity (followers pin this as --trusted-peers);
+      # restored under DPoS so reth devp2p block sync works for rejoin.
+      - --p2p-secret-key=/runtime/v0-p2p-secret.hex
+      - --port=30303
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.api=eth,net,web3
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=8546
+    ports:
+      - "19100:9100"   # DEVNET metrics endpoint (host:19100 → container:9100)
+
+  validator-1:
+    # /bin/sh -c (not exec-form) so $(cat /runtime/v0-enode.txt) expands —
+    # the trusted-peers enode is reth's devp2p block-sync source for rejoin.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --datadir=/runtime/reth-data/v1 \
+          --dpos \
+          --dpos.bls-key-path=/runtime/keys/validator-1/bls.hex \
+          --dpos.peer-key-path=/runtime/keys/validator-1/peer.hex \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --dpos.bootstrappers=/runtime/peers.json \
+          --dpos.dialable=172.20.0.11:9000 \
+          --dpos.metrics-port=9100 \
+          --dpos.slasher-keystore-path=/runtime/keys/validator-1/slasher.json \
+          --dpos.slasher-keystore-password-file=/runtime/keys/validator-1/slasher.pwd \
+          --builder.extradata= \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery
+
+  validator-2:
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --datadir=/runtime/reth-data/v2 \
+          --dpos \
+          --dpos.bls-key-path=/runtime/keys/validator-2/bls.hex \
+          --dpos.peer-key-path=/runtime/keys/validator-2/peer.hex \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --dpos.bootstrappers=/runtime/peers.json \
+          --dpos.dialable=172.20.0.12:9000 \
+          --dpos.metrics-port=9100 \
+          --dpos.slasher-keystore-path=/runtime/keys/validator-2/slasher.json \
+          --dpos.slasher-keystore-password-file=/runtime/keys/validator-2/slasher.pwd \
+          --builder.extradata= \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery
+
+  validator-3:
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --datadir=/runtime/reth-data/v3 \
+          --dpos \
+          --dpos.bls-key-path=/runtime/keys/validator-3/bls.hex \
+          --dpos.peer-key-path=/runtime/keys/validator-3/peer.hex \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --dpos.bootstrappers=/runtime/peers.json \
+          --dpos.dialable=172.20.0.13:9000 \
+          --dpos.metrics-port=9100 \
+          --dpos.slasher-keystore-path=/runtime/keys/validator-3/slasher.json \
+          --dpos.slasher-keystore-password-file=/runtime/keys/validator-3/slasher.pwd \
+          --builder.extradata= \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery
