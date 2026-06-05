@@ -1,7 +1,24 @@
 [workspace]
+# Core crates are listed explicitly; the DPoS crates are picked up by the
+# `crates/dpos/*` glob below.
 members = [
     "bins/*",
-    "crates/*",
+    "crates/build",
+    "crates/codec",
+    "crates/codec-derive",
+    "crates/contracts",
+    "crates/crypto",
+    "crates/evm",
+    "crates/genesis",
+    "crates/node",
+    "crates/revm",
+    "crates/runtime",
+    "crates/sdk",
+    "crates/sdk-derive",
+    "crates/testing",
+    "crates/types",
+    "crates/dpos/*",
+    "devnet/local-dpos-smoke/genesis-bootstrap",
     "e2e",
 ]
 exclude = [
@@ -46,7 +63,10 @@ fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false
 fluentbase-sdk-derive-core = { path = "./crates/sdk-derive/derive-core", default-features = false, version = "1.2.1" }
 fluentbase-testing = { path = "./crates/testing", version = "1.2.1" }
 fluentbase-types = { path = "./crates/types", default-features = false, version = "1.2.1" }
-fluentbase-bls = { path = "./crates/bls", default-features = false, version = "1.2.1" }
+fluentbase-bls = { path = "./crates/dpos/bls", version = "1.2.1" }
+fluentbase-staking-reader = { path = "./crates/dpos/staking-reader", version = "1.2.1" }
+fluentbase-p2p = { path = "./crates/dpos/p2p", default-features = false, version = "1.2.1" }
+fluentbase-consensus = { path = "./crates/dpos/consensus", default-features = false, version = "1.2.1" }
 #fluentbase-svm = { path = "./crates/svm", default-features = false }
 #fluentbase-svm-shared = { path = "./crates/svm-shared", default-features = false }
 #fluentbase-svm-common = { path = "./crates/svm-common", default-features = false }
@@ -144,6 +164,9 @@ hashbrown = { version = "0.16.0", default-features = false, features = ["default
 schnellru = { version = "0.2" }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+# Matches reth's transitive jsonrpsee pin (Cargo.lock 0.26.0). server+macros for the
+# `consensus` RPC namespace; client+ws-client for the cert-follower upstream (Phase 3).
+jsonrpsee = { version = "0.26", default-features = false, features = ["server", "client", "macros", "ws-client"] }
 serde_bytes = { version = "0.11.15", default-features = false }
 serde_with = { version = "3.11.0", default-features = false }
 spin = { version = "0.10.0", default-features = false, features = ["mutex"] }
@@ -323,9 +346,21 @@ alloy-rpc-types = { version = "1.4.3", features = ["eth"], default-features = fa
 alloy-rpc-types-eth = { version = "1.4.3", default-features = false }
 alloy-rpc-types-engine = { version = "1.4.3", default-features = false }
 
+# alloy write-side (slasher tx submission) — pin at 1.x to match the workspace's
+# existing alloy-* pins (alloy-network 1.6.3, alloy-rpc-types-eth 1.4.3,
+# alloy-primitives 1.5.0). Mixing alloy 1.x ↔ 2.x is forbidden — cross-major
+# TransactionRequest / Address / B256 / Bytes types don't unify and break
+# the slasher boundary with reth/alloy-rpc-types-eth. Cargo resolves the
+# latest compatible 1.x patch.
+alloy-provider = { version = "1", default-features = false }
+alloy-signer = { version = "1", default-features = false }
+alloy-signer-local = { version = "1", features = ["keystore"] }
+alloy-eips = { version = "1", default-features = false }
+
 # reth deps
 tracing = { version = "0.1.0", default-features = false }
 tokio = { version = "1.44.2", default-features = false }
+tokio-util = { version = "0.7", default-features = false }
 aquamarine = { version = "0.6" }
 backon = { version = "1.2", default-features = false, features = ["std-blocking-sleep", "tokio-sleep"] }
 tempfile = { version = "3.20" }
@@ -344,12 +379,25 @@ commonware-consensus = { git = "https://github.com/commonwarexyz/monorepo", tag 
 commonware-utils = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
 commonware-codec = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
 commonware-math = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-storage = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-runtime = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-p2p = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-broadcast = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-parallel = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+# Version matches commonware's pinned `prometheus-client = "0.24.0"` (monorepo v2026.4.0 root Cargo.toml).
+# Used by fluentbase-consensus to expose the `pending_finalizations` gauge via commonware-runtime's Metrics trait.
+prometheus-client = "0.24.0"
 # blst pinned to exactly what Commonware links (single version in the graph)
 blst = { version = "0.3.16", default-features = false, features = ["no-threads"] }
 num-bigint = { version = "0.4.6", default-features = false, features = [] }
 curve25519-dalek = { version = "4.1.3", default-features = false, features = ["alloc"] }
 flate2 = "1.1.9"
 parking_lot = "0.12"
+# dashmap: lock-free concurrent HashMap. Used by 09_liveness_wire to share
+# `Arc<DashMap<PayloadId, Bytes>>` between FluentApp (writer) and
+# FluentPayloadBuilder (reader) for per-PayloadId extra_data injection.
+dashmap = "6"
 
 # dev-dependencies
 serde_derive = { version = "1.0", default-features = false }

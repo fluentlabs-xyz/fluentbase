@@ -271,3 +271,26 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
         continue-on-error: true
+
+  # Standalone, always-on (no job-level `if`) so it runs on push/PR, not just
+  # manual dispatch like rust-fmt-lint. Checkout + grep only — no toolchain, fast.
+  dep-policy:
+    name: Dependency policy
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Enforce KP11 — bins/fluent must not depend on DPoS consensus internals directly
+        run: |
+          # The heavy DPoS consensus surface (bls, consensus) routes through
+          # fluentbase-node; the binary must not reach into those crates directly.
+          # fluentbase-p2p (CLI constants) and fluentbase-staking-reader (config +
+          # reader) ARE legitimate direct deps of the binary and are not gated.
+          if grep -qE '^fluentbase-(bls|consensus)\b' bins/fluent/Cargo.toml; then
+            echo "::error::KP11 violation — bins/fluent/Cargo.toml must not depend on fluentbase-{bls,consensus} directly; the consensus surface routes through fluentbase-node."
+            grep -nE '^fluentbase-(bls|consensus)\b' bins/fluent/Cargo.toml
+            exit 1
+          fi

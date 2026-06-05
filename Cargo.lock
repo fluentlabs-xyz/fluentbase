@@ -748,6 +748,7 @@ dependencies = [
  "async-trait",
  "coins-bip32 0.12.0",
  "coins-bip39 0.12.0",
+ "eth-keystore",
  "k256",
  "rand 0.8.5",
  "thiserror 2.0.18",
@@ -1636,7 +1637,7 @@ dependencies = [
  "bitflags 2.11.0",
  "cexpr",
  "clang-sys",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -2724,6 +2725,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "pin-project",
  "prometheus-client",
  "rand 0.8.5",
  "rand_core 0.6.4",
@@ -3647,7 +3649,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab67060fc6b8ef687992d439ca0fa36e7ed17e9a0b16b25b601e8757df720de"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.116",
 ]
 
 [[package]]
@@ -3890,7 +3892,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4243,7 +4245,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4259,7 +4261,7 @@ dependencies = [
  "hmac",
  "pbkdf2 0.11.0",
  "rand 0.8.5",
- "scrypt",
+ "scrypt 0.10.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4816,11 +4818,16 @@ name = "fluent"
 version = "1.2.1"
 dependencies = [
  "alloy-primitives",
+ "alloy-rpc-types-engine",
  "clap",
+ "dashmap",
+ "eyre",
  "fluentbase-genesis",
  "fluentbase-node",
+ "fluentbase-p2p",
  "fluentbase-revm",
  "fluentbase-runtime",
+ "fluentbase-staking-reader",
  "fluentbase-types",
  "humantime",
  "reth-basic-payload-builder",
@@ -4935,6 +4942,8 @@ dependencies = [
  "reth-trie-parallel",
  "reth-trie-sparse",
  "reth-zstd-compressors",
+ "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -4942,17 +4951,28 @@ dependencies = [
 name = "fluentbase-bls"
 version = "1.2.1"
 dependencies = [
+ "aes",
  "blst",
  "commonware-codec",
  "commonware-consensus",
  "commonware-cryptography",
  "commonware-math",
+ "commonware-parallel",
  "commonware-utils",
+ "ctr",
  "hex",
+ "hmac",
+ "pbkdf2 0.12.2",
  "proptest",
  "rand 0.8.5",
  "rand_core 0.6.4",
+ "scrypt 0.11.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
+ "unicode-normalization",
+ "zeroize",
 ]
 
 [[package]]
@@ -5007,6 +5027,60 @@ dependencies = [
  "quote",
  "serde",
  "syn 2.0.116",
+]
+
+[[package]]
+name = "fluentbase-consensus"
+version = "1.2.1"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "bytes",
+ "commonware-broadcast",
+ "commonware-codec",
+ "commonware-consensus",
+ "commonware-cryptography",
+ "commonware-math",
+ "commonware-p2p",
+ "commonware-parallel",
+ "commonware-resolver",
+ "commonware-runtime",
+ "commonware-storage",
+ "commonware-utils",
+ "dashmap",
+ "eyre",
+ "fluentbase-bls",
+ "fluentbase-p2p",
+ "fluentbase-staking-reader",
+ "futures",
+ "hex",
+ "metrics",
+ "pin-project",
+ "prometheus-client",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "reth-chain-state",
+ "reth-engine-primitives",
+ "reth-ethereum-engine-primitives",
+ "reth-ethereum-primitives",
+ "reth-evm",
+ "reth-payload-builder",
+ "reth-payload-primitives",
+ "reth-primitives-traits",
+ "reth-storage-api",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -5099,23 +5173,73 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-genesis-bootstrap"
+version = "1.2.1"
+dependencies = [
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "clap",
+ "coins-bip39 0.12.0",
+ "commonware-codec",
+ "commonware-cryptography",
+ "eyre",
+ "fluentbase-bls",
+ "fluentbase-evm",
+ "fluentbase-genesis",
+ "fluentbase-revm",
+ "fluentbase-testing",
+ "fluentbase-types",
+ "hex",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "secp256k1 0.31.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+]
+
+[[package]]
 name = "fluentbase-node"
 version = "1.2.1"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-evm",
  "alloy-genesis",
  "alloy-network",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "commonware-codec",
+ "commonware-consensus",
+ "commonware-cryptography",
+ "commonware-p2p",
+ "commonware-runtime",
+ "commonware-utils",
+ "dashmap",
  "directories",
  "eyre",
  "flate2",
+ "fluentbase-bls",
+ "fluentbase-consensus",
  "fluentbase-genesis",
+ "fluentbase-p2p",
  "fluentbase-revm",
  "fluentbase-runtime",
+ "fluentbase-staking-reader",
  "fluentbase-types",
+ "futures",
+ "hex",
+ "jsonrpsee",
+ "metrics",
  "reqwest 0.12.28",
  "reth-basic-payload-builder",
  "reth-chain-state",
@@ -5229,8 +5353,31 @@ dependencies = [
  "reth-trie-parallel",
  "reth-trie-sparse",
  "reth-zstd-compressors",
+ "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "fluentbase-p2p"
+version = "1.2.1"
+dependencies = [
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-math",
+ "commonware-p2p",
+ "commonware-runtime",
+ "commonware-utils",
+ "eyre",
+ "fluentbase-bls",
+ "fluentbase-staking-reader",
+ "hex",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
  "tracing",
 ]
 
@@ -5348,6 +5495,35 @@ dependencies = [
  "syn 2.0.116",
  "syn-solidity",
  "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "fluentbase-staking-reader"
+version = "1.2.1"
+dependencies = [
+ "alloy-consensus",
+ "alloy-evm",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "bytes",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-math",
+ "commonware-runtime",
+ "commonware-storage",
+ "commonware-utils",
+ "fluentbase-bls",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "reth-evm",
+ "reth-primitives-traits",
+ "reth-revm",
+ "reth-storage-api",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
  "tracing",
 ]
 
@@ -6269,7 +6445,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.2",
  "tokio",
  "tower-service",
  "tracing",
@@ -7740,7 +7916,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8523,6 +8699,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "password-hash"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "346f04948ba92c43e8469c1ee6736c7563d71012b17d40745260fe106aac2166"
+dependencies = [
+ "base64ct",
+ "rand_core 0.6.4",
+ "subtle",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8542,7 +8729,7 @@ checksum = "83a0692ec44e4cf1ef28ca317f14f8f07da2d95ec3fa01f86e4467b725e60917"
 dependencies = [
  "digest 0.10.7",
  "hmac",
- "password-hash",
+ "password-hash 0.4.2",
  "sha2 0.10.9",
 ]
 
@@ -8554,6 +8741,7 @@ checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
 dependencies = [
  "digest 0.10.7",
  "hmac",
+ "password-hash 0.5.0",
 ]
 
 [[package]]
@@ -9085,7 +9273,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.11.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.116",
@@ -9157,7 +9345,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.36",
- "socket2 0.5.10",
+ "socket2 0.6.2",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -9194,9 +9382,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -12883,7 +13071,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -13163,6 +13351,18 @@ checksum = "9f9e24d2b632954ded8ab2ef9fea0a0c769ea56ea98bddbafbad22caeeadf45d"
 dependencies = [
  "hmac",
  "pbkdf2 0.11.0",
+ "salsa20",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "scrypt"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0516a385866c09368f0b5bcd1caff3366aace790fcd46e2bb032697bb172fd1f"
+dependencies = [
+ "password-hash 0.5.0",
+ "pbkdf2 0.12.2",
  "salsa20",
  "sha2 0.10.9",
 ]
@@ -14180,7 +14380,7 @@ dependencies = [
  "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -15085,6 +15285,15 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-segmentation"
@@ -15993,7 +16202,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

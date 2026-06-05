@@ -68,6 +68,15 @@ pub const PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER: Address =
 /// A precompile smart contract that handles fee management.
 pub const PRECOMPILE_FEE_MANAGER: Address = address!("0x0000000000000000000000000000000000520fee");
 
+/// `LivenessSlashing` predeploy address.
+/// Called from `FluentBlockExecutor::apply_pre_execution_changes` via
+/// `transact_system_call(SYSTEM_ADDRESS, …)` with the previous finalized
+/// cert's bitmap; increments a per-`(epoch, signer_idx)` miss counter
+/// and routes to `Staking.slashFromLiveness` at threshold. The
+/// `SYSTEM_ADDRESS` sentinel itself lives at [`crate::SYSTEM_ADDRESS`].
+pub const PRECOMPILE_LIVENESS_SLASHING: Address =
+    address!("0x0000000000000000000000000000000000520020");
+
 /// EIP-2935 system contract / precompile address (as specified by the EIP).
 ///
 /// Kept as a standalone constant so fork-activation logic can include/exclude it.
@@ -154,6 +163,7 @@ pub const TESTNET_LEGACY_PRECOMPILE_ADDRESSES: &[Address] = &[
     PRECOMPILE_RUNTIME_UPGRADE,         // FORK ALERT: DON'T TOUCH!
     PRECOMPILE_CREATE2_FACTORY,         // FORK ALERT: DON'T TOUCH!
     PRECOMPILE_FEE_MANAGER,             // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_LIVENESS_SLASHING,       // FORK ALERT: DON'T TOUCH! (09_liveness_wire; live from genesis via chain-id gating)
     PRECOMPILE_WEBAUTHN_VERIFIER,       // FORK ALERT: DON'T TOUCH!
     PRECOMPILE_UNUSED_4,                // FORK ALERT: DON'T TOUCH!
 ];
