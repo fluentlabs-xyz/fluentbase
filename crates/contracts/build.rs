@@ -52,13 +52,17 @@ fn contracts_build_args(fluentbase_root_dir: &Path) -> BuildArgs {
         .exists()
         || fluentbase_root_dir.join("contracts/.cargo/config").exists();
 
+    let mount_dir = fluentbase_root_dir
+        .canonicalize()
+        .unwrap_or_else(|_| fluentbase_root_dir.to_path_buf());
+
     BuildArgs {
         docker: env_bool("FLUENTBASE_CONTRACTS_DOCKER").unwrap_or(false),
         docker_image: env::var("FLUENTBASE_BUILD_DOCKER_IMAGE")
             .unwrap_or_else(|_| DEFAULT_DOCKER_IMAGE.to_string()),
         docker_tag: env::var("FLUENTBASE_BUILD_DOCKER_TAG")
             .unwrap_or_else(|_| DEFAULT_DOCKER_TAG.to_string()),
-        mount_dir: Some(fluentbase_root_dir.to_path_buf()),
+        mount_dir: Some(mount_dir),
         features,
         no_default_features: true,
         locked: true,
@@ -103,6 +107,29 @@ fn run_package_build(
         is_debug_profile,
         Some(package),
     );
+}
+
+fn wasm_artifact_path(artifacts_dir: &Path, package: &Package) -> PathBuf {
+    let wasm_targets: Vec<_> = package
+        .targets
+        .iter()
+        .filter(|target| {
+            let is_bin = target.kind.contains(&TargetKind::Bin)
+                && target.crate_types.contains(&CrateType::Bin);
+            let is_cdylib = target.kind.contains(&TargetKind::CDyLib)
+                && target.crate_types.contains(&CrateType::CDyLib);
+            is_bin || is_cdylib
+        })
+        .collect();
+
+    assert_eq!(
+        wasm_targets.len(),
+        1,
+        "expected exactly one WASM target in package {}",
+        package.name
+    );
+
+    artifacts_dir.join(format!("{}.wasm", wasm_targets[0].name.replace('-', "_")))
 }
 
 fn run_cargo_build(
@@ -312,7 +339,17 @@ fn main() {
         code.push(format!("    wasm_bytecode: include_bytes!(\"{path}\"),"));
         code.push("};".to_string());
     }
-    let permissive_evm_path = permissive_artifacts_dir.join("fluentbase_contracts_evm.wasm");
+    let permissive_evm_package = packages_resolver
+        .packages
+        .iter()
+        .find(|package| package.name == "fluentbase-contracts-evm")
+        .expect("failed to resolve fluentbase-contracts-evm package");
+    let permissive_evm_path = wasm_artifact_path(&permissive_artifacts_dir, permissive_evm_package);
+    assert!(
+        permissive_evm_path.exists(),
+        "permissive EVM WASM artifact does not exist at {}",
+        permissive_evm_path.display()
+    );
     code.push(
         "pub const FLUENTBASE_CONTRACTS_EVM_PERMISSIVE: BuildOutput = BuildOutput {".to_string(),
     );
