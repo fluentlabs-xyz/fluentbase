@@ -42,8 +42,6 @@ rand_08 = { workspace = true }
 hex = { workspace = true }
 commonware-math = { workspace = true, features = ["std"] }
 commonware-cryptography = { workspace = true, features = ["std", "mocks"] }
-alloy-sol-types = { workspace = true, default-features = false, features = ["json"] }
-alloy-primitives = { workspace = true }
 
 [features]
 # Off by default. Enables `ValidatorBlsKeypair::write_to_plaintext_file`, which

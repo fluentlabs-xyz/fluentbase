@@ -42,12 +42,6 @@ const PEER_BYTES: usize = 32;
 
 impl Write for ValidatorSetSnapshot {
     fn write(&self, buf: &mut impl BufMut) {
-        debug_assert!(
-            self.validators.len() <= MAX_VALIDATORS,
-            "snapshot has {} validators > MAX_VALIDATORS {MAX_VALIDATORS}; \
-             would serialize into a blob the read path rejects",
-            self.validators.len()
-        );
         buf.put_slice(self.block_hash.as_slice());
         buf.put_u64(self.block_number);
         buf.put_u64(self.epoch);

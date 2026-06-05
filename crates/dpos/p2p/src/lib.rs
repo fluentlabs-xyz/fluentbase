@@ -272,7 +272,6 @@ mod tests {
             listen,
             dialable: Ingress::Socket(listen),
             bootstrappers: vec![],
-            allow_private_ips: true, // deterministic runtime uses 127.0.0.0/8
         }
     }
 

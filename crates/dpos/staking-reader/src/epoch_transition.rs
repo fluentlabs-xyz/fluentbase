@@ -34,8 +34,7 @@ use crate::{
     cache::ValidatorSetCache,
     error::ReadError,
     reader::{
-        check_committee_size, epoch_of_block, RethStakingStateReader, ValidatorSetSnapshot,
-        EPOCH_COMMITTEE_RETENTION_MARGIN,
+        check_committee_size, epoch_of_block, StakingStateRead, EPOCH_COMMITTEE_RETENTION_MARGIN,
     },
 };
 
@@ -52,48 +51,6 @@ pub enum TransitionOutcome {
     /// This block advanced `last_tracked_epoch` to the given value;
     /// the boundary trigger has been delivered to the consensus bridge.
     EpochAdvanced(u64),
-}
-
-/// The minimal read surface this orchestrator needs (the reader/store seam
-/// reintroduced **here**, by this real consumer, shaped to exactly what it
-/// calls).
-pub trait StakingStateRead {
-    /// Frozen committee for `epoch` (+ full keys) at block `at`.
-    fn epoch_committee_snapshot(
-        &self,
-        epoch: u64,
-        at: B256,
-    ) -> Result<ValidatorSetSnapshot, ReadError>;
-
-    /// `ChainConfig.getUndelegatePeriod()` (epochs) at `at`.
-    fn undelegate_period(&self, at: B256) -> Result<u32, ReadError>;
-
-    /// `ChainConfig.getEpochBlockInterval()` (blocks per epoch) at `at`.
-    /// Read per call (no OnceLock cache).
-    fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError>;
-}
-
-impl<P, E> StakingStateRead for RethStakingStateReader<P, E>
-where
-    P: reth_storage_api::StateProviderFactory
-        + reth_storage_api::HeaderProvider<Header = reth_primitives_traits::HeaderTy<E::Primitives>>
-        + Send
-        + Sync,
-    E: reth_evm::ConfigureEvm + Send + Sync,
-{
-    fn epoch_committee_snapshot(
-        &self,
-        epoch: u64,
-        at: B256,
-    ) -> Result<ValidatorSetSnapshot, ReadError> {
-        RethStakingStateReader::epoch_committee_snapshot(self, epoch, at)
-    }
-    fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
-        RethStakingStateReader::undelegate_period(self, at)
-    }
-    fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
-        RethStakingStateReader::epoch_block_interval(self, at)
-    }
 }
 
 /// Where the assembled peer set is delivered. p2p-agnostic on purpose:
@@ -129,6 +86,16 @@ pub struct EpochTransition<R, S, E: Storage + Metrics + BufferPooler> {
     /// receiver is closed, the trigger is silently dropped (04 has already
     /// shut down).
     boundary_tx: Option<tokio::sync::mpsc::Sender<(u64, crate::reader::ValidatorSetSnapshot)>>,
+    /// `epochBlockInterval` frozen on the first finalized block. The consensus
+    /// `FixedEpocher` is frozen at startup, so this MUST be treated as fixed
+    /// after genesis — honoring a live governance change here would diverge the
+    /// two epoch authorities. A later on-chain change is logged and ignored.
+    /// (Correct boundary-synced live re-interval is a separate, deferred task.)
+    frozen_interval: Option<u32>,
+    /// `dposActivationBlock` frozen on the first finalized block — origin for
+    /// the relative epoch numbering (consensus `OriginEpocher` is frozen at
+    /// startup, so this is treated as fixed identically to the interval).
+    frozen_activation: Option<u64>,
 }
 
 impl<R, S, E> EpochTransition<R, S, E>
@@ -151,6 +118,8 @@ where
             max_peer_set_size,
             last_tracked_epoch: None,
             boundary_tx,
+            frozen_interval: None,
+            frozen_activation: None,
         }
     }
 
@@ -175,27 +144,116 @@ where
         at: B256,
         number: u64,
     ) -> Result<TransitionOutcome, ReadError> {
-        // Re-read `interval` per call from on-chain ChainConfig at
-        // the finalized block hash. No OnceLock cache — a governance flip
-        // takes effect on the very next finalized block.
-        let interval = self.reader.epoch_block_interval(at)?;
-        if interval == 0 {
+        // `epochBlockInterval` is treated as FIXED after genesis: the consensus
+        // `FixedEpocher` is frozen at startup, so acting on a live governance
+        // change here would diverge the two epoch authorities (a boundary-synced
+        // live re-interval is a separate, deferred task). Freeze on the first
+        // finalized block; log + ignore any later on-chain change.
+        let observed = self.reader.epoch_block_interval(at)?;
+        if observed == 0 {
             return Err(ReadError::ZeroEpochInterval);
         }
-        let epoch = epoch_of_block(number, interval);
-        if self.last_tracked_epoch == Some(epoch) {
-            return Ok(TransitionOutcome::Intra); // write-once
+        let interval = match self.frozen_interval {
+            Some(frozen) => {
+                if observed != frozen {
+                    tracing::warn!(
+                        frozen,
+                        observed,
+                        "epochBlockInterval changed on-chain but is treated as fixed \
+                         after genesis (consensus FixedEpocher is frozen); ignoring"
+                    );
+                }
+                frozen
+            }
+            None => {
+                self.frozen_interval = Some(observed);
+                observed
+            }
+        };
+        // Freeze the relative-epoch origin on the first finalized block, mirroring
+        // the interval freeze (consensus OriginEpocher is frozen at startup).
+        let activation = {
+            let observed = self.reader.dpos_activation_block(at)?;
+            match self.frozen_activation {
+                Some(frozen) => {
+                    if observed != frozen {
+                        tracing::warn!(
+                            frozen,
+                            observed,
+                            "dposActivationBlock changed on-chain but is treated as fixed \
+                             after genesis (consensus OriginEpocher is frozen); ignoring"
+                        );
+                    }
+                    frozen
+                }
+                None => {
+                    self.frozen_activation = Some(observed);
+                    observed
+                }
+            }
+        };
+        let epoch_e = epoch_of_block(number, interval, activation);
+
+        // Cold-start bootstrap: on the very first finalized block, stand up the
+        // CURRENT epoch's engine. Its committee is already committed on-chain (the
+        // ahead-commit pipeline committed it during the prior epoch), so read the
+        // frozen array. `return` so a cold-start call never ALSO falls through to
+        // the boundary branch below — otherwise an anchor on the last block of an
+        // epoch whose `track_and_trigger` hit a Full channel (last_tracked stays
+        // None → `None < Some(next)`) would double-spawn epoch E+1 while E was
+        // never tracked.
+        if self.last_tracked_epoch.is_none() {
+            let snap = self.reader.epoch_committee_snapshot(epoch_e, at)?;
+            if snap.validators.is_empty() {
+                return Ok(TransitionOutcome::Intra);
+            }
+            return self.track_and_trigger(epoch_e, snap, at).await;
         }
-        let snap = self.reader.epoch_committee_snapshot(epoch, at)?; // frozen committee
-                                                                     // Missed-commit epoch: `Staking.sol` allows an epoch with no
-                                                                     // `commitEpochCommittee` (unslashable by design; idempotent /
-                                                                     // monotonic — a skip is safe). `getEpochCommittee` then returns
-                                                                     // empty. Do NOT persist/track an empty peer set and do NOT mark the
-                                                                     // epoch tracked — skip so a later finalized block can still apply
-                                                                     // it if the commit lands, and commonware keeps the prior set active.
-        if snap.validators.is_empty() {
-            return Ok(TransitionOutcome::Intra);
+
+        // Boundary: when the LAST block of epoch E finalizes, spawn epoch E+1. Its
+        // committee was committed one epoch ahead (at the first block of epoch E,
+        // §4.4), so the frozen `getEpochCommittee(E+1)` is on-chain by now and the
+        // genesis block for engine E+1 (= this finalized last-block of E) is
+        // stored. The engine-E engine keeps producing until E+1 takes over.
+        let next = epoch_e + 1;
+        // Boundary detection MUST be activation-relative, matching `epoch_of_block`
+        // (reader.rs) and the consensus `OriginEpocher`: the last block of relative
+        // epoch E is where `(number - activation) % interval == interval - 1`, i.e.
+        // `(number + 1 - activation) % interval == 0`. The absolute form
+        // `(number + 1) % interval == 0` only agrees when `activation % interval == 0`
+        // (a devnet bootstrap convention, NOT enforced — prod cold-start anchors on
+        // an arbitrary recent finalized height), so an absolute check would fire the
+        // peer-set handoff at a different block than `OriginEpocher` treats as the
+        // boundary — the exact "two epoch authorities diverge" failure the freeze
+        // logic above guards against.
+        let is_epoch_boundary = (number + 1)
+            .saturating_sub(activation)
+            .is_multiple_of(interval as u64);
+        if is_epoch_boundary && self.last_tracked_epoch < Some(next) {
+            // Missed-commit epoch: `Staking.sol` allows an epoch with no
+            // `commitEpochCommittee` (unslashable by design; idempotent / monotonic
+            // — a skip is safe); `getEpochCommittee` returns empty. Do NOT
+            // persist/track an empty peer set — skip so a later finalized block can
+            // still apply it if the commit lands, and commonware keeps the prior set.
+            let snap = self.reader.epoch_committee_snapshot(next, at)?;
+            if snap.validators.is_empty() {
+                return Ok(TransitionOutcome::Intra);
+            }
+            return self.track_and_trigger(next, snap, at).await;
         }
+        Ok(TransitionOutcome::Intra)
+    }
+
+    /// Persist + size-check + prune the frozen committee, feed the peer set to the
+    /// sink, and fire the boundary trigger — advancing `last_tracked_epoch` only on
+    /// a successful `try_send`. Extracted so both the cold-start bootstrap and the
+    /// boundary branch share identical (idempotent) side effects.
+    async fn track_and_trigger(
+        &mut self,
+        epoch: u64,
+        snap: crate::reader::ValidatorSetSnapshot,
+        at: B256,
+    ) -> Result<TransitionOutcome, ReadError> {
         let keys: Vec<PeerPubkey> = snap
             .validators
             .iter()
@@ -254,7 +312,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reader::{ConsensusKeys, ValidatorWithKeys};
+    use crate::reader::{ConsensusKeys, ValidatorSetSnapshot, ValidatorWithKeys};
     use alloy_primitives::Address;
     use commonware_codec::DecodeExt as _;
     use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer};
@@ -311,6 +369,9 @@ mod tests {
         fn epoch_block_interval(&self, _at: B256) -> Result<u32, ReadError> {
             Ok(self.interval)
         }
+        fn dpos_activation_block(&self, _at: B256) -> Result<u64, ReadError> {
+            Ok(0) // mock tests use absolute numbering
+        }
     }
 
     /// Records every `track` call.
@@ -344,11 +405,14 @@ mod tests {
                 None,
             );
             let h = B256::repeat_byte(0x11);
-            // block 500, interval 100 ⇒ epoch 5: first call ⇒ EpochAdvanced(5)
+            // block 500, interval 100 ⇒ epoch 5: first (cold-start) call bootstraps
+            // the current epoch ⇒ EpochAdvanced(5)
             let outcome_first = et.on_finalized(h, 500).await.unwrap();
             assert_eq!(outcome_first, TransitionOutcome::EpochAdvanced(5));
-            // re-delivery of the same epoch ⇒ Intra
-            let outcome_second = et.on_finalized(h, 599).await.unwrap();
+            // re-delivery on a MID-epoch block (550 is not the last block of epoch
+            // 5, so it is not a boundary) ⇒ Intra. (599 would be the last block of
+            // epoch 5 and now legitimately spawns epoch 6 — see the boundary test.)
+            let outcome_second = et.on_finalized(h, 550).await.unwrap();
             assert_eq!(outcome_second, TransitionOutcome::Intra);
             {
                 let log = sink.0.lock().unwrap();
@@ -358,6 +422,45 @@ mod tests {
                 et.cache.lock().await.contains(h).await.unwrap(),
                 "snapshot persisted"
             );
+        });
+    }
+
+    #[test]
+    fn last_block_of_epoch_spawns_next_epoch() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
+                ValidatorSetCache::init(ctx).await.unwrap(),
+            ));
+            let sink = RecordingSink::default();
+            let mut et = EpochTransition::new(
+                MockReader {
+                    committee: 5,
+                    undelegate: 7,
+                    interval: 100,
+                },
+                cache,
+                sink.clone(),
+                64,
+                None,
+            );
+            let h = B256::repeat_byte(0x22);
+            // cold-start mid-epoch-5 ⇒ bootstrap epoch 5
+            assert_eq!(
+                et.on_finalized(h, 550).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(5)
+            );
+            // last block of epoch 5 ((599+1)%100==0) ⇒ spawn epoch 6 one ahead
+            assert_eq!(
+                et.on_finalized(h, 599).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(6)
+            );
+            // mid-epoch-6 re-delivery ⇒ Intra (already tracked 6)
+            assert_eq!(
+                et.on_finalized(h, 650).await.unwrap(),
+                TransitionOutcome::Intra
+            );
+            let log = sink.0.lock().unwrap();
+            assert_eq!(*log, vec![(5, 5), (6, 5)], "bootstrap epoch 5, then spawn epoch 6 at its boundary");
         });
     }
 

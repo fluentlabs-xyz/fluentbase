@@ -81,8 +81,8 @@ pub const MAX_PEER_SET_SIZE: u64 = 51;
 //
 // `ALLOW_DNS: false` — Socket-only ingress; DNS provider out of trust
 // path. Trust anchor = on-chain Ed25519 + handshake.
-// Production rejects RFC-1918 ingress; dev/test toggles via
-// `FluentP2PConfig::allow_private_ips` (CLI surface).
+// Production rejects RFC-1918 ingress; this is network-derived in
+// `FluentP2PConfig::to_commonware_config` (deployed networks → false).
 pub const ALLOW_DNS: bool = false;
 
 // Listen port

@@ -22,8 +22,9 @@ use crate::{keys::ValidatorBlsKeypair, BlsPubkey, PeerPubkey, Scheme};
 /// [`Self::from_unverified`] constructor relaxes this contract.
 #[derive(Clone, Debug)]
 pub struct EpochCommittee {
-    /// On-chain epoch identifier — used by `evidence::extract_from_*`
-    /// to assert the evidence's claimed epoch matches the committee.
+    /// On-chain epoch identifier — used by the consensus slasher's
+    /// `evidence::extract_from_*` to assert the evidence's claimed epoch
+    /// matches the committee.
     pub epoch: u64,
     /// Commonware-sorted participant BiMap; signer indices in
     /// `Activity::Conflicting*` reference slots in this BiMap.
@@ -79,7 +80,7 @@ pub fn build_verifier(namespace: &[u8], participants: BiMap<PeerPubkey, BlsPubke
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{keys::ValidatorBlsKeypair, namespace::fluent_namespace};
+    use crate::{fluent_namespace, keys::ValidatorBlsKeypair};
     use commonware_codec::DecodeExt;
     use commonware_cryptography::ed25519::PrivateKey as Ed25519PrivateKey;
     use commonware_cryptography::Signer;

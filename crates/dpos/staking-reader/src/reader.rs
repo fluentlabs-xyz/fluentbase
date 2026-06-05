@@ -51,6 +51,7 @@ mod abi {
 
         // ChainConfig contract (separate address)
         function getEpochBlockInterval() external view returns (uint32);
+        function getDposActivationBlock() external view returns (uint64);
         function getUndelegatePeriod() external view returns (uint32);
         function getActiveValidatorsLength() external view returns (uint32);
     }
@@ -116,17 +117,25 @@ impl StakingReaderConfig {
     }
 }
 
-/// `epoch = block_number / epoch_block_interval` (integer division, matching
-/// the contract's `uint64(block.number / interval)`, `Staking.sol:364`).
-/// `epoch_block_interval` is the `uint32` from
-/// `ChainConfig.getEpochBlockInterval()`.
+/// Relative DPoS epoch: `(block_number - dpos_activation_block) / epoch_block_interval`
+/// (integer division, matching the contract's relative `_currentEpoch`,
+/// `Staking.sol:400`). `dpos_activation_block` is the `uint64` from
+/// `ChainConfig.getDposActivationBlock()` — zero ⇒ absolute numbering.
+/// `epoch_block_interval` is the `uint32` from `ChainConfig.getEpochBlockInterval()`.
+///
+/// `saturating_sub` mirrors the contract's `block.number < activation ⇒ 0` clamp
+/// (pre-activation blocks all map to epoch 0).
 ///
 /// Caller MUST ensure `epoch_block_interval > 0` (it is governance-mutable
 /// on-chain): `EpochTransition::on_finalized` and the dpos cold-start both
 /// guard it. A zero here is a divide-by-zero panic.
 #[inline]
-pub fn epoch_of_block(block_number: u64, epoch_block_interval: u32) -> u64 {
-    block_number / epoch_block_interval as u64
+pub fn epoch_of_block(
+    block_number: u64,
+    epoch_block_interval: u32,
+    dpos_activation_block: u64,
+) -> u64 {
+    block_number.saturating_sub(dpos_activation_block) / epoch_block_interval as u64
 }
 
 /// Committee-size guard: the on-chain committee must fit commonware's
@@ -293,6 +302,15 @@ where
             .map_err(|e| ReadError::AbiDecode(e.to_string()))
     }
 
+    /// `ChainConfig.getDposActivationBlock()` at block `at` — origin for the
+    /// relative DPoS epoch numbering (zero ⇒ absolute). Re-read per call.
+    pub fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
+        let cd = abi::getDposActivationBlockCall {}.abi_encode().into();
+        let ret = self.raw_view(self.cfg.chain_config_address, cd, at)?;
+        abi::getDposActivationBlockCall::abi_decode_returns(&ret)
+            .map_err(|e| ReadError::AbiDecode(e.to_string()))
+    }
+
     /// `ChainConfig.getUndelegatePeriod()` (epochs) at block `at`.
     ///
     /// Re-read on every call. Drives the epoch-committee retention
@@ -358,6 +376,54 @@ where
     }
 }
 
+/// Trait-ified read surface over [`RethStakingStateReader`] — the exact subset
+/// of staking reads the consensus layer consumes (the epoch-boundary
+/// orchestrator `EpochTransition`, the slasher, and `OuterEngine`). Kept as a
+/// trait so those consumers stay generic over the reader and can inject
+/// deterministic mocks in tests; the production impl is the blanket one on
+/// [`RethStakingStateReader`] below.
+pub trait StakingStateRead {
+    /// Frozen committee for `epoch` (+ full keys) at block `at`.
+    fn epoch_committee_snapshot(
+        &self,
+        epoch: u64,
+        at: B256,
+    ) -> Result<ValidatorSetSnapshot, ReadError>;
+
+    /// `ChainConfig.getUndelegatePeriod()` (epochs) at `at`.
+    fn undelegate_period(&self, at: B256) -> Result<u32, ReadError>;
+
+    /// `ChainConfig.getEpochBlockInterval()` (blocks per epoch) at `at`.
+    /// Read per call (no OnceLock cache).
+    fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError>;
+
+    /// `ChainConfig.getDposActivationBlock()` (relative-epoch origin) at `at`.
+    fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError>;
+}
+
+impl<P, E> StakingStateRead for RethStakingStateReader<P, E>
+where
+    P: StateProviderFactory + HeaderProvider<Header = HeaderTy<E::Primitives>> + Send + Sync,
+    E: ConfigureEvm + Send + Sync,
+{
+    fn epoch_committee_snapshot(
+        &self,
+        epoch: u64,
+        at: B256,
+    ) -> Result<ValidatorSetSnapshot, ReadError> {
+        RethStakingStateReader::epoch_committee_snapshot(self, epoch, at)
+    }
+    fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
+        RethStakingStateReader::undelegate_period(self, at)
+    }
+    fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
+        RethStakingStateReader::epoch_block_interval(self, at)
+    }
+    fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
+        RethStakingStateReader::dpos_activation_block(self, at)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{abi, check_committee_size, decode_consensus_keys, epoch_of_block, is_unset};
@@ -372,17 +438,27 @@ mod tests {
 
     #[test]
     fn block_zero_is_epoch_zero() {
-        assert_eq!(epoch_of_block(0, 100), 0);
+        assert_eq!(epoch_of_block(0, 100, 0), 0);
     }
     #[test]
     fn exact_multiple_advances_epoch() {
-        assert_eq!(epoch_of_block(100, 100), 1);
-        assert_eq!(epoch_of_block(199, 100), 1);
-        assert_eq!(epoch_of_block(200, 100), 2);
+        assert_eq!(epoch_of_block(100, 100, 0), 1);
+        assert_eq!(epoch_of_block(199, 100, 0), 1);
+        assert_eq!(epoch_of_block(200, 100, 0), 2);
     }
     #[test]
     fn off_by_one_below_boundary_stays() {
-        assert_eq!(epoch_of_block(99, 100), 0);
+        assert_eq!(epoch_of_block(99, 100, 0), 0);
+    }
+    #[test]
+    fn relative_to_activation() {
+        // activation=64, interval=32: anchor is relative epoch 0; advances every 32.
+        assert_eq!(epoch_of_block(64, 32, 64), 0);
+        assert_eq!(epoch_of_block(95, 32, 64), 0);
+        assert_eq!(epoch_of_block(96, 32, 64), 1);
+        assert_eq!(epoch_of_block(162, 32, 64), 3);
+        // pre-activation clamps to epoch 0 (saturating_sub).
+        assert_eq!(epoch_of_block(30, 32, 64), 0);
     }
 
     fn keys(seed: u64) -> abi::ConsensusKeys {

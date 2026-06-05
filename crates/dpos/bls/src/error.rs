@@ -39,6 +39,9 @@ pub enum Error {
         committee_epoch: u64,
     },
 
+    #[error("evidence is not structurally conflicting (mismatched signer/round, or identical proposals)")]
+    NonConflictingEvidence,
+
     #[error("EIP-2335 keystore: malformed JSON or unsupported version")]
     InvalidKeystore,
 

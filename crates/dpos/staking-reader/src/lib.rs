@@ -20,9 +20,10 @@
 //!   consensus layer trusts; no second parser.
 //! - **Epoch is local math.** `epoch = block.number / epochBlockInterval`;
 //!   no per-epoch `currentEpoch()` call.
-//! - **No premature seam.** `RethStakingStateReader` is a concrete type
-//!   (single impl, no consumer ⇒ no trait); a reader/store trait + mock can
-//!   be reintroduced when a real second consumer appears.
+//! - **Seam added on demand.** `RethStakingStateReader` is the concrete reader;
+//!   the `StakingStateRead` trait over it (in [`reader`]) was added once real
+//!   consumers appeared (the epoch-boundary orchestrator, the slasher,
+//!   `OuterEngine`) — each stays generic over the reader and mockable in tests.
 //!
 //! # Wiring
 //!
@@ -64,6 +65,6 @@ pub mod error;
 pub mod reader;
 
 pub use cache::ValidatorSetCache;
-pub use epoch_transition::{EpochTransition, PeerSetSink, StakingStateRead, TransitionOutcome};
+pub use epoch_transition::{EpochTransition, PeerSetSink, TransitionOutcome};
 pub use error::ReadError;
-pub use reader::RethStakingStateReader;
+pub use reader::{RethStakingStateReader, StakingStateRead};

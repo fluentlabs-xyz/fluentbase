@@ -47,7 +47,6 @@ fn make_config(
         listen,
         dialable: Ingress::Socket(listen),
         bootstrappers,
-        allow_private_ips: true, // 127.0.0.0/8 in deterministic runtime
     }
 }
 

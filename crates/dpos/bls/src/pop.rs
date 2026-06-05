@@ -52,7 +52,7 @@ pub fn verify_pop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::namespace::fluent_namespace;
+    use crate::fluent_namespace;
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng;
 
