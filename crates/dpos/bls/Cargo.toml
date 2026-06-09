@@ -1,0 +1,50 @@
+[package]
+name = "fluentbase-bls"
+version.workspace = true
+description = "BLS12-381 multisig wrapper for Fluent DPoS consensus signing"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+commonware-cryptography = { workspace = true, features = ["std"] }
+# commonware-consensus has no `std` feature — it is unconditionally std
+# (only `mocks`/`arbitrary` features exist). Adding features=["std"] errors.
+commonware-consensus = { workspace = true }
+commonware-utils = { workspace = true, features = ["std"] }
+commonware-codec = { workspace = true, features = ["std"] }
+commonware-parallel = { workspace = true, default-features = false }
+rand_core = { workspace = true }
+thiserror = { workspace = true }
+blst = { workspace = true }
+zeroize = { version = "1", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = { workspace = true }
+# EIP-2335 keystore primitives (direct; eth-keystore-0.5 implements only
+# Web3 Secret Storage v3 — Keccak-256 MAC — which differs from EIP-2335's
+# SHA-256 checksum, so we build the v4 wrapper from primitives.)
+scrypt = { version = "0.11", default-features = false, features = ["std"] }
+pbkdf2 = { version = "0.12", default-features = false, features = ["std"] }
+aes = { version = "0.8", default-features = false }
+ctr = { version = "0.9", default-features = false }
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
+hmac = { version = "0.12", default-features = false }
+unicode-normalization = { version = "0.1", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+proptest = { workspace = true }
+rand_08 = { workspace = true }
+hex = { workspace = true }
+commonware-math = { workspace = true, features = ["std"] }
+commonware-cryptography = { workspace = true, features = ["std", "mocks"] }
+
+[features]
+# Off by default. Enables `ValidatorBlsKeypair::write_to_plaintext_file`, which
+# writes an UNENCRYPTED private key to disk. Only the local devnet bootstrap
+# opts in; production binaries never enable it, so the writer cannot link in.
+plaintext-keys = []
