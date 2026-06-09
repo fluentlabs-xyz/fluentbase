@@ -1,0 +1,882 @@
+//! OuterEngine — cross-epoch singleton wrapper around `EpochManager`.
+//!
+//! `OuterBuilder::build` constructs subsystems in dependency order:
+//!   `marshal` → `executor` → `FluentApp` → `epoch_manager`.
+//!
+//! Lifetime alignment:
+//! - **global singletons**: `buffered::Engine`, `marshal::core::Actor`,
+//!   `finalizations_by_height`, `finalized_blocks`,
+//!   `EpochSchemeProvider`, `executor`.
+//! - **per-epoch**: `simplex::Engine` + `Inline` wrapper (inside
+//!   `EpochEngine` via `EpochManager`).
+
+use crate::{
+    application::{BeaconEngineLike, FluentApp, PayloadAttrsBuilderLike, PayloadBuilderLike},
+    block::Block,
+    digest::Digest,
+    epoch_manager,
+    epocher::OriginEpocher,
+    executor,
+    feed_sink::FeedSink,
+    slasher,
+    timeouts::ConsensusTimeouts,
+};
+use alloy_consensus::Header;
+use alloy_primitives::{Bytes, B256};
+use alloy_rpc_types_engine::PayloadId;
+use commonware_broadcast::buffered;
+use commonware_consensus::{
+    marshal::{
+        self, core::Actor as MarshalActor, resolver::p2p as marshal_p2p, standard::Standard,
+    },
+    simplex::types::Finalization,
+    types::{Epoch, Height, ViewDelta},
+    Reporters,
+};
+use commonware_cryptography::{certificate::Provider as CertProvider, ed25519::PublicKey};
+use commonware_p2p::{Blocker, Provider as PeerProvider, Receiver, Sender};
+use commonware_parallel::Sequential;
+use commonware_runtime::{
+    buffer::paged::CacheRef, spawn_cell, BufferPooler, Clock, ContextCell, Handle, Metrics,
+    Network as RNetwork, Pacer, Spawner, Storage,
+};
+use commonware_storage::archive::immutable;
+use commonware_utils::{NZUsize, NZU16, NZU64};
+use dashmap::DashMap;
+use fluentbase_bls::{keys::ValidatorBlsKeypair, Scheme as BlsScheme};
+use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
+use rand_core::CryptoRngCore;
+use reth_ethereum_primitives::Block as RethBlock;
+use reth_primitives_traits::SealedBlock;
+use std::{
+    collections::BTreeMap,
+    num::{NonZeroU64, NonZeroUsize},
+    sync::{atomic::AtomicU64, Arc, Mutex},
+    time::Duration,
+};
+use tokio::sync::mpsc;
+
+const REPLAY_BUFFER: NonZeroUsize = NZUsize!(8 * 1024 * 1024);
+const WRITE_BUFFER: NonZeroUsize = NZUsize!(1024 * 1024);
+const PAGE_CACHE_PAGE_SIZE: std::num::NonZeroU16 = NZU16!(4_096);
+const PAGE_CACHE_CAPACITY: NonZeroUsize = NZUsize!(8_192);
+const IMMUTABLE_ITEMS_PER_SECTION: NonZeroU64 = NZU64!(262_144);
+const PRUNABLE_ITEMS_PER_SECTION: NonZeroU64 = NZU64!(4_096);
+const MAX_REPAIR: NonZeroUsize = NZUsize!(20);
+const MAX_PENDING_ACKS: NonZeroUsize = NZUsize!(16);
+const FREEZER_TABLE_RESIZE_FREQUENCY: u8 = 4;
+const FREEZER_TABLE_RESIZE_CHUNK_SIZE: u32 = 1 << 16;
+const FREEZER_VALUE_TARGET_SIZE: u64 = 1 << 30;
+const FREEZER_VALUE_COMPRESSION: Option<u8> = Some(3);
+
+// EpochSchemeProvider — minimal per-epoch BlsScheme registry; never pruned.
+
+#[derive(Clone)]
+pub struct EpochSchemeProvider {
+    map: Arc<Mutex<BTreeMap<Epoch, Arc<BlsScheme>>>>,
+}
+
+impl EpochSchemeProvider {
+    pub fn new() -> Self {
+        Self {
+            map: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    /// Register a [`BlsScheme`] for `epoch`.
+    ///
+    /// Insert-or-equal with a verifier→signer direction guard.
+    /// The only legitimate same-epoch re-registration path is the
+    /// cold-start sequence in `dpos.rs` (`cold_start_register`), where a verifier-mode scheme
+    /// is registered first (so marshal can verify cross-epoch certs
+    /// before any `EpochEngine` for this epoch exists) and the engine
+    /// later overwrites it with a signer-mode scheme. Three outcomes:
+    ///
+    /// 1. **Vacant slot** → insert. Normal path for every new epoch.
+    /// 2. **Same committee, verifier → signer** → overwrite.
+    /// 3. **Different committee, OR signer → verifier downgrade** →
+    ///    refuse + log error. Either a bug, a malicious caller, or an
+    ///    accidental late `cold_start_register` after the engine started.
+    ///
+    /// Committee equality goes through the upstream
+    /// [`commonware_cryptography::certificate::Scheme::participants`]
+    /// accessor (returns `&Set<PeerPubkey>`); direction via
+    /// [`commonware_cryptography::certificate::Scheme::me`] (`Some(idx)` when
+    /// signer, `None` when verifier). No new accessors needed on
+    /// `BlsScheme` — both are on the upstream trait already.
+    pub fn register(&self, epoch: Epoch, scheme: BlsScheme) {
+        use commonware_cryptography::certificate::Scheme as _;
+        let mut map = self.map.lock().unwrap();
+        match map.entry(epoch) {
+            std::collections::btree_map::Entry::Vacant(v) => {
+                v.insert(Arc::new(scheme));
+            }
+            std::collections::btree_map::Entry::Occupied(mut o) => {
+                let existing = o.get();
+                if existing.participants() != scheme.participants() {
+                    tracing::error!(
+                        ?epoch,
+                        "EpochSchemeProvider::register rejected re-register with \
+                         different committee — preserving existing entry"
+                    );
+                    return;
+                }
+                let existing_is_signer = existing.me().is_some();
+                let new_is_signer = scheme.me().is_some();
+                if existing_is_signer && !new_is_signer {
+                    tracing::error!(
+                        ?epoch,
+                        "EpochSchemeProvider::register refused signer→verifier \
+                         downgrade — preserving existing entry (cold-start \
+                         transition is verifier→signer only)"
+                    );
+                    return;
+                }
+                o.insert(Arc::new(scheme));
+            }
+        }
+    }
+
+    /// Highest epoch with a registered scheme. Registrations are contiguous and
+    /// monotonic (the anchor epoch at cold-start, then one per crossed boundary),
+    /// so this is the highest epoch the follower can currently verify a cert for.
+    pub fn highest_epoch(&self) -> Option<Epoch> {
+        self.map.lock().unwrap().keys().next_back().copied()
+    }
+}
+
+impl Default for EpochSchemeProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CertProvider for EpochSchemeProvider {
+    type Scope = Epoch;
+    type Scheme = BlsScheme;
+
+    fn scoped(&self, scope: Epoch) -> Option<Arc<BlsScheme>> {
+        let got = self.map.lock().unwrap().get(&scope).cloned();
+        got
+    }
+}
+
+type FinalizationsArchive<E> = immutable::Archive<E, Digest, Finalization<BlsScheme, Digest>>;
+type FinalizedBlocksArchive<E> = immutable::Archive<E, Digest, Block>;
+pub type MarshalMailbox = marshal::core::Mailbox<BlsScheme, Standard<Block>>;
+
+/// Open the marshal's `finalized_blocks` immutable archive for a given
+/// `partition_prefix`. Single source of the archive config so the cold-start
+/// crash-survivor recovery (`dpos.rs`, opens it standalone before the engine is
+/// built) and the marshal itself (`build`, below) never drift on partition names
+/// or codec.
+pub(crate) async fn init_finalized_blocks_archive<E>(
+    context: &E,
+    partition_prefix: &str,
+) -> FinalizedBlocksArchive<E>
+where
+    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
+{
+    let page_cache = CacheRef::from_pooler(context, PAGE_CACHE_PAGE_SIZE, PAGE_CACHE_CAPACITY);
+    immutable::Archive::init(
+        context.with_label("finalized_blocks"),
+        immutable::Config {
+            metadata_partition: format!("{partition_prefix}-finalized-blocks-metadata"),
+            freezer_table_partition: format!("{partition_prefix}-finalized-blocks-freezer-table"),
+            freezer_table_initial_size: 1 << 16,
+            freezer_table_resize_frequency: FREEZER_TABLE_RESIZE_FREQUENCY,
+            freezer_table_resize_chunk_size: FREEZER_TABLE_RESIZE_CHUNK_SIZE,
+            freezer_key_partition: format!("{partition_prefix}-finalized-blocks-freezer-key"),
+            freezer_key_page_cache: page_cache.clone(),
+            freezer_key_write_buffer: WRITE_BUFFER,
+            freezer_value_partition: format!("{partition_prefix}-finalized-blocks-freezer-value"),
+            freezer_value_write_buffer: WRITE_BUFFER,
+            freezer_value_target_size: FREEZER_VALUE_TARGET_SIZE,
+            freezer_value_compression: FREEZER_VALUE_COMPRESSION,
+            ordinal_partition: format!("{partition_prefix}-finalized-blocks-ordinal"),
+            ordinal_write_buffer: WRITE_BUFFER,
+            items_per_section: IMMUTABLE_ITEMS_PER_SECTION,
+            codec_config: (),
+            replay_buffer: REPLAY_BUFFER,
+        },
+    )
+    .await
+    .expect("init finalized blocks archive")
+}
+
+/// Init the by-height finalizations (certificate) archive. Shared by the
+/// validator [`OuterBuilder::build`] and the cert-follower engine so the two
+/// open byte-identical partitions with the same unbounded certificate codec
+/// config — a follower started on a validator's data dir (or vice-versa) reads
+/// the same archive without migration.
+pub(crate) async fn init_finalizations_archive<E>(
+    context: &E,
+    partition_prefix: &str,
+    page_cache: CacheRef,
+) -> FinalizationsArchive<E>
+where
+    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
+{
+    use commonware_cryptography::certificate::Scheme as _;
+    immutable::Archive::init(
+        context.with_label("finalizations_by_height"),
+        immutable::Config {
+            metadata_partition: format!("{partition_prefix}-finalizations-by-height-metadata"),
+            freezer_table_partition: format!(
+                "{partition_prefix}-finalizations-by-height-freezer-table"
+            ),
+            freezer_table_initial_size: 1 << 16,
+            freezer_table_resize_frequency: FREEZER_TABLE_RESIZE_FREQUENCY,
+            freezer_table_resize_chunk_size: FREEZER_TABLE_RESIZE_CHUNK_SIZE,
+            freezer_key_partition: format!(
+                "{partition_prefix}-finalizations-by-height-freezer-key"
+            ),
+            freezer_key_page_cache: page_cache,
+            freezer_key_write_buffer: WRITE_BUFFER,
+            freezer_value_partition: format!(
+                "{partition_prefix}-finalizations-by-height-freezer-value"
+            ),
+            freezer_value_write_buffer: WRITE_BUFFER,
+            freezer_value_target_size: FREEZER_VALUE_TARGET_SIZE,
+            freezer_value_compression: FREEZER_VALUE_COMPRESSION,
+            ordinal_partition: format!("{partition_prefix}-finalizations-by-height-ordinal"),
+            ordinal_write_buffer: WRITE_BUFFER,
+            items_per_section: IMMUTABLE_ITEMS_PER_SECTION,
+            codec_config: BlsScheme::certificate_codec_config_unbounded(),
+            replay_buffer: REPLAY_BUFFER,
+        },
+    )
+    .await
+    .expect("init finalizations archive")
+}
+
+/// Page cache sized identically to the validator marshal (same constants), so a
+/// follower built on a validator's data dir reads the same archives.
+pub(crate) fn new_page_cache<E: BufferPooler>(context: &E) -> CacheRef {
+    CacheRef::from_pooler(context, PAGE_CACHE_PAGE_SIZE, PAGE_CACHE_CAPACITY)
+}
+
+/// Marshal config for the cert-follower — same storage tuning as the validator
+/// [`OuterBuilder::build`] (shared archive format) with the follower-only
+/// difference that no views are retained for re-proposal (`view_retention_timeout
+/// = 1`): a follower never proposes, it only verifies + applies. Keeping the
+/// constants here (rather than re-declaring them in `cert_follow`) prevents
+/// archive-format drift between validator and follower.
+pub(crate) fn follower_marshal_config(
+    partition_prefix: String,
+    mailbox_size: usize,
+    page_cache: CacheRef,
+    scheme_provider: EpochSchemeProvider,
+    epocher: OriginEpocher,
+) -> marshal::Config<Block, EpochSchemeProvider, OriginEpocher, Sequential> {
+    marshal::Config {
+        provider: scheme_provider,
+        epocher,
+        partition_prefix,
+        mailbox_size,
+        view_retention_timeout: ViewDelta::new(1),
+        prunable_items_per_section: PRUNABLE_ITEMS_PER_SECTION,
+        replay_buffer: REPLAY_BUFFER,
+        key_write_buffer: WRITE_BUFFER,
+        value_write_buffer: WRITE_BUFFER,
+        block_codec_config: (),
+        max_repair: MAX_REPAIR,
+        max_pending_acks: MAX_PENDING_ACKS,
+        page_cache,
+        strategy: Sequential,
+    }
+}
+
+type ExecutorActor<E, BE, Attrs> = executor::Actor<E, BE, Attrs, MarshalMailbox>;
+
+/// Builder for [`OuterEngine`] — the user-facing entry point. The caller
+/// hands it reth handles + genesis + cold-start EL state; `build`
+/// constructs marshal → executor → FluentApp → epoch_manager in
+/// dependency order.
+pub struct OuterBuilder<
+    B,
+    P,
+    PB,
+    BE,
+    AB,
+    Attrs,
+    R: slasher::StakingStateRead + Send + Sync + 'static,
+> {
+    // Identity / shared
+    pub me: PublicKey,
+    pub blocker: B,
+    pub provider: P,
+    pub chain_id: u64,
+    pub epoch_length_blocks: NonZeroU64,
+    /// `dposActivationBlock` — origin for the relative epoch numbering
+    /// (`OriginEpocher`). Zero ⇒ absolute (non-migration / pristine genesis).
+    pub dpos_activation_block: u64,
+    pub signer_keypair: Option<ValidatorBlsKeypair>,
+    pub timeouts: ConsensusTimeouts,
+    pub mailbox_size: usize,
+    pub deque_size: usize,
+    pub partition_prefix: String,
+    pub resolver_initial: Duration,
+    pub resolver_timeout: Duration,
+    pub resolver_fetch_retry: Duration,
+
+    // FluentApp constructor args.
+    pub genesis: Block,
+    pub payload_builder: PB,
+    pub beacon_engine: BE,
+    pub payload_attrs_builder: AB,
+    pub payload_resolve_time: Duration,
+    /// Observer for finalized blocks — wired to
+    /// [`fluentbase_staking_reader::EpochTransition::on_finalized`] for
+    /// epoch-boundary detection (fires `boundary_tx` for `EpochManager::enter`).
+    /// Required at the type level — tests pass `Arc::new(|_| {})`.
+    pub boundary_hook: Arc<dyn Fn(Block) + Send + Sync>,
+
+    /// Optional cert-feed sink: a second marshal application-`Reporter`
+    /// ([`Reporters::from((app, feed))`]) that forwards finalized heights to a
+    /// node-side feed actor serving the `consensus` RPC. `None` for nodes that
+    /// do not serve the cert feed (e.g. tests); set on every production node.
+    pub feed: Option<FeedSink>,
+
+    // Executor cold-start state (read from the reth provider).
+    pub last_execution_finalized_height: u64,
+    pub initial_finalized: (Height, B256),
+    pub initial_head: (Height, B256),
+    /// When migrating (Tempo→DPoS), the anchor height to seed the marshal's
+    /// in-order dispatch floor so it does not backfill pre-anchor history it
+    /// will never receive. `None` on normal restart (floor comes from metadata).
+    pub marshal_floor: Option<Height>,
+    pub fcu_heartbeat_interval: Duration,
+    pub fcu_pace: Duration,
+    /// Reth's in-memory canonical chain state — threaded into the
+    /// executor so `canonicalize`'s spec-compliant ancestor-FCU guard
+    /// can detect when reth's canonical was silently advanced by
+    /// `FluentApp::verify`'s direct `new_payload` calls.
+    pub canonical_state:
+        reth_chain_state::CanonicalInMemoryState<reth_ethereum_primitives::EthPrimitives>,
+
+    /// PhantomData carrier for `Attrs` (forwarded through FluentApp /
+    /// executor; doesn't appear directly in any Builder field).
+    pub _attrs: std::marker::PhantomData<Attrs>,
+
+    /// Shared between [`crate::application::FluentApp`] (writer in
+    /// `propose`) and `FluentPayloadBuilder` (reader in `try_build`).
+    /// dpos.rs constructs a single `Arc<DashMap>` and threads it through
+    /// both consumers so per-PayloadId `extra_data` injection is race-free.
+    pub extra_data_registry: Arc<DashMap<PayloadId, Bytes>>,
+
+    /// `Staking.sol` predeploy address (`StakingReaderConfig.staking_address`).
+    pub slasher_staking_address: alloy_primitives::Address,
+    /// Dedicated reader instance for slasher (NOT shared with ET).
+    pub slasher_reader: R,
+    /// Latest finalized hash provider (closure wrapping `node.provider`).
+    pub slasher_latest_finalized_hash: slasher::actor::LatestFinalizedHash,
+    /// Stale-epoch cache fallback (built in dpos.rs over the same
+    /// `Arc<Mutex<ValidatorSetCache>>` that `EpochTransition` writes).
+    pub slasher_stale_fallback: std::sync::Arc<dyn slasher::actor::StaleEpochFallback>,
+    /// TxPool transport (signer + pool + provider wrapper from dpos.rs).
+    pub slasher_sink: std::sync::Arc<dyn slasher::actor::SlasherTxSink>,
+    /// WAL storage partition name. The actual `queue::shared` handles
+    /// are initialised inside [`OuterBuilder::build`] under the slasher's
+    /// own context label.
+    pub slasher_wal_partition: String,
+}
+
+/// The global-singleton consensus driver wrapping a per-epoch
+/// [`epoch_manager::Actor`].
+pub struct OuterEngine<E, B, P, PB, BE, AB, Attrs, R>
+where
+    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
+    B: Blocker<PublicKey = PublicKey> + Clone,
+    P: PeerProvider<PublicKey = PublicKey> + Clone,
+    PB: PayloadBuilderLike<BuiltSealed = SealedBlock<RethBlock>> + Clone + Send + Sync + 'static,
+    BE: BeaconEngineLike<PayloadAttrs = Attrs, ExecutionData = SealedBlock<RethBlock>>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    AB: PayloadAttrsBuilderLike<Attrs = Attrs, Header = Header> + Clone + Send + Sync + 'static,
+    Attrs: Clone + Send + Sync + 'static,
+    R: slasher::StakingStateRead + Send + Sync + 'static,
+{
+    context: ContextCell<E>,
+    buffered: buffered::Engine<E, PublicKey, Block, P>,
+    buffer_mailbox: buffered::Mailbox<PublicKey, Block>,
+    marshal: MarshalActor<
+        E,
+        Standard<Block>,
+        EpochSchemeProvider,
+        FinalizationsArchive<E>,
+        FinalizedBlocksArchive<E>,
+        OriginEpocher,
+        Sequential,
+    >,
+    marshal_reporter_app: FluentApp<PB, BE, AB, Attrs>,
+    /// Clone of the marshal mailbox, exposed via [`OuterEngine::marshal_mailbox`]
+    /// for the node-side cert feed/RPC (by-height `get_finalization`+`get_block`).
+    cert_mailbox: MarshalMailbox,
+    /// Optional cert-feed sink, composed with `marshal_reporter_app` at `start`.
+    feed: Option<FeedSink>,
+    executor: ExecutorActor<E, BE, Attrs>,
+    epoch_manager: epoch_manager::Actor<E, B, PB, BE, AB, Attrs>,
+    slasher: slasher::Actor<E, R>,
+    boundary_tx: mpsc::Sender<(Epoch, ValidatorSetSnapshot)>,
+    scheme_provider: EpochSchemeProvider,
+    me: PublicKey,
+    blocker: B,
+    provider: P,
+    mailbox_size: usize,
+    resolver_initial: Duration,
+    resolver_timeout: Duration,
+    resolver_fetch_retry: Duration,
+}
+
+impl<B, P, PB, BE, AB, Attrs, R> OuterBuilder<B, P, PB, BE, AB, Attrs, R>
+where
+    B: Blocker<PublicKey = PublicKey> + Clone,
+    P: PeerProvider<PublicKey = PublicKey> + Clone,
+    PB: PayloadBuilderLike<BuiltSealed = SealedBlock<RethBlock>> + Clone + Send + Sync + 'static,
+    BE: BeaconEngineLike<PayloadAttrs = Attrs, ExecutionData = SealedBlock<RethBlock>>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    AB: PayloadAttrsBuilderLike<Attrs = Attrs, Header = Header> + Clone + Send + Sync + 'static,
+    Attrs: Clone + Send + Sync + 'static,
+    R: slasher::StakingStateRead + Send + Sync + 'static,
+{
+    /// Construct the engine in dependency order:
+    /// `buffered + archives + scheme_provider → marshal → executor →
+    /// FluentApp → epoch_manager`.
+    pub async fn build<E>(
+        self,
+        context: E,
+    ) -> eyre::Result<OuterEngine<E, B, P, PB, BE, AB, Attrs, R>>
+    where
+        E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
+    {
+        // Fail loud and early on misconfigured timeouts so a deep panic
+        // inside commonware (`voter/actor.rs:136`) becomes an actionable
+        // startup error instead.
+        self.timeouts
+            .validated()
+            .expect("ConsensusTimeouts invariants violated");
+        // The simplex-attestation wire format encodes committee_size as
+        // u8; in Solidity LivenessSlashing.processBitmap mirrors that
+        // layout. Bumping MAX_PEER_SET_SIZE past u8::MAX would silently
+        // truncate to 0 on the Solidity side (turning off liveness
+        // slashing) — fail at startup instead, before any block is
+        // proposed. Mirrored constant: MAX_ACTIVE_VALIDATORS in
+        // solidity-contracts/contracts/staking/ChainConfig.sol.
+        assert!(
+            fluentbase_p2p::constants::MAX_PEER_SET_SIZE <= u8::MAX as u64,
+            "wire format requires committee_size to fit u8; \
+             MAX_PEER_SET_SIZE = {} exceeds 255 — widen extra_data wire format \
+             to u16 BE before bumping",
+            fluentbase_p2p::constants::MAX_PEER_SET_SIZE,
+        );
+        let (buffered, buffer_mailbox) = buffered::Engine::new(
+            context.with_label("buffered"),
+            buffered::Config {
+                public_key: self.me.clone(),
+                mailbox_size: self.mailbox_size,
+                deque_size: self.deque_size,
+                priority: true,
+                codec_config: (),
+                peer_provider: self.provider.clone(),
+            },
+        );
+
+        let page_cache = CacheRef::from_pooler(&context, PAGE_CACHE_PAGE_SIZE, PAGE_CACHE_CAPACITY);
+
+        let finalizations_by_height =
+            init_finalizations_archive(&context, &self.partition_prefix, page_cache.clone()).await;
+
+        let finalized_blocks =
+            init_finalized_blocks_archive(&context, &self.partition_prefix).await;
+
+        // Single cross-epoch FixedEpocher + scheme provider. The same
+        // instance is threaded into marshal::Config below AND into
+        // epoch_manager::Config so all per-epoch engines + marshal share
+        // one source of truth — no risk of divergent epoch math after a
+        // hypothetical interval re-read (defense-in-depth).
+        let scheme_provider = EpochSchemeProvider::new();
+        let epocher = OriginEpocher::new(self.dpos_activation_block, self.epoch_length_blocks);
+
+        let (marshal, marshal_mailbox, last_consensus_finalized_height) = MarshalActor::init(
+            context.with_label("marshal"),
+            finalizations_by_height,
+            finalized_blocks,
+            marshal::Config {
+                provider: scheme_provider.clone(),
+                epocher: epocher.clone(),
+                partition_prefix: self.partition_prefix.clone(),
+                mailbox_size: self.mailbox_size,
+                view_retention_timeout: ViewDelta::new(
+                    self.timeouts.activity.get().saturating_mul(10),
+                ),
+                prunable_items_per_section: PRUNABLE_ITEMS_PER_SECTION,
+                replay_buffer: REPLAY_BUFFER,
+                key_write_buffer: WRITE_BUFFER,
+                value_write_buffer: WRITE_BUFFER,
+                block_codec_config: (),
+                max_repair: MAX_REPAIR,
+                max_pending_acks: MAX_PENDING_ACKS,
+                page_cache: page_cache.clone(),
+                strategy: Sequential,
+            },
+        )
+        .await;
+
+        // Tempo→DPoS swap: seed the marshal's in-order floor to the anchor so it
+        // dispatches from anchor+1 instead of chasing pre-anchor history that no
+        // DPoS node holds (would otherwise stall Update::Block forever). Buffered
+        // in the mailbox until the marshal actor starts in `run`; SetFloor is
+        // raises-only, so this is a no-op on a normal restart that passed the flag.
+        if let Some(floor) = self.marshal_floor {
+            marshal_mailbox.set_floor(floor).await;
+        }
+
+        // Reject crash-recovery backfill ranges that cross an epoch
+        // boundary — per-epoch BLS scheme rotation across backfill is
+        // not yet supported.
+        // Loud operator-actionable error beats a silent wrong-snapshot
+        // read from staking_reader. Empty range = no-op for the
+        // Tempo→DPoS migration path (cons_fin = 0).
+        let backfill_range =
+            (self.last_execution_finalized_height + 1)..=last_consensus_finalized_height.get();
+        if !backfill_range.is_empty() {
+            // On-chain `epochBlockInterval` is u32; epoch_of_block takes u32.
+            // Guard the NonZeroU64→u32 narrowing: a value > u32::MAX would
+            // truncate (and a nonzero multiple of 2^32 would truncate to 0 →
+            // div-by-zero in epoch_of_block). Unreachable for a u32-sourced
+            // interval, asserted as defense-in-depth.
+            debug_assert!(
+                self.epoch_length_blocks.get() <= u32::MAX as u64,
+                "epoch_length_blocks exceeds u32 — epoch_of_block interval would truncate"
+            );
+            let epoch_interval = self.epoch_length_blocks.get() as u32;
+            let backfill_start_epoch = fluentbase_staking_reader::reader::epoch_of_block(
+                self.last_execution_finalized_height,
+                epoch_interval,
+                self.dpos_activation_block,
+            );
+            let backfill_end_epoch = fluentbase_staking_reader::reader::epoch_of_block(
+                last_consensus_finalized_height.get(),
+                epoch_interval,
+                self.dpos_activation_block,
+            );
+            if backfill_start_epoch != backfill_end_epoch {
+                // Cross-epoch backfill: the lazy self-healing scheme cascade
+                // handles the rotation. The marshal transiently ack-drops an
+                // unregistered-epoch height and re-requests it via try_repair_gaps
+                // once the boundary block's execution exposes the next committee
+                // and the boundary hook registers scheme(E+1) (dpos.rs cold-start
+                // registers the resumed epoch so the cascade starts at the right
+                // epoch). Warn rather than bail so the reliance stays observable
+                // if catch-up ever stalls.
+                tracing::warn!(
+                    backfill_range = ?backfill_range,
+                    backfill_start_epoch,
+                    backfill_end_epoch,
+                    "DPoS init: backfill range crosses an epoch boundary; relying on \
+                     the lazy scheme cascade to register each epoch as catch-up \
+                     crosses it"
+                );
+            }
+        }
+
+        // Resume-vs-migrate executor seed. This
+        // uses the SAME consensus-archive discriminator that `dpos.rs` now uses to
+        // resolve the cold-start anchor (`is_fresh_migration =
+        // last_consensus_finalized <= activation`): a genuine first migration has
+        // an empty archive (`== 0`, well below the activation block), whereas a
+        // restart restores it to the last DPoS finalized height. When
+        // already-migrated, seed the executor from reth's actual head (which the
+        // node still holds on disk) rather than the finalized anchor, so it never
+        // attempts a backward FCU to a stale point — reth spec-skips a backward
+        // FCU to an ancestor, which would wedge the node instead of letting it
+        // catch up to the live chain.
+        let (initial_finalized, initial_head) =
+            if last_consensus_finalized_height.get() > self.dpos_activation_block {
+                let info = self.canonical_state.chain_info();
+                let seed = (Height::new(info.best_number), info.best_hash);
+                (seed, seed)
+            } else {
+                (self.initial_finalized, self.initial_head)
+            };
+
+        // Executor — depends on marshal_mailbox.
+        let (executor, executor_mailbox) = executor::Actor::init(
+            context.with_label("executor"),
+            executor::Config {
+                beacon_engine: self.beacon_engine.clone(),
+                marshal: marshal_mailbox.clone(),
+                fcu_heartbeat_interval: self.fcu_heartbeat_interval,
+                last_consensus_finalized_height,
+                last_execution_finalized_height: self.last_execution_finalized_height,
+                initial_finalized,
+                initial_head,
+                fcu_pace: self.fcu_pace,
+                canonical_state: self.canonical_state.clone(),
+            },
+        );
+
+        // FluentApp (needs executor_mailbox + marshal_mailbox + sidecar state).
+        let latest_finalized_height = Arc::new(AtomicU64::new(0));
+        let app = FluentApp::new(
+            self.genesis,
+            self.payload_builder,
+            self.beacon_engine,
+            self.payload_attrs_builder,
+            executor_mailbox,
+            self.boundary_hook,
+            self.payload_resolve_time,
+            Some(marshal_mailbox.clone()),
+            latest_finalized_height,
+            self.extra_data_registry,
+        );
+        let marshal_reporter_app = app.clone();
+
+        let scheme_provider_for_cb = scheme_provider.clone();
+        let register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync> =
+            Arc::new(move |epoch, scheme| scheme_provider_for_cb.register(epoch, scheme));
+
+        // Slasher — built before EpochManager so its mailbox can be threaded
+        // into `epoch_manager::Config` as the second arm of the simplex
+        // `Reporters` multiplex.
+        //
+        // Initialise the durable WAL queue under the slasher's own context
+        // label. The queue (writer, reader) pair is built here
+        // because `queue::shared::init` is async and `Actor::init` is sync.
+        let slasher_ctx = context.with_label("slasher");
+        let (wal_writer, wal_reader) = slasher::actor::init_wal_queue(
+            slasher_ctx.with_label("wal"),
+            self.slasher_wal_partition,
+        )
+        .await
+        .expect("slasher WAL queue init failed");
+        let (slasher, slasher_mailbox) = slasher::Actor::init(
+            slasher_ctx,
+            slasher::Config {
+                staking_address: self.slasher_staking_address,
+                reader: self.slasher_reader,
+                latest_finalized_hash: self.slasher_latest_finalized_hash,
+                // Thread the per-epoch scheme provider for pre-submit verify.
+                scheme_provider: scheme_provider.clone(),
+                // Stale-epoch cache fallback.
+                stale_fallback: self.slasher_stale_fallback,
+                // TxPool transport (signer + pool + provider).
+                sink: self.slasher_sink,
+                // Durable WAL split between producer/consumer tasks.
+                wal_writer,
+                wal_reader,
+            },
+        );
+
+        // EpochManager — gets the SAME FixedEpocher instance threaded
+        // through to its per-epoch engines (single source of truth).
+        let (epoch_manager, boundary_tx) = epoch_manager::Actor::new(
+            context.with_label("epoch_manager"),
+            epoch_manager::Config {
+                me: self.me.clone(),
+                blocker: self.blocker.clone(),
+                chain_id: self.chain_id,
+                epocher: epocher.clone(),
+                signer_keypair: self.signer_keypair,
+                app,
+                timeouts: self.timeouts,
+                mailbox_size: self.mailbox_size,
+                marshal_mailbox: marshal_mailbox.clone(),
+                slasher_mailbox,
+                page_cache,
+                register_scheme,
+            },
+        );
+
+        Ok(OuterEngine {
+            context: ContextCell::new(context),
+            buffered,
+            buffer_mailbox,
+            marshal,
+            marshal_reporter_app,
+            cert_mailbox: marshal_mailbox.clone(),
+            feed: self.feed,
+            executor,
+            epoch_manager,
+            slasher,
+            boundary_tx,
+            scheme_provider,
+            me: self.me,
+            blocker: self.blocker,
+            provider: self.provider,
+            mailbox_size: self.mailbox_size,
+            resolver_initial: self.resolver_initial,
+            resolver_timeout: self.resolver_timeout,
+            resolver_fetch_retry: self.resolver_fetch_retry,
+        })
+    }
+}
+
+impl<E, B, P, PB, BE, AB, Attrs, R> OuterEngine<E, B, P, PB, BE, AB, Attrs, R>
+where
+    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
+    B: Blocker<PublicKey = PublicKey> + Clone,
+    P: PeerProvider<PublicKey = PublicKey> + Clone,
+    PB: PayloadBuilderLike<BuiltSealed = SealedBlock<RethBlock>> + Clone + Send + Sync + 'static,
+    BE: BeaconEngineLike<PayloadAttrs = Attrs, ExecutionData = SealedBlock<RethBlock>>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    AB: PayloadAttrsBuilderLike<Attrs = Attrs, Header = Header> + Clone + Send + Sync + 'static,
+    Attrs: Clone + Send + Sync + 'static,
+    R: slasher::StakingStateRead + Send + Sync + 'static,
+{
+    /// Sender held by 03's `EpochTransition` to fire boundary triggers.
+    pub fn boundary_sender(&self) -> mpsc::Sender<(Epoch, ValidatorSetSnapshot)> {
+        self.boundary_tx.clone()
+    }
+
+    /// Clone of the marshal mailbox for the node-side cert feed/RPC. Call before
+    /// [`OuterEngine::start`] (which consumes `self`) and hand it up to the node
+    /// so its feed actor can answer `get_finalization`+`get_block` by height.
+    pub fn marshal_mailbox(&self) -> MarshalMailbox {
+        self.cert_mailbox.clone()
+    }
+
+    /// Cold-start: register the initial (pre-finalization) scheme.
+    pub fn cold_start_register(&self, epoch: Epoch, scheme: BlsScheme) {
+        self.scheme_provider.register(epoch, scheme);
+    }
+
+    /// 5-channel start. Threads:
+    ///   vote/cert/resolver → EpochManager (per-epoch via Muxers)
+    ///   broadcast → buffered::Engine
+    ///   marshal_p2p → marshal::resolver::p2p::init → marshal::core::Actor
+    /// Also spawns the executor in `run`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start<VS, VR, CS, CR, RS, RR, BS, BR, MS, MR>(
+        mut self,
+        ctx_for_resolver: E,
+        votes: (VS, VR),
+        certs: (CS, CR),
+        resolver: (RS, RR),
+        broadcast: (BS, BR),
+        marshal_p2p_chan: (MS, MR),
+    ) -> Handle<()>
+    where
+        VS: Sender<PublicKey = PublicKey>,
+        VR: Receiver<PublicKey = PublicKey>,
+        CS: Sender<PublicKey = PublicKey>,
+        CR: Receiver<PublicKey = PublicKey>,
+        RS: Sender<PublicKey = PublicKey>,
+        RR: Receiver<PublicKey = PublicKey>,
+        BS: Sender<PublicKey = PublicKey>,
+        BR: Receiver<PublicKey = PublicKey>,
+        MS: Sender<PublicKey = PublicKey>,
+        MR: Receiver<PublicKey = PublicKey>,
+    {
+        let (marshal_rx, marshal_resolver) = marshal_p2p::init::<_, _, _, Digest, MS, MR, _>(
+            &ctx_for_resolver,
+            marshal_p2p::Config {
+                public_key: self.me.clone(),
+                peer_provider: self.provider.clone(),
+                blocker: self.blocker.clone(),
+                mailbox_size: self.mailbox_size,
+                initial: self.resolver_initial,
+                timeout: self.resolver_timeout,
+                fetch_retry_timeout: self.resolver_fetch_retry,
+                priority_requests: true,
+                priority_responses: true,
+            },
+            marshal_p2p_chan,
+        );
+
+        spawn_cell!(
+            self.context,
+            self.run(
+                votes,
+                certs,
+                resolver,
+                broadcast,
+                (marshal_rx, marshal_resolver),
+            )
+            .await
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run<VS, VR, CS, CR, RS, RR, BS, BR, MarshalResolver>(
+        self,
+        votes: (VS, VR),
+        certs: (CS, CR),
+        resolver: (RS, RR),
+        broadcast: (BS, BR),
+        marshal_chan: (
+            mpsc::Receiver<marshal::resolver::handler::Message<Digest>>,
+            MarshalResolver,
+        ),
+    ) where
+        VS: Sender<PublicKey = PublicKey>,
+        VR: Receiver<PublicKey = PublicKey>,
+        CS: Sender<PublicKey = PublicKey>,
+        CR: Receiver<PublicKey = PublicKey>,
+        RS: Sender<PublicKey = PublicKey>,
+        RR: Receiver<PublicKey = PublicKey>,
+        BS: Sender<PublicKey = PublicKey>,
+        BR: Receiver<PublicKey = PublicKey>,
+        MarshalResolver: commonware_resolver::Resolver<
+            Key = marshal::resolver::handler::Request<Digest>,
+            PublicKey = PublicKey,
+        >,
+    {
+        // Start `epoch_manager` FIRST so its `boundary_rx` is
+        // draining before `marshal` starts firing the `Update::Block`
+        // path that ultimately triggers `boundary_hook` → bridge_tx.
+        // The bridge channel buffers 64 triggers (`dpos.rs` `bridge_tx`/`bridge_rx`) which
+        // absorbed the original ordering gap, but starting epoch_manager
+        // first eliminates the window for live epoch transitions when
+        // bursty finalization races a still-uninitialized consumer.
+        let mut em_handle = self.epoch_manager.start(votes, certs, resolver);
+        let mut buffered_handle = self.buffered.start(broadcast);
+        let mut executor_handle = self.executor.start();
+        // Compose the cert-feed sink as a second application-Reporter so it
+        // observes every finalization alongside `FluentApp` (the executor path).
+        // `From<(R1, Option<R2>)>` makes the feed optional; absent → app-only.
+        let app_reporter: Reporters<
+            marshal::Update<Block>,
+            FluentApp<PB, BE, AB, Attrs>,
+            FeedSink,
+        > = Reporters::from((self.marshal_reporter_app, self.feed));
+        let mut marshal_handle =
+            self.marshal
+                .start(app_reporter, self.buffer_mailbox, marshal_chan);
+        let mut slasher_handle = self.slasher.start();
+
+        // Supervisor: on first subsystem exit (clean or panic), abort the
+        // other 4 to release runtime resources promptly. The outer `run` then
+        // returns naturally; its caller (dpos.rs top-level select!) cancels the
+        // shutdown_token, which triggers cooperative shutdown of peer-context
+        // tasks (boundary_hook, bridge_forwarder). Handle::abort is idempotent
+        // on already-completed handles (monorepo/runtime/src/utils/handle.rs:107-118).
+        let exit = tokio::select! {
+            r = &mut buffered_handle => ("buffered", r),
+            r = &mut executor_handle => ("executor", r),
+            r = &mut marshal_handle => ("marshal", r),
+            r = &mut slasher_handle => ("slasher", r),
+            r = &mut em_handle => ("epoch_manager", r),
+        };
+
+        match exit.1 {
+            Ok(()) => tracing::warn!(subsystem = exit.0, "subsystem exited cleanly (unexpected)"),
+            Err(e) => tracing::error!(subsystem = exit.0, error = ?e, "subsystem failed"),
+        }
+
+        buffered_handle.abort();
+        executor_handle.abort();
+        marshal_handle.abort();
+        slasher_handle.abort();
+        em_handle.abort();
+    }
+}
