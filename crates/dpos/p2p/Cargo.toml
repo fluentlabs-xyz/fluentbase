@@ -1,0 +1,30 @@
+[package]
+name = "fluentbase-p2p"
+version.workspace = true
+description = "Fluent DPoS p2p layer: commonware_p2p::authenticated::discovery wiring (injection-style)"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+commonware-codec = { workspace = true, features = ["std"] }
+commonware-cryptography = { workspace = true, features = ["std"] }
+commonware-p2p = { workspace = true }
+commonware-runtime = { workspace = true }
+commonware-utils = { workspace = true, features = ["std"] }
+fluentbase-bls = { workspace = true }
+fluentbase-staking-reader = { workspace = true }
+eyre = { workspace = true }
+tracing = { workspace = true }
+rand_core = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+commonware-math = { workspace = true, features = ["std"] }
+rand_08 = { workspace = true }
+hex = { workspace = true }
