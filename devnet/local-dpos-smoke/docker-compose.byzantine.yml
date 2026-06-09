@@ -1,0 +1,10 @@
+# DEVNET-ONLY byzantine override. Layered ON TOP of docker-compose.yml +
+# docker-compose.dpos.yml (via DPOS_EXTRA_COMPOSE in scripts/case-byzantine.sh) to make
+# validator-3 equivocate (double-sign Notarizes) so the slasher path can be exercised
+# end-to-end. Reads via the `--dpos.byzantine` clap arg's env binding
+# (FLUENT_DPOS_BYZANTINE), so no command duplication. Requires the image built with the
+# `devnet-byzantine` cargo feature (the smoke Dockerfile enables it). NEVER in prod.
+services:
+  validator-3:
+    environment:
+      FLUENT_DPOS_BYZANTINE: equivocate

@@ -1,0 +1,96 @@
+# Cert-follower smoke overlay (Phase 4 of dpos_cert_follower_light_node).
+#
+# Adds a trustless `--cert-follow` node that pulls finality certs from
+# validator-0's `consensus` RPC (ws://172.20.0.10:8546), verifies each against
+# the on-chain epoch committee, and drives its own reth. Layered ON TOP of
+# docker-compose.yml + docker-compose.dpos.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dpos.yml \
+#       -f docker-compose.cert-follow.yml up -d cert-follower
+#
+# `cert-follower`        — the positive node (real v0 upstream).
+# `cert-mitm` + `cert-follower-tamper` — the negative case: a WS man-in-the-middle
+#   that flips a byte in every certificate, proving the follower REJECTS tampered
+#   certs (makes zero finalized progress) — verification, not trust, is load-bearing.
+#
+# Anchors (&fluent-build) do not cross compose files, so services here reference
+# the already-built `fluent-dpos-smoke:local` image directly.
+
+services:
+  cert-follower:
+    image: fluent-dpos-smoke:local
+    depends_on:
+      validator-0:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --cert-follow \
+          --sequencer-url=ws://172.20.0.10:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --storage.v2=false \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --datadir=/runtime/reth-data/cert-follower
+    volumes:
+      - runtime:/runtime
+    ports:
+      - "28545:8545"
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.21
+
+  # WS man-in-the-middle: relays validator-0's `consensus` RPC but corrupts every
+  # certificate (flips a hex nibble). Used only by the negative tamper case.
+  cert-mitm:
+    image: python:3.12-alpine
+    depends_on:
+      validator-0:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        pip install --quiet --no-cache-dir websockets && \
+        exec python /proxy/cert-mitm-proxy.py \
+          --listen 0.0.0.0:8546 \
+          --upstream ws://172.20.0.10:8546
+    volumes:
+      - ./scripts:/proxy:ro
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.22
+
+  # Follower pointed at the MITM instead of validator-0. Every cert it receives is
+  # tampered, so a correct follower must make ZERO finalized progress.
+  cert-follower-tamper:
+    image: fluent-dpos-smoke:local
+    depends_on:
+      cert-mitm:
+        condition: service_started
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --cert-follow \
+          --sequencer-url=ws://172.20.0.22:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --storage.v2=false \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --datadir=/runtime/reth-data/cert-follower-tamper
+    volumes:
+      - runtime:/runtime
+    ports:
+      - "38545:8545"
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.23
