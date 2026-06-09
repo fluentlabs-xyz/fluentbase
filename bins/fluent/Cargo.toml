@@ -49,9 +49,17 @@ fluentbase-revm = { workspace = true, features = ["std"] }
 fluentbase-genesis = { workspace = true, features = ["std"] }
 fluentbase-node = { workspace = true, features = ["std"] }
 fluentbase-types = { workspace = true, features = ["std"] }
+fluentbase-p2p = { workspace = true }
+fluentbase-staking-reader = { workspace = true }
 
 # alloy
 alloy-primitives = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+dashmap = { workspace = true }
+tokio-util = { workspace = true }
+tokio = { workspace = true, features = ["sync", "signal", "rt-multi-thread", "macros"] }
+reth-storage-api.workspace = true
+eyre = { workspace = true }
 
 # tracing
 tracing.workspace = true
@@ -174,6 +182,10 @@ min-trace-logs = [
 ]
 
 trie-debug = ["reth-node-builder/trie-debug", "reth-node-core/trie-debug"]
+
+# DEVNET-ONLY passthrough — compiles in the commonware-metrics HTTP endpoint
+# (`--dpos.metrics-port`) consumed by the local-dpos-smoke regression suite.
+dpos-devnet-metrics = ["fluentbase-node/dpos-devnet-metrics"]
 
 [[bin]]
 name = "fluent"

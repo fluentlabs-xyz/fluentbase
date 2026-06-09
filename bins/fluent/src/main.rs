@@ -1,13 +1,22 @@
 #![allow(missing_docs, dead_code)]
 
+mod node_modes;
+
+use alloy_primitives::Bytes;
+use alloy_rpc_types_engine::PayloadId;
 use clap::{Args, Parser};
+use dashmap::DashMap;
+use eyre::OptionExt;
 use fluentbase_node::{
+    cert_follow::spawn_cert_follower,
     chainspec::FluentChainSpecParser,
     consensus::FluentConsensus,
+    consensus_rpc::{ConsensusApiServer, ConsensusRpc},
+    dpos::{spawn_dpos, DposArgs},
     evm::{FluentEvmConfig, FluentExecutorBuilder, FluentNode},
     launcher::{launch_consensus_node, launch_consensus_validator},
     payload::FluentPayloadAttributesBuilder,
-    trusted_peers::{resolve_default_consensus_url, resolve_default_trusted_peers},
+    trusted_peers::resolve_default_trusted_peers,
 };
 use humantime::parse_duration;
 use reth_chainspec::ChainSpec;
@@ -16,8 +25,13 @@ use reth_ethereum_cli::{Cli, Commands};
 use reth_node_builder::{DebugNodeLauncherFuture, Node};
 use reth_node_core::version::{default_reth_version_metadata, try_init_version_metadata};
 use reth_node_ethereum::EthereumAddOns;
+use reth_storage_api::{BlockNumReader, HeaderProvider};
 use std::{borrow::Cow, sync::Arc, time::Duration};
-use tracing::info;
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info};
+
+/// `consensus_subscribe` broadcast buffer (slow consumers lag, not block).
+const CERT_FEED_EVENT_CAP: usize = 1024;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
@@ -81,6 +95,33 @@ pub struct FluentNodeArgs {
 
     #[arg(long = "sequencer-url")]
     pub sequencer_url: Option<String>,
+
+    /// Run as a DPoS validator (BFT consensus + p2p + finality-gated peer set).
+    /// Mutually exclusive with --validator and --sequencer-url.
+    #[arg(
+        long = "dpos",
+        default_value_t = false,
+        conflicts_with_all = &["validator", "sequencer_url"],
+    )]
+    pub dpos: bool,
+
+    /// Run as a trustless cert-follower: pull finality certs from
+    /// `--sequencer-url` (a `consensus`-RPC WebSocket), verify each against the
+    /// on-chain epoch committee, and drive this node's own reth. Mutually
+    /// exclusive with `--dpos`/`--validator`; requires `--sequencer-url` (the
+    /// upstream WS) and `--dpos.staking-config` (committee reads).
+    #[arg(
+        long = "cert-follow",
+        default_value_t = false,
+        conflicts_with_all = &["dpos", "validator"],
+        requires_all = &["sequencer_url", "dpos_staking_config"],
+    )]
+    pub cert_follow: bool,
+
+    /// DPoS validator configuration (`--dpos.*`): keys, paths, ports. Flattened
+    /// so the long flag list lives next to `DposConfig` in `fluentbase-node`.
+    #[command(flatten)]
+    pub dpos_cfg: DposArgs,
 }
 
 fn init_downloads_defaults() {
@@ -112,63 +153,228 @@ fn main() {
     // Override default reth version metadata with fluentbase-specific build metadata.
     init_fluent_version_metadata();
 
-    let mut consensus_url: Option<String> = None;
-    let mut block_producer: Option<Duration> = None;
+    // Single shared `Arc<DashMap>` instance
+    // between `FluentNode`'s payload builder (reader) and the DPoS thread's
+    // `OuterBuilder.extra_data_registry` (writer). Empty in non-DPoS modes
+    // — the executor's `processBitmap` system call no-ops on
+    // `committeeSize == 0` decoded from an empty extra_data.
+    let extra_data_registry: Arc<DashMap<PayloadId, Bytes>> = Arc::new(DashMap::new());
 
     let mut cli = Cli::<FluentChainSpecParser, FluentNodeArgs>::parse();
 
-    // Adjust several params for node execution
-    if let Commands::Node(node) = &mut cli.command {
-        // Merge default public trusted peers
+    // Adjust several params for node execution + resolve the fluent node modes.
+    let modes = if let Commands::Node(node) = &mut cli.command {
+        // Merge default public trusted peers (reth network config).
         let new_trusted_peers = resolve_default_trusted_peers(node.chain.chain);
         node.network.trusted_peers.extend(new_trusted_peers);
 
-        // If consensus URL is not specified, resolve default
-        if let Some(sequencer_url) = &node.ext.sequencer_url {
-            consensus_url = Some(sequencer_url.clone());
-        } else if let Some(debug_consensus_url) = &node.debug.rpc_consensus_url {
-            consensus_url = Some(debug_consensus_url.clone());
-        } else {
-            consensus_url = resolve_default_consensus_url(node.chain.chain);
-        }
+        node_modes::resolve_node_modes(
+            &node.ext,
+            node.chain.chain,
+            node.debug.rpc_consensus_url.as_deref(),
+            extra_data_registry.clone(),
+        )
+    } else {
+        node_modes::ResolvedModes::default()
+    };
+    let node_modes::ResolvedModes {
+        consensus_url,
+        block_producer,
+        dpos_config,
+        cert_follow_config,
+        cert_rpc_feed,
+        staking_address,
+        chain_config_address,
+        staking_reader_cfg,
+    } = modes;
 
-        // If validator mode is enabled then specify block production time
-        if node.ext.validator {
-            block_producer = Some(node.ext.validator_block_time);
-        }
-    }
+    // Pre-spawn the DPoS thread before reth's runtime starts. The thread
+    // blocks on a oneshot until the closure below forwards the reth
+    // FullNode.
+    let dpos_setup = dpos_config.map(|cfg| {
+        let shutdown_token = CancellationToken::new();
+        let spawn = spawn_dpos::<_, EthereumAddOns<_, _, _>>(cfg, shutdown_token.clone());
+        (spawn, shutdown_token)
+    });
+    let cert_follow_setup = cert_follow_config.map(|cfg| {
+        let shutdown_token = CancellationToken::new();
+        let spawn = spawn_cert_follower::<_, EthereumAddOns<_, _, _>>(cfg, shutdown_token.clone());
+        (spawn, shutdown_token)
+    });
 
-    let components = |spec: Arc<ChainSpec>| {
+    // Split the consensus thread setup so cancel + join run AFTER
+    // cli.run_with_components returns (Tempo pattern at bin/tempo/src/main.rs:734-742).
+    // Joining inside the async closure risks deadlock when reth's engine shutdown
+    // races with the consensus thread's in-flight beacon_engine_handle calls.
+    // DPoS and cert-follow are mutually exclusive (clap `conflicts_with`), so at
+    // most one setup is `Some`; both normalize to the same (handle_tx, dead_rx) +
+    // (join, shutdown_token) shape the launch closure drives.
+    let (consensus_thread_inner, consensus_thread_cleanup) = match (dpos_setup, cert_follow_setup) {
+        (Some((spawn, token)), None) => (
+            Some((spawn.handle_tx, spawn.dead_rx)),
+            Some((spawn.join, token)),
+        ),
+        (None, Some((spawn, token))) => (
+            Some((spawn.handle_tx, spawn.dead_rx)),
+            Some((spawn.join, token)),
+        ),
+        (None, None) => (None, None),
+        (Some(_), Some(_)) => {
+            unreachable!("clap conflicts_with prevents --dpos together with --cert-follow")
+        }
+    };
+
+    let components = move |spec: Arc<ChainSpec>| {
         (
-            FluentEvmConfig::new_with_default_factory(spec.clone()),
+            FluentEvmConfig::new(
+                spec.clone(),
+                fluentbase_node::evm::FluentEvmFactory::default(),
+                staking_address,
+                chain_config_address,
+            ),
             Arc::new(FluentConsensus::new(spec)),
         )
     };
 
-    if let Err(err) = cli.run_with_components::<FluentNode>(components, async move |builder, _| {
+    let extra_data_registry_for_node = extra_data_registry.clone();
+
+    // RocksDB close-order guard. The consensus thread (slasher `PoolTxSink`, and
+    // any other DPoS/cert-follow consumer) clones reth's provider, which owns a
+    // RocksDB instance. If such a clone is the LAST reference it closes RocksDB
+    // from the commonware runtime-teardown path, where RocksDB's process-global
+    // `PeriodicTaskScheduler::timer_mutex` is torn down concurrently -> a glibc
+    // "pthread lock: Invalid argument" abort (intermittent shutdown SIGABRT,
+    // exit 134/139 AFTER a successful flush — data is safe, but the process
+    // crashes on the way out). Send a provider clone out to `main` and hold it
+    // until AFTER the consensus thread is joined, so RocksDB's final close runs
+    // exactly once, on the main thread, in a clean context after every other ref
+    // is gone.
+    let (rocksdb_keepalive_tx, rocksdb_keepalive_rx) =
+        std::sync::mpsc::sync_channel::<Box<dyn std::any::Any + Send>>(1);
+
+    let run_result = cli.run_with_components::<FluentNode>(components, async move |builder, _| {
         info!(target: "reth::cli", "Launching node");
 
-        let components_builder = FluentNode::default()
-            .components_builder()
-            .executor(FluentExecutorBuilder::default());
+        let components_builder = FluentNode::with_extra_data_registry(
+            extra_data_registry_for_node,
+            !staking_address.is_zero(),
+        )
+        .components_builder()
+        .executor(FluentExecutorBuilder::new(
+            staking_address,
+            chain_config_address,
+        ));
         let add_ons = EthereumAddOns::default();
 
         let handle: DebugNodeLauncherFuture<_, _, _> = builder
             .with_types::<FluentNode>()
             .with_components(components_builder)
             .with_add_ons(add_ons)
+            .extend_rpc_modules(move |ctx| {
+                // Register the `consensus` namespace (cert-follower server) when
+                // this node serves the cert feed (DPoS enabled). Rides the
+                // existing `--http`/`--ws` transports.
+                if let Some(feed) = cert_rpc_feed {
+                    ctx.modules
+                        .merge_configured(ConsensusRpc::new(feed).into_rpc())?;
+                }
+                Ok(())
+            })
             .launch_with_debug_capabilities();
 
         let handle = handle.await?;
 
+        // Defer RocksDB's final close to `main` (see rocksdb_keepalive_tx): hand a
+        // provider clone out so the consensus thread's clone is never the last ref.
+        let _ = rocksdb_keepalive_tx.send(Box::new(handle.node.provider.clone()));
+
         if let Some(block_time) = block_producer {
-            launch_consensus_validator(&handle, block_time, FluentPayloadAttributesBuilder {})
-                .await?;
+            // Tempo→DPoS clean-halt: read the immutable, genesis-baked activation block
+            // once and stop producing once the sequencer head reaches it. `0` ⇒ absolute
+            // numbering (no migration) ⇒ no gate. Followers (--sequencer-url) relay the
+            // sequencer and stop with it, so this single read gates the whole network.
+            let activation_gate: Option<u64> = match &staking_reader_cfg {
+                Some(cfg) if !cfg.chain_config_address.is_zero() => {
+                    let reader = fluentbase_staking_reader::RethStakingStateReader::new(
+                        handle.node.provider.clone(),
+                        handle.node.evm_config.clone(),
+                        cfg.clone(),
+                    );
+                    let best = handle.node.provider.best_block_number()?;
+                    let best_hash = handle
+                        .node
+                        .provider
+                        .sealed_header(best)?
+                        .ok_or_eyre(
+                            "sequencer: no sealed header at best block for activation read",
+                        )?
+                        .hash();
+                    let act = reader.dpos_activation_block(best_hash)?;
+                    (act > 0).then_some(act)
+                }
+                _ => None,
+            };
+            launch_consensus_validator(
+                &handle,
+                block_time,
+                FluentPayloadAttributesBuilder {},
+                activation_gate,
+            )
+            .await?;
         } else if let Some(consensus_url) = consensus_url {
             launch_consensus_node(&handle, consensus_url).await?;
         }
-        handle.node_exit_future.await
-    }) {
+
+        if let Some((handle_tx, dead_rx)) = consensus_thread_inner {
+            info!(target: "reth::cli", "Handing reth FullNode to consensus thread");
+            if handle_tx.send(handle.node.clone()).is_err() {
+                eyre::bail!("consensus thread exited before NodeHandle could be sent");
+            }
+
+            tokio::select! {
+                _ = handle.node_exit_future => {
+                    info!("reth execution node exited");
+                }
+                _ = dead_rx => {
+                    // No flush: reth persists its in-memory tail on its own graceful
+                    // exit, and any unpersisted tail is rebuilt on the next cold-start
+                    // via `recover_finalized_tail_into_reth` (marshal durable archive).
+                    info!("DPoS thread exited; reth persists natively, lost tail \
+                           recovers on next cold-start");
+                }
+            }
+            Ok(())
+        } else {
+            handle.node_exit_future.await
+        }
+    });
+
+    // Hold reth's provider (the RocksDB owner) alive across the consensus-thread
+    // join so the slasher's clone can never be the last reference (see
+    // rocksdb_keepalive_tx). `None` if the node closure errored before sending.
+    let rocksdb_keepalive = rocksdb_keepalive_rx.recv().ok();
+
+    // Consensus-thread cleanup runs AFTER reth returns, regardless of
+    // run_result — the thread (DPoS or cert-follow) always gets a chance to exit
+    // cleanly.
+    if let Some((join, shutdown_token)) = consensus_thread_cleanup {
+        shutdown_token.cancel();
+        match join.join() {
+            Ok(Ok(())) => info!("consensus thread joined cleanly"),
+            Ok(Err(e)) => error!(?e, "consensus thread exited with error"),
+            Err(panic) => {
+                error!("consensus thread panicked");
+                std::panic::resume_unwind(panic);
+            }
+        }
+    }
+
+    // Every other reth/consensus reference is now gone; drop the keepalive so
+    // RocksDB's final close runs here, on the main thread, in a clean context
+    // (not from the consensus runtime teardown that triggered the SIGABRT).
+    drop(rocksdb_keepalive);
+
+    if let Err(err) = run_result {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
     }
