@@ -51,6 +51,31 @@ reth-evm.workspace = true
 reth-evm-ethereum.workspace = true
 reth-consensus-debug-client.workspace = true
 reth-engine-primitives.workspace = true
+reth-basic-payload-builder.workspace = true
+reth-chain-state.workspace = true
+reth-payload-builder-primitives.workspace = true
+
+# dpos
+fluentbase-bls.workspace = true
+fluentbase-consensus.workspace = true
+fluentbase-staking-reader.workspace = true
+fluentbase-p2p.workspace = true
+commonware-runtime.workspace = true
+commonware-p2p.workspace = true
+commonware-consensus.workspace = true
+commonware-cryptography = { workspace = true, features = ["std"] }
+commonware-utils = { workspace = true, features = ["std"] }
+commonware-codec.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+alloy-sol-types.workspace = true
+tokio-util.workspace = true
+dashmap.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+futures = "0.3"
+serde.workspace = true
+hex.workspace = true
+jsonrpsee.workspace = true
 
 # fluentbase
 fluentbase-runtime = { workspace = true }
@@ -83,6 +108,9 @@ reqwest = { workspace = true }
 
 [features]
 default = ["std"]
+# DEVNET-ONLY: compiles in the unauthenticated commonware-metrics HTTP endpoint
+# (`--dpos.metrics-port`) for the smoke regression suite. Off in prod builds.
+dpos-devnet-metrics = []
 std = [
     "fluentbase-runtime/std",
     "fluentbase-revm/std",
