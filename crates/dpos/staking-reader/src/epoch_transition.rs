@@ -194,28 +194,6 @@ where
         };
         let epoch_e = epoch_of_block(number, interval, activation);
 
-        // Cold-start bootstrap: on the very first finalized block, stand up the
-        // CURRENT epoch's engine. Its committee is already committed on-chain (the
-        // ahead-commit pipeline committed it during the prior epoch), so read the
-        // frozen array. `return` so a cold-start call never ALSO falls through to
-        // the boundary branch below — otherwise an anchor on the last block of an
-        // epoch whose `track_and_trigger` hit a Full channel (last_tracked stays
-        // None → `None < Some(next)`) would double-spawn epoch E+1 while E was
-        // never tracked.
-        if self.last_tracked_epoch.is_none() {
-            let snap = self.reader.epoch_committee_snapshot(epoch_e, at)?;
-            if snap.validators.is_empty() {
-                return Ok(TransitionOutcome::Intra);
-            }
-            return self.track_and_trigger(epoch_e, snap, at).await;
-        }
-
-        // Boundary: when the LAST block of epoch E finalizes, spawn epoch E+1. Its
-        // committee was committed one epoch ahead (at the first block of epoch E,
-        // §4.4), so the frozen `getEpochCommittee(E+1)` is on-chain by now and the
-        // genesis block for engine E+1 (= this finalized last-block of E) is
-        // stored. The engine-E engine keeps producing until E+1 takes over.
-        let next = epoch_e + 1;
         // Boundary detection MUST be activation-relative, matching `epoch_of_block`
         // (reader.rs) and the consensus `OriginEpocher`: the last block of relative
         // epoch E is where `(number - activation) % interval == interval - 1`, i.e.
@@ -229,6 +207,38 @@ where
         let is_epoch_boundary = (number + 1)
             .saturating_sub(activation)
             .is_multiple_of(interval as u64);
+
+        // Cold-start bootstrap: on the very first finalized block, stand up the
+        // CURRENT epoch's engine. Its committee is already committed on-chain (the
+        // ahead-commit pipeline committed it during the prior epoch), so read the
+        // frozen array. `return` so a cold-start call never ALSO falls through to
+        // the boundary branch below — otherwise an anchor on the last block of an
+        // epoch whose `track_and_trigger` hit a Full channel (last_tracked stays
+        // None → `None < Some(next)`) would double-spawn epoch E+1 while E was
+        // never tracked.
+        //
+        // If the resume block IS an epoch boundary (last block of E), a finalized
+        // boundary means the network has already advanced to E+1 — bootstrap E+1, not
+        // E, so a catch-up node hints `last(E+1)` ABOVE the marshal floor (which sits
+        // at this boundary). Entering E would hint `last(E) == floor` → a marshal
+        // no-op → permanent boundary-resume deadlock. Mirrors tempo entering the next
+        // epoch on a boundary-aligned resume; still a single `track_and_trigger` +
+        // `return`, preserving the double-spawn guard.
+        if self.last_tracked_epoch.is_none() {
+            let cold_epoch = if is_epoch_boundary { epoch_e + 1 } else { epoch_e };
+            let snap = self.reader.epoch_committee_snapshot(cold_epoch, at)?;
+            if snap.validators.is_empty() {
+                return Ok(TransitionOutcome::Intra);
+            }
+            return self.track_and_trigger(cold_epoch, snap, at).await;
+        }
+
+        // Boundary: when the LAST block of epoch E finalizes, spawn epoch E+1. Its
+        // committee was committed one epoch ahead (at the first block of epoch E,
+        // §4.4), so the frozen `getEpochCommittee(E+1)` is on-chain by now and the
+        // genesis block for engine E+1 (= this finalized last-block of E) is
+        // stored. The engine-E engine keeps producing until E+1 takes over.
+        let next = epoch_e + 1;
         if is_epoch_boundary && self.last_tracked_epoch < Some(next) {
             // Missed-commit epoch: `Staking.sol` allows an epoch with no
             // `commitEpochCommittee` (unslashable by design; idempotent / monotonic
@@ -461,6 +471,41 @@ mod tests {
             );
             let log = sink.0.lock().unwrap();
             assert_eq!(*log, vec![(5, 5), (6, 5)], "bootstrap epoch 5, then spawn epoch 6 at its boundary");
+        });
+    }
+
+    #[test]
+    fn cold_start_on_boundary_enters_next_epoch() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
+                ValidatorSetCache::init(ctx).await.unwrap(),
+            ));
+            let sink = RecordingSink::default();
+            let mut et = EpochTransition::new(
+                MockReader {
+                    committee: 5,
+                    undelegate: 7,
+                    interval: 100,
+                },
+                cache,
+                sink.clone(),
+                64,
+                None,
+            );
+            let h = B256::repeat_byte(0x55);
+            // Cold-start EXACTLY on the epoch-5 boundary (599 = last block of epoch 5,
+            // (599+1)%100==0). A finalized boundary means the network is in epoch 6 →
+            // bootstrap epoch 6, NOT epoch 5: entering 5 would deadlock a catch-up node
+            // (its hint last(5) == the marshal floor → a no-op).
+            assert_eq!(
+                et.on_finalized(h, 599).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(6),
+            );
+            assert_eq!(
+                *sink.0.lock().unwrap(),
+                vec![(6, 5)],
+                "boundary cold-start tracks epoch 6"
+            );
         });
     }
 

@@ -29,7 +29,7 @@ use crate::{
         derive_cold_start_heights, read_consensus_archive_last_finalized, wait_for_activation_block,
     },
     executor,
-    outer::{follower_marshal_config, init_finalizations_archive, EpochSchemeProvider},
+    outer::{follower_marshal_config, init_finalizations_archive, EpochSchemeProvider, MAX_REPAIR},
     scheme::epoch_committee_from_snapshot,
     OriginEpocher,
 };
@@ -171,93 +171,140 @@ impl CertFollowLayer {
             archive_finalized
         };
 
-        // EL-sync bootstrap. A fresh follower's reth is empty; post-merge reth won't
-        // sync historical blocks without an Engine-API head. If reth lacks the
-        // anchor, fetch the upstream's latest finalized head and FCU reth to it,
-        // triggering devp2p backward-sync from the trusted peer. Weak-subjectivity:
-        // ONLY the EL-sync head hash is trusted — reth validates every block (state
-        // root) and the driver verifies every live cert from the anchor forward (the
-        // first verified cert authenticates the anchor's hash via its `parent_hash`).
-        if provider
+        // Cold-start checkpoint: the block the follower trust-syncs reth to and floors
+        // the marshal at. A fresh follower's reth is empty (post-merge reth won't sync
+        // historical blocks without an Engine-API head), so a bounded catch-up loop
+        // drives reth onto the upstream's LIVE tip, then floors at what reth actually
+        // synced to. A single FCU+wait is NOT enough: reth syncs only to that one target
+        // while the upstream keeps producing, leaving a stale `[synced+1 .. tip]` gap
+        // that re-wedges if it exceeds MAX_REPAIR within one epoch. Each round backfills
+        // a smaller span, so the residual gap converges to the steady-state sync latency.
+        // A restart (reth already holds the archive anchor) skips the loop and resumes
+        // there. Weak-subjectivity: ONLY the EL-sync head hash is trusted — reth validates
+        // every block (state root) and the driver verifies every live cert from the
+        // checkpoint forward (the first verified cert authenticates the checkpoint hash
+        // via its `parent_hash`).
+        const EL_SYNC_WAIT: Duration = Duration::from_secs(120);
+        const CATCHUP_MAX_ROUNDS: u32 = 16;
+        let (checkpoint_height, checkpoint_hash) = if provider
             .block_hash(anchor_height)
             .wrap_err("block_hash(anchor) probe failed")?
             .is_none()
         {
-            match upstream.get_latest().await {
-                Some(latest) => {
-                    let latest_block = latest.block;
-                    let latest_hash = latest_block.block_hash();
-                    let latest_height = latest_block.height().get();
-                    info!(
-                        latest_height,
-                        anchor_height, "cert-follow: driving reth EL-sync to upstream checkpoint"
-                    );
-                    let _ = beacon_engine_handle
-                        .new_payload(latest_block.into_inner())
-                        .await;
-                    let _ = beacon_engine_handle
-                        .fork_choice_updated(
-                            ForkchoiceState {
-                                head_block_hash: latest_hash,
-                                safe_block_hash: latest_hash,
-                                finalized_block_hash: genesis_hash,
-                            },
-                            None,
-                        )
-                        .await;
-                }
-                None => warn!(
-                    "cert-follow: upstream getLatest returned none; relying on existing reth state"
-                ),
-            }
-
-            // Wait (bounded) for reth's backward-sync to canonicalize the anchor
-            // (block_hash present ⇒ executed ⇒ committee state queryable).
-            const EL_SYNC_WAIT: Duration = Duration::from_secs(120);
             let deadline = ctx.current() + EL_SYNC_WAIT;
-            while provider
-                .block_hash(anchor_height)
-                .wrap_err("block_hash(anchor) probe during EL-sync")?
-                .is_none()
-            {
-                if ctx.current() >= deadline {
-                    return Err(eyre!(
-                        "cert-follow: reth did not EL-sync to anchor {anchor_height} within \
-                         {EL_SYNC_WAIT:?} — is the trusted peer serving block bodies?"
-                    ));
+            let mut synced_height = anchor_height;
+            let mut rounds = 0u32;
+            loop {
+                let Some(latest) = upstream.get_latest().await else {
+                    warn!(
+                        "cert-follow: upstream getLatest returned none; relying on existing reth state"
+                    );
+                    break;
+                };
+                let latest_block = latest.block;
+                let tip_hash = latest_block.block_hash();
+                let tip_height = latest_block.height().get();
+                info!(
+                    tip_height,
+                    anchor_height,
+                    round = rounds,
+                    "cert-follow: driving reth EL-sync toward upstream tip"
+                );
+                let _ = beacon_engine_handle
+                    .new_payload(latest_block.into_inner())
+                    .await;
+                let _ = beacon_engine_handle
+                    .fork_choice_updated(
+                        ForkchoiceState {
+                            head_block_hash: tip_hash,
+                            safe_block_hash: tip_hash,
+                            finalized_block_hash: genesis_hash,
+                        },
+                        None,
+                    )
+                    .await;
+
+                // Wait (bounded) for reth's backward-sync to canonicalize the tip
+                // (block_hash present ⇒ executed ⇒ committee state queryable).
+                while provider
+                    .block_hash(tip_height)
+                    .wrap_err("block_hash(tip) probe during EL-sync")?
+                    .is_none()
+                {
+                    if ctx.current() >= deadline {
+                        return Err(eyre!(
+                            "cert-follow: reth did not EL-sync to tip {tip_height} within \
+                             {EL_SYNC_WAIT:?} — is the trusted peer serving block bodies?"
+                        ));
+                    }
+                    ctx.sleep(Duration::from_secs(2)).await;
                 }
-                ctx.sleep(Duration::from_secs(2)).await;
+                synced_height = tip_height;
+                rounds += 1;
+
+                // Exit when the residual gap above the synced head is crossable: a
+                // later-epoch upstream tip triggers the driver's catch-up `set_floor`-jump,
+                // and a same-epoch gap ≤ MAX_REPAIR the marshal fills contiguously.
+                // Otherwise loop — the upstream advanced > MAX_REPAIR in-epoch while we
+                // synced, so converge onto the newer tip (a smaller backfill each round).
+                let now_tip = upstream
+                    .get_latest()
+                    .await
+                    .map(|u| u.block.height().get())
+                    .unwrap_or(tip_height);
+                if catchup_gap_crossable(
+                    tip_height,
+                    now_tip,
+                    interval,
+                    dpos_activation_block,
+                    MAX_REPAIR.get() as u64,
+                ) {
+                    break;
+                }
+                if rounds >= CATCHUP_MAX_ROUNDS || ctx.current() >= deadline {
+                    warn!(
+                        synced_height,
+                        now_tip,
+                        "cert-follow: catch-up loop hit cap; flooring at synced head, \
+                         relying on the catch-up jump for the residual gap"
+                    );
+                    break;
+                }
             }
-        }
+            let hash = wait_for_activation_block(&ctx, &provider, synced_height).await?;
+            (synced_height, hash)
+        } else {
+            let hash = wait_for_activation_block(&ctx, &provider, anchor_height).await?;
+            (anchor_height, hash)
+        };
 
-        let anchor_hash = wait_for_activation_block(&ctx, &provider, anchor_height).await?;
-
-        // reth's actual canonical head (devp2p-synced, ahead of the consensus
-        // anchor). Seed the executor head here so it never issues a backward FCU to
-        // the anchor (reth spec-skips a backward FCU to an ancestor → wedge);
-        // finalized advances forward from the anchor as certs verify.
+        // reth's actual canonical head (devp2p-synced; == the checkpoint after the
+        // catch-up loop). Seed the executor head here so it never issues a backward FCU
+        // to an ancestor (reth spec-skips that → wedge); finalized advances forward from
+        // the checkpoint as certs verify.
         let chain = canonical_state.chain_info();
         let (head_num, head_hash) = (chain.best_number, chain.best_hash);
         let last_execution_finalized_height = provider
             .last_block_number()
             .wrap_err("provider failed to report chain head at follower startup")?;
 
-        let initial_epoch_u64 = epoch_of_block(anchor_height, interval, dpos_activation_block);
-        let initial_snapshot = reader.epoch_committee_snapshot(initial_epoch_u64, anchor_hash)?;
+        let checkpoint_epoch = epoch_of_block(checkpoint_height, interval, dpos_activation_block);
+        let initial_snapshot =
+            reader.epoch_committee_snapshot(checkpoint_epoch, checkpoint_hash)?;
         if initial_snapshot.validators.is_empty() {
             return Err(eyre!(
-                "staking contract returned empty committee for epoch {initial_epoch_u64} \
-                 (read at anchor block {anchor_height}); point --cert-follow at a network \
-                 whose committee is committed, or wait for reth to sync past DPoS activation"
+                "cert-follow: checkpoint epoch {checkpoint_epoch} has no committed committee \
+                 (read at checkpoint block {checkpoint_height}); point --cert-follow at a \
+                 network whose committee is committed for that epoch"
             ));
         }
         info!(
             chain_id,
-            anchor_height,
+            checkpoint_height,
             head_num,
-            initial_epoch = initial_epoch_u64,
+            checkpoint_epoch,
             interval,
-            "cert-follower cold-start anchor resolved"
+            "cert-follower cold-start checkpoint resolved"
         );
 
         // Marshal: archives (shared format with the validator) + scheme provider
@@ -282,29 +329,30 @@ impl CertFollowLayer {
             ),
         )
         .await;
-        // Pin the in-order floor to the anchor: dispatch from anchor+1 forward
+        // Pin the in-order floor to the checkpoint: dispatch from checkpoint+1 forward
         // (raises-only, so a restart with a higher archive floor is a no-op).
-        marshal_mailbox.set_floor(Height::new(anchor_height)).await;
+        marshal_mailbox
+            .set_floor(Height::new(checkpoint_height))
+            .await;
 
-        // Register the anchor epoch's verifier BEFORE any cert is processed —
+        // Register the checkpoint epoch's verifier BEFORE any cert is processed —
         // otherwise the marshal would reject the first finalization (no scheme).
         let namespace = fluent_namespace(chain_id);
         let initial_committee = epoch_committee_from_snapshot(&initial_snapshot)
-            .map_err(|e| eyre!("anchor committee has non-unique participants: {e:?}"))?;
+            .map_err(|e| eyre!("checkpoint committee has non-unique participants: {e:?}"))?;
         scheme_provider.register(
-            Epoch::new(initial_epoch_u64),
+            Epoch::new(checkpoint_epoch),
             build_verifier(&namespace, initial_committee.bimap),
         );
 
-        // The anchor itself carries no separately-verifiable cert: in a Tempo→DPoS
-        // migration the anchor (`dposActivationBlock`) is the switchover block,
-        // finalized by Tempo, so the upstream's DPoS marshal has no finalization for
-        // it (the first DPoS cert is anchor+1). Authentication is transitive instead:
-        // the driver BLS-verifies every forward cert, and the consensus digest IS the
-        // EVM block hash committing `parent_hash`, so the first verified descendant
-        // cert authenticates the anchor's hash. The anchor *hash* source (the trusted
-        // EL-sync head) is the remaining trust input — closed by the deferred L1
-        // anchor source, not by verifying a non-existent anchor cert.
+        // The checkpoint itself is not cert-verified here: its blocks `[..checkpoint]`
+        // are trusted via the EL-sync head (reth state-root-validates each) and the
+        // deferred L1 anchor source. Authentication is transitive forward: the driver
+        // BLS-verifies every cert from `checkpoint+1`, and the consensus digest IS the
+        // EVM block hash committing `parent_hash`, so the first verified descendant cert
+        // authenticates the checkpoint's hash. The checkpoint *hash* source (the trusted
+        // EL-sync head) is the remaining trust input — closed by the deferred L1 anchor
+        // source, not by verifying the checkpoint's own cert.
 
         // Executor — drives reth from the verified finalized stream.
         let (executor_actor, executor_mailbox) = executor::Actor::init(
@@ -315,7 +363,7 @@ impl CertFollowLayer {
                 fcu_heartbeat_interval,
                 last_consensus_finalized_height,
                 last_execution_finalized_height,
-                initial_finalized: (Height::new(anchor_height), anchor_hash),
+                initial_finalized: (Height::new(checkpoint_height), checkpoint_hash),
                 initial_head: (Height::new(head_num), head_hash),
                 fcu_pace,
                 canonical_state,
@@ -344,7 +392,7 @@ impl CertFollowLayer {
         );
 
         // Scheme-registration forwarder. Spawned BEFORE cold_start so the
-        // cold_start boundary fire is drained (re-registering the anchor scheme is
+        // cold_start boundary fire is drained (re-registering the checkpoint scheme is
         // idempotent — EpochSchemeProvider::register is insert-or-equal).
         let scheme_provider_for_fwd = scheme_provider.clone();
         let namespace_for_fwd = namespace.clone();
@@ -371,7 +419,7 @@ impl CertFollowLayer {
         );
         // Seed last_tracked_epoch so on_finalized boundary detection works.
         epoch_transition
-            .cold_start(anchor_hash, anchor_height)
+            .cold_start(checkpoint_hash, checkpoint_height)
             .await
             .wrap_err("follower epoch_transition cold_start failed")?;
 
@@ -439,5 +487,73 @@ impl CertFollowLayer {
             });
 
         Ok(CertFollowHandle { consensus_handle })
+    }
+}
+
+/// Cold-start catch-up loop exit test: is the residual gap `(synced_tip, current_tip]`
+/// crossable so the marshal can advance the floor from `synced_tip`?
+///
+/// True when EITHER the upstream's current tip is in a **later epoch** than the synced
+/// head (the driver's catch-up `set_floor`-jump fires on the first later-epoch cert and
+/// skips the gap) OR the same-epoch gap is `≤ max_repair` (the marshal fills it
+/// contiguously in one repair window). The only non-crossable case — same epoch AND
+/// gap `> max_repair` — is the wedge, so the loop keeps driving reth onto the
+/// newer tip until this returns true.
+fn catchup_gap_crossable(
+    synced_tip: u64,
+    current_tip: u64,
+    interval: u32,
+    dpos_activation_block: u64,
+    max_repair: u64,
+) -> bool {
+    epoch_of_block(current_tip, interval, dpos_activation_block)
+        > epoch_of_block(synced_tip, interval, dpos_activation_block)
+        || current_tip.saturating_sub(synced_tip) <= max_repair
+}
+
+#[cfg(test)]
+mod tests {
+    use super::catchup_gap_crossable;
+
+    // interval 32, activation 64 ⇒ epoch boundaries at 64,96,128,…; MAX_REPAIR 20.
+    const INTERVAL: u32 = 32;
+    const ACTIVATION: u64 = 64;
+    const MAX_REPAIR: u64 = 20;
+
+    fn crossable(synced: u64, current: u64) -> bool {
+        catchup_gap_crossable(synced, current, INTERVAL, ACTIVATION, MAX_REPAIR)
+    }
+
+    #[test]
+    fn same_epoch_small_gap_is_crossable() {
+        // synced 70, current 85: both epoch 0, gap 15 ≤ MAX_REPAIR → marshal fills it.
+        assert!(crossable(70, 85));
+    }
+
+    #[test]
+    fn same_epoch_gap_over_max_repair_is_not_crossable() {
+        // synced 70, current 95: both epoch 0 (95-64=31, /32=0), gap 25 > MAX_REPAIR →
+        // the wedge condition; the loop must keep catching up.
+        assert!(!crossable(70, 95));
+    }
+
+    #[test]
+    fn later_epoch_is_crossable_even_when_gap_exceeds_max_repair() {
+        // synced 70 (epoch 0), current 96 (epoch 1): the catch-up jump skips the gap,
+        // so a 26-block gap is fine.
+        assert!(crossable(70, 96));
+    }
+
+    #[test]
+    fn no_advance_is_crossable() {
+        // Upstream did not move while we synced (gap 0) — done.
+        assert!(crossable(87, 87));
+    }
+
+    #[test]
+    fn small_epoch_auto_crosses_a_boundary() {
+        // interval 16 ≤ MAX_REPAIR: any gap > MAX_REPAIR necessarily crosses an epoch,
+        // so the same-epoch-wedge case cannot arise.
+        assert!(catchup_gap_crossable(64, 85, 16, ACTIVATION, MAX_REPAIR));
     }
 }

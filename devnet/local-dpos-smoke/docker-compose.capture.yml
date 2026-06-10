@@ -1,0 +1,12 @@
+# Debug-logging override for the rejoin capture (task
+# dpos_liveness_rejoin_reth22_regression). Applied to the rejoining victim
+# (validator-3) via DPOS_EXTRA_COMPOSE so _migrate_to_dpos recreates it with a
+# debug RUST_LOG that surfaces the decisive consensus↔EL-boundary signals:
+#   fluentbase_consensus=debug          → executor FCU-drive / epoch_manager catch-up / driver
+#   commonware_consensus::marshal=debug → marshal floor / try_dispatch_blocks / gap-repair
+#   commonware_resolver=debug           → resolve_block: peers-vs-reth block source (the CoVe unknown)
+# reth stays at info (its SYNCING / forkchoice lines are info-level).
+services:
+  validator-3:
+    environment:
+      RUST_LOG: "info,fluentbase_consensus=debug,fluentbase_staking_reader=debug,commonware_consensus::marshal=debug,commonware_resolver=debug"
