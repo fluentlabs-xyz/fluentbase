@@ -1,10 +1,12 @@
 # AGENTS.md - Fluentbase Development Guide
 
-This file is for coding agents working in this repository. Follow it unless a more specific user instruction or a nested `AGENTS.md` overrides it.
+This file is for coding agents working in this repository. Follow it unless a more specific user instruction or a nested
+`AGENTS.md` overrides it.
 
 ## Project Snapshot
 
-Fluentbase is a Rust workspace for the Fluent L2 execution stack. The core idea is blended execution: EVM/SVM/WASM/UST compatibility layers converge into rWasm IR and a single proof-friendly runtime/STF.
+Fluentbase is a Rust workspace for the Fluent L2 execution stack. The core idea is blended execution: EVM/SVM/WASM/UST
+compatibility layers converge into rWasm IR and a single proof-friendly runtime/STF.
 
 Important areas:
 
@@ -41,6 +43,43 @@ It covers:
 - Constraints for AI coding agents
 
 Do not duplicate the full security rules here; keep `SECURITY.md` as the single source of truth.
+
+## Security Audit Mode
+
+When asked to audit for vulnerabilities, run this playbook. It is tuned for high-capability models
+(e.g. Fable 5) that follow instructions literally and under-use parallelism unless told to fan out.
+
+Operating rules:
+
+- Report EVERY finding with severity + confidence. Do NOT pre-filter for importance or certainty —
+  coverage is the goal; triage is a separate downstream pass. Instructions like "be conservative" or
+  "only high-severity" cause real bugs to be silently dropped; do not apply them in audit mode.
+- Take the full scope up front and run at `high`/`xhigh` effort. Do not narrow scope on your own.
+- Fan out subagents across the independent crate groups below, in parallel. Each subagent must read
+  real source — never reason from filenames or guess.
+- Trace data flow to a sink. A category name ("possible overflow") is not a finding; "guest length
+  `L` reaches `copy_from_slice` at `file:line` with no bounds check, panicking the runtime" is.
+
+Priority order (consensus-critical first): memory safety in `unsafe` → integer overflow in gas/fuel
+→ missing bounds checks in decoders → panics reachable from untrusted input (DoS / chain halt) →
+nondeterminism (consensus split) → host↔guest isolation breaks.
+
+Fan-outgroups (independent — audit concurrently):
+
+| Subagent           | Scope                                                                                | Primary risk                                                                     |
+|--------------------|--------------------------------------------------------------------------------------|----------------------------------------------------------------------------------|
+| runtime            | `crates/runtime`                                                                     | syscall handlers reading guest memory, fuel-charge ordering, host↔guest boundary |
+| codec              | `crates/codec`, `crates/codec-derive`                                                | header-vs-body bounds (see SECURITY.md checklist), unbounded allocation          |
+| evm/revm           | `crates/evm`, `crates/revm`                                                          | gas-arithmetic overflow, EVM-semantics divergence                                |
+| crypto/precompiles | `crates/crypto`, `contracts/*`                                                       | precompile input-length validation, modexp gas, curve membership                 |
+| sdk                | `crates/sdk`                                                                         | unsafe allocator, LEB128 decode, storage key/index math                          |
+| types/build/ci     | `crates/types`, `crates/build`, `crates/genesis`, `crates/node`, `.github/workflows` | bincode allocation, WASM validation, CI script injection                         |
+
+Per-finding reporting contract: severity (critical/high/medium/low) + confidence; `file_path:line`;
+the data path from untrusted input to sink; a concrete exploit scenario; the fix.
+
+Before reasoning from scratch, read `SECURITY.md` → **Auditor's Checklist** for the known
+vulnerability classes that recur in this codebase — check those first.
 
 ## Linear Task Tracking
 
@@ -105,16 +144,16 @@ review status until the manager moves the approved implementation work to `In Pr
 - Non-release branches should be squashed into the base branch unless the maintainer explicitly
   requests a different integration strategy.
 - Use Conventional Commits for commits and PR titles:
-  - `feat: ...`
-  - `fix: ...`
-  - `docs: ...`
-  - `refactor: ...`
-  - `test: ...`
-  - `chore: ...`
+    - `feat: ...`
+    - `fix: ...`
+    - `docs: ...`
+    - `refactor: ...`
+    - `test: ...`
+    - `chore: ...`
 - Branch names must use Conventional Commit types only, and should be short and typed, for example:
-  - `fix/evm-gas-accounting`
-  - `feat/fixture-tx-export`
-  - `docs/runtime-upgrade-notes`
+    - `fix/evm-gas-accounting`
+    - `feat/fixture-tx-export`
+    - `docs/runtime-upgrade-notes`
 - After opening/updating a PR, check CI until it is green or clearly report pending/failing checks as a blocker.
 
 ## Rust Style
@@ -122,10 +161,10 @@ review status until the manager moves the approved implementation work to `In Pr
 - Rust edition: 2021.
 - Workspace rust version in `Cargo.toml`: `1.92.0`; CI currently installs stable.
 - Formatting is controlled by `.rustfmt.toml`:
-  - max width 100
-  - crate-level import granularity
-  - grouped imports
-  - Unix newlines
+    - max width 100
+    - crate-level import granularity
+    - grouped imports
+    - Unix newlines
 - Run `cargo fmt`/`cargo fmt --check` for touched Rust code.
 - Clippy warnings are errors in CI (`-D warnings`).
 - Prefer explicit, deterministic behavior. Fluentbase code often runs in VM/proving/runtime-sensitive contexts.
@@ -182,14 +221,17 @@ Use targeted versions of these commands when full suites are too expensive, and 
 
 - `evm-e2e` is a separate crate. Do not assume root workspace commands include it.
 - Reuse existing fixture plumbing instead of duplicating parsing logic:
-  - `resolve_externalized_bytecodes`
-  - `prepare_env`
-  - `fill_tx_env`
-  - `execute_fluent_test_suite`
-  - `execute_evm_test_suite`
-- Many fixture transaction fields are computed after environment preparation and post-index selection. If exporting/replaying transactions, derive from the final `TxEnv`, not raw JSON alone.
-- Ethereum state-test `post` cases usually start from the same prestate independently; do not treat all post entries as one sequential blockchain script unless explicitly modeled that way.
-- For reproducibility, include chain id, fork/spec, block env, prestate assumptions, raw signed txs if available, and expected state/log/output roots.
+    - `resolve_externalized_bytecodes`
+    - `prepare_env`
+    - `fill_tx_env`
+    - `execute_fluent_test_suite`
+    - `execute_evm_test_suite`
+- Many fixture transaction fields are computed after environment preparation and post-index selection. If
+  exporting/replaying transactions, derive from the final `TxEnv`, not raw JSON alone.
+- Ethereum state-test `post` cases usually start from the same prestate independently; do not treat all post entries as
+  one sequential blockchain script unless explicitly modeled that way.
+- For reproducibility, include chain id, fork/spec, block env, prestate assumptions, raw signed txs if available, and
+  expected state/log/output roots.
 
 ## Node / Reth Integration Work
 
@@ -206,9 +248,11 @@ Expand to tests/clippy if behavior or public interfaces changed.
 
 ## Dependencies and Generated Artifacts
 
-- Use `cargo update` only when dependency updates are the task. The Makefile has an `update-deps` target for revm/rwasm across root, contracts, examples, and evm-e2e.
+- Use `cargo update` only when dependency updates are the task. The Makefile has an `update-deps` target for revm/rwasm
+  across root, contracts, examples, and evm-e2e.
 - Do not edit lockfiles casually.
-- Be cautious with generated contract/genesis artifacts. If a build script or checked-in generated file changes, explain why and how it was regenerated.
+- Be cautious with generated contract/genesis artifacts. If a build script or checked-in generated file changes, explain
+  why and how it was regenerated.
 
 ## PR Reporting Checklist
 
