@@ -83,22 +83,25 @@ impl ConsensusApiServer for ConsensusRpc {
         let mut rx = self.feed.subscribe();
         tokio::spawn(async move {
             loop {
-                match rx.recv().await {
-                    Ok(event) => {
-                        let Ok(msg) = SubscriptionMessage::new(
-                            sink.method_name(),
-                            sink.subscription_id(),
-                            &event,
-                        ) else {
-                            break;
-                        };
-                        if sink.send(msg).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(RecvError::Closed) => break,
-                    // Slow consumer fell behind; keep streaming from the latest.
-                    Err(RecvError::Lagged(_)) => continue,
+                // Reap promptly on client disconnect: without this, a dropped
+                // subscriber's task lingers until the next broadcast event, which
+                // during a finalization stall can be a long time (audit P2-21).
+                let event = tokio::select! {
+                    _ = sink.closed() => break,
+                    recv = rx.recv() => match recv {
+                        Ok(event) => event,
+                        Err(RecvError::Closed) => break,
+                        // Slow consumer fell behind; keep streaming from the latest.
+                        Err(RecvError::Lagged(_)) => continue,
+                    },
+                };
+                let Ok(msg) =
+                    SubscriptionMessage::new(sink.method_name(), sink.subscription_id(), &event)
+                else {
+                    break;
+                };
+                if sink.send(msg).await.is_err() {
+                    break;
                 }
             }
         });

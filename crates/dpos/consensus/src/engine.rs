@@ -9,6 +9,7 @@ use crate::{
     epocher::OriginEpocher, scheme::epoch_committee_from_snapshot,
     slasher::Mailbox as SlasherMailbox, timeouts::ConsensusTimeouts,
 };
+use crate::{REPLAY_BUFFER, WRITE_BUFFER};
 use commonware_consensus::{
     marshal::{
         core::Mailbox as MarshalMailbox,
@@ -24,7 +25,6 @@ use commonware_parallel::Sequential;
 use commonware_runtime::{
     buffer::paged::CacheRef, BufferPooler, Clock, ContextCell, Handle, Metrics, Spawner, Storage,
 };
-use commonware_utils::NZUsize;
 use fluentbase_bls::{
     fluent_namespace,
     keys::ValidatorBlsKeypair,
@@ -35,8 +35,6 @@ use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::CryptoRngCore;
 use std::sync::Arc;
 
-const REPLAY_BUFFER: std::num::NonZeroUsize = NZUsize!(8 * 1024 * 1024);
-const WRITE_BUFFER: std::num::NonZeroUsize = NZUsize!(1024 * 1024);
 const FETCH_CONCURRENT: usize = 4;
 
 type InlineFor<E, PB, BE, AB, Attrs> =

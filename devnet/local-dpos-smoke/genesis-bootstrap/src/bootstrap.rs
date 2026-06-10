@@ -33,6 +33,11 @@ pub const STAKING_TOKEN_ADDR: Address = address!("0x0000000000000000000000000000
 // setBlsVerifier (`onlyFromGovernance`) — bootstrap spoofs caller =
 // GOVERNANCE_ADDR (immutable target of the modifier).
 pub const BLS_VERIFIER_ADDR: Address = address!("0x0000000000000000000000000000000000005208");
+// DELEGATECALL'd library that `Staking` is linked against (forge extracted the
+// DPoS logic into it). Deployed at this fixed address; `artifacts::load` links
+// `Staking`'s `__$StakingDpos$__` placeholders to it. Stateless library — no
+// constructor args, no storage.
+pub const STAKING_DPOS_ADDR: Address = address!("0x0000000000000000000000000000000000005209");
 
 // EVM canonical SYSTEM_CALLER per StakingContext.sol:17 — used to satisfy
 // the `onlySystemCall` modifier on `commitEpochCommittee`.
@@ -178,6 +183,20 @@ pub fn run(
     )
         .abi_encode_sequence();
 
+    // ChainConfig takes the 6 StakingContext addresses PLUS the F1 immutable
+    // `minUndelegateBlocks` (devnet = 0, guard off). Encoded separately from the
+    // shared `context_args_encoded`, which the other 6-arg UUPS impls reuse.
+    let chain_config_constructor = (
+        STAKING_ADDR,
+        SYSTEM_REWARD_ADDR,
+        STAKING_POOL_ADDR,
+        GOVERNANCE_ADDR,
+        CHAIN_CONFIG_ADDR,
+        STAKING_TOKEN_ADDR,
+        U256::ZERO, // minUndelegateBlocks: F1 floor off on devnet
+    )
+        .abi_encode_sequence();
+
     let governance_constructor =
         (STAKING_ADDR, CHAIN_CONFIG_ADDR).abi_encode_sequence();
 
@@ -198,10 +217,16 @@ pub fn run(
         &mut ctx, deployer, &artefacts.staking_pool, STAKING_POOL_ADDR, &context_args_encoded, false,
     )?;
     deploy_to_canonical(
-        &mut ctx, deployer, &artefacts.chain_config, CHAIN_CONFIG_ADDR, &context_args_encoded, false,
+        &mut ctx, deployer, &artefacts.chain_config, CHAIN_CONFIG_ADDR, &chain_config_constructor, false,
     )?;
     deploy_to_canonical(
         &mut ctx, deployer, &artefacts.liveness_slashing, LIVENESS_SLASHING_ADDR, &context_args_encoded, false,
+    )?;
+    // Deploy the DELEGATECALL'd StakingDpos library FIRST — `Staking`'s bytecode
+    // is linked against `STAKING_DPOS_ADDR` (see `artifacts::load`). Stateless
+    // library: no constructor args, no storage copy.
+    deploy_to_canonical(
+        &mut ctx, deployer, &artefacts.staking_dpos, STAKING_DPOS_ADDR, &[], false,
     )?;
     deploy_to_canonical(
         &mut ctx, deployer, &artefacts.staking, STAKING_ADDR, &staking_constructor, false,
@@ -331,6 +356,7 @@ pub fn run(
         &mut ctx,
         &[
             STAKING_ADDR,
+            STAKING_DPOS_ADDR,
             CHAIN_CONFIG_ADDR,
             STAKING_POOL_ADDR,
             SYSTEM_REWARD_ADDR,

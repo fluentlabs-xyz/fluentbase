@@ -122,7 +122,8 @@ pub struct DposArgs {
     #[arg(
         long = "dpos.bls-key-path",
         env = "FLUENT_DPOS_BLS_KEY_PATH",
-        conflicts_with = "dpos_bls_keystore_path"
+        conflicts_with = "dpos_bls_keystore_path",
+        group = "bls"
     )]
     pub dpos_bls_key_path: Option<PathBuf>,
 
@@ -132,7 +133,8 @@ pub struct DposArgs {
         long = "dpos.bls-keystore-path",
         env = "FLUENT_DPOS_BLS_KEYSTORE_PATH",
         conflicts_with = "dpos_bls_key_path",
-        requires = "dpos_bls_keystore_password_file"
+        requires = "dpos_bls_keystore_password_file",
+        group = "bls"
     )]
     pub dpos_bls_keystore_path: Option<PathBuf>,
 
@@ -192,7 +194,8 @@ pub struct DposArgs {
     #[arg(
         long = "dpos.slasher-keystore-path",
         env = "FLUENT_DPOS_SLASHER_KEYSTORE_PATH",
-        requires = "dpos_slasher_keystore_password_file"
+        requires = "dpos_slasher_keystore_password_file",
+        required_if_eq("dpos", "true")
     )]
     pub dpos_slasher_keystore_path: Option<PathBuf>,
 
@@ -559,13 +562,7 @@ fn load_bls_keypair(
             let password_path = cfg.bls_keystore_password_file.as_deref().ok_or_eyre(
                 "--dpos.bls-keystore-path requires --dpos.bls-keystore-password-file",
             )?;
-            check_mode_600(password_path).wrap_err("BLS keystore password file mode check")?;
-            let password = std::fs::read_to_string(password_path).wrap_err_with(|| {
-                format!(
-                    "failed reading BLS keystore password from {}",
-                    password_path.display()
-                )
-            })?;
+            let password = read_password_file(password_path, "BLS keystore")?;
             fluentbase_bls::keys::ValidatorBlsKeypair::read_from_keystore(
                 keystore_path,
                 password.trim().as_bytes(),
@@ -609,15 +606,22 @@ fn load_slasher_signer(cfg: &DposConfig) -> eyre::Result<alloy_signer_local::Pri
     let password_path = cfg.slasher_keystore_password_file.as_deref().ok_or_eyre(
         "--dpos.slasher-keystore-path requires --dpos.slasher-keystore-password-file",
     )?;
-    check_mode_600(password_path).wrap_err("slasher keystore password file mode check")?;
-    let password = std::fs::read_to_string(password_path).wrap_err_with(|| {
-        format!(
-            "failed reading slasher keystore password from {}",
-            password_path.display()
-        )
-    })?;
+    let password = read_password_file(password_path, "slasher keystore")?;
     alloy_signer_local::LocalSigner::decrypt_keystore(keystore_path, password.trim())
         .map_err(|e| eyre!("failed decrypting slasher keystore: {e}"))
+}
+
+/// Read a keystore password file: enforce 0600 (or stricter) mode, then read into
+/// a zeroizing buffer cleared on drop. `what` labels the file in error messages.
+fn read_password_file(
+    path: &std::path::Path,
+    what: &str,
+) -> eyre::Result<zeroize::Zeroizing<String>> {
+    check_mode_600(path).wrap_err_with(|| format!("{what} password file mode check"))?;
+    Ok(zeroize::Zeroizing::new(
+        std::fs::read_to_string(path)
+            .wrap_err_with(|| format!("failed reading {what} password from {}", path.display()))?,
+    ))
 }
 
 #[cfg(unix)]

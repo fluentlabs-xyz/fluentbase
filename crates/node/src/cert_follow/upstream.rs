@@ -69,6 +69,14 @@ impl CertUpstream for UpstreamHandle {
     }
 }
 
+/// Bound on the live-finalized stream queued for the driver. BOUNDED (not
+/// unbounded) so a malicious/compromised upstream cannot OOM the follower by
+/// streaming certs faster than the driver's per-cert BLS verify drains them.
+/// On overflow the live event is dropped — the live stream is best-effort; the
+/// authoritative path is the marshal's by-height gap-repair (the resolver),
+/// which re-pulls any missed height (audit P2-8).
+const LIVE_FINALIZED_BUFFER: usize = 256;
+
 /// Build the upstream actor + its resolver handle + the live finalized receiver.
 pub fn init(
     ctx: Context,
@@ -76,10 +84,10 @@ pub fn init(
 ) -> (
     UpstreamActor,
     UpstreamHandle,
-    mpsc::UnboundedReceiver<UpstreamFinalized>,
+    mpsc::Receiver<UpstreamFinalized>,
 ) {
     let (mailbox_tx, mailbox_rx) = mpsc::unbounded_channel();
-    let (finalized_tx, finalized_rx) = mpsc::unbounded_channel();
+    let (finalized_tx, finalized_rx) = mpsc::channel(LIVE_FINALIZED_BUFFER);
     let actor = UpstreamActor {
         ctx,
         url,
@@ -93,7 +101,7 @@ pub struct UpstreamActor {
     ctx: Context,
     url: String,
     mailbox_rx: mpsc::UnboundedReceiver<UpstreamMsg>,
-    finalized_tx: mpsc::UnboundedSender<UpstreamFinalized>,
+    finalized_tx: mpsc::Sender<UpstreamFinalized>,
 }
 
 impl UpstreamActor {
@@ -137,7 +145,15 @@ impl UpstreamActor {
                     next = sub.next() => match next {
                         Some(Ok(event)) => {
                             if let Some(uf) = decode_finalized(event) {
-                                let _ = self.finalized_tx.send(uf);
+                                // try_send (never await): a full queue means the
+                                // driver is verify-bound; drop the live event and
+                                // let gap-repair backfill it (see LIVE_FINALIZED_BUFFER).
+                                if self.finalized_tx.try_send(uf).is_err() {
+                                    warn!(
+                                        "cert-follow live finalized queue full; dropping \
+                                         (gap-repair will backfill)"
+                                    );
+                                }
                             }
                         }
                         Some(Err(e)) => warn!(error = %e, "cert-follow upstream event decode error"),

@@ -21,6 +21,14 @@ case "$PHASE" in
     docker compose up --build -d
     ;;
   phase2)
+    # phase2 takes over the chain phase1 left running; it does NOT bring one up.
+    # Fail fast with a clear message instead of polling a dead chain for 180s when
+    # phase2 is run standalone (a common foot-gun — use `make smoke && make smoke-swap`).
+    if [[ -z "$(docker compose ps -q 2>/dev/null)" ]]; then
+      echo "FAIL (phase2): no chain is running — phase2 migrates the chain that"
+      echo "  phase1 leaves up. Run phase1 first:  make smoke && make smoke-swap"
+      exit 2
+    fi
     # Flush-gated Tempo→DPoS migration (sets PREV_FIN = anchor height).
     _migrate_to_dpos
     ;;

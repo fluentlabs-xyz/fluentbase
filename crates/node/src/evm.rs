@@ -889,93 +889,31 @@ where
         // mapped reth's default `"reth/v..."` extra_data to a fail-loud
         // BlockExecutionError, stalling every non-DPoS block at #1.
         if !self.staking_address.is_zero() && !self.chain_config_address.is_zero() {
-            // System-call the `LivenessSlashing` predeploy with the
-            // previous finalized
-            // cert's bitmap decoded from `block.header.extra_data`.
-            // Cold-start blocks carry empty `extra_data` → decoder
-            // returns `None` → no system call. Decode errors fail the
-            // block (consensus-side `verify` already structurally decoded
-            // the `extra_data`, so a decode failure here means a non-DPoS
-            // block reached this DPoS executor — fail-loud).
-            let extra_data = self.inner.ctx.extra_data.clone();
-            let decoded = fluentbase_consensus::extra_data::decode_simplex_attestation(&extra_data)
-                .map_err(|e| BlockExecutionError::msg(format!("liveness decode: {e}")))?;
-
-            if let Some(d) = decoded {
-                use fluentbase_revm::revm::context_interface::Block as _;
-                use fluentbase_revm::revm::DatabaseCommit as _;
-                let block_number: u64 = self.inner.evm().block().number().saturating_to();
-                let epoch = d.round.epoch().get();
-                let calldata =
-                    encode_process_bitmap_call(epoch, block_number, d.committee_size, &d.bitmap);
-                use alloy_sol_types::SolError as _;
-                use fluentbase_revm::revm::context_interface::result::ExecutionResult;
-                let ras = self
-                    .inner
-                    .evm_mut()
-                    .transact_system_call(
-                        fluentbase_types::SYSTEM_ADDRESS,
-                        fluentbase_types::PRECOMPILE_LIVENESS_SLASHING,
-                        calldata.into(),
-                    )
-                    .map_err(|e| BlockExecutionError::msg(format!("liveness sys call: {e:?}")))?;
-                // A Solidity revert lands inside `Ok(ras)` with a
-                // non-Success `ras.result` and rolled-back state, so the prior
-                // unconditional `commit(ras.state)` silently no-op'd it.
-                // Classify: the transient slash sub-path selectors
-                // (committee-not-yet-committed / victim-removed) are tolerated
-                // (skip this block's liveness accounting rather than wedge the
-                // chain); every other revert/halt is a deterministic caller bug
-                // and fails the block.
-                match ras.result {
-                    ExecutionResult::Success { .. } => {
-                        self.inner.evm_mut().db_mut().commit(ras.state)
-                    }
-                    ExecutionResult::Revert { output, .. } => {
-                        let sel = output.get(..4);
-                        if sel == Some(EpochCommitteeNotCommitted::SELECTOR.as_slice())
-                            || sel == Some(ValidatorNotFound::SELECTOR.as_slice())
-                        {
-                            tracing::error!(
-                                epoch,
-                                block_number,
-                                revert = %alloy_primitives::hex::encode(&output),
-                                "processBitmap transient revert (slash sub-path); \
-                                 liveness accounting skipped this block"
-                            );
-                            tracing::warn!(
-                                target: "fluentbase::liveness",
-                                "liveness_processbitmap_transient_revert"
-                            );
-                        } else {
-                            // InvalidBitmapLength / onlySystemCall / unknown =
-                            // deterministic caller bug — fail loud rather than
-                            // committing a rolled-back no-op.
-                            return Err(BlockExecutionError::msg(format!(
-                                "processBitmap reverted (caller bug, selector {sel:?}): 0x{}",
-                                alloy_primitives::hex::encode(&output)
-                            )));
-                        }
-                    }
-                    ExecutionResult::Halt { reason, .. } => {
-                        return Err(BlockExecutionError::msg(format!(
-                            "processBitmap halted: {reason:?}"
-                        )))
-                    }
-                }
-            }
-
-            // Commit the canonical committee one epoch ahead (PoS spec §4.4):
-            // catch up every uncommitted epoch within the lookahead horizon
-            // (`nextEpochToCommit() <= currentEpoch+1`), deriving each set from
-            // `committeeSelectionEpoch()` (= the committed epoch's N-1) so it
-            // matches the contract's `_getValidatorsAt(selectionEpoch)`
-            // verification. Steady state: one commit per epoch; genesis/migration:
-            // catches up a small backlog.
-            use alloy_sol_types::SolCall;
+            use alloy_sol_types::{SolCall, SolError as _};
             use fluentbase_revm::revm::context_interface::result::ExecutionResult;
             use fluentbase_revm::revm::context_interface::Block as _;
-            use fluentbase_revm::revm::DatabaseCommit as _;
+            use fluentbase_revm::revm::{Database as _, DatabaseCommit as _};
+
+            // P2-2: skip the entire DPoS section for a block whose PRE-execution
+            // state predates the staking/chain-config deployment. On a migrated
+            // prod chain the predeploys are NOT in the chainspec genesis, so a node
+            // resyncing history from genesis reaches codeless accounts; the view
+            // reads below would then decode an empty return and fail the block. The
+            // code-presence probe is a deterministic pure function of pre-block
+            // state, so every node skips the same blocks identically.
+            let chain_config_has_code = self
+                .inner
+                .evm_mut()
+                .db_mut()
+                .basic(self.chain_config_address)
+                .map_err(|e| {
+                    BlockExecutionError::msg(format!("chain_config account probe: {e:?}"))
+                })?
+                .is_some_and(|acc| !acc.is_empty_code_hash());
+            if !chain_config_has_code {
+                return Ok(());
+            }
+
             let block_number: u64 = self.inner.evm().block().number().saturating_to();
             let interval =
                 read_epoch_block_interval(self.inner.evm_mut(), self.chain_config_address)?;
@@ -986,11 +924,114 @@ where
             // activation ⇒ absolute (degenerate, pre-migration).
             let activation =
                 read_dpos_activation_block(self.inner.evm_mut(), self.chain_config_address)?;
-            // `interval == 0` is unreachable on a live chain: ChainConfig
-            // requires epochBlockInterval > 0 on both init and every setter
-            // (ChainConfig.sol:128,217), so the `else { 0 }` guard is purely
-            // defensive. `epoch_transition`'s reader div-by-zero-panics on the
-            // same malformed config; that divergence cannot fire in practice.
+
+            // `activation == 0` is the "DPoS not scheduled" sentinel, NOT a live
+            // operating mode: `setDposActivationBlock` can never store 0 on a live
+            // chain (it requires `newValue >= block.number`), every real deployment
+            // schedules a future activation block (devnet bakes 64), and `_currentEpoch`
+            // clamps to 0 below activation. So with `activation == 0` there is no DPoS
+            // epoch to account for, and running this section would (a) re-expose the
+            // legacy-extra_data fail-loud the gate below is meant to suppress
+            // (`block_number >= 0` is vacuously true), and (b) on a deep chain
+            // mistakenly enabled with `--dpos.staking-config` before activation is
+            // set, explode the commit loop into ~`block/interval` catch-up commits in
+            // one block. Skip the whole DPoS section until activation is scheduled (P2-2).
+            if activation == 0 {
+                return Ok(());
+            }
+
+            // System-call the `LivenessSlashing` predeploy with the previous
+            // finalized cert's bitmap decoded from `block.header.extra_data`, but
+            // ONLY at/after DPoS activation (P2-2). Pre-activation (Tempo-era)
+            // blocks carry the sequencer's legacy `extra_data`, which is not a DPoS
+            // attestation and must not fail-loud-decode. Cold-start DPoS blocks
+            // carry empty `extra_data` → decoder returns `None` → no system call.
+            // A decode error at/after activation IS a real fail-loud bug
+            // (consensus-side `verify` already structurally decoded it).
+            if block_number >= activation {
+                let extra_data = self.inner.ctx.extra_data.clone();
+                let decoded =
+                    fluentbase_consensus::extra_data::decode_simplex_attestation(&extra_data)
+                        .map_err(|e| BlockExecutionError::msg(format!("liveness decode: {e}")))?;
+                if let Some(d) = decoded {
+                    let epoch = d.round.epoch().get();
+                    let calldata = encode_process_bitmap_call(
+                        epoch,
+                        block_number,
+                        d.committee_size,
+                        &d.bitmap,
+                    );
+                    let ras = self
+                        .inner
+                        .evm_mut()
+                        .transact_system_call(
+                            fluentbase_types::SYSTEM_ADDRESS,
+                            fluentbase_types::PRECOMPILE_LIVENESS_SLASHING,
+                            calldata.into(),
+                        )
+                        .map_err(|e| {
+                            BlockExecutionError::msg(format!("liveness sys call: {e:?}"))
+                        })?;
+                    // A Solidity revert lands inside `Ok(ras)` with a
+                    // non-Success `ras.result` and rolled-back state, so the prior
+                    // unconditional `commit(ras.state)` silently no-op'd it.
+                    // Classify: the transient slash sub-path selectors
+                    // (committee-not-yet-committed / victim-removed) are tolerated
+                    // (skip this block's liveness accounting rather than wedge the
+                    // chain); every other revert/halt is a deterministic caller bug
+                    // and fails the block.
+                    match ras.result {
+                        ExecutionResult::Success { .. } => {
+                            self.inner.evm_mut().db_mut().commit(ras.state)
+                        }
+                        ExecutionResult::Revert { output, .. } => {
+                            let sel = output.get(..4);
+                            if sel == Some(EpochCommitteeNotCommitted::SELECTOR.as_slice())
+                                || sel == Some(ValidatorNotFound::SELECTOR.as_slice())
+                            {
+                                tracing::error!(
+                                    epoch,
+                                    block_number,
+                                    revert = %alloy_primitives::hex::encode(&output),
+                                    "processBitmap transient revert (slash sub-path); \
+                                     liveness accounting skipped this block"
+                                );
+                                tracing::warn!(
+                                    target: "fluentbase::liveness",
+                                    "liveness_processbitmap_transient_revert"
+                                );
+                            } else {
+                                // InvalidBitmapLength / onlySystemCall / unknown =
+                                // deterministic caller bug — fail loud rather than
+                                // committing a rolled-back no-op.
+                                return Err(BlockExecutionError::msg(format!(
+                                    "processBitmap reverted (caller bug, selector {sel:?}): 0x{}",
+                                    alloy_primitives::hex::encode(&output)
+                                )));
+                            }
+                        }
+                        ExecutionResult::Halt { reason, .. } => {
+                            return Err(BlockExecutionError::msg(format!(
+                                "processBitmap halted: {reason:?}"
+                            )))
+                        }
+                    }
+                }
+            }
+
+            // Commit the canonical committee one epoch ahead (PoS spec §4.4):
+            // catch up every uncommitted epoch within the lookahead horizon
+            // (`nextEpochToCommit() <= currentEpoch+1`), deriving each set from
+            // `committeeSelectionEpoch()` (= the committed epoch's N-1) so it
+            // matches the contract's `_getValidatorsAt(selectionEpoch)`
+            // verification. Steady state: one commit per epoch; genesis/migration:
+            // catches up a small backlog. Runs pre-activation too — the pre-swap
+            // sequencer commits committees so the first DPoS epoch's set is already
+            // on-chain at activation.
+            //
+            // `interval == 0` is unreachable on a live chain: ChainConfig requires
+            // epochBlockInterval > 0 on both init and every setter, so the
+            // `else { 0 }` guard is purely defensive.
             let current_epoch = if interval > 0 {
                 block_number.saturating_sub(activation) / interval as u64
             } else {

@@ -43,7 +43,7 @@ where
         payload_builder_handle,
         beacon_engine_handle,
         activation_gate,
-    );
+    )?;
 
     handle
         .node
@@ -83,20 +83,23 @@ where
         payload_builder: PayloadBuilderHandle<T>,
         to_engine: ConsensusEngineHandle<T>,
         activation_gate: Option<u64>,
-    ) -> Self {
+    ) -> eyre::Result<Self> {
+        let best = provider.best_block_number().map_err(|e| {
+            eyre::eyre!("BlockProducer: provider has no best block number (empty datadir?): {e}")
+        })?;
         let last_header = provider
-            .sealed_header(provider.best_block_number().unwrap())
-            .unwrap()
-            .unwrap();
+            .sealed_header(best)
+            .map_err(|e| eyre::eyre!("BlockProducer: sealed_header(best) read failed: {e}"))?
+            .ok_or_eyre("BlockProducer: no sealed header at best block — chain not initialized")?;
         let last_block_hash = last_header.hash();
-        Self {
+        Ok(Self {
             to_engine,
             payload_attributes_builder,
             payload_builder,
             last_header,
             last_block_hash,
             activation_gate,
-        }
+        })
     }
 
     pub async fn run(mut self, mut block_time: Interval, shutdown: GracefulShutdown) {

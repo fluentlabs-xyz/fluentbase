@@ -43,3 +43,12 @@ pub use epocher::OriginEpocher;
 pub use feed_sink::FeedSink;
 pub use outer::{MarshalMailbox, OuterBuilder, OuterEngine};
 pub use timeouts::ConsensusTimeouts;
+
+/// commonware journal replay buffer (per partition). Shared by the validator
+/// marshal archives ([`outer`]) and the per-epoch Simplex engines ([`engine`]);
+/// they MUST stay identical or storage replay desynchronizes between the two.
+pub(crate) const REPLAY_BUFFER: std::num::NonZeroUsize =
+    commonware_utils::NZUsize!(8 * 1024 * 1024);
+/// commonware journal write buffer (per partition). Same shared-identity
+/// constraint as [`REPLAY_BUFFER`].
+pub(crate) const WRITE_BUFFER: std::num::NonZeroUsize = commonware_utils::NZUsize!(1024 * 1024);

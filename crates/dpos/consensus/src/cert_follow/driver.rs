@@ -50,7 +50,7 @@ pub(crate) fn try_init<Provider, EvmConfig>(
     marshal: MarshalMailbox,
     scheme_provider: EpochSchemeProvider,
     epocher: OriginEpocher,
-    finalized_rx: mpsc::UnboundedReceiver<UpstreamFinalized>,
+    finalized_rx: mpsc::Receiver<UpstreamFinalized>,
     epoch_transition: FollowerEpochTransition<Provider, EvmConfig>,
 ) -> (Driver<Provider, EvmConfig>, MarshalReporter) {
     let (block_tx, block_rx) = mpsc::unbounded_channel();
@@ -86,7 +86,7 @@ pub(crate) struct Driver<Provider, EvmConfig> {
     marshal: MarshalMailbox,
     scheme_provider: EpochSchemeProvider,
     epocher: OriginEpocher,
-    finalized_rx: mpsc::UnboundedReceiver<UpstreamFinalized>,
+    finalized_rx: mpsc::Receiver<UpstreamFinalized>,
     block_rx: mpsc::UnboundedReceiver<Update<Block>>,
     epoch_transition: FollowerEpochTransition<Provider, EvmConfig>,
 }

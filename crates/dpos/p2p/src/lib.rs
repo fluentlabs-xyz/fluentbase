@@ -56,10 +56,18 @@ pub fn read_ed25519_key_from_file<P: AsRef<std::path::Path>>(
             ));
         }
     }
-    let raw = std::fs::read_to_string(path_ref)
-        .map_err(|e| eyre::eyre!("failed reading peer key file: {e}"))?;
-    let bytes = commonware_utils::from_hex_formatted(raw.trim())
-        .ok_or_else(|| eyre::eyre!("peer key file contents not valid hex"))?;
+    // Wrap the plaintext key material so it is scrubbed on drop — the ed25519
+    // signing scalar must not linger in freed heap (mirrors the BLS plaintext
+    // loader, `bls/src/keys.rs`; audit P2-9). `PrivateKey::decode` copies into a
+    // zeroizing `Secret`, so these source buffers are the only residue.
+    let raw = zeroize::Zeroizing::new(
+        std::fs::read_to_string(path_ref)
+            .map_err(|e| eyre::eyre!("failed reading peer key file: {e}"))?,
+    );
+    let bytes = zeroize::Zeroizing::new(
+        commonware_utils::from_hex_formatted(raw.trim())
+            .ok_or_else(|| eyre::eyre!("peer key file contents not valid hex"))?,
+    );
     ed25519::PrivateKey::decode(bytes.as_slice())
         .map_err(|e| eyre::eyre!("failed decoding peer key: {e:?}"))
 }

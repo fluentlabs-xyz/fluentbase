@@ -71,6 +71,7 @@ alloy-signer-local.workspace = true
 alloy-sol-types.workspace = true
 tokio-util.workspace = true
 dashmap.workspace = true
+zeroize = { version = "1", default-features = false }
 clap = { workspace = true, features = ["derive", "env"] }
 futures = "0.3"
 serde.workspace = true

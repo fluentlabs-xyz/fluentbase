@@ -9,6 +9,7 @@ regen-contracts:
 	  (echo "ERROR: solidity-contracts not found at $(SOLIDITY_CONTRACTS_DIR); set SOLIDITY_CONTRACTS_DIR" && exit 1)
 	cd $(SOLIDITY_CONTRACTS_DIR) && forge build
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/Staking.sol/Staking.json                       contracts/
+	cp $(SOLIDITY_CONTRACTS_DIR)/out/StakingDpos.sol/StakingDpos.json               contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/ChainConfig.sol/ChainConfig.json               contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/StakingPool.sol/StakingPool.json               contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/SystemReward.sol/SystemReward.json             contracts/
@@ -27,6 +28,13 @@ down:
 logs:
 	docker compose logs -f
 
+# Two-phase Tempo→DPoS migration smoke. ORDER MATTERS and the phases are NOT
+# self-contained: `smoke` (phase1) brings the chain up as Tempo and LEAVES IT
+# RUNNING; `smoke-swap` (phase2) takes over that running chain and migrates it to
+# DPoS. Running `make smoke-swap` ALONE polls a chain that was never started and
+# times out after 180s ("Tempo did not reach dposActivationBlock=64"). Always run
+# them together:  make smoke && make smoke-swap
+# (The `smoke-<case>` targets below are different — each is self-contained.)
 smoke:
 	@./scripts/assert-smoke.sh phase1
 

@@ -21,6 +21,7 @@ use crate::{
     slasher,
     timeouts::ConsensusTimeouts,
 };
+use crate::{REPLAY_BUFFER, WRITE_BUFFER};
 use alloy_consensus::Header;
 use alloy_primitives::{Bytes, B256};
 use alloy_rpc_types_engine::PayloadId;
@@ -56,8 +57,6 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-const REPLAY_BUFFER: NonZeroUsize = NZUsize!(8 * 1024 * 1024);
-const WRITE_BUFFER: NonZeroUsize = NZUsize!(1024 * 1024);
 const PAGE_CACHE_PAGE_SIZE: std::num::NonZeroU16 = NZU16!(4_096);
 const PAGE_CACHE_CAPACITY: NonZeroUsize = NZUsize!(8_192);
 const IMMUTABLE_ITEMS_PER_SECTION: NonZeroU64 = NZU64!(262_144);
@@ -586,22 +585,28 @@ where
             }
         }
 
-        // Resume-vs-migrate executor seed. This
-        // uses the SAME consensus-archive discriminator that `dpos.rs` now uses to
-        // resolve the cold-start anchor (`is_fresh_migration =
-        // last_consensus_finalized <= activation`): a genuine first migration has
-        // an empty archive (`== 0`, well below the activation block), whereas a
-        // restart restores it to the last DPoS finalized height. When
-        // already-migrated, seed the executor from reth's actual head (which the
-        // node still holds on disk) rather than the finalized anchor, so it never
-        // attempts a backward FCU to a stale point — reth spec-skips a backward
-        // FCU to an ancestor, which would wedge the node instead of letting it
-        // catch up to the live chain.
+        // Resume-vs-migrate executor seed. This uses the SAME consensus-archive
+        // discriminator that `dpos.rs` uses to resolve the cold-start anchor
+        // (`is_fresh_migration = last_consensus_finalized <= activation`): a genuine
+        // first migration has an empty archive (`== 0`, well below the activation
+        // block), whereas a restart restores it to the last DPoS finalized height.
+        // When already-migrated, seed the executor HEAD from reth's actual head
+        // (which the node still holds on disk) so it never issues a backward FCU to
+        // a stale ancestor (reth spec-skips that → wedge). The FINALIZED seed stays
+        // the consensus-archive value: reth's head can legitimately sit AHEAD of
+        // consensus-finalized under reth-2.x eager verify-path canonicalization, so
+        // seeding `finalized = head` would instruct reth to finalize a block
+        // consensus never finalized — and if consensus then finalizes a sibling, the
+        // stale finalized pointer breaks FCU monotonicity (finalized-not-ancestor) →
+        // restart-proof wedge. `finalized < head` is a valid forward FCU; the
+        // executor advances finalized forward as real finalizations land.
         let (initial_finalized, initial_head) =
             if last_consensus_finalized_height.get() > self.dpos_activation_block {
                 let info = self.canonical_state.chain_info();
-                let seed = (Height::new(info.best_number), info.best_hash);
-                (seed, seed)
+                (
+                    self.initial_finalized,
+                    (Height::new(info.best_number), info.best_hash),
+                )
             } else {
                 (self.initial_finalized, self.initial_head)
             };

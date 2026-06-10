@@ -34,7 +34,7 @@ impl FluentPayloadAttributesBuilder {
     fn build_attrs(parent_timestamp: u64) -> EthPayloadAttributes {
         let mut timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("system clock before UNIX_EPOCH")
             .as_secs();
         timestamp = std::cmp::max(parent_timestamp.saturating_add(1), timestamp);
         EthPayloadAttributes {

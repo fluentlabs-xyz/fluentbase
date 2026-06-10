@@ -88,6 +88,18 @@ pub struct CertFollowHandle {
     pub consensus_handle: Handle<()>,
 }
 
+/// Fatal only when reth's EL-sync makes NO forward progress for this long. An
+/// absolute deadline is wrong for prod: a deep backfill (millions of blocks
+/// behind the DPoS activation point) legitimately takes hours — the failure
+/// signal is *stalled* progress, not elapsed time. Progress is read via
+/// `last_block_number()` (NEVER `best_number`, which freezes during pipeline
+/// backfill on reth 2.x — see project memory `reth-sync-progress`).
+const EL_SYNC_NO_PROGRESS: Duration = Duration::from_secs(120);
+/// Re-targeting rounds for the catch-up loop: each round chases a newer upstream
+/// tip; the cap exit floors at the synced head and relies on the driver's
+/// catch-up jump for the residual gap.
+const CATCHUP_MAX_ROUNDS: u32 = 16;
+
 /// Namespace type for the launch entry point.
 pub struct CertFollowLayer;
 
@@ -102,7 +114,7 @@ impl CertFollowLayer {
         reth: CertFollowRethHandle<Provider, EvmConfig, BeaconEngine>,
         cfg: CertFollowConfig,
         upstream: U,
-        finalized_rx: mpsc::UnboundedReceiver<UpstreamFinalized>,
+        finalized_rx: mpsc::Receiver<UpstreamFinalized>,
         shutdown: CancellationToken,
     ) -> eyre::Result<CertFollowHandle>
     where
@@ -184,14 +196,11 @@ impl CertFollowLayer {
         // every block (state root) and the driver verifies every live cert from the
         // checkpoint forward (the first verified cert authenticates the checkpoint hash
         // via its `parent_hash`).
-        const EL_SYNC_WAIT: Duration = Duration::from_secs(120);
-        const CATCHUP_MAX_ROUNDS: u32 = 16;
         let (checkpoint_height, checkpoint_hash) = if provider
             .block_hash(anchor_height)
             .wrap_err("block_hash(anchor) probe failed")?
             .is_none()
         {
-            let deadline = ctx.current() + EL_SYNC_WAIT;
             let mut synced_height = anchor_height;
             let mut rounds = 0u32;
             loop {
@@ -224,17 +233,26 @@ impl CertFollowLayer {
                     )
                     .await;
 
-                // Wait (bounded) for reth's backward-sync to canonicalize the tip
-                // (block_hash present ⇒ executed ⇒ committee state queryable).
+                // Wait for reth's backward-sync to canonicalize the tip (block_hash
+                // present ⇒ executed ⇒ committee state queryable). Fail only on a
+                // *stall*: a deep prod backfill is legitimately slow, so the deadline
+                // resets whenever `last_block_number()` advances.
+                let mut last_progress = provider.last_block_number().unwrap_or(0);
+                let mut stall_deadline = ctx.current() + EL_SYNC_NO_PROGRESS;
                 while provider
                     .block_hash(tip_height)
                     .wrap_err("block_hash(tip) probe during EL-sync")?
                     .is_none()
                 {
-                    if ctx.current() >= deadline {
+                    let now = provider.last_block_number().unwrap_or(last_progress);
+                    if now > last_progress {
+                        last_progress = now;
+                        stall_deadline = ctx.current() + EL_SYNC_NO_PROGRESS;
+                    } else if ctx.current() >= stall_deadline {
                         return Err(eyre!(
-                            "cert-follow: reth did not EL-sync to tip {tip_height} within \
-                             {EL_SYNC_WAIT:?} — is the trusted peer serving block bodies?"
+                            "cert-follow: reth EL-sync stalled for {EL_SYNC_NO_PROGRESS:?} at \
+                             height {last_progress} (target tip {tip_height}); check devp2p \
+                             peering (trusted peers / firewall) and upstream block-body availability"
                         ));
                     }
                     ctx.sleep(Duration::from_secs(2)).await;
@@ -261,11 +279,11 @@ impl CertFollowLayer {
                 ) {
                     break;
                 }
-                if rounds >= CATCHUP_MAX_ROUNDS || ctx.current() >= deadline {
+                if rounds >= CATCHUP_MAX_ROUNDS {
                     warn!(
                         synced_height,
                         now_tip,
-                        "cert-follow: catch-up loop hit cap; flooring at synced head, \
+                        "cert-follow: catch-up loop hit round cap; flooring at synced head, \
                          relying on the catch-up jump for the residual gap"
                     );
                     break;

@@ -23,6 +23,7 @@ tracing = { workspace = true }
 rand_core = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["std"] }
+zeroize = { version = "1", default-features = false }
 
 [dev-dependencies]
 commonware-math = { workspace = true, features = ["std"] }

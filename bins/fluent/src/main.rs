@@ -83,7 +83,11 @@ fn init_fluent_version_metadata() {
 #[derive(Debug, Clone, Default, Args)]
 #[non_exhaustive]
 pub struct FluentNodeArgs {
-    #[arg(long = "validator", default_value_t = false)]
+    #[arg(
+        long = "validator",
+        default_value_t = false,
+        conflicts_with = "sequencer_url"
+    )]
     pub validator: bool,
 
     #[arg(
@@ -102,6 +106,11 @@ pub struct FluentNodeArgs {
         long = "dpos",
         default_value_t = false,
         conflicts_with_all = &["validator", "sequencer_url"],
+        // Require exactly one BLS key flag when --dpos: the `bls` ArgGroup
+        // (both flags, `conflicts_with` ⇒ at-most-one) plus this `requires_if`
+        // (⇒ at-least-one) = exactly-one, caught at PARSE time instead of after
+        // reth has fully launched (the exit-0-after-launch class; audit P2-18).
+        requires_if("true", "bls"),
     )]
     pub dpos: bool,
 
@@ -175,7 +184,7 @@ fn main() {
             extra_data_registry.clone(),
         )
     } else {
-        node_modes::ResolvedModes::default()
+        node_modes::resolve_non_node_modes()
     };
     let node_modes::ResolvedModes {
         consensus_url,
@@ -357,11 +366,20 @@ fn main() {
     // Consensus-thread cleanup runs AFTER reth returns, regardless of
     // run_result — the thread (DPoS or cert-follow) always gets a chance to exit
     // cleanly.
+    let mut consensus_failed = false;
     if let Some((join, shutdown_token)) = consensus_thread_cleanup {
         shutdown_token.cancel();
         match join.join() {
             Ok(Ok(())) => info!("consensus thread joined cleanly"),
-            Ok(Err(e)) => error!(?e, "consensus thread exited with error"),
+            Ok(Err(e)) => {
+                // A dead validator/follower (boot misconfig, wrong keystore
+                // password, or a mid-run consensus fault that cancelled the shared
+                // token via the 3-strike escalation) must exit NON-ZERO so systemd
+                // `Restart=on-failure` and exit-code alerting fire — otherwise the
+                // node silently stops attesting (audit P2-4 / P2-17).
+                error!(?e, "consensus thread exited with error");
+                consensus_failed = true;
+            }
             Err(panic) => {
                 error!("consensus thread panicked");
                 std::panic::resume_unwind(panic);
@@ -374,8 +392,13 @@ fn main() {
     // (not from the consensus runtime teardown that triggered the SIGABRT).
     drop(rocksdb_keepalive);
 
-    if let Err(err) = run_result {
+    // Print reth's error FIRST (it is often the root cause of a correlated crash),
+    // then exit non-zero if either reth or the consensus thread failed — don't let
+    // the consensus-thread failure shadow reth's reason from stderr.
+    if let Err(err) = &run_result {
         eprintln!("Error: {err:?}");
+    }
+    if consensus_failed || run_result.is_err() {
         std::process::exit(1);
     }
 }

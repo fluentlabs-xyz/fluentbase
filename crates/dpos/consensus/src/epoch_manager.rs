@@ -37,7 +37,10 @@ use fluentbase_bls::{
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::CryptoRngCore;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -51,6 +54,13 @@ pub const EPOCH_RETENTION_WINDOW: u64 = 2;
 
 /// Bounded mpsc capacity for boundary triggers (tokio `mpsc::channel(N)`).
 const BOUNDARY_BUFFER: usize = 64;
+
+/// Max distinct future epochs one peer may pin on the vote backup channel before
+/// its live frontier is corroborated. Two covers the legitimate case (a peer is
+/// at most ~1 boundary ahead of what it gossips) with slack; together with the
+/// committee bound this caps the corroboration map at `n · 2` epochs and stops a
+/// Byzantine minority from crowding out the honest frontier.
+const PINS_PER_SENDER: usize = 2;
 
 /// Per-epoch lifecycle actor.
 pub struct Actor<E, B, PB, BE, AB, Attrs>
@@ -66,9 +76,32 @@ where
     /// certs. Drives the catch-up hint target. Monotonic; never decremented by
     /// `prune_old` (the scheme provider is never pruned).
     highest_entered_epoch: Epoch,
-    /// Highest epoch observed on the vote backup channel — the live network
-    /// epoch. Gates `is_live_epoch`: epochs below it only soft-enter.
+    /// Highest live-network epoch corroborated by f+1 DISTINCT peers on the vote
+    /// backup channel. Gates `is_live_epoch`: epochs below it only soft-enter.
+    /// NEVER advanced from a single peer's wire-supplied epoch tag (that is
+    /// unauthenticated — one Byzantine peer naming `u64::MAX` would otherwise
+    /// pin every honest node into permanent soft-enter = network liveness halt).
+    /// f+1 distinct corroboration guarantees ≥1 honest reporter, so the value
+    /// only ever reaches an epoch the honest majority is actually voting at.
     highest_observed_epoch: Epoch,
+    /// Distinct backup-vote senders per future epoch, pending the f+1 threshold.
+    /// Bounded by the per-sender pin quota (see `sender_pins`); entries ≤
+    /// `highest_observed_epoch` are pruned on every advance.
+    observed_reporters: BTreeMap<Epoch, BTreeSet<PublicKey>>,
+    /// Per-sender quota of future epochs each peer may pin
+    /// ([`PINS_PER_SENDER`]). Bounds memory to `n · PINS_PER_SENDER` epochs AND
+    /// stops ≤f Byzantine from flooding many decoy epochs to crowd out the
+    /// honestly-corroborated true frontier — they can occupy at most `f ·
+    /// PINS_PER_SENDER` slots, so the frontier always has room to reach f+1.
+    sender_pins: BTreeMap<PublicKey, BTreeSet<Epoch>>,
+    /// Committee size of the HIGHEST-ENTERED epoch, used to derive the Byzantine
+    /// threshold f = (n−1)/3 for corroboration. Keyed on the newest entered epoch
+    /// (set in `enter` only when `epoch == highest_entered_epoch`) so it follows
+    /// both validator-set growth and shrink; a stale soft-enter (epoch <
+    /// highest_entered) cannot lower it, preserving the R4-2 grow-attack guard.
+    /// `0` until the first `enter`, during which backup corroboration is disabled
+    /// (the cold-start epoch full-enters from the verified boundary trigger).
+    committee_size: usize,
     cfg: Config<B, PB, BE, AB, Attrs>,
 }
 
@@ -133,6 +166,9 @@ where
             boundary_rx,
             highest_entered_epoch: Epoch::new(0),
             highest_observed_epoch: Epoch::new(0),
+            observed_reporters: BTreeMap::new(),
+            sender_pins: BTreeMap::new(),
+            committee_size: 0,
             cfg,
         };
         (actor, boundary_tx)
@@ -279,7 +315,7 @@ where
     /// blocks (boundary_hook → on_finalized → enter), registering the next scheme
     /// so the following hint reaches one epoch further — until we catch up.
     async fn handle_msg_for_unregistered_epoch(&mut self, their_epoch: Epoch, from: PublicKey) {
-        self.highest_observed_epoch = self.highest_observed_epoch.max(their_epoch);
+        self.corroborate_observed_epoch(their_epoch, from.clone());
         if their_epoch <= self.highest_entered_epoch {
             return;
         }
@@ -298,6 +334,25 @@ where
             .await;
     }
 
+    /// Advance the live frontier ONLY when f+1 DISTINCT peers have named the same
+    /// future epoch on the (unauthenticated) vote backup channel. With ≤ f
+    /// Byzantine validators, f+1 distinct reporters always include ≥1 honest one,
+    /// who only votes at the true live epoch — so a single (or up to f colluding)
+    /// Byzantine peer(s) cannot inflate the frontier and force permanent
+    /// soft-enter. Until the first `enter` sets the committee size, corroboration
+    /// is disabled (the cold-start epoch full-enters from the verified boundary
+    /// trigger, so an early backup message must not be able to gate it off).
+    fn corroborate_observed_epoch(&mut self, their_epoch: Epoch, from: PublicKey) {
+        corroborate_frontier(
+            &mut self.observed_reporters,
+            &mut self.sender_pins,
+            &mut self.highest_observed_epoch,
+            self.committee_size,
+            their_epoch,
+            from,
+        );
+    }
+
     /// True when `epoch` is at or past the highest epoch observed on the backup
     /// channel — i.e. the live frontier, not a historical catch-up epoch. Below
     /// the frontier we only soft-enter (register the scheme, NO participating
@@ -311,6 +366,8 @@ where
     /// Strict `>=` soft-enters every below-frontier epoch; once the walk reaches
     /// the frontier (votes arrive on a registered subchannel, not backup, so
     /// `highest_observed_epoch` stops rising) the frontier epoch full-enters.
+    /// The frontier itself is corroboration-gated — see
+    /// [`Self::corroborate_observed_epoch`].
     fn is_live_epoch(&self, epoch: Epoch) -> bool {
         epoch >= self.highest_observed_epoch
     }
@@ -336,6 +393,28 @@ where
         }
 
         self.highest_entered_epoch = self.highest_entered_epoch.max(epoch);
+        // Track the committee size of the HIGHEST-ENTERED epoch (monotonic in
+        // epoch, not in size) — feeds the f+1 Byzantine threshold. Keying on the
+        // newest entered epoch follows both validator-set growth and shrink
+        // (a >3× shrink under monotonic-max would freeze the frontier, since the
+        // tracked peer set == the current smaller committee can't reach the stale
+        // higher threshold). A stale soft-enter has `epoch < highest_entered`, so
+        // it cannot lower the threshold — preserving the R4-2 grow-attack guard.
+        if epoch == self.highest_entered_epoch {
+            self.committee_size = snap.validators.len();
+        }
+        // Entering an epoch RESOLVES it: prune any pending corroboration state for
+        // it and below, so a healthy node's boundary-race pins (peers that voted
+        // for E+1 on the backup channel just before the node registered E+1) are
+        // freed instead of permanently consuming each sender's pin quota and
+        // muting it — which would otherwise freeze the live frontier. `enter` is
+        // gated by the verified on-chain boundary trigger, so this free is not
+        // attacker-reachable; far-future decoy pins (epoch > entered) stay pinned.
+        prune_resolved(
+            &mut self.observed_reporters,
+            &mut self.sender_pins,
+            self.highest_entered_epoch,
+        );
 
         // Soft-enter for catch-up epochs: register the verifier so the marshal can
         // verify this epoch's finalization certs, but do NOT spawn a participating
@@ -451,12 +530,241 @@ where
     }
 }
 
+/// Live-frontier corroboration step. Advances `highest_observed_epoch` to
+/// `their_epoch` only once f+1 DISTINCT peers (f = (n−1)/3) have named it on the
+/// unauthenticated vote backup channel — with ≤f Byzantine, f+1 distinct
+/// reporters always include ≥1 honest one, so the frontier only ever reaches an
+/// epoch the honest majority is actually voting at. A per-sender pin quota bounds
+/// memory AND prevents a Byzantine minority from flooding decoy epochs to crowd
+/// the honest frontier out of the map. Extracted as a free function over the
+/// state pieces so the Byzantine-resistance invariant is unit-testable without
+/// standing up the full generic `Actor`.
+fn corroborate_frontier(
+    observed_reporters: &mut BTreeMap<Epoch, BTreeSet<PublicKey>>,
+    sender_pins: &mut BTreeMap<PublicKey, BTreeSet<Epoch>>,
+    highest_observed_epoch: &mut Epoch,
+    committee_size: usize,
+    their_epoch: Epoch,
+    from: PublicKey,
+) {
+    if committee_size == 0 || their_epoch <= *highest_observed_epoch {
+        return;
+    }
+    let threshold = (committee_size - 1) / 3 + 1; // f + 1, n = 3f + 1
+
+    // Per-sender quota: a peer may pin at most PINS_PER_SENDER distinct future
+    // epochs. f Byzantine therefore occupy ≤ f·PINS_PER_SENDER slots and cannot
+    // evict/crowd out the honestly-corroborated true frontier.
+    let pins = sender_pins.entry(from.clone()).or_default();
+    if !pins.contains(&their_epoch) {
+        if pins.len() >= PINS_PER_SENDER {
+            return;
+        }
+        pins.insert(their_epoch);
+    }
+
+    let reporters = observed_reporters.entry(their_epoch).or_default();
+    reporters.insert(from);
+    if reporters.len() >= threshold {
+        *highest_observed_epoch = (*highest_observed_epoch).max(their_epoch);
+        // Prune everything now at or below the advanced frontier and free the
+        // senders' quota for those epochs.
+        prune_resolved(observed_reporters, sender_pins, *highest_observed_epoch);
+    }
+}
+
+/// Drop pending corroboration state for every epoch `≤ floor` and free those
+/// epochs from each sender's pin quota. Called when the frontier advances
+/// (corroboration threshold met) AND when an epoch is entered (resolved by the
+/// verified boundary trigger) — the latter is what keeps a healthy node's
+/// boundary-race pins from permanently muting honest senders.
+fn prune_resolved(
+    observed_reporters: &mut BTreeMap<Epoch, BTreeSet<PublicKey>>,
+    sender_pins: &mut BTreeMap<PublicKey, BTreeSet<Epoch>>,
+    floor: Epoch,
+) {
+    observed_reporters.retain(|e, _| *e > floor);
+    sender_pins
+        .values_mut()
+        .for_each(|eps| eps.retain(|e| *e > floor));
+    sender_pins.retain(|_, eps| !eps.is_empty());
+}
+
 #[cfg(test)]
-#[allow(unused_imports)]
 mod tests {
-    // Smoke tests are gated on a real `commonware_runtime::deterministic::Runner`
-    // wiring of all 5 channels + a working marshal::core::Actor.
-    // The smoke-level test sits in `crate::outer::tests` once OuterEngine
-    // exists, because `Config::marshal_mailbox` and `page_cache` are produced
-    // by OuterEngine.
+    use super::*;
+    use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer};
+    use commonware_math::algebra::Random as _;
+    use rand_08::rngs::StdRng;
+    use rand_core::SeedableRng;
+
+    fn distinct_keys(n: usize) -> Vec<PublicKey> {
+        (0..n)
+            .map(|i| {
+                let mut rng = StdRng::seed_from_u64(0xF100 + i as u64);
+                Ed25519PrivateKey::random(&mut rng).public_key()
+            })
+            .collect()
+    }
+
+    /// Test harness mirroring the actor's three corroboration state pieces.
+    struct Frontier {
+        observed: BTreeMap<Epoch, BTreeSet<PublicKey>>,
+        pins: BTreeMap<PublicKey, BTreeSet<Epoch>>,
+        epoch: Epoch,
+        committee_size: usize,
+    }
+    impl Frontier {
+        fn new(committee_size: usize, start: u64) -> Self {
+            Self {
+                observed: BTreeMap::new(),
+                pins: BTreeMap::new(),
+                epoch: Epoch::new(start),
+                committee_size,
+            }
+        }
+        fn report(&mut self, epoch: u64, from: &PublicKey) {
+            corroborate_frontier(
+                &mut self.observed,
+                &mut self.pins,
+                &mut self.epoch,
+                self.committee_size,
+                Epoch::new(epoch),
+                from.clone(),
+            );
+        }
+        /// Mirror the actor's `enter`: resolve `epoch` (free its corroboration
+        /// state below the entered floor).
+        fn enter(&mut self, epoch: u64) {
+            prune_resolved(&mut self.observed, &mut self.pins, Epoch::new(epoch));
+        }
+        fn pin_count(&self, from: &PublicKey) -> usize {
+            self.pins.get(from).map_or(0, |e| e.len())
+        }
+    }
+
+    // A single peer (even naming u64::MAX) must NOT advance the live frontier —
+    // the P2-11 permanent-soft-enter halt. n = 4 ⇒ f = 1 ⇒ threshold f+1 = 2.
+    #[test]
+    fn single_peer_cannot_advance_frontier() {
+        let keys = distinct_keys(4);
+        let mut f = Frontier::new(4, 5);
+        f.report(u64::MAX, &keys[0]);
+        assert_eq!(
+            f.epoch,
+            Epoch::new(5),
+            "one peer must not move the frontier"
+        );
+        // Repeated messages from the SAME peer stay at one distinct reporter.
+        f.report(u64::MAX, &keys[0]);
+        assert_eq!(f.epoch, Epoch::new(5));
+    }
+
+    // f+1 distinct peers (≥1 honest) DO advance the frontier; lower pending
+    // entries are pruned.
+    #[test]
+    fn fplus1_distinct_peers_advance_frontier() {
+        let keys = distinct_keys(4);
+        let mut f = Frontier::new(4, 5);
+        f.report(9, &keys[0]);
+        assert_eq!(f.epoch, Epoch::new(5), "first reporter is below threshold");
+        f.report(9, &keys[1]);
+        assert_eq!(f.epoch, Epoch::new(9), "f+1=2 distinct reporters advance");
+        assert!(
+            f.observed.is_empty(),
+            "entries ≤ frontier pruned after advance"
+        );
+    }
+
+    // Before the first entered epoch (committee_size == 0) corroboration is
+    // disabled, so a pre-enter backup message can't gate off the cold-start epoch.
+    #[test]
+    fn no_corroboration_before_first_committee() {
+        let keys = distinct_keys(4);
+        let mut f = Frontier::new(0, 0);
+        for k in &keys {
+            f.report(99, k);
+        }
+        assert_eq!(f.epoch, Epoch::new(0));
+        assert!(f.observed.is_empty());
+    }
+
+    // R4-1 regression: f Byzantine cannot freeze the honest frontier by flooding
+    // many DECOY epochs each corroborated to count f. With n=7 (f=2), the 2
+    // Byzantine keys flood 100 high decoy epochs (each reaching count 2 < 3), then
+    // 3 honest peers back the true frontier 10. The per-sender pin quota stops the
+    // decoys from crowding it out, so the honest frontier still reaches f+1=3 and
+    // advances. (The old count-based eviction would have dropped epoch 10 forever.)
+    #[test]
+    fn byzantine_decoy_flood_cannot_freeze_honest_frontier() {
+        let keys = distinct_keys(7); // n=7 ⇒ f=2 ⇒ threshold 3; keys[5],[6] Byzantine
+        let mut f = Frontier::new(7, 0);
+        for e in 1_000..1_100u64 {
+            f.report(e, &keys[5]);
+            f.report(e, &keys[6]);
+        }
+        // Memory stays bounded by the per-sender quota (≤ n · PINS_PER_SENDER).
+        assert!(
+            f.observed.len() <= 7 * PINS_PER_SENDER,
+            "map bounded by quota: {}",
+            f.observed.len()
+        );
+        // 3 honest peers corroborate the true frontier 10 → must advance.
+        f.report(10, &keys[0]);
+        f.report(10, &keys[1]);
+        f.report(10, &keys[2]);
+        assert_eq!(
+            f.epoch,
+            Epoch::new(10),
+            "honest frontier advanced despite the decoy flood"
+        );
+    }
+
+    // The per-sender quota caps how many distinct future epochs one peer pins;
+    // beyond PINS_PER_SENDER its further (new-epoch) reports are ignored.
+    #[test]
+    fn per_sender_quota_caps_pins() {
+        let keys = distinct_keys(7);
+        let mut f = Frontier::new(7, 0);
+        for e in 50..60u64 {
+            f.report(e, &keys[6]);
+        }
+        assert_eq!(
+            f.observed.len(),
+            PINS_PER_SENDER,
+            "one peer pins at most PINS_PER_SENDER epochs"
+        );
+    }
+
+    // Regression: a healthy node's boundary-race pins must be FREED when the node
+    // enters the epoch, not permanently consume the sender's quota. Without the
+    // enter()-time prune, a peer that races a vote for E+1 onto the backup channel
+    // each boundary would exhaust PINS_PER_SENDER after 2 boundaries and be muted
+    // → the live frontier freezes.
+    #[test]
+    fn entering_an_epoch_frees_boundary_race_pins() {
+        let keys = distinct_keys(7); // threshold 3 — single races never fire it
+        let mut f = Frontier::new(7, 0);
+        // Simulate many boundaries: each, one peer races a single vote for the
+        // next epoch, then the node enters it.
+        for e in 1..=20u64 {
+            f.report(e, &keys[6]); // race vote for epoch e (below threshold)
+            f.enter(e); // node enters e → its pin must be freed
+            assert_eq!(
+                f.pin_count(&keys[6]),
+                0,
+                "pin for entered epoch {e} must be freed, not retained"
+            );
+        }
+        // The racer was never muted, so it can still corroborate a real future
+        // frontier together with f+1−1 others.
+        f.report(25, &keys[6]);
+        f.report(25, &keys[0]);
+        f.report(25, &keys[1]);
+        assert_eq!(
+            f.epoch,
+            Epoch::new(25),
+            "frontier still advances after 20 boundaries"
+        );
+    }
 }

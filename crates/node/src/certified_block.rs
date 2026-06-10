@@ -13,7 +13,6 @@
 use alloy_primitives::B256;
 use commonware_codec::{Decode as _, DecodeExt as _, Encode as _};
 use commonware_consensus::{simplex::types::Finalization, Heightable as _};
-use commonware_cryptography::certificate::Scheme as _;
 use eyre::WrapErr as _;
 use fluentbase_bls::Scheme as BlsScheme;
 use fluentbase_consensus::{Block, Digest};
@@ -50,14 +49,19 @@ impl CertifiedBlock {
 
     /// Decode back to the marshal-format typed pair (client side).
     ///
-    /// The certificate is decoded with the UNBOUNDED cert codec config — the same
-    /// the marshal's archive uses ([`outer.rs`] `certificate_codec_config_unbounded`).
-    /// The per-epoch scheme is required only later, for verification, not for decode.
+    /// The certificate signer-bitmap is decoded with a BOUNDED cap
+    /// (`MAX_PEER_SET_SIZE`) — NOT the unbounded `u32::MAX` config the marshal's
+    /// trusted archive uses. This data comes from an untrusted upstream over WS;
+    /// the unbounded decoder eagerly allocates `VecDeque::with_capacity(num_chunks)`
+    /// from a ~9-byte length prefix, so a tiny malicious certificate could force a
+    /// ~512 MB allocation and OOM the follower (audit R4-5). A real finalization
+    /// has ≤ the committee size (≤ `MAX_PEER_SET_SIZE`) signers; exact participant
+    /// validation still happens at cert-verify time against the per-epoch scheme.
     pub fn into_parts(&self) -> eyre::Result<(Cert, Block)> {
         let cert_bytes = hex::decode(&self.certificate).wrap_err("decode certificate hex")?;
         let cert = Cert::decode_cfg(
             cert_bytes.as_slice(),
-            &BlsScheme::certificate_codec_config_unbounded(),
+            &(fluentbase_p2p::constants::MAX_PEER_SET_SIZE as usize),
         )
         .wrap_err("decode finalization certificate")?;
         let block_bytes = hex::decode(&self.block).wrap_err("decode block hex")?;
