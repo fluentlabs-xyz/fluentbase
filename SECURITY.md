@@ -128,6 +128,60 @@ Untrusted inputs include transaction calldata, deployed bytecode, rWasm modules,
 guest memory offsets and lengths, syscall parameters, JSON fixtures, CLI arguments, environment
 configuration, and GitHub Actions event inputs.
 
+## Auditor's Checklist
+
+These vulnerability classes recur in execution and codec code and are the highest-yield. Each is a
+reachable-from-untrusted-input class, not a hypothetical. An auditor should check these first before
+reasoning from scratch. AI agents in audit mode: see `AGENTS.md` → Security Audit Mode for how to run.
+
+Decoders / codec (`crates/codec`, `crates/codec-derive`, `crates/sdk`, `crates/types`):
+
+- **Header validated, body not.** The dominant pattern: a length/offset word is bounds-checked when
+  read (e.g. `read_u32_aligned` validates its own 4-byte read), then the resulting offset/length is
+  used in `buf.chunk()[a..b]` or `with_capacity(n)` with no check that the described body is inside
+  the buffer. Every decode that reads an offset/length from input and then slices or allocates MUST
+  re-validate `offset (+ headroom) + len <= buf.len()` with checked arithmetic. Slice-out-of-range
+  panics the decoder — a remote DoS from any contract entrypoint that decodes `bytes`/`string`/`Vec`/
+  `HashMap`/derived structs.
+- **Unbounded allocation.** `Vec::with_capacity(n)` / `HashMap::with_capacity(n)` / `vec![0; n]`
+  where `n` is an attacker-controlled count → OOM abort. Bound `n` by remaining-bytes / element size
+  before allocating.
+- **Arithmetic on offsets/lengths.** `as u32` / `as usize` truncation on length fields; `offset + 32`
+  (or `align_up`) wrapping, then used as an index. Use checked arithmetic on every decode path.
+- **Swallowed decode errors.** `unwrap_or_default()` on a per-element decode hides corruption and
+  makes two distinct inputs decode to the same value — a determinism/correctness risk. Propagate with
+  `?`.
+- **LEB128 / varint** (`crates/sdk/src/leb128.rs`): bound byte count and shift. An unterminated or
+  oversized varint must return an error, not loop unbounded or overflow the target integer.
+
+Runtime / syscalls (`crates/runtime`):
+
+- Guest-supplied offset/length used to read or write guest memory without a bounds check.
+- Fuel/gas charged AFTER an expensive operation instead of before it.
+- Fixed-size buffer reads in the crypto/hashing/curve syscall handlers without validating the
+  guest-provided length first.
+
+Precompiles (`contracts/*`, `crates/crypto`):
+
+- Must accept ANY input length (empty / short / huge). Slicing a fixed-size chunk without a length
+  guard panics on crafted calldata. `modexp`: overflow in the gas formula and absurd base/exp/mod
+  length fields. `blake2f`: rounds parameter and final-block flag validation per EIP-152. Point
+  decompression (`bn254`, `bls12381`, edwards/weierstrass): subgroup and curve-membership checks.
+  `ecrecover` / `secp256r1` / `ed25519` / `webauthn`: signature malleability and wrong-length slices.
+
+EVM / consensus (`crates/evm`, `crates/revm`):
+
+- Gas arithmetic without checked/saturating ops; memory-expansion cost overflow.
+- Any divergence from canonical EVM semantics, or dependence on map-iteration order, is a consensus
+  split.
+
+Build / CI (`crates/build`, `.github/workflows`):
+
+- Untrusted WASM translated to rWasm without validation; path traversal or command execution at build
+  time.
+- `pull_request_target` combined with `${{ github.event.* }}` interpolated into `run:` steps (script
+  injection); secrets exposed to fork PRs; unpinned third-party actions used at a mutable ref.
+
 ## Existing Security Controls
 
 Important controls already present in the repository:
@@ -207,3 +261,4 @@ AI coding agents working in this repository must:
 | Date | Change |
 | --- | --- |
 | 2026-05-28 | Initial repository-specific security policy. |
+| 2026-06-10 | Added Auditor's Checklist (known vulnerability classes); paired with AGENTS.md Security Audit Mode. |
