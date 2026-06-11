@@ -47,6 +47,9 @@ trait RuntimeUpgradeTr {
         wasm_bytecode: Bytes,
     );
 
+    /// Recompile already deployed WASM runtime smart contract
+    fn recompile(&mut self, target_address: Address, genesis_hash: B256, genesis_version: String);
+
     /// Change contract owner
     fn change_owner(&mut self, new_owner: Address);
 
@@ -68,6 +71,74 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         wasm_bytecode: Bytes,
     ) {
         _ = self.only_owner();
+        self.compile_upgrade_and_emit(target_address, genesis_hash, genesis_version, wasm_bytecode);
+    }
+
+    #[function_id("recompile(address,uint256,string)")]
+    fn recompile(&mut self, target_address: Address, genesis_hash: B256, genesis_version: String) {
+        _ = self.only_owner();
+
+        let Ok(code_size) = self.sdk.code_size(&target_address).ok() else {
+            panic!("runtime-upgrade: can't obtain code size");
+        };
+        if code_size == 0 {
+            panic!("runtime-upgrade: empty target bytecode");
+        }
+
+        let Ok(wasm_bytecode) = self
+            .sdk
+            .code_copy(&target_address, 0, code_size as u64)
+            .ok()
+        else {
+            panic!("runtime-upgrade: can't load target bytecode");
+        };
+        if wasm_bytecode.len() != code_size as usize {
+            panic!("runtime-upgrade: incomplete target bytecode");
+        }
+
+        self.compile_upgrade_and_emit(target_address, genesis_hash, genesis_version, wasm_bytecode);
+    }
+
+    #[function_id("changeOwner(address)")]
+    fn change_owner(&mut self, new_owner: Address) {
+        _ = self.only_owner();
+        if new_owner == Address::ZERO {
+            panic!("runtime-upgrade: can't set owner to zero address");
+        }
+        self.owner_accessor().set(&mut self.sdk, new_owner);
+        OwnerChanged { new_owner }.emit(&mut self.sdk).unwrap();
+    }
+
+    #[function_id("owner()")]
+    fn owner(&mut self) -> Address {
+        let mut owner = self.owner_accessor().get(&self.sdk);
+        if owner.is_zero() {
+            owner = DEFAULT_UPDATE_GENESIS_AUTH;
+        }
+        owner
+    }
+
+    #[function_id("renounceOwnership()")]
+    fn renounce_ownership(&mut self) {
+        _ = self.only_owner();
+        // We set to `SYSTEM_ADDRESS` to make a system fully maintained by forks (if it's required)
+        self.owner_accessor().set(&mut self.sdk, SYSTEM_ADDRESS);
+        OwnerChanged {
+            new_owner: SYSTEM_ADDRESS,
+        }
+        .emit(&mut self.sdk)
+        .unwrap();
+    }
+}
+
+impl<SDK: SharedAPI> App<SDK> {
+    fn compile_upgrade_and_emit(
+        &mut self,
+        target_address: Address,
+        genesis_hash: B256,
+        genesis_version: String,
+        wasm_bytecode: Bytes,
+    ) {
         if !wasm_bytecode.starts_with(&WASM_MAGIC_BYTES) {
             panic!("runtime-upgrade: malformed wasm bytecode");
         }
@@ -105,39 +176,6 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         .unwrap();
     }
 
-    #[function_id("changeOwner(address)")]
-    fn change_owner(&mut self, new_owner: Address) {
-        _ = self.only_owner();
-        if new_owner == Address::ZERO {
-            panic!("runtime-upgrade: can't set owner to zero address");
-        }
-        self.owner_accessor().set(&mut self.sdk, new_owner);
-        OwnerChanged { new_owner }.emit(&mut self.sdk).unwrap();
-    }
-
-    #[function_id("owner()")]
-    fn owner(&mut self) -> Address {
-        let mut owner = self.owner_accessor().get(&self.sdk);
-        if owner.is_zero() {
-            owner = DEFAULT_UPDATE_GENESIS_AUTH;
-        }
-        owner
-    }
-
-    #[function_id("renounceOwnership()")]
-    fn renounce_ownership(&mut self) {
-        _ = self.only_owner();
-        // We set to `SYSTEM_ADDRESS` to make a system fully maintained by forks (if it's required)
-        self.owner_accessor().set(&mut self.sdk, SYSTEM_ADDRESS);
-        OwnerChanged {
-            new_owner: SYSTEM_ADDRESS,
-        }
-        .emit(&mut self.sdk)
-        .unwrap();
-    }
-}
-
-impl<SDK: SharedAPI> App<SDK> {
     fn only_owner(&self) -> Address {
         let mut owner = self.owner_accessor().get(&self.sdk);
         if owner == Address::ZERO {
@@ -189,5 +227,23 @@ mod tests {
         assert_eq!(decoded.0 .1, genesis_hash, "genesis_hash mismatch");
         assert_eq!(decoded.0 .2, genesis_version, "genesis_version mismatch");
         assert_eq!(decoded.0 .3, wasm_bytecode, "wasm_bytecode mismatch");
+    }
+
+    #[test]
+    fn test_recompile_encoding() {
+        let target = address!("2222222222222222222222222222222222222222");
+        let genesis_hash = B256::from([0xab; 32]);
+        let genesis_version = "v1.0.0".to_string();
+
+        let call = RecompileCall::new((target, genesis_hash, genesis_version.clone()));
+        let encoded = call.encode();
+
+        assert!(encoded.len() >= 4);
+        println!("Encoded call data: {}", hex::encode(&encoded));
+
+        let decoded = RecompileCall::decode(&&encoded[4..]).expect("failed to decode");
+        assert_eq!(decoded.0 .0, target, "target_address mismatch");
+        assert_eq!(decoded.0 .1, genesis_hash, "genesis_hash mismatch");
+        assert_eq!(decoded.0 .2, genesis_version, "genesis_version mismatch");
     }
 }

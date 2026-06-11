@@ -18,12 +18,16 @@ It exists so chain operators can replace system runtime bytecode, but it must st
 Upgrade contract exposes:
 
 - `upgradeTo(...)`
+- `recompile(...)`
 - `changeOwner(...)`
 - `owner()`
 - `renounceOwnership()`
 
 Key behavior:
 - only owner can upgrade,
+- `recompile(...)` loads the target account bytecode with `code_size`/`code_copy`, requires it to be
+  original WASM bytes, recompiles it to rWasm, and then uses the same upgrade syscall path as
+  `upgradeTo(...)`,
 - zero owner assignment is rejected by `changeOwner`,
 - renounce sets owner to system address,
 - default owner fallback is defined for unset state.
