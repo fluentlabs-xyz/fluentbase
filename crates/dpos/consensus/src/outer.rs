@@ -11,20 +11,20 @@
 //!   `EpochEngine` via `EpochManager`).
 
 use crate::{
-    application::{BeaconEngineLike, FluentApp, PayloadAttrsBuilderLike, PayloadBuilderLike},
-    block::Block,
+    application::{
+        BeaconEngineLike, DerivedBlockBuilder, ExecutedChain, FluentApp, OrderingAssembler,
+    },
     digest::Digest,
     epoch_manager,
     epocher::OriginEpocher,
     executor,
     feed_sink::FeedSink,
+    order_block::OrderBlock,
     slasher,
     timeouts::ConsensusTimeouts,
 };
 use crate::{REPLAY_BUFFER, WRITE_BUFFER};
-use alloy_consensus::Header;
-use alloy_primitives::{Bytes, B256};
-use alloy_rpc_types_engine::PayloadId;
+use alloy_primitives::{Address, B256};
 use commonware_broadcast::buffered;
 use commonware_consensus::{
     marshal::{
@@ -43,12 +43,9 @@ use commonware_runtime::{
 };
 use commonware_storage::archive::immutable;
 use commonware_utils::{NZUsize, NZU16, NZU64};
-use dashmap::DashMap;
 use fluentbase_bls::{keys::ValidatorBlsKeypair, Scheme as BlsScheme};
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::CryptoRngCore;
-use reth_ethereum_primitives::Block as RethBlock;
-use reth_primitives_traits::SealedBlock;
 use std::{
     collections::BTreeMap,
     num::{NonZeroU64, NonZeroUsize},
@@ -161,8 +158,8 @@ impl CertProvider for EpochSchemeProvider {
 }
 
 type FinalizationsArchive<E> = immutable::Archive<E, Digest, Finalization<BlsScheme, Digest>>;
-type FinalizedBlocksArchive<E> = immutable::Archive<E, Digest, Block>;
-pub type MarshalMailbox = marshal::core::Mailbox<BlsScheme, Standard<Block>>;
+type FinalizedBlocksArchive<E> = immutable::Archive<E, Digest, OrderBlock>;
+pub type MarshalMailbox = marshal::core::Mailbox<BlsScheme, Standard<OrderBlock>>;
 
 /// Open the marshal's `finalized_blocks` immutable archive for a given
 /// `partition_prefix`. Single source of the archive config so the cold-start
@@ -180,19 +177,19 @@ where
     immutable::Archive::init(
         context.with_label("finalized_blocks"),
         immutable::Config {
-            metadata_partition: format!("{partition_prefix}-finalized-blocks-metadata"),
-            freezer_table_partition: format!("{partition_prefix}-finalized-blocks-freezer-table"),
+            metadata_partition: format!("{partition_prefix}-v2-finalized-blocks-metadata"),
+            freezer_table_partition: format!("{partition_prefix}-v2-finalized-blocks-freezer-table"),
             freezer_table_initial_size: 1 << 16,
             freezer_table_resize_frequency: FREEZER_TABLE_RESIZE_FREQUENCY,
             freezer_table_resize_chunk_size: FREEZER_TABLE_RESIZE_CHUNK_SIZE,
-            freezer_key_partition: format!("{partition_prefix}-finalized-blocks-freezer-key"),
+            freezer_key_partition: format!("{partition_prefix}-v2-finalized-blocks-freezer-key"),
             freezer_key_page_cache: page_cache.clone(),
             freezer_key_write_buffer: WRITE_BUFFER,
-            freezer_value_partition: format!("{partition_prefix}-finalized-blocks-freezer-value"),
+            freezer_value_partition: format!("{partition_prefix}-v2-finalized-blocks-freezer-value"),
             freezer_value_write_buffer: WRITE_BUFFER,
             freezer_value_target_size: FREEZER_VALUE_TARGET_SIZE,
             freezer_value_compression: FREEZER_VALUE_COMPRESSION,
-            ordinal_partition: format!("{partition_prefix}-finalized-blocks-ordinal"),
+            ordinal_partition: format!("{partition_prefix}-v2-finalized-blocks-ordinal"),
             ordinal_write_buffer: WRITE_BUFFER,
             items_per_section: IMMUTABLE_ITEMS_PER_SECTION,
             codec_config: (),
@@ -220,25 +217,25 @@ where
     immutable::Archive::init(
         context.with_label("finalizations_by_height"),
         immutable::Config {
-            metadata_partition: format!("{partition_prefix}-finalizations-by-height-metadata"),
+            metadata_partition: format!("{partition_prefix}-v2-finalizations-by-height-metadata"),
             freezer_table_partition: format!(
-                "{partition_prefix}-finalizations-by-height-freezer-table"
+                "{partition_prefix}-v2-finalizations-by-height-freezer-table"
             ),
             freezer_table_initial_size: 1 << 16,
             freezer_table_resize_frequency: FREEZER_TABLE_RESIZE_FREQUENCY,
             freezer_table_resize_chunk_size: FREEZER_TABLE_RESIZE_CHUNK_SIZE,
             freezer_key_partition: format!(
-                "{partition_prefix}-finalizations-by-height-freezer-key"
+                "{partition_prefix}-v2-finalizations-by-height-freezer-key"
             ),
             freezer_key_page_cache: page_cache,
             freezer_key_write_buffer: WRITE_BUFFER,
             freezer_value_partition: format!(
-                "{partition_prefix}-finalizations-by-height-freezer-value"
+                "{partition_prefix}-v2-finalizations-by-height-freezer-value"
             ),
             freezer_value_write_buffer: WRITE_BUFFER,
             freezer_value_target_size: FREEZER_VALUE_TARGET_SIZE,
             freezer_value_compression: FREEZER_VALUE_COMPRESSION,
-            ordinal_partition: format!("{partition_prefix}-finalizations-by-height-ordinal"),
+            ordinal_partition: format!("{partition_prefix}-v2-finalizations-by-height-ordinal"),
             ordinal_write_buffer: WRITE_BUFFER,
             items_per_section: IMMUTABLE_ITEMS_PER_SECTION,
             codec_config: BlsScheme::certificate_codec_config_unbounded(),
@@ -267,7 +264,7 @@ pub(crate) fn follower_marshal_config(
     page_cache: CacheRef,
     scheme_provider: EpochSchemeProvider,
     epocher: OriginEpocher,
-) -> marshal::Config<Block, EpochSchemeProvider, OriginEpocher, Sequential> {
+) -> marshal::Config<OrderBlock, EpochSchemeProvider, OriginEpocher, Sequential> {
     marshal::Config {
         provider: scheme_provider,
         epocher,
@@ -286,7 +283,7 @@ pub(crate) fn follower_marshal_config(
     }
 }
 
-type ExecutorActor<E, BE, Attrs> = executor::Actor<E, BE, Attrs, MarshalMailbox>;
+type ExecutorActor<E, BE, D, XC> = executor::Actor<E, BE, D, XC, MarshalMailbox>;
 
 /// Builder for [`OuterEngine`] — the user-facing entry point. The caller
 /// hands it reth handles + genesis + cold-start EL state; `build`
@@ -295,10 +292,10 @@ type ExecutorActor<E, BE, Attrs> = executor::Actor<E, BE, Attrs, MarshalMailbox>
 pub struct OuterBuilder<
     B,
     P,
-    PB,
     BE,
-    AB,
-    Attrs,
+    D,
+    XC,
+    A,
     R: slasher::StakingStateRead + Send + Sync + 'static,
 > {
     // Identity / shared
@@ -320,16 +317,22 @@ pub struct OuterBuilder<
     pub resolver_fetch_retry: Duration,
 
     // FluentApp constructor args.
-    pub genesis: Block,
-    pub payload_builder: PB,
+    pub genesis: OrderBlock,
     pub beacon_engine: BE,
-    pub payload_attrs_builder: AB,
-    pub payload_resolve_time: Duration,
+    /// OrderBlock → derived-EVM-block execution (node-side, reth-evm).
+    pub deriver: D,
+    /// Local derived-chain view (node-side, provider-backed, by-NUMBER).
+    pub executed: XC,
+    /// Pool-backed ordering assembly with the in-flight suffix overlay.
+    pub assembler: Arc<A>,
+    /// This node's proposals only — agreed data once embedded in an artifact.
+    pub fee_recipient: Address,
+    pub target_gas_limit: u64,
     /// Observer for finalized blocks — wired to
     /// [`fluentbase_staking_reader::EpochTransition::on_finalized`] for
     /// epoch-boundary detection (fires `boundary_tx` for `EpochManager::enter`).
     /// Required at the type level — tests pass `Arc::new(|_| {})`.
-    pub boundary_hook: Arc<dyn Fn(Block) + Send + Sync>,
+    pub boundary_hook: Arc<dyn Fn(OrderBlock) + Send + Sync>,
 
     /// Optional cert-feed sink: a second marshal application-`Reporter`
     /// ([`Reporters::from((app, feed))`]) that forwards finalized heights to a
@@ -347,22 +350,12 @@ pub struct OuterBuilder<
     pub marshal_floor: Option<Height>,
     pub fcu_heartbeat_interval: Duration,
     pub fcu_pace: Duration,
-    /// Reth's in-memory canonical chain state — threaded into the
-    /// executor so `canonicalize`'s spec-compliant ancestor-FCU guard
-    /// can detect when reth's canonical was silently advanced by
-    /// `FluentApp::verify`'s direct `new_payload` calls.
+    /// Reth's in-memory canonical chain state — used by the
+    /// resume-vs-migrate executor seed below (the verify-path race its
+    /// ancestor-FCU guard once covered no longer exists: verify performs no
+    /// EL calls under deferred execution).
     pub canonical_state:
         reth_chain_state::CanonicalInMemoryState<reth_ethereum_primitives::EthPrimitives>,
-
-    /// PhantomData carrier for `Attrs` (forwarded through FluentApp /
-    /// executor; doesn't appear directly in any Builder field).
-    pub _attrs: std::marker::PhantomData<Attrs>,
-
-    /// Shared between [`crate::application::FluentApp`] (writer in
-    /// `propose`) and `FluentPayloadBuilder` (reader in `try_build`).
-    /// dpos.rs constructs a single `Arc<DashMap>` and threads it through
-    /// both consumers so per-PayloadId `extra_data` injection is race-free.
-    pub extra_data_registry: Arc<DashMap<PayloadId, Bytes>>,
 
     /// `Staking.sol` predeploy address (`StakingReaderConfig.staking_address`).
     pub slasher_staking_address: alloy_primitives::Address,
@@ -383,41 +376,42 @@ pub struct OuterBuilder<
 
 /// The global-singleton consensus driver wrapping a per-epoch
 /// [`epoch_manager::Actor`].
-pub struct OuterEngine<E, B, P, PB, BE, AB, Attrs, R>
+pub struct OuterEngine<E, B, P, BE, D, XC, A, R>
 where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
     B: Blocker<PublicKey = PublicKey> + Clone,
     P: PeerProvider<PublicKey = PublicKey> + Clone,
-    PB: PayloadBuilderLike<BuiltSealed = SealedBlock<RethBlock>> + Clone + Send + Sync + 'static,
-    BE: BeaconEngineLike<PayloadAttrs = Attrs, ExecutionData = SealedBlock<RethBlock>>
-        + Clone
+    BE: BeaconEngineLike<
+            ExecutionData = D::Derived,
+        > + Clone
         + Send
         + Sync
         + 'static,
-    AB: PayloadAttrsBuilderLike<Attrs = Attrs, Header = Header> + Clone + Send + Sync + 'static,
-    Attrs: Clone + Send + Sync + 'static,
+    D: DerivedBlockBuilder,
+    XC: ExecutedChain,
+    A: OrderingAssembler,
     R: slasher::StakingStateRead + Send + Sync + 'static,
 {
     context: ContextCell<E>,
-    buffered: buffered::Engine<E, PublicKey, Block, P>,
-    buffer_mailbox: buffered::Mailbox<PublicKey, Block>,
+    buffered: buffered::Engine<E, PublicKey, OrderBlock, P>,
+    buffer_mailbox: buffered::Mailbox<PublicKey, OrderBlock>,
     marshal: MarshalActor<
         E,
-        Standard<Block>,
+        Standard<OrderBlock>,
         EpochSchemeProvider,
         FinalizationsArchive<E>,
         FinalizedBlocksArchive<E>,
         OriginEpocher,
         Sequential,
     >,
-    marshal_reporter_app: FluentApp<PB, BE, AB, Attrs>,
+    marshal_reporter_app: FluentApp<XC, A>,
     /// Clone of the marshal mailbox, exposed via [`OuterEngine::marshal_mailbox`]
     /// for the node-side cert feed/RPC (by-height `get_finalization`+`get_block`).
     cert_mailbox: MarshalMailbox,
     /// Optional cert-feed sink, composed with `marshal_reporter_app` at `start`.
     feed: Option<FeedSink>,
-    executor: ExecutorActor<E, BE, Attrs>,
-    epoch_manager: epoch_manager::Actor<E, B, PB, BE, AB, Attrs>,
+    executor: ExecutorActor<E, BE, D, XC>,
+    epoch_manager: epoch_manager::Actor<E, B, XC, A>,
     slasher: slasher::Actor<E, R>,
     boundary_tx: mpsc::Sender<(Epoch, ValidatorSetSnapshot)>,
     scheme_provider: EpochSchemeProvider,
@@ -430,18 +424,19 @@ where
     resolver_fetch_retry: Duration,
 }
 
-impl<B, P, PB, BE, AB, Attrs, R> OuterBuilder<B, P, PB, BE, AB, Attrs, R>
+impl<B, P, BE, D, XC, A, R> OuterBuilder<B, P, BE, D, XC, A, R>
 where
     B: Blocker<PublicKey = PublicKey> + Clone,
     P: PeerProvider<PublicKey = PublicKey> + Clone,
-    PB: PayloadBuilderLike<BuiltSealed = SealedBlock<RethBlock>> + Clone + Send + Sync + 'static,
-    BE: BeaconEngineLike<PayloadAttrs = Attrs, ExecutionData = SealedBlock<RethBlock>>
-        + Clone
+    BE: BeaconEngineLike<
+            ExecutionData = D::Derived,
+        > + Clone
         + Send
         + Sync
         + 'static,
-    AB: PayloadAttrsBuilderLike<Attrs = Attrs, Header = Header> + Clone + Send + Sync + 'static,
-    Attrs: Clone + Send + Sync + 'static,
+    D: DerivedBlockBuilder,
+    XC: ExecutedChain,
+    A: OrderingAssembler,
     R: slasher::StakingStateRead + Send + Sync + 'static,
 {
     /// Construct the engine in dependency order:
@@ -450,7 +445,7 @@ where
     pub async fn build<E>(
         self,
         context: E,
-    ) -> eyre::Result<OuterEngine<E, B, P, PB, BE, AB, Attrs, R>>
+    ) -> eyre::Result<OuterEngine<E, B, P, BE, D, XC, A, R>>
     where
         E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
     {
@@ -616,6 +611,8 @@ where
             context.with_label("executor"),
             executor::Config {
                 beacon_engine: self.beacon_engine.clone(),
+                deriver: self.deriver,
+                executed: self.executed.clone(),
                 marshal: marshal_mailbox.clone(),
                 fcu_heartbeat_interval: self.fcu_heartbeat_interval,
                 last_consensus_finalized_height,
@@ -623,7 +620,6 @@ where
                 initial_finalized,
                 initial_head,
                 fcu_pace: self.fcu_pace,
-                canonical_state: self.canonical_state.clone(),
             },
         );
 
@@ -631,15 +627,14 @@ where
         let latest_finalized_height = Arc::new(AtomicU64::new(0));
         let app = FluentApp::new(
             self.genesis,
-            self.payload_builder,
-            self.beacon_engine,
-            self.payload_attrs_builder,
             executor_mailbox,
             self.boundary_hook,
-            self.payload_resolve_time,
             Some(marshal_mailbox.clone()),
             latest_finalized_height,
-            self.extra_data_registry,
+            self.executed,
+            self.assembler,
+            self.fee_recipient,
+            self.target_gas_limit,
         );
         let marshal_reporter_app = app.clone();
 
@@ -723,19 +718,20 @@ where
     }
 }
 
-impl<E, B, P, PB, BE, AB, Attrs, R> OuterEngine<E, B, P, PB, BE, AB, Attrs, R>
+impl<E, B, P, BE, D, XC, A, R> OuterEngine<E, B, P, BE, D, XC, A, R>
 where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
     B: Blocker<PublicKey = PublicKey> + Clone,
     P: PeerProvider<PublicKey = PublicKey> + Clone,
-    PB: PayloadBuilderLike<BuiltSealed = SealedBlock<RethBlock>> + Clone + Send + Sync + 'static,
-    BE: BeaconEngineLike<PayloadAttrs = Attrs, ExecutionData = SealedBlock<RethBlock>>
-        + Clone
+    BE: BeaconEngineLike<
+            ExecutionData = D::Derived,
+        > + Clone
         + Send
         + Sync
         + 'static,
-    AB: PayloadAttrsBuilderLike<Attrs = Attrs, Header = Header> + Clone + Send + Sync + 'static,
-    Attrs: Clone + Send + Sync + 'static,
+    D: DerivedBlockBuilder,
+    XC: ExecutedChain,
+    A: OrderingAssembler,
     R: slasher::StakingStateRead + Send + Sync + 'static,
 {
     /// Sender held by 03's `EpochTransition` to fire boundary triggers.
@@ -850,8 +846,8 @@ where
         // observes every finalization alongside `FluentApp` (the executor path).
         // `From<(R1, Option<R2>)>` makes the feed optional; absent → app-only.
         let app_reporter: Reporters<
-            marshal::Update<Block>,
-            FluentApp<PB, BE, AB, Attrs>,
+            marshal::Update<OrderBlock>,
+            FluentApp<XC, A>,
             FeedSink,
         > = Reporters::from((self.marshal_reporter_app, self.feed));
         let mut marshal_handle =

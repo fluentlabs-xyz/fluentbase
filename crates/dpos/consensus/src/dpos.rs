@@ -3,20 +3,19 @@
 //! by the host adapter at `crates/node/src/dpos.rs`.
 
 use crate::{
-    application::{BeaconEngineLike, PayloadAttrsBuilderLike, PayloadBuilderLike},
-    block::Block as ConsensusBlock,
+    application::{
+        BeaconEngineLike, DerivedBlock as _, DerivedBlockBuilder, ExecutedChain, OrderingAssembler,
+    },
+    order_block::{anchor_order_block, K},
     scheme::epoch_committee_from_snapshot,
     slasher::actor::{SharedCacheFallback, SlasherTxSink, StaleEpochFallback},
     timeouts::ConsensusTimeouts,
     OuterBuilder,
 };
 use alloy_consensus::Header;
-use alloy_primitives::{Bytes, B256};
-use alloy_rpc_types_engine::{ForkchoiceState, PayloadId};
-use commonware_consensus::{
-    types::{Epoch, Height},
-    Heightable as _,
-};
+use alloy_primitives::{Address, B256};
+use alloy_rpc_types_engine::ForkchoiceState;
+use commonware_consensus::types::{Epoch, Height};
 use commonware_cryptography::Signer;
 use commonware_p2p::{authenticated::discovery::Bootstrapper, Ingress};
 use commonware_runtime::{tokio::Context, Clock as _, Handle, Metrics as _, Spawner as _};
@@ -25,17 +24,15 @@ use commonware_storage::{
     metadata::{self, Metadata},
 };
 use commonware_utils::sequence::U64;
-use dashmap::DashMap;
 use eyre::{ensure, eyre, OptionExt as _, WrapErr as _};
 use fluentbase_bls::{
     fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_verifier, PeerPubkey,
 };
 use fluentbase_p2p::{FluentP2P, FluentP2PConfig};
 use fluentbase_staking_reader::{
-    reader::StakingReaderConfig, EpochTransition, ReadError, RethStakingStateReader,
+    reader::StakingReaderConfig, EpochTransition, RethStakingStateReader,
     TransitionOutcome, ValidatorSetCache,
 };
-use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::SealedBlock;
@@ -44,7 +41,6 @@ use reth_storage_api::{
     StateProviderFactory,
 };
 use std::{
-    marker::PhantomData,
     net::SocketAddr,
     num::NonZeroU64,
     sync::{
@@ -76,10 +72,9 @@ const MARSHAL_PARTITION_PREFIX: &str = "consensus_marshal";
 /// the host owns the `reth-transaction-pool` trait bounds), `chain_spec`
 /// reduces to its only used field `chain_id`, and `data_dir` is set
 /// host-side in `spawn_dpos` before `runner.start()`.
-pub struct RethHandle<Provider, EvmConfig, PayloadBuilder, BeaconEngine> {
+pub struct RethHandle<Provider, EvmConfig, BeaconEngine> {
     pub provider: Provider,
     pub evm_config: EvmConfig,
-    pub payload_builder_handle: PayloadBuilder,
     pub beacon_engine_handle: BeaconEngine,
     pub chain_id: u64,
     /// Disk-loaded canonical state snapshot. Reth's
@@ -202,18 +197,19 @@ pub(crate) async fn read_consensus_archive_last_finalized(
 /// them into reth, walking ancestors oldest-ward until reth reconnects; return the
 /// recovered `target`'s local hash. Standalone archive open (before the engine is
 /// built), like the metadata peek — dropped before `MarshalActor::init` re-opens it.
-async fn recover_finalized_tail_into_reth<Provider, BeaconEngine>(
+async fn recover_finalized_tail_into_reth<Provider, BeaconEngine, D>(
     ctx: &Context,
     beacon_engine: &BeaconEngine,
     provider: &Provider,
+    deriver: &D,
     target: u64,
 ) -> eyre::Result<B256>
 where
     Provider: BlockHashReader,
     BeaconEngine: BeaconEngineLike<
-        PayloadAttrs = EthPayloadAttributes,
-        ExecutionData = SealedBlock<RethBlock>,
+        ExecutionData = D::Derived,
     >,
+    D: DerivedBlockBuilder,
 {
     // An ungraceful crash loses only reth's unflushed tail (typically 1-2 blocks).
     // A larger gap is real EL data loss, not a recoverable flush race.
@@ -221,22 +217,36 @@ where
 
     let archive = crate::outer::init_finalized_blocks_archive(ctx, MARSHAL_PARTITION_PREFIX).await;
 
-    // Collect blocks reth is missing, from `target` downward, until reth holds the
-    // parent (the reconnect point).
-    let mut to_apply: Vec<ConsensusBlock> = Vec::new();
-    let mut h = target;
-    while provider
-        .block_hash(h)
-        .wrap_err("provider.block_hash during crash-survivor recovery")?
-        .is_none()
+    // Find the lowest missing height (the reconnect point is its parent). The
+    // archive stores ORDERING artifacts, so recovery re-derives each missing
+    // block oldest-first — same deterministic function as live execution.
+    let mut lowest = target;
+    while lowest > 0
+        && provider
+            .block_hash(lowest - 1)
+            .wrap_err("provider.block_hash during crash-survivor recovery")?
+            .is_none()
     {
-        if to_apply.len() as u64 >= MAX_COLD_RECOVER {
+        if target - lowest >= MAX_COLD_RECOVER {
             return Err(eyre!(
                 "crash-survivor recovery: reth missing > {MAX_COLD_RECOVER} blocks below \
                  finalized {target} — real EL data loss; re-sync the EL disk from a snapshot"
             ));
         }
-        let block = archive
+        lowest -= 1;
+    }
+    let mut parent_hash = provider
+        .block_hash(lowest.saturating_sub(1))
+        .wrap_err("provider.block_hash at recovery reconnect point")?
+        .ok_or_else(|| {
+            eyre!(
+                "crash-survivor recovery: no reconnect parent below height {lowest}; \
+                 re-sync the EL disk from a snapshot"
+            )
+        })?;
+    let mut target_hash = parent_hash;
+    for h in lowest..=target {
+        let order = archive
             .get(Identifier::Index(h))
             .await
             .map_err(|e| eyre!("reading marshal finalized_blocks at height {h}: {e}"))?
@@ -246,30 +256,19 @@ where
                      {h} (gap exceeds marshal retention); re-sync the EL disk from a snapshot"
                 )
             })?;
-        to_apply.push(block);
-        if h == 0 {
-            break;
-        }
-        h -= 1;
-    }
-
-    // The target block was pushed first; capture its EL hash for the canonicalizing
-    // FCU below before the vec is consumed.
-    let target_hash = to_apply
-        .first()
-        .expect("recovery loop ran at least once (target was missing)")
-        .block_hash();
-
-    // Apply oldest-first so each block's parent is already present in reth.
-    for block in to_apply.into_iter().rev() {
-        let bh = block.height();
-        let status = beacon_engine
-            .new_payload(block.into_inner())
+        let derived = deriver
+            .derive_and_execute(order, parent_hash)
             .await
-            .wrap_err("crash-survivor recovery new_payload failed")?;
+            .wrap_err("crash-survivor recovery derivation failed")?;
+        parent_hash = derived.evm_hash();
+        target_hash = parent_hash;
+        let status = beacon_engine
+            .import_derived(derived)
+            .await
+            .wrap_err("crash-survivor recovery import failed")?;
         ensure!(
             status.is_valid() || status.is_syncing(),
-            "EL rejected recovered finalized block {bh}: {status:?}"
+            "EL rejected recovered finalized block {h}: {status:?}"
         );
     }
     drop(archive); // release so MarshalActor::init can re-open the same partition.
@@ -283,9 +282,7 @@ where
                 head_block_hash: target_hash,
                 safe_block_hash: target_hash,
                 finalized_block_hash: target_hash,
-            },
-            None,
-        )
+            })
         .await
         .wrap_err("crash-survivor recovery FCU failed")?;
     ensure!(
@@ -307,15 +304,22 @@ where
 /// and permission checks); the slasher transport arrives pre-built
 /// because `PoolTxSink<P, Provider>` carries concrete
 /// `reth-transaction-pool` trait bounds that can't compile in this crate.
-pub struct DposLayerConfig<AB> {
+pub struct DposLayerConfig<D, XC, A> {
     pub bls_keypair: ValidatorBlsKeypair,
     pub peer_keypair: commonware_cryptography::ed25519::PrivateKey,
     pub slasher_sink: Arc<dyn SlasherTxSink>,
     pub staking_config: StakingReaderConfig,
     pub bootstrappers: Vec<Bootstrapper<PeerPubkey>>,
     pub p2p: P2pParams,
-    pub payload_attrs_builder: AB,
-    pub extra_data_registry: Arc<DashMap<PayloadId, Bytes>>,
+    /// OrderBlock → derived-EVM-block execution (node-built over reth-evm).
+    pub deriver: D,
+    /// Local derived-chain view (node-built over the reth provider).
+    pub executed: XC,
+    /// Pool-backed ordering assembly (node-built — pool trait bounds live there).
+    pub assembler: Arc<A>,
+    /// This node's own proposals only (agreed data once embedded).
+    pub fee_recipient: Address,
+    pub target_gas_limit: u64,
     /// Cert-feed sink (node-built): wired as the marshal's second
     /// application-`Reporter` so a node-side feed actor can serve the
     /// `consensus` RPC. `None` for nodes that don't serve the cert feed.
@@ -349,10 +353,10 @@ impl DposLayer {
     /// handles. Caller also performs filesystem key loading
     /// and `PoolTxSink` construction before calling.
     #[allow(clippy::too_many_arguments)]
-    pub async fn launch<Provider, EvmConfig, PayloadBuilder, BeaconEngine, AB>(
+    pub async fn launch<Provider, EvmConfig, BeaconEngine, D, XC, A>(
         ctx: Context,
-        reth: RethHandle<Provider, EvmConfig, PayloadBuilder, BeaconEngine>,
-        cfg: DposLayerConfig<AB>,
+        reth: RethHandle<Provider, EvmConfig, BeaconEngine>,
+        cfg: DposLayerConfig<D, XC, A>,
         shutdown: CancellationToken,
     ) -> eyre::Result<DposLayerHandle>
     where
@@ -367,23 +371,15 @@ impl DposLayer {
             + Sync
             + 'static,
         EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
-        PayloadBuilder: PayloadBuilderLike<BuiltSealed = SealedBlock<RethBlock>>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
         BeaconEngine: BeaconEngineLike<
-                PayloadAttrs = EthPayloadAttributes,
-                ExecutionData = SealedBlock<RethBlock>,
+                ExecutionData = D::Derived,
             > + Clone
             + Send
             + Sync
             + 'static,
-        AB: PayloadAttrsBuilderLike<Attrs = EthPayloadAttributes, Header = Header>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
+        D: DerivedBlockBuilder,
+        XC: ExecutedChain,
+        A: OrderingAssembler,
     {
         let DposLayerConfig {
             bls_keypair,
@@ -392,15 +388,17 @@ impl DposLayer {
             staking_config,
             bootstrappers,
             p2p: P2pParams { listen, dialable },
-            payload_attrs_builder,
-            extra_data_registry,
+            deriver,
+            executed,
+            assembler,
+            fee_recipient,
+            target_gas_limit,
             feed,
         } = cfg;
 
         let RethHandle {
             provider,
             evm_config,
-            payload_builder_handle,
             beacon_engine_handle,
             chain_id,
             canonical_state,
@@ -429,9 +427,6 @@ impl DposLayer {
         // graceful-shutdown restart `get_finalized_num_hash()` returns
         // `Some(disk_finalized.num_hash())`. The genesis fallback
         // handles the pristine-network case (no FCU yet).
-        let last_execution_finalized_height = provider
-            .last_block_number()
-            .wrap_err("provider failed to report chain head block number at startup")?;
         let (cs_finalized, cs_finalized_hash, head_num, head_hash) =
             derive_cold_start_heights(&canonical_state, genesis_hash);
 
@@ -491,6 +486,7 @@ impl DposLayer {
                         &ctx,
                         &beacon_engine_handle,
                         &provider,
+                        &deriver,
                         archive_finalized,
                     )
                     .await?
@@ -498,6 +494,13 @@ impl DposLayer {
             };
             (archive_finalized, hash)
         };
+
+        // Read AFTER the crash-survivor recovery above: recovery imports the
+        // lost reth tail, and a pre-recovery snapshot would make the executor
+        // backfill re-derive exactly those blocks (idempotent but wasted V).
+        let last_execution_finalized_height = provider
+            .last_block_number()
+            .wrap_err("provider failed to report chain head block number at startup")?;
 
         tracing::info!(
             last_execution_finalized_height,
@@ -616,12 +619,15 @@ impl DposLayer {
             mpsc::channel::<(u64, fluentbase_staking_reader::reader::ValidatorSetSnapshot)>(64);
 
         // Wire staking-reader ↔ p2p: EpochTransition consumes the Oracle as PeerSetSink.
+        let provider_for_et = provider.clone();
         let mut epoch_transition = EpochTransition::new(
             reader,
             cache,
             handles.oracle.clone(),
             fluentbase_p2p::constants::MAX_PEER_SET_SIZE as usize,
             Some(bridge_tx.clone()),
+            Arc::new(move |n| provider_for_et.block_hash(n).ok().flatten()),
+            K,
         );
 
         // Cold-start: read current finalized committee, track once.
@@ -661,7 +667,12 @@ impl DposLayer {
                 )
             })?;
         let genesis_sealed: SealedBlock<RethBlock> = SealedBlock::seal_slow(genesis_unsealed);
-        let genesis_block = ConsensusBlock::from_execution_block(genesis_sealed);
+        // F-type: the ordering-chain genesis is the deterministic anchor
+        // artifact (its `result` field binds the anchor's EVM hash, so the
+        // weak-subjectivity binding of the old executed-block genesis is
+        // preserved). Every node computes the identical artifact, so Simplex
+        // `set_genesis(digest)` matches view 1's parent on all nodes.
+        let genesis_block = anchor_order_block(&genesis_sealed);
 
         // Move EpochTransition into Arc<Mutex<_>> so the boundary_hook
         // closure can call back into it from any thread.
@@ -676,79 +687,41 @@ impl DposLayer {
         let et_for_hook = et_arc.clone();
         let ctx_for_hook = ctx.with_label("boundary_hook");
         let errors_for_hook = consecutive_errors.clone();
-        let boundary_hook: Arc<dyn Fn(ConsensusBlock) + Send + Sync> =
-            Arc::new(move |block: ConsensusBlock| {
+        let boundary_hook: Arc<dyn Fn(crate::order_block::OrderBlock) + Send + Sync> =
+            Arc::new(move |block: crate::order_block::OrderBlock| {
                 let et = et_for_hook.clone();
                 let ctx_task = ctx_for_hook.clone();
                 let shutdown = shutdown_for_hook.clone();
                 let errors = errors_for_hook.clone();
-                let hash = block.block_hash();
-                let number = block.height().get();
+                let number = block.height;
+                // The old BlockNotFound retry loop is gone: committee reads
+                // now resolve at the result-final height (number − K) inside
+                // EpochTransition; an unresolved read is Intra + a pending
+                // boundary that replays on the next delivery — no race with
+                // the executor's import remains.
                 drop(ctx_task.spawn(move |ctx_inner| async move {
-                    // `BlockNotFound` is the executor/new_payload race: this hook
-                    // and the executor both consume the same `Update::Block`, and
-                    // the hook's reth state read can beat the executor's
-                    // `new_payload` by microseconds. Intra-epoch this is benign
-                    // and self-corrects on the next finalized block — BUT the LAST
-                    // block of an epoch has no "next" finalized block until
-                    // `on_finalized` spawns the next epoch's engine, so a boundary
-                    // block that loses this race deferred-to-next would wedge the
-                    // chain forever (the epoch E+1 engine that produces block
-                    // E_end+1 is exactly what the deferred spawn was meant to start).
-                    // So retry in place — the block lands within a few ms — instead
-                    // of deferring to a finalized block that can never arrive.
-                    const BLOCK_LANDED_RETRIES: u32 = 100; // ~5s @ 50ms backoff
-                    const BLOCK_LANDED_BACKOFF: Duration = Duration::from_millis(50);
-                    let mut race_retries = 0u32;
+                    // Re-poke loop: a parked boundary replays only on the next
+                    // on_finalized call, and during epoch catch-up the parked
+                    // boundary IS the last deliverable block — without the
+                    // retry no further delivery would ever trigger the replay
+                    // (catch-up deadlock). Bounded by execution progress: the
+                    // executor has the boundary's range queued, so the park
+                    // clears within the derive backlog (~ack window).
+                    let mut retries = 0u32;
                     loop {
-                        // Re-lock per attempt so the retry backoff never holds the
-                        // EpochTransition mutex across a sleep. on_finalized is
-                        // idempotent, so re-entry after BlockNotFound is safe.
                         let outcome = {
                             let mut et_guard = et.lock().await;
-                            et_guard.on_finalized(hash, number).await
+                            et_guard.on_finalized(number).await
                         };
                         match outcome {
                             Ok(TransitionOutcome::EpochAdvanced(_)) => {
-                                // Reset only on a real epoch advance.
                                 errors.store(0, Ordering::Relaxed);
-                                break;
                             }
-                            Ok(TransitionOutcome::Intra) => {
-                                // Intra-epoch re-delivery, missed-commit epoch, or
-                                // bridge-channel-full retry-stall.
-                                break;
-                            }
-                            Err(ReadError::BlockNotFound(_))
-                                if race_retries < BLOCK_LANDED_RETRIES =>
-                            {
-                                race_retries += 1;
-                                ctx_inner.sleep(BLOCK_LANDED_BACKOFF).await;
-                                continue;
-                            }
-                            // Block never landed after the full backoff window —
-                            // this is no longer a microsecond race; treat as a real
-                            // error so the consecutive-error threshold can act.
-                            Err(ReadError::BlockNotFound(_)) => {
-                                let count = errors.fetch_add(1, Ordering::Relaxed) + 1;
-                                error!(
-                                    block_number = number,
-                                    block_hash = ?hash,
-                                    consecutive_errors = count,
-                                    retries = race_retries,
-                                    "epoch_transition.on_finalized: finalized block never \
-                                     landed in reth after retry window; treating as fatal"
-                                );
-                                if count >= MAX_CONSECUTIVE_ON_FINALIZED_ERRORS {
-                                    shutdown.cancel();
-                                }
-                                break;
-                            }
+                            Ok(TransitionOutcome::Intra) => {}
                             Err(e) => {
                                 let count = errors.fetch_add(1, Ordering::Relaxed) + 1;
                                 error!(
                                     block_number = number,
-                                    block_hash = ?hash,
                                     consecutive_errors = count,
                                     error = ?e,
                                     "epoch_transition.on_finalized failed"
@@ -764,6 +737,19 @@ impl DposLayer {
                                 break;
                             }
                         }
+                        let parked = { et.lock().await.has_pending_boundary() };
+                        if !parked {
+                            break;
+                        }
+                        if retries >= fluentbase_staking_reader::epoch_transition::PENDING_RETRY_LIMIT {
+                            error!(
+                                block_number = number,
+                                "pending boundary did not clear within the retry window"
+                            );
+                            break;
+                        }
+                        retries += 1;
+                        ctx_inner.sleep(fluentbase_staking_reader::epoch_transition::PENDING_RETRY_BACKOFF).await;
                     }
                 }));
             });
@@ -799,10 +785,12 @@ impl DposLayer {
 
             // FluentApp constructor args.
             genesis: genesis_block,
-            payload_builder: payload_builder_handle,
             beacon_engine: beacon_engine_handle,
-            payload_attrs_builder,
-            payload_resolve_time: Duration::from_millis(300),
+            deriver,
+            executed,
+            assembler,
+            fee_recipient,
+            target_gas_limit,
             boundary_hook,
 
             // Executor cold-start state.
@@ -817,8 +805,6 @@ impl DposLayer {
             fcu_pace: Duration::from_millis(20),
             canonical_state: canonical_state.clone(),
 
-            _attrs: PhantomData::<EthPayloadAttributes>,
-
             slasher_staking_address: staking_address,
             slasher_reader: reader_for_slasher,
             slasher_latest_finalized_hash,
@@ -826,7 +812,6 @@ impl DposLayer {
             slasher_sink,
             slasher_wal_partition: "slasher-wal".into(),
 
-            extra_data_registry: extra_data_registry.clone(),
             feed,
         }
         .build(ctx.with_label("outer_engine"))

@@ -12,7 +12,7 @@
 //!    `EpochTransition` (the validator wires a live `OracleHandle`; the follower
 //!    tracks no peers).
 
-use crate::{block::Block, executor};
+use crate::{executor, order_block::OrderBlock};
 use commonware_broadcast::buffered;
 use commonware_consensus::{marshal::Update, Reporter};
 use commonware_cryptography::{
@@ -26,7 +26,6 @@ use commonware_utils::ordered::Set;
 use fluentbase_bls::PeerPubkey;
 use fluentbase_staking_reader::PeerSetSink;
 use rand_08::SeedableRng as _;
-use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use std::future::Future;
 
 /// A never-used broadcast mailbox. The follower has no consensus peers to
@@ -36,7 +35,7 @@ use std::future::Future;
 pub(super) fn null_broadcast<E: Clock + Spawner + Metrics + BufferPooler>(
     context: E,
     mailbox_size: usize,
-) -> buffered::Mailbox<PublicKey, Block> {
+) -> buffered::Mailbox<PublicKey, OrderBlock> {
     // Deterministic throwaway key for the unused engine (seed 0 — never signs).
     let mut rng = rand_08::rngs::StdRng::seed_from_u64(0);
     let private_key = PrivateKey::random(&mut rng);
@@ -55,26 +54,26 @@ pub(super) fn null_broadcast<E: Clock + Spawner + Metrics + BufferPooler>(
     mailbox
 }
 
-/// Forwards every marshal `Update<Block>` to the executor's `Command::Finalize`.
+/// Forwards every marshal `Update<OrderBlock>` to the executor's `Command::Finalize`.
 /// The validator path uses `FluentApp` as this `Reporter` (application.rs:311);
 /// the follower has no app, so this newtype carries the executor mailbox alone.
 #[derive(Clone)]
 pub(super) struct AppReporter {
-    executor: executor::Mailbox<EthPayloadAttributes>,
+    executor: executor::Mailbox,
 }
 
 impl AppReporter {
-    pub(super) fn new(executor: executor::Mailbox<EthPayloadAttributes>) -> Self {
+    pub(super) fn new(executor: executor::Mailbox) -> Self {
         Self { executor }
     }
 }
 
 impl Reporter for AppReporter {
-    type Activity = Update<Block>;
+    type Activity = Update<OrderBlock>;
 
-    async fn report(&mut self, activity: Update<Block>) {
+    async fn report(&mut self, activity: Update<OrderBlock>) {
         // The `Exact` ack rides inside `Update::Block`; the executor fires it after
-        // EL `new_payload`. A closed mailbox means the executor task already exited —
+        // derive + import. A closed mailbox means the executor task already exited —
         // the dropped ack trips the marshal's `PendingAcks` supervisor cascade
         // (same recovery path as the validator), so just log the send failure.
         if let Err(e) = self.executor.send(executor::Message {

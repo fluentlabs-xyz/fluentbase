@@ -2,11 +2,9 @@
 //! staking) from parsed CLI args into one [`ResolvedModes`] struct, keeping the
 //! construction out of `main`.
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use alloy_primitives::{Address, Bytes};
-use alloy_rpc_types_engine::PayloadId;
-use dashmap::DashMap;
+use alloy_primitives::Address;
 use fluentbase_node::{
     cert_follow::CertFollowerConfig,
     consensus_rpc::FeedStateHandle,
@@ -47,7 +45,6 @@ pub(crate) fn resolve_node_modes(
     ext: &FluentNodeArgs,
     chain: Chain,
     debug_consensus_url: Option<&str>,
-    extra_data_registry: Arc<DashMap<PayloadId, Bytes>>,
 ) -> ResolvedModes {
     let mut modes = ResolvedModes::default();
 
@@ -84,7 +81,6 @@ pub(crate) fn resolve_node_modes(
         modes.cert_rpc_feed = Some(feed_handle.clone());
         modes.dpos_config = Some(DposConfig::from_args(
             &ext.dpos_cfg,
-            extra_data_registry.clone(),
             Some(CertFeed {
                 sink: feed_sink,
                 rx: feed_rx,

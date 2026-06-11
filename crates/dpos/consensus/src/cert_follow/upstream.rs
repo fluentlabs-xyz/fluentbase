@@ -8,7 +8,7 @@
 //! (`UpstreamActor`, follow/upstream/mod.rs:22), adapted to fluentbase's
 //! consensus/node crate split.
 
-use crate::{block::Block, digest::Digest};
+use crate::{digest::Digest, order_block::OrderBlock};
 use commonware_consensus::{simplex::types::Finalization, types::Height};
 use fluentbase_bls::Scheme as BlsScheme;
 use std::future::Future;
@@ -21,8 +21,10 @@ use std::future::Future;
 pub struct UpstreamFinalized {
     /// The finalization certificate (2f+1 BLS multisig over `block`'s digest).
     pub finalization: Finalization<BlsScheme, Digest>,
-    /// The finalized block the certificate commits to.
-    pub block: Block,
+    /// The finalized ordering artifact the certificate commits to. Its
+    /// `result` field is the only REAL EVM hash the follower can use to drive
+    /// reth EL-sync at cold-start (the digest is an ordering digest).
+    pub block: OrderBlock,
 }
 
 /// By-height pull seam for the marshal's gap-repair resolver. `Clone` so the

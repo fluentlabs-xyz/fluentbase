@@ -72,6 +72,13 @@ pub trait PeerSetSink {
 /// can take a read lock from a separate task to fall back to historical
 /// committees when the on-chain prune cursor has advanced past evidence
 /// epoch (`get_by_epoch`). Only ET writes; the slasher only reads.
+/// Re-poke cadence for a parked boundary (see
+/// [`EpochTransition::has_pending_boundary`]): callers retry `on_finalized`
+/// with this backoff until the park clears.
+pub const PENDING_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(200);
+/// Retry ceiling (~60s at the backoff above) before giving up loudly.
+pub const PENDING_RETRY_LIMIT: u32 = 300;
+
 pub struct EpochTransition<R, S, E: Storage + Metrics + BufferPooler> {
     reader: R,
     cache: std::sync::Arc<tokio::sync::Mutex<ValidatorSetCache<E>>>,
@@ -96,6 +103,22 @@ pub struct EpochTransition<R, S, E: Storage + Metrics + BufferPooler> {
     /// the relative epoch numbering (consensus `OriginEpocher` is frozen at
     /// startup, so this is treated as fixed identically to the interval).
     frozen_activation: Option<u64>,
+    /// Canonical EVM hash by height — the deferred-execution re-key: committee
+    /// reads resolve at `number − result_lag` (a result-final height) instead
+    /// of the ordering-finalized block's own hash, which has no executed state
+    /// yet. Provider-backed (by NUMBER, never best_number).
+    executed_hash: std::sync::Arc<dyn Fn(u64) -> Option<B256> + Send + Sync>,
+    /// Result lag K (passed in — this crate must not depend on consensus).
+    result_lag: u64,
+    /// Cold-start anchor height; floor for the read-height clamp (heights at
+    /// or below the anchor are executed by construction).
+    anchor_height: Option<u64>,
+    /// Boundary remembered while the executed tip lagged its read height.
+    /// ONLY boundary heights are stored: a non-boundary apply is Intra by
+    /// construction (nothing to replay), and an unconditional overwrite
+    /// would clobber a remembered boundary with a non-boundary during a
+    /// sustained execution lag — losing the epoch enter forever.
+    pending_boundary: Option<u64>,
 }
 
 impl<R, S, E> EpochTransition<R, S, E>
@@ -104,12 +127,15 @@ where
     S: PeerSetSink,
     E: Storage + Metrics + BufferPooler,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         reader: R,
         cache: std::sync::Arc<tokio::sync::Mutex<ValidatorSetCache<E>>>,
         sink: S,
         max_peer_set_size: usize,
         boundary_tx: Option<tokio::sync::mpsc::Sender<(u64, crate::reader::ValidatorSetSnapshot)>>,
+        executed_hash: std::sync::Arc<dyn Fn(u64) -> Option<B256> + Send + Sync>,
+        result_lag: u64,
     ) -> Self {
         Self {
             reader,
@@ -120,7 +146,43 @@ where
             boundary_tx,
             frozen_interval: None,
             frozen_activation: None,
+            executed_hash,
+            result_lag,
+            anchor_height: None,
+            pending_boundary: None,
         }
+    }
+
+    /// Activation-relative boundary predicate over the FROZEN geometry —
+    /// usable without any state read once `cold_start` froze it.
+    fn is_epoch_boundary_frozen(&self, number: u64) -> Option<bool> {
+        let interval = self.frozen_interval?;
+        let activation = self.frozen_activation?;
+        Some(
+            (number + 1)
+                .saturating_sub(activation)
+                .is_multiple_of(interval as u64),
+        )
+    }
+
+    /// Whether a boundary is parked awaiting execution catch-up. The replay
+    /// fires on the next `on_finalized` call — callers MUST re-poke (retry
+    /// with backoff) when this is set after their delivery was processed:
+    /// during epoch catch-up the parked boundary IS the last deliverable
+    /// block, so no further delivery will ever arrive to trigger the replay.
+    pub fn has_pending_boundary(&self) -> bool {
+        self.pending_boundary.is_some()
+    }
+
+    /// The executed height committee reads resolve at for an
+    /// ordering-finalized `number`: `number − result_lag`, clamped to the
+    /// cold-start anchor (≤ anchor is executed by construction). Frozen
+    /// committee arrays + one-shot consensus keys make the snapshot content
+    /// hash-invariant across any executed in-epoch hash, so the lagged read
+    /// point loses nothing.
+    fn read_height_for(&self, number: u64) -> u64 {
+        let floor = self.anchor_height.unwrap_or(0);
+        number.saturating_sub(self.result_lag).max(floor)
     }
 
     /// Apply one **finalized** block `B` (delivered sequentially via
@@ -139,10 +201,42 @@ where
     ///   NOT advanced.
     /// - `EpochAdvanced(epoch)` — the bridge trigger was delivered and
     ///   `last_tracked_epoch` advanced to `epoch`.
-    pub async fn on_finalized(
+    pub async fn on_finalized(&mut self, number: u64) -> Result<TransitionOutcome, ReadError> {
+        if self.frozen_interval.is_none() {
+            return Err(ReadError::Backend(
+                "on_finalized before cold_start (epoch geometry not frozen)".into(),
+            ));
+        }
+        // Replay FIRST: a boundary remembered while the executed tip lagged is
+        // applied before the new delivery, keeping boundary handling in height
+        // order. A single slot suffices: boundaries are interval-apart
+        // (devnet 32, governance-settable) ≫ result_lag + the executor ack
+        // window, so two can never be pending at once.
+        if let Some(b) = self.pending_boundary {
+            if let Some(at) = (self.executed_hash)(self.read_height_for(b)) {
+                self.pending_boundary = None;
+                let replay = self.apply_at(b, at).await?;
+                tracing::debug!(boundary = b, ?replay, "replayed pending boundary");
+            }
+        }
+        let Some(at) = (self.executed_hash)(self.read_height_for(number)) else {
+            // Executed tip hasn't reached number − result_lag yet (transient:
+            // bounded by the executor ack window). Remember ONLY boundaries.
+            if self.is_epoch_boundary_frozen(number) == Some(true) {
+                self.pending_boundary = Some(number);
+            }
+            return Ok(TransitionOutcome::Intra);
+        };
+        self.apply_at(number, at).await
+    }
+
+    /// The pre-deferred `on_finalized` body: epoch geometry freeze +
+    /// cold-start bootstrap (incl. boundary-resume E+1) + boundary branch,
+    /// reading committee state at the RESOLVED executed hash `at`.
+    async fn apply_at(
         &mut self,
-        at: B256,
         number: u64,
+        at: B256,
     ) -> Result<TransitionOutcome, ReadError> {
         // `epochBlockInterval` is treated as FIXED after genesis: the consensus
         // `FixedEpocher` is frozen at startup, so acting on a live governance
@@ -305,17 +399,18 @@ where
         Ok(TransitionOutcome::EpochAdvanced(epoch))
     }
 
-    /// Cold start: read the **current finalized** committee at `head` and
-    /// apply it **once**. No historical replay — there is no point taking an
-    /// outdated state because the network has moved on, and anything older
-    /// than the contract's retention window is pruned on-chain anyway.
-    /// Delegates to the steady-state path.
+    /// Cold start: freeze the epoch geometry and read the **current
+    /// finalized** committee at the EXPLICIT anchor hash `head` (the anchor
+    /// is executed by construction — the one height where no `executed_hash`
+    /// resolution is needed), apply once. Also pins the read-height floor for
+    /// every later `on_finalized`. MUST run before `on_finalized`.
     pub async fn cold_start(
         &mut self,
         head: B256,
         head_number: u64,
     ) -> Result<TransitionOutcome, ReadError> {
-        self.on_finalized(head, head_number).await
+        self.anchor_height = Some(head_number);
+        self.apply_at(head_number, head).await
     }
 }
 
@@ -384,6 +479,27 @@ mod tests {
         }
     }
 
+    /// Test ctor: a resolver that always resolves to `h` (mock chain where
+    /// every height is executed), result_lag = 3.
+    fn et(
+        reader: MockReader,
+        cache: std::sync::Arc<tokio::sync::Mutex<ValidatorSetCache<deterministic::Context>>>,
+        sink: RecordingSink,
+        max: usize,
+        tx: Option<tokio::sync::mpsc::Sender<(u64, crate::reader::ValidatorSetSnapshot)>>,
+        h: B256,
+    ) -> EpochTransition<MockReader, RecordingSink, deterministic::Context> {
+        EpochTransition::new(
+            reader,
+            cache,
+            sink,
+            max,
+            tx,
+            std::sync::Arc::new(move |_n| Some(h)),
+            3,
+        )
+    }
+
     /// Records every `track` call.
     #[derive(Clone, Default)]
     struct RecordingSink(Arc<Mutex<Vec<(u64, usize)>>>);
@@ -403,7 +519,8 @@ mod tests {
                 ValidatorSetCache::init(ctx).await.unwrap(),
             ));
             let sink = RecordingSink::default();
-            let mut et = EpochTransition::new(
+            let h = B256::repeat_byte(0x11);
+            let mut et = et(
                 MockReader {
                     committee: 5,
                     undelegate: 7,
@@ -413,16 +530,16 @@ mod tests {
                 sink.clone(),
                 64,
                 None,
+                h,
             );
-            let h = B256::repeat_byte(0x11);
-            // block 500, interval 100 ⇒ epoch 5: first (cold-start) call bootstraps
+            // block 500, interval 100 ⇒ epoch 5: cold_start bootstraps
             // the current epoch ⇒ EpochAdvanced(5)
-            let outcome_first = et.on_finalized(h, 500).await.unwrap();
+            let outcome_first = et.cold_start(h, 500).await.unwrap();
             assert_eq!(outcome_first, TransitionOutcome::EpochAdvanced(5));
             // re-delivery on a MID-epoch block (550 is not the last block of epoch
             // 5, so it is not a boundary) ⇒ Intra. (599 would be the last block of
             // epoch 5 and now legitimately spawns epoch 6 — see the boundary test.)
-            let outcome_second = et.on_finalized(h, 550).await.unwrap();
+            let outcome_second = et.on_finalized(550).await.unwrap();
             assert_eq!(outcome_second, TransitionOutcome::Intra);
             {
                 let log = sink.0.lock().unwrap();
@@ -442,7 +559,8 @@ mod tests {
                 ValidatorSetCache::init(ctx).await.unwrap(),
             ));
             let sink = RecordingSink::default();
-            let mut et = EpochTransition::new(
+            let h = B256::repeat_byte(0x22);
+            let mut et = et(
                 MockReader {
                     committee: 5,
                     undelegate: 7,
@@ -452,21 +570,21 @@ mod tests {
                 sink.clone(),
                 64,
                 None,
+                h,
             );
-            let h = B256::repeat_byte(0x22);
             // cold-start mid-epoch-5 ⇒ bootstrap epoch 5
             assert_eq!(
-                et.on_finalized(h, 550).await.unwrap(),
+                et.cold_start(h, 550).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(5)
             );
             // last block of epoch 5 ((599+1)%100==0) ⇒ spawn epoch 6 one ahead
             assert_eq!(
-                et.on_finalized(h, 599).await.unwrap(),
+                et.on_finalized(599).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(6)
             );
             // mid-epoch-6 re-delivery ⇒ Intra (already tracked 6)
             assert_eq!(
-                et.on_finalized(h, 650).await.unwrap(),
+                et.on_finalized(650).await.unwrap(),
                 TransitionOutcome::Intra
             );
             let log = sink.0.lock().unwrap();
@@ -481,7 +599,8 @@ mod tests {
                 ValidatorSetCache::init(ctx).await.unwrap(),
             ));
             let sink = RecordingSink::default();
-            let mut et = EpochTransition::new(
+            let h = B256::repeat_byte(0x55);
+            let mut et = et(
                 MockReader {
                     committee: 5,
                     undelegate: 7,
@@ -491,14 +610,14 @@ mod tests {
                 sink.clone(),
                 64,
                 None,
+                h,
             );
-            let h = B256::repeat_byte(0x55);
             // Cold-start EXACTLY on the epoch-5 boundary (599 = last block of epoch 5,
             // (599+1)%100==0). A finalized boundary means the network is in epoch 6 →
             // bootstrap epoch 6, NOT epoch 5: entering 5 would deadlock a catch-up node
             // (its hint last(5) == the marshal floor → a no-op).
             assert_eq!(
-                et.on_finalized(h, 599).await.unwrap(),
+                et.cold_start(h, 599).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(6),
             );
             assert_eq!(
@@ -515,7 +634,8 @@ mod tests {
             let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
                 ValidatorSetCache::init(ctx).await.unwrap(),
             ));
-            let mut et = EpochTransition::new(
+            let h = B256::repeat_byte(0x22);
+            let mut et = et(
                 MockReader {
                     committee: 10,
                     undelegate: 7,
@@ -525,9 +645,10 @@ mod tests {
                 RecordingSink::default(),
                 4, // max_peer_set_size < committee
                 None,
+                h,
             );
             assert!(matches!(
-                et.on_finalized(B256::repeat_byte(0x22), 200).await,
+                et.cold_start(h, 200).await,
                 Err(ReadError::CommitteeTooLarge {
                     epoch: 2,
                     size: 10,
@@ -543,7 +664,8 @@ mod tests {
             let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
                 ValidatorSetCache::init(ctx).await.unwrap(),
             ));
-            let mut et = EpochTransition::new(
+            let h = B256::repeat_byte(0x01);
+            let mut et = et(
                 MockReader {
                     committee: 3,
                     undelegate: 7,
@@ -553,9 +675,10 @@ mod tests {
                 RecordingSink::default(),
                 64,
                 None,
+                h,
             );
             assert!(matches!(
-                et.on_finalized(B256::repeat_byte(0x01), 100).await,
+                et.cold_start(h, 100).await,
                 Err(ReadError::ZeroEpochInterval)
             ));
         });
@@ -568,7 +691,8 @@ mod tests {
                 ValidatorSetCache::init(ctx).await.unwrap(),
             ));
             let sink = RecordingSink::default();
-            let mut et = EpochTransition::new(
+            let h = B256::repeat_byte(0x44);
+            let mut et = et(
                 MockReader {
                     committee: 0,
                     undelegate: 7,
@@ -578,10 +702,10 @@ mod tests {
                 sink.clone(),
                 64,
                 None,
+                h,
             );
-            let h = B256::repeat_byte(0x44);
             // epoch 7, empty ⇒ Intra (empty-committee is a no-op, not an advance)
-            let outcome = et.on_finalized(h, 700).await.unwrap();
+            let outcome = et.cold_start(h, 700).await.unwrap();
             assert_eq!(outcome, TransitionOutcome::Intra);
             assert!(
                 sink.0.lock().unwrap().is_empty(),
@@ -618,7 +742,8 @@ mod tests {
             };
             boundary_tx.try_send((999, dummy)).expect("first slot");
             // Now channel is full.
-            let mut et = EpochTransition::new(
+            let h = B256::repeat_byte(0xC6);
+            let mut et = et(
                 MockReader {
                     committee: 3,
                     undelegate: 7,
@@ -628,9 +753,9 @@ mod tests {
                 sink.clone(),
                 64,
                 Some(boundary_tx),
+                h,
             );
-            let h = B256::repeat_byte(0xC6);
-            let outcome = et.on_finalized(h, 500).await.unwrap(); // epoch 5
+            let outcome = et.cold_start(h, 500).await.unwrap(); // epoch 5
             assert_eq!(
                 outcome,
                 TransitionOutcome::Intra,
@@ -651,7 +776,8 @@ mod tests {
             ));
             let sink = RecordingSink::default();
             let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
-            let mut et = EpochTransition::new(
+            let h = B256::repeat_byte(0xCD);
+            let mut et = et(
                 MockReader {
                     committee: 4,
                     undelegate: 7,
@@ -661,10 +787,10 @@ mod tests {
                 sink.clone(),
                 64,
                 Some(boundary_tx),
+                h,
             );
-            let h = B256::repeat_byte(0xCD);
-            et.on_finalized(h, 800).await.unwrap();
-            et.on_finalized(h, 850).await.unwrap();
+            et.cold_start(h, 800).await.unwrap();
+            et.on_finalized(850).await.unwrap();
             let first = boundary_rx.try_recv().expect("first boundary fires");
             assert_eq!(first.0, 8);
             assert_eq!(first.1.validators.len(), 4);
@@ -679,7 +805,8 @@ mod tests {
                 ValidatorSetCache::init(ctx).await.unwrap(),
             ));
             let sink = RecordingSink::default();
-            let mut et = EpochTransition::new(
+            let h = B256::repeat_byte(0x33);
+            let mut et = et(
                 MockReader {
                     committee: 3,
                     undelegate: 7,
@@ -689,9 +816,70 @@ mod tests {
                 sink.clone(),
                 64,
                 None,
+                h,
             );
-            et.cold_start(B256::repeat_byte(0x33), 1200).await.unwrap();
+            et.cold_start(h, 1200).await.unwrap();
             assert_eq!(*sink.0.lock().unwrap(), vec![(12, 3)]);
+        });
+    }
+
+    #[test]
+    fn lagging_execution_defers_boundary_and_replays_it() {
+        // Boundary at 599 arrives while the executed tip lags its read height →
+        // remembered; a subsequent NON-boundary unresolved height must NOT
+        // clobber it; once execution catches up, the next delivery replays the
+        // boundary and epoch 6 enters.
+        deterministic::Runner::default().start(|ctx| async move {
+            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
+                ValidatorSetCache::init(ctx).await.unwrap(),
+            ));
+            let sink = RecordingSink::default();
+            let h = B256::repeat_byte(0x66);
+            let resolvable = Arc::new(Mutex::new(true));
+            let resolvable_for_et = resolvable.clone();
+            let mut et = EpochTransition::new(
+                MockReader {
+                    committee: 5,
+                    undelegate: 7,
+                    interval: 100,
+                },
+                cache,
+                sink.clone(),
+                64,
+                None,
+                std::sync::Arc::new(move |_n| {
+                    resolvable_for_et.lock().unwrap().then_some(h)
+                }),
+                3,
+            );
+            assert_eq!(
+                et.cold_start(h, 550).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(5)
+            );
+
+            *resolvable.lock().unwrap() = false;
+            assert_eq!(
+                et.on_finalized(599).await.unwrap(),
+                TransitionOutcome::Intra,
+                "boundary deferred while execution lags"
+            );
+            assert_eq!(
+                et.on_finalized(600).await.unwrap(),
+                TransitionOutcome::Intra,
+                "non-boundary lag must not clobber the pending boundary"
+            );
+
+            *resolvable.lock().unwrap() = true;
+            assert_eq!(
+                et.on_finalized(601).await.unwrap(),
+                TransitionOutcome::Intra,
+                "601 itself is intra; the boundary fires via the replay"
+            );
+            assert_eq!(
+                *sink.0.lock().unwrap(),
+                vec![(5, 5), (6, 5)],
+                "epoch 6 entered via the pending-boundary replay"
+            );
         });
     }
 }

@@ -29,6 +29,7 @@ pub enum FeedError {
 #[derive(Default)]
 struct FeedState {
     latest_finalized: Option<CertifiedBlock>,
+    latest_result_finalized: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -62,24 +63,39 @@ impl FeedStateHandle {
 
     /// `consensus_getLatest` snapshot.
     pub fn latest(&self) -> ConsensusState {
+        let state = self.state.read().expect("feed state poisoned");
         ConsensusState {
-            latest_finalized: self
-                .state
-                .read()
-                .expect("feed state poisoned")
-                .latest_finalized
-                .clone(),
+            latest_finalized: state.latest_finalized.clone(),
+            latest_result_finalized: state.latest_result_finalized,
         }
     }
 
-    /// Called by the feed actor on each finalized block: update the snapshot and
-    /// fan the event out to `subscribe` listeners (best-effort — no listeners is fine).
+    /// Called by the feed actor on each finalized artifact: update both
+    /// finality tiers and fan the events out to `subscribe` listeners
+    /// (best-effort — no listeners is fine). The result tier is derived from
+    /// the artifact's `result` commitment: inclusion-finalizing height N
+    /// attests the derived hash of N − K.
     pub fn record_finalized(&self, block: CertifiedBlock, seen: u64) {
-        self.state
-            .write()
-            .expect("feed state poisoned")
-            .latest_finalized = Some(block.clone());
+        let result_tier = block.into_parts().ok().and_then(|(_, order)| {
+            (order.result != alloy_primitives::B256::ZERO)
+                .then(|| (order.height.saturating_sub(fluentbase_consensus::K), order.result))
+        });
+        {
+            let mut state = self.state.write().expect("feed state poisoned");
+            state.latest_finalized = Some(block.clone());
+            if let Some((h, _)) = result_tier {
+                state.latest_result_finalized =
+                    Some(state.latest_result_finalized.unwrap_or(0).max(h));
+            }
+        }
         let _ = self.events_tx.send(Event::Finalized { block, seen });
+        if let Some((height, executed_hash)) = result_tier {
+            let _ = self.events_tx.send(Event::ResultFinalized {
+                height,
+                executed_hash,
+                seen,
+            });
+        }
     }
 
     /// `consensus_getFinalization`: `Latest` from the snapshot; `Height(h)` from

@@ -23,12 +23,12 @@ mod stubs;
 mod upstream;
 
 use crate::{
-    application::BeaconEngineLike,
-    block::Block,
+    application::{BeaconEngineLike, DerivedBlockBuilder, ExecutedChain},
     dpos::{
         derive_cold_start_heights, read_consensus_archive_last_finalized, wait_for_activation_block,
     },
     executor,
+    order_block::{OrderBlock, K},
     outer::{follower_marshal_config, init_finalizations_archive, EpochSchemeProvider, MAX_REPAIR},
     scheme::epoch_committee_from_snapshot,
     OriginEpocher,
@@ -39,7 +39,7 @@ use alloy_rpc_types_engine::ForkchoiceState;
 use commonware_consensus::{
     marshal::{core::Actor as MarshalActor, Update},
     types::{Epoch, Height},
-    Heightable as _, Reporters,
+    Reporters,
 };
 use commonware_runtime::{tokio::Context, Clock as _, Handle, Metrics as _, Spawner as _};
 use eyre::{eyre, OptionExt as _, WrapErr as _};
@@ -49,10 +49,8 @@ use fluentbase_staking_reader::{
     EpochTransition, RethStakingStateReader, ValidatorSetCache,
 };
 use reth_chain_state::CanonicalInMemoryState;
-use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
 use reth_evm::ConfigureEvm;
-use reth_primitives_traits::SealedBlock;
 use reth_storage_api::{
     BlockHashReader, BlockNumReader, BlockReader, HeaderProvider, StateProviderFactory,
 };
@@ -109,10 +107,13 @@ impl CertFollowLayer {
     /// resolver + driver + the epoch-rotation forwarder, and start them under an
     /// internal supervisor. `upstream` serves the resolver's by-height pulls;
     /// `finalized_rx` is the live finalized-cert stream the node's WS actor pushes.
-    pub async fn launch<Provider, EvmConfig, BeaconEngine, U>(
+    #[allow(clippy::too_many_arguments)]
+    pub async fn launch<Provider, EvmConfig, BeaconEngine, D, XC, U>(
         ctx: Context,
         reth: CertFollowRethHandle<Provider, EvmConfig, BeaconEngine>,
         cfg: CertFollowConfig,
+        deriver: D,
+        executed: XC,
         upstream: U,
         finalized_rx: mpsc::Receiver<UpstreamFinalized>,
         shutdown: CancellationToken,
@@ -129,12 +130,13 @@ impl CertFollowLayer {
             + 'static,
         EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
         BeaconEngine: BeaconEngineLike<
-                PayloadAttrs = EthPayloadAttributes,
-                ExecutionData = SealedBlock<RethBlock>,
+                ExecutionData = D::Derived,
             > + Clone
             + Send
             + Sync
             + 'static,
+        D: DerivedBlockBuilder,
+        XC: ExecutedChain,
         U: CertUpstream,
     {
         let CertFollowRethHandle {
@@ -211,26 +213,34 @@ impl CertFollowLayer {
                     break;
                 };
                 let latest_block = latest.block;
-                let tip_hash = latest_block.block_hash();
-                let tip_height = latest_block.height().get();
+                // F-type: the upstream serves ORDERING artifacts — there is no
+                // EVM body to new_payload and the digest is unresolvable by
+                // reth. The only real EVM hash on the wire is the committee-
+                // attested `result` (derived hash of tip − K); FCU toward it
+                // and let reth devp2p backfill the bodies.
+                let tip_hash = latest_block.result;
+                let tip_height = latest_block.height.saturating_sub(K);
+                if tip_hash == B256::ZERO {
+                    info!(
+                        tip = latest_block.height,
+                        "cert-follow: upstream tip is inside the pre-K window; \
+                         nothing to EL-sync"
+                    );
+                    break;
+                }
                 info!(
                     tip_height,
                     anchor_height,
                     round = rounds,
-                    "cert-follow: driving reth EL-sync toward upstream tip"
+                    "cert-follow: driving reth EL-sync toward attested derived hash"
                 );
-                let _ = beacon_engine_handle
-                    .new_payload(latest_block.into_inner())
-                    .await;
                 let _ = beacon_engine_handle
                     .fork_choice_updated(
                         ForkchoiceState {
                             head_block_hash: tip_hash,
                             safe_block_hash: tip_hash,
                             finalized_block_hash: genesis_hash,
-                        },
-                        None,
-                    )
+                        })
                     .await;
 
                 // Wait for reth's backward-sync to canonicalize the tip (block_hash
@@ -268,7 +278,7 @@ impl CertFollowLayer {
                 let now_tip = upstream
                     .get_latest()
                     .await
-                    .map(|u| u.block.height().get())
+                    .map(|u| u.block.height.saturating_sub(K))
                     .unwrap_or(tip_height);
                 if catchup_gap_crossable(
                     tip_height,
@@ -377,6 +387,8 @@ impl CertFollowLayer {
             ctx.with_label("executor"),
             executor::Config {
                 beacon_engine: beacon_engine_handle,
+                deriver,
+                executed: executed.clone(),
                 marshal: marshal_mailbox.clone(),
                 fcu_heartbeat_interval,
                 last_consensus_finalized_height,
@@ -384,7 +396,6 @@ impl CertFollowLayer {
                 initial_finalized: (Height::new(checkpoint_height), checkpoint_hash),
                 initial_head: (Height::new(head_num), head_hash),
                 fcu_pace,
-                canonical_state,
             },
         );
 
@@ -401,12 +412,15 @@ impl CertFollowLayer {
             mpsc::channel::<(u64, fluentbase_staking_reader::reader::ValidatorSetSnapshot)>(64);
         let reader_for_et =
             RethStakingStateReader::new(provider.clone(), evm_config, staking_config);
+        let provider_for_et = provider.clone();
         let mut epoch_transition = EpochTransition::new(
             reader_for_et,
             cache,
             stubs::NullPeerSetSink,
             fluentbase_p2p::constants::MAX_PEER_SET_SIZE as usize,
             Some(boundary_tx),
+            Arc::new(move |n| provider_for_et.block_hash(n).ok().flatten()),
+            K,
         );
 
         // Scheme-registration forwarder. Spawned BEFORE cold_start so the
@@ -453,7 +467,6 @@ impl CertFollowLayer {
         let (resolver_actor, resolver_mailbox, resolver_rx) = resolver::try_init(
             ctx.with_label("resolver"),
             resolver::Config {
-                provider,
                 upstream,
                 mailbox_size,
             },
@@ -467,7 +480,7 @@ impl CertFollowLayer {
         let executor_handle = executor_actor.start();
         let resolver_handle = resolver_actor.start();
         let marshal_handle = marshal.start(
-            Reporters::<Update<Block>, stubs::AppReporter, driver::MarshalReporter>::from((
+            Reporters::<Update<OrderBlock>, stubs::AppReporter, driver::MarshalReporter>::from((
                 app_reporter,
                 marshal_reporter,
             )),

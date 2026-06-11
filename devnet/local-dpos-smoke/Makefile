@@ -65,6 +65,9 @@ smoke-full-restart:
 # Trustless cert-follower: subscribe-align + gap back-fill + tampered-cert reject.
 smoke-cert-follow:
 	@./scripts/case-cert-follow.sh
+# Deferred-execution observables: K-lag invariant, result commitment, EL-slowed validator.
+smoke-deferred:
+	@./scripts/case-deferred.sh
 # Aggregate (CI entry point).
 smoke-all:
 	@./scripts/run-all.sh

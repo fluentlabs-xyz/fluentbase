@@ -197,6 +197,7 @@ where
 pub async fn launch_consensus_node<Node, AddOns: RethRpcAddOns<Node>>(
     handle: &NodeHandle<Node, AddOns>,
     consensus_url: String,
+    two_tier_activation: Option<u64>,
 ) -> eyre::Result<()>
 where
     Node: FullNodeComponents<Types: DebugNode<Node>>,
@@ -218,7 +219,12 @@ where
         .node
         .task_executor
         .spawn_critical_task("consensus node worker", async move {
-            new_block_fetcher(beacon_engine_handle, Arc::new(block_provider)).await
+            new_block_fetcher(
+                beacon_engine_handle,
+                Arc::new(block_provider),
+                two_tier_activation,
+            )
+            .await
         });
     Ok(())
 }
@@ -229,6 +235,7 @@ async fn new_block_fetcher<
 >(
     engine_handle: ConsensusEngineHandle<T>,
     block_provider: P,
+    two_tier_activation: Option<u64>,
 ) {
     let mut block_stream = {
         let (tx, rx) = mpsc::channel::<P::Block>(64);
@@ -239,12 +246,38 @@ async fn new_block_fetcher<
         rx
     };
 
+    // Two-tier finality mirror (DPoS era only): an upstream block at height
+    // N > activation is INCLUSION-level — its execution result becomes
+    // committee-attested K blocks later (deferred execution). Finalizing on
+    // receipt would overclaim by K and permanently desync this node's
+    // `finalized` tag from the validators'. Lag finalized by K, clamped to
+    // the activation anchor (the validators' own floor); pre-activation
+    // (Tempo era / no activation configured) keeps finalize-on-receipt.
+    let mut recent: std::collections::BTreeMap<u64, B256> = std::collections::BTreeMap::new();
     while let Some(block) = block_stream.recv().await {
         let payload = T::block_to_payload(SealedBlock::new_unhashed(block));
         let block_hash = payload.block_hash();
+        let number = payload.block_number();
+        recent.insert(number, block_hash);
+        recent.retain(|n, _| n.saturating_add(64) > number);
+        let finalized = match two_tier_activation {
+            Some(activation) if number > activation => {
+                let result_final = fluentbase_consensus::result_final_height(number, activation);
+                recent
+                    .range(..=result_final)
+                    .next_back()
+                    .map(|(_, h)| *h)
+                    .unwrap_or(B256::ZERO)
+            }
+            _ => block_hash,
+        };
         // Send new events to execution client
         let _ = engine_handle.new_payload(payload).await;
-        let state = ForkchoiceState::same_hash(block_hash);
+        let state = ForkchoiceState {
+            head_block_hash: block_hash,
+            safe_block_hash: finalized,
+            finalized_block_hash: finalized,
+        };
         let _ = engine_handle.fork_choice_updated(state, None).await;
     }
 }

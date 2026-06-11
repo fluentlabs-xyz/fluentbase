@@ -5,7 +5,6 @@ use alloy_primitives::{Bytes, B256};
 use alloy_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
 use alloy_rpc_types_engine::PayloadId;
 use dashmap::DashMap;
-use fluentbase_consensus::PayloadAttrsBuilderLike;
 use fluentbase_types::PRECOMPILE_FEE_MANAGER;
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder, PayloadConfig,
@@ -51,24 +50,6 @@ impl FluentPayloadAttributesBuilder {
 impl PayloadAttributesBuilder<EthPayloadAttributes, Header> for FluentPayloadAttributesBuilder {
     fn build(&self, parent: &SealedHeader<Header>) -> EthPayloadAttributes {
         Self::build_attrs(parent.timestamp())
-    }
-}
-
-// `PayloadAttrsBuilderLike` is the consensus-side trait
-// used by `FluentApp::propose`, which calls `build(parent.header())` on a raw
-// `&Header` (not `&SealedHeader<Header>`; see `SealedBlock::header` returns
-// `&B::Header`). This impl shares the body with the reth-side
-// `PayloadAttributesBuilder` impl via `build_attrs`.
-impl PayloadAttrsBuilderLike for FluentPayloadAttributesBuilder {
-    type Attrs = EthPayloadAttributes;
-    type Header = Header;
-
-    fn build(&self, parent: &Header) -> EthPayloadAttributes {
-        Self::build_attrs(parent.timestamp())
-    }
-
-    fn payload_id(&self, parent_hash: B256, attrs: &EthPayloadAttributes) -> PayloadId {
-        reth_payload_primitives::payload_id(&parent_hash, attrs)
     }
 }
 

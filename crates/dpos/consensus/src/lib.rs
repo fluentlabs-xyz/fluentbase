@@ -4,16 +4,15 @@
 //! params, not awaited. Pinned against commonware `monorepo @ v2026.4.0`.
 //!
 //! Frozen leaves (collaborator-free):
-//!   [`digest`] (block hash IS the Simplex digest — no separate hashing),
+//!   [`digest`] (the OrderBlock keccak digest wrapper),
 //!   [`elector_seed`] (per-epoch RoundRobin leader seed),
 //!   [`timeouts`] (timeout family + commonware panic-invariant guard).
 //!
-//! Wiring layer ([`application`], [`block`], [`engine`], [`epoch_manager`],
+//! Wiring layer ([`application`], [`order_block`], [`engine`], [`epoch_manager`],
 //!   [`outer`], [`executor`], [`slasher`]): adapts upstream commonware
 //!   Simplex behaviour to the Fluent Reth execution layer.
 
 pub mod application;
-pub mod block;
 pub mod cert_follow;
 pub mod digest;
 pub mod dpos;
@@ -24,14 +23,17 @@ pub mod epocher;
 pub mod executor;
 pub mod extra_data;
 pub mod feed_sink;
+pub mod order_block;
 pub mod outer;
-pub mod reth_adapters;
 pub mod scheme;
 pub mod slasher;
 pub mod timeouts;
 
-pub use application::{BeaconEngineLike, FluentApp, PayloadAttrsBuilderLike, PayloadBuilderLike};
-pub use block::Block;
+pub use application::{
+    gas_limit_within_1_1024, step_gas_limit, BeaconEngineLike, DerivedBlock, DerivedBlockBuilder,
+    ExecutedChain,
+    FluentApp, OrderingAssembler, VERIFY_EXEC_BUDGET,
+};
 pub use cert_follow::{
     CertFollowConfig, CertFollowHandle, CertFollowLayer, CertFollowRethHandle, CertUpstream,
     UpstreamFinalized,
@@ -41,6 +43,8 @@ pub use dpos::{DposLayer, DposLayerConfig, DposLayerHandle, P2pParams, RethHandl
 pub use elector_seed::epoch_leader_seed;
 pub use epocher::OriginEpocher;
 pub use feed_sink::FeedSink;
+pub use order_block::{anchor_order_block, result_target, OrderBlock, ResultTarget, K, result_final_height,
+};
 pub use outer::{MarshalMailbox, OuterBuilder, OuterEngine};
 pub use timeouts::ConsensusTimeouts;
 

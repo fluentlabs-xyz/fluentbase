@@ -79,8 +79,13 @@ where
         + Send
         + Sync
         + 'static,
-    <N as FullNodeComponents>::Evm:
-        reth_evm::ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
+    <N as FullNodeComponents>::Evm: reth_evm::ConfigureEvm<
+            Primitives = EthPrimitives,
+            NextBlockEnvCtx = reth_evm::NextBlockEnvAttributes,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     let (handle_tx, handle_rx) = oneshot::channel::<FullNode<N, AddOns>>();
     let (dead_tx, dead_rx) = oneshot::channel::<()>();
@@ -144,8 +149,13 @@ where
         + Send
         + Sync
         + 'static,
-    <N as FullNodeComponents>::Evm:
-        reth_evm::ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
+    <N as FullNodeComponents>::Evm: reth_evm::ConfigureEvm<
+            Primitives = EthPrimitives,
+            NextBlockEnvCtx = reth_evm::NextBlockEnvAttributes,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     let chain_id = node.chain_spec().chain_id();
     let staking_config = fluentbase_staking_reader::reader::StakingReaderConfig::from_json_path(
@@ -161,7 +171,9 @@ where
     let reth = CertFollowRethHandle {
         provider: node.provider.clone(),
         evm_config: node.evm_config.clone(),
-        beacon_engine_handle: node.add_ons_handle.beacon_engine_handle.clone(),
+        beacon_engine_handle: crate::importer::RethImporter::from_env(
+            node.add_ons_handle.beacon_engine_handle.clone(),
+        )?,
         chain_id,
         canonical_state: node.provider.canonical_state(),
         genesis_hash: node.chain_spec().genesis_hash(),
@@ -182,10 +194,16 @@ where
         fcu_pace: Duration::from_millis(20),
     };
 
+    let deriver =
+        crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
+    let executed = crate::ordering::ProviderExecutedChain(node.provider.clone());
+
     let mut handle = CertFollowLayer::launch(
         ctx,
         reth,
         follow_cfg,
+        deriver,
+        executed,
         upstream_handle,
         finalized_rx,
         shutdown_token.clone(),

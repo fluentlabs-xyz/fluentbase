@@ -187,7 +187,11 @@ impl UpstreamActor {
 
 /// Decode a live `Event::Finalized` into the engine's [`UpstreamFinalized`].
 fn decode_finalized(event: Event) -> Option<UpstreamFinalized> {
-    let Event::Finalized { block, .. } = event;
+    let Event::Finalized { block, .. } = event else {
+        // Result-tier events carry no cert+artifact pair; the follower's
+        // result view comes from the `result` field of inclusion events.
+        return None;
+    };
     match block.into_parts() {
         Ok((finalization, block)) => Some(UpstreamFinalized {
             finalization,

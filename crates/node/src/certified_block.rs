@@ -1,10 +1,10 @@
 //! `CertifiedBlock` — the wire unit a cert-follower pulls from an upstream and
-//! verifies: a finalized block paired with its consensus finalization certificate.
+//! verifies: a finalized ORDERING artifact paired with its consensus
+//! finalization certificate.
 //!
 //! Mirrors tempo's `consensus_getFinalization` DTO. Both the certificate and the
 //! block ride as hex: the certificate is the commonware `Finalization` codec, the
-//! block is fluentbase's RLP/commonware-codec `Block` (which, unlike tempo's
-//! serde-native block, is not serde — so it is hex-encoded too).
+//! block is fluentbase's commonware-codec `OrderBlock`.
 //!
 //! `epoch`/`view`/`digest` are informational (debug + by-height indexing). The
 //! follower's trust comes from decoding and verifying `certificate`, never from
@@ -12,10 +12,10 @@
 
 use alloy_primitives::B256;
 use commonware_codec::{Decode as _, DecodeExt as _, Encode as _};
-use commonware_consensus::{simplex::types::Finalization, Heightable as _};
+use commonware_consensus::simplex::types::Finalization;
 use eyre::WrapErr as _;
 use fluentbase_bls::Scheme as BlsScheme;
-use fluentbase_consensus::{Block, Digest};
+use fluentbase_consensus::{Digest, OrderBlock};
 use serde::{Deserialize, Serialize};
 
 /// The finalization certificate paired with the block it finalizes.
@@ -30,15 +30,15 @@ pub struct CertifiedBlock {
     pub digest: B256,
     /// Hex-encoded `Finalization<BlsScheme, Digest>` (commonware codec).
     pub certificate: String,
-    /// Hex-encoded `Block` (RLP via commonware codec).
+    /// Hex-encoded `OrderBlock` (commonware codec).
     pub block: String,
 }
 
 impl CertifiedBlock {
     /// Build from the archive's typed `(cert, block)` (server side).
-    pub fn from_parts(cert: &Cert, block: &Block) -> Self {
+    pub fn from_parts(cert: &Cert, block: &OrderBlock) -> Self {
         Self {
-            height: block.height().get(),
+            height: block.height,
             epoch: cert.proposal.round.epoch().get(),
             view: cert.proposal.round.view().get(),
             digest: cert.proposal.payload.0,
@@ -57,7 +57,7 @@ impl CertifiedBlock {
     /// ~512 MB allocation and OOM the follower (audit R4-5). A real finalization
     /// has ≤ the committee size (≤ `MAX_PEER_SET_SIZE`) signers; exact participant
     /// validation still happens at cert-verify time against the per-epoch scheme.
-    pub fn into_parts(&self) -> eyre::Result<(Cert, Block)> {
+    pub fn into_parts(&self) -> eyre::Result<(Cert, OrderBlock)> {
         let cert_bytes = hex::decode(&self.certificate).wrap_err("decode certificate hex")?;
         let cert = Cert::decode_cfg(
             cert_bytes.as_slice(),
@@ -65,7 +65,7 @@ impl CertifiedBlock {
         )
         .wrap_err("decode finalization certificate")?;
         let block_bytes = hex::decode(&self.block).wrap_err("decode block hex")?;
-        let block = Block::decode(block_bytes.as_slice()).wrap_err("decode block")?;
+        let block = OrderBlock::decode(block_bytes.as_slice()).wrap_err("decode block")?;
         Ok((cert, block))
     }
 }

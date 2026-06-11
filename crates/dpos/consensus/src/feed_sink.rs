@@ -9,7 +9,7 @@
 //! would balloon the already-8-generic `OuterEngine`; a concrete channel sink
 //! is the minimal wiring.
 
-use crate::block::Block;
+use crate::order_block::OrderBlock;
 use commonware_consensus::{marshal::Update, types::Height, Heightable as _, Reporter};
 use commonware_utils::Acknowledgement as _;
 use tokio::sync::mpsc;
@@ -30,9 +30,9 @@ impl FeedSink {
 }
 
 impl Reporter for FeedSink {
-    type Activity = Update<Block>;
+    type Activity = Update<OrderBlock>;
 
-    async fn report(&mut self, activity: Update<Block>) {
+    async fn report(&mut self, activity: Update<OrderBlock>) {
         match activity {
             // Forward the height, then acknowledge immediately: the feed is a
             // passive observer and must never add backpressure (the marshal

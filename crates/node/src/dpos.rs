@@ -56,7 +56,7 @@ where
     }
 }
 
-use crate::payload::FluentPayloadAttributesBuilder;
+use crate::ordering::{PoolAssembler, ProviderExecutedChain};
 
 /// Operator-supplied DPoS configuration (parsed from CLI/env in `main.rs`).
 ///
@@ -84,12 +84,6 @@ pub struct DposConfig {
     /// EIP-2335 / Web3 Secret Storage v3 keystore JSON for the slasher EOA.
     pub slasher_keystore_path: Option<PathBuf>,
     pub slasher_keystore_password_file: Option<PathBuf>,
-    /// Shared `extra_data` registry — same `Arc<DashMap>` instance is also
-    /// passed to `FluentNode::with_extra_data_registry` so payload-builder
-    /// (reader) and `OuterBuilder`/`FluentApp::propose` (writer) see the
-    /// same map.
-    pub extra_data_registry:
-        Arc<dashmap::DashMap<alloy_rpc_types_engine::PayloadId, alloy_primitives::Bytes>>,
     /// DEVNET-ONLY: serve commonware consensus metrics (prometheus text) on this
     /// host port for the smoke regression suite. `None` = disabled (prod default).
     pub metrics_port: Option<u16>,
@@ -213,13 +207,7 @@ impl DposConfig {
     /// and `cert_feed`. Only reached when `--dpos` is set, so the
     /// `required_if_eq("dpos", "true")` clap rules guarantee `peer_key_path` /
     /// `staking_config_path` / `bootstrappers_path` are `Some`.
-    pub fn from_args(
-        args: &DposArgs,
-        extra_data_registry: Arc<
-            dashmap::DashMap<alloy_rpc_types_engine::PayloadId, alloy_primitives::Bytes>,
-        >,
-        cert_feed: Option<CertFeed>,
-    ) -> Self {
+    pub fn from_args(args: &DposArgs, cert_feed: Option<CertFeed>) -> Self {
         Self {
             bls_key_path: args.dpos_bls_key_path.clone(),
             bls_keystore_path: args.dpos_bls_keystore_path.clone(),
@@ -240,7 +228,6 @@ impl DposConfig {
             dialable: args.dpos_dialable,
             slasher_keystore_path: args.dpos_slasher_keystore_path.clone(),
             slasher_keystore_password_file: args.dpos_slasher_keystore_password_file.clone(),
-            extra_data_registry,
             metrics_port: args.dpos_metrics_port,
             cert_feed,
         }
@@ -281,7 +268,13 @@ where
         + Send
         + Sync
         + 'static,
-    <N as FullNodeComponents>::Evm: Clone + Send + Sync + 'static,
+    <N as FullNodeComponents>::Evm: reth_evm::ConfigureEvm<
+            Primitives = EthPrimitives,
+            NextBlockEnvCtx = reth_evm::NextBlockEnvAttributes,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     let (handle_tx, handle_rx) = oneshot::channel::<FullNode<N, AddOns>>();
     let (dead_tx, dead_rx) = oneshot::channel::<()>();
@@ -351,7 +344,13 @@ where
         + Send
         + Sync
         + 'static,
-    <N as FullNodeComponents>::Evm: Clone + Send + Sync + 'static,
+    <N as FullNodeComponents>::Evm: reth_evm::ConfigureEvm<
+            Primitives = EthPrimitives,
+            NextBlockEnvCtx = reth_evm::NextBlockEnvAttributes,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     let chain_id = node.chain_spec().chain_id();
     let bls_keypair = load_bls_keypair(&cfg, chain_id)?;
@@ -406,12 +405,26 @@ where
     let reth = RethHandle {
         provider: node.provider.clone(),
         evm_config: node.evm_config.clone(),
-        payload_builder_handle: node.payload_builder_handle.clone(),
-        beacon_engine_handle: node.add_ons_handle.beacon_engine_handle.clone(),
+        beacon_engine_handle: crate::importer::RethImporter::from_env(
+            node.add_ons_handle.beacon_engine_handle.clone(),
+        )?,
         chain_id,
         canonical_state,
         genesis_hash,
     };
+
+    // Deferred-execution collaborators, all over the node's own provider/EVM:
+    // derive (reth-evm BlockBuilder), the derived-chain view, and the
+    // pool-backed ordering assembler.
+    let deriver = crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
+    let executed = ProviderExecutedChain(node.provider.clone());
+    let assembler = Arc::new(PoolAssembler::new(node.pool.clone(), executed.clone()));
+    // The protocol fee manager — same recipient the pre-deferred attrs
+    // builder used; uniform across honest nodes (agreed data once embedded).
+    let fee_recipient = fluentbase_types::PRECOMPILE_FEE_MANAGER;
+    // Gas-limit target = the chain's genesis gas limit (protocol default; the
+    // EIP-1559 ±1/1024 step walks the agreed limit toward it).
+    let target_gas_limit = node.chain_spec().genesis().gas_limit;
 
     // Cert-feed: the FeedSink goes DOWN into the marshal as its 2nd Reporter; the
     // receiver + state handle stay here to drive the node-side feed actor + RPC.
@@ -430,8 +443,11 @@ where
             listen,
             dialable: cfg.dialable,
         },
-        payload_attrs_builder: FluentPayloadAttributesBuilder,
-        extra_data_registry: cfg.extra_data_registry,
+        deriver,
+        executed,
+        assembler,
+        fee_recipient,
+        target_gas_limit,
         feed: feed_sink,
     };
 
@@ -662,7 +678,6 @@ mod tests {
             dialable: None,
             slasher_keystore_path: None,
             slasher_keystore_password_file: None,
-            extra_data_registry: Arc::new(dashmap::DashMap::new()),
             metrics_port: None,
             cert_feed: None,
         }

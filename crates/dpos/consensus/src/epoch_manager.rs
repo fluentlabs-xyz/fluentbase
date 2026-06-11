@@ -10,8 +10,8 @@
 //! simplex channels.
 
 use crate::{
-    application::FluentApp,
-    block::Block,
+    application::{ExecutedChain, FluentApp, OrderingAssembler},
+    order_block::OrderBlock,
     engine::{EpochEngine, EpochEngineConfig},
     epocher::OriginEpocher,
     scheme::epoch_committee_from_snapshot,
@@ -63,7 +63,7 @@ const BOUNDARY_BUFFER: usize = 64;
 const PINS_PER_SENDER: usize = 2;
 
 /// Per-epoch lifecycle actor.
-pub struct Actor<E, B, PB, BE, AB, Attrs>
+pub struct Actor<E, B, XC, A>
 where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics,
     B: Blocker<PublicKey = PublicKey>,
@@ -102,11 +102,11 @@ where
     /// `0` until the first `enter`, during which backup corroboration is disabled
     /// (the cold-start epoch full-enters from the verified boundary trigger).
     committee_size: usize,
-    cfg: Config<B, PB, BE, AB, Attrs>,
+    cfg: Config<B, XC, A>,
 }
 
 /// Configuration for the [`Actor`].
-pub struct Config<B, PB, BE, AB, Attrs> {
+pub struct Config<B, XC, A> {
     pub me: PublicKey,
     pub blocker: B,
     pub chain_id: u64,
@@ -115,11 +115,11 @@ pub struct Config<B, PB, BE, AB, Attrs> {
     /// every `EpochEngineConfig` constructed in `enter()`. `origin = dposActivationBlock`.
     pub epocher: OriginEpocher,
     pub signer_keypair: Option<ValidatorBlsKeypair>,
-    pub app: FluentApp<PB, BE, AB, Attrs>,
+    pub app: FluentApp<XC, A>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
-    pub marshal_mailbox: MarshalMailbox<BlsScheme, Standard<Block>>,
+    pub marshal_mailbox: MarshalMailbox<BlsScheme, Standard<OrderBlock>>,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
     pub slasher_mailbox: SlasherMailbox,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
@@ -129,35 +129,18 @@ pub struct Config<B, PB, BE, AB, Attrs> {
     pub register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync>,
 }
 
-impl<E, B, PB, BE, AB, Attrs> Actor<E, B, PB, BE, AB, Attrs>
+impl<E, B, XC, A> Actor<E, B, XC, A>
 where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics,
     B: Blocker<PublicKey = PublicKey> + Clone,
-    PB: crate::application::PayloadBuilderLike<
-            BuiltSealed = reth_primitives_traits::SealedBlock<reth_ethereum_primitives::Block>,
-        > + Clone
-        + Send
-        + Sync
-        + 'static,
-    BE: crate::application::BeaconEngineLike<
-            PayloadAttrs = Attrs,
-            ExecutionData = reth_primitives_traits::SealedBlock<reth_ethereum_primitives::Block>,
-        > + Clone
-        + Send
-        + Sync
-        + 'static,
-    AB: crate::application::PayloadAttrsBuilderLike<Attrs = Attrs, Header = alloy_consensus::Header>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
-    Attrs: Clone + Send + Sync + 'static,
+    XC: ExecutedChain,
+    A: OrderingAssembler,
 {
     /// Construct the actor + return the bounded `boundary_tx` sender (held by
     /// 03's `EpochTransition`).
     pub fn new(
         context: E,
-        cfg: Config<B, PB, BE, AB, Attrs>,
+        cfg: Config<B, XC, A>,
     ) -> (Self, mpsc::Sender<(Epoch, ValidatorSetSnapshot)>) {
         let (boundary_tx, boundary_rx) = mpsc::channel(BOUNDARY_BUFFER);
         let actor = Self {

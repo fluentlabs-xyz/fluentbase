@@ -9,7 +9,7 @@
 //! `consensus` stays transport-agnostic.
 
 use super::upstream::CertUpstream;
-use crate::{block::Block, digest::Digest};
+use crate::digest::Digest;
 use bytes::Bytes;
 use commonware_codec::Encode as _;
 use commonware_consensus::{marshal::resolver::handler, types::Height};
@@ -20,19 +20,16 @@ use commonware_utils::{
     futures::{AbortablePool, Aborter},
     vec::NonEmptyVec,
 };
-use eyre::Report;
-use reth_ethereum_primitives::Block as RethBlock;
-use reth_primitives_traits::SealedBlock;
-use reth_storage_api::{BlockReader, BlockSource};
+
 use std::collections::BTreeMap;
 use tokio::select;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, instrument, warn};
 
-pub(crate) fn try_init<TContext, Provider, U>(
+pub(crate) fn try_init<TContext, U>(
     context: TContext,
-    config: Config<Provider, U>,
+    config: Config<U>,
 ) -> (
-    Resolver<TContext, Provider, U>,
+    Resolver<TContext, U>,
     Mailbox,
     mpsc::Receiver<handler::Message<Digest>>,
 ) {
@@ -70,9 +67,7 @@ enum Message {
     },
 }
 
-pub(crate) struct Config<Provider, U> {
-    /// For reading finalized block bodies locally from the follower's reth.
-    pub(super) provider: Provider,
+pub(crate) struct Config<U> {
     /// For pulling certificates the follower is missing from the upstream.
     pub(super) upstream: U,
     pub(super) mailbox_size: usize,
@@ -80,19 +75,18 @@ pub(crate) struct Config<Provider, U> {
 
 type FetchPool = AbortablePool<(handler::Request<Digest>, Result<Bytes, bool>)>;
 
-pub(crate) struct Resolver<TContext, Provider, U> {
+pub(crate) struct Resolver<TContext, U> {
     context: ContextCell<TContext>,
-    config: Config<Provider, U>,
+    config: Config<U>,
     handler_tx: mpsc::Sender<handler::Message<Digest>>,
     mailbox: mpsc::UnboundedReceiver<Message>,
     requests: BTreeMap<handler::Request<Digest>, Aborter>,
     fetches: FetchPool,
 }
 
-impl<TContext, Provider, U> Resolver<TContext, Provider, U>
+impl<TContext, U> Resolver<TContext, U>
 where
     TContext: Spawner,
-    Provider: BlockReader<Block = RethBlock> + Clone + Send + Sync + 'static,
     U: CertUpstream,
 {
     async fn run(mut self) {
@@ -163,11 +157,14 @@ where
         }
         let aborter = match &key {
             handler::Request::Block(digest) => {
-                let provider = self.config.provider.clone();
-                let digest = *digest;
-                let key = key.clone();
-                self.fetches
-                    .push(async move { (key, resolve_block(&provider, digest)) })
+                // F-type: a Block request keys on the ORDERING digest, which
+                // reth cannot resolve (it stores derived EVM blocks) and the
+                // upstream serves only by height. The follower's repair path
+                // is Finalized-by-height (which carries the body); a bare
+                // by-digest body request is dropped.
+                debug!(%digest, "dropping by-digest block request (ordering digest; \
+                       repair is served by Finalized-by-height)");
+                return;
             }
             handler::Request::Finalized { height } => {
                 let upstream = self.config.upstream.clone();
@@ -184,23 +181,6 @@ where
         debug!(%key, "scheduled new request");
         self.requests.insert(key, aborter);
     }
-}
-
-/// Serve a `Block` request from the follower's local reth.
-#[instrument(skip(provider))]
-fn resolve_block<Provider>(provider: &Provider, block_digest: Digest) -> Result<Bytes, bool>
-where
-    Provider: BlockReader<Block = RethBlock>,
-{
-    let Ok(Some(block)) = provider
-        .find_block_by_hash(block_digest.0, BlockSource::Any)
-        .map_err(Report::new)
-        .inspect_err(|error| error!(%error, "reth lookup for resolver block failed"))
-    else {
-        return Err(false);
-    };
-    let consensus_block = Block::from_execution_block(SealedBlock::seal_slow(block));
-    Ok(consensus_block.encode())
 }
 
 /// Serve a `Finalized` request by pulling the certificate from the upstream WS.

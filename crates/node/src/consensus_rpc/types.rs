@@ -1,11 +1,13 @@
 //! Wire types for the `consensus` RPC namespace.
 //!
-//! v1 is finalized-only (F2=b): the feed taps the marshal's `Update<Block>`
-//! (finalized) stream, so only `Event::Finalized` and `ConsensusState.latest_finalized`
-//! are produced. `Notarized`/`Nullified` events and `latest_notarized` are deferred —
-//! they require tapping the richer simplex `Activity` stream and have no consumer yet.
-//! Both are additive later (`Event` is an enum; `ConsensusState` gains a field).
+//! Two-tier finality (deferred execution): `Finalized` = INCLUSION tier (the
+//! ordering artifact is committee-agreed, ~3Δ); `ResultFinalized` = RESULT
+//! tier (the derived block's hash became committee-attested via the `result`
+//! commitment embedded in the finalized artifact K heights above it).
+//! `Notarized`/`Nullified` events and `latest_notarized` remain deferred —
+//! additive later (`Event` is an enum; `ConsensusState` gains a field).
 
+use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 
 use crate::certified_block::CertifiedBlock;
@@ -18,6 +20,16 @@ pub enum Event {
         #[serde(flatten)]
         block: CertifiedBlock,
         /// Unix-ms at which the serving node observed this finalization.
+        seen: u64,
+    },
+    /// Result tier: `height`'s derived block hash became committee-attested
+    /// (it is the `result` commitment of the inclusion-finalized artifact at
+    /// `height + K`).
+    #[serde(rename_all = "camelCase")]
+    ResultFinalized {
+        height: u64,
+        executed_hash: B256,
+        /// Unix-ms at which the serving node observed the attestation.
         seen: u64,
     },
 }
@@ -35,6 +47,8 @@ pub enum Query {
 #[serde(rename_all = "camelCase")]
 pub struct ConsensusState {
     pub latest_finalized: Option<CertifiedBlock>,
+    /// Highest height whose execution result is committee-attested.
+    pub latest_result_finalized: Option<u64>,
 }
 
 #[cfg(test)]
@@ -80,11 +94,28 @@ mod tests {
     }
 
     #[test]
-    fn consensus_state_default_is_empty_finalized() {
+    fn consensus_state_default_is_empty() {
         let s = ConsensusState::default();
         let json = serde_json::to_string(&s).expect("serialize");
-        assert_eq!(json, "{\"latestFinalized\":null}");
+        assert_eq!(
+            json,
+            "{\"latestFinalized\":null,\"latestResultFinalized\":null}"
+        );
         let back: ConsensusState = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(s, back);
+    }
+
+    #[test]
+    fn result_finalized_event_round_trips() {
+        let e = Event::ResultFinalized {
+            height: 7,
+            executed_hash: B256::repeat_byte(0x42),
+            seen: 1_700_000_000_000,
+        };
+        let json = serde_json::to_string(&e).expect("serialize");
+        assert!(json.contains("\"type\":\"resultFinalized\""));
+        assert!(json.contains("\"executedHash\""));
+        let back: Event = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(e, back);
     }
 }

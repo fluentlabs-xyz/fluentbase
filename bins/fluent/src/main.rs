@@ -181,7 +181,6 @@ fn main() {
             &node.ext,
             node.chain.chain,
             node.debug.rpc_consensus_url.as_deref(),
-            extra_data_registry.clone(),
         )
     } else {
         node_modes::resolve_non_node_modes()
@@ -297,41 +296,40 @@ fn main() {
         // provider clone out so the consensus thread's clone is never the last ref.
         let _ = rocksdb_keepalive_tx.send(Box::new(handle.node.provider.clone()));
 
+        // Tempo→DPoS activation height, read once from the genesis-baked
+        // on-chain ChainConfig. Producer: clean-halt gate. Trust-follower:
+        // two-tier finality mirror (lag `finalized` by K past activation —
+        // validators' result-final semantics under deferred execution).
+        // `0` ⇒ absolute numbering (no migration) ⇒ neither applies.
+        let dpos_activation: Option<u64> = match &staking_reader_cfg {
+            Some(cfg) if !cfg.chain_config_address.is_zero() => {
+                let reader = fluentbase_staking_reader::RethStakingStateReader::new(
+                    handle.node.provider.clone(),
+                    handle.node.evm_config.clone(),
+                    cfg.clone(),
+                );
+                let best = handle.node.provider.best_block_number()?;
+                let best_hash = handle
+                    .node
+                    .provider
+                    .sealed_header(best)?
+                    .ok_or_eyre("no sealed header at best block for activation read")?
+                    .hash();
+                let act = reader.dpos_activation_block(best_hash)?;
+                (act > 0).then_some(act)
+            }
+            _ => None,
+        };
         if let Some(block_time) = block_producer {
-            // Tempo→DPoS clean-halt: read the immutable, genesis-baked activation block
-            // once and stop producing once the sequencer head reaches it. `0` ⇒ absolute
-            // numbering (no migration) ⇒ no gate. Followers (--sequencer-url) relay the
-            // sequencer and stop with it, so this single read gates the whole network.
-            let activation_gate: Option<u64> = match &staking_reader_cfg {
-                Some(cfg) if !cfg.chain_config_address.is_zero() => {
-                    let reader = fluentbase_staking_reader::RethStakingStateReader::new(
-                        handle.node.provider.clone(),
-                        handle.node.evm_config.clone(),
-                        cfg.clone(),
-                    );
-                    let best = handle.node.provider.best_block_number()?;
-                    let best_hash = handle
-                        .node
-                        .provider
-                        .sealed_header(best)?
-                        .ok_or_eyre(
-                            "sequencer: no sealed header at best block for activation read",
-                        )?
-                        .hash();
-                    let act = reader.dpos_activation_block(best_hash)?;
-                    (act > 0).then_some(act)
-                }
-                _ => None,
-            };
             launch_consensus_validator(
                 &handle,
                 block_time,
                 FluentPayloadAttributesBuilder {},
-                activation_gate,
+                dpos_activation,
             )
             .await?;
         } else if let Some(consensus_url) = consensus_url {
-            launch_consensus_node(&handle, consensus_url).await?;
+            launch_consensus_node(&handle, consensus_url, dpos_activation).await?;
         }
 
         if let Some((handle_tx, dead_rx)) = consensus_thread_inner {

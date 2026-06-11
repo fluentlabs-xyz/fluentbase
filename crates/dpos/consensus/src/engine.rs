@@ -5,9 +5,14 @@
 //! living in [`crate::outer::OuterEngine`].
 
 use crate::{
-    application::FluentApp, block::Block, digest::Digest, elector_seed::epoch_leader_seed,
-    epocher::OriginEpocher, scheme::epoch_committee_from_snapshot,
-    slasher::Mailbox as SlasherMailbox, timeouts::ConsensusTimeouts,
+    application::{ExecutedChain, FluentApp, OrderingAssembler},
+    digest::Digest,
+    elector_seed::epoch_leader_seed,
+    epocher::OriginEpocher,
+    order_block::OrderBlock,
+    scheme::epoch_committee_from_snapshot,
+    slasher::Mailbox as SlasherMailbox,
+    timeouts::ConsensusTimeouts,
 };
 use crate::{REPLAY_BUFFER, WRITE_BUFFER};
 use commonware_consensus::{
@@ -37,20 +42,19 @@ use std::sync::Arc;
 
 const FETCH_CONCURRENT: usize = 4;
 
-type InlineFor<E, PB, BE, AB, Attrs> =
-    Inline<E, BlsScheme, FluentApp<PB, BE, AB, Attrs>, Block, OriginEpocher>;
+type InlineFor<E, XC, A> = Inline<E, BlsScheme, FluentApp<XC, A>, OrderBlock, OriginEpocher>;
 
-type ConsensusEngine<E, B, PB, BE, AB, Attrs> = simplex::Engine<
+type ConsensusEngine<E, B, XC, A> = simplex::Engine<
     E,
     BlsScheme,
     RoundRobin<Sha256>,
     B,
     Digest,
-    InlineFor<E, PB, BE, AB, Attrs>,
-    InlineFor<E, PB, BE, AB, Attrs>,
+    InlineFor<E, XC, A>,
+    InlineFor<E, XC, A>,
     Reporters<
         Activity<BlsScheme, Digest>,
-        MarshalMailbox<BlsScheme, Standard<Block>>,
+        MarshalMailbox<BlsScheme, Standard<OrderBlock>>,
         SlasherMailbox,
     >,
     Sequential,
@@ -61,7 +65,7 @@ type ConsensusEngine<E, B, PB, BE, AB, Attrs> = simplex::Engine<
 /// `EvSink` is intentionally absent: `marshal_mailbox` is the sole simplex
 /// reporter (it impls `Reporter<Activity = Activity<S, V::Commitment>>`).
 /// Slashing/evidence reporting is wired separately through the slasher actor.
-pub struct EpochEngineConfig<B, PB, BE, AB, Attrs> {
+pub struct EpochEngineConfig<B, XC, A> {
     pub blocker: B,
     pub snapshot: ValidatorSetSnapshot,
     pub epoch: Epoch,
@@ -71,7 +75,7 @@ pub struct EpochEngineConfig<B, PB, BE, AB, Attrs> {
     pub epocher: OriginEpocher,
     pub chain_id: u64,
     pub signer_keypair: Option<ValidatorBlsKeypair>,
-    pub app: FluentApp<PB, BE, AB, Attrs>,
+    pub app: FluentApp<XC, A>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
     /// Callback that registers this epoch's [`BlsScheme`] in
@@ -82,57 +86,23 @@ pub struct EpochEngineConfig<B, PB, BE, AB, Attrs> {
 
 /// Per-epoch consensus engine. Created by
 /// [`crate::epoch_manager::Actor::enter`] on each boundary trigger.
-pub struct EpochEngine<E, B, PB, BE, AB, Attrs>
+pub struct EpochEngine<E, B, XC, A>
 where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics,
     B: Blocker<PublicKey = ed25519::PublicKey>,
-    PB: crate::application::PayloadBuilderLike<
-            BuiltSealed = reth_primitives_traits::SealedBlock<reth_ethereum_primitives::Block>,
-        > + Clone
-        + Send
-        + Sync
-        + 'static,
-    BE: crate::application::BeaconEngineLike<
-            PayloadAttrs = Attrs,
-            ExecutionData = reth_primitives_traits::SealedBlock<reth_ethereum_primitives::Block>,
-        > + Clone
-        + Send
-        + Sync
-        + 'static,
-    AB: crate::application::PayloadAttrsBuilderLike<Attrs = Attrs, Header = alloy_consensus::Header>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
-    Attrs: Clone + Send + Sync + 'static,
+    XC: ExecutedChain,
+    A: OrderingAssembler,
 {
     context: ContextCell<E>,
-    consensus: ConsensusEngine<E, B, PB, BE, AB, Attrs>,
+    consensus: ConsensusEngine<E, B, XC, A>,
 }
 
-impl<E, B, PB, BE, AB, Attrs> EpochEngine<E, B, PB, BE, AB, Attrs>
+impl<E, B, XC, A> EpochEngine<E, B, XC, A>
 where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics,
     B: Blocker<PublicKey = ed25519::PublicKey> + Clone,
-    PB: crate::application::PayloadBuilderLike<
-            BuiltSealed = reth_primitives_traits::SealedBlock<reth_ethereum_primitives::Block>,
-        > + Clone
-        + Send
-        + Sync
-        + 'static,
-    BE: crate::application::BeaconEngineLike<
-            PayloadAttrs = Attrs,
-            ExecutionData = reth_primitives_traits::SealedBlock<reth_ethereum_primitives::Block>,
-        > + Clone
-        + Send
-        + Sync
-        + 'static,
-    AB: crate::application::PayloadAttrsBuilderLike<Attrs = Attrs, Header = alloy_consensus::Header>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
-    Attrs: Clone + Send + Sync + 'static,
+    XC: ExecutedChain,
+    A: OrderingAssembler,
 {
     /// Build per-epoch simplex::Engine + Inline.
     ///
@@ -140,8 +110,8 @@ where
     /// (cross-epoch singletons).
     pub fn new(
         context: E,
-        cfg: EpochEngineConfig<B, PB, BE, AB, Attrs>,
-        marshal_mailbox: MarshalMailbox<BlsScheme, Standard<Block>>,
+        cfg: EpochEngineConfig<B, XC, A>,
+        marshal_mailbox: MarshalMailbox<BlsScheme, Standard<OrderBlock>>,
         slasher_mailbox: SlasherMailbox,
         page_cache: CacheRef,
     ) -> eyre::Result<Self> {
