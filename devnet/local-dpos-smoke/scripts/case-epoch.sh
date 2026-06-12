@@ -29,7 +29,15 @@ while (( $(date +%s) < deadline )); do
             cur=$(staking_call "currentEpoch()(uint256)")
             comm=$(staking_call "getEpochCommittee(uint64)(address[])" "$cur")
             [[ -n "$comm" && "$comm" != "[]" ]] || { echo "FAIL (smoke-epoch): getEpochCommittee($cur) empty"; exit 1; }
-            echo "OK (smoke-epoch): all 5 aligned finalized=$hd >= $TARGET (epoch $cur), committee non-empty"
+            # 1 blk/s pacing assert: 60s of chain time must finalize ~60
+            # blocks. Lower bound 45 tolerates view timeouts/jitter; upper
+            # bound 66 catches a pacing regression (the unpaced chain did
+            # ~350 blocks/min).
+            r0=$(finalized_dec); sleep 60; r1=$(finalized_dec)
+            delta=$(( r1 - r0 ))
+            (( delta >= 45 && delta <= 66 )) || {
+                echo "FAIL (smoke-epoch): block rate off target: $delta blocks in 60s (want 45..66)"; exit 1; }
+            echo "OK (smoke-epoch): all 5 aligned finalized=$hd >= $TARGET (epoch $cur), committee non-empty, pacing $delta blk/60s"
             exit 0
         fi
     fi

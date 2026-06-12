@@ -44,13 +44,15 @@ use std::{
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-/// Concurrent active-epochs window. Keeps the current + prior epoch's engines
-/// alive simultaneously so the boundary handoff (epoch E keeps producing until
-/// E+1 takes over) is seamless. NOTE: this is this crate's own design, NOT a
-/// commonware requirement — commonware's `Plan` enum is `{Propose, Forward}`
-/// (a broadcast-relay plan), there is no `Plan::Sequential`; the `Sequential`
-/// used by the engine is `commonware_parallel::Sequential` (a codec strategy).
-pub const EPOCH_RETENTION_WINDOW: u64 = 2;
+// Finished engines are aborted at the transition (tempo's exit-at-transition
+// pattern) — there is no concurrent active-epochs window. A finished engine
+// has nothing left to produce (its boundary finalization is what triggers
+// entering the next epoch) and its boundary re-propose loop is UNPACED
+// (Inline re-proposes without calling `app.propose`), so at 1 blk/s it spins
+// hundreds of views/s of BLS + marshal traffic and starves the live epoch
+// into certification timeouts. Stragglers still in the old epoch do not need
+// our engine: the boundary finalization is served via marshal/resolver, and
+// their late certificates verify via `EpochSchemeProvider` (never pruned).
 
 /// Bounded mpsc capacity for boundary triggers (tokio `mpsc::channel(N)`).
 const BOUNDARY_BUFFER: usize = 64;
@@ -344,7 +346,7 @@ where
     ///
     /// NB: must NOT add a retention window here. During fast catch-up
     /// `highest_observed_epoch` tracks only ~1-2 epochs ahead of the walk, so a
-    /// `+ EPOCH_RETENTION_WINDOW` slack makes the gate true for nearly every
+    /// retention-window slack makes the gate true for nearly every
     /// catch-up epoch → they all full-enter → spurious engines → flaky wedge.
     /// Strict `>=` soft-enters every below-frontier epoch; once the walk reaches
     /// the frontier (votes arrive on a registered subchannel, not backup, so
@@ -495,9 +497,12 @@ where
         info!(?epoch, "epoch entered");
     }
 
-    /// Abort epochs older than `current - EPOCH_RETENTION_WINDOW`.
+    /// Abort engines of all epochs below `current` (exit-at-transition; see
+    /// the lifecycle note above the actor). Called with the just-entered
+    /// epoch, so a stale/replayed boundary for an OLD epoch can never abort
+    /// a newer engine (`e < cutoff` only).
     fn prune_old(&mut self, current: Epoch) {
-        let cutoff = current.get().saturating_sub(EPOCH_RETENTION_WINDOW);
+        let cutoff = current.get();
         let to_drop: Vec<Epoch> = self
             .active_epochs
             .keys()

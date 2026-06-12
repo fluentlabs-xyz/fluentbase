@@ -49,13 +49,33 @@ use std::{
     time::Duration,
 };
 
-/// Bounded wait in `verify` for local execution to reach `N − K`. Derived
-/// from the certification window (`certification = 750ms`,
-/// `ConsensusTimeouts::fluent_1s`) minus ~50ms for structural checks +
-/// scheduling. Liveness-tuning, not a safety param (timeout ⇒ vote false) —
-/// still keep uniform across nodes.
-pub const VERIFY_EXEC_BUDGET: Duration = Duration::from_millis(700);
+/// Bounded wait in `verify` for local execution to reach `N − K`: the
+/// exec-gate budget = worst-case derive+execute of one block (~500ms today,
+/// growth headroom to 1s). Sits inside the certification window: the
+/// proposal arrives ≤ `leader` (1750ms) from view entry and
+/// `certification = 3200ms` (`ConsensusTimeouts::fluent_1s`) leaves
+/// ~1450ms ≥ this budget. Liveness-tuning, not a safety param
+/// (timeout ⇒ vote false) — still keep uniform across nodes.
+pub const VERIFY_EXEC_BUDGET: Duration = Duration::from_millis(1000);
 const VERIFY_EXEC_POLL: Duration = Duration::from_millis(25);
+
+/// Target ordering cadence: one block per second. The proposer holds its
+/// proposal until wall clock reaches `parent.timestamp + BLOCK_INTERVAL`,
+/// so timestamps advance as consecutive integer seconds ≈ wall clock
+/// (Clique-family parent+period pacing). Slow/nullified views self-correct:
+/// a late proposer is already past the target and does not sleep.
+/// Honest-proposer discipline only — the verify-side future bound
+/// ([`TIMESTAMP_FUTURE_TOLERANCE_SECS`]) is the enforcement half.
+pub const BLOCK_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Verify-side future bound: reject `block.timestamp > now + tolerance`.
+/// 1s covers second-granularity truncation + honest NTP skew. Load-bearing
+/// with pacing: without it, ONE far-future timestamp both poisons
+/// block.timestamp permanently (strict-monotonicity ratchet) and makes
+/// every honest proposer sleep_until(fake_time) — a single-block chain
+/// halt. With it, such a proposal fails verify at the honest quorum and
+/// the view nullifies. Consensus rule — MUST be uniform across nodes.
+pub const TIMESTAMP_FUTURE_TOLERANCE_SECS: u64 = 1;
 
 /// EIP-1559 hard floor for a header gas limit.
 pub const MIN_GAS_LIMIT: u64 = 5_000;
@@ -193,14 +213,75 @@ where
     }
 
     /// Pure structural validity of `block` against its parent — everything
-    /// verify checks WITHOUT touching the local derived chain. Parent
-    /// linkage + contiguous height are already enforced by Inline's
-    /// `validate_block` before app verify runs — not re-checked here.
-    fn structural_checks(block: &OrderBlock, parent: &OrderBlock) -> bool {
+    /// verify checks WITHOUT touching the local derived chain (`now_secs` is
+    /// the verifier's clock, sampled by the caller). Parent linkage +
+    /// contiguous height are already enforced by Inline's `validate_block`
+    /// before app verify runs — not re-checked here.
+    fn structural_checks(block: &OrderBlock, parent: &OrderBlock, now_secs: u64) -> bool {
         block.timestamp > parent.timestamp
+            && block.timestamp <= now_secs + TIMESTAMP_FUTURE_TOLERANCE_SECS
             && gas_limit_within_1_1024(parent.gas_limit, block.gas_limit)
             && extra_data::decode_simplex_attestation(&block.extra_data).is_ok()
             && total_tx_gas(&block.txs).is_some_and(|gas| gas <= block.gas_limit)
+    }
+
+    /// Paced proposal body, factored out of `Application::propose` so the
+    /// pacing/timestamp behavior is unit-testable (`AncestorStream` has no
+    /// public constructor).
+    async fn build_proposal<E: Clock>(&self, clock: &E, parent: OrderBlock) -> Option<OrderBlock> {
+        let height = parent.height + 1;
+
+        // Pace to 1 blk/s: hold until wall clock reaches parent + 1s.
+        // Cancellation-safe: Inline selects this future against
+        // tx.closed(), so a moved-on view aborts the sleep.
+        let pace_target =
+            std::time::UNIX_EPOCH + Duration::from_secs(parent.timestamp) + BLOCK_INTERVAL;
+        clock.sleep_until(pace_target).await;
+
+        // Execution gate (proposer-≤K-behind): the result commitment needs
+        // the local derived hash at height − K; a lagging proposer skips the
+        // view rather than guessing. Sampled after the pace sleep — the EL
+        // gets the full inter-block interval to reach height − K.
+        let result = match result_target(height, self.anchor_height) {
+            ResultTarget::PreActivation => B256::ZERO,
+            ResultTarget::Height(h) => match self.executed.executed_hash(h) {
+                Some(hash) => hash,
+                None => {
+                    tracing::debug!(
+                        height,
+                        result_height = h,
+                        executed_tip = self.executed.executed_tip(),
+                        "execution lags result target; skipping propose"
+                    );
+                    return None;
+                }
+            },
+        };
+
+        let extra_data = Bytes::from(match self.latest_finalized_cert().await {
+            Some((round, signers)) => extra_data::encode_simplex_attestation(round, &signers),
+            None => Vec::new(),
+        });
+
+        let gas_limit = step_gas_limit(parent.gas_limit, self.target_gas_limit);
+        let timestamp = clock
+            .current()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before UNIX_EPOCH")
+            .as_secs()
+            .max(parent.timestamp + 1);
+        let txs = self.assembler.assemble(height, gas_limit, TX_BYTE_BUDGET);
+
+        Some(OrderBlock {
+            parent: parent.digest(),
+            height,
+            timestamp,
+            fee_recipient: self.fee_recipient,
+            gas_limit,
+            extra_data,
+            result,
+            txs,
+        })
     }
 }
 
@@ -231,54 +312,11 @@ where
 
     async fn propose<P: BlockProvider<Block = OrderBlock>>(
         &mut self,
-        _ctx: (E, Self::Context),
+        ctx: (E, Self::Context),
         mut ancestry: AncestorStream<P, OrderBlock>,
     ) -> Option<OrderBlock> {
         let parent = ancestry.next().await?;
-        let height = parent.height + 1;
-
-        // Execution gate (proposer-≤K-behind): the result commitment needs
-        // the local derived hash at height − K; a lagging proposer skips the
-        // view rather than guessing.
-        let result = match result_target(height, self.anchor_height) {
-            ResultTarget::PreActivation => B256::ZERO,
-            ResultTarget::Height(h) => match self.executed.executed_hash(h) {
-                Some(hash) => hash,
-                None => {
-                    tracing::debug!(
-                        height,
-                        result_height = h,
-                        executed_tip = self.executed.executed_tip(),
-                        "execution lags result target; skipping propose"
-                    );
-                    return None;
-                }
-            },
-        };
-
-        let extra_data = Bytes::from(match self.latest_finalized_cert().await {
-            Some((round, signers)) => extra_data::encode_simplex_attestation(round, &signers),
-            None => Vec::new(),
-        });
-
-        let gas_limit = step_gas_limit(parent.gas_limit, self.target_gas_limit);
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock before UNIX_EPOCH")
-            .as_secs()
-            .max(parent.timestamp + 1);
-        let txs = self.assembler.assemble(height, gas_limit, TX_BYTE_BUDGET);
-
-        Some(OrderBlock {
-            parent: parent.digest(),
-            height,
-            timestamp,
-            fee_recipient: self.fee_recipient,
-            gas_limit,
-            extra_data,
-            result,
-            txs,
-        })
+        self.build_proposal(&ctx.0, parent).await
     }
 }
 
@@ -302,7 +340,13 @@ where
             return false;
         };
 
-        if !Self::structural_checks(&block, &parent) {
+        let now_secs = ctx
+            .0
+            .current()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before UNIX_EPOCH")
+            .as_secs();
+        if !Self::structural_checks(&block, &parent, now_secs) {
             return false;
         }
 
@@ -524,6 +568,58 @@ mod tests {
         assert_eq!(step_gas_limit(parent, parent + 5), parent + 5);
     }
 
+    // Pacing tests use single-digit timestamps: the deterministic runtime
+    // advances virtual time in 1ms cycles (deterministic.rs `Config::cycle`),
+    // so a sleep to a realistic unix-seconds target never completes.
+    fn tiny_ts_parent() -> OrderBlock {
+        OrderBlock {
+            timestamp: 5,
+            ..sample_order(Digest(B256::ZERO), 0)
+        }
+    }
+
+    #[test]
+    fn propose_paces_to_parent_plus_one_second() {
+        let runtime = commonware_runtime::deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let (mailbox, _rx) = fresh_mailbox();
+            let app = build_app(mailbox, Arc::new(|_b: OrderBlock| {}));
+            let parent = tiny_ts_parent();
+
+            // Virtual clock starts before the target: the pace sleep must
+            // carry it to parent+1 and the timestamp lands exactly there.
+            let block = app
+                .build_proposal(&ctx, parent.clone())
+                .await
+                .expect("proposed");
+            assert_eq!(block.timestamp, parent.timestamp + 1);
+            let now = ctx
+                .current()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            assert!(now > parent.timestamp, "clock advanced by the pace sleep");
+        });
+    }
+
+    #[test]
+    fn propose_does_not_pace_when_past_target() {
+        let runtime = commonware_runtime::deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let (mailbox, _rx) = fresh_mailbox();
+            let app = build_app(mailbox, Arc::new(|_b: OrderBlock| {}));
+            let parent = tiny_ts_parent();
+
+            // A late proposer (slow/nullified prior views) is already past
+            // parent+1: no extra sleep, timestamp = now.
+            let late = parent.timestamp + 10;
+            ctx.sleep_until(std::time::UNIX_EPOCH + Duration::from_secs(late))
+                .await;
+            let block = app.build_proposal(&ctx, parent).await.expect("proposed");
+            assert_eq!(block.timestamp, late);
+        });
+    }
+
     #[test]
     fn structural_checks_reject_each_violation() {
         let parent = sample_order(Digest(B256::ZERO), 1);
@@ -531,14 +627,17 @@ mod tests {
             parent: parent.digest(),
             ..sample_order(parent.digest(), 2)
         };
-        assert!(FluentApp::<NoChain, NoTxs>::structural_checks(&good, &parent));
+        let now = good.timestamp;
+        assert!(FluentApp::<NoChain, NoTxs>::structural_checks(
+            &good, &parent, now
+        ));
 
         let stale_ts = OrderBlock {
             timestamp: parent.timestamp,
             ..good.clone()
         };
         assert!(!FluentApp::<NoChain, NoTxs>::structural_checks(
-            &stale_ts, &parent
+            &stale_ts, &parent, now
         ));
 
         let wild_gas = OrderBlock {
@@ -546,7 +645,7 @@ mod tests {
             ..good.clone()
         };
         assert!(!FluentApp::<NoChain, NoTxs>::structural_checks(
-            &wild_gas, &parent
+            &wild_gas, &parent, now
         ));
 
         let bad_extra = OrderBlock {
@@ -554,7 +653,30 @@ mod tests {
             ..good.clone()
         };
         assert!(!FluentApp::<NoChain, NoTxs>::structural_checks(
-            &bad_extra, &parent
+            &bad_extra, &parent, now
+        ));
+    }
+
+    #[test]
+    fn structural_checks_enforce_future_bound() {
+        let parent = sample_order(Digest(B256::ZERO), 1);
+        let good = OrderBlock {
+            parent: parent.digest(),
+            ..sample_order(parent.digest(), 2)
+        };
+
+        // At the tolerance boundary: a proposer one second ahead of this
+        // verifier's clock is still honest (truncation + NTP skew).
+        let now = good.timestamp - TIMESTAMP_FUTURE_TOLERANCE_SECS;
+        assert!(FluentApp::<NoChain, NoTxs>::structural_checks(
+            &good, &parent, now
+        ));
+
+        // One second past the boundary: rejected.
+        assert!(!FluentApp::<NoChain, NoTxs>::structural_checks(
+            &good,
+            &parent,
+            now - 1
         ));
     }
 

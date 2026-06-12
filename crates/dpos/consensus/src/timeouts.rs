@@ -25,17 +25,27 @@ pub struct ConsensusTimeouts {
 }
 
 impl ConsensusTimeouts {
-    /// Fluent 1 block/sec starting set, derived from the real
-    /// `state.rs`/`config.rs` semantics.
+    /// Fluent 1 block/sec set. Deadlines are measured from view entry
+    /// (commonware `voter/state.rs`: `enter_view` arms both from the same
+    /// instant — NOT additive). Derivation:
+    ///   leader        = pace component (≤1000ms by construction: the pace
+    ///                   target is parent.timestamp+1 and view entry is
+    ///                   always after parent.timestamp) + 750ms
+    ///                   build/propagation/skew margin (tempo geo-prod
+    ///                   calibration: their leader = pace + 750ms);
+    ///   certification = leader part + 1000ms verify exec-gate
+    ///                   (`VERIFY_EXEC_BUDGET`: worst-case derive+execute
+    ///                   of one block, ~500ms today with growth headroom
+    ///                   to 1s) + ~450ms vote collection;
+    ///   timeout_retry = 1000ms nullify re-broadcast cadence;
+    ///   fetch         = 1000ms resolver fetch (worst-case 4 MB block).
     /// `leader ≤ certification` and `skip ≤ activity` hold by construction.
-    /// `leader`/`certification` are testnet-calibrated (couple to the 50M
-    /// Reth execution budget) — these are the documented starting values.
     pub fn fluent_1s() -> Self {
         Self {
-            leader: Duration::from_millis(400),
-            certification: Duration::from_millis(750),
-            timeout_retry: Duration::from_millis(200),
-            fetch: Duration::from_millis(750),
+            leader: Duration::from_millis(1750),
+            certification: Duration::from_millis(3200),
+            timeout_retry: Duration::from_millis(1000),
+            fetch: Duration::from_millis(1000),
             activity: ViewDelta::new(64),
             skip: ViewDelta::new(4),
         }
@@ -88,7 +98,7 @@ mod tests {
     #[test]
     fn inverted_leader_certification_rejected() {
         let mut t = ConsensusTimeouts::fluent_1s();
-        t.leader = Duration::from_millis(900); // > certification 750
+        t.leader = Duration::from_millis(4000); // > certification 3200
         assert!(t.validated().is_err());
     }
 

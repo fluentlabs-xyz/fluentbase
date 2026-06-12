@@ -68,7 +68,10 @@ liveness_cycle() {
 
     # 1) network keeps finalizing with 1/4 down (BFT f=1 holds) and advances the
     #    required gap (cycle 1: past a full epoch → reth pipeline-backfill rejoin).
-    deadline=$(( $(date +%s) + 150 ))
+    #    240s: cycle 1 waits 3*EPOCH_INTERVAL+1 = 97 blocks; at 1 blk/s with the
+    #    victim's leader views timing out (1750ms) until skip_timeout mutes them,
+    #    that's ~100-115s of chain time.
+    deadline=$(( $(date +%s) + 240 ))
     while (( $(date +%s) < deadline )); do (( $(finalized_dec) >= pre + gap )) && break; sleep 2; done
     (( $(finalized_dec) >= pre + gap )) || {
         echo "FAIL (smoke-liveness): chain did not advance $gap blocks with $svc down (finalized=$(finalized_dec), pre=$pre)"; exit 1; }
