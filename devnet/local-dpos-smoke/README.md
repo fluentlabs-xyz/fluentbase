@@ -166,6 +166,29 @@ distinct from the genesis-baked cases. Needs `forge`/`cast`/`jq` and a
 > `staking_exceeds_eip170_codesize`); until then step 2's cluster deploy reverts
 > with `CreateContractSizeLimit`.
 
+## Joining a running chain as a new validator
+
+A non-committee `--dpos` node has zero consensus-plane connectivity (the
+tracked peer set == the on-chain committee), so a new validator cannot boot
+straight into `--dpos` on a live chain. The supported flow:
+
+1. Run the node as a follower until it tracks the live tip:
+   `--cert-follow --sequencer-url ws://<upstream> --dpos.staking-config <json>`
+   (or trust-follow via `--sequencer-url` alone).
+2. Register + activate the validator and delegate stake (see the
+   production-path case for the exact calls).
+3. Before the first epoch whose committee includes the new key, restart the
+   same datadir into `--dpos --dpos.joiner ...`. The joiner flag anchors the
+   cold-start at the EL-restored finalized tip instead of failing the
+   fresh-migration guards; the epoch catch-up machinery walks the node to the
+   live frontier.
+
+Until its first committee epoch the joiner is consensus-isolated by design —
+it logs a periodic committee-watchdog WARN instead of progressing. Do NOT
+pass `--dpos.joiner` on a genuine Tempo→DPoS migration: the overshoot guard
+it bypasses exists to stop an ex-sequencer from anchoring past epoch 0
+(chain split).
+
 ## What this is NOT
 
 - Adversarial scenarios (slashing, view-change, equivocation) —

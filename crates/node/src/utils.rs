@@ -157,3 +157,70 @@ fn verify_detached_signature(_data_path: &Path, _sig_path: &Path) -> eyre::Resul
     //TODO(dmitry123): Make it work
     Ok(())
 }
+
+/// Shared consensus-thread scaffold: oneshot `FullNode` handshake + dedicated
+/// OS thread + commonware tokio `Runner` + dead-channel. The body closure runs
+/// on the commonware runtime once reth delivers the `FullNode`. Used by
+/// `spawn_dpos` and `spawn_cert_follower` (host-adapter duplication collapsed).
+pub struct ConsensusSpawn<N, AddOns>
+where
+    N: reth_node_api::FullNodeComponents,
+    AddOns: reth_node_builder::rpc::RethRpcAddOns<N>,
+{
+    pub join: std::thread::JoinHandle<eyre::Result<()>>,
+    pub handle_tx: tokio::sync::oneshot::Sender<reth_node_builder::FullNode<N, AddOns>>,
+    pub dead_rx: tokio::sync::oneshot::Receiver<()>,
+}
+
+pub(crate) fn spawn_consensus_thread<N, AddOns, F, Fut>(
+    name: &'static str,
+    body: F,
+) -> ConsensusSpawn<N, AddOns>
+where
+    N: reth_node_api::FullNodeComponents + 'static,
+    AddOns: reth_node_builder::rpc::RethRpcAddOns<N> + 'static,
+    F: FnOnce(commonware_runtime::tokio::Context, reth_node_builder::FullNode<N, AddOns>) -> Fut
+        + Send
+        + 'static,
+    Fut: std::future::Future<Output = eyre::Result<()>>,
+{
+    use commonware_runtime::{
+        tokio::{Config as RuntimeConfig, Runner as TokioRunner},
+        Runner as _,
+    };
+    use eyre::WrapErr as _;
+
+    let (handle_tx, handle_rx) = tokio::sync::oneshot::channel();
+    let (dead_tx, dead_rx) = tokio::sync::oneshot::channel();
+
+    let join = std::thread::Builder::new()
+        .name(name.into())
+        .spawn(move || {
+            let node: reth_node_builder::FullNode<N, AddOns> = handle_rx
+                .blocking_recv()
+                .wrap_err("channel closed before reth FullNode could be received")?;
+
+            let consensus_storage = node.data_dir.data_dir().join("dpos");
+            tracing::info!(
+                path = %consensus_storage.display(),
+                thread = name,
+                "consensus storage directory determined"
+            );
+
+            let runtime_config = RuntimeConfig::default()
+                .with_tcp_nodelay(Some(true))
+                .with_storage_directory(consensus_storage)
+                .with_catch_panics(true);
+            let runner = TokioRunner::new(runtime_config);
+            let ret = runner.start(|ctx| body(ctx, node));
+            let _ = dead_tx.send(());
+            ret
+        })
+        .expect("failed to spawn consensus thread");
+
+    ConsensusSpawn {
+        join,
+        handle_tx,
+        dead_rx,
+    }
+}

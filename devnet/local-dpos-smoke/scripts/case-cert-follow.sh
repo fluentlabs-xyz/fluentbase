@@ -32,23 +32,11 @@ echo "smoke-cert-follow: starting cert-follower (ws://172.20.0.10:8546)"
 docker compose "${CF_COMPOSE[@]}" up -d cert-follower
 
 align_target=$(( anchor + EPOCH_INTERVAL ))   # at least one epoch boundary crossed
-deadline=$(( $(date +%s) + 180 ))
-aligned=""
-while (( $(date +%s) < deadline )); do
-    v0=$(check_external 8545)
-    cf=$(check_external "$CF_PORT")
-    cf_h="${cf%%|*}"
-    if [[ "$cf_h" != "null" && "$cf" == "$v0" ]] && (( $(printf '%d' "$cf_h") > align_target )); then
-        aligned="$cf"
-        break
-    fi
-    sleep 2
-done
-if [[ -z "$aligned" ]]; then
+aligned=$(wait_follower_align "$CF_PORT" "$align_target" 180) || {
     echo "FAIL (smoke-cert-follow): cert-follower did not align with v0 past $align_target"
     docker compose "${CF_COMPOSE[@]}" logs --tail=200 cert-follower
     exit 1
-fi
+}
 echo "OK (phase 1 subscribe-align): cert-follower aligned with v0 at $aligned"
 
 # ── Phase 2: gap back-fill (stop past >0, restart, catch up) ─────────────────
@@ -60,33 +48,17 @@ shutdown_flushed cert-follower || echo "  (warning) cert-follower did not exit c
 # Let v0 advance well past f1 so the restart must back-fill a real gap.
 gap_target=$(( f1 + EPOCH_INTERVAL ))
 echo "  waiting for v0 to advance past $gap_target before restart"
-deadline=$(( $(date +%s) + 120 ))
-while (( $(date +%s) < deadline )); do
-    (( $(finalized_dec) > gap_target )) && break
-    sleep 2
-done
+wait_finalized_ge $(( gap_target + 1 )) 120 \
+    || { echo "FAIL (smoke-cert-follow): v0 did not advance past $gap_target"; exit 1; }
 f2=$(finalized_dec)
-(( f2 > gap_target )) || { echo "FAIL (smoke-cert-follow): v0 did not advance past $gap_target"; exit 1; }
 
 echo "  restarting cert-follower; must back-fill [$f1+1 .. $f2] via getFinalization"
 docker compose "${CF_COMPOSE[@]}" start cert-follower
-deadline=$(( $(date +%s) + 180 ))
-caught=""
-while (( $(date +%s) < deadline )); do
-    v0=$(check_external 8545)
-    cf=$(check_external "$CF_PORT")
-    cf_h="${cf%%|*}"
-    if [[ "$cf_h" != "null" && "$cf" == "$v0" ]] && (( $(printf '%d' "$cf_h") >= f2 )); then
-        caught="$cf"
-        break
-    fi
-    sleep 2
-done
-if [[ -z "$caught" ]]; then
+caught=$(wait_follower_align "$CF_PORT" "$f2" 180) || {
     echo "FAIL (smoke-cert-follow): cert-follower did not back-fill the gap to >= $f2"
     docker compose "${CF_COMPOSE[@]}" logs --tail=200 cert-follower
     exit 1
-fi
+}
 echo "OK (phase 2 gap back-fill): cert-follower caught up to $caught (>= f2=$f2)"
 
 # ── Phase 3: tampered-cert rejection (negative) ─────────────────────────────

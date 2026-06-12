@@ -71,9 +71,7 @@ liveness_cycle() {
     #    240s: cycle 1 waits 3*EPOCH_INTERVAL+1 = 97 blocks; at 1 blk/s with the
     #    victim's leader views timing out (1750ms) until skip_timeout mutes them,
     #    that's ~100-115s of chain time.
-    deadline=$(( $(date +%s) + 240 ))
-    while (( $(date +%s) < deadline )); do (( $(finalized_dec) >= pre + gap )) && break; sleep 2; done
-    (( $(finalized_dec) >= pre + gap )) || {
+    wait_finalized_ge $(( pre + gap )) 240 || {
         echo "FAIL (smoke-liveness): chain did not advance $gap blocks with $svc down (finalized=$(finalized_dec), pre=$pre)"; exit 1; }
     echo "  chain finalized past $((pre+gap)) with $svc down (BFT f=1 holds)"
 

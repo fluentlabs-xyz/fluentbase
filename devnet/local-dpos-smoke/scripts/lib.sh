@@ -73,16 +73,67 @@ shutdown_flushed() {
     return 1
 }
 
+# Core alignment poll shared by every converge helper: `reader` is a function
+# emitting one "height|hash" reading per line; all readings must be identical,
+# the head non-null/non-genesis, and — when a hex `floor` is given —
+# numerically GREATER than the floor (a head merely *different* from the floor
+# could be a regressed chain). Echoes the aligned reading.
+# Usage: _wait_aligned <timeout_s> <floor_hex|""> <reader-fn>
+_wait_aligned() {
+    local deadline=$(( $(date +%s) + $1 )) floor="$2" reader="$3"
+    local readings aligned r head
+    [[ "$floor" == 0x* ]] || floor=""   # "null"/empty → no floor check
+    while (( $(date +%s) < deadline )); do
+        mapfile -t readings < <("$reader")
+        if (( ${#readings[@]} > 0 )); then
+            aligned=1
+            for r in "${readings[@]}"; do [[ "$r" == "${readings[0]}" ]] || aligned=0; done
+            head="${readings[0]%%|*}"
+            if [[ "$aligned" == 1 && "$head" != "null" && "$head" != "0x0" ]] \
+               && { [[ -z "$floor" ]] || (( $(printf '%d' "$head") > $(printf '%d' "$floor") )); }; then
+                echo "${readings[0]}"; return 0
+            fi
+        fi
+        sleep 2
+    done
+    return 1
+}
+
+# One "height|hash" reading per line: the 4 genesis validators + full-node.
+_read_tempo_nodes() {
+    check_external 8545
+    check_node docker compose exec -T validator-1
+    check_node docker compose exec -T validator-2
+    check_node docker compose exec -T validator-3
+    check_external 18545
+}
+
 # Wait (default 90s) for all 5 nodes to align finalized > 0; echo "height|hash".
-wait_converge() {
-    local deadline=$(( $(date +%s) + ${1:-90} )) v0 v1 v2 v3 fn hn
-    while [[ $(date +%s) -lt $deadline ]]; do
-        v0=$(check_external 8545); v1=$(check_node docker compose exec -T validator-1)
-        v2=$(check_node docker compose exec -T validator-2); v3=$(check_node docker compose exec -T validator-3)
-        fn=$(check_external 18545); hn="${v0%%|*}"
-        if [[ "$hn" != "null" && "$hn" != "0x0" \
-              && "$v0" == "$v1" && "$v1" == "$v2" && "$v2" == "$v3" && "$v3" == "$fn" ]]; then
-            echo "$v0"; return 0
+wait_converge() { _wait_aligned "${1:-90}" "" _read_tempo_nodes; }
+
+# Poll (default 60s) until validator-0's finalized height reaches `target`
+# (decimal). Shared by every "wait for block N" loop in the case scripts —
+# see finalized_dec's note on the unreachable-RPC→0 coercion.
+wait_finalized_ge() {
+    local target="$1" deadline=$(( $(date +%s) + ${2:-60} ))
+    while (( $(date +%s) < deadline )); do
+        (( $(finalized_dec) >= target )) && return 0
+        sleep 1
+    done
+    return 1
+}
+
+# Wait (default 240s) until the follower RPC on host port $1 reports the SAME
+# "height|hash" as validator-0 with height strictly above the decimal floor
+# $2. Echoes the aligned reading. Shared by the cert-follow/cascade cases —
+# alignment semantics must not drift between them.
+wait_follower_align() {
+    local port="$1" floor="$2" deadline=$(( $(date +%s) + ${3:-240} )) v0 f f_h
+    while (( $(date +%s) < deadline )); do
+        v0=$(check_external 8545); f=$(check_external "$port")
+        f_h="${f%%|*}"
+        if [[ "$f_h" != "null" && "$f" == "$v0" ]] && (( $(printf '%d' "$f_h") > floor )); then
+            echo "$f"; return 0
         fi
         sleep 2
     done
@@ -202,34 +253,21 @@ advanced Tempo past the window. Re-run, or widen the window (raise EPOCH_INTERVA
         up -d --force-recreate "${VALS[@]}"
 }
 
-# Wait (default 120s) until the honest nodes align finalized strictly past PREV_FIN.
-# Normally requires all 5; if $DPOS_CONVERGE_EXCLUDE names a validator (e.g. a
-# byzantine one whose consensus is replaced and whose reth never finalizes), that
-# node is dropped from the alignment check and the honest quorum must align instead.
-wait_dpos_converge() {
-    local deadline=$(( $(date +%s) + ${1:-120} )) v0 v1 v2 v3 fn head
+# Honest-set reader for wait_dpos_converge: drops $DPOS_CONVERGE_EXCLUDE (e.g.
+# a byzantine validator whose reth never finalizes) from the alignment set.
+_read_dpos_nodes() {
     local excl="${DPOS_CONVERGE_EXCLUDE:-}"
-    while [[ $(date +%s) -lt $deadline ]]; do
-        v0=$(check_external 8545); v1=$(check_node docker compose exec -T validator-1)
-        v2=$(check_node docker compose exec -T validator-2); v3=$(check_node docker compose exec -T validator-3)
-        fn=$(check_external 18545); head="${v0%%|*}"
-        # collect the honest set's readings, excluding $excl
-        local readings=()
-        [[ "$excl" != "validator-0" ]] && readings+=("$v0")
-        [[ "$excl" != "validator-1" ]] && readings+=("$v1")
-        [[ "$excl" != "validator-2" ]] && readings+=("$v2")
-        [[ "$excl" != "validator-3" ]] && readings+=("$v3")
-        readings+=("$fn")
-        local aligned=1 r
-        for r in "${readings[@]}"; do [[ "$r" == "${readings[0]}" ]] || aligned=0; done
-        head="${readings[0]%%|*}"
-        if [[ "$aligned" == 1 && "$head" != "null" && "$head" != "0x0" && "$head" != "$PREV_FIN" ]]; then
-            echo "${readings[0]}"; return 0
-        fi
-        sleep 2
-    done
-    return 1
+    [[ "$excl" == "validator-0" ]] || check_external 8545
+    [[ "$excl" == "validator-1" ]] || check_node docker compose exec -T validator-1
+    [[ "$excl" == "validator-2" ]] || check_node docker compose exec -T validator-2
+    [[ "$excl" == "validator-3" ]] || check_node docker compose exec -T validator-3
+    check_external 18545
 }
+
+# Wait (default 120s) until the honest nodes align finalized strictly past PREV_FIN.
+# Normally requires all 5; if $DPOS_CONVERGE_EXCLUDE names a validator, that node
+# is dropped from the alignment check and the honest quorum must align instead.
+wait_dpos_converge() { _wait_aligned "${1:-120}" "$PREV_FIN" _read_dpos_nodes; }
 
 # One-shot: bring up the full Tempo stack, converge, migrate to DPoS, and wait
 # until the DPoS chain is live past the anchor. Leaves the stack UP. Used by every
@@ -277,31 +315,20 @@ pp_consensus_keys() {
         consensus-keys --idx "$1" --peers 6 --chain-id "$CHAIN_ID" 2>/dev/null
 }
 
+# Production-path reader: all 6 validators + full-node.
+_read_pp_nodes() {
+    check_external 8545
+    check_node docker compose exec -T validator-1
+    check_node docker compose exec -T validator-2
+    check_node docker compose exec -T validator-3
+    check_node docker compose exec -T validator-4
+    check_node docker compose exec -T validator-5
+    check_external 18545
+}
+
 # Wait (default 90s) until all 6 validators + full-node align finalized > floor.
 # $1 = timeout, $2 = floor hex to require strictly past (or "" for >0).
-pp_wait_converge() {
-    local deadline=$(( $(date +%s) + ${1:-90} )) floor="${2:-}" r readings head aligned
-    while [[ $(date +%s) -lt $deadline ]]; do
-        readings=(
-            "$(check_external 8545)"
-            "$(check_node docker compose exec -T validator-1)"
-            "$(check_node docker compose exec -T validator-2)"
-            "$(check_node docker compose exec -T validator-3)"
-            "$(check_node docker compose exec -T validator-4)"
-            "$(check_node docker compose exec -T validator-5)"
-            "$(check_external 18545)"
-        )
-        aligned=1
-        for r in "${readings[@]}"; do [[ "$r" == "${readings[0]}" ]] || aligned=0; done
-        head="${readings[0]%%|*}"
-        if [[ "$aligned" == 1 && "$head" != "null" && "$head" != "0x0" ]] \
-           && { [[ -z "$floor" ]] || [[ "$head" != "$floor" ]]; }; then
-            echo "${readings[0]}"; return 0
-        fi
-        sleep 2
-    done
-    return 1
-}
+pp_wait_converge() { _wait_aligned "${1:-90}" "${2:-}" _read_pp_nodes; }
 
 # cast read wrappers against the runtime-deployed addresses (set post-deploy).
 pp_staking_call()     { cast call "$STAKING_RT"      "$@" --rpc-url "$RPC"; }
@@ -350,8 +377,8 @@ pp_token_transfer() {
 
 # Drive one onlyFromGovernance action through propose → castVote(For) → execute.
 # $1=target $2=calldata(0x..) $3=description. v0 proposes; v0-v4 vote For (≥2/3 of
-# the 5-validator voting supply). votingPeriod=10 (l2.json) gives the 5 sequential
-# castVote sends room to land before the deadline.
+# the 5-validator voting supply). Votes go out --async, so the 10-block
+# votingPeriod (l2.json) only needs to fit their inclusion, not 5 receipt waits.
 pp_gov_action() {
     local target="$1" calldata="$2" desc="$3"
     local desc_hash pid i state
@@ -372,9 +399,14 @@ pp_gov_action() {
         sleep 1
     done
     [[ "$state" == 1 ]] || { echo "FAIL pp_gov_action: proposal not Active (state=$state) for: $desc"; return 1; }
+    # --async (no receipt wait): five sequential receipt-awaited sends cost
+    # ~1-2 blocks EACH at 1 blk/s and can overrun the 10-block voting window
+    # (votingPeriod, l2.json) — the Succeeded poll below is the real
+    # synchronization point, and the five voters are distinct keys (no nonce
+    # races between them).
     for i in 0 1 2 3 4; do
         cast send "$GOV_ADDR" "castVote(uint256,uint8)(uint256)" "$pid" 1 \
-            --rpc-url "$RPC" --private-key "$(pp_owner_key "$i")" >/dev/null
+            --rpc-url "$RPC" --private-key "$(pp_owner_key "$i")" --async >/dev/null
     done
     # Wait out the voting period until Succeeded (4), then execute.
     for i in $(seq 1 30); do

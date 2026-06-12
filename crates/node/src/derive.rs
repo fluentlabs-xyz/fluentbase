@@ -7,7 +7,7 @@
 use alloy_consensus::Header;
 use alloy_primitives::B256;
 use eyre::WrapErr as _;
-use fluentbase_consensus::{DerivedBlock, DerivedBlockBuilder, OrderBlock};
+use fluentbase_consensus::{DerivedBlock, DerivedBlockBuilder, OrderBlock, ParentHeaderMissing};
 use reth_ethereum_primitives::EthPrimitives;
 use reth_evm::{
     execute::{BlockBuilder as _, BlockExecutionError, BlockExecutionOutput, BlockValidationError},
@@ -94,12 +94,16 @@ where
     let parent_header = client
         .header(parent_evm_hash)
         .wrap_err("read parent header")?
-        .ok_or_else(|| eyre::eyre!("derive: parent header {parent_evm_hash} not found"))?;
+        .ok_or(ParentHeaderMissing(parent_evm_hash))?;
     let parent_sealed = SealedHeader::new(parent_header, parent_evm_hash);
 
+    // The header read above just proved the parent exists, so a state-read
+    // failure for the same hash is (overwhelmingly) the same eager-canonicalization
+    // visibility lag — type it so the recovery/jump retry can absorb it; the
+    // underlying provider error stays in the chain for the timeout report.
     let state_provider = client
         .state_by_block_hash(parent_evm_hash)
-        .wrap_err("derive: parent state not available")?;
+        .map_err(|e| eyre::Report::new(e).wrap_err(ParentHeaderMissing(parent_evm_hash)))?;
     let mut db = State::builder()
         .with_database(StateProviderDatabase::new(state_provider.as_ref()))
         .with_bundle_update()

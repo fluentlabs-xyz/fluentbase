@@ -154,16 +154,10 @@ echo "  pre-written config matches manifest ✓"
 # orphaned Tempo tail past it — dpos.rs:523-531). The followers ride the
 # uninterrupted WS stream to the same height.
 echo "== wait for sequencer (validator-0) to clean-halt at activation block $ACT =="
-_adl=$(( $(date +%s) + 200 ))
-while :; do
-    _h=$(printf '%d' "$(check_external 8545 2>/dev/null | cut -d'|' -f1)" 2>/dev/null || echo 0)
-    if (( _h >= ACT )); then break; fi
-    if (( $(date +%s) >= _adl )); then
-        echo "FAIL: sequencer did not reach activation block $ACT (head=$_h)"
-        docker compose logs validator-0 --tail=80; exit 1
-    fi
-    sleep 3
-done
+wait_finalized_ge "$ACT" 200 || {
+    echo "FAIL: sequencer did not reach activation block $ACT (head=$(finalized_dec))"
+    docker compose logs validator-0 --tail=80; exit 1
+}
 echo "  sequencer holds block $ACT"
 
 # All 7 nodes (followers + full-node) must align at the halted head before the

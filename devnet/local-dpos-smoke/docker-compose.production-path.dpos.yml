@@ -12,6 +12,33 @@
 # build_verifier) and becomes a signer at the boundary after on-chain
 # activateValidator + delegate. full-node stays a follower.
 
+# One shared --dpos follower-validator command for validators 1-5: the index
+# arrives via `environment: IDX` ($$ = compose-escaped, expanded by the
+# in-container sh) and drives the datadir, key paths, and the dialable IP
+# (172.20.0.1$IDX). One block to edit instead of five.
+x-dpos-validator-cmd: &dpos-validator-cmd
+  entrypoint: ["/bin/sh", "-c"]
+  command:
+    - |
+      exec /usr/local/bin/fluent node \
+        --chain=/runtime/genesis-local.json \
+        --datadir=/runtime/reth-data/v$$IDX \
+        --dpos \
+        --dpos.bls-key-path=/runtime/keys/validator-$$IDX/bls.hex \
+        --dpos.peer-key-path=/runtime/keys/validator-$$IDX/peer.hex \
+        --dpos.staking-config=/runtime/staking-reader.json \
+        --dpos.bootstrappers=/runtime/peers.json \
+        --dpos.dialable=172.20.0.1$$IDX:9000 \
+        --dpos.metrics-port=9100 \
+        --dpos.slasher-keystore-path=/runtime/keys/validator-$$IDX/slasher.json \
+        --dpos.slasher-keystore-password-file=/runtime/keys/validator-$$IDX/slasher.pwd \
+        --builder.extradata= \
+        --storage.v2=false \
+        --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+        --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+        --trusted-only \
+        --disable-discovery
+
 services:
   validator-0:
     command:
@@ -42,119 +69,29 @@ services:
       - "19100:9100"
 
   validator-1:
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        exec /usr/local/bin/fluent node \
-          --chain=/runtime/genesis-local.json \
-          --datadir=/runtime/reth-data/v1 \
-          --dpos \
-          --dpos.bls-key-path=/runtime/keys/validator-1/bls.hex \
-          --dpos.peer-key-path=/runtime/keys/validator-1/peer.hex \
-          --dpos.staking-config=/runtime/staking-reader.json \
-          --dpos.bootstrappers=/runtime/peers.json \
-          --dpos.dialable=172.20.0.11:9000 \
-          --dpos.metrics-port=9100 \
-          --dpos.slasher-keystore-path=/runtime/keys/validator-1/slasher.json \
-          --dpos.slasher-keystore-password-file=/runtime/keys/validator-1/slasher.pwd \
-          --builder.extradata= \
-          --storage.v2=false \
-          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
-          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
-          --trusted-only \
-          --disable-discovery
+    <<: *dpos-validator-cmd
+    environment:
+      IDX: "1"
 
   validator-2:
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        exec /usr/local/bin/fluent node \
-          --chain=/runtime/genesis-local.json \
-          --datadir=/runtime/reth-data/v2 \
-          --dpos \
-          --dpos.bls-key-path=/runtime/keys/validator-2/bls.hex \
-          --dpos.peer-key-path=/runtime/keys/validator-2/peer.hex \
-          --dpos.staking-config=/runtime/staking-reader.json \
-          --dpos.bootstrappers=/runtime/peers.json \
-          --dpos.dialable=172.20.0.12:9000 \
-          --dpos.metrics-port=9100 \
-          --dpos.slasher-keystore-path=/runtime/keys/validator-2/slasher.json \
-          --dpos.slasher-keystore-password-file=/runtime/keys/validator-2/slasher.pwd \
-          --builder.extradata= \
-          --storage.v2=false \
-          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
-          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
-          --trusted-only \
-          --disable-discovery
+    <<: *dpos-validator-cmd
+    environment:
+      IDX: "2"
 
   validator-3:
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        exec /usr/local/bin/fluent node \
-          --chain=/runtime/genesis-local.json \
-          --datadir=/runtime/reth-data/v3 \
-          --dpos \
-          --dpos.bls-key-path=/runtime/keys/validator-3/bls.hex \
-          --dpos.peer-key-path=/runtime/keys/validator-3/peer.hex \
-          --dpos.staking-config=/runtime/staking-reader.json \
-          --dpos.bootstrappers=/runtime/peers.json \
-          --dpos.dialable=172.20.0.13:9000 \
-          --dpos.metrics-port=9100 \
-          --dpos.slasher-keystore-path=/runtime/keys/validator-3/slasher.json \
-          --dpos.slasher-keystore-password-file=/runtime/keys/validator-3/slasher.pwd \
-          --builder.extradata= \
-          --storage.v2=false \
-          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
-          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
-          --trusted-only \
-          --disable-discovery
+    <<: *dpos-validator-cmd
+    environment:
+      IDX: "3"
 
   validator-4:
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        exec /usr/local/bin/fluent node \
-          --chain=/runtime/genesis-local.json \
-          --datadir=/runtime/reth-data/v4 \
-          --dpos \
-          --dpos.bls-key-path=/runtime/keys/validator-4/bls.hex \
-          --dpos.peer-key-path=/runtime/keys/validator-4/peer.hex \
-          --dpos.staking-config=/runtime/staking-reader.json \
-          --dpos.bootstrappers=/runtime/peers.json \
-          --dpos.dialable=172.20.0.14:9000 \
-          --dpos.metrics-port=9100 \
-          --dpos.slasher-keystore-path=/runtime/keys/validator-4/slasher.json \
-          --dpos.slasher-keystore-password-file=/runtime/keys/validator-4/slasher.pwd \
-          --builder.extradata= \
-          --storage.v2=false \
-          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
-          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
-          --trusted-only \
-          --disable-discovery
+    <<: *dpos-validator-cmd
+    environment:
+      IDX: "4"
 
   # External joiner: boots in --dpos but NOT in the initial committee, so it runs
   # as a verifier until on-chain activateValidator + delegate land its key in
   # getEpochCommittee(E+1), at which boundary it becomes a signer.
   validator-5:
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        exec /usr/local/bin/fluent node \
-          --chain=/runtime/genesis-local.json \
-          --datadir=/runtime/reth-data/v5 \
-          --dpos \
-          --dpos.bls-key-path=/runtime/keys/validator-5/bls.hex \
-          --dpos.peer-key-path=/runtime/keys/validator-5/peer.hex \
-          --dpos.staking-config=/runtime/staking-reader.json \
-          --dpos.bootstrappers=/runtime/peers.json \
-          --dpos.dialable=172.20.0.15:9000 \
-          --dpos.metrics-port=9100 \
-          --dpos.slasher-keystore-path=/runtime/keys/validator-5/slasher.json \
-          --dpos.slasher-keystore-password-file=/runtime/keys/validator-5/slasher.pwd \
-          --builder.extradata= \
-          --storage.v2=false \
-          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
-          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
-          --trusted-only \
-          --disable-discovery
+    <<: *dpos-validator-cmd
+    environment:
+      IDX: "5"

@@ -46,6 +46,29 @@ x-follower-health: &follower-health
     retries: 30
     start_period: 5s
 
+# One shared follower command for validators 1-5 + full-node: per-service
+# differences come in via `environment` ($$ = compose-escaped, expanded by the
+# in-container sh) — NODE_DIR (datadir suffix) and EXTRA_NODE_FLAGS (optional,
+# e.g. the full-node's proof window). A flag change edits ONE block, not 6 —
+# a hand-edited copy missing one flag is exactly the config-asymmetry
+# follower-wedge class this suite exists to catch.
+x-follower-cmd: &follower-cmd
+  entrypoint: ["/bin/sh", "-c"]
+  command:
+    - |
+      exec /usr/local/bin/fluent node \
+        --chain=/runtime/genesis-local.json \
+        --sequencer-url=ws://172.20.0.10:8546 \
+        --dpos.staking-config=/runtime/staking-reader.json \
+        --builder.extradata= \
+        --storage.v2=false \
+        $$EXTRA_NODE_FLAGS \
+        --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+        --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+        --trusted-only \
+        --disable-discovery \
+        --datadir=/runtime/reth-data/$$NODE_DIR
+
 services:
   genesis-init:
     <<: *fluent-build
@@ -106,24 +129,12 @@ services:
         ipv4_address: 172.20.0.10
 
   validator-1:
-    <<: [*fluent-build, *cpu-limit, *follower-health]
+    <<: [*fluent-build, *cpu-limit, *follower-health, *follower-cmd]
     depends_on:
       validator-0:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        exec /usr/local/bin/fluent node \
-          --chain=/runtime/genesis-local.json \
-          --sequencer-url=ws://172.20.0.10:8546 \
-          --dpos.staking-config=/runtime/staking-reader.json \
-          --builder.extradata= \
-          --storage.v2=false \
-          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
-          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
-          --trusted-only \
-          --disable-discovery \
-          --datadir=/runtime/reth-data/v1
+    environment:
+      NODE_DIR: v1
     volumes:
       - runtime:/runtime
     networks:
@@ -131,24 +142,12 @@ services:
         ipv4_address: 172.20.0.11
 
   validator-2:
-    <<: [*fluent-build, *cpu-limit, *follower-health]
+    <<: [*fluent-build, *cpu-limit, *follower-health, *follower-cmd]
     depends_on:
       validator-1:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        exec /usr/local/bin/fluent node \
-          --chain=/runtime/genesis-local.json \
-          --sequencer-url=ws://172.20.0.10:8546 \
-          --dpos.staking-config=/runtime/staking-reader.json \
-          --builder.extradata= \
-          --storage.v2=false \
-          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
-          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
-          --trusted-only \
-          --disable-discovery \
-          --datadir=/runtime/reth-data/v2
+    environment:
+      NODE_DIR: v2
     volumes:
       - runtime:/runtime
     networks:
@@ -156,24 +155,12 @@ services:
         ipv4_address: 172.20.0.12
 
   validator-3:
-    <<: [*fluent-build, *cpu-limit, *follower-health]
+    <<: [*fluent-build, *cpu-limit, *follower-health, *follower-cmd]
     depends_on:
       validator-2:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        exec /usr/local/bin/fluent node \
-          --chain=/runtime/genesis-local.json \
-          --sequencer-url=ws://172.20.0.10:8546 \
-          --dpos.staking-config=/runtime/staking-reader.json \
-          --builder.extradata= \
-          --storage.v2=false \
-          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
-          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
-          --trusted-only \
-          --disable-discovery \
-          --datadir=/runtime/reth-data/v3
+    environment:
+      NODE_DIR: v3
     volumes:
       - runtime:/runtime
     networks:
@@ -181,24 +168,12 @@ services:
         ipv4_address: 172.20.0.13
 
   validator-4:
-    <<: [*fluent-build, *cpu-limit, *follower-health]
+    <<: [*fluent-build, *cpu-limit, *follower-health, *follower-cmd]
     depends_on:
       validator-3:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        exec /usr/local/bin/fluent node \
-          --chain=/runtime/genesis-local.json \
-          --sequencer-url=ws://172.20.0.10:8546 \
-          --dpos.staking-config=/runtime/staking-reader.json \
-          --builder.extradata= \
-          --storage.v2=false \
-          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
-          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
-          --trusted-only \
-          --disable-discovery \
-          --datadir=/runtime/reth-data/v4
+    environment:
+      NODE_DIR: v4
     volumes:
       - runtime:/runtime
     networks:
@@ -206,24 +181,12 @@ services:
         ipv4_address: 172.20.0.14
 
   validator-5:
-    <<: [*fluent-build, *cpu-limit, *follower-health]
+    <<: [*fluent-build, *cpu-limit, *follower-health, *follower-cmd]
     depends_on:
       validator-4:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        exec /usr/local/bin/fluent node \
-          --chain=/runtime/genesis-local.json \
-          --sequencer-url=ws://172.20.0.10:8546 \
-          --dpos.staking-config=/runtime/staking-reader.json \
-          --builder.extradata= \
-          --storage.v2=false \
-          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
-          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
-          --trusted-only \
-          --disable-discovery \
-          --datadir=/runtime/reth-data/v5
+    environment:
+      NODE_DIR: v5
     volumes:
       - runtime:/runtime
     networks:
@@ -231,25 +194,13 @@ services:
         ipv4_address: 172.20.0.15
 
   full-node:
-    <<: [*fluent-build, *cpu-limit]
+    <<: [*fluent-build, *cpu-limit, *follower-cmd]
     depends_on:
       validator-5:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        exec /usr/local/bin/fluent node \
-          --chain=/runtime/genesis-local.json \
-          --sequencer-url=ws://172.20.0.10:8546 \
-          --dpos.staking-config=/runtime/staking-reader.json \
-          --builder.extradata= \
-          --storage.v2=false \
-          --rpc.eth-proof-window=50000 \
-          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
-          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
-          --trusted-only \
-          --disable-discovery \
-          --datadir=/runtime/reth-data/full-node
+    environment:
+      NODE_DIR: full-node
+      EXTRA_NODE_FLAGS: --rpc.eth-proof-window=50000
     volumes:
       - runtime:/runtime
     ports:

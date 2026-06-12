@@ -6,7 +6,10 @@
 //! `DposLayer::launch` returns the mailbox). Cloneable + `Send + Sync` so the
 //! jsonrpsee server handler and the feed actor share it.
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, OnceLock, RwLock},
+};
 
 use commonware_consensus::types::Height;
 use fluentbase_consensus::MarshalMailbox;
@@ -28,14 +31,29 @@ pub enum FeedError {
 
 #[derive(Default)]
 struct FeedState {
-    latest_finalized: Option<CertifiedBlock>,
+    latest_finalized: Option<Arc<CertifiedBlock>>,
     latest_result_finalized: Option<u64>,
+}
+
+/// Shared by-height window a follower serves from (bounded to
+/// `JUMP_THRESHOLD` entries by the window feed task). `Arc` values: the block
+/// payload is a multi-MB hex string worst-case, and serving must not deep-copy
+/// it under the read lock on every request.
+pub type CertWindow = Arc<RwLock<BTreeMap<u64, Arc<CertifiedBlock>>>>;
+
+/// By-height source behind `consensus_getFinalization`: the validator serves
+/// from the marshal archive (full history); a follower serves from a bounded
+/// in-memory window (deeper gaps are crossed by the downstream node's EL-sync
+/// jump, never by cert backfill).
+enum ByHeightSource {
+    Marshal(MarshalMailbox),
+    Window(CertWindow),
 }
 
 #[derive(Clone)]
 pub struct FeedStateHandle {
     state: Arc<RwLock<FeedState>>,
-    marshal: Arc<OnceLock<MarshalMailbox>>,
+    source: Arc<OnceLock<ByHeightSource>>,
     events_tx: broadcast::Sender<Event>,
 }
 
@@ -46,14 +64,19 @@ impl FeedStateHandle {
         let (events_tx, _) = broadcast::channel(event_capacity);
         Self {
             state: Arc::new(RwLock::new(FeedState::default())),
-            marshal: Arc::new(OnceLock::new()),
+            source: Arc::new(OnceLock::new()),
             events_tx,
         }
     }
 
     /// Wire the marshal mailbox (node-side, once `DposLayer::launch` returns it).
     pub fn set_marshal(&self, marshal: MarshalMailbox) {
-        let _ = self.marshal.set(marshal);
+        let _ = self.source.set(ByHeightSource::Marshal(marshal));
+    }
+
+    /// Wire a follower's bounded serving window (cert-follow mode).
+    pub fn set_window(&self, window: CertWindow) {
+        let _ = self.source.set(ByHeightSource::Window(window));
     }
 
     /// New `consensus_subscribe` receiver.
@@ -75,7 +98,7 @@ impl FeedStateHandle {
     /// (best-effort — no listeners is fine). The result tier is derived from
     /// the artifact's `result` commitment: inclusion-finalizing height N
     /// attests the derived hash of N − K.
-    pub fn record_finalized(&self, block: CertifiedBlock, seen: u64) {
+    pub fn record_finalized(&self, block: Arc<CertifiedBlock>, seen: u64) {
         let result_tier = block.into_parts().ok().and_then(|(_, order)| {
             (order.result != alloy_primitives::B256::ZERO)
                 .then(|| (order.height.saturating_sub(fluentbase_consensus::K), order.result))
@@ -100,7 +123,7 @@ impl FeedStateHandle {
 
     /// `consensus_getFinalization`: `Latest` from the snapshot; `Height(h)` from
     /// the marshal archive (`get_finalization` + `get_block` → [`CertifiedBlock`]).
-    pub async fn get_finalization(&self, query: Query) -> Result<CertifiedBlock, FeedError> {
+    pub async fn get_finalization(&self, query: Query) -> Result<Arc<CertifiedBlock>, FeedError> {
         match query {
             Query::Latest => self
                 .state
@@ -109,17 +132,24 @@ impl FeedStateHandle {
                 .latest_finalized
                 .clone()
                 .ok_or(FeedError::Missing),
-            Query::Height(h) => {
-                let marshal = self.marshal.get().ok_or(FeedError::NotReady)?;
-                let height = Height::new(h);
-                let fin = marshal
-                    .get_finalization(height)
-                    .await
-                    .ok_or(FeedError::Missing)?;
-                // `Height: Into<Identifier>` (marshal/mod.rs:103) — fetch the block by height.
-                let block = marshal.get_block(height).await.ok_or(FeedError::Missing)?;
-                Ok(CertifiedBlock::from_parts(&fin, &block))
-            }
+            Query::Height(h) => match self.source.get().ok_or(FeedError::NotReady)? {
+                ByHeightSource::Marshal(marshal) => {
+                    let height = Height::new(h);
+                    let fin = marshal
+                        .get_finalization(height)
+                        .await
+                        .ok_or(FeedError::Missing)?;
+                    // `Height: Into<Identifier>` (marshal/mod.rs:103) — fetch the block by height.
+                    let block = marshal.get_block(height).await.ok_or(FeedError::Missing)?;
+                    Ok(Arc::new(CertifiedBlock::from_parts(&fin, &block)))
+                }
+                ByHeightSource::Window(window) => window
+                    .read()
+                    .expect("cert window poisoned")
+                    .get(&h)
+                    .cloned()
+                    .ok_or(FeedError::Missing),
+            },
         }
     }
 }

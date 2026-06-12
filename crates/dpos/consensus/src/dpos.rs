@@ -4,7 +4,8 @@
 
 use crate::{
     application::{
-        BeaconEngineLike, DerivedBlock as _, DerivedBlockBuilder, ExecutedChain, OrderingAssembler,
+        derive_with_visibility_retry, BeaconEngineLike, DerivedBlock as _, DerivedBlockBuilder,
+        ExecutedChain, OrderingAssembler,
     },
     order_block::{anchor_order_block, K},
     scheme::epoch_committee_from_snapshot,
@@ -51,7 +52,7 @@ use std::{
 };
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Threshold for consecutive `on_finalized` errors before initiating shutdown.
 /// At 1 block/sec finalization, 3 = ~3 seconds tolerance. Survives transient
@@ -244,7 +245,6 @@ where
                  re-sync the EL disk from a snapshot"
             )
         })?;
-    let mut target_hash = parent_hash;
     for h in lowest..=target {
         let order = archive
             .get(Identifier::Index(h))
@@ -256,12 +256,10 @@ where
                      {h} (gap exceeds marshal retention); re-sync the EL disk from a snapshot"
                 )
             })?;
-        let derived = deriver
-            .derive_and_execute(order, parent_hash)
+        let derived = derive_with_visibility_retry(ctx, deriver, &order, parent_hash)
             .await
             .wrap_err("crash-survivor recovery derivation failed")?;
         parent_hash = derived.evm_hash();
-        target_hash = parent_hash;
         let status = beacon_engine
             .import_derived(derived)
             .await
@@ -270,26 +268,28 @@ where
             status.is_valid() || status.is_syncing(),
             "EL rejected recovered finalized block {h}: {status:?}"
         );
+        // Per-block FCU, awaited — the SAME visibility sync point the live
+        // executor relies on. An InsertExecuted import "adds to canonical
+        // chain" but header-by-hash reads do NOT see the block until an FCU
+        // lands (observed unbounded, not ms-scale: a 10s retry expired
+        // against it), so the next iteration's parent read would fail
+        // without this. The retry above still covers the devp2p-concurrent
+        // import case, where the canonicalizer is not us.
+        let resp = beacon_engine
+            .fork_choice_updated(ForkchoiceState {
+                head_block_hash: parent_hash,
+                safe_block_hash: parent_hash,
+                finalized_block_hash: parent_hash,
+            })
+            .await
+            .wrap_err("crash-survivor recovery per-block FCU failed")?;
+        ensure!(
+            resp.is_valid(),
+            "EL rejected crash-survivor recovery FCU at {h}: {:?}",
+            resp.payload_status
+        );
     }
     drop(archive); // release so MarshalActor::init can re-open the same partition.
-
-    // `new_payload` only buffers/validates; an FCU is required to make the recovered
-    // tail canonical so `block_hash(target)` (and the committee/genesis reads that
-    // follow) actually see it.
-    let resp = beacon_engine
-        .fork_choice_updated(
-            ForkchoiceState {
-                head_block_hash: target_hash,
-                safe_block_hash: target_hash,
-                finalized_block_hash: target_hash,
-            })
-        .await
-        .wrap_err("crash-survivor recovery FCU failed")?;
-    ensure!(
-        resp.is_valid(),
-        "EL rejected crash-survivor recovery FCU (target={target}): {:?}",
-        resp.payload_status
-    );
 
     provider
         .block_hash(target)
@@ -324,6 +324,63 @@ pub struct DposLayerConfig<D, XC, A> {
     /// application-`Reporter` so a node-side feed actor can serve the
     /// `consensus` RPC. `None` for nodes that don't serve the cert feed.
     pub feed: Option<crate::feed_sink::FeedSink>,
+    /// Operator assertion: this datadir followed a LIVE chain via another
+    /// plane (cert-follow / trust-follow) and is being promoted to a
+    /// validator. Converts the fresh-path fail-loud guards (epoch-0
+    /// overshoot + clean-halt) into a JOINER anchor at the EL-restored
+    /// finalized tip. NOT auto-detected: "joiner of a live chain" and
+    /// "migration ex-sequencer that overshot epoch 0" are indistinguishable
+    /// from local state, and the latter must stay fatal (anchoring nodes at
+    /// different points = chain split).
+    pub joiner: bool,
+}
+
+/// Cold-start kind resolved from durable state + the operator's joiner
+/// assertion. Pure function of the inputs so the 4-way decision is
+/// unit-testable without a node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColdStartKind {
+    /// Empty archive, EL at/inside epoch 0: anchor at the activation block.
+    FreshMigration,
+    /// Empty archive, EL past epoch 0, `--dpos.joiner` passed: anchor at the
+    /// EL-restored finalized tip (follower-datadir promotion).
+    Joiner,
+    /// Populated archive: resume at its finalized height (the joiner flag is
+    /// irrelevant — real consensus state always wins).
+    Restart,
+}
+
+fn resolve_cold_start_kind(
+    joiner: bool,
+    archive_finalized: u64,
+    activation: u64,
+    interval: u32,
+    cs_finalized: u64,
+) -> eyre::Result<ColdStartKind> {
+    if archive_finalized > activation {
+        if joiner {
+            warn!("--dpos.joiner ignored: consensus archive present (normal restart)");
+        }
+        return Ok(ColdStartKind::Restart);
+    }
+    let overshot = cs_finalized >= activation + interval as u64;
+    match (joiner, overshot) {
+        (true, true) => Ok(ColdStartKind::Joiner),
+        (false, true) => Err(eyre!(
+            "sequencer overshot epoch 0 (finalized {cs_finalized} >= activation {activation} \
+             + interval {interval}); refusing to anchor DPoS. If this datadir followed a LIVE \
+             chain via --cert-follow/trust-follow and is being promoted to a validator, \
+             restart with --dpos.joiner"
+        )),
+        (true, false) => {
+            warn!(
+                cs_finalized,
+                activation, "--dpos.joiner ignored: EL state is inside epoch 0 (genuine fresh migration)"
+            );
+            Ok(ColdStartKind::FreshMigration)
+        }
+        (false, false) => Ok(ColdStartKind::FreshMigration),
+    }
 }
 
 pub struct P2pParams {
@@ -394,6 +451,7 @@ impl DposLayer {
             fee_recipient,
             target_gas_limit,
             feed,
+            joiner,
         } = cfg;
 
         let RethHandle {
@@ -418,8 +476,11 @@ impl DposLayer {
         // already cloned at the call sites. Each instance lazy-inits its own
         // `OnceLock<u32>` epoch interval/undelegate cache on first call —
         // negligible (~2 extra reads at startup).
-        let reader_for_slasher =
-            RethStakingStateReader::new(provider.clone(), evm_config, staking_config);
+        let reader_for_slasher = RethStakingStateReader::new(
+            provider.clone(),
+            evm_config.clone(),
+            staking_config.clone(),
+        );
 
         // Reth's `BlockchainProvider::with_latest` populates
         // `canonical_state.finalized_block` from
@@ -441,29 +502,40 @@ impl DposLayer {
         let epoch_length_blocks =
             NonZeroU64::new(interval as u64).ok_or_eyre("epoch_block_interval must be > 0")?;
 
-        // Two-way cold-start discriminator (restart vs fresh migration). The
-        // marshal's durable application-metadata is the signal: an empty store
-        // (height <= activation) is a fresh Tempo→DPoS migration; a populated
-        // store (> activation) is a restart of an already-migrated node, which
-        // MUST resume at its real finalized height so the scheme cascade starts
-        // at the correct epoch.
+        // Three-way cold-start discriminator (restart vs fresh migration vs
+        // joiner). The marshal's durable application-metadata is the signal:
+        // an empty store (height <= activation) is a fresh Tempo→DPoS
+        // migration — unless the EL overshot epoch 0, which is fatal without
+        // the operator's --dpos.joiner assertion (follower-datadir promotion).
+        // A populated store is a restart of an already-migrated node, which
+        // MUST resume at its real finalized height so the scheme cascade
+        // starts at the correct epoch.
         let archive_finalized =
             read_consensus_archive_last_finalized(&ctx, MARSHAL_PARTITION_PREFIX).await?;
-        let is_fresh_migration = archive_finalized <= dpos_activation_block;
-        let (latest_finalized, latest_finalized_hash) = if is_fresh_migration {
+        let kind = resolve_cold_start_kind(
+            joiner,
+            archive_finalized,
+            dpos_activation_block,
+            interval,
+            cs_finalized,
+        )?;
+        let (latest_finalized, latest_finalized_hash) = if kind == ColdStartKind::Joiner {
+            // JOINER: anchor at the EL-restored finalized tip (the follower's
+            // result-final h − K). No archives to recover from — reth IS the
+            // source; the marshal floor seeds here and the epoch catch-up
+            // machinery walks the node to the live frontier exactly like a
+            // deep restart rejoin.
+            warn!(
+                anchor = cs_finalized,
+                "JOINER cold-start: promoting follower datadir to validator"
+            );
+            (cs_finalized, cs_finalized_hash)
+        } else if kind == ColdStartKind::FreshMigration {
             // FRESH MIGRATION: anchor ≡ block@dposActivationBlock; wait for reth
             // to hold it, hash derived locally (canonical at a finalized height).
             // Checkpoint-provisioned EL-ahead start is deferred to Phase 2/β — a
             // node-local EL head as genesis would diverge cross-node.
             let hash = wait_for_activation_block(&ctx, &provider, dpos_activation_block).await?;
-            // fail-loud: the sequencer must not have overshot epoch 0 entirely
-            // (finalized into epoch 1+) — DPoS would otherwise sibling-fork
-            // already-finalized blocks → finalized rollback → split.
-            ensure!(
-                cs_finalized < dpos_activation_block + interval as u64,
-                "sequencer overshot epoch 0 (finalized {cs_finalized} >= activation \
-                 {dpos_activation_block} + interval {interval}); refusing to anchor DPoS"
-            );
             (dpos_activation_block, hash)
         } else {
             // RESTART (already migrated): resume at the consensus archive's
@@ -505,7 +577,7 @@ impl DposLayer {
         tracing::info!(
             last_execution_finalized_height,
             archive_finalized,
-            is_fresh_migration,
+            ?kind,
             finalized = latest_finalized,
             finalized_hash = ?latest_finalized_hash,
             head_num,
@@ -520,7 +592,7 @@ impl DposLayer {
         // (mis-set chain-config, an ungated node, or a hand-rolled migration): fail
         // loud at cold-start rather than wedge silently in the executor ancestor-FCU
         // guard.
-        if is_fresh_migration {
+        if kind == ColdStartKind::FreshMigration {
             ensure!(
                 head_hash == latest_finalized_hash,
                 "fresh migration but reth head {head_num} ({head_hash:?}) != activation \
@@ -757,6 +829,83 @@ impl DposLayer {
         let me = peer_keypair.public_key();
         info!(peer_pubkey = %me, "DPoS peer identity");
 
+        // Isolation-window watchdog: a non-committee `--dpos` node has ZERO
+        // consensus-plane connectivity (the tracked peer set == the on-chain
+        // committee) yet otherwise looks alive — the silent-verifier trap.
+        // Surface it: when finalized makes no progress across two ticks AND
+        // this key is not in the current committee, say so loudly. Expected
+        // for a joiner until its first committee epoch; anything else means
+        // registration/delegation needs checking.
+        {
+            let wd_reader = RethStakingStateReader::new(
+                provider.clone(),
+                evm_config.clone(),
+                staking_config.clone(),
+            );
+            let wd_provider = provider.clone();
+            let wd_me = me.clone();
+            let wd_interval = interval;
+            let wd_activation = dpos_activation_block;
+            drop(ctx.with_label("committee_watchdog").spawn(move |c| async move {
+                let mut prev_fin = 0u64;
+                let mut stagnant = 0u32;
+                let mut cached: Option<(u64, B256, Option<bool>)> = None;
+                loop {
+                    c.sleep(Duration::from_secs(60)).await;
+                    let Ok(Some(fin)) = wd_provider.finalized_block_number() else {
+                        continue;
+                    };
+                    if fin > prev_fin {
+                        prev_fin = fin;
+                        stagnant = 0;
+                        continue;
+                    }
+                    stagnant += 1;
+                    if stagnant < 2 {
+                        continue;
+                    }
+                    let Ok(Some(hash)) = wd_provider.block_hash(fin) else {
+                        continue;
+                    };
+                    let epoch = fluentbase_staking_reader::reader::epoch_of_block(
+                        fin,
+                        wd_interval,
+                        wd_activation,
+                    );
+                    // The snapshot is a deterministic state read — while
+                    // finalized is stagnant its inputs cannot change, so a
+                    // wedged joiner re-warns from cache instead of re-running
+                    // the committee EVM read every tick for hours.
+                    let in_committee = match cached {
+                        Some((c_fin, c_hash, verdict)) if (c_fin, c_hash) == (fin, hash) => {
+                            verdict
+                        }
+                        _ => {
+                            let verdict = wd_reader
+                                .epoch_committee_snapshot(epoch, hash)
+                                .ok()
+                                .map(|s| {
+                                    s.validators
+                                        .iter()
+                                        .any(|v| v.keys.peer_pubkey == wd_me)
+                                });
+                            cached = Some((fin, hash, verdict));
+                            verdict
+                        }
+                    };
+                    if in_committee == Some(false) {
+                        warn!(
+                            finalized = fin,
+                            epoch,
+                            "no finalized progress and this key is NOT in the current \
+                             committee — expected for a joiner until its first committee \
+                             epoch; otherwise check validator registration/delegation"
+                        );
+                    }
+                }
+            }));
+        }
+
         // Slasher wiring — `latest_finalized_hash` closure over the reth
         // provider. The TxPool transport sink arrives pre-built via
         // `cfg.slasher_sink` (host-side construction).
@@ -797,10 +946,12 @@ impl DposLayer {
             last_execution_finalized_height,
             initial_finalized: (Height::new(latest_finalized), latest_finalized_hash),
             initial_head: (Height::new(initial_head_num), initial_head_hash),
-            // DPoS-era floor: the marshal never dispatches pre-activation history
-            // (no DPoS node holds it). Seeds a fresh migration to anchor+1; a
-            // no-op raise on restart (the archive's floor is already higher).
-            marshal_floor: Some(Height::new(dpos_activation_block)),
+            // DPoS-era floor: the marshal never dispatches pre-anchor history.
+            // Fresh migration: anchor = activation. Joiner: anchor = the
+            // EL-restored finalized tip (no pre-anchor certs exist locally).
+            // Restart: a raises-only no-op (the archive's floor is already
+            // at/above its own finalized).
+            marshal_floor: Some(Height::new(latest_finalized)),
             fcu_heartbeat_interval: Duration::from_secs(8),
             fcu_pace: Duration::from_millis(20),
             canonical_state: canonical_state.clone(),
@@ -862,5 +1013,170 @@ impl DposLayer {
             network_handle,
             cert_mailbox,
         })
+    }
+}
+
+#[cfg(test)]
+mod cold_start_kind_tests {
+    use super::{resolve_cold_start_kind, ColdStartKind};
+
+    const ACTIVATION: u64 = 192;
+    const INTERVAL: u32 = 64;
+
+    #[test]
+    fn fresh_migration_inside_epoch_0() {
+        let kind = resolve_cold_start_kind(false, 0, ACTIVATION, INTERVAL, ACTIVATION + 10)
+            .expect("fresh");
+        assert_eq!(kind, ColdStartKind::FreshMigration);
+    }
+
+    #[test]
+    fn overshoot_without_flag_is_fatal() {
+        let err = resolve_cold_start_kind(false, 0, ACTIVATION, INTERVAL, ACTIVATION + 500)
+            .unwrap_err();
+        assert!(err.to_string().contains("--dpos.joiner"), "{err}");
+    }
+
+    #[test]
+    fn overshoot_with_flag_is_joiner() {
+        let kind = resolve_cold_start_kind(true, 0, ACTIVATION, INTERVAL, ACTIVATION + 500)
+            .expect("joiner");
+        assert_eq!(kind, ColdStartKind::Joiner);
+    }
+
+    #[test]
+    fn flag_without_overshoot_is_noop_fresh() {
+        let kind = resolve_cold_start_kind(true, 0, ACTIVATION, INTERVAL, ACTIVATION + 10)
+            .expect("fresh");
+        assert_eq!(kind, ColdStartKind::FreshMigration);
+    }
+
+    #[test]
+    fn archive_present_is_restart_regardless_of_flag() {
+        for joiner in [false, true] {
+            let kind =
+                resolve_cold_start_kind(joiner, ACTIVATION + 300, ACTIVATION, INTERVAL, ACTIVATION + 500)
+                    .expect("restart");
+            assert_eq!(kind, ColdStartKind::Restart);
+        }
+    }
+
+    #[test]
+    fn boundary_exactly_one_interval_is_overshoot() {
+        // cs_finalized == activation + interval is the FIRST fatal height
+        // (epoch 0 is [activation, activation + interval)).
+        let err = resolve_cold_start_kind(false, 0, ACTIVATION, INTERVAL, ACTIVATION + INTERVAL as u64)
+            .unwrap_err();
+        assert!(err.to_string().contains("overshot"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod visibility_retry_tests {
+    use super::*;
+    use crate::{application::ParentHeaderMissing, digest::Digest, order_block::OrderBlock};
+    use alloy_consensus::{Block as AlloyBlock, BlockBody};
+    use alloy_primitives::{Address, Bytes};
+    use commonware_runtime::{deterministic, Runner as _};
+    use reth_ethereum_primitives::TransactionSigned;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    fn sample_order() -> OrderBlock {
+        OrderBlock {
+            parent: Digest(B256::ZERO),
+            height: 7,
+            timestamp: 7,
+            fee_recipient: Address::ZERO,
+            gas_limit: 30_000_000,
+            extra_data: Bytes::new(),
+            result: B256::ZERO,
+            txs: Vec::new(),
+        }
+    }
+
+    /// Fails the first `transient_failures` calls with [`ParentHeaderMissing`]
+    /// (or `fatal` instead, when set), then succeeds.
+    struct FlakyDeriver {
+        calls: AtomicU32,
+        transient_failures: u32,
+        fatal: bool,
+    }
+
+    impl DerivedBlockBuilder for FlakyDeriver {
+        type Derived = SealedBlock<RethBlock>;
+
+        async fn derive_and_execute(
+            &self,
+            order: OrderBlock,
+            parent_evm_hash: B256,
+        ) -> eyre::Result<SealedBlock<RethBlock>> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n < self.transient_failures {
+                if self.fatal {
+                    return Err(eyre!("disk exploded"));
+                }
+                return Err(ParentHeaderMissing(parent_evm_hash).into());
+            }
+            let header = Header {
+                parent_hash: parent_evm_hash,
+                number: order.height,
+                ..Default::default()
+            };
+            let body: BlockBody<TransactionSigned> = BlockBody::default();
+            Ok(SealedBlock::seal_slow(RethBlock::from(AlloyBlock::new(
+                header, body,
+            ))))
+        }
+    }
+
+    #[test]
+    fn transient_parent_miss_is_retried_until_visible() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let deriver = FlakyDeriver {
+                calls: AtomicU32::new(0),
+                transient_failures: 3,
+                fatal: false,
+            };
+            let derived = derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO)
+                .await
+                .expect("recovers once the parent becomes visible");
+            assert_eq!(derived.number(), 7);
+            assert_eq!(deriver.calls.load(Ordering::SeqCst), 4);
+        });
+    }
+
+    #[test]
+    fn other_derivation_errors_stay_immediately_fatal() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let deriver = FlakyDeriver {
+                calls: AtomicU32::new(0),
+                transient_failures: 1,
+                fatal: true,
+            };
+            let err = derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO)
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("disk exploded"), "{err}");
+            assert_eq!(deriver.calls.load(Ordering::SeqCst), 1, "no retry on fatal errors");
+        });
+    }
+
+    #[test]
+    fn persistent_parent_miss_fails_after_deadline() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let deriver = FlakyDeriver {
+                calls: AtomicU32::new(0),
+                transient_failures: u32::MAX,
+                fatal: false,
+            };
+            let err = derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO)
+                .await
+                .unwrap_err();
+            assert!(err.downcast_ref::<ParentHeaderMissing>().is_some(), "{err}");
+            assert!(
+                deriver.calls.load(Ordering::SeqCst) > 1,
+                "must have retried before giving up"
+            );
+        });
     }
 }

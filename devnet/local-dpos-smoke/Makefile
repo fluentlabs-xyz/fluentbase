@@ -68,6 +68,10 @@ smoke-full-restart:
 # Trustless cert-follower: subscribe-align + gap back-fill + tampered-cert reject.
 smoke-cert-follow:
 	@./scripts/case-cert-follow.sh
+# Lean-follower serving + L1 trust root: MockRollup checkpoint align +
+# follower→follower cascade + bogus-checkpoint fail-closed reject.
+smoke-cert-cascade:
+	@./scripts/case-cert-cascade.sh
 # Deferred-execution observables: K-lag invariant, result commitment, EL-slowed validator.
 smoke-deferred:
 	@./scripts/case-deferred.sh

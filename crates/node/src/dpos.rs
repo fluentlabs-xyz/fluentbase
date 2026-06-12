@@ -8,13 +8,9 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     sync::Arc,
-    thread,
 };
 
-use commonware_runtime::{
-    tokio::{Config as RuntimeConfig, Context, Runner as TokioRunner},
-    Runner as _,
-};
+use commonware_runtime::tokio::Context;
 // `Metrics` (ctx.with_label, ctx.encode) + `Spawner` (ctx.spawn) — used by the
 // cert-feed actor (unconditional) and the feature-gated devnet metrics endpoint.
 use commonware_consensus::types::Height;
@@ -34,7 +30,7 @@ use reth_node_api::{FullNodeComponents, FullNodeTypes};
 use reth_node_builder::{rpc::RethRpcAddOns, FullNode};
 use reth_provider::providers::{BlockchainProvider, ProviderNodeTypes};
 use reth_storage_api::{BlockHashReader, BlockIdReader, BlockNumReader, BlockReader};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -90,6 +86,9 @@ pub struct DposConfig {
     /// Cert-feed wiring for the `consensus` RPC namespace. `None` = node does not
     /// serve the cert feed (e.g. unit tests). Set on every production node.
     pub cert_feed: Option<CertFeed>,
+    /// `--dpos.joiner`: promote a follower datadir to a validator (see
+    /// `DposArgs::dpos_joiner`).
+    pub joiner: bool,
 }
 
 /// The node-side cert-feed wiring threaded from `main.rs`: the `FeedSink` goes
@@ -184,6 +183,18 @@ pub struct DposArgs {
     #[arg(long = "dpos.metrics-port", env = "FLUENT_DPOS_METRICS_PORT")]
     pub dpos_metrics_port: Option<u16>,
 
+    /// Operator assertion for promoting a follower datadir to a validator:
+    /// this node followed a LIVE chain via --cert-follow/trust-follow, so the
+    /// cold-start anchors at the EL-restored finalized tip instead of failing
+    /// the fresh-migration guards. Ignored on a genuine fresh migration or a
+    /// normal restart (consensus archive present).
+    #[arg(
+        long = "dpos.joiner",
+        env = "FLUENT_DPOS_JOINER",
+        default_value_t = false
+    )]
+    pub dpos_joiner: bool,
+
     /// EIP-2335 / Web3 Secret Storage v3 keystore JSON for the slasher EOA.
     #[arg(
         long = "dpos.slasher-keystore-path",
@@ -230,19 +241,12 @@ impl DposConfig {
             slasher_keystore_password_file: args.dpos_slasher_keystore_password_file.clone(),
             metrics_port: args.dpos_metrics_port,
             cert_feed,
+            joiner: args.dpos_joiner,
         }
     }
 }
 
-pub struct DposSpawn<N, AddOns>
-where
-    N: FullNodeComponents,
-    AddOns: RethRpcAddOns<N>,
-{
-    pub join: thread::JoinHandle<eyre::Result<()>>,
-    pub handle_tx: oneshot::Sender<FullNode<N, AddOns>>,
-    pub dead_rx: oneshot::Receiver<()>,
-}
+pub type DposSpawn<N, AddOns> = crate::utils::ConsensusSpawn<N, AddOns>;
 
 /// Spawn the DPoS validator thread. The thread blocks on `handle_tx`
 /// until the reth `FullNode` is delivered, then constructs the commonware
@@ -276,45 +280,9 @@ where
         + Sync
         + 'static,
 {
-    let (handle_tx, handle_rx) = oneshot::channel::<FullNode<N, AddOns>>();
-    let (dead_tx, dead_rx) = oneshot::channel::<()>();
-    let shutdown_token_inner = shutdown_token.clone();
-
-    let join = thread::Builder::new()
-        .name("dpos".into())
-        .spawn(move || {
-            let node = handle_rx
-                .blocking_recv()
-                .wrap_err("channel closed before reth FullNode could be received")?;
-
-            let consensus_storage = node.data_dir.data_dir().join("dpos");
-            info!(
-                path = %consensus_storage.display(),
-                "DPoS storage directory determined"
-            );
-
-            let catch_panics = true;
-            let tcp_nodelay = Some(true);
-            let runtime_config = RuntimeConfig::default()
-                .with_tcp_nodelay(tcp_nodelay)
-                .with_storage_directory(consensus_storage)
-                .with_catch_panics(catch_panics);
-            info!(catch_panics, ?tcp_nodelay, "DPoS RuntimeConfig");
-
-            let runner = TokioRunner::new(runtime_config);
-            let ret = runner.start(|ctx| async move {
-                run_dpos_stack(ctx, node, cfg, shutdown_token_inner).await
-            });
-            let _ = dead_tx.send(());
-            ret
-        })
-        .expect("failed to spawn dpos thread");
-
-    DposSpawn {
-        join,
-        handle_tx,
-        dead_rx,
-    }
+    crate::utils::spawn_consensus_thread("dpos", move |ctx, node| {
+        run_dpos_stack(ctx, node, cfg, shutdown_token)
+    })
 }
 
 /// The DPoS thread body — runs entirely on the commonware tokio runtime.
@@ -449,6 +417,7 @@ where
         fee_recipient,
         target_gas_limit,
         feed: feed_sink,
+        joiner: cfg.joiner,
     };
 
     // DEVNET-ONLY metrics endpoint (feature-gated so prod binaries can't serve
@@ -680,6 +649,7 @@ mod tests {
             slasher_keystore_password_file: None,
             metrics_port: None,
             cert_feed: None,
+            joiner: false,
         }
     }
 

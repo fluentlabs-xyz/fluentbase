@@ -9,16 +9,21 @@
 
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::certified_block::CertifiedBlock;
 
 /// An event pushed over the `consensus_subscribe` WS stream.
+///
+/// `Arc<CertifiedBlock>`: the payload is a multi-MB hex string worst-case and
+/// every broadcast subscriber receives a clone — `Arc` makes that a refcount
+/// bump (serde `rc` feature; JSON wire shape unchanged).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Event {
     Finalized {
         #[serde(flatten)]
-        block: CertifiedBlock,
+        block: Arc<CertifiedBlock>,
         /// Unix-ms at which the serving node observed this finalization.
         seen: u64,
     },
@@ -46,7 +51,7 @@ pub enum Query {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConsensusState {
-    pub latest_finalized: Option<CertifiedBlock>,
+    pub latest_finalized: Option<Arc<CertifiedBlock>>,
     /// Highest height whose execution result is committee-attested.
     pub latest_result_finalized: Option<u64>,
 }
@@ -70,7 +75,7 @@ mod tests {
     #[test]
     fn event_finalized_is_tagged_and_flattened() {
         let e = Event::Finalized {
-            block: certified(),
+            block: Arc::new(certified()),
             seen: 1_700_000_000_000,
         };
         let json = serde_json::to_string(&e).expect("serialize");

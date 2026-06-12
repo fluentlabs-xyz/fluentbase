@@ -24,8 +24,7 @@ docker kill "$VIC_CID"   # raw SIGKILL — simulates a crash, bypasses compose d
 # Chain keeps finalizing (quorum 3/4); let it advance to build an EL gap the
 # crashed node will have to backfill on restart.
 GAP_TARGET=$(( PRE + 12 ))
-deadline=$(( $(date +%s) + 90 ))
-while (( $(date +%s) < deadline )); do (( $(finalized_dec) >= GAP_TARGET )) && break; sleep 2; done
+wait_finalized_ge "$GAP_TARGET" 90 || true   # soft target; the hard assert is PRE+3 below
 HEAD_WHILE_DOWN=$(finalized_dec)
 (( HEAD_WHILE_DOWN >= PRE + 3 )) || { echo "FAIL: chain stalled with 1/4 crashed (finalized=$HEAD_WHILE_DOWN, pre=$PRE)"; docker compose logs --tail=120; exit 1; }
 echo "  chain advanced to $HEAD_WHILE_DOWN with validator-3 crashed (gap ~$((HEAD_WHILE_DOWN - PRE)) blocks)"

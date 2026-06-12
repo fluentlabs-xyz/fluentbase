@@ -132,13 +132,6 @@ impl EpochSchemeProvider {
             }
         }
     }
-
-    /// Highest epoch with a registered scheme. Registrations are contiguous and
-    /// monotonic (the anchor epoch at cold-start, then one per crossed boundary),
-    /// so this is the highest epoch the follower can currently verify a cert for.
-    pub fn highest_epoch(&self) -> Option<Epoch> {
-        self.map.lock().unwrap().keys().next_back().copied()
-    }
 }
 
 impl Default for EpochSchemeProvider {
@@ -244,43 +237,6 @@ where
     )
     .await
     .expect("init finalizations archive")
-}
-
-/// Page cache sized identically to the validator marshal (same constants), so a
-/// follower built on a validator's data dir reads the same archives.
-pub(crate) fn new_page_cache<E: BufferPooler>(context: &E) -> CacheRef {
-    CacheRef::from_pooler(context, PAGE_CACHE_PAGE_SIZE, PAGE_CACHE_CAPACITY)
-}
-
-/// Marshal config for the cert-follower — same storage tuning as the validator
-/// [`OuterBuilder::build`] (shared archive format) with the follower-only
-/// difference that no views are retained for re-proposal (`view_retention_timeout
-/// = 1`): a follower never proposes, it only verifies + applies. Keeping the
-/// constants here (rather than re-declaring them in `cert_follow`) prevents
-/// archive-format drift between validator and follower.
-pub(crate) fn follower_marshal_config(
-    partition_prefix: String,
-    mailbox_size: usize,
-    page_cache: CacheRef,
-    scheme_provider: EpochSchemeProvider,
-    epocher: OriginEpocher,
-) -> marshal::Config<OrderBlock, EpochSchemeProvider, OriginEpocher, Sequential> {
-    marshal::Config {
-        provider: scheme_provider,
-        epocher,
-        partition_prefix,
-        mailbox_size,
-        view_retention_timeout: ViewDelta::new(1),
-        prunable_items_per_section: PRUNABLE_ITEMS_PER_SECTION,
-        replay_buffer: REPLAY_BUFFER,
-        key_write_buffer: WRITE_BUFFER,
-        value_write_buffer: WRITE_BUFFER,
-        block_codec_config: (),
-        max_repair: MAX_REPAIR,
-        max_pending_acks: MAX_PENDING_ACKS,
-        page_cache,
-        strategy: Sequential,
-    }
 }
 
 type ExecutorActor<E, BE, D, XC> = executor::Actor<E, BE, D, XC, MarshalMailbox>;

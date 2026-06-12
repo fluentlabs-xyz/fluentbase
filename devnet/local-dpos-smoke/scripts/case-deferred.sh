@@ -39,12 +39,7 @@ trap tear_down EXIT
 # Steady state: let the chain move well past the anchor + result window so the
 # pre-K ramp (finalized clamped to the anchor) cannot skew the lag samples.
 base=$(baseline_height)
-deadline=$(( $(date +%s) + 90 ))
-while (( $(date +%s) < deadline )); do
-    (( $(finalized_dec) >= base + K + 5 )) && break
-    sleep 2
-done
-(( $(finalized_dec) >= base + K + 5 )) || { echo "FAIL (smoke-deferred): chain did not reach steady state past $((base + K + 5))"; exit 1; }
+wait_finalized_ge $(( base + K + 5 )) 90 || { echo "FAIL (smoke-deferred): chain did not reach steady state past $((base + K + 5))"; exit 1; }
 
 # ── 1. K-lag invariant ──────────────────────────────────────────────────────
 # 6 samples: lag < K in any sample = overclaim (hard fail); the chain advances

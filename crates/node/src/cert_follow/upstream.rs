@@ -36,6 +36,12 @@ enum UpstreamMsg {
     GetLatest {
         response: oneshot::Sender<Option<UpstreamFinalized>>,
     },
+    /// Engine-requested rotation: the current upstream served unverifiable
+    /// DATA (which a connection-level failover can never detect) — drop the
+    /// connection and move to the next URL.
+    Rotate {
+        response: oneshot::Sender<()>,
+    },
 }
 
 /// Cloneable handle the resolver uses for by-height pulls. Implements the
@@ -67,6 +73,16 @@ impl CertUpstream for UpstreamHandle {
             rx.await.ok().flatten()
         }
     }
+
+    fn rotate(&self) -> impl Future<Output = ()> + Send {
+        let tx = self.tx.clone();
+        async move {
+            let (response, rx) = oneshot::channel();
+            if tx.send(UpstreamMsg::Rotate { response }).is_ok() {
+                let _ = rx.await;
+            }
+        }
+    }
 }
 
 /// Bound on the live-finalized stream queued for the driver. BOUNDED (not
@@ -77,20 +93,24 @@ impl CertUpstream for UpstreamHandle {
 /// which re-pulls any missed height (audit P2-8).
 const LIVE_FINALIZED_BUFFER: usize = 256;
 
-/// Build the upstream actor + its resolver handle + the live finalized receiver.
+/// Build the upstream actor + its by-height pull handle + the live finalized
+/// receiver. `urls` is the failover list: the actor rotates to the next URL
+/// (round-robin) on a connect failure or a dropped connection.
 pub fn init(
     ctx: Context,
-    url: String,
+    urls: Vec<String>,
 ) -> (
     UpstreamActor,
     UpstreamHandle,
     mpsc::Receiver<UpstreamFinalized>,
 ) {
+    assert!(!urls.is_empty(), "cert-follow needs at least one upstream URL");
     let (mailbox_tx, mailbox_rx) = mpsc::unbounded_channel();
     let (finalized_tx, finalized_rx) = mpsc::channel(LIVE_FINALIZED_BUFFER);
     let actor = UpstreamActor {
         ctx,
-        url,
+        urls,
+        next_url: 0,
         mailbox_rx,
         finalized_tx,
     };
@@ -99,7 +119,8 @@ pub fn init(
 
 pub struct UpstreamActor {
     ctx: Context,
-    url: String,
+    urls: Vec<String>,
+    next_url: usize,
     mailbox_rx: mpsc::UnboundedReceiver<UpstreamMsg>,
     finalized_tx: mpsc::Sender<UpstreamFinalized>,
 }
@@ -115,13 +136,18 @@ impl UpstreamActor {
     async fn run(mut self) {
         let mut backoff = 1u64;
         loop {
-            let client = match WsClientBuilder::default().build(&self.url).await {
+            let url = self.urls[self.next_url % self.urls.len()].clone();
+            // Rotate regardless of outcome: a failed connect tries the next
+            // URL immediately (with backoff), a dropped connection reconnects
+            // to the next one — round-robin failover.
+            self.next_url = self.next_url.wrapping_add(1);
+            let client = match WsClientBuilder::default().build(&url).await {
                 Ok(c) => {
                     backoff = 1;
                     Arc::new(c)
                 }
                 Err(e) => {
-                    warn!(url = %self.url, error = %e, backoff, "cert-follow upstream connect failed; retrying");
+                    warn!(url = %url, error = %e, backoff, "cert-follow upstream connect failed; rotating");
                     self.ctx.sleep(Duration::from_secs(backoff)).await;
                     backoff = (backoff * 2).min(MAX_BACKOFF_SECS);
                     continue;
@@ -135,7 +161,7 @@ impl UpstreamActor {
                     continue;
                 }
             };
-            debug!(url = %self.url, "cert-follow upstream connected + subscribed");
+            debug!(url = %url, "cert-follow upstream connected + subscribed");
 
             // Serve the live stream + resolver pulls until the connection drops.
             loop {
@@ -176,6 +202,11 @@ impl UpstreamActor {
                             drop(self.ctx.with_label("get_latest").spawn(move |_| async move {
                                 let _ = response.send(fetch_finalization(&client, Query::Latest).await);
                             }));
+                        }
+                        Some(UpstreamMsg::Rotate { response }) => {
+                            warn!(url = %url, "cert-follow: rotating upstream on engine request (data fault)");
+                            let _ = response.send(());
+                            break;
                         }
                         None => return, // mailbox dropped → engine gone → shut down
                     },

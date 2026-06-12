@@ -11,6 +11,7 @@ pub mod server;
 pub mod state;
 pub mod types;
 
+pub(crate) use feed_actor::now_ms;
 pub use server::{ConsensusApiClient, ConsensusApiServer, ConsensusRpc};
 pub use state::FeedStateHandle;
 pub use types::{ConsensusState, Event, Query};

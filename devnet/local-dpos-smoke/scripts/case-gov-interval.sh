@@ -38,8 +38,6 @@ now=$(chainconfig_call "getEpochBlockInterval()(uint32)" 2>/dev/null || chaincon
 [[ "$now" == "$NEW_INTERVAL" ]] || { echo "FAIL (smoke-gov-interval): interval=$now != $NEW_INTERVAL"; exit 1; }
 
 pre=$(finalized_dec)
-deadline=$(( $(date +%s) + 60 ))
-while (( $(date +%s) < deadline )); do (( $(finalized_dec) >= pre + 3 )) && break; sleep 2; done
-(( $(finalized_dec) >= pre + 3 )) || { echo "FAIL (smoke-gov-interval): chain stalled after interval change"; exit 1; }
+wait_finalized_ge $(( pre + 3 )) 60 || { echo "FAIL (smoke-gov-interval): chain stalled after interval change"; exit 1; }
 
 echo "OK (smoke-gov-interval): interval $before→$NEW_INTERVAL applied; chain finalized past $((pre+3))"

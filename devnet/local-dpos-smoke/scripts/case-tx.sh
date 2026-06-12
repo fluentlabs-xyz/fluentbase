@@ -36,12 +36,7 @@ for h in "$TXH" "$CTXH"; do
     blk=$(printf '%d' "$blk"); (( blk > maxblk )) && maxblk=$blk
 done
 # wait until both tx blocks are finalized
-deadline=$(( $(date +%s) + 60 ))
-while (( $(date +%s) < deadline )); do
-    (( $(finalized_dec) >= maxblk )) && break
-    sleep 2
-done
-(( $(finalized_dec) >= maxblk )) || { echo "FAIL (smoke-tx): tx block $maxblk not finalized in time"; exit 1; }
+wait_finalized_ge "$maxblk" 60 || { echo "FAIL (smoke-tx): tx block $maxblk not finalized in time"; exit 1; }
 
 # 4) state changed: recipient balance delta == 0.1 ETH AND allowance slot == ALLOW.
 bal_after=$(cast balance "$DEAD" --rpc-url "$RPC")

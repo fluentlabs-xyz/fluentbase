@@ -234,9 +234,18 @@ where
         // Pace to 1 blk/s: hold until wall clock reaches parent + 1s.
         // Cancellation-safe: Inline selects this future against
         // tx.closed(), so a moved-on view aborts the sleep.
+        //
+        // Capped at one interval from NOW: verify tolerates parents up to
+        // TIMESTAMP_FUTURE_TOLERANCE_SECS ahead of our clock, and an uncapped
+        // sleep on such a parent would overrun the peers' leader deadline
+        // (its derivation assumes the pace component ≤ BLOCK_INTERVAL) —
+        // a proposer with a lagging clock would be nullified on every view it
+        // leads. The produced timestamp stays parent+1 (content, not wall
+        // time), so chain-time monotonicity is unaffected.
         let pace_target =
             std::time::UNIX_EPOCH + Duration::from_secs(parent.timestamp) + BLOCK_INTERVAL;
-        clock.sleep_until(pace_target).await;
+        let pace_cap = clock.current() + BLOCK_INTERVAL;
+        clock.sleep_until(pace_target.min(pace_cap)).await;
 
         // Execution gate (proposer-≤K-behind): the result commitment needs
         // the local derived hash at height − K; a lagging proposer skips the
@@ -461,6 +470,48 @@ impl DerivedBlock for SealedBlock<RethBlock> {
     }
 }
 
+/// Typed "parent header not readable yet" derivation failure. reth-2.2
+/// canonicalizes imports eagerly on the engine-tree thread, so a block can be
+/// "added to canonical chain" milliseconds before provider reads see its
+/// header; a recovery path that derives against a parent imported
+/// concurrently (devp2p live-sync or its own previous iteration's import)
+/// must be able to tell this transient visibility race from a real failure.
+#[derive(Debug, thiserror::Error)]
+#[error("derive: parent header {0} not found")]
+pub struct ParentHeaderMissing(pub B256);
+
+/// Derivation with a bounded retry on the parent-visibility race above. The
+/// live executor is immune — it awaits an FCU response after every block —
+/// but paths that derive against a parent imported WITHOUT an awaited FCU in
+/// between (the crash-recovery walk; the follower's first derive after an
+/// EL-sync jump, where devp2p canonicalized the parent) must absorb the race
+/// here. Any other derivation error stays immediately fatal.
+pub(crate) async fn derive_with_visibility_retry<C, D>(
+    ctx: &C,
+    deriver: &D,
+    order: &OrderBlock,
+    parent_hash: B256,
+) -> eyre::Result<D::Derived>
+where
+    C: commonware_runtime::Clock,
+    D: DerivedBlockBuilder,
+{
+    const RETRY: Duration = Duration::from_millis(100);
+    const DEADLINE: Duration = Duration::from_secs(10);
+    let deadline = ctx.current() + DEADLINE;
+    loop {
+        match deriver.derive_and_execute(order.clone(), parent_hash).await {
+            Err(e)
+                if e.downcast_ref::<ParentHeaderMissing>().is_some()
+                    && ctx.current() < deadline =>
+            {
+                ctx.sleep(RETRY).await;
+            }
+            other => return other,
+        }
+    }
+}
+
 /// Deterministic OrderBlock → derived-EVM-block execution: every node must
 /// compute a byte-identical derived block for the same `(order, parent)` —
 /// this is the function whose output the committee's `result` agreement
@@ -586,8 +637,11 @@ mod tests {
             let app = build_app(mailbox, Arc::new(|_b: OrderBlock| {}));
             let parent = tiny_ts_parent();
 
-            // Virtual clock starts before the target: the pace sleep must
-            // carry it to parent+1 and the timestamp lands exactly there.
+            // Clock at the parent's timestamp (synchronized proposer): the
+            // pace sleep must carry it to parent+1 and the timestamp lands
+            // exactly there.
+            ctx.sleep_until(std::time::UNIX_EPOCH + Duration::from_secs(parent.timestamp))
+                .await;
             let block = app
                 .build_proposal(&ctx, parent.clone())
                 .await
@@ -599,6 +653,33 @@ mod tests {
                 .unwrap()
                 .as_secs();
             assert!(now > parent.timestamp, "clock advanced by the pace sleep");
+        });
+    }
+
+    #[test]
+    fn pace_sleep_is_capped_for_a_future_dated_parent() {
+        let runtime = commonware_runtime::deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let (mailbox, _rx) = fresh_mailbox();
+            let app = build_app(mailbox, Arc::new(|_b: OrderBlock| {}));
+            let parent = tiny_ts_parent();
+
+            // Proposer clock lags the parent's timestamp (skew within the
+            // verify tolerance): the sleep must cap at one BLOCK_INTERVAL
+            // from now — never parent+1 — or the peers' leader deadline
+            // (which budgets pace ≤ BLOCK_INTERVAL) would expire first.
+            let start = ctx.current();
+            let block = app
+                .build_proposal(&ctx, parent.clone())
+                .await
+                .expect("proposed");
+            let slept = ctx.current().duration_since(start).unwrap();
+            assert!(
+                slept <= BLOCK_INTERVAL,
+                "pace sleep must be capped at BLOCK_INTERVAL under clock skew, slept {slept:?}"
+            );
+            // The CONTENT timestamp still extends the parent chain.
+            assert_eq!(block.timestamp, parent.timestamp + 1);
         });
     }
 

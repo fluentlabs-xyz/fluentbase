@@ -18,6 +18,7 @@ use std::future::Future;
 /// `CertifiedBlock` into this before handing it to the engine; the driver then
 /// verifies the certificate against the per-epoch `EpochSchemeProvider` (the
 /// trustless gate — a tampered cert never finalizes).
+#[derive(Clone)]
 pub struct UpstreamFinalized {
     /// The finalization certificate (2f+1 BLS multisig over `block`'s digest).
     pub finalization: Finalization<BlsScheme, Digest>,
@@ -45,4 +46,10 @@ pub trait CertUpstream: Clone + Send + Sync + 'static {
     /// which transitively authenticates the anchor's hash. Closing the head-hash trust
     /// is the deferred L1 anchor source.
     fn get_latest(&self) -> impl Future<Output = Option<UpstreamFinalized>> + Send;
+
+    /// Drop the current connection and move to the next configured upstream
+    /// URL. Called by the follow loop when the CURRENT upstream served
+    /// unverifiable data (tampered/mismatched cert) — connection-level
+    /// failures rotate inside the transport actor on their own.
+    fn rotate(&self) -> impl Future<Output = ()> + Send;
 }

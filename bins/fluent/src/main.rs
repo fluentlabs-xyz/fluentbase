@@ -96,8 +96,10 @@ pub struct FluentNodeArgs {
     )]
     pub validator_block_time: Duration,
 
-    #[arg(long = "sequencer-url")]
-    pub sequencer_url: Option<String>,
+    /// Repeatable: extra occurrences form the cert-follow failover list
+    /// (rotated on connect failure/disconnect). Trust-follow uses the first.
+    #[arg(long = "sequencer-url", action = clap::ArgAction::Append)]
+    pub sequencer_url: Vec<String>,
 
     /// Run as a DPoS validator (BFT consensus + p2p + finality-gated peer set).
     /// Mutually exclusive with --validator and --sequencer-url.
@@ -125,6 +127,22 @@ pub struct FluentNodeArgs {
         requires_all = &["sequencer_url", "dpos_staking_config"],
     )]
     pub cert_follow: bool,
+
+    /// L1 RPC for the cert-follower's Rollup trust-root checkpoint
+    /// (read at the `finalized` tag). Absent = devnet fallback (the upstream
+    /// head stays the only trust input).
+    #[arg(
+        long = "cert-follow.l1-rpc-url",
+        requires = "cert_follow_l1_rollup_address"
+    )]
+    pub cert_follow_l1_rpc_url: Option<String>,
+
+    /// Rollup contract address on L1 (pairs with --cert-follow.l1-rpc-url).
+    #[arg(
+        long = "cert-follow.l1-rollup-address",
+        requires = "cert_follow_l1_rpc_url"
+    )]
+    pub cert_follow_l1_rollup_address: Option<alloy_primitives::Address>,
 
     /// DPoS validator configuration (`--dpos.*`): keys, paths, ports. Flattened
     /// so the long flag list lives next to `DposConfig` in `fluentbase-node`.

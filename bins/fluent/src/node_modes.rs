@@ -53,8 +53,9 @@ pub(crate) fn resolve_node_modes(
 ) -> ResolvedModes {
     let mut modes = ResolvedModes::default();
 
-    // If consensus URL is not specified, resolve default
-    if let Some(sequencer_url) = &ext.sequencer_url {
+    // If consensus URL is not specified, resolve default. Trust-follow keeps
+    // using the FIRST entry of the (repeatable) --sequencer-url list (D3).
+    if let Some(sequencer_url) = ext.sequencer_url.first() {
         modes.consensus_url = Some(sequencer_url.clone());
     } else if let Some(debug_consensus_url) = debug_consensus_url {
         modes.consensus_url = Some(debug_consensus_url.to_owned());
@@ -100,11 +101,27 @@ pub(crate) fn resolve_node_modes(
     // `consensus_url` so `launch_consensus_node` (the trust path) does not
     // also run — the follower drives reth itself.
     if ext.cert_follow {
+        assert!(
+            !ext.sequencer_url.is_empty(),
+            "requires_all guarantees --sequencer-url"
+        );
+        // Serving side (D4): the follower serves the same `consensus` WS
+        // namespace as validators, window-backed. The handle is shared into
+        // the RPC closure exactly like the DPoS branch.
+        let feed_handle = FeedStateHandle::new(CERT_FEED_EVENT_CAP);
+        modes.cert_rpc_feed = Some(feed_handle.clone());
+        let l1 = ext.cert_follow_l1_rpc_url.as_ref().map(|url| {
+            fluentbase_node::cert_follow::l1::L1CheckpointConfig {
+                rpc_url: url.clone(),
+                rollup_address: ext
+                    .cert_follow_l1_rollup_address
+                    .expect("clap `requires` pairs the two L1 flags"),
+            }
+        });
         modes.cert_follow_config = Some(CertFollowerConfig {
-            sequencer_url: ext
-                .sequencer_url
-                .clone()
-                .expect("requires_all guarantees --sequencer-url"),
+            feed: Some(feed_handle),
+            l1,
+            sequencer_urls: ext.sequencer_url.clone(),
             staking_config_path: ext
                 .dpos_cfg
                 .dpos_staking_config

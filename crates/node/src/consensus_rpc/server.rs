@@ -9,6 +9,7 @@ use jsonrpsee::{
     types::ErrorObject,
     PendingSubscriptionSink, SubscriptionMessage,
 };
+use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
@@ -41,8 +42,10 @@ fn to_rpc_error(err: FeedError) -> ErrorObject<'static> {
 #[rpc(server, client, namespace = "consensus")]
 pub trait ConsensusApi {
     /// Finalization (block + 2f+1 cert) for `Latest` or a specific `Height`.
+    /// `Arc` is serialization-transparent (serde `rc`): the multi-MB payload
+    /// is not deep-copied between the serving window and the serializer.
     #[method(name = "getFinalization")]
-    async fn get_finalization(&self, query: Query) -> RpcResult<CertifiedBlock>;
+    async fn get_finalization(&self, query: Query) -> RpcResult<Arc<CertifiedBlock>>;
 
     /// Latest finalized snapshot.
     #[method(name = "getLatest")]
@@ -67,7 +70,7 @@ impl ConsensusRpc {
 
 #[jsonrpsee::core::async_trait]
 impl ConsensusApiServer for ConsensusRpc {
-    async fn get_finalization(&self, query: Query) -> RpcResult<CertifiedBlock> {
+    async fn get_finalization(&self, query: Query) -> RpcResult<Arc<CertifiedBlock>> {
         self.feed
             .get_finalization(query)
             .await

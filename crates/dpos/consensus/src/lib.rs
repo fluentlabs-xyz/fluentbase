@@ -32,7 +32,7 @@ pub mod timeouts;
 pub use application::{
     gas_limit_within_1_1024, step_gas_limit, BeaconEngineLike, DerivedBlock, DerivedBlockBuilder,
     ExecutedChain,
-    FluentApp, OrderingAssembler, VERIFY_EXEC_BUDGET,
+    FluentApp, OrderingAssembler, ParentHeaderMissing, VERIFY_EXEC_BUDGET,
 };
 pub use cert_follow::{
     CertFollowConfig, CertFollowHandle, CertFollowLayer, CertFollowRethHandle, CertUpstream,

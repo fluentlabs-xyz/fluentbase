@@ -4,16 +4,14 @@
 //! [`crate::dpos::spawn_dpos`] but for a non-validator follower (no BLS/peer
 //! keys, no p2p, no slasher — it verifies upstream certs and drives its own reth).
 
+pub mod l1;
 pub mod upstream;
 
-use std::{path::PathBuf, thread, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
-use commonware_runtime::{
-    tokio::{Config as RuntimeConfig, Context, Runner as TokioRunner},
-    Runner as _,
-};
+use commonware_runtime::{tokio::Context, Metrics as _, Spawner as _};
 use eyre::WrapErr as _;
-use fluentbase_consensus::{CertFollowConfig, CertFollowLayer, CertFollowRethHandle};
+use fluentbase_consensus::{CertFollowConfig, CertFollowLayer, CertFollowRethHandle, UpstreamFinalized};
 use reth_chainspec::EthChainSpec as _;
 use reth_ethereum_engine_primitives::EthEngineTypes;
 use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
@@ -23,35 +21,30 @@ use reth_storage_api::{
     BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider,
     StateProviderFactory,
 };
-use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::dpos::CanonicalStateAccess;
 
-/// Marshal storage prefix — identical to the validator
-/// (`fluentbase_consensus::dpos` `MARSHAL_PARTITION_PREFIX`) so a node can switch
-/// between validator and follower modes on the same data dir without migration.
-const MARSHAL_PARTITION_PREFIX: &str = "consensus_marshal";
-
 /// Operator-supplied follower configuration (parsed from CLI in `main.rs`).
 pub struct CertFollowerConfig {
-    /// Upstream `consensus` RPC WebSocket URL (a validator or another follower).
-    pub sequencer_url: String,
+    /// `consensus` RPC state handle (serving side, D4). `Some` on every
+    /// production follower: verified pairs feed a bounded window behind the
+    /// same WS namespace validators serve. `None` = no serving (tests).
+    pub feed: Option<crate::consensus_rpc::FeedStateHandle>,
+    /// Upstream `consensus` RPC WebSocket URLs (validators or other
+    /// followers). The WS actor rotates through them on connect failure /
+    /// disconnect (failover).
+    pub sequencer_urls: Vec<String>,
     /// Staking system-contract config (same JSON the validator uses) — the
     /// follower reads per-epoch committees from its own reth at this address.
     pub staking_config_path: PathBuf,
+    /// L1 Rollup checkpoint source (D2). `None` = devnet fallback (the
+    /// upstream `get_latest()` head stays the only trust input).
+    pub l1: Option<l1::L1CheckpointConfig>,
 }
 
-pub struct CertFollowerSpawn<N, AddOns>
-where
-    N: FullNodeComponents,
-    AddOns: RethRpcAddOns<N>,
-{
-    pub join: thread::JoinHandle<eyre::Result<()>>,
-    pub handle_tx: oneshot::Sender<FullNode<N, AddOns>>,
-    pub dead_rx: oneshot::Receiver<()>,
-}
+pub type CertFollowerSpawn<N, AddOns> = crate::utils::ConsensusSpawn<N, AddOns>;
 
 /// Spawn the cert-follower thread. Like [`crate::dpos::spawn_dpos`], the thread
 /// blocks on `handle_tx` until the reth `FullNode` is delivered, then stands up
@@ -87,38 +80,9 @@ where
         + Sync
         + 'static,
 {
-    let (handle_tx, handle_rx) = oneshot::channel::<FullNode<N, AddOns>>();
-    let (dead_tx, dead_rx) = oneshot::channel::<()>();
-    let shutdown_token_inner = shutdown_token.clone();
-
-    let join = thread::Builder::new()
-        .name("cert-follow".into())
-        .spawn(move || {
-            let node = handle_rx
-                .blocking_recv()
-                .wrap_err("channel closed before reth FullNode could be received")?;
-
-            let consensus_storage = node.data_dir.data_dir().join("dpos");
-            info!(path = %consensus_storage.display(), "cert-follow storage directory determined");
-
-            let runtime_config = RuntimeConfig::default()
-                .with_tcp_nodelay(Some(true))
-                .with_storage_directory(consensus_storage)
-                .with_catch_panics(true);
-            let runner = TokioRunner::new(runtime_config);
-            let ret = runner.start(|ctx| async move {
-                run_cert_follower_stack(ctx, node, cfg, shutdown_token_inner).await
-            });
-            let _ = dead_tx.send(());
-            ret
-        })
-        .expect("failed to spawn cert-follow thread");
-
-    CertFollowerSpawn {
-        join,
-        handle_tx,
-        dead_rx,
-    }
+    crate::utils::spawn_consensus_thread("cert-follow", move |ctx, node| {
+        run_cert_follower_stack(ctx, node, cfg, shutdown_token)
+    })
 }
 
 /// The cert-follower thread body — runs on the commonware tokio runtime. Builds
@@ -182,21 +146,51 @@ where
     // WS upstream: subscribe + serve gap pulls. Spawned BEFORE launch so the
     // live stream is flowing as soon as the engine starts.
     let (ws_actor, upstream_handle, finalized_rx) =
-        upstream::init(ctx.clone(), cfg.sequencer_url.clone());
+        upstream::init(ctx.clone(), cfg.sequencer_urls.clone());
     let mut ws_handle = ws_actor.start();
-    info!(url = %cfg.sequencer_url, "cert-follow upstream started");
+    info!(urls = ?cfg.sequencer_urls, "cert-follow upstream started");
 
+    let l1_checkpoint_hash = match &cfg.l1 {
+        Some(l1_cfg) => Some(l1::fetch_checkpoint_hash(l1_cfg).await?),
+        None => None,
+    };
     let follow_cfg = CertFollowConfig {
         staking_config,
-        partition_prefix: MARSHAL_PARTITION_PREFIX.into(),
-        mailbox_size: 256,
+        l1_checkpoint_hash,
         fcu_heartbeat_interval: Duration::from_secs(8),
-        fcu_pace: Duration::from_millis(20),
     };
 
     let deriver =
         crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
     let executed = crate::ordering::ProviderExecutedChain(node.provider.clone());
+
+    // Serving side (D4): verified pairs → bounded window + the same
+    // `consensus` namespace events validators emit. `record_finalized`
+    // already emits both finality tiers, so a downstream follower gets
+    // `ResultFinalized` for free.
+    let verified_tx = cfg.feed.map(|handle| {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UpstreamFinalized>();
+        let window: crate::consensus_rpc::state::CertWindow = Default::default();
+        handle.set_window(window.clone());
+        drop(ctx.with_label("window_feed").spawn(move |_| async move {
+            while let Some(uf) = rx.recv().await {
+                let height = uf.block.height;
+                let cb = std::sync::Arc::new(crate::certified_block::CertifiedBlock::from_parts(
+                    &uf.finalization,
+                    &uf.block,
+                ));
+                {
+                    let mut w = window.write().expect("cert window poisoned");
+                    w.insert(height, cb.clone());
+                    while w.len() as u64 > fluentbase_consensus::cert_follow::JUMP_THRESHOLD {
+                        w.pop_first();
+                    }
+                }
+                handle.record_finalized(cb, crate::consensus_rpc::now_ms());
+            }
+        }));
+        tx
+    });
 
     let mut handle = CertFollowLayer::launch(
         ctx,
@@ -206,6 +200,7 @@ where
         executed,
         upstream_handle,
         finalized_rx,
+        verified_tx,
         shutdown_token.clone(),
     )
     .await?;

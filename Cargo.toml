@@ -180,7 +180,7 @@ auto_impl = { version = "1.2", default-features = false }
 metrics = { version = "0.24.3", default-features = false }
 bytes = { version = "1.10.1", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
-jsonrpsee = { version = "0.26", default-features = false, features = ["server", "client", "macros", "ws-client"] }
+jsonrpsee = { version = "0.26", default-features = false, features = ["server", "client", "macros", "ws-client", "http-client"] }
 hex-literal = { version = "1.0.0" }
 strum_macros = { version = "0.27.1" }
 lazy_static = { version = "1.5.0", default-features = false, features = ["spin_no_std"] }

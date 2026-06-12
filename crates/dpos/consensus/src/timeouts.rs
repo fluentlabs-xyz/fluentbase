@@ -10,8 +10,16 @@
 
 // **** выглядит так как можно пренести в другой файл, отдельный зажирно
 
+use crate::application::{BLOCK_INTERVAL, VERIFY_EXEC_BUDGET};
 use commonware_consensus::types::ViewDelta;
 use std::time::Duration;
+
+/// Build/propagation/skew margin on top of the pace component (tempo geo-prod
+/// calibration: their leader = pace + 750ms).
+const LEADER_MARGIN: Duration = Duration::from_millis(750);
+
+/// Vote-collection margin on top of leader + the verify exec-gate budget.
+const VOTE_MARGIN: Duration = Duration::from_millis(450);
 
 /// The six Simplex timeouts (`simplex::Config` fields).
 #[derive(Clone, Copy, Debug)]
@@ -27,23 +35,25 @@ pub struct ConsensusTimeouts {
 impl ConsensusTimeouts {
     /// Fluent 1 block/sec set. Deadlines are measured from view entry
     /// (commonware `voter/state.rs`: `enter_view` arms both from the same
-    /// instant — NOT additive). Derivation:
-    ///   leader        = pace component (≤1000ms by construction: the pace
-    ///                   target is parent.timestamp+1 and view entry is
-    ///                   always after parent.timestamp) + 750ms
-    ///                   build/propagation/skew margin (tempo geo-prod
-    ///                   calibration: their leader = pace + 750ms);
-    ///   certification = leader part + 1000ms verify exec-gate
-    ///                   (`VERIFY_EXEC_BUDGET`: worst-case derive+execute
-    ///                   of one block, ~500ms today with growth headroom
-    ///                   to 1s) + ~450ms vote collection;
+    /// instant — NOT additive). Derived from the cadence source of truth
+    /// (`application::BLOCK_INTERVAL` / `VERIFY_EXEC_BUDGET`) so a retune
+    /// there cannot silently invalidate the timeouts:
+    ///   leader        = pace component (≤ BLOCK_INTERVAL by construction:
+    ///                   the pace sleep is capped at one interval from now)
+    ///                   + 750ms build/propagation/skew margin (tempo
+    ///                   geo-prod calibration: their leader = pace + 750ms);
+    ///   certification = leader + verify exec-gate budget
+    ///                   (`VERIFY_EXEC_BUDGET`: worst-case derive+execute of
+    ///                   one block, ~500ms today with growth headroom to 1s)
+    ///                   + 450ms vote collection;
     ///   timeout_retry = 1000ms nullify re-broadcast cadence;
     ///   fetch         = 1000ms resolver fetch (worst-case 4 MB block).
-    /// `leader ≤ certification` and `skip ≤ activity` hold by construction.
+    /// 1s cadence ⇒ leader 1750ms, certification 3200ms.
     pub fn fluent_1s() -> Self {
+        let leader = BLOCK_INTERVAL + LEADER_MARGIN;
         Self {
-            leader: Duration::from_millis(1750),
-            certification: Duration::from_millis(3200),
+            leader,
+            certification: leader + VERIFY_EXEC_BUDGET + VOTE_MARGIN,
             timeout_retry: Duration::from_millis(1000),
             fetch: Duration::from_millis(1000),
             activity: ViewDelta::new(64),
@@ -80,6 +90,19 @@ impl ConsensusTimeouts {
         if self.skip.get() > self.activity.get() {
             return Err("skip_timeout > activity_timeout");
         }
+        // Fluent-specific tripwires on top of commonware's set: the verify
+        // exec-gate polls up to VERIFY_EXEC_BUDGET inside the certification
+        // window, and paced proposals consume up to BLOCK_INTERVAL of the
+        // leader window — timeouts that don't leave room for either cause
+        // systematic nullify storms that nothing else would attribute.
+        if self.certification < self.leader + VERIFY_EXEC_BUDGET {
+            return Err(
+                "certification leaves less than VERIFY_EXEC_BUDGET after the leader deadline",
+            );
+        }
+        if self.leader <= BLOCK_INTERVAL {
+            return Err("leader_timeout must exceed BLOCK_INTERVAL (paced proposals would miss)");
+        }
         Ok(self)
     }
 }
@@ -106,6 +129,22 @@ mod tests {
     fn skip_above_activity_rejected() {
         let mut t = ConsensusTimeouts::fluent_1s();
         t.skip = ViewDelta::new(999); // > activity 64
+        assert!(t.validated().is_err());
+    }
+
+    #[test]
+    fn certification_without_verify_budget_rejected() {
+        let mut t = ConsensusTimeouts::fluent_1s();
+        // leader ≤ certification still holds, but the exec-gate budget no
+        // longer fits inside the certification window.
+        t.certification = t.leader + VERIFY_EXEC_BUDGET - Duration::from_millis(1);
+        assert!(t.validated().is_err());
+    }
+
+    #[test]
+    fn leader_below_block_interval_rejected() {
+        let mut t = ConsensusTimeouts::fluent_1s();
+        t.leader = BLOCK_INTERVAL; // paced proposal consumes the whole window
         assert!(t.validated().is_err());
     }
 }
