@@ -3,10 +3,11 @@
 // for each contract.
 #![allow(dead_code)]
 
-use crate::bootstrap::STAKING_DPOS_ADDR;
+use crate::bootstrap::{STAKING_DPOS_ADDR, STAKING_ECONOMICS_ADDR};
 use alloy_primitives::{Address, Bytes};
 use eyre::WrapErr;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Deserialize, Debug)]
@@ -19,6 +20,17 @@ struct ForgeArtefact {
 #[derive(Deserialize, Debug)]
 struct ForgeBytecode {
     object: String,
+    /// `{ "path/File.sol": { "LibName": [{start,length}] } }` — byte offsets of
+    /// each unresolved library reference. Empty/absent for fully-linked or
+    /// library-free bytecode.
+    #[serde(rename = "linkReferences", default)]
+    link_references: HashMap<String, HashMap<String, Vec<LinkRef>>>,
+}
+
+#[derive(Deserialize, Debug)]
+struct LinkRef {
+    start: usize,
+    length: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -30,10 +42,12 @@ pub struct ContractArtefact {
 #[derive(Debug)]
 pub struct Artefacts {
     pub staking: ContractArtefact,
-    /// DELEGATECALL'd library `Staking` is linked against (deployed at
-    /// `STAKING_DPOS_ADDR`). Forge leaves `__$<hash>$__` placeholders in
-    /// `Staking`'s init+deployed bytecode; we link them ourselves at load.
+    /// DELEGATECALL'd libraries `Staking` is linked against (deployed at
+    /// `STAKING_DPOS_ADDR` / `STAKING_ECONOMICS_ADDR`). Forge leaves
+    /// `__$<hash>$__` placeholders in `Staking`'s init+deployed bytecode keyed by
+    /// library name in `linkReferences`; we link them ourselves at load.
     pub staking_dpos: ContractArtefact,
+    pub staking_economics: ContractArtefact,
     pub chain_config: ContractArtefact,
     pub staking_pool: ContractArtefact,
     pub system_reward: ContractArtefact,
@@ -43,50 +57,56 @@ pub struct Artefacts {
     pub bls_verifier: ContractArtefact,
 }
 
-/// Replace every Solidity library placeholder `__$<34 hex>$__` (exactly 40 chars)
-/// in a bytecode hex string with `lib_addr` (40 hex chars). Forge auto-links the
-/// `StakingDpos` library to its CREATE2 address only at *deploy* time; the
-/// genesis-bootstrap deploys it at a fixed canonical address instead, so it must
-/// perform the link itself before decoding `Staking`'s bytecode.
-fn link_libraries(obj: &str, lib_addr: Address) -> String {
-    let addr_hex = hex::encode(lib_addr.as_slice()); // 20 bytes → 40 hex chars
-    let mut out = obj.to_string();
-    while let Some(pos) = out.find("__$") {
-        out.replace_range(pos..pos + 40, &addr_hex);
+/// Splice each Solidity library placeholder (`__$<34 hex>$__`, 20 bytes) in a
+/// bytecode hex string with its canonical address, driven by forge's
+/// `linkReferences` (byte offsets keyed by library name). Forge auto-links to
+/// CREATE2 addresses only at *deploy* time; the genesis-bootstrap deploys each
+/// library at a fixed canonical address instead, so it links here before
+/// decoding. Mapping by library NAME (not a blanket placeholder replace) is what
+/// keeps the two distinct libraries — `StakingDpos` and `StakingEconomics` —
+/// pointed at their own addresses; a blanket replace would collapse both onto one.
+fn link_object(bc: &ForgeBytecode, libs: &[(&str, Address)]) -> eyre::Result<Bytes> {
+    let mut chars = bc.object.trim_start_matches("0x").as_bytes().to_vec();
+    for (file, per_lib) in &bc.link_references {
+        for (lib_name, refs) in per_lib {
+            let addr = libs
+                .iter()
+                .find(|(name, _)| name == lib_name)
+                .map(|(_, addr)| *addr)
+                .ok_or_else(|| eyre::eyre!("unmapped library {lib_name} referenced in {file}"))?;
+            let addr_hex = hex::encode(addr.as_slice()); // 20 bytes → 40 hex chars
+            for r in refs {
+                let (s, e) = (r.start * 2, (r.start + r.length) * 2);
+                chars[s..e].copy_from_slice(addr_hex.as_bytes());
+            }
+        }
     }
-    out
+    let linked = String::from_utf8(chars).wrap_err("linked bytecode not utf8")?;
+    Ok(Bytes::from(hex::decode(linked).wrap_err("decode bytecode")?))
 }
 
 fn load_one(path: &Path) -> eyre::Result<ContractArtefact> {
-    load_one_linked(path, None)
+    load_one_linked(path, &[])
 }
 
-fn load_one_linked(path: &Path, lib: Option<Address>) -> eyre::Result<ContractArtefact> {
+fn load_one_linked(path: &Path, libs: &[(&str, Address)]) -> eyre::Result<ContractArtefact> {
     let raw = std::fs::read_to_string(path)
         .wrap_err_with(|| format!("read forge artefact {}", path.display()))?;
     let parsed: ForgeArtefact = serde_json::from_str(&raw)
         .wrap_err_with(|| format!("parse forge artefact {}", path.display()))?;
-    let link = |obj: &str| -> String {
-        let trimmed = obj.trim_start_matches("0x");
-        match lib {
-            Some(addr) => link_libraries(trimmed, addr),
-            None => trimmed.to_string(),
-        }
-    };
-    let init = Bytes::from(hex::decode(link(&parsed.bytecode.object)).wrap_err("decode init bytecode")?);
-    let deployed = Bytes::from(
-        hex::decode(link(&parsed.deployed_bytecode.object)).wrap_err("decode deployed bytecode")?,
-    );
     Ok(ContractArtefact {
-        init_bytecode: init,
-        deployed_bytecode: deployed,
+        init_bytecode: link_object(&parsed.bytecode, libs)?,
+        deployed_bytecode: link_object(&parsed.deployed_bytecode, libs)?,
     })
 }
 
 pub fn load(dir: &Path) -> eyre::Result<Artefacts> {
+    let staking_libs: [(&str, Address); 2] =
+        [("StakingDpos", STAKING_DPOS_ADDR), ("StakingEconomics", STAKING_ECONOMICS_ADDR)];
     Ok(Artefacts {
-        staking: load_one_linked(&dir.join("Staking.json"), Some(STAKING_DPOS_ADDR))?,
+        staking: load_one_linked(&dir.join("Staking.json"), &staking_libs)?,
         staking_dpos: load_one(&dir.join("StakingDpos.json"))?,
+        staking_economics: load_one(&dir.join("StakingEconomics.json"))?,
         chain_config: load_one(&dir.join("ChainConfig.json"))?,
         staking_pool: load_one(&dir.join("StakingPool.json"))?,
         system_reward: load_one(&dir.join("SystemReward.json"))?,

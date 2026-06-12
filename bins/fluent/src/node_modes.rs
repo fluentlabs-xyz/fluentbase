@@ -33,6 +33,11 @@ pub(crate) struct ResolvedModes {
     /// boundaries — required for prod migration past the first epoch boundary.
     pub staking_address: Address,
     pub chain_config_address: Address,
+    /// `LivenessSlashing` address the executor's `processBitmap` system call
+    /// targets. Lifted from the staking config (serde-defaulted to the canonical
+    /// predeploy slot) so the whole cluster can be runtime-deployed. Unused when
+    /// `staking_address` is zero (the system call is gated off).
+    pub liveness_slashing_address: Address,
     /// Retained to build the activation-block reader for the Tempo sequencer's
     /// production gate (clean-halt at `dposActivationBlock`).
     pub staking_reader_cfg: Option<fluentbase_staking_reader::reader::StakingReaderConfig>,
@@ -171,6 +176,7 @@ fn apply_staking_config(modes: &mut ResolvedModes, path: &std::path::Path, sourc
         Ok(parsed) => {
             modes.staking_address = parsed.staking_address;
             modes.chain_config_address = parsed.chain_config_address;
+            modes.liveness_slashing_address = parsed.liveness_slashing_address;
             modes.staking_reader_cfg = Some(parsed);
             // Both-or-neither: the committee-commit gate (evm.rs) needs BOTH
             // addresses non-zero. A one-zero typo would silently downgrade the

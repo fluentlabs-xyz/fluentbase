@@ -2,7 +2,8 @@ SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
 
 .PHONY: regen-contracts smoke smoke-swap up down logs clean \
         smoke-tx smoke-epoch smoke-peers smoke-liveness smoke-crash-survivor smoke-byzantine \
-        smoke-gov-interval smoke-full-restart smoke-all
+        smoke-gov-interval smoke-full-restart smoke-cert-follow smoke-deferred \
+        smoke-production-path smoke-all
 
 regen-contracts:
 	@test -d $(SOLIDITY_CONTRACTS_DIR) || \
@@ -10,12 +11,14 @@ regen-contracts:
 	cd $(SOLIDITY_CONTRACTS_DIR) && forge build
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/Staking.sol/Staking.json                       contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/StakingDpos.sol/StakingDpos.json               contracts/
+	cp $(SOLIDITY_CONTRACTS_DIR)/out/StakingEconomics.sol/StakingEconomics.json     contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/ChainConfig.sol/ChainConfig.json               contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/StakingPool.sol/StakingPool.json               contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/SystemReward.sol/SystemReward.json             contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/FluentGovernance.sol/FluentGovernance.json     contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/LivenessSlashing.sol/LivenessSlashing.json     contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/MockBlendToken.sol/MockBlendToken.json         contracts/
+	cp $(SOLIDITY_CONTRACTS_DIR)/out/BLS12381Verifier.sol/BLS12381Verifier.json     contracts/
 	git -C $(SOLIDITY_CONTRACTS_DIR) rev-parse HEAD > contracts/.vendor-sha
 	@echo "Vendored contracts updated; SHA recorded in contracts/.vendor-sha; remember to commit."
 
@@ -68,6 +71,11 @@ smoke-cert-follow:
 # Deferred-execution observables: K-lag invariant, result commitment, EL-slowed validator.
 smoke-deferred:
 	@./scripts/case-deferred.sh
+# Full production path: runtime contract deploy + dynamic registration + governance
+# activation + live committee rotation + liveness ejection. Long (~5-8 min),
+# first-of-its-kind, and gated on the EIP-170 Staking-codesize fix; NOT in run-all.
+smoke-production-path:
+	@./scripts/case-production-path.sh
 # Aggregate (CI entry point).
 smoke-all:
 	@./scripts/run-all.sh

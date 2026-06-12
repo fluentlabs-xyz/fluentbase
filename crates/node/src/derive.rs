@@ -246,6 +246,7 @@ mod tests {
             FluentEvmFactory::default(),
             Address::ZERO,
             Address::ZERO,
+            Address::ZERO,
         );
 
         let a = derive_sync(&provider, &evm_config, &order, genesis_hash).expect("derive a");

@@ -14,6 +14,11 @@ use crate::keys::KeySet;
 struct StakingReaderJson {
     staking_address: String,
     chain_config_address: String,
+    /// Runtime-deployed liveness is NOT at the canonical predeploy slot, so
+    /// the bare/pre-written variant pins it explicitly; the genesis-baked
+    /// variant keeps relying on the reader's serde default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    liveness_slashing_address: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -33,20 +38,42 @@ pub fn write(
     keys: &KeySet,
     bootstrap_count: usize,
     validator_ips: &[IpAddr],
+    bare: bool,
+    staking_reader_create_nonces: Option<&[u64]>,
 ) -> eyre::Result<()> {
     fs::write(
         out.join("genesis-local.json"),
         serde_json::to_string_pretty(genesis)?,
     )?;
 
-    let sr = StakingReaderJson {
-        staking_address: format!("{:#x}", STAKING_ADDR),
-        chain_config_address: format!("{:#x}", CHAIN_CONFIG_ADDR),
+    // `Full` flow: the cluster lives at fixed genesis predeploy slots. Bare
+    // flow: the cluster is forge-deployed at runtime by the driver, but the
+    // production-path smoke pre-writes the reader config by predicting the
+    // CREATE proxy addresses from the deployer (owner-0) nonces, so every
+    // node can carry `--dpos.staking-config` from first boot; the driver
+    // asserts the deploy manifest equals this file.
+    let staking_reader = if bare {
+        staking_reader_create_nonces.map(|nonces| {
+            let deployer = keys.validators[0].l2_signer.address();
+            StakingReaderJson {
+                staking_address: format!("{:#x}", deployer.create(nonces[0])),
+                chain_config_address: format!("{:#x}", deployer.create(nonces[1])),
+                liveness_slashing_address: Some(format!("{:#x}", deployer.create(nonces[2]))),
+            }
+        })
+    } else {
+        Some(StakingReaderJson {
+            staking_address: format!("{:#x}", STAKING_ADDR),
+            chain_config_address: format!("{:#x}", CHAIN_CONFIG_ADDR),
+            liveness_slashing_address: None,
+        })
     };
-    fs::write(
-        out.join("staking-reader.json"),
-        serde_json::to_string_pretty(&sr)?,
-    )?;
+    if let Some(sr) = staking_reader {
+        fs::write(
+            out.join("staking-reader.json"),
+            serde_json::to_string_pretty(&sr)?,
+        )?;
+    }
 
     // peers.json socket uses pinned IP, NOT docker service-name hostname,
     // because both `BootstrapperJson.socket` (crates/p2p/src/bootstrappers.rs:25)
@@ -139,6 +166,15 @@ pub fn write(
         &keys_dir.join("governance.hex"),
         hex::encode(keys.governance_signer.to_bytes()).as_bytes(),
     )?;
+    // Every validator's l2 owner key (bare hex, no 0x). The production-path
+    // driver signs per-validator register/vote/delegate txs with these; the
+    // genesis-baked smoke only ever needed validator-0 (`funded.hex`).
+    for v in &keys.validators {
+        write_mode_0600(
+            &keys_dir.join(format!("owner-{}.hex", v.idx)),
+            hex::encode(v.l2_signer.to_bytes()).as_bytes(),
+        )?;
+    }
     let addresses = AddressesJson {
         validators: keys
             .validators

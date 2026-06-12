@@ -6,7 +6,6 @@ use alloy_primitives::Bytes;
 use alloy_rpc_types_engine::PayloadId;
 use clap::{Args, Parser};
 use dashmap::DashMap;
-use eyre::OptionExt;
 use fluentbase_node::{
     cert_follow::spawn_cert_follower,
     chainspec::FluentChainSpecParser,
@@ -14,7 +13,7 @@ use fluentbase_node::{
     consensus_rpc::{ConsensusApiServer, ConsensusRpc},
     dpos::{spawn_dpos, DposArgs},
     evm::{FluentEvmConfig, FluentExecutorBuilder, FluentNode},
-    launcher::{launch_consensus_node, launch_consensus_validator},
+    launcher::{launch_consensus_node, launch_consensus_validator, ActivationProbe},
     payload::FluentPayloadAttributesBuilder,
     trusted_peers::resolve_default_trusted_peers,
 };
@@ -193,6 +192,7 @@ fn main() {
         cert_rpc_feed,
         staking_address,
         chain_config_address,
+        liveness_slashing_address,
         staking_reader_cfg,
     } = modes;
 
@@ -239,6 +239,7 @@ fn main() {
                 fluentbase_node::evm::FluentEvmFactory::default(),
                 staking_address,
                 chain_config_address,
+                liveness_slashing_address,
             ),
             Arc::new(FluentConsensus::new(spec)),
         )
@@ -271,6 +272,7 @@ fn main() {
         .executor(FluentExecutorBuilder::new(
             staking_address,
             chain_config_address,
+            liveness_slashing_address,
         ));
         let add_ons = EthereumAddOns::default();
 
@@ -296,27 +298,52 @@ fn main() {
         // provider clone out so the consensus thread's clone is never the last ref.
         let _ = rocksdb_keepalive_tx.send(Box::new(handle.node.provider.clone()));
 
-        // Tempo→DPoS activation height, read once from the genesis-baked
-        // on-chain ChainConfig. Producer: clean-halt gate. Trust-follower:
-        // two-tier finality mirror (lag `finalized` by K past activation —
-        // validators' result-final semantics under deferred execution).
-        // `0` ⇒ absolute numbering (no migration) ⇒ neither applies.
-        let dpos_activation: Option<u64> = match &staking_reader_cfg {
+        // Tempo→DPoS activation probe, shared by the producer's clean-halt
+        // gate and the trust-follower's two-tier finality mirror. Re-read per
+        // tick/block (NOT once at launch): a node started before governance
+        // schedules activation must still gate / mirror without a restart,
+        // and a pending activation may be re-scheduled. Pre-deploy (codeless
+        // ChainConfig) and unscheduled (0) both map to None; consumers latch
+        // the last Some, so every failure path below must be observable
+        // (warn) — a silent None is indistinguishable from "not scheduled
+        // yet" and would hide a degraded provider from operators.
+        let activation_probe: Option<ActivationProbe> = match &staking_reader_cfg {
             Some(cfg) if !cfg.chain_config_address.is_zero() => {
                 let reader = fluentbase_staking_reader::RethStakingStateReader::new(
                     handle.node.provider.clone(),
                     handle.node.evm_config.clone(),
                     cfg.clone(),
                 );
-                let best = handle.node.provider.best_block_number()?;
-                let best_hash = handle
-                    .node
-                    .provider
-                    .sealed_header(best)?
-                    .ok_or_eyre("no sealed header at best block for activation read")?
-                    .hash();
-                let act = reader.dpos_activation_block(best_hash)?;
-                (act > 0).then_some(act)
+                let provider = handle.node.provider.clone();
+                Some(Arc::new(move || {
+                    let best_hash = match provider
+                        .best_block_number()
+                        .ok()
+                        .and_then(|n| provider.sealed_header(n).ok().flatten())
+                        .map(|h| h.hash())
+                    {
+                        Some(hash) => hash,
+                        None => {
+                            tracing::warn!(
+                                target: "reth::cli",
+                                "DPoS activation probe: best-header read failed; \
+                                 keeping last known value"
+                            );
+                            return None;
+                        }
+                    };
+                    match reader.scheduled_dpos_activation(best_hash) {
+                        Ok(act) => act,
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "reth::cli",
+                                error = %e,
+                                "DPoS activation probe failed; keeping last known value"
+                            );
+                            None
+                        }
+                    }
+                }) as ActivationProbe)
             }
             _ => None,
         };
@@ -325,11 +352,11 @@ fn main() {
                 &handle,
                 block_time,
                 FluentPayloadAttributesBuilder {},
-                dpos_activation,
+                activation_probe,
             )
             .await?;
         } else if let Some(consensus_url) = consensus_url {
-            launch_consensus_node(&handle, consensus_url, dpos_activation).await?;
+            launch_consensus_node(&handle, consensus_url, activation_probe).await?;
         }
 
         if let Some((handle_tx, dead_rx)) = consensus_thread_inner {

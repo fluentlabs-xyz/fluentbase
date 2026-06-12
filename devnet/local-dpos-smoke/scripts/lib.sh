@@ -243,3 +243,168 @@ bring_up_dpos() {
 }
 
 tear_down() { docker compose down -v --remove-orphans 2>/dev/null || true; }
+
+# ============================================================================
+# Production-path (runtime-deploy) helpers — used by case-production-path.sh.
+#
+# This scenario runs its OWN compose project (6 validators, bare genesis): the
+# case script `export COMPOSE_FILE=...` before sourcing nothing extra, so every
+# `docker compose` above targets the right stack. The staking cluster is
+# deployed at RUNTIME via forge (not genesis); addresses are discovered from the
+# DeployStaking manifest and threaded into staking-reader.json before the --dpos
+# cold-restart. Foundry (forge/cast) is a host prerequisite, as in case-tx.sh.
+#
+# Requires (set by the case script): SOLIDITY_CONTRACTS_DIR, GOV_ADDR/STAKING_RT/
+# CHAIN_CONFIG_RT/LIVENESS_RT (populated after deploy).
+# ============================================================================
+
+PP_VALS=(validator-0 validator-1 validator-2 validator-3 validator-4 validator-5)
+PP_COMMITTEE_SIZE=5
+
+# Read a file out of the runtime docker volume (validator-0 mounts /runtime).
+pp_runtime_cat() { docker compose exec -T validator-0 cat "/runtime/$1" 2>/dev/null; }
+
+# Validator <idx> l2 owner key (0x-prefixed) and address, from the bare export.
+pp_owner_key()  { printf '0x%s' "$(pp_runtime_cat "keys/owner-$1.hex")"; }
+pp_owner_addr() { pp_runtime_cat addresses.json | jq -r ".validators[$1]"; }
+
+# Emit validator <idx> consensus-key material JSON (validatorAddress,
+# blsPubkeyUncompressed, blsPoPUncompressed, peerPubkey, ownerKey) by re-running
+# the bootstrap binary's consensus-keys subcommand inside the shared image.
+pp_consensus_keys() {
+    docker compose run --rm --no-deps -T \
+        --entrypoint /usr/local/bin/genesis-bootstrap genesis-init \
+        consensus-keys --idx "$1" --peers 6 --chain-id "$CHAIN_ID" 2>/dev/null
+}
+
+# Wait (default 90s) until all 6 validators + full-node align finalized > floor.
+# $1 = timeout, $2 = floor hex to require strictly past (or "" for >0).
+pp_wait_converge() {
+    local deadline=$(( $(date +%s) + ${1:-90} )) floor="${2:-}" r readings head aligned
+    while [[ $(date +%s) -lt $deadline ]]; do
+        readings=(
+            "$(check_external 8545)"
+            "$(check_node docker compose exec -T validator-1)"
+            "$(check_node docker compose exec -T validator-2)"
+            "$(check_node docker compose exec -T validator-3)"
+            "$(check_node docker compose exec -T validator-4)"
+            "$(check_node docker compose exec -T validator-5)"
+            "$(check_external 18545)"
+        )
+        aligned=1
+        for r in "${readings[@]}"; do [[ "$r" == "${readings[0]}" ]] || aligned=0; done
+        head="${readings[0]%%|*}"
+        if [[ "$aligned" == 1 && "$head" != "null" && "$head" != "0x0" ]] \
+           && { [[ -z "$floor" ]] || [[ "$head" != "$floor" ]]; }; then
+            echo "${readings[0]}"; return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
+
+# cast read wrappers against the runtime-deployed addresses (set post-deploy).
+pp_staking_call()     { cast call "$STAKING_RT"      "$@" --rpc-url "$RPC"; }
+pp_chainconfig_call() { cast call "$CHAIN_CONFIG_RT" "$@" --rpc-url "$RPC"; }
+
+# Committee member set at epoch $1 as a sorted, lowercased, space-joined string
+# (so set membership can be compared regardless of on-chain ordering).
+pp_committee() {
+    # Trailing `|| true`: an empty committee makes `grep .` exit non-zero, which
+    # under the caller's `set -o pipefail` would abort the whole script silently
+    # instead of yielding an empty string the assertion can report.
+    pp_staking_call "getEpochCommittee(uint64)(address[])" "$1" 2>/dev/null \
+        | tr -d '[]' | tr ',' '\n' | sed 's/^ *//;s/ *$//' \
+        | tr 'A-F' 'a-f' | grep . | sort | paste -sd' ' - || true
+}
+
+# Decimal current relative DPoS epoch from the host RPC head.
+pp_current_epoch() {
+    local head act interval
+    head=$(printf '%d' "$(check_external 8545 | cut -d'|' -f1)")
+    act=$(printf '%d' "$(pp_chainconfig_call 'getDposActivationBlock()(uint64)' 2>/dev/null || echo 0)")
+    interval=$(printf '%d' "$(pp_chainconfig_call 'getEpochBlockInterval()(uint32)' 2>/dev/null || echo 64)")
+    (( interval == 0 )) && { echo 0; return; }
+    (( head < act )) && { echo 0; return; }
+    echo $(( (head - act) / interval ))
+}
+
+# Block until the host RPC head crosses the next epoch boundary $1 times.
+pp_wait_epochs() {
+    local n="$1" start now
+    start=$(pp_current_epoch)
+    local deadline=$(( $(date +%s) + 60 * (n + 2) ))
+    while (( $(date +%s) < deadline )); do
+        now=$(pp_current_epoch)
+        (( now >= start + n )) && return 0
+        sleep 2
+    done
+    return 1
+}
+
+# Send BLEND <amount> from the deployer (v0) to <to>. $1=token $2=to $3=amount.
+pp_token_transfer() {
+    cast send "$1" "transfer(address,uint256)(bool)" "$2" "$3" \
+        --rpc-url "$RPC" --private-key "$(pp_owner_key 0)" >/dev/null
+}
+
+# Drive one onlyFromGovernance action through propose → castVote(For) → execute.
+# $1=target $2=calldata(0x..) $3=description. v0 proposes; v0-v4 vote For (≥2/3 of
+# the 5-validator voting supply). votingPeriod=10 (l2.json) gives the 5 sequential
+# castVote sends room to land before the deadline.
+pp_gov_action() {
+    local target="$1" calldata="$2" desc="$3"
+    local desc_hash pid i state
+    desc_hash=$(cast keccak "$desc")
+    # `cast call …(uint256)` pretty-prints large numbers as "<dec> [<sci>]"; the
+    # ` [9.86e76]` suffix must be stripped or it fails to re-parse as a uint256
+    # argument to state()/castVote()/execute() (silent parser error → empty state).
+    pid=$(cast call "$GOV_ADDR" \
+        "hashProposal(address[],uint256[],bytes[],bytes32)(uint256)" \
+        "[$target]" "[0]" "[$calldata]" "$desc_hash" --rpc-url "$RPC" | awk '{print $1}')
+    cast send "$GOV_ADDR" "propose(address[],uint256[],bytes[],string)(uint256)" \
+        "[$target]" "[0]" "[$calldata]" "$desc" \
+        --rpc-url "$RPC" --private-key "$(pp_owner_key 0)" >/dev/null
+    # votingDelay=0 → Active at the next block. Poll state (1 = Active).
+    for i in $(seq 1 15); do
+        state=$(cast call "$GOV_ADDR" "state(uint256)(uint8)" "$pid" --rpc-url "$RPC" 2>/dev/null | awk '{print $1}')
+        [[ "$state" == 1 ]] && break
+        sleep 1
+    done
+    [[ "$state" == 1 ]] || { echo "FAIL pp_gov_action: proposal not Active (state=$state) for: $desc"; return 1; }
+    for i in 0 1 2 3 4; do
+        cast send "$GOV_ADDR" "castVote(uint256,uint8)(uint256)" "$pid" 1 \
+            --rpc-url "$RPC" --private-key "$(pp_owner_key "$i")" >/dev/null
+    done
+    # Wait out the voting period until Succeeded (4), then execute.
+    for i in $(seq 1 30); do
+        state=$(cast call "$GOV_ADDR" "state(uint256)(uint8)" "$pid" --rpc-url "$RPC" 2>/dev/null | awk '{print $1}')
+        [[ "$state" == 4 ]] && break
+        sleep 1
+    done
+    [[ "$state" == 4 ]] || { echo "FAIL pp_gov_action: proposal not Succeeded (state=$state) for: $desc"; return 1; }
+    cast send "$GOV_ADDR" "execute(address[],uint256[],bytes[],bytes32)(uint256)" \
+        "[$target]" "[0]" "[$calldata]" "$desc_hash" \
+        --rpc-url "$RPC" --private-key "$(pp_owner_key 0)" >/dev/null
+}
+
+# Background value-transfer spammer (PID stored in PP_SPAMMER_PID). Sends 1 wei
+# v0→v1 every ~2s; asserts inclusion implicitly via nonce progression. The case
+# script checks the chain keeps finalizing across transitions; this just keeps
+# user tx pressure on the mempool throughout.
+PP_SPAMMER_PID=""
+pp_spammer_start() {
+    # $1 = funded sender key, $2 = recipient addr. The sender MUST be an account
+    # that issues no other txns during the run, else its nonce races the real
+    # deploy/registration txns (`replacement transaction underpriced`).
+    local from_key="$1" to_addr="$2"
+    (
+        while :; do
+            cast send "$to_addr" --value 1 \
+                --rpc-url "$RPC" --private-key "$from_key" >/dev/null 2>&1 || true
+            sleep 2
+        done
+    ) &
+    PP_SPAMMER_PID=$!
+}
+pp_spammer_stop() { [[ -n "$PP_SPAMMER_PID" ]] && kill "$PP_SPAMMER_PID" 2>/dev/null || true; }

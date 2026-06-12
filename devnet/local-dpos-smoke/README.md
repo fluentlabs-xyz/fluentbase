@@ -121,6 +121,51 @@ faces that run discovery and absorb DoS. Network identity is operator
 config, off-chain — the on-chain `ConsensusKeys` carry no IP/enode. See
 `~/.claude/standards/general.md` ("DPoS/BFT validator networking").
 
+## Production-path smoke (`make smoke-production-path`)
+
+The full prod lifecycle on a chain where the staking cluster is deployed at
+**runtime via forge** (not baked into genesis):
+
+1. 6 nodes + a full node boot a **bare** chain (no staking predeploys) — a
+   plain Tempo sequencer (validator-0) + WS followers. Every node carries
+   `--dpos.staking-config` from first boot: `genesis-init` pre-writes
+   `staking-reader.json` predicting the runtime CREATE addresses from deployer
+   nonces (`--staking-reader-create-nonces`, see the compose comment), so all
+   nodes execute the `commitEpochCommittee` system call identically from
+   block 1.
+2. The host driver deploys `MockBlendToken` + `BLS12381Verifier` (`forge
+   create`) and the staking cluster (`forge script DeployStaking`, config
+   selected via `NETWORK=local-dpos-smoke/l2`); the driver asserts the deploy
+   manifest matches the pre-written `staking-reader.json` (fail-loud on
+   deployer-nonce drift).
+3. Bootstraps a 5-validator committee: `setBlsVerifier` (governance) **before**
+   `setConsensusKeys` (the PoP is verified against the on-chain verifier), then
+   `setDposActivationBlock` (governance).
+4. The sequencer's **dynamic activation gate** (per-tick on-chain re-read)
+   clean-halts Tempo production at exactly `dposActivationBlock` — no
+   mid-flight restart, so the followers ride the uninterrupted WS stream to
+   the same height; once all nodes align, validators 0-5 cold-restart into
+   `--dpos`.
+5. Registers an **external 6th** validator (`registerValidator` →
+   `setConsensusKeys` → governance `activateValidator` → `delegate`) and asserts
+   it rotates into the top-5 committee, displacing the lowest.
+6. Ejects one committee validator by **liveness** (stopped at an epoch start so
+   50 misses fit one 64-block epoch) — asserts jail, then absence from
+   `getEpochCommittee` one boundary later.
+7. A background value-transfer spammer runs throughout; the chain must keep
+   finalizing across every transition.
+
+Long (~5-8 min) and first-of-its-kind, so it is **NOT** in `make smoke-all` —
+run it explicitly. Uses its own 6-node compose project
+(`docker-compose.production-path.yml` + `.production-path.dpos.yml`, chainId 2026)
+distinct from the genesis-baked cases. Needs `forge`/`cast`/`jq` and a
+`solidity-contracts` checkout at `SOLIDITY_CONTRACTS_DIR`.
+
+> **Gated on EIP-170:** the >24 KB `Staking` impl cannot be `CREATE`-deployed on a
+> stock node until the node code-size fix lands (task
+> `staking_exceeds_eip170_codesize`); until then step 2's cluster deploy reverts
+> with `CreateContractSizeLimit`.
+
 ## What this is NOT
 
 - Adversarial scenarios (slashing, view-change, equivocation) —

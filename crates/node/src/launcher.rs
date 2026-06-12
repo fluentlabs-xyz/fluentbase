@@ -21,11 +21,20 @@ use std::{sync::Arc, time::Duration};
 use tokio::{sync::mpsc, time::Interval};
 use tracing::{error, info};
 
+/// Re-readable probe for the governance-scheduled Tempo→DPoS activation
+/// height. `None` = staking cluster not deployed / activation not scheduled.
+/// Re-invoked per producer tick / received block: `setDposActivationBlock`
+/// may re-schedule while pending, so a launch-time snapshot goes stale.
+/// Callers latch the last `Some` — an on-chain `Some → None` transition is
+/// impossible (the setter cannot store 0 on a live chain), so `None` after a
+/// `Some` only ever means a transient read failure and must not un-gate.
+pub type ActivationProbe = Arc<dyn Fn() -> Option<u64> + Send + Sync>;
+
 pub async fn launch_consensus_validator<N, AddOns: RethRpcAddOns<N>, B>(
     handle: &NodeHandle<N, AddOns>,
     block_time: Duration,
     payload_attributes_builder: B,
-    activation_gate: Option<u64>,
+    activation_probe: Option<ActivationProbe>,
 ) -> eyre::Result<()>
 where
     N: FullNodeComponents<Types: DebugNode<N>>,
@@ -42,7 +51,7 @@ where
         payload_attributes_builder,
         payload_builder_handle,
         beacon_engine_handle,
-        activation_gate,
+        activation_probe,
     )?;
 
     handle
@@ -57,7 +66,8 @@ where
     Ok(())
 }
 
-#[derive(Debug)]
+// No `derive(Debug)`: the `ActivationProbe` closure is not `Debug`, and the
+// producer is only ever moved into its worker task, never formatted.
 pub struct BlockProducer<T: PayloadTypes, B> {
     to_engine: ConsensusEngineHandle<T>,
     payload_attributes_builder: B,
@@ -65,8 +75,10 @@ pub struct BlockProducer<T: PayloadTypes, B> {
     last_header: SealedHeaderFor<<T::BuiltPayload as BuiltPayload>::Primitives>,
     last_block_hash: B256,
     /// Tempo→DPoS migration clean-halt: stop producing once the head reaches
-    /// the genesis-baked `dposActivationBlock` (DPoS consensus produces from
-    /// activation+1). `None` ⇒ no migration gate (pure sequencer).
+    /// the on-chain `dposActivationBlock` (DPoS consensus produces from
+    /// activation+1). Re-probed each tick, latched on `Some` into
+    /// [`Self::activation_gate`]. `None` probe ⇒ pure sequencer, never gates.
+    activation_probe: Option<ActivationProbe>,
     activation_gate: Option<u64>,
 }
 
@@ -82,7 +94,7 @@ where
         payload_attributes_builder: B,
         payload_builder: PayloadBuilderHandle<T>,
         to_engine: ConsensusEngineHandle<T>,
-        activation_gate: Option<u64>,
+        activation_probe: Option<ActivationProbe>,
     ) -> eyre::Result<Self> {
         let best = provider.best_block_number().map_err(|e| {
             eyre::eyre!("BlockProducer: provider has no best block number (empty datadir?): {e}")
@@ -98,7 +110,8 @@ where
             payload_builder,
             last_header,
             last_block_hash,
-            activation_gate,
+            activation_probe,
+            activation_gate: None,
         })
     }
 
@@ -120,8 +133,13 @@ where
                 // until `advance_forkchoice_state()` finishes and only then exit the loop.
                 _ = block_time.tick() => {
                     // Tempo→DPoS migration clean-halt: stop producing once the
-                    // head reaches the genesis-baked activation block. DPoS
+                    // head reaches the on-chain activation block. DPoS
                     // consensus produces from activation+1.
+                    if let Some(probe) = &self.activation_probe {
+                        if let Some(act) = probe() {
+                            self.activation_gate = Some(act);
+                        }
+                    }
                     if let Some(act) = self.activation_gate {
                         if self.last_header.number() >= act {
                             info!(
@@ -197,7 +215,7 @@ where
 pub async fn launch_consensus_node<Node, AddOns: RethRpcAddOns<Node>>(
     handle: &NodeHandle<Node, AddOns>,
     consensus_url: String,
-    two_tier_activation: Option<u64>,
+    activation_probe: Option<ActivationProbe>,
 ) -> eyre::Result<()>
 where
     Node: FullNodeComponents<Types: DebugNode<Node>>,
@@ -222,7 +240,7 @@ where
             new_block_fetcher(
                 beacon_engine_handle,
                 Arc::new(block_provider),
-                two_tier_activation,
+                activation_probe,
             )
             .await
         });
@@ -235,7 +253,7 @@ async fn new_block_fetcher<
 >(
     engine_handle: ConsensusEngineHandle<T>,
     block_provider: P,
-    two_tier_activation: Option<u64>,
+    activation_probe: Option<ActivationProbe>,
 ) {
     let mut block_stream = {
         let (tx, rx) = mpsc::channel::<P::Block>(64);
@@ -252,9 +270,17 @@ async fn new_block_fetcher<
     // receipt would overclaim by K and permanently desync this node's
     // `finalized` tag from the validators'. Lag finalized by K, clamped to
     // the activation anchor (the validators' own floor); pre-activation
-    // (Tempo era / no activation configured) keeps finalize-on-receipt.
+    // (Tempo era / activation not scheduled yet) keeps finalize-on-receipt.
+    // Activation is re-probed per block and latched on `Some` so a node
+    // launched before `setDposActivationBlock` still picks it up.
+    let mut two_tier_activation: Option<u64> = None;
     let mut recent: std::collections::BTreeMap<u64, B256> = std::collections::BTreeMap::new();
     while let Some(block) = block_stream.recv().await {
+        if let Some(probe) = &activation_probe {
+            if let Some(act) = probe() {
+                two_tier_activation = Some(act);
+            }
+        }
         let payload = T::block_to_payload(SealedBlock::new_unhashed(block));
         let block_hash = payload.block_hash();
         let number = payload.block_number();

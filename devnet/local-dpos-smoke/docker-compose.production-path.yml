@@ -1,12 +1,22 @@
-name: fluent-dpos-smoke
+name: fluent-dpos-prod-path
 
-# Pipeline 2 phase-1: validator-0 is a Tempo sequencer producing
-# blocks at 1s cadence, validators 1-3 + full-node follow via
-# `--sequencer-url ws://172.20.0.10:8546`. Every node passes
-# `--dpos.staking-config=/runtime/staking-reader.json` so the
-# `commitEpochCommittee` system call runs identically on every
-# executor (state-root convergence). Phase-2 (cold-restart to
-# `--dpos`) is in `docker-compose.dpos.yml`.
+# Production-path smoke phase-A: a PLAIN chain (no staking in genesis). The
+# staking cluster is deployed at runtime via `forge` by the driver, which then
+# cold-restarts validators into `--dpos` via
+# docker-compose.production-path.dpos.yml. Every node carries
+# --dpos.staking-config from first boot: genesis-init pre-writes
+# /runtime/staking-reader.json predicting the runtime CREATE addresses (see
+# --staking-reader-create-nonces below), so all 7 nodes execute the
+# commitEpochCommittee system call identically from block 1 (state-root
+# symmetry) and the sequencer's dynamic activation gate clean-halts at
+# dposActivationBlock without a mid-flight restart.
+#
+# Topology: 6 validators (committee of 5 + 1 external joiner) + a full node.
+# validator-0 is the Tempo sequencer (1s blocks); 1-5 + full-node follow via WS.
+#
+# Startup CPU mitigation (brief G10): one shared image (`<<: *fluent-build`),
+# per-service cpus limit, and depends_on chaining on the previous validator's
+# healthcheck so the 6 nodes boot staggered, not all at once.
 networks:
   fluent-net:
     driver: bridge
@@ -20,27 +30,50 @@ x-fluent-build: &fluent-build
     dockerfile: devnet/local-dpos-smoke/Dockerfile
   image: fluent-dpos-smoke:local
 
+x-cpu-limit: &cpu-limit
+  deploy:
+    resources:
+      limits:
+        cpus: "2.0"
+
+x-follower-health: &follower-health
+  healthcheck:
+    test:
+      - "CMD-SHELL"
+      - "curl -s -X POST -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' http://localhost:8545 | grep -q result"
+    interval: 2s
+    timeout: 2s
+    retries: 30
+    start_period: 5s
+
 services:
   genesis-init:
     <<: *fluent-build
     entrypoint: ["/usr/local/bin/genesis-bootstrap"]
     command:
-      - full
-      - --peers=4
+      - bare
+      - --peers=6
       - --bootstrappers=1
       - --output=/runtime
-      - --contracts-dir=/contracts
       - --chain-id=2026
-      - --validator-ips=172.20.0.10,172.20.0.11,172.20.0.12,172.20.0.13
+      - --validator-ips=172.20.0.10,172.20.0.11,172.20.0.12,172.20.0.13,172.20.0.14,172.20.0.15
+      # Pre-write staking-reader.json predicting the runtime forge deploy.
+      # Deployer = owner-0; driver tx prefix: fund-spammer(0), token(1),
+      # BLS verifier(2), BLEND→v5(3); DeployStaking: CREATE2 linked-library
+      # txs burn nonces 4-5 (StakingDpos, StakingEconomics), approve 6, then
+      # impl/proxy pairs 7.. → proxies at nonce 8 (Staking), 14 (ChainConfig),
+      # 18 (LivenessSlashing). Adding/removing a linked library or an early
+      # driver tx SHIFTS these — case-production-path.sh asserts the deploy
+      # manifest equals this file and fails loud with the fix hint.
+      - --staking-reader-create-nonces=8,14,18
     volumes:
       - runtime:/runtime
-      - ./contracts:/contracts:ro
     networks:
       fluent-net:
         ipv4_address: 172.20.0.5
 
   validator-0:
-    <<: *fluent-build
+    <<: [*fluent-build, *cpu-limit, *follower-health]
     depends_on:
       genesis-init:
         condition: service_completed_successfully
@@ -60,11 +93,8 @@ services:
       - --ws
       - --ws.addr=0.0.0.0
       - --ws.port=8546
-      # Deterministic enode identity — followers pin this as `--trusted-peers`.
       - --p2p-secret-key=/runtime/v0-p2p-secret.hex
       - --port=30303
-      # Persist reth DB on the shared volume so phase-2 cold-restart
-      # (`--force-recreate`) doesn't wipe the chain state.
       - --datadir=/runtime/reth-data/v0
     volumes:
       - runtime:/runtime
@@ -74,17 +104,9 @@ services:
     networks:
       fluent-net:
         ipv4_address: 172.20.0.10
-    healthcheck:
-      test:
-        - "CMD-SHELL"
-        - "curl -s -X POST -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' http://localhost:8545 | grep -q result"
-      interval: 2s
-      timeout: 2s
-      retries: 30
-      start_period: 5s
 
   validator-1:
-    <<: *fluent-build
+    <<: [*fluent-build, *cpu-limit, *follower-health]
     depends_on:
       validator-0:
         condition: service_healthy
@@ -109,9 +131,9 @@ services:
         ipv4_address: 172.20.0.11
 
   validator-2:
-    <<: *fluent-build
+    <<: [*fluent-build, *cpu-limit, *follower-health]
     depends_on:
-      validator-0:
+      validator-1:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -134,9 +156,9 @@ services:
         ipv4_address: 172.20.0.12
 
   validator-3:
-    <<: *fluent-build
+    <<: [*fluent-build, *cpu-limit, *follower-health]
     depends_on:
-      validator-0:
+      validator-2:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -158,10 +180,60 @@ services:
       fluent-net:
         ipv4_address: 172.20.0.13
 
-  full-node:
-    <<: *fluent-build
+  validator-4:
+    <<: [*fluent-build, *cpu-limit, *follower-health]
     depends_on:
-      validator-0:
+      validator-3:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --sequencer-url=ws://172.20.0.10:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --storage.v2=false \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --datadir=/runtime/reth-data/v4
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.14
+
+  validator-5:
+    <<: [*fluent-build, *cpu-limit, *follower-health]
+    depends_on:
+      validator-4:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --sequencer-url=ws://172.20.0.10:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --storage.v2=false \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --datadir=/runtime/reth-data/v5
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.15
+
+  full-node:
+    <<: [*fluent-build, *cpu-limit]
+    depends_on:
+      validator-5:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:

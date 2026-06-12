@@ -10,7 +10,7 @@
 
 use alloy_consensus::BlockHeader;
 use alloy_evm::Evm;
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{address, Address, Bytes, B256};
 use alloy_sol_types::SolCall;
 use commonware_codec::DecodeExt as _;
 use fluentbase_bls::{BlsPubkey, PeerPubkey, PUBKEY_BYTES};
@@ -20,7 +20,7 @@ use reth_revm::{
     database::StateProviderDatabase,
     revm::context::result::{ExecutionResult, Output},
 };
-use reth_storage_api::{HeaderProvider, StateProviderFactory};
+use reth_storage_api::{AccountReader, HeaderProvider, StateProviderFactory};
 
 use crate::error::ReadError;
 
@@ -106,6 +106,18 @@ pub struct StakingReaderConfig {
     /// `ChainConfig` system contract address (separate contract — what
     /// `Staking._currentEpoch()` dereferences for `epochBlockInterval`).
     pub chain_config_address: Address,
+    /// `LivenessSlashing` contract address the executor system-calls for
+    /// `processBitmap`. Defaults to the canonical predeploy slot so existing
+    /// genesis-baked configs (which omit the field) keep working.
+    #[serde(default = "default_liveness_slashing_address")]
+    pub liveness_slashing_address: Address,
+}
+
+/// Mirror of `fluentbase_types::PRECOMPILE_LIVENESS_SLASHING`. Inlined (not
+/// imported) to avoid adding a `fluentbase-types` dep to this crate; a
+/// conformance test in `crates/node` (which depends on both) pins the equality.
+fn default_liveness_slashing_address() -> Address {
+    address!("0x0000000000000000000000000000000000520020")
 }
 
 impl StakingReaderConfig {
@@ -311,6 +323,38 @@ where
             .map_err(|e| ReadError::AbiDecode(e.to_string()))
     }
 
+    /// Activation height as a *scheduling state*: `Ok(None)` while the
+    /// ChainConfig contract has no code at `at` (runtime cluster not deployed
+    /// yet — the production-path smoke pre-writes the reader config before the
+    /// forge deploy) or while activation is unscheduled (`0`); `Ok(Some(h))`
+    /// once governance has scheduled it. The code-presence probe mirrors the
+    /// executor's P2-2 gate (`crates/node/src/evm.rs`) at the provider layer
+    /// so launcher-side consumers can boot with a pre-written config. A raw
+    /// [`Self::dpos_activation_block`] against a codeless account would
+    /// instead surface as an `AbiDecode` error on the empty return.
+    pub fn scheduled_dpos_activation(&self, at: B256) -> Result<Option<u64>, ReadError> {
+        let state = self
+            .provider
+            .state_by_block_hash(at)
+            .map_err(|e| ReadError::Backend(e.to_string()))?;
+        // reth normalizes no-code accounts to `bytecode_hash: None`; the
+        // KECCAK_EMPTY arm is defensive against unnormalized providers.
+        let deployed = state
+            .basic_account(&self.cfg.chain_config_address)
+            .map_err(|e| ReadError::Backend(e.to_string()))?
+            .is_some_and(|acc| {
+                acc.bytecode_hash
+                    .is_some_and(|h| h != alloy_consensus::constants::KECCAK_EMPTY)
+            });
+        if !deployed {
+            return Ok(None);
+        }
+        Ok(match self.dpos_activation_block(at)? {
+            0 => None,
+            h => Some(h),
+        })
+    }
+
     /// `ChainConfig.getUndelegatePeriod()` (epochs) at block `at`.
     ///
     /// Re-read on every call. Drives the epoch-committee retention
@@ -426,9 +470,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{abi, check_committee_size, decode_consensus_keys, epoch_of_block, is_unset};
+    use super::{
+        abi, check_committee_size, decode_consensus_keys, epoch_of_block, is_unset,
+        StakingReaderConfig,
+    };
     use crate::error::ReadError;
-    use alloy_primitives::{Address, Bytes, FixedBytes};
+    use alloy_primitives::{address, Address, Bytes, FixedBytes};
     use alloy_sol_types::{SolCall, SolValue};
     use commonware_codec::Encode as _;
     use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer};
@@ -531,5 +578,34 @@ mod tests {
         let ret = abi::getEpochCommitteeCall::abi_decode_returns(&data)
             .expect("empty address[] must decode");
         assert!(ret.is_empty());
+    }
+
+    #[test]
+    fn config_omitting_liveness_defaults_to_canonical_slot() {
+        // Back-compat: genesis-baked configs predate the field and must still
+        // land on the canonical predeploy slot (`PRECOMPILE_LIVENESS_SLASHING`).
+        let json = r#"{
+            "staking_address": "0x0000000000000000000000000000000000520010",
+            "chain_config_address": "0x0000000000000000000000000000000000520011"
+        }"#;
+        let cfg: StakingReaderConfig = serde_json::from_str(json).expect("config must parse");
+        assert_eq!(
+            cfg.liveness_slashing_address,
+            address!("0x0000000000000000000000000000000000520020")
+        );
+    }
+
+    #[test]
+    fn config_with_explicit_liveness_overrides_default() {
+        let json = r#"{
+            "staking_address": "0x0000000000000000000000000000000000520010",
+            "chain_config_address": "0x0000000000000000000000000000000000520011",
+            "liveness_slashing_address": "0x00000000000000000000000000000000000000ff"
+        }"#;
+        let cfg: StakingReaderConfig = serde_json::from_str(json).expect("config must parse");
+        assert_eq!(
+            cfg.liveness_slashing_address,
+            address!("0x00000000000000000000000000000000000000ff")
+        );
     }
 }

@@ -38,6 +38,12 @@ pub const BLS_VERIFIER_ADDR: Address = address!("0x00000000000000000000000000000
 // `Staking`'s `__$StakingDpos$__` placeholders to it. Stateless library — no
 // constructor args, no storage.
 pub const STAKING_DPOS_ADDR: Address = address!("0x0000000000000000000000000000000000005209");
+// Second DELEGATECALL'd library `Staking` is linked against — forge extracted the
+// staking-economics logic (delegation / rewards / fees / claims) into it to keep
+// `Staking` runtime bytecode under EIP-170. Deployed at this fixed address;
+// `artifacts::load` links `Staking`'s `__$StakingEconomics$__` placeholders to it.
+// Stateless library — no constructor args, no storage.
+pub const STAKING_ECONOMICS_ADDR: Address = address!("0x000000000000000000000000000000000000520a");
 
 // EVM canonical SYSTEM_CALLER per StakingContext.sol:17 — used to satisfy
 // the `onlySystemCall` modifier on `commitEpochCommittee`.
@@ -222,11 +228,14 @@ pub fn run(
     deploy_to_canonical(
         &mut ctx, deployer, &artefacts.liveness_slashing, LIVENESS_SLASHING_ADDR, &context_args_encoded, false,
     )?;
-    // Deploy the DELEGATECALL'd StakingDpos library FIRST — `Staking`'s bytecode
-    // is linked against `STAKING_DPOS_ADDR` (see `artifacts::load`). Stateless
-    // library: no constructor args, no storage copy.
+    // Deploy the DELEGATECALL'd libraries FIRST — `Staking`'s bytecode is linked
+    // against `STAKING_DPOS_ADDR` + `STAKING_ECONOMICS_ADDR` (see `artifacts::load`).
+    // Stateless libraries: no constructor args, no storage copy.
     deploy_to_canonical(
         &mut ctx, deployer, &artefacts.staking_dpos, STAKING_DPOS_ADDR, &[], false,
+    )?;
+    deploy_to_canonical(
+        &mut ctx, deployer, &artefacts.staking_economics, STAKING_ECONOMICS_ADDR, &[], false,
     )?;
     deploy_to_canonical(
         &mut ctx, deployer, &artefacts.staking, STAKING_ADDR, &staking_constructor, false,
@@ -357,6 +366,7 @@ pub fn run(
         &[
             STAKING_ADDR,
             STAKING_DPOS_ADDR,
+            STAKING_ECONOMICS_ADDR,
             CHAIN_CONFIG_ADDR,
             STAKING_POOL_ADDR,
             SYSTEM_REWARD_ADDR,

@@ -293,17 +293,33 @@ impl EvmFactory for FluentEvmFactory {
 /// so [`FluentBlockExecutor::apply_pre_execution_changes`] can issue the
 /// `commitEpochCommittee` system call at epoch boundaries. Non-DPoS chains
 /// pass [`Address::ZERO`] and the system call short-circuits.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct FluentExecutorBuilder {
     staking_address: Address,
     chain_config_address: Address,
+    liveness_slashing_address: Address,
+}
+
+impl Default for FluentExecutorBuilder {
+    fn default() -> Self {
+        Self {
+            staking_address: Address::ZERO,
+            chain_config_address: Address::ZERO,
+            liveness_slashing_address: fluentbase_types::PRECOMPILE_LIVENESS_SLASHING,
+        }
+    }
 }
 
 impl FluentExecutorBuilder {
-    pub const fn new(staking_address: Address, chain_config_address: Address) -> Self {
+    pub const fn new(
+        staking_address: Address,
+        chain_config_address: Address,
+        liveness_slashing_address: Address,
+    ) -> Self {
         Self {
             staking_address,
             chain_config_address,
+            liveness_slashing_address,
         }
     }
 }
@@ -320,6 +336,7 @@ where
             FluentEvmFactory::default(),
             self.staking_address,
             self.chain_config_address,
+            self.liveness_slashing_address,
         );
         Ok(evm_config)
     }
@@ -336,34 +353,42 @@ pub struct FluentEvmConfig {
     /// ChainConfig contract address. `Address::ZERO` disables the epoch
     /// system call.
     chain_config_address: Address,
+    /// `LivenessSlashing` contract address the `processBitmap` system call
+    /// targets. Operator-supplied via `StakingReaderConfig`; defaults to the
+    /// canonical predeploy slot.
+    liveness_slashing_address: Address,
 }
 
 impl FluentEvmConfig {
     /// Create a new [`FluentEvmConfig`] with the given chain spec, EVM factory,
-    /// and the operator-supplied staking + chain_config contract addresses.
+    /// and the operator-supplied staking + chain_config + liveness addresses.
     pub fn new(
         chain_spec: Arc<ChainSpec>,
         evm_factory: FluentEvmFactory,
         staking_address: Address,
         chain_config_address: Address,
+        liveness_slashing_address: Address,
     ) -> Self {
         let inner = EthEvmConfig::new_with_evm_factory(chain_spec.clone(), evm_factory);
         Self {
             inner,
             staking_address,
             chain_config_address,
+            liveness_slashing_address,
         }
     }
 
     /// Create a new [`FluentEvmConfig`] with the given chain spec and default
     /// EVM factory. Staking + ChainConfig addresses default to
-    /// [`Address::ZERO`] (non-DPoS path).
+    /// [`Address::ZERO`] (non-DPoS path); the liveness address defaults to the
+    /// canonical predeploy slot.
     pub fn new_with_default_factory(chain_spec: Arc<ChainSpec>) -> Self {
         Self::new(
             chain_spec,
             FluentEvmFactory::default(),
             Address::ZERO,
             Address::ZERO,
+            fluentbase_types::PRECOMPILE_LIVENESS_SLASHING,
         )
     }
 
@@ -420,6 +445,7 @@ impl BlockExecutorFactory for FluentEvmConfig {
             ),
             staking_address: self.staking_address,
             chain_config_address: self.chain_config_address,
+            liveness_slashing_address: self.liveness_slashing_address,
         }
     }
 }
@@ -856,6 +882,10 @@ pub struct FluentBlockExecutor<'a, Evm> {
     /// ChainConfig predeploy address. [`Address::ZERO`] disables the epoch
     /// system call (paired with [`Self::staking_address`]).
     chain_config_address: Address,
+    /// `LivenessSlashing` contract address the `processBitmap` system call
+    /// targets (configurable so the whole staking cluster can be runtime-
+    /// deployed; defaults to the canonical predeploy slot).
+    liveness_slashing_address: Address,
 }
 
 impl<'a, E> BlockExecutor for FluentBlockExecutor<'a, E>
@@ -966,7 +996,7 @@ where
                         .evm_mut()
                         .transact_system_call(
                             fluentbase_types::SYSTEM_ADDRESS,
-                            fluentbase_types::PRECOMPILE_LIVENESS_SLASHING,
+                            self.liveness_slashing_address,
                             calldata.into(),
                         )
                         .map_err(|e| {
@@ -1129,5 +1159,25 @@ where
 
     fn receipts(&self) -> &[Self::Receipt] {
         self.inner.receipts()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The staking-reader crate inlines the liveness predeploy slot as a literal
+    /// (it can't depend on `fluentbase-types`); pin its serde default to the
+    /// canonical constant so the inlined value can't silently drift.
+    #[test]
+    fn reader_liveness_default_matches_canonical_precompile() {
+        let json = r#"{
+            "staking_address": "0x0000000000000000000000000000000000520010",
+            "chain_config_address": "0x0000000000000000000000000000000000520011"
+        }"#;
+        let cfg: fluentbase_staking_reader::reader::StakingReaderConfig =
+            serde_json::from_str(json).expect("config must parse");
+        assert_eq!(
+            cfg.liveness_slashing_address,
+            fluentbase_types::PRECOMPILE_LIVENESS_SLASHING
+        );
     }
 }
