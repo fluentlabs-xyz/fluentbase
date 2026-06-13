@@ -2,7 +2,7 @@ use commonware_codec::Encode;
 use commonware_cryptography::bls12381::primitives::{group::Private, ops};
 use rand_core::CryptoRngCore;
 
-use crate::{error::Error, BlsPubkey, PUBKEY_BYTES, SECRET_BYTES, Variant};
+use crate::{error::Error, BlsPubkey, Variant, PUBKEY_BYTES, SECRET_BYTES};
 
 /// A validator's BLS keypair (MinSig: 32 B scalar private, 96 B G2 public).
 ///
@@ -99,10 +99,7 @@ impl ValidatorBlsKeypair {
     /// Secret bytes never cross the crate boundary — a leaky downstream cannot
     /// dump them via `{:?}` / `tracing`. On Unix, sets file mode 0600 at create.
     #[cfg(feature = "plaintext-keys")]
-    pub fn write_to_plaintext_file<P: AsRef<std::path::Path>>(
-        &self,
-        path: P,
-    ) -> Result<(), Error> {
+    pub fn write_to_plaintext_file<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), Error> {
         use commonware_codec::Encode;
         use zeroize::{Zeroize, Zeroizing};
         let mut secret_bytes: [u8; SECRET_BYTES] = self.secret.expose(|s| {

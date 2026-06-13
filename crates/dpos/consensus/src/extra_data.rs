@@ -9,7 +9,7 @@
 //! Cross-language parity:
 //! - Solidity decoder: `LivenessSlashing.processBitmap` (same LSB-first layout).
 //! - `committee_size` is `u8` here AND in Solidity. Both Rust
-//!   `fluentbase_p2p::constants::MAX_PEER_SET_SIZE` and Solidity
+//!   `fluentbase_p2p::constants::MAX_COMMITTEE_SIZE` and Solidity
 //!   `ChainConfig.MAX_ACTIVE_VALIDATORS` cap at 51. Bumping either past 255
 //!   requires widening this wire format to u16 BE; the panic in
 //!   `encode_simplex_attestation` is intentionally fail-loud, and the

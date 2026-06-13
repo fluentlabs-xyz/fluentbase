@@ -41,7 +41,7 @@ use commonware_runtime::{
     buffer::paged::CacheRef, spawn_cell, BufferPooler, Clock, ContextCell, Handle, Metrics,
     Network as RNetwork, Pacer, Spawner, Storage,
 };
-use commonware_storage::archive::immutable;
+use commonware_storage::archive::{immutable, Archive as _};
 use commonware_utils::{NZUsize, NZU16, NZU64};
 use fluentbase_bls::{keys::ValidatorBlsKeypair, Scheme as BlsScheme};
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
@@ -65,7 +65,14 @@ const FREEZER_TABLE_RESIZE_CHUNK_SIZE: u32 = 1 << 16;
 const FREEZER_VALUE_TARGET_SIZE: u64 = 1 << 30;
 const FREEZER_VALUE_COMPRESSION: Option<u8> = Some(3);
 
-// EpochSchemeProvider — minimal per-epoch BlsScheme registry; never pruned.
+// EpochSchemeProvider — minimal per-epoch BlsScheme registry; pruned to the
+// trailing SCHEME_RETENTION_EPOCHS (the unified supervisor keeps one process
+// alive across months — unbounded growth is no longer hypothetical).
+
+/// Trailing epochs of BLS schemes retained for cross-epoch cert verification
+/// (marshal backfill / catch-up register epochs in order, so older schemes
+/// are never re-read once the frontier passes them).
+const SCHEME_RETENTION_EPOCHS: usize = 8;
 
 #[derive(Clone)]
 pub struct EpochSchemeProvider {
@@ -131,6 +138,9 @@ impl EpochSchemeProvider {
                 o.insert(Arc::new(scheme));
             }
         }
+        while map.len() > SCHEME_RETENTION_EPOCHS {
+            map.pop_first();
+        }
     }
 }
 
@@ -171,14 +181,18 @@ where
         context.with_label("finalized_blocks"),
         immutable::Config {
             metadata_partition: format!("{partition_prefix}-v2-finalized-blocks-metadata"),
-            freezer_table_partition: format!("{partition_prefix}-v2-finalized-blocks-freezer-table"),
+            freezer_table_partition: format!(
+                "{partition_prefix}-v2-finalized-blocks-freezer-table"
+            ),
             freezer_table_initial_size: 1 << 16,
             freezer_table_resize_frequency: FREEZER_TABLE_RESIZE_FREQUENCY,
             freezer_table_resize_chunk_size: FREEZER_TABLE_RESIZE_CHUNK_SIZE,
             freezer_key_partition: format!("{partition_prefix}-v2-finalized-blocks-freezer-key"),
             freezer_key_page_cache: page_cache.clone(),
             freezer_key_write_buffer: WRITE_BUFFER,
-            freezer_value_partition: format!("{partition_prefix}-v2-finalized-blocks-freezer-value"),
+            freezer_value_partition: format!(
+                "{partition_prefix}-v2-finalized-blocks-freezer-value"
+            ),
             freezer_value_write_buffer: WRITE_BUFFER,
             freezer_value_target_size: FREEZER_VALUE_TARGET_SIZE,
             freezer_value_compression: FREEZER_VALUE_COMPRESSION,
@@ -245,15 +259,7 @@ type ExecutorActor<E, BE, D, XC> = executor::Actor<E, BE, D, XC, MarshalMailbox>
 /// hands it reth handles + genesis + cold-start EL state; `build`
 /// constructs marshal → executor → FluentApp → epoch_manager in
 /// dependency order.
-pub struct OuterBuilder<
-    B,
-    P,
-    BE,
-    D,
-    XC,
-    A,
-    R: slasher::StakingStateRead + Send + Sync + 'static,
-> {
+pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send + Sync + 'static> {
     // Identity / shared
     pub me: PublicKey,
     pub blocker: B,
@@ -264,6 +270,8 @@ pub struct OuterBuilder<
     /// (`OriginEpocher`). Zero ⇒ absolute (non-migration / pristine genesis).
     pub dpos_activation_block: u64,
     pub signer_keypair: Option<ValidatorBlsKeypair>,
+    /// Rotation-out signals to the unified supervisor (`None` = legacy).
+    pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<crate::dpos::ModeEvent>>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
     pub deque_size: usize,
@@ -274,6 +282,15 @@ pub struct OuterBuilder<
 
     // FluentApp constructor args.
     pub genesis: OrderBlock,
+    /// Unified-supervisor PROMOTION: write the synthesized anchor OrderBlock
+    /// into the finalized-blocks archive before the marshal starts. The
+    /// per-epoch `Inline::genesis(epoch > 0)` resolves the previous epoch's
+    /// terminal block via `marshal.get_block(last(prev))` — a promoted node
+    /// anchors exactly at that terminal block with an otherwise-empty (or
+    /// floored-stale) archive, so without this seed the first signer view
+    /// panics "missing starting epoch block". Idempotent (the archive
+    /// ignores duplicate indices).
+    pub seed_anchor_block: bool,
     pub beacon_engine: BE,
     /// OrderBlock → derived-EVM-block execution (node-side, reth-evm).
     pub deriver: D,
@@ -337,12 +354,7 @@ where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
     B: Blocker<PublicKey = PublicKey> + Clone,
     P: PeerProvider<PublicKey = PublicKey> + Clone,
-    BE: BeaconEngineLike<
-            ExecutionData = D::Derived,
-        > + Clone
-        + Send
-        + Sync
-        + 'static,
+    BE: BeaconEngineLike<ExecutionData = D::Derived> + Clone + Send + Sync + 'static,
     D: DerivedBlockBuilder,
     XC: ExecutedChain,
     A: OrderingAssembler,
@@ -384,12 +396,7 @@ impl<B, P, BE, D, XC, A, R> OuterBuilder<B, P, BE, D, XC, A, R>
 where
     B: Blocker<PublicKey = PublicKey> + Clone,
     P: PeerProvider<PublicKey = PublicKey> + Clone,
-    BE: BeaconEngineLike<
-            ExecutionData = D::Derived,
-        > + Clone
-        + Send
-        + Sync
-        + 'static,
+    BE: BeaconEngineLike<ExecutionData = D::Derived> + Clone + Send + Sync + 'static,
     D: DerivedBlockBuilder,
     XC: ExecutedChain,
     A: OrderingAssembler,
@@ -398,10 +405,7 @@ where
     /// Construct the engine in dependency order:
     /// `buffered + archives + scheme_provider → marshal → executor →
     /// FluentApp → epoch_manager`.
-    pub async fn build<E>(
-        self,
-        context: E,
-    ) -> eyre::Result<OuterEngine<E, B, P, BE, D, XC, A, R>>
+    pub async fn build<E>(self, context: E) -> eyre::Result<OuterEngine<E, B, P, BE, D, XC, A, R>>
     where
         E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
     {
@@ -413,17 +417,17 @@ where
             .expect("ConsensusTimeouts invariants violated");
         // The simplex-attestation wire format encodes committee_size as
         // u8; in Solidity LivenessSlashing.processBitmap mirrors that
-        // layout. Bumping MAX_PEER_SET_SIZE past u8::MAX would silently
+        // layout. Bumping MAX_COMMITTEE_SIZE past u8::MAX would silently
         // truncate to 0 on the Solidity side (turning off liveness
         // slashing) — fail at startup instead, before any block is
         // proposed. Mirrored constant: MAX_ACTIVE_VALIDATORS in
         // solidity-contracts/contracts/staking/ChainConfig.sol.
         assert!(
-            fluentbase_p2p::constants::MAX_PEER_SET_SIZE <= u8::MAX as u64,
+            fluentbase_p2p::constants::MAX_COMMITTEE_SIZE <= u8::MAX as u64,
             "wire format requires committee_size to fit u8; \
-             MAX_PEER_SET_SIZE = {} exceeds 255 — widen extra_data wire format \
+             MAX_COMMITTEE_SIZE = {} exceeds 255 — widen extra_data wire format \
              to u16 BE before bumping",
-            fluentbase_p2p::constants::MAX_PEER_SET_SIZE,
+            fluentbase_p2p::constants::MAX_COMMITTEE_SIZE,
         );
         let (buffered, buffer_mailbox) = buffered::Engine::new(
             context.with_label("buffered"),
@@ -442,8 +446,18 @@ where
         let finalizations_by_height =
             init_finalizations_archive(&context, &self.partition_prefix, page_cache.clone()).await;
 
-        let finalized_blocks =
+        let mut finalized_blocks =
             init_finalized_blocks_archive(&context, &self.partition_prefix).await;
+        if self.seed_anchor_block {
+            finalized_blocks
+                .put(
+                    self.genesis.height,
+                    self.genesis.digest(),
+                    self.genesis.clone(),
+                )
+                .await
+                .map_err(|e| eyre::eyre!("seeding promotion anchor block into archive: {e:?}"))?;
+        }
 
         // Single cross-epoch FixedEpocher + scheme provider. The same
         // instance is threaded into marshal::Config below AND into
@@ -640,6 +654,7 @@ where
                 chain_id: self.chain_id,
                 epocher: epocher.clone(),
                 signer_keypair: self.signer_keypair,
+                mode_events: self.mode_events,
                 app,
                 timeouts: self.timeouts,
                 mailbox_size: self.mailbox_size,
@@ -679,12 +694,7 @@ where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
     B: Blocker<PublicKey = PublicKey> + Clone,
     P: PeerProvider<PublicKey = PublicKey> + Clone,
-    BE: BeaconEngineLike<
-            ExecutionData = D::Derived,
-        > + Clone
-        + Send
-        + Sync
-        + 'static,
+    BE: BeaconEngineLike<ExecutionData = D::Derived> + Clone + Send + Sync + 'static,
     D: DerivedBlockBuilder,
     XC: ExecutedChain,
     A: OrderingAssembler,
@@ -801,11 +811,8 @@ where
         // Compose the cert-feed sink as a second application-Reporter so it
         // observes every finalization alongside `FluentApp` (the executor path).
         // `From<(R1, Option<R2>)>` makes the feed optional; absent → app-only.
-        let app_reporter: Reporters<
-            marshal::Update<OrderBlock>,
-            FluentApp<XC, A>,
-            FeedSink,
-        > = Reporters::from((self.marshal_reporter_app, self.feed));
+        let app_reporter: Reporters<marshal::Update<OrderBlock>, FluentApp<XC, A>, FeedSink> =
+            Reporters::from((self.marshal_reporter_app, self.feed));
         let mut marshal_handle =
             self.marshal
                 .start(app_reporter, self.buffer_mailbox, marshal_chan);

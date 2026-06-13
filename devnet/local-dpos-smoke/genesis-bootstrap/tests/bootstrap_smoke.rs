@@ -4,16 +4,17 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolValue};
 use fluentbase_genesis_bootstrap::{
     artifacts, bootstrap,
-    bootstrap::{BLS_VERIFIER_ADDR, CHAIN_CONFIG_ADDR, GOVERNANCE_ADDR, LIVENESS_SLASHING_ADDR,
-                PredeployState, STAKING_ADDR, STAKING_POOL_ADDR, STAKING_TOKEN_ADDR,
-                SYSTEM_REWARD_ADDR},
+    bootstrap::{
+        PredeployState, BLS_VERIFIER_ADDR, CHAIN_CONFIG_ADDR, GOVERNANCE_ADDR,
+        LIVENESS_SLASHING_ADDR, STAKING_ADDR, STAKING_POOL_ADDR, STAKING_TOKEN_ADDR,
+        SYSTEM_REWARD_ADDR,
+    },
     keys,
 };
 use fluentbase_testing::EvmTestingContext;
 
 const SMOKE_CHAIN_ID: u64 = 2026;
-const SMOKE_MNEMONIC: &str =
-    "test test test test test test test test test test test junk";
+const SMOKE_MNEMONIC: &str = "test test test test test test test test test test test junk";
 
 fn contracts_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -61,7 +62,11 @@ fn ctx_from_predeploy(state: &PredeployState) -> EvmTestingContext {
     for (addr, storage) in &state.storage_by_address {
         for (slot, value) in storage {
             ctx.db
-                .insert_account_storage(*addr, U256::from_be_bytes(slot.0), U256::from_be_bytes(value.0))
+                .insert_account_storage(
+                    *addr,
+                    U256::from_be_bytes(slot.0),
+                    U256::from_be_bytes(value.0),
+                )
                 .unwrap();
         }
     }
@@ -120,9 +125,16 @@ fn bootstrap_commits_epoch_zero_committee() {
     let committee = <Vec<Address>>::abi_decode(&out).expect("decode getEpochCommittee result");
 
     assert_eq!(committee.len(), key_set.validators.len());
-    let expected: Vec<Address> = key_set.validators.iter().map(|v| v.l2_signer.address()).collect();
+    let expected: Vec<Address> = key_set
+        .validators
+        .iter()
+        .map(|v| v.l2_signer.address())
+        .collect();
     for addr in &expected {
-        assert!(committee.contains(addr), "validator {addr:?} missing from committee");
+        assert!(
+            committee.contains(addr),
+            "validator {addr:?} missing from committee"
+        );
     }
 }
 

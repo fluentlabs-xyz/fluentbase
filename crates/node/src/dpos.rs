@@ -86,9 +86,11 @@ pub struct DposConfig {
     /// Cert-feed wiring for the `consensus` RPC namespace. `None` = node does not
     /// serve the cert feed (e.g. unit tests). Set on every production node.
     pub cert_feed: Option<CertFeed>,
-    /// `--dpos.joiner`: promote a follower datadir to a validator (see
-    /// `DposArgs::dpos_joiner`).
-    pub joiner: bool,
+    /// `--dpos.follower-upstream` WS URLs. Non-empty enables the UNIFIED
+    /// supervisor: the node runs a cert-follow substrate while its key is
+    /// outside the committee and auto-promotes/demotes at epoch boundaries
+    /// (no restarts). Empty = legacy `--dpos` (signer-or-silent-verifier).
+    pub follower_upstreams: Vec<String>,
 }
 
 /// The node-side cert-feed wiring threaded from `main.rs`: the `FeedSink` goes
@@ -183,17 +185,17 @@ pub struct DposArgs {
     #[arg(long = "dpos.metrics-port", env = "FLUENT_DPOS_METRICS_PORT")]
     pub dpos_metrics_port: Option<u16>,
 
-    /// Operator assertion for promoting a follower datadir to a validator:
-    /// this node followed a LIVE chain via --cert-follow/trust-follow, so the
-    /// cold-start anchors at the EL-restored finalized tip instead of failing
-    /// the fresh-migration guards. Ignored on a genuine fresh migration or a
-    /// normal restart (consensus archive present).
+    /// Upstream `consensus` WS URL(s) for the unified supervisor's follower
+    /// substrate (repeatable — failover list). Presence enables unified mode:
+    /// the node cert-follows while its key is outside the committee and
+    /// auto-promotes to signer at its first committee epoch boundary (and
+    /// demotes back on rotation-out) — no restarts. Absent = legacy `--dpos`.
     #[arg(
-        long = "dpos.joiner",
-        env = "FLUENT_DPOS_JOINER",
-        default_value_t = false
+        long = "dpos.follower-upstream",
+        env = "FLUENT_DPOS_FOLLOWER_UPSTREAM",
+        action = clap::ArgAction::Append
     )]
-    pub dpos_joiner: bool,
+    pub dpos_follower_upstream: Vec<String>,
 
     /// EIP-2335 / Web3 Secret Storage v3 keystore JSON for the slasher EOA.
     #[arg(
@@ -241,7 +243,7 @@ impl DposConfig {
             slasher_keystore_password_file: args.dpos_slasher_keystore_password_file.clone(),
             metrics_port: args.dpos_metrics_port,
             cert_feed,
-            joiner: args.dpos_joiner,
+            follower_upstreams: args.dpos_follower_upstream.clone(),
         }
     }
 }
@@ -280,8 +282,12 @@ where
         + Sync
         + 'static,
 {
-    crate::utils::spawn_consensus_thread("dpos", move |ctx, node| {
-        run_dpos_stack(ctx, node, cfg, shutdown_token)
+    crate::utils::spawn_consensus_thread("dpos", move |ctx, node| async move {
+        if cfg.follower_upstreams.is_empty() {
+            run_dpos_stack(ctx, node, cfg, shutdown_token).await
+        } else {
+            crate::unified::run_unified_stack(ctx, node, cfg, shutdown_token).await
+        }
     })
 }
 
@@ -320,8 +326,129 @@ where
         + Sync
         + 'static,
 {
+    spawn_devnet_metrics(&ctx, &cfg);
+
+    let cert_feed = cfg.cert_feed.take();
+    // Claim the single-execution import escrow ONCE per process.
+    let beacon_engine =
+        crate::importer::RethImporter::from_env(node.add_ons_handle.beacon_engine_handle.clone())?;
+    let mut handle = launch_dpos_layer(
+        ctx,
+        &node,
+        &cfg,
+        beacon_engine,
+        cert_feed,
+        false,
+        None,
+        shutdown_token.clone(),
+    )
+    .await?;
+
+    // Supervisor: on any unexpected exit, cancel the shared
+    // shutdown_token so reth/main also bring everything down gracefully;
+    // abort the surviving handle to release runtime resources.
+    let exit_reason = tokio::select! {
+        _ = shutdown_token.cancelled() => {
+            info!("DPoS thread received shutdown signal, exiting");
+            "shutdown_token"
+        }
+        res = &mut handle.consensus_handle => {
+            match res {
+                Ok(()) => warn!("OuterEngine exited cleanly (unexpected)"),
+                Err(e) => error!(error = ?e, "OuterEngine task failed"),
+            }
+            shutdown_token.cancel();
+            "consensus_exit"
+        }
+        res = &mut handle.network_handle => {
+            match res {
+                Ok(()) => warn!("p2p Network exited cleanly (unexpected)"),
+                Err(e) => error!(error = ?e, "p2p Network task failed"),
+            }
+            shutdown_token.cancel();
+            "network_exit"
+        }
+    };
+
+    handle.network_handle.abort();
+    handle.consensus_handle.abort();
+
+    info!(reason = exit_reason, "DPoS thread exiting");
+    Ok(())
+}
+
+/// DEVNET-ONLY metrics endpoint (feature-gated so prod binaries can't serve
+/// it). Spawned on a child of the commonware runtime context; children share
+/// the runtime's prometheus registry, so `c.encode()` includes the p2p
+/// tracker `connected`/`tracked` gauges the DposLayer registers later (the
+/// smoke `case-peers.sh` scrapes them). Must bind exactly ONCE per process —
+/// the unified supervisor relaunches the layer per promotion, so this lives
+/// outside [`launch_dpos_layer`].
+pub(crate) fn spawn_devnet_metrics(ctx: &Context, cfg: &DposConfig) {
+    #[cfg(feature = "dpos-devnet-metrics")]
+    if let Some(port) = cfg.metrics_port {
+        warn!(
+            port,
+            "DEVNET: serving commonware consensus metrics over HTTP (do not enable in prod)"
+        );
+        drop(ctx.with_label("metrics_http").spawn(move |c| async move {
+            serve_metrics(c, port).await;
+        }));
+    }
+    #[cfg(not(feature = "dpos-devnet-metrics"))]
+    if cfg.metrics_port.is_some() {
+        let _ = ctx;
+        warn!(
+            "--dpos.metrics-port set but this binary was built without the \
+             `dpos-devnet-metrics` feature; metrics endpoint disabled"
+        );
+    }
+}
+
+/// Build and launch the DPoS layer once: load operator keys + JSON configs,
+/// construct the `PoolTxSink`/deriver/assembler over the node's own
+/// provider, hand everything to [`DposLayer::launch`], wire the cert-feed
+/// actor and `set_marshal`. Extracted from [`run_dpos_stack`] so the unified
+/// supervisor can relaunch the signer stack per promotion; `promotion` /
+/// `mode_events` are the supervisor inputs (legacy passes `false` / `None`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn launch_dpos_layer<N, AddOns>(
+    ctx: Context,
+    node: &FullNode<N, AddOns>,
+    cfg: &DposConfig,
+    beacon_engine: crate::importer::RethImporter,
+    cert_feed: Option<CertFeed>,
+    promotion: bool,
+    mode_events: Option<tokio::sync::mpsc::UnboundedSender<fluentbase_consensus::ModeEvent>>,
+    shutdown_token: CancellationToken,
+) -> eyre::Result<DposLayerHandle>
+where
+    N: FullNodeComponents<
+        Types: reth_node_api::NodeTypes<
+            Payload = EthEngineTypes,
+            Primitives = reth_ethereum_primitives::EthPrimitives,
+        >,
+    >,
+    AddOns: RethRpcAddOns<N>,
+    <N as FullNodeTypes>::Provider: Clone
+        + BlockReader<Block = RethBlock>
+        + BlockHashReader
+        + BlockNumReader
+        + BlockIdReader
+        + CanonicalStateAccess
+        + Send
+        + Sync
+        + 'static,
+    <N as FullNodeComponents>::Evm: reth_evm::ConfigureEvm<
+            Primitives = EthPrimitives,
+            NextBlockEnvCtx = reth_evm::NextBlockEnvAttributes,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+{
     let chain_id = node.chain_spec().chain_id();
-    let bls_keypair = load_bls_keypair(&cfg, chain_id)?;
+    let bls_keypair = load_bls_keypair(cfg, chain_id)?;
     let peer_keypair = fluentbase_p2p::read_ed25519_key_from_file(&cfg.peer_key_path)
         .wrap_err_with(|| {
             format!(
@@ -329,7 +456,7 @@ where
                 cfg.peer_key_path.display()
             )
         })?;
-    let slasher_signer = load_slasher_signer(&cfg)?;
+    let slasher_signer = load_slasher_signer(cfg)?;
 
     let staking_config = fluentbase_staking_reader::reader::StakingReaderConfig::from_json_path(
         &cfg.staking_config_path,
@@ -373,9 +500,7 @@ where
     let reth = RethHandle {
         provider: node.provider.clone(),
         evm_config: node.evm_config.clone(),
-        beacon_engine_handle: crate::importer::RethImporter::from_env(
-            node.add_ons_handle.beacon_engine_handle.clone(),
-        )?,
+        beacon_engine_handle: beacon_engine,
         chain_id,
         canonical_state,
         genesis_hash,
@@ -384,7 +509,8 @@ where
     // Deferred-execution collaborators, all over the node's own provider/EVM:
     // derive (reth-evm BlockBuilder), the derived-chain view, and the
     // pool-backed ordering assembler.
-    let deriver = crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
+    let deriver =
+        crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
     let executed = ProviderExecutedChain(node.provider.clone());
     let assembler = Arc::new(PoolAssembler::new(node.pool.clone(), executed.clone()));
     // The protocol fee manager — same recipient the pre-deferred attrs
@@ -396,7 +522,7 @@ where
 
     // Cert-feed: the FeedSink goes DOWN into the marshal as its 2nd Reporter; the
     // receiver + state handle stay here to drive the node-side feed actor + RPC.
-    let (feed_sink, feed_actor_wiring) = match cfg.cert_feed.take() {
+    let (feed_sink, feed_actor_wiring) = match cert_feed {
         Some(cf) => (Some(cf.sink), Some((cf.rx, cf.handle))),
         None => (None, None),
     };
@@ -417,31 +543,9 @@ where
         fee_recipient,
         target_gas_limit,
         feed: feed_sink,
-        joiner: cfg.joiner,
+        promotion,
+        mode_events,
     };
-
-    // DEVNET-ONLY metrics endpoint (feature-gated so prod binaries can't serve
-    // it). Spawned on a child of the commonware runtime context BEFORE `launch`
-    // consumes `ctx`; children share the runtime's prometheus registry, so
-    // `c.encode()` includes the p2p tracker `connected`/`tracked` gauges the
-    // DposLayer registers later (the smoke `case-peers.sh` scrapes them).
-    #[cfg(feature = "dpos-devnet-metrics")]
-    if let Some(port) = cfg.metrics_port {
-        warn!(
-            port,
-            "DEVNET: serving commonware consensus metrics over HTTP (do not enable in prod)"
-        );
-        drop(ctx.with_label("metrics_http").spawn(move |c| async move {
-            serve_metrics(c, port).await;
-        }));
-    }
-    #[cfg(not(feature = "dpos-devnet-metrics"))]
-    if cfg.metrics_port.is_some() {
-        warn!(
-            "--dpos.metrics-port set but this binary was built without the \
-             `dpos-devnet-metrics` feature; metrics endpoint disabled"
-        );
-    }
 
     // Spawn the cert-feed actor on a child of the runtime context BEFORE `launch`
     // consumes `ctx`. It blocks on the channel until finalizations flow (post-launch),
@@ -454,8 +558,7 @@ where
         handle
     });
 
-    let mut handle: DposLayerHandle =
-        DposLayer::launch(ctx, reth, layer_cfg, shutdown_token.clone()).await?;
+    let handle: DposLayerHandle = DposLayer::launch(ctx, reth, layer_cfg, shutdown_token).await?;
 
     // Hand the marshal mailbox to the feed state (node-side, respecting the crate
     // boundary — consensus never names node types). Until this runs the RPC returns
@@ -464,37 +567,7 @@ where
         fh.set_marshal(handle.cert_mailbox.clone());
     }
 
-    // Supervisor: on any unexpected exit, cancel the shared
-    // shutdown_token so reth/main also bring everything down gracefully;
-    // abort the surviving handle to release runtime resources.
-    let exit_reason = tokio::select! {
-        _ = shutdown_token.cancelled() => {
-            info!("DPoS thread received shutdown signal, exiting");
-            "shutdown_token"
-        }
-        res = &mut handle.consensus_handle => {
-            match res {
-                Ok(()) => warn!("OuterEngine exited cleanly (unexpected)"),
-                Err(e) => error!(error = ?e, "OuterEngine task failed"),
-            }
-            shutdown_token.cancel();
-            "consensus_exit"
-        }
-        res = &mut handle.network_handle => {
-            match res {
-                Ok(()) => warn!("p2p Network exited cleanly (unexpected)"),
-                Err(e) => error!(error = ?e, "p2p Network task failed"),
-            }
-            shutdown_token.cancel();
-            "network_exit"
-        }
-    };
-
-    handle.network_handle.abort();
-    handle.consensus_handle.abort();
-
-    info!(reason = exit_reason, "DPoS thread exiting");
-    Ok(())
+    Ok(handle)
 }
 
 /// DEVNET-ONLY: minimal HTTP/1.0 responder serving the commonware runtime's
@@ -649,7 +722,7 @@ mod tests {
             slasher_keystore_password_file: None,
             metrics_port: None,
             cert_feed: None,
-            joiner: false,
+            follower_upstreams: vec![],
         }
     }
 

@@ -94,8 +94,7 @@ pub trait ExecutedChain: Clone + Send + Sync + 'static {
 /// Ordering-assembly: pick txs for height N against executed state plus the
 /// in-flight ordered-but-unexecuted suffix overlay. No execution.
 pub trait OrderingAssembler: Send + Sync + 'static {
-    fn assemble(&self, height: u64, gas_limit: u64, byte_budget: usize)
-        -> Vec<TransactionSigned>;
+    fn assemble(&self, height: u64, gas_limit: u64, byte_budget: usize) -> Vec<TransactionSigned>;
 
     /// Every ordering-finalized artifact, in order — keeps the in-flight
     /// suffix (nonces/hashes of ordered-but-unexecuted txs) authoritative so
@@ -823,7 +822,11 @@ mod tests {
             )
             .await;
 
-            assert_eq!(counter.load(Ordering::SeqCst), 0, "hook must NOT fire on Tip");
+            assert_eq!(
+                counter.load(Ordering::SeqCst),
+                0,
+                "hook must NOT fire on Tip"
+            );
             let msg = rx.lock().unwrap().try_recv().expect("Finalize sent");
             match msg.command {
                 executor::Command::Finalize(update) => {

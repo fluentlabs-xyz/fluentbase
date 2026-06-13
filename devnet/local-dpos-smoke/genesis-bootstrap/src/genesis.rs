@@ -6,16 +6,11 @@ use std::collections::BTreeMap;
 use crate::bootstrap::PredeployState;
 use crate::keys::KeySet;
 
-const BASE_GENESIS_JSON: &str =
-    include_str!("../../../../crates/genesis/genesis-devnet.json");
+const BASE_GENESIS_JSON: &str = include_str!("../../../../crates/genesis/genesis-devnet.json");
 
-pub fn assemble(
-    chain_id: u64,
-    keys: &KeySet,
-    predeploy: PredeployState,
-) -> eyre::Result<Genesis> {
-    let mut g: Genesis = serde_json::from_str(BASE_GENESIS_JSON)
-        .wrap_err("parse base genesis-devnet.json")?;
+pub fn assemble(chain_id: u64, keys: &KeySet, predeploy: PredeployState) -> eyre::Result<Genesis> {
+    let mut g: Genesis =
+        serde_json::from_str(BASE_GENESIS_JSON).wrap_err("parse base genesis-devnet.json")?;
 
     g.config.chain_id = chain_id;
     // Activate Paris hardfork at genesis. The named chainspecs ("dev",
@@ -43,8 +38,7 @@ pub fn assemble(
         let acct = g.alloc.entry(addr).or_default();
         acct.code = Some(code);
         if let Some(storage) = predeploy.storage_by_address.get(&addr) {
-            let storage_btree: BTreeMap<_, _> =
-                storage.iter().map(|(k, v)| (*k, *v)).collect();
+            let storage_btree: BTreeMap<_, _> = storage.iter().map(|(k, v)| (*k, *v)).collect();
             acct.storage = Some(storage_btree);
         }
         if let Some(balance) = predeploy.balance_by_address.get(&addr) {
@@ -54,21 +48,12 @@ pub fn assemble(
 
     let wei_per_eth = U256::from(10u128.pow(18));
     for v in &keys.validators {
-        let acct = g
-            .alloc
-            .entry(v.slasher.address())
-            .or_default();
+        let acct = g.alloc.entry(v.slasher.address()).or_default();
         acct.balance = wei_per_eth;
-        let owner_acct = g
-            .alloc
-            .entry(v.l2_signer.address())
-            .or_default();
+        let owner_acct = g.alloc.entry(v.l2_signer.address()).or_default();
         owner_acct.balance = wei_per_eth;
     }
-    let gov_acct = g
-        .alloc
-        .entry(keys.governance_signer.address())
-        .or_default();
+    let gov_acct = g.alloc.entry(keys.governance_signer.address()).or_default();
     gov_acct.balance = wei_per_eth;
 
     Ok(g)

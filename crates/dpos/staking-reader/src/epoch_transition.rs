@@ -34,7 +34,7 @@ use crate::{
     cache::ValidatorSetCache,
     error::ReadError,
     reader::{
-        check_committee_size, epoch_of_block, StakingStateRead, EPOCH_COMMITTEE_RETENTION_MARGIN,
+        check_peer_set_size, epoch_of_block, StakingStateRead, EPOCH_COMMITTEE_RETENTION_MARGIN,
     },
 };
 
@@ -233,11 +233,7 @@ where
     /// The pre-deferred `on_finalized` body: epoch geometry freeze +
     /// cold-start bootstrap (incl. boundary-resume E+1) + boundary branch,
     /// reading committee state at the RESOLVED executed hash `at`.
-    async fn apply_at(
-        &mut self,
-        number: u64,
-        at: B256,
-    ) -> Result<TransitionOutcome, ReadError> {
+    async fn apply_at(&mut self, number: u64, at: B256) -> Result<TransitionOutcome, ReadError> {
         // `epochBlockInterval` is treated as FIXED after genesis: the consensus
         // `FixedEpocher` is frozen at startup, so acting on a live governance
         // change here would diverge the two epoch authorities (a boundary-synced
@@ -319,7 +315,11 @@ where
         // epoch on a boundary-aligned resume; still a single `track_and_trigger` +
         // `return`, preserving the double-spawn guard.
         if self.last_tracked_epoch.is_none() {
-            let cold_epoch = if is_epoch_boundary { epoch_e + 1 } else { epoch_e };
+            let cold_epoch = if is_epoch_boundary {
+                epoch_e + 1
+            } else {
+                epoch_e
+            };
             let snap = self.reader.epoch_committee_snapshot(cold_epoch, at)?;
             if snap.validators.is_empty() {
                 return Ok(TransitionOutcome::Intra);
@@ -352,18 +352,22 @@ where
     /// sink, and fire the boundary trigger — advancing `last_tracked_epoch` only on
     /// a successful `try_send`. Extracted so both the cold-start bootstrap and the
     /// boundary branch share identical (idempotent) side effects.
+    ///
+    /// The tracked peer set is the Active validator REGISTRY ∪ the frozen
+    /// committee (tier-2: every activated validator — ejected, upcoming, the
+    /// sequencer — keeps consensus-plane connectivity; the committee union
+    /// covers the mid-epoch-jailed member that already left the registry but
+    /// is still in the frozen committee). The cache/schemes/bridge continue
+    /// to consume the COMMITTEE snapshot only.
     async fn track_and_trigger(
         &mut self,
         epoch: u64,
         snap: crate::reader::ValidatorSetSnapshot,
         at: B256,
     ) -> Result<TransitionOutcome, ReadError> {
-        let keys: Vec<PeerPubkey> = snap
-            .validators
-            .iter()
-            .map(|v| v.keys.peer_pubkey.clone())
-            .collect();
-        check_committee_size(epoch, keys.len(), self.max_peer_set_size)?; // committee-size guard (typed, not panic)
+        let mut tracked = self.reader.active_registry_peers(at)?;
+        tracked.extend(snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()));
+        check_peer_set_size(epoch, tracked.len(), self.max_peer_set_size)?; // typed, not panic
         let retention =
             self.reader.undelegate_period(at)? as u64 + EPOCH_COMMITTEE_RETENTION_MARGIN;
         {
@@ -371,7 +375,7 @@ where
             cache.persist_final(snap.clone()).await?; // finality-gated — idempotent
             cache.prune(epoch.saturating_sub(retention)).await?; // mirror on-chain prune
         }
-        self.sink.track(epoch, Set::from_iter_dedup(keys)).await; // one-shot
+        self.sink.track(epoch, Set::from_iter_dedup(tracked)).await; // one-shot
 
         // Gate `last_tracked_epoch` advance on `try_send` success. A
         // `Full` channel means the consensus bridge is backed up; leave the
@@ -477,6 +481,12 @@ mod tests {
         fn dpos_activation_block(&self, _at: B256) -> Result<u64, ReadError> {
             Ok(0) // mock tests use absolute numbering
         }
+        fn active_registry_peers(&self, _at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
+            // Mock registry == nothing beyond the committee: the union fed to
+            // the sink then equals the committee, keeping the existing
+            // boundary-tracking assertions meaningful unchanged.
+            Ok(vec![])
+        }
     }
 
     /// Test ctor: a resolver that always resolves to `h` (mock chain where
@@ -500,6 +510,35 @@ mod tests {
         )
     }
 
+    /// MockReader + a non-empty tier-2 registry: `active_registry_peers`
+    /// returns peers DISJOINT from the committee, so the tracked union must
+    /// be strictly larger than the committee.
+    struct RegistryReader {
+        inner: MockReader,
+        registry: Vec<PeerPubkey>,
+    }
+    impl StakingStateRead for RegistryReader {
+        fn epoch_committee_snapshot(
+            &self,
+            epoch: u64,
+            at: B256,
+        ) -> Result<ValidatorSetSnapshot, ReadError> {
+            self.inner.epoch_committee_snapshot(epoch, at)
+        }
+        fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
+            self.inner.undelegate_period(at)
+        }
+        fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
+            self.inner.epoch_block_interval(at)
+        }
+        fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
+            self.inner.dpos_activation_block(at)
+        }
+        fn active_registry_peers(&self, _at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
+            Ok(self.registry.clone())
+        }
+    }
+
     /// Records every `track` call.
     #[derive(Clone, Default)]
     struct RecordingSink(Arc<Mutex<Vec<(u64, usize)>>>);
@@ -510,6 +549,41 @@ mod tests {
                 log.lock().unwrap().push((epoch, peers.len()));
             }
         }
+    }
+
+    #[test]
+    fn tracked_set_is_registry_union_committee() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
+                ValidatorSetCache::init(ctx).await.unwrap(),
+            ));
+            let sink = RecordingSink::default();
+            let h = B256::repeat_byte(0x33);
+            // 2 registry-only peers (seeds far from the committee's) + committee of 3.
+            let reader = RegistryReader {
+                inner: MockReader {
+                    committee: 3,
+                    undelegate: 7,
+                    interval: 100,
+                },
+                registry: vec![
+                    validator(900_001).keys.peer_pubkey,
+                    validator(900_002).keys.peer_pubkey,
+                ],
+            };
+            let mut et = EpochTransition::new(
+                reader,
+                cache,
+                sink.clone(),
+                51,
+                None,
+                std::sync::Arc::new(move |_n| Some(h)),
+                3,
+            );
+            et.cold_start(h, 200).await.unwrap();
+            let log = sink.0.lock().unwrap();
+            assert_eq!(log.as_slice(), &[(2, 5)]);
+        });
     }
 
     #[test]
@@ -588,7 +662,11 @@ mod tests {
                 TransitionOutcome::Intra
             );
             let log = sink.0.lock().unwrap();
-            assert_eq!(*log, vec![(5, 5), (6, 5)], "bootstrap epoch 5, then spawn epoch 6 at its boundary");
+            assert_eq!(
+                *log,
+                vec![(5, 5), (6, 5)],
+                "bootstrap epoch 5, then spawn epoch 6 at its boundary"
+            );
         });
     }
 
@@ -643,13 +721,13 @@ mod tests {
                 },
                 cache,
                 RecordingSink::default(),
-                4, // max_peer_set_size < committee
+                4, // max_peer_set_size < tracked union (registry ∅ + committee 10)
                 None,
                 h,
             );
             assert!(matches!(
                 et.cold_start(h, 200).await,
-                Err(ReadError::CommitteeTooLarge {
+                Err(ReadError::PeerSetTooLarge {
                     epoch: 2,
                     size: 10,
                     max: 4
@@ -847,9 +925,7 @@ mod tests {
                 sink.clone(),
                 64,
                 None,
-                std::sync::Arc::new(move |_n| {
-                    resolvable_for_et.lock().unwrap().then_some(h)
-                }),
+                std::sync::Arc::new(move |_n| resolvable_for_et.lock().unwrap().then_some(h)),
                 3,
             );
             assert_eq!(

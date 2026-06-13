@@ -12,10 +12,7 @@ pub struct PopArtefacts {
     pub bls_pop_uncompressed: [u8; SIGNATURE_EIP2537_BYTES],
 }
 
-pub fn produce(
-    keypair: &ValidatorBlsKeypair,
-    chain_id: u64,
-) -> eyre::Result<PopArtefacts> {
+pub fn produce(keypair: &ValidatorBlsKeypair, chain_id: u64) -> eyre::Result<PopArtefacts> {
     let namespace = fluent_namespace(chain_id);
     let pop_compressed = sign_pop(keypair, &namespace);
     let pub_compressed = keypair.public_bytes();

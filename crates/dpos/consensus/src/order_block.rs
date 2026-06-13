@@ -173,8 +173,9 @@ impl Read for OrderBlock {
         // slice. Safe under the current p2p transport (delivers contiguous
         // `Bytes`); documented so a future segmented `Buf` source is caught
         // here — same caveat as the executed-block codec it replaces.
-        let header = alloy_rlp::Header::decode(&mut buf.chunk())
-            .map_err(|e| commonware_codec::Error::Wrapped("reading tx list RLP header", e.into()))?;
+        let header = alloy_rlp::Header::decode(&mut buf.chunk()).map_err(|e| {
+            commonware_codec::Error::Wrapped("reading tx list RLP header", e.into())
+        })?;
         if header.length_with_payload() > MAX_ORDER_BLOCK_SIZE {
             return Err(commonware_codec::Error::Invalid(
                 "order_block",
@@ -265,13 +266,34 @@ mod tests {
         let base = sample_order_block();
         let d = base.digest();
         let mutations: Vec<OrderBlock> = vec![
-            OrderBlock { parent: Digest(B256::repeat_byte(0xAA)), ..base.clone() },
-            OrderBlock { height: base.height + 1, ..base.clone() },
-            OrderBlock { timestamp: base.timestamp + 1, ..base.clone() },
-            OrderBlock { fee_recipient: Address::repeat_byte(0xBB), ..base.clone() },
-            OrderBlock { gas_limit: base.gas_limit + 1, ..base.clone() },
-            OrderBlock { extra_data: Bytes::from(vec![9u8]), ..base.clone() },
-            OrderBlock { result: B256::repeat_byte(0xCC), ..base.clone() },
+            OrderBlock {
+                parent: Digest(B256::repeat_byte(0xAA)),
+                ..base.clone()
+            },
+            OrderBlock {
+                height: base.height + 1,
+                ..base.clone()
+            },
+            OrderBlock {
+                timestamp: base.timestamp + 1,
+                ..base.clone()
+            },
+            OrderBlock {
+                fee_recipient: Address::repeat_byte(0xBB),
+                ..base.clone()
+            },
+            OrderBlock {
+                gas_limit: base.gas_limit + 1,
+                ..base.clone()
+            },
+            OrderBlock {
+                extra_data: Bytes::from(vec![9u8]),
+                ..base.clone()
+            },
+            OrderBlock {
+                result: B256::repeat_byte(0xCC),
+                ..base.clone()
+            },
         ];
         for m in mutations {
             assert_ne!(m.digest(), d);
@@ -307,7 +329,11 @@ mod tests {
         buf.extend_from_slice(b.result.as_slice());
         0u32.write(&mut buf);
         let oversize = MAX_ORDER_BLOCK_SIZE + 1;
-        alloy_rlp::Header { list: true, payload_length: oversize }.encode(&mut buf);
+        alloy_rlp::Header {
+            list: true,
+            payload_length: oversize,
+        }
+        .encode(&mut buf);
         buf.resize(buf.len() + oversize, 0);
 
         let err = OrderBlock::read(&mut buf.as_slice()).expect_err("oversize tx list");
@@ -342,9 +368,18 @@ mod tests {
     #[test]
     fn result_target_pre_activation_window_is_k_blocks() {
         let anchor = 100;
-        assert_eq!(result_target(anchor + 1, anchor), ResultTarget::PreActivation);
-        assert_eq!(result_target(anchor + K - 1, anchor), ResultTarget::PreActivation);
-        assert_eq!(result_target(anchor + K, anchor), ResultTarget::Height(anchor));
+        assert_eq!(
+            result_target(anchor + 1, anchor),
+            ResultTarget::PreActivation
+        );
+        assert_eq!(
+            result_target(anchor + K - 1, anchor),
+            ResultTarget::PreActivation
+        );
+        assert_eq!(
+            result_target(anchor + K, anchor),
+            ResultTarget::Height(anchor)
+        );
         assert_eq!(
             result_target(anchor + K + 5, anchor),
             ResultTarget::Height(anchor + 5)

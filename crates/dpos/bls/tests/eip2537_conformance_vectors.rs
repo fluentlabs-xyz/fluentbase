@@ -85,12 +85,42 @@ struct Recipe {
 // tamper kind). No repeated "another random valid key" / "negative ×
 // boundary" combos — those added no logical coverage.
 const RECIPES: &[Recipe] = &[
-    Recipe { label: "pop_valid_seed0", seed: 0, chain_id: C_MAIN, kind: Kind::Valid },
-    Recipe { label: "pop_valid_seed1", seed: 1, chain_id: C_MAIN, kind: Kind::Valid },
-    Recipe { label: "pop_valid_chain0", seed: 10, chain_id: 0, kind: Kind::Valid },
-    Recipe { label: "pop_valid_chain_max", seed: 11, chain_id: u64::MAX, kind: Kind::Valid },
-    Recipe { label: "pop_tampered_sig", seed: 0, chain_id: C_MAIN, kind: Kind::TamperedSig },
-    Recipe { label: "pop_tampered_pubkey", seed: 0, chain_id: C_MAIN, kind: Kind::TamperedPubkey },
+    Recipe {
+        label: "pop_valid_seed0",
+        seed: 0,
+        chain_id: C_MAIN,
+        kind: Kind::Valid,
+    },
+    Recipe {
+        label: "pop_valid_seed1",
+        seed: 1,
+        chain_id: C_MAIN,
+        kind: Kind::Valid,
+    },
+    Recipe {
+        label: "pop_valid_chain0",
+        seed: 10,
+        chain_id: 0,
+        kind: Kind::Valid,
+    },
+    Recipe {
+        label: "pop_valid_chain_max",
+        seed: 11,
+        chain_id: u64::MAX,
+        kind: Kind::Valid,
+    },
+    Recipe {
+        label: "pop_tampered_sig",
+        seed: 0,
+        chain_id: C_MAIN,
+        kind: Kind::TamperedSig,
+    },
+    Recipe {
+        label: "pop_tampered_pubkey",
+        seed: 0,
+        chain_id: C_MAIN,
+        kind: Kind::TamperedPubkey,
+    },
     Recipe {
         label: "pop_tampered_namespace",
         seed: 0,

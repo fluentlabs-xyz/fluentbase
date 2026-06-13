@@ -3,17 +3,18 @@
 # staking cluster is deployed at RUNTIME via forge (not baked into genesis),
 # mirroring prod:
 #   plain sequencer → runtime-deploy token+verifier+cluster → bootstrap 5-validator
-#   committee → cold-restart to --dpos → register an EXTERNAL 6th validator via
-#   governance + delegate → committee rotates → eject one validator by liveness →
-#   all under a background value-transfer load.
+#   committee → cold-restart ALL validators into unified --dpos
+#   (--dpos.follower-upstream) → register the EXTERNAL 6th validator via
+#   governance + delegate while its supervisor follows in-process → v5
+#   AUTO-promotes at its first committee epoch boundary (no operator action) →
+#   committee rotates (displaced validator auto-demotes and keeps following) →
+#   eject one validator by liveness → all under a background value-transfer load.
 #
 # First-of-its-kind end-to-end (live rotation + dynamic join). Per the brief, a
 # failure here is a real-bug finding, not a test defect.
 #
 # PREREQUISITES (host): docker, foundry (forge/cast), jq, a solidity-contracts
-# checkout at $SOLIDITY_CONTRACTS_DIR. NOTE: deploying the >24 KB Staking impl at
-# runtime requires the EIP-170 node fix (task staking_exceeds_eip170_codesize);
-# until it lands the cluster deploy reverts with CreateContractSizeLimit.
+# checkout at $SOLIDITY_CONTRACTS_DIR.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -167,8 +168,10 @@ pp_wait_converge 90 >/dev/null \
     || { echo "FAIL: followers did not align at the activation block"; docker compose logs --tail=120; exit 1; }
 echo "  all nodes aligned at $ACT; proceeding to --dpos cold-restart"
 
-# ── cold-restart all 6 validators into --dpos ───────────────────────────────
-echo "== cold-restart validators 0-5 into --dpos =="
+# ── cold-restart all 6 validators into unified --dpos ───────────────────────
+# v0-4 are in committee(0) → their supervisors enter the signer phase directly
+# (legacy FreshMigration discriminator); v5 is not → follower substrate.
+echo "== cold-restart: all validators into unified --dpos =="
 ANCHOR=$(check_external 8545 | cut -d'|' -f1)
 export COMPOSE_FILE="docker-compose.production-path.yml:docker-compose.production-path.dpos.yml"
 docker compose up -d --force-recreate "${PP_VALS[@]}" \
@@ -188,7 +191,11 @@ EXPECT=$(for i in 0 1 2 3 4; do pp_owner_addr "$i"; done | tr 'A-F' 'a-f' | sort
 echo "  committee(epoch $E) == initial 5 ✓"
 
 # ── register the EXTERNAL 6th validator (v5) via governance + delegate ──────
-echo "== register external validator v5 =="
+# v5 runs the same unified `--dpos` as everyone: its supervisor keeps it on
+# the in-process cert-follow substrate (key not in any committee yet) while
+# the registration lands on-chain — no operator choreography at any point.
+echo "== register external validator v5 (unified follower substrate meanwhile) =="
+REG_FLOOR=$(check_external 8545 | cut -d'|' -f1)
 V5_KEY="$(pp_owner_key 5)" ; V5_ADDR="$(pp_owner_addr 5)"
 cast send "$TOKEN" "approve(address,uint256)(bool)" "$STAKING_RT" "$STAKE_1E18" \
     --rpc-url "$RPC" --private-key "$V5_KEY" >/dev/null
@@ -208,15 +215,85 @@ cast send "$TOKEN" "approve(address,uint256)(bool)" "$STAKING_RT" "2000000000000
     --rpc-url "$RPC" --private-key "$V5_KEY" >/dev/null
 cast send "$STAKING_RT" "delegate(address,uint256)" "$V5_ADDR" "2000000000000000000" \
     --rpc-url "$RPC" --private-key "$V5_KEY" >/dev/null || { echo "FAIL: delegate v5"; exit 1; }
-echo "  v5 registered + activated + delegated; waiting 3 epoch boundaries for committee entry"
-pp_wait_epochs 3 || { echo "FAIL: chain did not advance 3 epochs after delegate"; exit 1; }
+echo "  v5 registered + activated + delegated"
+
+# v5's RPC must keep tracking v0 through the registration load — the unified
+# follower substrate is load-bearing for the join.
+pp_wait_converge 90 "$REG_FLOOR" >/dev/null \
+    || { echo "FAIL: nodes (v5 on follower substrate) lost alignment during registration"; docker compose logs validator-5 --tail=80; exit 1; }
+echo "  v5 follower substrate tracked the chain through registration ✓"
+
+# ── AUTO-promotion: no operator action — just observe ───────────────────────
+# committee[N] is committed one boundary early; once v5 shows up in the
+# ahead-committed set, its own supervisor must stop the follower lap at the
+# boundary−1 and promote in-process.
+echo "== wait for v5 in the ahead-committed committee (auto-promotion) =="
+v5l=$(tr 'A-F' 'a-f' <<<"$V5_ADDR")
+JOIN_E=""
+_deadline=$(( $(date +%s) + 300 ))
+while (( $(date +%s) < _deadline )); do
+    E=$(pp_current_epoch)
+    [[ " $(pp_committee $((E + 1))) " == *" $v5l "* ]] && { JOIN_E=$((E + 1)); break; }
+    sleep 2
+done
+[[ -n "$JOIN_E" ]] || { echo "FAIL: v5 never appeared in an ahead-committed committee"; exit 1; }
+echo "  v5 in committee(epoch $JOIN_E), current epoch $((JOIN_E - 1)); expecting in-process promotion"
+
+# ── assert v5 enters consensus at its first committee boundary ──────────────
+# Convergence strictly past the boundary block with v5 in the reading set
+# proves the supervisor promoted at the boundary and v5 follows as a signer.
+EPOCH_LEN=$(printf '%d' "$(pp_chainconfig_call 'getEpochBlockInterval()(uint32)')")
+JOIN_BOUNDARY=$(( ACT + JOIN_E * EPOCH_LEN ))
+pp_wait_converge 240 "$(printf '0x%x' "$JOIN_BOUNDARY")" >/dev/null \
+    || { echo "FAIL: v5 did not enter consensus past its committee boundary (block $JOIN_BOUNDARY)"
+         echo "--- v5 commonware peers (buffered_peer_total series) ---"
+         { docker compose exec -T validator-5 sh -c 'wget -qO- http://localhost:9100 2>/dev/null' \
+             | { grep -m20 -E "buffered_peer_total|peers_blocked" || true; }; } || true
+         echo "--- v0 commonware peers ---"
+         { curl -s http://localhost:19100 | { grep -m20 -E "buffered_peer_total|peers_blocked" || true; }; } || true
+         V5D=$(mktemp); docker compose logs validator-5 >"$V5D" 2>&1 || true
+         echo "--- v5 log (filtered) ---"
+         { grep -vE "Block added to canonical|Regular root task|Forkchoice updated|Canonical chain committed|Received forkchoice|Status connected" "$V5D" || true; } | tail -60
+         V0D=$(mktemp); docker compose logs validator-0 >"$V0D" 2>&1 || true
+         echo "--- v0 log (v5-related) ---"
+         { grep -iE "discovery|handshake|fac42278|dial|listener" "$V0D" || true; } | tail -40
+         rm -f "$V5D" "$V0D"
+         exit 1; }
+echo "  v5 entered consensus: all 6 validators + full-node aligned past block $JOIN_BOUNDARY ✓"
+
+# The promotion must be the in-process PROMOTION cold-start (not a restart):
+# logs go through a file — `docker logs | grep -q` SIGPIPEs under pipefail.
+V5_LOG=$(mktemp)
+docker compose logs validator-5 >"$V5_LOG" 2>&1 || true
+grep -q "PROMOTION cold-start" "$V5_LOG" \
+    || { echo "FAIL: v5 log has no PROMOTION cold-start (joined some other way?)"; rm -f "$V5_LOG"; exit 1; }
+rm -f "$V5_LOG"
+echo "  v5 promoted in-process (PROMOTION cold-start) ✓"
 
 E=$(pp_current_epoch)
 GOT=$(pp_committee "$E")
-v5l=$(tr 'A-F' 'a-f' <<<"$V5_ADDR")
 [[ " $GOT " == *" $v5l "* ]] || { echo "FAIL: v5 not in committee(epoch $E): [$GOT]"; exit 1; }
 [[ "$(wc -w <<<"$GOT")" == "$PP_COMMITTEE_SIZE" ]] || { echo "FAIL: committee size != $PP_COMMITTEE_SIZE"; exit 1; }
 echo "  committee rotated: v5 entered top-5, lowest dropped ✓"
+
+# ── DEMOTION: the validator v5 displaced must keep following ─────────────────
+# The displaced one demotes to the follower substrate in-process (rotation-out
+# → ModeEvent → supervisor) instead of wedging as a silent verifier. Identify
+# it as the initial-5 member missing from the rotated committee.
+DISPLACED_IDX=""
+for i in 0 1 2 3 4; do
+    a=$(tr 'A-F' 'a-f' <<<"$(pp_owner_addr "$i")")
+    [[ " $GOT " != *" $a "* ]] && { DISPLACED_IDX="$i"; break; }
+done
+[[ -n "$DISPLACED_IDX" ]] || { echo "FAIL: could not identify the displaced validator"; exit 1; }
+[[ "$DISPLACED_IDX" != 0 ]] || { echo "FAIL: rotation displaced validator-0 (harness RPC) — tie-break drift"; exit 1; }
+DEM_PRE=$(check_node docker compose exec -T "validator-$DISPLACED_IDX" | cut -d'|' -f1)
+sleep 8
+DEM_POST=$(check_node docker compose exec -T "validator-$DISPLACED_IDX" | cut -d'|' -f1)
+{ [[ "$DEM_PRE" != "null" && "$DEM_POST" != "null" ]] \
+    && (( $(printf '%d' "$DEM_POST") > $(printf '%d' "$DEM_PRE") )); } \
+    || { echo "FAIL: displaced validator-$DISPLACED_IDX stopped following after demotion ($DEM_PRE → $DEM_POST)"; docker compose logs "validator-$DISPLACED_IDX" --tail=80; exit 1; }
+echo "  displaced validator-$DISPLACED_IDX demoted in-process and keeps following ($DEM_PRE → $DEM_POST) ✓"
 
 # ── liveness ejection: stop one committee validator for ≥50 blocks/1 epoch ──
 # Stop at an epoch START: _missCounter resets each boundary, MISS_THRESHOLD=50 in
@@ -244,13 +321,30 @@ done
 (( JAIL_OK == 1 )) || { echo "FAIL: validator-$VICTIM_IDX not jailed (status=$st)"; exit 1; }
 echo "  validator-$VICTIM_IDX jailed at 50-miss threshold ✓"
 
-# Committee is ahead-committed, so the jailed validator only drops one boundary
-# later — assert absence AFTER the next epoch boundary, not immediately.
-pp_wait_epochs 1 >/dev/null
+# Committee[N] is committed at the boundary entering epoch N-1, and the jail
+# lands MID-epoch (50 misses ≈ 50 s into it) — so the first committee selected
+# post-jail is committee[E+2]: wait TWO boundaries, not one. (One boundary only
+# ever passed on the unpaced ~5.8 blk/s chain, where the 2 s jail-detect poll
+# lagged several epochs.) validatorJailEpochLength=4 keeps E+2 inside the jail.
+pp_wait_epochs 2 >/dev/null
 E=$(pp_current_epoch)
 GOT=$(pp_committee "$E")
 [[ " $GOT " != *" $VICTIM_ADDR "* ]] || { echo "FAIL: jailed validator still in committee(epoch $E): [$GOT]"; exit 1; }
 echo "  ejected validator gone from getEpochCommittee(epoch $E) ✓"
+
+# In unified mode v5 NEVER runs the legacy silent-verifier wait, so the
+# committee watchdog WARN must be absent from its ENTIRE log — any occurrence
+# means it fell back to the wedge the supervisor exists to eliminate. Logs go
+# through a file: `docker logs | grep -q` SIGPIPEs under pipefail.
+V5_LOG=$(mktemp)
+docker compose logs validator-5 >"$V5_LOG" 2>&1 || true
+if grep -q "NOT in the current committee" "$V5_LOG"; then
+    echo "FAIL: v5 hit the committee watchdog (legacy verifier wedge):"
+    grep "NOT in the current committee" "$V5_LOG"
+    rm -f "$V5_LOG"; exit 1
+fi
+rm -f "$V5_LOG"
+echo "  v5 watchdog silent for the whole run (unified mode) ✓"
 
 # ── assert the background tx load kept finalizing across every transition ───
 BEFORE=$(baseline_height)

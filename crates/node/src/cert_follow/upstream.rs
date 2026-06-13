@@ -39,9 +39,7 @@ enum UpstreamMsg {
     /// Engine-requested rotation: the current upstream served unverifiable
     /// DATA (which a connection-level failover can never detect) — drop the
     /// connection and move to the next URL.
-    Rotate {
-        response: oneshot::Sender<()>,
-    },
+    Rotate { response: oneshot::Sender<()> },
 }
 
 /// Cloneable handle the resolver uses for by-height pulls. Implements the
@@ -104,7 +102,10 @@ pub fn init(
     UpstreamHandle,
     mpsc::Receiver<UpstreamFinalized>,
 ) {
-    assert!(!urls.is_empty(), "cert-follow needs at least one upstream URL");
+    assert!(
+        !urls.is_empty(),
+        "cert-follow needs at least one upstream URL"
+    );
     let (mailbox_tx, mailbox_rx) = mpsc::unbounded_channel();
     let (finalized_tx, finalized_rx) = mpsc::channel(LIVE_FINALIZED_BUFFER);
     let actor = UpstreamActor {

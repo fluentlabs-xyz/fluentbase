@@ -76,7 +76,10 @@ services:
     command:
       - bare
       - --peers=6
-      - --bootstrappers=1
+      # Two bootstrappers (v0+v1): with ONE, a joiner promoting mid-rotation
+      # has a single dialable address — if that node is itself mid-churn, the
+      # joiner is stranded (no address gossip without a first connection).
+      - --bootstrappers=2
       - --output=/runtime
       - --chain-id=2026
       - --validator-ips=172.20.0.10,172.20.0.11,172.20.0.12,172.20.0.13,172.20.0.14,172.20.0.15

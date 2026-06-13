@@ -186,6 +186,9 @@ impl StakingStateRead for StubReader {
     fn dpos_activation_block(&self, _at: B256) -> Result<u64, ReadError> {
         Ok(0)
     }
+    fn active_registry_peers(&self, _at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
+        Ok(vec![])
+    }
 }
 
 #[derive(Default)]

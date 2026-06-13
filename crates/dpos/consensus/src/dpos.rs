@@ -31,8 +31,8 @@ use fluentbase_bls::{
 };
 use fluentbase_p2p::{FluentP2P, FluentP2PConfig};
 use fluentbase_staking_reader::{
-    reader::StakingReaderConfig, EpochTransition, RethStakingStateReader,
-    TransitionOutcome, ValidatorSetCache,
+    reader::StakingReaderConfig, EpochTransition, RethStakingStateReader, TransitionOutcome,
+    ValidatorSetCache,
 };
 use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
 use reth_evm::ConfigureEvm;
@@ -207,9 +207,7 @@ async fn recover_finalized_tail_into_reth<Provider, BeaconEngine, D>(
 ) -> eyre::Result<B256>
 where
     Provider: BlockHashReader,
-    BeaconEngine: BeaconEngineLike<
-        ExecutionData = D::Derived,
-    >,
+    BeaconEngine: BeaconEngineLike<ExecutionData = D::Derived>,
     D: DerivedBlockBuilder,
 {
     // An ungraceful crash loses only reth's unflushed tail (typically 1-2 blocks).
@@ -324,63 +322,76 @@ pub struct DposLayerConfig<D, XC, A> {
     /// application-`Reporter` so a node-side feed actor can serve the
     /// `consensus` RPC. `None` for nodes that don't serve the cert feed.
     pub feed: Option<crate::feed_sink::FeedSink>,
-    /// Operator assertion: this datadir followed a LIVE chain via another
-    /// plane (cert-follow / trust-follow) and is being promoted to a
-    /// validator. Converts the fresh-path fail-loud guards (epoch-0
-    /// overshoot + clean-halt) into a JOINER anchor at the EL-restored
-    /// finalized tip. NOT auto-detected: "joiner of a live chain" and
-    /// "migration ex-sequencer that overshot epoch 0" are indistinguishable
-    /// from local state, and the latter must stay fatal (anchoring nodes at
-    /// different points = chain split).
-    pub joiner: bool,
+    /// Unified-supervisor promotion (NOT operator-set): the supervisor's own
+    /// follower phase just verified the chain up to the EL tip, so the
+    /// discriminator heuristics are bypassed entirely — anchor at the EL
+    /// finalized tip even over a populated-but-stale consensus archive (the
+    /// raises-only marshal floor masks the stale prefix). The heuristics
+    /// exist only because a restarted PROCESS loses this context; the
+    /// in-process supervisor has it.
+    pub promotion: bool,
+    /// Mode signals to the unified supervisor (rotation-out → demote).
+    /// `None` = legacy `--dpos` (no supervisor listening).
+    pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<ModeEvent>>,
 }
 
-/// Cold-start kind resolved from durable state + the operator's joiner
-/// assertion. Pure function of the inputs so the 4-way decision is
-/// unit-testable without a node.
+/// Mode signal from the per-epoch engine construction to the unified
+/// supervisor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModeEvent {
+    /// The signer keypair is absent from `committee[epoch]` — the validator
+    /// was rotated out; the supervisor demotes the node to the follower
+    /// plane (the just-built verifier engine is aborted with the stack).
+    RotatedOut { epoch: u64 },
+}
+
+/// Cold-start kind resolved from durable state. Pure function of the inputs
+/// so the decision is unit-testable without a node. The unified supervisor's
+/// `Promotion` bypasses this resolver entirely (it KNOWS its follower phase
+/// verified the chain — the heuristics below exist only because a restarted
+/// process loses that context).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColdStartKind {
     /// Empty archive, EL at/inside epoch 0: anchor at the activation block.
     FreshMigration,
-    /// Empty archive, EL past epoch 0, `--dpos.joiner` passed: anchor at the
-    /// EL-restored finalized tip (follower-datadir promotion).
-    Joiner,
-    /// Populated archive: resume at its finalized height (the joiner flag is
-    /// irrelevant — real consensus state always wins).
+    /// Populated archive: resume at its finalized height (real consensus
+    /// state always wins).
     Restart,
+    /// Unified-supervisor promotion: anchor at the EL finalized tip
+    /// UNCONDITIONALLY (a stale archive is masked by the raises-only marshal
+    /// floor).
+    Promotion,
 }
 
 fn resolve_cold_start_kind(
-    joiner: bool,
     archive_finalized: u64,
     activation: u64,
     interval: u32,
     cs_finalized: u64,
 ) -> eyre::Result<ColdStartKind> {
     if archive_finalized > activation {
-        if joiner {
-            warn!("--dpos.joiner ignored: consensus archive present (normal restart)");
-        }
         return Ok(ColdStartKind::Restart);
     }
-    let overshot = cs_finalized >= activation + interval as u64;
-    match (joiner, overshot) {
-        (true, true) => Ok(ColdStartKind::Joiner),
-        (false, true) => Err(eyre!(
-            "sequencer overshot epoch 0 (finalized {cs_finalized} >= activation {activation} \
-             + interval {interval}); refusing to anchor DPoS. If this datadir followed a LIVE \
-             chain via --cert-follow/trust-follow and is being promoted to a validator, \
-             restart with --dpos.joiner"
-        )),
-        (true, false) => {
-            warn!(
-                cs_finalized,
-                activation, "--dpos.joiner ignored: EL state is inside epoch 0 (genuine fresh migration)"
-            );
-            Ok(ColdStartKind::FreshMigration)
-        }
-        (false, false) => Ok(ColdStartKind::FreshMigration),
+    if cs_finalized >= activation + interval as u64 {
+        return Err(eyre!(
+            "EL is past epoch 0 (finalized {cs_finalized} >= activation {activation} + interval \
+             {interval}) with an empty consensus archive; refusing to anchor DPoS on a state of \
+             unknown provenance. Run unified mode (--dpos.follower-upstream) so the node \
+             verifies-and-promotes itself, or restore the consensus archive."
+        ));
     }
+    Ok(ColdStartKind::FreshMigration)
+}
+
+/// Peek the consensus marshal archive's last-finalized height — the same value
+/// the cold-start discriminator reads. Returns 0 when the archive is
+/// empty/absent (no consensus state ever persisted). The unified supervisor's
+/// entry rule uses this to avoid choosing signer-first for an in-committee node
+/// that has no consensus state to resume (which would otherwise hit the
+/// `resolve_cold_start_kind` "empty archive + EL past epoch 0" fatal instead of
+/// following to build the archive first).
+pub async fn peek_consensus_archive_last_finalized(ctx: &Context) -> eyre::Result<u64> {
+    read_consensus_archive_last_finalized(ctx, MARSHAL_PARTITION_PREFIX).await
 }
 
 pub struct P2pParams {
@@ -428,12 +439,7 @@ impl DposLayer {
             + Sync
             + 'static,
         EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
-        BeaconEngine: BeaconEngineLike<
-                ExecutionData = D::Derived,
-            > + Clone
-            + Send
-            + Sync
-            + 'static,
+        BeaconEngine: BeaconEngineLike<ExecutionData = D::Derived> + Clone + Send + Sync + 'static,
         D: DerivedBlockBuilder,
         XC: ExecutedChain,
         A: OrderingAssembler,
@@ -451,7 +457,8 @@ impl DposLayer {
             fee_recipient,
             target_gas_limit,
             feed,
-            joiner,
+            promotion,
+            mode_events,
         } = cfg;
 
         let RethHandle {
@@ -502,32 +509,32 @@ impl DposLayer {
         let epoch_length_blocks =
             NonZeroU64::new(interval as u64).ok_or_eyre("epoch_block_interval must be > 0")?;
 
-        // Three-way cold-start discriminator (restart vs fresh migration vs
-        // joiner). The marshal's durable application-metadata is the signal:
-        // an empty store (height <= activation) is a fresh Tempo→DPoS
-        // migration — unless the EL overshot epoch 0, which is fatal without
-        // the operator's --dpos.joiner assertion (follower-datadir promotion).
-        // A populated store is a restart of an already-migrated node, which
-        // MUST resume at its real finalized height so the scheme cascade
-        // starts at the correct epoch.
+        // Cold-start discriminator (restart vs fresh migration; the unified
+        // supervisor's Promotion bypasses it — see resolve_cold_start_kind).
+        // The marshal's durable application-metadata is the signal: an empty
+        // store (height <= activation) is a fresh Tempo→DPoS migration —
+        // unless the EL overshot epoch 0, which is fatal (state of unknown
+        // provenance). A populated store is a restart of an already-migrated
+        // node, which MUST resume at its real finalized height so the scheme
+        // cascade starts at the correct epoch.
         let archive_finalized =
             read_consensus_archive_last_finalized(&ctx, MARSHAL_PARTITION_PREFIX).await?;
-        let kind = resolve_cold_start_kind(
-            joiner,
-            archive_finalized,
-            dpos_activation_block,
-            interval,
-            cs_finalized,
-        )?;
-        let (latest_finalized, latest_finalized_hash) = if kind == ColdStartKind::Joiner {
-            // JOINER: anchor at the EL-restored finalized tip (the follower's
-            // result-final h − K). No archives to recover from — reth IS the
-            // source; the marshal floor seeds here and the epoch catch-up
-            // machinery walks the node to the live frontier exactly like a
-            // deep restart rejoin.
-            warn!(
+        let kind = if promotion {
+            ColdStartKind::Promotion
+        } else {
+            resolve_cold_start_kind(
+                archive_finalized,
+                dpos_activation_block,
+                interval,
+                cs_finalized,
+            )?
+        };
+        let (latest_finalized, latest_finalized_hash) = if kind == ColdStartKind::Promotion {
+            info!(
                 anchor = cs_finalized,
-                "JOINER cold-start: promoting follower datadir to validator"
+                archive_finalized,
+                "PROMOTION cold-start: supervisor follower phase verified the chain; \
+                 anchoring at the EL finalized tip"
             );
             (cs_finalized, cs_finalized_hash)
         } else if kind == ColdStartKind::FreshMigration {
@@ -613,20 +620,20 @@ impl DposLayer {
         );
 
         // Enforce Rust ↔ Solidity invariant
-        //   `ChainConfig.activeValidatorsLength <= fluentbase_p2p::MAX_PEER_SET_SIZE`.
+        //   `ChainConfig.activeValidatorsLength <= fluentbase_p2p::MAX_COMMITTEE_SIZE`.
         let active_validators_length = reader
             .active_validators_length(latest_finalized_hash)
             .wrap_err("failed reading ChainConfig.activeValidatorsLength")?;
-        if (active_validators_length as u64) > fluentbase_p2p::constants::MAX_PEER_SET_SIZE {
+        if (active_validators_length as u64) > fluentbase_p2p::constants::MAX_COMMITTEE_SIZE {
             return Err(eyre!(
                 "ChainConfig.activeValidatorsLength ({}) exceeds \
-                 fluentbase_p2p::constants::MAX_PEER_SET_SIZE ({}). Rust ↔ Solidity \
-                 cap drift detected — bump MAX_PEER_SET_SIZE in \
+                 fluentbase_p2p::constants::MAX_COMMITTEE_SIZE ({}). Rust ↔ Solidity \
+                 cap drift detected — bump MAX_COMMITTEE_SIZE in \
                  crates/p2p/src/constants.rs AND MAX_ACTIVE_VALIDATORS in \
                  solidity-contracts/contracts/staking/ChainConfig.sol in the SAME PR, \
                  then redeploy/upgrade.",
                 active_validators_length,
-                fluentbase_p2p::constants::MAX_PEER_SET_SIZE,
+                fluentbase_p2p::constants::MAX_COMMITTEE_SIZE,
             ));
         }
 
@@ -634,7 +641,7 @@ impl DposLayer {
             chain_id,
             interval,
             retention,
-            max_peer_set_size = fluentbase_p2p::constants::MAX_PEER_SET_SIZE,
+            max_committee_size = fluentbase_p2p::constants::MAX_COMMITTEE_SIZE,
             active_validators_length,
             initial_epoch = initial_epoch_u64,
             latest_finalized,
@@ -696,7 +703,7 @@ impl DposLayer {
             reader,
             cache,
             handles.oracle.clone(),
-            fluentbase_p2p::constants::MAX_PEER_SET_SIZE as usize,
+            fluentbase_p2p::constants::MAX_REGISTRY_PEER_SET as usize,
             Some(bridge_tx.clone()),
             Arc::new(move |n| provider_for_et.block_hash(n).ok().flatten()),
             K,
@@ -813,7 +820,9 @@ impl DposLayer {
                         if !parked {
                             break;
                         }
-                        if retries >= fluentbase_staking_reader::epoch_transition::PENDING_RETRY_LIMIT {
+                        if retries
+                            >= fluentbase_staking_reader::epoch_transition::PENDING_RETRY_LIMIT
+                        {
                             error!(
                                 block_number = number,
                                 "pending boundary did not clear within the retry window"
@@ -821,7 +830,11 @@ impl DposLayer {
                             break;
                         }
                         retries += 1;
-                        ctx_inner.sleep(fluentbase_staking_reader::epoch_transition::PENDING_RETRY_BACKOFF).await;
+                        ctx_inner
+                            .sleep(
+                                fluentbase_staking_reader::epoch_transition::PENDING_RETRY_BACKOFF,
+                            )
+                            .await;
                     }
                 }));
             });
@@ -834,8 +847,8 @@ impl DposLayer {
         // committee) yet otherwise looks alive — the silent-verifier trap.
         // Surface it: when finalized makes no progress across two ticks AND
         // this key is not in the current committee, say so loudly. Expected
-        // for a joiner until its first committee epoch; anything else means
-        // registration/delegation needs checking.
+        // for a not-yet-committee validator without --dpos.follower-upstream;
+        // anything else means registration/delegation needs checking.
         {
             let wd_reader = RethStakingStateReader::new(
                 provider.clone(),
@@ -846,64 +859,67 @@ impl DposLayer {
             let wd_me = me.clone();
             let wd_interval = interval;
             let wd_activation = dpos_activation_block;
-            drop(ctx.with_label("committee_watchdog").spawn(move |c| async move {
-                let mut prev_fin = 0u64;
-                let mut stagnant = 0u32;
-                let mut cached: Option<(u64, B256, Option<bool>)> = None;
-                loop {
-                    c.sleep(Duration::from_secs(60)).await;
-                    let Ok(Some(fin)) = wd_provider.finalized_block_number() else {
-                        continue;
-                    };
-                    if fin > prev_fin {
-                        prev_fin = fin;
-                        stagnant = 0;
-                        continue;
-                    }
-                    stagnant += 1;
-                    if stagnant < 2 {
-                        continue;
-                    }
-                    let Ok(Some(hash)) = wd_provider.block_hash(fin) else {
-                        continue;
-                    };
-                    let epoch = fluentbase_staking_reader::reader::epoch_of_block(
-                        fin,
-                        wd_interval,
-                        wd_activation,
-                    );
-                    // The snapshot is a deterministic state read — while
-                    // finalized is stagnant its inputs cannot change, so a
-                    // wedged joiner re-warns from cache instead of re-running
-                    // the committee EVM read every tick for hours.
-                    let in_committee = match cached {
-                        Some((c_fin, c_hash, verdict)) if (c_fin, c_hash) == (fin, hash) => {
-                            verdict
+            drop(
+                ctx.with_label("committee_watchdog")
+                    .spawn(move |c| async move {
+                        let mut prev_fin = 0u64;
+                        let mut stagnant = 0u32;
+                        let mut cached: Option<(u64, B256, Option<bool>)> = None;
+                        loop {
+                            c.sleep(Duration::from_secs(60)).await;
+                            let Ok(Some(fin)) = wd_provider.finalized_block_number() else {
+                                continue;
+                            };
+                            if fin > prev_fin {
+                                prev_fin = fin;
+                                stagnant = 0;
+                                continue;
+                            }
+                            stagnant += 1;
+                            if stagnant < 2 {
+                                continue;
+                            }
+                            let Ok(Some(hash)) = wd_provider.block_hash(fin) else {
+                                continue;
+                            };
+                            let epoch = fluentbase_staking_reader::reader::epoch_of_block(
+                                fin,
+                                wd_interval,
+                                wd_activation,
+                            );
+                            // The snapshot is a deterministic state read — while
+                            // finalized is stagnant its inputs cannot change, so a
+                            // wedged verifier re-warns from cache instead of re-running
+                            // the committee EVM read every tick for hours.
+                            let in_committee = match cached {
+                                Some((c_fin, c_hash, verdict))
+                                    if (c_fin, c_hash) == (fin, hash) =>
+                                {
+                                    verdict
+                                }
+                                _ => {
+                                    let verdict = wd_reader
+                                        .epoch_committee_snapshot(epoch, hash)
+                                        .ok()
+                                        .map(|s| {
+                                            s.validators.iter().any(|v| v.keys.peer_pubkey == wd_me)
+                                        });
+                                    cached = Some((fin, hash, verdict));
+                                    verdict
+                                }
+                            };
+                            if in_committee == Some(false) {
+                                warn!(
+                                    finalized = fin,
+                                    epoch,
+                                    "no finalized progress and this key is NOT in the current \
+                             committee — run unified mode (--dpos.follower-upstream) to \
+                             follow meanwhile; otherwise check registration/delegation"
+                                );
+                            }
                         }
-                        _ => {
-                            let verdict = wd_reader
-                                .epoch_committee_snapshot(epoch, hash)
-                                .ok()
-                                .map(|s| {
-                                    s.validators
-                                        .iter()
-                                        .any(|v| v.keys.peer_pubkey == wd_me)
-                                });
-                            cached = Some((fin, hash, verdict));
-                            verdict
-                        }
-                    };
-                    if in_committee == Some(false) {
-                        warn!(
-                            finalized = fin,
-                            epoch,
-                            "no finalized progress and this key is NOT in the current \
-                             committee — expected for a joiner until its first committee \
-                             epoch; otherwise check validator registration/delegation"
-                        );
-                    }
-                }
-            }));
+                    }),
+            );
         }
 
         // Slasher wiring — `latest_finalized_hash` closure over the reth
@@ -924,6 +940,7 @@ impl DposLayer {
             epoch_length_blocks,
             dpos_activation_block,
             signer_keypair: Some(bls_keypair),
+            mode_events,
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             deque_size: 64,
@@ -947,11 +964,12 @@ impl DposLayer {
             initial_finalized: (Height::new(latest_finalized), latest_finalized_hash),
             initial_head: (Height::new(initial_head_num), initial_head_hash),
             // DPoS-era floor: the marshal never dispatches pre-anchor history.
-            // Fresh migration: anchor = activation. Joiner: anchor = the
+            // Fresh migration: anchor = activation. Promotion: anchor = the
             // EL-restored finalized tip (no pre-anchor certs exist locally).
             // Restart: a raises-only no-op (the archive's floor is already
             // at/above its own finalized).
             marshal_floor: Some(Height::new(latest_finalized)),
+            seed_anchor_block: kind == ColdStartKind::Promotion,
             fcu_heartbeat_interval: Duration::from_secs(8),
             fcu_pace: Duration::from_millis(20),
             canonical_state: canonical_state.clone(),
@@ -1024,50 +1042,36 @@ mod cold_start_kind_tests {
     const INTERVAL: u32 = 64;
 
     #[test]
-    fn fresh_migration_inside_epoch_0() {
-        let kind = resolve_cold_start_kind(false, 0, ACTIVATION, INTERVAL, ACTIVATION + 10)
-            .expect("fresh");
+    fn overshoot_with_empty_archive_is_fatal_pointing_at_unified_mode() {
+        let err = resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + 500).unwrap_err();
+        assert!(
+            err.to_string().contains("--dpos.follower-upstream"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn inside_epoch_zero_is_fresh_migration() {
+        let kind =
+            resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + 10).expect("fresh");
         assert_eq!(kind, ColdStartKind::FreshMigration);
     }
 
     #[test]
-    fn overshoot_without_flag_is_fatal() {
-        let err = resolve_cold_start_kind(false, 0, ACTIVATION, INTERVAL, ACTIVATION + 500)
-            .unwrap_err();
-        assert!(err.to_string().contains("--dpos.joiner"), "{err}");
-    }
-
-    #[test]
-    fn overshoot_with_flag_is_joiner() {
-        let kind = resolve_cold_start_kind(true, 0, ACTIVATION, INTERVAL, ACTIVATION + 500)
-            .expect("joiner");
-        assert_eq!(kind, ColdStartKind::Joiner);
-    }
-
-    #[test]
-    fn flag_without_overshoot_is_noop_fresh() {
-        let kind = resolve_cold_start_kind(true, 0, ACTIVATION, INTERVAL, ACTIVATION + 10)
-            .expect("fresh");
-        assert_eq!(kind, ColdStartKind::FreshMigration);
-    }
-
-    #[test]
-    fn archive_present_is_restart_regardless_of_flag() {
-        for joiner in [false, true] {
-            let kind =
-                resolve_cold_start_kind(joiner, ACTIVATION + 300, ACTIVATION, INTERVAL, ACTIVATION + 500)
-                    .expect("restart");
-            assert_eq!(kind, ColdStartKind::Restart);
-        }
+    fn archive_present_is_restart() {
+        let kind =
+            resolve_cold_start_kind(ACTIVATION + 300, ACTIVATION, INTERVAL, ACTIVATION + 500)
+                .expect("restart");
+        assert_eq!(kind, ColdStartKind::Restart);
     }
 
     #[test]
     fn boundary_exactly_one_interval_is_overshoot() {
         // cs_finalized == activation + interval is the FIRST fatal height
         // (epoch 0 is [activation, activation + interval)).
-        let err = resolve_cold_start_kind(false, 0, ACTIVATION, INTERVAL, ACTIVATION + INTERVAL as u64)
+        let err = resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + INTERVAL as u64)
             .unwrap_err();
-        assert!(err.to_string().contains("overshot"), "{err}");
+        assert!(err.to_string().contains("past epoch 0"), "{err}");
     }
 }
 
@@ -1157,7 +1161,11 @@ mod visibility_retry_tests {
                 .await
                 .unwrap_err();
             assert!(err.to_string().contains("disk exploded"), "{err}");
-            assert_eq!(deriver.calls.load(Ordering::SeqCst), 1, "no retry on fatal errors");
+            assert_eq!(
+                deriver.calls.load(Ordering::SeqCst),
+                1,
+                "no retry on fatal errors"
+            );
         });
     }
 

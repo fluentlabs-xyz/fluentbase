@@ -82,7 +82,9 @@ fn link_object(bc: &ForgeBytecode, libs: &[(&str, Address)]) -> eyre::Result<Byt
         }
     }
     let linked = String::from_utf8(chars).wrap_err("linked bytecode not utf8")?;
-    Ok(Bytes::from(hex::decode(linked).wrap_err("decode bytecode")?))
+    Ok(Bytes::from(
+        hex::decode(linked).wrap_err("decode bytecode")?,
+    ))
 }
 
 fn load_one(path: &Path) -> eyre::Result<ContractArtefact> {
@@ -101,8 +103,10 @@ fn load_one_linked(path: &Path, libs: &[(&str, Address)]) -> eyre::Result<Contra
 }
 
 pub fn load(dir: &Path) -> eyre::Result<Artefacts> {
-    let staking_libs: [(&str, Address); 2] =
-        [("StakingDpos", STAKING_DPOS_ADDR), ("StakingEconomics", STAKING_ECONOMICS_ADDR)];
+    let staking_libs: [(&str, Address); 2] = [
+        ("StakingDpos", STAKING_DPOS_ADDR),
+        ("StakingEconomics", STAKING_ECONOMICS_ADDR),
+    ];
     Ok(Artefacts {
         staking: load_one_linked(&dir.join("Staking.json"), &staking_libs)?,
         staking_dpos: load_one(&dir.join("StakingDpos.json"))?,

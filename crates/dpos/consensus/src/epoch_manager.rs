@@ -11,9 +11,9 @@
 
 use crate::{
     application::{ExecutedChain, FluentApp, OrderingAssembler},
-    order_block::OrderBlock,
     engine::{EpochEngine, EpochEngineConfig},
     epocher::OriginEpocher,
+    order_block::OrderBlock,
     scheme::epoch_committee_from_snapshot,
     slasher::Mailbox as SlasherMailbox,
     timeouts::ConsensusTimeouts,
@@ -52,7 +52,8 @@ use tracing::{info, warn};
 // hundreds of views/s of BLS + marshal traffic and starves the live epoch
 // into certification timeouts. Stragglers still in the old epoch do not need
 // our engine: the boundary finalization is served via marshal/resolver, and
-// their late certificates verify via `EpochSchemeProvider` (never pruned).
+// their late certificates verify via `EpochSchemeProvider` (trailing
+// 8-epoch window — see `SCHEME_RETENTION_EPOCHS`).
 
 /// Bounded mpsc capacity for boundary triggers (tokio `mpsc::channel(N)`).
 const BOUNDARY_BUFFER: usize = 64;
@@ -76,7 +77,7 @@ where
     /// Highest epoch we have entered (full or soft) — i.e. the highest epoch
     /// whose committee scheme is registered, so the marshal can verify its
     /// certs. Drives the catch-up hint target. Monotonic; never decremented by
-    /// `prune_old` (the scheme provider is never pruned).
+    /// `prune_old` (the scheme provider keeps a trailing window).
     highest_entered_epoch: Epoch,
     /// Highest live-network epoch corroborated by f+1 DISTINCT peers on the vote
     /// backup channel. Gates `is_live_epoch`: epochs below it only soft-enter.
@@ -117,6 +118,8 @@ pub struct Config<B, XC, A> {
     /// every `EpochEngineConfig` constructed in `enter()`. `origin = dposActivationBlock`.
     pub epocher: OriginEpocher,
     pub signer_keypair: Option<ValidatorBlsKeypair>,
+    /// Rotation-out signals to the unified supervisor (`None` = legacy).
+    pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<crate::dpos::ModeEvent>>,
     pub app: FluentApp<XC, A>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
@@ -127,7 +130,7 @@ pub struct Config<B, XC, A> {
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
     pub page_cache: CacheRef,
     /// Callback into [`crate::outer::EpochSchemeProvider`] so marshal can verify
-    /// cross-epoch finalization certificates (provider is never pruned).
+    /// cross-epoch finalization certificates (trailing-window pruned; see SCHEME_RETENTION_EPOCHS).
     pub register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync>,
 }
 
@@ -432,6 +435,7 @@ where
                 epocher: self.cfg.epocher.clone(),
                 chain_id: self.cfg.chain_id,
                 signer_keypair: self.cfg.signer_keypair.clone(),
+                mode_events: self.cfg.mode_events.clone(),
                 app: self.cfg.app.clone(),
                 timeouts: self.cfg.timeouts,
                 mailbox_size: self.cfg.mailbox_size,

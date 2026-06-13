@@ -19,7 +19,9 @@ const CHAIN_ID: u64 = 20994;
 
 fn committee(n: usize) -> (BiMap<PeerPubkey, BlsPubkey>, Vec<ValidatorBlsKeypair>) {
     let mut rng = StdRng::seed_from_u64(0xC0FFEE);
-    let peers: Vec<_> = (0..n).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
+    let peers: Vec<_> = (0..n)
+        .map(|_| Ed25519PrivateKey::random(&mut rng))
+        .collect();
     let blses: Vec<_> = (0..n)
         .map(|_| ValidatorBlsKeypair::generate(&mut rng))
         .collect();

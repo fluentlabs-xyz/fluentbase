@@ -75,12 +75,14 @@ pub struct EpochEngineConfig<B, XC, A> {
     pub epocher: OriginEpocher,
     pub chain_id: u64,
     pub signer_keypair: Option<ValidatorBlsKeypair>,
+    /// Rotation-out signals to the unified supervisor (`None` = legacy).
+    pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<crate::dpos::ModeEvent>>,
     pub app: FluentApp<XC, A>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
     /// Callback that registers this epoch's [`BlsScheme`] in
     /// [`crate::outer::EpochSchemeProvider`] so marshal can verify
-    /// cross-epoch finalization certificates (provider is never pruned).
+    /// cross-epoch finalization certificates (trailing-window pruned; see SCHEME_RETENTION_EPOCHS).
     pub register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync>,
 }
 
@@ -148,6 +150,14 @@ where
                         epoch = ?cfg.epoch,
                         "validator rotated out of committee; falling through to verifier mode"
                     );
+                    // Unified supervisor demotes on this signal (the verifier
+                    // engine built below is aborted with the stack); legacy
+                    // --dpos has no listener and keeps the silent verifier.
+                    if let Some(tx) = &cfg.mode_events {
+                        let _ = tx.send(crate::dpos::ModeEvent::RotatedOut {
+                            epoch: cfg.epoch.get(),
+                        });
+                    }
                 }
                 build_verifier(&namespace, bimap)
             });

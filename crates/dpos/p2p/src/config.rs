@@ -85,7 +85,7 @@ impl FluentP2PConfig {
             // Fluent's network-wide invariants:
             allow_dns: constants::ALLOW_DNS, // recommended: true → ours: false
             allow_private_ips, // recommended: false → ours: network-derived (deployed → false)
-            max_peer_set_size: constants::MAX_PEER_SET_SIZE, // recommended: 2^16 → ours: 51
+            max_peer_set_size: constants::MAX_REGISTRY_PEER_SET, // tracker feed = registry ∪ committee
             peer_connection_cooldown,
             gossip_bit_vec_frequency,
             // `tracked_peer_sets` not overridden: recommended default (4) is what we want.

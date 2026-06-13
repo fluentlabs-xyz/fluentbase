@@ -62,12 +62,48 @@ struct Recipe {
 }
 
 const RECIPES: &[Recipe] = &[
-    Recipe { label: "pop_main_pk96", chain_id: C_MAIN, subject: Subject::Pop, msg_seed: 0, msg_len: 96 },
-    Recipe { label: "pop_chain0_empty", chain_id: 0, subject: Subject::Pop, msg_seed: 1, msg_len: 0 },
-    Recipe { label: "notarize_main_proposal", chain_id: C_MAIN, subject: Subject::Notarize, msg_seed: 2, msg_len: 80 },
-    Recipe { label: "nullify_main_round", chain_id: C_MAIN, subject: Subject::Nullify, msg_seed: 3, msg_len: 11 },
-    Recipe { label: "finalize_chainmax_long", chain_id: u64::MAX, subject: Subject::Finalize, msg_seed: 4, msg_len: 200 },
-    Recipe { label: "sig_chain0_short", chain_id: 0, subject: Subject::Notarize, msg_seed: 5, msg_len: 1 },
+    Recipe {
+        label: "pop_main_pk96",
+        chain_id: C_MAIN,
+        subject: Subject::Pop,
+        msg_seed: 0,
+        msg_len: 96,
+    },
+    Recipe {
+        label: "pop_chain0_empty",
+        chain_id: 0,
+        subject: Subject::Pop,
+        msg_seed: 1,
+        msg_len: 0,
+    },
+    Recipe {
+        label: "notarize_main_proposal",
+        chain_id: C_MAIN,
+        subject: Subject::Notarize,
+        msg_seed: 2,
+        msg_len: 80,
+    },
+    Recipe {
+        label: "nullify_main_round",
+        chain_id: C_MAIN,
+        subject: Subject::Nullify,
+        msg_seed: 3,
+        msg_len: 11,
+    },
+    Recipe {
+        label: "finalize_chainmax_long",
+        chain_id: u64::MAX,
+        subject: Subject::Finalize,
+        msg_seed: 4,
+        msg_len: 200,
+    },
+    Recipe {
+        label: "sig_chain0_short",
+        chain_id: 0,
+        subject: Subject::Notarize,
+        msg_seed: 5,
+        msg_len: 1,
+    },
 ];
 
 fn ns_of(r: &Recipe) -> Vec<u8> {
@@ -132,8 +168,18 @@ struct VerifyRecipe {
 }
 
 const VERIFY_RECIPES: &[VerifyRecipe] = &[
-    VerifyRecipe { label: "verify_pop_valid", seed: 0, chain_id: C_MAIN, tampered: false },
-    VerifyRecipe { label: "verify_pop_tampered_sig", seed: 0, chain_id: C_MAIN, tampered: true },
+    VerifyRecipe {
+        label: "verify_pop_valid",
+        seed: 0,
+        chain_id: C_MAIN,
+        tampered: false,
+    },
+    VerifyRecipe {
+        label: "verify_pop_tampered_sig",
+        seed: 0,
+        chain_id: C_MAIN,
+        tampered: true,
+    },
 ];
 
 fn kp(seed: u64) -> ValidatorBlsKeypair {
@@ -141,7 +187,15 @@ fn kp(seed: u64) -> ValidatorBlsKeypair {
 }
 
 /// (ns, msg=pk_comp, sigUnc128, sigRef48, pkUnc256, pkRef96, expectedValid)
-type VerifyTuple = (Vec<u8>, [u8; 96], [u8; 128], [u8; 48], [u8; 256], [u8; 96], bool);
+type VerifyTuple = (
+    Vec<u8>,
+    [u8; 96],
+    [u8; 128],
+    [u8; 48],
+    [u8; 256],
+    [u8; 96],
+    bool,
+);
 
 fn verify_tuple(v: &VerifyRecipe) -> VerifyTuple {
     let k = kp(v.seed);
@@ -199,10 +253,30 @@ fn verify_corpus_matches_committed_constants() {
     );
     for (v, e) in VERIFY_RECIPES.iter().zip(VERIFY_EXPECTED.iter()) {
         let (ns, _msg, sig_unc, sig_ref, pk_unc, pk_ref, expected_valid) = verify_tuple(v);
-        assert_eq!(sig_unc, dehex::<128>(e.0), "verify drift (sigUnc) at `{}`", v.label);
-        assert_eq!(sig_ref, dehex::<48>(e.1), "verify drift (sigRef) at `{}`", v.label);
-        assert_eq!(pk_unc, dehex::<256>(e.2), "verify drift (pkUnc) at `{}`", v.label);
-        assert_eq!(pk_ref, dehex::<96>(e.3), "verify drift (pkRef) at `{}`", v.label);
+        assert_eq!(
+            sig_unc,
+            dehex::<128>(e.0),
+            "verify drift (sigUnc) at `{}`",
+            v.label
+        );
+        assert_eq!(
+            sig_ref,
+            dehex::<48>(e.1),
+            "verify drift (sigRef) at `{}`",
+            v.label
+        );
+        assert_eq!(
+            pk_unc,
+            dehex::<256>(e.2),
+            "verify drift (pkUnc) at `{}`",
+            v.label
+        );
+        assert_eq!(
+            pk_ref,
+            dehex::<96>(e.3),
+            "verify drift (pkRef) at `{}`",
+            v.label
+        );
 
         let verify_ok = fluentbase_bls::pop::verify_pop(&pk_ref, &ns, &sig_ref).is_ok();
         assert_eq!(
@@ -227,7 +301,11 @@ fn print_corpus() {
     // ns/msg/dst preimages for the Solidity mirror (it cannot run rand_08).
     println!("\n// hashToG1 Solidity mirror inputs (label | ns_hex | msg_hex | dst):");
     for r in RECIPES {
-        let dst = if matches!(r.subject, Subject::Pop) { "POP" } else { "SIG" };
+        let dst = if matches!(r.subject, Subject::Pop) {
+            "POP"
+        } else {
+            "SIG"
+        };
         println!(
             "// {} | {} | {} | {}",
             r.label,
@@ -250,7 +328,9 @@ fn print_corpus() {
         );
     }
     println!("];");
-    println!("\n// verify Solidity mirror (label | ns_hex | msg_hex(=pkRef) | dst=POP | expectedValid):");
+    println!(
+        "\n// verify Solidity mirror (label | ns_hex | msg_hex(=pkRef) | dst=POP | expectedValid):"
+    );
     for v in VERIFY_RECIPES {
         let (ns, msg, _su, _sr, _pu, _pr, valid) = verify_tuple(v);
         println!(

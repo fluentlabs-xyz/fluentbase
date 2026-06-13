@@ -32,8 +32,8 @@ pub enum ReadError {
         validator: alloy_primitives::Address,
     },
 
-    #[error("epoch {epoch} committee size {size} exceeds configured max_peer_set_size {max} (misconfig / governance drift)")]
-    CommitteeTooLarge { epoch: u64, size: usize, max: usize },
+    #[error("epoch {epoch} tracker peer-set size {size} (registry ∪ committee) exceeds configured max_peer_set_size {max} (misconfig / governance drift)")]
+    PeerSetTooLarge { epoch: u64, size: usize, max: usize },
 
     #[error("provider/evm backend error: {0}")]
     Backend(String),

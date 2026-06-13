@@ -7,12 +7,10 @@ cd "$(dirname "$0")/.."
 
 # Default suite = the cases green today. Excluded (run individually via
 # SMOKE_CASES="..." or `make smoke-<case>`):
-#   case-liveness     — blocked by the crash-fault liveness stall
-#                       (investigation: .claude/tasks/*__dpos_crash_fault_liveness_stall)
 #   case-byzantine    — pending Phase 5 (devnet-byzantine Rust feature + Conflicter)
 #   case-gov-interval — descoped: a ChainConfig setter change needs a full
 #                       FluentGovernance propose/vote/execute flow (onlyFromGovernance)
-CASES=(${SMOKE_CASES:-case-tx case-epoch case-peers case-full-restart case-deferred})
+CASES=(${SMOKE_CASES:-case-tx case-epoch case-peers case-liveness case-crash-survivor case-full-restart case-deferred case-cert-follow case-cert-cascade})
 
 declare -A RESULT
 fail=0

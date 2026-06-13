@@ -163,9 +163,9 @@ pub const TESTNET_LEGACY_PRECOMPILE_ADDRESSES: &[Address] = &[
     PRECOMPILE_RUNTIME_UPGRADE,         // FORK ALERT: DON'T TOUCH!
     PRECOMPILE_CREATE2_FACTORY,         // FORK ALERT: DON'T TOUCH!
     PRECOMPILE_FEE_MANAGER,             // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_LIVENESS_SLASHING,       // FORK ALERT: DON'T TOUCH! (09_liveness_wire; live from genesis via chain-id gating)
-    PRECOMPILE_WEBAUTHN_VERIFIER,       // FORK ALERT: DON'T TOUCH!
-    PRECOMPILE_UNUSED_4,                // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_LIVENESS_SLASHING, // FORK ALERT: DON'T TOUCH! (09_liveness_wire; live from genesis via chain-id gating)
+    PRECOMPILE_WEBAUTHN_VERIFIER, // FORK ALERT: DON'T TOUCH!
+    PRECOMPILE_UNUSED_4,          // FORK ALERT: DON'T TOUCH!
 ];
 
 /// Addresses whose execution is delegated to the **system runtime** implementation.

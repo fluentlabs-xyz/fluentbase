@@ -34,8 +34,7 @@ pub struct KeySet {
 }
 
 pub fn derive(mnemonic: &str, peers: u32, chain_id: u64) -> eyre::Result<KeySet> {
-    let m = Mnemonic::<English>::new_from_phrase(mnemonic)
-        .wrap_err("invalid BIP39 mnemonic")?;
+    let m = Mnemonic::<English>::new_from_phrase(mnemonic).wrap_err("invalid BIP39 mnemonic")?;
     let seed = m
         .to_seed(None)
         .map_err(|e| eyre::eyre!("BIP39 to_seed failed: {e:?}"))?;
@@ -58,8 +57,8 @@ pub fn derive(mnemonic: &str, peers: u32, chain_id: u64) -> eyre::Result<KeySet>
         let peer_bytes = derive_32("peer", i);
         let slasher_bytes = derive_32("slasher", i);
 
-        let l2_signer = PrivateKeySigner::from_bytes(&l2_bytes.into())
-            .wrap_err("derive L2 signer")?;
+        let l2_signer =
+            PrivateKeySigner::from_bytes(&l2_bytes.into()).wrap_err("derive L2 signer")?;
         // BLS12-381 scalar field is smaller than 2^256, so a raw 32-byte
         // seed can fall outside [1, r). `ValidatorBlsKeypair::generate`
         // wraps the IETF BLS KeyGen retry-on-zero loop; seeding StdRng

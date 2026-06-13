@@ -54,12 +54,7 @@ impl<Client, Evm> RethBlockDeriver<Client, Evm> {
 
 impl<Client, Evm> DerivedBlockBuilder for RethBlockDeriver<Client, Evm>
 where
-    Client: StateProviderFactory
-        + HeaderProvider<Header = Header>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+    Client: StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
     Evm: ConfigureEvm<Primitives = EthPrimitives, NextBlockEnvCtx = NextBlockEnvAttributes>
         + Clone
         + 'static,
@@ -75,9 +70,11 @@ where
         let evm_config = self.evm_config.clone();
         // EVM execution + state-root computation are CPU-bound (~V per
         // block); keep them off the async worker threads.
-        tokio::task::spawn_blocking(move || derive_sync(&client, &evm_config, &order, parent_evm_hash))
-            .await
-            .wrap_err("derive task panicked")?
+        tokio::task::spawn_blocking(move || {
+            derive_sync(&client, &evm_config, &order, parent_evm_hash)
+        })
+        .await
+        .wrap_err("derive task panicked")?
     }
 }
 
@@ -256,7 +253,11 @@ mod tests {
         let a = derive_sync(&provider, &evm_config, &order, genesis_hash).expect("derive a");
         let b = derive_sync(&provider, &evm_config, &order, genesis_hash).expect("derive b");
 
-        assert_eq!(a.evm_hash(), b.evm_hash(), "derivation must be byte-identical");
+        assert_eq!(
+            a.evm_hash(),
+            b.evm_hash(),
+            "derivation must be byte-identical"
+        );
         let a = a.recovered.into_sealed_block();
         // nonce-7 (gap) deterministically skipped; nonce-0 included.
         assert_eq!(a.body().transactions.len(), 1);

@@ -1,14 +1,15 @@
 //! [`FeedStateHandle`] — shared state behind the `consensus` RPC.
 //!
 //! Mirrors tempo `feed/state.rs`: a snapshot (`latest_finalized`) updated by the
-//! feed actor, a `broadcast` channel for `consensus_subscribe`, and an
-//! `OnceLock<MarshalMailbox>` for by-height `getFinalization` (set node-side once
-//! `DposLayer::launch` returns the mailbox). Cloneable + `Send + Sync` so the
-//! jsonrpsee server handler and the feed actor share it.
+//! feed actor, a `broadcast` channel for `consensus_subscribe`, and a SWAPPABLE
+//! by-height source for `getFinalization` (marshal mailbox in signer mode, the
+//! bounded window in follower mode — the unified supervisor re-wires it on every
+//! promotion/demotion). Cloneable + `Send + Sync` so the jsonrpsee server
+//! handler and the feed actor share it.
 
 use std::{
     collections::BTreeMap,
-    sync::{Arc, OnceLock, RwLock},
+    sync::{Arc, RwLock},
 };
 
 use commonware_consensus::types::Height;
@@ -53,7 +54,7 @@ enum ByHeightSource {
 #[derive(Clone)]
 pub struct FeedStateHandle {
     state: Arc<RwLock<FeedState>>,
-    source: Arc<OnceLock<ByHeightSource>>,
+    source: Arc<RwLock<Option<ByHeightSource>>>,
     events_tx: broadcast::Sender<Event>,
 }
 
@@ -64,19 +65,22 @@ impl FeedStateHandle {
         let (events_tx, _) = broadcast::channel(event_capacity);
         Self {
             state: Arc::new(RwLock::new(FeedState::default())),
-            source: Arc::new(OnceLock::new()),
+            source: Arc::new(RwLock::new(None)),
             events_tx,
         }
     }
 
     /// Wire the marshal mailbox (node-side, once `DposLayer::launch` returns it).
+    /// Replaces a previously wired window on in-process promotion.
     pub fn set_marshal(&self, marshal: MarshalMailbox) {
-        let _ = self.source.set(ByHeightSource::Marshal(marshal));
+        *self.source.write().expect("feed source poisoned") =
+            Some(ByHeightSource::Marshal(marshal));
     }
 
-    /// Wire a follower's bounded serving window (cert-follow mode).
+    /// Wire a follower's bounded serving window (cert-follow mode). Replaces a
+    /// previously wired marshal on in-process demotion.
     pub fn set_window(&self, window: CertWindow) {
-        let _ = self.source.set(ByHeightSource::Window(window));
+        *self.source.write().expect("feed source poisoned") = Some(ByHeightSource::Window(window));
     }
 
     /// New `consensus_subscribe` receiver.
@@ -100,8 +104,12 @@ impl FeedStateHandle {
     /// attests the derived hash of N − K.
     pub fn record_finalized(&self, block: Arc<CertifiedBlock>, seen: u64) {
         let result_tier = block.into_parts().ok().and_then(|(_, order)| {
-            (order.result != alloy_primitives::B256::ZERO)
-                .then(|| (order.height.saturating_sub(fluentbase_consensus::K), order.result))
+            (order.result != alloy_primitives::B256::ZERO).then(|| {
+                (
+                    order.height.saturating_sub(fluentbase_consensus::K),
+                    order.result,
+                )
+            })
         });
         {
             let mut state = self.state.write().expect("feed state poisoned");
@@ -132,24 +140,79 @@ impl FeedStateHandle {
                 .latest_finalized
                 .clone()
                 .ok_or(FeedError::Missing),
-            Query::Height(h) => match self.source.get().ok_or(FeedError::NotReady)? {
-                ByHeightSource::Marshal(marshal) => {
-                    let height = Height::new(h);
-                    let fin = marshal
-                        .get_finalization(height)
-                        .await
-                        .ok_or(FeedError::Missing)?;
-                    // `Height: Into<Identifier>` (marshal/mod.rs:103) — fetch the block by height.
-                    let block = marshal.get_block(height).await.ok_or(FeedError::Missing)?;
-                    Ok(Arc::new(CertifiedBlock::from_parts(&fin, &block)))
+            Query::Height(h) => {
+                // Snapshot the source under the lock, then await OUTSIDE it
+                // (MarshalMailbox is a cheap clone; holding a std RwLock
+                // across an await would block the swap and other readers).
+                let source = {
+                    let guard = self.source.read().expect("feed source poisoned");
+                    match guard.as_ref().ok_or(FeedError::NotReady)? {
+                        ByHeightSource::Marshal(m) => ByHeightSource::Marshal(m.clone()),
+                        ByHeightSource::Window(w) => ByHeightSource::Window(w.clone()),
+                    }
+                };
+                match source {
+                    ByHeightSource::Marshal(marshal) => {
+                        let height = Height::new(h);
+                        let fin = marshal
+                            .get_finalization(height)
+                            .await
+                            .ok_or(FeedError::Missing)?;
+                        // `Height: Into<Identifier>` (marshal/mod.rs:103) — fetch the block by height.
+                        let block = marshal.get_block(height).await.ok_or(FeedError::Missing)?;
+                        Ok(Arc::new(CertifiedBlock::from_parts(&fin, &block)))
+                    }
+                    ByHeightSource::Window(window) => window
+                        .read()
+                        .expect("cert window poisoned")
+                        .get(&h)
+                        .cloned()
+                        .ok_or(FeedError::Missing),
                 }
-                ByHeightSource::Window(window) => window
-                    .read()
-                    .expect("cert window poisoned")
-                    .get(&h)
-                    .cloned()
-                    .ok_or(FeedError::Missing),
-            },
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The by-height source is SWAPPABLE (promotion/demotion re-wires it) —
+    /// a second `set_*` must replace the first, not be silently ignored.
+    #[tokio::test]
+    async fn second_set_window_replaces_the_first() {
+        let handle = FeedStateHandle::new(8);
+        assert_eq!(
+            handle.get_finalization(Query::Height(7)).await.unwrap_err(),
+            FeedError::NotReady
+        );
+
+        let w1: CertWindow = Default::default();
+        handle.set_window(w1);
+        assert_eq!(
+            handle.get_finalization(Query::Height(7)).await.unwrap_err(),
+            FeedError::Missing
+        );
+
+        let w2: CertWindow = Default::default();
+        let cb = Arc::new(CertifiedBlock {
+            height: 7,
+            epoch: 0,
+            view: 7,
+            digest: alloy_primitives::B256::ZERO,
+            certificate: String::new(),
+            block: String::new(),
+        });
+        w2.write().unwrap().insert(7, cb);
+        handle.set_window(w2);
+        assert_eq!(
+            handle
+                .get_finalization(Query::Height(7))
+                .await
+                .unwrap()
+                .height,
+            7
+        );
     }
 }

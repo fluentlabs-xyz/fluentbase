@@ -36,10 +36,7 @@ impl EpochCommittee {
     /// on-chain. Production callers go through
     /// `fluentbase_consensus::scheme::epoch_committee_from_snapshot`
     /// (reads a frozen on-chain committee at a finalized hash).
-    pub fn from_pairs<I>(
-        epoch: u64,
-        pairs: I,
-    ) -> Result<Self, commonware_utils::ordered::Error>
+    pub fn from_pairs<I>(epoch: u64, pairs: I) -> Result<Self, commonware_utils::ordered::Error>
     where
         I: IntoIterator<Item = (PeerPubkey, BlsPubkey)>,
     {
@@ -98,7 +95,9 @@ mod tests {
         BiMap<PeerPubkey, BlsPubkey>,
     ) {
         let mut rng = StdRng::seed_from_u64(seed);
-        let peer_sks: Vec<_> = (0..n).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
+        let peer_sks: Vec<_> = (0..n)
+            .map(|_| Ed25519PrivateKey::random(&mut rng))
+            .collect();
         let bls_kps: Vec<_> = (0..n)
             .map(|_| ValidatorBlsKeypair::generate(&mut rng))
             .collect();

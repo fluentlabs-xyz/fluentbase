@@ -9,10 +9,14 @@ pub enum Error {
     #[error("private key bytes are not a valid scalar (zero or out of field)")]
     InvalidSecret,
 
-    #[error("public key bytes are not a valid G2 point (decoding, subgroup, or infinity check failed)")]
+    #[error(
+        "public key bytes are not a valid G2 point (decoding, subgroup, or infinity check failed)"
+    )]
     InvalidPubkey,
 
-    #[error("signature bytes are not a valid G1 point (decoding, subgroup, or infinity check failed)")]
+    #[error(
+        "signature bytes are not a valid G1 point (decoding, subgroup, or infinity check failed)"
+    )]
     InvalidSignature,
 
     #[error("proof of possession verification failed")]

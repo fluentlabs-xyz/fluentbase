@@ -2,7 +2,7 @@
 //! [`ProviderExecutedChain`] (the local derived-chain view) and
 //! [`PoolAssembler`] (pool-backed tx selection with the in-flight suffix).
 
-use alloy_primitives::{Address, B256, TxHash};
+use alloy_primitives::{Address, TxHash, B256};
 use fluentbase_consensus::{ExecutedChain, OrderBlock, OrderingAssembler};
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::SignedTransaction as _;

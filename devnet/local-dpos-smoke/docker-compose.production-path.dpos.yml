@@ -7,15 +7,19 @@
 #     up -d --force-recreate validator-0 validator-1 validator-2 validator-3 validator-4 validator-5
 #
 # Committee = validators 0-4 (activeValidatorsLength=5). validator-5 is the
-# EXTERNAL joiner: it boots in --dpos as a verifier (its key is not yet in the
-# committee — build_signer returns None, EpochEngine::new falls through to
-# build_verifier) and becomes a signer at the boundary after on-chain
-# activateValidator + delegate. full-node stays a follower.
+# EXTERNAL joiner. Every validator runs the UNIFIED `--dpos` mode
+# (`--dpos.follower-upstream` present): a node whose key is outside the
+# committee rides an in-process cert-follow substrate and auto-promotes to
+# signer at its first committee epoch boundary (and demotes back on
+# rotation-out) — NO restarts, no operator choreography. v5 therefore boots
+# the SAME command as everyone and joins by itself once registration +
+# delegation land. full-node stays a follower.
 
-# One shared --dpos follower-validator command for validators 1-5: the index
-# arrives via `environment: IDX` ($$ = compose-escaped, expanded by the
-# in-container sh) and drives the datadir, key paths, and the dialable IP
-# (172.20.0.1$IDX). One block to edit instead of five.
+# One shared command for validators 1-5: the index arrives via
+# `environment: IDX` ($$ = compose-escaped, expanded by the in-container sh)
+# and drives the datadir, key paths, and the dialable IP (172.20.0.1$IDX).
+# One block to edit instead of five — a hand-edited copy missing one flag is
+# exactly the config-asymmetry follower-wedge class this suite exists to catch.
 x-dpos-validator-cmd: &dpos-validator-cmd
   entrypoint: ["/bin/sh", "-c"]
   command:
@@ -24,6 +28,7 @@ x-dpos-validator-cmd: &dpos-validator-cmd
         --chain=/runtime/genesis-local.json \
         --datadir=/runtime/reth-data/v$$IDX \
         --dpos \
+        --dpos.follower-upstream=ws://172.20.0.10:8546 \
         --dpos.bls-key-path=/runtime/keys/validator-$$IDX/bls.hex \
         --dpos.peer-key-path=/runtime/keys/validator-$$IDX/peer.hex \
         --dpos.staking-config=/runtime/staking-reader.json \
@@ -35,17 +40,22 @@ x-dpos-validator-cmd: &dpos-validator-cmd
         --builder.extradata= \
         --storage.v2=false \
         --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+        --ws --ws.addr=0.0.0.0 --ws.port=8546 \
         --trusted-peers="$(cat /runtime/v0-enode.txt)" \
         --trusted-only \
         --disable-discovery
 
 services:
+  # validator-0 keeps its explicit block (WS server + host ports). Its
+  # follower-upstream points at validator-1 — pointing a node's follower
+  # substrate at ITSELF would be circular (own window serving own follower).
   validator-0:
     command:
       - node
       - --chain=/runtime/genesis-local.json
       - --datadir=/runtime/reth-data/v0
       - --dpos
+      - --dpos.follower-upstream=ws://172.20.0.11:8546
       - --dpos.bls-key-path=/runtime/keys/validator-0/bls.hex
       - --dpos.peer-key-path=/runtime/keys/validator-0/peer.hex
       - --dpos.staking-config=/runtime/staking-reader.json
@@ -88,9 +98,9 @@ services:
     environment:
       IDX: "4"
 
-  # External joiner: boots in --dpos but NOT in the initial committee, so it runs
-  # as a verifier until on-chain activateValidator + delegate land its key in
-  # getEpochCommittee(E+1), at which boundary it becomes a signer.
+  # External joiner: identical command — the unified supervisor keeps it on
+  # the follower substrate (its key is not in committee(0)) and auto-promotes
+  # at its first committee epoch boundary after registration + delegation.
   validator-5:
     <<: *dpos-validator-cmd
     environment:

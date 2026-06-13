@@ -29,7 +29,9 @@ use futures::{
 use prometheus_client::metrics::gauge::Gauge;
 use std::{ops::RangeInclusive, pin::Pin, time::Duration};
 use tokio::{select, sync::mpsc};
-use tracing::{debug, error, error_span, info, info_span, instrument, warn, warn_span, Level, Span};
+use tracing::{
+    debug, error, error_span, info, info_span, instrument, warn, warn_span, Level, Span,
+};
 
 /// One executor command paired with its tracing span (preserves the causal
 /// `parent` for `#[instrument]`).
@@ -188,11 +190,7 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
 impl<E, BE, D, XC, MarshalMailbox> Actor<E, BE, D, XC, MarshalMailbox>
 where
     E: Clock + commonware_runtime::Metrics + Pacer + Spawner + Send + 'static,
-    BE: BeaconEngineLike<
-            ExecutionData = D::Derived,
-        > + Send
-        + Sync
-        + 'static,
+    BE: BeaconEngineLike<ExecutionData = D::Derived> + Send + Sync + 'static,
     D: DerivedBlockBuilder,
     XC: ExecutedChain,
     MarshalMailbox: BlockFetcher,
@@ -452,7 +450,9 @@ where
         let mut first_missing = target;
         let mut parent_hash = loop {
             if first_missing == 0 {
-                return Err(eyre::eyre!("derive gap reaches height 0 — no executed ancestor"));
+                return Err(eyre::eyre!(
+                    "derive gap reaches height 0 — no executed ancestor"
+                ));
             }
             if let Some(hash) = self.executed.executed_hash(first_missing - 1) {
                 break hash;
@@ -506,8 +506,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::order_block::K;
     use crate::digest::Digest;
+    use crate::order_block::K;
     use alloy_consensus::{Block as AlloyBlock, BlockBody, Header as AlloyHeader};
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
@@ -683,7 +683,9 @@ mod tests {
         }
     }
 
-    fn finalize_msg(order: OrderBlock) -> (Message, commonware_utils::acknowledgement::ExactWaiter) {
+    fn finalize_msg(
+        order: OrderBlock,
+    ) -> (Message, commonware_utils::acknowledgement::ExactWaiter) {
         let (ack, waiter) = Exact::handle();
         (
             Message {

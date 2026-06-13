@@ -120,11 +120,7 @@ mod abi {
     }
 }
 
-pub fn run(
-    keys: &KeySet,
-    artefacts: &Artefacts,
-    chain_id: u64,
-) -> eyre::Result<PredeployState> {
+pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<PredeployState> {
     // PRECOMPILE_EVM_RUNTIME needs to be registered before any plain
     // EVM (`deployedBytecode`) deploy through `deploy_evm_tx` — without
     // it the EVM aborts with `MalformedBuiltinParams`. Mirrors the
@@ -203,8 +199,7 @@ pub fn run(
     )
         .abi_encode_sequence();
 
-    let governance_constructor =
-        (STAKING_ADDR, CHAIN_CONFIG_ADDR).abi_encode_sequence();
+    let governance_constructor = (STAKING_ADDR, CHAIN_CONFIG_ADDR).abi_encode_sequence();
 
     // MockBlendToken: constructor mints to deployer → storage MUST be
     // copied (balanceOf, totalSupply). The 6 UUPS impls below set ONLY
@@ -214,41 +209,91 @@ pub fn run(
     // `InvalidInitialization()`. So: copy storage for MockBlendToken,
     // skip storage for UUPS impls.
     deploy_to_canonical(
-        &mut ctx, deployer, &artefacts.mock_blend_token, STAKING_TOKEN_ADDR, &[], true,
+        &mut ctx,
+        deployer,
+        &artefacts.mock_blend_token,
+        STAKING_TOKEN_ADDR,
+        &[],
+        true,
     )?;
     deploy_to_canonical(
-        &mut ctx, deployer, &artefacts.system_reward, SYSTEM_REWARD_ADDR, &context_args_encoded, false,
+        &mut ctx,
+        deployer,
+        &artefacts.system_reward,
+        SYSTEM_REWARD_ADDR,
+        &context_args_encoded,
+        false,
     )?;
     deploy_to_canonical(
-        &mut ctx, deployer, &artefacts.staking_pool, STAKING_POOL_ADDR, &context_args_encoded, false,
+        &mut ctx,
+        deployer,
+        &artefacts.staking_pool,
+        STAKING_POOL_ADDR,
+        &context_args_encoded,
+        false,
     )?;
     deploy_to_canonical(
-        &mut ctx, deployer, &artefacts.chain_config, CHAIN_CONFIG_ADDR, &chain_config_constructor, false,
+        &mut ctx,
+        deployer,
+        &artefacts.chain_config,
+        CHAIN_CONFIG_ADDR,
+        &chain_config_constructor,
+        false,
     )?;
     deploy_to_canonical(
-        &mut ctx, deployer, &artefacts.liveness_slashing, LIVENESS_SLASHING_ADDR, &context_args_encoded, false,
+        &mut ctx,
+        deployer,
+        &artefacts.liveness_slashing,
+        LIVENESS_SLASHING_ADDR,
+        &context_args_encoded,
+        false,
     )?;
     // Deploy the DELEGATECALL'd libraries FIRST — `Staking`'s bytecode is linked
     // against `STAKING_DPOS_ADDR` + `STAKING_ECONOMICS_ADDR` (see `artifacts::load`).
     // Stateless libraries: no constructor args, no storage copy.
     deploy_to_canonical(
-        &mut ctx, deployer, &artefacts.staking_dpos, STAKING_DPOS_ADDR, &[], false,
+        &mut ctx,
+        deployer,
+        &artefacts.staking_dpos,
+        STAKING_DPOS_ADDR,
+        &[],
+        false,
     )?;
     deploy_to_canonical(
-        &mut ctx, deployer, &artefacts.staking_economics, STAKING_ECONOMICS_ADDR, &[], false,
+        &mut ctx,
+        deployer,
+        &artefacts.staking_economics,
+        STAKING_ECONOMICS_ADDR,
+        &[],
+        false,
     )?;
     deploy_to_canonical(
-        &mut ctx, deployer, &artefacts.staking, STAKING_ADDR, &staking_constructor, false,
+        &mut ctx,
+        deployer,
+        &artefacts.staking,
+        STAKING_ADDR,
+        &staking_constructor,
+        false,
     )?;
     deploy_to_canonical(
-        &mut ctx, deployer, &artefacts.governance, GOVERNANCE_ADDR, &governance_constructor, false,
+        &mut ctx,
+        deployer,
+        &artefacts.governance,
+        GOVERNANCE_ADDR,
+        &governance_constructor,
+        false,
     )?;
     // BLS12381Verifier is stateless (no storage, no constructor args) —
     // just place the runtime bytecode at the canonical address. We still
     // route through deploy_to_canonical to keep one code path for all
     // predeploys.
     deploy_to_canonical(
-        &mut ctx, deployer, &artefacts.bls_verifier, BLS_VERIFIER_ADDR, &[], false,
+        &mut ctx,
+        deployer,
+        &artefacts.bls_verifier,
+        BLS_VERIFIER_ADDR,
+        &[],
+        false,
     )?;
 
     // ChainConfig enforces non-zero minStake values (revert
@@ -278,12 +323,21 @@ pub fn run(
         dposActivationBlock: 64,
     }
     .abi_encode();
-    call_or_die(&mut ctx, deployer, CHAIN_CONFIG_ADDR, chain_config_init.into(), "ChainConfig.initialize")?;
+    call_or_die(
+        &mut ctx,
+        deployer,
+        CHAIN_CONFIG_ADDR,
+        chain_config_init.into(),
+        "ChainConfig.initialize",
+    )?;
 
     let initial_stakes = vec![smoke_min_stake; keys.validators.len()];
     let total_stake = smoke_min_stake * U256::from(keys.validators.len() as u64);
-    let validator_addrs: Vec<Address> =
-        keys.validators.iter().map(|v| v.l2_signer.address()).collect();
+    let validator_addrs: Vec<Address> = keys
+        .validators
+        .iter()
+        .map(|v| v.l2_signer.address())
+        .collect();
 
     // Staking._addValidator pulls each validator's initial stake via
     // BLEND.transferFrom(initialOwner, staking, stake). MockBlendToken's
@@ -311,13 +365,37 @@ pub fn run(
         commissionRate: 0,
     }
     .abi_encode();
-    call_or_die(&mut ctx, deployer, STAKING_ADDR, staking_init.into(), "Staking.initialize")?;
+    call_or_die(
+        &mut ctx,
+        deployer,
+        STAKING_ADDR,
+        staking_init.into(),
+        "Staking.initialize",
+    )?;
 
-    let pool_init = abi::IStakingPool::initializeCall { initialOwner: deployer }.abi_encode();
-    call_or_die(&mut ctx, deployer, STAKING_POOL_ADDR, pool_init.into(), "StakingPool.initialize")?;
+    let pool_init = abi::IStakingPool::initializeCall {
+        initialOwner: deployer,
+    }
+    .abi_encode();
+    call_or_die(
+        &mut ctx,
+        deployer,
+        STAKING_POOL_ADDR,
+        pool_init.into(),
+        "StakingPool.initialize",
+    )?;
 
-    let liveness_init = abi::ILivenessSlashing::initializeCall { initialOwner: deployer }.abi_encode();
-    call_or_die(&mut ctx, deployer, LIVENESS_SLASHING_ADDR, liveness_init.into(), "LivenessSlashing.initialize")?;
+    let liveness_init = abi::ILivenessSlashing::initializeCall {
+        initialOwner: deployer,
+    }
+    .abi_encode();
+    call_or_die(
+        &mut ctx,
+        deployer,
+        LIVENESS_SLASHING_ADDR,
+        liveness_init.into(),
+        "LivenessSlashing.initialize",
+    )?;
 
     // SystemReward._updateDistributionShare requires sum(shares) ==
     // SHARE_MAX_VALUE (10_000 bps). Smoke has no real fee economics, so
@@ -330,14 +408,26 @@ pub fn run(
         shares: vec![10_000],
     }
     .abi_encode();
-    call_or_die(&mut ctx, deployer, SYSTEM_REWARD_ADDR, sys_reward_init.into(), "SystemReward.initialize")?;
+    call_or_die(
+        &mut ctx,
+        deployer,
+        SYSTEM_REWARD_ADDR,
+        sys_reward_init.into(),
+        "SystemReward.initialize",
+    )?;
 
     let gov_init = abi::IFluentGovernance::initializeCall {
         initialOwner: deployer,
         initialVotingPeriod: 1,
     }
     .abi_encode();
-    call_or_die(&mut ctx, deployer, GOVERNANCE_ADDR, gov_init.into(), "FluentGovernance.initialize")?;
+    call_or_die(
+        &mut ctx,
+        deployer,
+        GOVERNANCE_ADDR,
+        gov_init.into(),
+        "FluentGovernance.initialize",
+    )?;
 
     // Wire BLS verifier through ChainConfig BEFORE registering keys —
     // setConsensusKeys reads chainConfig.getBlsVerifier() and reverts
@@ -469,10 +559,7 @@ fn register_validators(ctx: &mut EvmTestingContext, keys: &KeySet) -> eyre::Resu
     Ok(())
 }
 
-fn commit_initial_committee(
-    ctx: &mut EvmTestingContext,
-    keys: &KeySet,
-) -> eyre::Result<()> {
+fn commit_initial_committee(ctx: &mut EvmTestingContext, keys: &KeySet) -> eyre::Result<()> {
     // Canonical ed25519 ascending-peerPubkey order (G5 invariant —
     // crates/p2p/src/lib.rs:213, commonware_utils::ordered::Set ordering).
     use commonware_codec::Encode as _;
@@ -506,7 +593,9 @@ fn snapshot(ctx: &mut EvmTestingContext, addrs: &[Address]) -> PredeployState {
     let mut balance_by_address = HashMap::new();
 
     for addr in addrs {
-        let Some(account) = ctx.db.cache.accounts.get(addr) else { continue };
+        let Some(account) = ctx.db.cache.accounts.get(addr) else {
+            continue;
+        };
 
         if let Some(bytecode) = &account.info.code {
             // Wrap deployed EVM runtime bytecode in OwnableAccount(EVM_RUNTIME, code).
@@ -523,7 +612,8 @@ fn snapshot(ctx: &mut EvmTestingContext, addrs: &[Address]) -> PredeployState {
             // starts with the 0xEF44 magic and `Bytecode::new_raw_checked` in the
             // running node round-trips back to OwnableAccount.
             let raw = bytecode.original_bytes();
-            let wrapped: Bytes = if raw.starts_with(&[0xEF, 0x44]) || raw.starts_with(&[0xEF, 0x52]) {
+            let wrapped: Bytes = if raw.starts_with(&[0xEF, 0x44]) || raw.starts_with(&[0xEF, 0x52])
+            {
                 raw
             } else {
                 // EVM_RUNTIME reads metadata as `EthereumMetadata` (see

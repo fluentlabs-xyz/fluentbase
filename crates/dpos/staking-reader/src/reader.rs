@@ -48,6 +48,8 @@ mod abi {
         function getConsensusKeys(address validator)
             external view returns (ConsensusKeys);
         function getEpochCommittee(uint64 epoch) external view returns (address[]);
+        function getRegistryWithKeys()
+            external view returns (address[] addrs, ConsensusKeys[] keys);
 
         // ChainConfig contract (separate address)
         function getEpochBlockInterval() external view returns (uint32);
@@ -150,18 +152,19 @@ pub fn epoch_of_block(
     block_number.saturating_sub(dpos_activation_block) / epoch_block_interval as u64
 }
 
-/// Committee-size guard: the on-chain committee must fit commonware's
-/// `max_peer_set_size`, or `Oracle::track` panics deep in the p2p actor
+/// Tracker-feed guard: the peer set fed to `Oracle::track` (the Active
+/// validator registry ∪ current committee) must fit commonware's
+/// `max_peer_set_size`, or `track` panics deep in the p2p actor
 /// (`tracker/actor.rs:158-163`). Call this at the epoch boundary *before*
 /// `track` for an actionable error + a single controlled failure mode
 /// instead of an opaque panic.
-pub(crate) fn check_committee_size(
+pub(crate) fn check_peer_set_size(
     epoch: u64,
     size: usize,
     max_peer_set_size: usize,
 ) -> Result<(), ReadError> {
     if size > max_peer_set_size {
-        return Err(ReadError::CommitteeTooLarge {
+        return Err(ReadError::PeerSetTooLarge {
             epoch,
             size,
             max: max_peer_set_size,
@@ -369,12 +372,12 @@ where
 
     /// `ChainConfig.getActiveValidatorsLength()`. Used at startup by the host
     /// adapter to enforce the Rust ↔ Solidity invariant
-    /// `activeValidatorsLength <= fluentbase_p2p::constants::MAX_PEER_SET_SIZE`
+    /// `activeValidatorsLength <= fluentbase_p2p::constants::MAX_COMMITTEE_SIZE`
     /// The value is bounded on-chain by `ChainConfig.MAX_ACTIVE_VALIDATORS`
-    /// (currently 51); if Rust and Solidity caps ever drift, the next epoch
-    /// boundary would hit `ReadError::CommitteeTooLarge` or panic deep in
-    /// commonware's tracker — the startup assert catches this earlier with an
-    /// actionable error pointing at both source files.
+    /// (currently 51); if Rust and Solidity caps ever drift, the attestation
+    /// bitmap wire format (u8 committee_size) or scheme building would break —
+    /// the startup assert catches this earlier with an actionable error
+    /// pointing at both source files.
     pub fn active_validators_length(&self, at: B256) -> Result<u32, ReadError> {
         let cd = abi::getActiveValidatorsLengthCall {}.abi_encode().into();
         let ret = self.raw_view(self.cfg.chain_config_address, cd, at)?;
@@ -418,6 +421,28 @@ where
             validators,
         })
     }
+
+    /// Peer keys of the FULL Active-status validator registry
+    /// (`Staking.getRegistryWithKeys` = `_activeValidatorsList`, NOT the
+    /// stake-weighted top-k committee) at block `at`. Feeds the consensus
+    /// p2p tier-2 peer set: every activated validator — in or out of the
+    /// committee, including the sequencer — keeps consensus-plane
+    /// connectivity. Keyless entries (registered but `setConsensusKeys`
+    /// not yet called) are SKIPPED: unlike a committee member, a keyless
+    /// registry entry is a legal transient state, not an invariant
+    /// violation.
+    pub fn active_registry_peers(&self, at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
+        let cd = abi::getRegistryWithKeysCall {}.abi_encode().into();
+        let ret = self.raw_view(self.cfg.staking_address, cd, at)?;
+        let decoded = abi::getRegistryWithKeysCall::abi_decode_returns(&ret)
+            .map_err(|e| ReadError::AbiDecode(e.to_string()))?;
+        decoded
+            .keys
+            .into_iter()
+            .filter(|k| !is_unset(k))
+            .map(|k| PeerPubkey::decode(k.peerPubkey.as_slice()).map_err(|_| ReadError::PeerKey))
+            .collect()
+    }
 }
 
 /// Trait-ified read surface over [`RethStakingStateReader`] — the exact subset
@@ -443,6 +468,10 @@ pub trait StakingStateRead {
 
     /// `ChainConfig.getDposActivationBlock()` (relative-epoch origin) at `at`.
     fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError>;
+
+    /// Peer keys of the full Active validator registry (tier-2 feed),
+    /// keyless-filtered. See [`RethStakingStateReader::active_registry_peers`].
+    fn active_registry_peers(&self, at: B256) -> Result<Vec<PeerPubkey>, ReadError>;
 }
 
 impl<P, E> StakingStateRead for RethStakingStateReader<P, E>
@@ -466,12 +495,15 @@ where
     fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
         RethStakingStateReader::dpos_activation_block(self, at)
     }
+    fn active_registry_peers(&self, at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
+        RethStakingStateReader::active_registry_peers(self, at)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        abi, check_committee_size, decode_consensus_keys, epoch_of_block, is_unset,
+        abi, check_peer_set_size, decode_consensus_keys, epoch_of_block, is_unset,
         StakingReaderConfig,
     };
     use crate::error::ReadError;
@@ -554,16 +586,16 @@ mod tests {
     }
 
     #[test]
-    fn committee_size_at_max_is_ok() {
-        assert!(check_committee_size(7, 51, 51).is_ok());
-        assert!(check_committee_size(7, 0, 0).is_ok());
+    fn peer_set_size_at_max_is_ok() {
+        assert!(check_peer_set_size(7, 51, 51).is_ok());
+        assert!(check_peer_set_size(7, 0, 0).is_ok());
     }
 
     #[test]
-    fn committee_size_over_max_errors() {
+    fn peer_set_size_over_max_errors() {
         assert!(matches!(
-            check_committee_size(9, 52, 51),
-            Err(ReadError::CommitteeTooLarge {
+            check_peer_set_size(9, 52, 51),
+            Err(ReadError::PeerSetTooLarge {
                 epoch: 9,
                 size: 52,
                 max: 51

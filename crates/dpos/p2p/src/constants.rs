@@ -62,20 +62,28 @@ pub const MARSHAL_BACKLOG: usize = 128;
 // Hardcoded (not chainspec-tunable) because all peers must agree.
 pub const MAX_MESSAGE_SIZE: u32 = 4 * 1024 * 1024;
 
-// Peer set — cross-component invariant with the staking-reader's
-// `check_committee_size`.
-//
-// `n=51` baseline. The `EpochTransition::check_committee_size` guard
-// rejects oversize
-// committees here as a typed `ReadError::CommitteeTooLarge` instead of
-// letting commonware's tracker panic deeper.
+// Committee cap — bounds the COMMITTEE (extra_data `committee_size: u8`
+// bitmap, BLS scheme building), NOT the p2p tracker feed (see
+// `MAX_REGISTRY_PEER_SET` below for that).
 //
 // MUST mirror
-// `solidity-contracts/contracts/staking/ChainConfig.sol::MAX_ACTIVE_VALIDATORS`.
-// Drift between these two literals means a successful
-// `ChainConfig.setActiveValidatorsLength` call can still panic deep in
-// commonware's BitVec tracker. Update both in the SAME PR.
-pub const MAX_PEER_SET_SIZE: u64 = 51;
+// `solidity-contracts/contracts/staking/ChainConfig.sol::MAX_ACTIVE_VALIDATORS`
+// and stay ≤ 255 (the u8 wire format). Drift between the two literals means a
+// successful `ChainConfig.setActiveValidatorsLength` call later fails the
+// startup cap assert (dpos.rs) or corrupts the attestation bitmap. Update
+// both in the SAME PR.
+pub const MAX_COMMITTEE_SIZE: u64 = 51;
+
+// Tracker bit-vec guard for the tier-2 registry feed (the FULL Active
+// validator registry ∪ current committee is tracked, not just the
+// committee — every activated validator keeps consensus-plane
+// connectivity). Generous, NOT policy: the registry is bounded
+// economically (min stake) + by governance activation, and commonware's
+// recommended `max_peer_set_size` is 2^16 (gossip costs one bit per
+// peer). The staking-reader's `check_peer_set_size` rejects an oversize
+// feed as a typed `ReadError::PeerSetTooLarge` instead of letting
+// commonware's tracker panic deeper.
+pub const MAX_REGISTRY_PEER_SET: u64 = 4096;
 
 // Network policy
 //

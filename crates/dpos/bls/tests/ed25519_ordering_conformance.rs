@@ -105,10 +105,8 @@ fn commonware_orders_ed25519_committee_by_raw_byte_lex() {
 
     // Pin against the committed cross-language corpus (mirrored into Solidity).
     if !PEER_PUBKEYS_HEX.is_empty() {
-        let seed_hex: Vec<String> =
-            SEEDS.iter().map(|&s| hex::encode(peer_pubkey(s))).collect();
-        let committed: Vec<String> =
-            PEER_PUBKEYS_HEX.iter().map(|h| h.to_string()).collect();
+        let seed_hex: Vec<String> = SEEDS.iter().map(|&s| hex::encode(peer_pubkey(s))).collect();
+        let committed: Vec<String> = PEER_PUBKEYS_HEX.iter().map(|h| h.to_string()).collect();
         assert_eq!(
             seed_hex, committed,
             "PEER_PUBKEYS_HEX no longer matches the recipe — regenerate via \

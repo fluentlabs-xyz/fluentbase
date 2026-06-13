@@ -7,7 +7,7 @@
 //! chain (`provider.block_number(hash)`), so the assert is hash-existence,
 //! not height-equality.
 
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use alloy_sol_types::{sol, SolCall as _};
 use eyre::{ensure, eyre, WrapErr as _};
 use jsonrpsee::{core::client::ClientT as _, http_client::HttpClientBuilder, rpc_params};
@@ -51,17 +51,25 @@ pub async fn fetch_checkpoint_hash(cfg: &L1CheckpointConfig) -> eyre::Result<B25
         .build(&cfg.rpc_url)
         .wrap_err_with(|| format!("building L1 HTTP client for {}", cfg.rpc_url))?;
 
-    let index_ret = eth_call(&client, cfg.rollup_address, lastFinalizedBatchIndexCall {}.abi_encode())
-        .await
-        .wrap_err("Rollup.lastFinalizedBatchIndex() eth_call failed")?;
+    let index_ret = eth_call(
+        &client,
+        cfg.rollup_address,
+        lastFinalizedBatchIndexCall {}.abi_encode(),
+    )
+    .await
+    .wrap_err("Rollup.lastFinalizedBatchIndex() eth_call failed")?;
     let index = lastFinalizedBatchIndexCall::abi_decode_returns(&index_ret)
         .wrap_err("decoding lastFinalizedBatchIndex() return")?;
 
-    let batch_ret = eth_call(&client, cfg.rollup_address, getBatchCall { batchIndex: index }.abi_encode())
-        .await
-        .wrap_err("Rollup.getBatch(lastFinalized) eth_call failed")?;
-    let batch = getBatchCall::abi_decode_returns(&batch_ret)
-        .wrap_err("decoding getBatch() return")?;
+    let batch_ret = eth_call(
+        &client,
+        cfg.rollup_address,
+        getBatchCall { batchIndex: index }.abi_encode(),
+    )
+    .await
+    .wrap_err("Rollup.getBatch(lastFinalized) eth_call failed")?;
+    let batch =
+        getBatchCall::abi_decode_returns(&batch_ret).wrap_err("decoding getBatch() return")?;
 
     ensure!(
         batch.toBlockHash != B256::ZERO,

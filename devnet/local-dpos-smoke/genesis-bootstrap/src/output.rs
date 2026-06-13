@@ -128,7 +128,10 @@ pub fn write(
             .map_err(|e| eyre::eyre!("write BLS plaintext: {e:?}"))?;
 
         let peer_bytes = v.peer.encode();
-        write_mode_0600(&dir.join("peer.hex"), hex::encode(peer_bytes.as_ref()).as_bytes())?;
+        write_mode_0600(
+            &dir.join("peer.hex"),
+            hex::encode(peer_bytes.as_ref()).as_bytes(),
+        )?;
 
         let mut rng = rand_08::rngs::OsRng;
         let pk_bytes: alloy_primitives::B256 = v.slasher.to_bytes();

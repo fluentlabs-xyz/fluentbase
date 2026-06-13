@@ -155,6 +155,21 @@ pub(crate) struct FollowLoop<E, BE, D, XC, U, CS, ES> {
     /// [`STARVATION_JUMP`] in production; shrunk in tests (a 60-virtual-second
     /// deterministic wait is a 60k-cycle crawl).
     pub starvation_jump: Duration,
+    /// Stop cleanly once the cursor reaches this height (used by the unified
+    /// supervisor to hand reth to the signer stack at an epoch boundary).
+    /// `None` = run forever (standalone `--cert-follow`).
+    pub stop_at: Option<u64>,
+}
+
+/// Why [`FollowLoop::run`] returned `Ok`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FollowExit {
+    /// `stop_at` reached: the cursor sits at/past the requested height (an
+    /// EL-sync jump can overshoot) and the corresponding FCU has been
+    /// acknowledged — reth is at a clean handoff point. `evm_hash` is the
+    /// cursor's executed hash: the supervisor reads the ahead-committed
+    /// committee at exactly this state.
+    StoppedAt { height: u64, evm_hash: B256 },
 }
 
 impl<E, BE, D, XC, U, CS, ES> FollowLoop<E, BE, D, XC, U, CS, ES>
@@ -167,9 +182,22 @@ where
     CS: CommitteeSource,
     ES: ElSync,
 {
-    pub(crate) async fn run(mut self) -> eyre::Result<()> {
+    pub(crate) async fn run(mut self) -> eyre::Result<FollowExit> {
         let mut consecutive_faults = 0u32;
         loop {
+            // Loop-top so every cursor mutation is covered: the seed (a
+            // supervisor re-launch may race the boundary), apply(), and the
+            // EL-sync jump inside next_finalized (which can overshoot the
+            // boundary — the caller anchors at the actual cursor, not at
+            // `stop_at`, so `>=` is the correct predicate).
+            if let Some(stop) = self.stop_at {
+                if self.cursor.height >= stop {
+                    return Ok(FollowExit::StoppedAt {
+                        height: self.cursor.height,
+                        evm_hash: self.cursor.evm_hash,
+                    });
+                }
+            }
             let uf = self.next_finalized().await?;
             match self.apply(uf).await {
                 Ok(()) => consecutive_faults = 0,
@@ -284,7 +312,10 @@ where
         };
         let resp = self.beacon_engine.fork_choice_updated(fcu).await?;
         ensure!(
-            !matches!(resp.payload_status.status, PayloadStatusEnum::Invalid { .. }),
+            !matches!(
+                resp.payload_status.status,
+                PayloadStatusEnum::Invalid { .. }
+            ),
             "EL rejected FCU at {h}: {:?}",
             resp.payload_status
         );
@@ -425,7 +456,11 @@ where
     /// Reseed the loop at an EL-sync jump landing: re-assert the L1 trust
     /// root, restart linkage, drop cached schemes, and reset the finality
     /// floor to `landing − K` (the landing itself is not result-attested yet).
-    fn reseed_at_jump_landing(&mut self, synced_height: u64, synced_hash: B256) -> eyre::Result<()> {
+    fn reseed_at_jump_landing(
+        &mut self,
+        synced_height: u64,
+        synced_hash: B256,
+    ) -> eyre::Result<()> {
         if let Some(l1) = self.l1_checkpoint {
             ensure!(
                 self.el_sync
@@ -472,11 +507,11 @@ mod tests {
     use alloy_consensus::{Block as AlloyBlock, BlockBody, Header as AlloyHeader};
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus};
+    use commonware_codec::DecodeExt as _;
     use commonware_consensus::{
         simplex::types::{Finalization, Finalize, Proposal},
         types::{Epoch, Round, View},
     };
-    use commonware_codec::DecodeExt as _;
     use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
     use commonware_math::algebra::Random as _;
     use commonware_runtime::{deterministic, Runner as _};
@@ -553,9 +588,8 @@ mod tests {
             .take(3)
             .map(|s| Finalize::sign(s, prop.clone()).expect("sign"))
             .collect();
-        let finalization =
-            Finalization::from_finalizes(&c.verifier, finalizes.iter(), &Sequential)
-                .expect("quorum");
+        let finalization = Finalization::from_finalizes(&c.verifier, finalizes.iter(), &Sequential)
+            .expect("quorum");
         UpstreamFinalized {
             finalization,
             block: block.clone(),
@@ -604,10 +638,9 @@ mod tests {
                 ..Default::default()
             };
             let body: BlockBody<TransactionSigned> = BlockBody::default();
-            let sealed =
-                RethSealed::seal_slow(reth_ethereum_primitives::Block::from(AlloyBlock::new(
-                    header, body,
-                )));
+            let sealed = RethSealed::seal_slow(reth_ethereum_primitives::Block::from(
+                AlloyBlock::new(header, body),
+            ));
             self.chain
                 .canonical
                 .lock()
@@ -725,11 +758,8 @@ mod tests {
         let el_sync_calls = Arc::new(Mutex::new(0));
         let (finalized_tx, finalized_rx) = mpsc::channel(64);
         let (verified_tx, verified_rx) = mpsc::unbounded_channel();
-        let epoch0 = fluentbase_staking_reader::reader::epoch_of_block(
-            cursor_height,
-            INTERVAL,
-            ACTIVATION,
-        );
+        let epoch0 =
+            fluentbase_staking_reader::reader::epoch_of_block(cursor_height, INTERVAL, ACTIVATION);
         let lp = FollowLoop {
             ctx,
             beacon_engine: beacon.clone(),
@@ -770,6 +800,7 @@ mod tests {
             highest_live_seen: cursor_height,
             l1_checkpoint: None,
             starvation_jump: Duration::from_secs(2),
+            stop_at: None,
         };
         (
             lp,
@@ -792,7 +823,9 @@ mod tests {
         runtime.start(|ctx| async move {
             let (mut lp, mut fx) = fixture(ctx, ACTIVATION);
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), ACTIVATION + 1, B256::ZERO);
-            lp.apply(certify(&fx.committee, 0, &block)).await.expect("ok");
+            lp.apply(certify(&fx.committee, 0, &block))
+                .await
+                .expect("ok");
             assert_eq!(lp.cursor.height, ACTIVATION + 1);
             assert_eq!(lp.cursor.prev_digest, Some(block.digest()));
             assert!(fx.verified_rx.try_recv().is_ok(), "published to window");
@@ -810,7 +843,10 @@ mod tests {
                 ACTIVATION + 1,
                 B256::repeat_byte(0x66),
             );
-            let err = lp.apply(certify(&fx.committee, 0, &block)).await.unwrap_err();
+            let err = lp
+                .apply(certify(&fx.committee, 0, &block))
+                .await
+                .unwrap_err();
             assert!(err.to_string().contains("pre-K"), "{err}");
         });
     }
@@ -832,7 +868,10 @@ mod tests {
                 start + 1,
                 B256::repeat_byte(0x22),
             );
-            let err = lp.apply(certify(&fx.committee, 0, &block)).await.unwrap_err();
+            let err = lp
+                .apply(certify(&fx.committee, 0, &block))
+                .await
+                .unwrap_err();
             assert!(err.to_string().contains("DIVERGENCE"), "{err}");
         });
     }
@@ -844,8 +883,14 @@ mod tests {
             let (mut lp, fx) = fixture(ctx, ACTIVATION);
             lp.cursor.prev_digest = Some(Digest(B256::repeat_byte(0x77)));
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), ACTIVATION + 1, B256::ZERO);
-            let err = lp.apply(certify(&fx.committee, 0, &block)).await.unwrap_err();
-            assert!(err.to_string().contains("ordering parent mismatch"), "{err}");
+            let err = lp
+                .apply(certify(&fx.committee, 0, &block))
+                .await
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("ordering parent mismatch"),
+                "{err}"
+            );
         });
     }
 
@@ -882,7 +927,9 @@ mod tests {
                 result: attested,
                 ..block
             };
-            lp.apply(certify(&fx.committee, 1, &block)).await.expect("ok");
+            lp.apply(certify(&fx.committee, 1, &block))
+                .await
+                .expect("ok");
             let reads = fx.scheme_reads.lock().unwrap();
             assert_eq!(reads.len(), 1, "one committee read on rotation");
             assert_eq!(reads[0].0, 1, "epoch 1 requested");
@@ -901,8 +948,46 @@ mod tests {
             let (mut lp, fx) = fixture(ctx, ACTIVATION);
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), ACTIVATION + 1, B256::ZERO);
             // Height 65 is epoch 0; an epoch-2 cert must be rejected before BLS.
-            let err = lp.apply(certify(&fx.committee, 2, &block)).await.unwrap_err();
+            let err = lp
+                .apply(certify(&fx.committee, 2, &block))
+                .await
+                .unwrap_err();
             assert!(err.to_string().contains("!= expected"), "{err}");
+        });
+    }
+
+    #[test]
+    fn run_stops_exactly_at_stop_height_after_applying_up_to_it() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let (mut lp, fx) = fixture(ctx, ACTIVATION);
+            lp.stop_at = Some(ACTIVATION + 2);
+            let b1 = sample_order(Digest(B256::repeat_byte(0xaa)), ACTIVATION + 1, B256::ZERO);
+            let b2 = sample_order(b1.digest(), ACTIVATION + 2, B256::ZERO);
+            fx.finalized_tx
+                .send(certify(&fx.committee, 0, &b1))
+                .await
+                .unwrap();
+            fx.finalized_tx
+                .send(certify(&fx.committee, 0, &b2))
+                .await
+                .unwrap();
+            let exit = lp.run().await.expect("run");
+            assert!(
+                matches!(exit, FollowExit::StoppedAt { height, .. } if height == ACTIVATION + 2)
+            );
+        });
+    }
+
+    #[test]
+    fn run_with_seed_already_at_stop_exits_without_pulling() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let (mut lp, fx) = fixture(ctx, ACTIVATION);
+            lp.stop_at = Some(ACTIVATION);
+            let exit = lp.run().await.expect("run");
+            assert!(matches!(exit, FollowExit::StoppedAt { height, .. } if height == ACTIVATION));
+            assert!(fx.upstream.by_height.lock().unwrap().is_empty());
         });
     }
 
@@ -912,7 +997,11 @@ mod tests {
         runtime.start(|ctx| async move {
             let (mut lp, fx) = fixture(ctx, ACTIVATION);
             let far = ACTIVATION + 1 + JUMP_THRESHOLD + 10;
-            let live = sample_order(Digest(B256::repeat_byte(0xaa)), far, B256::repeat_byte(0x44));
+            let live = sample_order(
+                Digest(B256::repeat_byte(0xaa)),
+                far,
+                B256::repeat_byte(0x44),
+            );
             let live_uf = certify(&fx.committee, 0, &live);
             fx.finalized_tx.send(live_uf.clone()).await.unwrap();
             *fx.upstream.latest.lock().unwrap() = Some(live_uf);
@@ -950,13 +1039,20 @@ mod tests {
             lp.l1_checkpoint = Some(B256::repeat_byte(0x1a));
             lp.el_sync.holds_l1 = false;
             let far = ACTIVATION + 1 + JUMP_THRESHOLD + 10;
-            let live = sample_order(Digest(B256::repeat_byte(0xaa)), far, B256::repeat_byte(0x44));
+            let live = sample_order(
+                Digest(B256::repeat_byte(0xaa)),
+                far,
+                B256::repeat_byte(0x44),
+            );
             let live_uf = certify(&fx.committee, 0, &live);
             fx.finalized_tx.send(live_uf.clone()).await.unwrap();
             *fx.upstream.latest.lock().unwrap() = Some(live_uf);
             let err = match lp.next_finalized().await {
                 Err(e) => e,
-                Ok(uf) => panic!("expected the L1 re-assert to fail, got height {}", uf.block.height),
+                Ok(uf) => panic!(
+                    "expected the L1 re-assert to fail, got height {}",
+                    uf.block.height
+                ),
             };
             assert!(err.to_string().contains("NOT in the local chain"), "{err}");
         });
@@ -970,7 +1066,11 @@ mod tests {
             // A lagging upstream's sync lands AT the cursor — must not move it.
             lp.el_sync.landing = (ACTIVATION, B256::repeat_byte(0xc0));
             let far = ACTIVATION + 1 + JUMP_THRESHOLD + 10;
-            let live = sample_order(Digest(B256::repeat_byte(0xaa)), far, B256::repeat_byte(0x44));
+            let live = sample_order(
+                Digest(B256::repeat_byte(0xaa)),
+                far,
+                B256::repeat_byte(0x44),
+            );
             let live_uf = certify(&fx.committee, 0, &live);
             fx.finalized_tx.send(live_uf.clone()).await.unwrap();
             *fx.upstream.latest.lock().unwrap() = Some(live_uf);
@@ -983,7 +1083,10 @@ mod tests {
                 .insert(ACTIVATION + 1, certify(&fx.committee, 0, &want));
             let got = lp.next_finalized().await.expect("next");
             assert_eq!(got.block.height, ACTIVATION + 1, "fell back to the pull");
-            assert_eq!(lp.cursor.height, ACTIVATION, "cursor untouched by the stale landing");
+            assert_eq!(
+                lp.cursor.height, ACTIVATION,
+                "cursor untouched by the stale landing"
+            );
             assert_eq!(lp.cursor.prev_digest, None, "no reseed happened");
         });
     }
@@ -994,9 +1097,17 @@ mod tests {
         runtime.start(|ctx| async move {
             let (mut lp, fx) = fixture(ctx, ACTIVATION + K);
             // Tampered pair (payload != digest) → rotatable upstream fault.
-            let block = sample_order(Digest(B256::repeat_byte(0xaa)), ACTIVATION + K + 1, B256::ZERO);
+            let block = sample_order(
+                Digest(B256::repeat_byte(0xaa)),
+                ACTIVATION + K + 1,
+                B256::ZERO,
+            );
             let mut uf = certify(&fx.committee, 0, &block);
-            uf.block = sample_order(Digest(B256::repeat_byte(0xab)), ACTIVATION + K + 1, B256::ZERO);
+            uf.block = sample_order(
+                Digest(B256::repeat_byte(0xab)),
+                ACTIVATION + K + 1,
+                B256::ZERO,
+            );
             let err = lp.apply(uf).await.unwrap_err();
             assert!(
                 err.downcast_ref::<UpstreamDataFault>().is_some(),
@@ -1013,7 +1124,10 @@ mod tests {
                 ACTIVATION + K + 1,
                 B256::repeat_byte(0x22),
             );
-            let err = lp.apply(certify(&fx.committee, 0, &block)).await.unwrap_err();
+            let err = lp
+                .apply(certify(&fx.committee, 0, &block))
+                .await
+                .unwrap_err();
             assert!(
                 err.downcast_ref::<UpstreamDataFault>().is_none(),
                 "divergence must stay fatal: {err}"

@@ -50,18 +50,18 @@ impl CertifiedBlock {
     /// Decode back to the marshal-format typed pair (client side).
     ///
     /// The certificate signer-bitmap is decoded with a BOUNDED cap
-    /// (`MAX_PEER_SET_SIZE`) — NOT the unbounded `u32::MAX` config the marshal's
+    /// (`MAX_COMMITTEE_SIZE`) — NOT the unbounded `u32::MAX` config the marshal's
     /// trusted archive uses. This data comes from an untrusted upstream over WS;
     /// the unbounded decoder eagerly allocates `VecDeque::with_capacity(num_chunks)`
     /// from a ~9-byte length prefix, so a tiny malicious certificate could force a
     /// ~512 MB allocation and OOM the follower (audit R4-5). A real finalization
-    /// has ≤ the committee size (≤ `MAX_PEER_SET_SIZE`) signers; exact participant
+    /// has ≤ the committee size (≤ `MAX_COMMITTEE_SIZE`) signers; exact participant
     /// validation still happens at cert-verify time against the per-epoch scheme.
     pub fn into_parts(&self) -> eyre::Result<(Cert, OrderBlock)> {
         let cert_bytes = hex::decode(&self.certificate).wrap_err("decode certificate hex")?;
         let cert = Cert::decode_cfg(
             cert_bytes.as_slice(),
-            &(fluentbase_p2p::constants::MAX_PEER_SET_SIZE as usize),
+            &(fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as usize),
         )
         .wrap_err("decode finalization certificate")?;
         let block_bytes = hex::decode(&self.block).wrap_err("decode block hex")?;

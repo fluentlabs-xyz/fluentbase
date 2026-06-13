@@ -144,14 +144,22 @@ The full prod lifecycle on a chain where the staking cluster is deployed at
 4. The sequencer's **dynamic activation gate** (per-tick on-chain re-read)
    clean-halts Tempo production at exactly `dposActivationBlock` — no
    mid-flight restart, so the followers ride the uninterrupted WS stream to
-   the same height; once all nodes align, validators 0-5 cold-restart into
-   `--dpos`.
-5. Registers an **external 6th** validator (`registerValidator` →
-   `setConsensusKeys` → governance `activateValidator` → `delegate`) and asserts
-   it rotates into the top-5 committee, displacing the lowest.
+   the same height; once all nodes align, ALL six validators cold-restart into
+   **unified `--dpos`** (`--dpos.follower-upstream` set): committee members'
+   supervisors enter the signer phase directly, while validator-5 (no
+   committee seat yet) rides the in-process cert-follow substrate.
+5. Registers the **external 6th** validator (`registerValidator` →
+   `setConsensusKeys` → governance `activateValidator` → `delegate`) while its
+   supervisor follows in-process; once its key appears in the ahead-committed
+   `getEpochCommittee(E+1)`, the supervisor stops the follower lap at the
+   boundary and **auto-promotes** — the case asserts convergence past the
+   boundary, the `PROMOTION cold-start` log line, the committee rotation, AND
+   that the displaced validator **auto-demotes** and keeps following (no
+   silent-verifier wedge; watchdog WARN absent from v5's entire log).
 6. Ejects one committee validator by **liveness** (stopped at an epoch start so
    50 misses fit one 64-block epoch) — asserts jail, then absence from
-   `getEpochCommittee` one boundary later.
+   `getEpochCommittee` two boundaries later (committee[E+1] was committed
+   pre-jail).
 7. A background value-transfer spammer runs throughout; the chain must keep
    finalizing across every transition.
 
@@ -161,33 +169,24 @@ run it explicitly. Uses its own 6-node compose project
 distinct from the genesis-baked cases. Needs `forge`/`cast`/`jq` and a
 `solidity-contracts` checkout at `SOLIDITY_CONTRACTS_DIR`.
 
-> **Gated on EIP-170:** the >24 KB `Staking` impl cannot be `CREATE`-deployed on a
-> stock node until the node code-size fix lands (task
-> `staking_exceeds_eip170_codesize`); until then step 2's cluster deploy reverts
-> with `CreateContractSizeLimit`.
-
 ## Joining a running chain as a new validator
 
-A non-committee `--dpos` node has zero consensus-plane connectivity (the
-tracked peer set == the on-chain committee), so a new validator cannot boot
-straight into `--dpos` on a live chain. The supported flow:
+Boot the node in unified `--dpos` with one or more
+`--dpos.follower-upstream ws://<upstream>` URLs (a `consensus`-RPC WebSocket
+of any validator or follower). The node's supervisor keeps it on an
+in-process cert-follow substrate (verifying every upstream certificate
+against the on-chain committee) while its key is outside the committee.
+Register + activate the validator and delegate stake (see the
+production-path case for the exact calls) — once the key appears in the
+ahead-committed `getEpochCommittee(E+1)`, the supervisor stops the follower
+at the epoch boundary and promotes to signer in-process. Rotation-out later
+demotes it back to the follower substrate the same way. No restarts, no
+manual timing.
 
-1. Run the node as a follower until it tracks the live tip:
-   `--cert-follow --sequencer-url ws://<upstream> --dpos.staking-config <json>`
-   (or trust-follow via `--sequencer-url` alone).
-2. Register + activate the validator and delegate stake (see the
-   production-path case for the exact calls).
-3. Before the first epoch whose committee includes the new key, restart the
-   same datadir into `--dpos --dpos.joiner ...`. The joiner flag anchors the
-   cold-start at the EL-restored finalized tip instead of failing the
-   fresh-migration guards; the epoch catch-up machinery walks the node to the
-   live frontier.
-
-Until its first committee epoch the joiner is consensus-isolated by design —
-it logs a periodic committee-watchdog WARN instead of progressing. Do NOT
-pass `--dpos.joiner` on a genuine Tempo→DPoS migration: the overshoot guard
-it bypasses exists to stop an ex-sequencer from anchoring past epoch 0
-(chain split).
+Without `--dpos.follower-upstream` a non-committee `--dpos` node has zero
+consensus-plane connectivity (push dissemination is participant-scoped) and
+idles behind the committee watchdog WARN until its committee epoch — run
+unified mode instead.
 
 ## What this is NOT
 
@@ -195,7 +194,4 @@ it bypasses exists to stop an ex-sequencer from anchoring past epoch 0
   separate ticket(s)
 - Production deployment — uses deprecated plaintext BLS key path,
   devnet-only Dockerfile (`fluent.image.kind=devnet-smoke` label)
-- Hot in-process swap (pipeline 3) — requires per-engine Shutdown
-  channel + FCU ordering invariants, not implemented; cold-restart
-  swap above is the supported migration mechanism today
 - CI integration — pure developer hand-tool

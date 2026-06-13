@@ -27,8 +27,9 @@ use reth_ethereum_primitives::EthPrimitives;
 use reth_payload_primitives::PayloadTypes;
 use std::sync::Arc;
 
-type TreeTx =
-    Sender<FromEngine<EngineApiRequest<EthEngineTypes, EthPrimitives>, reth_ethereum_primitives::Block>>;
+type TreeTx = Sender<
+    FromEngine<EngineApiRequest<EthEngineTypes, EthPrimitives>, reth_ethereum_primitives::Block>,
+>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ImportMode {

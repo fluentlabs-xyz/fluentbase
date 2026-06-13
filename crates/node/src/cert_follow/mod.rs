@@ -11,7 +11,9 @@ use std::{path::PathBuf, time::Duration};
 
 use commonware_runtime::{tokio::Context, Metrics as _, Spawner as _};
 use eyre::WrapErr as _;
-use fluentbase_consensus::{CertFollowConfig, CertFollowLayer, CertFollowRethHandle, UpstreamFinalized};
+use fluentbase_consensus::{
+    CertFollowConfig, CertFollowLayer, CertFollowRethHandle, UpstreamFinalized,
+};
 use reth_chainspec::EthChainSpec as _;
 use reth_ethereum_engine_primitives::EthEngineTypes;
 use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
@@ -158,6 +160,7 @@ where
         staking_config,
         l1_checkpoint_hash,
         fcu_heartbeat_interval: Duration::from_secs(8),
+        stop_at_next_boundary: false,
     };
 
     let deriver =

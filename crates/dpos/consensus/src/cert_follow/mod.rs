@@ -32,8 +32,8 @@ use fluentbase_staking_reader::{
     reader::{epoch_of_block, StakingReaderConfig},
     RethStakingStateReader,
 };
-pub use follow::{VerifiedTx, JUMP_THRESHOLD};
 pub(crate) use follow::{CommitteeSource, ElSync};
+pub use follow::{FollowExit, VerifiedTx, JUMP_THRESHOLD};
 use reth_chain_state::CanonicalInMemoryState;
 use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
 use reth_evm::ConfigureEvm;
@@ -68,11 +68,19 @@ pub struct CertFollowConfig {
     /// canonically in the follower's own reth.
     pub l1_checkpoint_hash: Option<B256>,
     pub fcu_heartbeat_interval: Duration,
+    /// Unified-supervisor lap mode: stop the loop at the next epoch
+    /// boundary − 1 (relative to the launch checkpoint) and report the stop
+    /// point via [`CertFollowHandle::stopped_rx`] instead of cancelling the
+    /// shutdown token. `false` = standalone `--cert-follow` (run forever).
+    pub stop_at_next_boundary: bool,
 }
 
 /// Handle the host adapter supervises alongside its WS-upstream actor.
 pub struct CertFollowHandle {
     pub consensus_handle: Handle<()>,
+    /// Fires once with the stop point when `stop_at_next_boundary` was set
+    /// and the loop reached it (sender dropped without firing on error).
+    pub stopped_rx: tokio::sync::oneshot::Receiver<follow::FollowExit>,
 }
 
 /// Fatal only when reth's EL-sync makes NO forward progress for this long. An
@@ -92,12 +100,8 @@ struct RethCommitteeSource<Provider, EvmConfig> {
 
 impl<Provider, EvmConfig> CommitteeSource for RethCommitteeSource<Provider, EvmConfig>
 where
-    Provider: StateProviderFactory
-        + HeaderProvider<Header = Header>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+    Provider:
+        StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
     EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
 {
     fn scheme_at(&self, epoch: u64, at_hash: B256) -> eyre::Result<BlsScheme> {
@@ -235,7 +239,8 @@ fn read_geometry<Provider, EvmConfig>(
     at: B256,
 ) -> eyre::Result<Option<(u64, u32)>>
 where
-    Provider: StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
+    Provider:
+        StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
     EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
 {
     match reader.scheduled_dpos_activation(at)? {
@@ -246,6 +251,19 @@ where
             Ok(Some((activation, interval)))
         }
     }
+}
+
+/// Supervisor lap stop: the cursor height at which the FINALIZED tier
+/// (`cursor − K`, two-tier FCU) sits EXACTLY on the last block of the
+/// checkpoint's epoch (`next boundary − 1`). That block is the only valid
+/// promotion anchor: the synthesized anchor OrderBlock at it is the
+/// "starting epoch block" the per-epoch Inline requires, and the
+/// EpochTransition boundary-resume rule bootstraps the NEXT epoch from it —
+/// exactly the epoch the new member belongs to. Always strictly past the
+/// checkpoint (`epoch_of(checkpoint)` puts the next boundary above it, and
+/// `K ≥ 1`), so re-laps cannot spin.
+fn next_lap_stop(checkpoint: u64, activation: u64, interval: u32) -> u64 {
+    activation + (epoch_of_block(checkpoint, interval, activation) + 1) * interval as u64 - 1 + K
 }
 
 /// Namespace type for the launch entry point.
@@ -449,18 +467,48 @@ impl CertFollowLayer {
             highest_live_seen: checkpoint_height,
             l1_checkpoint: cfg.l1_checkpoint_hash,
             starvation_jump: follow::STARVATION_JUMP,
+            stop_at: cfg
+                .stop_at_next_boundary
+                .then(|| next_lap_stop(checkpoint_height, activation, interval)),
         };
 
         // The loop handle IS the engine handle: fail-closed — on any loop
         // error cancel the shared shutdown so the host brings the node down.
+        // A boundary stop (supervisor lap mode) is the one NON-fatal exit: it
+        // reports the stop point and leaves the token alone.
+        let (stopped_tx, stopped_rx) = tokio::sync::oneshot::channel();
         let consensus_handle = ctx.with_label("follow_loop").spawn(move |_| async move {
             match follow_loop.run().await {
-                Ok(()) => warn!("cert-follower loop exited cleanly (unexpected)"),
+                Ok(exit @ follow::FollowExit::StoppedAt { .. }) => {
+                    let _ = stopped_tx.send(exit);
+                    return;
+                }
                 Err(e) => error!(error = ?e, "cert-follower loop failed (fail-closed)"),
             }
             shutdown.cancel();
         });
 
-        Ok(CertFollowHandle { consensus_handle })
+        Ok(CertFollowHandle {
+            consensus_handle,
+            stopped_rx,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_lap_stop;
+
+    #[test]
+    fn lap_stop_puts_the_finalized_anchor_on_boundary_minus_one() {
+        // act=64, interval=32, K=3: checkpoint mid-epoch-0 (70) → next
+        // boundary 96 → stop at 98 (finalized anchor = 98−K = 95 = the last
+        // block of epoch 0, the only valid promotion anchor).
+        assert_eq!(next_lap_stop(70, 64, 32), 98);
+        // Checkpoint at boundary−1 (95) is still epoch 0 → same stop.
+        assert_eq!(next_lap_stop(95, 64, 32), 98);
+        // Checkpoint ON the boundary (96 = epoch 1) → anchor 127 → stop 130:
+        // strictly past any epoch-1 checkpoint (no re-lap spin).
+        assert_eq!(next_lap_stop(96, 64, 32), 130);
     }
 }

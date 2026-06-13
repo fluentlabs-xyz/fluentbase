@@ -161,8 +161,8 @@ impl EthKeystoreV4 {
         if self.crypto.cipher.message.len() != SECRET_BYTES {
             return Err(Error::InvalidLength);
         }
-        let mut cipher = Aes128Ctr::new_from_slices(&dk[0..16], iv)
-            .map_err(|_| Error::InvalidKeystore)?;
+        let mut cipher =
+            Aes128Ctr::new_from_slices(&dk[0..16], iv).map_err(|_| Error::InvalidKeystore)?;
         let mut secret = Zeroizing::new(self.crypto.cipher.message.clone());
         cipher.apply_keystream(secret.as_mut_slice());
 
@@ -184,9 +184,8 @@ impl EthKeystoreV4 {
                 },
             ) => {
                 let log_n = ilog2_u32(*n).ok_or(Error::InvalidKeystore)?;
-                let params =
-                    scrypt::Params::new(log_n, *r, *p, *dklen as usize)
-                        .map_err(|_| Error::InvalidKeystore)?;
+                let params = scrypt::Params::new(log_n, *r, *p, *dklen as usize)
+                    .map_err(|_| Error::InvalidKeystore)?;
                 let mut out = vec![0u8; *dklen as usize];
                 scrypt::scrypt(password, salt, &params, &mut out)
                     .map_err(|_| Error::KeystoreKdf)?;
