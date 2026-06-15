@@ -30,9 +30,6 @@ struct RuntimeUpgraded {
 struct ContractRecompiled {
     #[indexed]
     target_address: Address,
-    #[indexed]
-    genesis_hash: B256,
-    genesis_version: String,
     code_hash: B256,
 }
 
@@ -58,7 +55,7 @@ trait RuntimeUpgradeTr {
     );
 
     /// Recompile already deployed WASM runtime smart contract
-    fn recompile(&mut self, target_address: Address, genesis_hash: B256, genesis_version: String);
+    fn recompile(&mut self, target_address: Address);
 
     /// Change contract owner
     fn change_owner(&mut self, new_owner: Address);
@@ -92,8 +89,8 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         .unwrap();
     }
 
-    #[function_id("recompile(address,uint256,string)")]
-    fn recompile(&mut self, target_address: Address, genesis_hash: B256, genesis_version: String) {
+    #[function_id("recompile(address)")]
+    fn recompile(&mut self, target_address: Address) {
         _ = self.only_owner();
 
         let Ok(code_size) = self.sdk.code_size(&target_address).ok() else {
@@ -117,8 +114,6 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         let code_hash = self.compile_and_install(target_address, wasm_bytecode);
         ContractRecompiled {
             target_address,
-            genesis_hash,
-            genesis_version,
             code_hash,
         }
         .emit(&mut self.sdk)
@@ -245,10 +240,8 @@ mod tests {
     #[test]
     fn test_recompile_encoding() {
         let target = address!("2222222222222222222222222222222222222222");
-        let genesis_hash = B256::from([0xab; 32]);
-        let genesis_version = "v1.0.0".to_string();
 
-        let call = RecompileCall::new((target, genesis_hash, genesis_version.clone()));
+        let call = RecompileCall::new((target,));
         let encoded = call.encode();
 
         assert!(encoded.len() >= 4);
@@ -256,8 +249,6 @@ mod tests {
 
         let decoded = RecompileCall::decode(&&encoded[4..]).expect("failed to decode");
         assert_eq!(decoded.0 .0, target, "target_address mismatch");
-        assert_eq!(decoded.0 .1, genesis_hash, "genesis_hash mismatch");
-        assert_eq!(decoded.0 .2, genesis_version, "genesis_version mismatch");
     }
 
     #[test]
@@ -268,7 +259,7 @@ mod tests {
         );
         assert_eq!(
             ContractRecompiled::SIGNATURE,
-            "ContractRecompiled(address,bytes32,string,bytes32)"
+            "ContractRecompiled(address,bytes32)"
         );
         assert_ne!(RuntimeUpgraded::SELECTOR, ContractRecompiled::SELECTOR);
     }
