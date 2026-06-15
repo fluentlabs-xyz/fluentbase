@@ -27,6 +27,13 @@ struct RuntimeUpgraded {
 }
 
 #[derive(Event)]
+struct ContractRecompiled {
+    #[indexed]
+    target_address: Address,
+    code_hash: B256,
+}
+
+#[derive(Event)]
 struct OwnerChanged {
     new_owner: Address,
 }
@@ -46,6 +53,9 @@ trait RuntimeUpgradeTr {
         genesis_version: String,
         wasm_bytecode: Bytes,
     );
+
+    /// Recompile already deployed WASM runtime smart contract
+    fn recompile(&mut self, target_address: Address);
 
     /// Change contract owner
     fn change_owner(&mut self, new_owner: Address);
@@ -68,37 +78,42 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         wasm_bytecode: Bytes,
     ) {
         _ = self.only_owner();
-        if !wasm_bytecode.starts_with(&WASM_MAGIC_BYTES) {
-            panic!("runtime-upgrade: malformed wasm bytecode");
-        }
-        let Ok(RwasmCompilationResult { rwasm_module, .. }) =
-            compile_rwasm_maybe_system(&target_address, &wasm_bytecode)
-        else {
-            panic!("runtime-upgrade: failed to compile bytecode");
-        };
-        let rwasm_bytecode = rwasm_module.serialize();
-
-        let mut buffer = vec![0u8; encode::upgrade_runtime_size_hint(rwasm_bytecode.len())];
-        encode::upgrade_runtime_into(&mut &mut buffer[..], &target_address, &rwasm_bytecode);
-        let (_fuel_consumed, _fuel_refunded, exit_code) = self.sdk.native_exec(
-            SYSCALL_ID_UPGRADE_RUNTIME,
-            Cow::Owned(buffer),
-            None,
-            STATE_MAIN,
-        );
-
-        if exit_code != ExitCode::Ok.into_i32() {
-            panic!("runtime-upgrade: failed to upgrade");
-        }
-
-        let Ok(code_hash) = self.sdk.code_hash(&target_address).ok() else {
-            panic!("runtime-upgrade: can't obtain code hash");
-        };
-
+        let code_hash = self.compile_and_install(target_address, wasm_bytecode);
         RuntimeUpgraded {
             target_address,
             genesis_hash,
             genesis_version,
+            code_hash,
+        }
+        .emit(&mut self.sdk)
+        .unwrap();
+    }
+
+    #[function_id("recompile(address)")]
+    fn recompile(&mut self, target_address: Address) {
+        _ = self.only_owner();
+
+        let Ok(code_size) = self.sdk.code_size(&target_address).ok() else {
+            panic!("runtime-upgrade: can't obtain code size");
+        };
+        if code_size == 0 {
+            panic!("runtime-upgrade: empty target bytecode");
+        }
+
+        let Ok(wasm_bytecode) = self
+            .sdk
+            .code_copy(&target_address, 0, code_size as u64)
+            .ok()
+        else {
+            panic!("runtime-upgrade: can't load target bytecode");
+        };
+        if wasm_bytecode.len() != code_size as usize {
+            panic!("runtime-upgrade: incomplete target bytecode");
+        }
+
+        let code_hash = self.compile_and_install(target_address, wasm_bytecode);
+        ContractRecompiled {
+            target_address,
             code_hash,
         }
         .emit(&mut self.sdk)
@@ -138,6 +153,37 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
 }
 
 impl<SDK: SharedAPI> App<SDK> {
+    fn compile_and_install(&mut self, target_address: Address, wasm_bytecode: Bytes) -> B256 {
+        if !wasm_bytecode.starts_with(&WASM_MAGIC_BYTES) {
+            panic!("runtime-upgrade: malformed wasm bytecode");
+        }
+        let Ok(RwasmCompilationResult { rwasm_module, .. }) =
+            compile_rwasm_maybe_system(&target_address, &wasm_bytecode)
+        else {
+            panic!("runtime-upgrade: failed to compile bytecode");
+        };
+        let rwasm_bytecode = rwasm_module.serialize();
+
+        let mut buffer = vec![0u8; encode::upgrade_runtime_size_hint(rwasm_bytecode.len())];
+        encode::upgrade_runtime_into(&mut &mut buffer[..], &target_address, &rwasm_bytecode);
+        let (_fuel_consumed, _fuel_refunded, exit_code) = self.sdk.native_exec(
+            SYSCALL_ID_UPGRADE_RUNTIME,
+            Cow::Owned(buffer),
+            None,
+            STATE_MAIN,
+        );
+
+        if exit_code != ExitCode::Ok.into_i32() {
+            panic!("runtime-upgrade: failed to upgrade");
+        }
+
+        let Ok(code_hash) = self.sdk.code_hash(&target_address).ok() else {
+            panic!("runtime-upgrade: can't obtain code hash");
+        };
+
+        code_hash
+    }
+
     fn only_owner(&self) -> Address {
         let mut owner = self.owner_accessor().get(&self.sdk);
         if owner == Address::ZERO {
@@ -189,5 +235,32 @@ mod tests {
         assert_eq!(decoded.0 .1, genesis_hash, "genesis_hash mismatch");
         assert_eq!(decoded.0 .2, genesis_version, "genesis_version mismatch");
         assert_eq!(decoded.0 .3, wasm_bytecode, "wasm_bytecode mismatch");
+    }
+
+    #[test]
+    fn test_recompile_encoding() {
+        let target = address!("2222222222222222222222222222222222222222");
+
+        let call = RecompileCall::new((target,));
+        let encoded = call.encode();
+
+        assert!(encoded.len() >= 4);
+        println!("Encoded call data: {}", hex::encode(&encoded));
+
+        let decoded = RecompileCall::decode(&&encoded[4..]).expect("failed to decode");
+        assert_eq!(decoded.0 .0, target, "target_address mismatch");
+    }
+
+    #[test]
+    fn test_upgrade_and_recompile_event_signatures_are_distinct() {
+        assert_eq!(
+            RuntimeUpgraded::SIGNATURE,
+            "RuntimeUpgraded(address,bytes32,string,bytes32)"
+        );
+        assert_eq!(
+            ContractRecompiled::SIGNATURE,
+            "ContractRecompiled(address,bytes32)"
+        );
+        assert_ne!(RuntimeUpgraded::SELECTOR, ContractRecompiled::SELECTOR);
     }
 }
