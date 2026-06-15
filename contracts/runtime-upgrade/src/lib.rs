@@ -27,6 +27,16 @@ struct RuntimeUpgraded {
 }
 
 #[derive(Event)]
+struct ContractRecompiled {
+    #[indexed]
+    target_address: Address,
+    #[indexed]
+    genesis_hash: B256,
+    genesis_version: String,
+    code_hash: B256,
+}
+
+#[derive(Event)]
 struct OwnerChanged {
     new_owner: Address,
 }
@@ -71,7 +81,15 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         wasm_bytecode: Bytes,
     ) {
         _ = self.only_owner();
-        self.compile_upgrade_and_emit(target_address, genesis_hash, genesis_version, wasm_bytecode);
+        let code_hash = self.compile_and_install(target_address, wasm_bytecode);
+        RuntimeUpgraded {
+            target_address,
+            genesis_hash,
+            genesis_version,
+            code_hash,
+        }
+        .emit(&mut self.sdk)
+        .unwrap();
     }
 
     #[function_id("recompile(address,uint256,string)")]
@@ -96,7 +114,15 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
             panic!("runtime-upgrade: incomplete target bytecode");
         }
 
-        self.compile_upgrade_and_emit(target_address, genesis_hash, genesis_version, wasm_bytecode);
+        let code_hash = self.compile_and_install(target_address, wasm_bytecode);
+        ContractRecompiled {
+            target_address,
+            genesis_hash,
+            genesis_version,
+            code_hash,
+        }
+        .emit(&mut self.sdk)
+        .unwrap();
     }
 
     #[function_id("changeOwner(address)")]
@@ -132,13 +158,7 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
 }
 
 impl<SDK: SharedAPI> App<SDK> {
-    fn compile_upgrade_and_emit(
-        &mut self,
-        target_address: Address,
-        genesis_hash: B256,
-        genesis_version: String,
-        wasm_bytecode: Bytes,
-    ) {
+    fn compile_and_install(&mut self, target_address: Address, wasm_bytecode: Bytes) -> B256 {
         if !wasm_bytecode.starts_with(&WASM_MAGIC_BYTES) {
             panic!("runtime-upgrade: malformed wasm bytecode");
         }
@@ -166,14 +186,7 @@ impl<SDK: SharedAPI> App<SDK> {
             panic!("runtime-upgrade: can't obtain code hash");
         };
 
-        RuntimeUpgraded {
-            target_address,
-            genesis_hash,
-            genesis_version,
-            code_hash,
-        }
-        .emit(&mut self.sdk)
-        .unwrap();
+        code_hash
     }
 
     fn only_owner(&self) -> Address {
@@ -245,5 +258,18 @@ mod tests {
         assert_eq!(decoded.0 .0, target, "target_address mismatch");
         assert_eq!(decoded.0 .1, genesis_hash, "genesis_hash mismatch");
         assert_eq!(decoded.0 .2, genesis_version, "genesis_version mismatch");
+    }
+
+    #[test]
+    fn test_upgrade_and_recompile_event_signatures_are_distinct() {
+        assert_eq!(
+            RuntimeUpgraded::SIGNATURE,
+            "RuntimeUpgraded(address,bytes32,string,bytes32)"
+        );
+        assert_eq!(
+            ContractRecompiled::SIGNATURE,
+            "ContractRecompiled(address,bytes32,string,bytes32)"
+        );
+        assert_ne!(RuntimeUpgraded::SELECTOR, ContractRecompiled::SELECTOR);
     }
 }
