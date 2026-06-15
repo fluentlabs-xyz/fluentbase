@@ -1,4 +1,6 @@
 mod fixtures;
+#[cfg(test)]
+mod heavy_tests;
 mod inspector;
 pub mod merkle_trie;
 mod runner;

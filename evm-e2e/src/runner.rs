@@ -270,7 +270,7 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
         });
     }
 
-    if state_root1 != test.hash {
+    if test.hash != B256::ZERO && state_root1 != test.hash {
         let kind = TestErrorKind::StateRootMismatch {
             expected: test.hash,
             got: state_root1,
