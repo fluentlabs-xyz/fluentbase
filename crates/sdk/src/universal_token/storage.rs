@@ -42,7 +42,10 @@ impl TokenNameOrSymbol {
         debug_assert!(value.len() <= B256::len_bytes());
         let mut bytes = B256::ZERO;
         let len = core::cmp::min(B256::len_bytes(), value.len());
-        bytes[..len].copy_from_slice(value.as_bytes());
+        // Slice the source too: when value is longer than 32 bytes, `len` is
+        // clamped to 32 but `value.as_bytes()` is not, so copy_from_slice would
+        // panic on the length mismatch. Truncate to the first `len` bytes.
+        bytes[..len].copy_from_slice(&value.as_bytes()[..len]);
         Self { bytes }
     }
 

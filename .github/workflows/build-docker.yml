@@ -48,20 +48,34 @@ jobs:
       - name: Extract metadata
         id: meta
         shell: bash
+        # All ${{ }} values are passed through env and referenced as quoted shell
+        # vars. GitHub substitutes ${{ }} as raw text BEFORE the shell runs, so
+        # interpolating free-form inputs (docker_tag, branch) or refs (ref_name)
+        # directly into run: allows shell injection. env: avoids that.
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          GH_SHA: ${{ github.sha }}
+          GH_EVENT_NAME: ${{ github.event_name }}
+          GH_REF_TYPE: ${{ github.ref_type }}
+          GH_REF_NAME: ${{ github.ref_name }}
+          INPUT_DOCKER_TAG: ${{ inputs.docker_tag }}
+          INPUT_BRANCH: ${{ inputs.branch }}
+          INPUT_PUSH_LATEST: ${{ inputs.push_latest }}
         run: |
           set -euo pipefail
-          
-          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-          EVENT="${{ github.event_name }}"
-          REF_TYPE="${{ github.ref_type }}"
-          REF_NAME="${{ github.ref_name }}"
-          
+
+          SHA_SHORT=$(echo "${GH_SHA}" | cut -c1-7)
+          IMAGE="${REGISTRY}/${IMAGE_NAME}"
+          EVENT="${GH_EVENT_NAME}"
+          REF_TYPE="${GH_REF_TYPE}"
+          REF_NAME="${GH_REF_NAME}"
+
           # --- Determine version and SDK args ---
           if [[ "$EVENT" == "workflow_dispatch" ]]; then
-          VERSION="${{ inputs.docker_tag }}"
-          if [[ -n "${{ inputs.branch }}" ]]; then
-              SDK_VERSION_BRANCH="${{ inputs.branch }}"
+          VERSION="${INPUT_DOCKER_TAG}"
+          if [[ -n "${INPUT_BRANCH}" ]]; then
+              SDK_VERSION_BRANCH="${INPUT_BRANCH}"
               SDK_VERSION_TAG=""
           else
               SDK_VERSION_BRANCH=""
@@ -86,9 +100,8 @@ jobs:
           if [[ "$IS_RC" != "true" ]] && { [[ "$EVENT" == "workflow_dispatch" && "${{ inputs.push_latest }}" == "true" ]] || [[ "$REF_TYPE" == "tag" ]]; }; then
           PUSH_LATEST=true
           fi
-
           TAGS="${IMAGE}:${VERSION}"
-          if [[ "$PUSH_LATEST" == "true" ]]; then
+          if [[ ("$EVENT" == "workflow_dispatch" && "${INPUT_PUSH_LATEST}" == "true") || "$REF_TYPE" == "tag" ]]; then
           TAGS+=",${IMAGE}:latest"
           fi
           
