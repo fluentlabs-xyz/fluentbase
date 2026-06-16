@@ -52,10 +52,15 @@ fn eth_call_b7ab4db5_halts_with_malformed_builtin_params() {
     use revm_statetest_types::{SpecName, TestSuite};
     use std::{fs, path::Path};
 
-    let path = Path::new("./fixtures/testnet_eth_call_b7ab4db5_malformed_builtin_params.json");
-    let mut fixture: serde_json::Value = serde_json::from_str(&fs::read_to_string(path).unwrap())
-        .expect("fixture should deserialize as json");
-    resolve_externalized_bytecodes(&mut fixture, path.parent().unwrap());
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures/testnet_eth_call_b7ab4db5_malformed_builtin_params.json");
+    let mut fixture: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).expect("fixture should be readable"))
+            .expect("fixture should deserialize as json");
+    resolve_externalized_bytecodes(
+        &mut fixture,
+        path.parent().expect("fixture path should have a parent"),
+    );
     let suite: TestSuite = serde_json::from_value(fixture).expect("fixture should parse");
     let (name, unit) = suite
         .0
