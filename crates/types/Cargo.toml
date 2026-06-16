@@ -19,8 +19,6 @@ strum_macros = { workspace = true }
 hashbrown = { workspace = true }
 bincode = { workspace = true, features = ["alloc", "serde", "derive"] }
 paste = { workspace = true }
-fluentbase-codec = { workspace = true }
-fluentbase-codec-derive = { workspace = true }
 
 [features]
 default = ["std"]
