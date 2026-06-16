@@ -347,3 +347,189 @@ impl CertScheme for CombinedScheme {
         VoteScheme::certificate_codec_config_unbounded()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{beacon::seed_namespace, fluent_namespace, keys::ValidatorBlsKeypair};
+    use commonware_codec::{DecodeExt as _, Encode as _};
+    use commonware_consensus::{
+        simplex::types::Proposal,
+        types::{Epoch, Round, View},
+    };
+    use commonware_cryptography::{
+        bls12381::dkg::deal_anonymous, ed25519::PrivateKey as Ed25519PrivateKey,
+        sha256::Digest as Sha256Digest, Signer as _,
+    };
+    use commonware_math::algebra::Random as _;
+    use commonware_parallel::Sequential;
+    use commonware_utils::{ordered::BiMap, N3f1, TryCollect as _};
+    use rand_08::rngs::StdRng;
+    use rand_core::SeedableRng as _;
+
+    const NS_CHAIN: u64 = 20994;
+
+    /// `n` combined-scheme signers over one committee sharing the same public
+    /// polynomial — each holds its own multisig key and the matching threshold
+    /// share (share index == its committee Participant index).
+    fn committee(n: usize) -> (Vec<CombinedScheme>, Vec<u8>) {
+        let mut rng = StdRng::seed_from_u64(7);
+        let peer_sks: Vec<Ed25519PrivateKey> = (0..n)
+            .map(|_| Ed25519PrivateKey::random(&mut rng))
+            .collect();
+        let bls_kps: Vec<ValidatorBlsKeypair> = (0..n)
+            .map(|_| ValidatorBlsKeypair::generate(&mut rng))
+            .collect();
+        let bimap: BiMap<PeerPubkey, crate::BlsPubkey> = peer_sks
+            .iter()
+            .zip(bls_kps.iter())
+            .map(|(p, b)| {
+                (
+                    p.public_key(),
+                    crate::BlsPubkey::decode(b.public_bytes().as_slice()).unwrap(),
+                )
+            })
+            .try_collect()
+            .unwrap();
+
+        let (sharing, shares) = deal_anonymous::<MinSig, N3f1>(
+            &mut rng,
+            Default::default(),
+            (n as u32).try_into().unwrap(),
+        );
+        let ns = fluent_namespace(NS_CHAIN);
+        let seed_ns = seed_namespace(&ns);
+
+        let schemes = bls_kps
+            .iter()
+            .map(|kp| {
+                let vote =
+                    VoteScheme::signer(&ns, bimap.clone(), kp.secret().clone()).expect("member");
+                let me = vote.me().expect("signer");
+                let share = shares.iter().find(|s| s.index == me).unwrap().clone();
+                CombinedScheme::new(vote, Some((sharing.clone(), Some(share), seed_ns.clone())))
+            })
+            .collect();
+        (schemes, seed_ns)
+    }
+
+    fn proposal() -> Proposal<Sha256Digest> {
+        Proposal::new(
+            Round::new(Epoch::new(1), View::new(9)),
+            View::new(8),
+            Sha256Digest::decode([7u8; 32].as_slice()).unwrap(),
+        )
+    }
+
+    fn assemble_over<'a>(
+        schemes: &[CombinedScheme],
+        subject: Subject<'a, Sha256Digest>,
+    ) -> CombinedCertificate {
+        let mut rng = StdRng::seed_from_u64(1);
+        let atts: Vec<_> = schemes
+            .iter()
+            .map(|s| s.sign(subject).expect("sign"))
+            .collect();
+        // every signer's attestation must verify
+        for a in &atts {
+            assert!(schemes[0].verify_attestation(&mut rng, subject, a, &Sequential));
+        }
+        schemes[0]
+            .assemble::<_, N3f1>(atts, &Sequential)
+            .expect("assemble")
+    }
+
+    #[test]
+    fn notarize_and_finalize_recover_byte_identical_seed() {
+        let (schemes, _) = committee(4);
+        let p = proposal();
+        let cert_n = assemble_over(&schemes, Subject::Notarize { proposal: &p });
+        let cert_f = assemble_over(&schemes, Subject::Finalize { proposal: &p });
+
+        let seed_n = cert_n.seed().expect("notarization carries a seed");
+        let seed_f = cert_f.seed().expect("finalization carries a seed");
+        assert_eq!(
+            seed_n.encode(),
+            seed_f.encode(),
+            "seed recovered from the notarization cert must be byte-identical to the finalization cert"
+        );
+
+        let mut rng = StdRng::seed_from_u64(2);
+        assert!(schemes[0].verify_certificate::<_, Sha256Digest, N3f1>(
+            &mut rng,
+            Subject::Notarize { proposal: &p },
+            &cert_n,
+            &Sequential
+        ));
+    }
+
+    #[test]
+    fn nullify_certificate_has_no_seed() {
+        let (schemes, _) = committee(4);
+        let round = Round::new(Epoch::new(1), View::new(9));
+        let cert = assemble_over(&schemes, Subject::Nullify { round });
+        assert!(
+            cert.seed().is_none(),
+            "nullify carries the absent-seed sentinel"
+        );
+        let mut rng = StdRng::seed_from_u64(3);
+        assert!(schemes[0].verify_certificate::<_, Sha256Digest, N3f1>(
+            &mut rng,
+            Subject::Nullify { round },
+            &cert,
+            &Sequential
+        ));
+    }
+
+    #[test]
+    fn withheld_seed_partial_makes_notarize_attestation_invalid() {
+        let (schemes, _) = committee(4);
+        let p = proposal();
+        let subject = Subject::Notarize { proposal: &p };
+        let mut att = schemes[0].sign(subject).expect("sign");
+        let mut combined = *att.signature.get().unwrap();
+        combined.seed = absent_seed();
+        att.signature = combined.into();
+        let mut rng = StdRng::seed_from_u64(4);
+        assert!(
+            !schemes[0].verify_attestation(&mut rng, subject, &att, &Sequential),
+            "a Notarize without a valid seed partial must be rejected"
+        );
+    }
+
+    #[test]
+    fn fallback_scheme_is_pure_multisig() {
+        let mut rng = StdRng::seed_from_u64(7);
+        let peer_sks: Vec<Ed25519PrivateKey> = (0..4)
+            .map(|_| Ed25519PrivateKey::random(&mut rng))
+            .collect();
+        let bls_kps: Vec<ValidatorBlsKeypair> = (0..4)
+            .map(|_| ValidatorBlsKeypair::generate(&mut rng))
+            .collect();
+        let bimap: BiMap<PeerPubkey, crate::BlsPubkey> = peer_sks
+            .iter()
+            .zip(bls_kps.iter())
+            .map(|(p, b)| {
+                (
+                    p.public_key(),
+                    crate::BlsPubkey::decode(b.public_bytes().as_slice()).unwrap(),
+                )
+            })
+            .try_collect()
+            .unwrap();
+        let ns = fluent_namespace(NS_CHAIN);
+        let schemes: Vec<CombinedScheme> = bls_kps
+            .iter()
+            .map(|kp| {
+                let vote = VoteScheme::signer(&ns, bimap.clone(), kp.secret().clone()).unwrap();
+                CombinedScheme::new(vote, None)
+            })
+            .collect();
+        let p = proposal();
+        let cert = assemble_over(&schemes, Subject::Notarize { proposal: &p });
+        assert!(
+            cert.seed().is_none(),
+            "a fallback (beacon=None) cert carries no seed"
+        );
+    }
+}

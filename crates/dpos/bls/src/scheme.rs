@@ -7,7 +7,9 @@
 //! (the on-chain signer-index resolution in `Staking.sol`) MUST mirror
 //! this ordering.
 
-use commonware_cryptography::bls12381::primitives::{group::Share, sharing::Sharing, variant::MinSig};
+use commonware_cryptography::bls12381::primitives::{
+    group::Share, sharing::Sharing, variant::MinSig,
+};
 use commonware_utils::{ordered::BiMap, TryCollect};
 
 use crate::{

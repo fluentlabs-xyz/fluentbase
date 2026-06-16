@@ -29,7 +29,8 @@ use crate::BlsSignature;
 const BEACON_SEED_SUFFIX: &[u8] = b"_BEACON_SEED";
 
 /// The group public key `PK_epoch` a verifier checks recovered seeds against.
-pub type GroupPublic = <MinSig as commonware_cryptography::bls12381::primitives::variant::Variant>::Public;
+pub type GroupPublic =
+    <MinSig as commonware_cryptography::bls12381::primitives::variant::Variant>::Public;
 
 /// The seed signing namespace for a chain: `chain_namespace ‖ "_BEACON_SEED"`.
 pub fn seed_namespace(chain_namespace: &[u8]) -> Vec<u8> {
@@ -48,7 +49,11 @@ fn seed_message(round: Round) -> Vec<u8> {
 }
 
 /// Partial-sign the seed for `round` with this member's DKG share.
-pub fn sign_seed_partial(share: &Share, namespace: &[u8], round: Round) -> PartialSignature<MinSig> {
+pub fn sign_seed_partial(
+    share: &Share,
+    namespace: &[u8],
+    round: Round,
+) -> PartialSignature<MinSig> {
     threshold::sign_message::<MinSig>(share, namespace, &seed_message(round))
 }
 
