@@ -128,6 +128,13 @@ unsafe impl core::alloc::GlobalAlloc for BlockListAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: core::alloc::Layout) {
+        // Mirror the zero-size guard in `alloc`: a zero-size allocation returns
+        // the `align` sentinel (a small integer), not a real payload pointer.
+        // Feeding that to `dealloc_impl` would underflow `ptr - size_of::<usize>()`
+        // and read/write through a wild address. Nothing to free for a ZST.
+        if _layout.size() == 0 {
+            return;
+        }
         dealloc_impl(ptr);
     }
 }

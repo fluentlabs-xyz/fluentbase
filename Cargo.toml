@@ -106,7 +106,7 @@ fluentbase-types = { path = "./crates/types", default-features = false, version 
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 # rwasm
-rwasm = { version = "0.4.3", default-features = false }
+rwasm = { version = "0.4.4", default-features = false }
 
 # alloy
 alloy-primitives = { version = "1.5.6", default-features = false, features = ["map-foldhash", "sha3-keccak", "rlp"] }
