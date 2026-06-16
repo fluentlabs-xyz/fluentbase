@@ -15,7 +15,7 @@
 //! provides `Relay` (inline.rs:471); `FluentApp` does not.
 
 use crate::{
-    beacon::seed_actor::FinalizedFeed,
+    beacon::types::Seed,
     digest::Digest,
     executor, extra_data,
     order_block::{result_target, OrderBlock, ResultTarget, TX_BYTE_BUDGET},
@@ -149,13 +149,6 @@ pub struct FluentApp<XC, A> {
     /// Ordering-chain genesis height ([`crate::order_block::anchor_order_block`]);
     /// origin of the `result_target` pre-activation window.
     anchor_height: u64,
-    /// Beacon seed trigger: notified with a block's height the moment this node
-    /// is about to NOTARIZE it (verify→true, or its own proposal). The seed
-    /// actor then signs+broadcasts this node's threshold partial for that
-    /// height, so partials accumulate during round-1 (Notarize) and `seed(h)`
-    /// is recovered by the time `h` finalizes — sign-at-notarize, NOT
-    /// sign-after-finalize. `None` when the beacon is not configured.
-    seed_feed: Option<FinalizedFeed>,
 }
 
 impl<XC: Clone, A> Clone for FluentApp<XC, A> {
@@ -171,7 +164,6 @@ impl<XC: Clone, A> Clone for FluentApp<XC, A> {
             fee_recipient: self.fee_recipient,
             target_gas_limit: self.target_gas_limit,
             anchor_height: self.anchor_height,
-            seed_feed: self.seed_feed.clone(),
         }
     }
 }
@@ -192,7 +184,6 @@ where
         assembler: Arc<A>,
         fee_recipient: Address,
         target_gas_limit: u64,
-        seed_feed: Option<FinalizedFeed>,
     ) -> Self {
         let anchor_height = genesis.height;
         Self {
@@ -206,7 +197,6 @@ where
             fee_recipient,
             target_gas_limit,
             anchor_height,
-            seed_feed,
         }
     }
 
@@ -290,12 +280,6 @@ where
             .as_secs()
             .max(parent.timestamp + 1);
         let txs = self.assembler.assemble(height, gas_limit, TX_BYTE_BUDGET);
-
-        // About to propose (and notarize) this height: trigger our threshold
-        // seed partial now so it accumulates during round-1, not after finalize.
-        if let Some(feed) = &self.seed_feed {
-            feed.notify(height);
-        }
 
         Some(OrderBlock {
             parent: parent.digest(),
@@ -407,17 +391,6 @@ where
                 })
             }
         };
-
-        // A true verdict means this node will NOTARIZE `block`: trigger our
-        // threshold seed partial for its height now (sign-at-notarize), so
-        // partials accumulate during round-1 and seed(h) is recovered by
-        // finalize. Harmless if a later view supersedes this block (the partial
-        // is just unused; peers dedup by signer).
-        if verdict {
-            if let Some(feed) = &self.seed_feed {
-                feed.notify(block.height);
-            }
-        }
         verdict
     }
 }
@@ -523,6 +496,7 @@ pub(crate) async fn derive_with_visibility_retry<C, D>(
     deriver: &D,
     order: &OrderBlock,
     parent_hash: B256,
+    seed: Option<Seed>,
 ) -> eyre::Result<D::Derived>
 where
     C: commonware_runtime::Clock,
@@ -532,7 +506,10 @@ where
     const DEADLINE: Duration = Duration::from_secs(10);
     let deadline = ctx.current() + DEADLINE;
     loop {
-        match deriver.derive_and_execute(order.clone(), parent_hash).await {
+        match deriver
+            .derive_and_execute(order.clone(), parent_hash, seed.clone())
+            .await
+        {
             Err(e)
                 if e.downcast_ref::<ParentHeaderMissing>().is_some()
                     && ctx.current() < deadline =>
@@ -558,6 +535,7 @@ pub trait DerivedBlockBuilder: Send + Sync + 'static {
         &self,
         order: OrderBlock,
         parent_evm_hash: B256,
+        seed: Option<Seed>,
     ) -> impl std::future::Future<Output = eyre::Result<Self::Derived>> + Send;
 }
 
@@ -615,7 +593,6 @@ mod tests {
             Arc::new(NoTxs),
             Address::ZERO,
             30_000_000,
-            None,
         )
     }
 

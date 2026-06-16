@@ -87,11 +87,10 @@ pub fn run_local_dkg<R: CryptoRngCore>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::beacon::{
-        outcome::group_public_key,
-        seed::{recover_seed, seed_namespace, sign_seed_partial, verify_seed},
-    };
+    use crate::beacon::outcome::group_public_key;
+    use commonware_consensus::types::{Epoch, Round, View};
     use commonware_math::algebra::Random as _;
+    use fluentbase_bls::beacon::{recover_seed, seed_namespace, sign_seed_partial, verify_seed};
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng as _;
 
@@ -107,17 +106,17 @@ mod tests {
             run_local_dkg(&mut rng, b"FLUENT_DPOS_V1_test", 0, &keys, &keys).expect("dkg");
         assert_eq!(shares.len(), keys.len(), "every player gets a share");
 
-        // The DKG group key drives the per-height seed: sign with the DKG shares,
+        // The DKG group key drives the per-round seed: sign with the DKG shares,
         // recover, and verify against PK_epoch — the full DKG → seed → verify path.
         let ns = seed_namespace(b"FLUENT_DPOS_V1_test");
-        let height = 100u64;
+        let round = Round::new(Epoch::new(0), View::new(100));
         let partials: Vec<_> = shares
             .values()
-            .map(|s| sign_seed_partial(s, &ns, height))
+            .map(|s| sign_seed_partial(s, &ns, round))
             .collect();
-        let seed = recover_seed(outcome.public(), &partials, height).expect("recover seed");
+        let sig = recover_seed(outcome.public(), &partials).expect("recover seed");
         assert!(
-            verify_seed(group_public_key(&outcome), &ns, &seed),
+            verify_seed(group_public_key(&outcome), &ns, round, &sig),
             "seed from DKG shares must verify against the DKG group key PK_epoch"
         );
     }

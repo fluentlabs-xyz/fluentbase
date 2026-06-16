@@ -7,8 +7,7 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
-    sync::{Arc, Mutex},
-    time::Duration,
+    sync::Arc,
 };
 
 use commonware_runtime::tokio::Context;
@@ -536,35 +535,20 @@ where
     // Deferred-execution collaborators, all over the node's own provider/EVM:
     // derive (reth-evm BlockBuilder), the derived-chain view, and the
     // pool-backed ordering assembler.
-    // Randomness beacon (Decision C4): when a sharing is configured, build the
-    // shared seed cache, attach it to the deriver (which reads seed(h) for
-    // prev_randao), and hand the same cache + this node's share to the layer so
-    // its seed actor writes recovered seeds into it. Absent → gated fallback.
+    // Randomness beacon: when a sharing is configured, give the deriver the
+    // epoch key (PK_epoch + seed namespace) so it can verify a cert-recovered
+    // seed, and hand the threshold material to the layer so every per-epoch
+    // combined scheme emits the seed partial. Absent → gated fallback.
     let deriver_base =
         crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
     let (deriver, beacon_launch) = match load_beacon(cfg)? {
         Some((share, sharing)) => {
-            let seed_cache = Arc::new(Mutex::new(
-                fluentbase_consensus::beacon::seed_cache::SeedCache::default(),
-            ));
             let namespace = fluentbase_consensus::beacon::seed::seed_namespace(
                 &fluentbase_bls::fluent_namespace(chain_id),
             );
             let pk_epoch = *sharing.public();
-            // Derive-gate wait: seed(h) is signed right after h finalizes and
-            // recovers within ~one gossip round; 2s ceiling stays well inside
-            // the K=3 result-finality budget at 1 blk/s before gated fallback.
-            let deriver = deriver_base.with_beacon(
-                seed_cache.clone(),
-                namespace,
-                Some(pk_epoch),
-                Duration::from_secs(2),
-            );
-            let launch = fluentbase_consensus::dpos::BeaconLaunch {
-                share,
-                sharing,
-                seed_cache,
-            };
+            let deriver = deriver_base.with_beacon_key(Some(pk_epoch), namespace);
+            let launch = fluentbase_consensus::dpos::BeaconLaunch { share, sharing };
             (deriver, Some(launch))
         }
         None => (deriver_base, None),

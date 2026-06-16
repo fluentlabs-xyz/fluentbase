@@ -290,10 +290,26 @@ where
         //    parent-visibility race: after a jump the parent was
         //    canonicalized by reth's own devp2p backfill, not by our awaited
         //    FCU, so its header can lag reader visibility by milliseconds.
-        let derived =
-            derive_with_visibility_retry(&self.ctx, &self.deriver, &uf.block, self.cursor.evm_hash)
-                .await
-                .wrap_err_with(|| format!("derivation failed at {h}"))?;
+        // The seed rides the cert this follower already verified above; pass it
+        // so a re-deriving follower's prev_randao matches the validators
+        // (absent ⇒ gated fallback, agreed).
+        let seed = uf
+            .finalization
+            .certificate
+            .seed()
+            .map(|signature| crate::beacon::types::Seed {
+                target_round: uf.finalization.proposal.round,
+                signature,
+            });
+        let derived = derive_with_visibility_retry(
+            &self.ctx,
+            &self.deriver,
+            &uf.block,
+            self.cursor.evm_hash,
+            seed,
+        )
+        .await
+        .wrap_err_with(|| format!("derivation failed at {h}"))?;
         let head_hash = derived.evm_hash();
         let status = self.beacon_engine.import_derived(derived).await?;
         ensure!(
@@ -630,6 +646,7 @@ mod tests {
             &self,
             order: OrderBlock,
             parent_evm_hash: B256,
+            _seed: Option<crate::beacon::types::Seed>,
         ) -> eyre::Result<RethExecBlock> {
             let header = AlloyHeader {
                 parent_hash: parent_evm_hash,

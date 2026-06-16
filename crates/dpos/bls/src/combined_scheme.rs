@@ -14,10 +14,11 @@
 //! Dual mode: a scheme built WITH a per-epoch threshold share is beacon-active
 //! (a real partial is REQUIRED on `Notarize`/`Finalize` votes — a vote without
 //! it is invalid → Nullify → not counted → notarize quorum ⟺ ≥t partials);
-//! WITHOUT a share it is fallback (the seed slot is the [`absent_seed`]
-//! sentinel everywhere → the deriver uses the weak `order.digest()` randomness).
-//! The seed slot is ALWAYS present (fixed 96 B) because `Scheme::Signature` is
-//! `CodecFixed` — `Nullify` votes and fallback epochs carry the sentinel.
+//! WITHOUT a share it is fallback (`seed = None` everywhere → the deriver uses
+//! the weak `order.digest()` randomness).
+//! The signature is `CodecFixed`, so the optional seed is a FIXED slot (a
+//! 1-byte present flag + a 48-byte G1 slot): `Nullify` votes and fallback
+//! epochs carry `None`.
 
 use bytes::{Buf, BufMut};
 use commonware_codec::{EncodeSize, Error as CodecError, FixedSize, Read, ReadExt as _, Write};
@@ -31,7 +32,6 @@ use commonware_cryptography::{
     certificate::{Attestation, Scheme as CertScheme},
     Digest,
 };
-use commonware_math::algebra::Additive as _;
 use commonware_parallel::Strategy;
 use commonware_utils::{ordered::Set, Faults, Participant};
 use rand_core::CryptoRngCore;
@@ -40,16 +40,8 @@ use crate::{beacon, BlsSignature, PeerPubkey, VoteScheme};
 
 type VoteCertificate = <VoteScheme as CertScheme>::Certificate;
 
-/// The canonical "no seed this vote" sentinel — the BLS12-381 G1 identity
-/// (point at infinity), a never-valid threshold partial that can never collide
-/// with a real recovered seed. Used on `Nullify` votes and in fallback epochs.
-pub fn absent_seed() -> BlsSignature {
-    BlsSignature::zero()
-}
-
-fn is_absent(sig: &BlsSignature) -> bool {
-    *sig == absent_seed()
-}
+/// Compressed-G1 byte length — the seed slot width.
+const SEED_SLOT: usize = crate::SIGNATURE_BYTES;
 
 /// The round a subject is scoped to (used as the seed message domain).
 fn subject_round<D: Digest>(subject: &Subject<'_, D>) -> Round {
@@ -59,19 +51,51 @@ fn subject_round<D: Digest>(subject: &Subject<'_, D>) -> Round {
     }
 }
 
-/// Whether a subject carries a real seed partial (Notarize/Finalize) vs the
-/// sentinel (Nullify).
+/// Whether a subject carries a real seed partial (Notarize/Finalize) vs none
+/// (Nullify).
 fn seeded_subject<D: Digest>(subject: &Subject<'_, D>) -> bool {
     matches!(subject, Subject::Notarize { .. } | Subject::Finalize { .. })
 }
 
-/// Per-vote signature: attributable multisig share + threshold seed partial.
-/// FIXED 96 B (two G1 points) — `CodecFixed` forbids a variable-size `Option`,
-/// so `seed` is always present; it is [`absent_seed`] on a Nullify or fallback.
+/// Encode an optional seed as a FIXED-size slot: a 1-byte present flag + a
+/// 48-byte G1 slot (the signature when present, all-zero when absent). An
+/// explicit flag — not a sentinel point — is REQUIRED because the BLS12-381 G1
+/// identity is not a decodable point (`G1::read` rejects infinity), so a "no
+/// seed" (Nullify / fallback-epoch) vote could not otherwise round-trip while
+/// keeping the `CodecFixed` constant size.
+fn write_seed_slot(seed: &Option<BlsSignature>, buf: &mut impl BufMut) {
+    match seed {
+        Some(s) => {
+            1u8.write(buf);
+            s.write(buf);
+        }
+        None => {
+            0u8.write(buf);
+            buf.put_slice(&[0u8; SEED_SLOT]);
+        }
+    }
+}
+
+fn read_seed_slot(buf: &mut impl Buf) -> Result<Option<BlsSignature>, CodecError> {
+    let present = u8::read(buf)?;
+    let raw = <[u8; SEED_SLOT]>::read(buf)?;
+    match present {
+        0 => Ok(None),
+        1 => Ok(Some(BlsSignature::read(&mut raw.as_slice())?)),
+        _ => Err(CodecError::Invalid(
+            "CombinedSignature",
+            "bad seed present flag",
+        )),
+    }
+}
+
+/// Per-vote signature: the attributable multisig share + the threshold seed
+/// partial. FIXED 97 B (vote 48 ‖ flag 1 ‖ seed-slot 48); `seed = None` on a
+/// Nullify vote or in a fallback (no-beacon) epoch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CombinedSignature {
     pub vote: BlsSignature,
-    pub seed: BlsSignature,
+    pub seed: Option<BlsSignature>,
 }
 
 impl CombinedSignature {
@@ -82,13 +106,13 @@ impl CombinedSignature {
 }
 
 impl FixedSize for CombinedSignature {
-    const SIZE: usize = BlsSignature::SIZE * 2;
+    const SIZE: usize = crate::SIGNATURE_BYTES + 1 + SEED_SLOT;
 }
 
 impl Write for CombinedSignature {
     fn write(&self, buf: &mut impl BufMut) {
         self.vote.write(buf);
-        self.seed.write(buf);
+        write_seed_slot(&self.seed, buf);
     }
 }
 
@@ -96,37 +120,37 @@ impl Read for CombinedSignature {
     type Cfg = ();
     fn read_cfg(buf: &mut impl Buf, _: &()) -> Result<Self, CodecError> {
         let vote = BlsSignature::read(buf)?;
-        let seed = BlsSignature::read(buf)?;
+        let seed = read_seed_slot(buf)?;
         Ok(Self { vote, seed })
     }
 }
 
 /// Certificate assembled from a quorum of [`CombinedSignature`]s: the
 /// attributable multisig certificate (bitmap + aggregate vote) plus the
-/// recovered threshold seed (or [`absent_seed`] for a Nullify/fallback cert).
+/// recovered threshold seed (`None` for a Nullify/fallback cert).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CombinedCertificate {
     pub vote: VoteCertificate,
-    pub seed: BlsSignature,
+    pub seed: Option<BlsSignature>,
 }
 
 impl CombinedCertificate {
     /// The recovered seed signature, or `None` when absent (Nullify/fallback).
     pub fn seed(&self) -> Option<BlsSignature> {
-        (!is_absent(&self.seed)).then_some(self.seed)
+        self.seed
     }
 }
 
 impl Write for CombinedCertificate {
     fn write(&self, buf: &mut impl BufMut) {
         self.vote.write(buf);
-        self.seed.write(buf);
+        write_seed_slot(&self.seed, buf);
     }
 }
 
 impl EncodeSize for CombinedCertificate {
     fn encode_size(&self) -> usize {
-        self.vote.encode_size() + BlsSignature::SIZE
+        self.vote.encode_size() + 1 + SEED_SLOT
     }
 }
 
@@ -134,7 +158,7 @@ impl Read for CombinedCertificate {
     type Cfg = usize;
     fn read_cfg(buf: &mut impl Buf, participants: &usize) -> Result<Self, CodecError> {
         let vote = VoteCertificate::read_cfg(buf, participants)?;
-        let seed = BlsSignature::read(buf)?;
+        let seed = read_seed_slot(buf)?;
         Ok(Self { vote, seed })
     }
 }
@@ -219,9 +243,9 @@ impl CertScheme for CombinedScheme {
         let seed = match (&self.beacon, seeded_subject(&subject)) {
             (Some(b), true) => {
                 let share = b.share.as_ref()?;
-                beacon::sign_seed_partial(share, &b.seed_namespace, round).value
+                Some(beacon::sign_seed_partial(share, &b.seed_namespace, round).value)
             }
-            _ => absent_seed(),
+            _ => None,
         };
         Some(Attestation {
             signer: vote_att.signer,
@@ -254,15 +278,22 @@ impl CertScheme for CombinedScheme {
             return false;
         };
         match (&self.beacon, seeded_subject(&subject)) {
-            (Some(b), true) => {
-                let partial = PartialSignature::<MinSig> {
-                    index: attestation.signer,
-                    value: combined.seed,
-                };
-                !is_absent(&combined.seed)
-                    && beacon::verify_seed_partial(&b.sharing, &b.seed_namespace, round, &partial)
-            }
-            _ => is_absent(&combined.seed),
+            // ACTIVE Notarize/Finalize: a missing or invalid seed partial makes
+            // the whole vote invalid (→ Nullify → not counted toward quorum).
+            (Some(b), true) => match combined.seed {
+                Some(value) => beacon::verify_seed_partial(
+                    &b.sharing,
+                    &b.seed_namespace,
+                    round,
+                    &PartialSignature::<MinSig> {
+                        index: attestation.signer,
+                        value,
+                    },
+                ),
+                None => false,
+            },
+            // Nullify, or a fallback epoch: the seed MUST be absent.
+            _ => combined.seed.is_none(),
         }
     }
 
@@ -280,20 +311,22 @@ impl CertScheme for CombinedScheme {
             Some(b)
                 if atts
                     .iter()
-                    .all(|a| a.signature.get().is_some_and(|c| !is_absent(&c.seed))) =>
+                    .all(|a| a.signature.get().is_some_and(|c| c.seed.is_some())) =>
             {
                 let partials: Vec<PartialSignature<MinSig>> = atts
                     .iter()
                     .filter_map(|a| {
-                        a.signature.get().map(|c| PartialSignature::<MinSig> {
-                            index: a.signer,
-                            value: c.seed,
+                        a.signature.get().and_then(|c| {
+                            c.seed.map(|value| PartialSignature::<MinSig> {
+                                index: a.signer,
+                                value,
+                            })
                         })
                     })
                     .collect();
-                beacon::recover_seed(&b.sharing, &partials).ok()?
+                Some(beacon::recover_seed(&b.sharing, &partials).ok()?)
             }
-            _ => absent_seed(),
+            _ => None,
         };
         Some(CombinedCertificate { vote, seed })
     }
@@ -318,16 +351,13 @@ impl CertScheme for CombinedScheme {
             return false;
         }
         match (&self.beacon, seeded_subject(&subject)) {
-            (Some(b), true) => {
-                !is_absent(&certificate.seed)
-                    && beacon::verify_seed(
-                        b.sharing.public(),
-                        &b.seed_namespace,
-                        round,
-                        &certificate.seed,
-                    )
-            }
-            _ => is_absent(&certificate.seed),
+            (Some(b), true) => match &certificate.seed {
+                Some(sig) => {
+                    beacon::verify_seed(b.sharing.public(), &b.seed_namespace, round, sig)
+                }
+                None => false,
+            },
+            _ => certificate.seed.is_none(),
         }
     }
 
@@ -488,7 +518,7 @@ mod tests {
         let subject = Subject::Notarize { proposal: &p };
         let mut att = schemes[0].sign(subject).expect("sign");
         let mut combined = *att.signature.get().unwrap();
-        combined.seed = absent_seed();
+        combined.seed = None;
         att.signature = combined.into();
         let mut rng = StdRng::seed_from_u64(4);
         assert!(

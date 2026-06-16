@@ -54,8 +54,8 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-const PAGE_CACHE_PAGE_SIZE: std::num::NonZeroU16 = NZU16!(4_096);
-const PAGE_CACHE_CAPACITY: NonZeroUsize = NZUsize!(8_192);
+pub(crate) const PAGE_CACHE_PAGE_SIZE: std::num::NonZeroU16 = NZU16!(4_096);
+pub(crate) const PAGE_CACHE_CAPACITY: NonZeroUsize = NZUsize!(8_192);
 const IMMUTABLE_ITEMS_PER_SECTION: NonZeroU64 = NZU64!(262_144);
 const PRUNABLE_ITEMS_PER_SECTION: NonZeroU64 = NZU64!(4_096);
 pub(crate) const MAX_REPAIR: NonZeroUsize = NZUsize!(20);
@@ -224,25 +224,25 @@ where
     immutable::Archive::init(
         context.with_label("finalizations_by_height"),
         immutable::Config {
-            metadata_partition: format!("{partition_prefix}-v2-finalizations-by-height-metadata"),
+            metadata_partition: format!("{partition_prefix}-v3-finalizations-by-height-metadata"),
             freezer_table_partition: format!(
-                "{partition_prefix}-v2-finalizations-by-height-freezer-table"
+                "{partition_prefix}-v3-finalizations-by-height-freezer-table"
             ),
             freezer_table_initial_size: 1 << 16,
             freezer_table_resize_frequency: FREEZER_TABLE_RESIZE_FREQUENCY,
             freezer_table_resize_chunk_size: FREEZER_TABLE_RESIZE_CHUNK_SIZE,
             freezer_key_partition: format!(
-                "{partition_prefix}-v2-finalizations-by-height-freezer-key"
+                "{partition_prefix}-v3-finalizations-by-height-freezer-key"
             ),
             freezer_key_page_cache: page_cache,
             freezer_key_write_buffer: WRITE_BUFFER,
             freezer_value_partition: format!(
-                "{partition_prefix}-v2-finalizations-by-height-freezer-value"
+                "{partition_prefix}-v3-finalizations-by-height-freezer-value"
             ),
             freezer_value_write_buffer: WRITE_BUFFER,
             freezer_value_target_size: FREEZER_VALUE_TARGET_SIZE,
             freezer_value_compression: FREEZER_VALUE_COMPRESSION,
-            ordinal_partition: format!("{partition_prefix}-v2-finalizations-by-height-ordinal"),
+            ordinal_partition: format!("{partition_prefix}-v3-finalizations-by-height-ordinal"),
             ordinal_write_buffer: WRITE_BUFFER,
             items_per_section: IMMUTABLE_ITEMS_PER_SECTION,
             codec_config: BlsScheme::certificate_codec_config_unbounded(),
@@ -272,9 +272,6 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     pub signer_keypair: Option<ValidatorBlsKeypair>,
     /// Rotation-out signals to the unified supervisor (`None` = legacy).
     pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<crate::dpos::ModeEvent>>,
-    /// Randomness-beacon seed feed handed to the executor: notified per
-    /// finalized height for sign-after-finalize (Decision C4). `None` = no beacon.
-    pub seed_feed: Option<crate::beacon::seed_actor::FinalizedFeed>,
     /// Per-epoch threshold beacon key threaded into every per-epoch consensus
     /// scheme so each vote carries the seed partial. `None` ⇒ fallback epochs.
     pub beacon_key: Option<fluentbase_bls::scheme::BeaconKey>,
@@ -614,7 +611,6 @@ where
             self.assembler,
             self.fee_recipient,
             self.target_gas_limit,
-            self.seed_feed,
         );
         let marshal_reporter_app = app.clone();
 

@@ -22,7 +22,8 @@ use commonware_consensus::{
     types::{Epoch, Round, View},
 };
 use commonware_cryptography::{
-    ed25519::PrivateKey as Ed25519PrivateKey, sha256::Digest as Sha256Digest, Signer,
+    certificate::Attestation, ed25519::PrivateKey as Ed25519PrivateKey,
+    sha256::Digest as Sha256Digest, Signer,
 };
 use commonware_math::algebra::Random;
 use commonware_utils::{ordered::BiMap, TryCollect};
@@ -32,7 +33,7 @@ use fluentbase_bls::{
     keys::ValidatorBlsKeypair,
     pop::sign_pop,
     scheme::build_signer,
-    BlsPubkey, PeerPubkey,
+    BlsPubkey, PeerPubkey, Scheme, VoteScheme,
 };
 use rand_08::rngs::StdRng;
 use rand_core::SeedableRng;
@@ -183,6 +184,18 @@ fn sig48(att_sig_bytes: &[u8]) -> [u8; 48] {
     <[u8; 48]>::try_from(att_sig_bytes).expect("G1 sig is 48 B")
 }
 
+/// Project a combined-scheme attestation onto its `VoteScheme` (48-B multisig)
+/// half — the form that is actually submitted on-chain. This is an INDEPENDENT
+/// re-implementation of `slasher::evidence::vote_attestation`: the fixture
+/// builds the on-chain wire bytes this way, while the production extractor
+/// reaches them by decoding the raw combined blob — both must agree.
+fn vote_att(att: &Attestation<Scheme>) -> Attestation<VoteScheme> {
+    Attestation {
+        signer: att.signer,
+        signature: (*att.signature.get().unwrap().vote()).into(),
+    }
+}
+
 fn conflicting_notarize() -> (
     Vector,
     ConflictingNotarize<fluentbase_bls::Scheme, Sha256Digest>,
@@ -201,13 +214,24 @@ fn conflicting_notarize() -> (
     let n1 = Notarize::sign(&s, p1.clone()).expect("sign n1");
     let n2 = Notarize::sign(&s, p2.clone()).expect("sign n2");
     let signer_idx = n1.attestation.signer.get();
-    let s1 = sig48(n1.attestation.signature.get().unwrap().encode().as_ref());
-    let s2 = sig48(n2.attestation.signature.get().unwrap().encode().as_ref());
+    let s1 = sig48(n1.attestation.signature.get().unwrap().vote().encode().as_ref());
+    let s2 = sig48(n2.attestation.signature.get().unwrap().vote().encode().as_ref());
+    let on_chain = ConflictingNotarize::<VoteScheme, _>::new(
+        Notarize {
+            proposal: p1.clone(),
+            attestation: vote_att(&n1.attestation),
+        },
+        Notarize {
+            proposal: p2.clone(),
+            attestation: vote_att(&n2.attestation),
+        },
+    );
+    let evidence = hex::encode(on_chain.encode());
     let ev = ConflictingNotarize::new(n1, n2);
     let pk96: [u8; 96] = kps[OFFENDER].public_bytes();
     let vector = Vector {
         label: "conflicting_notarize",
-        evidence: hex::encode(ev.encode()),
+        evidence,
         epoch: EPOCH,
         signer_idx,
         kind1: 0,
@@ -241,13 +265,24 @@ fn conflicting_finalize() -> (
     let f1 = Finalize::sign(&s, p1.clone()).expect("sign f1");
     let f2 = Finalize::sign(&s, p2.clone()).expect("sign f2");
     let signer_idx = f1.attestation.signer.get();
-    let s1 = sig48(f1.attestation.signature.get().unwrap().encode().as_ref());
-    let s2 = sig48(f2.attestation.signature.get().unwrap().encode().as_ref());
+    let s1 = sig48(f1.attestation.signature.get().unwrap().vote().encode().as_ref());
+    let s2 = sig48(f2.attestation.signature.get().unwrap().vote().encode().as_ref());
+    let on_chain = ConflictingFinalize::<VoteScheme, _>::new(
+        Finalize {
+            proposal: p1.clone(),
+            attestation: vote_att(&f1.attestation),
+        },
+        Finalize {
+            proposal: p2.clone(),
+            attestation: vote_att(&f2.attestation),
+        },
+    );
+    let evidence = hex::encode(on_chain.encode());
     let ev = ConflictingFinalize::new(f1, f2);
     let pk96: [u8; 96] = kps[OFFENDER].public_bytes();
     let vector = Vector {
         label: "conflicting_finalize",
-        evidence: hex::encode(ev.encode()),
+        evidence,
         epoch: EPOCH,
         signer_idx,
         kind1: 2,
@@ -281,13 +316,24 @@ fn nullify_finalize() -> (
     let prop: Proposal<Sha256Digest> = Proposal::new(round(), View::new(VIEW - 1), digest(0xee));
     let fin = Finalize::sign(&s, prop.clone()).expect("sign finalize");
     let signer_idx = nul.attestation.signer.get();
-    let s1 = sig48(nul.attestation.signature.get().unwrap().encode().as_ref());
-    let s2 = sig48(fin.attestation.signature.get().unwrap().encode().as_ref());
+    let s1 = sig48(nul.attestation.signature.get().unwrap().vote().encode().as_ref());
+    let s2 = sig48(fin.attestation.signature.get().unwrap().vote().encode().as_ref());
+    let on_chain = NullifyFinalize::<VoteScheme, _>::new(
+        commonware_consensus::simplex::types::Nullify {
+            round: nul.round,
+            attestation: vote_att(&nul.attestation),
+        },
+        Finalize {
+            proposal: prop.clone(),
+            attestation: vote_att(&fin.attestation),
+        },
+    );
+    let evidence = hex::encode(on_chain.encode());
     let ev = NullifyFinalize::new(nul, fin);
     let pk96: [u8; 96] = kps[OFFENDER].public_bytes();
     let vector = Vector {
         label: "nullify_finalize",
-        evidence: hex::encode(ev.encode()),
+        evidence,
         epoch: EPOCH,
         signer_idx,
         kind1: 1, // Nullify (message = Round.encode())

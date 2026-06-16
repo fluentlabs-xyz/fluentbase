@@ -47,13 +47,14 @@ use commonware_consensus::{
     },
     Epochable,
 };
-use commonware_cryptography::{certificate, Digest as DigestTrait};
+use commonware_cryptography::{certificate, certificate::Attestation, Digest as DigestTrait};
 use commonware_parallel::Sequential;
 use commonware_utils::ordered::BiMap;
 use fluentbase_bls::{
+    combined_scheme::CombinedSignature,
     encoding::{pubkey_compressed_to_eip2537, signature_compressed_to_eip2537},
-    BlsPubkey, EpochCommittee, Error, PeerPubkey, Scheme, PUBKEY_BYTES, PUBKEY_EIP2537_BYTES,
-    SIGNATURE_BYTES, SIGNATURE_EIP2537_BYTES,
+    BlsPubkey, EpochCommittee, Error, PeerPubkey, Scheme, VoteScheme, PUBKEY_BYTES,
+    PUBKEY_EIP2537_BYTES, SIGNATURE_BYTES, SIGNATURE_EIP2537_BYTES,
 };
 use rand_core::CryptoRngCore;
 
@@ -114,15 +115,31 @@ pub struct SlashCallArgs {
     pub sig2_uncompressed: [u8; SIGNATURE_EIP2537_BYTES],
 }
 
-/// Encode an `S::Signature` (= G1 compressed for MinSig) into the fixed
-/// 48-byte buffer the contract expects.
-fn sig_compressed<S: certificate::Scheme>(
-    sig: &S::Signature,
-) -> Result<[u8; SIGNATURE_BYTES], Error> {
-    sig.encode()
+/// Encode the ATTRIBUTABLE multisig half of a combined-scheme signature
+/// (= G1 compressed, 48 B) into the fixed buffer the contract expects. The
+/// per-vote signature is `CombinedSignature{vote, seed}` (96 B); equivocation
+/// evidence is over the `vote` half only — the threshold `seed` partial is
+/// non-attributable and never submitted on-chain.
+fn sig_compressed(sig: &CombinedSignature) -> Result<[u8; SIGNATURE_BYTES], Error> {
+    sig.vote()
+        .encode()
         .as_ref()
         .try_into()
         .map_err(|_| Error::InvalidSignature)
+}
+
+/// Project a combined-scheme attestation onto its attributable multisig
+/// (`VoteScheme`) half, dropping the non-attributable threshold seed partial.
+/// Re-encoding the evidence over `VoteScheme` keeps each signature 48 B on the
+/// wire — the layout `SimplexEvidenceDecoder.sol` parses (`uvarint(signer) ‖
+/// sig[48]`). The combined signature is 97 B (vote ‖ flag ‖ seed slot); a raw
+/// `ConflictingNotarize<Scheme>::encode()` would desync the on-chain decoder.
+fn vote_attestation(att: &Attestation<Scheme>) -> Result<Attestation<VoteScheme>, Error> {
+    let combined = att.signature.get().ok_or(Error::InvalidSignature)?;
+    Ok(Attestation {
+        signer: att.signer,
+        signature: (*combined.vote()).into(),
+    })
 }
 
 /// Look up the offender's `BlsPubkey` (96 B G2 compressed) by
@@ -170,12 +187,12 @@ where
     D: DigestTrait,
 {
     check_epoch_match(ev, committee)?;
-    let evidence = ev.encode().to_vec();
+    let raw = ev.encode().to_vec();
 
     // Re-decode the two inner Notarize structs (Conflicting* fields are
     // private; Write/Read traits are public — round-trip is the only
     // path to the inner sig material).
-    let mut buf: &[u8] = &evidence;
+    let mut buf: &[u8] = &raw;
     let n1 = Notarize::<Scheme, D>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
     let n2 = Notarize::<Scheme, D>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
 
@@ -199,9 +216,24 @@ where
         .get()
         .ok_or(Error::InvalidSignature)?;
 
-    let sig1 = sig_compressed::<Scheme>(sig1_g1)?;
-    let sig2 = sig_compressed::<Scheme>(sig2_g1)?;
+    let sig1 = sig_compressed(sig1_g1)?;
+    let sig2 = sig_compressed(sig2_g1)?;
     let pk96 = pk_compressed(ev.signer().get(), &committee.bimap)?;
+
+    // Re-encode over `VoteScheme` so each signature is the 48-B multisig half
+    // the on-chain decoder expects (the seed partial is consensus-internal).
+    let evidence = ConflictingNotarize::<VoteScheme, D>::new(
+        Notarize {
+            proposal: n1.proposal.clone(),
+            attestation: vote_attestation(&n1.attestation)?,
+        },
+        Notarize {
+            proposal: n2.proposal.clone(),
+            attestation: vote_attestation(&n2.attestation)?,
+        },
+    )
+    .encode()
+    .to_vec();
 
     Ok(SlashCallArgs {
         kind: SlashKind::ConflictingNotarize,
@@ -222,9 +254,9 @@ where
     D: DigestTrait,
 {
     check_epoch_match(ev, committee)?;
-    let evidence = ev.encode().to_vec();
+    let raw = ev.encode().to_vec();
 
-    let mut buf: &[u8] = &evidence;
+    let mut buf: &[u8] = &raw;
     let f1 = Finalize::<Scheme, D>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
     let f2 = Finalize::<Scheme, D>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
 
@@ -244,9 +276,24 @@ where
         .get()
         .ok_or(Error::InvalidSignature)?;
 
-    let sig1 = sig_compressed::<Scheme>(sig1_g1)?;
-    let sig2 = sig_compressed::<Scheme>(sig2_g1)?;
+    let sig1 = sig_compressed(sig1_g1)?;
+    let sig2 = sig_compressed(sig2_g1)?;
     let pk96 = pk_compressed(ev.signer().get(), &committee.bimap)?;
+
+    // Re-encode over `VoteScheme` (48-B-per-signature wire layout) — see
+    // `extract_from_conflicting_notarize`.
+    let evidence = ConflictingFinalize::<VoteScheme, D>::new(
+        Finalize {
+            proposal: f1.proposal.clone(),
+            attestation: vote_attestation(&f1.attestation)?,
+        },
+        Finalize {
+            proposal: f2.proposal.clone(),
+            attestation: vote_attestation(&f2.attestation)?,
+        },
+    )
+    .encode()
+    .to_vec();
 
     Ok(SlashCallArgs {
         kind: SlashKind::ConflictingFinalize,
@@ -267,9 +314,9 @@ where
     D: DigestTrait,
 {
     check_epoch_match(ev, committee)?;
-    let evidence = ev.encode().to_vec();
+    let raw = ev.encode().to_vec();
 
-    let mut buf: &[u8] = &evidence;
+    let mut buf: &[u8] = &raw;
     let nullify =
         Nullify::<Scheme>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
     let finalize =
@@ -293,9 +340,24 @@ where
         .get()
         .ok_or(Error::InvalidSignature)?;
 
-    let sig1 = sig_compressed::<Scheme>(sig1_g1)?;
-    let sig2 = sig_compressed::<Scheme>(sig2_g1)?;
+    let sig1 = sig_compressed(sig1_g1)?;
+    let sig2 = sig_compressed(sig2_g1)?;
     let pk96 = pk_compressed(ev.signer().get(), &committee.bimap)?;
+
+    // Re-encode over `VoteScheme` (48-B-per-signature wire layout) — see
+    // `extract_from_conflicting_notarize`.
+    let evidence = NullifyFinalize::<VoteScheme, D>::new(
+        Nullify {
+            round: nullify.round,
+            attestation: vote_attestation(&nullify.attestation)?,
+        },
+        Finalize {
+            proposal: finalize.proposal.clone(),
+            attestation: vote_attestation(&finalize.attestation)?,
+        },
+    )
+    .encode()
+    .to_vec();
 
     Ok(SlashCallArgs {
         kind: SlashKind::NullifyFinalize,

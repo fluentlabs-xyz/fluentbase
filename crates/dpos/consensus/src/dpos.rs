@@ -215,6 +215,17 @@ where
     const MAX_COLD_RECOVER: u64 = 64;
 
     let archive = crate::outer::init_finalized_blocks_archive(ctx, MARSHAL_PARTITION_PREFIX).await;
+    // Re-derived heights must use the SAME seed peers used (recovered from the
+    // finalization cert), not the gated fallback — else a restart diverges. Open
+    // the finalizations archive standalone (like `archive` above) to read it.
+    let finalizations = {
+        let page_cache = commonware_runtime::buffer::paged::CacheRef::from_pooler(
+            ctx,
+            crate::outer::PAGE_CACHE_PAGE_SIZE,
+            crate::outer::PAGE_CACHE_CAPACITY,
+        );
+        crate::outer::init_finalizations_archive(ctx, MARSHAL_PARTITION_PREFIX, page_cache).await
+    };
 
     // Find the lowest missing height (the reconnect point is its parent). The
     // archive stores ORDERING artifacts, so recovery re-derives each missing
@@ -254,7 +265,18 @@ where
                      {h} (gap exceeds marshal retention); re-sync the EL disk from a snapshot"
                 )
             })?;
-        let derived = derive_with_visibility_retry(ctx, deriver, &order, parent_hash)
+        let seed = finalizations
+            .get(Identifier::Index(h))
+            .await
+            .ok()
+            .flatten()
+            .and_then(|fin| {
+                fin.certificate.seed().map(|signature| crate::beacon::types::Seed {
+                    target_round: fin.proposal.round,
+                    signature,
+                })
+            });
+        let derived = derive_with_visibility_retry(ctx, deriver, &order, parent_hash, seed)
             .await
             .wrap_err("crash-survivor recovery derivation failed")?;
         parent_hash = derived.evm_hash();
@@ -335,16 +357,15 @@ pub struct DposLayerConfig<D, XC, A> {
     pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<ModeEvent>>,
     /// Randomness-beacon launch material (devnet bootstrap). `None` = no beacon
     /// (gated fallback `prev_randao = order.digest()`). When present, the layer
-    /// registers `BEACON_CHANNEL`, spawns the seed actor, and feeds recovered
-    /// seeds into `seed_cache` — the same `Arc` the node's deriver reads for
-    /// `prev_randao(h) = H(seed(h))` (Decisions A/P4/C2/C4).
+    /// threads the threshold key into every per-epoch combined consensus scheme,
+    /// so each vote carries the seed partial and the seed is recovered from the
+    /// finalization certificate.
     pub beacon: Option<BeaconLaunch>,
 }
 
 /// Threshold randomness-beacon material handed to the DPoS layer at launch
-/// (devnet bootstrap; the live DKG actor is phased — research Q2). The deriver
-/// (node-side) already holds a clone of `seed_cache`; the layer spawns the seed
-/// actor against the same cache so recovered seeds reach `prev_randao`.
+/// (devnet bootstrap; the live DKG actor is phased). Threaded into the combined
+/// consensus scheme; the deriver reads the recovered seed from the certificate.
 pub struct BeaconLaunch {
     /// This node's DKG share, or `None` for a verifier-only beacon participant.
     pub share: Option<commonware_cryptography::bls12381::primitives::group::Share>,
@@ -352,9 +373,6 @@ pub struct BeaconLaunch {
     pub sharing: commonware_cryptography::bls12381::primitives::sharing::Sharing<
         commonware_cryptography::bls12381::primitives::variant::MinSig,
     >,
-    /// Shared with the node's deriver: the seed actor WRITES recovered seeds
-    /// here; `derive(h)` READS `seed(h)` to set `prev_randao` (Decision C4).
-    pub seed_cache: Arc<std::sync::Mutex<crate::beacon::seed_cache::SeedCache>>,
 }
 
 /// Mode signal from the per-epoch engine construction to the unified
@@ -955,36 +973,14 @@ impl DposLayer {
                 provider_for_finalized.block_hash(n).ok().flatten()
             });
 
-        // Randomness-beacon seed actor (Decision C4): drives the per-height
-        // seed sub-protocol over the global BEACON_CHANNEL, writing recovered
-        // seeds into the cache the node's deriver reads for prev_randao. Single
-        // bootstrapped key for now (per-epoch DKG + Muxing are phased — Q2).
-        let (seed_feed, beacon_key) = if let Some(bl) = beacon {
+        // Per-epoch threshold beacon key for the combined consensus scheme: each
+        // vote carries the seed partial (round-keyed), so the seed is recovered
+        // from the notarization/finalization certificate — no separate seed
+        // plane. Single genesis-bootstrapped key for now (per-epoch DKG is phased).
+        let beacon_key = beacon.map(|bl| {
             let namespace = crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
-            // The combined consensus scheme signs/verifies the seed partial per
-            // vote (round-keyed) using the same threshold material; the seed
-            // namespace mirrors the side-channel's so recovered seeds match.
-            let beacon_key = Some((bl.sharing.clone(), bl.share.clone(), namespace.clone()));
-            let signer = crate::beacon::seed_actor::SeedSigner::new(
-                namespace,
-                bl.sharing,
-                bl.share,
-                bl.seed_cache,
-                crate::beacon::seed_actor::DEFAULT_ROUND_RETAIN,
-            );
-            let (seed_actor, feed) = crate::beacon::seed_actor::SeedActor::new(
-                signer,
-                handles.beacon_sender,
-                handles.beacon_receiver,
-            );
-            drop(
-                ctx.with_label("beacon_seed")
-                    .spawn(move |_| async move { seed_actor.run().await }),
-            );
-            (Some(feed), beacon_key)
-        } else {
-            (None, None)
-        };
+            (bl.sharing, bl.share, namespace)
+        });
 
         let outer = OuterBuilder {
             me: me.clone(),
@@ -995,7 +991,6 @@ impl DposLayer {
             dpos_activation_block,
             signer_keypair: Some(bls_keypair),
             mode_events,
-            seed_feed,
             beacon_key,
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
@@ -1171,6 +1166,7 @@ mod visibility_retry_tests {
             &self,
             order: OrderBlock,
             parent_evm_hash: B256,
+            _seed: Option<crate::beacon::types::Seed>,
         ) -> eyre::Result<SealedBlock<RethBlock>> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             if n < self.transient_failures {
@@ -1199,7 +1195,7 @@ mod visibility_retry_tests {
                 transient_failures: 3,
                 fatal: false,
             };
-            let derived = derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO)
+            let derived = derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO, None)
                 .await
                 .expect("recovers once the parent becomes visible");
             assert_eq!(derived.number(), 7);
@@ -1215,7 +1211,7 @@ mod visibility_retry_tests {
                 transient_failures: 1,
                 fatal: true,
             };
-            let err = derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO)
+            let err = derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO, None)
                 .await
                 .unwrap_err();
             assert!(err.to_string().contains("disk exploded"), "{err}");
@@ -1235,7 +1231,7 @@ mod visibility_retry_tests {
                 transient_failures: u32::MAX,
                 fatal: false,
             };
-            let err = derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO)
+            let err = derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO, None)
                 .await
                 .unwrap_err();
             assert!(err.downcast_ref::<ParentHeaderMissing>().is_some(), "{err}");

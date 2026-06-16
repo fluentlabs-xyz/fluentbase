@@ -12,8 +12,5 @@
 pub mod dkg;
 pub mod outcome;
 pub mod seed;
-pub mod seed_actor;
-pub mod seed_cache;
-pub mod seed_round;
 pub mod types;
 pub mod wire;

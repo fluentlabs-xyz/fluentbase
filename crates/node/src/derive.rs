@@ -8,8 +8,8 @@ use alloy_consensus::Header;
 use alloy_primitives::B256;
 use eyre::WrapErr as _;
 use fluentbase_consensus::beacon::{
-    seed::{prev_randao_for_height, GroupPublic},
-    seed_cache::SeedCache,
+    seed::{prev_randao_for_round, GroupPublic},
+    types::Seed,
 };
 use fluentbase_consensus::{DerivedBlock, DerivedBlockBuilder, OrderBlock, ParentHeaderMissing};
 use reth_ethereum_primitives::EthPrimitives;
@@ -21,10 +21,6 @@ use reth_primitives_traits::{RecoveredBlock, SealedHeader, SignedTransaction as 
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::{HeaderProvider, StateProviderFactory};
 use reth_trie_common::{updates::TrieUpdates, HashedPostState};
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
 
 /// One derivation's full output: the recovered block plus every execution
 /// artifact the engine-tree needs to import it WITHOUT re-executing
@@ -48,39 +44,32 @@ impl DerivedBlock for DerivedExecution {
     }
 }
 
-/// Source of the threshold-beacon randomness that overrides the weak fallback
-/// `prev_randao`. `None` (the [`RethBlockDeriver::new`] default) keeps the
-/// pre-beacon behaviour exactly — `prev_randao(h) = order.digest()`, the Q4
-/// `assurance=false` fallback. When present, `derive_and_execute` looks up
-/// `seed(h)` (fed by the live beacon→executor channel and the OrderBlock
-/// stream, Decision C4) and, if it verifies against `pk_epoch`, uses
-/// `H(seed(h))` (Decisions A/P4/C2/C4).
+/// Beacon verify material: the epoch group key + seed namespace the deriver
+/// checks a cert-recovered seed against. `None` (the [`RethBlockDeriver::new`]
+/// default) keeps the pre-beacon behaviour — `prev_randao = order.digest()`,
+/// the gated `assurance=false` fallback. The seed itself is NOT held here: it
+/// is supplied per block by the caller (extracted from the consensus
+/// certificate), so resolution is synchronous (no cache, no wait).
 #[derive(Clone, Debug)]
-struct BeaconSeedSource {
-    /// Recovered per-height seeds, keyed by `target_height`.
-    cache: Arc<Mutex<SeedCache>>,
-    /// `chain_namespace ‖ "_BEACON_SEED"` — verifies `seed(h)` vs `pk_epoch`.
+struct BeaconVerify {
+    /// `chain_namespace ‖ "_BEACON_SEED"` — verifies the seed vs `pk_epoch`.
     namespace: Vec<u8>,
     /// The epoch group public key the seed is checked against. `None` until
-    /// `PK_epoch` publication to L2 is wired (Phase 2) → gated fallback.
+    /// `PK_epoch` is published trustlessly to L2 → gated fallback.
     pk_epoch: Option<GroupPublic>,
-    /// How long `derive(h)` waits for `seed(h)` before falling back (the
-    /// derive-gate, Decision C4). Bounded so a missing seed never blocks
-    /// derivation past the K result-finality budget (G1).
-    wait: Duration,
 }
 
 #[derive(Clone, Debug)]
 pub struct RethBlockDeriver<Client, Evm> {
     client: Client,
     evm_config: Evm,
-    beacon: Option<BeaconSeedSource>,
+    beacon: Option<BeaconVerify>,
 }
 
 impl<Client, Evm> RethBlockDeriver<Client, Evm> {
     /// Pre-beacon constructor: `prev_randao` is always the weak deterministic
-    /// fallback (`order.digest()`), identical to the behaviour before the
-    /// beacon. The live randomness path is opted into via [`Self::with_beacon`].
+    /// fallback (`order.digest()`). The verified randomness path is opted into
+    /// via [`Self::with_beacon_key`].
     pub fn new(client: Client, evm_config: Evm) -> Self {
         Self {
             client,
@@ -89,71 +78,34 @@ impl<Client, Evm> RethBlockDeriver<Client, Evm> {
         }
     }
 
-    /// Attach the threshold-beacon seed source. `pk_epoch = None` keeps the
-    /// gated fallback until `PK_epoch` is published (Phase 2); a populated
-    /// `cache` + `pk_epoch` activate `prev_randao(h) = H(seed(h))`.
-    pub fn with_beacon(
-        mut self,
-        cache: Arc<Mutex<SeedCache>>,
-        namespace: Vec<u8>,
-        pk_epoch: Option<GroupPublic>,
-        wait: Duration,
-    ) -> Self {
-        self.beacon = Some(BeaconSeedSource {
-            cache,
-            namespace,
-            pk_epoch,
-            wait,
-        });
+    /// Attach the epoch beacon key (group public + seed namespace) used to
+    /// verify a cert-recovered seed. `pk_epoch = None` keeps the gated fallback
+    /// until `PK_epoch` is published; with it, a verified seed yields
+    /// `prev_randao = H(seed)`.
+    pub fn with_beacon_key(mut self, pk_epoch: Option<GroupPublic>, namespace: Vec<u8>) -> Self {
+        self.beacon = Some(BeaconVerify { namespace, pk_epoch });
         self
     }
 
-    /// Decide `prev_randao(h)`: the gated threshold value `H(seed(h))` when a
-    /// seed for this height is available (waited up to `beacon.wait`) and
-    /// verifies against `pk_epoch`, else the weak deterministic `fallback`
-    /// (Q4 `assurance=false` — never blocks derivation).
-    async fn resolve_prev_randao(&self, height: u64, fallback: B256) -> B256 {
-        let Some(beacon) = &self.beacon else {
+    /// Decide `prev_randao`: the gated threshold value `H(seed)` when the
+    /// caller supplied a seed (recovered from the block's consensus
+    /// certificate) that verifies against `pk_epoch`, else the weak
+    /// deterministic `fallback`. Synchronous — the seed is already in hand.
+    fn resolve_prev_randao(&self, seed: Option<&Seed>, fallback: B256) -> B256 {
+        let (Some(beacon), Some(s)) = (&self.beacon, seed) else {
             return fallback;
         };
-        const POLL: Duration = Duration::from_millis(20);
-        let deadline = tokio::time::Instant::now() + beacon.wait;
-        loop {
-            let seed = beacon
-                .cache
-                .lock()
-                .expect("seed cache mutex")
-                .get(height)
-                .cloned();
-            if let Some(seed) = seed {
-                let (prev_randao, assurance) = prev_randao_for_height(
-                    height,
-                    Some(&seed),
-                    beacon.pk_epoch.as_ref(),
-                    &beacon.namespace,
-                    fallback,
-                );
-                if assurance {
-                    // Smoke/ops signal: threshold randomness verified against
-                    // PK_epoch is in effect for this block (vs the digest fallback).
-                    tracing::info!(height, %prev_randao, "beacon: threshold prev_randao active");
-                }
-                return prev_randao;
-            }
-            if tokio::time::Instant::now() >= deadline {
-                break;
-            }
-            tokio::time::sleep(POLL).await;
-        }
-        // Seed never arrived within the gate window → gated fallback.
-        prev_randao_for_height(
-            height,
-            None,
+        let (prev_randao, assurance) = prev_randao_for_round(
+            s.target_round,
+            Some(s),
             beacon.pk_epoch.as_ref(),
             &beacon.namespace,
             fallback,
-        )
-        .0
+        );
+        if assurance {
+            tracing::info!(round = ?s.target_round, %prev_randao, "beacon: threshold prev_randao active");
+        }
+        prev_randao
     }
 }
 
@@ -170,13 +122,12 @@ where
         &self,
         order: OrderBlock,
         parent_evm_hash: B256,
+        seed: Option<Seed>,
     ) -> eyre::Result<DerivedExecution> {
-        // Resolve prev_randao BEFORE the blocking task: the derive-gate may
-        // await seed(h) (Decision C4), which is async; execution itself is
-        // CPU-bound and stays on a blocking thread.
-        let prev_randao = self
-            .resolve_prev_randao(order.height, order.digest().0)
-            .await;
+        // The seed (if any) was recovered from this block's consensus
+        // certificate by the caller, so prev_randao resolution is synchronous;
+        // execution itself is CPU-bound and stays on a blocking thread.
+        let prev_randao = self.resolve_prev_randao(seed.as_ref(), order.digest().0);
         let client = self.client.clone();
         let evm_config = self.evm_config.clone();
         // EVM execution + state-root computation are CPU-bound (~V per
@@ -394,57 +345,44 @@ mod tests {
     // deterministic fallback — never blocking, the Q4 assurance=false path.
     #[test]
     fn resolve_prev_randao_uses_verified_seed_else_falls_back() {
+        use commonware_consensus::types::{Epoch, Round, View};
         use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
         use commonware_utils::{test_rng, N3f1, NZU32};
-        use fluentbase_consensus::beacon::seed::{
-            prev_randao_from_seed, recover_seed, seed_namespace, sign_seed_partial,
-        };
-        use fluentbase_consensus::beacon::seed_cache::SeedCache;
+        use fluentbase_bls::beacon::{recover_seed, sign_seed_partial};
+        use fluentbase_consensus::beacon::seed::{prev_randao_from_seed, seed_namespace};
 
         let mut rng = test_rng();
         let (sharing, shares) =
             deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(4));
         let ns = seed_namespace(b"fluent-devnet");
-        let height = 50u64;
+        let round = Round::new(Epoch::new(1), View::new(50));
         let partials: Vec<_> = shares
             .iter()
-            .map(|s| sign_seed_partial(s, &ns, height))
+            .map(|s| sign_seed_partial(s, &ns, round))
             .collect();
-        let seed = recover_seed(&sharing, &partials, height).expect("recover");
+        let seed = Seed {
+            target_round: round,
+            signature: recover_seed(&sharing, &partials).expect("recover"),
+        };
         let expected = prev_randao_from_seed(&seed);
-
-        let cache = Arc::new(Mutex::new(SeedCache::default()));
-        cache.lock().unwrap().insert(seed);
-
-        // The inherent ctor/resolver have no Client/Evm bounds → unit types.
-        let deriver = RethBlockDeriver::<(), ()>::new((), ()).with_beacon(
-            cache,
-            ns,
-            Some(*sharing.public()),
-            Duration::ZERO,
-        );
-
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .expect("rt");
         let fallback = B256::repeat_byte(0x99);
 
+        // The inherent ctor/resolver have no Client/Evm bounds → unit types.
+        let deriver =
+            RethBlockDeriver::<(), ()>::new((), ()).with_beacon_key(Some(*sharing.public()), ns);
+
         // seed present + verifies → threshold randomness.
-        assert_eq!(
-            rt.block_on(deriver.resolve_prev_randao(height, fallback)),
-            expected
-        );
-        // no seed for this height → gated fallback.
-        assert_eq!(
-            rt.block_on(deriver.resolve_prev_randao(height + 1, fallback)),
-            fallback
-        );
+        assert_eq!(deriver.resolve_prev_randao(Some(&seed), fallback), expected);
+        // a seed for a DIFFERENT round → gated fallback (round mismatch).
+        let other = Seed {
+            target_round: Round::new(Epoch::new(1), View::new(51)),
+            signature: seed.signature,
+        };
+        assert_eq!(deriver.resolve_prev_randao(Some(&other), fallback), fallback);
+        // no seed → fallback.
+        assert_eq!(deriver.resolve_prev_randao(None, fallback), fallback);
         // no beacon source at all → fallback.
         let plain = RethBlockDeriver::<(), ()>::new((), ());
-        assert_eq!(
-            rt.block_on(plain.resolve_prev_randao(height, fallback)),
-            fallback
-        );
+        assert_eq!(plain.resolve_prev_randao(Some(&seed), fallback), fallback);
     }
 }

@@ -124,6 +124,15 @@ pub trait BlockFetcher: Clone + Send + Sync + 'static {
         &self,
         height: Height,
     ) -> impl std::future::Future<Output = Option<OrderBlock>> + Send;
+
+    /// The beacon seed for `height`, recovered from that height's finalization
+    /// certificate (the combined consensus scheme). `None` when no cert is held
+    /// or the epoch is on the fallback (no-beacon) path — derivation then uses
+    /// the gated `order.digest()` fallback.
+    fn fetch_seed(
+        &self,
+        height: Height,
+    ) -> impl std::future::Future<Output = Option<crate::beacon::types::Seed>> + Send;
 }
 
 /// Explicit impl for the concrete marshal mailbox.
@@ -136,6 +145,16 @@ impl BlockFetcher
 {
     async fn fetch_block_by_height(&self, height: Height) -> Option<OrderBlock> {
         self.get_block(height).await
+    }
+
+    async fn fetch_seed(&self, height: Height) -> Option<crate::beacon::types::Seed> {
+        let fin = self.get_finalization(height).await?;
+        fin.certificate
+            .seed()
+            .map(|signature| crate::beacon::types::Seed {
+                target_round: fin.proposal.round,
+                signature,
+            })
     }
 }
 
@@ -393,9 +412,10 @@ where
             None => self.derive_missing_prefix(parent_height).await?,
         };
 
+        let seed = self.marshal.fetch_seed(Height::new(height)).await;
         let derived = self
             .deriver
-            .derive_and_execute(order, parent_hash)
+            .derive_and_execute(order, parent_hash, seed)
             .await
             .wrap_err("derive_and_execute failed")?;
         let derived_hash = derived.evm_hash();
@@ -471,9 +491,10 @@ where
                 .ok_or_else(|| {
                     eyre::eyre!("derive gap: marshal has no ordering artifact at height {h}")
                 })?;
+            let seed = self.marshal.fetch_seed(Height::new(h)).await;
             let derived = self
                 .deriver
-                .derive_and_execute(order, parent_hash)
+                .derive_and_execute(order, parent_hash, seed)
                 .await
                 .wrap_err_with(|| format!("gap derivation failed at height {h}"))?;
             parent_hash = derived.evm_hash();
@@ -586,6 +607,7 @@ mod tests {
             &self,
             order: OrderBlock,
             parent_evm_hash: B256,
+            _seed: Option<crate::beacon::types::Seed>,
         ) -> eyre::Result<RethExecBlock> {
             let sealed = sealed_at(parent_evm_hash, order.height);
             self.chain
@@ -628,6 +650,9 @@ mod tests {
     impl BlockFetcher for FakeMarshal {
         async fn fetch_block_by_height(&self, height: Height) -> Option<OrderBlock> {
             self.canned.lock().unwrap().get(&height.get()).cloned()
+        }
+        async fn fetch_seed(&self, _height: Height) -> Option<crate::beacon::types::Seed> {
+            None
         }
     }
 
