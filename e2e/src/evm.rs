@@ -8,7 +8,21 @@ use fluentbase_sdk::{
 };
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use hex_literal::hex;
-use revm::{bytecode::opcode, context::result::ExecutionResult::Revert};
+use revm::{
+    bytecode::opcode,
+    context::result::{ExecutionResult::Revert, HaltReason},
+};
+
+#[test]
+fn test_eth_call_without_to_treats_data_as_create_initcode() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    const CALLER_ADDRESS: Address = Address::ZERO;
+
+    let result = TxBuilder::create(&mut ctx, CALLER_ADDRESS, hex!("b7ab4db5").into()).execute();
+    result
+        .expect_halt()
+        .expect_reason(HaltReason::OpcodeNotFound);
+}
 
 #[test]
 fn test_evm_greeting() {
