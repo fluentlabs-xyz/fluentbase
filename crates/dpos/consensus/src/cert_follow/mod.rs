@@ -112,7 +112,7 @@ where
         );
         let committee = epoch_committee_from_snapshot(&snap)
             .map_err(|e| eyre!("epoch {epoch} committee has non-unique participants: {e:?}"))?;
-        Ok(build_verifier(&self.namespace, committee.bimap))
+        Ok(build_verifier(&self.namespace, committee.bimap, None))
     }
 }
 

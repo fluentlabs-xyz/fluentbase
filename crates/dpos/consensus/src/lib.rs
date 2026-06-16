@@ -13,6 +13,7 @@
 //!   Simplex behaviour to the Fluent Reth execution layer.
 
 pub mod application;
+pub mod beacon;
 pub mod cert_follow;
 pub mod digest;
 pub mod dpos;

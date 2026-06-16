@@ -4,6 +4,7 @@
 //! agreeing OrderBlock N+K is the committee's attestation of block N's
 //! execution result.
 
+use crate::beacon::types::{Seed, MAX_BEACON_OUTCOME_SIZE};
 use crate::digest::Digest;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use bytes::{Buf, BufMut};
@@ -61,6 +62,16 @@ pub struct OrderBlock {
     pub result: B256,
     /// Ordered raw transactions.
     pub txs: Vec<TransactionSigned>,
+    /// Per-epoch DKG outcome (the encoded commonware `Output` = group key
+    /// `PK_{E+1}` + public polynomial), present ONLY on the epoch-boundary
+    /// block that agrees the next committee's beacon key. Opaque at this codec
+    /// layer (parsed by `beacon` with the committee-size config — `Output`'s
+    /// decode needs it); the system call then publishes `PK_{E+1}` to L2.
+    pub beacon_outcome: Option<Bytes>,
+    /// Per-height threshold randomness seed for a PAST height (see [`Seed`]),
+    /// embedded post-finalization by a later proposer in the `(h, h+K]` window;
+    /// `prev_randao(seed.target_height) = H(seed.signature)`.
+    pub beacon_seed: Option<Seed>,
 }
 
 impl OrderBlock {
@@ -117,14 +128,20 @@ pub fn anchor_order_block(anchor: &SealedBlock<reth_ethereum_primitives::Block>)
         extra_data: Bytes::new(),
         result: anchor.hash(),
         txs: Vec::new(),
+        beacon_outcome: None,
+        beacon_seed: None,
     }
 }
 
 // Wire format (all integers big-endian via commonware primitives):
 //   parent(32) ‖ height(8) ‖ timestamp(8) ‖ fee_recipient(20) ‖ gas_limit(8)
-//   ‖ result(32) ‖ extra_data_len(4)+bytes ‖ txs as one RLP list.
-// The RLP tx list reuses alloy's canonical encoding so tx bytes are identical
-// to their EVM-block representation.
+//   ‖ result(32) ‖ extra_data_len(4)+bytes ‖ txs as one RLP list
+//   ‖ beacon_flags(1) ‖ [beacon_outcome_len(4)+bytes] ‖ [beacon_seed].
+// `beacon_flags` bit0 = outcome present, bit1 = seed present. The RLP tx list
+// reuses alloy's canonical encoding so tx bytes are identical to their
+// EVM-block representation. Both beacon fields are part of the encoding (hence
+// the digest): an unagreed beacon value would let two proposers embed
+// different randomness under one digest → derive/STF divergence.
 
 impl Write for OrderBlock {
     fn write(&self, buf: &mut impl BufMut) {
@@ -138,13 +155,33 @@ impl Write for OrderBlock {
         (self.extra_data.len() as u32).write(buf);
         buf.put_slice(&self.extra_data);
         self.txs.encode(buf);
+        let flags =
+            (self.beacon_outcome.is_some() as u8) | ((self.beacon_seed.is_some() as u8) << 1);
+        flags.write(buf);
+        if let Some(outcome) = &self.beacon_outcome {
+            (outcome.len() as u32).write(buf);
+            buf.put_slice(outcome);
+        }
+        if let Some(seed) = &self.beacon_seed {
+            seed.write(buf);
+        }
     }
 }
 
 impl EncodeSize for OrderBlock {
     fn encode_size(&self) -> usize {
         use alloy_rlp::Encodable as _;
-        32 + 8 + 8 + 20 + 8 + 32 + 4 + self.extra_data.len() + self.txs.length()
+        32 + 8
+            + 8
+            + 20
+            + 8
+            + 32
+            + 4
+            + self.extra_data.len()
+            + self.txs.length()
+            + 1
+            + self.beacon_outcome.as_ref().map_or(0, |o| 4 + o.len())
+            + self.beacon_seed.as_ref().map_or(0, |s| s.encode_size())
     }
 }
 
@@ -188,6 +225,27 @@ impl Read for OrderBlock {
         let bytes = buf.copy_to_bytes(header.length_with_payload());
         let txs: Vec<TransactionSigned> = alloy_rlp::Decodable::decode(&mut bytes.as_ref())
             .map_err(|e| commonware_codec::Error::Wrapped("reading tx list", e.into()))?;
+        let flags = u8::read_cfg(buf, &())?;
+        let beacon_outcome = if flags & 1 != 0 {
+            let len = u32::read_cfg(buf, &())? as usize;
+            if len > MAX_BEACON_OUTCOME_SIZE {
+                return Err(commonware_codec::Error::Invalid(
+                    "order_block",
+                    "beacon_outcome exceeds MAX_BEACON_OUTCOME_SIZE",
+                ));
+            }
+            if len > buf.remaining() {
+                return Err(commonware_codec::Error::EndOfBuffer);
+            }
+            Some(Bytes::from(buf.copy_to_bytes(len)))
+        } else {
+            None
+        };
+        let beacon_seed = if flags & 2 != 0 {
+            Some(Seed::read_cfg(buf, &())?)
+        } else {
+            None
+        };
         Ok(Self {
             parent,
             height,
@@ -197,6 +255,8 @@ impl Read for OrderBlock {
             extra_data,
             result,
             txs,
+            beacon_outcome,
+            beacon_seed,
         })
     }
 }
@@ -247,12 +307,24 @@ mod tests {
             extra_data: Bytes::from(vec![1u8, 2, 3]),
             result: B256::repeat_byte(0x33),
             txs: Vec::new(),
+            beacon_outcome: None,
+            beacon_seed: None,
         }
     }
 
     #[test]
     fn codec_round_trip() {
         let original = sample_order_block();
+        let encoded = original.encode();
+        assert_eq!(original.encode_size(), encoded.len());
+        let decoded = OrderBlock::read(&mut encoded.as_ref()).expect("decode");
+        assert_eq!(original, decoded);
+    }
+
+    #[test]
+    fn codec_round_trip_with_beacon_outcome() {
+        let mut original = sample_order_block();
+        original.beacon_outcome = Some(Bytes::from(vec![7u8; 96]));
         let encoded = original.encode();
         assert_eq!(original.encode_size(), encoded.len());
         let decoded = OrderBlock::read(&mut encoded.as_ref()).expect("decode");
@@ -294,10 +366,39 @@ mod tests {
                 result: B256::repeat_byte(0xCC),
                 ..base.clone()
             },
+            OrderBlock {
+                beacon_outcome: Some(Bytes::from(vec![9u8; 48])),
+                ..base.clone()
+            },
         ];
         for m in mutations {
             assert_ne!(m.digest(), d);
         }
+    }
+
+    #[test]
+    fn read_rejects_oversize_beacon_outcome() {
+        // Hand-encode a block with the outcome flag set and an oversize length prefix.
+        let mut buf = Vec::new();
+        let b = sample_order_block();
+        b.parent.write(&mut buf);
+        b.height.write(&mut buf);
+        b.timestamp.write(&mut buf);
+        buf.extend_from_slice(b.fee_recipient.as_slice());
+        b.gas_limit.write(&mut buf);
+        buf.extend_from_slice(b.result.as_slice());
+        (b.extra_data.len() as u32).write(&mut buf);
+        buf.extend_from_slice(&b.extra_data);
+        {
+            use alloy_rlp::Encodable as _;
+            b.txs.encode(&mut buf);
+        }
+        1u8.write(&mut buf); // beacon_flags: outcome present
+        ((MAX_BEACON_OUTCOME_SIZE + 1) as u32).write(&mut buf);
+        buf.resize(buf.len() + MAX_BEACON_OUTCOME_SIZE + 1, 0);
+
+        let err = OrderBlock::read(&mut buf.as_slice()).expect_err("oversize beacon_outcome");
+        assert!(matches!(err, commonware_codec::Error::Invalid(_, _)));
     }
 
     #[test]

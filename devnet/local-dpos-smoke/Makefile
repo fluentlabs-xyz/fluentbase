@@ -3,7 +3,7 @@ SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
 .PHONY: regen-contracts smoke smoke-swap up down logs clean \
         smoke-tx smoke-epoch smoke-peers smoke-liveness smoke-crash-survivor smoke-byzantine \
         smoke-gov-interval smoke-full-restart smoke-cert-follow smoke-deferred \
-        smoke-production-path smoke-all
+        smoke-vrf smoke-production-path smoke-all
 
 regen-contracts:
 	@test -d $(SOLIDITY_CONTRACTS_DIR) || \
@@ -75,6 +75,9 @@ smoke-cert-cascade:
 # Deferred-execution observables: K-lag invariant, result commitment, EL-slowed validator.
 smoke-deferred:
 	@./scripts/case-deferred.sh
+# Threshold randomness beacon: prev_randao = H(verified threshold seed) under DPoS.
+smoke-vrf:
+	@./scripts/case-vrf.sh
 # Full production path: runtime contract deploy + dynamic registration + governance
 # activation + live committee rotation + liveness ejection. Long (~5-8 min),
 # first-of-its-kind, and gated on the EIP-170 Staking-codesize fix; NOT in run-all.

@@ -142,7 +142,7 @@ where
         let scheme: BlsScheme = cfg
             .signer_keypair
             .as_ref()
-            .and_then(|keypair| build_signer(&namespace, bimap.clone(), keypair))
+            .and_then(|keypair| build_signer(&namespace, bimap.clone(), keypair, None))
             .unwrap_or_else(|| {
                 if cfg.signer_keypair.is_some() {
                     metrics::counter!("epoch_engine_rotated_out_total").increment(1);
@@ -159,7 +159,7 @@ where
                         });
                     }
                 }
-                build_verifier(&namespace, bimap)
+                build_verifier(&namespace, bimap, None)
             });
 
         (cfg.register_scheme)(cfg.epoch, scheme.clone());

@@ -31,6 +31,8 @@ use commonware_consensus::simplex::scheme::bls12381_multisig;
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_cryptography::ed25519;
 
+pub mod beacon;
+pub mod combined_scheme;
 pub mod encoding;
 pub mod error;
 pub mod keys;
@@ -55,11 +57,19 @@ pub type BlsPubkey =
 pub type BlsSignature =
     <MinSig as commonware_cryptography::bls12381::primitives::variant::Variant>::Signature;
 
-/// Macro-generated multisig signing scheme for the Simplex engine.
+/// Inner multisig signing scheme — the attributable VOTE half of the
+/// [`Scheme`] (`CombinedScheme`). Used directly only by the combined scheme's
+/// delegation and by verifier-only consumers that need just the vote half.
 ///
 /// `bls12381_multisig::Scheme<P, V>` is a thin wrapper around the underlying
 /// `Generic<P, V, N>` — see [crate doc](crate) for why we only expose this.
-pub type Scheme = bls12381_multisig::Scheme<PeerPubkey, Variant>;
+pub type VoteScheme = bls12381_multisig::Scheme<PeerPubkey, Variant>;
+
+/// The Fluent DPoS consensus scheme: an attributable multisig vote (for
+/// finalization + slashing) fused with a threshold beacon seed partial (for
+/// randomness). Every vote carries both; the seed is recovered from the
+/// notarization/finalization certificate. See [`combined_scheme`].
+pub type Scheme = combined_scheme::CombinedScheme;
 
 /// Compressed pubkey byte length.
 pub const PUBKEY_BYTES: usize = 96;

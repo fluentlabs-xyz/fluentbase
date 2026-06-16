@@ -94,6 +94,7 @@ mod abi {
                 bytes32 peerPubkey
             ) external;
             function commitEpochCommittee(address[] committee) external;
+            function commitEpochBeaconKey(bytes groupPubKey) external;
         }
         interface IStakingPool {
             function initialize(address initialOwner) external;
@@ -450,6 +451,7 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
 
     register_validators(&mut ctx, keys)?;
     commit_initial_committee(&mut ctx, keys)?;
+    commit_initial_beacon_key(&mut ctx, keys)?;
 
     Ok(snapshot(
         &mut ctx,
@@ -584,6 +586,28 @@ fn commit_initial_committee(ctx: &mut EvmTestingContext, keys: &KeySet) -> eyre:
         STAKING_ADDR,
         input.into(),
         "commitEpochCommittee[epoch=0]",
+    )
+}
+
+/// Publish the epoch-0 beacon group public key `PK_epoch` to L2 (devnet
+/// bootstrap; research #2). Mirrors `commit_initial_committee` —
+/// `commitEpochBeaconKey` is `onlySystemCall`. The bytes are the commonware
+/// encoding of the MinSig group public key (`Sharing::public()`), exactly what
+/// the deriver/STF verify recovered seeds against; nodes read it back via
+/// `getEpochBeaconKey(0)`.
+fn commit_initial_beacon_key(ctx: &mut EvmTestingContext, keys: &KeySet) -> eyre::Result<()> {
+    use commonware_codec::Encode as _;
+    let group_pub_key = keys.beacon_sharing.public().encode().as_ref().to_vec();
+    let input = abi::IStaking::commitEpochBeaconKeyCall {
+        groupPubKey: group_pub_key.into(),
+    }
+    .abi_encode();
+    call_or_die(
+        ctx,
+        SYSTEM_CALLER,
+        STAKING_ADDR,
+        input.into(),
+        "commitEpochBeaconKey[epoch=0]",
     )
 }
 

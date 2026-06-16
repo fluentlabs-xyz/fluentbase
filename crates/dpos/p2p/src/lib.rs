@@ -137,6 +137,13 @@ where
     pub broadcast_receiver: DiscReceiver,
     pub marshal_sender: DiscSender<E>,
     pub marshal_receiver: DiscReceiver,
+
+    // BEACON: global one-instance channel for the randomness-beacon seed
+    // sub-protocol (DKG + per-height seed partials). Consumed once by the
+    // seed actor in 04's launch (single bootstrapped key for now; per-epoch
+    // Muxing lands with the live DKG actor — research Q2).
+    pub beacon_sender: DiscSender<E>,
+    pub beacon_receiver: DiscReceiver,
 }
 
 impl<E> FluentP2P<E>
@@ -181,6 +188,11 @@ where
             constants::MARSHAL_QUOTA,
             constants::MARSHAL_BACKLOG,
         );
+        let (beacon_s, beacon_r) = network.register(
+            constants::BEACON_CHANNEL,
+            constants::BEACON_QUOTA,
+            constants::BEACON_BACKLOG,
+        );
 
         let handles = FluentP2PHandles {
             oracle: OracleHandle { inner: oracle },
@@ -194,6 +206,8 @@ where
             broadcast_receiver: br_r,
             marshal_sender: mr_s,
             marshal_receiver: mr_r,
+            beacon_sender: beacon_s,
+            beacon_receiver: beacon_r,
         };
         let me = Self { network };
         (me, handles)

@@ -18,6 +18,8 @@ commonware-consensus = { workspace = true }
 commonware-utils = { workspace = true, features = ["std"] }
 commonware-codec = { workspace = true, features = ["std"] }
 commonware-parallel = { workspace = true, default-features = false }
+commonware-math = { workspace = true, features = ["std"] }
+bytes = { workspace = true }
 rand_core = { workspace = true }
 thiserror = { workspace = true }
 blst = { workspace = true }

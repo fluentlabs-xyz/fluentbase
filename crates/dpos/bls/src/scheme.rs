@@ -7,9 +7,19 @@
 //! (the on-chain signer-index resolution in `Staking.sol`) MUST mirror
 //! this ordering.
 
+use commonware_cryptography::bls12381::primitives::{group::Share, sharing::Sharing, variant::MinSig};
 use commonware_utils::{ordered::BiMap, TryCollect};
 
-use crate::{keys::ValidatorBlsKeypair, BlsPubkey, PeerPubkey, Scheme};
+use crate::{
+    combined_scheme::CombinedScheme, keys::ValidatorBlsKeypair, BlsPubkey, PeerPubkey, Scheme,
+    VoteScheme,
+};
+
+/// Per-epoch threshold beacon material for the [`CombinedScheme`]: the public
+/// polynomial `PK_epoch`, this node's share (`None` for a verifier-only / no-share
+/// node), and the seed namespace. `None` for the whole tuple ⇒ a fallback
+/// (pure-multisig) epoch.
+pub type BeaconKey = (Sharing<MinSig>, Option<Share>, Vec<u8>);
 
 /// Per-epoch consensus committee: an epoch identifier paired with the
 /// commonware-sorted `BiMap<PeerPubkey, BlsPubkey>` that defines the
@@ -65,13 +75,22 @@ pub fn build_signer(
     namespace: &[u8],
     participants: BiMap<PeerPubkey, BlsPubkey>,
     keypair: &ValidatorBlsKeypair,
+    beacon: Option<BeaconKey>,
 ) -> Option<Scheme> {
-    Scheme::signer(namespace, participants, keypair.secret().clone())
+    let vote = VoteScheme::signer(namespace, participants, keypair.secret().clone())?;
+    Some(CombinedScheme::new(vote, beacon))
 }
 
-/// Build a verifier-only scheme (full nodes, light clients, slashers).
-pub fn build_verifier(namespace: &[u8], participants: BiMap<PeerPubkey, BlsPubkey>) -> Scheme {
-    Scheme::verifier(namespace, participants)
+/// Build a verifier-only scheme (full nodes, light clients, slashers). A
+/// `beacon` part (with `share = None`) lets the verifier check recovered seeds
+/// against `PK_epoch`; `None` ⇒ a fallback (pure-multisig) epoch.
+pub fn build_verifier(
+    namespace: &[u8],
+    participants: BiMap<PeerPubkey, BlsPubkey>,
+    beacon: Option<BeaconKey>,
+) -> Scheme {
+    let vote = VoteScheme::verifier(namespace, participants);
+    CombinedScheme::new(vote, beacon)
 }
 
 #[cfg(test)]
@@ -114,7 +133,7 @@ mod tests {
     #[test]
     fn build_signer_succeeds_for_member() {
         let (_, bls_kps, bimap) = fixture(1, 4);
-        let scheme = build_signer(&fluent_namespace(20994), bimap, &bls_kps[0]);
+        let scheme = build_signer(&fluent_namespace(20994), bimap, &bls_kps[0], None);
         assert!(scheme.is_some());
     }
 
@@ -123,14 +142,14 @@ mod tests {
         let (_, _bls_kps, bimap) = fixture(1, 4);
         // Generate an outsider keypair not in the committee.
         let outsider = ValidatorBlsKeypair::generate(&mut StdRng::seed_from_u64(999));
-        let scheme = build_signer(&fluent_namespace(20994), bimap, &outsider);
+        let scheme = build_signer(&fluent_namespace(20994), bimap, &outsider, None);
         assert!(scheme.is_none());
     }
 
     #[test]
     fn build_verifier_does_not_panic_with_empty_committee() {
         let empty = BiMap::<PeerPubkey, BlsPubkey>::default();
-        let _ = build_verifier(&fluent_namespace(20994), empty);
+        let _ = build_verifier(&fluent_namespace(20994), empty, None);
         // Just exercises the constructor; verify-on-empty quorum is Engine concern.
     }
 }

@@ -272,6 +272,9 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     pub signer_keypair: Option<ValidatorBlsKeypair>,
     /// Rotation-out signals to the unified supervisor (`None` = legacy).
     pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<crate::dpos::ModeEvent>>,
+    /// Randomness-beacon seed feed handed to the executor: notified per
+    /// finalized height for sign-after-finalize (Decision C4). `None` = no beacon.
+    pub seed_feed: Option<crate::beacon::seed_actor::FinalizedFeed>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
     pub deque_size: usize,
@@ -594,6 +597,9 @@ where
         );
 
         // FluentApp (needs executor_mailbox + marshal_mailbox + sidecar state).
+        // The beacon seed feed lives here, NOT on the executor: the partial is
+        // triggered at notarize-time (verify→true / own propose), so seed(h) is
+        // recovered by the time h finalizes (sign-at-notarize).
         let latest_finalized_height = Arc::new(AtomicU64::new(0));
         let app = FluentApp::new(
             self.genesis,
@@ -605,6 +611,7 @@ where
             self.assembler,
             self.fee_recipient,
             self.target_gas_limit,
+            self.seed_feed,
         );
         let marshal_reporter_app = app.clone();
 

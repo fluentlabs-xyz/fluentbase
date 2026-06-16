@@ -5,12 +5,18 @@
 use alloy_signer_local::PrivateKeySigner;
 use coins_bip39::{English, Mnemonic};
 use commonware_codec::DecodeExt;
+use commonware_cryptography::bls12381::{
+    dkg::deal_anonymous,
+    primitives::{group::Share, sharing::Sharing, variant::MinSig},
+};
 use commonware_cryptography::ed25519::PrivateKey as Ed25519PrivateKey;
-use eyre::WrapErr;
+use commonware_utils::N3f1;
+use eyre::{OptionExt, WrapErr};
 use fluentbase_bls::keys::ValidatorBlsKeypair;
 use rand_08::rngs::StdRng;
 use rand_core::SeedableRng;
 use sha2::{Digest, Sha256};
+use std::num::NonZeroU32;
 
 pub struct Validator {
     pub idx: u32,
@@ -20,6 +26,11 @@ pub struct Validator {
     pub slasher: PrivateKeySigner,
     pub slasher_password: String,
     pub reth_p2p: secp256k1::SecretKey,
+    /// This validator's threshold-beacon DKG share (devnet bootstrap: the key
+    /// is dealt deterministically at genesis, mirroring the epoch-0 committee
+    /// bootstrap, since the live DKG actor is phased — research Q2). Signs the
+    /// per-height seed partials (`prev_randao(h) = H(seed(h))`).
+    pub beacon_share: Share,
 }
 
 pub struct FullNode {
@@ -31,6 +42,10 @@ pub struct KeySet {
     pub validators: Vec<Validator>,
     pub full_node: FullNode,
     pub governance_signer: PrivateKeySigner,
+    /// The dealt beacon sharing — its `.public()` is `PK_epoch`, published to L2
+    /// (`commitEpochBeaconKey`) and the group key every node verifies seeds
+    /// against. The same `Sharing` underlies all validators' [`Validator::beacon_share`].
+    pub beacon_sharing: Sharing<MinSig>,
 }
 
 pub fn derive(mnemonic: &str, peers: u32, chain_id: u64) -> eyre::Result<KeySet> {
@@ -49,6 +64,16 @@ pub fn derive(mnemonic: &str, peers: u32, chain_id: u64) -> eyre::Result<KeySet>
         h.update(idx.to_be_bytes());
         h.finalize().into()
     };
+
+    // Deal the threshold randomness-beacon key across all `peers` validators,
+    // deterministically from the mnemonic so every regen is reproducible. The
+    // share index assigned here is the signer index that appears in seed
+    // partials; recovery only needs the shared `Sharing`, so it is independent
+    // of the (peer-pubkey-sorted) committee ordering.
+    let beacon_n = NonZeroU32::new(peers).ok_or_eyre("peers must be non-zero for beacon DKG")?;
+    let mut beacon_rng = StdRng::from_seed(derive_32("beacon-dkg", 0));
+    let (beacon_sharing, beacon_shares) =
+        deal_anonymous::<MinSig, N3f1>(&mut beacon_rng, Default::default(), beacon_n);
 
     let mut validators = Vec::with_capacity(peers as usize);
     for i in 0..peers {
@@ -88,6 +113,7 @@ pub fn derive(mnemonic: &str, peers: u32, chain_id: u64) -> eyre::Result<KeySet>
             slasher,
             slasher_password,
             reth_p2p,
+            beacon_share: beacon_shares[i as usize].clone(),
         });
     }
 
@@ -106,5 +132,6 @@ pub fn derive(mnemonic: &str, peers: u32, chain_id: u64) -> eyre::Result<KeySet>
         validators,
         full_node,
         governance_signer,
+        beacon_sharing,
     })
 }

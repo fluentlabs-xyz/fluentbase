@@ -25,6 +25,13 @@ pub const CERT_CHANNEL: u64 = 1;
 pub const RESOLVER_CHANNEL: u64 = 2;
 pub const BROADCAST_CHANNEL: u64 = 3;
 pub const MARSHAL_CHANNEL: u64 = 4;
+// Beacon plane (threshold randomness): per-height seed partials under a
+// {Dkg|Seed} envelope. Currently a GLOBAL one-instance channel like
+// BROADCAST/MARSHAL — registered once in `FluentP2P::build` and consumed by the
+// single seed actor (`dpos.rs::launch`), matching the devnet single
+// bootstrapped key. Per-epoch Muxing in the EpochManager (so DKG-for-E and
+// seed-of-E never interleave) lands with the live DKG actor — research Q2/#3.
+pub const BEACON_CHANNEL: u64 = 5;
 
 // Per-channel rate quotas
 //
@@ -47,6 +54,9 @@ pub const RESOLVER_QUOTA: Quota = Quota::per_second(NZU32!(128));
 // MARSHAL:   backfill is request-bursty (catch-up).
 pub const BROADCAST_QUOTA: Quota = Quota::per_second(NZU32!(8));
 pub const MARSHAL_QUOTA: Quota = Quota::per_second(NZU32!(16));
+// BEACON: DKG is bursty for one round per epoch then idle; seed is one partial
+// per finalized height. Matched to VOTE/CERT (per-epoch muxed, same n=51 fan-out).
+pub const BEACON_QUOTA: Quota = Quota::per_second(NZU32!(128));
 
 // Per-channel backlog (mailbox size before back-pressure)
 pub const VOTE_BACKLOG: usize = 256;
@@ -54,6 +64,7 @@ pub const CERT_BACKLOG: usize = 256;
 pub const RESOLVER_BACKLOG: usize = 64;
 pub const BROADCAST_BACKLOG: usize = 32;
 pub const MARSHAL_BACKLOG: usize = 128;
+pub const BEACON_BACKLOG: usize = 256;
 
 // Wire caps
 //

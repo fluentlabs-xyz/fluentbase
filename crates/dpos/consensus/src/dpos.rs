@@ -333,6 +333,28 @@ pub struct DposLayerConfig<D, XC, A> {
     /// Mode signals to the unified supervisor (rotation-out → demote).
     /// `None` = legacy `--dpos` (no supervisor listening).
     pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<ModeEvent>>,
+    /// Randomness-beacon launch material (devnet bootstrap). `None` = no beacon
+    /// (gated fallback `prev_randao = order.digest()`). When present, the layer
+    /// registers `BEACON_CHANNEL`, spawns the seed actor, and feeds recovered
+    /// seeds into `seed_cache` — the same `Arc` the node's deriver reads for
+    /// `prev_randao(h) = H(seed(h))` (Decisions A/P4/C2/C4).
+    pub beacon: Option<BeaconLaunch>,
+}
+
+/// Threshold randomness-beacon material handed to the DPoS layer at launch
+/// (devnet bootstrap; the live DKG actor is phased — research Q2). The deriver
+/// (node-side) already holds a clone of `seed_cache`; the layer spawns the seed
+/// actor against the same cache so recovered seeds reach `prev_randao`.
+pub struct BeaconLaunch {
+    /// This node's DKG share, or `None` for a verifier-only beacon participant.
+    pub share: Option<commonware_cryptography::bls12381::primitives::group::Share>,
+    /// The public polynomial (`.public()` is `PK_epoch`).
+    pub sharing: commonware_cryptography::bls12381::primitives::sharing::Sharing<
+        commonware_cryptography::bls12381::primitives::variant::MinSig,
+    >,
+    /// Shared with the node's deriver: the seed actor WRITES recovered seeds
+    /// here; `derive(h)` READS `seed(h)` to set `prev_randao` (Decision C4).
+    pub seed_cache: Arc<std::sync::Mutex<crate::beacon::seed_cache::SeedCache>>,
 }
 
 /// Mode signal from the per-epoch engine construction to the unified
@@ -459,6 +481,7 @@ impl DposLayer {
             feed,
             promotion,
             mode_events,
+            beacon,
         } = cfg;
 
         let RethHandle {
@@ -932,6 +955,33 @@ impl DposLayer {
                 provider_for_finalized.block_hash(n).ok().flatten()
             });
 
+        // Randomness-beacon seed actor (Decision C4): drives the per-height
+        // seed sub-protocol over the global BEACON_CHANNEL, writing recovered
+        // seeds into the cache the node's deriver reads for prev_randao. Single
+        // bootstrapped key for now (per-epoch DKG + Muxing are phased — Q2).
+        let seed_feed = if let Some(bl) = beacon {
+            let namespace = crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
+            let signer = crate::beacon::seed_actor::SeedSigner::new(
+                namespace,
+                bl.sharing,
+                bl.share,
+                bl.seed_cache,
+                crate::beacon::seed_actor::DEFAULT_ROUND_RETAIN,
+            );
+            let (seed_actor, feed) = crate::beacon::seed_actor::SeedActor::new(
+                signer,
+                handles.beacon_sender,
+                handles.beacon_receiver,
+            );
+            drop(
+                ctx.with_label("beacon_seed")
+                    .spawn(move |_| async move { seed_actor.run().await }),
+            );
+            Some(feed)
+        } else {
+            None
+        };
+
         let outer = OuterBuilder {
             me: me.clone(),
             blocker: handles.oracle.clone(),
@@ -941,6 +991,7 @@ impl DposLayer {
             dpos_activation_block,
             signer_keypair: Some(bls_keypair),
             mode_events,
+            seed_feed,
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             deque_size: 64,
@@ -991,7 +1042,7 @@ impl DposLayer {
         let namespace = fluent_namespace(chain_id);
         let initial_committee = epoch_committee_from_snapshot(&initial_snapshot)
             .map_err(|e| eyre!("initial snapshot has non-unique participants: {e:?}"))?;
-        let initial_scheme = build_verifier(&namespace, initial_committee.bimap);
+        let initial_scheme = build_verifier(&namespace, initial_committee.bimap, None);
         outer.cold_start_register(Epoch::new(initial_epoch_u64), initial_scheme);
 
         // Bridge forwarder: drains (u64, snap) queued by EpochTransition
@@ -1095,6 +1146,8 @@ mod visibility_retry_tests {
             extra_data: Bytes::new(),
             result: B256::ZERO,
             txs: Vec::new(),
+            beacon_outcome: None,
+            beacon_seed: None,
         }
     }
 

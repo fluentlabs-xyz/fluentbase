@@ -144,7 +144,31 @@ pub fn write(
         )
         .wrap_err("encrypt slasher keystore")?;
         write_mode_0600(&dir.join("slasher.pwd"), v.slasher_password.as_bytes())?;
+
+        // This validator's threshold-beacon DKG share (devnet bootstrap) —
+        // loaded via --dpos.beacon-share-path to sign per-height seed partials.
+        // Secret material, so mode 0600 like bls.hex / peer.hex.
+        write_mode_0600(
+            &dir.join("beacon-share.hex"),
+            hex::encode(v.beacon_share.encode().as_ref()).as_bytes(),
+        )?;
     }
+
+    // The beacon public polynomial (`Sharing`) — public info every node needs
+    // to VERIFY seed partials and RECOVER the threshold seed; `.public()` is
+    // PK_epoch (what the deriver checks recovered seeds against). Public, so a
+    // plain world-readable write, unlike the per-validator shares above.
+    fs::write(
+        keys_dir.join("beacon-sharing.hex"),
+        hex::encode(keys.beacon_sharing.encode().as_ref()),
+    )?;
+    // PK_epoch alone (the MinSig group public key) — what `commitEpochBeaconKey`
+    // publishes to L2 and what recovered seeds verify against. Written so the
+    // smoke can assert the on-chain `getEpochBeaconKey(0)` equals it byte-for-byte.
+    fs::write(
+        keys_dir.join("beacon-pk.hex"),
+        hex::encode(keys.beacon_sharing.public().encode().as_ref()),
+    )?;
 
     let full_dir = keys_dir.join("full-node");
     fs::create_dir_all(&full_dir)?;

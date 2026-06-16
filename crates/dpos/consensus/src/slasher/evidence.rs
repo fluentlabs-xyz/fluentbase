@@ -396,7 +396,7 @@ mod tests {
         BiMap<PeerPubkey, BlsPubkey>,
     ) {
         let (kps, bimap) = small_committee(seed, 4);
-        let s = build_signer(&fluent_namespace(TEST_CHAIN_ID), bimap.clone(), &kps[0])
+        let s = build_signer(&fluent_namespace(TEST_CHAIN_ID), bimap.clone(), &kps[0], None)
             .expect("offender must be member");
         let p1 = Proposal::new(round(), View::new(41), digest(0xaa));
         let p2 = Proposal::new(round(), View::new(41), digest(0xbb));
@@ -417,7 +417,7 @@ mod tests {
 
         // Non-conflicting Notarize — must produce None
         let (kps, bimap) = small_committee(2, 4);
-        let s = build_signer(&fluent_namespace(TEST_CHAIN_ID), bimap, &kps[0]).unwrap();
+        let s = build_signer(&fluent_namespace(TEST_CHAIN_ID), bimap, &kps[0], None).unwrap();
         let n = Notarize::sign(&s, Proposal::new(round(), View::new(41), digest(0xcc))).unwrap();
         let plain = Activity::<Scheme, Sha256Digest>::Notarize(n);
         assert_eq!(SlashKind::from_activity(&plain), None);
@@ -472,7 +472,7 @@ mod tests {
         // Build a verifier scheme over the same committee so the activity
         // is verifiable in principle.
         let scheme =
-            fluentbase_bls::scheme::build_verifier(&fluent_namespace(TEST_CHAIN_ID), bimap);
+            fluentbase_bls::scheme::build_verifier(&fluent_namespace(TEST_CHAIN_ID), bimap, None);
         let mut rng = StdRng::seed_from_u64(0xdeadbeef);
 
         // Sanity: clean activity must verify.

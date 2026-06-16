@@ -15,6 +15,7 @@
 //! provides `Relay` (inline.rs:471); `FluentApp` does not.
 
 use crate::{
+    beacon::seed_actor::FinalizedFeed,
     digest::Digest,
     executor, extra_data,
     order_block::{result_target, OrderBlock, ResultTarget, TX_BYTE_BUDGET},
@@ -148,6 +149,13 @@ pub struct FluentApp<XC, A> {
     /// Ordering-chain genesis height ([`crate::order_block::anchor_order_block`]);
     /// origin of the `result_target` pre-activation window.
     anchor_height: u64,
+    /// Beacon seed trigger: notified with a block's height the moment this node
+    /// is about to NOTARIZE it (verify→true, or its own proposal). The seed
+    /// actor then signs+broadcasts this node's threshold partial for that
+    /// height, so partials accumulate during round-1 (Notarize) and `seed(h)`
+    /// is recovered by the time `h` finalizes — sign-at-notarize, NOT
+    /// sign-after-finalize. `None` when the beacon is not configured.
+    seed_feed: Option<FinalizedFeed>,
 }
 
 impl<XC: Clone, A> Clone for FluentApp<XC, A> {
@@ -163,6 +171,7 @@ impl<XC: Clone, A> Clone for FluentApp<XC, A> {
             fee_recipient: self.fee_recipient,
             target_gas_limit: self.target_gas_limit,
             anchor_height: self.anchor_height,
+            seed_feed: self.seed_feed.clone(),
         }
     }
 }
@@ -183,6 +192,7 @@ where
         assembler: Arc<A>,
         fee_recipient: Address,
         target_gas_limit: u64,
+        seed_feed: Option<FinalizedFeed>,
     ) -> Self {
         let anchor_height = genesis.height;
         Self {
@@ -196,6 +206,7 @@ where
             fee_recipient,
             target_gas_limit,
             anchor_height,
+            seed_feed,
         }
     }
 
@@ -208,7 +219,7 @@ where
         }
         let h = stored - 1;
         let fin = marshal.get_finalization(Height::new(h)).await?;
-        Some((fin.proposal.round, fin.certificate.signers.clone()))
+        Some((fin.proposal.round, fin.certificate.vote.signers.clone()))
     }
 
     /// Pure structural validity of `block` against its parent — everything
@@ -280,6 +291,12 @@ where
             .max(parent.timestamp + 1);
         let txs = self.assembler.assemble(height, gas_limit, TX_BYTE_BUDGET);
 
+        // About to propose (and notarize) this height: trigger our threshold
+        // seed partial now so it accumulates during round-1, not after finalize.
+        if let Some(feed) = &self.seed_feed {
+            feed.notify(height);
+        }
+
         Some(OrderBlock {
             parent: parent.digest(),
             height,
@@ -289,6 +306,8 @@ where
             extra_data,
             result,
             txs,
+            beacon_outcome: None,
+            beacon_seed: None,
         })
     }
 }
@@ -362,17 +381,19 @@ where
         // then EXACT equality against the agreed commitment. Timeout → false
         // (backpressure: consensus slows until execution catches up — the
         // Monad "execution lags by at most K" enforcement semantic).
-        match result_target(block.height, self.anchor_height) {
+        let verdict = match result_target(block.height, self.anchor_height) {
             ResultTarget::PreActivation => block.result == B256::ZERO,
             ResultTarget::Height(h) => {
                 let polls = (VERIFY_EXEC_BUDGET.as_micros() / VERIFY_EXEC_POLL.as_micros()) as u32;
+                let mut ok = None;
                 for _ in 0..polls {
                     if let Some(local) = self.executed.executed_hash(h) {
-                        return block.result == local;
+                        ok = Some(block.result == local);
+                        break;
                     }
                     ctx.0.sleep(VERIFY_EXEC_POLL).await;
                 }
-                match self.executed.executed_hash(h) {
+                ok.unwrap_or_else(|| match self.executed.executed_hash(h) {
                     Some(local) => block.result == local,
                     None => {
                         tracing::warn!(
@@ -383,9 +404,21 @@ where
                         );
                         false
                     }
-                }
+                })
+            }
+        };
+
+        // A true verdict means this node will NOTARIZE `block`: trigger our
+        // threshold seed partial for its height now (sign-at-notarize), so
+        // partials accumulate during round-1 and seed(h) is recovered by
+        // finalize. Harmless if a later view supersedes this block (the partial
+        // is just unused; peers dedup by signer).
+        if verdict {
+            if let Some(feed) = &self.seed_feed {
+                feed.notify(block.height);
             }
         }
+        verdict
     }
 }
 
@@ -563,6 +596,8 @@ mod tests {
             extra_data: Bytes::new(),
             result: B256::ZERO,
             txs: Vec::new(),
+            beacon_outcome: None,
+            beacon_seed: None,
         }
     }
 
@@ -580,6 +615,7 @@ mod tests {
             Arc::new(NoTxs),
             Address::ZERO,
             30_000_000,
+            None,
         )
     }
 

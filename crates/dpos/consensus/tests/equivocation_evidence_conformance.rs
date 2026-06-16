@@ -189,7 +189,7 @@ fn conflicting_notarize() -> (
     BiMap<PeerPubkey, BlsPubkey>,
 ) {
     let (kps, bimap) = committee(1);
-    let s = build_signer(&fluent_namespace(C_MAIN), bimap.clone(), &kps[OFFENDER]).expect("member");
+    let s = build_signer(&fluent_namespace(C_MAIN), bimap.clone(), &kps[OFFENDER], None).expect("member");
     let p1: Proposal<Sha256Digest> = Proposal::new(round(), View::new(VIEW - 1), digest(0xaa));
     let p2: Proposal<Sha256Digest> = Proposal::new(round(), View::new(VIEW - 1), digest(0xbb));
     let n1 = Notarize::sign(&s, p1.clone()).expect("sign n1");
@@ -223,7 +223,7 @@ fn conflicting_finalize() -> (
     BiMap<PeerPubkey, BlsPubkey>,
 ) {
     let (kps, bimap) = committee(1);
-    let s = build_signer(&fluent_namespace(C_MAIN), bimap.clone(), &kps[OFFENDER]).expect("member");
+    let s = build_signer(&fluent_namespace(C_MAIN), bimap.clone(), &kps[OFFENDER], None).expect("member");
     let p1: Proposal<Sha256Digest> = Proposal::new(round(), View::new(VIEW - 1), digest(0xcc));
     let p2: Proposal<Sha256Digest> = Proposal::new(round(), View::new(VIEW - 1), digest(0xdd));
     let f1 = Finalize::sign(&s, p1.clone()).expect("sign f1");
@@ -257,7 +257,7 @@ fn nullify_finalize() -> (
     BiMap<PeerPubkey, BlsPubkey>,
 ) {
     let (kps, bimap) = committee(1);
-    let s = build_signer(&fluent_namespace(C_MAIN), bimap.clone(), &kps[OFFENDER]).expect("member");
+    let s = build_signer(&fluent_namespace(C_MAIN), bimap.clone(), &kps[OFFENDER], None).expect("member");
     let nul = commonware_consensus::simplex::types::Nullify::sign::<Sha256Digest>(&s, round())
         .expect("sign nullify");
     let prop: Proposal<Sha256Digest> = Proposal::new(round(), View::new(VIEW - 1), digest(0xee));

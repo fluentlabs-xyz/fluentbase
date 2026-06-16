@@ -99,7 +99,7 @@ fn build_conflicting_notarize() -> (
     BiMap<PeerPubkey, BlsPubkey>,
 ) {
     let (kps, bimap) = committee(1);
-    let s = build_signer(&fluent_namespace(C_MAIN), bimap.clone(), &kps[OFFENDER])
+    let s = build_signer(&fluent_namespace(C_MAIN), bimap.clone(), &kps[OFFENDER], None)
         .expect("offender must be in committee");
     let round = Round::new(Epoch::new(EPOCH), View::new(VIEW));
     let p1: Proposal<Sha256Digest> = Proposal::new(round, View::new(VIEW - 1), digest(0xaa));
@@ -115,7 +115,7 @@ fn build_consensus_digest_conflicting_notarize() -> (
     BiMap<PeerPubkey, BlsPubkey>,
 ) {
     let (kps, bimap) = committee(1);
-    let s = build_signer(&fluent_namespace(C_MAIN), bimap.clone(), &kps[OFFENDER])
+    let s = build_signer(&fluent_namespace(C_MAIN), bimap.clone(), &kps[OFFENDER], None)
         .expect("offender must be in committee");
     let round = Round::new(Epoch::new(EPOCH), View::new(VIEW));
     let d_a = fluentbase_consensus::Digest(B256::from([0xaa; 32]));
@@ -344,7 +344,7 @@ async fn spawn_actor_with_stubs(
     // The slasher only needs verify_pre_submit's verification path, not
     // signing — `build_verifier` is sufficient and accepts any committee.
     let scheme_provider = EpochSchemeProvider::new();
-    let scheme = build_verifier(&fluent_namespace(C_MAIN), scheme_bimap.clone());
+    let scheme = build_verifier(&fluent_namespace(C_MAIN), scheme_bimap.clone(), None);
     scheme_provider.register(Epoch::new(EPOCH), scheme);
 
     let latest: slasher::actor::LatestFinalizedHash = Arc::new(|| Some(B256::ZERO));
@@ -543,7 +543,7 @@ mod slash_abi {
 /// proposals) over consensus digests.
 fn build_conflicting_finalize() -> ConflictingFinalize<BlsScheme, fluentbase_consensus::Digest> {
     let (kps, bimap) = committee(1);
-    let s = build_signer(&fluent_namespace(C_MAIN), bimap, &kps[OFFENDER])
+    let s = build_signer(&fluent_namespace(C_MAIN), bimap, &kps[OFFENDER], None)
         .expect("offender in committee");
     let round = Round::new(Epoch::new(EPOCH), View::new(VIEW));
     let p1 = Proposal::new(
@@ -564,7 +564,7 @@ fn build_conflicting_finalize() -> ConflictingFinalize<BlsScheme, fluentbase_con
 /// A `NullifyFinalize` by OFFENDER (nullify + finalize for the same round).
 fn build_nullify_finalize() -> NullifyFinalize<BlsScheme, fluentbase_consensus::Digest> {
     let (kps, bimap) = committee(1);
-    let s = build_signer(&fluent_namespace(C_MAIN), bimap, &kps[OFFENDER])
+    let s = build_signer(&fluent_namespace(C_MAIN), bimap, &kps[OFFENDER], None)
         .expect("offender in committee");
     let round = Round::new(Epoch::new(EPOCH), View::new(VIEW));
     let nullify = Nullify::sign::<fluentbase_consensus::Digest>(&s, round).expect("sign nullify");

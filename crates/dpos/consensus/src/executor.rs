@@ -531,6 +531,8 @@ mod tests {
             extra_data: Bytes::new(),
             result,
             txs: Vec::new(),
+            beacon_outcome: None,
+            beacon_seed: None,
         }
     }
 

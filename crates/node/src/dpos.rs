@@ -7,7 +7,8 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use commonware_runtime::tokio::Context;
@@ -91,6 +92,12 @@ pub struct DposConfig {
     /// outside the committee and auto-promotes/demotes at epoch boundaries
     /// (no restarts). Empty = legacy `--dpos` (signer-or-silent-verifier).
     pub follower_upstreams: Vec<String>,
+    /// Hex-encoded commonware `Share` — this validator's threshold-beacon DKG
+    /// share. `None` = verifier-only on the beacon plane.
+    pub beacon_share_path: Option<PathBuf>,
+    /// Hex-encoded commonware `Sharing` (public polynomial). Presence enables
+    /// the randomness beacon (`prev_randao(h) = H(seed(h))`).
+    pub beacon_sharing_path: Option<PathBuf>,
 }
 
 /// The node-side cert-feed wiring threaded from `main.rs`: the `FeedSink` goes
@@ -213,6 +220,24 @@ pub struct DposArgs {
         env = "FLUENT_DPOS_SLASHER_KEYSTORE_PASSWORD_FILE"
     )]
     pub dpos_slasher_keystore_password_file: Option<PathBuf>,
+
+    /// This validator's threshold randomness-beacon DKG share (hex-encoded
+    /// commonware `Share`). Devnet bootstrap deals the key at genesis and
+    /// writes it per validator; absent = verifier-only on the beacon plane
+    /// (still collects peers' partials, never signs). Requires
+    /// `--dpos.beacon-sharing-path`.
+    #[arg(
+        long = "dpos.beacon-share-path",
+        env = "FLUENT_DPOS_BEACON_SHARE_PATH",
+        requires = "dpos_beacon_sharing_path"
+    )]
+    pub dpos_beacon_share_path: Option<PathBuf>,
+
+    /// The beacon public polynomial (hex-encoded commonware `Sharing`) — public
+    /// info used to verify seed partials, recover the threshold seed, and
+    /// derive `PK_epoch`. Shared by all nodes. Enables the beacon plane.
+    #[arg(long = "dpos.beacon-sharing-path", env = "FLUENT_DPOS_BEACON_SHARING_PATH")]
+    pub dpos_beacon_sharing_path: Option<PathBuf>,
 }
 
 impl DposConfig {
@@ -244,6 +269,8 @@ impl DposConfig {
             metrics_port: args.dpos_metrics_port,
             cert_feed,
             follower_upstreams: args.dpos_follower_upstream.clone(),
+            beacon_share_path: args.dpos_beacon_share_path.clone(),
+            beacon_sharing_path: args.dpos_beacon_sharing_path.clone(),
         }
     }
 }
@@ -509,8 +536,39 @@ where
     // Deferred-execution collaborators, all over the node's own provider/EVM:
     // derive (reth-evm BlockBuilder), the derived-chain view, and the
     // pool-backed ordering assembler.
-    let deriver =
+    // Randomness beacon (Decision C4): when a sharing is configured, build the
+    // shared seed cache, attach it to the deriver (which reads seed(h) for
+    // prev_randao), and hand the same cache + this node's share to the layer so
+    // its seed actor writes recovered seeds into it. Absent → gated fallback.
+    let deriver_base =
         crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
+    let (deriver, beacon_launch) = match load_beacon(cfg)? {
+        Some((share, sharing)) => {
+            let seed_cache = Arc::new(Mutex::new(
+                fluentbase_consensus::beacon::seed_cache::SeedCache::default(),
+            ));
+            let namespace = fluentbase_consensus::beacon::seed::seed_namespace(
+                &fluentbase_bls::fluent_namespace(chain_id),
+            );
+            let pk_epoch = *sharing.public();
+            // Derive-gate wait: seed(h) is signed right after h finalizes and
+            // recovers within ~one gossip round; 2s ceiling stays well inside
+            // the K=3 result-finality budget at 1 blk/s before gated fallback.
+            let deriver = deriver_base.with_beacon(
+                seed_cache.clone(),
+                namespace,
+                Some(pk_epoch),
+                Duration::from_secs(2),
+            );
+            let launch = fluentbase_consensus::dpos::BeaconLaunch {
+                share,
+                sharing,
+                seed_cache,
+            };
+            (deriver, Some(launch))
+        }
+        None => (deriver_base, None),
+    };
     let executed = ProviderExecutedChain(node.provider.clone());
     let assembler = Arc::new(PoolAssembler::new(node.pool.clone(), executed.clone()));
     // The protocol fee manager — same recipient the pre-deferred attrs
@@ -545,6 +603,7 @@ where
         feed: feed_sink,
         promotion,
         mode_events,
+        beacon: beacon_launch,
     };
 
     // Spawn the cert-feed actor on a child of the runtime context BEFORE `launch`
@@ -568,6 +627,42 @@ where
     }
 
     Ok(handle)
+}
+
+/// Load the threshold randomness-beacon material from the configured hex files
+/// (devnet bootstrap): the public polynomial (`Sharing`, always required to
+/// enable the beacon) and this node's `Share` (absent → verifier-only on the
+/// beacon plane). `Ok(None)` when no `--dpos.beacon-sharing-path` is set.
+type BeaconShare = commonware_cryptography::bls12381::primitives::group::Share;
+type BeaconSharing = commonware_cryptography::bls12381::primitives::sharing::Sharing<
+    commonware_cryptography::bls12381::primitives::variant::MinSig,
+>;
+
+fn load_beacon(cfg: &DposConfig) -> eyre::Result<Option<(Option<BeaconShare>, BeaconSharing)>> {
+    let Some(sharing_path) = &cfg.beacon_sharing_path else {
+        return Ok(None);
+    };
+    let sharing_hex = std::fs::read_to_string(sharing_path).wrap_err("read beacon-sharing file")?;
+    // `from_hex_formatted` (repo-standard, used by the BLS + peer-key loaders)
+    // tolerates a 0x prefix / whitespace — keep one hex policy across all key files.
+    let sharing_bytes = commonware_utils::from_hex_formatted(sharing_hex.trim())
+        .ok_or_else(|| eyre!("invalid beacon-sharing hex"))?;
+    let sharing = fluentbase_consensus::beacon::seed::parse_sharing(&sharing_bytes)
+        .map_err(|e| eyre!("parse beacon Sharing: {e:?}"))?;
+
+    let share = match &cfg.beacon_share_path {
+        Some(path) => {
+            let share_hex = std::fs::read_to_string(path).wrap_err("read beacon-share file")?;
+            let share_bytes = commonware_utils::from_hex_formatted(share_hex.trim())
+                .ok_or_else(|| eyre!("invalid beacon-share hex"))?;
+            Some(
+                fluentbase_consensus::beacon::seed::parse_share(&share_bytes)
+                    .map_err(|e| eyre!("parse beacon Share: {e:?}"))?,
+            )
+        }
+        None => None,
+    };
+    Ok(Some((share, sharing)))
 }
 
 /// DEVNET-ONLY: minimal HTTP/1.0 responder serving the commonware runtime's
@@ -723,6 +818,8 @@ mod tests {
             metrics_port: None,
             cert_feed: None,
             follower_upstreams: vec![],
+            beacon_share_path: None,
+            beacon_sharing_path: None,
         }
     }
 

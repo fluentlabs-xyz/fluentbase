@@ -33,6 +33,7 @@ alloy-sol-types = { workspace = true }
 
 commonware-codec = { workspace = true }
 commonware-cryptography = { workspace = true }
+commonware-utils = { workspace = true, features = ["std"] }
 
 coins-bip39 = "0.12"
 

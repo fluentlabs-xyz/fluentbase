@@ -413,7 +413,7 @@ where
             match epoch_committee_from_snapshot(&snap) {
                 Ok(committee) => (self.cfg.register_scheme)(
                     epoch,
-                    build_verifier(&fluent_namespace(self.cfg.chain_id), committee.bimap),
+                    build_verifier(&fluent_namespace(self.cfg.chain_id), committee.bimap, None),
                 ),
                 Err(e) => warn!(
                     ?epoch,

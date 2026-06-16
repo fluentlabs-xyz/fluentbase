@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 #   case-byzantine    — pending Phase 5 (devnet-byzantine Rust feature + Conflicter)
 #   case-gov-interval — descoped: a ChainConfig setter change needs a full
 #                       FluentGovernance propose/vote/execute flow (onlyFromGovernance)
-CASES=(${SMOKE_CASES:-case-tx case-epoch case-peers case-liveness case-crash-survivor case-full-restart case-deferred case-cert-follow case-cert-cascade})
+CASES=(${SMOKE_CASES:-case-tx case-epoch case-peers case-liveness case-crash-survivor case-full-restart case-deferred case-cert-follow case-cert-cascade case-vrf})
 
 declare -A RESULT
 fail=0

@@ -559,9 +559,9 @@ mod tests {
         let ns = fluent_namespace(CHAIN_ID);
         let signers = bls_kps
             .iter()
-            .map(|kp| build_signer(&ns, bimap.clone(), kp).expect("member"))
+            .map(|kp| build_signer(&ns, bimap.clone(), kp, None).expect("member"))
             .collect();
-        let verifier = fluentbase_bls::scheme::build_verifier(&ns, bimap);
+        let verifier = fluentbase_bls::scheme::build_verifier(&ns, bimap, None);
         Committee { signers, verifier }
     }
 
@@ -575,6 +575,8 @@ mod tests {
             extra_data: Bytes::new(),
             result,
             txs: Vec::new(),
+            beacon_outcome: None,
+            beacon_seed: None,
         }
     }
 
