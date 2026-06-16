@@ -1,0 +1,62 @@
+{
+  "eth_call_b7ab4db5_malformed_builtin_params": {
+    "_info": {
+      "comment": "Reproduces eth_call payload {\"data\":\"0xb7ab4db5\"} against Fluent locally. With no `to`, the call is executed as contract creation; 0xb7 is PUSH24 but only three immediate bytes follow, so Fluent halts with MalformedBuiltinParams.",
+      "sourceRpc": "curl 'https://rpc.fluent.xyz' -H 'content-type: application/json' --data-raw '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_call\",\"params\":[{\"data\":\"0xb7ab4db5\"},\"latest\"]}' | jq"
+    },
+    "config": {
+      "chainid": "0x5202"
+    },
+    "env": {
+      "currentBaseFee": "0x7",
+      "currentCoinbase": "0x0000000000000000000000000000000000520fee",
+      "currentDifficulty": "0x0",
+      "currentGasLimit": "0x2faf080",
+      "currentNumber": "0x172af18",
+      "currentRandom": "0xb026dfda660045d2e5f7fa93ce2b9820403e83582c5d5721514e105ba4411b68",
+      "currentTimestamp": "0x69dfead6"
+    },
+    "pre": {
+      "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b": {
+        "balance": "0xde0b6b3a7640000",
+        "nonce": "0x0",
+        "code": "0x",
+        "storage": {}
+      }
+    },
+    "post": {
+      "Prague": [
+        {
+          "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "indexes": {
+            "data": 0,
+            "gas": 0,
+            "value": 0
+          },
+          "logs": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+          "state": {}
+        }
+      ]
+    },
+    "transaction": {
+      "accessLists": [
+        []
+      ],
+      "data": [
+        "0xb7ab4db5"
+      ],
+      "gasLimit": [
+        "0xf4240"
+      ],
+      "gasPrice": "0x3b9aca07",
+      "maxFeePerGas": "0x3b9aca0e",
+      "maxPriorityFeePerGas": "0x3b9aca00",
+      "nonce": "0x0",
+      "sender": "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b",
+      "value": [
+        "0x0"
+      ],
+      "secretKey": "0x45a915e4d060149eb4365960e6a7a45f334393093061116b197e3240065ff2d8"
+    }
+  }
+}
