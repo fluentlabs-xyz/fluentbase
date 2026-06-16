@@ -396,8 +396,13 @@ mod tests {
         BiMap<PeerPubkey, BlsPubkey>,
     ) {
         let (kps, bimap) = small_committee(seed, 4);
-        let s = build_signer(&fluent_namespace(TEST_CHAIN_ID), bimap.clone(), &kps[0], None)
-            .expect("offender must be member");
+        let s = build_signer(
+            &fluent_namespace(TEST_CHAIN_ID),
+            bimap.clone(),
+            &kps[0],
+            None,
+        )
+        .expect("offender must be member");
         let p1 = Proposal::new(round(), View::new(41), digest(0xaa));
         let p2 = Proposal::new(round(), View::new(41), digest(0xbb));
         let n1 = Notarize::sign(&s, p1).expect("sign n1");

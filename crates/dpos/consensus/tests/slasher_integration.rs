@@ -99,8 +99,13 @@ fn build_conflicting_notarize() -> (
     BiMap<PeerPubkey, BlsPubkey>,
 ) {
     let (kps, bimap) = committee(1);
-    let s = build_signer(&fluent_namespace(C_MAIN), bimap.clone(), &kps[OFFENDER], None)
-        .expect("offender must be in committee");
+    let s = build_signer(
+        &fluent_namespace(C_MAIN),
+        bimap.clone(),
+        &kps[OFFENDER],
+        None,
+    )
+    .expect("offender must be in committee");
     let round = Round::new(Epoch::new(EPOCH), View::new(VIEW));
     let p1: Proposal<Sha256Digest> = Proposal::new(round, View::new(VIEW - 1), digest(0xaa));
     let p2: Proposal<Sha256Digest> = Proposal::new(round, View::new(VIEW - 1), digest(0xbb));
@@ -115,8 +120,13 @@ fn build_consensus_digest_conflicting_notarize() -> (
     BiMap<PeerPubkey, BlsPubkey>,
 ) {
     let (kps, bimap) = committee(1);
-    let s = build_signer(&fluent_namespace(C_MAIN), bimap.clone(), &kps[OFFENDER], None)
-        .expect("offender must be in committee");
+    let s = build_signer(
+        &fluent_namespace(C_MAIN),
+        bimap.clone(),
+        &kps[OFFENDER],
+        None,
+    )
+    .expect("offender must be in committee");
     let round = Round::new(Epoch::new(EPOCH), View::new(VIEW));
     let d_a = fluentbase_consensus::Digest(B256::from([0xaa; 32]));
     let d_b = fluentbase_consensus::Digest(B256::from([0xbb; 32]));

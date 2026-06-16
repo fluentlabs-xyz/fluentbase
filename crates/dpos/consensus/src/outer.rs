@@ -275,6 +275,9 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// Randomness-beacon seed feed handed to the executor: notified per
     /// finalized height for sign-after-finalize (Decision C4). `None` = no beacon.
     pub seed_feed: Option<crate::beacon::seed_actor::FinalizedFeed>,
+    /// Per-epoch threshold beacon key threaded into every per-epoch consensus
+    /// scheme so each vote carries the seed partial. `None` ⇒ fallback epochs.
+    pub beacon_key: Option<fluentbase_bls::scheme::BeaconKey>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
     pub deque_size: usize,
@@ -665,6 +668,7 @@ where
                 app,
                 timeouts: self.timeouts,
                 mailbox_size: self.mailbox_size,
+                beacon: self.beacon_key,
                 marshal_mailbox: marshal_mailbox.clone(),
                 slasher_mailbox,
                 page_cache,

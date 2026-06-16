@@ -33,7 +33,10 @@ use commonware_runtime::{
 };
 use commonware_utils::vec::NonEmptyVec;
 use fluentbase_bls::{
-    fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_verifier, Scheme as BlsScheme,
+    fluent_namespace,
+    keys::ValidatorBlsKeypair,
+    scheme::{build_verifier, BeaconKey},
+    Scheme as BlsScheme,
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::CryptoRngCore;
@@ -123,6 +126,10 @@ pub struct Config<B, XC, A> {
     pub app: FluentApp<XC, A>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
+    /// Per-epoch threshold beacon key (devnet: one genesis key for all epochs);
+    /// `None` ⇒ fallback (pure-multisig) epochs. Threaded into each
+    /// `EpochEngineConfig` and the soft-enter verifier scheme.
+    pub beacon: Option<BeaconKey>,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
     pub marshal_mailbox: MarshalMailbox<BlsScheme, Standard<OrderBlock>>,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
@@ -413,7 +420,11 @@ where
             match epoch_committee_from_snapshot(&snap) {
                 Ok(committee) => (self.cfg.register_scheme)(
                     epoch,
-                    build_verifier(&fluent_namespace(self.cfg.chain_id), committee.bimap, None),
+                    build_verifier(
+                        &fluent_namespace(self.cfg.chain_id),
+                        committee.bimap,
+                        self.cfg.beacon.clone(),
+                    ),
                 ),
                 Err(e) => warn!(
                     ?epoch,
@@ -440,6 +451,7 @@ where
                 timeouts: self.cfg.timeouts,
                 mailbox_size: self.cfg.mailbox_size,
                 register_scheme: self.cfg.register_scheme.clone(),
+                beacon: self.cfg.beacon.clone(),
             },
             self.cfg.marshal_mailbox.clone(),
             self.cfg.slasher_mailbox.clone(),

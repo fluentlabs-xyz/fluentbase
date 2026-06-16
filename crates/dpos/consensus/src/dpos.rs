@@ -959,8 +959,12 @@ impl DposLayer {
         // seed sub-protocol over the global BEACON_CHANNEL, writing recovered
         // seeds into the cache the node's deriver reads for prev_randao. Single
         // bootstrapped key for now (per-epoch DKG + Muxing are phased — Q2).
-        let seed_feed = if let Some(bl) = beacon {
+        let (seed_feed, beacon_key) = if let Some(bl) = beacon {
             let namespace = crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
+            // The combined consensus scheme signs/verifies the seed partial per
+            // vote (round-keyed) using the same threshold material; the seed
+            // namespace mirrors the side-channel's so recovered seeds match.
+            let beacon_key = Some((bl.sharing.clone(), bl.share.clone(), namespace.clone()));
             let signer = crate::beacon::seed_actor::SeedSigner::new(
                 namespace,
                 bl.sharing,
@@ -977,9 +981,9 @@ impl DposLayer {
                 ctx.with_label("beacon_seed")
                     .spawn(move |_| async move { seed_actor.run().await }),
             );
-            Some(feed)
+            (Some(feed), beacon_key)
         } else {
-            None
+            (None, None)
         };
 
         let outer = OuterBuilder {
@@ -992,6 +996,7 @@ impl DposLayer {
             signer_keypair: Some(bls_keypair),
             mode_events,
             seed_feed,
+            beacon_key,
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             deque_size: 64,

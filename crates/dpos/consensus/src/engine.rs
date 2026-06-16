@@ -33,7 +33,7 @@ use commonware_runtime::{
 use fluentbase_bls::{
     fluent_namespace,
     keys::ValidatorBlsKeypair,
-    scheme::{build_signer, build_verifier},
+    scheme::{build_signer, build_verifier, BeaconKey},
     Scheme as BlsScheme,
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
@@ -84,6 +84,10 @@ pub struct EpochEngineConfig<B, XC, A> {
     /// [`crate::outer::EpochSchemeProvider`] so marshal can verify
     /// cross-epoch finalization certificates (trailing-window pruned; see SCHEME_RETENTION_EPOCHS).
     pub register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync>,
+    /// Per-epoch threshold beacon key (`PK_epoch` polynomial + this node's
+    /// share + seed namespace), threaded so the combined scheme emits/verifies
+    /// the seed partial. `None` ⇒ a fallback (pure-multisig) epoch.
+    pub beacon: Option<BeaconKey>,
 }
 
 /// Per-epoch consensus engine. Created by
@@ -142,7 +146,9 @@ where
         let scheme: BlsScheme = cfg
             .signer_keypair
             .as_ref()
-            .and_then(|keypair| build_signer(&namespace, bimap.clone(), keypair, None))
+            .and_then(|keypair| {
+                build_signer(&namespace, bimap.clone(), keypair, cfg.beacon.clone())
+            })
             .unwrap_or_else(|| {
                 if cfg.signer_keypair.is_some() {
                     metrics::counter!("epoch_engine_rotated_out_total").increment(1);
@@ -159,7 +165,7 @@ where
                         });
                     }
                 }
-                build_verifier(&namespace, bimap, None)
+                build_verifier(&namespace, bimap, cfg.beacon.clone())
             });
 
         (cfg.register_scheme)(cfg.epoch, scheme.clone());
