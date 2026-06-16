@@ -807,6 +807,9 @@ mod tests {
                     Update::Block(b, _ack) => assert_eq!(b.digest(), block.digest()),
                     _ => panic!("expected Update::Block"),
                 },
+                executor::Command::SpecNotarized(_) => {
+                    panic!("FluentApp never emits SpecNotarized")
+                }
             }
         });
     }
@@ -844,6 +847,9 @@ mod tests {
             match msg.command {
                 executor::Command::Finalize(update) => {
                     assert!(matches!(*update, Update::Tip(..)));
+                }
+                executor::Command::SpecNotarized(_) => {
+                    panic!("FluentApp never emits SpecNotarized")
                 }
             }
         });

@@ -596,6 +596,11 @@ where
             },
         );
 
+        // Notarization arm of the simplex reporter — forwards `SpecNotarized`
+        // to the executor for speculative execution. Built from a mailbox clone
+        // before `FluentApp` consumes `executor_mailbox`.
+        let spec_exec_mailbox = crate::spec_exec::Mailbox::new(executor_mailbox.clone());
+
         // FluentApp (needs executor_mailbox + marshal_mailbox + sidecar state).
         // The beacon seed feed lives here, NOT on the executor: the partial is
         // triggered at notarize-time (verify→true / own propose), so seed(h) is
@@ -667,6 +672,7 @@ where
                 beacon: self.beacon_key,
                 marshal_mailbox: marshal_mailbox.clone(),
                 slasher_mailbox,
+                spec_exec_mailbox,
                 page_cache,
                 register_scheme,
             },

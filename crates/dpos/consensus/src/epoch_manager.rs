@@ -134,6 +134,10 @@ pub struct Config<B, XC, A> {
     pub marshal_mailbox: MarshalMailbox<BlsScheme, Standard<OrderBlock>>,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
     pub slasher_mailbox: SlasherMailbox,
+    /// Cross-epoch singleton from [`crate::outer::OuterEngine`]: the
+    /// notarization arm of the simplex reporter, forwarding `SpecNotarized`
+    /// commands to the executor for speculative execution.
+    pub spec_exec_mailbox: crate::spec_exec::Mailbox,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
     pub page_cache: CacheRef,
     /// Callback into [`crate::outer::EpochSchemeProvider`] so marshal can verify
@@ -455,6 +459,7 @@ where
             },
             self.cfg.marshal_mailbox.clone(),
             self.cfg.slasher_mailbox.clone(),
+            self.cfg.spec_exec_mailbox.clone(),
             self.cfg.page_cache.clone(),
         ) {
             Ok(engine) => engine,

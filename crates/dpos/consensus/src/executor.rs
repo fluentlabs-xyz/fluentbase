@@ -27,7 +27,7 @@ use futures::{
     FutureExt as _, StreamExt as _,
 };
 use prometheus_client::metrics::gauge::Gauge;
-use std::{ops::RangeInclusive, pin::Pin, time::Duration};
+use std::{collections::BTreeMap, ops::RangeInclusive, pin::Pin, time::Duration};
 use tokio::{select, sync::mpsc};
 use tracing::{
     debug, error, error_span, info, info_span, instrument, warn, warn_span, Level, Span,
@@ -44,6 +44,21 @@ pub enum Command {
     /// Derive + import a finalized ordering artifact (`Update::Block`) or
     /// refresh the catch-up target (`Update::Tip`).
     Finalize(Box<Update<OrderBlock>>),
+    /// A block was NOTARIZED (round-1 quorum) — speculatively derive + import
+    /// it now, ahead of finalization, to hide execution latency under the
+    /// finalization rounds. Best-effort: `forward_finalized` stays the sole
+    /// authority and reconciles (skip-if-matched / re-derive + reorg). Boxed to
+    /// keep the enum small (mirrors `Finalize`).
+    SpecNotarized(Box<Notarized>),
+}
+
+/// Payload of [`Command::SpecNotarized`]: the ordering digest + round + the
+/// seed recovered from the Notarization certificate. The block body is fetched
+/// from the marshal by digest at execution time.
+pub struct Notarized {
+    pub round: commonware_consensus::types::Round,
+    pub digest: crate::digest::Digest,
+    pub seed: Option<crate::beacon::types::Seed>,
 }
 
 pub struct Mailbox {
@@ -125,6 +140,15 @@ pub trait BlockFetcher: Clone + Send + Sync + 'static {
         height: Height,
     ) -> impl std::future::Future<Output = Option<OrderBlock>> + Send;
 
+    /// Best-effort LOCAL lookup of a block by its ordering digest. Used by the
+    /// speculative path: at notarization the body is in the marshal buffer (we
+    /// voted on it), so a `None` simply means "not local yet" → skip
+    /// speculation (the finalized path will derive it).
+    fn fetch_block_by_digest(
+        &self,
+        digest: crate::digest::Digest,
+    ) -> impl std::future::Future<Output = Option<OrderBlock>> + Send;
+
     /// The beacon seed for `height`, recovered from that height's finalization
     /// certificate (the combined consensus scheme). `None` when no cert is held
     /// or the epoch is on the fallback (no-beacon) path — derivation then uses
@@ -145,6 +169,10 @@ impl BlockFetcher
 {
     async fn fetch_block_by_height(&self, height: Height) -> Option<OrderBlock> {
         self.get_block(height).await
+    }
+
+    async fn fetch_block_by_digest(&self, digest: crate::digest::Digest) -> Option<OrderBlock> {
+        self.get_block(&digest).await
     }
 
     async fn fetch_seed(&self, height: Height) -> Option<crate::beacon::types::Seed> {
@@ -204,6 +232,17 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     /// cold-start snapshot, so a stale initial head is never re-sent over a
     /// canonical chain that moved without us.
     has_advanced_since_init: bool,
+
+    /// Highest height the executor has imported (speculatively OR finalized).
+    /// Speculation only fires for `spec_head + 1`, and is tracked here rather
+    /// than via `executed_tip()` to avoid reth's `best_number` lag race.
+    spec_head: u64,
+    /// Heights speculatively executed at notarization but not yet finalized:
+    /// height → the notarized ordering digest. On finalized delivery a digest
+    /// match means the speculation was correct (skip re-derive, keep the head
+    /// lead); a mismatch (notarized-then-nullified, sibling finalized) forces a
+    /// re-derive + head reorg back onto the finalized fork.
+    spec_executed: BTreeMap<u64, crate::digest::Digest>,
 }
 
 impl<E, BE, D, XC, MarshalMailbox> Actor<E, BE, D, XC, MarshalMailbox>
@@ -257,6 +296,8 @@ where
             pending_finalizations: FuturesOrdered::new(),
             pending_finalizations_gauge,
             has_advanced_since_init: false,
+            spec_head: cfg.initial_head.0.get(),
+            spec_executed: BTreeMap::new(),
         };
         (actor, mailbox)
     }
@@ -384,7 +425,81 @@ where
                         .set(self.pending_finalizations.len() as i64);
                 }
             },
+            Command::SpecNotarized(n) => {
+                let Notarized {
+                    round,
+                    digest,
+                    seed,
+                } = *n;
+                if let Err(error) = self.spec_execute(cause, round, digest, seed).await {
+                    // Speculation is best-effort: a failure here is logged, never
+                    // fatal — `forward_finalized` will derive the block at
+                    // finalization regardless.
+                    warn!(%error, %digest, "speculative execution skipped");
+                }
+            }
         }
+    }
+
+    /// Speculatively derive + import a NOTARIZED block, advancing the EL head
+    /// ahead of finalization. Strictly forward-only (`spec_head + 1`); a gap or
+    /// an already-covered height is left to `forward_finalized`, which keeps
+    /// this path race-free with finalized delivery (both run in this one loop).
+    #[instrument(skip_all, parent = &cause, fields(%digest), err(level = Level::DEBUG))]
+    async fn spec_execute(
+        &mut self,
+        cause: Span,
+        _round: commonware_consensus::types::Round,
+        digest: crate::digest::Digest,
+        seed: Option<crate::beacon::types::Seed>,
+    ) -> eyre::Result<()> {
+        let Some(order) = self.marshal.fetch_block_by_digest(digest).await else {
+            // Body not in the local buffer yet — finalized path will derive it.
+            return Ok(());
+        };
+        let height = order.height;
+        // Only speculate the immediate next block. A higher height (gap) or a
+        // height at/below the tip (re-notarization, already executed) is the
+        // finalized path's job.
+        if height != self.spec_head + 1 {
+            return Ok(());
+        }
+        let parent_height = height
+            .checked_sub(1)
+            .ok_or_else(|| eyre::eyre!("speculative height 0"))?;
+        // Parent must be locally present; a transient miss (reth visibility
+        // lag) just defers to the finalized path.
+        let Some(parent_hash) = self.executed.executed_hash(parent_height) else {
+            return Ok(());
+        };
+
+        let derived = self
+            .deriver
+            .derive_and_execute(order, parent_hash, seed)
+            .await
+            .wrap_err("speculative derive_and_execute failed")?;
+        let derived_hash = derived.evm_hash();
+        self.submit_finalized_payload(derived).await?;
+
+        // Advance the head only; the result-final cursor stays put (the block
+        // is not finalized) and there is no marshal ack.
+        let new = self.last_canonicalized.update_head(Height::new(height), derived_hash);
+        let fcu = self
+            .beacon_engine
+            .fork_choice_updated(new.forkchoice)
+            .pace(&self.context, self.fcu_pace)
+            .await
+            .wrap_err("speculative FCU failed")?;
+        ensure!(
+            !fcu.is_invalid(),
+            "EL reported invalid speculative FCU: {:?}",
+            fcu.payload_status
+        );
+        self.last_canonicalized = new;
+        self.has_advanced_since_init = true;
+        self.spec_head = height;
+        self.spec_executed.insert(height, digest);
+        Ok(())
     }
 
     #[instrument(
@@ -402,24 +517,52 @@ where
         let parent_height = height
             .checked_sub(1)
             .ok_or_else(|| eyre::eyre!("ordering height 0 cannot be finalized"))?;
-        let parent_hash = match self.executed.executed_hash(parent_height) {
-            Some(hash) => hash,
-            // The marshal can hold finalized artifacts the EL hasn't derived
-            // yet (restart with an unflushed reth tail; repair landing ahead
-            // of dispatch). Derivation is strictly sequential, so walk the
-            // missing prefix out of the marshal and derive it first; a
-            // genuinely unfillable gap stays fatal (visible, not wedged).
-            None => self.derive_missing_prefix(parent_height).await?,
+
+        // Reconcile against speculation: if this height was speculatively
+        // executed with the SAME ordering block, reth is already canonical here
+        // — skip the re-derive and, crucially, do NOT roll the head back (the
+        // speculative lead at `height+1..` must survive). Otherwise (first
+        // execution, or the speculation was a sibling that got nullified)
+        // derive the finalized block and reorg the head onto it.
+        let correctly_speculated = self.spec_executed.get(&height) == Some(&order.digest())
+            && self.executed.executed_hash(height).is_some();
+
+        let derived_hash = if correctly_speculated {
+            self.executed
+                .executed_hash(height)
+                .expect("checked is_some above")
+        } else {
+            let parent_hash = match self.executed.executed_hash(parent_height) {
+                Some(hash) => hash,
+                // The marshal can hold finalized artifacts the EL hasn't derived
+                // yet (restart with an unflushed reth tail; repair landing ahead
+                // of dispatch). Derivation is strictly sequential, so walk the
+                // missing prefix out of the marshal and derive it first; a
+                // genuinely unfillable gap stays fatal (visible, not wedged).
+                None => self.derive_missing_prefix(parent_height).await?,
+            };
+
+            let seed = self.marshal.fetch_seed(Height::new(height)).await;
+            let derived = self
+                .deriver
+                .derive_and_execute(order, parent_hash, seed)
+                .await
+                .wrap_err("derive_and_execute failed")?;
+            let derived_hash = derived.evm_hash();
+            self.submit_finalized_payload(derived).await?;
+            derived_hash
         };
 
-        let seed = self.marshal.fetch_seed(Height::new(height)).await;
-        let derived = self
-            .deriver
-            .derive_and_execute(order, parent_hash, seed)
-            .await
-            .wrap_err("derive_and_execute failed")?;
-        let derived_hash = derived.evm_hash();
-        self.submit_finalized_payload(derived).await?;
+        // The finalized fork is now canonical at `height`. Any speculation
+        // above it that built on a now-orphaned sibling is invalid; reset the
+        // speculative tip so the next notarization re-speculates forward. A
+        // correct speculation keeps its lead.
+        if correctly_speculated {
+            self.spec_head = self.spec_head.max(height);
+        } else {
+            self.spec_head = height;
+        }
+        self.spec_executed = self.spec_executed.split_off(&(height + 1));
 
         self.ordering_finalized = self.ordering_finalized.max(height);
         let result_final = crate::order_block::result_final_height(
@@ -440,7 +583,12 @@ where
                 ),
             }
         }
-        new = new.update_head(Height::new(height), derived_hash);
+        // Move the head onto the finalized block only when speculation did not
+        // already place the correct block here (else we would roll back the
+        // speculative lead). A re-derive/rollback DOES move the head (reorg).
+        if !correctly_speculated {
+            new = new.update_head(Height::new(height), derived_hash);
+        }
 
         let fcu = self
             .beacon_engine
@@ -557,13 +705,17 @@ mod tests {
         }
     }
 
-    fn sealed_at(parent: B256, number: u64) -> RethExecBlock {
+    /// `discriminator` (the ordering digest) is folded into `extra_data` so two
+    /// sibling orders at the same (parent, height) seal to DISTINCT block hashes
+    /// — required to observe a speculative rollback (sibling reorg).
+    fn sealed_at(parent: B256, number: u64, discriminator: B256) -> RethExecBlock {
         let header = AlloyHeader {
             parent_hash: parent,
             number,
             gas_limit: 30_000_000,
             timestamp: 1_700_000_000 + number,
             difficulty: U256::ZERO,
+            extra_data: Bytes::from(discriminator.to_vec()),
             ..Default::default()
         };
         let body: BlockBody<TransactionSigned> = BlockBody::default();
@@ -609,7 +761,9 @@ mod tests {
             parent_evm_hash: B256,
             _seed: Option<crate::beacon::types::Seed>,
         ) -> eyre::Result<RethExecBlock> {
-            let sealed = sealed_at(parent_evm_hash, order.height);
+            let sealed = sealed_at(parent_evm_hash, order.height, order.digest().0);
+            // Last writer wins, modelling a reth reorg: a finalized sibling
+            // derived after a speculative one replaces the canonical hash.
             self.chain
                 .canonical
                 .lock()
@@ -650,6 +804,14 @@ mod tests {
     impl BlockFetcher for FakeMarshal {
         async fn fetch_block_by_height(&self, height: Height) -> Option<OrderBlock> {
             self.canned.lock().unwrap().get(&height.get()).cloned()
+        }
+        async fn fetch_block_by_digest(&self, digest: crate::digest::Digest) -> Option<OrderBlock> {
+            self.canned
+                .lock()
+                .unwrap()
+                .values()
+                .find(|o| o.digest() == digest)
+                .cloned()
         }
         async fn fetch_seed(&self, _height: Height) -> Option<crate::beacon::types::Seed> {
             None
@@ -721,6 +883,24 @@ mod tests {
             },
             waiter,
         )
+    }
+
+    /// A `SpecNotarized` command for `order` (seedless; the round view is a
+    /// stand-in — the executor keys speculation off the fetched block's height,
+    /// not the round).
+    fn spec_msg(order: &OrderBlock) -> Message {
+        use commonware_consensus::types::{Epoch, View};
+        Message {
+            cause: Span::current(),
+            command: Command::SpecNotarized(Box::new(Notarized {
+                round: commonware_consensus::types::Round::new(
+                    Epoch::new(0),
+                    View::new(order.height),
+                ),
+                digest: order.digest(),
+                seed: None,
+            })),
+        }
     }
 
     #[test]
@@ -916,6 +1096,103 @@ mod tests {
                 assert_eq!(
                     fcus[0].head_block_hash,
                     fx.chain.executed_hash(ANCHOR + 1).unwrap()
+                );
+            }
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // Speculative execution imports the block at NOTARIZATION (advancing the
+    // head ahead of finalization); the matching finalization reconciles WITHOUT
+    // re-deriving and keeps the head where speculation put it.
+    #[test]
+    fn speculation_advances_head_then_reconciles_without_redrive() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
+            // Body present in the marshal buffer (we voted to notarize it).
+            fx.marshal
+                .canned
+                .lock()
+                .unwrap()
+                .insert(ANCHOR + 1, order.clone());
+
+            mailbox.send(spec_msg(&order)).expect("send spec");
+            // Finalize the SAME order — reconciliation must skip the re-derive.
+            let (msg, waiter) = finalize_msg(order.clone());
+            mailbox.send(msg).expect("send finalize");
+            waiter.await.expect("ack");
+
+            {
+                let payloads = fx.beacon.new_payload_calls.lock().unwrap();
+                let heights: Vec<u64> = payloads.iter().map(|p| p.number).collect();
+                assert_eq!(
+                    heights,
+                    vec![ANCHOR + 1],
+                    "imported once at notarization; finalize skipped the re-derive"
+                );
+                let derived = fx.chain.executed_hash(ANCHOR + 1).unwrap();
+                let fcus = fx.beacon.fcu_calls.lock().unwrap();
+                assert_eq!(
+                    fcus.last().unwrap().head_block_hash,
+                    derived,
+                    "head sits on the speculatively-executed block"
+                );
+            }
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // A notarized block that then gets nullified (a SIBLING finalizes) must be
+    // rolled back: the finalized sibling is derived and the head reorgs onto it.
+    #[test]
+    fn speculation_rolls_back_to_finalized_sibling() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            // Speculatively execute sibling A (notarized at ANCHOR+1).
+            let order_a = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::repeat_byte(0xAA));
+            fx.marshal
+                .canned
+                .lock()
+                .unwrap()
+                .insert(ANCHOR + 1, order_a.clone());
+            mailbox.send(spec_msg(&order_a)).expect("send spec A");
+
+            // But a different sibling B finalizes (A was nullified).
+            let order_b = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::repeat_byte(0xBB));
+            let (msg, waiter) = finalize_msg(order_b.clone());
+            mailbox.send(msg).expect("send finalize B");
+            waiter.await.expect("ack");
+
+            {
+                let payloads = fx.beacon.new_payload_calls.lock().unwrap();
+                assert_eq!(
+                    payloads.len(),
+                    2,
+                    "A speculated, then B re-derived on rollback"
+                );
+                let hash_b = sealed_at(fx.anchor_hash, ANCHOR + 1, order_b.digest().0).hash();
+                let hash_a = sealed_at(fx.anchor_hash, ANCHOR + 1, order_a.digest().0).hash();
+                assert_ne!(hash_a, hash_b, "siblings must seal to distinct hashes");
+                let fcus = fx.beacon.fcu_calls.lock().unwrap();
+                assert_eq!(
+                    fcus.last().unwrap().head_block_hash,
+                    hash_b,
+                    "head reorged onto the finalized sibling"
                 );
             }
 

@@ -54,8 +54,12 @@ type ConsensusEngine<E, B, XC, A> = simplex::Engine<
     InlineFor<E, XC, A>,
     Reporters<
         Activity<BlsScheme, Digest>,
-        MarshalMailbox<BlsScheme, Standard<OrderBlock>>,
-        SlasherMailbox,
+        Reporters<
+            Activity<BlsScheme, Digest>,
+            MarshalMailbox<BlsScheme, Standard<OrderBlock>>,
+            SlasherMailbox,
+        >,
+        crate::spec_exec::Mailbox,
     >,
     Sequential,
 >;
@@ -119,6 +123,7 @@ where
         cfg: EpochEngineConfig<B, XC, A>,
         marshal_mailbox: MarshalMailbox<BlsScheme, Standard<OrderBlock>>,
         slasher_mailbox: SlasherMailbox,
+        spec_exec_mailbox: crate::spec_exec::Mailbox,
         page_cache: CacheRef,
     ) -> eyre::Result<Self> {
         // A non-unique committee is reachable from on-chain data
@@ -188,7 +193,10 @@ where
                 blocker: cfg.blocker,
                 automaton: inline.clone(),
                 relay: inline,
-                reporter: Reporters::from((marshal_mailbox, slasher_mailbox)),
+                reporter: Reporters::from((
+                    Reporters::from((marshal_mailbox, slasher_mailbox)),
+                    spec_exec_mailbox,
+                )),
                 strategy: Sequential,
                 partition: format!("consensus_epoch_{}", cfg.epoch.get()),
                 mailbox_size: cfg.mailbox_size,

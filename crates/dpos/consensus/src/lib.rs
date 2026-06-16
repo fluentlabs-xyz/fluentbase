@@ -28,6 +28,7 @@ pub mod order_block;
 pub mod outer;
 pub mod scheme;
 pub mod slasher;
+pub mod spec_exec;
 pub mod timeouts;
 
 pub use application::{
