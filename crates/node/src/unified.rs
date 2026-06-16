@@ -136,6 +136,20 @@ where
     // launch-time pair from node_modes.
     let feed_state: Option<FeedStateHandle> = cfg.cert_feed.take().map(|cf| cf.handle);
 
+    // Public threshold-beacon polynomial (`PK_epoch`), parsed once. The
+    // follower-lap verifier + deriver need it to verify the seed half of each
+    // combined cert and reproduce `prev_randao = H(seed)`; absent on a
+    // pre-beacon chain. (The signer lap's deriver gets its beacon key from the
+    // legacy `spawn_dpos` path it delegates to.)
+    let beacon_seed_namespace = fluentbase_consensus::beacon::seed::seed_namespace(
+        &fluentbase_bls::fluent_namespace(node.chain_spec().chain_id()),
+    );
+    let beacon_sharing = cfg
+        .beacon_sharing_path
+        .as_ref()
+        .map(crate::cert_follow::parse_beacon_sharing)
+        .transpose()?;
+
     // Entry rule: in the CURRENT committee → signer first, legacy
     // discriminator (Restart / FreshMigration). Codeless ChainConfig or
     // unscheduled activation → there is no committee to be in yet.
@@ -240,16 +254,27 @@ where
                     canonical_state: node.provider.canonical_state(),
                     genesis_hash: node.chain_spec().genesis_hash(),
                 };
-                let deriver = crate::derive::RethBlockDeriver::new(
+                let deriver_base = crate::derive::RethBlockDeriver::new(
                     node.provider.clone(),
                     node.evm_config.clone(),
                 );
+                let (deriver, follow_beacon) = match &beacon_sharing {
+                    Some(sharing) => (
+                        deriver_base.with_beacon_key(
+                            Some(*sharing.public()),
+                            beacon_seed_namespace.clone(),
+                        ),
+                        Some((sharing.clone(), None, beacon_seed_namespace.clone())),
+                    ),
+                    None => (deriver_base, None),
+                };
                 let executed = crate::ordering::ProviderExecutedChain(node.provider.clone());
                 let follow_cfg = CertFollowConfig {
                     staking_config: staking_config.clone(),
                     l1_checkpoint_hash: None,
                     fcu_heartbeat_interval: Duration::from_secs(8),
                     stop_at_next_boundary: true,
+                    beacon: follow_beacon,
                 };
                 let mut handle = CertFollowLayer::launch(
                     ctx.clone(),

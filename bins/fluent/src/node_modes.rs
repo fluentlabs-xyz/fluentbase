@@ -127,6 +127,7 @@ pub(crate) fn resolve_node_modes(
                 .dpos_staking_config
                 .clone()
                 .expect("requires_all guarantees --dpos.staking-config"),
+            beacon_sharing_path: ext.dpos_cfg.dpos_beacon_sharing_path.clone(),
         });
         modes.consensus_url = None;
     }

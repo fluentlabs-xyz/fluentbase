@@ -73,6 +73,13 @@ pub struct CertFollowConfig {
     /// point via [`CertFollowHandle::stopped_rx`] instead of cancelling the
     /// shutdown token. `false` = standalone `--cert-follow` (run forever).
     pub stop_at_next_boundary: bool,
+    /// Public threshold-beacon key (`PK_epoch` polynomial + seed namespace, no
+    /// `Share` — a follower never signs). REQUIRED on a beacon-active chain:
+    /// the per-epoch verifier scheme verifies the seed half of each combined
+    /// finalization cert against it, and the deriver recovers
+    /// `prev_randao = H(seed)` from it. `None` ⇒ the follower would reject
+    /// every seeded cert and derive the fallback (divergence).
+    pub beacon: Option<fluentbase_bls::scheme::BeaconKey>,
 }
 
 /// Handle the host adapter supervises alongside its WS-upstream actor.
@@ -96,6 +103,10 @@ const EL_SYNC_NO_PROGRESS: Duration = Duration::from_secs(120);
 struct RethCommitteeSource<Provider, EvmConfig> {
     reader: RethStakingStateReader<Provider, EvmConfig>,
     namespace: Vec<u8>,
+    /// Public threshold-beacon key (see [`CertFollowConfig::beacon`]); makes the
+    /// per-epoch verifier beacon-active so it accepts (and verifies) the seed
+    /// half of combined finalization certs.
+    beacon: Option<fluentbase_bls::scheme::BeaconKey>,
 }
 
 impl<Provider, EvmConfig> CommitteeSource for RethCommitteeSource<Provider, EvmConfig>
@@ -112,7 +123,11 @@ where
         );
         let committee = epoch_committee_from_snapshot(&snap)
             .map_err(|e| eyre!("epoch {epoch} committee has non-unique participants: {e:?}"))?;
-        Ok(build_verifier(&self.namespace, committee.bimap, None))
+        Ok(build_verifier(
+            &self.namespace,
+            committee.bimap,
+            self.beacon.clone(),
+        ))
     }
 }
 
@@ -412,6 +427,7 @@ impl CertFollowLayer {
         let committees = RethCommitteeSource {
             reader,
             namespace: fluent_namespace(chain_id),
+            beacon: cfg.beacon.clone(),
         };
         let initial_scheme = committees
             .scheme_at(checkpoint_epoch, checkpoint_hash)
