@@ -39,7 +39,7 @@ pub fn instruction_result_from_exit_code(
         ExitCode::UnknownError => InstructionResult::UnknownError,
         ExitCode::InputOutputOutOfBounds => InstructionResult::InputOutputOutOfBounds,
         ExitCode::PrecompileError => InstructionResult::PrecompileError,
-        ExitCode::NotSupportedBytecode => InstructionResult::MalformedBuiltinParams,
+        ExitCode::NotSupportedBytecode => InstructionResult::OpcodeNotFound,
         ExitCode::StateChangeDuringStaticCall => InstructionResult::StateChangeDuringStaticCall,
         ExitCode::CreateContractSizeLimit => InstructionResult::CreateContractSizeLimit,
         ExitCode::CreateContractCollision => InstructionResult::CreateCollision,
