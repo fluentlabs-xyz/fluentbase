@@ -310,10 +310,26 @@ jobs:
         uses: actions/download-artifact@v8
       - name: Generate full changelog
         id: changelog
+        # Build release notes by writing git output to a file via redirection.
+        # Commit subjects are attacker-controlled (any merged PR), so they must
+        # never be echoed into $GITHUB_OUTPUT (heredoc-delimiter injection) nor
+        # interpolated into a later run: block (shell injection). Writing to a
+        # file treats them as literal text. VERSION comes from the job env, not
+        # from a ${{ }} expression spliced into the shell.
         run: |
-          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
-          echo "$(git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 ${{ env.VERSION }}^)..${{ env.VERSION }})" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          previous_tag="$(git describe --tags --abbrev=0 "${VERSION}^")"
+          {
+            echo "Add a summary, including:"
+            echo
+            echo "- Critical bug fixes"
+            echo "- New features"
+            echo "- Any breaking changes (and what to expect)"
+            echo
+            echo "## All Changes"
+            echo
+            git log --pretty=format:"- %s" "${previous_tag}..${VERSION}"
+            echo
+          } > release-notes.md
       - name: Create release draft
         env:
           GITHUB_USER: ${{ github.repository_owner }}
@@ -326,19 +342,6 @@ jobs:
             prerelease_flag="--prerelease"
           fi
 
-          body=$(cat <<- "ENDBODY"
-          Add a summary, including:
-
-          - Critical bug fixes
-          - New features
-          - Any breaking changes (and what to expect)
-
-          ## All Changes
-
-          ${{ steps.changelog.outputs.CHANGELOG }}
-
-          ENDBODY
-          )
           assets=()
           for d in ./*fluent-*.tar.gz*; do
             assets+=("$d/$(basename "$d")")
@@ -349,5 +352,4 @@ jobs:
           for d in ./*evm-runtime-permissive-*.rwasm.gz*; do
             assets+=("$d/$(basename "$d")")
           done
-          tag_name="${{ env.VERSION }}"
-          echo "$body" | gh release create --draft $prerelease_flag -t "Genesis $tag_name" -F "-" "$tag_name" "${assets[@]}"
+          gh release create --draft $prerelease_flag -t "Genesis ${VERSION}" -F release-notes.md "${VERSION}" "${assets[@]}"
