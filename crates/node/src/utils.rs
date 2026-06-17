@@ -5,6 +5,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const MAX_GENESIS_JSON_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Downloads genesis from GitHub releases into `../genesis/` (sibling to this crate),
 /// caches it, and verifies its detached OpenPGP signature.
 ///
@@ -114,13 +116,20 @@ pub fn download_to(url: &str, path: &Path) -> eyre::Result<()> {
 fn read_genesis_from_gz(path: &Path) -> eyre::Result<Genesis> {
     use eyre::WrapErr as _;
     let gz = fs::read(path).wrap_err_with(|| format!("failed to read {}", path.display()))?;
-    let mut decoder = flate2::read::GzDecoder::new(&gz[..]);
-    let mut json = String::new();
+    let decoder = flate2::read::GzDecoder::new(&gz[..]);
+    let mut json = Vec::new();
     decoder
-        .read_to_string(&mut json)
+        .take(MAX_GENESIS_JSON_BYTES + 1)
+        .read_to_end(&mut json)
         .wrap_err("failed to decompress genesis gz")?;
+    if json.len() as u64 > MAX_GENESIS_JSON_BYTES {
+        eyre::bail!(
+            "genesis JSON exceeds {} byte decompressed limit",
+            MAX_GENESIS_JSON_BYTES
+        );
+    }
     let genesis =
-        serde_json::from_str::<Genesis>(&json).wrap_err("failed to parse genesis JSON")?;
+        serde_json::from_slice::<Genesis>(&json).wrap_err("failed to parse genesis JSON")?;
     Ok(genesis)
 }
 
