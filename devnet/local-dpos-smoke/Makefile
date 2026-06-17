@@ -3,7 +3,7 @@ SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
 .PHONY: regen-contracts smoke smoke-swap up down logs clean \
         smoke-tx smoke-epoch smoke-peers smoke-liveness smoke-crash-survivor smoke-byzantine \
         smoke-gov-interval smoke-full-restart smoke-cert-follow smoke-deferred \
-        smoke-vrf smoke-production-path smoke-all
+        smoke-vrf smoke-vrf-rotation smoke-production-path smoke-all
 
 regen-contracts:
 	@test -d $(SOLIDITY_CONTRACTS_DIR) || \
@@ -78,6 +78,12 @@ smoke-deferred:
 # Threshold randomness beacon: prev_randao = H(verified threshold seed) under DPoS.
 smoke-vrf:
 	@./scripts/case-vrf.sh
+# Live DKG beacon ROTATION: a committee change forces a fresh DKG → a rotated
+# on-chain group key; beacon relives from the new epoch's first block; a stable
+# epoch carries the key forward (no on-chain commit). Runtime forge deploy +
+# dynamic registration; same prerequisites as smoke-production-path. Long (~6-9 min).
+smoke-vrf-rotation:
+	@./scripts/case-vrf-rotation.sh
 # Full production path: runtime contract deploy + dynamic registration + governance
 # activation + live committee rotation + liveness ejection. Long (~5-8 min),
 # first-of-its-kind, and gated on the EIP-170 Staking-codesize fix; NOT in run-all.
