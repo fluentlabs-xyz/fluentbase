@@ -123,11 +123,26 @@ done
 
 # 2b) Let the chain advance a few blocks (~1 blk/s) and require every validator's
 #     active-count to GROW — proves the beacon is live at probe time, not frozen
-#     post-warm-up on the digest fallback.
-if ! wait_finalized_ge $(( fin + 3 )) 30; then
-    echo "FAIL (smoke-vrf): chain did not advance >= 3 blocks past $fin within 30s — cannot observe a sustained beacon"
-    exit 1
-fi
+#     post-warm-up on the digest fallback. The ACTIVE_LINE fires at the SPECULATIVE
+#     TIP (notarize-time derive under deferred execution), so growth must track the
+#     HEAD, not finalized: right after the Tempo→DPoS migration the tip bursts ahead
+#     and finalized can catch up to it WITHOUT the tip producing new blocks — which
+#     froze the count under the old finalized-based wait (false "beacon stopped").
+head_dec() {
+    curl -s -X POST -H 'Content-Type: application/json' \
+        --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+        "$RPC" 2>/dev/null | jq -r '.result // "0x0"' \
+        | { read -r h; printf '%d' "$h" 2>/dev/null || echo 0; }
+}
+head0=$(head_dec)
+hdeadline=$(( SECONDS + 30 ))
+while (( $(head_dec) < head0 + 3 )); do
+    if (( SECONDS >= hdeadline )); then
+        echo "FAIL (smoke-vrf): head did not advance >= 3 blocks past $head0 within 30s — cannot observe a sustained beacon"
+        exit 1
+    fi
+    sleep 1
+done
 for v in "${VALIDATORS[@]}"; do
     after=$(log_count "$v" "$ACTIVE_LINE"); after=${after:-0}
     if (( after <= ${before[$v]} )); then
