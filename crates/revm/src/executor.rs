@@ -143,7 +143,14 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
         // - the rWasm module (prefix)
         // - constructor parameters (suffix)
         // Check `contracts/wasm/lib.rs` for more
-        let (rwasm_module, bytes_read) = RwasmModule::new(interpreter_result.output.as_ref());
+        let Ok((rwasm_module, bytes_read)) =
+            RwasmModule::new_checked(interpreter_result.output.as_ref())
+        else {
+            return Ok(NextAction::error(
+                ExitCode::MalformedBuiltinParams,
+                interpreter_result.gas,
+            ));
+        };
         let (rwasm_module_raw, constructor_params_raw) = (
             interpreter_result.output.slice(..bytes_read),
             interpreter_result.output.slice(bytes_read..),
