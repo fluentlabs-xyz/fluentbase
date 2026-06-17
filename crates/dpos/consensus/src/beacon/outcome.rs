@@ -7,7 +7,11 @@
 //! publishes to L2.
 
 use commonware_codec::{Encode as _, Read as _};
-use commonware_cryptography::bls12381::{dkg::Output, primitives::sharing::ModeVersion};
+use commonware_cryptography::bls12381::{
+    dkg::Output,
+    primitives::{group::Share, sharing::ModeVersion, variant::MinSig},
+};
+use commonware_utils::ordered::Set;
 use core::num::NonZeroU32;
 use fluentbase_bls::PeerPubkey;
 use fluentbase_p2p::constants::MAX_COMMITTEE_SIZE;
@@ -51,6 +55,39 @@ pub fn encode_outcome(outcome: &DkgOutcome) -> Vec<u8> {
 /// system call commits to L2.
 pub fn group_public_key(outcome: &DkgOutcome) -> &GroupPublic {
     outcome.public().public()
+}
+
+/// The boundary qualification gate ("C", share-on-polynomial): a SHARE-HOLDER
+/// accepts a proposer-asserted DKG `outcome` for epoch E iff (a) its players are
+/// exactly `committee` (committee[E] — the outcome is for the right committee) and
+/// (b) this node's OWN secret share lies on the asserted aggregate polynomial at
+/// its index (`g^{sk_j} == outcome.public().partial_public(j)`).
+///
+/// SOUND: a forged aggregate polynomial `≠` the real one agrees with it at ≤
+/// `quorum−1` of the `n` player indices (two distinct degree-`(quorum−1)`
+/// polynomials agree at ≤ `quorum−1` points), so at most `quorum−1 < quorum`
+/// honest share-holders find their share on it — it can never reach a quorum of
+/// share-holder accepts; conversely a quorum of accepts ⟹ the asserted polynomial
+/// matches ≥ `quorum` real shares ⟹ it IS the real aggregate. A pure
+/// `verify_seed` gate would be forgeable (a proposer mints its own keypair); C
+/// binds `PK_E` to the validators' own (uncontrolled) shares. The asserted
+/// `outcome.dealers()` is the quorum-sized qualified set `Q` (a SUBSET of the
+/// committee), so it is intentionally NOT required to equal `committee`.
+///
+/// Observers (no share) cannot run this — the caller must WITHHOLD the qualifying
+/// vote for them, never accept on shape alone.
+pub fn validate_share_on_poly(
+    outcome: &DkgOutcome,
+    committee: &Set<PeerPubkey>,
+    my_share: &Share,
+) -> bool {
+    if outcome.players() != committee {
+        return false;
+    }
+    match outcome.public().partial_public(my_share.index) {
+        Ok(pub_share) => pub_share == my_share.public::<MinSig>(),
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]
@@ -108,5 +145,39 @@ mod tests {
             parse_outcome(&bytes),
             Err(OutcomeError::TrailingBytes)
         ));
+    }
+
+    #[test]
+    fn share_on_poly_accepts_own_rejects_forged_and_wrong_committee() {
+        use crate::beacon::dkg::run_local_dkg;
+        let mut rng = StdRng::seed_from_u64(13);
+        let keys: Vec<Ed25519PrivateKey> =
+            (0..5).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
+        let committee: Set<PeerPubkey> =
+            Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+
+        let (out_a, shares_a) = run_local_dkg(&mut rng, b"ns", 0, &keys, &keys).expect("dkg a");
+        // A DIFFERENT ceremony over the SAME committee -> a different aggregate poly.
+        let (_out_b, shares_b) = run_local_dkg(&mut rng, b"ns", 1, &keys, &keys).expect("dkg b");
+
+        for pk in committee.iter() {
+            let mine = shares_a.get(pk).expect("share a");
+            assert!(
+                validate_share_on_poly(&out_a, &committee, mine),
+                "own share must lie on the asserted poly"
+            );
+            let forged = shares_b.get(pk).expect("share b");
+            assert!(
+                !validate_share_on_poly(&out_a, &committee, forged),
+                "a share from a different ceremony must NOT lie on this poly"
+            );
+        }
+
+        // Outcome asserted for a DIFFERENT committee -> reject (players mismatch).
+        let other: Set<PeerPubkey> = Set::from_iter_dedup(
+            (0..5).map(|_| Ed25519PrivateKey::random(&mut rng).public_key()),
+        );
+        let any = shares_a.values().next().expect("a share");
+        assert!(!validate_share_on_poly(&out_a, &other, any));
     }
 }
