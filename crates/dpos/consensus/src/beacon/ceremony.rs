@@ -205,8 +205,19 @@ impl DkgCeremony {
     }
 
     /// Derive the agreed [`CeremonyOutput`] (`PK_E`) + this node's secret [`Share`]
-    /// over the collected logs. Consumes the ceremony (called once, at the boundary
-    /// after the logs are agreed).
+    /// over the collected logs.
+    ///
+    /// CALLER CONTRACT (the supervisor enforces timing; this is destructive):
+    /// - [`seal_dealings`](Self::seal_dealings) MUST have run first — it is the only
+    ///   place this node's own dealer log enters `self.logs` and is broadcast, so
+    ///   finalizing without sealing drops this dealer from the quorum (locally AND
+    ///   for every peer).
+    /// - At least a dealer-quorum of VALID logs must be recorded, else
+    ///   `Player::finalize` returns `Err(DkgFailed)`. Because this CONSUMES the
+    ///   ceremony, a premature/under-quorum call is irrecoverable (the whole epoch's
+    ///   ceremony is lost) — the supervisor must only call it once the collection
+    ///   window has closed AND the logs are agreed (the option-A stall is a HALT the
+    ///   supervisor resumes by retrying delivery + finalize, NOT by dropping state).
     pub fn finalize<R: CryptoRngCore>(
         self,
         rng: &mut R,

@@ -59,20 +59,34 @@ pub fn group_public_key(outcome: &DkgOutcome) -> &GroupPublic {
 
 /// The boundary qualification gate ("C", share-on-polynomial): a SHARE-HOLDER
 /// accepts a proposer-asserted DKG `outcome` for epoch E iff (a) its players are
-/// exactly `committee` (committee[E] — the outcome is for the right committee) and
+/// exactly `committee` (committee[E]) AND the sharing's participant `total` is the
+/// committee size (so the polynomial index domain is exactly the committee), and
 /// (b) this node's OWN secret share lies on the asserted aggregate polynomial at
 /// its index (`g^{sk_j} == outcome.public().partial_public(j)`).
 ///
-/// SOUND: a forged aggregate polynomial `≠` the real one agrees with it at ≤
-/// `quorum−1` of the `n` player indices (two distinct degree-`(quorum−1)`
-/// polynomials agree at ≤ `quorum−1` points), so at most `quorum−1 < quorum`
-/// honest share-holders find their share on it — it can never reach a quorum of
-/// share-holder accepts; conversely a quorum of accepts ⟹ the asserted polynomial
-/// matches ≥ `quorum` real shares ⟹ it IS the real aggregate. A pure
-/// `verify_seed` gate would be forgeable (a proposer mints its own keypair); C
-/// binds `PK_E` to the validators' own (uncontrolled) shares. The asserted
-/// `outcome.dealers()` is the quorum-sized qualified set `Q` (a SUBSET of the
-/// committee), so it is intentionally NOT required to equal `committee`.
+/// What C alone guarantees: a forged polynomial that does NOT pass through the
+/// honest shares is rejected — to be accepted by a quorum it must agree with the
+/// real aggregate at ≥ `quorum` player points. For a polynomial of degree
+/// `quorum−1` (the honest aggregate's degree) that pins it to the real aggregate
+/// (a degree-`d` poly is determined by `d+1` points) ⟹ the real `PK_E`.
+///
+/// IMPORTANT CAVEAT — C is NOT standalone-sufficient: commonware `Sharing` does
+/// not expose, nor does its decoder pin, the polynomial degree (`Sharing::Read`
+/// bounds the coefficient count only to `≤ MAX_COMMITTEE_SIZE`), and the quorum
+/// `q = n−f ≈ 2n/3 < n`. So a HIGH-degree forged poly (degree up to `n−1`) can be
+/// fitted through the `q` honest public share points while carrying an ARBITRARY
+/// constant term (a forged `PK_E`). C cannot detect that here. It is closed by the
+/// per-round SEED-VERIFY that the always-active verify path runs ALONGSIDE C at the
+/// boundary: the seed `σ₀` recovered from the committee's REAL shares is the unique
+/// threshold signature under the real secret and will NOT verify against a forged
+/// `PK_E = poly.constant()` (BLS uniqueness). So the COMBINED gate (C ∧
+/// `verify_seed(σ₀, PK_E)`) is sound: C cheaply rejects polys that miss the honest
+/// shares; seed-verify rejects a high-degree poly with a forged constant. Callers
+/// MUST run both — C is necessary, not sufficient. A pure `verify_seed` gate alone
+/// would be forgeable (a proposer mints its own keypair `(x, g^x)`); C binds the
+/// poly to the validators' own (uncontrolled) shares. `outcome.dealers()` is the
+/// quorum-sized qualified set `Q` (a SUBSET of the committee), so it is
+/// intentionally NOT required to equal `committee`.
 ///
 /// Observers (no share) cannot run this — the caller must WITHHOLD the qualifying
 /// vote for them, never accept on shape alone.
@@ -81,7 +95,9 @@ pub fn validate_share_on_poly(
     committee: &Set<PeerPubkey>,
     my_share: &Share,
 ) -> bool {
-    if outcome.players() != committee {
+    if outcome.players() != committee
+        || outcome.public().total().get() as usize != committee.len()
+    {
         return false;
     }
     match outcome.public().partial_public(my_share.index) {
