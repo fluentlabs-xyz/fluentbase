@@ -549,25 +549,21 @@ where
             let namespace = fluentbase_consensus::beacon::seed::seed_namespace(
                 &fluentbase_bls::fluent_namespace(chain_id),
             );
-            // Per-epoch resolver: read PK_E from L2 state for the block's epoch,
-            // falling back to the genesis PK_0 (the configured sharing) when the
-            // epoch is uncommitted (every epoch pre-rotation) or on a read error.
+            // Per-epoch resolver reads PK_E from L2 state for the block's epoch;
+            // the deriver applies the genesis-PK_0 fallback only for an uncommitted
+            // epoch (read Ok(None)) — a read error propagates, never silently
+            // substitutes (would fork prev_randao).
             let genesis_pk = *sharing.public();
             let beacon_reader = fluentbase_staking_reader::reader::RethStakingStateReader::new(
                 node.provider.clone(),
                 node.evm_config.clone(),
                 staking_config.clone(),
             );
-            let resolver = std::sync::Arc::new(
-                move |epoch: u64, at: alloy_primitives::B256| {
-                    beacon_reader
-                        .epoch_beacon_key(epoch, at)
-                        .ok()
-                        .flatten()
-                        .or(Some(genesis_pk))
-                },
+            let deriver = deriver_base.with_beacon_resolver(
+                namespace,
+                crate::derive::beacon_pk_resolver(beacon_reader),
+                Some(genesis_pk),
             );
-            let deriver = deriver_base.with_beacon_resolver(namespace, resolver);
             let launch = fluentbase_consensus::dpos::BeaconLaunch { share, sharing };
             (deriver, Some(launch))
         }

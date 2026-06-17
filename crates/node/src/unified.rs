@@ -260,22 +260,16 @@ where
                 );
                 let (deriver, follow_beacon) = match &beacon_sharing {
                     Some(sharing) => {
-                        // Per-epoch resolver: read PK_E from L2 state for the
-                        // block's epoch, genesis-PK_0 fallback when uncommitted.
+                        // Per-epoch resolver reads PK_E from L2 state; deriver applies
+                        // genesis-PK_0 fallback only for an uncommitted epoch — a read
+                        // error propagates, never silently substitutes.
                         let genesis_pk = *sharing.public();
-                        let beacon_reader = reader.clone();
-                        let resolver = std::sync::Arc::new(
-                            move |epoch: u64, at: alloy_primitives::B256| {
-                                beacon_reader
-                                    .epoch_beacon_key(epoch, at)
-                                    .ok()
-                                    .flatten()
-                                    .or(Some(genesis_pk))
-                            },
-                        );
                         (
-                            deriver_base
-                                .with_beacon_resolver(beacon_seed_namespace.clone(), resolver),
+                            deriver_base.with_beacon_resolver(
+                                beacon_seed_namespace.clone(),
+                                crate::derive::beacon_pk_resolver(reader.clone()),
+                                Some(genesis_pk),
+                            ),
                             Some((sharing.clone(), None, beacon_seed_namespace.clone())),
                         )
                     }

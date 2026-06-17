@@ -96,9 +96,11 @@ impl EncodeSize for DkgMsg {
 }
 
 impl Read for DkgMsg {
-    /// The committee size `n` (≥ the commitment-polynomial length = quorum) used
-    /// to bound the `Commitment`/`Reveal` decoders. The actor supplies it from
-    /// the ceremony `Info`.
+    /// An UPPER BOUND on the committee size (≥ the commitment-polynomial length =
+    /// quorum) used to bound the `Commitment`/`Reveal` decoders. It need NOT be the
+    /// exact per-ceremony `n` — the actor can pass `MAX_COMMITTEE_SIZE` (committees
+    /// for E vs E+1 may differ in size, and the decoder runs before the message's
+    /// own `ceremony_epoch` is known), and the inner polynomial length self-bounds.
     type Cfg = NonZeroU32;
 
     fn read_cfg(buf: &mut impl Buf, committee_size: &NonZeroU32) -> Result<Self, Error> {
