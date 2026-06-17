@@ -259,13 +259,26 @@ where
                     node.evm_config.clone(),
                 );
                 let (deriver, follow_beacon) = match &beacon_sharing {
-                    Some(sharing) => (
-                        deriver_base.with_beacon_key(
-                            Some(*sharing.public()),
-                            beacon_seed_namespace.clone(),
-                        ),
-                        Some((sharing.clone(), None, beacon_seed_namespace.clone())),
-                    ),
+                    Some(sharing) => {
+                        // Per-epoch resolver: read PK_E from L2 state for the
+                        // block's epoch, genesis-PK_0 fallback when uncommitted.
+                        let genesis_pk = *sharing.public();
+                        let beacon_reader = reader.clone();
+                        let resolver = std::sync::Arc::new(
+                            move |epoch: u64, at: alloy_primitives::B256| {
+                                beacon_reader
+                                    .epoch_beacon_key(epoch, at)
+                                    .ok()
+                                    .flatten()
+                                    .or(Some(genesis_pk))
+                            },
+                        );
+                        (
+                            deriver_base
+                                .with_beacon_resolver(beacon_seed_namespace.clone(), resolver),
+                            Some((sharing.clone(), None, beacon_seed_namespace.clone())),
+                        )
+                    }
                     None => (deriver_base, None),
                 };
                 let executed = crate::ordering::ProviderExecutedChain(node.provider.clone());

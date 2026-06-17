@@ -271,10 +271,12 @@ where
             .ok()
             .flatten()
             .and_then(|fin| {
-                fin.certificate.seed().map(|signature| crate::beacon::types::Seed {
-                    target_round: fin.proposal.round,
-                    signature,
-                })
+                fin.certificate
+                    .seed()
+                    .map(|signature| crate::beacon::types::Seed {
+                        target_round: fin.proposal.round,
+                        signature,
+                    })
             });
         let derived = derive_with_visibility_retry(ctx, deriver, &order, parent_hash, seed)
             .await
@@ -1195,9 +1197,10 @@ mod visibility_retry_tests {
                 transient_failures: 3,
                 fatal: false,
             };
-            let derived = derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO, None)
-                .await
-                .expect("recovers once the parent becomes visible");
+            let derived =
+                derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO, None)
+                    .await
+                    .expect("recovers once the parent becomes visible");
             assert_eq!(derived.number(), 7);
             assert_eq!(deriver.calls.load(Ordering::SeqCst), 4);
         });
@@ -1211,9 +1214,10 @@ mod visibility_retry_tests {
                 transient_failures: 1,
                 fatal: true,
             };
-            let err = derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO, None)
-                .await
-                .unwrap_err();
+            let err =
+                derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO, None)
+                    .await
+                    .unwrap_err();
             assert!(err.to_string().contains("disk exploded"), "{err}");
             assert_eq!(
                 deriver.calls.load(Ordering::SeqCst),
@@ -1231,9 +1235,10 @@ mod visibility_retry_tests {
                 transient_failures: u32::MAX,
                 fatal: false,
             };
-            let err = derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO, None)
-                .await
-                .unwrap_err();
+            let err =
+                derive_with_visibility_retry(&ctx, &deriver, &sample_order(), B256::ZERO, None)
+                    .await
+                    .unwrap_err();
             assert!(err.downcast_ref::<ParentHeaderMissing>().is_some(), "{err}");
             assert!(
                 deriver.calls.load(Ordering::SeqCst) > 1,

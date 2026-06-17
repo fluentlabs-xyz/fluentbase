@@ -19,8 +19,11 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
 use commonware_consensus::{marshal::Update, types::Height};
 use commonware_runtime::{spawn_cell, Clock, ContextCell, FutureExt as _, Handle, Pacer, Spawner};
-use commonware_utils::{acknowledgement::Exact, futures::OptionFuture, Acknowledgement as _};
+use commonware_utils::{
+    acknowledgement::Exact, futures::OptionFuture, vec::NonEmptyVec, Acknowledgement as _,
+};
 use eyre::{ensure, WrapErr as _};
+use fluentbase_bls::PeerPubkey;
 use futures::{
     future::{ready, BoxFuture, Ready},
     stream::FuturesOrdered,
@@ -134,6 +137,19 @@ impl LastCanonicalized {
 
 // BlockFetcher — minimal trait so we don't depend on the full marshal Mailbox type.
 
+/// Outcome of looking up the beacon seed for a finalized height.
+pub enum SeedLookup {
+    /// The finalization cert is not local yet — it exists in the network (the
+    /// block IS finalized) and must be fetched before deriving; deriving with
+    /// the fallback here would fork the chain. The caller defers + re-polls.
+    CertMissing,
+    /// The cert is present and carries no seed — a genuine no-beacon epoch; the
+    /// gated `order.digest()` fallback is correct and agreed across nodes.
+    NoBeacon,
+    /// The cert is present and carries the round's threshold seed.
+    Seed(crate::beacon::types::Seed),
+}
+
 pub trait BlockFetcher: Clone + Send + Sync + 'static {
     fn fetch_block_by_height(
         &self,
@@ -149,14 +165,18 @@ pub trait BlockFetcher: Clone + Send + Sync + 'static {
         digest: crate::digest::Digest,
     ) -> impl std::future::Future<Output = Option<OrderBlock>> + Send;
 
-    /// The beacon seed for `height`, recovered from that height's finalization
-    /// certificate (the combined consensus scheme). `None` when no cert is held
-    /// or the epoch is on the fallback (no-beacon) path — derivation then uses
-    /// the gated `order.digest()` fallback.
-    fn fetch_seed(
+    /// 3-way seed lookup for a finalized height (see [`SeedLookup`]).
+    /// Distinguishes "cert not local yet" (must fetch — never fall back) from
+    /// "no-beacon epoch" (agreed fallback) from a present seed.
+    fn lookup_seed(&self, height: Height) -> impl std::future::Future<Output = SeedLookup> + Send;
+
+    /// Ask peers for the finalization at `height` (fills `finalizations_by_height`
+    /// durably). Fire-and-forget; the marshal skips it if already local.
+    fn hint_finalization(
         &self,
         height: Height,
-    ) -> impl std::future::Future<Output = Option<crate::beacon::types::Seed>> + Send;
+        targets: NonEmptyVec<PeerPubkey>,
+    ) -> impl std::future::Future<Output = ()> + Send;
 }
 
 /// Explicit impl for the concrete marshal mailbox.
@@ -175,15 +195,73 @@ impl BlockFetcher
         self.get_block(&digest).await
     }
 
-    async fn fetch_seed(&self, height: Height) -> Option<crate::beacon::types::Seed> {
-        let fin = self.get_finalization(height).await?;
-        fin.certificate
-            .seed()
-            .map(|signature| crate::beacon::types::Seed {
-                target_round: fin.proposal.round,
-                signature,
-            })
+    async fn lookup_seed(&self, height: Height) -> SeedLookup {
+        match self.get_finalization(height).await {
+            None => SeedLookup::CertMissing,
+            Some(fin) => match fin.certificate.seed() {
+                Some(signature) => SeedLookup::Seed(crate::beacon::types::Seed {
+                    target_round: fin.proposal.round,
+                    signature,
+                }),
+                None => SeedLookup::NoBeacon,
+            },
+        }
     }
+
+    async fn hint_finalization(&self, height: Height, targets: NonEmptyVec<PeerPubkey>) {
+        self.hint_finalized(height, targets).await;
+    }
+}
+
+/// Self-driven re-poll cadence while awaiting a not-yet-local finalization cert.
+const SEED_FETCH_POLL: Duration = Duration::from_millis(200);
+/// Total budget for a deferred block's cert to arrive before failing loud.
+const SEED_FETCH_MAX_WAIT: Duration = Duration::from_secs(30);
+
+/// Returns the current committee's peers to target for a finalization re-fetch,
+/// or `None` if no committee is known yet. Re-invoked per retry so it tracks the
+/// catch-up walk's advancing epoch.
+pub type PeersForFinalization =
+    std::sync::Arc<dyn Fn() -> Option<NonEmptyVec<PeerPubkey>> + Send + Sync>;
+
+/// A finalized block held while its beacon seed (finalization cert) is not local
+/// yet. The `pending_finalizations` drain is paused while this is `Some`, which
+/// preserves strict derive order and lets the marshal's `MAX_PENDING_ACKS`
+/// backpressure bound the queue.
+struct Deferred {
+    cause: Span,
+    order: OrderBlock,
+    ack: Exact,
+    deadline: std::time::SystemTime,
+}
+
+/// Result of attempting to derive a finalized block.
+enum DeriveOutcome {
+    /// Derived + imported + FCU'd + acked.
+    Done,
+    /// A required finalization cert (for `height`) is not local yet; the block
+    /// (with its ack) is handed back to be deferred + re-polled. A hint has
+    /// already been issued for `height`. `order` is boxed to keep this enum
+    /// small (the `Done` arm is the hot path).
+    NeedSeed {
+        cause: Span,
+        order: Box<OrderBlock>,
+        ack: Exact,
+        height: Height,
+    },
+}
+
+/// Seed resolution for one height: either a usable seed (`Some` = beacon,
+/// `None` = agreed no-beacon fallback) or "cert not local — fetch it".
+enum SeedOr {
+    Seed(Option<crate::beacon::types::Seed>),
+    Need(Height),
+}
+
+/// Result of the gap prefix-derive: the hash at `target`, or a missing cert.
+enum PrefixResult {
+    Hash(B256),
+    NeedSeed(Height),
 }
 
 pub struct Config<BE, D, XC, MarshalMailbox> {
@@ -197,6 +275,7 @@ pub struct Config<BE, D, XC, MarshalMailbox> {
     pub initial_finalized: (Height, B256),
     pub initial_head: (Height, B256),
     pub fcu_pace: Duration,
+    pub peers_for_finalization: PeersForFinalization,
 }
 
 pub struct Actor<E, BE, D, XC, MarshalMailbox> {
@@ -243,6 +322,16 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     /// lead); a mismatch (notarized-then-nullified, sibling finalized) forces a
     /// re-derive + head reorg back onto the finalized fork.
     spec_executed: BTreeMap<u64, crate::digest::Digest>,
+
+    peers_for_finalization: PeersForFinalization,
+    /// A finalized block whose cert (seed) is not local yet; held with its ack
+    /// while `deferred_timer` re-polls. The `pending_finalizations` drain is
+    /// paused while this is `Some` (preserves order).
+    deferred: Option<Deferred>,
+    /// Self-driven (NOT delivery-driven) re-poll timer; armed only while
+    /// `deferred` is `Some`. Delivery-driven retry would deadlock on the last
+    /// catch-up block (see research addendum).
+    deferred_timer: OptionFuture<BoxFuture<'static, ()>>,
 }
 
 impl<E, BE, D, XC, MarshalMailbox> Actor<E, BE, D, XC, MarshalMailbox>
@@ -298,6 +387,9 @@ where
             has_advanced_since_init: false,
             spec_head: cfg.initial_head.0.get(),
             spec_executed: BTreeMap::new(),
+            peers_for_finalization: cfg.peers_for_finalization,
+            deferred: None,
+            deferred_timer: OptionFuture::default(),
         };
         (actor, mailbox)
     }
@@ -310,7 +402,9 @@ where
         info_span!("start").in_scope(|| info!("executor starting"));
 
         loop {
-            if self.pending_backfill.is_none() {
+            // Do not pull more work while a block is deferred awaiting its cert
+            // — the deferred block must derive first (strict order).
+            if self.deferred.is_none() && self.pending_backfill.is_none() {
                 if let Some(height) = self.finalized_heights_to_backfill.next() {
                     let marshal = self.marshal.clone();
                     self.pending_backfill.replace(
@@ -333,10 +427,13 @@ where
                         Some(block) => {
                             let (ack, _waiter) = Exact::handle();
                             let span = info_span!("backfill_on_start", %height);
-                            if let Err(error) = self.forward_finalized(span, block, ack).await {
-                                error_span!("shutdown").in_scope(|| error!(%error,
-                                    "executor fatal error during backfill; shutting down"));
-                                break;
+                            match self.try_derive(span, block, ack).await {
+                                Ok(outcome) => self.defer_if_needed(outcome, None),
+                                Err(error) => {
+                                    error_span!("shutdown").in_scope(|| error!(%error,
+                                        "executor fatal error during backfill; shutting down"));
+                                    break;
+                                }
                             }
                         }
                         None => {
@@ -351,14 +448,41 @@ where
                 }
 
                 Some((cause, block, ack)) = self.pending_finalizations.next(),
-                if self.pending_backfill.is_none()
+                if self.deferred.is_none()
+                    && self.pending_backfill.is_none()
                     && self.finalized_heights_to_backfill.is_empty() => {
                     self.pending_finalizations_gauge
                         .set(self.pending_finalizations.len() as i64);
-                    if let Err(error) = self.forward_finalized(cause, block, ack).await {
-                        error_span!("shutdown").in_scope(|| error!(%error,
-                            "executor fatal error during finalize; shutting down"));
+                    match self.try_derive(cause, block, ack).await {
+                        Ok(outcome) => self.defer_if_needed(outcome, None),
+                        Err(error) => {
+                            error_span!("shutdown").in_scope(|| error!(%error,
+                                "executor fatal error during finalize; shutting down"));
+                            break;
+                        }
+                    }
+                }
+
+                // Self-driven re-poll of a deferred block's cert. OptionFuture
+                // does NOT auto-clear after Poll::Ready (cf. pending_backfill) —
+                // clear it here; re-arm only if still deferred. Delivery-driven
+                // retry is avoided on purpose (it deadlocks at the last block).
+                () = &mut self.deferred_timer => {
+                    *self.deferred_timer = None;
+                    let d = self.deferred.take().expect("timer armed ⇒ deferred set");
+                    if self.context.current() >= d.deadline {
+                        error_span!("shutdown").in_scope(|| error!(height = %d.order.height,
+                            "finalization cert unavailable within budget; cannot derive beacon \
+                             prev_randao without diverging; shutting down"));
                         break;
+                    }
+                    match self.try_derive(d.cause, d.order, d.ack).await {
+                        Ok(outcome) => self.defer_if_needed(outcome, Some(d.deadline)),
+                        Err(error) => {
+                            error_span!("shutdown").in_scope(|| error!(%error,
+                                "executor fatal error during deferred derive; shutting down"));
+                            break;
+                        }
                     }
                 }
 
@@ -372,6 +496,30 @@ where
                     self.reset_fcu_heartbeat_timer();
                 }
             }
+        }
+    }
+
+    /// Stash a `NeedSeed` outcome into the deferred slot + arm the self-driven
+    /// re-poll timer; a `Done` outcome is a no-op. `deadline` is `None` for a
+    /// freshly-popped block (start the budget now) or `Some` to PRESERVE the
+    /// original budget across a re-poll.
+    fn defer_if_needed(&mut self, outcome: DeriveOutcome, deadline: Option<std::time::SystemTime>) {
+        if let DeriveOutcome::NeedSeed {
+            cause,
+            order,
+            ack,
+            height,
+        } = outcome
+        {
+            debug!(%height, "finalization cert not local yet; deferring derive + hinting peers");
+            let deadline = deadline.unwrap_or_else(|| self.context.current() + SEED_FETCH_MAX_WAIT);
+            self.deferred = Some(Deferred {
+                cause,
+                order: *order,
+                ack,
+                deadline,
+            });
+            self.arm_deferred_timer();
         }
     }
 
@@ -483,7 +631,9 @@ where
 
         // Advance the head only; the result-final cursor stays put (the block
         // is not finalized) and there is no marshal ack.
-        let new = self.last_canonicalized.update_head(Height::new(height), derived_hash);
+        let new = self
+            .last_canonicalized
+            .update_head(Height::new(height), derived_hash);
         let fcu = self
             .beacon_engine
             .fork_choice_updated(new.forkchoice)
@@ -502,17 +652,37 @@ where
         Ok(())
     }
 
-    #[instrument(
-        skip_all, parent = &cause,
-        fields(block.digest = %order.digest(), block.height = %order.height),
-        err(level = Level::WARN), ret,
-    )]
-    async fn forward_finalized(
+    /// Resolve the seed for a finalized height. `CertMissing` ⇒ hint the peers
+    /// and signal `Need` so the caller defers (never derive with the fallback on
+    /// a beacon chain — that forks).
+    async fn seed_or_need(&mut self, height: Height) -> SeedOr {
+        match self.marshal.lookup_seed(height).await {
+            SeedLookup::Seed(s) => SeedOr::Seed(Some(s)),
+            SeedLookup::NoBeacon => SeedOr::Seed(None),
+            SeedLookup::CertMissing => {
+                if let Some(targets) = (self.peers_for_finalization)() {
+                    self.marshal.hint_finalization(height, targets).await;
+                }
+                SeedOr::Need(height)
+            }
+        }
+    }
+
+    fn arm_deferred_timer(&mut self) {
+        self.deferred_timer
+            .replace(self.context.sleep(SEED_FETCH_POLL).boxed());
+    }
+
+    /// Derive + import + FCU + ack a finalized block IF every cert it needs is
+    /// local. The moment a required cert is missing it returns `NeedSeed` —
+    /// WITHOUT mutating any finalized state or acking — so the caller can defer
+    /// and re-poll on the self-driven timer.
+    async fn try_derive(
         &mut self,
         cause: Span,
         order: OrderBlock,
         ack: Exact,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<DeriveOutcome> {
         let height = order.height;
         let parent_height = height
             .checked_sub(1)
@@ -528,6 +698,8 @@ where
             && self.executed.executed_hash(height).is_some();
 
         let derived_hash = if correctly_speculated {
+            // Already derived via spec_execute with the Notarization-cert seed —
+            // needs NO finalization seed, so it never defers (the live path).
             self.executed
                 .executed_hash(height)
                 .expect("checked is_some above")
@@ -539,10 +711,32 @@ where
                 // of dispatch). Derivation is strictly sequential, so walk the
                 // missing prefix out of the marshal and derive it first; a
                 // genuinely unfillable gap stays fatal (visible, not wedged).
-                None => self.derive_missing_prefix(parent_height).await?,
+                None => match self.derive_missing_prefix(parent_height).await? {
+                    PrefixResult::Hash(hash) => hash,
+                    PrefixResult::NeedSeed(h) => {
+                        return Ok(DeriveOutcome::NeedSeed {
+                            cause,
+                            order: Box::new(order),
+                            ack,
+                            height: h,
+                        })
+                    }
+                },
             };
 
-            let seed = self.marshal.fetch_seed(Height::new(height)).await;
+            // The seed MUST be the cert's — a missing cert defers (never the
+            // fallback) so a beacon-active chain cannot fork on catch-up.
+            let seed = match self.seed_or_need(Height::new(height)).await {
+                SeedOr::Seed(s) => s,
+                SeedOr::Need(h) => {
+                    return Ok(DeriveOutcome::NeedSeed {
+                        cause,
+                        order: Box::new(order),
+                        ack,
+                        height: h,
+                    })
+                }
+            };
             let derived = self
                 .deriver
                 .derive_and_execute(order, parent_hash, seed)
@@ -608,13 +802,16 @@ where
         self.reset_fcu_heartbeat_timer();
 
         ack.acknowledge();
-        Ok(())
+        Ok(DeriveOutcome::Done)
     }
 
     /// Derive the missing `..=target` prefix from the marshal's archive:
     /// probe backward to the highest executed ancestor, then fetch + derive +
-    /// import forward. Returns the derived hash AT `target`.
-    async fn derive_missing_prefix(&mut self, target: u64) -> eyre::Result<B256> {
+    /// import forward. Returns the derived hash AT `target`, or `NeedSeed(h)`
+    /// when a gap height's finalization cert is not local yet (the whole op then
+    /// defers; the re-walk on retry is idempotent — already-derived prefix
+    /// heights advance `first_missing`).
+    async fn derive_missing_prefix(&mut self, target: u64) -> eyre::Result<PrefixResult> {
         let mut first_missing = target;
         let mut parent_hash = loop {
             if first_missing == 0 {
@@ -631,7 +828,20 @@ where
             first_missing,
             target, "deriving missing prefix from marshal before the delivered block"
         );
+        // Up-front hint burst over the whole gap range (marshal skips heights it
+        // already holds) so the certs land in parallel rather than one per retry.
         for h in first_missing..=target {
+            if let Some(targets) = (self.peers_for_finalization)() {
+                self.marshal
+                    .hint_finalization(Height::new(h), targets)
+                    .await;
+            }
+        }
+        for h in first_missing..=target {
+            let seed = match self.seed_or_need(Height::new(h)).await {
+                SeedOr::Seed(s) => s,
+                SeedOr::Need(h) => return Ok(PrefixResult::NeedSeed(h)),
+            };
             let order = self
                 .marshal
                 .fetch_block_by_height(Height::new(h))
@@ -639,7 +849,6 @@ where
                 .ok_or_else(|| {
                     eyre::eyre!("derive gap: marshal has no ordering artifact at height {h}")
                 })?;
-            let seed = self.marshal.fetch_seed(Height::new(h)).await;
             let derived = self
                 .deriver
                 .derive_and_execute(order, parent_hash, seed)
@@ -648,7 +857,7 @@ where
             parent_hash = derived.evm_hash();
             self.submit_finalized_payload(derived).await?;
         }
-        Ok(parent_hash)
+        Ok(PrefixResult::Hash(parent_hash))
     }
 
     /// Import the derived block into the EL. VALID is the expected steady
@@ -796,9 +1005,30 @@ mod tests {
         }
     }
 
+    /// Scripts how `lookup_seed` behaves in a test.
+    #[derive(Clone, Copy, Default, PartialEq)]
+    enum SeedMode {
+        /// Every height is a no-beacon epoch → gated `order.digest()` fallback
+        /// (the default; matches the pre-beacon behaviour the non-seed tests rely on).
+        #[default]
+        NoBeacon,
+        /// Every height's cert is permanently missing (fail-loud test).
+        AlwaysMissing,
+        /// A height's cert is missing until it has been `hint_finalization`ed,
+        /// then resolves (models a peer serving the re-fetch). Resolves to
+        /// `NoBeacon` — the executor control flow (CertMissing → defer → hint →
+        /// resolve → derive) is identical to a real seed; the `Some`-vs-`None`
+        /// seed VALUE is only observable in `derive.rs::resolve_prev_randao`,
+        /// which is tested there + by the smoke.
+        MissingUntilHinted,
+    }
+
     #[derive(Clone, Default)]
     struct FakeMarshal {
         canned: Arc<Mutex<BTreeMap<u64, OrderBlock>>>,
+        seed_mode: Arc<Mutex<SeedMode>>,
+        /// Heights passed to `hint_finalization`, in call order.
+        hints: Arc<Mutex<Vec<u64>>>,
     }
 
     impl BlockFetcher for FakeMarshal {
@@ -813,8 +1043,21 @@ mod tests {
                 .find(|o| o.digest() == digest)
                 .cloned()
         }
-        async fn fetch_seed(&self, _height: Height) -> Option<crate::beacon::types::Seed> {
-            None
+        async fn lookup_seed(&self, height: Height) -> SeedLookup {
+            match *self.seed_mode.lock().unwrap() {
+                SeedMode::NoBeacon => SeedLookup::NoBeacon,
+                SeedMode::AlwaysMissing => SeedLookup::CertMissing,
+                SeedMode::MissingUntilHinted => {
+                    if self.hints.lock().unwrap().contains(&height.get()) {
+                        SeedLookup::NoBeacon
+                    } else {
+                        SeedLookup::CertMissing
+                    }
+                }
+            }
+        }
+        async fn hint_finalization(&self, height: Height, _targets: NonEmptyVec<PeerPubkey>) {
+            self.hints.lock().unwrap().push(height.get());
         }
     }
 
@@ -867,9 +1110,18 @@ mod tests {
                     initial_finalized: (Height::new(anchor_height), self.anchor_hash),
                     initial_head: (Height::new(anchor_height), self.anchor_hash),
                     fcu_pace: Duration::from_millis(0),
+                    peers_for_finalization: std::sync::Arc::new(dummy_peers),
                 },
             )
         }
+    }
+
+    /// One deterministic dummy peer for the finalization-hint target set
+    /// (FakeMarshal ignores the targets' contents — it only records the call).
+    fn dummy_peers() -> Option<NonEmptyVec<PeerPubkey>> {
+        use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
+        let pk = Ed25519PrivateKey::from_seed(99).public_key();
+        NonEmptyVec::try_from(vec![pk]).ok()
     }
 
     fn finalize_msg(
@@ -1198,6 +1450,114 @@ mod tests {
 
             drop(mailbox);
             let _ = handle.await;
+        });
+    }
+
+    // A finalized block whose cert is not local yet is DEFERRED (not derived
+    // with the fallback), the peers are hinted, and once the cert lands (here:
+    // after the hint) the block derives — in strict order behind any earlier
+    // deferred block. Exercises the non-blocking deferred-slot + self-driven
+    // timer (critic 🔴/🟠).
+    #[test]
+    fn catch_up_defers_then_derives_in_order_when_cert_lands() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            *fx.marshal.seed_mode.lock().unwrap() = SeedMode::MissingUntilHinted;
+            let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            let o1 = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
+            let o2 = sample_order(o1.digest(), ANCHOR + 2, B256::ZERO);
+            let (m1, _w1) = finalize_msg(o1);
+            let (m2, w2) = finalize_msg(o2);
+            mailbox.send(m1).expect("send 1");
+            mailbox.send(m2).expect("send 2");
+            // The deterministic clock auto-advances past SEED_FETCH_POLL, firing
+            // the re-poll; by then the hint is recorded so the cert resolves.
+            w2.await
+                .expect("ack 2 (both derived after their certs landed)");
+
+            {
+                let payloads = fx.beacon.new_payload_calls.lock().unwrap();
+                let heights: Vec<u64> = payloads.iter().map(|p| p.number).collect();
+                assert_eq!(
+                    heights,
+                    vec![ANCHOR + 1, ANCHOR + 2],
+                    "both derived, strict order (h before h+1) preserved across deferral"
+                );
+                let hints = fx.marshal.hints.lock().unwrap();
+                assert!(
+                    hints.contains(&(ANCHOR + 1)) && hints.contains(&(ANCHOR + 2)),
+                    "each missing cert was hinted to peers: {hints:?}"
+                );
+            }
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // A genuine no-beacon epoch (cert present, no seed) derives immediately with
+    // the agreed fallback — no defer, no hint.
+    #[test]
+    fn no_beacon_epoch_derives_immediately_without_hinting() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR); // default SeedMode::NoBeacon
+            let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            let (msg, waiter) =
+                finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
+            mailbox.send(msg).expect("send");
+            waiter.await.expect("ack");
+
+            assert_eq!(
+                fx.beacon.new_payload_calls.lock().unwrap().len(),
+                1,
+                "derived immediately"
+            );
+            assert!(
+                fx.marshal.hints.lock().unwrap().is_empty(),
+                "no-beacon epoch must not hint a re-fetch"
+            );
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // A finalized beacon block whose cert NEVER arrives must fail loud (shutdown)
+    // after the budget — never derive with the fallback (which would fork).
+    #[test]
+    fn deferred_fails_loud_when_cert_never_arrives() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            *fx.marshal.seed_mode.lock().unwrap() = SeedMode::AlwaysMissing;
+            let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            let (msg, _waiter) =
+                finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
+            mailbox.send(msg).expect("send");
+            // The deterministic clock fast-forwards through SEED_FETCH_MAX_WAIT;
+            // the executor breaks (shutdown), so the handle completes WITHOUT us
+            // dropping the mailbox.
+            let _ = handle.await;
+
+            assert!(
+                fx.beacon.new_payload_calls.lock().unwrap().is_empty(),
+                "must NOT derive with the fallback when the beacon cert is missing"
+            );
+            assert!(
+                !fx.marshal.hints.lock().unwrap().is_empty(),
+                "should have hinted the missing cert before giving up"
+            );
         });
     }
 }

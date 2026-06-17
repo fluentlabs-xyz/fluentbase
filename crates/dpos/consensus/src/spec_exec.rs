@@ -45,13 +45,10 @@ impl Reporter for Mailbox {
         let Activity::Notarization(n) = activity else {
             return;
         };
-        let seed = n
-            .certificate
-            .seed()
-            .map(|signature| Seed {
-                target_round: n.proposal.round,
-                signature,
-            });
+        let seed = n.certificate.seed().map(|signature| Seed {
+            target_round: n.proposal.round,
+            signature,
+        });
         let msg = executor::Message {
             cause: Span::current(),
             command: Command::SpecNotarized(Box::new(Notarized {

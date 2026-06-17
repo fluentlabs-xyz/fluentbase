@@ -191,8 +191,24 @@ where
             let seed_namespace = fluentbase_consensus::beacon::seed::seed_namespace(
                 &fluentbase_bls::fluent_namespace(chain_id),
             );
-            let pk_epoch = *sharing.public();
-            let deriver = deriver_base.with_beacon_key(Some(pk_epoch), seed_namespace.clone());
+            // Per-epoch resolver: read PK_E from L2 state for the block's epoch,
+            // genesis-PK_0 fallback when uncommitted (every epoch pre-rotation).
+            let genesis_pk = *sharing.public();
+            let beacon_reader = fluentbase_staking_reader::reader::RethStakingStateReader::new(
+                node.provider.clone(),
+                node.evm_config.clone(),
+                staking_config.clone(),
+            );
+            let resolver = std::sync::Arc::new(
+                move |epoch: u64, at: alloy_primitives::B256| {
+                    beacon_reader
+                        .epoch_beacon_key(epoch, at)
+                        .ok()
+                        .flatten()
+                        .or(Some(genesis_pk))
+                },
+            );
+            let deriver = deriver_base.with_beacon_resolver(seed_namespace.clone(), resolver);
             (deriver, Some((sharing, None, seed_namespace)))
         }
         None => (deriver_base, None),

@@ -214,8 +214,24 @@ fn conflicting_notarize() -> (
     let n1 = Notarize::sign(&s, p1.clone()).expect("sign n1");
     let n2 = Notarize::sign(&s, p2.clone()).expect("sign n2");
     let signer_idx = n1.attestation.signer.get();
-    let s1 = sig48(n1.attestation.signature.get().unwrap().vote().encode().as_ref());
-    let s2 = sig48(n2.attestation.signature.get().unwrap().vote().encode().as_ref());
+    let s1 = sig48(
+        n1.attestation
+            .signature
+            .get()
+            .unwrap()
+            .vote()
+            .encode()
+            .as_ref(),
+    );
+    let s2 = sig48(
+        n2.attestation
+            .signature
+            .get()
+            .unwrap()
+            .vote()
+            .encode()
+            .as_ref(),
+    );
     let on_chain = ConflictingNotarize::<VoteScheme, _>::new(
         Notarize {
             proposal: p1.clone(),
@@ -265,8 +281,24 @@ fn conflicting_finalize() -> (
     let f1 = Finalize::sign(&s, p1.clone()).expect("sign f1");
     let f2 = Finalize::sign(&s, p2.clone()).expect("sign f2");
     let signer_idx = f1.attestation.signer.get();
-    let s1 = sig48(f1.attestation.signature.get().unwrap().vote().encode().as_ref());
-    let s2 = sig48(f2.attestation.signature.get().unwrap().vote().encode().as_ref());
+    let s1 = sig48(
+        f1.attestation
+            .signature
+            .get()
+            .unwrap()
+            .vote()
+            .encode()
+            .as_ref(),
+    );
+    let s2 = sig48(
+        f2.attestation
+            .signature
+            .get()
+            .unwrap()
+            .vote()
+            .encode()
+            .as_ref(),
+    );
     let on_chain = ConflictingFinalize::<VoteScheme, _>::new(
         Finalize {
             proposal: p1.clone(),
@@ -316,8 +348,24 @@ fn nullify_finalize() -> (
     let prop: Proposal<Sha256Digest> = Proposal::new(round(), View::new(VIEW - 1), digest(0xee));
     let fin = Finalize::sign(&s, prop.clone()).expect("sign finalize");
     let signer_idx = nul.attestation.signer.get();
-    let s1 = sig48(nul.attestation.signature.get().unwrap().vote().encode().as_ref());
-    let s2 = sig48(fin.attestation.signature.get().unwrap().vote().encode().as_ref());
+    let s1 = sig48(
+        nul.attestation
+            .signature
+            .get()
+            .unwrap()
+            .vote()
+            .encode()
+            .as_ref(),
+    );
+    let s2 = sig48(
+        fin.attestation
+            .signature
+            .get()
+            .unwrap()
+            .vote()
+            .encode()
+            .as_ref(),
+    );
     let on_chain = NullifyFinalize::<VoteScheme, _>::new(
         commonware_consensus::simplex::types::Nullify {
             round: nul.round,

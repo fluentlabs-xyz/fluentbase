@@ -43,7 +43,7 @@ use commonware_runtime::{
 };
 use commonware_storage::archive::{immutable, Archive as _};
 use commonware_utils::{NZUsize, NZU16, NZU64};
-use fluentbase_bls::{keys::ValidatorBlsKeypair, Scheme as BlsScheme};
+use fluentbase_bls::{keys::ValidatorBlsKeypair, PeerPubkey, Scheme as BlsScheme};
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::CryptoRngCore;
 use std::{
@@ -147,6 +147,15 @@ impl EpochSchemeProvider {
 impl Default for EpochSchemeProvider {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl EpochSchemeProvider {
+    /// The scheme for the highest known epoch (the current committee). Its
+    /// `participants()` are the peers to target for a finalization re-fetch on
+    /// catch-up — they are connected and hold the durable finalizations.
+    pub fn latest_scheme(&self) -> Option<Arc<BlsScheme>> {
+        self.map.lock().unwrap().values().next_back().cloned()
     }
 }
 
@@ -579,6 +588,20 @@ where
                 (self.initial_finalized, self.initial_head)
             };
 
+        // Peer source for the executor's finalization re-fetch on catch-up: the
+        // highest known epoch's committee (connected peers holding the durable
+        // finalizations). Re-invoked per retry so it tracks the catch-up walk's
+        // advancing epoch.
+        let peers_for_finalization: executor::PeersForFinalization = {
+            let sp = scheme_provider.clone();
+            Arc::new(move || {
+                use commonware_cryptography::certificate::Scheme as _;
+                let scheme = sp.latest_scheme()?;
+                let peers: Vec<PeerPubkey> = scheme.participants().iter().cloned().collect();
+                commonware_utils::vec::NonEmptyVec::try_from(peers).ok()
+            })
+        };
+
         // Executor — depends on marshal_mailbox.
         let (executor, executor_mailbox) = executor::Actor::init(
             context.with_label("executor"),
@@ -593,6 +616,7 @@ where
                 initial_finalized,
                 initial_head,
                 fcu_pace: self.fcu_pace,
+                peers_for_finalization,
             },
         );
 

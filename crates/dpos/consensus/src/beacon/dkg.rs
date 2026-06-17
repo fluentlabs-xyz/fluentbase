@@ -10,6 +10,22 @@
 //! async actor performs with real `BEACON_CHANNEL` message passing (each node
 //! runs only its own dealer + player). It is the orchestration reference and
 //! the test oracle; a single-process devnet bootstrap can call it directly.
+//
+// TODO(dpos_vrf_live_dkg, v2 — reshare-heal on observers): cadence v1 runs a
+// FRESH ceremony only on committee CHANGE and carry-forwards an unchanged
+// committee. That never heals an OBSERVER (a committee member with no share —
+// missed the E-1 window): under a long-stable committee it stays share-less,
+// so the beacon's share-holder margin (tolerates <= f non-share-holders before
+// the no-quorum stall) erodes silently with no repair path. The fix is a
+// RESHARE (`Dealer::start(previous = Some(existing))`, NOT a fresh key) by the
+// current share-holders: re-distributes the SAME secret to the full player set
+// (incl. observers) so `PK_E` stays identical (no boundary re-commit / STF
+// continuity break) while observers gain shares. Trigger must be CONDITIONAL
+// (only when observers exist / margin drops) — not blind-periodic (the reason
+// periodic reshare was rejected) — AND consensus-AGREED (observer-ness is local;
+// an un-agreed trigger reintroduces the silent-failure liveness surface), and it
+// needs a dedicated reshare ceremony-result log. Heal BEFORE observers exceed f,
+// or the reshare itself can't reach a dealer quorum.
 
 use crate::beacon::outcome::DkgOutcome;
 use commonware_cryptography::{

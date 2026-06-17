@@ -235,7 +235,10 @@ pub struct DposArgs {
     /// The beacon public polynomial (hex-encoded commonware `Sharing`) — public
     /// info used to verify seed partials, recover the threshold seed, and
     /// derive `PK_epoch`. Shared by all nodes. Enables the beacon plane.
-    #[arg(long = "dpos.beacon-sharing-path", env = "FLUENT_DPOS_BEACON_SHARING_PATH")]
+    #[arg(
+        long = "dpos.beacon-sharing-path",
+        env = "FLUENT_DPOS_BEACON_SHARING_PATH"
+    )]
     pub dpos_beacon_sharing_path: Option<PathBuf>,
 }
 
@@ -546,8 +549,25 @@ where
             let namespace = fluentbase_consensus::beacon::seed::seed_namespace(
                 &fluentbase_bls::fluent_namespace(chain_id),
             );
-            let pk_epoch = *sharing.public();
-            let deriver = deriver_base.with_beacon_key(Some(pk_epoch), namespace);
+            // Per-epoch resolver: read PK_E from L2 state for the block's epoch,
+            // falling back to the genesis PK_0 (the configured sharing) when the
+            // epoch is uncommitted (every epoch pre-rotation) or on a read error.
+            let genesis_pk = *sharing.public();
+            let beacon_reader = fluentbase_staking_reader::reader::RethStakingStateReader::new(
+                node.provider.clone(),
+                node.evm_config.clone(),
+                staking_config.clone(),
+            );
+            let resolver = std::sync::Arc::new(
+                move |epoch: u64, at: alloy_primitives::B256| {
+                    beacon_reader
+                        .epoch_beacon_key(epoch, at)
+                        .ok()
+                        .flatten()
+                        .or(Some(genesis_pk))
+                },
+            );
+            let deriver = deriver_base.with_beacon_resolver(namespace, resolver);
             let launch = fluentbase_consensus::dpos::BeaconLaunch { share, sharing };
             (deriver, Some(launch))
         }

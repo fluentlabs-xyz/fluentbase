@@ -48,6 +48,7 @@ mod abi {
         function getConsensusKeys(address validator)
             external view returns (ConsensusKeys);
         function getEpochCommittee(uint64 epoch) external view returns (address[]);
+        function getEpochBeaconKey(uint64 epoch) external view returns (bytes);
         function getRegistryWithKeys()
             external view returns (address[] addrs, ConsensusKeys[] keys);
 
@@ -196,6 +197,23 @@ fn decode_consensus_keys(k: abi::ConsensusKeys) -> Result<ConsensusKeys, ReadErr
     })
 }
 
+/// Decode the `getEpochBeaconKey` return: empty bytes ⇒ uncommitted / fallback
+/// epoch (`Ok(None)`); 96 B ⇒ the committed group key `PK_epoch`. Wrong length
+/// or a failed subgroup check is rejected (never silently coerced).
+fn decode_beacon_key(raw: &[u8]) -> Result<Option<BlsPubkey>, ReadError> {
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    if raw.len() != PUBKEY_BYTES {
+        return Err(ReadError::AbiDecode(format!(
+            "beacon key length {} != {PUBKEY_BYTES}",
+            raw.len()
+        )));
+    }
+    let key = BlsPubkey::decode(raw).map_err(|e| ReadError::BlsKey(format!("{e:?}")))?;
+    Ok(Some(key))
+}
+
 /// The contract's "validator has no consensus keys set" sentinel.
 #[inline]
 fn is_unset(k: &abi::ConsensusKeys) -> bool {
@@ -212,7 +230,7 @@ fn is_unset(k: &abi::ConsensusKeys) -> bool {
 /// extra in-process EVM STATICCALL (~tens of µs) — negligible relative to
 /// the blast radius. The Solidity-side immutability story is owned by the
 /// staking contracts; this Rust mitigation works independently.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RethStakingStateReader<P, E> {
     provider: P,
     evm_config: E,
@@ -303,6 +321,18 @@ where
         let ret = self.raw_view(self.cfg.staking_address, cd, at)?;
         abi::getEpochCommitteeCall::abi_decode_returns(&ret)
             .map_err(|e| ReadError::AbiDecode(e.to_string()))
+    }
+
+    /// Committed beacon group key `PK_epoch` for `epoch`, read from L2 state at
+    /// `at`. `Ok(None)` when the epoch is uncommitted or a fallback record (the
+    /// contract returns empty bytes, not a revert). This is the trust-rooted
+    /// source of `PK_epoch` for the live per-epoch randomness beacon.
+    pub fn epoch_beacon_key(&self, epoch: u64, at: B256) -> Result<Option<BlsPubkey>, ReadError> {
+        let cd = abi::getEpochBeaconKeyCall { epoch }.abi_encode().into();
+        let ret = self.raw_view(self.cfg.staking_address, cd, at)?;
+        let raw = abi::getEpochBeaconKeyCall::abi_decode_returns(&ret)
+            .map_err(|e| ReadError::AbiDecode(e.to_string()))?;
+        decode_beacon_key(&raw)
     }
 
     /// `ChainConfig.getEpochBlockInterval()` at block `at`.
@@ -503,8 +533,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        abi, check_peer_set_size, decode_consensus_keys, epoch_of_block, is_unset,
-        StakingReaderConfig,
+        abi, check_peer_set_size, decode_beacon_key, decode_consensus_keys, epoch_of_block,
+        is_unset, StakingReaderConfig,
     };
     use crate::error::ReadError;
     use alloy_primitives::{address, Address, Bytes, FixedBytes};
@@ -581,6 +611,35 @@ mod tests {
         assert!(!is_unset(&bad));
         assert!(matches!(
             decode_consensus_keys(bad),
+            Err(ReadError::BlsKey(_))
+        ));
+    }
+
+    #[test]
+    fn empty_beacon_key_is_uncommitted() {
+        assert!(decode_beacon_key(&[]).expect("empty must decode").is_none());
+    }
+
+    #[test]
+    fn valid_beacon_key_decodes() {
+        let mut rng = StdRng::seed_from_u64(9);
+        let bls = fluentbase_bls::keys::ValidatorBlsKeypair::generate(&mut rng);
+        let decoded = decode_beacon_key(&bls.public_bytes()).expect("valid key must decode");
+        assert!(decoded.is_some());
+    }
+
+    #[test]
+    fn wrong_length_beacon_key_rejected() {
+        assert!(matches!(
+            decode_beacon_key(&[0u8; 48]),
+            Err(ReadError::AbiDecode(_))
+        ));
+    }
+
+    #[test]
+    fn malformed_96_byte_beacon_key_rejected_by_subgroup_check() {
+        assert!(matches!(
+            decode_beacon_key(&[0xFFu8; fluentbase_bls::PUBKEY_BYTES]),
             Err(ReadError::BlsKey(_))
         ));
     }

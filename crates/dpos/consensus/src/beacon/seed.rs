@@ -76,8 +76,7 @@ pub fn prev_randao_for_round(
 ) -> (B256, bool) {
     match (seed, pk_epoch) {
         (Some(s), Some(pk))
-            if s.target_round == round
-                && verify_seed(pk, namespace, round, &s.signature) =>
+            if s.target_round == round && verify_seed(pk, namespace, round, &s.signature) =>
         {
             (prev_randao_from_seed(s), true)
         }
@@ -148,9 +147,9 @@ mod tests {
 
         let other_round = Round::new(Epoch::new(2), View::new(43));
         for (rd, s, p) in [
-            (round, Some(&seed), None),               // no PK_epoch
-            (round, None, Some(pk)),                  // no seed
-            (other_round, Some(&seed), Some(pk)),     // seed is for another round
+            (round, Some(&seed), None),           // no PK_epoch
+            (round, None, Some(pk)),              // no seed
+            (other_round, Some(&seed), Some(pk)), // seed is for another round
         ] {
             let (r, a) = prev_randao_for_round(rd, s, p, &ns, fallback);
             assert!(!a, "must not claim assurance on the fallback path");
