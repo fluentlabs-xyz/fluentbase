@@ -368,6 +368,20 @@ pub struct FluentEvmConfig {
     beacon_outcomes: Arc<DashMap<u64, Bytes>>,
 }
 
+/// Stash a boundary block's encoded DKG outcome (group key `PK_epoch`) so the
+/// executor's `commitEpochBeaconKey` system call can pick it up, keyed by the
+/// EVM block number being derived. Implemented by [`FluentEvmConfig`]; a trait
+/// so the deriver can call it behind its generic `Evm` bound.
+pub trait BeaconOutcomeSink {
+    fn set_beacon_outcome(&self, height: u64, outcome: Bytes);
+}
+
+impl BeaconOutcomeSink for FluentEvmConfig {
+    fn set_beacon_outcome(&self, height: u64, outcome: Bytes) {
+        self.beacon_outcomes.insert(height, outcome);
+    }
+}
+
 impl FluentEvmConfig {
     /// Create a new [`FluentEvmConfig`] with the given chain spec, EVM factory,
     /// and the operator-supplied staking + chain_config + liveness addresses.
@@ -386,14 +400,6 @@ impl FluentEvmConfig {
             liveness_slashing_address,
             beacon_outcomes: Arc::new(DashMap::new()),
         }
-    }
-
-    /// Stash a boundary block's encoded DKG outcome (group key) keyed by the
-    /// ordering `height` being derived, so the executor can issue
-    /// `commitEpochBeaconKey`. Called from `derive` before block build. See the
-    /// `beacon_outcomes` field doc for why this side-channel exists.
-    pub fn set_beacon_outcome(&self, height: u64, outcome: Bytes) {
-        self.beacon_outcomes.insert(height, outcome);
     }
 
     /// Create a new [`FluentEvmConfig`] with the given chain spec and default

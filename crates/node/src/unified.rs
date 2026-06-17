@@ -98,7 +98,8 @@ where
         > + Clone
         + Send
         + Sync
-        + 'static,
+        + 'static
+        + crate::evm::BeaconOutcomeSink,
 {
     crate::dpos::spawn_devnet_metrics(&ctx, &cfg);
 

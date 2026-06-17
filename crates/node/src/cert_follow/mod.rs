@@ -102,7 +102,8 @@ where
         > + Clone
         + Send
         + Sync
-        + 'static,
+        + 'static
+        + crate::evm::BeaconOutcomeSink,
 {
     crate::utils::spawn_consensus_thread("cert-follow", move |ctx, node| {
         run_cert_follower_stack(ctx, node, cfg, shutdown_token)
@@ -143,7 +144,8 @@ where
         > + Clone
         + Send
         + Sync
-        + 'static,
+        + 'static
+        + crate::evm::BeaconOutcomeSink,
 {
     let chain_id = node.chain_spec().chain_id();
     let staking_config = fluentbase_staking_reader::reader::StakingReaderConfig::from_json_path(

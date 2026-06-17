@@ -309,7 +309,8 @@ where
         > + Clone
         + Send
         + Sync
-        + 'static,
+        + 'static
+        + crate::evm::BeaconOutcomeSink,
 {
     crate::utils::spawn_consensus_thread("dpos", move |ctx, node| async move {
         if cfg.follower_upstreams.is_empty() {
@@ -353,7 +354,8 @@ where
         > + Clone
         + Send
         + Sync
-        + 'static,
+        + 'static
+        + crate::evm::BeaconOutcomeSink,
 {
     spawn_devnet_metrics(&ctx, &cfg);
 
@@ -474,7 +476,8 @@ where
         > + Clone
         + Send
         + Sync
-        + 'static,
+        + 'static
+        + crate::evm::BeaconOutcomeSink,
 {
     let chain_id = node.chain_spec().chain_id();
     let bls_keypair = load_bls_keypair(cfg, chain_id)?;
