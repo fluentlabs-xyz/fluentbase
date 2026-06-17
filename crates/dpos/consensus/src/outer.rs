@@ -282,9 +282,10 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     pub signer_keypair: Option<ValidatorBlsKeypair>,
     /// Rotation-out signals to the unified supervisor (`None` = legacy).
     pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<crate::dpos::ModeEvent>>,
-    /// Per-epoch threshold beacon key threaded into every per-epoch consensus
-    /// scheme so each vote carries the seed partial. `None` ⇒ fallback epochs.
-    pub beacon_key: Option<fluentbase_bls::scheme::BeaconKey>,
+    /// Per-epoch beacon resolver: returns each epoch's `BeaconKey` (live-DKG
+    /// store + carry-forward + genesis fallback) so every per-epoch consensus
+    /// scheme carries the seed partial under that epoch's `PK_epoch`.
+    pub beacon_resolver: epoch_manager::BeaconResolver,
     /// Live-DKG verify/propose context for `FluentApp` (the boundary "C" gate +
     /// the proposer's `beacon_outcome` assertion). `None` ⇒ no beacon gating.
     pub beacon_verify: Option<BeaconVerify>,
@@ -703,7 +704,7 @@ where
                 app,
                 timeouts: self.timeouts,
                 mailbox_size: self.mailbox_size,
-                beacon: self.beacon_key,
+                beacon_resolver: self.beacon_resolver,
                 marshal_mailbox: marshal_mailbox.clone(),
                 slasher_mailbox,
                 spec_exec_mailbox,

@@ -47,6 +47,11 @@ use std::{
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
+/// Resolves the per-epoch [`BeaconKey`] (live-DKG store + carry-forward + genesis
+/// fallback). `None` ⇒ a fallback (pure-multisig) epoch. Built at the launch site
+/// over the `CeremonyStore`; see `dpos.rs::launch`.
+pub type BeaconResolver = Arc<dyn Fn(u64) -> Option<BeaconKey> + Send + Sync>;
+
 // Finished engines are aborted at the transition (tempo's exit-at-transition
 // pattern) — there is no concurrent active-epochs window. A finished engine
 // has nothing left to produce (its boundary finalization is what triggers
@@ -126,10 +131,12 @@ pub struct Config<B, XC, A> {
     pub app: FluentApp<XC, A>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
-    /// Per-epoch threshold beacon key (devnet: one genesis key for all epochs);
-    /// `None` ⇒ fallback (pure-multisig) epochs. Threaded into each
-    /// `EpochEngineConfig` and the soft-enter verifier scheme.
-    pub beacon: Option<BeaconKey>,
+    /// Per-epoch beacon resolver: returns the [`BeaconKey`] (`PK_epoch` sharing +
+    /// this node's share + namespace) for `epoch`, sourced from the live-DKG
+    /// store with carry-forward (most-recent ceremony ≤ E) and the genesis
+    /// bootstrap fallback. `None` ⇒ a fallback (pure-multisig) epoch. Called per
+    /// epoch in `enter()` for the live engine + the soft-enter verifier.
+    pub beacon_resolver: BeaconResolver,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
     pub marshal_mailbox: MarshalMailbox<BlsScheme, Standard<OrderBlock>>,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
@@ -427,7 +434,7 @@ where
                     build_verifier(
                         &fluent_namespace(self.cfg.chain_id),
                         committee.bimap,
-                        self.cfg.beacon.clone(),
+                        (self.cfg.beacon_resolver)(epoch.get()),
                     ),
                 ),
                 Err(e) => warn!(
@@ -455,7 +462,7 @@ where
                 timeouts: self.cfg.timeouts,
                 mailbox_size: self.cfg.mailbox_size,
                 register_scheme: self.cfg.register_scheme.clone(),
-                beacon: self.cfg.beacon.clone(),
+                beacon: (self.cfg.beacon_resolver)(epoch.get()),
             },
             self.cfg.marshal_mailbox.clone(),
             self.cfg.slasher_mailbox.clone(),

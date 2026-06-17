@@ -1049,14 +1049,29 @@ impl DposLayer {
                 provider_for_finalized.block_hash(n).ok().flatten()
             });
 
-        // Per-epoch threshold beacon key for the combined consensus scheme: each
-        // vote carries the seed partial (round-keyed), so the seed is recovered
-        // from the notarization/finalization certificate — no separate seed
-        // plane. Single genesis-bootstrapped key for now (per-epoch DKG is phased).
-        let beacon_key = beacon.map(|bl| {
-            let namespace = crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
-            (bl.sharing, bl.share, namespace)
-        });
+        // Per-epoch threshold beacon resolver for the combined consensus scheme:
+        // each vote carries the seed partial (round-keyed), so the seed is
+        // recovered from the notarization/finalization certificate — no separate
+        // seed plane. The key ROTATES per epoch: the live-DKG `ceremony_store`
+        // holds (PK_E, share) for every epoch this node was a member of where the
+        // committee changed; `resolve(E)` returns the most-recent such key at or
+        // before E (carry-forward across stable epochs), falling back to the
+        // genesis bootstrap key (epoch 0 / pre-first-rotation).
+        let beacon_namespace = crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
+        let genesis_beacon_key = beacon.map(|bl| (bl.sharing, bl.share, beacon_namespace.clone()));
+        let beacon_resolver: crate::epoch_manager::BeaconResolver = {
+            let store = ceremony_store.clone();
+            let namespace = beacon_namespace;
+            let genesis = genesis_beacon_key;
+            Arc::new(move |epoch: u64| {
+                if let Ok(m) = store.read() {
+                    if let Some((_, (out, share))) = m.range(..=epoch).next_back() {
+                        return Some((out.public().clone(), Some(share.clone()), namespace.clone()));
+                    }
+                }
+                genesis.clone()
+            })
+        };
 
         let outer = OuterBuilder {
             me: me.clone(),
@@ -1067,7 +1082,7 @@ impl DposLayer {
             dpos_activation_block,
             signer_keypair: Some(bls_keypair),
             mode_events,
-            beacon_key,
+            beacon_resolver,
             beacon_verify: Some(beacon_verify),
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
