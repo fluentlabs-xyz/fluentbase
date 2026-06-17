@@ -7,28 +7,34 @@
 //! ~all of E-1), so at most a couple are in flight.
 //!
 //! Lifecycle, driven by the finalized-height stream + chain committee reads:
-//! - entering epoch E-1 (committee[E] != committee[E-1]) → `DkgCeremony::start`,
-//!   broadcast commitment + send private shares;
+//! - entering epoch E-1 (committee[E] != committee[E-1] AND this node ∈
+//!   committee[E]) → `DkgCeremony::start`, broadcast commitment + send shares;
 //! - finalized height reaches `epoch_start(E) - DKG_MARGIN_BLOCKS` → `seal_dealings`
 //!   (broadcast the signed log);
-//! - entering epoch E → `DkgCeremony::finalize` → write `(PK_E, share)` into the
-//!   per-epoch [`BeaconKeyStore`] (Phase 5 wires that store into the per-epoch
-//!   consensus scheme + the `commitEpochBeaconKey` producer).
+//! - once a sealed ceremony has a selectable quorum (`DkgCeremony::ready`, probed
+//!   each subsequent tick — STILL DURING the margin window, BEFORE the epoch-E
+//!   boundary block is proposed/verified) → `DkgCeremony::finalize` → memoize
+//!   `(PK_E, share)` into the per-epoch [`CeremonyStore`]. The consensus verify
+//!   path reads the share for the C share-on-polynomial gate, `propose` reads
+//!   `PK_E` for the boundary `beacon_outcome`, and Phase 5's finalized-boundary
+//!   swap reads both for the per-epoch signing slot + `commitEpochBeaconKey`.
 //!
-//! The actor never finalizes over a locally-selected Q — finalize runs only at the
-//! epoch boundary over the logs collected by then (option-A: <quorum valid logs →
-//! the write is skipped and the beacon naturally stalls, not a crash).
+//! The actor never finalizes over a locally-selected Q before sealing, and never
+//! over an under-quorum log set (`ready` gates it). <quorum valid logs → no store
+//! entry → the beacon naturally stalls for that epoch (option A), not a crash.
 
 use crate::beacon::{
-    ceremony::{DkgCeremony, Outgoing, Target},
+    ceremony::{CeremonyOutput, DkgCeremony, Outgoing, Target},
     dkg_msg::DkgMsg,
     wire::BeaconMessage,
 };
 use commonware_codec::{Encode as _, Read as _, ReadExt as _};
-use commonware_cryptography::ed25519::PrivateKey as Ed25519PrivateKey;
+use commonware_cryptography::{
+    bls12381::primitives::group::Share, ed25519::PrivateKey as Ed25519PrivateKey, Signer as _,
+};
 use commonware_p2p::{Receiver, Recipients, Sender};
 use commonware_utils::ordered::Set;
-use fluentbase_bls::{scheme::BeaconKey, PeerPubkey};
+use fluentbase_bls::PeerPubkey;
 use rand_core::CryptoRngCore;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -41,9 +47,13 @@ use std::{
 /// off the on-chain `epochBlockInterval`, not an absolute window (see Q4).
 pub const DKG_MARGIN_BLOCKS: u64 = 10;
 
-/// The per-epoch beacon material the live DKG produces. Phase 5 reads this store
-/// to source each epoch's consensus-scheme `BeaconKey` + drive the on-chain commit.
-pub type BeaconKeyStore = Arc<RwLock<BTreeMap<u64, BeaconKey>>>;
+/// The agreed DKG result for an epoch this node is a MEMBER of: the group output
+/// (`PK_E` + public polynomial) and this node's secret share, memoized by the
+/// actor during the post-seal margin window — BEFORE the epoch-E boundary block
+/// is proposed/verified. Read by the consensus verify/propose path (the C gate's
+/// share + the proposer's `beacon_outcome`) and by Phase 5's signing-slot swap at
+/// the finalized boundary. Non-members never get an entry (⇒ observer ⇒ withhold).
+pub type CeremonyStore = Arc<RwLock<BTreeMap<u64, (CeremonyOutput, Share)>>>;
 
 /// Resolves committee[epoch] (the Commonware-ordered peer set) at a finalized
 /// state hash — provided by the launch site over the staking reader.
@@ -57,7 +67,7 @@ pub struct DkgActor<Se, Re> {
     sender: Se,
     receiver: Re,
     committee_for: CommitteeFor,
-    keys: BeaconKeyStore,
+    store: CeremonyStore,
     dpos_activation: u64,
     epoch_interval: u64,
     /// Active ceremonies keyed by their target epoch E.
@@ -80,7 +90,7 @@ where
         sender: Se,
         receiver: Re,
         committee_for: CommitteeFor,
-        keys: BeaconKeyStore,
+        store: CeremonyStore,
         dpos_activation: u64,
         epoch_interval: u64,
     ) -> Self {
@@ -90,7 +100,7 @@ where
             sender,
             receiver,
             committee_for,
-            keys,
+            store,
             dpos_activation,
             epoch_interval,
             ceremonies: BTreeMap::new(),
@@ -127,13 +137,17 @@ where
     }
 
     async fn on_height(&mut self, height: u64, rng: &mut impl CryptoRngCore) {
-        // Seal any active ceremony whose collection deadline has passed.
         let mut to_send: Vec<Outgoing> = Vec::new();
+
+        // 1. Seal any active ceremony whose collection deadline has passed.
         let due: Vec<u64> = self
             .ceremonies
             .keys()
             .copied()
-            .filter(|e| !self.sealed.contains(e) && height >= self.epoch_start(*e).saturating_sub(DKG_MARGIN_BLOCKS))
+            .filter(|e| {
+                !self.sealed.contains(e)
+                    && height >= self.epoch_start(*e).saturating_sub(DKG_MARGIN_BLOCKS)
+            })
             .collect();
         for e in due {
             if let Some(c) = self.ceremonies.get_mut(&e) {
@@ -142,26 +156,48 @@ where
             }
         }
 
-        // Detect epoch transitions (a height may cross more than one boundary).
+        // 2. Compute + memoize any SEALED ceremony that now has a selectable quorum.
+        //    This runs STILL DURING the margin window — before the epoch's boundary
+        //    block is proposed/verified — so the verify-path C gate can read the
+        //    share. `ready` probes non-destructively (Logs clone); `finalize` then
+        //    consumes the fulfilled ceremony.
+        let sealed_epochs: Vec<u64> = self
+            .ceremonies
+            .keys()
+            .copied()
+            .filter(|e| self.sealed.contains(e))
+            .collect();
+        let mut ready: Vec<u64> = Vec::new();
+        for e in sealed_epochs {
+            if self.ceremonies.get(&e).is_some_and(|c| c.ready(rng)) {
+                ready.push(e);
+            }
+        }
+        for e in ready {
+            let Some(c) = self.ceremonies.remove(&e) else {
+                continue;
+            };
+            self.sealed.remove(&e);
+            match c.finalize(rng) {
+                Ok((out, share)) => {
+                    if let Ok(mut store) = self.store.write() {
+                        store.insert(e, (out, share));
+                    }
+                    tracing::info!(epoch = e, "live DKG: PK_epoch + share computed + stored");
+                }
+                Err(err) => tracing::warn!(
+                    epoch = e,
+                    ?err,
+                    "live DKG: finalize failed after ready-probe — beacon stalls for this epoch"
+                ),
+            }
+        }
+
+        // 3. Detect epoch transitions (a height may cross more than one boundary):
+        //    start the NEXT epoch's ceremony on entering a new epoch.
         let now = self.epoch_of(height);
         while self.last_epoch < now {
             let entered = self.last_epoch + 1;
-            // Finalize the ceremony that targeted the just-entered epoch.
-            if let Some(c) = self.ceremonies.remove(&entered) {
-                match c.finalize(rng) {
-                    Ok((out, share)) => {
-                        let namespace = self.namespace.clone();
-                        let key: BeaconKey = (out.public().clone(), Some(share), namespace);
-                        if let Ok(mut store) = self.keys.write() {
-                            store.insert(entered, key);
-                        }
-                        tracing::info!(epoch = entered, "live DKG: PK_epoch finalized + stored");
-                    }
-                    Err(e) => tracing::warn!(epoch = entered, ?e, "live DKG: finalize failed (under-quorum) — beacon stalls for this epoch"),
-                }
-            }
-            self.sealed.remove(&entered);
-            // Start the ceremony for the NEXT epoch if the committee changes.
             self.maybe_start(entered + 1, rng, &mut to_send);
             self.last_epoch = entered;
         }
@@ -182,6 +218,12 @@ where
         };
         if next == cur {
             return; // carry-forward
+        }
+        // Model B: only a MEMBER of committee[target] deals to itself. A node that
+        // is in committee[target-1] but not committee[target] does not deal.
+        let me = self.me_key.public_key();
+        if !next.iter().any(|p| *p == me) {
+            return;
         }
         match DkgCeremony::start(rng, &self.namespace, target, next, self.me_key.clone()) {
             Ok((ceremony, outgoing)) => {

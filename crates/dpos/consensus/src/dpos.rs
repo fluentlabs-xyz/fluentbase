@@ -532,6 +532,13 @@ impl DposLayer {
             staking_config.clone(),
         );
 
+        // Clones for the live-DKG beacon actor's committee resolver — taken before
+        // `reader` is moved into `EpochTransition` below. `RethStakingStateReader`
+        // is `Clone`; `provider` (BlockNumReader + BlockHashReader) resolves the
+        // current finalized EVM hash the committee snapshot reads at.
+        let reader_for_dkg = reader.clone();
+        let provider_for_dkg = provider.clone();
+
         // Reth's `BlockchainProvider::with_latest` populates
         // `canonical_state.finalized_block` from
         // `ChainState::LastFinalizedBlock` during node init, so on a
@@ -804,13 +811,22 @@ impl DposLayer {
         // fire-and-forget via `ctx.spawn` (NOT `tokio::spawn`, which would
         // depend on the implicit `tokio::Handle::current()` contract under
         // commonware-tokio).
+        // Finalized-height tap for the live-DKG beacon actor: the boundary hook
+        // fires for every finalized `Update::Block`, so it is the actor's epoch
+        // clock (seal deadline + transition detection). Best-effort `try_send` —
+        // a full/closed channel just means the actor missed a tick, recovered on
+        // the next one (the ceremony window spans ~all of E-1).
+        let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
+
         let consecutive_errors = Arc::new(AtomicU32::new(0));
         let shutdown_for_hook = shutdown.clone();
         let et_for_hook = et_arc.clone();
         let ctx_for_hook = ctx.with_label("boundary_hook");
         let errors_for_hook = consecutive_errors.clone();
+        let dkg_height_tx_for_hook = dkg_height_tx.clone();
         let boundary_hook: Arc<dyn Fn(crate::order_block::OrderBlock) + Send + Sync> =
             Arc::new(move |block: crate::order_block::OrderBlock| {
+                let _ = dkg_height_tx_for_hook.try_send(block.height);
                 let et = et_for_hook.clone();
                 let ctx_task = ctx_for_hook.clone();
                 let shutdown = shutdown_for_hook.clone();
@@ -884,6 +900,46 @@ impl DposLayer {
 
         let me = peer_keypair.public_key();
         info!(peer_pubkey = %me, "DPoS peer identity");
+
+        // ── Live per-epoch threshold-beacon DKG actor ───────────────────────────
+        // committee[E] deals to itself over BEACON_CHANNEL during E-1; the agreed
+        // (PK_E, share) is memoized into `ceremony_store` before E's boundary block
+        // and read by the consensus verify/propose path (Phase 4) + the per-epoch
+        // signing-slot swap (Phase 5). The store is held here and threaded in below.
+        let ceremony_store: crate::beacon::actor::CeremonyStore =
+            Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()));
+        {
+            let committee_for: crate::beacon::actor::CommitteeFor = {
+                let reader = reader_for_dkg;
+                let provider = provider_for_dkg;
+                Arc::new(move |epoch: u64| {
+                    let fin = provider.finalized_block_number().ok().flatten()?;
+                    let hash = provider.block_hash(fin).ok().flatten()?;
+                    let snap = reader.epoch_committee_snapshot(epoch, hash).ok()?;
+                    if snap.validators.is_empty() {
+                        return None;
+                    }
+                    Some(commonware_utils::ordered::Set::from_iter_dedup(
+                        snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
+                    ))
+                })
+            };
+            let dkg_namespace =
+                crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
+            let dkg_actor = crate::beacon::actor::DkgActor::new(
+                dkg_namespace,
+                peer_keypair.clone(),
+                handles.beacon_sender,
+                handles.beacon_receiver,
+                committee_for,
+                ceremony_store.clone(),
+                dpos_activation_block,
+                interval.into(),
+            );
+            drop(ctx.with_label("dkg_actor").spawn(move |c| async move {
+                dkg_actor.run(dkg_height_rx, c).await;
+            }));
+        }
 
         // Isolation-window watchdog: a non-committee `--dpos` node has ZERO
         // consensus-plane connectivity (the tracked peer set == the on-chain

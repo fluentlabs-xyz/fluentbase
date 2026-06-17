@@ -19,7 +19,7 @@
 use crate::beacon::dkg_msg::{DealerCommitment, DkgBody, DkgMsg};
 use commonware_cryptography::{
     bls12381::{
-        dkg::{Dealer, DealerPrivMsg, Error as DkgError, Info, Logs, Output, Player},
+        dkg::{observe, Dealer, DealerPrivMsg, Error as DkgError, Info, Logs, Output, Player},
         primitives::{group::Share, sharing::Mode, variant::MinSig},
     },
     ed25519::{self, PrivateKey as Ed25519PrivateKey},
@@ -202,6 +202,19 @@ impl DkgCeremony {
                 body: DkgBody::Reveal(Box::new(signed)),
             },
         }]
+    }
+
+    /// Non-destructively probe whether the ceremony can now derive its agreed
+    /// output — i.e. a quorum of valid dealer logs is selectable. Uses `observe`
+    /// over a CLONE of the collected logs (`Logs` is `Clone`; `Player` is not),
+    /// so the ceremony is left intact: the supervisor calls this each tick after
+    /// [`seal_dealings`](Self::seal_dealings) until it returns `true`, THEN
+    /// [`finalize`](Self::finalize). A `true` means a subsequent `finalize` will
+    /// select the same quorum and succeed — the share can be memoized before the
+    /// epoch boundary block is proposed/verified.
+    pub fn ready<R: CryptoRngCore>(&self, rng: &mut R) -> bool {
+        observe::<MinSig, PeerPubkey, N3f1, ed25519::Batch>(rng, self.logs.clone(), &Sequential)
+            .is_ok()
     }
 
     /// Derive the agreed [`CeremonyOutput`] (`PK_E`) + this node's secret [`Share`]
