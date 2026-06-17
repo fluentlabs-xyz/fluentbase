@@ -9,6 +9,7 @@
 //! [`seed`] cryptographic primitives; the DKG ceremony and the p2p sub-protocol
 //! actors are added in subsequent increments.
 
+pub mod actor;
 pub mod ceremony;
 pub mod dkg;
 pub mod dkg_msg;
