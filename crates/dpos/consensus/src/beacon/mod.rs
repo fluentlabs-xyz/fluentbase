@@ -10,6 +10,7 @@
 //! actors are added in subsequent increments.
 
 pub mod dkg;
+pub mod dkg_msg;
 pub mod outcome;
 pub mod seed;
 pub mod types;
