@@ -908,24 +908,42 @@ impl DposLayer {
         // signing-slot swap (Phase 5). The store is held here and threaded in below.
         let ceremony_store: crate::beacon::actor::CeremonyStore =
             Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()));
+
+        // Committee resolver — shared by the DKG actor (deal/carry-forward
+        // decision) and the verify/propose beacon gate. Reads the on-chain
+        // committee at the current finalized EVM hash.
+        let committee_for: crate::beacon::actor::CommitteeFor = {
+            let reader = reader_for_dkg;
+            let provider = provider_for_dkg;
+            Arc::new(move |epoch: u64| {
+                let fin = provider.finalized_block_number().ok().flatten()?;
+                let hash = provider.block_hash(fin).ok().flatten()?;
+                let snap = reader.epoch_committee_snapshot(epoch, hash).ok()?;
+                if snap.validators.is_empty() {
+                    return None;
+                }
+                Some(commonware_utils::ordered::Set::from_iter_dedup(
+                    snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
+                ))
+            })
+        };
+
+        // Verify/propose beacon context: the boundary "C" gate reads this node's
+        // memoized (PK_E, share) from the live-DKG store; the proposer asserts
+        // PK_E in `beacon_outcome`.
+        let beacon_for_epoch: crate::application::BeaconForEpoch = {
+            let store = ceremony_store.clone();
+            Arc::new(move |epoch: u64| store.read().ok().and_then(|m| m.get(&epoch).cloned()))
+        };
+        let beacon_verify = crate::application::BeaconVerify::new(
+            beacon_for_epoch,
+            committee_for.clone(),
+            dpos_activation_block,
+            interval.into(),
+        );
+
         {
-            let committee_for: crate::beacon::actor::CommitteeFor = {
-                let reader = reader_for_dkg;
-                let provider = provider_for_dkg;
-                Arc::new(move |epoch: u64| {
-                    let fin = provider.finalized_block_number().ok().flatten()?;
-                    let hash = provider.block_hash(fin).ok().flatten()?;
-                    let snap = reader.epoch_committee_snapshot(epoch, hash).ok()?;
-                    if snap.validators.is_empty() {
-                        return None;
-                    }
-                    Some(commonware_utils::ordered::Set::from_iter_dedup(
-                        snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
-                    ))
-                })
-            };
-            let dkg_namespace =
-                crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
+            let dkg_namespace = crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
             let dkg_actor = crate::beacon::actor::DkgActor::new(
                 dkg_namespace,
                 peer_keypair.clone(),
@@ -1050,6 +1068,7 @@ impl DposLayer {
             signer_keypair: Some(bls_keypair),
             mode_events,
             beacon_key,
+            beacon_verify: Some(beacon_verify),
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             deque_size: 64,

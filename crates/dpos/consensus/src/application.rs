@@ -15,7 +15,11 @@
 //! provides `Relay` (inline.rs:471); `FluentApp` does not.
 
 use crate::{
-    beacon::types::Seed,
+    beacon::{
+        ceremony::CeremonyOutput,
+        outcome::{encode_outcome, parse_outcome, validate_share_on_poly},
+        types::Seed,
+    },
     digest::Digest,
     executor, extra_data,
     order_block::{result_target, OrderBlock, ResultTarget, TX_BYTE_BUDGET},
@@ -34,10 +38,14 @@ use commonware_consensus::{
     types::{Height, Round},
     Application, Reporter, VerifyingApplication,
 };
-use commonware_cryptography::{certificate::Signers, ed25519::PublicKey};
+use commonware_cryptography::{
+    bls12381::primitives::group::Share, certificate::Signers, ed25519::PublicKey,
+};
 use commonware_runtime::{Clock, Metrics, Spawner};
+use commonware_utils::ordered::Set;
 /// The signing scheme bound for this Application.
 pub use fluentbase_bls::Scheme as BlsScheme;
+use fluentbase_bls::PeerPubkey;
 use futures::StreamExt as _;
 use rand_08::Rng;
 use reth_ethereum_primitives::{Block as RethBlock, TransactionSigned};
@@ -124,10 +132,74 @@ pub fn step_gas_limit(parent: u64, target: u64) -> u64 {
     stepped.max(MIN_GAS_LIMIT)
 }
 
+/// Resolves committee[epoch] (the Commonware-ordered peer set) at the current
+/// finalized state — provided by the launch site over the staking reader.
+pub type CommitteeForEpoch = Arc<dyn Fn(u64) -> Option<Set<PeerPubkey>> + Send + Sync>;
+
+/// Resolves this node's memoized DKG result for an epoch it is a MEMBER of:
+/// the agreed `Output` (`PK_E`) + this node's share. `None` ⇒ observer / share
+/// not produced (⇒ withhold the qualifying beacon vote). Provided by the launch
+/// site over the live-DKG `CeremonyStore`.
+pub type BeaconForEpoch = Arc<dyn Fn(u64) -> Option<(CeremonyOutput, Share)> + Send + Sync>;
+
+/// The per-epoch beacon-DKG context threaded into [`FluentApp`]'s verify/propose
+/// path: the boundary "C" share-on-polynomial qualification + the proposer's
+/// `beacon_outcome` assertion. `None` on `FluentApp` ⇒ no beacon context
+/// (cold-start epoch 0 / followers / tests) ⇒ the beacon gate is a no-op.
+#[derive(Clone)]
+pub struct BeaconVerify {
+    beacon_for_epoch: BeaconForEpoch,
+    committee_for: CommitteeForEpoch,
+    dpos_activation: u64,
+    epoch_interval: u64,
+}
+
+impl BeaconVerify {
+    pub fn new(
+        beacon_for_epoch: BeaconForEpoch,
+        committee_for: CommitteeForEpoch,
+        dpos_activation: u64,
+        epoch_interval: u64,
+    ) -> Self {
+        Self {
+            beacon_for_epoch,
+            committee_for,
+            dpos_activation,
+            epoch_interval,
+        }
+    }
+
+    fn epoch_of(&self, height: u64) -> u64 {
+        height.saturating_sub(self.dpos_activation) / self.epoch_interval.max(1)
+    }
+
+    fn epoch_start(&self, epoch: u64) -> u64 {
+        self.dpos_activation + epoch * self.epoch_interval
+    }
+
+    /// A height is a CHANGE-epoch first block iff it is the first block of an
+    /// epoch `E ≥ 1` whose committee differs from `E-1`'s. Both committees are
+    /// read at the current finalized hash (the resolver's contract); an
+    /// unresolvable read ⇒ `false` (an honest change block then fails the
+    /// epoch-type gate transiently → view-change → retry once the read resolves).
+    fn is_change_epoch_first_block(&self, height: u64, epoch: u64) -> bool {
+        if epoch == 0 || height != self.epoch_start(epoch) {
+            return false;
+        }
+        match ((self.committee_for)(epoch), (self.committee_for)(epoch - 1)) {
+            (Some(cur), Some(prev)) => cur != prev,
+            _ => false,
+        }
+    }
+}
+
 /// The Fluent consensus application.
 ///
 /// Generic over `XC` (local derived-chain view) and `A` (tx assembler).
 pub struct FluentApp<XC, A> {
+    /// Per-epoch beacon-DKG verify/propose context (see [`BeaconVerify`]).
+    /// `None` ⇒ no beacon gating (cold-start epoch 0 / followers / tests).
+    beacon: Option<BeaconVerify>,
     genesis: Arc<OrderBlock>,
     executor: executor::Mailbox,
     /// Observer for `Update::Block` finalizations — NOT a state-advancing
@@ -154,6 +226,7 @@ pub struct FluentApp<XC, A> {
 impl<XC: Clone, A> Clone for FluentApp<XC, A> {
     fn clone(&self) -> Self {
         Self {
+            beacon: self.beacon.clone(),
             genesis: self.genesis.clone(),
             executor: self.executor.clone(),
             boundary_hook: self.boundary_hook.clone(),
@@ -187,6 +260,7 @@ where
     ) -> Self {
         let anchor_height = genesis.height;
         Self {
+            beacon: None,
             genesis: Arc::new(genesis),
             executor,
             boundary_hook,
@@ -199,6 +273,15 @@ where
             anchor_height,
         }
     }
+
+    /// Attach the per-epoch beacon-DKG verify/propose context (the boundary "C"
+    /// gate + the proposer's `beacon_outcome` assertion). Validators supply this;
+    /// cold-start / followers / tests leave it `None`.
+    pub fn with_beacon(mut self, beacon: BeaconVerify) -> Self {
+        self.beacon = Some(beacon);
+        self
+    }
+
 
     /// Returns the latest finalized cert's `(round, signers)`, if any.
     pub async fn latest_finalized_cert(&self) -> Option<(Round, Signers)> {
@@ -281,6 +364,26 @@ where
             .max(parent.timestamp + 1);
         let txs = self.assembler.assemble(height, gas_limit, TX_BYTE_BUDGET);
 
+        // On a CHANGE-epoch first block this node, as proposer, MUST assert the
+        // agreed DKG `Output` (PK_E) in `beacon_outcome`. If our ceremony has not
+        // produced it yet, skip the view (like the exec-lag gate) rather than
+        // propose a `None` that every verifier would reject on the epoch-type gate.
+        let beacon_outcome = match self.beacon.as_ref() {
+            Some(bv) if bv.is_change_epoch_first_block(height, bv.epoch_of(height)) => {
+                match (bv.beacon_for_epoch)(bv.epoch_of(height)) {
+                    Some((out, _share)) => Some(Bytes::from(encode_outcome(&out))),
+                    None => {
+                        tracing::debug!(
+                            height,
+                            "change-epoch boundary but DKG outcome not ready; skipping propose"
+                        );
+                        return None;
+                    }
+                }
+            }
+            _ => None,
+        };
+
         Some(OrderBlock {
             parent: parent.digest(),
             height,
@@ -290,7 +393,7 @@ where
             extra_data,
             result,
             txs,
-            beacon_outcome: None,
+            beacon_outcome,
             beacon_seed: None,
         })
     }
@@ -305,6 +408,64 @@ where
 fn total_tx_gas(txs: &[TransactionSigned]) -> Option<u64> {
     txs.iter()
         .try_fold(0u64, |acc, tx| acc.checked_add(tx.gas_limit()))
+}
+
+/// Beacon boundary gate (returns `false` ⇒ vote against the block):
+/// - epoch-type gate: `beacon_outcome` is present IFF this is a change-epoch
+///   first block (a `Some` anywhere else, or a missing `Some` on a change block,
+///   is malformed → reject);
+/// - on a change-epoch first block: this node's epoch-E share must lie on the
+///   proposer's asserted polynomial ("C", [`validate_share_on_poly`]). An
+///   observer / not-yet-ready share withholds the qualifying accept (votes
+///   `false`); a quorum of converged share-holders carries the block, a forged
+///   poly that misses the honest shares cannot reach quorum.
+///
+/// `beacon == None` (cold-start epoch 0 / followers / tests) ⇒ no gating. The
+/// seed-verify backstop that closes C's high-degree caveat is the always-active
+/// deriver path (recovered seed vs the committed `PK_E`), NOT this gate.
+fn beacon_gate_decision(beacon: Option<&BeaconVerify>, block: &OrderBlock) -> bool {
+    let Some(bv) = beacon else {
+        return true; // no beacon context — nothing to gate
+    };
+    let epoch = bv.epoch_of(block.height);
+    let is_change = bv.is_change_epoch_first_block(block.height, epoch);
+    if block.beacon_outcome.is_some() != is_change {
+        tracing::warn!(
+            height = block.height,
+            epoch,
+            is_change,
+            has_outcome = block.beacon_outcome.is_some(),
+            "beacon epoch-type gate: beacon_outcome presence mismatch — voting false"
+        );
+        return false;
+    }
+    let Some(bytes) = block.beacon_outcome.as_ref() else {
+        return true; // non-change block, correctly absent
+    };
+    let outcome = match parse_outcome(bytes) {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!(height = block.height, epoch, ?e, "beacon_outcome failed to parse");
+            return false;
+        }
+    };
+    let Some(committee_e) = (bv.committee_for)(epoch) else {
+        tracing::warn!(epoch, "committee[E] unavailable at verify — voting false");
+        return false;
+    };
+    match (bv.beacon_for_epoch)(epoch) {
+        Some((_out, share)) => {
+            let ok = validate_share_on_poly(&outcome, &committee_e, &share);
+            if !ok {
+                tracing::warn!(epoch, "C share-on-poly FAILED for asserted outcome");
+            }
+            ok
+        }
+        None => {
+            tracing::debug!(epoch, "no epoch-E share — withholding beacon qualifying vote");
+            false
+        }
+    }
 }
 
 impl<E, XC, A> Application<E> for FluentApp<XC, A>
@@ -358,6 +519,12 @@ where
             .expect("system clock before UNIX_EPOCH")
             .as_secs();
         if !Self::structural_checks(&block, &parent, now_secs) {
+            return false;
+        }
+
+        // Beacon boundary gate: epoch-type (beacon_outcome present IFF change-epoch
+        // first block) + the "C" share-on-polynomial qualification on a change block.
+        if !beacon_gate_decision(self.beacon.as_ref(), &block) {
             return false;
         }
 
@@ -604,6 +771,74 @@ mod tests {
             executor::Mailbox::new_for_test(tx),
             Arc::new(Mutex::new(rx)),
         )
+    }
+
+    #[test]
+    fn beacon_gate_epoch_type_and_share_on_poly() {
+        use crate::beacon::dkg::run_local_dkg;
+        use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
+        use commonware_math::algebra::Random as _;
+        use rand_08::rngs::StdRng;
+        use rand_core::SeedableRng as _;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let keys: Vec<Ed25519PrivateKey> =
+            (0..5).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
+        let committee: Set<PeerPubkey> = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+        let (out, shares) = run_local_dkg(&mut rng, b"ns", 1, &keys, &keys).expect("dkg");
+        // A different ceremony over the same committee ⇒ a forged poly for the
+        // same PK_E slot whose constant misses our real share.
+        let (out_forged, _) = run_local_dkg(&mut rng, b"ns", 2, &keys, &keys).expect("dkg forged");
+        let my_share = shares.get(&keys[0].public_key()).expect("share").clone();
+        // A different set for E-1 so epoch 1 reads as a CHANGE epoch.
+        let prev_committee: Set<PeerPubkey> =
+            Set::from_iter_dedup((0..5).map(|_| Ed25519PrivateKey::random(&mut rng).public_key()));
+
+        let make_bv = |share: Option<Share>, change: bool| {
+            let cur = committee.clone();
+            let prev = if change {
+                prev_committee.clone()
+            } else {
+                committee.clone()
+            };
+            let committee_for: CommitteeForEpoch = Arc::new(move |e: u64| match e {
+                0 => Some(prev.clone()),
+                _ => Some(cur.clone()),
+            });
+            let out_e = out.clone();
+            let beacon_for_epoch: BeaconForEpoch = Arc::new(move |e: u64| {
+                (e == 1)
+                    .then(|| share.clone().map(|s| (out_e.clone(), s)))
+                    .flatten()
+            });
+            BeaconVerify::new(beacon_for_epoch, committee_for, 0, 10)
+        };
+
+        let block = |height: u64, oc: Option<Bytes>| {
+            let mut b = sample_order(Digest(B256::ZERO), height);
+            b.beacon_outcome = oc;
+            b
+        };
+        let enc = |o: &CeremonyOutput| Bytes::from(encode_outcome(o));
+
+        // (a) honest change block (height 10 = epoch_start(1)): C passes.
+        let bv = make_bv(Some(my_share.clone()), true);
+        assert!(beacon_gate_decision(Some(&bv), &block(10, Some(enc(&out)))));
+        // (b) forged outcome: C fails for the honest share-holder.
+        assert!(!beacon_gate_decision(Some(&bv), &block(10, Some(enc(&out_forged)))));
+        // (c) epoch-type: change block missing the outcome → reject.
+        assert!(!beacon_gate_decision(Some(&bv), &block(10, None)));
+        // (d) epoch-type: outcome on a non-first block of the epoch → reject.
+        assert!(!beacon_gate_decision(Some(&bv), &block(11, Some(enc(&out)))));
+        // (f) observer (no share) on a change block → withhold.
+        let bv_obs = make_bv(None, true);
+        assert!(!beacon_gate_decision(Some(&bv_obs), &block(10, Some(enc(&out)))));
+        // (e) carry-forward (committee unchanged): no outcome expected.
+        let bv_cf = make_bv(Some(my_share), false);
+        assert!(beacon_gate_decision(Some(&bv_cf), &block(10, None)));
+        assert!(!beacon_gate_decision(Some(&bv_cf), &block(10, Some(enc(&out)))));
+        // (g) no beacon context → no gating.
+        assert!(beacon_gate_decision(None, &block(10, Some(enc(&out)))));
     }
 
     #[test]

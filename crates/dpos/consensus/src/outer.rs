@@ -12,7 +12,8 @@
 
 use crate::{
     application::{
-        BeaconEngineLike, DerivedBlockBuilder, ExecutedChain, FluentApp, OrderingAssembler,
+        BeaconEngineLike, BeaconVerify, DerivedBlockBuilder, ExecutedChain, FluentApp,
+        OrderingAssembler,
     },
     digest::Digest,
     epoch_manager,
@@ -284,6 +285,9 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// Per-epoch threshold beacon key threaded into every per-epoch consensus
     /// scheme so each vote carries the seed partial. `None` ⇒ fallback epochs.
     pub beacon_key: Option<fluentbase_bls::scheme::BeaconKey>,
+    /// Live-DKG verify/propose context for `FluentApp` (the boundary "C" gate +
+    /// the proposer's `beacon_outcome` assertion). `None` ⇒ no beacon gating.
+    pub beacon_verify: Option<BeaconVerify>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
     pub deque_size: usize,
@@ -630,17 +634,23 @@ where
         // triggered at notarize-time (verify→true / own propose), so seed(h) is
         // recovered by the time h finalizes (sign-at-notarize).
         let latest_finalized_height = Arc::new(AtomicU64::new(0));
-        let app = FluentApp::new(
-            self.genesis,
-            executor_mailbox,
-            self.boundary_hook,
-            Some(marshal_mailbox.clone()),
-            latest_finalized_height,
-            self.executed,
-            self.assembler,
-            self.fee_recipient,
-            self.target_gas_limit,
-        );
+        let app = {
+            let app = FluentApp::new(
+                self.genesis,
+                executor_mailbox,
+                self.boundary_hook,
+                Some(marshal_mailbox.clone()),
+                latest_finalized_height,
+                self.executed,
+                self.assembler,
+                self.fee_recipient,
+                self.target_gas_limit,
+            );
+            match self.beacon_verify {
+                Some(bv) => app.with_beacon(bv),
+                None => app,
+            }
+        };
         let marshal_reporter_app = app.clone();
 
         let scheme_provider_for_cb = scheme_provider.clone();
