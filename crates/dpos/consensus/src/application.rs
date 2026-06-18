@@ -381,27 +381,32 @@ where
         // produced it yet, skip the view (like the exec-lag gate) rather than
         // propose a `None` that every verifier would reject on the epoch-type gate.
         let beacon_outcome = match self.beacon.as_ref() {
-            Some(bv) if bv.is_change_epoch_first_block(height, bv.epoch_of(height)) => {
-                match (bv.beacon_for_epoch)(bv.epoch_of(height)) {
-                    Some((out, _share)) => {
-                        tracing::info!(
-                            height,
-                            epoch = bv.epoch_of(height),
-                            "beacon: proposing change-epoch boundary with asserted PK_E"
-                        );
-                        Some(Bytes::from(encode_outcome(&out)))
+            Some(bv) => {
+                let epoch = bv.epoch_of(height);
+                if bv.is_change_epoch_first_block(height, epoch) {
+                    match (bv.beacon_for_epoch)(epoch) {
+                        Some((out, _share)) => {
+                            tracing::info!(
+                                height,
+                                epoch,
+                                "beacon: proposing change-epoch boundary with asserted PK_E"
+                            );
+                            Some(Bytes::from(encode_outcome(&out)))
+                        }
+                        None => {
+                            tracing::info!(
+                                height,
+                                epoch,
+                                "beacon: change-epoch boundary but DKG outcome not ready; skipping propose"
+                            );
+                            return None;
+                        }
                     }
-                    None => {
-                        tracing::info!(
-                            height,
-                            epoch = bv.epoch_of(height),
-                            "beacon: change-epoch boundary but DKG outcome not ready; skipping propose"
-                        );
-                        return None;
-                    }
+                } else {
+                    None
                 }
             }
-            _ => None,
+            None => None,
         };
 
         Some(OrderBlock {
@@ -552,7 +557,7 @@ where
         // then EXACT equality against the agreed commitment. Timeout → false
         // (backpressure: consensus slows until execution catches up — the
         // Monad "execution lags by at most K" enforcement semantic).
-        let verdict = match result_target(block.height, self.anchor_height) {
+        match result_target(block.height, self.anchor_height) {
             ResultTarget::PreActivation => block.result == B256::ZERO,
             ResultTarget::Height(h) => {
                 let polls = (VERIFY_EXEC_BUDGET.as_micros() / VERIFY_EXEC_POLL.as_micros()) as u32;
@@ -577,8 +582,7 @@ where
                     }
                 })
             }
-        };
-        verdict
+        }
     }
 }
 
