@@ -34,9 +34,39 @@ use crate::{
     cache::ValidatorSetCache,
     error::ReadError,
     reader::{
-        check_peer_set_size, epoch_of_block, StakingStateRead, EPOCH_COMMITTEE_RETENTION_MARGIN,
+        check_peer_set_size, epoch_of_block, is_epoch_boundary, StakingStateRead,
+        EPOCH_COMMITTEE_RETENTION_MARGIN,
     },
 };
+
+/// Freeze a governance-mutable geometry field on its first observation, then
+/// treat it as fixed: returns the frozen value on every later call and warns
+/// (log-only) if the on-chain value drifts. `what` names the field + the
+/// consensus authority it backs (e.g. FixedEpocher / OriginEpocher) for the
+/// diagnostic. Shared by the `epochBlockInterval` and `dposActivationBlock`
+/// freezes in `apply_at`, which are otherwise identical bar the type.
+fn freeze_or_warn<T: Copy + PartialEq + std::fmt::Debug>(
+    slot: &mut Option<T>,
+    observed: T,
+    what: &str,
+) -> T {
+    match *slot {
+        Some(frozen) => {
+            if observed != frozen {
+                tracing::warn!(
+                    ?frozen,
+                    ?observed,
+                    "{what} changed on-chain but is treated as fixed after genesis; ignoring"
+                );
+            }
+            frozen
+        }
+        None => {
+            *slot = Some(observed);
+            observed
+        }
+    }
+}
 
 /// Outcome of [`EpochTransition::on_finalized`] — distinguishes an
 /// intra-epoch no-op from an actual epoch advance. The dpos.rs
@@ -51,6 +81,30 @@ pub enum TransitionOutcome {
     /// This block advanced `last_tracked_epoch` to the given value;
     /// the boundary trigger has been delivered to the consensus bridge.
     EpochAdvanced(u64),
+}
+
+/// Internal result of `track_and_trigger`, distinguishing the two `Intra`
+/// reasons the caller must treat differently for the pending-boundary slot:
+/// `Full` is RETRYABLE (keep the boundary parked so the re-poke loop retries),
+/// `Closed` is NOT (the forwarder has shut down — releasing the park avoids
+/// spinning the re-poke loop against a dead channel during teardown).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TriggerResult {
+    /// Boundary trigger delivered (or no bridge configured) — epoch advanced.
+    Advanced,
+    /// Bridge channel full — retry the send on the next poke.
+    Full,
+    /// Bridge channel closed (forwarder gone) — unrecoverable, do not retry.
+    Closed,
+}
+
+impl TriggerResult {
+    fn into_outcome(self, epoch: u64) -> TransitionOutcome {
+        match self {
+            TriggerResult::Advanced => TransitionOutcome::EpochAdvanced(epoch),
+            TriggerResult::Full | TriggerResult::Closed => TransitionOutcome::Intra,
+        }
+    }
 }
 
 /// Where the assembled peer set is delivered. p2p-agnostic on purpose:
@@ -156,13 +210,11 @@ where
     /// Activation-relative boundary predicate over the FROZEN geometry —
     /// usable without any state read once `cold_start` froze it.
     fn is_epoch_boundary_frozen(&self, number: u64) -> Option<bool> {
-        let interval = self.frozen_interval?;
-        let activation = self.frozen_activation?;
-        Some(
-            (number + 1)
-                .saturating_sub(activation)
-                .is_multiple_of(interval as u64),
-        )
+        Some(is_epoch_boundary(
+            number,
+            self.frozen_interval?,
+            self.frozen_activation?,
+        ))
     }
 
     /// Whether a boundary is parked awaiting execution catch-up. The replay
@@ -214,7 +266,15 @@ where
         // window, so two can never be pending at once.
         if let Some(b) = self.pending_boundary {
             if let Some(at) = (self.executed_hash)(self.read_height_for(b)) {
-                self.pending_boundary = None;
+                // `apply_at` OWNS `pending_boundary`: it releases the slot on a
+                // real advance (or an empty missed-commit epoch) and KEEPS it
+                // parked when the bridge channel is Full (returns `Intra`
+                // without advancing), so the re-poke loop retries the send. A
+                // transient `ReadError` propagates via `?` with the slot
+                // untouched (still parked) — `b` is the last deliverable block
+                // during catch-up, so dropping it would wedge epoch E+1
+                // forever. `apply_at` is idempotent per epoch, so re-applying
+                // on the next retry is safe.
                 let replay = self.apply_at(b, at).await?;
                 tracing::debug!(boundary = b, ?replay, "replayed pending boundary");
             }
@@ -223,6 +283,21 @@ where
             // Executed tip hasn't reached number − result_lag yet (transient:
             // bounded by the executor ack window). Remember ONLY boundaries.
             if self.is_epoch_boundary_frozen(number) == Some(true) {
+                // Single-slot invariant: a second boundary can be parked only by
+                // clobbering the first, silently dropping its epoch handoff. This
+                // is unreachable while `interval > MAX_PENDING_ACKS + result_lag`
+                // (marshal ack backpressure resolves execution within one
+                // interval — see executor.rs), which holds for the shipped
+                // interval (32 > 16 + 3). A genesis interval that violates it
+                // would make this fire — fail loud in debug/tests rather than
+                // lose an epoch silently in release.
+                debug_assert!(
+                    self.pending_boundary.is_none_or(|p| p == number),
+                    "two boundaries pending at once (parked {:?}, new {number}): execution \
+                     lagged a full epoch interval — interval > MAX_PENDING_ACKS + result_lag \
+                     invariant violated (check the frozen epochBlockInterval)",
+                    self.pending_boundary,
+                );
                 self.pending_boundary = Some(number);
             }
             return Ok(TransitionOutcome::Intra);
@@ -243,45 +318,19 @@ where
         if observed == 0 {
             return Err(ReadError::ZeroEpochInterval);
         }
-        let interval = match self.frozen_interval {
-            Some(frozen) => {
-                if observed != frozen {
-                    tracing::warn!(
-                        frozen,
-                        observed,
-                        "epochBlockInterval changed on-chain but is treated as fixed \
-                         after genesis (consensus FixedEpocher is frozen); ignoring"
-                    );
-                }
-                frozen
-            }
-            None => {
-                self.frozen_interval = Some(observed);
-                observed
-            }
-        };
+        let interval = freeze_or_warn(
+            &mut self.frozen_interval,
+            observed,
+            "epochBlockInterval (consensus FixedEpocher is frozen)",
+        );
         // Freeze the relative-epoch origin on the first finalized block, mirroring
         // the interval freeze (consensus OriginEpocher is frozen at startup).
-        let activation = {
-            let observed = self.reader.dpos_activation_block(at)?;
-            match self.frozen_activation {
-                Some(frozen) => {
-                    if observed != frozen {
-                        tracing::warn!(
-                            frozen,
-                            observed,
-                            "dposActivationBlock changed on-chain but is treated as fixed \
-                             after genesis (consensus OriginEpocher is frozen); ignoring"
-                        );
-                    }
-                    frozen
-                }
-                None => {
-                    self.frozen_activation = Some(observed);
-                    observed
-                }
-            }
-        };
+        let observed = self.reader.dpos_activation_block(at)?;
+        let activation = freeze_or_warn(
+            &mut self.frozen_activation,
+            observed,
+            "dposActivationBlock (consensus OriginEpocher is frozen)",
+        );
         let epoch_e = epoch_of_block(number, interval, activation);
 
         // Boundary detection MUST be activation-relative, matching `epoch_of_block`
@@ -294,9 +343,7 @@ where
         // peer-set handoff at a different block than `OriginEpocher` treats as the
         // boundary — the exact "two epoch authorities diverge" failure the freeze
         // logic above guards against.
-        let is_epoch_boundary = (number + 1)
-            .saturating_sub(activation)
-            .is_multiple_of(interval as u64);
+        let is_boundary = is_epoch_boundary(number, interval, activation);
 
         // Cold-start bootstrap: on the very first finalized block, stand up the
         // CURRENT epoch's engine. Its committee is already committed on-chain (the
@@ -315,16 +362,22 @@ where
         // epoch on a boundary-aligned resume; still a single `track_and_trigger` +
         // `return`, preserving the double-spawn guard.
         if self.last_tracked_epoch.is_none() {
-            let cold_epoch = if is_epoch_boundary {
-                epoch_e + 1
-            } else {
-                epoch_e
-            };
+            // Cold start owns its own retry: while `last_tracked_epoch` stays
+            // None every delivery re-enters this branch and re-bootstraps, so it
+            // never uses the pending-boundary slot. Release any park a prior
+            // delivery left set (e.g. a boundary parked while the anchor epoch
+            // was an empty missed-commit, replayed here) — otherwise it would
+            // wedge the re-poke loop after the bootstrap finally advances.
+            self.pending_boundary = None;
+            let cold_epoch = if is_boundary { epoch_e + 1 } else { epoch_e };
             let snap = self.reader.epoch_committee_snapshot(cold_epoch, at)?;
             if snap.validators.is_empty() {
                 return Ok(TransitionOutcome::Intra);
             }
-            return self.track_and_trigger(cold_epoch, snap, at).await;
+            return Ok(self
+                .track_and_trigger(cold_epoch, snap, at)
+                .await?
+                .into_outcome(cold_epoch));
         }
 
         // Boundary: when the LAST block of epoch E finalizes, spawn epoch E+1. Its
@@ -333,7 +386,7 @@ where
         // genesis block for engine E+1 (= this finalized last-block of E) is
         // stored. The engine-E engine keeps producing until E+1 takes over.
         let next = epoch_e + 1;
-        if is_epoch_boundary && self.last_tracked_epoch < Some(next) {
+        if is_boundary && self.last_tracked_epoch < Some(next) {
             // Missed-commit epoch: `Staking.sol` allows an epoch with no
             // `commitEpochCommittee` (unslashable by design; idempotent / monotonic
             // — a skip is safe); `getEpochCommittee` returns empty. Do NOT
@@ -341,9 +394,23 @@ where
             // still apply it if the commit lands, and commonware keeps the prior set.
             let snap = self.reader.epoch_committee_snapshot(next, at)?;
             if snap.validators.is_empty() {
+                // Missed-commit epoch: nothing to hand off — release any park so
+                // the re-poke loop stops (a later commit lands via a fresh path).
+                self.pending_boundary = None;
                 return Ok(TransitionOutcome::Intra);
             }
-            return self.track_and_trigger(next, snap, at).await;
+            let result = self.track_and_trigger(next, snap, at).await?;
+            // KEEP the boundary parked ONLY when the send is RETRYABLE (`Full`):
+            // this block is the last deliverable one during catch-up, so nothing
+            // else re-detects the boundary — the re-poke loop must retry (the
+            // same wedge the slot guards against for lagging execution). On a
+            // real advance, or a `Closed` channel (forwarder gone — retrying a
+            // dead channel only spins the loop during teardown), release it.
+            self.pending_boundary = match result {
+                TriggerResult::Full => Some(number),
+                TriggerResult::Advanced | TriggerResult::Closed => None,
+            };
+            return Ok(result.into_outcome(next));
         }
         Ok(TransitionOutcome::Intra)
     }
@@ -364,7 +431,7 @@ where
         epoch: u64,
         snap: crate::reader::ValidatorSetSnapshot,
         at: B256,
-    ) -> Result<TransitionOutcome, ReadError> {
+    ) -> Result<TriggerResult, ReadError> {
         let mut tracked = self.reader.active_registry_peers(at)?;
         tracked.extend(snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()));
         check_peer_set_size(epoch, tracked.len(), self.max_peer_set_size)?; // typed, not panic
@@ -379,28 +446,29 @@ where
 
         // Gate `last_tracked_epoch` advance on `try_send` success. A
         // `Full` channel means the consensus bridge is backed up; leave the
-        // epoch un-tracked so the next finalized block re-enters here
-        // (persist/track/prune are idempotent — see contract above), retries
+        // epoch un-tracked and signal RETRY so the next finalized block re-enters
+        // here (persist/track/prune are idempotent — see contract above), retries
         // the send, and only advances `last_tracked_epoch` once consensus
         // actually saw the boundary trigger. A `Closed` channel means the
-        // forwarder shut down; the forwarder itself fires the shutdown_token
-        // path (see crates/node/src/dpos.rs bridge forwarder), so we just
-        // log and return Intra without advancing.
+        // forwarder shut down (it fires the shutdown_token path itself, see
+        // crates/node/src/dpos.rs bridge forwarder) — signal CLOSED so the caller
+        // releases the park instead of spinning the re-poke loop against a dead
+        // channel during teardown.
         if let Some(tx) = self.boundary_tx.as_ref() {
             match tx.try_send((epoch, snap)) {
                 Ok(()) => {}
                 Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                     tracing::warn!(epoch, "bridge channel full; retry on next finalized block");
-                    return Ok(TransitionOutcome::Intra);
+                    return Ok(TriggerResult::Full);
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                     tracing::error!(epoch, "bridge channel closed — forwarder has shut down");
-                    return Ok(TransitionOutcome::Intra);
+                    return Ok(TriggerResult::Closed);
                 }
             }
         }
         self.last_tracked_epoch = Some(epoch);
-        Ok(TransitionOutcome::EpochAdvanced(epoch))
+        Ok(TriggerResult::Advanced)
     }
 
     /// Cold start: freeze the epoch geometry and read the **current
@@ -842,6 +910,155 @@ mod tests {
             assert_eq!(
                 et.last_tracked_epoch, None,
                 "last_tracked_epoch must NOT advance"
+            );
+        });
+    }
+
+    #[test]
+    fn boundary_full_channel_parks_and_recovers() {
+        // A steady-state boundary whose `track_and_trigger` hits a Full bridge
+        // channel must KEEP the boundary parked (so the re-poke loop retries the
+        // send) and advance only once the channel drains — the wedge the
+        // Err-only clear missed (a Full returns Ok(Intra), not Err).
+        deterministic::Runner::default().start(|ctx| async move {
+            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
+                ValidatorSetCache::init(ctx).await.unwrap(),
+            ));
+            let sink = RecordingSink::default();
+            // Capacity-1 channel: cold_start fills it with epoch 5, so the
+            // epoch-6 boundary send then hits Full.
+            let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(1);
+            let h = B256::repeat_byte(0xC7);
+            let mut et = et(
+                MockReader {
+                    committee: 3,
+                    undelegate: 7,
+                    interval: 100,
+                },
+                cache,
+                sink.clone(),
+                64,
+                Some(boundary_tx),
+                h,
+            );
+            // cold_start at 500 (mid-epoch 5) tracks epoch 5 → fills the 1 slot.
+            assert_eq!(
+                et.cold_start(h, 500).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(5)
+            );
+            // Boundary 599 (last block of epoch 5) → track epoch 6 → channel Full.
+            assert_eq!(
+                et.on_finalized(599).await.unwrap(),
+                TransitionOutcome::Intra,
+                "Full bridge channel surfaces as Intra"
+            );
+            assert_eq!(
+                et.last_tracked_epoch,
+                Some(5),
+                "epoch 6 must NOT advance while the channel is Full"
+            );
+            assert!(
+                et.has_pending_boundary(),
+                "boundary 599 must stay PARKED so the re-poke loop retries"
+            );
+            // Drain the channel (consume the epoch-5 trigger), then re-poke.
+            assert_eq!(boundary_rx.try_recv().expect("epoch 5 queued").0, 5);
+            et.on_finalized(599).await.unwrap();
+            assert_eq!(
+                et.last_tracked_epoch,
+                Some(6),
+                "epoch 6 advances once the channel has room"
+            );
+            assert!(
+                !et.has_pending_boundary(),
+                "park released after the successful advance"
+            );
+            assert_eq!(boundary_rx.try_recv().expect("epoch 6 queued").0, 6);
+        });
+    }
+
+    #[test]
+    fn cold_start_branch_releases_a_stale_park() {
+        // A boundary parked while `last_tracked_epoch` was still None (anchor on
+        // a missed-commit epoch) is replayed through the cold-start branch — which
+        // must RELEASE the park once the bootstrap advances, else the re-poke loop
+        // spins on a slot nothing will ever clear.
+        deterministic::Runner::default().start(|ctx| async move {
+            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
+                ValidatorSetCache::init(ctx).await.unwrap(),
+            ));
+            let h = B256::repeat_byte(0x77);
+            let mut et = et(
+                MockReader {
+                    committee: 3,
+                    undelegate: 7,
+                    interval: 100,
+                },
+                cache,
+                RecordingSink::default(),
+                64,
+                None,
+                h,
+            );
+            // Pre-seed a park with last_tracked still None (the wedge precondition).
+            et.pending_boundary = Some(599);
+            assert_eq!(et.last_tracked_epoch, None);
+            // cold_start at 500 (mid-epoch 5) bootstraps epoch 5 via the cold-start branch.
+            assert_eq!(
+                et.cold_start(h, 500).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(5)
+            );
+            assert!(
+                !et.has_pending_boundary(),
+                "cold-start branch must release the stale park after advancing"
+            );
+        });
+    }
+
+    #[test]
+    fn boundary_closed_channel_releases_park() {
+        // A `Closed` bridge (forwarder gone) is unrecoverable — unlike `Full`, the
+        // boundary must NOT stay parked, or the re-poke loop spins against a dead
+        // channel during teardown.
+        deterministic::Runner::default().start(|ctx| async move {
+            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
+                ValidatorSetCache::init(ctx).await.unwrap(),
+            ));
+            let sink = RecordingSink::default();
+            let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
+            let h = B256::repeat_byte(0x78);
+            let mut et = et(
+                MockReader {
+                    committee: 3,
+                    undelegate: 7,
+                    interval: 100,
+                },
+                cache,
+                sink,
+                64,
+                Some(boundary_tx),
+                h,
+            );
+            assert_eq!(
+                et.cold_start(h, 500).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(5)
+            );
+            // Drain epoch 5, then CLOSE the channel (drop the receiver).
+            let _ = boundary_rx.try_recv();
+            drop(boundary_rx);
+            // Boundary 599 → epoch-6 send hits Closed → released, NOT parked.
+            assert_eq!(
+                et.on_finalized(599).await.unwrap(),
+                TransitionOutcome::Intra
+            );
+            assert!(
+                !et.has_pending_boundary(),
+                "Closed channel is unrecoverable — must not park"
+            );
+            assert_eq!(
+                et.last_tracked_epoch,
+                Some(5),
+                "Closed does not advance the epoch"
             );
         });
     }

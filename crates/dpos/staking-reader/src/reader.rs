@@ -14,13 +14,15 @@ use alloy_primitives::{address, Address, Bytes, B256};
 use alloy_sol_types::SolCall;
 use commonware_codec::DecodeExt as _;
 use fluentbase_bls::{BlsPubkey, PeerPubkey, PUBKEY_BYTES};
-use reth_evm::ConfigureEvm;
+use reth_evm::{ConfigureEvm, EvmFor};
 use reth_primitives_traits::HeaderTy;
 use reth_revm::{
     database::StateProviderDatabase,
     revm::context::result::{ExecutionResult, Output},
 };
-use reth_storage_api::{AccountReader, HeaderProvider, StateProviderFactory};
+use reth_storage_api::{
+    AccountReader, HeaderProvider, StateProviderBox, StateProviderFactory,
+};
 
 use crate::error::ReadError;
 
@@ -153,6 +155,25 @@ pub fn epoch_of_block(
     block_number.saturating_sub(dpos_activation_block) / epoch_block_interval as u64
 }
 
+/// Activation-relative epoch-boundary predicate: `true` when `block_number` is
+/// the LAST block of its relative epoch, i.e. `(number + 1 - activation)` is a
+/// multiple of `interval`. Activation-relative to match [`epoch_of_block`] and
+/// the consensus `OriginEpocher` (an absolute `(number+1) % interval` check only
+/// agrees when `activation % interval == 0`). Single definition shared by
+/// `EpochTransition`'s frozen-geometry and in-flight boundary checks, and
+/// (`pub`, like its sibling [`epoch_of_block`]) by the follower-promotion
+/// anchor gate in `crates/node` — so no caller hand-rolls the formula.
+#[inline]
+pub fn is_epoch_boundary(
+    block_number: u64,
+    epoch_block_interval: u32,
+    dpos_activation_block: u64,
+) -> bool {
+    (block_number + 1)
+        .saturating_sub(dpos_activation_block)
+        .is_multiple_of(epoch_block_interval as u64)
+}
+
 /// Tracker-feed guard: the peer set fed to `Oracle::track` (the Active
 /// validator registry ∪ current committee) must fit commonware's
 /// `max_peer_set_size`, or `track` panics deep in the p2p actor
@@ -220,6 +241,48 @@ fn is_unset(k: &abi::ConsensusKeys) -> bool {
     k.blsPubkey.is_empty()
 }
 
+/// One read-only system call to `addr` with `calldata` against an
+/// already-built EVM. View functions do not mutate, so the returned state
+/// delta is discarded (`transact_system_call` never commits — the next call
+/// on the same `evm` reads the identical immutable block state). Uses the
+/// system-call path (no caller funding / nonce / gas) — staking getters don't
+/// gate on `msg.sender`.
+///
+/// Free fn over `&mut impl Evm` so it can run against either a one-shot EVM
+/// (single getter) or a hoisted EVM reused for every member of a committee
+/// snapshot (`epoch_committee_snapshot`) — the header/state are invariant at a
+/// fixed `at`, so building them once per snapshot is the whole point.
+fn exec_view<Ev: Evm>(evm: &mut Ev, addr: Address, calldata: Bytes) -> Result<Bytes, ReadError> {
+    let out = evm
+        .transact_system_call(Address::ZERO, addr, calldata)
+        .map_err(|e| ReadError::Backend(e.to_string()))?;
+
+    match out.result {
+        ExecutionResult::Success { output, .. } => match output {
+            Output::Call(b) | Output::Create(b, _) => Ok(b),
+        },
+        ExecutionResult::Revert { output, .. } => Err(ReadError::CallReverted(
+            alloy_primitives::hex::encode(output),
+        )),
+        ExecutionResult::Halt { reason, .. } => {
+            Err(ReadError::CallReverted(format!("halt: {reason:?}")))
+        }
+    }
+}
+
+/// ABI-encode `call`, run it against `evm` via [`exec_view`], and ABI-decode
+/// the return — the `abi_encode → exec → abi_decode_returns → map_err` pipeline
+/// the typed getters all share, collapsed to one site. The `sol!` call type
+/// (`C`) and target `addr` are the only variation.
+fn decode_view<Ev: Evm, C: SolCall>(
+    evm: &mut Ev,
+    addr: Address,
+    call: &C,
+) -> Result<C::Return, ReadError> {
+    let ret = exec_view(evm, addr, call.abi_encode().into())?;
+    C::abi_decode_returns(&ret).map_err(|e| ReadError::AbiDecode(e.to_string()))
+}
+
 /// In-process staking reader over a reth provider + EVM config.
 ///
 /// `epoch_block_interval` and `undelegate_period` are NO LONGER
@@ -250,11 +313,22 @@ where
         }
     }
 
-    /// One read-only call to `addr` with `calldata`, against the state at
-    /// block `at`. View functions do not mutate, so the returned state delta
-    /// is discarded. Uses the system-call path (no caller funding / nonce /
-    /// gas) — staking getters don't gate on `msg.sender`.
-    fn raw_view(&self, addr: Address, calldata: Bytes, at: B256) -> Result<Bytes, ReadError> {
+    /// Build the EVM for the state at block `at` ONCE and hand it to `f`. The
+    /// header read + state-provider build + EVM construction are invariant at a
+    /// fixed `at`, so a multi-call read (`epoch_committee_snapshot`) builds them
+    /// a single time and reuses the `&mut Ev` for every member.
+    ///
+    /// This hoist is scoped to ONE `at` per invocation — it is NOT a persistent
+    /// cross-read cache; the deliberate "no cross-call caching" invariant
+    /// (governance-mutable params, reorg safety) is unaffected.
+    fn with_evm<R>(
+        &self,
+        at: B256,
+        f: impl FnOnce(
+            &mut EvmFor<E, StateProviderDatabase<StateProviderBox>>,
+            &HeaderTy<E::Primitives>,
+        ) -> Result<R, ReadError>,
+    ) -> Result<R, ReadError> {
         let header = self
             .provider
             .header(at)
@@ -271,56 +345,20 @@ where
             .evm_for_block(db, &header)
             .map_err(|e| ReadError::Backend(e.to_string()))?;
 
-        let out = evm
-            .transact_system_call(Address::ZERO, addr, calldata)
-            .map_err(|e| ReadError::Backend(e.to_string()))?;
-
-        match out.result {
-            ExecutionResult::Success { output, .. } => match output {
-                Output::Call(b) | Output::Create(b, _) => Ok(b),
-            },
-            ExecutionResult::Revert { output, .. } => Err(ReadError::CallReverted(
-                alloy_primitives::hex::encode(output),
-            )),
-            ExecutionResult::Halt { reason, .. } => {
-                Err(ReadError::CallReverted(format!("halt: {reason:?}")))
-            }
-        }
+        // Hand the header to `f` too: a multi-call read (`epoch_committee_snapshot`)
+        // gets the block number from it instead of a SECOND `provider.header(at)`.
+        f(&mut evm, &header)
     }
 
-    fn block_number(&self, at: B256) -> Result<u64, ReadError> {
-        Ok(self
-            .provider
-            .header(at)
-            .map_err(|e| ReadError::Backend(e.to_string()))?
-            .ok_or(ReadError::BlockNotFound(at))?
-            .number())
-    }
-
-    /// Consensus keys for one validator. `Ok(None)` when unset (the contract
-    /// returns a zeroed struct, not a revert).
-    pub(crate) fn consensus_keys(
-        &self,
-        validator: Address,
-        at: B256,
-    ) -> Result<Option<ConsensusKeys>, ReadError> {
-        let cd = abi::getConsensusKeysCall { validator }.abi_encode().into();
-        let ret = self.raw_view(self.cfg.staking_address, cd, at)?;
-        let k = abi::getConsensusKeysCall::abi_decode_returns(&ret)
-            .map_err(|e| ReadError::AbiDecode(e.to_string()))?;
-        if is_unset(&k) {
-            return Ok(None);
-        }
-        Ok(Some(decode_consensus_keys(k)?))
-    }
-
-    /// Frozen committee for `epoch` (canonical ascending-peerPubkey order).
-    /// Uncommitted epoch ⇒ `Ok(vec![])`, not a revert.
-    pub(crate) fn epoch_committee(&self, epoch: u64, at: B256) -> Result<Vec<Address>, ReadError> {
-        let cd = abi::getEpochCommitteeCall { epoch }.abi_encode().into();
-        let ret = self.raw_view(self.cfg.staking_address, cd, at)?;
-        abi::getEpochCommitteeCall::abi_decode_returns(&ret)
-            .map_err(|e| ReadError::AbiDecode(e.to_string()))
+    /// ABI-encoded typed read of `call` against `addr` at block `at`: the
+    /// `abi_encode → exec_view → abi_decode_returns → map_err(AbiDecode)`
+    /// boilerplate the typed getters share, collapsed behind one generic site.
+    /// Builds a one-shot EVM via [`Self::with_evm`] (single top-level read);
+    /// within a snapshot read the hoisted EVM is reused directly via
+    /// [`decode_view`]. Uses the system-call path (no caller funding / nonce /
+    /// gas) — staking getters don't gate on `msg.sender`.
+    fn call<C: SolCall>(&self, addr: Address, call: &C, at: B256) -> Result<C::Return, ReadError> {
+        self.with_evm(at, |evm, _header| decode_view(evm, addr, call))
     }
 
     /// Committed beacon group key `PK_epoch` for `epoch`, read from L2 state at
@@ -328,10 +366,11 @@ where
     /// contract returns empty bytes, not a revert). This is the trust-rooted
     /// source of `PK_epoch` for the live per-epoch randomness beacon.
     pub fn epoch_beacon_key(&self, epoch: u64, at: B256) -> Result<Option<BlsPubkey>, ReadError> {
-        let cd = abi::getEpochBeaconKeyCall { epoch }.abi_encode().into();
-        let ret = self.raw_view(self.cfg.staking_address, cd, at)?;
-        let raw = abi::getEpochBeaconKeyCall::abi_decode_returns(&ret)
-            .map_err(|e| ReadError::AbiDecode(e.to_string()))?;
+        let raw = self.call(
+            self.cfg.staking_address,
+            &abi::getEpochBeaconKeyCall { epoch },
+            at,
+        )?;
         decode_beacon_key(&raw)
     }
 
@@ -341,19 +380,21 @@ where
     /// EVM STATICCALL per finalized block — negligible relative to a
     /// governance-flip consensus-split blast radius.
     pub fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
-        let cd = abi::getEpochBlockIntervalCall {}.abi_encode().into();
-        let ret = self.raw_view(self.cfg.chain_config_address, cd, at)?;
-        abi::getEpochBlockIntervalCall::abi_decode_returns(&ret)
-            .map_err(|e| ReadError::AbiDecode(e.to_string()))
+        self.call(
+            self.cfg.chain_config_address,
+            &abi::getEpochBlockIntervalCall {},
+            at,
+        )
     }
 
     /// `ChainConfig.getDposActivationBlock()` at block `at` — origin for the
     /// relative DPoS epoch numbering (zero ⇒ absolute). Re-read per call.
     pub fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
-        let cd = abi::getDposActivationBlockCall {}.abi_encode().into();
-        let ret = self.raw_view(self.cfg.chain_config_address, cd, at)?;
-        abi::getDposActivationBlockCall::abi_decode_returns(&ret)
-            .map_err(|e| ReadError::AbiDecode(e.to_string()))
+        self.call(
+            self.cfg.chain_config_address,
+            &abi::getDposActivationBlockCall {},
+            at,
+        )
     }
 
     /// Activation height as a *scheduling state*: `Ok(None)` while the
@@ -394,10 +435,11 @@ where
     /// window (`undelegatePeriod + EPOCH_COMMITTEE_RETENTION_MARGIN`) and
     /// mirrors the contract's own `_pruneStaleCommittees`.
     pub fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
-        let cd = abi::getUndelegatePeriodCall {}.abi_encode().into();
-        let ret = self.raw_view(self.cfg.chain_config_address, cd, at)?;
-        abi::getUndelegatePeriodCall::abi_decode_returns(&ret)
-            .map_err(|e| ReadError::AbiDecode(e.to_string()))
+        self.call(
+            self.cfg.chain_config_address,
+            &abi::getUndelegatePeriodCall {},
+            at,
+        )
     }
 
     /// `ChainConfig.getActiveValidatorsLength()`. Used at startup by the host
@@ -409,10 +451,11 @@ where
     /// the startup assert catches this earlier with an actionable error
     /// pointing at both source files.
     pub fn active_validators_length(&self, at: B256) -> Result<u32, ReadError> {
-        let cd = abi::getActiveValidatorsLengthCall {}.abi_encode().into();
-        let ret = self.raw_view(self.cfg.chain_config_address, cd, at)?;
-        abi::getActiveValidatorsLengthCall::abi_decode_returns(&ret)
-            .map_err(|e| ReadError::AbiDecode(e.to_string()))
+        self.call(
+            self.cfg.chain_config_address,
+            &abi::getActiveValidatorsLengthCall {},
+            at,
+        )
     }
 
     /// Snapshot of the **frozen `epoch` committee** (authoritative for the
@@ -426,27 +469,46 @@ where
     /// [`ReadError::CommitteeMemberKeyless`] (on-chain invariant violation),
     /// never silently skipped. Empty / uncommitted epoch ⇒ a snapshot with
     /// `validators: []`.
+    ///
+    /// All `1 + N` STATICCALLs run against a SINGLE EVM built once for `at`
+    /// (via [`Self::with_evm`]) — the header read + state-provider build are
+    /// invariant at a fixed `at`, so a 51-member committee no longer re-reads
+    /// the header / rebuilds the state provider ~52 times. Each
+    /// `transact_system_call` is a pure view that commits nothing, so reusing
+    /// the EVM is byte-for-byte the same as the prior per-call construction
+    /// (same calldata, same order, same decode, same error variants).
     pub fn epoch_committee_snapshot(
         &self,
         epoch: u64,
         at: B256,
     ) -> Result<ValidatorSetSnapshot, ReadError> {
-        let committee = self.epoch_committee(epoch, at)?;
-        let validators = committee
-            .into_iter()
-            .map(|address| {
-                let keys =
-                    self.consensus_keys(address, at)?
-                        .ok_or(ReadError::CommitteeMemberKeyless {
+        let staking = self.cfg.staking_address;
+        let (block_number, validators) = self.with_evm(at, |evm, header| {
+            // Block number from the already-read header — no second header read.
+            let block_number = header.number();
+            let committee: Vec<Address> =
+                decode_view(evm, staking, &abi::getEpochCommitteeCall { epoch })?;
+            let validators = committee
+                .into_iter()
+                .map(|address| {
+                    let k = decode_view(evm, staking, &abi::getConsensusKeysCall { validator: address })?;
+                    if is_unset(&k) {
+                        return Err(ReadError::CommitteeMemberKeyless {
                             epoch,
                             validator: address,
-                        })?;
-                Ok(ValidatorWithKeys { address, keys })
-            })
-            .collect::<Result<Vec<_>, ReadError>>()?;
+                        });
+                    }
+                    Ok(ValidatorWithKeys {
+                        address,
+                        keys: decode_consensus_keys(k)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, ReadError>>()?;
+            Ok((block_number, validators))
+        })?;
         Ok(ValidatorSetSnapshot {
             block_hash: at,
-            block_number: self.block_number(at)?,
+            block_number,
             epoch,
             validators,
         })
@@ -462,10 +524,11 @@ where
     /// registry entry is a legal transient state, not an invariant
     /// violation.
     pub fn active_registry_peers(&self, at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
-        let cd = abi::getRegistryWithKeysCall {}.abi_encode().into();
-        let ret = self.raw_view(self.cfg.staking_address, cd, at)?;
-        let decoded = abi::getRegistryWithKeysCall::abi_decode_returns(&ret)
-            .map_err(|e| ReadError::AbiDecode(e.to_string()))?;
+        let decoded = self.call(
+            self.cfg.staking_address,
+            &abi::getRegistryWithKeysCall {},
+            at,
+        )?;
         decoded
             .keys
             .into_iter()
