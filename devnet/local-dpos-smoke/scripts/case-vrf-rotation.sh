@@ -10,10 +10,11 @@
 # committee change forces a fresh DKG ceremony whose new PK_E lands on-chain.
 #
 # It asserts ALL of:
-#   1. BASELINE — at the initial committee (epoch E0) the beacon is live:
-#      getEpochBeaconKey(E0) is non-empty, prev_randao is non-zero + varies +
-#      byte-identical across all nodes (the smoke-vrf window check), and the
-#      validators log the assurance=true ACTIVE_LINE.
+#   1. BASELINE — at the initial committee (epoch E0) the chain is live and the
+#      beacon is in its KEYLESS pre-rotation state: getEpochBeaconKey(E0) is EMPTY,
+#      prev_randao is non-zero + varies + byte-identical across all nodes
+#      (digest-fallback determinism), and the ACTIVE_LINE has NOT yet fired
+#      (assurance=false is EXPECTED here — see the keyless-baseline note below).
 #   2. TRIGGER — register external validator v5 (governance activate + delegate
 #      >1e18 BLEND). committee[N] reads EffBal(N-1) and a delegate is effective in
 #      EffBal(E+2) ⇒ v5 enters the committee at E+3 (mirrors smoke-production-path's
@@ -26,56 +27,47 @@
 #      ACTIVE_LINE count keeps GROWING after the boundary and prev_randao is
 #      non-zero + node-agreed at and just past the E_new boundary block (the beacon
 #      did not stall across the rotation).
-#   5. CARRY-FORWARD — pick a STABLE epoch (committee unchanged vs its predecessor;
-#      we scan for one rather than guess). Its getEpochBeaconKey is EMPTY *and* the
-#      beacon stays live across it (same key carried forward in memory).
+#   5. CARRY-FORWARD — pick a STABLE epoch AFTER E_new (committee unchanged vs its
+#      predecessor; we scan for one). The DKG only re-deals + commits on a committee
+#      CHANGE, so a stable epoch has NO own commit — but the staking contract's
+#      getEpochBeaconKey does CARRY-FORWARD ON READ (option A), returning the
+#      most-recent committed key, so a stable epoch returns the SAME key as E_new
+#      (non-empty), AND the beacon stays live across it.
 #
-#      ── CARRY-FORWARD ASSUMPTION (EMPTY, verified against the code) ──────────
-#      A stable epoch returns EMPTY bytes (0x) from getEpochBeaconKey, NOT the
-#      carried-forward key. Verified:
-#        - The DKG ceremony (and thus a committed group key) starts ONLY when the
-#          committee actually changes; an unchanged committee "carries the key
-#          forward (no ceremony — Phase 5 reuses the prior epoch's BeaconKey)".
-#          crates/dpos/consensus/src/beacon/actor.rs:175-185 (maybe_start: `if next
-#          == cur { return; // carry-forward }`).
-#        - commitEpochBeaconKey fires from the executor ONLY when a boundary block
-#          staged a DKG outcome via the beacon_outcomes side-channel
-#          (`if let Some((_, group_key)) = self.beacon_outcomes.remove(...)`).
-#          crates/node/src/evm.rs:1158-1195. No ceremony ⇒ nothing staged ⇒ no
-#          commit for that epoch.
-#        - getEpochBeaconKey returns the raw mapping slot, which is empty for any
-#          uncommitted epoch (Solidity default), and the doc-comment says exactly
-#          "empty if uncommitted or a fallback epoch".
-#          solidity-contracts contracts/staking/Staking.sol:741-745 (vendored
-#          getter; see devnet/local-dpos-smoke/contracts/Staking.json ABI).
-#      So a stable epoch ⇒ getEpochBeaconKey EMPTY while prev_randao stays live.
-#      (If a future change made stable epochs commit the carried key instead, this
-#      assertion would need to flip to "equals the previous epoch's key".)
+#      ── CARRY-FORWARD MODEL (option A — carry-forward on read) ───────────────
+#        - commitEpochBeaconKey(uint64 epoch, bytes) fires ONLY on a committee
+#          CHANGE (the boundary block stages the DKG outcome via beacon_outcomes;
+#          crates/node/src/evm.rs); stable epochs commit nothing.
+#        - getEpochBeaconKey(E) returns the active key = the most-recent committed
+#          key with committed-epoch <= E (Staking.sol _activeBeaconKey), so a
+#          stable epoch E_s > E_new returns E_new's PK (carried forward), and the
+#          deriver/STF read the active key directly.
+#        - Contract change tracked in solidity-contracts task
+#          beacon_key_sparse_epoch_commit.
+#      So a stable epoch ⇒ getEpochBeaconKey == E_new's key, prev_randao stays live.
 #
 # This case runs the PRODUCTION-PATH stack (runtime forge deploy + 6 validators),
-# because that is the harness that can actually rotate the committee. The beacon
-# group key for epoch 0 is committed at genesis-bootstrap on the genesis stack;
-# on the production-path stack the staking cluster is deployed at runtime and the
-# DPoS-activation epoch (relative E0) gets its key committed at the migration
-# boundary the same way smoke-vrf's epoch 0 does.
+# because that is the harness that can actually rotate the committee.
+#
+# KEYLESS-BASELINE NOTE (by design — do NOT "fix" by wiring genesis keys): the
+# production-path `--dpos` override does NOT pass --dpos.beacon-sharing-path /
+# --dpos.beacon-share-path, so the validators run the beacon KEYLESS until the
+# first live-DKG rotation. This is intentional: genesis-bootstrap deals the beacon
+# for --peers=6 aligned to the 6-peer sorted order, but the initial committee is 5
+# — wiring that key would WEDGE the always-active gate on an index mismatch (a
+# member's Participant index in the 5-member BiMap != its 6-deal index). The
+# always-active-from-genesis property is covered by smoke-vrf (genesis stack,
+# --peers=4 == committee=4). HERE we test the LIVE DKG: a committee change runs a
+# fresh ceremony among the stayers, commits PK_E_new on-chain, and the beacon
+# comes ALIVE at E_new (all nodes derive prev_randao by verifying the cert seed vs
+# the committed PK — even v5/full-node, which hold no share). v5 (the joiner) is a
+# cert-follower during E_new-1, so it MISSES E_new's ceremony (not on BEACON_CHANNEL)
+# → it is a beacon-observer at E_new (no share); the 4 stayers (n=5 ⇒ quorum 4)
+# carry the DKG + the seed quorum. So the active-count-growth probe targets a
+# STAYER; node-agreement spans all nodes.
 #
 # PREREQUISITES (host): docker, foundry (forge/cast), jq, a solidity-contracts
 # checkout at $SOLIDITY_CONTRACTS_DIR.
-#
-# ⚠️ HARNESS PREREQUISITE (not yet satisfied on this branch — see commit notes):
-# the production-path `--dpos` override (docker-compose.production-path.dpos.yml)
-# does NOT yet pass `--dpos.beacon-sharing-path` / `--dpos.beacon-share-path`, so
-# the production-path validators currently run the beacon KEYLESS (digest
-# fallback, assurance=false) until the first live-DKG rotation. genesis-bootstrap
-# DOES emit the keys to /runtime/keys/, but two things must be aligned before the
-# baseline (always-active) assertions below can pass: (1) wire those flags into
-# the .dpos.yml override (mirroring docker-compose.dpos.yml), and (2) ensure the
-# genesis Sharing is dealt for the INITIAL committee size (the 6-peer bootstrap
-# vs the 5-member initial committee — a size/index mismatch would wedge the
-# always-active gate, so this needs an iterative docker run to confirm). The
-# ROTATION assertions (3/4) — beacon comes alive at E_new via the live DKG —
-# hold regardless; only the baseline (1) and carry-forward-stays-live (5) depend
-# on the genesis key being wired+aligned.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -98,7 +90,14 @@ forge_l2() { ( cd "$SOLIDITY_CONTRACTS_DIR" && "$@" ); }
 
 # ── log helpers (verbatim from case-vrf.sh) ─────────────────────────────────
 # mixHash (prev_randao) of block $1 as seen by RPC $2 (default $RPC), lowercased.
-mixhash_at() { cast block "$1" --rpc-url "${2:-$RPC}" --json | jq -r .mixHash | tr 'A-F' 'a-f'; }
+# GRACEFUL: a not-yet-synced block makes `cast block` exit non-zero — under
+# set -e + pipefail that would silently kill the script mid-window instead of the
+# intended "node behind" FAIL. Coerce any failure / missing field to "null" so the
+# callers (assert_beacon_window / wait_nodes_have) handle a lagging node cleanly.
+mixhash_at() {
+    { cast block "$1" --rpc-url "${2:-$RPC}" --json 2>/dev/null || echo '{}'; } \
+        | jq -r '.mixHash // "null"' 2>/dev/null | tr 'A-F' 'a-f'
+}
 # mixHash of block $2 (decimal) as seen INSIDE container service $1.
 mixhash_in() {
     local hexn
@@ -121,6 +120,18 @@ is_zero_hash() { [[ "$1" =~ ^0x0+$ ]]; }
 # Count log lines matching $2 in service $1 (0 on no match — never trips set -e).
 log_count() { docker compose logs "$1" 2>/dev/null | grep -c "$2" || true; }
 
+# Head (latest/tip) block number on the local RPC. The ACTIVE_LINE fires at the
+# SPECULATIVE TIP (notarize-time derive under deferred execution), so a growth
+# probe must wait for the HEAD to advance — finalized can catch up to a burst-
+# ahead tip WITHOUT the tip producing new blocks (false "frozen"); see case-vrf.sh
+# 2b for the same idiom.
+head_dec() {
+    curl -s -X POST -H 'Content-Type: application/json' \
+        --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+        "$RPC" 2>/dev/null | jq -r '.result // "0x0"' \
+        | { read -r h; printf '%d' "$h" 2>/dev/null || echo 0; }
+}
+
 # On-chain beacon group key for epoch $1 (lowercased, whitespace-stripped). Empty
 # string when uncommitted (the getter returns 0x → we normalise that to "").
 # Reader: getEpochBeaconKey(uint64)(bytes) — the only on-chain reader (smoke-vrf
@@ -136,9 +147,7 @@ beacon_empty() { [[ -z "$1" ]]; }
 
 # All deriving nodes on the production-path stack: 6 validators + full-node.
 NODES=(validator-0 validator-1 validator-2 validator-3 validator-4 validator-5 full-node)
-VALIDATORS=(validator-0 validator-1 validator-2 validator-3 validator-4 validator-5)
 ACTIVE_LINE="beacon: threshold prev_randao active"
-MIN_BLOCKS=5
 
 # Assert prev_randao is non-zero AND byte-identical across all NODES at every block
 # in [lo..hi] (decimal), AND all distinct across heights (real, varying randomness).
@@ -178,13 +187,35 @@ assert_beacon_window() {
     echo "  [$label] blocks [$lo..$hi]: ${#mixes[@]}/${#mixes[@]} distinct non-zero prev_randao, byte-identical across all ${#NODES[@]} nodes"
 }
 
-# Snapshot each validator's ACTIVE_LINE count into the named assoc array $1.
-snapshot_active_counts() {
-    local -n _dst="$1"
-    local v c
-    for v in "${VALIDATORS[@]}"; do
-        c=$(log_count "$v" "$ACTIVE_LINE"); c=${c:-0}
-        _dst[$v]=$c
+# Wait until EVERY node has block $1 (decimal) available, up to $2 s (default 120).
+# The followers (full-node + a freshly-promoted v5) lag the validators by a few
+# blocks, so a strict cross-node window right at a fresh boundary must wait for
+# them to catch up first — otherwise assert_beacon_window trips "node behind".
+wait_nodes_have() {
+    local block="$1" deadline=$(( SECONDS + ${2:-120} )) svc mh all
+    while true; do
+        all=1
+        for svc in "${NODES[@]}"; do
+            mh=$(mixhash_of "$svc" "$block")
+            if [[ "$mh" == "null" || -z "$mh" ]]; then all=0; break; fi
+        done
+        (( all == 1 )) && return 0
+        if (( SECONDS >= deadline )); then
+            echo "  [wait_nodes_have] timeout at block $block — per-node status:"
+            for svc in "${NODES[@]}"; do
+                mh=$(mixhash_of "$svc" "$block")
+                if [[ "$mh" == "null" || -z "$mh" ]]; then
+                    echo "    $svc: MISSING block $block — last 50 log lines (beacon/epoch/seed/error):"
+                    docker compose logs --tail=400 "$svc" 2>/dev/null \
+                        | grep -iE "beacon|epoch|seed|prev_randao|share|verif|notariz|finaliz|nullif|error|panic|syncing|stuck" \
+                        | tail -50 | sed 's/^/      /' || true
+                else
+                    echo "    $svc: has block $block"
+                fi
+            done
+            return 1
+        fi
+        sleep 2
     done
 }
 
@@ -197,7 +228,7 @@ snapshot_active_counts() {
 # ════════════════════════════════════════════════════════════════════════════
 echo "== phase A: bare sequencer chain =="
 docker compose up --build -d
-pp_wait_converge 120 >/dev/null || { echo "FAIL (smoke-vrf-rotation): bare chain did not converge"; docker compose logs --tail=120; exit 1; }
+pp_wait_converge 240 >/dev/null || { echo "FAIL (smoke-vrf-rotation): bare chain did not converge"; docker compose logs --tail=120; exit 1; }
 echo "  converged plain chain"
 
 DEPLOYER_KEY="$(pp_owner_key 0)"
@@ -277,18 +308,23 @@ done
 echo "  pre-written config matches manifest"
 
 echo "== wait for sequencer (validator-0) to clean-halt at activation block $ACT =="
-wait_finalized_ge "$ACT" 200 || {
+wait_finalized_ge "$ACT" 400 || {
     echo "FAIL (smoke-vrf-rotation): sequencer did not reach activation block $ACT (head=$(finalized_dec))"
     docker compose logs validator-0 --tail=80; exit 1
 }
-pp_wait_converge 90 >/dev/null \
+pp_wait_converge 180 >/dev/null \
     || { echo "FAIL (smoke-vrf-rotation): followers did not align at the activation block"; docker compose logs --tail=120; exit 1; }
 echo "  all nodes aligned at $ACT; proceeding to --dpos cold-restart"
 
-echo "== cold-restart: all validators into unified --dpos =="
+echo "== cold-restart: all validators into unified --dpos (+ full-node into --cert-follow) =="
 ANCHOR=$(check_external 8545 | cut -d'|' -f1)
 export COMPOSE_FILE="docker-compose.production-path.yml:docker-compose.production-path.dpos.yml"
-docker compose up -d --force-recreate "${PP_VALS[@]}" \
+# full-node is recreated too: the .dpos.yml overlay switches it from the
+# pre-DPoS trust-follow block relay to a CERT-FOLLOWER. A relay can't reproduce
+# the beacon boundary block's commitEpochBeaconKey (PK_E lives in the consensus
+# OrderBlock, not the executed block), so it diverges at the rotation; a
+# cert-follower derives + verifies the seed and survives.
+docker compose up -d --force-recreate "${PP_VALS[@]}" full-node \
     || { echo "FAIL (smoke-vrf-rotation): cold-restart into --dpos (a validator exited)"; docker compose logs validator-0 --tail=80; exit 1; }
 pp_wait_converge 180 "$ANCHOR" >/dev/null \
     || { echo "FAIL (smoke-vrf-rotation): DPoS chain did not converge past anchor $ANCHOR"; docker compose logs --tail=200; exit 1; }
@@ -301,43 +337,41 @@ EPOCH_LEN=$(printf '%d' "$(pp_chainconfig_call 'getEpochBlockInterval()(uint32)'
 epoch_first_block() { echo $(( ACT + $1 * EPOCH_LEN )); }
 
 # ════════════════════════════════════════════════════════════════════════════
-# 1) BASELINE — initial committee E0 has a live, verified beacon.
+# 1) BASELINE — initial committee E0, KEYLESS beacon (pre-rotation). The chain is
+#    live and prev_randao is non-zero + node-agreed (digest fallback), but no
+#    beacon key is committed yet and the ACTIVE_LINE has not fired. See the
+#    KEYLESS-BASELINE NOTE in the header for WHY (genesis key not wired on the
+#    production-path stack — by design; the live DKG brings the beacon alive at
+#    the first rotation).
 # ════════════════════════════════════════════════════════════════════════════
-echo "== 1) BASELINE: beacon live at the initial committee =="
+echo "== 1) BASELINE: chain live + KEYLESS beacon at the initial committee =="
 E0=$(pp_current_epoch)
 GOT0=$(pp_committee "$E0")
 EXPECT0=$(for i in 0 1 2 3 4; do pp_owner_addr "$i"; done | tr 'A-F' 'a-f' | sort | paste -sd' ' -)
 [[ "$GOT0" == "$EXPECT0" ]] || { echo "FAIL (smoke-vrf-rotation): committee(E0=$E0) != initial 5 (got [$GOT0] want [$EXPECT0])"; exit 1; }
 echo "  committee(epoch $E0) == initial 5"
 
-# E0's beacon key must be committed (non-empty): the relative-epoch-0 key is
-# committed at the migration boundary (the same on-chain reader smoke-vrf step 4
-# checks for genesis epoch 0).
+# E0's beacon key is EMPTY — the production-path baseline is keyless (no genesis
+# key wired; the live DKG commits a key only at the first committee change). Stays
+# in scope for step 3's rotation comparison (KEY_E0 == "" ⇒ any committed KEY_NEW
+# trivially differs).
 KEY_E0=$(beacon_key "$E0")
-if beacon_empty "$KEY_E0"; then
-    echo "FAIL (smoke-vrf-rotation): getEpochBeaconKey(E0=$E0) is EMPTY — initial committee has no committed PK_E (beacon never bootstrapped)"
-    docker compose logs validator-0 --tail=80; exit 1
+if ! beacon_empty "$KEY_E0"; then
+    echo "FAIL (smoke-vrf-rotation): getEpochBeaconKey(E0=$E0) is NON-empty ($KEY_E0) — the production-path baseline is expected KEYLESS. If the .dpos.yml override now wires a genesis key, flip this baseline back to beacon-active (and the genesis Sharing must be dealt for the 5-member committee, not 6 — see header)."
+    exit 1
 fi
-echo "  getEpochBeaconKey(E0=$E0) committed (non-empty)"
+echo "  getEpochBeaconKey(E0=$E0) is EMPTY (keyless production-path baseline — expected)"
 
-# prev_randao live over a window inside E0 — non-zero, varying, node-agreed.
+# prev_randao live over a window inside E0 — non-zero, varying, node-agreed. On the
+# keyless baseline this is the digest fallback (still deterministic + agreed across
+# nodes), which is all this assertion requires; ACTIVE_LINE is NOT required here.
 fin=$(finalized_dec)
 (( fin > 0 )) || { echo "FAIL (smoke-vrf-rotation): no finalized block"; exit 1; }
 WINDOW=8
 lo=$(( fin > WINDOW ? fin - WINDOW + 1 : 1 ))
 echo "  checking baseline prev_randao window [$lo..$fin]"
 assert_beacon_window "$lo" "$fin" "baseline E$E0"
-
-# Validators logged the assurance=true ACTIVE_LINE (the beacon path against PK_E,
-# not the digest fallback) at least MIN_BLOCKS times.
-for v in "${VALIDATORS[@]}"; do
-    c=$(log_count "$v" "$ACTIVE_LINE"); c=${c:-0}
-    if (( c < MIN_BLOCKS )); then
-        echo "FAIL (smoke-vrf-rotation): $v logged threshold prev_randao only $c times (< $MIN_BLOCKS) — beacon inactive at baseline"
-        docker compose logs --tail=80 "$v"; exit 1
-    fi
-    echo "  $v — threshold prev_randao active x$c (baseline)"
-done
+echo "  baseline beacon keyless (ACTIVE_LINE not required at E0; goes live at E_new)"
 
 # ════════════════════════════════════════════════════════════════════════════
 # 2) TRIGGER — register external validator v5 (governance + delegate). The
@@ -367,7 +401,7 @@ cast send "$STAKING_RT" "delegate(address,uint256)" "$V5_ADDR" "2000000000000000
     --rpc-url "$RPC" --private-key "$V5_KEY" >/dev/null || { echo "FAIL (smoke-vrf-rotation): delegate v5"; exit 1; }
 echo "  v5 registered + activated + delegated"
 
-pp_wait_converge 90 "$REG_FLOOR" >/dev/null \
+pp_wait_converge 180 "$REG_FLOOR" >/dev/null \
     || { echo "FAIL (smoke-vrf-rotation): nodes lost alignment during registration"; docker compose logs validator-5 --tail=80; exit 1; }
 echo "  v5 follower substrate tracked the chain through registration"
 
@@ -377,7 +411,7 @@ echo "  v5 follower substrate tracked the chain through registration"
 # real on-chain committee so a re-tuned EffBal timeline does not silently skew us).
 echo "== wait for the committee to actually change (expect ~E0+3 by EffBal arithmetic) =="
 E_new=""
-_deadline=$(( $(date +%s) + 360 ))
+_deadline=$(( $(date +%s) + 900 ))
 while (( $(date +%s) < _deadline )); do
     E=$(pp_current_epoch)
     # committee[E+1] is committed one boundary ahead; inspect it for v5.
@@ -387,10 +421,30 @@ while (( $(date +%s) < _deadline )); do
     fi
     sleep 2
 done
-[[ -n "$E_new" ]] || { echo "FAIL (smoke-vrf-rotation): committee never changed (v5 never entered an ahead-committed committee within 360s)"; docker compose logs validator-5 --tail=80; exit 1; }
+[[ -n "$E_new" ]] || { echo "FAIL (smoke-vrf-rotation): committee never changed (v5 never entered an ahead-committed committee within 900s)"; docker compose logs validator-5 --tail=80; exit 1; }
 GOT_NEW=$(pp_committee "$E_new")
 [[ "$GOT_NEW" != "$GOT0" ]] || { echo "FAIL (smoke-vrf-rotation): committee(E_new=$E_new) equals E0's — not actually a rotation"; exit 1; }
 echo "  committee changed at E_new=$E_new (E0=$E0): [$GOT_NEW] (was [$GOT0])"
+
+# Stayers = members in BOTH committee[E0] and committee[E_new]: they were on the
+# BEACON_CHANNEL during E_new-1 and so dealt+hold shares from E_new's DKG, logging
+# the ACTIVE_LINE first. v5 (the joiner) was a cert-follower during E_new-1, missed
+# the ceremony, and is a beacon-OBSERVER at E_new (no share) — so the active-count
+# growth probe (step 4) MUST target a stayer, not v5. n=5 ⇒ quorum 4 ⇒ the 4
+# stayers carry the DKG + the seed quorum on their own.
+PROBE_STAYERS=()
+for i in 0 1 2 3 4; do
+    al=$(tr 'A-F' 'a-f' <<<"$(pp_owner_addr "$i")")
+    if [[ " $GOT0 " == *" $al "* && " $GOT_NEW " == *" $al "* ]]; then
+        PROBE_STAYERS+=("validator-$i")
+    fi
+done
+[[ ${#PROBE_STAYERS[@]} -ge 1 ]] || { echo "FAIL (smoke-vrf-rotation): no stayer between committee[E0] and committee[E_new] — no beacon-share holder to probe"; exit 1; }
+# Prefer validator-0 (host-mapped 8545) first if it is a stayer.
+if printf '%s\n' "${PROBE_STAYERS[@]}" | grep -qx validator-0; then
+    PROBE_STAYERS=(validator-0 $(printf '%s\n' "${PROBE_STAYERS[@]}" | grep -vx validator-0))
+fi
+echo "  stayers (DKG-share holders; active-growth probe set): ${PROBE_STAYERS[*]}"
 
 # ════════════════════════════════════════════════════════════════════════════
 # 3) ROTATION — the fresh DKG committed a NEW group key for E_new.
@@ -399,8 +453,19 @@ echo "== 3) ROTATION: getEpochBeaconKey(E_new) non-empty AND != getEpochBeaconKe
 # E_new's key may be committed exactly at its boundary; wait until the chain
 # crosses the E_new boundary so the commitEpochBeaconKey system call has landed.
 E_NEW_BOUNDARY=$(epoch_first_block "$E_new")
-wait_finalized_ge "$E_NEW_BOUNDARY" 240 \
-    || { echo "FAIL (smoke-vrf-rotation): chain did not reach E_new boundary block $E_NEW_BOUNDARY (head=$(finalized_dec))"; docker compose logs validator-0 --tail=80; exit 1; }
+# Generous budget: the 6-node production-path stack runs well below 1 blk/s under
+# the spammer load (and the DKG batch-verify) — the climb from the discovery point
+# (~epoch E_new-1) to the boundary is ~EPOCH_LEN blocks. On timeout, distinguish a
+# STALL (head frozen) from merely-slow by sampling head twice.
+if ! wait_finalized_ge "$E_NEW_BOUNDARY" 900; then
+    h1=$(finalized_dec); sleep 10; h2=$(finalized_dec)
+    echo "FAIL (smoke-vrf-rotation): chain did not reach E_new boundary block $E_NEW_BOUNDARY in 900s (finalized $h1 → $h2 over 10s — $([[ "$h2" -gt "$h1" ]] && echo 'advancing, just slow: raise the budget' || echo 'FROZEN: real stall at/before the rotation'))"
+    echo "  --- live-DKG ceremony lifecycle on the stayers (started/computed?) ---"
+    for s in validator-0 validator-2 validator-3 validator-4; do
+        echo "  [$s]:"; docker compose logs "$s" 2>/dev/null | grep "live DKG" | tail -6 | sed 's/^/    /' || true
+    done
+    docker compose logs validator-0 --tail=80; exit 1
+fi
 KEY_NEW=""
 for _ in $(seq 1 30); do
     KEY_NEW=$(beacon_key "$E_new")
@@ -409,18 +474,23 @@ for _ in $(seq 1 30); do
 done
 if beacon_empty "$KEY_NEW"; then
     echo "FAIL (smoke-vrf-rotation): getEpochBeaconKey(E_new=$E_new) is EMPTY after the committee changed — the fresh DKG did not commit a key (beacon did not re-deal)"
-    echo "  --- 'live DKG' lines on the new committee member v5 ---"
-    docker compose logs validator-5 2>/dev/null | grep "live DKG" | tail -20 || true
-    docker compose logs validator-0 --tail=80
+    echo "  --- 'live DKG' lines on the STAYERS (eval / ceremony started / computed?) ---"
+    for s in "${PROBE_STAYERS[@]}"; do
+        echo "  [$s]:"; docker compose logs "$s" 2>/dev/null | grep "live DKG" | tail -8 | sed 's/^/    /' || true
+    done
+    docker compose logs validator-0 --tail=60
     exit 1
 fi
-if [[ "$KEY_NEW" == "$KEY_E0" ]]; then
-    echo "FAIL (smoke-vrf-rotation): getEpochBeaconKey(E_new=$E_new) == getEpochBeaconKey(E0=$E0) — committee changed but the group key did NOT rotate (stale DKG / carried forward through a change)"
+# With the keyless baseline KEY_E0 is "", so a non-empty KEY_NEW trivially differs;
+# the -n guard documents that the real assertion is the non-empty check above and
+# only fires if a (non-empty) E0 key somehow equals E_new's.
+if [[ -n "$KEY_E0" && "$KEY_NEW" == "$KEY_E0" ]]; then
+    echo "FAIL (smoke-vrf-rotation): getEpochBeaconKey(E_new=$E_new) == getEpochBeaconKey(E0=$E0) — committee changed but the group key did NOT rotate"
     echo "  E0  key: $KEY_E0"
     echo "  Enew key: $KEY_NEW"
     exit 1
 fi
-echo "  getEpochBeaconKey(E_new=$E_new) is non-empty and ROTATED away from E0's key"
+echo "  getEpochBeaconKey(E_new=$E_new) is non-empty (first live DKG) and != E0's key"
 
 # ════════════════════════════════════════════════════════════════════════════
 # 4) RELIVE — the beacon is assurance=true from the FIRST block of E_new: the
@@ -429,21 +499,44 @@ echo "  getEpochBeaconKey(E_new=$E_new) is non-empty and ROTATED away from E0's 
 #    count keeps GROWING (the beacon did not stall across the rotation).
 # ════════════════════════════════════════════════════════════════════════════
 echo "== 4) RELIVE: beacon live from the first block of E_new =="
+# Snapshot ACTIVE_LINE counts on the STAYERS only (the share holders that log
+# assurance=true; v5 is a beacon-observer at E_new and may not log active yet).
 declare -A before_relive
-snapshot_active_counts before_relive
+for v in "${PROBE_STAYERS[@]}"; do
+    c=$(log_count "$v" "$ACTIVE_LINE"); before_relive[$v]=${c:-0}
+done
 
 # Advance a few blocks past the E_new boundary so we have a window strictly inside
 # the new epoch to check (and so the growth check below has room).
 RELIVE_HI=$(( E_NEW_BOUNDARY + 4 ))
-wait_finalized_ge "$RELIVE_HI" 60 \
+wait_finalized_ge "$RELIVE_HI" 180 \
     || { echo "FAIL (smoke-vrf-rotation): chain did not advance past the E_new boundary ($RELIVE_HI) — cannot observe a sustained post-rotation beacon"; exit 1; }
-# Window: the boundary block itself + the next few blocks of E_new.
+# Followers (full-node + freshly-promoted v5) lag the validators at the fresh
+# boundary — wait for ALL nodes to have the window before the strict cross-node
+# check, else assert_beacon_window trips "node behind" on a node still catching up.
+wait_nodes_have "$RELIVE_HI" 180 \
+    || { echo "FAIL (smoke-vrf-rotation): not all nodes reached the relive window block $RELIVE_HI (a follower never caught up)"; exit 1; }
+# Window: the boundary block itself + the next few blocks of E_new — checked across
+# ALL nodes (incl v5 + full-node): they all DERIVE prev_randao by verifying the
+# cert seed vs the committed PK_E_new, so it is byte-identical everywhere even
+# though only the stayers hold shares.
 assert_beacon_window "$E_NEW_BOUNDARY" "$RELIVE_HI" "relive E$E_new"
 
-for v in "${VALIDATORS[@]}"; do
+# Active-count growth must track the HEAD (the speculative tip where ACTIVE_LINE
+# fires), not finalized — same reason as case-vrf.sh 2b.
+head0=$(head_dec)
+hdeadline=$(( SECONDS + 90 ))
+while (( $(head_dec) < head0 + 3 )); do
+    if (( SECONDS >= hdeadline )); then
+        echo "FAIL (smoke-vrf-rotation): head did not advance >= 3 past $head0 within 90s — cannot observe a sustained post-rotation beacon"
+        exit 1
+    fi
+    sleep 1
+done
+for v in "${PROBE_STAYERS[@]}"; do
     after=$(log_count "$v" "$ACTIVE_LINE"); after=${after:-0}
     if (( after <= ${before_relive[$v]} )); then
-        echo "FAIL (smoke-vrf-rotation): $v active-count frozen at $after across the E_new boundary — beacon stalled at the rotation (fell back to digest)"
+        echo "FAIL (smoke-vrf-rotation): $v (stayer/share-holder) active-count frozen at $after across the E_new boundary — beacon did not relive (fell back to digest)"
         docker compose logs --tail=80 "$v"; exit 1
     fi
     echo "  $v — active-count grew ${before_relive[$v]} → $after across the rotation (beacon relive)"
@@ -455,37 +548,60 @@ done
 #    stays live across it (the prior key carried forward in memory).
 #    Assumption: EMPTY (see header). Reader: getEpochBeaconKey(uint64)(bytes).
 # ════════════════════════════════════════════════════════════════════════════
-echo "== 5) CARRY-FORWARD: stable epoch has EMPTY beacon key but a live beacon =="
-# Find a stable epoch: committee(E_s) == committee(E_s - 1), with E_s already
-# fully elapsed (so its window of blocks exists). Scan [1 .. E_new-1] for the
-# first such epoch (e.g. E0+1, which is before any rotation). E_s>=1 so a
-# predecessor committee exists; E_s != E_new (which by construction changed).
+echo "== 5) CARRY-FORWARD: stable epoch carries E_new's key forward (live beacon) =="
+# The stable epoch MUST be AFTER E_new: a stable epoch in [1, E_new) is keyless
+# (digest fallback, not threshold-live) on the production-path baseline, so testing
+# carry-forward there proves nothing about the beacon carrying its GROUP KEY
+# forward. The first stable epoch after the rotation is E_new+1: its committee
+# equals E_new's (no committee change → no own DKG commit). The committee may keep
+# OSCILLATING afterwards (a joiner whose delegated weight does not durably hold its
+# slot is bumped back out a couple of epochs later — a stake-dynamics artifact of
+# the minimal devnet set, NOT a beacon property), so we scan from E_new+1 upward
+# for the FIRST stable epoch rather than assuming the set has permanently settled.
+# The chain must have ENTERED at least epoch E_new+2 so that E_new+1 is excluded
+# from the `e < cur_now` guard below (which skips the current, not-yet-finalized
+# epoch's committee).
+WAIT_BOUNDARY=$(epoch_first_block "$(( E_new + 2 ))")
+wait_finalized_ge "$(( WAIT_BOUNDARY + (EPOCH_LEN > 5 ? 4 : EPOCH_LEN - 1) ))" 900 \
+    || { echo "FAIL (smoke-vrf-rotation): chain did not elapse into epoch $(( E_new + 2 )) (head=$(finalized_dec))"; docker compose logs validator-0 --tail=80; exit 1; }
 E_s=""
 cur_now=$(pp_current_epoch)
-for ((e = 1; e < E_new && e < cur_now; e++)); do
+for ((e = E_new + 1; e < cur_now; e++)); do
     c_e=$(pp_committee "$e")
     c_p=$(pp_committee $((e - 1)))
-    # both must be readable (non-empty) and equal → unchanged committee.
+    # both readable (non-empty) and equal → unchanged committee (carry-forward).
     if [[ -n "$c_e" && "$c_e" == "$c_p" ]]; then
         E_s="$e"; break
     fi
 done
-[[ -n "$E_s" ]] || { echo "FAIL (smoke-vrf-rotation): could not find a stable (unchanged-committee) epoch in [1..$((E_new - 1))] — cannot test carry-forward"; exit 1; }
-echo "  stable epoch E_s=$E_s (committee == committee($((E_s - 1))))"
+[[ -n "$E_s" ]] || { echo "FAIL (smoke-vrf-rotation): no stable (unchanged-committee) epoch found in [$((E_new + 1)), $((cur_now - 1))] — cannot test carry-forward"; exit 1; }
+echo "  stable epoch E_s=$E_s (committee == committee($((E_s - 1)))=E_new), AFTER E_new=$E_new"
 
-# 5a) Its on-chain beacon key is EMPTY (no commit on a no-change epoch).
+# 5a) CARRY-FORWARD ON READ (Staking option A): the stable epoch has NO own
+#     commit (the DKG only re-deals + commits on a committee CHANGE), but
+#     getEpochBeaconKey carries the most-recent committed key forward, so it
+#     returns the SAME key as E_new (non-empty) — NOT empty. This is the on-chain
+#     source of truth for "active PK at epoch E_s".
 KEY_S=$(beacon_key "$E_s")
-if ! beacon_empty "$KEY_S"; then
-    echo "FAIL (smoke-vrf-rotation): getEpochBeaconKey(stable E_s=$E_s) is NON-empty ($KEY_S) — a key was committed for an unchanged committee, violating the carry-forward (no-commit) assumption (see header). If the contract now commits the carried key on stable epochs, flip this assertion to '== getEpochBeaconKey(E_s-1)'."
+if beacon_empty "$KEY_S"; then
+    echo "FAIL (smoke-vrf-rotation): getEpochBeaconKey(stable E_s=$E_s) is EMPTY — carry-forward-on-read should return the carried key (E_new's PK). Contract regression (option A) or no commit landed."
     exit 1
 fi
-echo "  getEpochBeaconKey(stable E_s=$E_s) is EMPTY (no on-chain commit — key carried forward)"
+if [[ "$KEY_S" != "$KEY_NEW" ]]; then
+    echo "FAIL (smoke-vrf-rotation): getEpochBeaconKey(stable E_s=$E_s)=$KEY_S != carried key from E_new=$KEY_NEW — carry-forward returned the wrong key"
+    exit 1
+fi
+echo "  getEpochBeaconKey(stable E_s=$E_s) carries E_new's key forward (== $KEY_NEW)"
 
 # 5b) The beacon stays LIVE across E_s: prev_randao non-zero + node-agreed over a
 #     window inside E_s (the carried-forward key still verifies the seed).
 S_LO=$(epoch_first_block "$E_s")
 S_HI=$(( S_LO + (EPOCH_LEN > 5 ? 4 : EPOCH_LEN - 1) ))
 echo "  checking live-across-stable prev_randao window [$S_LO..$S_HI]"
+wait_finalized_ge "$S_HI" 300 \
+    || { echo "FAIL (smoke-vrf-rotation): chain did not reach the carry-forward window block $S_HI"; exit 1; }
+wait_nodes_have "$S_HI" 180 \
+    || { echo "FAIL (smoke-vrf-rotation): not all nodes reached the carry-forward window block $S_HI"; exit 1; }
 assert_beacon_window "$S_LO" "$S_HI" "carry-forward E$E_s"
 
 # ── assert the background tx load kept finalizing throughout ─────────────────
@@ -496,7 +612,7 @@ AFTER=$(finalized_dec)
 echo "  chain still finalizing under tx load ($BEFORE → $AFTER)"
 
 echo "OK (smoke-vrf-rotation): live per-epoch DKG beacon ROTATED across a committee change — \
-baseline beacon live at initial committee E$E0 (getEpochBeaconKey non-empty, prev_randao non-zero+varying+node-agreed, assurance log active); \
-registering v5 changed the committee at E$E_new; getEpochBeaconKey(E$E_new) is non-empty and != getEpochBeaconKey(E$E0) (fresh DKG re-dealt); \
-beacon relived from the first block of E$E_new (prev_randao non-zero+agreed at the boundary, ACTIVE_LINE counts still growing); \
-stable epoch E$E_s carried the key forward (getEpochBeaconKey EMPTY, no commit) while prev_randao stayed live across it"
+baseline chain live at initial committee E$E0 with KEYLESS beacon (getEpochBeaconKey EMPTY, prev_randao non-zero+varying+node-agreed via digest fallback, ACTIVE_LINE not yet firing); \
+registering v5 changed the committee at E$E_new; getEpochBeaconKey(E$E_new) non-empty (first live DKG) and != getEpochBeaconKey(E$E0); \
+beacon CAME ALIVE from the first block of E$E_new (prev_randao threshold-verified, byte-identical across all ${#NODES[@]} nodes incl v5+full-node, ACTIVE_LINE growing on stayers ${PROBE_STAYERS[*]}); \
+stable epoch E$E_s > E_new carried E_new's key forward (getEpochBeaconKey == E_new, carry-forward on read) while the threshold beacon stayed live"

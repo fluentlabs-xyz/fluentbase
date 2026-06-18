@@ -385,6 +385,15 @@ pub enum ModeEvent {
     /// was rotated out; the supervisor demotes the node to the follower
     /// plane (the just-built verifier engine is aborted with the stack).
     RotatedOut { epoch: u64 },
+    /// The validator IS in `committee[epoch]` but holds NO local beacon
+    /// polynomial for it (a joiner that missed the epoch's DKG: it has only the
+    /// on-chain group key `PK_epoch`, not the full `Sharing`). With just the
+    /// group key it can verify ASSEMBLED certs but NOT individual seed partials,
+    /// so it cannot run as a participating Simplex member (it would reject every
+    /// seeded peer vote and block its peers). The supervisor keeps it on the
+    /// cert-follow plane for this epoch — it rejoins as a full member once a
+    /// future reshare lands its share (see `dpos_beacon_share_reshare`).
+    NoBeaconPolynomial { epoch: u64 },
 }
 
 /// Cold-start kind resolved from durable state. Pure function of the inputs
@@ -1073,6 +1082,34 @@ impl DposLayer {
             })
         };
 
+        // Authoritative on-chain group-key resolver for the per-epoch VERIFY path
+        // (soft-enter catch-up + a committee member that missed the epoch's DKG):
+        // reads getEpochBeaconKey(E) at the current finalized hash. The polynomial
+        // for SIGNING stays node-local (`beacon_resolver`); only the group key —
+        // which IS on-chain — is sourced trustlessly here.
+        let beacon_verify_pk: crate::epoch_manager::BeaconVerifyPk = {
+            let reader = RethStakingStateReader::new(
+                provider.clone(),
+                evm_config.clone(),
+                staking_config.clone(),
+            );
+            let provider = provider.clone();
+            Arc::new(move |epoch: u64| {
+                // Read at the LATEST EXECUTED block, NOT finalized. Unlike the
+                // committee (committed one epoch AHEAD, visible at finalized),
+                // PK_epoch is committed AT the epoch's FIRST block — at the
+                // entry boundary the finalized tier lags that commit by a few
+                // blocks (deferred execution), so a finalized read returns the
+                // stale prior key and a fresh joiner would build a wrong verify
+                // scheme. The executed head has the epoch's first block by the
+                // time the node enters the epoch; the committed key is immutable,
+                // so any state ≥ that block yields the same PK_epoch.
+                let head = provider.last_block_number().ok()?;
+                let hash = provider.block_hash(head).ok().flatten()?;
+                reader.epoch_beacon_key(epoch, hash).ok().flatten()
+            })
+        };
+
         let outer = OuterBuilder {
             me: me.clone(),
             blocker: handles.oracle.clone(),
@@ -1083,6 +1120,7 @@ impl DposLayer {
             signer_keypair: Some(bls_keypair),
             mode_events,
             beacon_resolver,
+            beacon_verify_pk,
             beacon_verify: Some(beacon_verify),
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,

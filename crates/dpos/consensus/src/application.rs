@@ -186,10 +186,22 @@ impl BeaconVerify {
         if epoch == 0 || height != self.epoch_start(epoch) {
             return false;
         }
-        match ((self.committee_for)(epoch), (self.committee_for)(epoch - 1)) {
-            (Some(cur), Some(prev)) => cur != prev,
-            _ => false,
-        }
+        let cur = (self.committee_for)(epoch);
+        let prev = (self.committee_for)(epoch - 1);
+        let change = matches!((&cur, &prev), (Some(c), Some(p)) if c != p);
+        // Diagnostic (fires only for a first-block-of-epoch — once per boundary per
+        // propose/verify): shows whether committee[E]/[E-1] are readable at the
+        // finalized hash and the change decision. Pinpoints a boundary block being
+        // treated as a normal block because the committee wasn't yet visible.
+        tracing::info!(
+            height,
+            epoch,
+            cur_readable = cur.is_some(),
+            prev_readable = prev.is_some(),
+            change,
+            "beacon: is_change_epoch_first_block (boundary eval)"
+        );
+        change
     }
 }
 
@@ -371,11 +383,19 @@ where
         let beacon_outcome = match self.beacon.as_ref() {
             Some(bv) if bv.is_change_epoch_first_block(height, bv.epoch_of(height)) => {
                 match (bv.beacon_for_epoch)(bv.epoch_of(height)) {
-                    Some((out, _share)) => Some(Bytes::from(encode_outcome(&out))),
-                    None => {
-                        tracing::debug!(
+                    Some((out, _share)) => {
+                        tracing::info!(
                             height,
-                            "change-epoch boundary but DKG outcome not ready; skipping propose"
+                            epoch = bv.epoch_of(height),
+                            "beacon: proposing change-epoch boundary with asserted PK_E"
+                        );
+                        Some(Bytes::from(encode_outcome(&out)))
+                    }
+                    None => {
+                        tracing::info!(
+                            height,
+                            epoch = bv.epoch_of(height),
+                            "beacon: change-epoch boundary but DKG outcome not ready; skipping propose"
                         );
                         return None;
                     }

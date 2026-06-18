@@ -94,7 +94,7 @@ mod abi {
                 bytes32 peerPubkey
             ) external;
             function commitEpochCommittee(address[] committee) external;
-            function commitEpochBeaconKey(bytes groupPubKey) external;
+            function commitEpochBeaconKey(uint64 epoch, bytes groupPubKey) external;
         }
         interface IStakingPool {
             function initialize(address initialOwner) external;
@@ -599,6 +599,7 @@ fn commit_initial_beacon_key(ctx: &mut EvmTestingContext, keys: &KeySet) -> eyre
     use commonware_codec::Encode as _;
     let group_pub_key = keys.beacon_sharing.public().encode().as_ref().to_vec();
     let input = abi::IStaking::commitEpochBeaconKeyCall {
+        epoch: 0,
         groupPubKey: group_pub_key.into(),
     }
     .abi_encode();

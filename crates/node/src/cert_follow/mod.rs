@@ -187,30 +187,40 @@ where
     // seeded cert and derive the `order.digest()` fallback (divergence).
     let deriver_base =
         crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
-    let (deriver, beacon) = match cfg.beacon_sharing_path.as_ref().map(parse_beacon_sharing) {
+    // The deriver MUST always carry the per-epoch on-chain PK_E resolver so a
+    // follower derives the SAME threshold `prev_randao` as the committee once the
+    // beacon is live — even on a keyless / live-DKG-rotation chain with no
+    // genesis sharing. The resolver reads getEpochBeaconKey(E) and returns
+    // Ok(None) for an uncommitted / keyless epoch (seed then absent → gated
+    // fallback, matching the committee). Gating it on `beacon_sharing_path` left a
+    // keyless follower deriving the digest fallback while the committee derived
+    // threshold → state-root DIVERGENCE at the rotated epoch's first block. The
+    // `beacon` verifier material (full polynomial) stays gated: without a genesis
+    // sharing the follower reads PK_E on-chain via `scheme_at` to verify certs.
+    let seed_namespace = fluentbase_consensus::beacon::seed::seed_namespace(
+        &fluentbase_bls::fluent_namespace(chain_id),
+    );
+    let beacon_reader = fluentbase_staking_reader::reader::RethStakingStateReader::new(
+        node.provider.clone(),
+        node.evm_config.clone(),
+        staking_config.clone(),
+    );
+    let (genesis_pk, beacon) = match cfg.beacon_sharing_path.as_ref().map(parse_beacon_sharing) {
         Some(sharing) => {
             let sharing = sharing?;
-            let seed_namespace = fluentbase_consensus::beacon::seed::seed_namespace(
-                &fluentbase_bls::fluent_namespace(chain_id),
-            );
-            // Per-epoch resolver reads PK_E from L2 state; deriver applies the
-            // genesis-PK_0 fallback only for an uncommitted epoch — a read error
-            // propagates, never silently substitutes.
             let genesis_pk = *sharing.public();
-            let beacon_reader = fluentbase_staking_reader::reader::RethStakingStateReader::new(
-                node.provider.clone(),
-                node.evm_config.clone(),
-                staking_config.clone(),
-            );
-            let deriver = deriver_base.with_beacon_resolver(
-                seed_namespace.clone(),
-                crate::derive::beacon_pk_resolver(beacon_reader),
+            (
                 Some(genesis_pk),
-            );
-            (deriver, Some((sharing, None, seed_namespace)))
+                Some((sharing, None, seed_namespace.clone())),
+            )
         }
-        None => (deriver_base, None),
+        None => (None, None),
     };
+    let deriver = deriver_base.with_beacon_resolver(
+        seed_namespace.clone(),
+        crate::derive::beacon_pk_resolver(beacon_reader),
+        genesis_pk,
+    );
 
     let follow_cfg = CertFollowConfig {
         staking_config,

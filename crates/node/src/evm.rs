@@ -705,8 +705,11 @@ alloy_sol_types::sol! {
     // Randomness-beacon group key (PK_epoch), kept in sync with
     // `solidity-contracts/contracts/staking/Staking.sol`. Unlike the committee
     // it is NOT re-derived on-chain — the executor commits the DKG outcome's
-    // group key handed in via the `beacon_outcomes` side-channel.
-    function commitEpochBeaconKey(bytes calldata groupPubKey) external;
+    // group key handed in via the `beacon_outcomes` side-channel. The explicit
+    // `epoch` is the epoch the key is FOR (= the current epoch of the boundary
+    // block); the contract stores it sparsely (carry-forward on read), so the
+    // sequential-cursor desync of the old no-arg form no longer applies.
+    function commitEpochBeaconKey(uint64 epoch, bytes calldata groupPubKey) external;
 
     struct EpochConsensusKeys {
         bytes blsPubkey;
@@ -1096,8 +1099,12 @@ where
             // `interval == 0` is unreachable on a live chain: ChainConfig requires
             // epochBlockInterval > 0 on both init and every setter, so the
             // `else { 0 }` guard is purely defensive.
+            // Shared activation-relative epoch math (the single definition in
+            // `staking-reader`) so this ahead-commit horizon can never drift
+            // from the consensus/cold-start epocher. The `else { 0 }` keeps the
+            // defensive interval==0 guard (`epoch_of_block` divides, see above).
             let current_epoch = if interval > 0 {
-                block_number.saturating_sub(activation) / interval as u64
+                fluentbase_staking_reader::reader::epoch_of_block(block_number, interval, activation)
             } else {
                 0
             };
@@ -1171,7 +1178,10 @@ where
             // for a fallback epoch is a valid no-assurance commit, NOT skipped).
             let block_height: u64 = self.inner.evm().block().number().saturating_to();
             if let Some((_, group_key)) = self.beacon_outcomes.remove(&block_height) {
+                // `current_epoch` (computed above for the committee loop) is the
+                // epoch of THIS boundary block = the epoch the DKG key is for.
                 let calldata = commitEpochBeaconKeyCall {
+                    epoch: current_epoch,
                     groupPubKey: group_key,
                 }
                 .abi_encode();

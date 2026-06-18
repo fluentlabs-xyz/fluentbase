@@ -286,6 +286,10 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// store + carry-forward + genesis fallback) so every per-epoch consensus
     /// scheme carries the seed partial under that epoch's `PK_epoch`.
     pub beacon_resolver: epoch_manager::BeaconResolver,
+    /// Authoritative on-chain group-key resolver (`getEpochBeaconKey`) for the
+    /// per-epoch VERIFY path (soft-enter catch-up + a member that missed the
+    /// epoch's DKG). See [`epoch_manager::BeaconVerifyPk`].
+    pub beacon_verify_pk: epoch_manager::BeaconVerifyPk,
     /// Live-DKG verify/propose context for `FluentApp` (the boundary "C" gate +
     /// the proposer's `beacon_outcome` assertion). `None` ⇒ no beacon gating.
     pub beacon_verify: Option<BeaconVerify>,
@@ -705,6 +709,7 @@ where
                 timeouts: self.timeouts,
                 mailbox_size: self.mailbox_size,
                 beacon_resolver: self.beacon_resolver,
+                beacon_verify_pk: self.beacon_verify_pk,
                 marshal_mailbox: marshal_mailbox.clone(),
                 slasher_mailbox,
                 spec_exec_mailbox,

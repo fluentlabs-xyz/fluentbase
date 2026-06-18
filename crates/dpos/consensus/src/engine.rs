@@ -31,9 +31,10 @@ use commonware_runtime::{
     buffer::paged::CacheRef, BufferPooler, Clock, ContextCell, Handle, Metrics, Spawner, Storage,
 };
 use fluentbase_bls::{
+    beacon::{seed_namespace, GroupPublic},
     fluent_namespace,
     keys::ValidatorBlsKeypair,
-    scheme::{build_signer, build_verifier, BeaconKey},
+    scheme::{build_signer, build_verifier, build_verifier_group_key, BeaconKey},
     Scheme as BlsScheme,
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
@@ -90,8 +91,17 @@ pub struct EpochEngineConfig<B, XC, A> {
     pub register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync>,
     /// Per-epoch threshold beacon key (`PK_epoch` polynomial + this node's
     /// share + seed namespace), threaded so the combined scheme emits/verifies
-    /// the seed partial. `None` ⇒ a fallback (pure-multisig) epoch.
+    /// the seed partial. `None` ⇒ a fallback (pure-multisig) epoch. This is the
+    /// node-LOCAL DKG material — used to SIGN only when its group key matches
+    /// the authoritative on-chain key below.
     pub beacon: Option<BeaconKey>,
+    /// Authoritative on-chain group key `PK_epoch` (`getEpochBeaconKey`), resolved
+    /// for this epoch. When the local [`Self::beacon`] does NOT match it (a fresh
+    /// joiner that missed this epoch's DKG ceremony) or the node is not a committee
+    /// member, the scheme VERIFIES assembled certs against this key (a group-key
+    /// verifier — `verify_certificate` needs only the group key). `None` ⇒ a
+    /// pre-beacon (pure-multisig) chain. See [`crate::epoch_manager::BeaconVerifyPk`].
+    pub beacon_verify_pk: Option<GroupPublic>,
 }
 
 /// Per-epoch consensus engine. Created by
@@ -148,13 +158,73 @@ where
         // this epoch's committee. Fall through to verifier mode + emit a
         // metric so the operator can see the rotation event, instead of
         // panicking and killing the per-epoch task.
-        let scheme: BlsScheme = cfg
-            .signer_keypair
-            .as_ref()
-            .and_then(|keypair| {
-                build_signer(&namespace, bimap.clone(), keypair, cfg.beacon.clone())
-            })
-            .unwrap_or_else(|| {
+        //
+        // A SIGNER uses its OWN local DKG material (the full polynomial + share it
+        // computed) — never gated on the on-chain key, since it signs partials
+        // under its own share. The on-chain group key is only for nodes that have
+        // NO local material (a fresh joiner that missed the ceremony, or a
+        // non-member): they verify assembled certs against it.
+        // A member that holds the local polynomial (`Sharing`) is a SIGNER even
+        // if its `Share` is `None` (a joiner that missed E's DKG): the combined
+        // `sign()` self-suppresses the seed-bearing Notarize/Finalize (it returns
+        // `None` when `share == None`, combined_scheme.rs:280) while still
+        // producing a valid Nullify — so a shareless member stays out of the
+        // notarization/finalization (beacon) quorum but participates in
+        // view-changes. Per the joiner-share decision (2026-06-18, model B; see
+        // the `dpos_beacon_share_reshare` brief). Only a member with NO local
+        // polynomial in a beacon-active epoch falls back to verify-only against
+        // the authoritative on-chain key (it cannot self-suppress, so signing
+        // would emit a rejected seedless vote).
+        let can_sign_locally = match (&cfg.beacon, &cfg.beacon_verify_pk) {
+            // Have the local polynomial → signer (self-suppresses seed votes when
+            // it holds no share; always able to Nullify).
+            (Some(_), _) => true,
+            // Pure-multisig epoch (no beacon anywhere) → a normal signer.
+            (None, None) => true,
+            // Beacon-active epoch, no local polynomial → verify-only via the on-chain key.
+            (None, Some(_)) => false,
+        };
+        // `build_signer` returns `None` exactly when the keypair is not in the
+        // committee BiMap (genuinely rotated out) — distinct from a member whose
+        // local key merely mismatches.
+        let member_signer = cfg.signer_keypair.as_ref().and_then(|keypair| {
+            build_signer(&namespace, bimap.clone(), keypair, cfg.beacon.clone())
+        });
+        let verify_only = |bimap| match cfg.beacon_verify_pk {
+            Some(pk) => build_verifier_group_key(&namespace, bimap, pk, seed_namespace(&namespace)),
+            None => build_verifier(&namespace, bimap, cfg.beacon.clone()),
+        };
+        let scheme: BlsScheme = match member_signer {
+            Some(signer) if can_sign_locally => signer,
+            Some(_) => {
+                // Member with NO local beacon polynomial in a beacon-active epoch
+                // (a joiner that missed the epoch's DKG: it holds only the on-chain
+                // group key PK_E, not the full Sharing). A group-key-only scheme can
+                // verify ASSEMBLED certs but NOT individual seed partials, so it
+                // cannot run as a participating Simplex member — it would reject
+                // every seeded peer vote (`verify_attestation` has no polynomial to
+                // check the partial against) and block its peers into a wedge. Signal
+                // the unified supervisor to keep this node on the cert-follow plane
+                // for the epoch (it follows assembled certs via the group key, and
+                // rejoins as a full member once a reshare lands its share — see
+                // dpos_beacon_share_reshare). The verify-only engine built below is
+                // aborted with the stack on demotion; legacy --dpos (no supervisor
+                // listening) keeps the silent verifier.
+                tracing::warn!(
+                    epoch = ?cfg.epoch,
+                    "committee member without a local beacon polynomial — staying on cert-follow plane (no partial-verify without the Sharing)"
+                );
+                if cfg.signer_keypair.is_some() {
+                    if let Some(tx) = &cfg.mode_events {
+                        let _ = tx.send(crate::dpos::ModeEvent::NoBeaconPolynomial {
+                            epoch: cfg.epoch.get(),
+                        });
+                    }
+                }
+                verify_only(bimap)
+            }
+            None => {
+                // Genuinely not a committee member: rotated out.
                 if cfg.signer_keypair.is_some() {
                     metrics::counter!("epoch_engine_rotated_out_total").increment(1);
                     tracing::warn!(
@@ -170,8 +240,9 @@ where
                         });
                     }
                 }
-                build_verifier(&namespace, bimap, cfg.beacon.clone())
-            });
+                verify_only(bimap)
+            }
+        };
 
         (cfg.register_scheme)(cfg.epoch, scheme.clone());
 

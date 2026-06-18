@@ -105,3 +105,31 @@ services:
     <<: *dpos-validator-cmd
     environment:
       IDX: "5"
+
+  # Full node as a CERT-FOLLOWER (not the pre-DPoS trust-follow block relay).
+  # A trust-follow relay re-executes each block via new_payload, but the beacon
+  # boundary block's `commitEpochBeaconKey` system call needs PK_E from the
+  # consensus-layer `OrderBlock.beacon_outcome` (a deriver side-channel a relay
+  # never populates) — so a relay diverges (skips the commit → wrong state root)
+  # at every committee-change boundary. A cert-follower pulls the OrderBlock,
+  # runs the deriver (which stages PK_E) and verifies the seed against the
+  # in-block/on-chain key — the only follower mode that survives a beacon
+  # rotation. (Production implication: followers on a beacon-DPoS chain must
+  # cert-follow, or PK_E must be embedded in the executed block.)
+  full-node:
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --cert-follow \
+          --sequencer-url=ws://172.20.0.10:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --storage.v2=false \
+          --rpc.eth-proof-window=50000 \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --datadir=/runtime/reth-data/full-node

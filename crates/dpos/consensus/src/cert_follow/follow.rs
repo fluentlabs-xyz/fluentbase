@@ -23,6 +23,10 @@ use crate::{
         derive_with_visibility_retry, BeaconEngineLike, DerivedBlock as _, DerivedBlockBuilder,
         ExecutedChain,
     },
+    beacon::{
+        outcome::{group_public_key, parse_outcome},
+        seed::GroupPublic,
+    },
     digest::Digest,
     order_block::{result_final_height, result_target, ResultTarget, K},
 };
@@ -78,8 +82,23 @@ pub(crate) struct UpstreamDataFault(pub String);
 /// last-executed block (`cursor.evm_hash`), which is at/after the commit
 /// point for both the current epoch and the next (ahead-commit pipeline:
 /// epoch E+1 is committed at the first block of epoch E).
+///
+/// `in_block_pk` is the beacon group key `PK_E` asserted in the epoch's
+/// boundary `OrderBlock.beacon_outcome`. UNLIKE the committee, `PK_E` is
+/// committed on-chain only WHEN the boundary block executes — so at the boundary
+/// block `getEpochBeaconKey(E)` read at `cursor.evm_hash` (the parent state)
+/// still returns the prior key, and the boundary cert's seed (recovered under
+/// `PK_E`) would fail to verify. The source uses `in_block_pk` when present
+/// (the same in-block key the deriver recovers for `prev_randao`); a mid-epoch
+/// entry (jumped past the boundary, no `beacon_outcome`) falls back to the
+/// on-chain read, which by then sees the committed `PK_E`.
 pub(crate) trait CommitteeSource: Send + Sync + 'static {
-    fn scheme_at(&self, epoch: u64, at_hash: B256) -> eyre::Result<BlsScheme>;
+    fn scheme_at(
+        &self,
+        epoch: u64,
+        at_hash: B256,
+        in_block_pk: Option<GroupPublic>,
+    ) -> eyre::Result<BlsScheme>;
 }
 
 /// EL-sync seam shared by the cold-start phase and the loop's jump rule:
@@ -250,9 +269,18 @@ where
             ))
             .into());
         }
-        // 3. BLS multisig against the epoch committee.
+        // 3. BLS multisig against the epoch committee (+ threshold seed vs PK_E).
         let epoch = uf.finalization.proposal.round.epoch().get();
-        self.rotate_scheme(epoch)?;
+        // At a committee-change boundary block, PK_E is asserted in the block's
+        // own beacon_outcome BEFORE it is committed on-chain — recover it so the
+        // boundary cert's seed verifies (mirrors the deriver's in_block_pk).
+        let in_block_pk = uf
+            .block
+            .beacon_outcome
+            .as_ref()
+            .and_then(|b| parse_outcome(b.as_ref()).ok())
+            .map(|o| *group_public_key(&o));
+        self.rotate_scheme(epoch, in_block_pk)?;
         let scheme = &self.schemes[&epoch];
         if !uf.finalization.verify(&mut self.ctx, scheme, &Sequential) {
             return Err(UpstreamDataFault(format!(
@@ -353,7 +381,7 @@ where
     /// Boundary-inline scheme rotation: no EpochTransition, no re-poke. The
     /// cert's epoch must be the one `cursor + 1` falls into (a cert from any
     /// other epoch cannot be valid for this height).
-    fn rotate_scheme(&mut self, epoch: u64) -> eyre::Result<()> {
+    fn rotate_scheme(&mut self, epoch: u64, in_block_pk: Option<GroupPublic>) -> eyre::Result<()> {
         if self.schemes.contains_key(&epoch) {
             return Ok(());
         }
@@ -371,7 +399,7 @@ where
         }
         let scheme = self
             .committees
-            .scheme_at(epoch, self.cursor.evm_hash)
+            .scheme_at(epoch, self.cursor.evm_hash, in_block_pk)
             .wrap_err_with(|| format!("building verifier for epoch {epoch}"))?;
         info!(epoch, "cert-follower registered epoch verifier");
         self.schemes.insert(epoch, scheme);
@@ -715,12 +743,20 @@ mod tests {
 
     struct CannedCommittees {
         verifier: BlsScheme,
-        reads: Arc<Mutex<Vec<(u64, B256)>>>,
+        reads: Arc<Mutex<Vec<(u64, B256, bool)>>>,
     }
 
     impl CommitteeSource for CannedCommittees {
-        fn scheme_at(&self, epoch: u64, at_hash: B256) -> eyre::Result<BlsScheme> {
-            self.reads.lock().unwrap().push((epoch, at_hash));
+        fn scheme_at(
+            &self,
+            epoch: u64,
+            at_hash: B256,
+            in_block_pk: Option<GroupPublic>,
+        ) -> eyre::Result<BlsScheme> {
+            self.reads
+                .lock()
+                .unwrap()
+                .push((epoch, at_hash, in_block_pk.is_some()));
             Ok(self.verifier.clone())
         }
     }
@@ -746,7 +782,7 @@ mod tests {
         chain: FakeChain,
         beacon: FakeBeacon,
         upstream: FakeUpstream,
-        scheme_reads: Arc<Mutex<Vec<(u64, B256)>>>,
+        scheme_reads: Arc<Mutex<Vec<(u64, B256, bool)>>>,
         el_sync_calls: Arc<Mutex<u32>>,
         finalized_tx: mpsc::Sender<UpstreamFinalized>,
         verified_rx: mpsc::UnboundedReceiver<UpstreamFinalized>,

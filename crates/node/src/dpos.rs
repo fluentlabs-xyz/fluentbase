@@ -547,31 +547,37 @@ where
     // combined scheme emits the seed partial. Absent → gated fallback.
     let deriver_base =
         crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
-    let (deriver, beacon_launch) = match load_beacon(cfg)? {
+    // A genesis beacon (devnet bootstrap) supplies PK_0 as the fallback verify
+    // key and the consensus-side launch share. It is ABSENT for a live-DKG
+    // rotation chain (keyless baseline → beacon comes alive only once the live
+    // DKG commits PK_E on-chain). Either way the deriver MUST get the per-epoch
+    // on-chain resolver so it can verify a cert-recovered seed against the
+    // committed PK_E — the resolver reads getEpochBeaconKey(E) from L2 state and
+    // returns Ok(None) for an uncommitted / keyless epoch (then the seed is
+    // simply absent → gated fallback). Gating the resolver on the genesis beacon
+    // left a live-DKG chain with `beacon = None`, so every seeded notarization
+    // fell to the digest fallback (beacon never relived).
+    let (genesis_pk, beacon_launch) = match load_beacon(cfg)? {
         Some((share, sharing)) => {
-            let namespace = fluentbase_consensus::beacon::seed::seed_namespace(
-                &fluentbase_bls::fluent_namespace(chain_id),
-            );
-            // Per-epoch resolver reads PK_E from L2 state for the block's epoch;
-            // the deriver applies the genesis-PK_0 fallback only for an uncommitted
-            // epoch (read Ok(None)) — a read error propagates, never silently
-            // substitutes (would fork prev_randao).
             let genesis_pk = *sharing.public();
-            let beacon_reader = fluentbase_staking_reader::reader::RethStakingStateReader::new(
-                node.provider.clone(),
-                node.evm_config.clone(),
-                staking_config.clone(),
-            );
-            let deriver = deriver_base.with_beacon_resolver(
-                namespace,
-                crate::derive::beacon_pk_resolver(beacon_reader),
-                Some(genesis_pk),
-            );
             let launch = fluentbase_consensus::dpos::BeaconLaunch { share, sharing };
-            (deriver, Some(launch))
+            (Some(genesis_pk), Some(launch))
         }
-        None => (deriver_base, None),
+        None => (None, None),
     };
+    let namespace = fluentbase_consensus::beacon::seed::seed_namespace(
+        &fluentbase_bls::fluent_namespace(chain_id),
+    );
+    let beacon_reader = fluentbase_staking_reader::reader::RethStakingStateReader::new(
+        node.provider.clone(),
+        node.evm_config.clone(),
+        staking_config.clone(),
+    );
+    let deriver = deriver_base.with_beacon_resolver(
+        namespace,
+        crate::derive::beacon_pk_resolver(beacon_reader),
+        genesis_pk,
+    );
     let executed = ProviderExecutedChain(node.provider.clone());
     let assembler = Arc::new(PoolAssembler::new(node.pool.clone(), executed.clone()));
     // The protocol fee manager — same recipient the pre-deferred attrs

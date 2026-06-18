@@ -35,7 +35,7 @@ use commonware_utils::vec::NonEmptyVec;
 use fluentbase_bls::{
     fluent_namespace,
     keys::ValidatorBlsKeypair,
-    scheme::{build_verifier, BeaconKey},
+    scheme::{build_verifier, build_verifier_group_key, BeaconKey},
     Scheme as BlsScheme,
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
@@ -49,8 +49,22 @@ use tracing::{info, warn};
 
 /// Resolves the per-epoch [`BeaconKey`] (live-DKG store + carry-forward + genesis
 /// fallback). `None` ⇒ a fallback (pure-multisig) epoch. Built at the launch site
-/// over the `CeremonyStore`; see `dpos.rs::launch`.
+/// over the `CeremonyStore`; see `dpos.rs::launch`. This is the LOCAL DKG material
+/// (full polynomial + this node's share) — required to SIGN seed partials and
+/// verify individual partials. The polynomial is NOT on-chain, so this stays
+/// node-local.
 pub type BeaconResolver = Arc<dyn Fn(u64) -> Option<BeaconKey> + Send + Sync>;
+
+/// Resolves the AUTHORITATIVE per-epoch beacon group key `PK_epoch` from on-chain
+/// `getEpochBeaconKey(E)` (read at the latest executed head — PK_epoch is committed
+/// at the epoch's first block, which the finalized tier lags at the entry boundary).
+/// `None` ⇒ the epoch
+/// has no committed key (pre-beacon / pure-multisig chain). Used for VERIFICATION:
+/// `verify_certificate` needs only the group key, which IS on-chain — so a node
+/// verifying an epoch's assembled certs (a soft-enter catch-up verifier, or a
+/// committee member that missed that epoch's DKG ceremony) reads the trustless
+/// on-chain key rather than a stale local carry-forward. Built in `dpos.rs::launch`.
+pub type BeaconVerifyPk = Arc<dyn Fn(u64) -> Option<crate::beacon::seed::GroupPublic> + Send + Sync>;
 
 // Finished engines are aborted at the transition (tempo's exit-at-transition
 // pattern) — there is no concurrent active-epochs window. A finished engine
@@ -137,6 +151,12 @@ pub struct Config<B, XC, A> {
     /// bootstrap fallback. `None` ⇒ a fallback (pure-multisig) epoch. Called per
     /// epoch in `enter()` for the live engine + the soft-enter verifier.
     pub beacon_resolver: BeaconResolver,
+    /// Authoritative on-chain group key `PK_epoch` resolver (`getEpochBeaconKey`).
+    /// Used for VERIFICATION: a soft-enter catch-up verifier, and a committee
+    /// member that lacks matching local DKG material (a fresh joiner that missed
+    /// the epoch's ceremony), verify assembled certs against this trustless key
+    /// instead of a stale local carry-forward. See [`BeaconVerifyPk`].
+    pub beacon_verify_pk: BeaconVerifyPk,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
     pub marshal_mailbox: MarshalMailbox<BlsScheme, Standard<OrderBlock>>,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
@@ -429,14 +449,29 @@ where
         // below it) full-enters below.
         if !self.is_live_epoch(epoch) {
             match epoch_committee_from_snapshot(&snap) {
-                Ok(committee) => (self.cfg.register_scheme)(
-                    epoch,
-                    build_verifier(
-                        &fluent_namespace(self.cfg.chain_id),
-                        committee.bimap,
-                        (self.cfg.beacon_resolver)(epoch.get()),
-                    ),
-                ),
+                Ok(committee) => {
+                    let namespace = fluent_namespace(self.cfg.chain_id);
+                    // Soft-enter is verify-only (no engine, no signing). Verify the
+                    // epoch's assembled certs against the AUTHORITATIVE on-chain
+                    // group key — a catch-up node never ran this (possibly rotated)
+                    // epoch's DKG, so a local carry-forward key would be wrong. The
+                    // epoch is historical here, so getEpochBeaconKey(E) is already
+                    // committed. `None` (pre-beacon chain) keeps the local fallback.
+                    let scheme = match (self.cfg.beacon_verify_pk)(epoch.get()) {
+                        Some(pk) => build_verifier_group_key(
+                            &namespace,
+                            committee.bimap,
+                            pk,
+                            crate::beacon::seed::seed_namespace(&namespace),
+                        ),
+                        None => build_verifier(
+                            &namespace,
+                            committee.bimap,
+                            (self.cfg.beacon_resolver)(epoch.get()),
+                        ),
+                    };
+                    (self.cfg.register_scheme)(epoch, scheme);
+                }
                 Err(e) => warn!(
                     ?epoch,
                     ?e,
@@ -463,6 +498,7 @@ where
                 mailbox_size: self.cfg.mailbox_size,
                 register_scheme: self.cfg.register_scheme.clone(),
                 beacon: (self.cfg.beacon_resolver)(epoch.get()),
+                beacon_verify_pk: (self.cfg.beacon_verify_pk)(epoch.get()),
             },
             self.cfg.marshal_mailbox.clone(),
             self.cfg.slasher_mailbox.clone(),

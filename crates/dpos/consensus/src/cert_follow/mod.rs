@@ -27,7 +27,12 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
 use commonware_runtime::{tokio::Context, Clock as _, Handle, Metrics as _, Spawner as _};
 use eyre::{ensure, eyre, WrapErr as _};
-use fluentbase_bls::{fluent_namespace, scheme::build_verifier, Scheme as BlsScheme};
+use fluentbase_bls::{
+    beacon::seed_namespace as beacon_seed_namespace,
+    fluent_namespace,
+    scheme::{build_verifier, build_verifier_group_key},
+    Scheme as BlsScheme,
+};
 use fluentbase_staking_reader::{
     reader::{epoch_of_block, StakingReaderConfig},
     RethStakingStateReader,
@@ -115,7 +120,12 @@ where
         StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
     EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
 {
-    fn scheme_at(&self, epoch: u64, at_hash: B256) -> eyre::Result<BlsScheme> {
+    fn scheme_at(
+        &self,
+        epoch: u64,
+        at_hash: B256,
+        in_block_pk: Option<fluentbase_bls::beacon::GroupPublic>,
+    ) -> eyre::Result<BlsScheme> {
         let snap = self.reader.epoch_committee_snapshot(epoch, at_hash)?;
         ensure!(
             !snap.validators.is_empty(),
@@ -123,11 +133,41 @@ where
         );
         let committee = epoch_committee_from_snapshot(&snap)
             .map_err(|e| eyre!("epoch {epoch} committee has non-unique participants: {e:?}"))?;
-        Ok(build_verifier(
-            &self.namespace,
-            committee.bimap,
-            self.beacon.clone(),
-        ))
+        // Per-epoch beacon key PK_E. PREFER the boundary block's own asserted
+        // key (in_block_pk): at a committee-change boundary, commitEpochBeaconKey(E)
+        // executes WITH the boundary block, so PK_E is not yet on-chain at
+        // at_hash (the parent state) — the boundary cert's seed (under PK_E)
+        // would fail against the carried-forward key. Otherwise read the
+        // committed key from getEpochBeaconKey(E) at the committee's hash
+        // (carry-forward on read covers stable epochs; a mid-epoch entry past
+        // the boundary sees the committed PK_E). `None` from both (pre-beacon /
+        // pure-multisig chain) falls back to the static genesis beacon, or
+        // pure-multisig when that too is absent.
+        if let Some(pk) = in_block_pk {
+            return Ok(build_verifier_group_key(
+                &self.namespace,
+                committee.bimap,
+                pk,
+                beacon_seed_namespace(&self.namespace),
+            ));
+        }
+        match self
+            .reader
+            .epoch_beacon_key(epoch, at_hash)
+            .map_err(|e| eyre!("epoch {epoch} beacon key read at {at_hash}: {e:?}"))?
+        {
+            Some(pk) => Ok(build_verifier_group_key(
+                &self.namespace,
+                committee.bimap,
+                pk,
+                beacon_seed_namespace(&self.namespace),
+            )),
+            None => Ok(build_verifier(
+                &self.namespace,
+                committee.bimap,
+                self.beacon.clone(),
+            )),
+        }
     }
 }
 
@@ -430,7 +470,7 @@ impl CertFollowLayer {
             beacon: cfg.beacon.clone(),
         };
         let initial_scheme = committees
-            .scheme_at(checkpoint_epoch, checkpoint_hash)
+            .scheme_at(checkpoint_epoch, checkpoint_hash, None)
             .wrap_err_with(|| {
                 format!(
                     "checkpoint epoch {checkpoint_epoch} verifier (read at block \

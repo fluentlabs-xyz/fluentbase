@@ -27,7 +27,7 @@ use fluentbase_consensus::{
     FollowExit, ModeEvent,
 };
 use fluentbase_staking_reader::reader::{
-    epoch_of_block, RethStakingStateReader, ValidatorSetSnapshot,
+    epoch_of_block, is_epoch_boundary, RethStakingStateReader, ValidatorSetSnapshot,
 };
 use reth_chainspec::EthChainSpec as _;
 use reth_ethereum_engine_primitives::EthEngineTypes;
@@ -259,23 +259,27 @@ where
                     node.provider.clone(),
                     node.evm_config.clone(),
                 );
-                let (deriver, follow_beacon) = match &beacon_sharing {
-                    Some(sharing) => {
-                        // Per-epoch resolver reads PK_E from L2 state; deriver applies
-                        // genesis-PK_0 fallback only for an uncommitted epoch — a read
-                        // error propagates, never silently substitutes.
-                        let genesis_pk = *sharing.public();
-                        (
-                            deriver_base.with_beacon_resolver(
-                                beacon_seed_namespace.clone(),
-                                crate::derive::beacon_pk_resolver(reader.clone()),
-                                Some(genesis_pk),
-                            ),
-                            Some((sharing.clone(), None, beacon_seed_namespace.clone())),
-                        )
-                    }
-                    None => (deriver_base, None),
-                };
+                // The follower deriver MUST always carry the per-epoch on-chain
+                // PK_E resolver so it derives the SAME threshold `prev_randao` as
+                // the committee once the beacon is live — even on a keyless /
+                // live-DKG-rotation chain with no genesis beacon. The resolver
+                // reads getEpochBeaconKey(E) and returns Ok(None) for an
+                // uncommitted / keyless epoch (then the seed is absent → gated
+                // fallback, matching the committee). Gating it on `beacon_sharing`
+                // left a keyless follower deriving the digest fallback while the
+                // committee derived threshold → state-root DIVERGENCE at the
+                // rotated epoch's first block. `follow_beacon` (the cert
+                // seed-verify scheme material) stays gated: the follower reads
+                // PK_E on-chain via `scheme_at` when no genesis sharing is present.
+                let genesis_pk = beacon_sharing.as_ref().map(|s| *s.public());
+                let follow_beacon = beacon_sharing
+                    .as_ref()
+                    .map(|s| (s.clone(), None, beacon_seed_namespace.clone()));
+                let deriver = deriver_base.with_beacon_resolver(
+                    beacon_seed_namespace.clone(),
+                    crate::derive::beacon_pk_resolver(reader.clone()),
+                    genesis_pk,
+                );
                 let executed = crate::ordering::ProviderExecutedChain(node.provider.clone());
                 let follow_cfg = CertFollowConfig {
                     staking_config: staking_config.clone(),
@@ -342,7 +346,7 @@ where
                 let interval = reader.epoch_block_interval(evm_hash)?;
                 eyre::ensure!(interval > 0, "epoch_block_interval must be > 0");
                 let anchor = height.saturating_sub(fluentbase_consensus::K);
-                let anchor_is_boundary = (anchor + 1).saturating_sub(act) % interval as u64 == 0;
+                let anchor_is_boundary = is_epoch_boundary(anchor, interval, act);
                 if !anchor_is_boundary {
                     info!(
                         height,
@@ -396,6 +400,14 @@ where
                 match ev {
                     Some(ModeEvent::RotatedOut { epoch }) => {
                         info!(epoch, "rotated out of committee — demoting to follower phase");
+                        true
+                    }
+                    Some(ModeEvent::NoBeaconPolynomial { epoch }) => {
+                        info!(
+                            epoch,
+                            "in committee but no local beacon polynomial (missed DKG) — \
+                             staying on cert-follow plane until a reshare lands the share"
+                        );
                         true
                     }
                     None => {

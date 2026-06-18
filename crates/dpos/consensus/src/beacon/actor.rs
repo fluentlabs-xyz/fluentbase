@@ -74,8 +74,9 @@ pub struct DkgActor<Se, Re> {
     ceremonies: BTreeMap<u64, DkgCeremony>,
     /// Target epochs whose dealing phase has been sealed.
     sealed: BTreeSet<u64>,
-    /// Highest epoch we have already reacted to (for boundary detection).
-    last_epoch: u64,
+    /// Target epochs whose committee first-became-readable has been logged
+    /// (one-shot diagnostic; see `maybe_start`).
+    eval_logged: BTreeSet<u64>,
 }
 
 impl<Se, Re> DkgActor<Se, Re>
@@ -105,7 +106,7 @@ where
             epoch_interval,
             ceremonies: BTreeMap::new(),
             sealed: BTreeSet::new(),
-            last_epoch: 0,
+            eval_logged: BTreeSet::new(),
         }
     }
 
@@ -122,6 +123,11 @@ where
     /// `heights` carries every finalized block height (tapped from the boundary
     /// hook); the actor derives epoch transitions + the seal deadline from it.
     pub async fn run(mut self, mut heights: tokio::sync::mpsc::Receiver<u64>, mut rng: impl CryptoRngCore) {
+        tracing::info!(
+            activation = self.dpos_activation,
+            interval = self.epoch_interval,
+            "live DKG: actor started"
+        );
         loop {
             tokio::select! {
                 maybe_h = heights.recv() => match maybe_h {
@@ -193,14 +199,17 @@ where
             }
         }
 
-        // 3. Detect epoch transitions (a height may cross more than one boundary):
-        //    start the NEXT epoch's ceremony on entering a new epoch.
+        // 3. Start the NEXT epoch's DKG ceremony. Retried on EVERY tick (not just
+        //    once at the epoch transition): committee[E+1] is committed on-chain
+        //    sometime DURING epoch E, which can land AFTER the actor (driven by
+        //    lagging finalized heights) first enters E — a single-shot check at the
+        //    transition would see the committee still unchanged, carry forward, and
+        //    NEVER deal, so the E+1 boundary block wedges (no PK_{E+1}). maybe_start
+        //    is idempotent (no-op once the ceremony is in flight, already computed,
+        //    the committee is unchanged, or this node is not a member), so retrying
+        //    until committee[E+1] is visible+changed is safe.
         let now = self.epoch_of(height);
-        while self.last_epoch < now {
-            let entered = self.last_epoch + 1;
-            self.maybe_start(entered + 1, rng, &mut to_send);
-            self.last_epoch = entered;
-        }
+        self.maybe_start(now + 1, rng, &mut to_send);
 
         self.broadcast_all(to_send).await;
     }
@@ -209,11 +218,37 @@ where
     /// committee actually changes; an unchanged committee carries the key forward
     /// (no ceremony — Phase 5 reuses the prior epoch's `BeaconKey`).
     fn maybe_start(&mut self, target: u64, rng: &mut impl CryptoRngCore, out: &mut Vec<Outgoing>) {
+        // Skip if a ceremony for this epoch is in flight OR already computed (the
+        // per-tick retry would otherwise re-deal an epoch whose ceremony finished
+        // and was removed from `ceremonies`).
         if target == 0 || self.ceremonies.contains_key(&target) {
             return;
         }
-        let (Some(cur), Some(next)) = ((self.committee_for)(target - 1), (self.committee_for)(target))
-        else {
+        if self
+            .store
+            .read()
+            .ok()
+            .is_some_and(|s| s.contains_key(&target))
+        {
+            return;
+        }
+        let cur = (self.committee_for)(target - 1);
+        let next = (self.committee_for)(target);
+        let me = self.me_key.public_key();
+        // One-shot diagnostic: log when committee[target] FIRST becomes readable,
+        // with the deal decision inputs — pinpoints start vs carry-forward vs
+        // not-member vs committee-never-readable without per-tick spam.
+        if next.is_some() && self.eval_logged.insert(target) {
+            tracing::info!(
+                target,
+                cur_n = cur.as_ref().map(|c| c.len()),
+                next_n = next.as_ref().map(|c| c.len()),
+                change = (cur.as_ref() != next.as_ref()),
+                me_member = next.as_ref().is_some_and(|n| n.iter().any(|p| *p == me)),
+                "live DKG: committee[target] readable — maybe_start eval"
+            );
+        }
+        let (Some(cur), Some(next)) = (cur, next) else {
             return;
         };
         if next == cur {
@@ -221,7 +256,6 @@ where
         }
         // Model B: only a MEMBER of committee[target] deals to itself. A node that
         // is in committee[target-1] but not committee[target] does not deal.
-        let me = self.me_key.public_key();
         if !next.iter().any(|p| *p == me) {
             return;
         }

@@ -277,13 +277,21 @@ where
         slot_number: None,
     };
 
-    // Producer: a boundary block carries the agreed DKG outcome (PK_E). Stash it
-    // for the executor's `commitEpochBeaconKey` system call, keyed by the EVM
-    // block number being derived (= parent + 1, the executor's read key). Inside
+    // Producer: a boundary block carries the agreed DKG outcome. Stash the
+    // 96-byte group public key `PK_E` for the executor's `commitEpochBeaconKey`
+    // system call, keyed by the EVM block number being derived (= parent + 1,
+    // the executor's read key). Commit ONLY the group key (`Output::public()`
+    // encoded) — what `getEpochBeaconKey`/the reader's 96-byte `decode_beacon_key`
+    // expects — NOT the full ~745-byte encoded outcome; this matches the genesis
+    // bootstrap's `commitEpochBeaconKey(0, sharing.public().encode())`. Inside
     // the deriver this covers every path (spec-exec + finalized + retry); the
     // value comes ONLY from the agreed OrderBlock field, never a node-local key.
     if let Some(outcome) = &order.beacon_outcome {
-        evm_config.set_beacon_outcome(parent_sealed.number + 1, outcome.clone());
+        use commonware_codec::Encode as _;
+        let parsed = parse_outcome(outcome.as_ref())
+            .map_err(|e| eyre::eyre!("parse beacon_outcome for on-chain commit: {e:?}"))?;
+        let group_key = group_public_key(&parsed).encode().as_ref().to_vec();
+        evm_config.set_beacon_outcome(parent_sealed.number + 1, group_key.into());
     }
 
     let mut builder = evm_config
