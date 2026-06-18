@@ -167,18 +167,12 @@ where
         //    block is proposed/verified — so the verify-path C gate can read the
         //    share. `ready` probes non-destructively (Logs clone); `finalize` then
         //    consumes the fulfilled ceremony.
-        let sealed_epochs: Vec<u64> = self
+        let ready: Vec<u64> = self
             .ceremonies
-            .keys()
-            .copied()
-            .filter(|e| self.sealed.contains(e))
+            .iter()
+            .filter(|(e, c)| self.sealed.contains(*e) && c.ready(rng))
+            .map(|(e, _)| *e)
             .collect();
-        let mut ready: Vec<u64> = Vec::new();
-        for e in sealed_epochs {
-            if self.ceremonies.get(&e).is_some_and(|c| c.ready(rng)) {
-                ready.push(e);
-            }
-        }
         for e in ready {
             let Some(c) = self.ceremonies.remove(&e) else {
                 continue;
