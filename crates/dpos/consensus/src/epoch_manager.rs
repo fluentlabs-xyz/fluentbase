@@ -296,27 +296,15 @@ where
                     }
                 }
                 r = &mut mux_vote_handle => {
-                    match r {
-                        Ok(Ok(())) => warn!("vote Muxer exited cleanly (unexpected)"),
-                        Ok(Err(e)) => tracing::error!(error = ?e, "vote Muxer p2p receiver failed"),
-                        Err(e) => tracing::error!(error = ?e, "vote Muxer task failed"),
-                    }
+                    log_mux_exit("vote", r);
                     break;
                 }
                 r = &mut mux_cert_handle => {
-                    match r {
-                        Ok(Ok(())) => warn!("cert Muxer exited cleanly (unexpected)"),
-                        Ok(Err(e)) => tracing::error!(error = ?e, "cert Muxer p2p receiver failed"),
-                        Err(e) => tracing::error!(error = ?e, "cert Muxer task failed"),
-                    }
+                    log_mux_exit("cert", r);
                     break;
                 }
                 r = &mut mux_res_handle => {
-                    match r {
-                        Ok(Ok(())) => warn!("resolver Muxer exited cleanly (unexpected)"),
-                        Ok(Err(e)) => tracing::error!(error = ?e, "resolver Muxer p2p receiver failed"),
-                        Err(e) => tracing::error!(error = ?e, "resolver Muxer task failed"),
-                    }
+                    log_mux_exit("resolver", r);
                     break;
                 }
             }
@@ -341,7 +329,24 @@ where
     /// blocks (boundary_hook → on_finalized → enter), registering the next scheme
     /// so the following hint reaches one epoch further — until we catch up.
     async fn handle_msg_for_unregistered_epoch(&mut self, their_epoch: Epoch, from: PublicKey) {
-        self.corroborate_observed_epoch(their_epoch, from.clone());
+        // Advance the live frontier ONLY when f+1 DISTINCT peers have named the
+        // same future epoch on the (unauthenticated) vote backup channel. With
+        // ≤ f Byzantine validators, f+1 distinct reporters always include ≥1
+        // honest one, who only votes at the true live epoch — so a single (or up
+        // to f colluding) Byzantine peer(s) cannot inflate the frontier and force
+        // permanent soft-enter. Until the first `enter` sets the committee size,
+        // corroboration is disabled (the cold-start epoch full-enters from the
+        // verified boundary trigger, so an early backup message must not gate it
+        // off). `corroborate_frontier` is a free fn so this logic is unit-testable
+        // without an `Actor`.
+        corroborate_frontier(
+            &mut self.observed_reporters,
+            &mut self.sender_pins,
+            &mut self.highest_observed_epoch,
+            self.committee_size,
+            their_epoch,
+            from.clone(),
+        );
         if their_epoch <= self.highest_entered_epoch {
             return;
         }
@@ -360,25 +365,6 @@ where
             .await;
     }
 
-    /// Advance the live frontier ONLY when f+1 DISTINCT peers have named the same
-    /// future epoch on the (unauthenticated) vote backup channel. With ≤ f
-    /// Byzantine validators, f+1 distinct reporters always include ≥1 honest one,
-    /// who only votes at the true live epoch — so a single (or up to f colluding)
-    /// Byzantine peer(s) cannot inflate the frontier and force permanent
-    /// soft-enter. Until the first `enter` sets the committee size, corroboration
-    /// is disabled (the cold-start epoch full-enters from the verified boundary
-    /// trigger, so an early backup message must not be able to gate it off).
-    fn corroborate_observed_epoch(&mut self, their_epoch: Epoch, from: PublicKey) {
-        corroborate_frontier(
-            &mut self.observed_reporters,
-            &mut self.sender_pins,
-            &mut self.highest_observed_epoch,
-            self.committee_size,
-            their_epoch,
-            from,
-        );
-    }
-
     /// True when `epoch` is at or past the highest epoch observed on the backup
     /// channel — i.e. the live frontier, not a historical catch-up epoch. Below
     /// the frontier we only soft-enter (register the scheme, NO participating
@@ -393,7 +379,7 @@ where
     /// the frontier (votes arrive on a registered subchannel, not backup, so
     /// `highest_observed_epoch` stops rising) the frontier epoch full-enters.
     /// The frontier itself is corroboration-gated — see
-    /// [`Self::corroborate_observed_epoch`].
+    /// [`corroborate_frontier`].
     fn is_live_epoch(&self, epoch: Epoch) -> bool {
         epoch >= self.highest_observed_epoch
     }
@@ -579,6 +565,20 @@ where
                 info!(?e, "epoch exited (retention window)");
             }
         }
+    }
+}
+
+/// Log a Muxer task's exit (a clean exit is unexpected; any error is a fault).
+/// Shared by the three identical vote/cert/resolver `select!` arms. Generic over
+/// the Muxer error `E` and the join error `J` so it needs no concrete type names.
+fn log_mux_exit<E: core::fmt::Debug, J: core::fmt::Debug>(
+    label: &str,
+    r: Result<Result<(), E>, J>,
+) {
+    match r {
+        Ok(Ok(())) => warn!("{label} Muxer exited cleanly (unexpected)"),
+        Ok(Err(e)) => tracing::error!(error = ?e, "{label} Muxer p2p receiver failed"),
+        Err(e) => tracing::error!(error = ?e, "{label} Muxer task failed"),
     }
 }
 
