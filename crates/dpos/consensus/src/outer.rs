@@ -165,8 +165,7 @@ impl CertProvider for EpochSchemeProvider {
     type Scheme = BlsScheme;
 
     fn scoped(&self, scope: Epoch) -> Option<Arc<BlsScheme>> {
-        let got = self.map.lock().unwrap().get(&scope).cloned();
-        got
+        self.map.lock().unwrap().get(&scope).cloned()
     }
 }
 

@@ -64,16 +64,9 @@ pub struct Notarized {
     pub seed: Option<crate::beacon::types::Seed>,
 }
 
+#[derive(Clone)]
 pub struct Mailbox {
     tx: mpsc::UnboundedSender<Message>,
-}
-
-impl Clone for Mailbox {
-    fn clone(&self) -> Self {
-        Self {
-            tx: self.tx.clone(),
-        }
-    }
 }
 
 impl Mailbox {
@@ -108,30 +101,28 @@ struct LastCanonicalized {
 }
 
 impl LastCanonicalized {
-    fn update_finalized(self, height: Height, hash: B256) -> Self {
-        let mut this = self;
-        if height > this.finalized_height {
-            this.finalized_height = height;
-            this.forkchoice.safe_block_hash = hash;
-            this.forkchoice.finalized_block_hash = hash;
+    fn update_finalized(mut self, height: Height, hash: B256) -> Self {
+        if height > self.finalized_height {
+            self.finalized_height = height;
+            self.forkchoice.safe_block_hash = hash;
+            self.forkchoice.finalized_block_hash = hash;
         }
-        if height >= this.head_height {
-            this.head_height = height;
-            this.forkchoice.head_block_hash = hash;
+        if height >= self.head_height {
+            self.head_height = height;
+            self.forkchoice.head_block_hash = hash;
         }
-        this
+        self
     }
 
-    fn update_head(self, height: Height, hash: B256) -> Self {
-        let mut this = self;
+    fn update_head(mut self, height: Height, hash: B256) -> Self {
         // A lower-height head on the finalized fork (a legitimate reorg of an
         // unfinalized tail — e.g. the migration cold-start where reth's head
         // sits on an orphaned tail) MUST be allowed to roll the head back.
-        if height > this.finalized_height || hash == this.forkchoice.finalized_block_hash {
-            this.head_height = height;
-            this.forkchoice.head_block_hash = hash;
+        if height > self.finalized_height || hash == self.forkchoice.finalized_block_hash {
+            self.head_height = height;
+            self.forkchoice.head_block_hash = hash;
         }
-        this
+        self
     }
 }
 
@@ -694,7 +685,10 @@ where
         // speculative lead at `height+1..` must survive). Otherwise (first
         // execution, or the speculation was a sibling that got nullified)
         // derive the finalized block and reorg the head onto it.
-        let correctly_speculated = self.spec_executed.get(&height) == Some(&order.digest())
+        let correctly_speculated = self
+            .spec_executed
+            .get(&height)
+            .is_some_and(|d| *d == order.digest())
             && self.executed.executed_hash(height).is_some();
 
         let derived_hash = if correctly_speculated {
@@ -830,10 +824,11 @@ where
         );
         // Up-front hint burst over the whole gap range (marshal skips heights it
         // already holds) so the certs land in parallel rather than one per retry.
-        for h in first_missing..=target {
-            if let Some(targets) = (self.peers_for_finalization)() {
+        // The committee is fixed within a single walk, so resolve the targets once.
+        if let Some(targets) = (self.peers_for_finalization)() {
+            for h in first_missing..=target {
                 self.marshal
-                    .hint_finalization(Height::new(h), targets)
+                    .hint_finalization(Height::new(h), targets.clone())
                     .await;
             }
         }
@@ -1457,7 +1452,7 @@ mod tests {
     // with the fallback), the peers are hinted, and once the cert lands (here:
     // after the hint) the block derives — in strict order behind any earlier
     // deferred block. Exercises the non-blocking deferred-slot + self-driven
-    // timer (critic 🔴/🟠).
+    // timer.
     #[test]
     fn catch_up_defers_then_derives_in_order_when_cert_lands() {
         let runtime = deterministic::Runner::default();
