@@ -44,7 +44,7 @@ impl ConsensusTimeouts {
     ///                   geo-prod calibration: their leader = pace + 750ms);
     ///   certification = leader + verify exec-gate budget
     ///                   (`VERIFY_EXEC_BUDGET`: worst-case derive+execute of
-    ///                   one block, ~500ms today with growth headroom to 1s)
+    ///                   one block, 1000ms)
     ///                   + 450ms vote collection;
     ///   timeout_retry = 1000ms nullify re-broadcast cadence;
     ///   fetch         = 1000ms resolver fetch (worst-case 4 MB block).

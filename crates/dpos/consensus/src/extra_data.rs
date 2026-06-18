@@ -96,24 +96,6 @@ pub fn decode_simplex_attestation(buf: &[u8]) -> Result<Option<DecodedAttestatio
     }))
 }
 
-/// Bitmap-only encoder used by the validator for the byte-equal comparison
-/// against the bitmap segment of `extra_data`. Mirrors the bitmap layout
-/// in `encode_simplex_attestation` exactly.
-pub fn encode_bitmap_only(signers: &Signers) -> Vec<u8> {
-    let n = signers.len();
-    debug_assert!(
-        n <= u8::MAX as usize,
-        "committee_size exceeds u8::MAX; widen wire format to u16 BE if this fires"
-    );
-    let bitmap_bytes = n.div_ceil(8);
-    let mut bitmap = vec![0u8; bitmap_bytes];
-    for p in signers.iter() {
-        let idx = p.get() as usize;
-        bitmap[idx >> 3] |= 1 << (idx & 7);
-    }
-    bitmap
-}
-
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum DecodeError {
     #[error("extra_data too short for attestation header (need ≥ 17 bytes)")]
@@ -223,21 +205,6 @@ mod tests {
         // LSB of byte 1 (signer 8).
         assert_eq!(buf[17], 0x01);
         assert_eq!(buf[18], 0x01);
-    }
-
-    #[test]
-    fn encode_bitmap_only_matches_attestation_suffix() {
-        let signers = Signers::from(
-            8,
-            [
-                Participant::new(0),
-                Participant::new(3),
-                Participant::new(7),
-            ],
-        );
-        let buf = encode_simplex_attestation(round(1, 2), &signers);
-        let bitmap = encode_bitmap_only(&signers);
-        assert_eq!(&buf[17..], bitmap.as_slice());
     }
 
     /// Hex-pinned fixture cross-checked with the Solidity decoder. If this

@@ -26,10 +26,10 @@ pub const K: u64 = 3;
 pub const MAX_ORDER_BLOCK_SIZE: usize = 4 * 1024 * 1024;
 
 /// Tx-list byte budget for ordering assembly: [`MAX_ORDER_BLOCK_SIZE`] minus
-/// a fixed 4 KiB allowance for the non-tx fields (parent/height/result,
-/// extra_data — committee-size-bounded bitmap, codec framing), so an
+/// the [`MAX_EXTRA_DATA_SIZE`] allowance for the non-tx fields (parent/height/
+/// result, extra_data — committee-size-bounded bitmap, codec framing), so an
 /// assembled artifact always fits its own decode cap.
-pub const TX_BYTE_BUDGET: usize = MAX_ORDER_BLOCK_SIZE - 4 * 1024;
+pub const TX_BYTE_BUDGET: usize = MAX_ORDER_BLOCK_SIZE - MAX_EXTRA_DATA_SIZE;
 
 /// Decode cap for `extra_data` (the simplex liveness attestation: round +
 /// u8-capped committee bitmap ≪ 1 KiB; cap matches the TX_BYTE_BUDGET
@@ -78,10 +78,6 @@ impl OrderBlock {
     /// keccak256 over the canonical codec encoding — the consensus identity.
     pub fn digest(&self) -> Digest {
         Digest(keccak256(self.encode()))
-    }
-
-    pub fn parent_digest(&self) -> Digest {
-        self.parent
     }
 }
 
@@ -376,17 +372,24 @@ mod tests {
         }
     }
 
+    /// Hand-encode the fixed OrderBlock header prefix (everything before
+    /// extra_data) — mirrors the `Write` impl so the oversize-decode tests
+    /// below share one copy of the byte layout instead of three.
+    fn write_header_prefix(buf: &mut Vec<u8>, b: &OrderBlock) {
+        b.parent.write(buf);
+        b.height.write(buf);
+        b.timestamp.write(buf);
+        buf.extend_from_slice(b.fee_recipient.as_slice());
+        b.gas_limit.write(buf);
+        buf.extend_from_slice(b.result.as_slice());
+    }
+
     #[test]
     fn read_rejects_oversize_beacon_outcome() {
         // Hand-encode a block with the outcome flag set and an oversize length prefix.
         let mut buf = Vec::new();
         let b = sample_order_block();
-        b.parent.write(&mut buf);
-        b.height.write(&mut buf);
-        b.timestamp.write(&mut buf);
-        buf.extend_from_slice(b.fee_recipient.as_slice());
-        b.gas_limit.write(&mut buf);
-        buf.extend_from_slice(b.result.as_slice());
+        write_header_prefix(&mut buf, &b);
         (b.extra_data.len() as u32).write(&mut buf);
         buf.extend_from_slice(&b.extra_data);
         {
@@ -405,12 +408,7 @@ mod tests {
     fn read_rejects_oversize_extra_data() {
         let mut buf = Vec::new();
         let b = sample_order_block();
-        b.parent.write(&mut buf);
-        b.height.write(&mut buf);
-        b.timestamp.write(&mut buf);
-        buf.extend_from_slice(b.fee_recipient.as_slice());
-        b.gas_limit.write(&mut buf);
-        buf.extend_from_slice(b.result.as_slice());
+        write_header_prefix(&mut buf, &b);
         ((MAX_EXTRA_DATA_SIZE + 1) as u32).write(&mut buf);
         buf.resize(buf.len() + MAX_EXTRA_DATA_SIZE + 1, 0);
 
@@ -422,12 +420,7 @@ mod tests {
     fn read_rejects_oversize_tx_list() {
         let b = sample_order_block();
         let mut buf = Vec::new();
-        b.parent.write(&mut buf);
-        b.height.write(&mut buf);
-        b.timestamp.write(&mut buf);
-        buf.extend_from_slice(b.fee_recipient.as_slice());
-        b.gas_limit.write(&mut buf);
-        buf.extend_from_slice(b.result.as_slice());
+        write_header_prefix(&mut buf, &b);
         0u32.write(&mut buf);
         let oversize = MAX_ORDER_BLOCK_SIZE + 1;
         alloy_rlp::Header {
