@@ -10,7 +10,7 @@
 //! considered and rejected: rogue-key safety already comes from PoP, and
 //! address binding adds no security here.
 
-use commonware_codec::{DecodeExt, Encode};
+use commonware_codec::{DecodeExt, EncodeFixed};
 use commonware_cryptography::bls12381::primitives::ops;
 
 use crate::{
@@ -23,11 +23,9 @@ use crate::{
 /// Returns the 48-byte compressed G1 signature.
 pub fn sign_pop(keypair: &ValidatorBlsKeypair, namespace: &[u8]) -> [u8; SIGNATURE_BYTES] {
     let sig: BlsSignature = ops::sign_proof_of_possession::<Variant>(keypair.secret(), namespace);
-    let bytes = sig.encode();
-    bytes
-        .as_ref()
-        .try_into()
-        .expect("MinSig signature is exactly 48 bytes")
+    // `BlsSignature::SIZE == SIGNATURE_BYTES` for MinSig (G1 compressed);
+    // `encode_fixed` asserts the length matches.
+    sig.encode_fixed::<SIGNATURE_BYTES>()
 }
 
 /// Verify a Proof-of-Possession.

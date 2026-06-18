@@ -305,7 +305,7 @@ mod tests {
             .values()
             .map(|s| sign_seed_partial(s, &seed_ns, round))
             .collect();
-        let sig = recover_seed(outputs[0].public(), &partials).expect("recover");
+        let sig = recover_seed::<N3f1>(outputs[0].public(), &partials).expect("recover");
         assert!(
             verify_seed(pk0, &seed_ns, round, &sig),
             "seed from the event-driven DKG shares must verify against PK_E"

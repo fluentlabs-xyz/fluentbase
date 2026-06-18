@@ -1,4 +1,4 @@
-use commonware_codec::Encode;
+use commonware_codec::EncodeFixed;
 use commonware_cryptography::bls12381::primitives::{group::Private, ops};
 use rand_core::CryptoRngCore;
 
@@ -41,12 +41,9 @@ impl ValidatorBlsKeypair {
 
     /// Compressed BLS public key (G2, 96 B for MinSig).
     pub fn public_bytes(&self) -> [u8; PUBKEY_BYTES] {
-        let bytes = self.public.encode();
-        // `BlsPubkey::SIZE == PUBKEY_BYTES` for MinSig (G2 compressed).
-        bytes
-            .as_ref()
-            .try_into()
-            .expect("BLS pubkey is exactly 96 bytes for MinSig")
+        // `BlsPubkey::SIZE == PUBKEY_BYTES` for MinSig (G2 compressed);
+        // `encode_fixed` asserts the length matches.
+        self.public.encode_fixed::<PUBKEY_BYTES>()
     }
 
     /// Borrow the underlying private scalar for use with `ops::*` functions

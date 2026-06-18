@@ -103,7 +103,7 @@ mod tests {
             .collect();
         Seed {
             target_round: round,
-            signature: recover_seed(&sharing, &partials).expect("recover"),
+            signature: recover_seed::<N3f1>(&sharing, &partials).expect("recover"),
         }
     }
 
@@ -136,7 +136,7 @@ mod tests {
             .collect();
         let seed = Seed {
             target_round: round,
-            signature: recover_seed(&sharing, &partials).expect("recover"),
+            signature: recover_seed::<N3f1>(&sharing, &partials).expect("recover"),
         };
         let pk = sharing.public();
         let fallback = B256::repeat_byte(0xAB);

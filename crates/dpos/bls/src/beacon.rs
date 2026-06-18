@@ -19,7 +19,7 @@ use commonware_cryptography::bls12381::primitives::{
     Error,
 };
 use commonware_parallel::Sequential;
-use commonware_utils::N3f1;
+use commonware_utils::Faults;
 
 use crate::BlsSignature;
 
@@ -71,11 +71,16 @@ pub fn verify_seed_partial(
 /// Recover the unique threshold seed signature for a round from ≥t verified
 /// partials. Returns the raw recovered signature (the consumer pairs it with
 /// the round to form a `Seed` and derive `prev_randao`).
-pub fn recover_seed(
+///
+/// Generic over the fault model `M` so the seed quorum (`sharing.required::<M>()`)
+/// stays in lockstep with the vote quorum `CombinedScheme::assemble` recovers
+/// under the same `M` — the whole stack is `N3f1` today, but pinning a literal
+/// here would let the two halves of one certificate silently disagree.
+pub fn recover_seed<M: Faults>(
     sharing: &Sharing<MinSig>,
     partials: &[PartialSignature<MinSig>],
 ) -> Result<BlsSignature, Error> {
-    threshold::recover::<MinSig, _, N3f1>(sharing, partials, &Sequential)
+    threshold::recover::<MinSig, _, M>(sharing, partials, &Sequential)
 }
 
 /// Verify a recovered seed signature against the group public key `PK_epoch` —

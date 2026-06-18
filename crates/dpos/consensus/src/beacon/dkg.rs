@@ -130,7 +130,7 @@ mod tests {
             .values()
             .map(|s| sign_seed_partial(s, &ns, round))
             .collect();
-        let sig = recover_seed(outcome.public(), &partials).expect("recover seed");
+        let sig = recover_seed::<N3f1>(outcome.public(), &partials).expect("recover seed");
         assert!(
             verify_seed(group_public_key(&outcome), &ns, round, &sig),
             "seed from DKG shares must verify against the DKG group key PK_epoch"

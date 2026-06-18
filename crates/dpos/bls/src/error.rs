@@ -28,7 +28,7 @@ pub enum Error {
     #[error("file contents not valid hex")]
     InvalidHex,
 
-    #[error("file contents wrong length (expected 32 bytes after hex-decode)")]
+    #[error("input wrong length (expected 32 bytes)")]
     InvalidLength,
 
     #[error("signer_idx {signer_idx} is out of range for committee of {committee_len} validators")]

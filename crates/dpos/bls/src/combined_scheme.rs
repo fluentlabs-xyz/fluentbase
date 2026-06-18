@@ -36,7 +36,10 @@ use commonware_parallel::Strategy;
 use commonware_utils::{ordered::Set, Faults, Participant};
 use rand_core::CryptoRngCore;
 
-use crate::{beacon, BlsSignature, PeerPubkey, VoteScheme};
+use crate::{
+    beacon::{self, GroupPublic},
+    BlsSignature, PeerPubkey, VoteScheme,
+};
 
 type VoteCertificate = <VoteScheme as CertScheme>::Certificate;
 
@@ -166,7 +169,16 @@ impl Read for CombinedCertificate {
 /// The per-epoch threshold material a beacon-active scheme holds.
 #[derive(Clone)]
 struct BeaconPart {
-    sharing: Sharing<MinSig>,
+    /// Group public key `PK_epoch` — verifies a RECOVERED seed in an assembled
+    /// certificate. Always present in a beacon-active scheme; a verifier-only
+    /// follower (no polynomial) needs nothing more.
+    group_public: GroupPublic,
+    /// Full public polynomial. REQUIRED to verify individual seed partials
+    /// (`verify_attestation`) and to recover the seed (`assemble`). `Some` for
+    /// signers and active full-verifiers; `None` for a group-key-only verifier
+    /// (the cert-follower) that checks ASSEMBLED certificates but never
+    /// processes individual partials or assembles.
+    sharing: Option<Sharing<MinSig>>,
     share: Option<Share>,
     seed_namespace: Vec<u8>,
 }
@@ -205,12 +217,35 @@ impl CombinedScheme {
                 );
             }
             BeaconPart {
-                sharing,
+                group_public: *sharing.public(),
+                sharing: Some(sharing),
                 share,
                 seed_namespace,
             }
         });
         Self { vote, beacon }
+    }
+
+    /// Build a beacon-active scheme from ONLY the group public key `PK_epoch`
+    /// (no polynomial, no share) — for a verifier-only node (the cert-follower)
+    /// that reads `PK_epoch` from on-chain `getEpochBeaconKey(E)` and checks the
+    /// seed half of ASSEMBLED finalization certificates. Such a scheme can NOT
+    /// verify individual partials or assemble (both need the full polynomial),
+    /// which a verifier never does.
+    pub(crate) fn new_group_key(
+        vote: VoteScheme,
+        group_public: GroupPublic,
+        seed_namespace: Vec<u8>,
+    ) -> Self {
+        Self {
+            vote,
+            beacon: Some(BeaconPart {
+                group_public,
+                sharing: None,
+                share: None,
+                seed_namespace,
+            }),
+        }
     }
 
     fn vote_attestation(att: &Attestation<Self>) -> Option<Attestation<VoteScheme>> {
@@ -279,10 +314,13 @@ impl CertScheme for CombinedScheme {
         };
         match (&self.beacon, seeded_subject(&subject)) {
             // ACTIVE Notarize/Finalize: a missing or invalid seed partial makes
-            // the whole vote invalid (→ Nullify → not counted toward quorum).
-            (Some(b), true) => match combined.seed {
-                Some(value) => beacon::verify_seed_partial(
-                    &b.sharing,
+            // the whole vote invalid (→ Nullify → not counted toward quorum). A
+            // group-key-only verifier (no polynomial) cannot check an
+            // individual partial — it only ever verifies assembled certs, so
+            // reject here rather than accept unchecked.
+            (Some(b), true) => match (&b.sharing, combined.seed) {
+                (Some(sharing), Some(value)) => beacon::verify_seed_partial(
+                    sharing,
                     &b.seed_namespace,
                     round,
                     &PartialSignature::<MinSig> {
@@ -290,7 +328,7 @@ impl CertScheme for CombinedScheme {
                         value,
                     },
                 ),
-                None => false,
+                _ => false,
             },
             // Nullify, or a fallback epoch: the seed MUST be absent.
             _ => combined.seed.is_none(),
@@ -308,10 +346,12 @@ impl CertScheme for CombinedScheme {
             atts.iter().filter_map(Self::vote_attestation).collect();
         let vote = self.vote.assemble::<_, M>(vote_atts, strategy)?;
         let seed = match &self.beacon {
-            Some(b)
-                if atts
-                    .iter()
-                    .all(|a| a.signature.get().is_some_and(|c| c.seed.is_some())) =>
+            Some(BeaconPart {
+                sharing: Some(sharing),
+                ..
+            }) if atts
+                .iter()
+                .all(|a| a.signature.get().is_some_and(|c| c.seed.is_some())) =>
             {
                 let partials: Vec<PartialSignature<MinSig>> = atts
                     .iter()
@@ -324,7 +364,7 @@ impl CertScheme for CombinedScheme {
                         })
                     })
                     .collect();
-                Some(beacon::recover_seed(&b.sharing, &partials).ok()?)
+                Some(beacon::recover_seed::<M>(sharing, &partials).ok()?)
             }
             _ => None,
         };
@@ -352,9 +392,7 @@ impl CertScheme for CombinedScheme {
         }
         match (&self.beacon, seeded_subject(&subject)) {
             (Some(b), true) => match &certificate.seed {
-                Some(sig) => {
-                    beacon::verify_seed(b.sharing.public(), &b.seed_namespace, round, sig)
-                }
+                Some(sig) => beacon::verify_seed(&b.group_public, &b.seed_namespace, round, sig),
                 None => false,
             },
             _ => certificate.seed.is_none(),
@@ -402,7 +440,14 @@ mod tests {
     /// `n` combined-scheme signers over one committee sharing the same public
     /// polynomial — each holds its own multisig key and the matching threshold
     /// share (share index == its committee Participant index).
-    fn committee(n: usize) -> (Vec<CombinedScheme>, Vec<u8>) {
+    fn committee(
+        n: usize,
+    ) -> (
+        Vec<CombinedScheme>,
+        Vec<u8>,
+        Sharing<MinSig>,
+        BiMap<PeerPubkey, crate::BlsPubkey>,
+    ) {
         let mut rng = StdRng::seed_from_u64(7);
         let peer_sks: Vec<Ed25519PrivateKey> = (0..n)
             .map(|_| Ed25519PrivateKey::random(&mut rng))
@@ -440,7 +485,7 @@ mod tests {
                 CombinedScheme::new(vote, Some((sharing.clone(), Some(share), seed_ns.clone())))
             })
             .collect();
-        (schemes, seed_ns)
+        (schemes, seed_ns, sharing, bimap)
     }
 
     fn proposal() -> Proposal<Sha256Digest> {
@@ -471,7 +516,7 @@ mod tests {
 
     #[test]
     fn notarize_and_finalize_recover_byte_identical_seed() {
-        let (schemes, _) = committee(4);
+        let (schemes, _, _, _) = committee(4);
         let p = proposal();
         let cert_n = assemble_over(&schemes, Subject::Notarize { proposal: &p });
         let cert_f = assemble_over(&schemes, Subject::Finalize { proposal: &p });
@@ -494,8 +539,53 @@ mod tests {
     }
 
     #[test]
+    fn group_key_verifier_accepts_cert_and_rejects_wrong_key() {
+        // A verifier-only node (cert-follower) holds ONLY PK_epoch (read from
+        // on-chain getEpochBeaconKey), no polynomial. It must verify a cert the
+        // full committee assembled, and reject one whose seed is under a
+        // different group key (the rotation bug: cert under PK_E checked vs PK_0).
+        let (schemes, seed_ns, sharing, bimap) = committee(4);
+        let p = proposal();
+        let cert = assemble_over(&schemes, Subject::Notarize { proposal: &p });
+
+        let ns = fluent_namespace(NS_CHAIN);
+        let group_verifier = CombinedScheme::new_group_key(
+            VoteScheme::verifier(&ns, bimap.clone()),
+            *sharing.public(),
+            seed_ns.clone(),
+        );
+        let mut rng = StdRng::seed_from_u64(5);
+        assert!(
+            group_verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+                &mut rng,
+                Subject::Notarize { proposal: &p },
+                &cert,
+                &Sequential
+            ),
+            "group-key verifier must accept a cert assembled under the matching PK_epoch"
+        );
+
+        // A different committee's group key (foreign PK) must reject the seed.
+        let (_, _, other_sharing, _) = committee(5);
+        let wrong_verifier = CombinedScheme::new_group_key(
+            VoteScheme::verifier(&ns, bimap),
+            *other_sharing.public(),
+            seed_ns,
+        );
+        assert!(
+            !wrong_verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+                &mut rng,
+                Subject::Notarize { proposal: &p },
+                &cert,
+                &Sequential
+            ),
+            "a seed recovered under PK_E must NOT verify against a different group key"
+        );
+    }
+
+    #[test]
     fn nullify_certificate_has_no_seed() {
-        let (schemes, _) = committee(4);
+        let (schemes, _, _, _) = committee(4);
         let round = Round::new(Epoch::new(1), View::new(9));
         let cert = assemble_over(&schemes, Subject::Nullify { round });
         assert!(
@@ -513,7 +603,7 @@ mod tests {
 
     #[test]
     fn withheld_seed_partial_makes_notarize_attestation_invalid() {
-        let (schemes, _) = committee(4);
+        let (schemes, _, _, _) = committee(4);
         let p = proposal();
         let subject = Subject::Notarize { proposal: &p };
         let mut att = schemes[0].sign(subject).expect("sign");

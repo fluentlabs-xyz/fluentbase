@@ -203,6 +203,13 @@ impl EthKeystoreV4 {
                 if prf != "hmac-sha256" {
                     return Err(Error::InvalidKeystore);
                 }
+                // Bound `dklen` before allocating: it is an unvalidated `u32`
+                // from the keystore JSON, and unlike the scrypt branch (capped
+                // by `scrypt::Params::new` at 64) PBKDF2 has no built-in limit,
+                // so a hostile/corrupt file could request a multi-GiB buffer.
+                if *dklen > 64 {
+                    return Err(Error::InvalidKeystore);
+                }
                 let mut out = vec![0u8; *dklen as usize];
                 pbkdf2::pbkdf2::<Hmac<Sha256>>(password, salt, *c, &mut out)
                     .map_err(|_| Error::KeystoreKdf)?;
@@ -214,10 +221,8 @@ impl EthKeystoreV4 {
 }
 
 fn ilog2_u32(n: u32) -> Option<u8> {
-    if n == 0 || (n & (n - 1)) != 0 {
-        return None;
-    }
-    Some(n.trailing_zeros() as u8)
+    // scrypt's `log_n` requires N to be an exact power of two.
+    n.is_power_of_two().then(|| n.trailing_zeros() as u8)
 }
 
 #[cfg(test)]
