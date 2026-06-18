@@ -1,4 +1,4 @@
-//! `FluentP2PConfig` — Fluent-side config struct + `to_commonware_config`
+//! `FluentP2PConfig` — Fluent-side config struct + `into_commonware_config`
 //! adapter that fills the rest from the must-be-identical hardcoded
 //! constants in `crate::constants`.
 
@@ -16,7 +16,10 @@ use crate::constants;
 /// Configuration for [`crate::FluentP2P::build`]. Includes only fields
 /// that vary per-operator (safe-to-desync) or per-chain; every
 /// network-invariant param comes from [`crate::constants`].
-#[derive(Clone)]
+///
+/// Not `Clone`: `into_commonware_config` consumes it by value (the only
+/// consumer), and it holds the secret ed25519 `crypto` key — no reason to offer
+/// a cheap way to duplicate key material.
 pub struct FluentP2PConfig {
     /// Local Ed25519 keypair (Tier-3 peer key; on-chain
     /// `consensusKeys.peerPubkey`).
@@ -46,7 +49,7 @@ impl FluentP2PConfig {
     /// `max_message_size` from its args, plus sensible defaults for the
     /// remaining fields), then override only the must-be-identical
     /// fields where our value differs from commonware's recommendation.
-    pub fn to_commonware_config(&self) -> CommonwareConfig<PrivateKey> {
+    pub fn into_commonware_config(self) -> CommonwareConfig<PrivateKey> {
         // Restart-rejoin latency vs. production rate-limiting, selected per network.
         // commonware's `recommended()` (and tempo's production profile) set
         // `peer_connection_cooldown = 60s` / `gossip_bit_vec_frequency = 50s` as a
@@ -90,11 +93,11 @@ impl FluentP2PConfig {
             gossip_bit_vec_frequency,
             // `tracked_peer_sets` not overridden: recommended default (4) is what we want.
             ..CommonwareConfig::recommended(
-                self.crypto.clone(),
+                self.crypto,
                 &fluent_namespace(self.chain_id),
                 self.listen,
-                self.dialable.clone(),
-                self.bootstrappers.clone(),
+                self.dialable,
+                self.bootstrappers,
                 constants::MAX_MESSAGE_SIZE,
             )
         }

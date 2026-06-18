@@ -15,22 +15,25 @@ use commonware_utils::NZU32;
 // Channel IDs
 //
 // Three top-level Muxed channels (per-epoch demux): VOTE/CERT/RESOLVER.
-// Two top-level non-Muxed channels (global one-instance for the node):
-// BROADCAST (block-data dissemination via `buffered::Engine`) and
-// MARSHAL (backfill via `marshal::resolver::p2p::init`). Order is
-// arbitrary but fixed: changing it without coordinated release
-// silently misroutes consensus traffic across the network.
+// Three top-level non-Muxed channels (global one-instance for the node):
+// BROADCAST (block-data dissemination via `buffered::Engine`),
+// MARSHAL (backfill via `marshal::resolver::p2p::init`), and BEACON
+// (randomness-beacon DKG + per-height seed partials; see BEACON_CHANNEL
+// below). Order is arbitrary but fixed: changing it without coordinated
+// release silently misroutes consensus traffic across the network.
 pub const VOTE_CHANNEL: u64 = 0;
 pub const CERT_CHANNEL: u64 = 1;
 pub const RESOLVER_CHANNEL: u64 = 2;
 pub const BROADCAST_CHANNEL: u64 = 3;
 pub const MARSHAL_CHANNEL: u64 = 4;
-// Beacon plane (threshold randomness): per-height seed partials under a
-// {Dkg|Seed} envelope. Currently a GLOBAL one-instance channel like
-// BROADCAST/MARSHAL — registered once in `FluentP2P::build` and consumed by the
-// single seed actor (`dpos.rs::launch`), matching the devnet single
-// bootstrapped key. Per-epoch Muxing in the EpochManager (so DKG-for-E and
-// seed-of-E never interleave) lands with the live DKG actor — research Q2/#3.
+// Beacon plane (threshold randomness): carries the per-epoch self-DKG
+// ceremony traffic (`BeaconMessage::Dkg`) that establishes `PK_epoch`. The
+// recovered randomness SEED rides INSIDE the consensus cert
+// (`CombinedCertificate`) — the old sign-at-notarize seed side-channel was
+// deleted — so this channel carries DKG ONLY. A GLOBAL one-instance channel
+// like BROADCAST/MARSHAL, registered once in `FluentP2P::build` and consumed by
+// the live `DkgActor` (`dpos.rs::launch` → `beacon/actor.rs`). Per-epoch Muxing
+// (so DKG-for-E and DKG-for-E+1 never interleave) is deferred.
 pub const BEACON_CHANNEL: u64 = 5;
 
 // Per-channel rate quotas
@@ -54,8 +57,8 @@ pub const RESOLVER_QUOTA: Quota = Quota::per_second(NZU32!(128));
 // MARSHAL:   backfill is request-bursty (catch-up).
 pub const BROADCAST_QUOTA: Quota = Quota::per_second(NZU32!(8));
 pub const MARSHAL_QUOTA: Quota = Quota::per_second(NZU32!(16));
-// BEACON: DKG is bursty for one round per epoch then idle; seed is one partial
-// per finalized height. Matched to VOTE/CERT (per-epoch muxed, same n=51 fan-out).
+// BEACON: DKG is bursty for one round per epoch (dealing/ack broadcast) then
+// idle. Matched to VOTE/CERT (same n=51 fan-out for the DKG round).
 pub const BEACON_QUOTA: Quota = Quota::per_second(NZU32!(128));
 
 // Per-channel backlog (mailbox size before back-pressure)
@@ -101,7 +104,7 @@ pub const MAX_REGISTRY_PEER_SET: u64 = 4096;
 // `ALLOW_DNS: false` — Socket-only ingress; DNS provider out of trust
 // path. Trust anchor = on-chain Ed25519 + handshake.
 // Production rejects RFC-1918 ingress; this is network-derived in
-// `FluentP2PConfig::to_commonware_config` (deployed networks → false).
+// `FluentP2PConfig::into_commonware_config` (deployed networks → false).
 pub const ALLOW_DNS: bool = false;
 
 // Listen port

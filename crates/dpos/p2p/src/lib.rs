@@ -7,7 +7,7 @@
 //! epoch_manager mux consumption) are deferred.
 //!
 //! Public API:
-//! - [`FluentP2P::build`] — sync constructor (Network::new + 5× register); returns the Network owner + [`FluentP2PHandles`] (clone-into-04/06).
+//! - [`FluentP2P::build`] — sync constructor (Network::new + 6× register); returns the Network owner + [`FluentP2PHandles`] (clone-into-04/06).
 //! - [`FluentP2P::start`] — consumes self, calls `Network::start`.
 //! - [`FluentP2PHandles`] — Fluent-domain handles (no commonware-p2p types leaked into 04's / 06's public API beyond the `OracleHandle` newtype and the `DiscSender` / `DiscReceiver` type aliases, which are intentional re-exports).
 
@@ -58,14 +58,23 @@ pub fn read_ed25519_key_from_file<P: AsRef<std::path::Path>>(
     }
     // Wrap the plaintext key material so it is scrubbed on drop — the ed25519
     // signing scalar must not linger in freed heap (mirrors the BLS plaintext
-    // loader, `bls/src/keys.rs`; audit P2-9). `PrivateKey::decode` copies into a
-    // zeroizing `Secret`, so these source buffers are the only residue.
+    // loader, `bls/src/keys.rs`; audit P2-9). We strip whitespace + an optional
+    // `0x` into a Zeroizing buffer and call `from_hex` DIRECTLY:
+    // `from_hex_formatted` does an internal `hex.replace(...)` that would leave a
+    // NON-zeroized copy of the key hex in freed heap. `PrivateKey::decode` copies
+    // into a zeroizing `Secret`, so these buffers are then the only residue.
     let raw = zeroize::Zeroizing::new(
         std::fs::read_to_string(path_ref)
             .map_err(|e| eyre::eyre!("failed reading peer key file: {e}"))?,
     );
+    let cleaned = zeroize::Zeroizing::new(
+        raw.chars()
+            .filter(|c| !c.is_ascii_whitespace())
+            .collect::<String>(),
+    );
+    let hex = cleaned.strip_prefix("0x").unwrap_or(&cleaned);
     let bytes = zeroize::Zeroizing::new(
-        commonware_utils::from_hex_formatted(raw.trim())
+        commonware_utils::from_hex(hex)
             .ok_or_else(|| eyre::eyre!("peer key file contents not valid hex"))?,
     );
     ed25519::PrivateKey::decode(bytes.as_slice())
@@ -99,7 +108,7 @@ pub type DiscReceiver = Receiver<ed25519::PublicKey>;
 /// `epoch_manager` (see
 /// `crates/consensus/src/epoch_manager.rs`), which builds its own
 /// `Muxer`s over the raw channels. So 05 exposes
-/// the raw 5-channel `(Sender, Receiver)` pairs and does NOT pre-mux
+/// the raw 6-channel `(Sender, Receiver)` pairs and does NOT pre-mux
 /// vote/cert/resolver here — pre-muxing was redundant and would
 /// double-demux.
 pub struct FluentP2P<E>
@@ -138,10 +147,10 @@ where
     pub marshal_sender: DiscSender<E>,
     pub marshal_receiver: DiscReceiver,
 
-    // BEACON: global one-instance channel for the randomness-beacon seed
-    // sub-protocol (DKG + per-height seed partials). Consumed once by the
-    // seed actor in 04's launch (single bootstrapped key for now; per-epoch
-    // Muxing lands with the live DKG actor — research Q2).
+    // BEACON: global one-instance channel for the randomness-beacon DKG
+    // ceremony (the recovered seed rides in the consensus cert, NOT here — the
+    // old seed side-channel was deleted). Consumed once by the live `DkgActor`
+    // in 04's launch. Per-epoch Muxing is deferred.
     pub beacon_sender: DiscSender<E>,
     pub beacon_receiver: DiscReceiver,
 }
@@ -151,11 +160,11 @@ where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Resolver,
 {
     /// Build the p2p layer: instantiate commonware Network, register
-    /// 5 top-level channels. Per-epoch demux for vote/cert/resolver is
+    /// 6 top-level channels. Per-epoch demux for vote/cert/resolver is
     /// handled inside the consensus `EpochManager` (it builds its own
     /// `Muxer`s), so this layer returns raw channels here.
     pub fn build(ctx: E, cfg: FluentP2PConfig) -> (Self, FluentP2PHandles<E>) {
-        let commonware_cfg = cfg.to_commonware_config();
+        let commonware_cfg = cfg.into_commonware_config();
         let (mut network, oracle) = Network::new(ctx.with_label("p2p_network"), commonware_cfg);
 
         // Register 3 per-epoch-demuxed channels (consumed by the consensus EpochManager).
@@ -175,9 +184,10 @@ where
             constants::RESOLVER_BACKLOG,
         );
 
-        // Register 2 global one-instance channels:
+        // Register 3 global one-instance channels:
         //    BROADCAST (block-data via buffered::Engine) +
-        //    MARSHAL (backfill via marshal::resolver::p2p::init).
+        //    MARSHAL (backfill via marshal::resolver::p2p::init) +
+        //    BEACON (randomness-beacon DKG + per-height seed partials).
         let (br_s, br_r) = network.register(
             constants::BROADCAST_CHANNEL,
             constants::BROADCAST_QUOTA,
@@ -368,8 +378,9 @@ mod tests {
             let mut sink = handles.oracle.clone();
             <OracleHandle as PeerSetSink>::track(&mut sink, 7, Set::default()).await;
 
-            // All 5 channels are exposed as raw (sender, receiver). Bind by
-            // move to prove they are owned and usable.
+            // All 6 channels are exposed as raw (sender, receiver) — the five
+            // bound below plus BEACON via `..`. Bind by move to prove they are
+            // owned and usable.
             let FluentP2PHandles {
                 vote_sender: _vs,
                 vote_receiver: _vr,

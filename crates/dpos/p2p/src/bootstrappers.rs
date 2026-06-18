@@ -2,7 +2,7 @@
 //! `(Ed25519 peer pubkey, SocketAddr)` pairs for cold-start peer discovery.
 //!
 //! No in-tree per-chain default lists — operator MUST provide a JSON file
-//! via `--dpos.bootstrappers-path` (genesis bootstrap event = empty `[]`
+//! via `--dpos.bootstrappers` (genesis bootstrap event = empty `[]`
 //! JSON file). This avoids:
 //! - Silent prod deployment with empty defaults (no defense before).
 //! - Chain-ID duplication between `bootstrappers.rs` and `chainspec.rs`.
@@ -36,7 +36,7 @@ struct BootstrapperJson {
 ///
 /// Each `peer_pubkey` is subgroup-checked at decode (`PeerPubkey::decode`).
 ///
-/// Operator MUST provide a file via `--dpos.bootstrappers-path`; genesis
+/// Operator MUST provide a file via `--dpos.bootstrappers`; genesis
 /// bootstrap event = empty `[]` JSON file (explicit intent for the first
 /// bootnode in a new network).
 ///
