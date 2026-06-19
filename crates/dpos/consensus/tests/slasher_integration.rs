@@ -360,6 +360,7 @@ async fn spawn_actor_with_stubs(
     let latest: slasher::actor::LatestFinalizedHash = Arc::new(|| Some(B256::ZERO));
     let cfg = slasher::actor::Config {
         staking_address,
+        chain_id: C_MAIN,
         reader,
         latest_finalized_hash: latest,
         scheme_provider,

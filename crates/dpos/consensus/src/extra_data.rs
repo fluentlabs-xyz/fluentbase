@@ -79,7 +79,10 @@ pub fn decode_simplex_attestation(buf: &[u8]) -> Result<Option<DecodedAttestatio
         // The encoder never emits a zero committee (it derives the size from a
         // real `signers.len()`); a zero-size attestation is only craftable by a
         // forger. Reject it rather than decode an empty bitmap (defense-in-depth;
-        // `application.rs` byte-equal check + `evm.rs` decode are the other backstops).
+        // the `evm.rs` processBitmap decode is the other backstop. NOTE: verify()
+        // does NOT byte-bind extra_data to the verifier's own cert — that compare
+        // was unsound on the non-canonical bitmap and was reverted; see the
+        // liveness-bitmap open-design note in DPOS_ARCHITECTURE.md §2.3).
         return Err(DecodeError::ZeroCommittee);
     }
     let expected_bitmap = (committee_size as usize).div_ceil(8);
@@ -89,10 +92,25 @@ pub fn decode_simplex_attestation(buf: &[u8]) -> Result<Option<DecodedAttestatio
             got: buf.len(),
         });
     }
+    let bitmap = buf[HDR..].to_vec();
+    // Reject nonzero PADDING bits in the final bitmap byte: bits with index
+    // ≥ committee_size do not correspond to any signer. A forger could set them
+    // to perturb the byte layout the on-chain `processBitmap` / equivocation
+    // counters read; the honest encoder never emits them (it only ever sets bits
+    // < committee_size). `committee_size % 8 == 0` ⇒ no padding (full last byte).
+    let pad_bits = (8 - (committee_size as usize % 8)) % 8;
+    if pad_bits != 0 {
+        if let Some(&last) = bitmap.last() {
+            let pad_mask: u8 = (0xFFu16 << (8 - pad_bits)) as u8;
+            if last & pad_mask != 0 {
+                return Err(DecodeError::NonzeroPadding);
+            }
+        }
+    }
     Ok(Some(DecodedAttestation {
         round: Round::new(Epoch::new(epoch_u64), View::new(view_u64)),
         committee_size,
-        bitmap: buf[HDR..].to_vec(),
+        bitmap,
     }))
 }
 
@@ -104,6 +122,8 @@ pub enum DecodeError {
     LengthMismatch { expected: usize, got: usize },
     #[error("extra_data committee_size is zero (only craftable by a forger)")]
     ZeroCommittee,
+    #[error("extra_data bitmap has nonzero padding bits beyond committee_size")]
+    NonzeroPadding,
 }
 
 #[cfg(test)]
@@ -219,6 +239,32 @@ mod tests {
         // bitmap = 0b0000_1001 = 0x09.
         let expected = hex::decode("0000000000000007000000000000002a0809").unwrap();
         assert_eq!(buf, expected);
+    }
+
+    #[test]
+    fn decode_rejects_nonzero_padding_bits() {
+        // committee_size = 51 → 7 bitmap bytes; the last byte has 3 valid bits
+        // (signers 48,49,50) and 5 padding bits (51..56) that must be zero.
+        let signers = all_signers(51);
+        let mut buf = encode_simplex_attestation(round(7, 42), &signers);
+        // Honest encoding decodes fine.
+        assert!(decode_simplex_attestation(&buf).unwrap().is_some());
+        // Set a padding bit (bit 3 of the last byte = signer index 51).
+        let last = buf.len() - 1;
+        buf[last] |= 0b0000_1000;
+        assert_eq!(
+            decode_simplex_attestation(&buf).unwrap_err(),
+            DecodeError::NonzeroPadding
+        );
+    }
+
+    #[test]
+    fn decode_accepts_full_last_byte_when_no_padding() {
+        // committee_size = 8 → exactly 1 byte, no padding bits; 0xFF is valid.
+        let signers = all_signers(8);
+        let buf = encode_simplex_attestation(round(1, 1), &signers);
+        let d = decode_simplex_attestation(&buf).unwrap().unwrap();
+        assert_eq!(d.bitmap, vec![0xFF]);
     }
 
     #[test]

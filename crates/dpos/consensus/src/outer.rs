@@ -587,6 +587,22 @@ where
         // executor advances finalized forward as real finalizations land.
         let (initial_finalized, initial_head) =
             if last_consensus_finalized_height.get() > self.dpos_activation_block {
+                // KNOWN, intentionally left as-is: `chain_info().best_number`
+                // is subject to the best_number-freezes-during-pipeline-backfill
+                // invariant — during a DEEP devp2p pipeline backfill it is frozen
+                // (set only at on_backfill_sync_finished). The documented-correct
+                // progress source would be `last_block_number()` /
+                // StageCheckpointReader, but those live on the reth provider, which
+                // is NOT threaded into this builder (here `provider` is the p2p
+                // oracle); `canonical_state` exposes only chain_info(). Threading a
+                // reth provider in solely for this seed would touch the
+                // migrated-restart cold-start path for a coincidence-only gain, so
+                // we leave it. Harm is bounded to migrated-restart-DURING-deep-
+                // backfill (prod cold-start) and additionally suppressed by the
+                // executor's `has_advanced_since_init` FCU-heartbeat gate (a stale
+                // initial head is never re-sent until the first real consensus
+                // advance). best_number/best_hash are mutually consistent (single
+                // lock), so the seeded pair is never internally torn.
                 let info = self.canonical_state.chain_info();
                 (
                     self.initial_finalized,
@@ -679,6 +695,7 @@ where
             slasher_ctx,
             slasher::Config {
                 staking_address: self.slasher_staking_address,
+                chain_id: self.chain_id,
                 reader: self.slasher_reader,
                 latest_finalized_hash: self.slasher_latest_finalized_hash,
                 // Thread the per-epoch scheme provider for pre-submit verify.

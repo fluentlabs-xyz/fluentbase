@@ -265,18 +265,31 @@ where
                      {h} (gap exceeds marshal retention); re-sync the EL disk from a snapshot"
                 )
             })?;
-        let seed = finalizations
+        // Mirror the live executor's 3-way seed resolution (executor::SeedLookup):
+        // a PRESENT finalization with no seed is a genuine no-beacon epoch → the
+        // agreed `order.digest()` fallback (seed = None); a present finalization
+        // WITH a seed → use it. But a MISSING or unreadable finalization at a
+        // height we ourselves finalized must NOT silently fall back to seedless
+        // derive — on a beacon-active chain that re-rolls prev_randao and forks
+        // the restart (the same asymmetry the fail-loud `order` lookup above
+        // enforces). Fail loud instead.
+        let fin = finalizations
             .get(Identifier::Index(h))
             .await
-            .ok()
-            .flatten()
-            .and_then(|fin| {
-                fin.certificate
-                    .seed()
-                    .map(|signature| crate::beacon::types::Seed {
-                        target_round: fin.proposal.round,
-                        signature,
-                    })
+            .map_err(|e| eyre!("reading marshal finalizations at height {h}: {e}"))?
+            .ok_or_else(|| {
+                eyre!(
+                    "crash-survivor recovery: marshal finalizations has no cert at height {h} \
+                     — cannot recover the beacon seed without diverging prev_randao; \
+                     re-sync the EL disk from a snapshot"
+                )
+            })?;
+        let seed = fin
+            .certificate
+            .seed()
+            .map(|signature| crate::beacon::types::Seed {
+                target_round: fin.proposal.round,
+                signature,
             });
         let derived = derive_with_visibility_retry(ctx, deriver, &order, parent_hash, seed)
             .await
@@ -1068,25 +1081,13 @@ impl DposLayer {
         // genesis bootstrap key (epoch 0 / pre-first-rotation).
         let beacon_namespace = crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
         let genesis_beacon_key = beacon.map(|bl| (bl.sharing, bl.share, beacon_namespace.clone()));
-        let beacon_resolver: crate::epoch_manager::BeaconResolver = {
-            let store = ceremony_store.clone();
-            let namespace = beacon_namespace;
-            let genesis = genesis_beacon_key;
-            Arc::new(move |epoch: u64| {
-                if let Ok(m) = store.read() {
-                    if let Some((_, (out, share))) = m.range(..=epoch).next_back() {
-                        return Some((out.public().clone(), Some(share.clone()), namespace.clone()));
-                    }
-                }
-                genesis.clone()
-            })
-        };
 
         // Authoritative on-chain group-key resolver for the per-epoch VERIFY path
         // (soft-enter catch-up + a committee member that missed the epoch's DKG):
         // reads getEpochBeaconKey(E) at the current finalized hash. The polynomial
         // for SIGNING stays node-local (`beacon_resolver`); only the group key —
-        // which IS on-chain — is sourced trustlessly here.
+        // which IS on-chain — is sourced trustlessly here. ALSO used to gate the
+        // signer's carry-forward (below).
         let beacon_verify_pk: crate::epoch_manager::BeaconVerifyPk = {
             let reader = RethStakingStateReader::new(
                 provider.clone(),
@@ -1107,6 +1108,154 @@ impl DposLayer {
                 let head = provider.last_block_number().ok()?;
                 let hash = provider.block_hash(head).ok().flatten()?;
                 reader.epoch_beacon_key(epoch, hash).ok().flatten()
+            })
+        };
+
+        // THREE-WAY on-chain group-key read for the carry-forward GUARD only.
+        // Unlike `beacon_verify_pk` (which collapses every
+        // failure to `None`, fine for the verify path that just falls back to a
+        // local key), the carry-forward decision MUST distinguish:
+        //   - `Err(())`  = the chain state was UNREADABLE (last_block_number /
+        //                  block_hash / epoch_beacon_key errored, or block_hash
+        //                  None). A transient read failure is the common
+        //                  stable-epoch path; demoting on it would drop a
+        //                  legitimate signer off the quorum for the whole epoch
+        //                  (shrinking the quorum → stall). We CANNOT-CONFIRM, so
+        //                  the conservative-SAFE choice is to TRUST the carried
+        //                  share (downstream seed partials are still C-gate /
+        //                  seed-verify checked, so a wrong key cannot silently
+        //                  finalize a bad seed).
+        //   - `Ok(None)` = the chain DEFINITIVELY has no key for E (uncommitted /
+        //                  keyless on a beacon-active epoch) → genuine absence →
+        //                  demote.
+        //   - `Ok(Some)` = a definitively-read key → compare against the carried
+        //                  key; mismatch ⇒ genuine committee change ⇒ demote.
+        let beacon_pk_onchain_3way = {
+            let reader = RethStakingStateReader::new(
+                provider.clone(),
+                evm_config.clone(),
+                staking_config.clone(),
+            );
+            let provider = provider.clone();
+            Arc::new(
+                move |epoch: u64| -> Result<Option<crate::beacon::seed::GroupPublic>, ()> {
+                    let head = provider.last_block_number().map_err(|_| ())?;
+                    let hash = provider.block_hash(head).map_err(|_| ())?.ok_or(())?;
+                    reader.epoch_beacon_key(epoch, hash).map_err(|_| ())
+                },
+            )
+        };
+
+        // Per-epoch threshold beacon resolver for the combined consensus scheme:
+        // each vote carries the seed partial (round-keyed), so the seed is
+        // recovered from the notarization/finalization certificate — no separate
+        // seed plane. The key ROTATES per epoch: the live-DKG `ceremony_store`
+        // holds (PK_E, share) for every epoch this node was a member of where the
+        // committee changed; `resolve(E)` returns the most-recent such key at or
+        // before E (carry-forward across stable epochs), falling back to the
+        // genesis bootstrap key (epoch 0 / pre-first-rotation).
+        //
+        // CARRY-FORWARD GUARD: a stored key from an EARLIER epoch is only safe
+        // to sign E's seed partials with when the committee (and thus the DKG
+        // polynomial) did NOT change between the stored epoch and E. If the
+        // committee changed at E, this node's stored share lies on the PRIOR
+        // polynomial and would emit INVALID seed partials (rejected → seedless
+        // votes → cannot notarize). We confirm validity against the authoritative
+        // on-chain group key: the carried `PK` (group key of the stored DKG) must
+        // equal `getEpochBeaconKey(E)`. On mismatch (or an uncommitted/keyless E)
+        // we return `None`, so the engine sees `(beacon=None, verify_pk=Some)` and
+        // self-demotes to the cert-follow plane (`NoBeaconPolynomial`) until a
+        // reshare lands this node's share for E — instead of signing under a stale
+        // polynomial. An EXACT-epoch hit (stored epoch == E: we ran E's own DKG)
+        // also passes this check (our group key IS E's on-chain key). When the
+        // on-chain read is UNREADABLE (transient) we cannot confirm, so we KEEP
+        // the carried share rather than demote (demoting on a transient read
+        // hiccup — the common stable-epoch path — would drop a legitimate signer
+        // off the quorum and shrink it → stall; seed partials stay C-gate /
+        // seed-verify checked downstream, so trusting the carry-forward is the
+        // conservative-safe choice). Only a DEFINITIVELY-read mismatch or absence
+        // demotes — see the 3-way reader below.
+        let beacon_resolver: crate::epoch_manager::BeaconResolver = {
+            let store = ceremony_store.clone();
+            let namespace = beacon_namespace;
+            let genesis = genesis_beacon_key;
+            let onchain_pk = beacon_pk_onchain_3way.clone();
+            Arc::new(move |epoch: u64| {
+                if let Ok(m) = store.read() {
+                    if let Some((&stored_epoch, (out, share))) = m.range(..=epoch).next_back() {
+                        let carried_pk = out.public().public();
+                        // Exact-epoch hit: we ran this epoch's own DKG — the share
+                        // is definitionally on E's polynomial, no on-chain confirm
+                        // needed (the boundary read may even still lag here).
+                        if stored_epoch == epoch {
+                            return Some((
+                                out.public().clone(),
+                                Some(share.clone()),
+                                namespace.clone(),
+                            ));
+                        }
+                        // Carry-forward across a (possibly committee-changed) gap.
+                        // Only DEMOTE on a DEFINITIVELY-read mismatch/absence —
+                        // NEVER on an unreadable state (a transient read failure
+                        // is the common stable-epoch path; demoting on it would
+                        // drop a legitimate signer off the quorum for the whole
+                        // epoch and shrink the quorum → stall). See the
+                        // 3-way reader comment above.
+                        match onchain_pk(epoch) {
+                            // Definitively read a matching key → safe carry-forward.
+                            Ok(Some(pk)) if &pk == carried_pk => {
+                                return Some((
+                                    out.public().clone(),
+                                    Some(share.clone()),
+                                    namespace.clone(),
+                                ));
+                            }
+                            // Definitively read a DIFFERENT key (genuine committee
+                            // change → our share lies on the prior polynomial) →
+                            // demote.
+                            Ok(Some(_)) => {
+                                tracing::warn!(
+                                    epoch,
+                                    stored_epoch,
+                                    "beacon carry-forward rejected: stored DKG key does not match \
+                                     on-chain getEpochBeaconKey(E) (committee changed) — demoting \
+                                     to cert-follow until a reshare lands this node's share"
+                                );
+                                return None;
+                            }
+                            // Definitively absent on a beacon-active epoch
+                            // (uncommitted / keyless) → genuine absence → demote.
+                            Ok(None) => {
+                                tracing::warn!(
+                                    epoch,
+                                    stored_epoch,
+                                    "beacon carry-forward rejected: on-chain getEpochBeaconKey(E) \
+                                     is empty (uncommitted/keyless epoch) — demoting to cert-follow"
+                                );
+                                return None;
+                            }
+                            // UNREADABLE state (transient) — cannot confirm.
+                            // Conservative-SAFE: TRUST the carried share (seed
+                            // partials remain C-gate / seed-verify checked
+                            // downstream); do NOT demote.
+                            Err(()) => {
+                                tracing::warn!(
+                                    epoch,
+                                    stored_epoch,
+                                    "beacon carry-forward: on-chain getEpochBeaconKey(E) \
+                                     unreadable (transient) — keeping carried share rather than \
+                                     demoting (avoids quorum shrink on a stable-epoch read hiccup)"
+                                );
+                                return Some((
+                                    out.public().clone(),
+                                    Some(share.clone()),
+                                    namespace.clone(),
+                                ));
+                            }
+                        }
+                    }
+                }
+                genesis.clone()
             })
         };
 

@@ -13,7 +13,8 @@
 
 use super::evidence::{
     extract_from_conflicting_finalize, extract_from_conflicting_notarize,
-    extract_from_nullify_finalize, verify_pre_submit, SlashCallArgs, SlashKind,
+    extract_from_nullify_finalize, verify_pre_submit, verify_pre_submit_vote_only, SlashCallArgs,
+    SlashKind,
 };
 use crate::{
     digest::Digest,
@@ -54,6 +55,34 @@ use fluentbase_staking_reader::StakingStateRead;
 /// Closure returning the latest finalized block hash (or `None` if not yet
 /// known). Threaded in from `dpos.rs`, wraps the reth provider.
 pub type LatestFinalizedHash = Arc<dyn Fn() -> Option<B256> + Send + Sync>;
+
+/// Backoff between producer retries of a transient `handle` failure.
+const SLASHER_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
+/// Max producer attempts for one Activity before it is dropped (a missing
+/// committee/scheme/finalized-hash at startup resolves within seconds; a
+/// dependency that is still down after this bound is an operational failure
+/// surfaced by the drop log + metric, not a silent loss on the first hiccup).
+const SLASHER_MAX_RETRIES: u32 = 30;
+
+/// Outcome of [`Actor::handle`] classifying a failure by retry-ability.
+/// TRANSIENT failures (startup races: no finalized hash, RPC/state read error,
+/// scheme/committee not yet registered, storage hiccup) are re-attempted by the
+/// producer; PERMANENT failures (malformed/variant-mismatch evidence, BiMap
+/// divergence, prune-pruned uncached committee) are dropped — retrying the same
+/// bytes can never succeed.
+enum HandleError {
+    Transient(eyre::Report),
+    Permanent(eyre::Report),
+}
+
+impl HandleError {
+    fn transient(msg: impl Into<String>) -> Self {
+        Self::Transient(eyre::eyre!("{}", msg.into()))
+    }
+    fn permanent(msg: impl Into<String>) -> Self {
+        Self::Permanent(eyre::eyre!("{}", msg.into()))
+    }
+}
 
 /// Stale-epoch fallback abstraction.
 ///
@@ -189,6 +218,10 @@ where
 {
     /// Staking predeploy address.
     pub staking_address: Address,
+    /// L2 chain id — used to rebuild a verifier scheme (`fluent_namespace`) for
+    /// an evidence epoch whose scheme the provider has pruned but whose
+    /// committee the stale fallback still holds (§14).
+    pub chain_id: u64,
     /// Reader for committee resolution (dedicated instance, NOT shared with ET).
     pub reader: R,
     /// Latest finalized hash provider (used as `at` block for snapshot lookup).
@@ -215,6 +248,7 @@ where
     context: ContextCell<E>,
     mailbox_rx: mpsc::UnboundedReceiver<Message>,
     staking_address: Address,
+    chain_id: u64,
     reader: R,
     latest_finalized_hash: LatestFinalizedHash,
     /// Per-epoch scheme used for local pre-submit verification.
@@ -244,6 +278,7 @@ where
             context: ContextCell::new(context),
             mailbox_rx: rx,
             staking_address: cfg.staking_address,
+            chain_id: cfg.chain_id,
             reader: cfg.reader,
             latest_finalized_hash: cfg.latest_finalized_hash,
             scheme_provider: cfg.scheme_provider,
@@ -279,16 +314,55 @@ where
 
     async fn run_producer(mut self) {
         info!("slasher producer starting");
-        while let Some(activity) = self.mailbox_rx.recv().await {
-            if let Err(e) = self.handle(activity).await {
-                warn!(?e, "slasher producer handle failed; dropping evidence");
+        // Transient-error retry buffer: a `handle` failure on a TRANSIENT cause
+        // (no finalized hash yet at startup, RPC Err, scheme/committee not yet
+        // registered for the evidence epoch) must NOT lose the Activity —
+        // simplex reports a conflict exactly once and there is no replay path.
+        // Re-attempt with a short backoff before pulling the next mailbox item,
+        // up to a bound; only a PERMANENT failure (malformed/variant-mismatch
+        // evidence, BiMap divergence) is dropped.
+        let mut retry: Option<(Message, u32)> = None;
+        loop {
+            if let Some((activity, attempts)) = retry.take() {
+                self.context.sleep(SLASHER_RETRY_BACKOFF).await;
+                match self.handle(activity.clone()).await {
+                    Ok(()) => {}
+                    Err(HandleError::Permanent(e)) => {
+                        warn!(?e, "slasher producer handle failed permanently; dropping evidence");
+                    }
+                    Err(HandleError::Transient(e)) => {
+                        if attempts + 1 >= SLASHER_MAX_RETRIES {
+                            error!(?e, attempts = attempts + 1,
+                                "slasher producer exhausted retries; dropping slashable evidence");
+                            metrics::counter!("slasher_evidence_dropped_total").increment(1);
+                        } else {
+                            debug!(?e, attempts = attempts + 1,
+                                "slasher producer transient failure; will retry");
+                            retry = Some((activity, attempts + 1));
+                        }
+                    }
+                }
+                continue;
+            }
+            let Some(activity) = self.mailbox_rx.recv().await else {
+                break;
+            };
+            match self.handle(activity.clone()).await {
+                Ok(()) => {}
+                Err(HandleError::Permanent(e)) => {
+                    warn!(?e, "slasher producer handle failed permanently; dropping evidence");
+                }
+                Err(HandleError::Transient(e)) => {
+                    debug!(?e, "slasher producer transient failure; will retry");
+                    retry = Some((activity, 0));
+                }
             }
         }
         info!("slasher producer exiting");
     }
 
     #[instrument(skip_all, fields(kind, epoch, victim))]
-    async fn handle(&mut self, activity: Message) -> eyre::Result<()> {
+    async fn handle(&mut self, activity: Message) -> Result<(), HandleError> {
         let Some(kind) = SlashKind::from_activity(&activity) else {
             return Ok(()); // not slashable — silently drop
         };
@@ -296,77 +370,120 @@ where
         tracing::Span::current().record("kind", tracing::field::debug(kind));
         tracing::Span::current().record("epoch", epoch);
 
+        // No finalized hash yet (startup) is transient — the next finalization
+        // supplies one and the buffered Activity retries.
         let head = (self.latest_finalized_hash)()
-            .ok_or_else(|| eyre::eyre!("no latest finalized hash available"))?;
+            .ok_or_else(|| HandleError::transient("no latest finalized hash available"))?;
         let snap = match self.reader.epoch_committee_snapshot(epoch, head) {
             Ok(s) if !s.validators.is_empty() => s,
             Ok(_) => {
                 // Empty on-chain committee → fall through to durable cache.
+                // A cache read error is transient (storage hiccup); a genuine
+                // miss (prune cursor past the evidence epoch) is permanent.
                 self.stale_fallback
                     .get_by_epoch(epoch)
-                    .await?
+                    .await
+                    .map_err(|e| HandleError::transient(format!("stale cache read failed: {e:?}")))?
                     .ok_or_else(|| {
-                        eyre::eyre!(
+                        HandleError::permanent(format!(
                             "epoch {epoch} evidence: empty on-chain committee AND \
                              not in cache (prune cursor advanced past evidence epoch); \
                              this evidence is unrecoverable"
-                        )
+                        ))
                     })?
             }
-            Err(e) => return Err(e.into()),
+            // An on-chain read error (RPC / state lookup) is transient.
+            Err(e) => return Err(HandleError::transient(format!("committee read failed: {e:?}"))),
         };
 
         // Build typed EpochCommittee + resolve victim via the BiMap.
         let committee = epoch_committee_from_snapshot(&snap)
-            .map_err(|e| eyre::eyre!("epoch_committee_from_snapshot failed: {e:?}"))?;
+            .map_err(|e| HandleError::permanent(format!("epoch_committee_from_snapshot failed: {e:?}")))?;
 
-        // Local pre-submit crypto verify.
-        let scheme_arc = self
-            .scheme_provider
-            .scoped(ConsensusEpoch::new(epoch))
-            .ok_or_else(|| {
-                eyre::eyre!("no BlsScheme registered for epoch {epoch}; cannot verify_pre_submit")
-            })?;
+        // Local pre-submit crypto verify. The scheme provider keeps only the
+        // recent epochs (pruned ~8 deep), but on-chain `_slashEquivocation`
+        // accepts evidence for `undelegatePeriod + 8` epochs with no age check
+        // (§14). For an evidence epoch whose scheme is pruned but whose
+        // committee the stale fallback still holds, the pre-submit window must
+        // match the committee stale-fallback window — so verify against a
+        // verifier rebuilt from the recovered `committee.bimap`.
+        //
+        // The per-epoch DKG polynomial is NOT recoverable at slash time, so the
+        // rebuilt combined verifier would have `beacon = None`; on a
+        // beacon-active chain that WRONGLY rejects a seeded Notarize/Finalize
+        // equivocation vote (CombinedScheme::verify_attestation's
+        // `_ => combined.seed.is_none()` fallback arm rejects a present seed).
+        // The on-chain evidence is over the attributable VOTE half only (the
+        // threshold seed partial is non-attributable and dropped), so on a
+        // rebuild we verify ONLY that vote half against a VoteScheme verifier —
+        // correct, sufficient, and polynomial-free. When the full per-epoch
+        // scheme is still registered, use it directly (its seeded arm verifies
+        // the partial too, a strictly stronger check).
         let mut rng = rand_core::OsRng;
-        verify_pre_submit(&activity, scheme_arc.as_ref(), &mut rng)
-            .map_err(|e| eyre::eyre!("verify_pre_submit rejected evidence: {e:?}"))?;
+        match self.scheme_provider.scoped(ConsensusEpoch::new(epoch)) {
+            Some(arc) => {
+                verify_pre_submit(&activity, arc.as_ref(), &mut rng).map_err(|e| {
+                    HandleError::permanent(format!("verify_pre_submit rejected evidence: {e:?}"))
+                })?;
+            }
+            None => {
+                debug!(
+                    epoch,
+                    "BlsScheme pruned for evidence epoch; \
+                     verifying vote-half against verifier rebuilt from cached committee"
+                );
+                let vote_scheme = fluentbase_bls::VoteScheme::verifier(
+                    &fluentbase_bls::fluent_namespace(self.chain_id),
+                    committee.bimap.clone(),
+                );
+                verify_pre_submit_vote_only(&activity, &vote_scheme, &mut rng).map_err(|e| {
+                    HandleError::permanent(format!(
+                        "verify_pre_submit (vote-only) rejected evidence: {e:?}"
+                    ))
+                })?;
+            }
+        }
 
         let args: SlashCallArgs = match (kind, &activity) {
             (SlashKind::ConflictingNotarize, Activity::ConflictingNotarize(ev)) => {
-                extract_from_conflicting_notarize(ev, &committee)?
+                extract_from_conflicting_notarize(ev, &committee)
+                    .map_err(|e| HandleError::permanent(format!("{e:?}")))?
             }
             (SlashKind::ConflictingFinalize, Activity::ConflictingFinalize(ev)) => {
-                extract_from_conflicting_finalize(ev, &committee)?
+                extract_from_conflicting_finalize(ev, &committee)
+                    .map_err(|e| HandleError::permanent(format!("{e:?}")))?
             }
             (SlashKind::NullifyFinalize, Activity::NullifyFinalize(ev)) => {
-                extract_from_nullify_finalize(ev, &committee)?
+                extract_from_nullify_finalize(ev, &committee)
+                    .map_err(|e| HandleError::permanent(format!("{e:?}")))?
             }
             // `SlashKind::from_activity` already filtered to a slashable variant,
             // so this is unreachable today; degrade gracefully (log + skip) rather
             // than panic the accountability actor if a future variant desyncs
             // `from_activity` from this match.
             _ => {
-                return Err(eyre::eyre!(
+                return Err(HandleError::permanent(format!(
                     "SlashKind/Activity variant mismatch ({kind:?}); skipping"
-                ))
+                )))
             }
         };
 
-        let signer_idx = activity_signer_idx(&activity)
-            .ok_or_else(|| eyre::eyre!("Activity variant carries no slashable signer; skipping"))?;
+        let signer_idx = activity_signer_idx(&activity).ok_or_else(|| {
+            HandleError::permanent("Activity variant carries no slashable signer; skipping")
+        })?;
         let signer_peer = committee
             .bimap
             .get(signer_idx as usize)
-            .ok_or_else(|| eyre::eyre!("signer_idx {signer_idx} not in BiMap"))?;
+            .ok_or_else(|| HandleError::permanent(format!("signer_idx {signer_idx} not in BiMap")))?;
         let victim = snap
             .validators
             .iter()
             .find(|v| &v.keys.peer_pubkey == signer_peer)
             .ok_or_else(|| {
-                eyre::eyre!(
+                HandleError::permanent(format!(
                     "BiMap-resolved peer pubkey not in snapshot — \
                      contract / BiMap ordering divergence; signer_idx={signer_idx}"
-                )
+                ))
             })?
             .address;
         tracing::Span::current().record("victim", tracing::field::display(victim));
@@ -389,7 +506,7 @@ where
             .wal_writer
             .enqueue(payload)
             .await
-            .map_err(|e| eyre::eyre!("WAL enqueue failed: {e:?}"))?;
+            .map_err(|e| HandleError::transient(format!("WAL enqueue failed: {e:?}")))?;
         debug!(%victim, pos, "enqueued slash evidence to WAL");
         metrics::counter!("slasher_wal_enqueued_total", "kind" => kind_label(kind)).increment(1);
         Ok(())

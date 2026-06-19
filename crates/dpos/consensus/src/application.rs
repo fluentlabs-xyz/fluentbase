@@ -547,6 +547,23 @@ where
             return false;
         }
 
+        // The forge-able liveness bitmap is an OPEN DESIGN item — NOT defended
+        // here. extra_data carries only the bitmap, not the signatures, so the
+        // verifier cannot soundly re-verify the embedded quorum at verify-time;
+        // and a byte-compare against this node's own marshal-archived
+        // finalization is UNSOUND (the archive holds each node's first-observed,
+        // locally-assembled cert — commonware `assemble` keeps any ≥quorum
+        // attestation set and `verify_certificate` accepts any ≥quorum bitmap, so
+        // honest nodes legitimately hold byte-DIFFERENT bitmaps for the same
+        // round → byte-exact compare false-rejects honest proposals → nullify
+        // storm / liveness stall; same class as the verify-gate
+        // non-deterministic-cert-freeze hazard). The real defense must live
+        // where the signatures/cert actually exist (the STF/zkVM that already
+        // re-verifies the finalization cert), or be a deterministic committed
+        // liveness bitmap, or liveness-slashing tolerant of per-block bitmap
+        // variance via sustained-absence thresholds. Verify does structural
+        // decode only (above). DO NOT re-introduce a verify-time byte-compare.
+
         // Beacon boundary gate: epoch-type (beacon_outcome present IFF change-epoch
         // first block) + the "C" share-on-polynomial qualification on a change block.
         if !beacon_gate_decision(self.beacon.as_ref(), &block) {

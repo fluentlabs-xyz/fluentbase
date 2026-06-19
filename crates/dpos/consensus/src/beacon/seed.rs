@@ -62,6 +62,12 @@ pub fn prev_randao_from_seed(seed: &Seed) -> B256 {
 /// Decide `prev_randao` for the EVM block whose ordering round is `round`, with
 /// the beacon-failure fallback GATED so it can never halt the chain (G1).
 ///
+/// TODO(beacon-k-lag): this consumes `seed(round)` for block at
+/// `round`, which is grindable via abort-to-next-view (non-slashable Nullify
+/// re-rolls the round → a fresh seed). The fix is to feed `seed(round − K)`
+/// here instead; see the `crate::beacon` module doc for the full rationale and
+/// the multi-repo (node + STF guest) scope. Deferred — must be symmetric.
+///
 /// Returns `(prev_randao, assurance)`. Threshold randomness is used ONLY when a
 /// seed for exactly this round is present, `PK_epoch` is known, and the seed
 /// verifies against it — then `(keccak256(seed), true)`. Every other case

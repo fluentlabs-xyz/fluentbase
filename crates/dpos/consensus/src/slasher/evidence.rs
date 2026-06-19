@@ -117,7 +117,7 @@ pub struct SlashCallArgs {
 
 /// Encode the ATTRIBUTABLE multisig half of a combined-scheme signature
 /// (= G1 compressed, 48 B) into the fixed buffer the contract expects. The
-/// per-vote signature is `CombinedSignature{vote, seed}` (96 B); equivocation
+/// per-vote signature is `CombinedSignature{vote, seed}` (97 B = vote 48 ‖ flag 1 ‖ seed slot 48); equivocation
 /// evidence is over the `vote` half only — the threshold `seed` partial is
 /// non-attributable and never submitted on-chain.
 fn sig_compressed(sig: &CombinedSignature) -> Result<[u8; SIGNATURE_BYTES], Error> {
@@ -396,6 +396,125 @@ where
     }
 }
 
+/// Project a slashable `Activity<Scheme, D>` onto its attributable VoteScheme
+/// half and verify ONLY the multisig vote signatures against a VoteScheme
+/// verifier built from the committee bimap.
+///
+/// This is the verify path used when the per-epoch [`Scheme`] is pruned from
+/// the scheme provider and must be rebuilt from the recovered committee bimap:
+/// the per-epoch DKG polynomial (needed by [`Scheme::verify_attestation`]'s
+/// SEEDED arm) is NOT recoverable at slash time, so a rebuilt
+/// `build_verifier(.., None)` (beacon = `None`) would WRONGLY reject a seeded
+/// Notarize/Finalize equivocation vote on a beacon-active chain (the
+/// `_ => combined.seed.is_none()` fallback arm rejects a present seed). The
+/// equivocation evidence submitted on-chain is over the vote half only (the
+/// threshold seed partial is non-attributable and dropped — see
+/// [`vote_attestation`]); verifying just that attributable half is the correct
+/// and sufficient pre-submit check, and it never needs the polynomial.
+///
+/// The projection drops the seed partial via [`vote_attestation`] and
+/// reconstructs the `Activity<VoteScheme, D>` so `Activity::verify` checks the
+/// same signer/round/proposal-bound multisig signatures the on-chain decoder
+/// will see. The attributable signer index is preserved verbatim (the projection
+/// copies `attestation.signer` and the proposal/round). NB: an equivocation
+/// attestation is single-signer (a scalar `signer` index), not a bitmap — a
+/// bitmap exists only in an aggregated certificate, which is not involved here.
+pub fn verify_pre_submit_vote_only<D, R>(
+    activity: &Activity<Scheme, D>,
+    vote_scheme: &VoteScheme,
+    rng: &mut R,
+) -> Result<(), Error>
+where
+    D: DigestTrait,
+    R: CryptoRngCore,
+{
+    let vote_activity = project_activity_to_vote(activity)?;
+    if vote_activity.verify(rng, vote_scheme, &Sequential) {
+        Ok(())
+    } else {
+        Err(Error::InvalidSignature)
+    }
+}
+
+/// Re-project a slashable `Activity<Scheme, D>` onto `Activity<VoteScheme, D>`,
+/// dropping the threshold seed half of every attestation. Mirrors the
+/// per-variant `extract_from_*` re-encoding (same `vote_attestation` +
+/// `Conflicting*::new` reconstruction) but returns the typed Activity so it can
+/// be re-verified rather than ABI-encoded.
+fn project_activity_to_vote<D>(
+    activity: &Activity<Scheme, D>,
+) -> Result<Activity<VoteScheme, D>, Error>
+where
+    D: DigestTrait,
+{
+    match activity {
+        Activity::ConflictingNotarize(ev) => {
+            let raw = ev.encode().to_vec();
+            let mut buf: &[u8] = &raw;
+            let n1 = Notarize::<Scheme, D>::read_cfg(&mut buf, &())
+                .map_err(|_| Error::InvalidSignature)?;
+            let n2 = Notarize::<Scheme, D>::read_cfg(&mut buf, &())
+                .map_err(|_| Error::InvalidSignature)?;
+            Ok(Activity::ConflictingNotarize(ConflictingNotarize::<
+                VoteScheme,
+                D,
+            >::new(
+                Notarize {
+                    proposal: n1.proposal.clone(),
+                    attestation: vote_attestation(&n1.attestation)?,
+                },
+                Notarize {
+                    proposal: n2.proposal.clone(),
+                    attestation: vote_attestation(&n2.attestation)?,
+                },
+            )))
+        }
+        Activity::ConflictingFinalize(ev) => {
+            let raw = ev.encode().to_vec();
+            let mut buf: &[u8] = &raw;
+            let f1 = Finalize::<Scheme, D>::read_cfg(&mut buf, &())
+                .map_err(|_| Error::InvalidSignature)?;
+            let f2 = Finalize::<Scheme, D>::read_cfg(&mut buf, &())
+                .map_err(|_| Error::InvalidSignature)?;
+            Ok(Activity::ConflictingFinalize(ConflictingFinalize::<
+                VoteScheme,
+                D,
+            >::new(
+                Finalize {
+                    proposal: f1.proposal.clone(),
+                    attestation: vote_attestation(&f1.attestation)?,
+                },
+                Finalize {
+                    proposal: f2.proposal.clone(),
+                    attestation: vote_attestation(&f2.attestation)?,
+                },
+            )))
+        }
+        Activity::NullifyFinalize(ev) => {
+            let raw = ev.encode().to_vec();
+            let mut buf: &[u8] = &raw;
+            let nullify = Nullify::<Scheme>::read_cfg(&mut buf, &())
+                .map_err(|_| Error::InvalidSignature)?;
+            let finalize = Finalize::<Scheme, D>::read_cfg(&mut buf, &())
+                .map_err(|_| Error::InvalidSignature)?;
+            Ok(Activity::NullifyFinalize(NullifyFinalize::<VoteScheme, D>::new(
+                Nullify {
+                    round: nullify.round,
+                    attestation: vote_attestation(&nullify.attestation)?,
+                },
+                Finalize {
+                    proposal: finalize.proposal.clone(),
+                    attestation: vote_attestation(&finalize.attestation)?,
+                },
+            )))
+        }
+        // Not a slashable equivocation variant — the caller filters via
+        // `SlashKind::from_activity` before reaching this, so this is
+        // unreachable; reject rather than panic.
+        _ => Err(Error::NonConflictingEvidence),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,11 +524,17 @@ mod tests {
         types::{Epoch, Round, View},
     };
     use commonware_cryptography::{
-        ed25519::PrivateKey as Ed25519PrivateKey, sha256::Digest as Sha256Digest, Signer,
+        bls12381::{dkg::deal_anonymous, primitives::variant::MinSig},
+        ed25519::PrivateKey as Ed25519PrivateKey,
+        sha256::Digest as Sha256Digest,
+        Signer,
     };
+    use commonware_cryptography::certificate::Scheme as SchemeTrait;
     use commonware_math::algebra::Random;
-    use commonware_utils::TryCollect;
-    use fluentbase_bls::{fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_signer};
+    use commonware_utils::{N3f1, TryCollect};
+    use fluentbase_bls::{
+        beacon::seed_namespace, fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_signer,
+    };
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng;
 
@@ -562,6 +687,104 @@ mod tests {
 
         let err = verify_pre_submit(&tampered_activity, &scheme, &mut rng)
             .expect_err("tampered activity must fail verify");
+        assert!(matches!(err, Error::InvalidSignature), "got: {err:?}");
+    }
+
+    /// Build a SEEDED (beacon-active) `ConflictingNotarize`: the offender signs
+    /// two conflicting proposals at the same round with a combined scheme that
+    /// carries a real threshold seed partial. Mirrors the production beacon-active
+    /// path — `Notarize` votes carry `CombinedSignature{vote, seed: Some(..)}`.
+    fn build_seeded_ev_conflicting_notarize(
+        seed: u64,
+    ) -> (
+        ConflictingNotarize<Scheme, Sha256Digest>,
+        BiMap<PeerPubkey, BlsPubkey>,
+    ) {
+        let (kps, bimap) = small_committee(seed, 4);
+        let mut rng = StdRng::seed_from_u64(seed ^ 0x5eed);
+        let (sharing, shares) =
+            deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), 4u32.try_into().unwrap());
+        let ns = fluent_namespace(TEST_CHAIN_ID);
+        let seed_ns = seed_namespace(&ns);
+        // Offender = committee member 0. Its threshold share index must equal its
+        // Simplex Participant index (BiMap slot) — resolve via the signer's
+        // `me()` (CombinedScheme delegates to the VoteScheme).
+        let probe = build_signer(&ns, bimap.clone(), &kps[0], None).expect("offender is a member");
+        let me = SchemeTrait::me(&probe).expect("signer carries a Participant index");
+        let share = shares.iter().find(|sh| sh.index == me).unwrap().clone();
+        let seeded = build_signer(
+            &ns,
+            bimap.clone(),
+            &kps[0],
+            Some((sharing, Some(share), seed_ns)),
+        )
+        .expect("offender must be member");
+        let p1 = Proposal::new(round(), View::new(41), digest(0xaa));
+        let p2 = Proposal::new(round(), View::new(41), digest(0xbb));
+        let n1 = Notarize::sign(&seeded, p1).expect("sign n1");
+        let n2 = Notarize::sign(&seeded, p2).expect("sign n2");
+        (ConflictingNotarize::new(n1, n2), bimap)
+    }
+
+    #[test]
+    fn vote_only_verify_accepts_seeded_evidence_that_combined_none_verifier_rejects() {
+        // REGRESSION GUARD: on a beacon-active chain the offender's
+        // conflicting Notarize votes carry a seed partial. A rebuilt combined
+        // verifier with `beacon = None` (the only thing recoverable at slash
+        // time — the per-epoch DKG polynomial is gone) WRONGLY rejects them via
+        // the `_ => combined.seed.is_none()` fallback arm. The vote-only verify
+        // path must ACCEPT them by checking just the attributable multisig half.
+        let (ev, bimap) = build_seeded_ev_conflicting_notarize(7);
+        let activity = Activity::<Scheme, Sha256Digest>::ConflictingNotarize(ev);
+        let mut rng = StdRng::seed_from_u64(0xabcd);
+
+        // 1. The rebuilt combined verifier (beacon = None) rejects the seeded
+        //    evidence — the exact bug this fix routes around.
+        let combined_none = fluentbase_bls::scheme::build_verifier(
+            &fluent_namespace(TEST_CHAIN_ID),
+            bimap.clone(),
+            None,
+        );
+        assert!(
+            verify_pre_submit(&activity, &combined_none, &mut rng).is_err(),
+            "combined verifier with beacon=None must reject seeded evidence (the regression)"
+        );
+
+        // 2. The vote-only verifier accepts it — checks the attributable vote
+        //    half against the committee bimap, no polynomial needed.
+        let vote_scheme =
+            VoteScheme::verifier(&fluent_namespace(TEST_CHAIN_ID), bimap);
+        verify_pre_submit_vote_only(&activity, &vote_scheme, &mut rng)
+            .expect("vote-only verify must accept seeded equivocation evidence");
+    }
+
+    #[test]
+    fn vote_only_verify_rejects_tampered_seeded_evidence() {
+        // The vote-only path must still reject a corrupted vote-half signature
+        // (it is a real crypto check, not a structural rubber-stamp).
+        let (ev, bimap) = build_seeded_ev_conflicting_notarize(11);
+        let activity = Activity::<Scheme, Sha256Digest>::ConflictingNotarize(ev);
+        let mut rng = StdRng::seed_from_u64(0x1234);
+        let vote_scheme =
+            VoteScheme::verifier(&fluent_namespace(TEST_CHAIN_ID), bimap.clone());
+
+        // Sanity: clean seeded evidence verifies vote-only.
+        verify_pre_submit_vote_only(&activity, &vote_scheme, &mut rng)
+            .expect("clean seeded evidence must verify vote-only");
+
+        // Tamper a byte deep in sig1's 48-byte vote body, re-decode, re-verify.
+        let bytes = match &activity {
+            Activity::ConflictingNotarize(ev) => ev.encode().to_vec(),
+            _ => unreachable!(),
+        };
+        let mut tampered = bytes.clone();
+        tampered[50] ^= 0x01;
+        let tampered_ev: ConflictingNotarize<Scheme, Sha256Digest> =
+            ConflictingNotarize::decode(tampered.as_slice())
+                .expect("tampering a sig body byte must keep Read invariants intact");
+        let tampered_activity = Activity::<Scheme, Sha256Digest>::ConflictingNotarize(tampered_ev);
+        let err = verify_pre_submit_vote_only(&tampered_activity, &vote_scheme, &mut rng)
+            .expect_err("tampered vote-half must fail vote-only verify");
         assert!(matches!(err, Error::InvalidSignature), "got: {err:?}");
     }
 

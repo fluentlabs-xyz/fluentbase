@@ -49,7 +49,7 @@ pub enum Command {
     Finalize(Box<Update<OrderBlock>>),
     /// A block was NOTARIZED (round-1 quorum) — speculatively derive + import
     /// it now, ahead of finalization, to hide execution latency under the
-    /// finalization rounds. Best-effort: `forward_finalized` stays the sole
+    /// finalization rounds. Best-effort: `try_derive` (finalized path) stays the sole
     /// authority and reconciles (skip-if-matched / re-derive + reorg). Boxed to
     /// keep the enum small (mirrors `Finalize`).
     SpecNotarized(Box<Notarized>),
@@ -572,7 +572,7 @@ where
                 } = *n;
                 if let Err(error) = self.spec_execute(cause, round, digest, seed).await {
                     // Speculation is best-effort: a failure here is logged, never
-                    // fatal — `forward_finalized` will derive the block at
+                    // fatal — `try_derive` (finalized path) will derive the block at
                     // finalization regardless.
                     warn!(%error, %digest, "speculative execution skipped");
                 }
@@ -582,7 +582,7 @@ where
 
     /// Speculatively derive + import a NOTARIZED block, advancing the EL head
     /// ahead of finalization. Strictly forward-only (`spec_head + 1`); a gap or
-    /// an already-covered height is left to `forward_finalized`, which keeps
+    /// an already-covered height is left to `try_derive` (finalized path), which keeps
     /// this path race-free with finalized delivery (both run in this one loop).
     #[instrument(skip_all, parent = &cause, fields(%digest), err(level = Level::DEBUG))]
     async fn spec_execute(
@@ -592,6 +592,15 @@ where
         digest: crate::digest::Digest,
         seed: Option<crate::beacon::types::Seed>,
     ) -> eyre::Result<()> {
+        // A finalized block is deferred awaiting its cert (strict-order pause).
+        // Speculating past it would advance head/spec_head OVER the deferred
+        // height, leaking the strict-order invariant (self-healing, but the
+        // finalized path is the sole authority — let it derive first). The
+        // mailbox arm is intentionally NOT gated (shutdown + Command::Finalize
+        // enqueue must keep flowing); the guard lives here.
+        if self.deferred.is_some() {
+            return Ok(());
+        }
         let Some(order) = self.marshal.fetch_block_by_digest(digest).await else {
             // Body not in the local buffer yet — finalized path will derive it.
             return Ok(());
@@ -632,8 +641,8 @@ where
             .await
             .wrap_err("speculative FCU failed")?;
         ensure!(
-            !fcu.is_invalid(),
-            "EL reported invalid speculative FCU: {:?}",
+            fcu.is_valid() || fcu.is_syncing(),
+            "EL reported non-valid speculative FCU: {:?}",
             fcu.payload_status
         );
         self.last_canonicalized = new;
@@ -668,6 +677,7 @@ where
     /// local. The moment a required cert is missing it returns `NeedSeed` —
     /// WITHOUT mutating any finalized state or acking — so the caller can defer
     /// and re-poll on the self-driven timer.
+    #[instrument(skip_all, parent = &cause, fields(height = order.height), err)]
     async fn try_derive(
         &mut self,
         cause: Span,
@@ -785,8 +795,8 @@ where
             .await
             .wrap_err("finalize FCU failed")?;
         ensure!(
-            !fcu.is_invalid(),
-            "EL reported invalid finalize FCU: {:?}",
+            fcu.is_valid() || fcu.is_syncing(),
+            "EL reported non-valid finalize FCU: {:?}",
             fcu.payload_status
         );
         if new != self.last_canonicalized {
@@ -951,9 +961,24 @@ mod tests {
         }
     }
 
+    type SeedsSeen = Arc<Mutex<Vec<(u64, Option<crate::beacon::types::Seed>)>>>;
+
     #[derive(Clone)]
     struct FakeDeriver {
         chain: FakeChain,
+        /// Records the (height, seed) passed to each `derive_and_execute` so a
+        /// test can assert the cert-recovered seed actually reaches the deriver.
+        /// Mutex<Vec> so it survives the deriver clone (Arc-shared).
+        seeds_seen: SeedsSeen,
+    }
+
+    impl FakeDeriver {
+        fn new(chain: FakeChain) -> Self {
+            Self {
+                chain,
+                seeds_seen: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
     }
 
     impl DerivedBlockBuilder for FakeDeriver {
@@ -963,8 +988,12 @@ mod tests {
             &self,
             order: OrderBlock,
             parent_evm_hash: B256,
-            _seed: Option<crate::beacon::types::Seed>,
+            seed: Option<crate::beacon::types::Seed>,
         ) -> eyre::Result<RethExecBlock> {
+            self.seeds_seen
+                .lock()
+                .unwrap()
+                .push((order.height, seed));
             let sealed = sealed_at(parent_evm_hash, order.height, order.digest().0);
             // Last writer wins, modelling a reth reorg: a finalized sibling
             // derived after a speculative one replaces the canonical hash.
@@ -981,6 +1010,11 @@ mod tests {
     struct FakeBeacon {
         fcu_calls: Arc<Mutex<Vec<ForkchoiceState>>>,
         new_payload_calls: Arc<Mutex<Vec<RethExecBlock>>>,
+        /// Override for the `fork_choice_updated` status; `None` ⇒ Valid. Set to
+        /// drive SYNCING / INVALID through the FCU gate.
+        fcu_status: Arc<Mutex<Option<PayloadStatusEnum>>>,
+        /// Override for the `import_derived` status; `None` ⇒ Valid.
+        import_status: Arc<Mutex<Option<PayloadStatusEnum>>>,
     }
 
     impl BeaconEngineLike for FakeBeacon {
@@ -991,17 +1025,29 @@ mod tests {
             state: ForkchoiceState,
         ) -> eyre::Result<ForkchoiceUpdated> {
             self.fcu_calls.lock().unwrap().push(state);
-            Ok(ForkchoiceUpdated::from_status(PayloadStatusEnum::Valid))
+            let status = self
+                .fcu_status
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or(PayloadStatusEnum::Valid);
+            Ok(ForkchoiceUpdated::from_status(status))
         }
 
         async fn import_derived(&self, data: RethExecBlock) -> eyre::Result<PayloadStatus> {
             self.new_payload_calls.lock().unwrap().push(data);
-            Ok(PayloadStatus::from_status(PayloadStatusEnum::Valid))
+            let status = self
+                .import_status
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or(PayloadStatusEnum::Valid);
+            Ok(PayloadStatus::from_status(status))
         }
     }
 
     /// Scripts how `lookup_seed` behaves in a test.
-    #[derive(Clone, Copy, Default, PartialEq)]
+    #[derive(Clone, Default, PartialEq)]
     enum SeedMode {
         /// Every height is a no-beacon epoch → gated `order.digest()` fallback
         /// (the default; matches the pre-beacon behaviour the non-seed tests rely on).
@@ -1016,6 +1062,9 @@ mod tests {
         /// seed VALUE is only observable in `derive.rs::resolve_prev_randao`,
         /// which is tested there + by the smoke.
         MissingUntilHinted,
+        /// Every height's cert carries this real beacon seed — `SeedLookup::Seed`
+        /// flows through the executor into the deriver.
+        Beacon(crate::beacon::types::Seed),
     }
 
     #[derive(Clone, Default)]
@@ -1039,7 +1088,7 @@ mod tests {
                 .cloned()
         }
         async fn lookup_seed(&self, height: Height) -> SeedLookup {
-            match *self.seed_mode.lock().unwrap() {
+            match &*self.seed_mode.lock().unwrap() {
                 SeedMode::NoBeacon => SeedLookup::NoBeacon,
                 SeedMode::AlwaysMissing => SeedLookup::CertMissing,
                 SeedMode::MissingUntilHinted => {
@@ -1049,6 +1098,7 @@ mod tests {
                         SeedLookup::CertMissing
                     }
                 }
+                SeedMode::Beacon(seed) => SeedLookup::Seed(seed.clone()),
             }
         }
         async fn hint_finalization(&self, height: Height, _targets: NonEmptyVec<PeerPubkey>) {
@@ -1059,6 +1109,7 @@ mod tests {
     struct Fixture {
         chain: FakeChain,
         beacon: FakeBeacon,
+        deriver: FakeDeriver,
         marshal: FakeMarshal,
         anchor_hash: B256,
     }
@@ -1074,6 +1125,7 @@ mod tests {
                 .unwrap()
                 .insert(anchor_height, anchor_hash);
             Self {
+                deriver: FakeDeriver::new(chain.clone()),
                 chain,
                 beacon: FakeBeacon::default(),
                 marshal: FakeMarshal::default(),
@@ -1094,9 +1146,7 @@ mod tests {
                 ctx,
                 Config {
                     beacon_engine: self.beacon.clone(),
-                    deriver: FakeDeriver {
-                        chain: self.chain.clone(),
-                    },
+                    deriver: self.deriver.clone(),
                     executed: self.chain.clone(),
                     marshal: self.marshal.clone(),
                     fcu_heartbeat_interval: Duration::from_secs(60),
@@ -1117,6 +1167,26 @@ mod tests {
         use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
         let pk = Ed25519PrivateKey::from_seed(99).public_key();
         NonEmptyVec::try_from(vec![pk]).ok()
+    }
+
+    /// A real recovered threshold seed for `round` (the executor passes it
+    /// through verbatim; it never re-verifies, so any valid `Seed` suffices).
+    fn real_seed(round: commonware_consensus::types::Round) -> crate::beacon::types::Seed {
+        use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
+        use commonware_utils::{test_rng, N3f1, NZU32};
+        use fluentbase_bls::beacon::{recover_seed, seed_namespace, sign_seed_partial};
+        let mut rng = test_rng();
+        let (sharing, shares) =
+            deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(5));
+        let ns = seed_namespace(b"fluent-test");
+        let partials: Vec<_> = shares
+            .iter()
+            .map(|s| sign_seed_partial(s, &ns, round))
+            .collect();
+        crate::beacon::types::Seed {
+            target_round: round,
+            signature: recover_seed::<N3f1>(&sharing, &partials).expect("recover seed"),
+        }
     }
 
     fn finalize_msg(
@@ -1553,6 +1623,212 @@ mod tests {
                 !fx.marshal.hints.lock().unwrap().is_empty(),
                 "should have hinted the missing cert before giving up"
             );
+        });
+    }
+
+    // A multi-height speculative lead (spec_head 3 ahead) where a SIBLING
+    // finalizes mid-lead must roll back exactly at the diverging height: the
+    // finalized sibling is re-derived and the speculative entries strictly above
+    // it (split_off) are dropped so the next notarization re-speculates forward.
+    #[test]
+    fn multi_height_speculation_rolls_back_at_sibling_mid_lead() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            // Build a speculative lead of 3: ANCHOR+1, +2, +3 (each parent links
+            // to the prior digest so they chain).
+            let o1 = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
+            let o2a = sample_order(o1.digest(), ANCHOR + 2, B256::repeat_byte(0xAA));
+            let o3 = sample_order(o2a.digest(), ANCHOR + 3, B256::ZERO);
+            {
+                let mut canned = fx.marshal.canned.lock().unwrap();
+                canned.insert(ANCHOR + 1, o1.clone());
+                canned.insert(ANCHOR + 2, o2a.clone());
+                canned.insert(ANCHOR + 3, o3.clone());
+            }
+            mailbox.send(spec_msg(&o1)).expect("spec 1");
+            mailbox.send(spec_msg(&o2a)).expect("spec 2a");
+            mailbox.send(spec_msg(&o3)).expect("spec 3");
+
+            // Finalize ANCHOR+1 as speculated (no re-derive), then a SIBLING B at
+            // ANCHOR+2 finalizes — o2a was nullified. Rollback derives B at +2;
+            // the +3 speculation (built on the orphaned o2a) is discarded.
+            let (m1, w1) = finalize_msg(o1.clone());
+            mailbox.send(m1).expect("send finalize 1");
+            w1.await.expect("ack 1");
+
+            let o2b = sample_order(o1.digest(), ANCHOR + 2, B256::repeat_byte(0xBB));
+            let (m2b, w2b) = finalize_msg(o2b.clone());
+            mailbox.send(m2b).expect("send finalize 2b");
+            w2b.await.expect("ack 2b");
+
+            {
+                let payloads = fx.beacon.new_payload_calls.lock().unwrap();
+                let heights: Vec<u64> = payloads.iter().map(|p| p.number).collect();
+                // 3 speculative imports (101,102,103) + 1 rollback re-derive (102).
+                assert_eq!(
+                    heights,
+                    vec![ANCHOR + 1, ANCHOR + 2, ANCHOR + 3, ANCHOR + 2],
+                    "speculated 3-deep then re-derived the finalized sibling at +2"
+                );
+                let hash_b = sealed_at(
+                    fx.chain.executed_hash(ANCHOR + 1).unwrap(),
+                    ANCHOR + 2,
+                    o2b.digest().0,
+                )
+                .hash();
+                let fcus = fx.beacon.fcu_calls.lock().unwrap();
+                assert_eq!(
+                    fcus.last().unwrap().head_block_hash,
+                    hash_b,
+                    "head reorged back onto the finalized sibling at +2"
+                );
+            }
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // An INVALID forkchoice status (import VALID, FCU INVALID) is fatal —
+    // the executor shuts down rather than advancing onto a rejected head.
+    #[test]
+    fn invalid_fcu_status_is_fatal() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            *fx.beacon.fcu_status.lock().unwrap() = Some(PayloadStatusEnum::Invalid {
+                validation_error: "test-induced".into(),
+            });
+            let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            let (msg, _waiter) =
+                finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
+            mailbox.send(msg).expect("send");
+            // The executor breaks on the INVALID FCU, so the handle completes
+            // WITHOUT us dropping the mailbox.
+            let _ = handle.await;
+        });
+    }
+
+    // A SYNCING status (both import and FCU) is the tolerated cold-start /
+    // rejoin window — the block still derives and acks.
+    #[test]
+    fn syncing_status_is_tolerated_through_the_gate() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            *fx.beacon.fcu_status.lock().unwrap() = Some(PayloadStatusEnum::Syncing);
+            *fx.beacon.import_status.lock().unwrap() = Some(PayloadStatusEnum::Syncing);
+            let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            let (msg, waiter) =
+                finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
+            mailbox.send(msg).expect("send");
+            waiter.await.expect("SYNCING is tolerated → block acks");
+
+            assert_eq!(
+                fx.beacon.new_payload_calls.lock().unwrap().len(),
+                1,
+                "block derived under SYNCING"
+            );
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // Finalized path: a real `SeedLookup::Seed(Some)` flows through the
+    // executor into the deriver — the deriver receives the cert-recovered seed,
+    // not None.
+    #[test]
+    fn real_seed_flows_through_executor_to_deriver() {
+        use commonware_consensus::types::{Epoch, Round, View};
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let seed = real_seed(Round::new(Epoch::new(0), View::new(ANCHOR + 1)));
+            let fx = Fixture::new(ANCHOR);
+            *fx.marshal.seed_mode.lock().unwrap() = SeedMode::Beacon(seed.clone());
+            let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            let (msg, waiter) =
+                finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
+            mailbox.send(msg).expect("send");
+            waiter.await.expect("ack");
+
+            {
+                let seen = fx.deriver.seeds_seen.lock().unwrap();
+                assert_eq!(
+                    seen.as_slice(),
+                    &[(ANCHOR + 1, Some(seed))],
+                    "the cert-recovered seed reached the deriver verbatim"
+                );
+            }
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // Speculative path: the seed recovered from the NOTARIZATION cert (the
+    // `SpecNotarized` command) reaches the deriver during speculative execution.
+    #[test]
+    fn notarization_seed_reaches_deriver_on_speculation() {
+        use commonware_consensus::types::{Epoch, Round, View};
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let round = Round::new(Epoch::new(0), View::new(ANCHOR + 1));
+            let seed = real_seed(round);
+            let fx = Fixture::new(ANCHOR);
+            let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
+            fx.marshal
+                .canned
+                .lock()
+                .unwrap()
+                .insert(ANCHOR + 1, order.clone());
+
+            // Speculative command carrying the notarization seed.
+            mailbox
+                .send(Message {
+                    cause: Span::current(),
+                    command: Command::SpecNotarized(Box::new(Notarized {
+                        round,
+                        digest: order.digest(),
+                        seed: Some(seed.clone()),
+                    })),
+                })
+                .expect("send spec");
+            // Drain barrier: finalize the same order (skips re-derive since it was
+            // speculated; the spec import already recorded the seed).
+            let (m, w) = finalize_msg(order.clone());
+            mailbox.send(m).expect("send finalize");
+            w.await.expect("ack");
+
+            {
+                let seen = fx.deriver.seeds_seen.lock().unwrap();
+                assert_eq!(
+                    seen.as_slice(),
+                    &[(ANCHOR + 1, Some(seed))],
+                    "the notarization-cert seed reached the deriver during speculation"
+                );
+            }
+
+            drop(mailbox);
+            let _ = handle.await;
         });
     }
 }

@@ -217,30 +217,72 @@ where
                     });
                 }
             }
-            let uf = self.next_finalized().await?;
+            // `next_finalized` can itself raise an UpstreamDataFault: the
+            // EL-sync jump path drives reth onto an upstream-served tip, and a
+            // sync_to failure or an unverifiable/unreachable jump target is the
+            // upstream's data surface — route it through the SAME rotate-and-retry
+            // policy as apply() rather than halting fatally (one malicious
+            // far-ahead upstream must not wedge the follower).
+            let uf = match self.next_finalized().await {
+                Ok(uf) => uf,
+                Err(e) if e.downcast_ref::<UpstreamDataFault>().is_some() => {
+                    match Self::on_upstream_fault(
+                        &mut consecutive_faults,
+                        &self.upstream,
+                        e,
+                        "upstream jump target unverifiable",
+                    )
+                    .await
+                    {
+                        Ok(()) => continue,
+                        Err(e) => return Err(e),
+                    }
+                }
+                Err(e) => return Err(e),
+            };
             match self.apply(uf).await {
                 Ok(()) => consecutive_faults = 0,
                 // Upstream-data faults rotate to the next configured URL and
                 // re-pull the same height; identical faults from every
                 // upstream mean the data (or we) are at fault — halt.
                 Err(e) if e.downcast_ref::<UpstreamDataFault>().is_some() => {
-                    consecutive_faults += 1;
-                    if consecutive_faults >= MAX_UPSTREAM_FAULTS {
-                        return Err(e.wrap_err(format!(
-                            "{MAX_UPSTREAM_FAULTS} consecutive upstream data faults — \
-                             halting fail-closed"
-                        )));
-                    }
-                    warn!(
-                        error = %e,
-                        fault = consecutive_faults,
-                        "upstream served an unverifiable pair; rotating upstream and re-pulling"
-                    );
-                    self.upstream.rotate().await;
+                    Self::on_upstream_fault(
+                        &mut consecutive_faults,
+                        &self.upstream,
+                        e,
+                        "upstream served an unverifiable pair",
+                    )
+                    .await?;
                 }
                 Err(e) => return Err(e),
             }
         }
+    }
+
+    /// Shared rotate-and-retry handling for an [`UpstreamDataFault`]: bump the
+    /// consecutive-fault counter, halt fail-closed at [`MAX_UPSTREAM_FAULTS`],
+    /// otherwise rotate to the next upstream and let the caller re-pull. Returns
+    /// `Err` only when the cap is hit.
+    async fn on_upstream_fault(
+        consecutive_faults: &mut u32,
+        upstream: &U,
+        e: eyre::Report,
+        context: &str,
+    ) -> eyre::Result<()> {
+        *consecutive_faults += 1;
+        if *consecutive_faults >= MAX_UPSTREAM_FAULTS {
+            return Err(e.wrap_err(format!(
+                "{MAX_UPSTREAM_FAULTS} consecutive upstream data faults — \
+                 halting fail-closed"
+            )));
+        }
+        warn!(
+            error = %e,
+            fault = *consecutive_faults,
+            "{context}; rotating upstream and re-pulling"
+        );
+        upstream.rotate().await;
+        Ok(())
     }
 
     /// Verify → derive → FCU → publish → advance. Verification failures
@@ -445,11 +487,26 @@ where
                     // events can lag (dropped on overflow / WS reconnect).
                     self.highest_live_seen = self.highest_live_seen.max(latest.block.height);
                     if latest.block.height > want {
+                        // Authenticate the jump target BEFORE driving reth onto
+                        // it: sync_to follows an upstream-served tip, so an
+                        // unverified `latest` would let a malicious far-ahead
+                        // upstream steer the EL onto an unagreed branch. With an
+                        // L1 checkpoint configured the post-jump `holds()` probe
+                        // is the trust root, so cert-verify is belt-and-braces;
+                        // WITHOUT it the committee cert is the ONLY trust anchor
+                        // — an unverifiable/unreachable target is an upstream
+                        // fault (rotate + retry), not a fatal halt.
+                        self.verify_jump_target(&latest)?;
                         let (synced_height, synced_hash) = self
                             .el_sync
                             .sync_to(&latest)
                             .await
-                            .wrap_err("EL-sync jump failed")?;
+                            .map_err(|e| {
+                                // A sync_to failure is the upstream's data/transport
+                                // surface — classify as a rotatable fault rather
+                                // than a fatal `?`.
+                                UpstreamDataFault(format!("EL-sync jump failed: {e:#}"))
+                            })?;
                         // A landing that does not advance the cursor (lagging
                         // get_latest after a failover rotation, upstream
                         // reorg) must not reseed backward — fall through to
@@ -495,6 +552,85 @@ where
                 _ = self.ctx.sleep(PULL_RETRY) => {}
             }
         }
+    }
+
+    /// Authenticate an EL-sync jump target's finalization against its epoch
+    /// committee BEFORE `sync_to` drives reth onto it. Mirrors the
+    /// per-block `apply` cert checks (payload==digest → BLS multisig + threshold
+    /// seed vs PK_E) on the `latest` pair.
+    ///
+    /// Trust model: when an `l1_checkpoint` is configured, `reseed_at_jump_landing`
+    /// re-asserts that the synced head descends from the L1-finalized block — that
+    /// IS the trust root, so a cert-verify failure here is permitted (we proceed
+    /// and let the L1 probe gate the landing). WITHOUT an L1 checkpoint the
+    /// committee cert is the only trust anchor on a jump, so an unverifiable cert
+    /// — OR a committee we cannot even read at the current cursor state (a target
+    /// too far ahead for the local state to hold its epoch's committee) — is an
+    /// [`UpstreamDataFault`]: rotate to the next upstream rather than blindly
+    /// syncing onto a possibly-forged tip.
+    fn verify_jump_target(&mut self, latest: &UpstreamFinalized) -> eyre::Result<()> {
+        // The cert must sign the served artifact.
+        if latest.finalization.proposal.payload != latest.block.digest() {
+            return Err(UpstreamDataFault(format!(
+                "jump target cert payload != block digest at height {}",
+                latest.block.height
+            ))
+            .into());
+        }
+        let epoch = latest.finalization.proposal.round.epoch().get();
+        let in_block_pk = latest
+            .block
+            .beacon_outcome
+            .as_ref()
+            .and_then(|b| parse_outcome(b.as_ref()).ok())
+            .map(|o| *group_public_key(&o));
+        // Build the verifier for the target epoch from local state at the cursor.
+        // A far-ahead target may reference a committee the current state cannot
+        // yet read — that is exactly the case the L1 checkpoint is for.
+        let scheme = match self
+            .committees
+            .scheme_at(epoch, self.cursor.evm_hash, in_block_pk)
+        {
+            Ok(scheme) => scheme,
+            Err(e) => {
+                if self.l1_checkpoint.is_some() {
+                    warn!(
+                        height = latest.block.height,
+                        epoch,
+                        error = %e,
+                        "jump target committee unreadable at cursor state; \
+                         proceeding under the L1 checkpoint trust root"
+                    );
+                    return Ok(());
+                }
+                return Err(UpstreamDataFault(format!(
+                    "jump target committee for epoch {epoch} unreadable at cursor state \
+                     and no L1 checkpoint to fall back on: {e:#}"
+                ))
+                .into());
+            }
+        };
+        if !latest
+            .finalization
+            .verify(&mut self.ctx, &scheme, &Sequential)
+        {
+            if self.l1_checkpoint.is_some() {
+                warn!(
+                    height = latest.block.height,
+                    epoch,
+                    "jump target cert FAILED BLS verification; \
+                     proceeding under the L1 checkpoint trust root"
+                );
+                return Ok(());
+            }
+            return Err(UpstreamDataFault(format!(
+                "jump target finalization cert FAILED BLS verification at height {} \
+                 (epoch {epoch}) and no L1 checkpoint to fall back on",
+                latest.block.height
+            ))
+            .into());
+        }
+        Ok(())
     }
 
     /// Reseed the loop at an EL-sync jump landing: re-assert the L1 trust
@@ -1110,6 +1246,77 @@ mod tests {
                 ),
             };
             assert!(err.to_string().contains("NOT in the local chain"), "{err}");
+        });
+    }
+
+    #[test]
+    fn unverifiable_jump_target_without_l1_is_an_upstream_fault_not_a_sync() {
+        // A forged jump target (cert payload != block digest) with no L1
+        // checkpoint must NOT drive sync_to — it is an UpstreamDataFault that
+        // surfaces from next_finalized.
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let (mut lp, fx) = fixture(ctx, ACTIVATION);
+            assert!(lp.l1_checkpoint.is_none(), "fixture has no L1 checkpoint");
+            let far = ACTIVATION + 1 + JUMP_THRESHOLD + 10;
+            let live = sample_order(
+                Digest(B256::repeat_byte(0xaa)),
+                far,
+                B256::repeat_byte(0x44),
+            );
+            let mut forged = certify(&fx.committee, 0, &live);
+            // Cert signs a DIFFERENT block than the one served.
+            forged.block = sample_order(Digest(B256::repeat_byte(0xab)), far, B256::repeat_byte(0x44));
+            fx.finalized_tx.send(forged.clone()).await.unwrap();
+            *fx.upstream.latest.lock().unwrap() = Some(forged);
+            let err = match lp.next_finalized().await {
+                Err(e) => e,
+                Ok(uf) => panic!("expected an upstream fault, got height {}", uf.block.height),
+            };
+            assert!(
+                err.downcast_ref::<UpstreamDataFault>().is_some(),
+                "unverifiable jump target must be an upstream fault: {err}"
+            );
+            assert_eq!(
+                *fx.el_sync_calls.lock().unwrap(),
+                0,
+                "must NOT sync onto an unverified tip"
+            );
+        });
+    }
+
+    #[test]
+    fn run_rotates_then_halts_on_repeated_unverifiable_jump_targets() {
+        // A sync_to/verify fault inside next_finalized must rotate the
+        // upstream (not halt fatally on the first one); only MAX_UPSTREAM_FAULTS
+        // consecutive faults halt fail-closed.
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let (mut lp, fx) = fixture(ctx, ACTIVATION);
+            let far = ACTIVATION + 1 + JUMP_THRESHOLD + 10;
+            let live = sample_order(
+                Digest(B256::repeat_byte(0xaa)),
+                far,
+                B256::repeat_byte(0x44),
+            );
+            let mut forged = certify(&fx.committee, 0, &live);
+            forged.block = sample_order(Digest(B256::repeat_byte(0xab)), far, B256::repeat_byte(0x44));
+            // Every upstream serves the same forged target — run rotates per
+            // fault then halts at the cap. Pre-arm the gap signal so the jump
+            // branch fires immediately (no starvation wait).
+            lp.highest_live_seen = far;
+            *fx.upstream.latest.lock().unwrap() = Some(forged);
+            let err = lp.run().await.unwrap_err();
+            assert!(
+                err.to_string().contains("consecutive upstream data faults"),
+                "expected fail-closed after the fault cap: {err}"
+            );
+            assert_eq!(
+                *fx.upstream.rotations.lock().unwrap(),
+                MAX_UPSTREAM_FAULTS - 1,
+                "rotated once per fault below the cap, then halted"
+            );
+            assert_eq!(*fx.el_sync_calls.lock().unwrap(), 0, "never synced");
         });
     }
 
