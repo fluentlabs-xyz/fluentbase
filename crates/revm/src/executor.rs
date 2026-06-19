@@ -13,7 +13,7 @@ use fluentbase_runtime::{
     RuntimeContext, RuntimeExecutor,
 };
 use fluentbase_sdk::{
-    bincode, debug_log, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
+    bincode, is_delegated_runtime_address, is_execute_using_system_runtime, keccak256,
     rwasm_core::RwasmModule,
     system::{
         JournalLog, RuntimeExecutionOutcomeV1, RuntimeInterruptionOutcomeV1, RuntimeNewFrameInputV1,
@@ -427,12 +427,6 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
         Cow::Owned(contract_input),
         fuel_limit,
         if is_create { STATE_DEPLOY } else { STATE_MAIN },
-    );
-
-    debug_log!(
-        "revm: syscall_exec_impl exit_code={} fuel_consumed={}",
-        exit_code,
-        fuel_consumed
     );
 
     // Convert consumed fuel into gas to charge inside REVM.
