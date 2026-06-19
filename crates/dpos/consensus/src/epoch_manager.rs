@@ -64,7 +64,8 @@ pub type BeaconResolver = Arc<dyn Fn(u64) -> Option<BeaconKey> + Send + Sync>;
 /// verifying an epoch's assembled certs (a soft-enter catch-up verifier, or a
 /// committee member that missed that epoch's DKG ceremony) reads the trustless
 /// on-chain key rather than a stale local carry-forward. Built in `dpos.rs::launch`.
-pub type BeaconVerifyPk = Arc<dyn Fn(u64) -> Option<crate::beacon::seed::GroupPublic> + Send + Sync>;
+pub type BeaconVerifyPk =
+    Arc<dyn Fn(u64) -> Option<crate::beacon::seed::GroupPublic> + Send + Sync>;
 
 // Finished engines are aborted at the transition (tempo's exit-at-transition
 // pattern) — there is no concurrent active-epochs window. A finished engine
@@ -165,6 +166,10 @@ pub struct Config<B, XC, A> {
     /// notarization arm of the simplex reporter, forwarding `SpecNotarized`
     /// commands to the executor for speculative execution.
     pub spec_exec_mailbox: crate::spec_exec::Mailbox,
+    /// Cross-epoch singleton from [`crate::outer::OuterEngine`]: the shared
+    /// `round → recovered seed` map for the Stage-2 beacon certify gate. Written
+    /// by `spec_exec_mailbox`, read by each per-epoch [`crate::beacon::certify::BeaconCertify`].
+    pub seed_store: crate::beacon::certify::SeedStore,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
     pub page_cache: CacheRef,
     /// Callback into [`crate::outer::EpochSchemeProvider`] so marshal can verify
@@ -485,6 +490,7 @@ where
                 register_scheme: self.cfg.register_scheme.clone(),
                 beacon: (self.cfg.beacon_resolver)(epoch.get()),
                 beacon_verify_pk: (self.cfg.beacon_verify_pk)(epoch.get()),
+                seed_store: self.cfg.seed_store.clone(),
             },
             self.cfg.marshal_mailbox.clone(),
             self.cfg.slasher_mailbox.clone(),

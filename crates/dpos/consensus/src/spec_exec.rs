@@ -15,7 +15,7 @@
 //! there is no cross-actor race on the speculative state.
 
 use crate::{
-    beacon::types::Seed,
+    beacon::{certify::SeedStore, types::Seed},
     executor,
     executor::{Command, Notarized},
 };
@@ -30,11 +30,21 @@ type Digest = crate::digest::Digest;
 #[derive(Clone)]
 pub struct Mailbox {
     executor: executor::Mailbox,
+    /// Shared `round → recovered seed` map for the Stage-2 beacon certify gate
+    /// ([`crate::beacon::certify`]). This reporter is the WRITER: the
+    /// notarization carries the recovered seed, and it fires (via the voter's
+    /// `notify` → `try_broadcast_notarization`) BEFORE the next loop iteration
+    /// calls `certify` for the same round. `None` ⇒ no certify gate wired
+    /// (tests / pre-beacon configs).
+    seed_store: Option<SeedStore>,
 }
 
 impl Mailbox {
-    pub fn new(executor: executor::Mailbox) -> Self {
-        Self { executor }
+    pub fn new(executor: executor::Mailbox, seed_store: Option<SeedStore>) -> Self {
+        Self {
+            executor,
+            seed_store,
+        }
     }
 }
 
@@ -49,6 +59,11 @@ impl Reporter for Mailbox {
             target_round: n.proposal.round,
             signature,
         });
+        // Record the recovered seed for the certify gate (round-keyed). Fired
+        // here, before `certify(round, _)` runs next loop iteration.
+        if let (Some(store), Some(s)) = (self.seed_store.as_ref(), seed.as_ref()) {
+            crate::beacon::certify::record_seed(store, s.target_round, s.signature);
+        }
         let msg = executor::Message {
             cause: Span::current(),
             command: Command::SpecNotarized(Box::new(Notarized {

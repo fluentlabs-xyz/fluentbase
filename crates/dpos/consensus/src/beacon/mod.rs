@@ -37,6 +37,7 @@
 
 pub mod actor;
 pub mod ceremony;
+pub mod certify;
 pub mod dkg;
 pub mod dkg_msg;
 pub mod outcome;

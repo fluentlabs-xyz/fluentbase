@@ -644,10 +644,18 @@ where
             },
         );
 
+        // Shared `round → recovered seed` map for the Stage-2 beacon certify gate
+        // (`crate::beacon::certify`). The spec-exec reporter writes it (it already
+        // recovers the seed per notarization); each per-epoch `BeaconCertify`
+        // wrapper reads it. Cross-epoch singleton.
+        let seed_store = crate::beacon::certify::new_seed_store();
+
         // Notarization arm of the simplex reporter — forwards `SpecNotarized`
         // to the executor for speculative execution. Built from a mailbox clone
-        // before `FluentApp` consumes `executor_mailbox`.
-        let spec_exec_mailbox = crate::spec_exec::Mailbox::new(executor_mailbox.clone());
+        // before `FluentApp` consumes `executor_mailbox`. Also writes the recovered
+        // seed into `seed_store` for the certify gate.
+        let spec_exec_mailbox =
+            crate::spec_exec::Mailbox::new(executor_mailbox.clone(), Some(seed_store.clone()));
 
         // FluentApp (needs executor_mailbox + marshal_mailbox + sidecar state).
         // The beacon seed feed lives here, NOT on the executor: the partial is
@@ -729,6 +737,7 @@ where
                 marshal_mailbox: marshal_mailbox.clone(),
                 slasher_mailbox,
                 spec_exec_mailbox,
+                seed_store,
                 page_cache,
                 register_scheme,
             },

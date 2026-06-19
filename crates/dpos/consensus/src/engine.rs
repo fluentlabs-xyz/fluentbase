@@ -6,6 +6,7 @@
 
 use crate::{
     application::{ExecutedChain, FluentApp, OrderingAssembler},
+    beacon::certify::{BeaconCertify, SeedStore},
     digest::Digest,
     elector_seed::epoch_leader_seed,
     epocher::OriginEpocher,
@@ -43,7 +44,10 @@ use std::sync::Arc;
 
 const FETCH_CONCURRENT: usize = 4;
 
-type InlineFor<E, XC, A> = Inline<E, BlsScheme, FluentApp<XC, A>, OrderBlock, OriginEpocher>;
+/// The automaton+relay handed to simplex: `Inline` plus the Stage-2 beacon
+/// seed-verify at `certify` ([`crate::beacon::certify`]). `BeaconCertify` wraps a
+/// per-epoch `Inline` (built in [`EpochEngine::new`]).
+type AutomatonFor<E, XC, A> = BeaconCertify<E, XC, A>;
 
 type ConsensusEngine<E, B, XC, A> = simplex::Engine<
     E,
@@ -51,8 +55,8 @@ type ConsensusEngine<E, B, XC, A> = simplex::Engine<
     RoundRobin<Sha256>,
     B,
     Digest,
-    InlineFor<E, XC, A>,
-    InlineFor<E, XC, A>,
+    AutomatonFor<E, XC, A>,
+    AutomatonFor<E, XC, A>,
     Reporters<
         Activity<BlsScheme, Digest>,
         Reporters<
@@ -102,6 +106,11 @@ pub struct EpochEngineConfig<B, XC, A> {
     /// verifier — `verify_certificate` needs only the group key). `None` ⇒ a
     /// pre-beacon (pure-multisig) chain. See [`crate::epoch_manager::BeaconVerifyPk`].
     pub beacon_verify_pk: Option<GroupPublic>,
+    /// Shared `round → recovered seed` map for the Stage-2 beacon certify gate
+    /// ([`crate::beacon::certify`]). Cross-epoch singleton from
+    /// [`crate::outer::OuterEngine`]; written by the spec-exec reporter, read by
+    /// this epoch's [`BeaconCertify`] wrapper.
+    pub seed_store: SeedStore,
 }
 
 /// Per-epoch consensus engine. Created by
@@ -254,6 +263,18 @@ where
             marshal_mailbox.clone(),
             cfg.epocher.clone(),
         );
+        // Stage-2 beacon seed-verify at `certify`: wrap `Inline` so the boundary
+        // block's seed is checked against its OWN asserted PK_E before
+        // finalization (see `crate::beacon::certify`). Non-boundary blocks are
+        // left to `CombinedScheme::verify_certificate` (already seed-checked at
+        // notarization). The wrapper delegates Automaton/Relay verbatim.
+        let automaton = BeaconCertify::new(
+            inline,
+            context.with_label("beacon_certify_ctx"),
+            marshal_mailbox.clone(),
+            cfg.seed_store,
+            seed_namespace(&namespace),
+        );
 
         let t = cfg.timeouts;
         let consensus = simplex::Engine::new(
@@ -262,8 +283,8 @@ where
                 scheme,
                 elector: RoundRobin::<Sha256>::shuffled(&epoch_leader_seed(&cfg.snapshot)),
                 blocker: cfg.blocker,
-                automaton: inline.clone(),
-                relay: inline,
+                automaton: automaton.clone(),
+                relay: automaton,
                 reporter: Reporters::from((
                     Reporters::from((marshal_mailbox, slasher_mailbox)),
                     spec_exec_mailbox,
