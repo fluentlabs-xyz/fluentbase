@@ -51,7 +51,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/target,sharing=locked \
     cargo build --profile $BUILD_PROFILE --locked \
         --bin fluent --bin genesis-bootstrap \
-        --features fluent/dpos-devnet-metrics && \
+        --features fluent/dpos-devnet-metrics,fluent/dpos-devnet-byzantine && \
     cp /app/target/$BUILD_PROFILE/fluent /app/fluent && \
     cp /app/target/$BUILD_PROFILE/genesis-bootstrap /app/genesis-bootstrap
 

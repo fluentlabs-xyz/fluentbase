@@ -1,9 +1,10 @@
 SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
 
 .PHONY: regen-contracts smoke smoke-swap up down logs clean \
-        smoke-tx smoke-epoch smoke-peers smoke-liveness smoke-crash-survivor smoke-byzantine \
+        smoke-base smoke-fault smoke-tx smoke-epoch smoke-peers smoke-liveness smoke-crash-survivor smoke-byzantine \
         smoke-gov-interval smoke-full-restart smoke-cert-follow smoke-deferred \
-        smoke-vrf smoke-vrf-rotation smoke-production-path smoke-all
+        smoke-vrf smoke-vrf-rotation smoke-byzantine-vrf smoke-vrf-fault smoke-vrf-boundary \
+        smoke-production-path smoke-all
 
 regen-contracts:
 	@test -d $(SOLIDITY_CONTRACTS_DIR) || \
@@ -19,6 +20,7 @@ regen-contracts:
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/LivenessSlashing.sol/LivenessSlashing.json     contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/MockBlendToken.sol/MockBlendToken.json         contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/BLS12381Verifier.sol/BLS12381Verifier.json     contracts/
+	cp $(SOLIDITY_CONTRACTS_DIR)/out/PrevRandaoProbe.sol/PrevRandaoProbe.json        contracts/
 	git -C $(SOLIDITY_CONTRACTS_DIR) rev-parse HEAD > contracts/.vendor-sha
 	@echo "Vendored contracts updated; SHA recorded in contracts/.vendor-sha; remember to commit."
 
@@ -48,6 +50,20 @@ clean:
 	docker compose down -v --remove-orphans
 
 # --- regression cases (each self-contained: brings up + tears down its own stack) ---
+# Read-only default-stack suite on ONE bring-up: tx + epoch + vrf + vrf-boundary.
+# These four never mutate consensus (no node stop/restart/jail), so they share a
+# single Tempo→DPoS migration instead of four. Each remains runnable standalone via
+# its own smoke-<case> target below. This is what run-all uses (replaces the three
+# separate tx/epoch/vrf runs and adds boundary coverage).
+smoke-base:
+	@./scripts/case-base.sh
+# Recoverable DESTRUCTIVE default-stack suite on ONE bring-up: deferred + peers +
+# vrf-fault + crash-survivor + full-restart, chained least→most invasive (each
+# restores the stack before handing off; fail-fast). Each remains runnable
+# standalone via its own smoke-<case> target below. Excludes smoke-liveness (its
+# jail is unrecoverable). Heavy (~25-30 min).
+smoke-fault:
+	@./scripts/case-fault.sh
 smoke-tx:
 	@./scripts/case-tx.sh
 smoke-epoch:
@@ -84,11 +100,41 @@ smoke-vrf:
 # dynamic registration; same prerequisites as smoke-production-path. Long (~6-9 min).
 smoke-vrf-rotation:
 	@./scripts/case-vrf-rotation.sh
+# Byzantine beacon: a committee STAYER forges a PK_E at the change-epoch boundary;
+# the honest share-holders reject it at the "C" gate so it never finalizes, and an
+# honest leader crosses the boundary with the real key (SAFETY + LIVENESS). Runs on
+# the rotation stack (the forge only fires on a real committee change); requires the
+# image built with the `dpos-devnet-byzantine` feature. Long (~8-10 min), needs
+# foundry; NOT in run-all (like smoke-byzantine / smoke-production-path).
+smoke-byzantine-vrf:
+	@./scripts/case-byzantine-vrf.sh
 # Full production path: runtime contract deploy + dynamic registration + governance
 # activation + live committee rotation + liveness ejection. Long (~5-8 min),
 # first-of-its-kind, and gated on the EIP-170 Staking-codesize fix; NOT in run-all.
 smoke-production-path:
 	@./scripts/case-production-path.sh
+# Beacon under fault: f=1 validator down (beacon survives via n−f quorum) + the
+# downed node restarts and catches up the gap with verified prev_randao (A1/B3/B4).
+# Heavy (~4-5 min); NOT in run-all.
+smoke-vrf-fault:
+	@./scripts/case-vrf-fault.sh
+# Beacon across an epoch boundary on a stable committee: prev_randao stays active
+# + node-agreed across the boundary, on-chain key carries forward (F1/F2). Heavy
+# (~3-4 min); NOT in run-all.
+smoke-vrf-boundary:
+	@./scripts/case-vrf-boundary.sh
+# TODO(deferred, after-forked-staking-state-harness): E2 wrong-key cert-follower
+# smoke (`smoke-vrf-wrongkey` + docker-compose.cert-follow-wrongkey.yml) — a
+# follower with a WRONG beacon key must derive a DIVERGENT mixHash (order.digest()
+# fallback), the negative of E1. The naive `--dpos.beacon-sharing-path` lever is
+# VACUOUS: a cert-follower reads PK_E from on-chain getEpochBeaconKey, not
+# sharing-path (see cert_follow/mod.rs::scheme_at). A real divergence needs a
+# doctored on-chain key (forked staking state) or a test-only wrong-key injection
+# flag (a production code smell), so this is deferred. The core property
+# (unverifiable PK_E ⇒ order.digest() fallback ⇒ divergence) is already unit-covered
+# by derive.rs::resolve_prev_randao_uses_verified_seed_else_falls_back, and the
+# forged-PK_E *attacker* angle is covered by the byzantine beacon smoke. Approved
+# deferred by user 2026-06-19.
 # Aggregate (CI entry point).
 smoke-all:
 	@./scripts/run-all.sh

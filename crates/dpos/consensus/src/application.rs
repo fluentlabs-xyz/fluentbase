@@ -142,6 +142,29 @@ pub type CommitteeForEpoch = Arc<dyn Fn(u64) -> Option<Set<PeerPubkey>> + Send +
 /// site over the live-DKG `CeremonyStore`.
 pub type BeaconForEpoch = Arc<dyn Fn(u64) -> Option<(CeremonyOutput, Share)> + Send + Sync>;
 
+/// DEVNET/TEST-ONLY byzantine validator behaviour, gated behind the
+/// `dpos-devnet-byzantine` cargo feature. Never compiled into a production build,
+/// so a deployed validator can never misbehave through this path.
+#[cfg(feature = "dpos-devnet-byzantine")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ByzantineMode {
+    /// At a CHANGE-epoch first block: propose a FORGED `PK_E` (different from the
+    /// real DKG outcome) AND, as a verifier, vote yes on any change-epoch boundary
+    /// block regardless of the "C" gate (so a colluding byzantine quorum can
+    /// notarize a forge and exercise the certify-hook Nullify path). See
+    /// [`crate::beacon::certify`] and the byzantine-vrf smoke.
+    ForgeBeaconPk,
+    /// Multisig double-sign: this node EQUIVOCATES on every Notarize/Finalize it
+    /// would cast (two conflicting votes — a random proposal + the real one — for
+    /// the SAME round) so honest peers report a `ConflictingNotarize` /
+    /// `ConflictingFinalize` and the slasher jails it. The trigger is VOTE-based
+    /// (fires every view the node participates in), NOT leadership-based, so it is
+    /// deterministic in docker. Consumed in [`crate::engine`] (the per-epoch
+    /// engine swaps in a [`crate::byzantine::VoteEquivocator`] in place of the
+    /// honest `simplex::Engine`). See the byzantine equivocation smoke.
+    Equivocate,
+}
+
 /// The per-epoch beacon-DKG context threaded into [`FluentApp`]'s verify/propose
 /// path: the boundary "C" share-on-polynomial qualification + the proposer's
 /// `beacon_outcome` assertion. `None` on `FluentApp` ⇒ no beacon context
@@ -152,6 +175,10 @@ pub struct BeaconVerify {
     committee_for: CommitteeForEpoch,
     dpos_activation: u64,
     epoch_interval: u64,
+    /// DEVNET/TEST-ONLY byzantine behaviour; `None` (and absent without the
+    /// feature) on every honest node.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    byzantine: Option<ByzantineMode>,
 }
 
 impl BeaconVerify {
@@ -166,6 +193,28 @@ impl BeaconVerify {
             committee_for,
             dpos_activation,
             epoch_interval,
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            byzantine: None,
+        }
+    }
+
+    /// DEVNET/TEST-ONLY: attach a byzantine behaviour. No-op when `None`.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    pub fn with_byzantine(mut self, mode: Option<ByzantineMode>) -> Self {
+        self.byzantine = mode;
+        self
+    }
+
+    /// `true` iff this node is flagged to forge the beacon `PK_E` (devnet/test).
+    /// Always `false` on a production build (the field does not exist).
+    fn forges_beacon_pk(&self) -> bool {
+        #[cfg(feature = "dpos-devnet-byzantine")]
+        {
+            matches!(self.byzantine, Some(ByzantineMode::ForgeBeaconPk))
+        }
+        #[cfg(not(feature = "dpos-devnet-byzantine"))]
+        {
+            false
         }
     }
 
@@ -326,6 +375,30 @@ where
     async fn build_proposal<E: Clock>(&self, clock: &E, parent: OrderBlock) -> Option<OrderBlock> {
         let height = parent.height + 1;
 
+        // Item C (leader liveness, fast view-change): a CHANGE-epoch boundary leader
+        // that does not yet hold the agreed `PK_E` cannot produce a valid boundary
+        // proposal (every verifier rejects a boundary block without the asserted
+        // outcome). Decline NOW — BEFORE the 1s pace sleep below — so the voter arms
+        // `MissingProposal` → immediate Nullify → the next (share-holding) leader
+        // proposes ~1s sooner. This is the SAME condition the post-pace
+        // `beacon_outcome` gate enforces (see below), hoisted to save the pace on a
+        // doomed view. It fires ONLY on a change-epoch first block, so a stable
+        // beacon-active epoch (no `CeremonyStore` entry — the DKG runs only on a
+        // committee change) is never affected.
+        if let Some(bv) = self.beacon.as_ref() {
+            let epoch = bv.epoch_of(height);
+            if bv.is_change_epoch_first_block(height, epoch) && (bv.beacon_for_epoch)(epoch).is_none()
+            {
+                tracing::info!(
+                    height,
+                    epoch,
+                    "beacon: boundary leader without epoch-E DKG outcome — declining propose \
+                     (fast view-change)"
+                );
+                return None;
+            }
+        }
+
         // Pace to 1 blk/s: hold until wall clock reaches parent + 1s.
         // Cancellation-safe: Inline selects this future against
         // tx.closed(), so a moved-on view aborts the sleep.
@@ -386,6 +459,27 @@ where
                 if bv.is_change_epoch_first_block(height, epoch) {
                     match (bv.beacon_for_epoch)(epoch) {
                         Some((out, _share)) => {
+                            #[cfg(feature = "dpos-devnet-byzantine")]
+                            if bv.forges_beacon_pk() {
+                                let forged = crate::beacon::outcome::forge_outcome_same_committee(&out);
+                                tracing::warn!(
+                                    height,
+                                    epoch,
+                                    "BYZANTINE: proposing forged PK_E at boundary"
+                                );
+                                return Some(OrderBlock {
+                                    parent: parent.digest(),
+                                    height,
+                                    timestamp,
+                                    fee_recipient: self.fee_recipient,
+                                    gas_limit,
+                                    extra_data,
+                                    result,
+                                    txs,
+                                    beacon_outcome: Some(Bytes::from(encode_outcome(&forged))),
+                                    beacon_seed: None,
+                                });
+                            }
                             tracing::info!(
                                 height,
                                 epoch,
@@ -474,6 +568,19 @@ fn beacon_gate_decision(beacon: Option<&BeaconVerify>, block: &OrderBlock) -> bo
             return false;
         }
     };
+    // DEVNET/TEST-ONLY: a byzantine node colluding to notarize a forged boundary
+    // votes yes regardless of the "C" gate, so a byzantine quorum can carry the
+    // forge to the certify hook (where the seed-verify Nullifies it). HARMLESS to
+    // an honest leader's real boundary (its real share passes C anyway). Never
+    // reachable in production (the flag does not compile in).
+    if bv.forges_beacon_pk() {
+        tracing::warn!(
+            height = block.height,
+            epoch,
+            "BYZANTINE: bypassing C gate for change-epoch boundary block"
+        );
+        return true;
+    }
     let Some(committee_e) = (bv.committee_for)(epoch) else {
         tracing::warn!(epoch, "committee[E] unavailable at verify — voting false");
         return false;
@@ -672,6 +779,15 @@ pub trait BeaconEngineLike: Send + Sync + 'static {
 pub trait DerivedBlock: Send + Sync + 'static {
     fn evm_hash(&self) -> B256;
     fn number(&self) -> u64;
+    /// Beacon observation for this block, surfaced to the executor's
+    /// `BeaconMetrics`: `Some(true)` = `prev_randao` was the verified threshold
+    /// seed; `Some(false)` = a beacon-active block fell back to `order.digest()`
+    /// (seed absent/unverified — the certify hook Nullifies such a boundary, so
+    /// this is the local pre-Nullify observation); `None` = pre-beacon / no seed
+    /// (not a beacon-active observation). Defaults to `None`.
+    fn beacon_active(&self) -> Option<bool> {
+        None
+    }
 }
 
 impl DerivedBlock for SealedBlock<RethBlock> {
@@ -986,6 +1102,53 @@ mod tests {
                 .await;
             let block = app.build_proposal(&ctx, parent).await.expect("proposed");
             assert_eq!(block.timestamp, late);
+        });
+    }
+
+    // Item C: a CHANGE-epoch boundary leader with no live-DKG outcome for the epoch
+    // declines to propose IMMEDIATELY — before the 1s pace sleep — so the voter
+    // fast-Nullifies to the next (share-holding) leader.
+    #[test]
+    fn boundary_leader_without_outcome_declines_propose() {
+        use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
+        use commonware_math::algebra::Random as _;
+        use rand_08::rngs::StdRng;
+        use rand_core::SeedableRng as _;
+
+        let runtime = commonware_runtime::deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let mut rng = StdRng::seed_from_u64(7);
+            let k0: Vec<Ed25519PrivateKey> =
+                (0..4).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
+            let k1: Vec<Ed25519PrivateKey> =
+                (0..4).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
+            let c0: Set<PeerPubkey> = Set::from_iter_dedup(k0.iter().map(|k| k.public_key()));
+            let c1: Set<PeerPubkey> = Set::from_iter_dedup(k1.iter().map(|k| k.public_key()));
+            // c0 != c1 ⇒ epoch 1's first block is a CHANGE-epoch boundary.
+            let committee_for: CommitteeForEpoch = Arc::new(move |e: u64| match e {
+                0 => Some(c0.clone()),
+                _ => Some(c1.clone()),
+            });
+            // This node ran no live DKG ⇒ no CeremonyStore entry for any epoch.
+            let beacon_for_epoch: BeaconForEpoch = Arc::new(|_e| None);
+            // activation=0, interval=10 ⇒ epoch_start(1)=10, so proposed height 10
+            // (parent 9 + 1) is the change-epoch first block.
+            let bv = BeaconVerify::new(beacon_for_epoch, committee_for, 0, 10);
+
+            let (mailbox, _rx) = fresh_mailbox();
+            let app = build_app(mailbox, Arc::new(|_b: OrderBlock| {})).with_beacon(bv);
+
+            let parent = sample_order(Digest(B256::ZERO), 9);
+            let start = ctx.current();
+            let decision = app.build_proposal(&ctx, parent).await;
+            assert!(
+                decision.is_none(),
+                "boundary leader without epoch-E DKG outcome must decline"
+            );
+            assert!(
+                ctx.current().duration_since(start).unwrap() < BLOCK_INTERVAL,
+                "must decline BEFORE the pace sleep (fast view-change)"
+            );
         });
     }
 

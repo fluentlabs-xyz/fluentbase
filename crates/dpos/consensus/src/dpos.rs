@@ -376,6 +376,20 @@ pub struct DposLayerConfig<D, XC, A> {
     /// so each vote carries the seed partial and the seed is recovered from the
     /// finalization certificate.
     pub beacon: Option<BeaconLaunch>,
+    /// Directory for on-disk live-DKG share persistence (item A): the parent of
+    /// `--dpos.beacon-share-path` ("where everything lies"). Memoized `(PK_E, share)`
+    /// pairs are written here as `beacon-share-e<E>.bin` (mode 0600) and reloaded at
+    /// launch. `None` ⇒ no share-path configured ⇒ in-memory only (no persistence).
+    pub beacon_share_dir: Option<std::path::PathBuf>,
+    /// `--dpos.no-beacon` (item K): run the node PRE-BEACON. Skips the live DKG (so the
+    /// beacon never activates on a committee change) and installs no verify/propose
+    /// context — committee changes proceed as pure multisig and a shareless joiner can
+    /// promote. Mutually exclusive with `beacon` (a `Some(BeaconLaunch)`).
+    pub no_beacon: bool,
+    /// DEVNET/TEST-ONLY byzantine behaviour (gated behind `dpos-devnet-byzantine`).
+    /// Absent — and the field does not exist — in a production build.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    pub byzantine: Option<crate::application::ByzantineMode>,
 }
 
 /// Threshold randomness-beacon material handed to the DPoS layer at launch
@@ -524,6 +538,10 @@ impl DposLayer {
             promotion,
             mode_events,
             beacon,
+            beacon_share_dir,
+            no_beacon,
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            byzantine,
         } = cfg;
 
         let RethHandle {
@@ -931,6 +949,23 @@ impl DposLayer {
         let ceremony_store: crate::beacon::actor::CeremonyStore =
             Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()));
 
+        // Item A: reload any persisted live-DKG shares into the fresh store BEFORE
+        // the resolver/DKG actor read it, so a restarted committee member rejoins
+        // the seed quorum at its current epoch instead of carry-forwarding the wrong
+        // key (and demoting). Also closes the §8.11.1 deep-catch-up gap (a share on
+        // disk from when E's ceremony first finalized).
+        if let Some(dir) = &beacon_share_dir {
+            let reloaded = crate::beacon::share_state::load_all(dir);
+            if !reloaded.is_empty() {
+                if let Ok(mut store) = ceremony_store.write() {
+                    for (epoch, output, share) in reloaded {
+                        tracing::info!(epoch, "beacon: reloaded persisted live-DKG share from disk");
+                        store.insert(epoch, (output, share));
+                    }
+                }
+            }
+        }
+
         // Committee resolver — shared by the DKG actor (deal/carry-forward
         // decision) and the verify/propose beacon gate. Reads the on-chain
         // committee at the current finalized EVM hash.
@@ -950,21 +985,46 @@ impl DposLayer {
             })
         };
 
-        // Verify/propose beacon context: the boundary "C" gate reads this node's
-        // memoized (PK_E, share) from the live-DKG store; the proposer asserts
-        // PK_E in `beacon_outcome`.
-        let beacon_for_epoch: crate::application::BeaconForEpoch = {
-            let store = ceremony_store.clone();
-            Arc::new(move |epoch: u64| store.read().ok().and_then(|m| m.get(&epoch).cloned()))
-        };
-        let beacon_verify = crate::application::BeaconVerify::new(
-            beacon_for_epoch,
-            committee_for.clone(),
-            dpos_activation_block,
-            interval.into(),
-        );
+        // Beacon counters — created + registered ONCE here (the launch context is a
+        // commonware `Metrics` context), then cloned into the DKG actor, the executor,
+        // and each per-epoch engine (via `OuterBuilder`). Each metric is Arc-backed, so
+        // every clone shares one counter on the `:19100` registry.
+        let beacon_metrics = crate::beacon::metrics::BeaconMetrics::default();
+        beacon_metrics.register(&ctx);
 
-        {
+        // Verify/propose beacon context + live DKG. With `--dpos.no-beacon` the node
+        // stays PRE-BEACON: skip the live DKG (which would otherwise ACTIVATE the beacon
+        // on ANY committee change — committee[E] deals to itself, making the beacon come
+        // alive from the new epoch) AND install NO verify/propose context, so committee
+        // changes proceed as pure multisig and a shareless joiner can still PROMOTE
+        // (otherwise it would self-demote on `NoBeaconPolynomial`). Without `no-beacon`:
+        // the boundary "C" gate reads this node's memoized (PK_E, share) from the
+        // live-DKG store and the proposer asserts PK_E in `beacon_outcome`.
+        let beacon_verify = if no_beacon {
+            // The BEACON_CHANNEL halves, the committee resolver, and the dkg-height
+            // stream are unused on a no-beacon node — drop them explicitly.
+            drop((
+                committee_for,
+                handles.beacon_sender,
+                handles.beacon_receiver,
+                dkg_height_rx,
+            ));
+            None
+        } else {
+            let beacon_for_epoch: crate::application::BeaconForEpoch = {
+                let store = ceremony_store.clone();
+                Arc::new(move |epoch: u64| store.read().ok().and_then(|m| m.get(&epoch).cloned()))
+            };
+            let bv = crate::application::BeaconVerify::new(
+                beacon_for_epoch,
+                committee_for.clone(),
+                dpos_activation_block,
+                interval.into(),
+            );
+            // DEVNET/TEST-ONLY: thread the byzantine mode into the verify/propose
+            // beacon context (no-op + field-absent in a production build).
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            let bv = bv.with_byzantine(byzantine);
             let dkg_namespace = crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
             let dkg_actor = crate::beacon::actor::DkgActor::new(
                 dkg_namespace,
@@ -975,11 +1035,14 @@ impl DposLayer {
                 ceremony_store.clone(),
                 dpos_activation_block,
                 interval.into(),
+                beacon_metrics.clone(),
+                beacon_share_dir.clone(),
             );
             drop(ctx.with_label("dkg_actor").spawn(move |c| async move {
                 dkg_actor.run(dkg_height_rx, c).await;
             }));
-        }
+            Some(bv)
+        };
 
         // Isolation-window watchdog: a non-committee `--dpos` node has ZERO
         // consensus-plane connectivity (the tracked peer set == the on-chain
@@ -1082,54 +1145,32 @@ impl DposLayer {
         let beacon_namespace = crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
         let genesis_beacon_key = beacon.map(|bl| (bl.sharing, bl.share, beacon_namespace.clone()));
 
-        // Authoritative on-chain group-key resolver for the per-epoch VERIFY path
-        // (soft-enter catch-up + a committee member that missed the epoch's DKG):
-        // reads getEpochBeaconKey(E) at the current finalized hash. The polynomial
-        // for SIGNING stays node-local (`beacon_resolver`); only the group key —
-        // which IS on-chain — is sourced trustlessly here. ALSO used to gate the
-        // signer's carry-forward (below).
-        let beacon_verify_pk: crate::epoch_manager::BeaconVerifyPk = {
-            let reader = RethStakingStateReader::new(
-                provider.clone(),
-                evm_config.clone(),
-                staking_config.clone(),
-            );
-            let provider = provider.clone();
-            Arc::new(move |epoch: u64| {
-                // Read at the LATEST EXECUTED block, NOT finalized. Unlike the
-                // committee (committed one epoch AHEAD, visible at finalized),
-                // PK_epoch is committed AT the epoch's FIRST block — at the
-                // entry boundary the finalized tier lags that commit by a few
-                // blocks (deferred execution), so a finalized read returns the
-                // stale prior key and a fresh joiner would build a wrong verify
-                // scheme. The executed head has the epoch's first block by the
-                // time the node enters the epoch; the committed key is immutable,
-                // so any state ≥ that block yields the same PK_epoch.
-                let head = provider.last_block_number().ok()?;
-                let hash = provider.block_hash(head).ok().flatten()?;
-                reader.epoch_beacon_key(epoch, hash).ok().flatten()
-            })
-        };
-
-        // THREE-WAY on-chain group-key read for the carry-forward GUARD only.
-        // Unlike `beacon_verify_pk` (which collapses every
-        // failure to `None`, fine for the verify path that just falls back to a
-        // local key), the carry-forward decision MUST distinguish:
+        // SINGLE three-way on-chain group-key reader, shared by the per-epoch VERIFY
+        // path (`beacon_verify_pk`, below) AND the carry-forward GUARD (the resolver
+        // below). Reads getEpochBeaconKey(E) at the LATEST EXECUTED block, NOT
+        // finalized: unlike the committee (committed one epoch AHEAD, visible at
+        // finalized), PK_epoch is committed AT the epoch's FIRST block — at the entry
+        // boundary the finalized tier lags that commit by a few blocks (deferred
+        // execution), so a finalized read returns the stale prior key. The executed
+        // head has the epoch's first block by the time the node enters; the committed
+        // key is immutable, so any state ≥ that block yields the same PK_epoch.
+        //
+        // The result is THREE-WAY because both consumers need the distinction
+        // (collapsing Err→None was the soft/full-enter stale-key hazard AND the
+        // over-broad carry-forward demote):
         //   - `Err(())`  = the chain state was UNREADABLE (last_block_number /
-        //                  block_hash / epoch_beacon_key errored, or block_hash
-        //                  None). A transient read failure is the common
-        //                  stable-epoch path; demoting on it would drop a
-        //                  legitimate signer off the quorum for the whole epoch
-        //                  (shrinking the quorum → stall). We CANNOT-CONFIRM, so
-        //                  the conservative-SAFE choice is to TRUST the carried
-        //                  share (downstream seed partials are still C-gate /
-        //                  seed-verify checked, so a wrong key cannot silently
-        //                  finalize a bad seed).
+        //                  block_hash / epoch_beacon_key errored, or block_hash None).
+        //                  A transient read failure is the common stable-epoch path.
+        //                  Carry-forward TRUSTS the carried share (downstream seed
+        //                  partials are still C-gate / seed-verify checked, so a wrong
+        //                  key cannot silently finalize a bad seed); the enter sites
+        //                  DEFER (retry on the next boundary re-poke) rather than build
+        //                  a verify/sign scheme under a stale local key.
         //   - `Ok(None)` = the chain DEFINITIVELY has no key for E (uncommitted /
-        //                  keyless on a beacon-active epoch) → genuine absence →
-        //                  demote.
-        //   - `Ok(Some)` = a definitively-read key → compare against the carried
-        //                  key; mismatch ⇒ genuine committee change ⇒ demote.
+        //                  keyless on a beacon-active epoch) → genuine absence → demote
+        //                  (carry-forward) / local fallback (verify path).
+        //   - `Ok(Some)` = a definitively-read key → compare against the carried key
+        //                  (carry-forward); the trustless per-epoch key (verify path).
         let beacon_pk_onchain_3way = {
             let reader = RethStakingStateReader::new(
                 provider.clone(),
@@ -1145,6 +1186,12 @@ impl DposLayer {
                 },
             )
         };
+
+        // The per-epoch VERIFY-key resolver IS the same three-way reader (no lossy
+        // `.ok()?` variant): `verify_certificate` needs only the group key, which IS
+        // on-chain. Consumed at soft-enter (the catch-up verifier) and full-enter (the
+        // engine's group-key verify scheme); both DEFER on `Err`.
+        let beacon_verify_pk: crate::epoch_manager::BeaconVerifyPk = beacon_pk_onchain_3way.clone();
 
         // Per-epoch threshold beacon resolver for the combined consensus scheme:
         // each vote carries the seed partial (round-keyed), so the seed is
@@ -1270,7 +1317,8 @@ impl DposLayer {
             mode_events,
             beacon_resolver,
             beacon_verify_pk,
-            beacon_verify: Some(beacon_verify),
+            beacon_metrics,
+            beacon_verify,
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             deque_size: 64,
@@ -1312,6 +1360,9 @@ impl DposLayer {
             slasher_wal_partition: "slasher-wal".into(),
 
             feed,
+
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            byzantine,
         }
         .build(ctx.with_label("outer_engine"))
         .await?;

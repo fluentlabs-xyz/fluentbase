@@ -61,7 +61,6 @@ x-follower-cmd: &follower-cmd
         --sequencer-url=ws://172.20.0.10:8546 \
         --dpos.staking-config=/runtime/staking-reader.json \
         --builder.extradata= \
-        --storage.v2=false \
         $$EXTRA_NODE_FLAGS \
         --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
         --trusted-peers="$(cat /runtime/v0-enode.txt)" \
@@ -111,7 +110,6 @@ services:
       - --validator.block-time=1s
       - --dpos.staking-config=/runtime/staking-reader.json
       - --builder.extradata=
-      - --storage.v2=false
       - --http
       - --http.addr=0.0.0.0
       - --http.port=8545

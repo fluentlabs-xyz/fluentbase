@@ -520,6 +520,46 @@ mod tests {
         );
     }
 
+    /// The PRODUCTION forge path: the byzantine proposer's
+    /// `forge_outcome_same_committee` (same helper `build_proposal` calls under
+    /// `dpos-devnet-byzantine`) yields a DIFFERENT `PK_E` over the SAME committee;
+    /// the round's REAL recovered seed must NOT verify against it ⇒ certify FALSE ⇒
+    /// Nullify. The honest outcome over the same recorded seed certifies TRUE. This
+    /// is the authoritative proof of the certify-hook Nullify path the byzantine-vrf
+    /// smoke relies on (where a colluding byzantine quorum reaches certify).
+    #[test]
+    fn certify_nullifies_the_production_forge_outcome() {
+        use crate::beacon::outcome::forge_outcome_same_committee;
+        let ns = seed_namespace(&fluent_namespace(20994));
+        let r = round_at(7);
+        let (real_outcome, real_shares) = deal_committee(1, 5);
+        // The round's seed is the unique threshold signature under the REAL shares.
+        let seed = recover_seed_for(&real_outcome, &real_shares, &ns, r);
+        let store = new_seed_store();
+        record_seed(&store, r, seed);
+
+        // Honest boundary: the real outcome certifies against the recovered seed.
+        let honest = boundary_block(Some(encode_outcome(&real_outcome)));
+        assert!(
+            seed_certify_verdict(&honest, r, &store, &ns),
+            "honest boundary: real seed verifies vs the real PK_E"
+        );
+
+        // Byzantine boundary: the forged outcome (same committee, different PK_E)
+        // does NOT verify against the real recovered seed ⇒ certify false ⇒ Nullify.
+        let forged_outcome = forge_outcome_same_committee(&real_outcome);
+        assert_ne!(
+            group_public_key(&forged_outcome),
+            group_public_key(&real_outcome),
+            "the production forge must assert a different PK_E"
+        );
+        let forged = boundary_block(Some(encode_outcome(&forged_outcome)));
+        assert!(
+            !seed_certify_verdict(&forged, r, &store, &ns),
+            "forged PK_E from the production forge path must Nullify at certify"
+        );
+    }
+
     #[test]
     fn boundary_block_nullifies_without_recorded_seed() {
         let ns = seed_namespace(&fluent_namespace(20994));

@@ -25,7 +25,6 @@ services:
       - --dpos.beacon-share-path=/runtime/keys/validator-0/beacon-share.hex
       - --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex
       - --builder.extradata=
-      - --storage.v2=false
       # Deterministic enode identity (followers pin this as --trusted-peers);
       # restored under DPoS so reth devp2p block sync works for rejoin.
       - --p2p-secret-key=/runtime/v0-p2p-secret.hex
@@ -61,7 +60,6 @@ services:
           --dpos.beacon-share-path=/runtime/keys/validator-1/beacon-share.hex \
           --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex \
           --builder.extradata= \
-          --storage.v2=false \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
           --trusted-only \
@@ -86,7 +84,6 @@ services:
           --dpos.beacon-share-path=/runtime/keys/validator-2/beacon-share.hex \
           --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex \
           --builder.extradata= \
-          --storage.v2=false \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
           --trusted-only \
@@ -111,7 +108,6 @@ services:
           --dpos.beacon-share-path=/runtime/keys/validator-3/beacon-share.hex \
           --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex \
           --builder.extradata= \
-          --storage.v2=false \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
           --trusted-only \

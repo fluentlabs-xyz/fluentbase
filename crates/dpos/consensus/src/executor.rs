@@ -267,6 +267,9 @@ pub struct Config<BE, D, XC, MarshalMailbox> {
     pub initial_head: (Height, B256),
     pub fcu_pace: Duration,
     pub peers_for_finalization: PeersForFinalization,
+    /// Beacon counters (cross-epoch singleton from `dpos.rs::launch`). The
+    /// executor increments `seed_active` / `digest_fallback` per derived block.
+    pub beacon_metrics: crate::beacon::metrics::BeaconMetrics,
 }
 
 pub struct Actor<E, BE, D, XC, MarshalMailbox> {
@@ -276,6 +279,7 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     executed: XC,
     marshal: MarshalMailbox,
     mailbox: mpsc::UnboundedReceiver<Message>,
+    beacon_metrics: crate::beacon::metrics::BeaconMetrics,
 
     last_canonicalized: LastCanonicalized,
     /// Highest ordering-finalized height processed; drives the result-final
@@ -357,6 +361,7 @@ where
             executed: cfg.executed,
             marshal: cfg.marshal,
             mailbox: rx,
+            beacon_metrics: cfg.beacon_metrics,
             last_canonicalized: LastCanonicalized {
                 forkchoice: ForkchoiceState {
                     head_block_hash: cfg.initial_head.1,
@@ -872,6 +877,13 @@ where
     /// genuinely INVALID status is fatal — under the fallback it means local
     /// derivation diverged from reth's re-execution.
     async fn submit_finalized_payload(&mut self, derived: D::Derived) -> eyre::Result<()> {
+        // Single chokepoint for all three derive paths (spec / finalized / gap):
+        // record this block's beacon outcome before the value is moved into the EL.
+        match derived.beacon_active() {
+            Some(true) => self.beacon_metrics.seed_active.inc(),
+            Some(false) => self.beacon_metrics.digest_fallback.inc(),
+            None => 0,
+        };
         let status = self
             .beacon_engine
             .import_derived(derived)
@@ -1156,6 +1168,7 @@ mod tests {
                     initial_head: (Height::new(anchor_height), self.anchor_hash),
                     fcu_pace: Duration::from_millis(0),
                     peers_for_finalization: std::sync::Arc::new(dummy_peers),
+                    beacon_metrics: crate::beacon::metrics::BeaconMetrics::default(),
                 },
             )
         }

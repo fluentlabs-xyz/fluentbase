@@ -119,6 +119,10 @@ default = ["std"]
 # DEVNET-ONLY: compiles in the unauthenticated commonware-metrics HTTP endpoint
 # (`--dpos.metrics-port`) for the smoke regression suite. Off in prod builds.
 dpos-devnet-metrics = []
+# DEVNET/TEST-ONLY: enables the byzantine beacon-PK_E forge (`--dpos.byzantine`)
+# for the byzantine-vrf smoke. Propagates to the consensus crate (the forge lives
+# there). Off in prod builds.
+dpos-devnet-byzantine = ["fluentbase-consensus/dpos-devnet-byzantine"]
 std = [
     "fluentbase-runtime/std",
     "fluentbase-revm/std",

@@ -58,14 +58,22 @@ pub type BeaconResolver = Arc<dyn Fn(u64) -> Option<BeaconKey> + Send + Sync>;
 /// Resolves the AUTHORITATIVE per-epoch beacon group key `PK_epoch` from on-chain
 /// `getEpochBeaconKey(E)` (read at the latest executed head — PK_epoch is committed
 /// at the epoch's first block, which the finalized tier lags at the entry boundary).
-/// `None` ⇒ the epoch
-/// has no committed key (pre-beacon / pure-multisig chain). Used for VERIFICATION:
-/// `verify_certificate` needs only the group key, which IS on-chain — so a node
-/// verifying an epoch's assembled certs (a soft-enter catch-up verifier, or a
-/// committee member that missed that epoch's DKG ceremony) reads the trustless
-/// on-chain key rather than a stale local carry-forward. Built in `dpos.rs::launch`.
+/// THREE-WAY (the SAME reader as the carry-forward guard, `dpos.rs::beacon_pk_onchain_3way`):
+/// `Ok(Some)` = a definitively-read key; `Ok(None)` = the epoch definitively has no
+/// committed key (pre-beacon / pure-multisig chain) ⇒ local fallback; `Err(())` = the
+/// chain state was UNREADABLE (transient: last_block_number / block_hash /
+/// epoch_beacon_key errored, or block_hash `None`). The `Err` arm must NOT collapse to
+/// `None` at the enter sites — both soft- and full-enter DEFER on `Err` (the boundary
+/// re-poke re-drives `enter` once state is readable), because an `Err`→`None` collapse at
+/// a rotation boundary would let a signer build/sign under a stale carried-forward
+/// polynomial (`engine.rs` `can_sign_locally` is `(Some(_), _) => true` regardless of the
+/// verify key) → wrong-epoch partials fail `verify_seed` at peers → quorum stall. Used for
+/// VERIFICATION: `verify_certificate` needs only the group key, which IS on-chain — so a
+/// node verifying an epoch's assembled certs (a soft-enter catch-up verifier, or a
+/// committee member that missed that epoch's DKG ceremony) reads the trustless on-chain key
+/// rather than a stale local carry-forward. Built in `dpos.rs::launch`.
 pub type BeaconVerifyPk =
-    Arc<dyn Fn(u64) -> Option<crate::beacon::seed::GroupPublic> + Send + Sync>;
+    Arc<dyn Fn(u64) -> Result<Option<crate::beacon::seed::GroupPublic>, ()> + Send + Sync>;
 
 // Finished engines are aborted at the transition (tempo's exit-at-transition
 // pattern) — there is no concurrent active-epochs window. A finished engine
@@ -170,11 +178,20 @@ pub struct Config<B, XC, A> {
     /// `round → recovered seed` map for the Stage-2 beacon certify gate. Written
     /// by `spec_exec_mailbox`, read by each per-epoch [`crate::beacon::certify::BeaconCertify`].
     pub seed_store: crate::beacon::certify::SeedStore,
+    /// Cross-epoch singleton from [`crate::outer::OuterEngine`]: beacon counters,
+    /// threaded into each per-epoch engine for the demote counters.
+    pub beacon_metrics: crate::beacon::metrics::BeaconMetrics,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
     pub page_cache: CacheRef,
     /// Callback into [`crate::outer::EpochSchemeProvider`] so marshal can verify
     /// cross-epoch finalization certificates (trailing-window pruned; see SCHEME_RETENTION_EPOCHS).
     pub register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync>,
+    /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
+    /// `dpos-devnet-byzantine`). `None` on every honest node. Passed into every
+    /// per-epoch [`EpochEngineConfig`] so the engine swaps in a
+    /// [`crate::byzantine::VoteEquivocator`].
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    pub byzantine: Option<crate::application::ByzantineMode>,
 }
 
 impl<E, B, XC, A> Actor<E, B, XC, A>
@@ -449,17 +466,29 @@ where
                     // epoch is historical here, so getEpochBeaconKey(E) is already
                     // committed. `None` (pre-beacon chain) keeps the local fallback.
                     let scheme = match (self.cfg.beacon_verify_pk)(epoch.get()) {
-                        Some(pk) => build_verifier_group_key(
+                        Ok(Some(pk)) => build_verifier_group_key(
                             &namespace,
                             committee.bimap,
                             pk,
                             crate::beacon::seed::seed_namespace(&namespace),
                         ),
-                        None => build_verifier(
+                        Ok(None) => build_verifier(
                             &namespace,
                             committee.bimap,
                             (self.cfg.beacon_resolver)(epoch.get()),
                         ),
+                        // UNREADABLE on-chain state (transient): do NOT collapse to a
+                        // local fallback key — that risks verifying a rotated epoch's
+                        // certs against a stale carry-forward. Defer; the boundary
+                        // re-poke re-drives enter(epoch) once state is readable.
+                        Err(()) => {
+                            warn!(
+                                ?epoch,
+                                "soft-enter deferred — getEpochBeaconKey(E) unreadable \
+                                 (transient); retry on next boundary re-poke"
+                            );
+                            return;
+                        }
                     };
                     (self.cfg.register_scheme)(epoch, scheme);
                 }
@@ -472,6 +501,25 @@ where
             info!(?epoch, "epoch soft-entered (scheme only, catch-up)");
             return;
         }
+
+        // Resolve the authoritative on-chain verify key with the SAME three-way as
+        // soft-enter: on Err(()) DEFER rather than collapse to None. engine.rs's
+        // `can_sign_locally` is `(Some(_), _) => true` regardless of this key, so an
+        // Err→None collapse at a rotation boundary would let the engine sign partials
+        // under the carried-forward STALE polynomial (the carry-forward guard keeps the
+        // share on Err) → wrong-epoch partials fail verify_seed at peers → no notarize
+        // quorum → epoch beacon stall. The boundary re-poke re-drives enter once readable.
+        let beacon_verify_pk = match (self.cfg.beacon_verify_pk)(epoch.get()) {
+            Ok(pk) => pk,
+            Err(()) => {
+                warn!(
+                    ?epoch,
+                    "full-enter deferred — getEpochBeaconKey(E) unreadable (transient); \
+                     retry on next boundary re-poke"
+                );
+                return;
+            }
+        };
 
         let engine_ctx = self.context.with_label("simplex");
         let engine = match EpochEngine::new(
@@ -489,8 +537,11 @@ where
                 mailbox_size: self.cfg.mailbox_size,
                 register_scheme: self.cfg.register_scheme.clone(),
                 beacon: (self.cfg.beacon_resolver)(epoch.get()),
-                beacon_verify_pk: (self.cfg.beacon_verify_pk)(epoch.get()),
+                beacon_verify_pk,
                 seed_store: self.cfg.seed_store.clone(),
+                beacon_metrics: self.cfg.beacon_metrics.clone(),
+                #[cfg(feature = "dpos-devnet-byzantine")]
+                byzantine: self.cfg.byzantine,
             },
             self.cfg.marshal_mailbox.clone(),
             self.cfg.slasher_mailbox.clone(),

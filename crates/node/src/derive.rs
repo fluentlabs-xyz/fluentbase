@@ -36,6 +36,10 @@ pub struct DerivedExecution {
     pub output: BlockExecutionOutput<reth_ethereum_primitives::Receipt>,
     pub hashed_state: HashedPostState,
     pub trie_updates: TrieUpdates,
+    /// Beacon observation for the executor's `BeaconMetrics`: `Some(true)` =
+    /// verified threshold seed, `Some(false)` = beacon-active gated fallback,
+    /// `None` = pre-beacon / no seed. See [`resolve_prev_randao`].
+    pub beacon_active: Option<bool>,
 }
 
 impl DerivedBlock for DerivedExecution {
@@ -45,6 +49,10 @@ impl DerivedBlock for DerivedExecution {
 
     fn number(&self) -> u64 {
         self.recovered.number
+    }
+
+    fn beacon_active(&self) -> Option<bool> {
+        self.beacon_active
     }
 }
 
@@ -155,9 +163,9 @@ fn resolve_prev_randao(
     in_block_pk: Option<&GroupPublic>,
     parent_evm_hash: B256,
     fallback: B256,
-) -> eyre::Result<B256> {
+) -> eyre::Result<(B256, Option<bool>)> {
     let (Some(beacon), Some(s)) = (beacon, seed) else {
-        return Ok(fallback);
+        return Ok((fallback, None));
     };
     // Ok(Some) = committed PK_E; Ok(None) = uncommitted epoch; Err =
     // non-deterministic read failure → propagate (retry). For an uncommitted
@@ -178,9 +186,19 @@ fn resolve_prev_randao(
     if assurance {
         tracing::info!(round = ?s.target_round, %prev_randao, "beacon: threshold prev_randao active");
     } else {
-        tracing::debug!(round = ?s.target_round, "beacon: seed present but unverified vs PK_E — gated fallback prev_randao");
+        // Item D: a beacon-active block with an absent/unverified seed. We do NOT
+        // halt the deriver — the Stage-2 certify hook (consensus/beacon/certify.rs)
+        // Nullifies such a boundary BEFORE it finalizes, so this is only the local
+        // pre-Nullify observation on a node that derived ahead of the Nullify. WARN
+        // (not debug) + count via the executor's `beacon_digest_fallback_total`
+        // (the returned `Some(false)`), so smoke D1 can assert it is 0 post-anchor.
+        tracing::warn!(
+            round = ?s.target_round,
+            "beacon: seed present but unverified vs PK_E — gated order.digest() fallback \
+             (certify hook Nullifies a beacon-active boundary; local pre-Nullify observation)"
+        );
     }
-    Ok(prev_randao)
+    Ok((prev_randao, Some(assurance)))
 }
 
 impl<Client, Evm> DerivedBlockBuilder for RethBlockDeriver<Client, Evm>
@@ -199,6 +217,16 @@ where
         parent_evm_hash: B256,
         seed: Option<Seed>,
     ) -> eyre::Result<DerivedExecution> {
+        // A cert that recovered a seed means the chain is beacon-active at this
+        // height. A deriver with no verify material (`with_beacon_resolver` not
+        // wired) would silently fall back to `order.digest()` for every such block
+        // and fork vs verifying nodes. The legitimate pre-beacon `new()` and
+        // `--dpos.no-beacon` paths never see a seed, so this never trips them.
+        debug_assert!(
+            seed.is_none() || self.beacon.is_some(),
+            "beacon-active block (cert carried a seed) but RethBlockDeriver has no verify \
+             material — with_beacon_resolver was not wired"
+        );
         let client = self.client.clone();
         let evm_config = self.evm_config.clone();
         let beacon = self.beacon.clone();
@@ -216,14 +244,21 @@ where
                 .as_ref()
                 .and_then(|b| parse_outcome(b.as_ref()).ok())
                 .map(|o| *group_public_key(&o));
-            let prev_randao = resolve_prev_randao(
+            let (prev_randao, beacon_active) = resolve_prev_randao(
                 beacon.as_ref(),
                 seed.as_ref(),
                 in_block_pk.as_ref(),
                 parent_evm_hash,
                 fallback,
             )?;
-            derive_sync(&client, &evm_config, &order, parent_evm_hash, prev_randao)
+            derive_sync(
+                &client,
+                &evm_config,
+                &order,
+                parent_evm_hash,
+                prev_randao,
+                beacon_active,
+            )
         })
         .await
         .wrap_err("derive task panicked")?
@@ -236,6 +271,7 @@ fn derive_sync<Client, Evm>(
     order: &OrderBlock,
     parent_evm_hash: B256,
     prev_randao: B256,
+    beacon_active: Option<bool>,
 ) -> eyre::Result<DerivedExecution>
 where
     Client: StateProviderFactory + HeaderProvider<Header = Header>,
@@ -334,6 +370,7 @@ where
         },
         hashed_state: outcome.hashed_state,
         trie_updates: outcome.trie_updates,
+        beacon_active,
     })
 }
 
@@ -425,9 +462,9 @@ mod tests {
         );
 
         let prev_randao = B256::repeat_byte(0x42);
-        let a = derive_sync(&provider, &evm_config, &order, genesis_hash, prev_randao)
+        let a = derive_sync(&provider, &evm_config, &order, genesis_hash, prev_randao, None)
             .expect("derive a");
-        let b = derive_sync(&provider, &evm_config, &order, genesis_hash, prev_randao)
+        let b = derive_sync(&provider, &evm_config, &order, genesis_hash, prev_randao, None)
             .expect("derive b");
 
         assert_eq!(
@@ -486,29 +523,30 @@ mod tests {
         };
         let at = B256::ZERO;
 
-        // seed present + verifies → threshold randomness.
+        // seed present + verifies → threshold randomness, beacon_active = Some(true).
         assert_eq!(
             resolve_prev_randao(Some(&beacon), Some(&seed), None, at, fallback).unwrap(),
-            expected
+            (expected, Some(true))
         );
-        // a seed for a DIFFERENT round → gated fallback (round mismatch).
+        // a seed for a DIFFERENT round → gated fallback (round mismatch),
+        // beacon_active = Some(false) (a beacon-active gated-fallback observation).
         let other = Seed {
             target_round: Round::new(Epoch::new(1), View::new(51)),
             signature: seed.signature,
         };
         assert_eq!(
             resolve_prev_randao(Some(&beacon), Some(&other), None, at, fallback).unwrap(),
-            fallback
+            (fallback, Some(false))
         );
-        // no seed → fallback.
+        // no seed → fallback, not a beacon observation.
         assert_eq!(
             resolve_prev_randao(Some(&beacon), None, None, at, fallback).unwrap(),
-            fallback
+            (fallback, None)
         );
-        // no beacon source at all → fallback.
+        // no beacon source at all → fallback, not a beacon observation.
         assert_eq!(
             resolve_prev_randao(None, Some(&seed), None, at, fallback).unwrap(),
-            fallback
+            (fallback, None)
         );
         // a resolver read ERROR propagates (never silently degrades).
         let erroring: PkResolver = Arc::new(|_e, _a| Err(eyre::eyre!("read failed")));
@@ -532,12 +570,12 @@ mod tests {
         assert_eq!(
             resolve_prev_randao(Some(&beacon_no_genesis), Some(&seed), Some(&pk), at, fallback)
                 .unwrap(),
-            expected,
+            (expected, Some(true)),
             "uncommitted epoch uses the in-block PK_E"
         );
         assert_eq!(
             resolve_prev_randao(Some(&beacon_no_genesis), Some(&seed), None, at, fallback).unwrap(),
-            fallback,
+            (fallback, Some(false)),
             "uncommitted epoch, no in-block key, no genesis → gated fallback"
         );
     }

@@ -34,7 +34,6 @@ services:
           --cert-follow.l1-rpc-url=http://172.20.0.10:8545 \
           --cert-follow.l1-rollup-address=${MOCK_ROLLUP_ADDR:-0x0000000000000000000000000000000000000000} \
           --builder.extradata= \
-          --storage.v2=false \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --ws --ws.addr=0.0.0.0 --ws.port=8546 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
@@ -64,7 +63,6 @@ services:
           --dpos.staking-config=/runtime/staking-reader.json \
           --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex \
           --builder.extradata= \
-          --storage.v2=false \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
           --trusted-only \
@@ -95,7 +93,6 @@ services:
           --cert-follow.l1-rpc-url=http://172.20.0.10:8545 \
           --cert-follow.l1-rollup-address=${BOGUS_ROLLUP_ADDR:-0x0000000000000000000000000000000000000000} \
           --builder.extradata= \
-          --storage.v2=false \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
           --trusted-only \

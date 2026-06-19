@@ -152,6 +152,119 @@ liveness_call()    { cast call "$LIVENESS_SLASHING_ADDR" "$@" --rpc-url "$RPC"; 
 # accepted as a PRE/baseline (see baseline_height).
 finalized_dec() { printf '%d' "$(check_external 8545 | cut -d'|' -f1)" 2>/dev/null || echo 0; }
 
+# --- beacon / prev_randao smoke helpers (shared by the VRF cases) ----------
+# Hoisted from case-vrf.sh / case-vrf-rotation.sh so the VRF / fault / boundary
+# cases share ONE copy. Callers define a `NODES` array (the services to compare).
+
+# mixHash (prev_randao) of block $1 as seen by RPC $2 (default $RPC), lowercased.
+# GRACEFUL: a not-yet-synced block makes `cast block` exit non-zero — under
+# set -e + pipefail that would silently kill the script mid-window instead of the
+# intended "node behind" FAIL. Coerce any failure / missing field to "null" so the
+# callers (assert_beacon_window / wait_nodes_have) handle a lagging node cleanly.
+mixhash_at() {
+    { cast block "$1" --rpc-url "${2:-$RPC}" --json 2>/dev/null || echo '{}'; } \
+        | jq -r '.mixHash // "null"' 2>/dev/null | tr 'A-F' 'a-f'
+}
+# mixHash of block $2 (decimal) as seen INSIDE container service $1 (for the
+# validators that expose no host RPC port). "null" when absent / RPC unreachable.
+mixhash_in() {
+    local hexn
+    hexn=$(printf '0x%x' "$2")
+    # GRACEFUL: a stopped/restarting container or a not-yet-up RPC makes
+    # `docker compose exec … curl` exit non-zero (curl 7 = connect failed) — under
+    # set -e + pipefail that kills the script instead of yielding the intended
+    # "null" (node behind). Coerce any failure to {} so callers handle it cleanly.
+    { docker compose exec -T "$1" curl -s -X POST -H 'Content-Type: application/json' \
+        --data "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getBlockByNumber\",\"params\":[\"$hexn\",false],\"id\":1}" \
+        http://localhost:8545 2>/dev/null || echo '{}'; } \
+        | jq -r '.result.mixHash // "null"' 2>/dev/null | tr 'A-F' 'a-f'
+}
+# mixHash of block $2 (decimal) as seen by node service $1 — routes to the host
+# RPC for the two services that publish one (validator-0 → 8545, full-node →
+# 18545), else the in-container probe.
+mixhash_of() {
+    case "$1" in
+        validator-0) mixhash_at "$2" ;;
+        full-node)   mixhash_at "$2" "http://localhost:18545" ;;
+        *)           mixhash_in "$1" "$2" ;;
+    esac
+}
+is_zero_hash() { [[ "$1" =~ ^0x0+$ ]]; }
+# Count log lines matching $2 in service $1 (0 on no match — never trips set -e).
+log_count() { docker compose logs "$1" 2>/dev/null | grep -c "$2" || true; }
+# On-chain getEpochBeaconKey($1) at the host RPC, lowercased+trimmed ("0x" when
+# the epoch has no committed key — a pre-beacon / uncommitted epoch).
+beacon_key_at() {
+    cast call "$STAKING_ADDR" "getEpochBeaconKey(uint64)(bytes)" "$1" --rpc-url "$RPC" \
+        2>/dev/null | tr -d '[:space:]' | tr 'A-F' 'a-f'
+}
+
+# Assert prev_randao is non-zero AND byte-identical across all $NODES at every block
+# in [$1..$2] (decimal), AND all distinct across heights (real, varying randomness).
+# $3 = a label for FAIL messages. Echoes a one-line summary on success.
+assert_beacon_window() {
+    local lo="$1" hi="$2" label="$3"
+    local n svc mh agree distinct
+    local mixes=() vals=()
+    for ((n = lo; n <= hi; n++)); do
+        vals=()
+        for svc in "${NODES[@]}"; do
+            mh=$(mixhash_of "$svc" "$n")
+            if [[ "$mh" == "null" || -z "$mh" ]]; then
+                echo "FAIL (beacon-window): $label — $svc has no mixHash for block $n (node behind / RPC down)"
+                docker compose logs --tail=80 "$svc"; exit 1
+            fi
+            if is_zero_hash "$mh"; then
+                echo "FAIL (beacon-window): $label — prev_randao is zero at block $n on $svc (beacon stalled / fell to digest)"
+                docker compose logs --tail=80 "$svc"; exit 1
+            fi
+            vals+=("$mh")
+        done
+        agree=$(printf '%s\n' "${vals[@]}" | sort -u | wc -l)
+        if (( agree != 1 )); then
+            echo "FAIL (beacon-window): $label — nodes disagree on prev_randao at block $n (divergent seed):"
+            paste -d' ' <(printf '%s\n' "${NODES[@]}") <(printf '%s\n' "${vals[@]}") | sed 's/^/  /'
+            exit 1
+        fi
+        mixes+=("${vals[0]}")
+    done
+    distinct=$(printf '%s\n' "${mixes[@]}" | sort -u | wc -l)
+    if (( distinct != ${#mixes[@]} )); then
+        echo "FAIL (beacon-window): $label — prev_randao not varying over [$lo..$hi]: ${#mixes[@]} blocks but only $distinct distinct (stuck randomness)"
+        printf '  %s\n' "${mixes[@]}"
+        exit 1
+    fi
+    echo "  [$label] blocks [$lo..$hi]: ${#mixes[@]}/${#mixes[@]} distinct non-zero prev_randao, byte-identical across all ${#NODES[@]} nodes"
+}
+
+# Wait until EVERY $NODES service has block $1 (decimal) available, up to $2 s
+# (default 120). Followers lag the validators by a few blocks, so a cross-node
+# window right at a fresh boundary must wait for them first.
+wait_nodes_have() {
+    local block="$1" deadline=$(( SECONDS + ${2:-120} )) svc mh all
+    while true; do
+        all=1
+        for svc in "${NODES[@]}"; do
+            mh=$(mixhash_of "$svc" "$block")
+            if [[ "$mh" == "null" || -z "$mh" ]]; then all=0; break; fi
+        done
+        (( all == 1 )) && return 0
+        if (( SECONDS >= deadline )); then
+            echo "  [wait_nodes_have] timeout at block $block — per-node status:"
+            for svc in "${NODES[@]}"; do
+                mh=$(mixhash_of "$svc" "$block")
+                if [[ "$mh" == "null" || -z "$mh" ]]; then
+                    echo "    $svc: MISSING block $block"
+                else
+                    echo "    $svc: has block $block"
+                fi
+            done
+            return 1
+        fi
+        sleep 1
+    done
+}
+
 # Settled finalized height for a PRE/baseline capture. Unlike finalized_dec, which
 # maps "RPC unreachable" to 0 indistinguishably from genesis, this retries until
 # validator-0 returns a real height > 0 so a momentary RPC blip at capture time

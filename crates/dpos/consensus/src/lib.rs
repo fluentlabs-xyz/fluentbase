@@ -14,6 +14,9 @@
 
 pub mod application;
 pub mod beacon;
+/// DEVNET/TEST-ONLY byzantine validator actors (gated behind `dpos-devnet-byzantine`).
+#[cfg(feature = "dpos-devnet-byzantine")]
+pub mod byzantine;
 pub mod cert_follow;
 pub mod digest;
 pub mod dpos;

@@ -39,6 +39,7 @@ use rand_core::CryptoRngCore;
 use std::{
     collections::{BTreeMap, BTreeSet},
     num::NonZeroU32,
+    path::PathBuf,
     sync::{Arc, RwLock},
 };
 
@@ -70,6 +71,11 @@ pub struct DkgActor<Se, Re> {
     store: CeremonyStore,
     dpos_activation: u64,
     epoch_interval: u64,
+    metrics: crate::beacon::metrics::BeaconMetrics,
+    /// Directory for on-disk share persistence (item A): the parent of
+    /// `--dpos.beacon-share-path`. `None` ⇒ no share-path configured (e.g. a
+    /// case-(b) sharing-only node) ⇒ memoized shares stay in-memory only.
+    share_dir: Option<PathBuf>,
     /// Active ceremonies keyed by their target epoch E.
     ceremonies: BTreeMap<u64, DkgCeremony>,
     /// Target epochs whose dealing phase has been sealed.
@@ -94,6 +100,8 @@ where
         store: CeremonyStore,
         dpos_activation: u64,
         epoch_interval: u64,
+        metrics: crate::beacon::metrics::BeaconMetrics,
+        share_dir: Option<PathBuf>,
     ) -> Self {
         Self {
             namespace,
@@ -104,6 +112,8 @@ where
             store,
             dpos_activation,
             epoch_interval,
+            metrics,
+            share_dir,
             ceremonies: BTreeMap::new(),
             sealed: BTreeSet::new(),
             eval_logged: BTreeSet::new(),
@@ -167,6 +177,21 @@ where
         //    block is proposed/verified — so the verify-path C gate can read the
         //    share. `ready` probes non-destructively (Logs clone); `finalize` then
         //    consumes the fulfilled ceremony.
+        //
+        //    Item F (PK_E byte-identity — SAFETY holds, residual is LIVENESS only):
+        //    `finalize` is deterministic over a given selected log set, so all honest
+        //    members that select the same logs derive the byte-identical `PK_E` (the
+        //    n=51 `dkg::seed_is_threshold_unique_at_n51` test confirms the seed at the
+        //    production committee size). If honest members select DIFFERENT log sets
+        //    (no consensus-pinned QUAL — out of scope, `dpos_beacon_share_reshare`),
+        //    a minority `PK_E` fails the boundary "C" share-on-poly gate
+        //    (`application::beacon_gate_decision`) → no qualifying quorum → view-change;
+        //    and a forged/divergent `PK_E` that threaded the C gate still cannot
+        //    finalize, because the Stage-2 certify hook (`beacon::certify`) σ-verifies
+        //    the recovered seed against the asserted `PK_E` and Nullifies on mismatch.
+        //    So a divergent log set NEVER yields a forged finalized seed — the only
+        //    residual is a LIVENESS stall of that epoch's beacon (option-A halt), paired
+        //    with the `dkg_ceremony_fail_total` metric below.
         let ready: Vec<u64> = self
             .ceremonies
             .iter()
@@ -180,16 +205,34 @@ where
             self.sealed.remove(&e);
             match c.finalize(rng) {
                 Ok((out, share)) => {
+                    // Item A: persist (PK_E, share) to disk BEFORE the in-memory
+                    // insert (which moves the pair), so a mid-epoch restart reloads
+                    // it instead of carry-forwarding the wrong key and stalling.
+                    // Best-effort — the in-memory store is authoritative for the
+                    // running process, so a write failure only warns.
+                    if let Some(dir) = &self.share_dir {
+                        if let Err(err) = crate::beacon::share_state::persist(dir, e, &out, &share) {
+                            tracing::warn!(
+                                epoch = e,
+                                ?err,
+                                "live DKG: failed to persist share to disk (in-memory store unaffected)"
+                            );
+                        }
+                    }
                     if let Ok(mut store) = self.store.write() {
                         store.insert(e, (out, share));
                     }
+                    self.metrics.dkg_ceremony_ok.inc();
                     tracing::info!(epoch = e, "live DKG: PK_epoch + share computed + stored");
                 }
-                Err(err) => tracing::warn!(
-                    epoch = e,
-                    ?err,
-                    "live DKG: finalize failed after ready-probe — beacon stalls for this epoch"
-                ),
+                Err(err) => {
+                    self.metrics.dkg_ceremony_fail.inc();
+                    tracing::warn!(
+                        epoch = e,
+                        ?err,
+                        "live DKG: finalize failed after ready-probe — beacon stalls for this epoch"
+                    );
+                }
             }
         }
 

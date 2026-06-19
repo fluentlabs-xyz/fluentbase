@@ -97,6 +97,14 @@ pub struct DposConfig {
     /// Hex-encoded commonware `Sharing` (public polynomial). Presence enables
     /// the randomness beacon (`prev_randao(h) = H(seed(h))`).
     pub beacon_sharing_path: Option<PathBuf>,
+    /// `--dpos.no-beacon` (item K): run PRE-BEACON — no live DKG, no beacon
+    /// verify/propose context (committee changes stay pure multisig). Mutually
+    /// exclusive with `beacon_sharing_path` (the clap `beacon` ArgGroup).
+    pub no_beacon: bool,
+    /// DEVNET/TEST-ONLY byzantine mode string (`--dpos.byzantine`). Gated behind
+    /// `dpos-devnet-byzantine`; the field does not exist in a production build.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    pub byzantine_mode: Option<String>,
 }
 
 /// The node-side cert-feed wiring threaded from `main.rs`: the `FeedSink` goes
@@ -235,11 +243,38 @@ pub struct DposArgs {
     /// The beacon public polynomial (hex-encoded commonware `Sharing`) — public
     /// info used to verify seed partials, recover the threshold seed, and
     /// derive `PK_epoch`. Shared by all nodes. Enables the beacon plane.
+    /// Exactly one of `{--dpos.beacon-sharing-path, --dpos.no-beacon}` is
+    /// required under `--dpos` (the `beacon` ArgGroup + `requires_if` on `--dpos`)
+    /// — fail-closed so a `--dpos` node can never SILENTLY run with weak
+    /// (`order.digest()`) randomness; the opt-out must be explicit.
     #[arg(
         long = "dpos.beacon-sharing-path",
-        env = "FLUENT_DPOS_BEACON_SHARING_PATH"
+        env = "FLUENT_DPOS_BEACON_SHARING_PATH",
+        group = "beacon"
     )]
     pub dpos_beacon_sharing_path: Option<PathBuf>,
+
+    /// Explicit opt-out of the randomness beacon: run this `--dpos` node
+    /// pure-multisig with the weak deterministic `order.digest()` `prev_randao`.
+    /// Mutually exclusive with `--dpos.beacon-sharing-path`; exactly one of the
+    /// two is required under `--dpos`. No `default_value_t` — a bool flag with a
+    /// default is treated by clap as always-present and would defeat the
+    /// exactly-one `beacon` group check.
+    #[arg(
+        long = "dpos.no-beacon",
+        env = "FLUENT_DPOS_NO_BEACON",
+        conflicts_with = "dpos_beacon_sharing_path",
+        group = "beacon"
+    )]
+    pub dpos_no_beacon: bool,
+
+    /// DEVNET/TEST-ONLY byzantine validator mode (e.g. `forge-beacon-pk`). Compiled
+    /// in ONLY with the `dpos-devnet-byzantine` cargo feature; the flag does not
+    /// exist in a production build. Used by the byzantine-vrf smoke to prove the
+    /// beacon's safety against a forged `PK_E`.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    #[arg(long = "dpos.byzantine", env = "FLUENT_DPOS_BYZANTINE")]
+    pub dpos_byzantine: Option<String>,
 }
 
 impl DposConfig {
@@ -273,6 +308,9 @@ impl DposConfig {
             follower_upstreams: args.dpos_follower_upstream.clone(),
             beacon_share_path: args.dpos_beacon_share_path.clone(),
             beacon_sharing_path: args.dpos_beacon_sharing_path.clone(),
+            no_beacon: args.dpos_no_beacon,
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            byzantine_mode: args.dpos_byzantine.clone(),
         }
     }
 }
@@ -594,6 +632,28 @@ where
         None => (None, None),
     };
 
+    // DEVNET/TEST-ONLY: parse the byzantine mode string. An unknown value
+    // fails-loud rather than silently running honest (a misconfigured smoke must
+    // not false-pass). The whole block is gated out of production builds.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    let byzantine = match cfg.byzantine_mode.as_deref() {
+        None => None,
+        Some("forge-beacon-pk") => {
+            tracing::warn!("DEVNET BYZANTINE MODE ACTIVE: forge-beacon-pk — NEVER use in production");
+            Some(fluentbase_consensus::application::ByzantineMode::ForgeBeaconPk)
+        }
+        Some("equivocate") => {
+            tracing::warn!("DEVNET BYZANTINE MODE ACTIVE: equivocate — NEVER use in production");
+            Some(fluentbase_consensus::application::ByzantineMode::Equivocate)
+        }
+        Some(other) => {
+            eyre::bail!(
+                "unknown --dpos.byzantine mode: {other:?} \
+                 (expected `forge-beacon-pk` or `equivocate`)"
+            )
+        }
+    };
+
     let layer_cfg = DposLayerConfig {
         bls_keypair,
         peer_keypair,
@@ -613,6 +673,19 @@ where
         promotion,
         mode_events,
         beacon: beacon_launch,
+        // Item A: persist live-DKG shares in the directory that holds the genesis
+        // share ("where everything lies") — the parent of --dpos.beacon-share-path.
+        // None when no share-path is configured (in-memory only).
+        beacon_share_dir: cfg
+            .beacon_share_path
+            .as_ref()
+            .and_then(|p| p.parent().map(std::path::Path::to_path_buf)),
+        // Item K: --dpos.no-beacon ⇒ disable the live DKG + beacon context entirely
+        // (pre-beacon, pure multisig) so committee changes don't activate the beacon
+        // and a shareless joiner can still promote.
+        no_beacon: cfg.no_beacon,
+        #[cfg(feature = "dpos-devnet-byzantine")]
+        byzantine,
     };
 
     // Spawn the cert-feed actor on a child of the runtime context BEFORE `launch`
@@ -661,9 +734,16 @@ fn load_beacon(cfg: &DposConfig) -> eyre::Result<Option<(Option<BeaconShare>, Be
 
     let share = match &cfg.beacon_share_path {
         Some(path) => {
-            let share_hex = std::fs::read_to_string(path).wrap_err("read beacon-share file")?;
-            let share_bytes = commonware_utils::from_hex_formatted(share_hex.trim())
-                .ok_or_else(|| eyre!("invalid beacon-share hex"))?;
+            // Item B: scrub the secret share hex + decoded bytes on drop (the parsed
+            // `Share` already zeroizes via `Secret<Scalar>`; the public `sharing_hex`
+            // above is left as-is — it is public material).
+            let share_hex = zeroize::Zeroizing::new(
+                std::fs::read_to_string(path).wrap_err("read beacon-share file")?,
+            );
+            let share_bytes = zeroize::Zeroizing::new(
+                commonware_utils::from_hex_formatted(share_hex.trim())
+                    .ok_or_else(|| eyre!("invalid beacon-share hex"))?,
+            );
             Some(
                 fluentbase_consensus::beacon::seed::parse_share(&share_bytes)
                     .map_err(|e| eyre!("parse beacon Share: {e:?}"))?,
@@ -671,6 +751,24 @@ fn load_beacon(cfg: &DposConfig) -> eyre::Result<Option<(Option<BeaconShare>, Be
         }
         None => None,
     };
+    // Item K, signer-holds-share diagnostic (P3 = warn, not bail): the beacon is
+    // configured (public Sharing present) but this node holds no secret Share. This
+    // is the legitimate §8.11.1(b) degraded mode — the combined scheme self-suppresses
+    // its seed-bearing Notarize/Finalize votes (it stays a full Simplex participant,
+    // just out of the seed quorum), and a cert-follow→signer promotion legitimately
+    // lands here until a reshare delivers the share. So we do NOT bail (that would
+    // reject a supported mode, and entry-committee membership is not cheaply readable
+    // at this launch layer); we WARN so an operator who simply forgot
+    // `--dpos.beacon-share-path` sees it. The fail-closed gate for item K is the clap
+    // `beacon` ArgGroup (explicit `--dpos.beacon-sharing-path` xor `--dpos.no-beacon`).
+    if share.is_none() {
+        tracing::warn!(
+            "beacon: --dpos.beacon-sharing-path set but no --dpos.beacon-share-path — this node \
+             holds the public polynomial but no secret share. It participates in consensus but \
+             self-suppresses seed votes (out of the seed quorum) until a share is provided/reshared. \
+             If this node is (or becomes) a committee member, provide --dpos.beacon-share-path."
+        );
+    }
     Ok(Some((share, sharing)))
 }
 
@@ -829,6 +927,9 @@ mod tests {
             follower_upstreams: vec![],
             beacon_share_path: None,
             beacon_sharing_path: None,
+            no_beacon: false,
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            byzantine_mode: None,
         }
     }
 

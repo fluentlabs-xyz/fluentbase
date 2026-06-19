@@ -289,6 +289,9 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// per-epoch VERIFY path (soft-enter catch-up + a member that missed the
     /// epoch's DKG). See [`epoch_manager::BeaconVerifyPk`].
     pub beacon_verify_pk: epoch_manager::BeaconVerifyPk,
+    /// Beacon counters (cross-epoch singleton from `dpos.rs::launch`, already
+    /// registered there). Threaded to the executor + each per-epoch engine.
+    pub beacon_metrics: crate::beacon::metrics::BeaconMetrics,
     /// Live-DKG verify/propose context for `FluentApp` (the boundary "C" gate +
     /// the proposer's `beacon_outcome` assertion). `None` ⇒ no beacon gating.
     pub beacon_verify: Option<BeaconVerify>,
@@ -365,6 +368,13 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// are initialised inside [`OuterBuilder::build`] under the slasher's
     /// own context label.
     pub slasher_wal_partition: String,
+
+    /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
+    /// `dpos-devnet-byzantine`). `None` on every honest node. Threaded into
+    /// [`epoch_manager::Config`] so the per-epoch engine can swap in a
+    /// [`crate::byzantine::VoteEquivocator`].
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    pub byzantine: Option<crate::application::ByzantineMode>,
 }
 
 /// The global-singleton consensus driver wrapping a per-epoch
@@ -641,6 +651,7 @@ where
                 initial_head,
                 fcu_pace: self.fcu_pace,
                 peers_for_finalization,
+                beacon_metrics: self.beacon_metrics.clone(),
             },
         );
 
@@ -738,8 +749,11 @@ where
                 slasher_mailbox,
                 spec_exec_mailbox,
                 seed_store,
+                beacon_metrics: self.beacon_metrics,
                 page_cache,
                 register_scheme,
+                #[cfg(feature = "dpos-devnet-byzantine")]
+                byzantine: self.byzantine,
             },
         );
 

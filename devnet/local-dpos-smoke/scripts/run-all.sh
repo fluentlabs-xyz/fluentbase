@@ -5,12 +5,17 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-# Default suite = the cases green today. Excluded (run individually via
-# SMOKE_CASES="..." or `make smoke-<case>`):
-#   case-byzantine    — pending Phase 5 (devnet-byzantine Rust feature + Conflicter)
-#   case-gov-interval — descoped: a ChainConfig setter change needs a full
-#                       FluentGovernance propose/vote/execute flow (onlyFromGovernance)
-CASES=(${SMOKE_CASES:-case-tx case-epoch case-peers case-liveness case-crash-survivor case-full-restart case-deferred case-cert-follow case-cert-cascade case-vrf})
+# Default suite = the cases green today. `case-base` bundles the read-only
+# default-stack cases (tx + epoch + vrf + vrf-boundary) onto ONE bring-up — it
+# replaces the former separate case-tx/case-epoch/case-vrf entries and adds
+# vrf-boundary coverage. Excluded (run individually via SMOKE_CASES="..." or
+# `make smoke-<case>`):
+#   case-byzantine     — pending Phase 5 (equivocation Conflicter Rust side absent)
+#   case-byzantine-vrf — long (~8-10 min), runs the rotation stack, needs foundry +
+#                        the `dpos-devnet-byzantine` image feature
+#   case-gov-interval  — descoped: a ChainConfig setter change needs a full
+#                        FluentGovernance propose/vote/execute flow (onlyFromGovernance)
+CASES=(${SMOKE_CASES:-case-base case-peers case-liveness case-crash-survivor case-full-restart case-deferred case-cert-follow case-cert-cascade})
 
 declare -A RESULT
 fail=0

@@ -32,7 +32,6 @@ services:
           --dpos.staking-config=/runtime/staking-reader.json \
           --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex \
           --builder.extradata= \
-          --storage.v2=false \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
           --trusted-only \
@@ -83,7 +82,6 @@ services:
           --dpos.staking-config=/runtime/staking-reader.json \
           --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex \
           --builder.extradata= \
-          --storage.v2=false \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
           --trusted-only \

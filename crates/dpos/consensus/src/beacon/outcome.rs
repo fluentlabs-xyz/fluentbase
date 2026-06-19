@@ -106,6 +106,42 @@ pub fn validate_share_on_poly(
     }
 }
 
+/// DEVNET/TEST-ONLY forge of a different per-epoch DKG outcome over the SAME
+/// committee. Deals a fresh anonymous DKG to `real.players()` (the proposer holds
+/// the committee's PUBLIC peer set, never the other validators' shares) with a
+/// fixed devnet RNG, yielding an `Output` whose `players()`/`total()` match the
+/// real committee — so it passes the epoch-type/shape gate — but whose `PK_E`
+/// differs. The forged polynomial does NOT thread the honest shares, so each
+/// honest share-holder's "C" gate ([`validate_share_on_poly`]) rejects it at
+/// verify; under the realistic `f=1` bound the forge cannot reach a notarization
+/// quorum, so it never finalizes (the consensus-level SAFETY observable). The
+/// certify hook ([`crate::beacon::certify`]) is the closure that would Nullify it
+/// IF a colluding byzantine quorum did notarize it — exercised by the gated
+/// certify tests where the collusion is constructible.
+///
+/// Gated behind `dpos-devnet-byzantine` (or `test`): the forge can never be reached
+/// in a production build.
+#[cfg(any(test, feature = "dpos-devnet-byzantine"))]
+pub fn forge_outcome_same_committee(real: &DkgOutcome) -> DkgOutcome {
+    use commonware_cryptography::bls12381::{dkg::deal, primitives::sharing::Mode};
+    use commonware_utils::N3f1;
+    use rand_08::rngs::StdRng;
+    use rand_core::SeedableRng as _;
+
+    // Fixed devnet seed → deterministic forge (every byzantine node forges the
+    // identical PK_E for a given committee, so they collude on one value).
+    let mut rng = StdRng::seed_from_u64(0xB17E_FACE);
+    let players = real.players().clone();
+    let (forged, _shares) = deal::<MinSig, PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players)
+        .expect("forge: deal over the real committee's public players");
+    debug_assert_ne!(
+        forged.public().public(),
+        real.public().public(),
+        "a forged outcome must carry a different PK_E than the real one"
+    );
+    forged
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,5 +231,50 @@ mod tests {
         );
         let any = shares_a.values().next().expect("a share");
         assert!(!validate_share_on_poly(&out_a, &other, any));
+    }
+
+    /// The devnet byzantine forge: a DIFFERENT `PK_E` over the SAME committee that
+    /// is NOT trivially shape-rejected (players + total match the committee) yet
+    /// FAILS every honest share-holder's "C" gate — exactly the Track-1 SAFETY
+    /// mechanism (the forge cannot pass C → cannot reach a quorum at `f=1`).
+    #[test]
+    fn forge_differs_in_pk_keeps_committee_shape_and_fails_honest_c() {
+        use crate::beacon::dkg::run_local_dkg;
+        let mut rng = StdRng::seed_from_u64(21);
+        let keys: Vec<Ed25519PrivateKey> =
+            (0..5).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
+        let committee: Set<PeerPubkey> = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+        let (real, real_shares) = run_local_dkg(&mut rng, b"ns", 0, &keys, &keys).expect("dkg");
+
+        let forged = forge_outcome_same_committee(&real);
+
+        assert_ne!(
+            group_public_key(&forged),
+            group_public_key(&real),
+            "the forge must assert a DIFFERENT PK_E"
+        );
+        assert_eq!(
+            forged.players(),
+            real.players(),
+            "the forge keeps players == committee (passes the shape/epoch-type gate)"
+        );
+        assert_eq!(
+            forged.public().total(),
+            real.public().total(),
+            "the forge keeps total == committee size (passes the shape gate)"
+        );
+        // It is decodable through the wire path verify uses, so it is NOT a
+        // trivially-rejected malformed outcome — it reaches the C check.
+        let bytes = encode_outcome(&forged);
+        assert!(parse_outcome(&bytes).is_ok(), "forge round-trips the codec");
+        // Yet EVERY honest share-holder's C gate rejects it (their real share does
+        // not lie on the forged poly).
+        for pk in committee.iter() {
+            let honest_share = real_shares.get(pk).expect("real share");
+            assert!(
+                !validate_share_on_poly(&forged, &committee, honest_share),
+                "an honest share must NOT lie on the forged polynomial"
+            );
+        }
     }
 }

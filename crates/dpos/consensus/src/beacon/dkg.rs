@@ -136,4 +136,56 @@ mod tests {
             "seed from DKG shares must verify against the DKG group key PK_epoch"
         );
     }
+
+    // Item F: PK_E + seed determinism at the PRODUCTION committee size (n=51,
+    // f=16, MAX_PEER_SET_SIZE). The threshold seed is UNIQUE — any two distinct
+    // n−f (=35) seed-quorum subsets of the 51 partials recover the byte-identical signature
+    // — which is exactly why every deriving node computes the same prev_randao
+    // regardless of which quorum it observed. (Cross-player PK_E agreement is a
+    // commonware DKG guarantee; this asserts OUR seed machinery + quorum math at
+    // scale, not the library internals.) The n=51 ceremony completing in this
+    // unit confirms DKG feasibility at scale; the per-block gossip reachability
+    // within DKG_MARGIN_BLOCKS=10 is exercised by the rotation smoke at the real
+    // committee size, so the margin constant is left at 10.
+    #[test]
+    fn seed_is_threshold_unique_at_n51() {
+        use commonware_codec::Encode as _;
+
+        let mut rng = StdRng::seed_from_u64(51);
+        let keys: Vec<Ed25519PrivateKey> = (0..51)
+            .map(|_| Ed25519PrivateKey::random(&mut rng))
+            .collect();
+        let (outcome, shares) =
+            run_local_dkg(&mut rng, b"FLUENT_DPOS_V1_test", 0, &keys, &keys).expect("n=51 dkg");
+        assert_eq!(shares.len(), 51, "all 51 players get a share at n=51/f=16");
+
+        let ns = seed_namespace(b"FLUENT_DPOS_V1_test");
+        let round = Round::new(Epoch::new(0), View::new(100));
+        let partials: Vec<_> = shares
+            .values()
+            .map(|s| sign_seed_partial(s, &ns, round))
+            .collect();
+
+        // Two DISTINCT seed-quorum subsets (n−f = 51−16 = 35) must recover the SAME
+        // signature. [0..35] and [16..51] are different 35-member sets.
+        let seed_all = recover_seed::<N3f1>(outcome.public(), &partials).expect("recover all");
+        let seed_a =
+            recover_seed::<N3f1>(outcome.public(), &partials[0..35]).expect("recover subset a");
+        let seed_b =
+            recover_seed::<N3f1>(outcome.public(), &partials[16..51]).expect("recover subset b");
+        assert_eq!(
+            seed_all.encode().as_ref(),
+            seed_a.encode().as_ref(),
+            "an n−f quorum subset recovers the canonical seed"
+        );
+        assert_eq!(
+            seed_a.encode().as_ref(),
+            seed_b.encode().as_ref(),
+            "a different n−f quorum subset recovers the byte-identical seed (threshold uniqueness)"
+        );
+        assert!(
+            verify_seed(group_public_key(&outcome), &ns, round, &seed_all),
+            "the n=51 recovered seed verifies against PK_epoch"
+        );
+    }
 }

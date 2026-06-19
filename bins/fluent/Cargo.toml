@@ -187,6 +187,11 @@ trie-debug = ["reth-node-builder/trie-debug", "reth-node-core/trie-debug"]
 # (`--dpos.metrics-port`) consumed by the local-dpos-smoke regression suite.
 dpos-devnet-metrics = ["fluentbase-node/dpos-devnet-metrics"]
 
+# DEVNET/TEST-ONLY passthrough — compiles in the byzantine beacon-PK_E forge
+# (`--dpos.byzantine forge-beacon-pk`) consumed by the byzantine-vrf smoke. Never
+# enabled in a production build.
+dpos-devnet-byzantine = ["fluentbase-node/dpos-devnet-byzantine"]
+
 [[bin]]
 name = "fluent"
 path = "src/main.rs"

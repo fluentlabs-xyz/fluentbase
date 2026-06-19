@@ -44,6 +44,11 @@ pub const STAKING_DPOS_ADDR: Address = address!("0x00000000000000000000000000000
 // `artifacts::load` links `Staking`'s `__$StakingEconomics$__` placeholders to it.
 // Stateless library — no constructor args, no storage.
 pub const STAKING_ECONOMICS_ADDR: Address = address!("0x000000000000000000000000000000000000520a");
+// Stateless equivocation-evidence decoder (no storage / constructor, like the BLS
+// verifier). Wired into ChainConfig via setEvidenceDecoder (`onlyFromGovernance`);
+// without it `Staking._slashEquivocation` reverts EvidenceDecoderNotConfigured, so
+// the byzantine equivocation smoke's slash can never land.
+pub const EVIDENCE_DECODER_ADDR: Address = address!("0x000000000000000000000000000000000000520b");
 
 // EVM canonical SYSTEM_CALLER per StakingContext.sol:17 — used to satisfy
 // the `onlySystemCall` modifier on `commitEpochCommittee`.
@@ -117,6 +122,7 @@ mod abi {
         }
         interface IChainConfigGovernance {
             function setBlsVerifier(address newValue) external;
+            function setEvidenceDecoder(address newValue) external;
         }
     }
 }
@@ -296,6 +302,16 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
         &[],
         false,
     )?;
+    // SimplexEvidenceDecoder is likewise stateless (no storage / constructor) —
+    // place its runtime bytecode at the canonical address through the same path.
+    deploy_to_canonical(
+        &mut ctx,
+        deployer,
+        &artefacts.evidence_decoder,
+        EVIDENCE_DECODER_ADDR,
+        &[],
+        false,
+    )?;
 
     // ChainConfig enforces non-zero minStake values (revert
     // "minValidatorStakeAmount") and Staking._addValidator enforces
@@ -449,6 +465,24 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
         "ChainConfig.setBlsVerifier",
     )?;
 
+    // Wire the equivocation-evidence decoder through ChainConfig (same
+    // `onlyFromGovernance` spoof). Without it `Staking._slashEquivocation` reverts
+    // `EvidenceDecoderNotConfigured` — the byzantine equivocation smoke's on-chain
+    // slash would never land (honest peers detect+block the equivocator, but the
+    // jail never happens). setConsensusKeys does not need it, so historically it was
+    // left unset; the equivocation smoke is the first path that exercises slashing.
+    let set_decoder = abi::IChainConfigGovernance::setEvidenceDecoderCall {
+        newValue: EVIDENCE_DECODER_ADDR,
+    }
+    .abi_encode();
+    call_or_die(
+        &mut ctx,
+        GOVERNANCE_ADDR,
+        CHAIN_CONFIG_ADDR,
+        set_decoder.into(),
+        "ChainConfig.setEvidenceDecoder",
+    )?;
+
     register_validators(&mut ctx, keys)?;
     commit_initial_committee(&mut ctx, keys)?;
     commit_initial_beacon_key(&mut ctx, keys)?;
@@ -466,6 +500,7 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
             LIVENESS_SLASHING_ADDR,
             STAKING_TOKEN_ADDR,
             BLS_VERIFIER_ADDR,
+            EVIDENCE_DECODER_ADDR,
         ],
     ))
 }

@@ -111,6 +111,38 @@ pub struct EpochEngineConfig<B, XC, A> {
     /// [`crate::outer::OuterEngine`]; written by the spec-exec reporter, read by
     /// this epoch's [`BeaconCertify`] wrapper.
     pub seed_store: SeedStore,
+    /// Beacon counters (cross-epoch singleton). This epoch's engine increments
+    /// the demote counters when it self-demotes to the cert-follow plane.
+    pub beacon_metrics: crate::beacon::metrics::BeaconMetrics,
+    /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
+    /// `dpos-devnet-byzantine`). `None` on every honest node. When
+    /// `Some(ByzantineMode::Equivocate)` (and this node can sign), `new()` builds
+    /// the [`Inner::Equivocate`] variant instead of the honest `simplex::Engine`.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    pub byzantine: Option<crate::application::ByzantineMode>,
+}
+
+/// The per-epoch engine variant chosen in [`EpochEngine::new`]. Honest nodes are
+/// always [`Inner::Normal`]; only a DEVNET/TEST byzantine node (gated behind
+/// `dpos-devnet-byzantine`) takes [`Inner::Equivocate`], which swaps the honest
+/// `simplex::Engine` for a [`crate::byzantine::VoteEquivocator`] on the vote
+/// channel. The choice is made in `new()` (so the byzantine path never even
+/// builds the simplex engine) and dispatched in [`EpochEngine::start`].
+enum Inner<E, B, XC, A>
+where
+    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics,
+    B: Blocker<PublicKey = ed25519::PublicKey>,
+    XC: ExecutedChain,
+    A: OrderingAssembler,
+{
+    // Boxed: the simplex engine is far larger than the byzantine `Equivocate`
+    // variant; boxing keeps the enum small (clippy::large_enum_variant).
+    Normal(Box<ConsensusEngine<E, B, XC, A>>),
+    /// The flagged byzantine signer scheme, carried until `start()` spawns the
+    /// equivocator on the vote channel. Boxed to match the boxed `Normal` variant
+    /// so neither dominates the enum size (clippy::large_enum_variant).
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    Equivocate(Box<BlsScheme>),
 }
 
 /// Per-epoch consensus engine. Created by
@@ -123,7 +155,7 @@ where
     A: OrderingAssembler,
 {
     context: ContextCell<E>,
-    consensus: ConsensusEngine<E, B, XC, A>,
+    inner: Inner<E, B, XC, A>,
 }
 
 impl<E, B, XC, A> EpochEngine<E, B, XC, A>
@@ -203,6 +235,17 @@ where
             Some(pk) => build_verifier_group_key(&namespace, bimap, pk, seed_namespace(&namespace)),
             None => build_verifier(&namespace, bimap, cfg.beacon.clone()),
         };
+        // DEVNET/TEST-ONLY: whether this node is a signing committee member (the
+        // first match arm below). A byzantine equivocator can only double-sign if it
+        // holds a signing scheme; a non-member / no-local-polynomial node falls
+        // through to the honest engine (GOTCHA 7 — rotated-out / no-polynomial).
+        // NOTE: `can_sign_locally` is `(Some(_), _) => true` even for a member that
+        // holds the polynomial WITHOUT a share — such a node still routes here, but
+        // its combined `sign()` self-suppresses (returns `None`), so the
+        // `VoteEquivocator` produces nothing; its startup probe warns LOUDLY for
+        // that case rather than failing silently (the genesis smoke stack seeds it).
+        #[cfg(feature = "dpos-devnet-byzantine")]
+        let can_sign = member_signer.is_some() && can_sign_locally;
         let scheme: BlsScheme = match member_signer {
             Some(signer) if can_sign_locally => signer,
             Some(_) => {
@@ -224,6 +267,7 @@ where
                     "committee member without a local beacon polynomial — staying on cert-follow plane (no partial-verify without the Sharing)"
                 );
                 if cfg.signer_keypair.is_some() {
+                    cfg.beacon_metrics.engine_demoted_no_polynomial.inc();
                     if let Some(tx) = &cfg.mode_events {
                         let _ = tx.send(crate::dpos::ModeEvent::NoBeaconPolynomial {
                             epoch: cfg.epoch.get(),
@@ -236,6 +280,7 @@ where
                 // Genuinely not a committee member: rotated out.
                 if cfg.signer_keypair.is_some() {
                     metrics::counter!("epoch_engine_rotated_out_total").increment(1);
+                    cfg.beacon_metrics.engine_demoted_rotated_out.inc();
                     tracing::warn!(
                         epoch = ?cfg.epoch,
                         "validator rotated out of committee; falling through to verifier mode"
@@ -254,6 +299,29 @@ where
         };
 
         (cfg.register_scheme)(cfg.epoch, scheme.clone());
+
+        // DEVNET/TEST-ONLY: a byzantine equivocator swaps the honest simplex engine
+        // for a vote-channel double-signer ([`crate::byzantine::VoteEquivocator`]).
+        // Only a SIGNING member can equivocate (otherwise its scheme can't sign a
+        // vote); a non-signing flagged node falls through to the honest engine.
+        // The scheme is still registered above so peers can verify its equivocating
+        // votes' signatures (the slasher needs the attributable vote half). We skip
+        // building the simplex engine entirely on this path.
+        #[cfg(feature = "dpos-devnet-byzantine")]
+        if matches!(
+            cfg.byzantine,
+            Some(crate::application::ByzantineMode::Equivocate)
+        ) && can_sign
+        {
+            tracing::warn!(
+                epoch = ?cfg.epoch,
+                "BYZANTINE: this validator will EQUIVOCATE its votes — NEVER use in production"
+            );
+            return Ok(Self {
+                context: ContextCell::new(context),
+                inner: Inner::Equivocate(Box::new(scheme)),
+            });
+        }
 
         // Use the cross-epoch OriginEpocher threaded in via config,
         // not a per-epoch local re-construction.
@@ -309,7 +377,7 @@ where
 
         Ok(Self {
             context: ContextCell::new(context),
-            consensus,
+            inner: Inner::Normal(Box::new(consensus)),
         })
     }
 
@@ -331,7 +399,23 @@ where
             impl Receiver<PublicKey = ed25519::PublicKey>,
         ),
     ) -> Handle<()> {
-        let _ = &self.context;
-        self.consensus.start(vote, cert, resolver)
+        let Self { context, inner } = self;
+        match inner {
+            Inner::Normal(consensus) => {
+                // The simplex engine owns its own context; this cell is otherwise
+                // unused on the normal path (kept for symmetry with the byzantine
+                // arm, which moves it into the equivocator).
+                let _ = context;
+                (*consensus).start(vote, cert, resolver)
+            }
+            // DEVNET/TEST-ONLY: the byzantine equivocator only needs the vote
+            // channel (it double-signs received Notarize/Finalize votes); cert and
+            // resolver are dropped — it never runs marshal/executor/resolver.
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            Inner::Equivocate(scheme) => {
+                drop((cert, resolver));
+                crate::byzantine::VoteEquivocator::new(context.into_present(), *scheme).start(vote)
+            }
+        }
     }
 }

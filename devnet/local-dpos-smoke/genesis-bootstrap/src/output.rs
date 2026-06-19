@@ -147,11 +147,12 @@ pub fn write(
 
         // This validator's threshold-beacon DKG share (devnet bootstrap) —
         // loaded via --dpos.beacon-share-path to sign per-height seed partials.
-        // Secret material, so mode 0600 like bls.hex / peer.hex.
-        write_mode_0600(
-            &dir.join("beacon-share.hex"),
-            hex::encode(v.beacon_share.encode().as_ref()).as_bytes(),
-        )?;
+        // Secret material, so mode 0600 like bls.hex / peer.hex. Item B: scrub the
+        // encoded bytes + hex on drop so the secret share does not linger in memory
+        // after the write.
+        let share_bytes = zeroize::Zeroizing::new(v.beacon_share.encode().as_ref().to_vec());
+        let share_hex = zeroize::Zeroizing::new(hex::encode(share_bytes.as_slice()));
+        write_mode_0600(&dir.join("beacon-share.hex"), share_hex.as_bytes())?;
     }
 
     // The beacon public polynomial (`Sharing`) — public info every node needs

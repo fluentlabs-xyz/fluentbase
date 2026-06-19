@@ -37,8 +37,8 @@ x-dpos-validator-cmd: &dpos-validator-cmd
         --dpos.metrics-port=9100 \
         --dpos.slasher-keystore-path=/runtime/keys/validator-$$IDX/slasher.json \
         --dpos.slasher-keystore-password-file=/runtime/keys/validator-$$IDX/slasher.pwd \
+        --dpos.no-beacon \
         --builder.extradata= \
-        --storage.v2=false \
         --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
         --ws --ws.addr=0.0.0.0 --ws.port=8546 \
         --trusted-peers="$(cat /runtime/v0-enode.txt)" \
@@ -64,8 +64,8 @@ services:
       - --dpos.metrics-port=9100
       - --dpos.slasher-keystore-path=/runtime/keys/validator-0/slasher.json
       - --dpos.slasher-keystore-password-file=/runtime/keys/validator-0/slasher.pwd
+      - --dpos.no-beacon
       - --builder.extradata=
-      - --storage.v2=false
       - --p2p-secret-key=/runtime/v0-p2p-secret.hex
       - --port=30303
       - --http
@@ -126,7 +126,6 @@ services:
           --sequencer-url=ws://172.20.0.10:8546 \
           --dpos.staking-config=/runtime/staking-reader.json \
           --builder.extradata= \
-          --storage.v2=false \
           --rpc.eth-proof-window=50000 \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \

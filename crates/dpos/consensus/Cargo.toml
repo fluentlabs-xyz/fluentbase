@@ -58,6 +58,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tokio-util = { workspace = true }
 dashmap = { workspace = true }
+zeroize = { version = "1", default-features = false }
 
 [dev-dependencies]
 commonware-cryptography = { workspace = true, features = ["std"] }
@@ -72,3 +73,7 @@ commonware-codec = { workspace = true, features = ["std"] }
 [features]
 default = ["std"]
 std = []
+# DEVNET/TEST-ONLY: compiles in the byzantine beacon-PK_E forge (`--dpos.byzantine
+# forge-beacon-pk`) used by the byzantine-vrf smoke. Off in prod builds — the flag
+# and the forge code do not exist without it.
+dpos-devnet-byzantine = []

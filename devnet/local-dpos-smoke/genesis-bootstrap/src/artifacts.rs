@@ -55,6 +55,11 @@ pub struct Artefacts {
     pub liveness_slashing: ContractArtefact,
     pub mock_blend_token: ContractArtefact,
     pub bls_verifier: ContractArtefact,
+    /// Stateless decoder (no storage / constructor) that `Staking._slashEquivocation`
+    /// uses to parse equivocation evidence. Wired into ChainConfig via
+    /// `setEvidenceDecoder`; without it every `slashEquivocation*` reverts
+    /// `EvidenceDecoderNotConfigured` — so the byzantine equivocation smoke needs it.
+    pub evidence_decoder: ContractArtefact,
 }
 
 /// Splice each Solidity library placeholder (`__$<34 hex>$__`, 20 bytes) in a
@@ -118,5 +123,6 @@ pub fn load(dir: &Path) -> eyre::Result<Artefacts> {
         liveness_slashing: load_one(&dir.join("LivenessSlashing.json"))?,
         mock_blend_token: load_one(&dir.join("MockBlendToken.json"))?,
         bls_verifier: load_one(&dir.join("BLS12381Verifier.json"))?,
+        evidence_decoder: load_one(&dir.join("SimplexEvidenceDecoder.json"))?,
     })
 }

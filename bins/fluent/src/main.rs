@@ -112,6 +112,12 @@ pub struct FluentNodeArgs {
         // (⇒ at-least-one) = exactly-one, caught at PARSE time instead of after
         // reth has fully launched (the exit-0-after-launch class; audit P2-18).
         requires_if("true", "bls"),
+        // Same exactly-one gate for the randomness beacon: the `beacon` ArgGroup
+        // ({--dpos.beacon-sharing-path, --dpos.no-beacon}, `conflicts_with` ⇒
+        // at-most-one) + this `requires_if` (⇒ at-least-one) = exactly-one, so a
+        // --dpos node can never SILENTLY default to weak order.digest() randomness
+        // (item K, fail-closed).
+        requires_if("true", "beacon"),
     )]
     pub dpos: bool,
 
@@ -443,5 +449,83 @@ fn main() {
     }
     if consensus_failed || run_result.is_err() {
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod beacon_arggroup_tests {
+    use super::FluentNodeArgs;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: FluentNodeArgs,
+    }
+
+    /// Minimal flags that satisfy every OTHER `required_if_eq("dpos","true")` /
+    /// `bls` rule, so each case isolates the `beacon` ArgGroup behaviour.
+    fn dpos_base() -> Vec<&'static str> {
+        vec![
+            "test",
+            "--dpos",
+            "--dpos.bls-key-path",
+            "/k/bls.hex",
+            "--dpos.peer-key-path",
+            "/k/peer.hex",
+            "--dpos.staking-config",
+            "/k/staking.json",
+            "--dpos.bootstrappers",
+            "/k/boot.json",
+            "--dpos.slasher-keystore-path",
+            "/k/slasher.json",
+            "--dpos.slasher-keystore-password-file",
+            "/k/slasher.pw",
+        ]
+    }
+
+    fn parse(extra: &[&str]) -> Result<TestCli, clap::Error> {
+        let mut argv = dpos_base();
+        argv.extend_from_slice(extra);
+        TestCli::try_parse_from(argv)
+    }
+
+    // Item K, fail-closed: a `--dpos` node must pick EXACTLY ONE of
+    // {--dpos.beacon-sharing-path, --dpos.no-beacon} at PARSE time — never a
+    // silent default to weak order.digest() randomness.
+    #[test]
+    fn dpos_requires_exactly_one_beacon_choice() {
+        // (1) neither beacon flag → error (requires_if("true","beacon")).
+        assert!(parse(&[]).is_err(), "neither beacon flag must be rejected");
+        // (2) sharing-path only → ok.
+        assert!(
+            parse(&["--dpos.beacon-sharing-path", "/k/sharing.hex"]).is_ok(),
+            "sharing-path alone must parse"
+        );
+        // (3) no-beacon only → ok (the explicit opt-out).
+        assert!(
+            parse(&["--dpos.no-beacon"]).is_ok(),
+            "--dpos.no-beacon alone must parse"
+        );
+        // (4) both → error (conflicts_with ⇒ at-most-one).
+        assert!(
+            parse(&[
+                "--dpos.beacon-sharing-path",
+                "/k/sharing.hex",
+                "--dpos.no-beacon"
+            ])
+            .is_err(),
+            "both beacon flags must conflict"
+        );
+    }
+
+    // (5) `--dpos.beacon-share-path` (the secret share) requires the public
+    // `--dpos.beacon-sharing-path`, independent of `--dpos`.
+    #[test]
+    fn beacon_share_path_requires_sharing_path() {
+        assert!(
+            TestCli::try_parse_from(["test", "--dpos.beacon-share-path", "/k/share.hex"]).is_err(),
+            "beacon-share-path without beacon-sharing-path must be rejected"
+        );
     }
 }
