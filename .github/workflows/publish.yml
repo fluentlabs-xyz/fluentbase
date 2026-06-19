@@ -18,6 +18,7 @@ env:
 jobs:
   publish:
     name: Publish to crates.io
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || (github.ref_type == 'tag' && !contains(github.ref_name, '-')) }}
     runs-on: ubuntu-latest
 
     steps:
