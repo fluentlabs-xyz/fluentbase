@@ -32,10 +32,10 @@ use commonware_runtime::{
     buffer::paged::CacheRef, BufferPooler, Clock, ContextCell, Handle, Metrics, Spawner, Storage,
 };
 use fluentbase_bls::{
-    beacon::{seed_namespace, GroupPublic},
+    beacon::seed_namespace,
     fluent_namespace,
     keys::ValidatorBlsKeypair,
-    scheme::{build_signer, build_verifier, build_verifier_group_key, BeaconKey},
+    scheme::{build_signer, build_verifier, BeaconKey},
     Scheme as BlsScheme,
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
@@ -99,13 +99,6 @@ pub struct EpochEngineConfig<B, XC, A> {
     /// node-LOCAL DKG material — used to SIGN only when its group key matches
     /// the authoritative on-chain key below.
     pub beacon: Option<BeaconKey>,
-    /// Authoritative on-chain group key `PK_epoch` (`getEpochBeaconKey`), resolved
-    /// for this epoch. When the local [`Self::beacon`] does NOT match it (a fresh
-    /// joiner that missed this epoch's DKG ceremony) or the node is not a committee
-    /// member, the scheme VERIFIES assembled certs against this key (a group-key
-    /// verifier — `verify_certificate` needs only the group key). `None` ⇒ a
-    /// pre-beacon (pure-multisig) chain. See [`crate::epoch_manager::BeaconVerifyPk`].
-    pub beacon_verify_pk: Option<GroupPublic>,
     /// Shared `round → recovered seed` map for the Stage-2 beacon certify gate
     /// ([`crate::beacon::certify`]). Cross-epoch singleton from
     /// [`crate::outer::OuterEngine`]; written by the spec-exec reporter, read by
@@ -216,14 +209,20 @@ where
         // polynomial in a beacon-active epoch falls back to verify-only against
         // the authoritative on-chain key (it cannot self-suppress, so signing
         // would emit a rejected seedless vote).
-        let can_sign_locally = match (&cfg.beacon, &cfg.beacon_verify_pk) {
+        // Beacon-active from `DETERMINISTIC_BOOTSTRAP_EPOCH` on — a LOCAL,
+        // deterministic predicate that replaces the old on-chain `beacon_verify_pk`
+        // Some/None probe (the PK_E layer is gone). A member with no local
+        // polynomial in a beacon-active epoch still demotes (it cannot
+        // self-suppress, so signing would emit a rejected seedless vote).
+        let beacon_active = cfg.epoch.get() >= crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
+        let can_sign_locally = match (&cfg.beacon, beacon_active) {
             // Have the local polynomial → signer (self-suppresses seed votes when
             // it holds no share; always able to Nullify).
             (Some(_), _) => true,
-            // Pure-multisig epoch (no beacon anywhere) → a normal signer.
-            (None, None) => true,
-            // Beacon-active epoch, no local polynomial → verify-only via the on-chain key.
-            (None, Some(_)) => false,
+            // Pre-beacon (pure-multisig) epoch → a normal signer.
+            (None, false) => true,
+            // Beacon-active epoch, no local polynomial → verify-only.
+            (None, true) => false,
         };
         // `build_signer` returns `None` exactly when the keypair is not in the
         // committee BiMap (genuinely rotated out) — distinct from a member whose
@@ -231,10 +230,11 @@ where
         let member_signer = cfg.signer_keypair.as_ref().and_then(|keypair| {
             build_signer(&namespace, bimap.clone(), keypair, cfg.beacon.clone())
         });
-        let verify_only = |bimap| match cfg.beacon_verify_pk {
-            Some(pk) => build_verifier_group_key(&namespace, bimap, pk, seed_namespace(&namespace)),
-            None => build_verifier(&namespace, bimap, cfg.beacon.clone()),
-        };
+        // Verify-only scheme is MULTISIG-ONLY (`verify_certificate` ignores the
+        // seed now that the PK_E layer is gone) — no group key needed. The
+        // registered scheme only verifies assembled certs for the marshal (this
+        // node's engine is aborted on demotion).
+        let verify_only = |bimap| build_verifier(&namespace, bimap, None);
         // DEVNET/TEST-ONLY: whether this node is a signing committee member (the
         // first match arm below). A byzantine equivocator can only double-sign if it
         // holds a signing scheme; a non-member / no-local-polynomial node falls

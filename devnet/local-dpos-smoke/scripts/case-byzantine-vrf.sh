@@ -14,10 +14,10 @@
 #
 # WHY a SINGLE Byzantine (not a quorum): under the realistic N3f1 bound (n=5 ⇒ f=1,
 # quorum 4), a forge reaches the Stage-2 certify hook only if a quorum (≥4) of nodes
-# notarize it. But flagging 4-of-5 byzantine leaves only the SHARELESS joiner honest,
-# which cannot propose the real boundary → liveness would stall. There is no single-
-# run split that shows BOTH certify-Nullify AND liveness at f=1. So here a SINGLE
-# byzantine stayer forges: the 3 honest share-holders REJECT it at the "C" gate at
+# notarize it. But flagging 4-of-5 byzantine leaves too few honest share-holders to
+# both reject the forge AND propose the real boundary → liveness would stall. There is
+# no single-run split that shows BOTH certify-Nullify AND liveness at f=1. So here a
+# SINGLE byzantine forges: the 3 honest share-holders REJECT it at the "C" gate at
 # verify (their real shares do not lie on the forged poly) → it cannot notarize →
 # the forged PK_E never finalizes (SAFETY), and an honest share-holder crosses E_new
 # with the real key (LIVENESS). The certify-hook Nullify path itself (which needs a
@@ -25,6 +25,15 @@
 # crates/dpos/consensus/src/beacon/{outcome.rs,certify.rs} — that is the authoritative
 # proof of the certify hook; this docker case proves the realistic-fault end-to-end
 # safety + liveness.
+#
+# NOTE (early-join): under the always-on beacon plane EVERY committee[E] member holds
+# a share at E — JOINERS too (a newcomer deals its share from its follower phase in
+# E-1), not just stayers. So "byzantine must be a stayer to hold a share to forge" is
+# NO LONGER a constraint. We keep the byzantine as a permanent STAYER purely by CHOICE
+# (it is the simplest rotation-proof way to give it a forge opportunity at every
+# boundary while preserving f=1 and the repeated-boundary reliability fix below). A
+# joiner-byzantine variant is possible but adds no new safety/liveness coverage — the
+# C gate + certify hook reject the forge regardless of stayer-vs-joiner.
 #
 # ── WHY REPEATED committee changes (the reliability fix) ────────────────────
 # The forge fires in `build_proposal` ONLY when the byzantine node is the LEADER of
@@ -90,19 +99,10 @@ forge_l2() { ( cd "$SOLIDITY_CONTRACTS_DIR" && "$@" ); }
 # mixhash_at/in/of, is_zero_hash, log_count are shared in lib.sh (whose mixhash_in
 # is GRACEFUL — coerces a down/restarting node's RPC to "null" instead of killing
 # the script under set -e, which matters on this churny rotation+forge stack).
-# The rotation-specific beacon_key/beacon_empty are kept local.
-beacon_key() {
-    local k
-    k=$(cast call "$STAKING_RT" "getEpochBeaconKey(uint64)(bytes)" "$1" --rpc-url "$RPC" 2>/dev/null \
-        | tr -d '[:space:]' | tr 'A-F' 'a-f')
-    [[ "$k" == "0x" || "$k" == "0x0" ]] && k=""
-    printf '%s' "$k"
-}
-beacon_empty() { [[ -z "$1" ]]; }
 
 # Honest deriving nodes (all EXCEPT the Byzantine stayer): they must agree on
-# prev_randao and serve the real on-chain key. The Byzantine node's own reth may
-# diverge while it churns forged boundary views, so it is excluded.
+# prev_randao (the real seed each honest node verified and derived). The Byzantine
+# node's own reth may diverge while it churns forged boundary views, so it is excluded.
 HONEST_NODES=()
 for svc in validator-0 validator-1 validator-2 validator-3 validator-4 validator-5 full-node; do
     [[ "$svc" == "validator-$BYZ_IDX" ]] || HONEST_NODES+=("$svc")
@@ -492,32 +492,27 @@ FORGE_EPOCH=$(docker compose logs "validator-$BYZ_IDX" 2>/dev/null \
 echo "  forged boundary epoch = $FORGE_EPOCH (anchoring the SAFETY window there)"
 
 # ════════════════════════════════════════════════════════════════════════════
-# 2) SAFETY: the forged key never landed on-chain. getEpochBeaconKey(FORGE_EPOCH) is
-#    the REAL rotated key (non-empty); honest nodes derive prev_randao against it and AGREE.
+# 2) SAFETY: the forged PK_E never finalized. The beacon has no on-chain mirror,
+#    so the seed rides the consensus cert and prev_randao = H(seed). The safety
+#    proof: at and just past the forged boundary, ALL honest nodes derive a
+#    non-zero, byte-IDENTICAL prev_randao. If a forged seed had finalized, the
+#    honest set's seeds would fail-verify → a digest-fallback / zero / DIVERGENT
+#    mixHash, so this window MUST fail on a finalized forge — it is meaningful.
 # ════════════════════════════════════════════════════════════════════════════
-echo "== 2) SAFETY: the forged PK_E never finalized / never poisoned getEpochBeaconKey =="
+echo "== 2) SAFETY: the forged PK_E never finalized (honest nodes agree on prev_randao) =="
 FORGE_BOUNDARY=$(epoch_first_block "$FORGE_EPOCH")
 wait_finalized_ge "$FORGE_BOUNDARY" 900 \
     || { echo "FAIL (smoke-byzantine-vrf): chain did not reach the forged-boundary block $FORGE_BOUNDARY (epoch $FORGE_EPOCH)"; docker compose logs validator-0 --tail=80; exit 1; }
-KEY_NEW=""
-for _ in $(seq 1 30); do
-    KEY_NEW=$(beacon_key "$FORGE_EPOCH"); beacon_empty "$KEY_NEW" || break; sleep 2
-done
-if beacon_empty "$KEY_NEW"; then
-    echo "FAIL (smoke-byzantine-vrf): getEpochBeaconKey(forged epoch=$FORGE_EPOCH) EMPTY — the honest DKG key never committed (did the byzantine forge wedge the boundary commit?)"
-    docker compose logs validator-0 --tail=80; exit 1
-fi
-echo "  getEpochBeaconKey(forged epoch=$FORGE_EPOCH) committed the REAL rotated key (non-empty: ${KEY_NEW:0:18}…)"
 # The honest nodes derive prev_randao at and just past the forged boundary and AGREE —
-# i.e. the on-chain key is the real one (a forged key would make seeds fail-verify → a
-# digest-fallback/zero/divergent mixHash on the honest set).
+# i.e. every honest node verified the SAME real threshold seed (a forged seed that had
+# finalized would fail-verify → a digest-fallback/zero/divergent mixHash on the honest set).
 RELIVE_HI=$(( FORGE_BOUNDARY + 4 ))
 wait_finalized_ge "$RELIVE_HI" 180 \
     || { echo "FAIL (smoke-byzantine-vrf): chain did not advance past the forged boundary ($RELIVE_HI)"; exit 1; }
 wait_nodes_have "$RELIVE_HI" 180 \
     || { echo "FAIL (smoke-byzantine-vrf): not all honest nodes reached the window block $RELIVE_HI"; exit 1; }
 assert_honest_beacon_window "$FORGE_BOUNDARY" "$RELIVE_HI" "post-forge E$FORGE_EPOCH"
-echo "  honest nodes derive prev_randao against the REAL key (non-zero + byte-identical) — the forge corrupted neither the on-chain key nor the derived randomness"
+echo "  honest nodes derive a non-zero, byte-identical prev_randao across the forged boundary — the forge corrupted neither the finalized seed nor the derived randomness"
 
 # 3) The honest share-holders REJECTED the forged boundary at the "C" gate at verify
 #    (the f=1 safety mechanism: the forge could not pass C → could not notarize →
@@ -543,7 +538,7 @@ echo "  chain still finalizing under tx load ($BEFORE → $AFTER)"
 
 echo "OK (smoke-byzantine-vrf): a Byzantine stayer (validator-$BYZ_IDX) FORGED a PK_E at a change-epoch boundary (forged epoch E$FORGE_EPOCH, x$forged_count, reached by toggling v5 in/out of the committee — repeated change-epoch boundaries — until the byzantine led one); \
 the honest share-holders REJECTED it at the C gate (x$cfail) so it could not notarize → the forged PK_E NEVER finalized; \
-getEpochBeaconKey(E$FORGE_EPOCH) committed the REAL rotated key and all ${#HONEST_NODES[@]} honest nodes derive prev_randao against it (non-zero + byte-identical); \
+all ${#HONEST_NODES[@]} honest nodes derive a non-zero, byte-identical prev_randao across the forged boundary (the SAME real threshold seed — a finalized forge would have diverged the honest set); \
 the chain crossed the boundary via an honest leader and kept finalizing under tx load ($BEFORE → $AFTER). \
-SAFETY (forged PK_E never on-chain / never finalized) + LIVENESS (honest beacon crossed + sustained). \
+SAFETY (forged PK_E never finalized → honest prev_randao agreed) + LIVENESS (honest beacon crossed + sustained). \
 The certify-hook Nullify path is proven by the gated unit tests (beacon/outcome.rs, beacon/certify.rs)."

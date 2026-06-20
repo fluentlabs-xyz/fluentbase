@@ -44,28 +44,6 @@ pub struct CertFollowerConfig {
     /// L1 Rollup checkpoint source (D2). `None` = devnet fallback (the
     /// upstream `get_latest()` head stays the only trust input).
     pub l1: Option<l1::L1CheckpointConfig>,
-    /// Path to the public threshold-beacon polynomial hex (`PK_epoch`, from
-    /// `--dpos.beacon-sharing-path`). REQUIRED on a beacon-active chain so the
-    /// follower verifies the seed half of each combined cert and reproduces
-    /// `prev_randao = H(seed)`; `None` = pre-beacon / fallback chain. Parsed in
-    /// `run_cert_follower_stack` (mirrors `staking_config_path`).
-    pub beacon_sharing_path: Option<PathBuf>,
-}
-
-/// Parse the public threshold-beacon polynomial (`Sharing` / `PK_epoch`) from a
-/// hex file. A follower never signs, so only the public polynomial is needed.
-pub(crate) fn parse_beacon_sharing(
-    path: &PathBuf,
-) -> eyre::Result<
-    commonware_cryptography::bls12381::primitives::sharing::Sharing<
-        commonware_cryptography::bls12381::primitives::variant::MinSig,
-    >,
-> {
-    let hex = std::fs::read_to_string(path).wrap_err("read beacon-sharing file")?;
-    let bytes = commonware_utils::from_hex_formatted(hex.trim())
-        .ok_or_else(|| eyre::eyre!("invalid beacon-sharing hex"))?;
-    fluentbase_consensus::beacon::seed::parse_sharing(&bytes)
-        .map_err(|e| eyre::eyre!("parse beacon Sharing: {e:?}"))
 }
 
 pub type CertFollowerSpawn<N, AddOns> = crate::utils::ConsensusSpawn<N, AddOns>;
@@ -102,8 +80,7 @@ where
         > + Clone
         + Send
         + Sync
-        + 'static
-        + crate::evm::BeaconOutcomeSink,
+        + 'static,
 {
     crate::utils::spawn_consensus_thread("cert-follow", move |ctx, node| {
         run_cert_follower_stack(ctx, node, cfg, shutdown_token)
@@ -144,8 +121,7 @@ where
         > + Clone
         + Send
         + Sync
-        + 'static
-        + crate::evm::BeaconOutcomeSink,
+        + 'static,
 {
     let chain_id = node.chain_spec().chain_id();
     let staking_config = fluentbase_staking_reader::reader::StakingReaderConfig::from_json_path(
@@ -180,54 +156,19 @@ where
         Some(l1_cfg) => Some(l1::fetch_checkpoint_hash(l1_cfg).await?),
         None => None,
     };
-    // Threshold beacon: a follower never signs, so it holds only the PUBLIC
-    // polynomial (`PK_epoch`). With it the per-epoch verifier accepts+verifies
-    // the seed half of each combined cert and the deriver recovers
-    // `prev_randao = H(seed)`; without it the follower would reject every
-    // seeded cert and derive the `order.digest()` fallback (divergence).
-    let deriver_base =
+    // Threshold beacon: a follower never signs. The beacon is always-on live-DKG;
+    // the deriver computes prev_randao = H(seed) directly from the cert-recovered
+    // seed (no on-chain PK_E read — that layer is gone, DPOS_ARCHITECTURE §8.11),
+    // matching the committee.
+    let deriver =
         crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
-    // The deriver MUST always carry the per-epoch on-chain PK_E resolver so a
-    // follower derives the SAME threshold `prev_randao` as the committee once the
-    // beacon is live — even on a keyless / live-DKG-rotation chain with no
-    // genesis sharing. The resolver reads getEpochBeaconKey(E) and returns
-    // Ok(None) for an uncommitted / keyless epoch (seed then absent → gated
-    // fallback, matching the committee). Gating it on `beacon_sharing_path` left a
-    // keyless follower deriving the digest fallback while the committee derived
-    // threshold → state-root DIVERGENCE at the rotated epoch's first block. The
-    // `beacon` verifier material (full polynomial) stays gated: without a genesis
-    // sharing the follower reads PK_E on-chain via `scheme_at` to verify certs.
-    let seed_namespace = fluentbase_consensus::beacon::seed::seed_namespace(
-        &fluentbase_bls::fluent_namespace(chain_id),
-    );
-    let beacon_reader = fluentbase_staking_reader::reader::RethStakingStateReader::new(
-        node.provider.clone(),
-        node.evm_config.clone(),
-        staking_config.clone(),
-    );
-    let (genesis_pk, beacon) = match cfg.beacon_sharing_path.as_ref().map(parse_beacon_sharing) {
-        Some(sharing) => {
-            let sharing = sharing?;
-            let genesis_pk = *sharing.public();
-            (
-                Some(genesis_pk),
-                Some((sharing, None, seed_namespace.clone())),
-            )
-        }
-        None => (None, None),
-    };
-    let deriver = deriver_base.with_beacon_resolver(
-        seed_namespace.clone(),
-        crate::derive::beacon_pk_resolver(beacon_reader),
-        genesis_pk,
-    );
 
     let follow_cfg = CertFollowConfig {
         staking_config,
         l1_checkpoint_hash,
         fcu_heartbeat_interval: Duration::from_secs(8),
         stop_at_next_boundary: false,
-        beacon,
+        beacon: None,
     };
 
     let executed = crate::ordering::ProviderExecutedChain(node.provider.clone());

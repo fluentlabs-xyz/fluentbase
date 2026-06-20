@@ -37,7 +37,6 @@ x-dpos-validator-cmd: &dpos-validator-cmd
         --dpos.metrics-port=9100 \
         --dpos.slasher-keystore-path=/runtime/keys/validator-$$IDX/slasher.json \
         --dpos.slasher-keystore-password-file=/runtime/keys/validator-$$IDX/slasher.pwd \
-        --dpos.no-beacon \
         --builder.extradata= \
         --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
         --ws --ws.addr=0.0.0.0 --ws.port=8546 \
@@ -64,7 +63,6 @@ services:
       - --dpos.metrics-port=9100
       - --dpos.slasher-keystore-path=/runtime/keys/validator-0/slasher.json
       - --dpos.slasher-keystore-password-file=/runtime/keys/validator-0/slasher.pwd
-      - --dpos.no-beacon
       - --builder.extradata=
       - --p2p-secret-key=/runtime/v0-p2p-secret.hex
       - --port=30303

@@ -9,8 +9,9 @@
 //! used by simplex's elector and slashing evidence.
 
 use commonware_utils::ordered::Error as OrderedError;
-use fluentbase_bls::EpochCommittee;
+use fluentbase_bls::{fluent_namespace, scheme::build_verifier, EpochCommittee, Scheme as BlsScheme};
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
+use tracing::warn;
 
 /// Build the typed [`EpochCommittee`] for one epoch's committee snapshot.
 ///
@@ -34,4 +35,26 @@ pub fn epoch_committee_from_snapshot(
             .iter()
             .map(|v| (v.keys.peer_pubkey.clone(), v.keys.bls_pubkey)),
     )
+}
+
+/// Build the verify-only (MULTISIG-ONLY, `beacon = None`) [`BlsScheme`] for a
+/// soft-entered committee `snap`. Shared by the catch-up paths that register a
+/// scheme so the marshal can verify a past epoch's finalization certs without
+/// standing up a participating engine: the per-message hint path
+/// ([`crate::epoch_manager::Actor::enter`] soft-enter) and the bulk catch-up
+/// span ([`crate::epoch_manager`]'s `soft_enter_span` callback). Returns `None`
+/// on an invalid (non-unique-participant) committee, logging a warn — the caller
+/// skips that epoch rather than panicking.
+pub fn soft_enter_verifier(snap: &ValidatorSetSnapshot, chain_id: u64) -> Option<BlsScheme> {
+    match epoch_committee_from_snapshot(snap) {
+        Ok(committee) => Some(build_verifier(
+            &fluent_namespace(chain_id),
+            committee.bimap,
+            None,
+        )),
+        Err(e) => {
+            warn!(epoch = snap.epoch, ?e, "soft-enter skipped — invalid committee snapshot");
+            None
+        }
+    }
 }

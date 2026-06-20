@@ -95,22 +95,6 @@ pub fn build_verifier(
     CombinedScheme::new(vote, beacon)
 }
 
-/// Build a verifier-only scheme from JUST the group public key `PK_epoch` (no
-/// polynomial / no share). For a node that reads `PK_epoch` from on-chain
-/// `getEpochBeaconKey(E)` (the cert-follower) and only ever verifies ASSEMBLED
-/// finalization certificates — it never processes individual seed partials,
-/// which require the full polynomial. `seed_namespace` = `chain_namespace ‖
-/// "_BEACON_SEED"` (see [`crate::beacon::seed_namespace`]).
-pub fn build_verifier_group_key(
-    namespace: &[u8],
-    participants: BiMap<PeerPubkey, BlsPubkey>,
-    group_public: crate::beacon::GroupPublic,
-    seed_namespace: Vec<u8>,
-) -> Scheme {
-    let vote = VoteScheme::verifier(namespace, participants);
-    CombinedScheme::new_group_key(vote, group_public, seed_namespace)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

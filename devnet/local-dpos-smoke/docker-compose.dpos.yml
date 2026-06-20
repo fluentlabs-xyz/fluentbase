@@ -22,8 +22,6 @@ services:
       - --dpos.metrics-port=9100
       - --dpos.slasher-keystore-path=/runtime/keys/validator-0/slasher.json
       - --dpos.slasher-keystore-password-file=/runtime/keys/validator-0/slasher.pwd
-      - --dpos.beacon-share-path=/runtime/keys/validator-0/beacon-share.hex
-      - --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex
       - --builder.extradata=
       # Deterministic enode identity (followers pin this as --trusted-peers);
       # restored under DPoS so reth devp2p block sync works for rejoin.
@@ -57,8 +55,6 @@ services:
           --dpos.metrics-port=9100 \
           --dpos.slasher-keystore-path=/runtime/keys/validator-1/slasher.json \
           --dpos.slasher-keystore-password-file=/runtime/keys/validator-1/slasher.pwd \
-          --dpos.beacon-share-path=/runtime/keys/validator-1/beacon-share.hex \
-          --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex \
           --builder.extradata= \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
@@ -81,8 +77,6 @@ services:
           --dpos.metrics-port=9100 \
           --dpos.slasher-keystore-path=/runtime/keys/validator-2/slasher.json \
           --dpos.slasher-keystore-password-file=/runtime/keys/validator-2/slasher.pwd \
-          --dpos.beacon-share-path=/runtime/keys/validator-2/beacon-share.hex \
-          --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex \
           --builder.extradata= \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
@@ -105,8 +99,6 @@ services:
           --dpos.metrics-port=9100 \
           --dpos.slasher-keystore-path=/runtime/keys/validator-3/slasher.json \
           --dpos.slasher-keystore-password-file=/runtime/keys/validator-3/slasher.pwd \
-          --dpos.beacon-share-path=/runtime/keys/validator-3/beacon-share.hex \
-          --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex \
           --builder.extradata= \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \

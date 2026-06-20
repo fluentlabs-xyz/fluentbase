@@ -11,14 +11,13 @@ use crate::{
     scheme::epoch_committee_from_snapshot,
     slasher::actor::{SharedCacheFallback, SlasherTxSink, StaleEpochFallback},
     timeouts::ConsensusTimeouts,
-    OuterBuilder,
+    OuterBuilder, SoftEnterCommittees,
 };
 use alloy_consensus::Header;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::ForkchoiceState;
 use commonware_consensus::types::{Epoch, Height};
 use commonware_cryptography::Signer;
-use commonware_p2p::{authenticated::discovery::Bootstrapper, Ingress};
 use commonware_runtime::{tokio::Context, Clock as _, Handle, Metrics as _, Spawner as _};
 use commonware_storage::{
     archive::{Archive as _, Identifier},
@@ -29,10 +28,9 @@ use eyre::{ensure, eyre, OptionExt as _, WrapErr as _};
 use fluentbase_bls::{
     fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_verifier, PeerPubkey,
 };
-use fluentbase_p2p::{FluentP2P, FluentP2PConfig};
 use fluentbase_staking_reader::{
-    reader::StakingReaderConfig, EpochTransition, RethStakingStateReader, TransitionOutcome,
-    ValidatorSetCache,
+    reader::{StakingReaderConfig, ValidatorSetSnapshot},
+    EpochTransition, RethStakingStateReader, TransitionOutcome, ValidatorSetCache,
 };
 use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
 use reth_evm::ConfigureEvm;
@@ -42,7 +40,6 @@ use reth_storage_api::{
     StateProviderFactory,
 };
 use std::{
-    net::SocketAddr,
     num::NonZeroU64,
     sync::{
         atomic::{AtomicU32, Ordering},
@@ -50,6 +47,7 @@ use std::{
     },
     time::Duration,
 };
+use std::sync::Mutex as StdMutex;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -344,8 +342,6 @@ pub struct DposLayerConfig<D, XC, A> {
     pub peer_keypair: commonware_cryptography::ed25519::PrivateKey,
     pub slasher_sink: Arc<dyn SlasherTxSink>,
     pub staking_config: StakingReaderConfig,
-    pub bootstrappers: Vec<Bootstrapper<PeerPubkey>>,
-    pub p2p: P2pParams,
     /// OrderBlock → derived-EVM-block execution (node-built over reth-evm).
     pub deriver: D,
     /// Local derived-chain view (node-built over the reth provider).
@@ -370,38 +366,127 @@ pub struct DposLayerConfig<D, XC, A> {
     /// Mode signals to the unified supervisor (rotation-out → demote).
     /// `None` = legacy `--dpos` (no supervisor listening).
     pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<ModeEvent>>,
-    /// Randomness-beacon launch material (devnet bootstrap). `None` = no beacon
-    /// (gated fallback `prev_randao = order.digest()`). When present, the layer
-    /// threads the threshold key into every per-epoch combined consensus scheme,
-    /// so each vote carries the seed partial and the seed is recovered from the
-    /// finalization certificate.
-    pub beacon: Option<BeaconLaunch>,
-    /// Directory for on-disk live-DKG share persistence (item A): the parent of
-    /// `--dpos.beacon-share-path` ("where everything lies"). Memoized `(PK_E, share)`
-    /// pairs are written here as `beacon-share-e<E>.bin` (mode 0600) and reloaded at
-    /// launch. `None` ⇒ no share-path configured ⇒ in-memory only (no persistence).
-    pub beacon_share_dir: Option<std::path::PathBuf>,
-    /// `--dpos.no-beacon` (item K): run the node PRE-BEACON. Skips the live DKG (so the
-    /// beacon never activates on a committee change) and installs no verify/propose
-    /// context — committee changes proceed as pure multisig and a shareless joiner can
-    /// promote. Mutually exclusive with `beacon` (a `Some(BeaconLaunch)`).
-    pub no_beacon: bool,
+    /// The always-on beacon/DKG plane, built ONCE per process in the node crate
+    /// (`unified.rs`) and shared across the follower↔signer phase switch. The
+    /// signer engine is a CONSUMER of its shared `ceremony_store` (the C-gate
+    /// share source + the proposer's `beacon_outcome`) and `committee_for`, re-uses
+    /// its `oracle` (the single network's peer set) + its already-registered
+    /// `beacon_metrics`, and CLONES its 5 `MuxHandle`s + `subscribe()`s the vote
+    /// backup to wire the OuterEngine's per-promotion sub-channels — it never
+    /// re-builds the network, re-spawns the `DkgActor`, re-registers the metrics, or
+    /// re-binds `listen`.
+    pub beacon_plane: SharedBeaconPlane,
     /// DEVNET/TEST-ONLY byzantine behaviour (gated behind `dpos-devnet-byzantine`).
     /// Absent — and the field does not exist — in a production build.
     #[cfg(feature = "dpos-devnet-byzantine")]
     pub byzantine: Option<crate::application::ByzantineMode>,
 }
 
-/// Threshold randomness-beacon material handed to the DPoS layer at launch
-/// (devnet bootstrap; the live DKG actor is phased). Threaded into the combined
-/// consensus scheme; the deriver reads the recovered seed from the certificate.
-pub struct BeaconLaunch {
-    /// This node's DKG share, or `None` for a verifier-only beacon participant.
-    pub share: Option<commonware_cryptography::bls12381::primitives::group::Share>,
-    /// The public polynomial (`.public()` is `PK_epoch`).
-    pub sharing: commonware_cryptography::bls12381::primitives::sharing::Sharing<
-        commonware_cryptography::bls12381::primitives::variant::MinSig,
+/// A plane-owned broker handle for one of the 5 non-beacon channels: the single
+/// network's `(Sender, Receiver)` pair are owned by a persistent `Muxer` in the
+/// always-on plane (node crate); every promotion CLONES this handle (an `Arc`) and
+/// registers fresh sub-channels against the SAME broker. A `SubReceiver`
+/// auto-deregisters on drop, so a demoted engine that drops its `SubReceiver`s frees
+/// the slots and a re-promoted one re-registers — restart-free re-promotion.
+///
+/// `MuxHandle::register` takes `&mut self`, so the shared handle is wrapped in
+/// `Arc<Mutex<_>>`: each `register` (a boundary-rate control-channel round-trip)
+/// locks transiently. The derived `Clone` on `MuxHandle<S, R>` carries a spurious
+/// `R: Clone` bound that the move-only `DiscReceiver` does NOT satisfy, so the bare
+/// `MuxHandle` is itself un-`Clone`able here — the `Arc` is both the sharing
+/// mechanism AND the `Clone` we need for `SharedBeaconPlane`.
+pub type PlaneMux = Arc<
+    Mutex<
+        commonware_p2p::utils::mux::MuxHandle<
+            fluentbase_p2p::DiscSender<Context>,
+            fluentbase_p2p::DiscReceiver,
+        >,
     >,
+>;
+
+/// One item the vote Muxer's backup channel surfaces: a vote for an epoch with no
+/// registered sub-channel (the network is ahead of us). `(subchannel == epoch, (from,
+/// payload))`; the payload is unused by the catch-up hint. Mirrors the mux's
+/// `BackupResponse<PublicKey>` so the `EpochManager` backup arm is unchanged.
+pub type VoteBackupItem = (u64, (PeerPubkey, commonware_runtime::IoBuf));
+
+/// A re-settable forwarding target: a single mpsc slot the plane re-points to the
+/// CURRENTLY-active consumer per promotion. The plane's forwarder drains a move-only
+/// source (the vote Muxer's backup receiver) and `try_send`s each item to the parked
+/// sender; on demote the receiver drops and the forwarder parks (drops items while no
+/// engine is up — a follower needs no catch-up hint). [`subscribe`] hands each
+/// promotion a fresh `Receiver`, re-pointing the slot.
+#[derive(Clone)]
+pub struct ResettableForward<T> {
+    slot: Arc<Mutex<Option<mpsc::Sender<T>>>>,
+    capacity: usize,
+}
+
+impl<T> ResettableForward<T> {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            slot: Arc::new(Mutex::new(None)),
+            capacity,
+        }
+    }
+
+    /// Hand the currently-active consumer a fresh receiver and re-point the
+    /// forwarder's sender at it (replacing any prior promotion's). The prior
+    /// receiver — already dropped on demote — leaves its sender to fail `try_send`,
+    /// so re-pointing is the only state to update.
+    pub async fn subscribe(&self) -> mpsc::Receiver<T> {
+        let (tx, rx) = mpsc::channel(self.capacity);
+        *self.slot.lock().await = Some(tx);
+        rx
+    }
+
+    /// The shared slot — the plane's forwarder task reads the live target from it.
+    pub fn slot(&self) -> Arc<Mutex<Option<mpsc::Sender<T>>>> {
+        self.slot.clone()
+    }
+}
+
+/// The persistent beacon/DKG plane handed DOWN from the node crate's always-on
+/// component into each per-promotion signer engine. The node crate owns the single
+/// `FluentP2P` (beacon halves + `DkgActor` consume their channel there; the 5
+/// non-beacon channels are owned by 5 persistent plane `Muxer`s), the
+/// EpochTransition-driven Oracle peer-set, the `dkg_height` clock, and reloads the
+/// `ceremony_store` from `<datadir>/beacon/` once at startup; the signer engine
+/// reads the SAME shared `Arc`s and CLONES the 5 `MuxHandle`s per promotion. There is
+/// exactly ONE network / listen bind / peer set / broker set per process — a
+/// demote→re-promote within one process needs no network rebuild (the engine drops
+/// its `SubReceiver`s on demote; the next promotion re-registers fresh ones).
+#[derive(Clone)]
+pub struct SharedBeaconPlane {
+    /// The single network's Oracle (the one `Clone` p2p handle), used by the
+    /// engine's blocker/provider + its EpochTransition peer-set sink.
+    pub oracle: fluentbase_p2p::OracleHandle,
+    /// The shared live-DKG store: written by the always-on `DkgActor`, read by the
+    /// per-engine `BeaconVerify` (C gate + propose) and `beacon_resolver` (sign).
+    pub ceremony_store: crate::beacon::actor::CeremonyStore,
+    /// Edge-trigger the `DkgActor` fires when a share lands in `ceremony_store`, so
+    /// `epoch_manager::enter` wakes the instant its share is memoized instead of
+    /// polling. Same `Arc` held by the actor (the producer) and the manager (the
+    /// waiter); see [`crate::epoch_manager::wait_for_beacon`].
+    pub share_notify: Arc<tokio::sync::Notify>,
+    /// On-chain committee resolver (the deal/carry-forward set), built once over the
+    /// persistent reader+provider and shared with both the actor and the verify gate.
+    pub committee_for: crate::beacon::actor::CommitteeFor,
+    /// Beacon counters, registered ONCE at the persistent layer; cloned (never
+    /// re-registered) into the executor + each per-epoch engine.
+    pub beacon_metrics: crate::beacon::metrics::BeaconMetrics,
+    /// The 5 plane-owned non-beacon channel broker handles (vote/cert/resolver are
+    /// per-epoch register/deregister; broadcast/marshal register subchannel 0 once
+    /// per promotion). Cloned per promotion; the Muxer tasks live in the plane.
+    pub vote_mux: PlaneMux,
+    pub cert_mux: PlaneMux,
+    pub resolver_mux: PlaneMux,
+    pub broadcast_mux: PlaneMux,
+    pub marshal_mux: PlaneMux,
+    /// The vote Muxer's backup re-settable forwarder: the plane owns the move-only
+    /// backup receiver and forwards each catch-up item to the currently-active
+    /// `EpochManager`; each promotion `subscribe()`s a fresh receiver.
+    pub vote_backup: ResettableForward<VoteBackupItem>,
 }
 
 /// Mode signal from the per-epoch engine construction to the unified
@@ -472,14 +557,8 @@ pub async fn peek_consensus_archive_last_finalized(ctx: &Context) -> eyre::Resul
     read_consensus_archive_last_finalized(ctx, MARSHAL_PARTITION_PREFIX).await
 }
 
-pub struct P2pParams {
-    pub listen: SocketAddr,
-    pub dialable: Option<SocketAddr>,
-}
-
 pub struct DposLayerHandle {
     pub consensus_handle: Handle<()>,
-    pub network_handle: Handle<()>,
     /// Marshal mailbox clone for the node-side cert feed/RPC (by-height
     /// `get_finalization`+`get_block`). The node calls `feed_handle.set_marshal`
     /// with this once `launch` returns — keeping node types out of consensus.
@@ -527,8 +606,6 @@ impl DposLayer {
             peer_keypair,
             slasher_sink,
             staking_config,
-            bootstrappers,
-            p2p: P2pParams { listen, dialable },
             deriver,
             executed,
             assembler,
@@ -537,12 +614,29 @@ impl DposLayer {
             feed,
             promotion,
             mode_events,
-            beacon,
-            beacon_share_dir,
-            no_beacon,
+            beacon_plane,
             #[cfg(feature = "dpos-devnet-byzantine")]
             byzantine,
         } = cfg;
+
+        // The plane owns the 5 persistent Muxers; this promotion CLONES their handles
+        // (to register fresh per-epoch / subchannel-0 routes against the SAME broker
+        // tasks) and `subscribe()`s a fresh vote-backup receiver. No raw move-only
+        // halves are consumed here, so a later demote→re-promote re-clones cleanly.
+        let SharedBeaconPlane {
+            oracle,
+            ceremony_store,
+            share_notify,
+            committee_for,
+            beacon_metrics,
+            vote_mux,
+            cert_mux,
+            resolver_mux,
+            broadcast_mux,
+            marshal_mux,
+            vote_backup,
+        } = beacon_plane;
+        let vote_backup_rx = vote_backup.subscribe().await;
 
         let RethHandle {
             provider,
@@ -571,13 +665,6 @@ impl DposLayer {
             evm_config.clone(),
             staking_config.clone(),
         );
-
-        // Clones for the live-DKG beacon actor's committee resolver — taken before
-        // `reader` is moved into `EpochTransition` below. `RethStakingStateReader`
-        // is `Clone`; `provider` (BlockNumReader + BlockHashReader) resolves the
-        // current finalized EVM hash the committee snapshot reads at.
-        let reader_for_dkg = reader.clone();
-        let provider_for_dkg = provider.clone();
 
         // Reth's `BlockchainProvider::with_latest` populates
         // `canonical_state.finalized_block` from
@@ -763,21 +850,12 @@ impl DposLayer {
         let slasher_stale_fallback: Arc<dyn StaleEpochFallback> =
             Arc::new(SharedCacheFallback(cache.clone()));
 
-        // Build the p2p layer: FluentP2P + handles.
-        let dialable_addr = dialable.unwrap_or(listen);
-        info!(
-            count = bootstrappers.len(),
-            chain_id, "DPoS bootstrappers handed in by host"
-        );
-        let p2p_cfg = FluentP2PConfig {
-            crypto: peer_keypair.clone(),
-            chain_id,
-            listen,
-            dialable: Ingress::Socket(dialable_addr),
-            bootstrappers,
-        };
-        let (p2p, handles) = FluentP2P::build(ctx.clone(), p2p_cfg);
-        let network_handle = p2p.start();
+        // The single `FluentP2P` is built ONCE per process by the node crate's
+        // always-on beacon plane (and stays up across the follower↔signer switch);
+        // this signer engine consumes a CLONE of that one network's `oracle` plus
+        // CLONES of the 5 plane-owned non-beacon `MuxHandle`s. It never re-binds
+        // `listen`, rebuilds a `Muxer`, or consumes a raw channel half — so a
+        // demote→re-promote within one process re-clones cleanly (no network rebuild).
 
         // Bridge channel: boundary triggers from EpochTransition queue here;
         // a forwarder task (spawned after build) drains bridge_rx →
@@ -787,12 +865,16 @@ impl DposLayer {
         let (bridge_tx, mut bridge_rx) =
             mpsc::channel::<(u64, fluentbase_staking_reader::reader::ValidatorSetSnapshot)>(64);
 
-        // Wire staking-reader ↔ p2p: EpochTransition consumes the Oracle as PeerSetSink.
+        // Wire staking-reader ↔ p2p: EpochTransition consumes the (shared) Oracle as
+        // PeerSetSink. The persistent plane's own EpochTransition also tracks this
+        // Oracle's peer set so connectivity persists across the follower phase; both
+        // compute the identical `active_registry_peers ∪ committee[E+1]` union, so a
+        // double `track` of the same (epoch, set) is idempotent.
         let provider_for_et = provider.clone();
         let mut epoch_transition = EpochTransition::new(
             reader,
             cache,
-            handles.oracle.clone(),
+            oracle.clone(),
             fluentbase_p2p::constants::MAX_REGISTRY_PEER_SET as usize,
             Some(bridge_tx.clone()),
             Arc::new(move |n| provider_for_et.block_hash(n).ok().flatten()),
@@ -850,23 +932,17 @@ impl DposLayer {
         // Boundary hook: fires for every `Update::Block`. Spawns
         // fire-and-forget via `ctx.spawn` (NOT `tokio::spawn`, which would
         // depend on the implicit `tokio::Handle::current()` contract under
-        // commonware-tokio).
-        // Finalized-height tap for the live-DKG beacon actor: the boundary hook
-        // fires for every finalized `Update::Block`, so it is the actor's epoch
-        // clock (seal deadline + transition detection). Best-effort `try_send` —
-        // a full/closed channel just means the actor missed a tick, recovered on
-        // the next one (the ceremony window spans ~all of E-1).
-        let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
-
+        // commonware-tokio). The live-DKG epoch clock no longer rides this
+        // hook — the always-on plane (node crate) owns the `dkg_height` stream
+        // off a persistent finalized-height source, so the `DkgActor` keeps
+        // ticking across the follower phase where this signer hook does not run.
         let consecutive_errors = Arc::new(AtomicU32::new(0));
         let shutdown_for_hook = shutdown.clone();
         let et_for_hook = et_arc.clone();
         let ctx_for_hook = ctx.with_label("boundary_hook");
         let errors_for_hook = consecutive_errors.clone();
-        let dkg_height_tx_for_hook = dkg_height_tx.clone();
         let boundary_hook: Arc<dyn Fn(crate::order_block::OrderBlock) + Send + Sync> =
             Arc::new(move |block: crate::order_block::OrderBlock| {
-                let _ = dkg_height_tx_for_hook.try_send(block.height);
                 let et = et_for_hook.clone();
                 let ctx_task = ctx_for_hook.clone();
                 let shutdown = shutdown_for_hook.clone();
@@ -941,76 +1017,20 @@ impl DposLayer {
         let me = peer_keypair.public_key();
         info!(peer_pubkey = %me, "DPoS peer identity");
 
-        // ── Live per-epoch threshold-beacon DKG actor ───────────────────────────
-        // committee[E] deals to itself over BEACON_CHANNEL during E-1; the agreed
-        // (PK_E, share) is memoized into `ceremony_store` before E's boundary block
-        // and read by the consensus verify/propose path (Phase 4) + the per-epoch
-        // signing-slot swap (Phase 5). The store is held here and threaded in below.
-        let ceremony_store: crate::beacon::actor::CeremonyStore =
-            Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()));
+        // The live-DKG `ceremony_store` (written by the always-on `DkgActor`) and the
+        // `committee_for` resolver arrive SHARED from the persistent beacon plane
+        // (node crate) via [`SharedBeaconPlane`]; this signer engine is a read-only
+        // consumer (the C gate + propose `beacon_outcome` via `BeaconVerify`, and the
+        // per-epoch signing material via `beacon_resolver`). The disk reload of
+        // `<datadir>/beacon/` happened ONCE at the plane's startup — not here.
 
-        // Item A: reload any persisted live-DKG shares into the fresh store BEFORE
-        // the resolver/DKG actor read it, so a restarted committee member rejoins
-        // the seed quorum at its current epoch instead of carry-forwarding the wrong
-        // key (and demoting). Also closes the §8.11.1 deep-catch-up gap (a share on
-        // disk from when E's ceremony first finalized).
-        if let Some(dir) = &beacon_share_dir {
-            let reloaded = crate::beacon::share_state::load_all(dir);
-            if !reloaded.is_empty() {
-                if let Ok(mut store) = ceremony_store.write() {
-                    for (epoch, output, share) in reloaded {
-                        tracing::info!(epoch, "beacon: reloaded persisted live-DKG share from disk");
-                        store.insert(epoch, (output, share));
-                    }
-                }
-            }
-        }
-
-        // Committee resolver — shared by the DKG actor (deal/carry-forward
-        // decision) and the verify/propose beacon gate. Reads the on-chain
-        // committee at the current finalized EVM hash.
-        let committee_for: crate::beacon::actor::CommitteeFor = {
-            let reader = reader_for_dkg;
-            let provider = provider_for_dkg;
-            Arc::new(move |epoch: u64| {
-                let fin = provider.finalized_block_number().ok().flatten()?;
-                let hash = provider.block_hash(fin).ok().flatten()?;
-                let snap = reader.epoch_committee_snapshot(epoch, hash).ok()?;
-                if snap.validators.is_empty() {
-                    return None;
-                }
-                Some(commonware_utils::ordered::Set::from_iter_dedup(
-                    snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
-                ))
-            })
-        };
-
-        // Beacon counters — created + registered ONCE here (the launch context is a
-        // commonware `Metrics` context), then cloned into the DKG actor, the executor,
-        // and each per-epoch engine (via `OuterBuilder`). Each metric is Arc-backed, so
-        // every clone shares one counter on the `:19100` registry.
-        let beacon_metrics = crate::beacon::metrics::BeaconMetrics::default();
-        beacon_metrics.register(&ctx);
-
-        // Verify/propose beacon context + live DKG. With `--dpos.no-beacon` the node
-        // stays PRE-BEACON: skip the live DKG (which would otherwise ACTIVATE the beacon
-        // on ANY committee change — committee[E] deals to itself, making the beacon come
-        // alive from the new epoch) AND install NO verify/propose context, so committee
-        // changes proceed as pure multisig and a shareless joiner can still PROMOTE
-        // (otherwise it would self-demote on `NoBeaconPolynomial`). Without `no-beacon`:
-        // the boundary "C" gate reads this node's memoized (PK_E, share) from the
-        // live-DKG store and the proposer asserts PK_E in `beacon_outcome`.
-        let beacon_verify = if no_beacon {
-            // The BEACON_CHANNEL halves, the committee resolver, and the dkg-height
-            // stream are unused on a no-beacon node — drop them explicitly.
-            drop((
-                committee_for,
-                handles.beacon_sender,
-                handles.beacon_receiver,
-                dkg_height_rx,
-            ));
-            None
-        } else {
+        // Beacon is MANDATORY under `--dpos` (always-on live DKG — no opt-out). The
+        // verify/propose context reads the SHARED `ceremony_store` (written by the
+        // always-on `DkgActor` in the persistent plane) and the SHARED on-chain
+        // `committee_for`: the boundary "C" gate reads this node's memoized
+        // (PK_E, share) and the proposer asserts PK_E in `beacon_outcome`. The DKG
+        // actor + beacon p2p halves are NOT (re)built here — they live in the plane.
+        let beacon_verify = {
             let beacon_for_epoch: crate::application::BeaconForEpoch = {
                 let store = ceremony_store.clone();
                 Arc::new(move |epoch: u64| store.read().ok().and_then(|m| m.get(&epoch).cloned()))
@@ -1025,22 +1045,6 @@ impl DposLayer {
             // beacon context (no-op + field-absent in a production build).
             #[cfg(feature = "dpos-devnet-byzantine")]
             let bv = bv.with_byzantine(byzantine);
-            let dkg_namespace = crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
-            let dkg_actor = crate::beacon::actor::DkgActor::new(
-                dkg_namespace,
-                peer_keypair.clone(),
-                handles.beacon_sender,
-                handles.beacon_receiver,
-                committee_for,
-                ceremony_store.clone(),
-                dpos_activation_block,
-                interval.into(),
-                beacon_metrics.clone(),
-                beacon_share_dir.clone(),
-            );
-            drop(ctx.with_label("dkg_actor").spawn(move |c| async move {
-                dkg_actor.run(dkg_height_rx, c).await;
-            }));
             Some(bv)
         };
 
@@ -1140,58 +1144,18 @@ impl DposLayer {
         // seed plane. The key ROTATES per epoch: the live-DKG `ceremony_store`
         // holds (PK_E, share) for every epoch this node was a member of where the
         // committee changed; `resolve(E)` returns the most-recent such key at or
-        // before E (carry-forward across stable epochs), falling back to the
-        // genesis bootstrap key (epoch 0 / pre-first-rotation).
+        // before E (carry-forward across stable epochs). There is NO genesis-baked
+        // fallback key anymore (the genesis deal was removed): epoch 1 is seedless
+        // and the first key is the deterministic epoch-2 live DKG, so the resolver
+        // bottoms out at `None` (a keyless epoch ⇒ pure-multisig / gated fallback).
         let beacon_namespace = crate::beacon::seed::seed_namespace(&fluent_namespace(chain_id));
-        let genesis_beacon_key = beacon.map(|bl| (bl.sharing, bl.share, beacon_namespace.clone()));
-
-        // SINGLE three-way on-chain group-key reader, shared by the per-epoch VERIFY
-        // path (`beacon_verify_pk`, below) AND the carry-forward GUARD (the resolver
-        // below). Reads getEpochBeaconKey(E) at the LATEST EXECUTED block, NOT
-        // finalized: unlike the committee (committed one epoch AHEAD, visible at
-        // finalized), PK_epoch is committed AT the epoch's FIRST block — at the entry
-        // boundary the finalized tier lags that commit by a few blocks (deferred
-        // execution), so a finalized read returns the stale prior key. The executed
-        // head has the epoch's first block by the time the node enters; the committed
-        // key is immutable, so any state ≥ that block yields the same PK_epoch.
-        //
-        // The result is THREE-WAY because both consumers need the distinction
-        // (collapsing Err→None was the soft/full-enter stale-key hazard AND the
-        // over-broad carry-forward demote):
-        //   - `Err(())`  = the chain state was UNREADABLE (last_block_number /
-        //                  block_hash / epoch_beacon_key errored, or block_hash None).
-        //                  A transient read failure is the common stable-epoch path.
-        //                  Carry-forward TRUSTS the carried share (downstream seed
-        //                  partials are still C-gate / seed-verify checked, so a wrong
-        //                  key cannot silently finalize a bad seed); the enter sites
-        //                  DEFER (retry on the next boundary re-poke) rather than build
-        //                  a verify/sign scheme under a stale local key.
-        //   - `Ok(None)` = the chain DEFINITIVELY has no key for E (uncommitted /
-        //                  keyless on a beacon-active epoch) → genuine absence → demote
-        //                  (carry-forward) / local fallback (verify path).
-        //   - `Ok(Some)` = a definitively-read key → compare against the carried key
-        //                  (carry-forward); the trustless per-epoch key (verify path).
-        let beacon_pk_onchain_3way = {
-            let reader = RethStakingStateReader::new(
-                provider.clone(),
-                evm_config.clone(),
-                staking_config.clone(),
-            );
-            let provider = provider.clone();
-            Arc::new(
-                move |epoch: u64| -> Result<Option<crate::beacon::seed::GroupPublic>, ()> {
-                    let head = provider.last_block_number().map_err(|_| ())?;
-                    let hash = provider.block_hash(head).map_err(|_| ())?.ok_or(())?;
-                    reader.epoch_beacon_key(epoch, hash).map_err(|_| ())
-                },
-            )
-        };
-
-        // The per-epoch VERIFY-key resolver IS the same three-way reader (no lossy
-        // `.ok()?` variant): `verify_certificate` needs only the group key, which IS
-        // on-chain. Consumed at soft-enter (the catch-up verifier) and full-enter (the
-        // engine's group-key verify scheme); both DEFER on `Err`.
-        let beacon_verify_pk: crate::epoch_manager::BeaconVerifyPk = beacon_pk_onchain_3way.clone();
+        let genesis_beacon_key: Option<(
+            commonware_cryptography::bls12381::primitives::sharing::Sharing<
+                commonware_cryptography::bls12381::primitives::variant::MinSig,
+            >,
+            Option<commonware_cryptography::bls12381::primitives::group::Share>,
+            Vec<u8>,
+        )> = None;
 
         // Per-epoch threshold beacon resolver for the combined consensus scheme:
         // each vote carries the seed partial (round-keyed), so the seed is
@@ -1202,121 +1166,77 @@ impl DposLayer {
         // before E (carry-forward across stable epochs), falling back to the
         // genesis bootstrap key (epoch 0 / pre-first-rotation).
         //
-        // CARRY-FORWARD GUARD: a stored key from an EARLIER epoch is only safe
-        // to sign E's seed partials with when the committee (and thus the DKG
-        // polynomial) did NOT change between the stored epoch and E. If the
-        // committee changed at E, this node's stored share lies on the PRIOR
-        // polynomial and would emit INVALID seed partials (rejected → seedless
-        // votes → cannot notarize). We confirm validity against the authoritative
-        // on-chain group key: the carried `PK` (group key of the stored DKG) must
-        // equal `getEpochBeaconKey(E)`. On mismatch (or an uncommitted/keyless E)
-        // we return `None`, so the engine sees `(beacon=None, verify_pk=Some)` and
-        // self-demotes to the cert-follow plane (`NoBeaconPolynomial`) until a
-        // reshare lands this node's share for E — instead of signing under a stale
-        // polynomial. An EXACT-epoch hit (stored epoch == E: we ran E's own DKG)
-        // also passes this check (our group key IS E's on-chain key). When the
-        // on-chain read is UNREADABLE (transient) we cannot confirm, so we KEEP
-        // the carried share rather than demote (demoting on a transient read
-        // hiccup — the common stable-epoch path — would drop a legitimate signer
-        // off the quorum and shrink it → stall; seed partials stay C-gate /
-        // seed-verify checked downstream, so trusting the carry-forward is the
-        // conservative-safe choice). Only a DEFINITIVELY-read mismatch or absence
-        // demotes — see the 3-way reader below.
+        // The on-chain getEpochBeaconKey carry-forward cross-check is GONE (the
+        // PK_E layer was removed). A stored key is carried forward to E
+        // unconditionally; a stale carried share (committee changed at E) emits
+        // seed partials that peers reject via `verify_seed_partial` (the vote
+        // Nullifies → does not count toward quorum), and the certify hook gates the
+        // boundary, so a wrong carry-forward can NEVER finalize a bad seed. The
+        // dropped guard was only an early-demote LIVENESS optimization (a
+        // missed-ceremony member now signs doomed partials instead of demoting to
+        // cert-follow); fresh-share committee[E] members still form the quorum.
         let beacon_resolver: crate::epoch_manager::BeaconResolver = {
             let store = ceremony_store.clone();
             let namespace = beacon_namespace;
             let genesis = genesis_beacon_key;
-            let onchain_pk = beacon_pk_onchain_3way.clone();
             Arc::new(move |epoch: u64| {
                 if let Ok(m) = store.read() {
-                    if let Some((&stored_epoch, (out, share))) = m.range(..=epoch).next_back() {
-                        let carried_pk = out.public().public();
-                        // Exact-epoch hit: we ran this epoch's own DKG — the share
-                        // is definitionally on E's polynomial, no on-chain confirm
-                        // needed (the boundary read may even still lag here).
-                        if stored_epoch == epoch {
-                            return Some((
-                                out.public().clone(),
-                                Some(share.clone()),
-                                namespace.clone(),
-                            ));
-                        }
-                        // Carry-forward across a (possibly committee-changed) gap.
-                        // Only DEMOTE on a DEFINITIVELY-read mismatch/absence —
-                        // NEVER on an unreadable state (a transient read failure
-                        // is the common stable-epoch path; demoting on it would
-                        // drop a legitimate signer off the quorum for the whole
-                        // epoch and shrink the quorum → stall). See the
-                        // 3-way reader comment above.
-                        match onchain_pk(epoch) {
-                            // Definitively read a matching key → safe carry-forward.
-                            Ok(Some(pk)) if &pk == carried_pk => {
-                                return Some((
-                                    out.public().clone(),
-                                    Some(share.clone()),
-                                    namespace.clone(),
-                                ));
-                            }
-                            // Definitively read a DIFFERENT key (genuine committee
-                            // change → our share lies on the prior polynomial) →
-                            // demote.
-                            Ok(Some(_)) => {
-                                tracing::warn!(
-                                    epoch,
-                                    stored_epoch,
-                                    "beacon carry-forward rejected: stored DKG key does not match \
-                                     on-chain getEpochBeaconKey(E) (committee changed) — demoting \
-                                     to cert-follow until a reshare lands this node's share"
-                                );
-                                return None;
-                            }
-                            // Definitively absent on a beacon-active epoch
-                            // (uncommitted / keyless) → genuine absence → demote.
-                            Ok(None) => {
-                                tracing::warn!(
-                                    epoch,
-                                    stored_epoch,
-                                    "beacon carry-forward rejected: on-chain getEpochBeaconKey(E) \
-                                     is empty (uncommitted/keyless epoch) — demoting to cert-follow"
-                                );
-                                return None;
-                            }
-                            // UNREADABLE state (transient) — cannot confirm.
-                            // Conservative-SAFE: TRUST the carried share (seed
-                            // partials remain C-gate / seed-verify checked
-                            // downstream); do NOT demote.
-                            Err(()) => {
-                                tracing::warn!(
-                                    epoch,
-                                    stored_epoch,
-                                    "beacon carry-forward: on-chain getEpochBeaconKey(E) \
-                                     unreadable (transient) — keeping carried share rather than \
-                                     demoting (avoids quorum shrink on a stable-epoch read hiccup)"
-                                );
-                                return Some((
-                                    out.public().clone(),
-                                    Some(share.clone()),
-                                    namespace.clone(),
-                                ));
-                            }
-                        }
+                    if let Some((_stored_epoch, (out, share))) = m.range(..=epoch).next_back() {
+                        // Exact-epoch hit OR carry-forward: return the local share.
+                        return Some((
+                            out.public().clone(),
+                            Some(share.clone()),
+                            namespace.clone(),
+                        ));
                     }
                 }
                 genesis.clone()
             })
         };
 
+        // Bulk catch-up committee reader for the EpochManager span soft-enter:
+        // load the node's CURRENT finalized tip (re-read every call — a catch-up
+        // node's tip advances as the gap closes) and read the contiguous on-chain
+        // committee prefix for the requested span via EpochTransition's
+        // side-effect-free `soft_enter_span` (committees resolve at the
+        // result-final state, anchor − K). Returns `(epoch, snap)` pairs; the
+        // consensus side (outer.rs) builds + registers the verify-only scheme.
+        // Finalized tip from `canonical_state.get_finalized_num_hash()` — NOT
+        // `chain_info().best_number`, which is frozen during pipeline backfill on
+        // a deeply-behind node (see MEMORY reth-sync-progress note).
+        let et_for_span = et_arc.clone();
+        let canonical_for_span = canonical_state.clone();
+        let soft_enter_committees: SoftEnterCommittees = Arc::new(move |from: Epoch, to: Epoch| {
+            let et = et_for_span.clone();
+            let canonical = canonical_for_span.clone();
+            Box::pin(async move {
+                let anchor = canonical
+                    .get_finalized_num_hash()
+                    .map_or(0, |nh| nh.number);
+                let collected = StdMutex::new(Vec::new());
+                let record = |epoch: u64, snap: ValidatorSetSnapshot| {
+                    collected.lock().expect("soft-enter span collector").push((epoch, snap));
+                };
+                et.lock()
+                    .await
+                    .soft_enter_span(from.get(), to.get(), anchor, &record)
+                    .await;
+                collected.into_inner().expect("soft-enter span collector")
+            })
+        });
+
         let outer = OuterBuilder {
             me: me.clone(),
-            blocker: handles.oracle.clone(),
-            provider: handles.oracle.clone(),
+            blocker: oracle.clone(),
+            provider: oracle.clone(),
             chain_id,
             epoch_length_blocks,
             dpos_activation_block,
             signer_keypair: Some(bls_keypair),
             mode_events,
             beacon_resolver,
-            beacon_verify_pk,
+            beacon_share_notify: share_notify,
+            soft_enter_committees,
             beacon_metrics,
             beacon_verify,
             timeouts: ConsensusTimeouts::fluent_1s(),
@@ -1397,19 +1317,23 @@ impl DposLayer {
         // `start` consumes the engine.
         let cert_mailbox = outer.marshal_mailbox();
 
-        // Start OuterEngine — 6-arg start: ctx + 5 raw channels.
+        // Start OuterEngine — ctx + the 5 plane-owned non-beacon `MuxHandle`s
+        // (vote/cert/resolver per-epoch register, broadcast/marshal subchannel 0) +
+        // this promotion's fresh vote-backup receiver. The OuterEngine registers its
+        // sub-channels in `run`; on demote it drops them (auto-deregister) — the
+        // plane's broker tasks stay live for the next promotion.
         let consensus_handle = outer.start(
             ctx.with_label("marshal_resolver"),
-            (handles.vote_sender, handles.vote_receiver),
-            (handles.cert_sender, handles.cert_receiver),
-            (handles.resolver_sender, handles.resolver_receiver),
-            (handles.broadcast_sender, handles.broadcast_receiver),
-            (handles.marshal_sender, handles.marshal_receiver),
+            vote_mux,
+            cert_mux,
+            resolver_mux,
+            broadcast_mux,
+            marshal_mux,
+            vote_backup_rx,
         );
 
         Ok(DposLayerHandle {
             consensus_handle,
-            network_handle,
             cert_mailbox,
         })
     }
@@ -1453,6 +1377,91 @@ mod cold_start_kind_tests {
         let err = resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + INTERVAL as u64)
             .unwrap_err();
         assert!(err.to_string().contains("past epoch 0"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod broker_repromote_tests {
+    use commonware_cryptography::{ed25519::PrivateKey, Signer as _};
+    use commonware_p2p::{
+        simulated::{Config as SimConfig, Link, Network},
+        utils::mux::Muxer,
+        Manager as _, Receiver as _, Recipients, Sender as _,
+    };
+    use commonware_runtime::{deterministic, IoBuf, Metrics as _, Quota, Runner as _};
+    use commonware_utils::{ordered::Set, NZUsize};
+    use std::{num::NonZeroU32, sync::Arc, time::Duration};
+    use tokio::sync::Mutex;
+
+    const SUBCHANNEL: u64 = 0;
+    const QUOTA: Quota = Quota::per_second(NonZeroU32::MAX);
+
+    /// A demoted engine drops its `SubReceiver`s; a re-promoted engine CLONES the
+    /// plane's `Arc<Mutex<MuxHandle>>` (the `PlaneMux` sharing) and re-registers the
+    /// SAME subchannel against the SAME persistent broker — no network rebuild. This
+    /// is the restart-free re-promotion property the broker-in-plane refactor adds.
+    #[test]
+    fn plane_mux_supports_drop_then_reclone_reregister() {
+        let executor = deterministic::Runner::default();
+        executor.start(|ctx| async move {
+            let (network, oracle) = Network::<_, super::PeerPubkey>::new(
+                ctx.with_label("net"),
+                SimConfig {
+                    max_size: 1024 * 1024,
+                    disconnect_on_block: false,
+                    tracked_peer_sets: NZUsize!(1),
+                },
+            );
+            network.start();
+
+            let (pk1, pk2) = (
+                PrivateKey::from_seed(1).public_key(),
+                PrivateKey::from_seed(2).public_key(),
+            );
+            oracle
+                .manager()
+                .track(0, Set::from_iter_dedup([pk1.clone(), pk2.clone()]))
+                .await;
+            for (a, b) in [(pk1.clone(), pk2.clone()), (pk2.clone(), pk1.clone())] {
+                oracle
+                    .add_link(
+                        a,
+                        b,
+                        Link {
+                            latency: Duration::from_millis(0),
+                            jitter: Duration::from_millis(0),
+                            success_rate: 1.0,
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
+
+            // Plane-side broker over peer 1; the plane shares the registrar behind
+            // Arc<Mutex> (PlaneMux).
+            let (s1, r1) = oracle.control(pk1.clone()).register(7, QUOTA).await.unwrap();
+            let (mux1, handle1) = Muxer::new(ctx.with_label("mux1"), s1, r1, 8);
+            mux1.start();
+            let plane_mux = Arc::new(Mutex::new(handle1));
+
+            // Sender side over peer 2.
+            let (s2, r2) = oracle.control(pk2.clone()).register(7, QUOTA).await.unwrap();
+            let (mux2, mut handle2) = Muxer::new(ctx.with_label("mux2"), s2, r2, 8);
+            mux2.start();
+            let (mut tx2, _rx2) = handle2.register(SUBCHANNEL).await.unwrap();
+
+            // Two promotions: each clones the SAME plane_mux, registers SUBCHANNEL,
+            // receives, then drops its SubReceiver (auto-deregister) at scope exit.
+            for payload in [b"a".as_ref(), b"b".as_ref()] {
+                let p = plane_mux.clone();
+                let (_sub_tx, mut sub_rx) = p.lock().await.register(SUBCHANNEL).await.unwrap();
+                tx2.send(Recipients::One(pk1.clone()), IoBuf::from(payload), false)
+                    .await
+                    .unwrap();
+                let (from, _) = sub_rx.recv().await.unwrap();
+                assert_eq!(from, pk2);
+            }
+        });
     }
 }
 

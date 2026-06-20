@@ -11,5 +11,5 @@ source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/asserts.sh"
 
 bring_up_dpos
-trap tear_down EXIT
+trap '[ -n "${SMOKE_KEEP_UP:-}" ] || tear_down' EXIT
 assert_vrf

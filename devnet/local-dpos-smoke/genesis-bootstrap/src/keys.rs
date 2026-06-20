@@ -4,19 +4,13 @@
 
 use alloy_signer_local::PrivateKeySigner;
 use coins_bip39::{English, Mnemonic};
-use commonware_codec::{DecodeExt, Encode as _};
-use commonware_cryptography::bls12381::{
-    dkg::deal_anonymous,
-    primitives::{group::Share, sharing::Sharing, variant::MinSig},
-};
-use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
-use commonware_utils::N3f1;
-use eyre::{OptionExt, WrapErr};
+use commonware_codec::DecodeExt;
+use commonware_cryptography::ed25519::PrivateKey as Ed25519PrivateKey;
+use eyre::WrapErr;
 use fluentbase_bls::keys::ValidatorBlsKeypair;
 use rand_08::rngs::StdRng;
 use rand_core::SeedableRng;
 use sha2::{Digest, Sha256};
-use std::num::NonZeroU32;
 
 pub struct Validator {
     pub idx: u32,
@@ -26,11 +20,6 @@ pub struct Validator {
     pub slasher: PrivateKeySigner,
     pub slasher_password: String,
     pub reth_p2p: secp256k1::SecretKey,
-    /// This validator's threshold-beacon DKG share (devnet bootstrap: the key
-    /// is dealt deterministically at genesis, mirroring the epoch-0 committee
-    /// bootstrap, since the live DKG actor is phased — research Q2). Signs the
-    /// per-height seed partials (`prev_randao(h) = H(seed(h))`).
-    pub beacon_share: Share,
 }
 
 pub struct FullNode {
@@ -42,10 +31,6 @@ pub struct KeySet {
     pub validators: Vec<Validator>,
     pub full_node: FullNode,
     pub governance_signer: PrivateKeySigner,
-    /// The dealt beacon sharing — its `.public()` is `PK_epoch`, published to L2
-    /// (`commitEpochBeaconKey`) and the group key every node verifies seeds
-    /// against. The same `Sharing` underlies all validators' [`Validator::beacon_share`].
-    pub beacon_sharing: Sharing<MinSig>,
 }
 
 pub fn derive(mnemonic: &str, peers: u32, chain_id: u64) -> eyre::Result<KeySet> {
@@ -65,18 +50,9 @@ pub fn derive(mnemonic: &str, peers: u32, chain_id: u64) -> eyre::Result<KeySet>
         h.finalize().into()
     };
 
-    // Deal the threshold randomness-beacon key across all `peers` validators,
-    // deterministically from the mnemonic so every regen is reproducible.
-    // `beacon_shares[j].index == j`; each share is assigned BELOW to the
-    // validator whose CONSENSUS participant index equals `j` (the combined
-    // scheme tags each seed partial with the signer's consensus index, so the
-    // polynomial index must match or `verify_seed_partial` checks the wrong
-    // evaluation point).
-    let beacon_n = NonZeroU32::new(peers).ok_or_eyre("peers must be non-zero for beacon DKG")?;
-    let mut beacon_rng = StdRng::from_seed(derive_32("beacon-dkg", 0));
-    let (beacon_sharing, beacon_shares) =
-        deal_anonymous::<MinSig, N3f1>(&mut beacon_rng, Default::default(), beacon_n);
-
+    // No genesis beacon deal: the beacon is always-on live DKG (epoch 1 seedless,
+    // first key at the deterministic epoch-2 ceremony), so the devnet stack starts
+    // keyless exactly like production — no genesis sharing/share material.
     let mut validators = Vec::with_capacity(peers as usize);
     for i in 0..peers {
         let l2_bytes = derive_32("l2-owner", i);
@@ -115,25 +91,7 @@ pub fn derive(mnemonic: &str, peers: u32, chain_id: u64) -> eyre::Result<KeySet>
             slasher,
             slasher_password,
             reth_p2p,
-            // Provisional — reassigned by consensus index just below.
-            beacon_share: beacon_shares[i as usize].clone(),
         });
-    }
-
-    // Align each validator's beacon share index with its CONSENSUS participant
-    // index — the position of its peer pubkey in the ascending-byte-sorted
-    // committee (the `commitEpochCommittee` / commonware `Set` ordering, see
-    // bootstrap.rs::commit_initial_committee). Validator at sorted position `p`
-    // gets `beacon_shares[p]` (index `p`), so the seed partial it signs lands at
-    // the polynomial point the verifier evaluates for participant `p`.
-    let mut by_consensus_index: Vec<usize> = (0..validators.len()).collect();
-    by_consensus_index.sort_by(|&a, &b| {
-        let pa = validators[a].peer.public_key().encode();
-        let pb = validators[b].peer.public_key().encode();
-        pa.as_ref().cmp(pb.as_ref())
-    });
-    for (consensus_index, &vi) in by_consensus_index.iter().enumerate() {
-        validators[vi].beacon_share = beacon_shares[consensus_index].clone();
     }
 
     let full_node_bytes = derive_32("peer-full", 0);
@@ -151,6 +109,5 @@ pub fn derive(mnemonic: &str, peers: u32, chain_id: u64) -> eyre::Result<KeySet>
         validators,
         full_node,
         governance_signer,
-        beacon_sharing,
     })
 }

@@ -357,29 +357,6 @@ pub struct FluentEvmConfig {
     /// targets. Operator-supplied via `StakingReaderConfig`; defaults to the
     /// canonical predeploy slot.
     liveness_slashing_address: Address,
-    /// Side-channel carrying a boundary block's encoded DKG outcome (group key
-    /// `PK_epoch`) to `FluentBlockExecutor::apply_pre_execution_changes` for the
-    /// `commitEpochBeaconKey` system call, keyed by the ordering height being
-    /// derived. The group key is agreed `OrderBlock` data but NOT a header
-    /// field, so it cannot ride `extra_data` (committee bitmap); this mirrors
-    /// the `FluentNode.extra_data_registry` idiom. Ordering is BFT-final before
-    /// deferred derivation ⇒ one derived block per height ⇒ the height key is
-    /// unambiguous; the executor removes each entry after use.
-    beacon_outcomes: Arc<DashMap<u64, Bytes>>,
-}
-
-/// Stash a boundary block's encoded DKG outcome (group key `PK_epoch`) so the
-/// executor's `commitEpochBeaconKey` system call can pick it up, keyed by the
-/// EVM block number being derived. Implemented by [`FluentEvmConfig`]; a trait
-/// so the deriver can call it behind its generic `Evm` bound.
-pub trait BeaconOutcomeSink {
-    fn set_beacon_outcome(&self, height: u64, outcome: Bytes);
-}
-
-impl BeaconOutcomeSink for FluentEvmConfig {
-    fn set_beacon_outcome(&self, height: u64, outcome: Bytes) {
-        self.beacon_outcomes.insert(height, outcome);
-    }
 }
 
 impl FluentEvmConfig {
@@ -398,7 +375,6 @@ impl FluentEvmConfig {
             staking_address,
             chain_config_address,
             liveness_slashing_address,
-            beacon_outcomes: Arc::new(DashMap::new()),
         }
     }
 
@@ -470,7 +446,6 @@ impl BlockExecutorFactory for FluentEvmConfig {
             staking_address: self.staking_address,
             chain_config_address: self.chain_config_address,
             liveness_slashing_address: self.liveness_slashing_address,
-            beacon_outcomes: self.beacon_outcomes.clone(),
         }
     }
 }
@@ -702,15 +677,6 @@ alloy_sol_types::sol! {
     // (`getEpochBlockInterval`).
     function commitEpochCommittee(address[] calldata committee) external;
 
-    // Randomness-beacon group key (PK_epoch), kept in sync with
-    // `solidity-contracts/contracts/staking/Staking.sol`. Unlike the committee
-    // it is NOT re-derived on-chain — the executor commits the DKG outcome's
-    // group key handed in via the `beacon_outcomes` side-channel. The explicit
-    // `epoch` is the epoch the key is FOR (= the current epoch of the boundary
-    // block); the contract stores it sparsely (carry-forward on read), so the
-    // sequential-cursor desync of the old no-arg form no longer applies.
-    function commitEpochBeaconKey(uint64 epoch, bytes calldata groupPubKey) external;
-
     struct EpochConsensusKeys {
         bytes blsPubkey;
         bytes32 peerPubkey;
@@ -920,9 +886,6 @@ pub struct FluentBlockExecutor<'a, Evm> {
     /// targets (configurable so the whole staking cluster can be runtime-
     /// deployed; defaults to the canonical predeploy slot).
     liveness_slashing_address: Address,
-    /// Block-height-keyed DKG outcome group keys for the `commitEpochBeaconKey`
-    /// system call (shared with [`FluentEvmConfig::beacon_outcomes`]).
-    beacon_outcomes: Arc<DashMap<u64, Bytes>>,
 }
 
 impl<'a, E> BlockExecutor for FluentBlockExecutor<'a, E>
@@ -1015,12 +978,20 @@ where
             // carry empty `extra_data` → decoder returns `None` → no system call.
             // A decode error at/after activation IS a real fail-loud bug
             // (consensus-side `verify` already structurally decoded it).
-            if block_number >= activation {
+            // Decode the header attestation ONCE (the liveness bitmap) so it feeds
+            // the processBitmap call below. Pre-activation blocks carry legacy
+            // non-DPoS extra_data that must not fail-loud-decode → decode only at
+            // ≥ activation.
+            let decoded = if block_number >= activation {
                 let extra_data = self.inner.ctx.extra_data.clone();
-                let decoded =
-                    fluentbase_consensus::extra_data::decode_simplex_attestation(&extra_data)
-                        .map_err(|e| BlockExecutionError::msg(format!("liveness decode: {e}")))?;
-                if let Some(d) = decoded {
+                fluentbase_consensus::extra_data::decode_simplex_attestation(&extra_data)
+                    .map_err(|e| BlockExecutionError::msg(format!("liveness decode: {e}")))?
+            } else {
+                None
+            };
+
+            if block_number >= activation {
+                if let Some(d) = &decoded {
                     let epoch = d.round.epoch().get();
                     let calldata = encode_process_bitmap_call(
                         epoch,
@@ -1168,47 +1139,6 @@ where
                 }
             }
 
-            // Mirror commitEpochCommittee for the randomness-beacon group key.
-            // PK_epoch is the DKG outcome — NOT re-derivable on-chain — so a
-            // boundary block's group key is handed to the executor via the
-            // `beacon_outcomes` side-channel (keyed by the ordering height being
-            // derived; see the field doc) and committed verbatim. At most one
-            // commit per block; the contract's own cursor + `target<=cur+1` gate
-            // order them. Fail-loud like the committee commit (an empty group key
-            // for a fallback epoch is a valid no-assurance commit, NOT skipped).
-            let block_height: u64 = self.inner.evm().block().number().saturating_to();
-            if let Some((_, group_key)) = self.beacon_outcomes.remove(&block_height) {
-                // `current_epoch` (computed above for the committee loop) is the
-                // epoch of THIS boundary block = the epoch the DKG key is for.
-                let calldata = commitEpochBeaconKeyCall {
-                    epoch: current_epoch,
-                    groupPubKey: group_key,
-                }
-                .abi_encode();
-                let ras = self
-                    .inner
-                    .evm_mut()
-                    .transact_system_call(
-                        fluentbase_types::SYSTEM_ADDRESS,
-                        self.staking_address,
-                        calldata.into(),
-                    )
-                    .map_err(|e| {
-                        BlockExecutionError::msg(format!(
-                            "commitEpochBeaconKey(height {block_height}) sys call failed: {e:?}"
-                        ))
-                    })?;
-                match ras.result {
-                    ExecutionResult::Success { .. } => {
-                        self.inner.evm_mut().db_mut().commit(ras.state);
-                    }
-                    other => {
-                        return Err(BlockExecutionError::msg(format!(
-                            "commitEpochBeaconKey(height {block_height}) did not succeed: {other:?}"
-                        )))
-                    }
-                }
-            }
         }
         Ok(())
     }

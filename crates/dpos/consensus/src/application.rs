@@ -16,6 +16,7 @@
 
 use crate::{
     beacon::{
+        actor::DETERMINISTIC_BOOTSTRAP_EPOCH,
         ceremony::CeremonyOutput,
         outcome::{encode_outcome, parse_outcome, validate_share_on_poly},
         types::Seed,
@@ -227,13 +228,20 @@ impl BeaconVerify {
     }
 
     /// A height is a CHANGE-epoch first block iff it is the first block of an
-    /// epoch `E ≥ 1` whose committee differs from `E-1`'s. Both committees are
-    /// read at the current finalized hash (the resolver's contract); an
-    /// unresolvable read ⇒ `false` (an honest change block then fails the
+    /// epoch `E ≥ 1` whose committee differs from `E-1`'s, OR the first block of
+    /// the deterministic-bootstrap epoch (committee[2] always seeds the beacon
+    /// during epoch 1, even on a stable committee — keyed off the same
+    /// [`DETERMINISTIC_BOOTSTRAP_EPOCH`] the DKG actor's `maybe_start` uses, so the
+    /// two never disagree on which boundaries assert a `beacon_outcome`). Both
+    /// committees are read at the current finalized hash (the resolver's contract);
+    /// an unresolvable read ⇒ `false` (an honest change block then fails the
     /// epoch-type gate transiently → view-change → retry once the read resolves).
     fn is_change_epoch_first_block(&self, height: u64, epoch: u64) -> bool {
         if epoch == 0 || height != self.epoch_start(epoch) {
             return false;
+        }
+        if epoch == DETERMINISTIC_BOOTSTRAP_EPOCH {
+            return true;
         }
         let cur = (self.committee_for)(epoch);
         let prev = (self.committee_for)(epoch - 1);
@@ -435,10 +443,7 @@ where
             },
         };
 
-        let extra_data = Bytes::from(match self.latest_finalized_cert().await {
-            Some((round, signers)) => extra_data::encode_simplex_attestation(round, &signers),
-            None => Vec::new(),
-        });
+        let cert = self.latest_finalized_cert().await;
 
         let gas_limit = step_gas_limit(parent.gas_limit, self.target_gas_limit);
         let timestamp = clock
@@ -453,33 +458,26 @@ where
         // agreed DKG `Output` (PK_E) in `beacon_outcome`. If our ceremony has not
         // produced it yet, skip the view (like the exec-lag gate) rather than
         // propose a `None` that every verifier would reject on the epoch-type gate.
-        let beacon_outcome = match self.beacon.as_ref() {
+        let beacon_outcome: Option<Bytes> = match self.beacon.as_ref() {
             Some(bv) => {
                 let epoch = bv.epoch_of(height);
                 if bv.is_change_epoch_first_block(height, epoch) {
                     match (bv.beacon_for_epoch)(epoch) {
                         Some((out, _share)) => {
+                            // Byzantine forge of the asserted PK_E; off the feature
+                            // this is just `out`. The honest C-gate + certify hook
+                            // Nullify it (§8.11.2).
                             #[cfg(feature = "dpos-devnet-byzantine")]
-                            if bv.forges_beacon_pk() {
-                                let forged = crate::beacon::outcome::forge_outcome_same_committee(&out);
+                            let out = if bv.forges_beacon_pk() {
                                 tracing::warn!(
                                     height,
                                     epoch,
                                     "BYZANTINE: proposing forged PK_E at boundary"
                                 );
-                                return Some(OrderBlock {
-                                    parent: parent.digest(),
-                                    height,
-                                    timestamp,
-                                    fee_recipient: self.fee_recipient,
-                                    gas_limit,
-                                    extra_data,
-                                    result,
-                                    txs,
-                                    beacon_outcome: Some(Bytes::from(encode_outcome(&forged))),
-                                    beacon_seed: None,
-                                });
-                            }
+                                crate::beacon::outcome::forge_outcome_same_committee(&out)
+                            } else {
+                                out
+                            };
                             tracing::info!(
                                 height,
                                 epoch,
@@ -502,6 +500,11 @@ where
             }
             None => None,
         };
+
+        let extra_data = Bytes::from(match cert {
+            Some((round, signers)) => extra_data::encode_simplex_attestation(round, &signers),
+            None => Vec::new(),
+        });
 
         Some(OrderBlock {
             parent: parent.digest(),
@@ -996,6 +999,56 @@ mod tests {
         assert!(!beacon_gate_decision(Some(&bv_cf), &block(10, Some(enc(&out)))));
         // (g) no beacon context → no gating.
         assert!(beacon_gate_decision(None, &block(10, Some(enc(&out)))));
+    }
+
+    /// Deterministic epoch-2 bootstrap: committee[2]'s first block is a change
+    /// boundary (asserts an outcome + runs the C gate) EVEN ON A STABLE committee,
+    /// while epoch 1 stays seedless (no outcome). interval=10, activation=0 ⇒
+    /// epoch_start(1)=10, epoch_start(2)=20.
+    #[test]
+    fn epoch_two_bootstrap_is_change_boundary_on_stable_committee() {
+        use crate::beacon::dkg::run_local_dkg;
+        use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
+        use commonware_math::algebra::Random as _;
+        use rand_08::rngs::StdRng;
+        use rand_core::SeedableRng as _;
+
+        let mut rng = StdRng::seed_from_u64(7);
+        let keys: Vec<Ed25519PrivateKey> =
+            (0..5).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
+        // STABLE committee: identical for every epoch (so on-change activation
+        // would NEVER fire; only the deterministic epoch-2 bootstrap does).
+        let committee: Set<PeerPubkey> = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+        let (out, shares) = run_local_dkg(&mut rng, b"ns", 2, &keys, &keys).expect("dkg");
+        let my_share = shares.get(&keys[0].public_key()).expect("share").clone();
+
+        let committee_for: CommitteeForEpoch = {
+            let c = committee.clone();
+            Arc::new(move |_e: u64| Some(c.clone()))
+        };
+        let out_e = out.clone();
+        let beacon_for_epoch: BeaconForEpoch = Arc::new(move |e: u64| {
+            (e == DETERMINISTIC_BOOTSTRAP_EPOCH).then(|| (out_e.clone(), my_share.clone()))
+        });
+        let bv = BeaconVerify::new(beacon_for_epoch, committee_for, 0, 10);
+
+        let block = |height: u64, oc: Option<Bytes>| {
+            let mut b = sample_order(Digest(B256::ZERO), height);
+            b.beacon_outcome = oc;
+            b
+        };
+        let enc = |o: &CeremonyOutput| Bytes::from(encode_outcome(o));
+
+        assert!(bv.is_change_epoch_first_block(20, 2));
+        // Epoch-2 first block: outcome required + C share-on-poly passes.
+        assert!(beacon_gate_decision(Some(&bv), &block(20, Some(enc(&out)))));
+        // Epoch-2 first block missing the outcome → reject (epoch-type gate).
+        assert!(!beacon_gate_decision(Some(&bv), &block(20, None)));
+        // Epoch 1 (seedless) on the same stable committee: NOT a change boundary —
+        // no outcome expected; an asserted outcome is rejected.
+        assert!(!bv.is_change_epoch_first_block(10, 1));
+        assert!(beacon_gate_decision(Some(&bv), &block(10, None)));
+        assert!(!beacon_gate_decision(Some(&bv), &block(10, Some(enc(&out)))));
     }
 
     #[test]

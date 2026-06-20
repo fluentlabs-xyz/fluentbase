@@ -123,15 +123,30 @@ assert_epoch() {
 #     which the static >=MIN_BLOCKS count alone cannot see;
 #   - the COMPUTED beacon value lands on-chain — every recently logged
 #     `prev_randao=H(seed)` equals the actual mixHash of a finalized block (step
-#     1 reads the header, step 2 reads the log; this ties the two together);
-#   - PK_epoch is published on-chain and equals the seed-verifying group key.
+#     1 reads the header, step 2 reads the log; this ties the two together).
 assert_vrf() {
-    # mixhash_at/in/of, is_zero_hash, log_count, beacon_key_at, assert_beacon_window,
+    # mixhash_at/in/of, is_zero_hash, log_count, assert_beacon_window,
     # wait_nodes_have are shared in lib.sh.
 
     local NODES VALIDATORS fin WINDOW lo mixes vals n svc mh agree distinct
     NODES=(validator-0 validator-1 validator-2 validator-3 full-node)
     VALIDATORS=(validator-0 validator-1 validator-2 validator-3)
+
+    # The beacon is THRESHOLD-ACTIVE from EPOCH 2 (deterministic epoch-2 bootstrap):
+    # epoch 1 is seedless (order.digest()), committee[2] DKGs during epoch 1, and
+    # the first key (PK_2) commits at the epoch-2 boundary. So every beacon-active
+    # assertion below must run inside epoch >= 2 — wait for finalized to clear
+    # epoch_start(2) + WINDOW before sampling.
+    WINDOW=8
+    local EPOCH2_START EPOCH2_PROBE
+    EPOCH2_START=$(( DPOS_ACTIVATION_BLOCK + 2 * EPOCH_INTERVAL ))
+    EPOCH2_PROBE=$(( EPOCH2_START + WINDOW ))
+    echo "smoke-vrf: beacon active from epoch 2 (start=$EPOCH2_START); waiting for finalized >= $EPOCH2_PROBE"
+    wait_finalized_ge "$EPOCH2_PROBE" 300 >/dev/null || {
+        echo "FAIL (smoke-vrf): chain did not reach finalized $EPOCH2_PROBE (epoch-2 window)"
+        docker compose logs --tail=120 validator-0
+        exit 1
+    }
 
     fin=$(finalized_dec)
     (( fin > 0 )) || { echo "FAIL (smoke-vrf): no finalized block"; exit 1; }
@@ -142,10 +157,19 @@ assert_vrf() {
     #    heights: all distinct (the seed is unique per height → randomness varies).
     #    The per-height all-node agreement is the strong check; a single node
     #    deriving a divergent seed at one height (which validator-0-only / single-
-    #    height probes miss) fails here.
-    WINDOW=8
+    #    height probes miss) fails here. The window sits inside epoch >= 2 (gated
+    #    above), so every sampled height has a verified threshold seed.
     lo=$(( fin > WINDOW ? fin - WINDOW + 1 : 1 ))
+    (( lo >= EPOCH2_START )) || lo=$EPOCH2_START
     echo "smoke-vrf: DPoS up, finalized=$fin; checking prev_randao over blocks [$lo..$fin] on ${#NODES[@]} nodes"
+    # The import-follower (full-node) syncs the validator chain via devp2p and lags
+    # the validators' finalized tip by a few blocks; wait for EVERY node (incl. the
+    # follower) to have the top block before asserting per-node mixHash, else the
+    # check races the follower's catch-up. wait_nodes_have prints which node is
+    # MISSING on timeout (a genuinely stuck follower fails loud, not silently waited).
+    wait_nodes_have "$fin" 120 || {
+        echo "FAIL (smoke-vrf): nodes did not all reach block $fin within 120s"; exit 1
+    }
     mixes=()
     for ((n = lo; n <= fin; n++)); do
         vals=()
@@ -269,18 +293,6 @@ assert_vrf() {
     fi
     echo "smoke-vrf: all $((fin3 - chk_lo + 1)) recent finalized mixHashes [$chk_lo..$fin3] were logged as threshold-active beacon values (header == deriver H(seed))"
 
-    # 4) PK_epoch is PUBLISHED ON-CHAIN (commitEpochBeaconKey at genesis) and equals
-    #    the group key recovered seeds verify against — the trustless source the STF
-    #    reads (research #2). Compare on-chain getEpochBeaconKey(0) to beacon-pk.hex.
-    local pk_file pk_chain
-    pk_file=$(docker compose exec -T validator-0 cat /runtime/keys/beacon-pk.hex | tr -d '[:space:]')
-    pk_chain=$(cast call "$STAKING_ADDR" "getEpochBeaconKey(uint64)(bytes)" 0 --rpc-url "$RPC" | tr -d '[:space:]')
-    if [[ -z "$pk_file" || "$pk_chain" != "0x$pk_file" ]]; then
-        echo "FAIL (smoke-vrf): on-chain getEpochBeaconKey(0)=$pk_chain != published PK_epoch 0x$pk_file"
-        exit 1
-    fi
-    echo "smoke-vrf: PK_epoch on-chain (getEpochBeaconKey(0)) matches the seed-verifying group key"
-
     # 5) C1/C2 (+H2) — the EVM-visible `block.prevrandao` EQUALS the header mixHash, i.e.
     #    the beacon value H(seed) reached EVM EXECUTION, not just the header. Deploy a
     #    probe whose snapshot() records `block.prevrandao` at its own block and emits it;
@@ -334,28 +346,30 @@ assert_vrf() {
     # follower `full-node` is in NODES, and step 1 asserts byte-identical prev_randao
     # across ALL nodes (incl full-node) at every height.
 
-    echo "OK (smoke-vrf): threshold-beacon prev_randao active+sustained+still-growing on all 4 validators (>=$MIN_BLOCKS blocks), non-zero and ${#mixes[@]}/${#mixes[@]} distinct and byte-identical across all ${#NODES[@]} nodes at every height in [$lo..$fin], recent logged H(seed) values match on-chain mixHashes, PK_epoch published+matched on L2 (deterministic seed)"
+    echo "OK (smoke-vrf): threshold-beacon prev_randao active+sustained+still-growing on all 4 validators (>=$MIN_BLOCKS blocks) from epoch 2, non-zero and ${#mixes[@]}/${#mixes[@]} distinct and byte-identical across all ${#NODES[@]} nodes at every height in [$lo..$fin], recent logged H(seed) values match on-chain mixHashes"
 }
 
 # smoke-vrf-boundary: the threshold beacon survives an EPOCH BOUNDARY on a STABLE
-# committee. Crosses the first relative-epoch boundary (activation + interval) and
-# asserts:
+# committee. The beacon activates at epoch 2 (deterministic bootstrap), so the first
+# stable carry-forward boundary to probe is epoch 2 → epoch 3 (NOT 0→1, which are
+# keyless). Crosses the epoch-2→3 boundary (activation + 3*interval) and asserts:
 #   F1 — prev_randao stays threshold-active, byte-identical across all nodes, and
-#        varying ACROSS the boundary (the per-epoch engine rebuild + Phase-1
-#        full-enter carry-forward read at the boundary edge);
-#   F2 — the new (uncommitted, stable-committee) epoch CARRIES the key forward
-#        on-chain: getEpochBeaconKey(1) == getEpochBeaconKey(0).
+#        varying ACROSS the boundary (the per-epoch engine rebuild + full-enter
+#        carry-forward read at the boundary edge). The carry-forward is an internal
+#        detail with no on-chain mirror; the beacon staying live + node-agreed
+#        across the boundary is the full proof.
 assert_vrf_boundary() {
-    local NODES BOUNDARY TARGET lo hi pk0 pk1
+    local NODES BOUNDARY TARGET lo hi
     NODES=(validator-0 validator-1 validator-2 validator-3 full-node)
 
     # Epoch geometry (lib.sh, mirrors genesis-bootstrap): DPoS activates at
-    # DPOS_ACTIVATION_BLOCK; epochs are EPOCH_INTERVAL blocks. Relative epoch 1 begins
-    # at activation + interval — the first boundary to cross on a stable committee.
-    BOUNDARY=$(( DPOS_ACTIVATION_BLOCK + EPOCH_INTERVAL ))
+    # DPOS_ACTIVATION_BLOCK; epochs are EPOCH_INTERVAL blocks. The beacon is active
+    # from epoch 2; epoch 3 begins at activation + 3*interval — the first stable
+    # carry-forward boundary to cross on a beacon-active stable committee.
+    BOUNDARY=$(( DPOS_ACTIVATION_BLOCK + 3 * EPOCH_INTERVAL ))
     TARGET=$(( BOUNDARY + 8 ))
-    echo "smoke-vrf-boundary: waiting for finalized >= $TARGET (epoch-1 boundary at block $BOUNDARY)"
-    wait_finalized_ge "$TARGET" 180 >/dev/null || {
+    echo "smoke-vrf-boundary: waiting for finalized >= $TARGET (epoch-2→3 boundary at block $BOUNDARY)"
+    wait_finalized_ge "$TARGET" 300 >/dev/null || {
         echo "FAIL (smoke-vrf-boundary): chain did not reach finalized $TARGET"
         docker compose logs --tail=120 validator-0
         exit 1
@@ -370,21 +384,7 @@ assert_vrf_boundary() {
         exit 1
     }
     assert_beacon_window "$lo" "$hi" "epoch-boundary-$BOUNDARY"
-    echo "smoke-vrf-boundary: F1 — beacon active + byte-identical across the epoch-1 boundary (block $BOUNDARY)"
+    echo "smoke-vrf-boundary: F1 — beacon active + byte-identical across the epoch-2→3 boundary (block $BOUNDARY)"
 
-    # F2: a STABLE committee commits no fresh PK_E at the boundary, so on-chain
-    # getEpochBeaconKey CARRIES FORWARD — epoch 1 reads the same key as epoch 0.
-    pk0=$(beacon_key_at 0)
-    pk1=$(beacon_key_at 1)
-    if [[ -z "$pk0" || "$pk0" == "0x" ]]; then
-        echo "FAIL (smoke-vrf-boundary): getEpochBeaconKey(0) is empty ('$pk0') — genesis beacon key not committed"
-        exit 1
-    fi
-    if [[ "$pk1" != "$pk0" ]]; then
-        echo "FAIL (smoke-vrf-boundary): F2 — getEpochBeaconKey(1)='$pk1' != getEpochBeaconKey(0)='$pk0' (a stable committee must carry the key forward)"
-        exit 1
-    fi
-    echo "smoke-vrf-boundary: F2 — getEpochBeaconKey(1) == getEpochBeaconKey(0) ($pk0) — carry-forward on a stable committee"
-
-    echo "OK (smoke-vrf-boundary): threshold beacon active + node-agreed + varying across the epoch-1 boundary (block $BOUNDARY); on-chain key carries forward for the stable committee"
+    echo "OK (smoke-vrf-boundary): threshold beacon active + node-agreed + varying across the epoch-2→3 boundary (block $BOUNDARY); the per-epoch carry-forward kept the beacon live with no break in node-agreed prev_randao"
 }

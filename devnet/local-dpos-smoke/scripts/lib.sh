@@ -192,12 +192,6 @@ mixhash_of() {
 is_zero_hash() { [[ "$1" =~ ^0x0+$ ]]; }
 # Count log lines matching $2 in service $1 (0 on no match — never trips set -e).
 log_count() { docker compose logs "$1" 2>/dev/null | grep -c "$2" || true; }
-# On-chain getEpochBeaconKey($1) at the host RPC, lowercased+trimmed ("0x" when
-# the epoch has no committed key — a pre-beacon / uncommitted epoch).
-beacon_key_at() {
-    cast call "$STAKING_ADDR" "getEpochBeaconKey(uint64)(bytes)" "$1" --rpc-url "$RPC" \
-        2>/dev/null | tr -d '[:space:]' | tr 'A-F' 'a-f'
-}
 
 # Assert prev_randao is non-zero AND byte-identical across all $NODES at every block
 # in [$1..$2] (decimal), AND all distinct across heights (real, varying randomness).

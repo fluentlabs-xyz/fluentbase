@@ -36,10 +36,7 @@ use commonware_parallel::Strategy;
 use commonware_utils::{ordered::Set, Faults, Participant};
 use rand_core::CryptoRngCore;
 
-use crate::{
-    beacon::{self, GroupPublic},
-    BlsSignature, PeerPubkey, VoteScheme,
-};
+use crate::{beacon, BlsSignature, PeerPubkey, VoteScheme};
 
 type VoteCertificate = <VoteScheme as CertScheme>::Certificate;
 
@@ -169,14 +166,9 @@ impl Read for CombinedCertificate {
 /// The per-epoch threshold material a beacon-active scheme holds.
 #[derive(Clone)]
 struct BeaconPart {
-    /// Group public key `PK_epoch` — verifies a RECOVERED seed in an assembled
-    /// certificate. Always present in a beacon-active scheme; a verifier-only
-    /// follower (no polynomial) needs nothing more.
-    group_public: GroupPublic,
     /// Full public polynomial. REQUIRED to verify individual seed partials
     /// (`verify_attestation`) and to recover the seed (`assemble`). `Some` for
-    /// signers and active full-verifiers; `None` for a group-key-only verifier
-    /// (the cert-follower) that checks ASSEMBLED certificates but never
+    /// signers; `None` for a no-share node (verify-only / fallback) that never
     /// processes individual partials or assembles.
     sharing: Option<Sharing<MinSig>>,
     share: Option<Share>,
@@ -217,35 +209,12 @@ impl CombinedScheme {
                 );
             }
             BeaconPart {
-                group_public: *sharing.public(),
                 sharing: Some(sharing),
                 share,
                 seed_namespace,
             }
         });
         Self { vote, beacon }
-    }
-
-    /// Build a beacon-active scheme from ONLY the group public key `PK_epoch`
-    /// (no polynomial, no share) — for a verifier-only node (the cert-follower)
-    /// that reads `PK_epoch` from on-chain `getEpochBeaconKey(E)` and checks the
-    /// seed half of ASSEMBLED finalization certificates. Such a scheme can NOT
-    /// verify individual partials or assemble (both need the full polynomial),
-    /// which a verifier never does.
-    pub(crate) fn new_group_key(
-        vote: VoteScheme,
-        group_public: GroupPublic,
-        seed_namespace: Vec<u8>,
-    ) -> Self {
-        Self {
-            vote,
-            beacon: Some(BeaconPart {
-                group_public,
-                sharing: None,
-                share: None,
-                seed_namespace,
-            }),
-        }
     }
 
     fn vote_attestation(att: &Attestation<Self>) -> Option<Attestation<VoteScheme>> {
@@ -383,20 +352,15 @@ impl CertScheme for CombinedScheme {
         D: Digest,
         M: Faults,
     {
-        let round = subject_round(&subject);
-        if !self
-            .vote
+        // Vote-only: verify the attributable multisig quorum and IGNORE the
+        // recovered threshold seed. The seed is already bound by the quorum — it
+        // rides the OrderBlock digest the 2f+1 multisig signs, and every partial
+        // was checked at vote time (`verify_attestation`, against the local
+        // Sharing) before any signer co-signed. Re-checking the assembled seed
+        // against an on-chain group key (`getEpochBeaconKey`) added nothing over
+        // the quorum, so that PK_E layer is gone (DPOS_ARCHITECTURE §8.11).
+        self.vote
             .verify_certificate::<_, _, M>(rng, subject, &certificate.vote, strategy)
-        {
-            return false;
-        }
-        match (&self.beacon, seeded_subject(&subject)) {
-            (Some(b), true) => match &certificate.seed {
-                Some(sig) => beacon::verify_seed(&b.group_public, &b.seed_namespace, round, sig),
-                None => false,
-            },
-            _ => certificate.seed.is_none(),
-        }
     }
 
     fn is_attributable() -> bool {
@@ -539,47 +503,46 @@ mod tests {
     }
 
     #[test]
-    fn group_key_verifier_accepts_cert_and_rejects_wrong_key() {
-        // A verifier-only node (cert-follower) holds ONLY PK_epoch (read from
-        // on-chain getEpochBeaconKey), no polynomial. It must verify a cert the
-        // full committee assembled, and reject one whose seed is under a
-        // different group key (the rotation bug: cert under PK_E checked vs PK_0).
-        let (schemes, seed_ns, sharing, bimap) = committee(4);
+    fn vote_only_verifier_accepts_seeded_cert_and_rejects_wrong_multisig() {
+        // After the on-chain PK_E removal every verifier (cert-follower /
+        // marshal / non-signer) checks an assembled cert MULTISIG-ONLY: a
+        // beacon-active (seeded) cert is accepted — the seed is bound by the
+        // quorum — and a cert whose multisig does not match the verified subject
+        // is rejected. (Pre-removal a `beacon: None` scheme wrongly rejected ANY
+        // seeded cert via the `_ => seed.is_none()` arm.)
+        let (schemes, _, _, bimap) = committee(4);
         let p = proposal();
         let cert = assemble_over(&schemes, Subject::Notarize { proposal: &p });
 
         let ns = fluent_namespace(NS_CHAIN);
-        let group_verifier = CombinedScheme::new_group_key(
-            VoteScheme::verifier(&ns, bimap.clone()),
-            *sharing.public(),
-            seed_ns.clone(),
-        );
+        let verifier = CombinedScheme::new(VoteScheme::verifier(&ns, bimap), None);
         let mut rng = StdRng::seed_from_u64(5);
+
         assert!(
-            group_verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+            verifier.verify_certificate::<_, Sha256Digest, N3f1>(
                 &mut rng,
                 Subject::Notarize { proposal: &p },
                 &cert,
                 &Sequential
             ),
-            "group-key verifier must accept a cert assembled under the matching PK_epoch"
+            "vote-only verifier must accept a seeded cert whose multisig matches the subject"
         );
 
-        // A different committee's group key (foreign PK) must reject the seed.
-        let (_, _, other_sharing, _) = committee(5);
-        let wrong_verifier = CombinedScheme::new_group_key(
-            VoteScheme::verifier(&ns, bimap),
-            *other_sharing.public(),
-            seed_ns,
+        // The same cert checked against a DIFFERENT proposal (foreign payload):
+        // the multisig is bound to `p`, so the quorum check fails.
+        let other = Proposal::new(
+            Round::new(Epoch::new(1), View::new(9)),
+            View::new(8),
+            Sha256Digest::decode([9u8; 32].as_slice()).unwrap(),
         );
         assert!(
-            !wrong_verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+            !verifier.verify_certificate::<_, Sha256Digest, N3f1>(
                 &mut rng,
-                Subject::Notarize { proposal: &p },
+                Subject::Notarize { proposal: &other },
                 &cert,
                 &Sequential
             ),
-            "a seed recovered under PK_E must NOT verify against a different group key"
+            "vote-only verifier must reject a cert whose multisig does not match the subject"
         );
     }
 

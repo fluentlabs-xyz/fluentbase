@@ -471,6 +471,53 @@ where
         Ok(TriggerResult::Advanced)
     }
 
+    /// Bulk catch-up committee reader: register a verify-only scheme for every
+    /// epoch in the inclusive span `[from, to]` by reading each committee from
+    /// the CURRENT finalized state — used by the consensus catch-up path
+    /// ([`crate::epoch_transition`]'s `soft_enter_span` callback) to pre-register
+    /// a whole gap in one step instead of one boundary per finalized round-trip.
+    ///
+    /// Committees are read at the SAME result-final state the in-order boundary
+    /// path uses: `read_height_for(anchor_number)` (= `anchor_number − result_lag`,
+    /// clamped to the anchor floor), resolved to an executed hash via
+    /// `executed_hash`. For each `epoch in from..=to`, `epoch_committee_snapshot`
+    /// is read at that hash; a non-empty committee is handed to `register` and
+    /// `registered` advances; the FIRST empty / unreadable / missed-commit epoch
+    /// BREAKS the loop (the on-chain commit cursor is a contiguous prefix, so a
+    /// gap means nothing above is committed yet). Returns the highest epoch
+    /// registered, or `from − 1` if the read state is unresolvable / none qualify.
+    ///
+    /// SIDE-EFFECT-FREE: it advances NO `EpochTransition` state — neither
+    /// `last_tracked_epoch` nor `pending_boundary` — and does not persist/track/
+    /// prune. It is orthogonal to the in-order `on_finalized` boundary walk: this
+    /// is a read-only fan-out that hands schemes to the marshal's verifier, while
+    /// the boundary walk remains the sole authority that advances epoch state.
+    pub async fn soft_enter_span(
+        &self,
+        from: u64,
+        to: u64,
+        anchor_number: u64,
+        register: &(dyn Fn(u64, crate::reader::ValidatorSetSnapshot) + Send + Sync),
+    ) -> u64 {
+        let none = from.saturating_sub(1);
+        let Some(read_at) = (self.executed_hash)(self.read_height_for(anchor_number)) else {
+            return none;
+        };
+        let mut registered = none;
+        for epoch in from..=to {
+            match self.reader.epoch_committee_snapshot(epoch, read_at) {
+                Ok(snap) if !snap.validators.is_empty() => {
+                    register(epoch, snap);
+                    registered = epoch;
+                }
+                // Empty (missed-commit), unreadable, or read error: the on-chain
+                // commit cursor is a contiguous prefix, so stop at the first gap.
+                _ => break,
+            }
+        }
+        registered
+    }
+
     /// Cold start: freeze the epoch geometry and read the **current
     /// finalized** committee at the EXPLICIT anchor hash `head` (the anchor
     /// is executed by construction — the one height where no `executed_hash`
@@ -604,6 +651,43 @@ mod tests {
         }
         fn active_registry_peers(&self, _at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
             Ok(self.registry.clone())
+        }
+    }
+
+    /// `MockReader` capped to a contiguous committed prefix: a committee is
+    /// non-empty for `epoch <= committed_to`, empty above — mirroring the
+    /// on-chain `commitEpochCommittee` cursor that only ever fills a prefix.
+    struct PrefixReader {
+        inner: MockReader,
+        committed_to: u64,
+    }
+    impl StakingStateRead for PrefixReader {
+        fn epoch_committee_snapshot(
+            &self,
+            epoch: u64,
+            at: B256,
+        ) -> Result<ValidatorSetSnapshot, ReadError> {
+            if epoch > self.committed_to {
+                return Ok(ValidatorSetSnapshot {
+                    block_hash: at,
+                    block_number: epoch * 100,
+                    epoch,
+                    validators: vec![],
+                });
+            }
+            self.inner.epoch_committee_snapshot(epoch, at)
+        }
+        fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
+            self.inner.undelegate_period(at)
+        }
+        fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
+            self.inner.epoch_block_interval(at)
+        }
+        fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
+            self.inner.dpos_activation_block(at)
+        }
+        fn active_registry_peers(&self, at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
+            self.inner.active_registry_peers(at)
         }
     }
 
@@ -1173,6 +1257,98 @@ mod tests {
                 vec![(5, 5), (6, 5)],
                 "epoch 6 entered via the pending-boundary replay"
             );
+        });
+    }
+
+    #[test]
+    fn soft_enter_span_registers_contiguous_committed_prefix() {
+        // The on-chain commit cursor fills only a prefix: committee non-empty for
+        // epoch ≤ committed_to, empty above. soft_enter_span must register exactly
+        // [from ..= committed_to], return committed_to, hand back snapshots equal
+        // to the boundary-path read, and touch NO EpochTransition state.
+        deterministic::Runner::default().start(|ctx| async move {
+            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
+                ValidatorSetCache::init(ctx).await.unwrap(),
+            ));
+            let h = B256::repeat_byte(0x9A);
+            let committed_to = 5u64;
+            let et = EpochTransition::new(
+                PrefixReader {
+                    inner: MockReader {
+                        committee: 4,
+                        undelegate: 7,
+                        interval: 100,
+                    },
+                    committed_to,
+                },
+                cache,
+                RecordingSink::default(),
+                64,
+                None,
+                std::sync::Arc::new(move |_n| Some(h)),
+                3,
+            );
+
+            let recorded: Arc<Mutex<Vec<(u64, ValidatorSetSnapshot)>>> = Arc::new(Mutex::new(vec![]));
+            let rec = recorded.clone();
+            let register = move |epoch: u64, snap: ValidatorSetSnapshot| {
+                rec.lock().unwrap().push((epoch, snap));
+            };
+            let registered = et.soft_enter_span(2, 8, 500, &register).await;
+
+            assert_eq!(registered, committed_to, "truncates at the committed prefix");
+            let recorded = recorded.lock().unwrap();
+            assert_eq!(
+                recorded.iter().map(|(e, _)| *e).collect::<Vec<_>>(),
+                vec![2, 3, 4, 5],
+                "registers exactly the contiguous committed prefix [2..=5]"
+            );
+            // Each handed-back snapshot equals the boundary-path read at the
+            // result-final state (read_height_for(500) resolves to `h`).
+            for (epoch, snap) in recorded.iter() {
+                let expected = et
+                    .reader
+                    .epoch_committee_snapshot(*epoch, h)
+                    .unwrap();
+                assert_eq!(snap.epoch, expected.epoch);
+                assert_eq!(snap.validators.len(), expected.validators.len());
+                assert_eq!(snap.block_hash, expected.block_hash);
+            }
+            // Side-effect-free: no ET state advanced.
+            assert_eq!(et.last_tracked_epoch, None, "soft_enter_span advances no epoch state");
+            assert!(!et.has_pending_boundary(), "soft_enter_span parks no boundary");
+        });
+    }
+
+    #[test]
+    fn soft_enter_span_unresolvable_read_state_registers_nothing() {
+        // When the executed tip hasn't reached the result-final read height, the
+        // read state is unresolvable → register nothing, return from − 1.
+        deterministic::Runner::default().start(|ctx| async move {
+            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
+                ValidatorSetCache::init(ctx).await.unwrap(),
+            ));
+            let et = EpochTransition::new(
+                MockReader {
+                    committee: 4,
+                    undelegate: 7,
+                    interval: 100,
+                },
+                cache,
+                RecordingSink::default(),
+                64,
+                None,
+                std::sync::Arc::new(|_n| None), // nothing executed yet
+                3,
+            );
+            let calls = Arc::new(Mutex::new(0u32));
+            let c = calls.clone();
+            let register = move |_e: u64, _s: ValidatorSetSnapshot| {
+                *c.lock().unwrap() += 1;
+            };
+            let registered = et.soft_enter_span(3, 8, 500, &register).await;
+            assert_eq!(registered, 2, "from − 1 when the read state is unresolvable");
+            assert_eq!(*calls.lock().unwrap(), 0, "nothing registered");
         });
     }
 }

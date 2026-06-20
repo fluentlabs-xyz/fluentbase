@@ -45,7 +45,7 @@ use tracing::{error, info};
 use crate::{
     cert_follow::upstream,
     consensus_rpc::FeedStateHandle,
-    dpos::{launch_dpos_layer, CanonicalStateAccess, CertFeed, DposConfig},
+    dpos::{build_beacon_plane, launch_dpos_layer, CanonicalStateAccess, CertFeed, DposConfig},
 };
 
 /// Which phase the supervisor enters on the current loop iteration, and the
@@ -98,8 +98,7 @@ where
         > + Clone
         + Send
         + Sync
-        + 'static
-        + crate::evm::BeaconOutcomeSink,
+        + 'static,
 {
     crate::dpos::spawn_devnet_metrics(&ctx, &cfg);
 
@@ -137,19 +136,6 @@ where
     // launch-time pair from node_modes.
     let feed_state: Option<FeedStateHandle> = cfg.cert_feed.take().map(|cf| cf.handle);
 
-    // Public threshold-beacon polynomial (`PK_epoch`), parsed once. The
-    // follower-lap verifier + deriver need it to verify the seed half of each
-    // combined cert and reproduce `prev_randao = H(seed)`; absent on a
-    // pre-beacon chain. (The signer lap's deriver gets its beacon key from the
-    // legacy `spawn_dpos` path it delegates to.)
-    let beacon_seed_namespace = fluentbase_consensus::beacon::seed::seed_namespace(
-        &fluentbase_bls::fluent_namespace(node.chain_spec().chain_id()),
-    );
-    let beacon_sharing = cfg
-        .beacon_sharing_path
-        .as_ref()
-        .map(crate::cert_follow::parse_beacon_sharing)
-        .transpose()?;
 
     // Entry rule: in the CURRENT committee → signer first, legacy
     // discriminator (Restart / FreshMigration). Codeless ChainConfig or
@@ -206,6 +192,14 @@ where
         "unified --dpos supervisor starting"
     );
 
+    // Always-on beacon/DKG plane: ONE FluentP2P + persistent DkgActor + shared
+    // CeremonyStore, built ONCE before the loop for EVERY registered validator and
+    // kept alive across the follower↔signer switch. The DkgActor deals committee[E]'s
+    // share during E-1 regardless of this node's current consensus role, so a NEWCOMER
+    // promoted at the E boundary already holds its share (early-join). Only the
+    // consensus engine toggles; the plane is aborted only at process shutdown.
+    let plane = build_beacon_plane(&ctx, &node, &cfg).await?;
+
     loop {
         let promotion = match entry {
             // Signer-first (in-committee at startup): legacy cold-start
@@ -259,34 +253,17 @@ where
                     node.provider.clone(),
                     node.evm_config.clone(),
                 );
-                // The follower deriver MUST always carry the per-epoch on-chain
-                // PK_E resolver so it derives the SAME threshold `prev_randao` as
-                // the committee once the beacon is live — even on a keyless /
-                // live-DKG-rotation chain with no genesis beacon. The resolver
-                // reads getEpochBeaconKey(E) and returns Ok(None) for an
-                // uncommitted / keyless epoch (then the seed is absent → gated
-                // fallback, matching the committee). Gating it on `beacon_sharing`
-                // left a keyless follower deriving the digest fallback while the
-                // committee derived threshold → state-root DIVERGENCE at the
-                // rotated epoch's first block. `follow_beacon` (the cert
-                // seed-verify scheme material) stays gated: the follower reads
-                // PK_E on-chain via `scheme_at` when no genesis sharing is present.
-                let genesis_pk = beacon_sharing.as_ref().map(|s| *s.public());
-                let follow_beacon = beacon_sharing
-                    .as_ref()
-                    .map(|s| (s.clone(), None, beacon_seed_namespace.clone()));
-                let deriver = deriver_base.with_beacon_resolver(
-                    beacon_seed_namespace.clone(),
-                    crate::derive::beacon_pk_resolver(reader.clone()),
-                    genesis_pk,
-                );
+                // The follower deriver computes prev_randao = H(seed) directly
+                // from the cert-recovered seed (no on-chain PK_E read — that layer
+                // is gone, DPOS_ARCHITECTURE §8.11), matching the committee.
+                let deriver = deriver_base;
                 let executed = crate::ordering::ProviderExecutedChain(node.provider.clone());
                 let follow_cfg = CertFollowConfig {
                     staking_config: staking_config.clone(),
                     l1_checkpoint_hash: None,
                     fcu_heartbeat_interval: Duration::from_secs(8),
                     stop_at_next_boundary: true,
-                    beacon: follow_beacon,
+                    beacon: None,
                 };
                 let mut handle = CertFollowLayer::launch(
                     ctx.clone(),
@@ -306,6 +283,12 @@ where
                     _ = process_token.cancelled() => {
                         handle.consensus_handle.abort();
                         ws_handle.abort();
+                        plane.net_handle.abort();
+                        plane.dkg_handle.abort();
+                        plane.poller_handle.abort();
+                        for h in &plane.mux_handles {
+                            h.abort();
+                        }
                         info!("unified supervisor exiting (shutdown) during follower phase");
                         return Ok(());
                     }
@@ -376,6 +359,11 @@ where
             let (sink, rx) = fluentbase_consensus::FeedSink::channel();
             CertFeed { sink, rx, handle }
         });
+        // RESTART-FREE re-promotion: the signer engine CLONES the shared plane —
+        // including the 5 `MuxHandle`s + the vote-backup forwarder — and registers
+        // fresh sub-channels against the plane's persistent Muxers. On demote the
+        // engine drops its `SubReceiver`s (auto-deregister); the next promotion
+        // re-clones and re-registers with NO network rebuild and NO listen re-bind.
         let mut handle = launch_dpos_layer(
             ctx.clone(),
             &node,
@@ -384,6 +372,7 @@ where
             cert_feed,
             promotion,
             Some(mode_tx),
+            plane.shared.clone(),
             phase_token.clone(),
         )
         .await?;
@@ -391,9 +380,14 @@ where
         let demoted = tokio::select! {
             biased;
             _ = process_token.cancelled() => {
-                handle.network_handle.abort();
                 handle.consensus_handle.abort();
                 info!("unified supervisor exiting (shutdown) during signer phase");
+                plane.net_handle.abort();
+                plane.dkg_handle.abort();
+                plane.poller_handle.abort();
+                for h in &plane.mux_handles {
+                    h.abort();
+                }
                 return Ok(());
             }
             ev = mode_rx.recv() => {
@@ -420,17 +414,20 @@ where
             _ = phase_token.cancelled() => {
                 // The layer's internal fatal path (e.g. 3 consecutive
                 // on_finalized errors) cancels its token.
-                handle.network_handle.abort();
                 handle.consensus_handle.abort();
                 process_token.cancel();
+                plane.net_handle.abort();
+                plane.dkg_handle.abort();
+                plane.poller_handle.abort();
+                for h in &plane.mux_handles {
+                    h.abort();
+                }
                 bail!("signer phase failed (layer cancelled its token)");
             }
             _ = &mut handle.consensus_handle => { false }
-            _ = &mut handle.network_handle => { false }
         };
 
         phase_token.cancel();
-        handle.network_handle.abort();
         handle.consensus_handle.abort();
 
         if !demoted {

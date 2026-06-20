@@ -30,7 +30,6 @@ services:
           --cert-follow \
           --sequencer-url=ws://172.20.0.10:8546 \
           --dpos.staking-config=/runtime/staking-reader.json \
-          --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex \
           --builder.extradata= \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
@@ -80,7 +79,6 @@ services:
           --cert-follow \
           --sequencer-url=ws://172.20.0.22:8546 \
           --dpos.staking-config=/runtime/staking-reader.json \
-          --dpos.beacon-sharing-path=/runtime/keys/beacon-sharing.hex \
           --builder.extradata= \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \

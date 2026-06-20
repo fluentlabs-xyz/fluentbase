@@ -7,15 +7,8 @@
 use alloy_consensus::Header;
 use alloy_primitives::B256;
 use eyre::WrapErr as _;
-use std::sync::Arc;
-use crate::evm::BeaconOutcomeSink;
-use fluentbase_consensus::beacon::{
-    outcome::{group_public_key, parse_outcome},
-    seed::{prev_randao_for_round, GroupPublic},
-    types::Seed,
-};
+use fluentbase_consensus::beacon::{seed::prev_randao_from_seed, types::Seed};
 use fluentbase_consensus::{DerivedBlock, DerivedBlockBuilder, OrderBlock, ParentHeaderMissing};
-use fluentbase_staking_reader::reader::RethStakingStateReader;
 use reth_ethereum_primitives::EthPrimitives;
 use reth_evm::{
     execute::{BlockBuilder as _, BlockExecutionError, BlockExecutionOutput, BlockValidationError},
@@ -37,8 +30,8 @@ pub struct DerivedExecution {
     pub hashed_state: HashedPostState,
     pub trie_updates: TrieUpdates,
     /// Beacon observation for the executor's `BeaconMetrics`: `Some(true)` =
-    /// verified threshold seed, `Some(false)` = beacon-active gated fallback,
-    /// `None` = pre-beacon / no seed. See [`resolve_prev_randao`].
+    /// threshold seed present (`prev_randao = H(seed)`), `None` = no seed
+    /// (pre-beacon / fallback). See [`resolve_prev_randao`].
     pub beacon_active: Option<bool>,
 }
 
@@ -56,156 +49,43 @@ impl DerivedBlock for DerivedExecution {
     }
 }
 
-/// Reads the beacon group key `PK_E` for an epoch at a given (executed-parent)
-/// state hash. `Ok(None)` ⇒ the epoch is uncommitted — DETERMINISTIC, every node
-/// sees the same empty state, so the deriver applies the genesis `PK_0` fallback.
-/// `Err` ⇒ a NON-deterministic read failure (state-visibility lag, backend error);
-/// the deriver MUST NOT collapse it into the fallback (that would diverge
-/// `prev_randao` across nodes → fork) — it propagates so the executor retries.
-type PkResolver = Arc<dyn Fn(u64, B256) -> eyre::Result<Option<GroupPublic>> + Send + Sync>;
-
-/// Build a [`PkResolver`] over the L2 staking reader: `getEpochBeaconKey(E)` read
-/// at the given state hash. Used by all deriver call sites (validator / unified /
-/// cert-follower) so the resolution policy lives in ONE place. The genesis-`PK_0`
-/// fallback for an uncommitted epoch is applied by the deriver, NOT here — a read
-/// error stays an error and is never silently substituted.
-pub fn beacon_pk_resolver<P, E>(reader: RethStakingStateReader<P, E>) -> PkResolver
-where
-    P: StateProviderFactory + HeaderProvider<Header = Header> + Send + Sync + 'static,
-    E: ConfigureEvm<Primitives = EthPrimitives> + Send + Sync + 'static,
-{
-    Arc::new(move |epoch, at| {
-        reader
-            .epoch_beacon_key(epoch, at)
-            .map_err(|e| eyre::eyre!("beacon key read for epoch {epoch}: {e}"))
-    })
-}
-
-/// Beacon verify material: a per-epoch group-key resolver + the seed namespace
-/// the deriver checks a cert-recovered seed against. `None` (the
-/// [`RethBlockDeriver::new`] default) keeps the pre-beacon behaviour —
-/// `prev_randao = order.digest()`, the gated `assurance=false` fallback. The
-/// seed itself is NOT held here: it is supplied per block by the caller
-/// (extracted from the consensus certificate), so resolution is synchronous.
-#[derive(Clone)]
-struct BeaconVerify {
-    /// `chain_namespace ‖ "_BEACON_SEED"` — verifies the seed vs `PK_E`.
-    namespace: Vec<u8>,
-    /// Reads `PK_E` for `(epoch, executed-parent state hash)`.
-    pk_for_epoch: PkResolver,
-    /// Deterministic fallback key for an UNCOMMITTED epoch (an `Ok(None)` read) —
-    /// the genesis `PK_0`. NEVER used to mask a read error.
-    genesis_pk: Option<GroupPublic>,
-}
-
-impl std::fmt::Debug for BeaconVerify {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BeaconVerify")
-            .field("namespace", &self.namespace)
-            .field("pk_for_epoch", &"<resolver>")
-            .field("genesis_pk", &self.genesis_pk)
-            .finish()
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct RethBlockDeriver<Client, Evm> {
     client: Client,
     evm_config: Evm,
-    beacon: Option<BeaconVerify>,
 }
 
 impl<Client, Evm> RethBlockDeriver<Client, Evm> {
-    /// Pre-beacon constructor: `prev_randao` is always the weak deterministic
-    /// fallback (`order.digest()`). The verified randomness path is opted into
-    /// via [`Self::with_beacon_resolver`].
     pub fn new(client: Client, evm_config: Evm) -> Self {
-        Self {
-            client,
-            evm_config,
-            beacon: None,
-        }
-    }
-
-    /// Attach the per-epoch beacon-key resolver + seed namespace + the genesis
-    /// `PK_0` fallback used to verify a cert-recovered seed. A verified seed
-    /// yields `prev_randao = H(seed)`, else the gated `order.digest()` fallback.
-    pub fn with_beacon_resolver(
-        mut self,
-        namespace: Vec<u8>,
-        pk_for_epoch: PkResolver,
-        genesis_pk: Option<GroupPublic>,
-    ) -> Self {
-        self.beacon = Some(BeaconVerify {
-            namespace,
-            pk_for_epoch,
-            genesis_pk,
-        });
-        self
+        Self { client, evm_config }
     }
 }
 
-/// Decide `prev_randao`: the gated threshold value `H(seed)` when the caller
-/// supplied a seed (recovered from the block's consensus certificate) that
-/// verifies against the epoch's `PK_E`, else the weak deterministic `fallback`.
-/// The epoch is taken from the seed's round; the key is read at
-/// `parent_evm_hash` (the executed parent block hash). A read ERROR propagates
-/// (the caller retries) — it is never absorbed into the fallback, which would
-/// diverge `prev_randao` between nodes. Free fn so it runs inside `spawn_blocking`.
+/// Decide `prev_randao` from the cert-recovered seed: `H(seed) = keccak256(σ)`
+/// when a seed is present, else the weak deterministic `fallback`. The seed is a
+/// unique threshold signature already bound by the multisig finalization cert
+/// (recovered from ≥t partials each checked at vote time), so the deriver trusts
+/// it — the on-chain `PK_E` re-verification carried no security and is gone
+/// (DPOS_ARCHITECTURE §8.11). No key, no read, no `Result`. Free fn so it runs
+/// inside `spawn_blocking`.
 ///
-/// `in_block_pk` is the group key asserted by THIS block's own `beacon_outcome`
-/// (the CHANGE-epoch boundary block, before its `PK_E` is committed on-chain) —
-/// used when the on-chain read is still empty, so the boundary block's own seed
-/// verifies and the beacon relives from block 1 of the new epoch.
-fn resolve_prev_randao(
-    beacon: Option<&BeaconVerify>,
-    seed: Option<&Seed>,
-    in_block_pk: Option<&GroupPublic>,
-    parent_evm_hash: B256,
-    fallback: B256,
-) -> eyre::Result<(B256, Option<bool>)> {
-    let (Some(beacon), Some(s)) = (beacon, seed) else {
-        return Ok((fallback, None));
-    };
-    // Ok(Some) = committed PK_E; Ok(None) = uncommitted epoch; Err =
-    // non-deterministic read failure → propagate (retry). For an uncommitted
-    // epoch, prefer this block's OWN asserted PK_E (the change-epoch boundary
-    // block commits PK_E during its own execution, so the on-chain read lags it
-    // by exactly one block), then the genesis fallback.
-    let pk_epoch = match (beacon.pk_for_epoch)(s.target_round.epoch().get(), parent_evm_hash)? {
-        Some(pk) => Some(pk),
-        None => in_block_pk.cloned().or(beacon.genesis_pk),
-    };
-    let (prev_randao, assurance) = prev_randao_for_round(
-        s.target_round,
-        Some(s),
-        pk_epoch.as_ref(),
-        &beacon.namespace,
-        fallback,
-    );
-    if assurance {
-        tracing::info!(round = ?s.target_round, %prev_randao, "beacon: threshold prev_randao active");
-    } else {
-        // Item D: a beacon-active block with an absent/unverified seed. We do NOT
-        // halt the deriver — the Stage-2 certify hook (consensus/beacon/certify.rs)
-        // Nullifies such a boundary BEFORE it finalizes, so this is only the local
-        // pre-Nullify observation on a node that derived ahead of the Nullify. WARN
-        // (not debug) + count via the executor's `beacon_digest_fallback_total`
-        // (the returned `Some(false)`), so smoke D1 can assert it is 0 post-anchor.
-        tracing::warn!(
-            round = ?s.target_round,
-            "beacon: seed present but unverified vs PK_E — gated order.digest() fallback \
-             (certify hook Nullifies a beacon-active boundary; local pre-Nullify observation)"
-        );
+/// Returns `(prev_randao, beacon_active)`: `Some(true)` = threshold randomness,
+/// `None` = no seed (pre-beacon / fallback).
+fn resolve_prev_randao(seed: Option<&Seed>, fallback: B256) -> (B256, Option<bool>) {
+    match seed {
+        Some(s) => {
+            let prev_randao = prev_randao_from_seed(s);
+            tracing::info!(round = ?s.target_round, %prev_randao, "beacon: threshold prev_randao active");
+            (prev_randao, Some(true))
+        }
+        None => (fallback, None),
     }
-    Ok((prev_randao, Some(assurance)))
 }
 
 impl<Client, Evm> DerivedBlockBuilder for RethBlockDeriver<Client, Evm>
 where
     Client: StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
     Evm: ConfigureEvm<Primitives = EthPrimitives, NextBlockEnvCtx = NextBlockEnvAttributes>
-        + BeaconOutcomeSink
         + Clone
         + 'static,
 {
@@ -217,40 +97,13 @@ where
         parent_evm_hash: B256,
         seed: Option<Seed>,
     ) -> eyre::Result<DerivedExecution> {
-        // A cert that recovered a seed means the chain is beacon-active at this
-        // height. A deriver with no verify material (`with_beacon_resolver` not
-        // wired) would silently fall back to `order.digest()` for every such block
-        // and fork vs verifying nodes. The legitimate pre-beacon `new()` and
-        // `--dpos.no-beacon` paths never see a seed, so this never trips them.
-        debug_assert!(
-            seed.is_none() || self.beacon.is_some(),
-            "beacon-active block (cert carried a seed) but RethBlockDeriver has no verify \
-             material — with_beacon_resolver was not wired"
-        );
         let client = self.client.clone();
         let evm_config = self.evm_config.clone();
-        let beacon = self.beacon.clone();
         let fallback = order.digest().0;
-        // prev_randao resolution does a blocking EVM STATICCALL (the beacon-key
-        // read), and EVM execution + state-root are CPU-bound (~V per block) —
-        // keep both off the async worker threads. A read error propagates so the
-        // caller retries (never silently degrades prev_randao).
+        // EVM execution + state-root are CPU-bound (~V per block) — keep off the
+        // async worker threads.
         tokio::task::spawn_blocking(move || {
-            // The change-epoch boundary block asserts PK_E in its own
-            // beacon_outcome before it is committed on-chain — recover it here so
-            // the boundary block's seed verifies (beacon relives from block 1).
-            let in_block_pk = order
-                .beacon_outcome
-                .as_ref()
-                .and_then(|b| parse_outcome(b.as_ref()).ok())
-                .map(|o| *group_public_key(&o));
-            let (prev_randao, beacon_active) = resolve_prev_randao(
-                beacon.as_ref(),
-                seed.as_ref(),
-                in_block_pk.as_ref(),
-                parent_evm_hash,
-                fallback,
-            )?;
+            let (prev_randao, beacon_active) = resolve_prev_randao(seed.as_ref(), fallback);
             derive_sync(
                 &client,
                 &evm_config,
@@ -275,8 +128,7 @@ fn derive_sync<Client, Evm>(
 ) -> eyre::Result<DerivedExecution>
 where
     Client: StateProviderFactory + HeaderProvider<Header = Header>,
-    Evm: ConfigureEvm<Primitives = EthPrimitives, NextBlockEnvCtx = NextBlockEnvAttributes>
-        + BeaconOutcomeSink,
+    Evm: ConfigureEvm<Primitives = EthPrimitives, NextBlockEnvCtx = NextBlockEnvAttributes>,
 {
     let parent_header = client
         .header(parent_evm_hash)
@@ -309,26 +161,14 @@ where
         gas_limit: order.gas_limit,
         parent_beacon_block_root: Some(B256::ZERO),
         withdrawals: None,
+        // A change-epoch boundary block's `extra_data` already carries the agreed
+        // 96-byte `PK_E` tail (encoded by the proposer in `application.rs`), so the
+        // derived header carries it verbatim and the executor commits
+        // `commitEpochBeaconKey` from the block itself — build AND import identical,
+        // no out-of-band map. See `extra_data.rs` (the `flags`/PK wire format).
         extra_data: order.extra_data.clone(),
         slot_number: None,
     };
-
-    // Producer: a boundary block carries the agreed DKG outcome. Stash the
-    // 96-byte group public key `PK_E` for the executor's `commitEpochBeaconKey`
-    // system call, keyed by the EVM block number being derived (= parent + 1,
-    // the executor's read key). Commit ONLY the group key (`Output::public()`
-    // encoded) — what `getEpochBeaconKey`/the reader's 96-byte `decode_beacon_key`
-    // expects — NOT the full ~745-byte encoded outcome; this matches the genesis
-    // bootstrap's `commitEpochBeaconKey(0, sharing.public().encode())`. Inside
-    // the deriver this covers every path (spec-exec + finalized + retry); the
-    // value comes ONLY from the agreed OrderBlock field, never a node-local key.
-    if let Some(outcome) = &order.beacon_outcome {
-        use commonware_codec::Encode as _;
-        let parsed = parse_outcome(outcome.as_ref())
-            .map_err(|e| eyre::eyre!("parse beacon_outcome for on-chain commit: {e:?}"))?;
-        let group_key = group_public_key(&parsed).encode().as_ref().to_vec();
-        evm_config.set_beacon_outcome(parent_sealed.number + 1, group_key.into());
-    }
 
     let mut builder = evm_config
         .builder_for_next_block(&mut db, &parent_sealed, attrs)
@@ -489,7 +329,7 @@ mod tests {
     // otherwise (height absent, or no beacon source) it degrades to the weak
     // deterministic fallback — never blocking, the Q4 assurance=false path.
     #[test]
-    fn resolve_prev_randao_uses_verified_seed_else_falls_back() {
+    fn resolve_prev_randao_uses_seed_else_falls_back() {
         use commonware_consensus::types::{Epoch, Round, View};
         use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
         use commonware_utils::{test_rng, N3f1, NZU32};
@@ -512,71 +352,14 @@ mod tests {
         let expected = prev_randao_from_seed(&seed);
         let fallback = B256::repeat_byte(0x99);
 
-        // A constant resolver (every epoch → the same `PK_0`, Ok) reproduces the
-        // pre-rotation static-key behaviour; `at` is ignored.
-        let pk = *sharing.public();
-        let resolver: PkResolver = Arc::new(move |_epoch, _at| Ok(Some(pk)));
-        let beacon = BeaconVerify {
-            namespace: ns,
-            pk_for_epoch: resolver,
-            genesis_pk: Some(pk),
-        };
-        let at = B256::ZERO;
-
-        // seed present + verifies → threshold randomness, beacon_active = Some(true).
+        // Seed present → threshold randomness `H(seed)`, beacon_active = Some(true).
+        // The seed is bound by the multisig cert, so the deriver trusts it — no
+        // on-chain PK_E re-verify (that layer is gone, DPOS_ARCHITECTURE §8.11).
         assert_eq!(
-            resolve_prev_randao(Some(&beacon), Some(&seed), None, at, fallback).unwrap(),
+            resolve_prev_randao(Some(&seed), fallback),
             (expected, Some(true))
         );
-        // a seed for a DIFFERENT round → gated fallback (round mismatch),
-        // beacon_active = Some(false) (a beacon-active gated-fallback observation).
-        let other = Seed {
-            target_round: Round::new(Epoch::new(1), View::new(51)),
-            signature: seed.signature,
-        };
-        assert_eq!(
-            resolve_prev_randao(Some(&beacon), Some(&other), None, at, fallback).unwrap(),
-            (fallback, Some(false))
-        );
-        // no seed → fallback, not a beacon observation.
-        assert_eq!(
-            resolve_prev_randao(Some(&beacon), None, None, at, fallback).unwrap(),
-            (fallback, None)
-        );
-        // no beacon source at all → fallback, not a beacon observation.
-        assert_eq!(
-            resolve_prev_randao(None, Some(&seed), None, at, fallback).unwrap(),
-            (fallback, None)
-        );
-        // a resolver read ERROR propagates (never silently degrades).
-        let erroring: PkResolver = Arc::new(|_e, _a| Err(eyre::eyre!("read failed")));
-        let beacon_err = BeaconVerify {
-            namespace: beacon.namespace.clone(),
-            pk_for_epoch: erroring,
-            genesis_pk: Some(pk),
-        };
-        assert!(resolve_prev_randao(Some(&beacon_err), Some(&seed), None, at, fallback).is_err());
-
-        // Boundary edge: the on-chain read is empty (uncommitted epoch), but THIS
-        // block asserts PK_E in its own beacon_outcome → use it so the seed
-        // verifies (beacon relives from block 1). With no genesis fallback, ONLY
-        // the in-block key makes the seed verify.
-        let none_resolver: PkResolver = Arc::new(|_e, _a| Ok(None));
-        let beacon_no_genesis = BeaconVerify {
-            namespace: beacon.namespace.clone(),
-            pk_for_epoch: none_resolver,
-            genesis_pk: None,
-        };
-        assert_eq!(
-            resolve_prev_randao(Some(&beacon_no_genesis), Some(&seed), Some(&pk), at, fallback)
-                .unwrap(),
-            (expected, Some(true)),
-            "uncommitted epoch uses the in-block PK_E"
-        );
-        assert_eq!(
-            resolve_prev_randao(Some(&beacon_no_genesis), Some(&seed), None, at, fallback).unwrap(),
-            (fallback, Some(false)),
-            "uncommitted epoch, no in-block key, no genesis → gated fallback"
-        );
+        // No seed → fallback, not a beacon observation.
+        assert_eq!(resolve_prev_randao(None, fallback), (fallback, None));
     }
 }

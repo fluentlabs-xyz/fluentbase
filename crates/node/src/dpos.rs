@@ -11,15 +11,25 @@ use std::{
 };
 
 use commonware_runtime::tokio::Context;
-// `Metrics` (ctx.with_label, ctx.encode) + `Spawner` (ctx.spawn) — used by the
-// cert-feed actor (unconditional) and the feature-gated devnet metrics endpoint.
+// `Clock` (ctx.current/sleep in the finalized-height poller) + `Metrics`
+// (ctx.with_label, ctx.encode) + `Spawner` (ctx.spawn) — used by the always-on
+// beacon plane, the cert-feed actor, and the feature-gated devnet metrics endpoint.
 use commonware_consensus::types::Height;
-use commonware_runtime::{Metrics as _, Spawner as _};
+use commonware_p2p::{
+    utils::mux::{Builder, Muxer},
+    Ingress,
+};
+use commonware_runtime::{Clock as _, Handle, Metrics as _, Spawner as _};
 use eyre::{eyre, OptionExt as _, WrapErr as _};
 use fluentbase_consensus::dpos::{
-    DposLayer, DposLayerConfig, DposLayerHandle, P2pParams, RethHandle,
+    DposLayer, DposLayerConfig, DposLayerHandle, RethHandle, ResettableForward, SharedBeaconPlane,
+    VoteBackupItem,
 };
 pub use fluentbase_consensus::FeedSink;
+use fluentbase_p2p::{FluentP2P, FluentP2PConfig};
+use fluentbase_staking_reader::{
+    reader::RethStakingStateReader, EpochTransition, ValidatorSetCache,
+};
 
 use crate::consensus_rpc::{feed_actor::FeedActor, FeedStateHandle};
 use reth_chain_state::CanonicalInMemoryState;
@@ -29,8 +39,12 @@ use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
 use reth_node_api::{FullNodeComponents, FullNodeTypes};
 use reth_node_builder::{rpc::RethRpcAddOns, FullNode};
 use reth_provider::providers::{BlockchainProvider, ProviderNodeTypes};
-use reth_storage_api::{BlockHashReader, BlockIdReader, BlockNumReader, BlockReader};
-use tokio::sync::mpsc;
+use reth_storage_api::{
+    BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider,
+    StateProviderFactory,
+};
+use std::time::Duration;
+use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -91,16 +105,6 @@ pub struct DposConfig {
     /// outside the committee and auto-promotes/demotes at epoch boundaries
     /// (no restarts). Empty = legacy `--dpos` (signer-or-silent-verifier).
     pub follower_upstreams: Vec<String>,
-    /// Hex-encoded commonware `Share` — this validator's threshold-beacon DKG
-    /// share. `None` = verifier-only on the beacon plane.
-    pub beacon_share_path: Option<PathBuf>,
-    /// Hex-encoded commonware `Sharing` (public polynomial). Presence enables
-    /// the randomness beacon (`prev_randao(h) = H(seed(h))`).
-    pub beacon_sharing_path: Option<PathBuf>,
-    /// `--dpos.no-beacon` (item K): run PRE-BEACON — no live DKG, no beacon
-    /// verify/propose context (committee changes stay pure multisig). Mutually
-    /// exclusive with `beacon_sharing_path` (the clap `beacon` ArgGroup).
-    pub no_beacon: bool,
     /// DEVNET/TEST-ONLY byzantine mode string (`--dpos.byzantine`). Gated behind
     /// `dpos-devnet-byzantine`; the field does not exist in a production build.
     #[cfg(feature = "dpos-devnet-byzantine")]
@@ -228,46 +232,6 @@ pub struct DposArgs {
     )]
     pub dpos_slasher_keystore_password_file: Option<PathBuf>,
 
-    /// This validator's threshold randomness-beacon DKG share (hex-encoded
-    /// commonware `Share`). Devnet bootstrap deals the key at genesis and
-    /// writes it per validator; absent = verifier-only on the beacon plane
-    /// (still collects peers' partials, never signs). Requires
-    /// `--dpos.beacon-sharing-path`.
-    #[arg(
-        long = "dpos.beacon-share-path",
-        env = "FLUENT_DPOS_BEACON_SHARE_PATH",
-        requires = "dpos_beacon_sharing_path"
-    )]
-    pub dpos_beacon_share_path: Option<PathBuf>,
-
-    /// The beacon public polynomial (hex-encoded commonware `Sharing`) — public
-    /// info used to verify seed partials, recover the threshold seed, and
-    /// derive `PK_epoch`. Shared by all nodes. Enables the beacon plane.
-    /// Exactly one of `{--dpos.beacon-sharing-path, --dpos.no-beacon}` is
-    /// required under `--dpos` (the `beacon` ArgGroup + `requires_if` on `--dpos`)
-    /// — fail-closed so a `--dpos` node can never SILENTLY run with weak
-    /// (`order.digest()`) randomness; the opt-out must be explicit.
-    #[arg(
-        long = "dpos.beacon-sharing-path",
-        env = "FLUENT_DPOS_BEACON_SHARING_PATH",
-        group = "beacon"
-    )]
-    pub dpos_beacon_sharing_path: Option<PathBuf>,
-
-    /// Explicit opt-out of the randomness beacon: run this `--dpos` node
-    /// pure-multisig with the weak deterministic `order.digest()` `prev_randao`.
-    /// Mutually exclusive with `--dpos.beacon-sharing-path`; exactly one of the
-    /// two is required under `--dpos`. No `default_value_t` — a bool flag with a
-    /// default is treated by clap as always-present and would defeat the
-    /// exactly-one `beacon` group check.
-    #[arg(
-        long = "dpos.no-beacon",
-        env = "FLUENT_DPOS_NO_BEACON",
-        conflicts_with = "dpos_beacon_sharing_path",
-        group = "beacon"
-    )]
-    pub dpos_no_beacon: bool,
-
     /// DEVNET/TEST-ONLY byzantine validator mode (e.g. `forge-beacon-pk`). Compiled
     /// in ONLY with the `dpos-devnet-byzantine` cargo feature; the flag does not
     /// exist in a production build. Used by the byzantine-vrf smoke to prove the
@@ -306,9 +270,6 @@ impl DposConfig {
             metrics_port: args.dpos_metrics_port,
             cert_feed,
             follower_upstreams: args.dpos_follower_upstream.clone(),
-            beacon_share_path: args.dpos_beacon_share_path.clone(),
-            beacon_sharing_path: args.dpos_beacon_sharing_path.clone(),
-            no_beacon: args.dpos_no_beacon,
             #[cfg(feature = "dpos-devnet-byzantine")]
             byzantine_mode: args.dpos_byzantine.clone(),
         }
@@ -347,8 +308,7 @@ where
         > + Clone
         + Send
         + Sync
-        + 'static
-        + crate::evm::BeaconOutcomeSink,
+        + 'static,
 {
     crate::utils::spawn_consensus_thread("dpos", move |ctx, node| async move {
         if cfg.follower_upstreams.is_empty() {
@@ -392,8 +352,7 @@ where
         > + Clone
         + Send
         + Sync
-        + 'static
-        + crate::evm::BeaconOutcomeSink,
+        + 'static,
 {
     spawn_devnet_metrics(&ctx, &cfg);
 
@@ -401,6 +360,11 @@ where
     // Claim the single-execution import escrow ONCE per process.
     let beacon_engine =
         crate::importer::RethImporter::from_env(node.add_ons_handle.beacon_engine_handle.clone())?;
+
+    // Always-on beacon plane (one FluentP2P + 5 persistent Muxers + persistent
+    // DkgActor + shared store), built ONCE — the legacy `--dpos` path runs a single
+    // signer engine over it (it CLONES the shared plane, including the MuxHandles).
+    let mut plane = build_beacon_plane(&ctx, &node, &cfg).await?;
     let mut handle = launch_dpos_layer(
         ctx,
         &node,
@@ -409,13 +373,14 @@ where
         cert_feed,
         false,
         None,
+        plane.shared.clone(),
         shutdown_token.clone(),
     )
     .await?;
 
     // Supervisor: on any unexpected exit, cancel the shared
     // shutdown_token so reth/main also bring everything down gracefully;
-    // abort the surviving handle to release runtime resources.
+    // abort the surviving handles to release runtime resources.
     let exit_reason = tokio::select! {
         _ = shutdown_token.cancelled() => {
             info!("DPoS thread received shutdown signal, exiting");
@@ -429,7 +394,7 @@ where
             shutdown_token.cancel();
             "consensus_exit"
         }
-        res = &mut handle.network_handle => {
+        res = &mut plane.net_handle => {
             match res {
                 Ok(()) => warn!("p2p Network exited cleanly (unexpected)"),
                 Err(e) => error!(error = ?e, "p2p Network task failed"),
@@ -439,7 +404,12 @@ where
         }
     };
 
-    handle.network_handle.abort();
+    plane.net_handle.abort();
+    plane.dkg_handle.abort();
+    plane.poller_handle.abort();
+    for h in &plane.mux_handles {
+        h.abort();
+    }
     handle.consensus_handle.abort();
 
     info!(reason = exit_reason, "DPoS thread exiting");
@@ -474,6 +444,376 @@ pub(crate) fn spawn_devnet_metrics(ctx: &Context, cfg: &DposConfig) {
     }
 }
 
+/// The always-on beacon/DKG plane, built ONCE per process (before the
+/// follower↔signer loop) and kept alive across every phase switch. It owns the
+/// single `FluentP2P` (so there is exactly one network / `listen` bind / peer set),
+/// the 5 persistent non-beacon channel `Muxer`s (the brokers the per-promotion
+/// signer engine registers sub-channels against — so a demote→re-promote needs NO
+/// network rebuild), the persistent `DkgActor` (committee[E] deals during E-1
+/// regardless of this node's current consensus role), the shared `ceremony_store`
+/// (reloaded from `<datadir>/beacon/` once), and an `EpochTransition`-driven Oracle
+/// peer set fed by a finalized-height poller (the DKG clock that keeps ticking while
+/// this node is a FOLLOWER). The signer engine CLONES the shared `Arc`s +
+/// `MuxHandle`s per promotion; only its consensus engine is aborted on a phase
+/// switch — the plane's network/broker/DkgActor handles survive until process
+/// shutdown.
+pub(crate) struct BeaconPlane {
+    /// The single network's start handle — aborted ONLY at process shutdown.
+    pub net_handle: Handle<()>,
+    /// The persistent `DkgActor` task — aborted ONLY at process shutdown.
+    pub dkg_handle: Handle<()>,
+    /// The finalized-height poller driving the plane's ET + `dkg_height` clock.
+    pub poller_handle: Handle<()>,
+    /// The 5 persistent non-beacon `Muxer` broker tasks (vote/cert/resolver/
+    /// broadcast/marshal) + the vote-backup forwarder — aborted ONLY at process
+    /// shutdown (they outlive every per-promotion signer engine).
+    pub mux_handles: Vec<Handle<()>>,
+    /// Shared store + committee resolver + Oracle + metrics + the 5 `MuxHandle`s +
+    /// the vote-backup forwarder, CLONED into the signer engine per promotion (the
+    /// engine never re-builds any of these or re-binds the network).
+    pub shared: SharedBeaconPlane,
+}
+
+/// Build the always-on beacon plane for a registered `--dpos` validator. Mirrors
+/// the network/EpochTransition/DkgActor construction that used to live inside
+/// `DposLayer::launch`, lifted UP so it persists across the consensus role switch.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn build_beacon_plane<N, AddOns>(
+    ctx: &Context,
+    node: &FullNode<N, AddOns>,
+    cfg: &DposConfig,
+) -> eyre::Result<BeaconPlane>
+where
+    N: FullNodeComponents<
+        Types: reth_node_api::NodeTypes<
+            Payload = EthEngineTypes,
+            Primitives = reth_ethereum_primitives::EthPrimitives,
+        >,
+    >,
+    AddOns: RethRpcAddOns<N>,
+    <N as FullNodeTypes>::Provider: Clone
+        + BlockReader<Block = RethBlock>
+        + BlockHashReader
+        + BlockNumReader
+        + BlockIdReader
+        + StateProviderFactory
+        + HeaderProvider<Header = alloy_consensus::Header>
+        + CanonicalStateAccess
+        + Send
+        + Sync
+        + 'static,
+    <N as FullNodeComponents>::Evm:
+        reth_evm::ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
+{
+    let chain_id = node.chain_spec().chain_id();
+    let peer_keypair = fluentbase_p2p::read_ed25519_key_from_file(&cfg.peer_key_path)
+        .wrap_err_with(|| format!("failed loading peer key from {}", cfg.peer_key_path.display()))?;
+    let staking_config = fluentbase_staking_reader::reader::StakingReaderConfig::from_json_path(
+        &cfg.staking_config_path,
+    )
+    .wrap_err_with(|| {
+        format!(
+            "failed loading staking config from {}",
+            cfg.staking_config_path.display()
+        )
+    })?;
+    let bootstrappers = fluentbase_p2p::bootstrappers::load_from_json_path(&cfg.bootstrappers_path)
+        .wrap_err_with(|| {
+            format!(
+                "failed loading bootstrappers from {}",
+                cfg.bootstrappers_path.display()
+            )
+        })?;
+
+    // The ONE network: build + start ONCE. The beacon halves go to the DkgActor;
+    // the non-beacon halves are handed down to the (first) signer engine; the oracle
+    // (the only Clone handle) is shared by the plane's ET and the engine's blocker.
+    let listen = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), cfg.p2p_port);
+    let dialable = cfg.dialable.unwrap_or(listen);
+    let (p2p, handles) = FluentP2P::build(
+        ctx.clone(),
+        FluentP2PConfig {
+            crypto: peer_keypair.clone(),
+            chain_id,
+            listen,
+            dialable: Ingress::Socket(dialable),
+            bootstrappers,
+        },
+    );
+    let net_handle = p2p.start();
+
+    // The 5 persistent non-beacon channel Muxers. The plane owns these brokers for
+    // the whole process; each promotion's signer engine CLONES the `MuxHandle`s and
+    // registers per-epoch (vote/cert/resolver) / subchannel-0 (broadcast/marshal)
+    // sub-channels. A demoted engine drops its `SubReceiver`s (auto-deregister); the
+    // next promotion re-registers against the SAME brokers — restart-free. The vote
+    // Muxer carries a backup channel for catch-up hints; the plane forwards it to the
+    // currently-active engine via a re-settable forwarder (`vote_backup`).
+    let mux_mailbox = 256usize;
+    let (mux_vote, vote_mux, vote_backup_rx) = Muxer::builder(
+        ctx.with_label("plane_vote_mux"),
+        handles.vote_sender,
+        handles.vote_receiver,
+        mux_mailbox,
+    )
+    .with_backup()
+    .build();
+    let (mux_cert, cert_mux) = Muxer::new(
+        ctx.with_label("plane_cert_mux"),
+        handles.cert_sender,
+        handles.cert_receiver,
+        mux_mailbox,
+    );
+    let (mux_res, resolver_mux) = Muxer::new(
+        ctx.with_label("plane_resolver_mux"),
+        handles.resolver_sender,
+        handles.resolver_receiver,
+        mux_mailbox,
+    );
+    let (mux_bcast, broadcast_mux) = Muxer::new(
+        ctx.with_label("plane_broadcast_mux"),
+        handles.broadcast_sender,
+        handles.broadcast_receiver,
+        mux_mailbox,
+    );
+    let (mux_marshal, marshal_mux) = Muxer::new(
+        ctx.with_label("plane_marshal_mux"),
+        handles.marshal_sender,
+        handles.marshal_receiver,
+        mux_mailbox,
+    );
+    // Adopt each Muxer's run-handle under a thin shim so all plane-broker handles
+    // share one `Handle<()>` shutdown-abort type (the Muxer's `start()` returns a
+    // `Handle<Result<(), Error>>`; aborting the shim aborts the awaited muxer task).
+    let adopt = |label: &str, h: commonware_runtime::Handle<_>| -> Handle<()> {
+        ctx.with_label(label).spawn(move |_| async move {
+            if let Ok(Err(e)) = h.await {
+                warn!(error = ?e, "plane Muxer p2p receiver failed");
+            }
+        })
+    };
+    let mut mux_handles: Vec<Handle<()>> = vec![
+        adopt("plane_vote_mux_sup", mux_vote.start()),
+        adopt("plane_cert_mux_sup", mux_cert.start()),
+        adopt("plane_resolver_mux_sup", mux_res.start()),
+        adopt("plane_broadcast_mux_sup", mux_bcast.start()),
+        adopt("plane_marshal_mux_sup", mux_marshal.start()),
+    ];
+
+    // Vote-backup re-settable forwarder: the plane owns the move-only backup
+    // receiver and re-broadcasts each catch-up item to the CURRENTLY-active
+    // EpochManager (`subscribe()`d fresh per promotion). While no engine is up the
+    // parked sender is `None`/closed and items are dropped — a follower needs no
+    // catch-up hint.
+    let vote_backup: ResettableForward<VoteBackupItem> = ResettableForward::new(mux_mailbox);
+    mux_handles.push({
+        let slot = vote_backup.slot();
+        ctx.with_label("plane_vote_backup_fwd")
+            .spawn(move |_| async move {
+                let mut rx = vote_backup_rx;
+                while let Some(item) = rx.recv().await {
+                    let guard = slot.lock().await;
+                    if let Some(tx) = guard.as_ref() {
+                        let _ = tx.try_send(item);
+                    }
+                }
+            })
+    });
+
+    // Shared live-DKG store, reloaded from `<datadir>/beacon/` ONCE.
+    let beacon_dir = node.data_dir.data_dir().join("beacon");
+    let ceremony_store: fluentbase_consensus::beacon::actor::CeremonyStore =
+        Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()));
+    // Edge-trigger the DkgActor fires when a share lands; the EpochManager's
+    // `enter` waits on it (instead of polling) so a signer that reaches the
+    // boundary before its share is memoized wakes the instant it lands.
+    let share_notify = Arc::new(tokio::sync::Notify::new());
+    let reloaded = fluentbase_consensus::beacon::share_state::load_all(&beacon_dir);
+    if !reloaded.is_empty() {
+        if let Ok(mut store) = ceremony_store.write() {
+            for (epoch, output, share) in reloaded {
+                info!(epoch, "beacon: reloaded persisted live-DKG share from disk");
+                store.insert(epoch, (output, share));
+            }
+        }
+    }
+
+    // On-chain committee resolver (deal/carry-forward set), shared by the DkgActor
+    // and the per-engine verify gate. Reads committee[E] at the current finalized
+    // EVM hash (mirrors the resolver that used to live in `DposLayer::launch`).
+    let committee_for: fluentbase_consensus::beacon::actor::CommitteeFor = {
+        let reader = RethStakingStateReader::new(
+            node.provider.clone(),
+            node.evm_config.clone(),
+            staking_config.clone(),
+        );
+        let provider = node.provider.clone();
+        Arc::new(move |epoch: u64| {
+            let fin = provider.finalized_block_number().ok().flatten()?;
+            let hash = provider.block_hash(fin).ok().flatten()?;
+            let snap = reader.epoch_committee_snapshot(epoch, hash).ok()?;
+            if snap.validators.is_empty() {
+                return None;
+            }
+            Some(commonware_utils::ordered::Set::from_iter_dedup(
+                snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
+            ))
+        })
+    };
+
+    // Beacon counters — registered ONCE here (the persistent layer); cloned (never
+    // re-registered) into the DkgActor + each per-epoch signer engine.
+    let beacon_metrics = fluentbase_consensus::beacon::metrics::BeaconMetrics::default();
+    beacon_metrics.register(ctx);
+
+    // EpochTransition-driven Oracle peer set + the `dkg_height` clock, both fed by a
+    // persistent finalized-height poller (reth `finalized_block_number`) — a source
+    // that exists in BOTH the follower and signer phases, unlike the per-engine
+    // boundary hook. cold_start tracks the initial committee's peer set so the node
+    // is connected on BEACON_CHANNEL from block 1 of its follower phase.
+    let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
+    let cache = Arc::new(Mutex::new(
+        ValidatorSetCache::init(ctx.with_label("beacon_plane_cache"))
+            .await
+            .wrap_err("failed initializing beacon-plane ValidatorSetCache")?,
+    ));
+    let et_reader = RethStakingStateReader::new(
+        node.provider.clone(),
+        node.evm_config.clone(),
+        staking_config.clone(),
+    );
+    let provider_for_et = node.provider.clone();
+    let mut epoch_transition = EpochTransition::new(
+        et_reader,
+        cache,
+        handles.oracle.clone(),
+        fluentbase_p2p::constants::MAX_REGISTRY_PEER_SET as usize,
+        None,
+        Arc::new(move |n| provider_for_et.block_hash(n).ok().flatten()),
+        fluentbase_consensus::K,
+    );
+    let (cs_fin_num, cs_fin_hash) = node
+        .provider
+        .finalized_block_num_hash()
+        .ok()
+        .flatten()
+        .map(|nh| (nh.number, nh.hash))
+        .unwrap_or_else(|| (0, node.chain_spec().genesis_hash()));
+    epoch_transition
+        .cold_start(cs_fin_hash, cs_fin_num)
+        .await
+        .wrap_err("beacon-plane epoch_transition cold_start failed")?;
+    let et_arc = Arc::new(Mutex::new(epoch_transition));
+
+    // Finalized-height poller, feeding TWO sinks off the SAME EL-finalized cursor:
+    //   - `dkg_height` ← `fin + K` (ORDERING-finalized): the executor sets the
+    //     EL-finalized height = `result_final_height(tip, floor) = ordering_finalized
+    //     − K` (`order_block.rs::result_final_height`, `K = fluentbase_consensus::K`),
+    //     so `fin + K` is the ordering-finalized height that produced `fin`. The
+    //     DkgActor's seal deadline + `epoch_start` geometry are ORDERING-chain
+    //     quantities; feeding it the raw EL-finalized `fin` would silently shorten
+    //     the `DKG_MARGIN_BLOCKS` window by K (the epoch-2 boundary wedge). For every
+    //     epoch ≥ 1 the cold-start floor clamp is inactive, so `fin + K` == the
+    //     ordering tip exactly.
+    //   - `et.on_finalized(fin)` ← raw EL-finalized `fin`: the peer-set tracker's
+    //     `read_height_for(n) = n − K` contract assumes a finalized input; do NOT
+    //     shift it.
+    let poller_handle = {
+        let provider = node.provider.clone();
+        let et = et_arc.clone();
+        let dkg_tx = dkg_height_tx.clone();
+        ctx.with_label("beacon_plane_poller")
+            .spawn(move |c| async move {
+                let mut sent = cs_fin_num;
+                let _ = dkg_tx.try_send(cs_fin_num + fluentbase_consensus::K);
+                loop {
+                    c.sleep(Duration::from_millis(500)).await;
+                    let Ok(Some(fin)) = provider.finalized_block_number() else {
+                        continue;
+                    };
+                    while sent < fin {
+                        sent += 1;
+                        let _ = dkg_tx.try_send(sent + fluentbase_consensus::K);
+                    }
+                    // Drive the boundary detection; errors here are non-fatal to the
+                    // beacon plane (the engine's own ET is the authoritative boundary
+                    // path) — log and keep the peer set tracking.
+                    let outcome = { et.lock().await.on_finalized(fin).await };
+                    if let Err(e) = outcome {
+                        warn!(finalized = fin, error = ?e, "beacon plane: ET on_finalized failed");
+                    }
+                }
+            })
+    };
+
+    // The persistent DkgActor — spawned ONCE, runs for the whole process.
+    let dkg_namespace = fluentbase_consensus::beacon::seed::seed_namespace(
+        &fluentbase_bls::fluent_namespace(chain_id),
+    );
+    let activation = {
+        let reader = RethStakingStateReader::new(
+            node.provider.clone(),
+            node.evm_config.clone(),
+            staking_config.clone(),
+        );
+        reader.dpos_activation_block(cs_fin_hash).unwrap_or(0)
+    };
+    let interval = {
+        let reader = RethStakingStateReader::new(
+            node.provider.clone(),
+            node.evm_config.clone(),
+            staking_config.clone(),
+        );
+        reader.epoch_block_interval(cs_fin_hash).unwrap_or(1).max(1)
+    };
+    let dkg_actor = fluentbase_consensus::beacon::actor::DkgActor::new(
+        dkg_namespace,
+        peer_keypair,
+        handles.beacon_sender,
+        handles.beacon_receiver,
+        committee_for.clone(),
+        ceremony_store.clone(),
+        share_notify.clone(),
+        activation,
+        interval as u64,
+        beacon_metrics.clone(),
+        Some(beacon_dir),
+    );
+    let dkg_handle = ctx
+        .with_label("dkg_actor")
+        .spawn(move |c| async move { dkg_actor.run(dkg_height_rx, c).await });
+
+    info!(
+        listen = %listen,
+        activation,
+        interval,
+        "always-on beacon plane built (one FluentP2P, persistent DkgActor)"
+    );
+
+    Ok(BeaconPlane {
+        net_handle,
+        dkg_handle,
+        poller_handle,
+        mux_handles,
+        shared: SharedBeaconPlane {
+            oracle: handles.oracle,
+            ceremony_store,
+            share_notify,
+            committee_for,
+            beacon_metrics,
+            // Share each MuxHandle behind Arc<Mutex> (the per-promotion Clone + the
+            // transient register-lock; the move-only DiscReceiver makes the bare
+            // MuxHandle un-Clone-able).
+            vote_mux: Arc::new(Mutex::new(vote_mux)),
+            cert_mux: Arc::new(Mutex::new(cert_mux)),
+            resolver_mux: Arc::new(Mutex::new(resolver_mux)),
+            broadcast_mux: Arc::new(Mutex::new(broadcast_mux)),
+            marshal_mux: Arc::new(Mutex::new(marshal_mux)),
+            vote_backup,
+        },
+    })
+}
+
 /// Build and launch the DPoS layer once: load operator keys + JSON configs,
 /// construct the `PoolTxSink`/deriver/assembler over the node's own
 /// provider, hand everything to [`DposLayer::launch`], wire the cert-feed
@@ -489,6 +829,7 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     cert_feed: Option<CertFeed>,
     promotion: bool,
     mode_events: Option<tokio::sync::mpsc::UnboundedSender<fluentbase_consensus::ModeEvent>>,
+    shared_beacon: SharedBeaconPlane,
     shutdown_token: CancellationToken,
 ) -> eyre::Result<DposLayerHandle>
 where
@@ -514,8 +855,7 @@ where
         > + Clone
         + Send
         + Sync
-        + 'static
-        + crate::evm::BeaconOutcomeSink,
+        + 'static,
 {
     let chain_id = node.chain_spec().chain_id();
     let bls_keypair = load_bls_keypair(cfg, chain_id)?;
@@ -537,19 +877,6 @@ where
             cfg.staking_config_path.display()
         )
     })?;
-    let bootstrappers = fluentbase_p2p::bootstrappers::load_from_json_path(&cfg.bootstrappers_path)
-        .wrap_err_with(|| {
-            format!(
-                "failed loading bootstrappers from {}",
-                cfg.bootstrappers_path.display()
-            )
-        })?;
-    info!(
-        count = bootstrappers.len(),
-        path = %cfg.bootstrappers_path.display(),
-        chain_id,
-        "DPoS bootstrappers loaded"
-    );
 
     // Build PoolTxSink host-side: PoolTxSink<P, Provider> carries concrete
     // reth-transaction-pool trait bounds (PoolTransaction<Consensus =
@@ -564,7 +891,6 @@ where
             node.evm_config.clone(),
         ));
 
-    let listen = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), cfg.p2p_port);
     let canonical_state = node.provider.canonical_state();
     let genesis_hash = node.chain_spec().genesis_hash();
     let reth = RethHandle {
@@ -578,44 +904,11 @@ where
 
     // Deferred-execution collaborators, all over the node's own provider/EVM:
     // derive (reth-evm BlockBuilder), the derived-chain view, and the
-    // pool-backed ordering assembler.
-    // Randomness beacon: when a sharing is configured, give the deriver the
-    // epoch key (PK_epoch + seed namespace) so it can verify a cert-recovered
-    // seed, and hand the threshold material to the layer so every per-epoch
-    // combined scheme emits the seed partial. Absent → gated fallback.
-    let deriver_base =
+    // pool-backed ordering assembler. The beacon is always-on live-DKG; the
+    // deriver computes prev_randao = H(seed) directly from the cert-recovered
+    // seed (no on-chain PK_E read — that layer is gone, DPOS_ARCHITECTURE §8.11).
+    let deriver =
         crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
-    // A genesis beacon (devnet bootstrap) supplies PK_0 as the fallback verify
-    // key and the consensus-side launch share. It is ABSENT for a live-DKG
-    // rotation chain (keyless baseline → beacon comes alive only once the live
-    // DKG commits PK_E on-chain). Either way the deriver MUST get the per-epoch
-    // on-chain resolver so it can verify a cert-recovered seed against the
-    // committed PK_E — the resolver reads getEpochBeaconKey(E) from L2 state and
-    // returns Ok(None) for an uncommitted / keyless epoch (then the seed is
-    // simply absent → gated fallback). Gating the resolver on the genesis beacon
-    // left a live-DKG chain with `beacon = None`, so every seeded notarization
-    // fell to the digest fallback (beacon never relived).
-    let (genesis_pk, beacon_launch) = match load_beacon(cfg)? {
-        Some((share, sharing)) => {
-            let genesis_pk = *sharing.public();
-            let launch = fluentbase_consensus::dpos::BeaconLaunch { share, sharing };
-            (Some(genesis_pk), Some(launch))
-        }
-        None => (None, None),
-    };
-    let namespace = fluentbase_consensus::beacon::seed::seed_namespace(
-        &fluentbase_bls::fluent_namespace(chain_id),
-    );
-    let beacon_reader = fluentbase_staking_reader::reader::RethStakingStateReader::new(
-        node.provider.clone(),
-        node.evm_config.clone(),
-        staking_config.clone(),
-    );
-    let deriver = deriver_base.with_beacon_resolver(
-        namespace,
-        crate::derive::beacon_pk_resolver(beacon_reader),
-        genesis_pk,
-    );
     let executed = ProviderExecutedChain(node.provider.clone());
     let assembler = Arc::new(PoolAssembler::new(node.pool.clone(), executed.clone()));
     // The protocol fee manager — same recipient the pre-deferred attrs
@@ -659,11 +952,6 @@ where
         peer_keypair,
         slasher_sink,
         staking_config,
-        bootstrappers,
-        p2p: P2pParams {
-            listen,
-            dialable: cfg.dialable,
-        },
         deriver,
         executed,
         assembler,
@@ -672,18 +960,12 @@ where
         feed: feed_sink,
         promotion,
         mode_events,
-        beacon: beacon_launch,
-        // Item A: persist live-DKG shares in the directory that holds the genesis
-        // share ("where everything lies") — the parent of --dpos.beacon-share-path.
-        // None when no share-path is configured (in-memory only).
-        beacon_share_dir: cfg
-            .beacon_share_path
-            .as_ref()
-            .and_then(|p| p.parent().map(std::path::Path::to_path_buf)),
-        // Item K: --dpos.no-beacon ⇒ disable the live DKG + beacon context entirely
-        // (pre-beacon, pure multisig) so committee changes don't activate the beacon
-        // and a shareless joiner can still promote.
-        no_beacon: cfg.no_beacon,
+        // The always-on beacon plane (shared store + committee resolver + the single
+        // network's oracle + the once-registered metrics + the 5 non-beacon MuxHandles
+        // + the vote-backup forwarder). The signer engine CLONES these per promotion;
+        // it never rebuilds the network, re-spawns the DkgActor, or consumes a raw
+        // channel half — so a demote→re-promote re-clones with no rebuild.
+        beacon_plane: shared_beacon,
         #[cfg(feature = "dpos-devnet-byzantine")]
         byzantine,
     };
@@ -709,67 +991,6 @@ where
     }
 
     Ok(handle)
-}
-
-/// Load the threshold randomness-beacon material from the configured hex files
-/// (devnet bootstrap): the public polynomial (`Sharing`, always required to
-/// enable the beacon) and this node's `Share` (absent → verifier-only on the
-/// beacon plane). `Ok(None)` when no `--dpos.beacon-sharing-path` is set.
-type BeaconShare = commonware_cryptography::bls12381::primitives::group::Share;
-type BeaconSharing = commonware_cryptography::bls12381::primitives::sharing::Sharing<
-    commonware_cryptography::bls12381::primitives::variant::MinSig,
->;
-
-fn load_beacon(cfg: &DposConfig) -> eyre::Result<Option<(Option<BeaconShare>, BeaconSharing)>> {
-    let Some(sharing_path) = &cfg.beacon_sharing_path else {
-        return Ok(None);
-    };
-    let sharing_hex = std::fs::read_to_string(sharing_path).wrap_err("read beacon-sharing file")?;
-    // `from_hex_formatted` (repo-standard, used by the BLS + peer-key loaders)
-    // tolerates a 0x prefix / whitespace — keep one hex policy across all key files.
-    let sharing_bytes = commonware_utils::from_hex_formatted(sharing_hex.trim())
-        .ok_or_else(|| eyre!("invalid beacon-sharing hex"))?;
-    let sharing = fluentbase_consensus::beacon::seed::parse_sharing(&sharing_bytes)
-        .map_err(|e| eyre!("parse beacon Sharing: {e:?}"))?;
-
-    let share = match &cfg.beacon_share_path {
-        Some(path) => {
-            // Item B: scrub the secret share hex + decoded bytes on drop (the parsed
-            // `Share` already zeroizes via `Secret<Scalar>`; the public `sharing_hex`
-            // above is left as-is — it is public material).
-            let share_hex = zeroize::Zeroizing::new(
-                std::fs::read_to_string(path).wrap_err("read beacon-share file")?,
-            );
-            let share_bytes = zeroize::Zeroizing::new(
-                commonware_utils::from_hex_formatted(share_hex.trim())
-                    .ok_or_else(|| eyre!("invalid beacon-share hex"))?,
-            );
-            Some(
-                fluentbase_consensus::beacon::seed::parse_share(&share_bytes)
-                    .map_err(|e| eyre!("parse beacon Share: {e:?}"))?,
-            )
-        }
-        None => None,
-    };
-    // Item K, signer-holds-share diagnostic (P3 = warn, not bail): the beacon is
-    // configured (public Sharing present) but this node holds no secret Share. This
-    // is the legitimate §8.11.1(b) degraded mode — the combined scheme self-suppresses
-    // its seed-bearing Notarize/Finalize votes (it stays a full Simplex participant,
-    // just out of the seed quorum), and a cert-follow→signer promotion legitimately
-    // lands here until a reshare delivers the share. So we do NOT bail (that would
-    // reject a supported mode, and entry-committee membership is not cheaply readable
-    // at this launch layer); we WARN so an operator who simply forgot
-    // `--dpos.beacon-share-path` sees it. The fail-closed gate for item K is the clap
-    // `beacon` ArgGroup (explicit `--dpos.beacon-sharing-path` xor `--dpos.no-beacon`).
-    if share.is_none() {
-        tracing::warn!(
-            "beacon: --dpos.beacon-sharing-path set but no --dpos.beacon-share-path — this node \
-             holds the public polynomial but no secret share. It participates in consensus but \
-             self-suppresses seed votes (out of the seed quorum) until a share is provided/reshared. \
-             If this node is (or becomes) a committee member, provide --dpos.beacon-share-path."
-        );
-    }
-    Ok(Some((share, sharing)))
 }
 
 /// DEVNET-ONLY: minimal HTTP/1.0 responder serving the commonware runtime's
@@ -925,9 +1146,6 @@ mod tests {
             metrics_port: None,
             cert_feed: None,
             follower_upstreams: vec![],
-            beacon_share_path: None,
-            beacon_sharing_path: None,
-            no_beacon: false,
             #[cfg(feature = "dpos-devnet-byzantine")]
             byzantine_mode: None,
         }

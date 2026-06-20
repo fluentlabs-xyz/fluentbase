@@ -45,7 +45,7 @@ pub use cert_follow::{
 pub use digest::Digest;
 pub use dpos::{
     peek_consensus_archive_last_finalized, DposLayer, DposLayerConfig, DposLayerHandle, ModeEvent,
-    P2pParams, RethHandle,
+    PlaneMux, ResettableForward, RethHandle, SharedBeaconPlane, VoteBackupItem,
 };
 pub use elector_seed::epoch_leader_seed;
 pub use epocher::OriginEpocher;
@@ -53,7 +53,7 @@ pub use feed_sink::FeedSink;
 pub use order_block::{
     anchor_order_block, result_final_height, result_target, OrderBlock, ResultTarget, K,
 };
-pub use outer::{MarshalMailbox, OuterBuilder, OuterEngine};
+pub use outer::{MarshalMailbox, OuterBuilder, OuterEngine, SoftEnterCommittees};
 pub use timeouts::ConsensusTimeouts;
 
 /// commonware journal replay buffer (per partition). Shared by the validator

@@ -29,7 +29,7 @@ use commonware_parallel::Sequential;
 use commonware_utils::{ordered::Set, N3f1};
 use fluentbase_bls::PeerPubkey;
 use rand_core::CryptoRngCore;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The agreed group output of a finished ceremony (`PK_E` + public polynomial).
 pub type CeremonyOutput = Output<MinSig, PeerPubkey>;
@@ -63,6 +63,10 @@ pub struct DkgCeremony {
     /// a dealer's commitment AND its private share before it can ack).
     pending_pub: BTreeMap<PeerPubkey, DealerCommitment>,
     pending_priv: BTreeMap<PeerPubkey, DealerPrivMsg>,
+    /// Distinct dealers whose log has been recorded into `logs` (our own at seal +
+    /// each peer's `Reveal`). Lets the supervisor's deterministic-settle gate detect
+    /// "all `n` logs in" so every honest node finalizes over the IDENTICAL set.
+    recorded: BTreeSet<PeerPubkey>,
 }
 
 impl DkgCeremony {
@@ -127,6 +131,7 @@ impl DkgCeremony {
                 logs,
                 pending_pub: BTreeMap::new(),
                 pending_priv: BTreeMap::new(),
+                recorded: BTreeSet::new(),
             },
             out,
         ))
@@ -153,6 +158,7 @@ impl DkgCeremony {
             }
             DkgBody::Reveal(signed) => {
                 if let Some((pk, log)) = (*signed).check(&self.info) {
+                    self.recorded.insert(pk.clone());
                     self.logs.record(pk, log);
                 }
                 Vec::new()
@@ -193,6 +199,7 @@ impl DkgCeremony {
         };
         let signed = dealer.finalize::<N3f1>();
         if let Some((pk, log)) = signed.clone().check(&self.info) {
+            self.recorded.insert(pk.clone());
             self.logs.record(pk, log);
         }
         vec![Outgoing {
@@ -215,6 +222,15 @@ impl DkgCeremony {
     pub fn ready<R: CryptoRngCore>(&self, rng: &mut R) -> bool {
         observe::<MinSig, PeerPubkey, N3f1, ed25519::Batch>(rng, self.logs.clone(), &Sequential)
             .is_ok()
+    }
+
+    /// Count of DISTINCT dealer logs recorded so far (our own at seal + each peer's
+    /// `Reveal`). When this equals the committee size, every reachable log is in;
+    /// combined with [`ready`](Self::ready) (a valid quorum is selectable) it is the
+    /// supervisor's "all-in" signal — every honest node then holds the IDENTICAL log
+    /// set, so the deterministic `select` derives the identical `PK_E`.
+    pub fn recorded_log_count(&self) -> usize {
+        self.recorded.len()
     }
 
     /// Derive the agreed [`CeremonyOutput`] (`PK_E`) + this node's secret [`Share`]

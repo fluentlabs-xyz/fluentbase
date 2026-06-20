@@ -21,6 +21,7 @@ use crate::{
     executor,
     feed_sink::FeedSink,
     order_block::OrderBlock,
+    scheme::soft_enter_verifier,
     slasher,
     timeouts::ConsensusTimeouts,
 };
@@ -36,16 +37,32 @@ use commonware_consensus::{
     Reporters,
 };
 use commonware_cryptography::{certificate::Provider as CertProvider, ed25519::PublicKey};
-use commonware_p2p::{Blocker, Provider as PeerProvider, Receiver, Sender};
+use commonware_p2p::{
+    utils::mux::MuxHandle, Blocker, Provider as PeerProvider, Receiver, Sender,
+};
+
+/// A plane-owned `Muxer` broker handle shared across promotions. `MuxHandle::register`
+/// takes `&mut self` (a boundary-rate control-channel round-trip), and the move-only
+/// `DiscReceiver` breaks the derived `Clone` bound on `MuxHandle`, so the handle is
+/// shared via `Arc<Mutex<_>>` (the `Arc` is also the per-promotion `Clone`).
+pub(crate) type SharedMux<HS, HR> = Arc<tokio::sync::Mutex<MuxHandle<HS, HR>>>;
+
+/// Bulk catch-up committee reader threaded from `dpos.rs` into [`OuterBuilder`]:
+/// given an inclusive epoch span `[from, to]`, returns the contiguous on-chain
+/// committee prefix `(epoch, snap)` read at the result-final state. See
+/// [`OuterBuilder::soft_enter_committees`].
+pub type SoftEnterCommittees =
+    Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Vec<(u64, ValidatorSetSnapshot)>> + Send + Sync>;
 use commonware_parallel::Sequential;
 use commonware_runtime::{
-    buffer::paged::CacheRef, spawn_cell, BufferPooler, Clock, ContextCell, Handle, Metrics,
+    buffer::paged::CacheRef, spawn_cell, BufferPooler, Clock, ContextCell, Handle, IoBuf, Metrics,
     Network as RNetwork, Pacer, Spawner, Storage,
 };
 use commonware_storage::archive::{immutable, Archive as _};
 use commonware_utils::{NZUsize, NZU16, NZU64};
 use fluentbase_bls::{keys::ValidatorBlsKeypair, PeerPubkey, Scheme as BlsScheme};
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
+use futures::future::BoxFuture;
 use rand_core::CryptoRngCore;
 use std::{
     collections::BTreeMap,
@@ -285,10 +302,21 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// store + carry-forward + genesis fallback) so every per-epoch consensus
     /// scheme carries the seed partial under that epoch's `PK_epoch`.
     pub beacon_resolver: epoch_manager::BeaconResolver,
-    /// Authoritative on-chain group-key resolver (`getEpochBeaconKey`) for the
-    /// per-epoch VERIFY path (soft-enter catch-up + a member that missed the
-    /// epoch's DKG). See [`epoch_manager::BeaconVerifyPk`].
-    pub beacon_verify_pk: epoch_manager::BeaconVerifyPk,
+    /// Edge-trigger the `DkgActor` fires when a share lands, so `enter` wakes the
+    /// instant its share is memoized rather than polling. Threaded to the manager.
+    pub beacon_share_notify: std::sync::Arc<tokio::sync::Notify>,
+    /// Bulk catch-up committee reader (built in `dpos.rs` over `et_arc` + the
+    /// reth finalized-tip source). Given an inclusive epoch span `[from, to]`, it
+    /// loads the node's current finalized tip, reads each committee from
+    /// [`fluentbase_staking_reader::EpochTransition::soft_enter_span`] at the
+    /// result-final state, and returns the contiguous on-chain prefix of
+    /// `(epoch, snap)` it could read. `build` wraps this into the
+    /// [`epoch_manager::Config::soft_enter_span`] closure that also builds +
+    /// registers the verify-only scheme for each (via [`soft_enter_verifier`] +
+    /// `register_scheme`), keeping `register_scheme` + `chain_id` on the
+    /// consensus side where they live. `None` ⇒ no catch-up span (tests / nodes
+    /// without an `EpochTransition`); the manager then never pre-registers.
+    pub soft_enter_committees: SoftEnterCommittees,
     /// Beacon counters (cross-epoch singleton from `dpos.rs::launch`, already
     /// registered there). Threaded to the executor + each per-epoch engine.
     pub beacon_metrics: crate::beacon::metrics::BeaconMetrics,
@@ -696,6 +724,34 @@ where
         let register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync> =
             Arc::new(move |epoch, scheme| scheme_provider_for_cb.register(epoch, scheme));
 
+        // Bulk catch-up soft-enter span: wrap the node-side committee reader with
+        // the verify-only scheme construction + registration (kept here so
+        // `register_scheme` + `chain_id` stay on the consensus side). For each
+        // `(epoch, snap)` in the contiguous on-chain prefix the reader returns,
+        // build + register the MULTISIG-ONLY verifier and return the highest
+        // registered epoch (= the marshal hint target). The reader already
+        // truncates at the first missed/unreadable committee, so the result is a
+        // contiguous prefix; if it returns nothing, hold at `from − 1`.
+        let chain_id = self.chain_id;
+        let register_for_span = register_scheme.clone();
+        let read_committees = self.soft_enter_committees;
+        let soft_enter_span: Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Epoch> + Send + Sync> =
+            Arc::new(move |from: Epoch, to: Epoch| {
+                let read = read_committees.clone();
+                let register = register_for_span.clone();
+                Box::pin(async move {
+                    let committees = read(from, to).await;
+                    let mut registered = Epoch::new(from.get().saturating_sub(1));
+                    for (epoch, snap) in committees {
+                        if let Some(scheme) = soft_enter_verifier(&snap, chain_id) {
+                            register(Epoch::new(epoch), scheme);
+                            registered = Epoch::new(epoch);
+                        }
+                    }
+                    registered
+                })
+            });
+
         // Slasher — built before EpochManager so its mailbox can be threaded
         // into `epoch_manager::Config` as the second arm of the simplex
         // `Reporters` multiplex.
@@ -744,7 +800,7 @@ where
                 timeouts: self.timeouts,
                 mailbox_size: self.mailbox_size,
                 beacon_resolver: self.beacon_resolver,
-                beacon_verify_pk: self.beacon_verify_pk,
+                beacon_share_notify: self.beacon_share_notify,
                 marshal_mailbox: marshal_mailbox.clone(),
                 slasher_mailbox,
                 spec_exec_mailbox,
@@ -752,6 +808,7 @@ where
                 beacon_metrics: self.beacon_metrics,
                 page_cache,
                 register_scheme,
+                soft_enter_span,
                 #[cfg(feature = "dpos-devnet-byzantine")]
                 byzantine: self.byzantine,
             },
@@ -809,34 +866,80 @@ where
         self.scheme_provider.register(epoch, scheme);
     }
 
-    /// 5-channel start. Threads:
-    ///   vote/cert/resolver → EpochManager (per-epoch via Muxers)
-    ///   broadcast → buffered::Engine
-    ///   marshal_p2p → marshal::resolver::p2p::init → marshal::core::Actor
-    /// Also spawns the executor in `run`.
+    /// Broker-handle start. Threads the 5 plane-owned `MuxHandle`s + this
+    /// promotion's vote-backup receiver:
+    ///   vote/cert/resolver → EpochManager (per-epoch register/deregister)
+    ///   broadcast → buffered::Engine (subchannel 0, registered once in `run`)
+    ///   marshal → marshal::resolver::p2p::init → marshal::core::Actor (subchannel 0)
+    /// Registration is async, so it happens inside `run` (keeps `start` sync); the
+    /// muxes live in the always-on plane, so on demote the dropped `SubReceiver`s
+    /// auto-deregister and the next promotion re-registers — restart-free.
     #[allow(clippy::too_many_arguments)]
-    pub fn start<VS, VR, CS, CR, RS, RR, BS, BR, MS, MR>(
+    pub fn start<HS, HR>(
         mut self,
         ctx_for_resolver: E,
-        votes: (VS, VR),
-        certs: (CS, CR),
-        resolver: (RS, RR),
-        broadcast: (BS, BR),
-        marshal_p2p_chan: (MS, MR),
+        vote_mux: SharedMux<HS, HR>,
+        cert_mux: SharedMux<HS, HR>,
+        resolver_mux: SharedMux<HS, HR>,
+        broadcast_mux: SharedMux<HS, HR>,
+        marshal_mux: SharedMux<HS, HR>,
+        vote_backup: mpsc::Receiver<(u64, (PublicKey, IoBuf))>,
     ) -> Handle<()>
     where
-        VS: Sender<PublicKey = PublicKey>,
-        VR: Receiver<PublicKey = PublicKey>,
-        CS: Sender<PublicKey = PublicKey>,
-        CR: Receiver<PublicKey = PublicKey>,
-        RS: Sender<PublicKey = PublicKey>,
-        RR: Receiver<PublicKey = PublicKey>,
-        BS: Sender<PublicKey = PublicKey>,
-        BR: Receiver<PublicKey = PublicKey>,
-        MS: Sender<PublicKey = PublicKey>,
-        MR: Receiver<PublicKey = PublicKey>,
+        HS: Sender<PublicKey = PublicKey>,
+        HR: Receiver<PublicKey = PublicKey>,
     {
-        let (marshal_rx, marshal_resolver) = marshal_p2p::init::<_, _, _, Digest, MS, MR, _>(
+        spawn_cell!(
+            self.context,
+            self.run(
+                ctx_for_resolver,
+                vote_mux,
+                cert_mux,
+                resolver_mux,
+                broadcast_mux,
+                marshal_mux,
+                vote_backup,
+            )
+            .await
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run<HS, HR>(
+        self,
+        ctx_for_resolver: E,
+        vote_mux: SharedMux<HS, HR>,
+        cert_mux: SharedMux<HS, HR>,
+        resolver_mux: SharedMux<HS, HR>,
+        broadcast_mux: SharedMux<HS, HR>,
+        marshal_mux: SharedMux<HS, HR>,
+        vote_backup: mpsc::Receiver<(u64, (PublicKey, IoBuf))>,
+    ) where
+        HS: Sender<PublicKey = PublicKey>,
+        HR: Receiver<PublicKey = PublicKey>,
+    {
+        // Register subchannel 0 on the broadcast + marshal muxes (the global
+        // singletons that consume one fixed sub-channel each). A dedicated Muxer per
+        // top-level channel means subchannel 0 never collides with the per-epoch
+        // vote/cert/resolver registrations on their OWN muxes. On a `Closed` error
+        // (plane Muxer torn down at shutdown) the engine exits — the supervisor is
+        // already shutting down.
+        let marshal_sub = match marshal_mux.lock().await.register(0).await {
+            Ok(sub) => sub,
+            Err(e) => {
+                tracing::error!(error = ?e, "marshal mux register(0) failed — OuterEngine exiting");
+                return;
+            }
+        };
+        let broadcast = match broadcast_mux.lock().await.register(0).await {
+            Ok(sub) => sub,
+            Err(e) => {
+                tracing::error!(error = ?e, "broadcast mux register(0) failed — OuterEngine exiting");
+                return;
+            }
+        };
+
+        let (marshal_rx, marshal_resolver) = marshal_p2p::init::<_, _, _, Digest, _, _, _>(
             &ctx_for_resolver,
             marshal_p2p::Config {
                 public_key: self.me.clone(),
@@ -849,47 +952,10 @@ where
                 priority_requests: true,
                 priority_responses: true,
             },
-            marshal_p2p_chan,
+            marshal_sub,
         );
+        let marshal_chan = (marshal_rx, marshal_resolver);
 
-        spawn_cell!(
-            self.context,
-            self.run(
-                votes,
-                certs,
-                resolver,
-                broadcast,
-                (marshal_rx, marshal_resolver),
-            )
-            .await
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn run<VS, VR, CS, CR, RS, RR, BS, BR, MarshalResolver>(
-        self,
-        votes: (VS, VR),
-        certs: (CS, CR),
-        resolver: (RS, RR),
-        broadcast: (BS, BR),
-        marshal_chan: (
-            mpsc::Receiver<marshal::resolver::handler::Message<Digest>>,
-            MarshalResolver,
-        ),
-    ) where
-        VS: Sender<PublicKey = PublicKey>,
-        VR: Receiver<PublicKey = PublicKey>,
-        CS: Sender<PublicKey = PublicKey>,
-        CR: Receiver<PublicKey = PublicKey>,
-        RS: Sender<PublicKey = PublicKey>,
-        RR: Receiver<PublicKey = PublicKey>,
-        BS: Sender<PublicKey = PublicKey>,
-        BR: Receiver<PublicKey = PublicKey>,
-        MarshalResolver: commonware_resolver::Resolver<
-            Key = marshal::resolver::handler::Request<Digest>,
-            PublicKey = PublicKey,
-        >,
-    {
         // Start `epoch_manager` FIRST so its `boundary_rx` is
         // draining before `marshal` starts firing the `Update::Block`
         // path that ultimately triggers `boundary_hook` → bridge_tx.
@@ -897,7 +963,9 @@ where
         // absorbed the original ordering gap, but starting epoch_manager
         // first eliminates the window for live epoch transitions when
         // bursty finalization races a still-uninitialized consumer.
-        let mut em_handle = self.epoch_manager.start(votes, certs, resolver);
+        let mut em_handle =
+            self.epoch_manager
+                .start(vote_mux, cert_mux, resolver_mux, vote_backup);
         let mut buffered_handle = self.buffered.start(broadcast);
         let mut executor_handle = self.executor.start();
         // Compose the cert-feed sink as a second application-Reporter so it

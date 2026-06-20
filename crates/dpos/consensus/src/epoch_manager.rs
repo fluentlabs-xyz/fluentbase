@@ -1,30 +1,33 @@
 //! Per-epoch consensus engine lifecycle.
 //!
-//! Owns the active-epochs map, 3 internal Muxers (vote/cert/resolver),
-//! and an event-driven boundary trigger (`mpsc::Receiver<(Epoch, snap)>`)
-//! fed by [`fluentbase_staking_reader::EpochTransition`].
+//! Owns the active-epochs map and an event-driven boundary trigger
+//! (`mpsc::Receiver<(Epoch, snap)>`) fed by
+//! [`fluentbase_staking_reader::EpochTransition`]. The vote/cert/resolver Muxers
+//! are NOT owned here — they live in the always-on plane (node crate); this manager
+//! receives their `MuxHandle`s + the vote backup forwarder per promotion and
+//! registers/deregisters per-epoch sub-channels against them.
 //!
 //! `marshal::core::Actor`, `buffered::Engine`, and the 2
 //! `immutable::Archive` instances do **not** pass through here — they live
 //! in [`crate::outer::OuterEngine`]. EpochManager threads only the 3
-//! simplex channels.
+//! simplex broker handles.
 
 use crate::{
     application::{ExecutedChain, FluentApp, OrderingAssembler},
     engine::{EpochEngine, EpochEngineConfig},
     epocher::OriginEpocher,
     order_block::OrderBlock,
-    scheme::epoch_committee_from_snapshot,
+    outer::SharedMux,
+    scheme::soft_enter_verifier,
     slasher::Mailbox as SlasherMailbox,
     timeouts::ConsensusTimeouts,
 };
 use commonware_consensus::{
     marshal::{core::Mailbox as MarshalMailbox, standard::Standard},
-    types::{Epoch, Epocher as _},
+    types::{Epoch, Epocher as _, Height},
 };
 use commonware_cryptography::ed25519::PublicKey;
 use commonware_p2p::{
-    utils::mux::{Builder, MuxHandle, Muxer},
     Blocker, Receiver, Sender,
 };
 use commonware_runtime::{
@@ -32,17 +35,14 @@ use commonware_runtime::{
     Spawner, Storage,
 };
 use commonware_utils::vec::NonEmptyVec;
-use fluentbase_bls::{
-    fluent_namespace,
-    keys::ValidatorBlsKeypair,
-    scheme::{build_verifier, build_verifier_group_key, BeaconKey},
-    Scheme as BlsScheme,
-};
+use fluentbase_bls::{keys::ValidatorBlsKeypair, scheme::BeaconKey, Scheme as BlsScheme};
+use futures::future::BoxFuture;
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::CryptoRngCore;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
+    time::Duration,
 };
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -54,26 +54,6 @@ use tracing::{info, warn};
 /// verify individual partials. The polynomial is NOT on-chain, so this stays
 /// node-local.
 pub type BeaconResolver = Arc<dyn Fn(u64) -> Option<BeaconKey> + Send + Sync>;
-
-/// Resolves the AUTHORITATIVE per-epoch beacon group key `PK_epoch` from on-chain
-/// `getEpochBeaconKey(E)` (read at the latest executed head — PK_epoch is committed
-/// at the epoch's first block, which the finalized tier lags at the entry boundary).
-/// THREE-WAY (the SAME reader as the carry-forward guard, `dpos.rs::beacon_pk_onchain_3way`):
-/// `Ok(Some)` = a definitively-read key; `Ok(None)` = the epoch definitively has no
-/// committed key (pre-beacon / pure-multisig chain) ⇒ local fallback; `Err(())` = the
-/// chain state was UNREADABLE (transient: last_block_number / block_hash /
-/// epoch_beacon_key errored, or block_hash `None`). The `Err` arm must NOT collapse to
-/// `None` at the enter sites — both soft- and full-enter DEFER on `Err` (the boundary
-/// re-poke re-drives `enter` once state is readable), because an `Err`→`None` collapse at
-/// a rotation boundary would let a signer build/sign under a stale carried-forward
-/// polynomial (`engine.rs` `can_sign_locally` is `(Some(_), _) => true` regardless of the
-/// verify key) → wrong-epoch partials fail `verify_seed` at peers → quorum stall. Used for
-/// VERIFICATION: `verify_certificate` needs only the group key, which IS on-chain — so a
-/// node verifying an epoch's assembled certs (a soft-enter catch-up verifier, or a
-/// committee member that missed that epoch's DKG ceremony) reads the trustless on-chain key
-/// rather than a stale local carry-forward. Built in `dpos.rs::launch`.
-pub type BeaconVerifyPk =
-    Arc<dyn Fn(u64) -> Result<Option<crate::beacon::seed::GroupPublic>, ()> + Send + Sync>;
 
 // Finished engines are aborted at the transition (tempo's exit-at-transition
 // pattern) — there is no concurrent active-epochs window. A finished engine
@@ -95,6 +75,22 @@ const BOUNDARY_BUFFER: usize = 64;
 /// committee bound this caps the corroboration map at `n · 2` epochs and stops a
 /// Byzantine minority from crowding out the honest frontier.
 const PINS_PER_SENDER: usize = 2;
+
+/// Bound on the edge-triggered beacon-readiness wait in `enter` (see
+/// [`wait_for_beacon`]). On expiry a beacon-active signer proceeds pure-multisig
+/// (the local DKG share never landed ⇒ option-A stall). Caps how long `enter`
+/// may block the manager loop; the common case wakes on the share-landed edge
+/// far sooner, so this is the no-quorum backstop, not the steady-state latency.
+const BEACON_READY_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Max epochs to pre-register ahead of the entered tip in ONE catch-up step (the
+/// span soft-entered by [`Config::soft_enter_span`] on a single backup-vote hint).
+/// Bounds the per-hint catch-up work AND — crucially — MUST stay strictly less
+/// than `outer.rs::SCHEME_RETENTION_EPOCHS` (= 8): the marshal verifies the
+/// span's finalization certs against schemes the provider retains in a trailing
+/// window, so a span wider than that window would evict the low end before the
+/// gap-walk reaches it (the cert at the bottom boundary would fail to verify).
+const CATCHUP_SPAN_CAP: u64 = 6;
 
 /// Per-epoch lifecycle actor.
 pub struct Actor<E, B, XC, A>
@@ -160,12 +156,11 @@ pub struct Config<B, XC, A> {
     /// bootstrap fallback. `None` ⇒ a fallback (pure-multisig) epoch. Called per
     /// epoch in `enter()` for the live engine + the soft-enter verifier.
     pub beacon_resolver: BeaconResolver,
-    /// Authoritative on-chain group key `PK_epoch` resolver (`getEpochBeaconKey`).
-    /// Used for VERIFICATION: a soft-enter catch-up verifier, and a committee
-    /// member that lacks matching local DKG material (a fresh joiner that missed
-    /// the epoch's ceremony), verify assembled certs against this trustless key
-    /// instead of a stale local carry-forward. See [`BeaconVerifyPk`].
-    pub beacon_verify_pk: BeaconVerifyPk,
+    /// Edge-trigger the `DkgActor` fires when a share lands in the live-DKG store.
+    /// `enter()` arms `notified()` and re-checks `beacon_resolver`, so a signer that
+    /// reaches the boundary before its share is memoized wakes the instant it lands
+    /// instead of polling. Same `Arc` the actor holds (via `SharedBeaconPlane`).
+    pub beacon_share_notify: std::sync::Arc<tokio::sync::Notify>,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
     pub marshal_mailbox: MarshalMailbox<BlsScheme, Standard<OrderBlock>>,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
@@ -186,6 +181,18 @@ pub struct Config<B, XC, A> {
     /// Callback into [`crate::outer::EpochSchemeProvider`] so marshal can verify
     /// cross-epoch finalization certificates (trailing-window pruned; see SCHEME_RETENTION_EPOCHS).
     pub register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync>,
+    /// Bulk catch-up soft-enter: register a verify-only scheme for EVERY epoch in
+    /// the inclusive span `[from, to]`, reading each committee from the CURRENT
+    /// finalized state (at the result-final read height — see
+    /// [`fluentbase_staking_reader::EpochTransition::soft_enter_span`]). Returns
+    /// the HIGHEST epoch actually registered (a missed/unreadable committee
+    /// truncates the contiguous on-chain prefix). Called ONCE per backup-vote
+    /// hint from [`Actor::handle_msg_for_unregistered_epoch`] to pre-register a
+    /// whole gap in one step (instead of one boundary per finalized round-trip),
+    /// so the marshal hint can target the frontier directly. Built in
+    /// [`crate::outer::OuterBuilder::build`] over `register_scheme` + `chain_id`
+    /// + the node-side committee reader threaded from `dpos.rs`.
+    pub soft_enter_span: Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Epoch> + Send + Sync>,
     /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
     /// `dpos-devnet-byzantine`). `None` on every honest node. Passed into every
     /// per-epoch [`EpochEngineConfig`] so the engine swaps in a
@@ -222,82 +229,51 @@ where
         (actor, boundary_tx)
     }
 
-    /// Start the manager. Threads the 3 simplex p2p channels — vote/cert/resolver.
-    pub fn start<VS, VR, CS, CR, RS, RR>(
+    /// Start the manager. The 3 simplex broker handles (vote/cert/resolver) are
+    /// owned by the always-on plane (node crate); this manager CLONES them per
+    /// promotion to register per-epoch sub-channels and drops them on exit (the
+    /// `SubReceiver`s auto-deregister, freeing the slots for the next promotion). The
+    /// vote Muxer's backup receiver is the plane's re-settable forwarder, fresh per
+    /// promotion.
+    pub fn start<HS, HR>(
         mut self,
-        votes: (VS, VR),
-        certs: (CS, CR),
-        resolver: (RS, RR),
+        vote_mux: SharedMux<HS, HR>,
+        cert_mux: SharedMux<HS, HR>,
+        res_mux: SharedMux<HS, HR>,
+        vote_backup: mpsc::Receiver<(u64, (PublicKey, commonware_runtime::IoBuf))>,
     ) -> Handle<()>
     where
-        VS: Sender<PublicKey = PublicKey>,
-        VR: Receiver<PublicKey = PublicKey>,
-        CS: Sender<PublicKey = PublicKey>,
-        CR: Receiver<PublicKey = PublicKey>,
-        RS: Sender<PublicKey = PublicKey>,
-        RR: Receiver<PublicKey = PublicKey>,
+        HS: Sender<PublicKey = PublicKey>,
+        HR: Receiver<PublicKey = PublicKey>,
     {
-        spawn_cell!(self.context, self.run(votes, certs, resolver).await)
+        spawn_cell!(
+            self.context,
+            self.run(vote_mux, cert_mux, res_mux, vote_backup).await
+        )
     }
 
-    async fn run<VS, VR, CS, CR, RS, RR>(
+    async fn run<HS, HR>(
         mut self,
-        votes: (VS, VR),
-        certs: (CS, CR),
-        resolver: (RS, RR),
+        vote_mux: SharedMux<HS, HR>,
+        cert_mux: SharedMux<HS, HR>,
+        res_mux: SharedMux<HS, HR>,
+        mut vote_backup: mpsc::Receiver<(u64, (PublicKey, commonware_runtime::IoBuf))>,
     ) where
-        VS: Sender<PublicKey = PublicKey>,
-        VR: Receiver<PublicKey = PublicKey>,
-        CS: Sender<PublicKey = PublicKey>,
-        CR: Receiver<PublicKey = PublicKey>,
-        RS: Sender<PublicKey = PublicKey>,
-        RR: Receiver<PublicKey = PublicKey>,
+        HS: Sender<PublicKey = PublicKey>,
+        HR: Receiver<PublicKey = PublicKey>,
     {
-        let (vote_s, vote_r) = votes;
-        let (cert_s, cert_r) = certs;
-        let (res_s, res_r) = resolver;
-
-        // Vote mux carries a backup channel: votes for epochs with no registered
-        // sub-channel (i.e. epochs ahead of us, while catching up) surface on
-        // `vote_backup` instead of being dropped, driving the catch-up hint.
-        let (mux_vote, mut vote_mux, mut vote_backup) = Muxer::builder(
-            self.context.with_label("epoch_mgr_vote_mux"),
-            vote_s,
-            vote_r,
-            self.cfg.mailbox_size,
-        )
-        .with_backup()
-        .build();
-        let mut mux_vote_handle = mux_vote.start();
-        let (mux_cert, mut cert_mux) = Muxer::new(
-            self.context.with_label("epoch_mgr_cert_mux"),
-            cert_s,
-            cert_r,
-            self.cfg.mailbox_size,
-        );
-        let mut mux_cert_handle = mux_cert.start();
-        let (mux_res, mut res_mux) = Muxer::new(
-            self.context.with_label("epoch_mgr_resolver_mux"),
-            res_s,
-            res_r,
-            self.cfg.mailbox_size,
-        );
-        let mut mux_res_handle = mux_res.start();
-
-        // Supervisor: boundary_rx-close is detected inline via the
-        // Option pattern in the recv arm (bare `r = &mut handle` arms have
-        // no pattern guard so `tokio::select!`'s `else` branch is structurally
-        // unreachable while Muxer arms are present and pending — we must
-        // check `recv() -> None` inline). Graceful epoch_manager exit happens
-        // via either (a) boundary_rx close, or (b) Muxer exit triggered by
-        // network teardown (aborting network_handle cascades through p2p
-        // actors to close the Muxer's underlying receiver).
+        // The vote/cert/resolver Muxers live in the always-on plane (one set per
+        // process). Catch-up votes for an unregistered epoch surface on the plane's
+        // `vote_backup` forwarder (re-pointed to THIS manager per promotion), driving
+        // the catch-up hint. Graceful exit is via boundary_rx close OR vote_backup
+        // close (the plane parks the forwarder while no engine is up); the plane's
+        // Muxer tasks are NOT aborted here (they outlive this manager).
         loop {
             tokio::select! {
                 recv = self.boundary_rx.recv() => {
                     match recv {
                         Some((epoch, snap)) => {
-                            self.enter(epoch, snap, &mut vote_mux, &mut cert_mux, &mut res_mux).await;
+                            self.enter(epoch, snap, &vote_mux, &cert_mux, &res_mux).await;
                             self.prune_old(epoch);
                         }
                         None => {
@@ -317,27 +293,14 @@ where
                         }
                     }
                 }
-                r = &mut mux_vote_handle => {
-                    log_mux_exit("vote", r);
-                    break;
-                }
-                r = &mut mux_cert_handle => {
-                    log_mux_exit("cert", r);
-                    break;
-                }
-                r = &mut mux_res_handle => {
-                    log_mux_exit("resolver", r);
-                    break;
-                }
             }
         }
 
-        // Abort all Mux handles + all per-epoch engine handles. abort() is
-        // idempotent (no-op on already-completed handles per
-        // monorepo/runtime/src/utils/handle.rs:107-118).
-        mux_vote_handle.abort();
-        mux_cert_handle.abort();
-        mux_res_handle.abort();
+        // Abort all per-epoch engine handles (their `SubReceiver`s drop →
+        // auto-deregister from the plane's persistent Muxers). abort() is idempotent
+        // (no-op on already-completed handles per
+        // monorepo/runtime/src/utils/handle.rs:107-118). The MuxHandle clones drop
+        // here too — the plane's broker tasks stay live for the next promotion.
         for (epoch, handle) in std::mem::take(&mut self.active_epochs) {
             info!(?epoch, "aborting active epoch engine on exit");
             handle.abort();
@@ -345,11 +308,18 @@ where
     }
 
     /// A vote arrived for an epoch with no registered sub-channel — the network
-    /// is ahead of us. Hint the marshal to fetch the finalization at the boundary
-    /// of the highest epoch we can already verify; its gap-repair then walks our
-    /// finalized tip forward. Crossing each boundary delivers the next epoch's
-    /// blocks (boundary_hook → on_finalized → enter), registering the next scheme
-    /// so the following hint reaches one epoch further — until we catch up.
+    /// is ahead of us. PRE-REGISTER a bounded SPAN of verify-only schemes ahead of
+    /// our entered tip in one step (`soft_enter_span`), then hint the marshal to
+    /// fetch the finalization at the boundary of the HIGHEST epoch we just
+    /// registered — so its gap-repair can walk our finalized tip across the whole
+    /// span at once instead of stalling one boundary per finalized round-trip
+    /// (the deep-catch-up wedge: each boundary cost ~14s while the chain paced
+    /// 1 blk/s, so a multi-epoch gap never converged). The span is bounded by the
+    /// f+1-corroborated observed frontier AND [`CATCHUP_SPAN_CAP`]
+    /// (< `SCHEME_RETENTION_EPOCHS`, so the marshal never evicts the span's low
+    /// end before the walk reaches it). `highest_entered_epoch` advances to the
+    /// highest registered epoch so a repeat backup vote does not re-register the
+    /// same span and the hint stays monotone.
     async fn handle_msg_for_unregistered_epoch(&mut self, their_epoch: Epoch, from: PublicKey) {
         // Advance the live frontier ONLY when f+1 DISTINCT peers have named the
         // same future epoch on the (unauthenticated) vote backup channel. With
@@ -369,22 +339,27 @@ where
             their_epoch,
             from.clone(),
         );
-        if their_epoch <= self.highest_entered_epoch {
-            return;
-        }
-        let Some(boundary) = self.cfg.epocher.last(self.highest_entered_epoch) else {
-            return;
+        let mailbox = self.cfg.marshal_mailbox.clone();
+        let hint = move |boundary| {
+            Box::pin(async move {
+                mailbox
+                    .hint_finalized(boundary, NonEmptyVec::new(from))
+                    .await;
+            }) as BoxFuture<'static, ()>
         };
-        info!(
-            observed = their_epoch.get(),
-            entered = self.highest_entered_epoch.get(),
-            %boundary,
-            "catch-up: behind network; hinting marshal toward entered-epoch boundary"
-        );
-        self.cfg
-            .marshal_mailbox
-            .hint_finalized(boundary, NonEmptyVec::new(from))
-            .await;
+        // The span-pipeline body is a free async fn over the state pieces +
+        // callbacks so the pipelining invariant (ONE bounded span per hint, the
+        // hint targeting the registered frontier) is unit-testable without
+        // standing up the full generic `Actor` / a real marshal mailbox.
+        pipeline_catchup_span(
+            &mut self.highest_entered_epoch,
+            self.highest_observed_epoch,
+            their_epoch,
+            &self.cfg.epocher,
+            self.cfg.soft_enter_span.as_ref(),
+            hint,
+        )
+        .await;
     }
 
     /// True when `epoch` is at or past the highest epoch observed on the backup
@@ -406,20 +381,16 @@ where
         epoch >= self.highest_observed_epoch
     }
 
-    async fn enter<VS, VR, CS, CR, RS, RR>(
+    async fn enter<HS, HR>(
         &mut self,
         epoch: Epoch,
         snap: ValidatorSetSnapshot,
-        vote_mux: &mut MuxHandle<VS, VR>,
-        cert_mux: &mut MuxHandle<CS, CR>,
-        res_mux: &mut MuxHandle<RS, RR>,
+        vote_mux: &SharedMux<HS, HR>,
+        cert_mux: &SharedMux<HS, HR>,
+        res_mux: &SharedMux<HS, HR>,
     ) where
-        VS: Sender<PublicKey = PublicKey>,
-        VR: Receiver<PublicKey = PublicKey>,
-        CS: Sender<PublicKey = PublicKey>,
-        CR: Receiver<PublicKey = PublicKey>,
-        RS: Sender<PublicKey = PublicKey>,
-        RR: Receiver<PublicKey = PublicKey>,
+        HS: Sender<PublicKey = PublicKey>,
+        HR: Receiver<PublicKey = PublicKey>,
     {
         if self.active_epochs.contains_key(&epoch) {
             warn!(?epoch, "epoch already active; skipping");
@@ -456,69 +427,41 @@ where
         // drive the executor on a dead fork. The live epoch (and the retention window
         // below it) full-enters below.
         if !self.is_live_epoch(epoch) {
-            match epoch_committee_from_snapshot(&snap) {
-                Ok(committee) => {
-                    let namespace = fluent_namespace(self.cfg.chain_id);
-                    // Soft-enter is verify-only (no engine, no signing). Verify the
-                    // epoch's assembled certs against the AUTHORITATIVE on-chain
-                    // group key — a catch-up node never ran this (possibly rotated)
-                    // epoch's DKG, so a local carry-forward key would be wrong. The
-                    // epoch is historical here, so getEpochBeaconKey(E) is already
-                    // committed. `None` (pre-beacon chain) keeps the local fallback.
-                    let scheme = match (self.cfg.beacon_verify_pk)(epoch.get()) {
-                        Ok(Some(pk)) => build_verifier_group_key(
-                            &namespace,
-                            committee.bimap,
-                            pk,
-                            crate::beacon::seed::seed_namespace(&namespace),
-                        ),
-                        Ok(None) => build_verifier(
-                            &namespace,
-                            committee.bimap,
-                            (self.cfg.beacon_resolver)(epoch.get()),
-                        ),
-                        // UNREADABLE on-chain state (transient): do NOT collapse to a
-                        // local fallback key — that risks verifying a rotated epoch's
-                        // certs against a stale carry-forward. Defer; the boundary
-                        // re-poke re-drives enter(epoch) once state is readable.
-                        Err(()) => {
-                            warn!(
-                                ?epoch,
-                                "soft-enter deferred — getEpochBeaconKey(E) unreadable \
-                                 (transient); retry on next boundary re-poke"
-                            );
-                            return;
-                        }
-                    };
-                    (self.cfg.register_scheme)(epoch, scheme);
-                }
-                Err(e) => warn!(
-                    ?epoch,
-                    ?e,
-                    "soft-enter skipped — invalid committee snapshot"
-                ),
+            // Soft-enter is verify-only (no engine, no signing). The verifier is
+            // MULTISIG-ONLY (`verify_certificate` ignores the seed now that the
+            // PK_E layer is gone) — no group key to read, nothing to lag, no
+            // defer. The verifier construction is shared with the bulk catch-up
+            // span path (see [`soft_enter_verifier`] + `Config::soft_enter_span`).
+            if let Some(scheme) = soft_enter_verifier(&snap, self.cfg.chain_id) {
+                (self.cfg.register_scheme)(epoch, scheme);
             }
             info!(?epoch, "epoch soft-entered (scheme only, catch-up)");
             return;
         }
 
-        // Resolve the authoritative on-chain verify key with the SAME three-way as
-        // soft-enter: on Err(()) DEFER rather than collapse to None. engine.rs's
-        // `can_sign_locally` is `(Some(_), _) => true` regardless of this key, so an
-        // Err→None collapse at a rotation boundary would let the engine sign partials
-        // under the carried-forward STALE polynomial (the carry-forward guard keeps the
-        // share on Err) → wrong-epoch partials fail verify_seed at peers → no notarize
-        // quorum → epoch beacon stall. The boundary re-poke re-drives enter once readable.
-        let beacon_verify_pk = match (self.cfg.beacon_verify_pk)(epoch.get()) {
-            Ok(pk) => pk,
-            Err(()) => {
-                warn!(
-                    ?epoch,
-                    "full-enter deferred — getEpochBeaconKey(E) unreadable (transient); \
-                     retry on next boundary re-poke"
-                );
-                return;
-            }
+        // Self-heal the beacon-readiness boundary race BEFORE constructing the
+        // engine: `enter` fires off the consensus ordering clock the instant the
+        // boundary block finalizes, but this node's own DKG share lands in the
+        // shared `ceremony_store` off the gossip plane (the quorum-th `Reveal`),
+        // which can arrive just after `enter`. A signing member waits — edge-driven
+        // off the actor's `share_notify`, bounded, deadlock-free — for its share
+        // rather than baking a permanent verify-only demote for the whole epoch.
+        // See `wait_for_beacon`.
+        let beacon = {
+            let beacon_active =
+                epoch.get() >= crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
+            let resolver = self.cfg.beacon_resolver.clone();
+            let epoch_n = epoch.get();
+            let wait_ctx = self.context.with_label("beacon");
+            wait_for_beacon(
+                &wait_ctx,
+                move || resolver(epoch_n),
+                &self.cfg.beacon_share_notify,
+                beacon_active,
+                self.cfg.signer_keypair.is_some(),
+                BEACON_READY_TIMEOUT,
+            )
+            .await
         };
 
         let engine_ctx = self.context.with_label("simplex");
@@ -536,8 +479,7 @@ where
                 timeouts: self.cfg.timeouts,
                 mailbox_size: self.cfg.mailbox_size,
                 register_scheme: self.cfg.register_scheme.clone(),
-                beacon: (self.cfg.beacon_resolver)(epoch.get()),
-                beacon_verify_pk,
+                beacon,
                 seed_store: self.cfg.seed_store.clone(),
                 beacon_metrics: self.cfg.beacon_metrics.clone(),
                 #[cfg(feature = "dpos-devnet-byzantine")]
@@ -560,12 +502,13 @@ where
             }
         };
 
-        // Register the three sub-channels. `Muxer::register` errors are
+        // Register the three sub-channels against the plane-owned Muxers (locking
+        // each transiently — registration is boundary-rate). `register` errors are
         // AlreadyRegistered (unreachable — guarded by `active_epochs` above) or
         // Closed (muxer task gone, i.e. teardown). On any error, skip the enter
         // rather than `.expect()`-panic (which would cascade to the whole stack).
         // Partial registrations auto-deregister when their `SubReceiver` drops.
-        let vote_sub = match vote_mux.register(epoch.get()).await {
+        let vote_sub = match vote_mux.lock().await.register(epoch.get()).await {
             Ok(s) => s,
             Err(e) => {
                 warn!(
@@ -576,7 +519,7 @@ where
                 return;
             }
         };
-        let cert_sub = match cert_mux.register(epoch.get()).await {
+        let cert_sub = match cert_mux.lock().await.register(epoch.get()).await {
             Ok(s) => s,
             Err(e) => {
                 warn!(
@@ -587,7 +530,7 @@ where
                 return;
             }
         };
-        let res_sub = match res_mux.register(epoch.get()).await {
+        let res_sub = match res_mux.lock().await.register(epoch.get()).await {
             Ok(s) => s,
             Err(e) => {
                 warn!(
@@ -622,20 +565,6 @@ where
                 info!(?e, "epoch exited (retention window)");
             }
         }
-    }
-}
-
-/// Log a Muxer task's exit (a clean exit is unexpected; any error is a fault).
-/// Shared by the three identical vote/cert/resolver `select!` arms. Generic over
-/// the Muxer error `E` and the join error `J` so it needs no concrete type names.
-fn log_mux_exit<E: core::fmt::Debug, J: core::fmt::Debug>(
-    label: &str,
-    r: Result<Result<(), E>, J>,
-) {
-    match r {
-        Ok(Ok(())) => warn!("{label} Muxer exited cleanly (unexpected)"),
-        Ok(Err(e)) => tracing::error!(error = ?e, "{label} Muxer p2p receiver failed"),
-        Err(e) => tracing::error!(error = ?e, "{label} Muxer task failed"),
     }
 }
 
@@ -682,6 +611,58 @@ fn corroborate_frontier(
     }
 }
 
+/// The catch-up span pipeline: PRE-REGISTER a bounded span of verify-only
+/// schemes ahead of the entered tip in ONE step, then hint the marshal toward
+/// the registered frontier's boundary so its gap-repair walks the whole span at
+/// once (replacing the one-boundary-per-finalized-round-trip walk that never
+/// converged on a deep gap). Extracted as a free async fn over the state pieces
+/// and callbacks so the pipelining invariant is unit-testable without an `Actor`
+/// or a real marshal mailbox.
+///
+/// - early-outs when `their_epoch ≤ *highest_entered_epoch` (caught up);
+/// - span = `[entered+1 .. min(highest_observed_epoch, entered+CATCHUP_SPAN_CAP)]`
+///   (bounded; `CATCHUP_SPAN_CAP < SCHEME_RETENTION_EPOCHS` so the provider never
+///   evicts the span's low end before the walk reaches it);
+/// - `soft_enter_span(from, to)` registers the contiguous on-chain prefix and
+///   returns the highest epoch actually registered;
+/// - `*highest_entered_epoch` advances to that frontier so a repeat backup vote
+///   does not re-register the same span and the hint stays monotone;
+/// - `hint(boundary)` targets `epocher.last(registered_to)`.
+async fn pipeline_catchup_span(
+    highest_entered_epoch: &mut Epoch,
+    highest_observed_epoch: Epoch,
+    their_epoch: Epoch,
+    epocher: &OriginEpocher,
+    soft_enter_span: &(dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Epoch> + Send + Sync),
+    hint: impl FnOnce(Height) -> BoxFuture<'static, ()>,
+) {
+    if their_epoch <= *highest_entered_epoch {
+        return;
+    }
+    let entered = highest_entered_epoch.get();
+    let span_from = Epoch::new(entered + 1);
+    let span_top = highest_observed_epoch.min(Epoch::new(entered + CATCHUP_SPAN_CAP));
+    let registered_to = if span_top >= span_from {
+        soft_enter_span(span_from, span_top).await
+    } else {
+        *highest_entered_epoch
+    };
+    let Some(boundary) = epocher.last(registered_to) else {
+        return;
+    };
+    info!(
+        observed = their_epoch.get(),
+        entered,
+        registered_to = registered_to.get(),
+        %boundary,
+        "catch-up: behind network; span soft-entered, hinting marshal toward frontier"
+    );
+    // Advance the entered tip to the registered frontier so the next backup
+    // vote does not re-register the same span and the hint stays monotone.
+    *highest_entered_epoch = registered_to;
+    hint(boundary).await;
+}
+
 /// Drop pending corroboration state for every epoch `≤ floor` and free those
 /// epochs from each sender's pin quota. Called when the frontier advances
 /// (corroboration threshold met) AND when an epoch is entered (resolved by the
@@ -697,6 +678,71 @@ fn prune_resolved(
         .values_mut()
         .for_each(|eps| eps.retain(|e| *e > floor));
     sender_pins.retain(|_, eps| !eps.is_empty());
+}
+
+/// Edge-triggered wait for a beacon-active epoch's local DKG share.
+///
+/// `enter` fires off the consensus ordering clock the instant the boundary block
+/// finalizes, but this node's own DKG share lands in the shared `ceremony_store`
+/// off the gossip plane — the `DkgActor` finalizes it the moment the quorum-th
+/// `Reveal` arrives (`actor.rs::drive_finalization`, event-driven, independent of
+/// the frozen-at-the-boundary height feed). That can land just AFTER `enter`. If
+/// `resolve` returned `None` and we proceeded, `EpochEngine::new` would bake a
+/// PERMANENT verify-only demote for the whole epoch (`engine.rs`: `(None, true)
+/// => false`), dropping a signing member out of the seed quorum — enough
+/// simultaneous race-losers and the epoch's seed quorum is unreachable, wedging
+/// it. A potential signer therefore waits for its share before resolving.
+///
+/// Edge-driven, not polled: the `DkgActor` fires `share_notify` the instant it
+/// inserts a share, so this wakes on that edge rather than sampling on a clock.
+/// `notify.notified()` is ARMED BEFORE the `resolve()` re-check, so a share that
+/// lands in the gap between the check and the await still wakes us (no lost
+/// wakeup). Deadlock-free: the actor advances on its own task while this manager
+/// loop blocks. A non-signer, a pre-beacon epoch, or a genuinely sub-quorum DKG
+/// (share never lands) returns `None` immediately / on `timeout` — option-A
+/// pure-multisig, never an unbounded block.
+async fn wait_for_beacon<C: Clock>(
+    ctx: &C,
+    resolve: impl Fn() -> Option<BeaconKey>,
+    notify: &tokio::sync::Notify,
+    beacon_active: bool,
+    is_signer: bool,
+    timeout: Duration,
+) -> Option<BeaconKey> {
+    if let Some(beacon) = resolve() {
+        return Some(beacon);
+    }
+    // Only a signing member of a beacon-active epoch needs the local share; a
+    // follower / pre-beacon epoch / rotated-out node is correctly keyless and
+    // must not block on a share it will never hold.
+    if !beacon_active || !is_signer {
+        return None;
+    }
+    // One deadline for the whole wait (created once, polled across iterations — a
+    // spurious wake for another epoch's share does not reset it).
+    let deadline = ctx.sleep(timeout);
+    tokio::pin!(deadline);
+    loop {
+        // Arm the wakeup BEFORE the re-check: if the share lands between `resolve`
+        // and the `select!`, the already-registered `notified()` still fires.
+        let notified = notify.notified();
+        if let Some(beacon) = resolve() {
+            return Some(beacon);
+        }
+        tokio::pin!(notified);
+        tokio::select! {
+            // Prefer the share-landed edge over the timeout (deterministic poll order).
+            biased;
+            _ = &mut notified => continue,
+            _ = &mut deadline => {
+                warn!(
+                    "beacon share did not land within the self-heal window — \
+                     entering epoch pure-multisig (option-A stall)"
+                );
+                return None;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -875,5 +921,221 @@ mod tests {
             Epoch::new(25),
             "frontier still advances after 20 boundaries"
         );
+    }
+
+    // The beacon-readiness wait: the fast-None gates (non-signer, pre-beacon epoch)
+    // short-circuit WITHOUT waiting; a signing member of a beacon-active epoch BLOCKS
+    // on the share-landed edge (the actor's `share_notify`) and returns the moment its
+    // DKG share lands; and a genuinely absent share times out to None after the BOUNDED
+    // timeout (so `enter` can never block the manager loop indefinitely), not forever.
+    #[test]
+    fn wait_for_beacon_gates_and_self_heals() {
+        use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
+        use commonware_runtime::{deterministic, Runner as _, Spawner as _};
+        use commonware_utils::N3f1;
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+        // A real (cheap) BeaconKey from a 4-party anonymous deal.
+        let mut rng = StdRng::seed_from_u64(7);
+        let (sharing, shares) =
+            deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), 4u32.try_into().unwrap());
+        let key: BeaconKey = (sharing, Some(shares[0].clone()), b"ns".to_vec());
+
+        // Gate 1 — a non-signer never blocks on a share it will never hold: with an
+        // empty resolve the closure is consulted exactly once, then None.
+        let calls = Arc::new(AtomicU32::new(0));
+        let got = deterministic::Runner::default().start({
+            let calls = calls.clone();
+            move |ctx| async move {
+                let notify = tokio::sync::Notify::new();
+                wait_for_beacon(
+                    &ctx,
+                    move || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        None
+                    },
+                    &notify,
+                    true,
+                    false,
+                    Duration::from_millis(1),
+                )
+                .await
+            }
+        });
+        assert!(got.is_none(), "non-signer must not acquire a beacon");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "non-signer must short-circuit, not wait"
+        );
+
+        // Gate 2 — a pre-beacon (pure-multisig) epoch likewise short-circuits.
+        let calls = Arc::new(AtomicU32::new(0));
+        let got = deterministic::Runner::default().start({
+            let calls = calls.clone();
+            move |ctx| async move {
+                let notify = tokio::sync::Notify::new();
+                wait_for_beacon(
+                    &ctx,
+                    move || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        None
+                    },
+                    &notify,
+                    false,
+                    true,
+                    Duration::from_millis(1),
+                )
+                .await
+            }
+        });
+        assert!(got.is_none());
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "pre-beacon epoch must short-circuit, not wait"
+        );
+
+        // Self-heal — a signing member of a beacon-active epoch BLOCKS on the
+        // share-landed edge: a concurrent task flips the resolver to Some and fires
+        // the notifier; the wait wakes on that edge (not a clock) and returns the key.
+        let got = deterministic::Runner::default().start({
+            let key = key.clone();
+            move |ctx| async move {
+                let notify = Arc::new(tokio::sync::Notify::new());
+                let ready = Arc::new(AtomicBool::new(false));
+                // Producer: after a virtual delay, land the share + fire the edge.
+                drop(ctx.with_label("share_lander").spawn({
+                    let notify = notify.clone();
+                    let ready = ready.clone();
+                    move |c| async move {
+                        c.sleep(Duration::from_millis(5)).await;
+                        ready.store(true, Ordering::SeqCst);
+                        notify.notify_waiters();
+                    }
+                }));
+                wait_for_beacon(
+                    &ctx,
+                    move || ready.load(Ordering::SeqCst).then(|| key.clone()),
+                    &notify,
+                    true,
+                    true,
+                    Duration::from_secs(10), // generous; the edge wakes us long before this
+                )
+                .await
+            }
+        });
+        assert!(
+            got.is_some(),
+            "signer must wake on the share-landed edge and return the key"
+        );
+
+        // Bounded timeout — an absent share (the notifier never fires) returns None
+        // after the timeout, never forever.
+        let got = deterministic::Runner::default().start(move |ctx| async move {
+            let notify = tokio::sync::Notify::new();
+            wait_for_beacon(&ctx, || None, &notify, true, true, Duration::from_millis(5)).await
+        });
+        assert!(got.is_none(), "absent share must time out to None");
+    }
+
+    /// Records every `(from, to)` span the catch-up pipeline soft-enters and
+    /// returns `to` (the whole span registered).
+    fn recording_span(
+        log: std::sync::Arc<std::sync::Mutex<Vec<(u64, u64)>>>,
+    ) -> Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Epoch> + Send + Sync> {
+        Arc::new(move |from: Epoch, to: Epoch| {
+            log.lock().unwrap().push((from.get(), to.get()));
+            Box::pin(async move { to }) as BoxFuture<'static, Epoch>
+        })
+    }
+
+    // A DEEP gap (entered 0, observed frontier 3) must be pipelined in ONE hint:
+    // a single soft_enter_span(1, 3) and a single marshal hint at last(3) — NOT
+    // three serialized one-boundary-at-a-time round-trips. A repeat vote at the
+    // now-entered frontier must be a no-op. Then a CAP variant: a 20-deep
+    // observed frontier is capped to (1, CATCHUP_SPAN_CAP) and hints last(CAP).
+    #[test]
+    fn deep_catchup_pipelines_span_in_one_hint() {
+        use commonware_consensus::types::Epocher as _;
+        use std::sync::Mutex as StdMutex;
+
+        let epocher = OriginEpocher::new(0, 32u64.try_into().unwrap());
+
+        // A hint recorder that records each targeted boundary.
+        let mk_hint = |hints: std::sync::Arc<StdMutex<Vec<Height>>>| {
+            move |b: Height| {
+                hints.lock().unwrap().push(b);
+                Box::pin(async move {}) as BoxFuture<'static, ()>
+            }
+        };
+
+        // Deep gap: entered 0, observed frontier 3.
+        let spans = std::sync::Arc::new(StdMutex::new(Vec::<(u64, u64)>::new()));
+        let hints = std::sync::Arc::new(StdMutex::new(Vec::<Height>::new()));
+        let soft = recording_span(spans.clone());
+        let mut entered = Epoch::new(0);
+
+        futures::executor::block_on(pipeline_catchup_span(
+            &mut entered,
+            Epoch::new(3),
+            Epoch::new(3),
+            &epocher,
+            soft.as_ref(),
+            mk_hint(hints.clone()),
+        ));
+        assert_eq!(
+            *spans.lock().unwrap(),
+            vec![(1, 3)],
+            "deep gap pipelined in ONE span call, not three serialized hops"
+        );
+        assert_eq!(
+            *hints.lock().unwrap(),
+            vec![epocher.last(Epoch::new(3)).unwrap()],
+            "single hint targets the registered frontier's boundary last(3)"
+        );
+        assert_eq!(entered, Epoch::new(3), "entered tip advanced to the frontier");
+
+        // A second identical vote at the now-entered frontier is a no-op (early-out).
+        futures::executor::block_on(pipeline_catchup_span(
+            &mut entered,
+            Epoch::new(3),
+            Epoch::new(3),
+            &epocher,
+            soft.as_ref(),
+            mk_hint(hints.clone()),
+        ));
+        assert_eq!(
+            spans.lock().unwrap().len(),
+            1,
+            "a repeat vote at the entered frontier must NOT re-register the span"
+        );
+        assert_eq!(hints.lock().unwrap().len(), 1, "no second hint");
+
+        // CAP variant: a 20-deep observed frontier caps the span at
+        // (1, CATCHUP_SPAN_CAP) and hints last(CAP).
+        let spans = std::sync::Arc::new(StdMutex::new(Vec::<(u64, u64)>::new()));
+        let hints = std::sync::Arc::new(StdMutex::new(Vec::<Height>::new()));
+        let soft = recording_span(spans.clone());
+        let mut entered = Epoch::new(0);
+        futures::executor::block_on(pipeline_catchup_span(
+            &mut entered,
+            Epoch::new(20),
+            Epoch::new(20),
+            &epocher,
+            soft.as_ref(),
+            mk_hint(hints.clone()),
+        ));
+        assert_eq!(
+            *spans.lock().unwrap(),
+            vec![(1, CATCHUP_SPAN_CAP)],
+            "span capped at CATCHUP_SPAN_CAP, not the full 20-deep frontier"
+        );
+        assert_eq!(
+            *hints.lock().unwrap(),
+            vec![epocher.last(Epoch::new(CATCHUP_SPAN_CAP)).unwrap()],
+            "hint targets last(CATCHUP_SPAN_CAP)"
+        );
+        assert_eq!(entered, Epoch::new(CATCHUP_SPAN_CAP));
     }
 }

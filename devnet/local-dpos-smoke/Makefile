@@ -4,6 +4,7 @@ SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
         smoke-base smoke-fault smoke-tx smoke-epoch smoke-peers smoke-liveness smoke-crash-survivor smoke-byzantine \
         smoke-gov-interval smoke-full-restart smoke-cert-follow smoke-deferred \
         smoke-vrf smoke-vrf-rotation smoke-byzantine-vrf smoke-vrf-fault smoke-vrf-boundary \
+        smoke-vrf-dkg-liveness \
         smoke-production-path smoke-all
 
 regen-contracts:
@@ -123,6 +124,12 @@ smoke-vrf-fault:
 # (~3-4 min); NOT in run-all.
 smoke-vrf-boundary:
 	@./scripts/case-vrf-boundary.sh
+# DKG-liveness negative edge (NO reshare): a member offline during its epoch-2 DKG
+# window misses the ceremony, is shareless for that epoch, and SITS OUT the seed
+# quorum while the chain stays live on the n−f survivors; it re-derives prev_randao
+# from the cert seed on restart. Heavy (~4-5 min); NOT in run-all.
+smoke-vrf-dkg-liveness:
+	@./scripts/case-vrf-dkg-liveness.sh
 # TODO(deferred, after-forked-staking-state-harness): E2 wrong-key cert-follower
 # smoke (`smoke-vrf-wrongkey` + docker-compose.cert-follow-wrongkey.yml) — a
 # follower with a WRONG beacon key must derive a DIVERGENT mixHash (order.digest()

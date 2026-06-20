@@ -215,10 +215,20 @@ assert_peers() {
 #        would diverge). Folds item I (keyless restart) + the executor catch-up
 #        seed-availability invariant.
 assert_vrf_fault() {
-    local DOWN SURVIVORS NODES down_at gap_target a_lo a_hi catchup_deadline dh n d v miss
+    local DOWN SURVIVORS NODES down_at gap_target a_lo a_hi catchup_deadline dh n d v miss EPOCH2_PROBE
     DOWN=validator-3
     SURVIVORS=(validator-0 validator-1 validator-2 full-node)
 
+    # The beacon is THRESHOLD-ACTIVE from EPOCH 2 (deterministic bootstrap). The fault
+    # window + the downed-node share reload must exercise a seeded epoch, so wait until
+    # finalized is inside epoch >= 2 before stopping the victim.
+    EPOCH2_PROBE=$(( DPOS_ACTIVATION_BLOCK + 2 * EPOCH_INTERVAL + 8 ))
+    echo "smoke-vrf-fault: beacon active from epoch 2; waiting for finalized >= $EPOCH2_PROBE before the fault"
+    wait_finalized_ge "$EPOCH2_PROBE" 300 >/dev/null || {
+        echo "FAIL (smoke-vrf-fault): chain did not reach the epoch-2 window ($EPOCH2_PROBE) before the fault"
+        docker compose logs --tail=120 validator-0
+        exit 1
+    }
     (( $(finalized_dec) > 0 )) || { echo "FAIL (smoke-vrf-fault): no finalized block"; exit 1; }
 
     # A1: take ONE validator down (f=1). With 4 validators (f=1) the seed quorum is
@@ -274,6 +284,106 @@ assert_vrf_fault() {
     echo "smoke-vrf-fault: B3/B4 — $DOWN restarted, caught up, and re-obtained the gap [$a_lo..$a_hi] with the byte-identical threshold prev_randao (assurance, not fallback)"
 
     echo "OK (smoke-vrf-fault): beacon survived the f=1 fault; the downed validator restarted, reloaded its share, and caught up the gap with verified threshold prev_randao"
+}
+
+# smoke-vrf-dkg-liveness (DKG-liveness negative edge — NO reshare): a committee
+# member taken OFFLINE during its DKG window misses the ceremony, is SHARELESS for
+# that epoch, and SITS OUT seed voting while the chain stays live on the remaining
+# n−f share-holder quorum. On the genesis stack (4 validators, f=1, the deterministic
+# epoch-2 ceremony is the activation DKG), we stop validator-3 BEFORE the epoch-2 DKG
+# window opens (epoch_start(2) − DKG_MARGIN_BLOCKS) and keep it down across the
+# epoch-2 boundary; the 3 survivors (n−f=3 quorum) carry committee[2]'s DKG and seed
+# the beacon from epoch 2. Assert:
+#   1. the chain reaches epoch 2 and finalizes WHILE validator-3 is down (the beacon
+#      went live on n−f survivors);
+#   2. validator-3, after restart, logs NO "share computed + stored" for epoch 2 (it
+#      was excluded by Joint-Feldman QUAL → shareless for epoch 2 → it sits out);
+#   3. the chain stays live after validator-3 rejoins (it re-derives prev_randao from
+#      the cert seed like any verify-only node, and rejoins the SEED quorum only at
+#      the NEXT DKG it attends — covered in the rotation stack, see the note below).
+# NOTE: the "rejoins the seed quorum at the next DKG" leg requires a committee CHANGE
+# (recurring DKG) — that is the rotation stack's domain (case-vrf-rotation.sh proves
+# early-join for a joiner); here we prove the SIT-OUT + chain-liveness half on the
+# stable genesis stack. NO reshare.
+# DKG_MARGIN_BLOCKS = 10 (consensus/beacon/actor.rs) — the window is
+# [epoch_start(2) − 10, epoch_start(2)).
+assert_vrf_dkg_liveness() {
+    local DOWN SURVIVORS NODES EPOCH2_START WINDOW_OPEN BOUNDARY_PROBE PRE share_lines
+    DOWN=validator-3
+    SURVIVORS=(validator-0 validator-1 validator-2 full-node)
+    EPOCH2_START=$(( DPOS_ACTIVATION_BLOCK + 2 * EPOCH_INTERVAL ))
+    WINDOW_OPEN=$(( EPOCH2_START - 10 ))   # DKG_MARGIN_BLOCKS = 10
+    BOUNDARY_PROBE=$(( EPOCH2_START + 6 ))
+
+    # Stop the victim BEFORE the epoch-2 DKG window opens, so it misses committee[2]'s
+    # ceremony entirely. epoch 1 is seedless, so taking it down now does not affect a
+    # live beacon (none yet) — it only excludes it from the epoch-2 deal.
+    echo "smoke-vrf-dkg-liveness: bringing $DOWN down BEFORE the epoch-2 DKG window opens (block < $WINDOW_OPEN)"
+    if (( $(finalized_dec) >= WINDOW_OPEN )); then
+        echo "FAIL (smoke-vrf-dkg-liveness): chain already at/past the epoch-2 DKG window ($WINDOW_OPEN) — cannot stop the victim before its ceremony (raise the activation gap or run earlier)"
+        exit 1
+    fi
+    docker compose stop "$DOWN" >/dev/null
+    PRE=$(finalized_dec)
+    # shellcheck disable=SC2034
+    NODES=("${SURVIVORS[@]}")
+
+    # 1) The chain crosses the epoch-2 boundary and finalizes on the n−f=3 survivors —
+    #    committee[2]'s DKG completed without the offline member, beacon live from
+    #    epoch 2.
+    echo "smoke-vrf-dkg-liveness: waiting for finalized >= $BOUNDARY_PROBE with $DOWN down (n−f=3 quorum must seed epoch 2)"
+    wait_finalized_ge "$BOUNDARY_PROBE" 400 >/dev/null || {
+        echo "FAIL (smoke-vrf-dkg-liveness): chain did not reach the epoch-2 boundary with $DOWN down (survivors below n−f quorum / DKG could not complete shorthanded)"
+        docker compose logs --tail=120 validator-0
+        exit 1
+    }
+    wait_nodes_have "$BOUNDARY_PROBE" 120 || { echo "FAIL (smoke-vrf-dkg-liveness): survivors did not all reach $BOUNDARY_PROBE"; exit 1; }
+    assert_beacon_window "$EPOCH2_START" "$BOUNDARY_PROBE" "dkg-liveness-epoch2"
+    echo "smoke-vrf-dkg-liveness: beacon went LIVE at epoch 2 on the 3 survivors while $DOWN was offline during its DKG window"
+
+    # 2) Restart the victim. It missed epoch 2's ceremony → it holds NO epoch-2 share.
+    #    Assert it logs NO "share computed + stored" for epoch 2 (it sits out the seed
+    #    quorum for epoch 2; it re-derives prev_randao from the cert like a verify-only
+    #    node and stays live).
+    echo "smoke-vrf-dkg-liveness: restarting $DOWN — it must NOT hold an epoch-2 share (excluded by QUAL)"
+    docker compose start "$DOWN" >/dev/null
+    # Let it catch up to the boundary so its logs for epoch 2 are complete.
+    local catchup_deadline dh
+    catchup_deadline=$(( SECONDS + 150 ))
+    while :; do
+        dh=$(mixhash_in "$DOWN" "$BOUNDARY_PROBE")
+        [[ "$dh" != "null" && -n "$dh" ]] && break
+        (( SECONDS < catchup_deadline )) || { echo "FAIL (smoke-vrf-dkg-liveness): $DOWN did not catch up to $BOUNDARY_PROBE after restart"; docker compose logs --tail=120 "$DOWN"; exit 1; }
+        sleep 2
+    done
+    # The actor logs "live DKG: PK_epoch + share computed + stored" with epoch=<E> ONLY
+    # for an epoch it actually finalized a share for. A member excluded from epoch 2's
+    # QUAL produces no such line for epoch 2.
+    share_lines=$(docker compose logs "$DOWN" 2>/dev/null \
+        | grep "live DKG: PK_epoch + share computed + stored" | grep -E "epoch=2( |,|$)" || true)
+    if [[ -n "$share_lines" ]]; then
+        echo "FAIL (smoke-vrf-dkg-liveness): $DOWN logged an epoch-2 share despite being offline during the epoch-2 DKG window — it should be SHARELESS for epoch 2 (QUAL exclusion):"
+        printf '%s\n' "$share_lines" | sed 's/^/    /'
+        exit 1
+    fi
+    echo "smoke-vrf-dkg-liveness: $DOWN holds NO epoch-2 share (correctly excluded by QUAL — it sits out the epoch-2 seed quorum, NO reshare)"
+
+    # 3) The chain stays live after the victim rejoins (it derives prev_randao from the
+    #    cert seed like a verify-only node — byte-identical to the survivors).
+    local v hi miss
+    hi=$(finalized_dec)
+    miss=()
+    for ((v = EPOCH2_START; v <= BOUNDARY_PROBE; v++)); do
+        dh=$(mixhash_in "$DOWN" "$v"); sv=$(mixhash_at "$v")
+        [[ "$dh" == "null" || -z "$dh" ]] && { miss+=("$v=missing-on-$DOWN"); continue; }
+        [[ "$dh" == "$sv" ]] || miss+=("$v: $DOWN=$dh != validator-0=$sv")
+    done
+    (( ${#miss[@]} == 0 )) || { echo "FAIL (smoke-vrf-dkg-liveness): restarted $DOWN derived divergent prev_randao (did not recover the cert seed as a verify-only node):"; printf '  %s\n' "${miss[@]}"; exit 1; }
+    BEFORE=$hi; sleep 6; AFTER=$(finalized_dec)
+    (( AFTER > BEFORE )) || { echo "FAIL (smoke-vrf-dkg-liveness): chain not finalizing after $DOWN rejoined ($AFTER <= $BEFORE)"; exit 1; }
+    echo "smoke-vrf-dkg-liveness: chain stayed live after $DOWN rejoined ($BEFORE → $AFTER); $DOWN re-derived epoch-2 prev_randao from the cert seed byte-identically"
+
+    echo "OK (smoke-vrf-dkg-liveness): a member offline during its epoch-2 DKG window was excluded from the ceremony (shareless, NO reshare) and SAT OUT the epoch-2 seed quorum, while the chain finalized on the n−f=3 survivors and the rejoined member re-derived prev_randao from the cert seed"
 }
 
 # smoke-crash-survivor (Problem A): a validator is CRASHED ungracefully
