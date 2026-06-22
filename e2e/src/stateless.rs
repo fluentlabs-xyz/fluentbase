@@ -42,7 +42,7 @@ fn test_example_rwasm() {
 fn test_example_panic() {
     let (output, exit_code) =
         run_with_default_context(FLUENTBASE_EXAMPLES_PANIC.wasm_bytecode.to_vec(), &[]);
-    assert_eq!(from_utf8(&output[..]).unwrap(), "it's panic time",);
+    assert_eq!(from_utf8(&output[68..68 + 15]).unwrap(), "it's panic time");
     assert_eq!(exit_code, -1);
 }
 

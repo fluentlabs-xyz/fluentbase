@@ -13,10 +13,7 @@ use fluentbase_sdk::{
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder, TxResultExt};
 use hex_literal::hex;
-use revm::{
-    bytecode::Bytecode,
-    context::result::{ExecutionResult, HaltReason},
-};
+use revm::{bytecode::Bytecode, context::result::HaltReason};
 use rwasm::RwasmModule;
 use std::str::from_utf8_unchecked;
 
@@ -177,7 +174,7 @@ fn test_wasm_panic() {
     );
     assert!(!result.is_success());
     let bytes = result.output().unwrap_or_default();
-    assert_eq!("it's panic time", from_utf8(&bytes[..]).unwrap());
+    assert_eq!("it's panic time", from_utf8(&bytes[68..68 + 15]).unwrap());
 }
 
 #[test]
