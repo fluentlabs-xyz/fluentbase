@@ -1,4 +1,4 @@
-use crate::EvmTestingContextWithGenesis;
+use crate::{helpers::decode_evm_error_string, EvmTestingContextWithGenesis};
 use core::str::from_utf8;
 use fluentbase_codec::{bytes::BytesMut, SolidityABI};
 use fluentbase_contracts::{
@@ -177,7 +177,7 @@ fn test_wasm_panic() {
     );
     assert!(!result.is_success());
     let bytes = result.output().unwrap_or_default();
-    assert_eq!("it's panic time", from_utf8(&bytes[..]).unwrap());
+    assert_eq!("it's panic time", decode_evm_error_string(&bytes));
 }
 
 #[test]

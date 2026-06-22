@@ -1,4 +1,4 @@
-use core::str::from_utf8;
+use crate::helpers::decode_evm_error_string;
 use fluentbase_contracts::{
     FLUENTBASE_EXAMPLES_GREETING, FLUENTBASE_EXAMPLES_PANIC, FLUENTBASE_EXAMPLES_ROUTER_SOLIDITY,
     FLUENTBASE_EXAMPLES_RWASM, FLUENTBASE_EXAMPLES_TINY_KECCAK,
@@ -42,7 +42,7 @@ fn test_example_rwasm() {
 fn test_example_panic() {
     let (output, exit_code) =
         run_with_default_context(FLUENTBASE_EXAMPLES_PANIC.wasm_bytecode.to_vec(), &[]);
-    assert_eq!(from_utf8(&output[..]).unwrap(), "it's panic time",);
+    assert_eq!(decode_evm_error_string(&output), "it's panic time");
     assert_eq!(exit_code, -1);
 }
 

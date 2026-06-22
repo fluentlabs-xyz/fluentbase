@@ -1,3 +1,4 @@
+use fluentbase_codec::SolidityABI;
 use fluentbase_sdk::{Address, Bytes, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 // use fluentbase_svm::{
 //     account::AccountSharedData,
@@ -9,6 +10,17 @@ use fluentbase_sdk::{Address, Bytes, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext};
 use revm::context::result::ExecutionResult;
 // use solana_program_pack::Pack;
+
+pub fn decode_evm_error_string(output: &[u8]) -> String {
+    const ERROR_STRING_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
+    assert!(
+        output.starts_with(&ERROR_STRING_SELECTOR),
+        "expected Error(string) selector, got: 0x{}",
+        hex::encode(output)
+    );
+    SolidityABI::<String>::decode(&&output[ERROR_STRING_SELECTOR.len()..], 0)
+        .expect("decode Error(string) payload")
+}
 
 pub fn call_with_sig(
     ctx: &mut EvmTestingContext,
