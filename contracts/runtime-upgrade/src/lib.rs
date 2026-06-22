@@ -73,7 +73,10 @@ trait RuntimeUpgradeTr {
     /// Recompile already deployed WASM runtime smart contract
     fn recompile(&mut self, target_address: Address);
 
-    /// Plan a bulk runtime upgrade.
+    /// Plan a bulk runtime upgrade as exact target/hash pairs.
+    ///
+    /// The target address is part of the authorization boundary: approving only a WASM hash would
+    /// let the delegated upgrader install approved bytecode at the wrong system address.
     fn plan_upgrade(
         &mut self,
         genesis_hash: B256,
@@ -169,6 +172,8 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
             panic!("runtime-upgrade: planned upgrador is zero address");
         }
 
+        // Validate the whole replacement plan before clearing the previous one. The runtime should
+        // never persist a partial plan if one entry is malformed.
         for (index, (target_address, wasm_code_hash)) in target_addresses
             .iter()
             .copied()
@@ -235,6 +240,7 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         let genesis_hash = self.planned_genesis_hash_accessor().get(&self.sdk);
         let genesis_version = self.planned_genesis_version_accessor().get(&self.sdk);
         let code_hash = self.compile_and_install(target_address, wasm_bytecode);
+        // Consume the exact target/hash pair so a planned upgrade cannot be replayed.
         self.remove_planned_upgrade(target_address, wasm_code_hash);
 
         RuntimeUpgraded {

@@ -19,6 +19,8 @@ Upgrade contract exposes:
 
 - `upgradeTo(...)`
 - `recompile(...)`
+- `planUpgrade(...)`
+- `upgradeToPlanned(...)`
 - `changeOwner(...)`
 - `owner()`
 - `renounceOwnership()`
@@ -29,6 +31,12 @@ Key behavior:
   original WASM bytes, recompiles it to rWasm, and then uses the same upgrade syscall path as
   `upgradeTo(...)`,
 - `upgradeTo(...)` emits `RuntimeUpgraded`, while `recompile(...)` emits `ContractRecompiled`,
+- `planUpgrade(...)` lets the owner pre-authorize a release batch as exact `(target, raw WASM
+  hash)` pairs plus release metadata and an authorized upgrador,
+- `upgradeToPlanned(...)` can be called only by that upgrador and only for a stored target/hash
+  pair; the pair is removed after successful installation to prevent replay,
+- planned upgrades bind hashes to target addresses so a delegated upgrader cannot reuse approved
+  bytecode against the wrong system contract,
 - zero owner assignment is rejected by `changeOwner`,
 - renounce sets owner to system address,
 - default owner fallback is defined for unset state.
@@ -63,6 +71,7 @@ Treat it as compatibility debt, not target architecture.
 For real upgrades:
 
 - produce deterministic build artifacts,
+- publish target-address-to-WASM-hash pairs for planned releases,
 - use multisig/operator quorum controls,
 - roll out to all nodes coherently,
 - verify post-upgrade code hash and runtime behavior,
