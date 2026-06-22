@@ -13,7 +13,7 @@ pub unsafe fn handle_panic_info(info: &core::panic::PanicInfo) -> ! {
 
 #[cfg(feature = "fast-panic")]
 pub unsafe fn handle_panic_info(info: &core::panic::PanicInfo) -> ! {
-    let Some(message) = info.message().as_str() else {
+    let Some(panic_message) = info.message().as_str() else {
         // TODO(dmitry123): How to support multiline panic messages? Not supported API by Rust yet w/o alloc.
         unreachable!("multiline or panic with args is not supported with fast-panic feature")
     };
