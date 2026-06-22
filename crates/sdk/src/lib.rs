@@ -13,6 +13,7 @@ pub mod debug;
 pub mod entrypoint;
 pub mod leb128;
 mod macros;
+#[cfg(target_arch = "wasm32")]
 pub mod panic;
 pub mod shared;
 pub mod storage;
