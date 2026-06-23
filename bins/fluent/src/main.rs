@@ -7,11 +7,10 @@ use alloy_rpc_types_engine::PayloadId;
 use clap::{Args, Parser};
 use dashmap::DashMap;
 use fluentbase_node::{
-    cert_follow::spawn_cert_follower,
     chainspec::FluentChainSpecParser,
     consensus::FluentConsensus,
     consensus_rpc::{ConsensusApiServer, ConsensusRpc},
-    dpos::{spawn_dpos, DposArgs},
+    dpos::{spawn_node_stack, DposArgs},
     evm::{FluentEvmConfig, FluentExecutorBuilder, FluentNode},
     launcher::{launch_consensus_node, launch_consensus_validator, ActivationProbe},
     payload::FluentPayloadAttributesBuilder,
@@ -207,8 +206,7 @@ fn main() {
     let node_modes::ResolvedModes {
         consensus_url,
         block_producer,
-        dpos_config,
-        cert_follow_config,
+        node_stack,
         cert_rpc_feed,
         staking_address,
         chain_config_address,
@@ -216,17 +214,16 @@ fn main() {
         staking_reader_cfg,
     } = modes;
 
-    // Pre-spawn the DPoS thread before reth's runtime starts. The thread
-    // blocks on a oneshot until the closure below forwards the reth
-    // FullNode.
-    let dpos_setup = dpos_config.map(|cfg| {
+    // Pre-spawn the unified consensus thread before reth's runtime starts. The
+    // thread blocks on a oneshot until the closure below forwards the reth
+    // FullNode. ONE spawn for both `--dpos` (validator) and `--cert-follow`
+    // (follower) — `resolve_node_modes` produced exactly one `NodeStackCfg` (they
+    // are mutually exclusive via clap `conflicts_with`); the standalone
+    // `--sequencer-url` trust relay is the separate `launch_consensus_node` path
+    // and never yields a `NodeStackCfg`.
+    let consensus_setup = node_stack.map(|cfg| {
         let shutdown_token = CancellationToken::new();
-        let spawn = spawn_dpos::<_, EthereumAddOns<_, _, _>>(cfg, shutdown_token.clone());
-        (spawn, shutdown_token)
-    });
-    let cert_follow_setup = cert_follow_config.map(|cfg| {
-        let shutdown_token = CancellationToken::new();
-        let spawn = spawn_cert_follower::<_, EthereumAddOns<_, _, _>>(cfg, shutdown_token.clone());
+        let spawn = spawn_node_stack::<_, EthereumAddOns<_, _, _>>(cfg, shutdown_token.clone());
         (spawn, shutdown_token)
     });
 
@@ -234,22 +231,12 @@ fn main() {
     // cli.run_with_components returns (Tempo pattern at bin/tempo/src/main.rs:734-742).
     // Joining inside the async closure risks deadlock when reth's engine shutdown
     // races with the consensus thread's in-flight beacon_engine_handle calls.
-    // DPoS and cert-follow are mutually exclusive (clap `conflicts_with`), so at
-    // most one setup is `Some`; both normalize to the same (handle_tx, dead_rx) +
-    // (join, shutdown_token) shape the launch closure drives.
-    let (consensus_thread_inner, consensus_thread_cleanup) = match (dpos_setup, cert_follow_setup) {
-        (Some((spawn, token)), None) => (
+    let (consensus_thread_inner, consensus_thread_cleanup) = match consensus_setup {
+        Some((spawn, token)) => (
             Some((spawn.handle_tx, spawn.dead_rx)),
             Some((spawn.join, token)),
         ),
-        (None, Some((spawn, token))) => (
-            Some((spawn.handle_tx, spawn.dead_rx)),
-            Some((spawn.join, token)),
-        ),
-        (None, None) => (None, None),
-        (Some(_), Some(_)) => {
-            unreachable!("clap conflicts_with prevents --dpos together with --cert-follow")
-        }
+        None => (None, None),
     };
 
     let components = move |spec: Arc<ChainSpec>| {

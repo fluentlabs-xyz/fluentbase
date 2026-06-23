@@ -21,11 +21,14 @@ fluentbase-staking-reader = { workspace = true }
 eyre = { workspace = true }
 tracing = { workspace = true }
 rand_core = { workspace = true }
+# `commonware-math` (the `Random` trait) + `rand_08` (`OsRng`) back
+# `generate_ephemeral_ed25519_key` (the standalone --cert-follow follower's
+# gossip-idle broadcast-plane identity) — regular deps, not just tests.
+commonware-math = { workspace = true, features = ["std"] }
+rand_08 = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["std"] }
 zeroize = { version = "1", default-features = false }
 
 [dev-dependencies]
-commonware-math = { workspace = true, features = ["std"] }
-rand_08 = { workspace = true }
 hex = { workspace = true }

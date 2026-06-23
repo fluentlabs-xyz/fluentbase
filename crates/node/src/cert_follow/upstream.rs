@@ -8,7 +8,14 @@
 //! `consensus` engine never names node RPC types. Mirrors tempo
 //! `follow/upstream/actor.rs`, adapted to fluentbase's crate split.
 
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use commonware_consensus::types::Height;
 use commonware_runtime::{tokio::Context, Clock as _, Handle, Metrics as _, Spawner as _};
@@ -92,8 +99,13 @@ impl CertUpstream for UpstreamHandle {
 const LIVE_FINALIZED_BUFFER: usize = 256;
 
 /// Build the upstream actor + its by-height pull handle + the live finalized
-/// receiver. `urls` is the failover list: the actor rotates to the next URL
-/// (round-robin) on a connect failure or a dropped connection.
+/// receiver + the connection-generation token. `urls` is the failover list: the
+/// actor rotates to the next URL (round-robin) on a connect failure or a dropped
+/// connection. The returned [`Arc<AtomicU64>`] is bumped by the actor each time
+/// it (re)establishes a connection — the cert-inlet observes it to scope its
+/// data-fault streak per-CONNECTION (#7), so a connection-level auto-rotation
+/// (which the inlet cannot otherwise see) resets the streak and A's faults never
+/// bleed into B's rotation budget.
 pub fn init(
     ctx: Context,
     urls: Vec<String>,
@@ -101,6 +113,7 @@ pub fn init(
     UpstreamActor,
     UpstreamHandle,
     mpsc::Receiver<UpstreamFinalized>,
+    Arc<AtomicU64>,
 ) {
     assert!(
         !urls.is_empty(),
@@ -108,14 +121,21 @@ pub fn init(
     );
     let (mailbox_tx, mailbox_rx) = mpsc::unbounded_channel();
     let (finalized_tx, finalized_rx) = mpsc::channel(LIVE_FINALIZED_BUFFER);
+    let conn_gen = Arc::new(AtomicU64::new(0));
     let actor = UpstreamActor {
         ctx,
         urls,
         next_url: 0,
         mailbox_rx,
         finalized_tx,
+        conn_gen: conn_gen.clone(),
     };
-    (actor, UpstreamHandle { tx: mailbox_tx }, finalized_rx)
+    (
+        actor,
+        UpstreamHandle { tx: mailbox_tx },
+        finalized_rx,
+        conn_gen,
+    )
 }
 
 pub struct UpstreamActor {
@@ -124,6 +144,10 @@ pub struct UpstreamActor {
     next_url: usize,
     mailbox_rx: mpsc::UnboundedReceiver<UpstreamMsg>,
     finalized_tx: mpsc::Sender<UpstreamFinalized>,
+    /// Bumped on each successful (re)connect+subscribe so the cert-inlet can
+    /// scope its data-fault streak per-CONNECTION (#7). Shared with the inlet via
+    /// the [`init`] return.
+    conn_gen: Arc<AtomicU64>,
 }
 
 impl UpstreamActor {
@@ -162,6 +186,10 @@ impl UpstreamActor {
                     continue;
                 }
             };
+            // A new connection is live + serving: bump the generation so the
+            // cert-inlet resets its per-connection data-fault streak (#7) — the
+            // streak from the prior upstream URL must not count against this one.
+            self.conn_gen.fetch_add(1, Ordering::Release);
             debug!(url = %url, "cert-follow upstream connected + subscribed");
 
             // Serve the live stream + resolver pulls until the connection drops.

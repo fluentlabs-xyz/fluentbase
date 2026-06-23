@@ -145,17 +145,18 @@ The full prod lifecycle on a chain where the staking cluster is deployed at
    clean-halts Tempo production at exactly `dposActivationBlock` — no
    mid-flight restart, so the followers ride the uninterrupted WS stream to
    the same height; once all nodes align, ALL six validators cold-restart into
-   **unified `--dpos`** (`--dpos.follower-upstream` set): committee members'
-   supervisors enter the signer phase directly, while validator-5 (no
-   committee seat yet) rides the in-process cert-follow substrate.
+   `--dpos` (`--dpos.follower-upstream` set): committee members cold-start as
+   signers, while validator-5 (no committee seat yet) stays a verify-only node
+   that follows the chain via its cert-inlet.
 5. Registers the **external 6th** validator (`registerValidator` →
-   `setConsensusKeys` → governance `activateValidator` → `delegate`) while its
-   supervisor follows in-process; once its key appears in the ahead-committed
-   `getEpochCommittee(E+1)`, the supervisor stops the follower lap at the
-   boundary and **auto-promotes** — the case asserts convergence past the
-   boundary, the `PROMOTION cold-start` log line, the committee rotation, AND
-   that the displaced validator **auto-demotes** and keeps following (no
-   silent-verifier wedge; watchdog WARN absent from v5's entire log).
+   `setConsensusKeys` → governance `activateValidator` → `delegate`) while it
+   follows via its inlet; once its key appears in the ahead-committed
+   `getEpochCommittee(E+1)` and it holds its DKG share, `reconcile_roles`
+   **promotes it to Signer in-process** (no restart) — the case asserts
+   convergence past the boundary, the `promoted to Signer in-process` log line,
+   the committee rotation, AND that the displaced validator **demotes to
+   verify-only in-process** and keeps following its inlet (no silent-verifier
+   wedge; watchdog WARN absent from v5's entire log).
 6. Ejects one committee validator by **liveness** (stopped at an epoch start so
    50 misses fit one 64-block epoch) — asserts jail, then absence from
    `getEpochCommittee` two boundaries later (committee[E+1] was committed

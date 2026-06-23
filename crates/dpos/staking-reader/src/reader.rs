@@ -358,7 +358,9 @@ where
     }
 
     /// `ChainConfig.getDposActivationBlock()` at block `at` — origin for the
-    /// relative DPoS epoch numbering (zero ⇒ absolute). Re-read per call.
+    /// relative DPoS epoch numbering. `0` is the unscheduled sentinel
+    /// (`setDposActivationBlock` requires a future block, so a live chain never
+    /// stores `0`; cf. `crates/node/src/evm.rs`). Re-read per call.
     pub fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
         self.call(
             self.cfg.chain_config_address,
@@ -532,6 +534,33 @@ pub trait StakingStateRead {
     /// `ChainConfig.getDposActivationBlock()` (relative-epoch origin) at `at`.
     fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError>;
 
+    /// DPoS activation as a *scheduling state* — the codeless/unscheduled-tolerant
+    /// gate the beacon-plane cold-start defers on (`None` ⇒ not yet a DPoS chain at
+    /// `at`, so freezing geometry would read a reverting/empty ChainConfig).
+    ///
+    /// The default folds NOTHING (`Ok(Some(dpos_activation_block(at)?))`) so the
+    /// in-memory test mocks — which always have a live synthetic ChainConfig, and
+    /// legitimately use activation `0` for absolute numbering — stay "scheduled"
+    /// and freeze exactly as before. The real [`RethStakingStateReader`] OVERRIDES
+    /// this with a provider-level code-presence probe + the `0`-sentinel fold (see
+    /// [`RethStakingStateReader::scheduled_dpos_activation`]); only there does a
+    /// codeless / unscheduled anchor surface as `None`.
+    ///
+    /// `activation == 0` ⇒ "absolute numbering (legitimate)" is a TEST-MOCK-ONLY
+    /// affordance and NOT a live-chain divergence: it is meaningful ONLY through
+    /// this default impl (synthetic mocks with no real `setDposActivationBlock`
+    /// constraint). On a REAL chain `0` can never be a genuine activation —
+    /// `setDposActivationBlock` refuses to store `0` (it requires a future block),
+    /// the real [`RethStakingStateReader::scheduled_dpos_activation`] folds the
+    /// `0` sentinel to `None`, AND `dpos::resolve_cold_start_kind` FATALS on
+    /// `activation == 0` ("the unscheduled sentinel"). So the apparent
+    /// contradiction between "0 = absolute" here and "0 = unscheduled, fatal"
+    /// there is intentional: the two layers describe different worlds (mock vs
+    /// real), not the same one. Do NOT "reconcile" them by changing behavior.
+    fn scheduled_dpos_activation(&self, at: B256) -> Result<Option<u64>, ReadError> {
+        Ok(Some(self.dpos_activation_block(at)?))
+    }
+
     /// Peer keys of the full Active validator registry (tier-2 feed),
     /// keyless-filtered. See [`RethStakingStateReader::active_registry_peers`].
     fn active_registry_peers(&self, at: B256) -> Result<Vec<PeerPubkey>, ReadError>;
@@ -557,6 +586,13 @@ where
     }
     fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
         RethStakingStateReader::dpos_activation_block(self, at)
+    }
+    /// Override the trait default with the code-presence-aware probe: a codeless
+    /// ChainConfig (runtime cluster not deployed at `at`) or an unscheduled `0`
+    /// activation both map to `None`, so the beacon-plane cold-start can defer
+    /// instead of fatally erroring on the empty/reverting read.
+    fn scheduled_dpos_activation(&self, at: B256) -> Result<Option<u64>, ReadError> {
+        RethStakingStateReader::scheduled_dpos_activation(self, at)
     }
     fn active_registry_peers(&self, at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
         RethStakingStateReader::active_registry_peers(self, at)

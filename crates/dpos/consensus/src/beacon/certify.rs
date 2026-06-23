@@ -91,36 +91,48 @@ use tracing::{info, warn};
 const SEED_RETENTION: usize = 4096;
 
 /// Shared, bounded `round → recovered seed` map. Written by the notarization
-/// [`Reporter`](commonware_consensus::Reporter) ([`crate::spec_exec::Mailbox`]),
-/// read by [`BeaconCertify::certify`].
-pub type SeedStore = Arc<Mutex<BTreeMap<Round, BlsSignature>>>;
+/// [`Reporter`](commonware_consensus::Reporter) ([`crate::spec_exec::Mailbox`])
+/// via [`SeedStore::record`], read by [`BeaconCertify::certify`]. A newtype rather
+/// than a bare alias so the [`SEED_RETENTION`] eviction is the ONLY insertion path:
+/// holders cannot lock the inner map and grow it unbounded.
+#[derive(Clone)]
+pub struct SeedStore(Arc<Mutex<BTreeMap<Round, BlsSignature>>>);
 
-/// Construct an empty [`SeedStore`].
-pub fn new_seed_store() -> SeedStore {
-    Arc::new(Mutex::new(BTreeMap::new()))
-}
+impl SeedStore {
+    /// Construct an empty store.
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(BTreeMap::new())))
+    }
 
-/// Record the recovered seed for `round`, evicting the oldest entries past
-/// [`SEED_RETENTION`]. Idempotent: the seed is unique per round, so a re-report
-/// (peer cert after self-assembly, or replay) writes the same value.
-pub fn record_seed(store: &SeedStore, round: Round, seed: BlsSignature) {
-    let Ok(mut map) = store.lock() else {
-        // A poisoned lock means a prior panic while holding it — the seed gate
-        // can no longer function; log once rather than propagate a panic into
-        // the reporter hot path.
-        warn!("beacon certify seed store poisoned; dropping recorded seed");
-        return;
-    };
-    map.insert(round, seed);
-    while map.len() > SEED_RETENTION {
-        // Evict the oldest (lowest-round) entry. `BTreeMap` orders by `Round`, so
-        // `pop_first` is the lowest round (matches the `outer.rs` eviction idiom).
-        map.pop_first();
+    /// Record the recovered seed for `round`, evicting the oldest entries past
+    /// [`SEED_RETENTION`]. Idempotent: the seed is unique per round, so a re-report
+    /// (peer cert after self-assembly, or replay) writes the same value.
+    pub fn record(&self, round: Round, seed: BlsSignature) {
+        let Ok(mut map) = self.0.lock() else {
+            // A poisoned lock means a prior panic while holding it — the seed gate
+            // can no longer function; log once rather than propagate a panic into
+            // the reporter hot path.
+            warn!("beacon certify seed store poisoned; dropping recorded seed");
+            return;
+        };
+        map.insert(round, seed);
+        while map.len() > SEED_RETENTION {
+            // Evict the oldest (lowest-round) entry. `BTreeMap` orders by `Round`, so
+            // `pop_first` is the lowest round (matches the `outer.rs` eviction idiom).
+            map.pop_first();
+        }
+    }
+
+    /// The recovered seed for `round`, if present.
+    fn lookup(&self, round: Round) -> Option<BlsSignature> {
+        self.0.lock().ok()?.get(&round).copied()
     }
 }
 
-fn lookup_seed(store: &SeedStore, round: Round) -> Option<BlsSignature> {
-    store.lock().ok()?.get(&round).copied()
+impl Default for SeedStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 type InlineFor<E, XC, A> = Inline<E, BlsScheme, FluentApp<XC, A>, OrderBlock, OriginEpocher>;
@@ -358,7 +370,7 @@ fn seed_certify_verdict(
         }
     };
     let pk_e: &GroupPublic = group_public_key(&outcome);
-    let Some(seed) = lookup_seed(seeds, round) else {
+    let Some(seed) = seeds.lookup(round) else {
         warn!(
             height = block.height,
             ?round,
@@ -479,7 +491,7 @@ mod tests {
     #[test]
     fn non_boundary_block_certifies_without_seed() {
         let ns = seed_namespace(&fluent_namespace(20994));
-        let store = new_seed_store();
+        let store = SeedStore::new();
         let block = boundary_block(None); // beacon_outcome = None ⇒ non-boundary
         assert!(seed_certify_verdict(&block, round_at(7), &store, &ns));
     }
@@ -490,8 +502,8 @@ mod tests {
         let r = round_at(7);
         let (outcome, shares) = deal_committee(1, 5);
         let seed = recover_seed_for(&outcome, &shares, &ns, r);
-        let store = new_seed_store();
-        record_seed(&store, r, seed);
+        let store = SeedStore::new();
+        store.record(r, seed);
 
         let block = boundary_block(Some(encode_outcome(&outcome)));
         assert!(
@@ -510,8 +522,8 @@ mod tests {
         // ...but the proposer asserts a DIFFERENT (forged) outcome's PK_E.
         let (forged_outcome, _forged_shares) = deal_committee(2, 5);
 
-        let store = new_seed_store();
-        record_seed(&store, r, seed);
+        let store = SeedStore::new();
+        store.record(r, seed);
 
         let block = boundary_block(Some(encode_outcome(&forged_outcome)));
         assert!(
@@ -535,8 +547,8 @@ mod tests {
         let (real_outcome, real_shares) = deal_committee(1, 5);
         // The round's seed is the unique threshold signature under the REAL shares.
         let seed = recover_seed_for(&real_outcome, &real_shares, &ns, r);
-        let store = new_seed_store();
-        record_seed(&store, r, seed);
+        let store = SeedStore::new();
+        store.record(r, seed);
 
         // Honest boundary: the real outcome certifies against the recovered seed.
         let honest = boundary_block(Some(encode_outcome(&real_outcome)));
@@ -565,7 +577,7 @@ mod tests {
         let ns = seed_namespace(&fluent_namespace(20994));
         let r = round_at(7);
         let (outcome, _shares) = deal_committee(1, 5);
-        let store = new_seed_store(); // empty — no seed recorded for r
+        let store = SeedStore::new(); // empty — no seed recorded for r
         let block = boundary_block(Some(encode_outcome(&outcome)));
         assert!(
             !seed_certify_verdict(&block, r, &store, &ns),
@@ -577,10 +589,10 @@ mod tests {
     fn malformed_outcome_is_rejected() {
         let ns = seed_namespace(&fluent_namespace(20994));
         let r = round_at(7);
-        let store = new_seed_store();
+        let store = SeedStore::new();
         // A recorded seed is present, but the asserted outcome is undecodable.
         let (outcome, shares) = deal_committee(1, 5);
-        record_seed(&store, r, recover_seed_for(&outcome, &shares, &ns, r));
+        store.record(r, recover_seed_for(&outcome, &shares, &ns, r));
         let block = boundary_block(Some(vec![0xFF; 8]));
         assert!(!seed_certify_verdict(&block, r, &store, &ns));
     }
@@ -651,16 +663,16 @@ mod tests {
     fn record_seed_is_bounded_and_idempotent() {
         let ns = seed_namespace(&fluent_namespace(20994));
         let (outcome, shares) = deal_committee(1, 5);
-        let store = new_seed_store();
+        let store = SeedStore::new();
         for v in 0..(SEED_RETENTION as u64 + 50) {
             let r = round_at(v);
-            record_seed(&store, r, recover_seed_for(&outcome, &shares, &ns, r));
+            store.record(r, recover_seed_for(&outcome, &shares, &ns, r));
         }
         // Idempotent re-insert (same unique seed) does not grow the map.
         let r0 = round_at(SEED_RETENTION as u64 + 49);
-        record_seed(&store, r0, recover_seed_for(&outcome, &shares, &ns, r0));
+        store.record(r0, recover_seed_for(&outcome, &shares, &ns, r0));
 
-        let map = store.lock().unwrap();
+        let map = store.0.lock().unwrap();
         assert_eq!(map.len(), SEED_RETENTION, "store is bounded");
         assert!(map.contains_key(&r0), "newest retained");
         assert!(!map.contains_key(&round_at(0)), "oldest evicted");

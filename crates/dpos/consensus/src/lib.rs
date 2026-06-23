@@ -18,6 +18,8 @@ pub mod beacon;
 #[cfg(feature = "dpos-devnet-byzantine")]
 pub mod byzantine;
 pub mod cert_follow;
+pub mod cert_inlet;
+pub mod cold_start_jump;
 pub mod digest;
 pub mod dpos;
 pub mod elector_seed;
@@ -29,6 +31,7 @@ pub mod extra_data;
 pub mod feed_sink;
 pub mod order_block;
 pub mod outer;
+pub mod role;
 pub mod scheme;
 pub mod slasher;
 pub mod spec_exec;
@@ -38,14 +41,19 @@ pub use application::{
     gas_limit_within_1_1024, step_gas_limit, BeaconEngineLike, DerivedBlock, DerivedBlockBuilder,
     ExecutedChain, FluentApp, OrderingAssembler, ParentHeaderMissing, VERIFY_EXEC_BUDGET,
 };
-pub use cert_follow::{
-    CertFollowConfig, CertFollowHandle, CertFollowLayer, CertFollowRethHandle, CertUpstream,
-    FollowExit, UpstreamFinalized,
+pub use cert_follow::{read_geometry, CertUpstream, UpstreamFinalized};
+pub use cert_inlet::{
+    CertInlet, CommitteeSource, MarshalSink, NoopResolver, RethCommitteeSource, RotateUpstream,
+    MAX_UPSTREAM_FAULTS,
+};
+pub use cold_start_jump::{
+    assert_l1_checkpoint, cold_start_jump, ElSync, RethElSync, JUMP_THRESHOLD,
 };
 pub use digest::Digest;
 pub use dpos::{
-    peek_consensus_archive_last_finalized, DposLayer, DposLayerConfig, DposLayerHandle, ModeEvent,
-    PlaneMux, ResettableForward, RethHandle, SharedBeaconPlane, VoteBackupItem,
+    peek_consensus_archive_last_finalized, DposLayer, DposLayerConfig, DposLayerHandle,
+    FollowerLayerConfig, FollowerRethHandle, PlaneMux, ResettableForward, RethHandle,
+    SharedBeaconPlane, VoteBackupItem,
 };
 pub use elector_seed::epoch_leader_seed;
 pub use epocher::OriginEpocher;

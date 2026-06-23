@@ -94,10 +94,16 @@ pub struct DkgActor<Se, Re> {
     receiver: Re,
     committee_for: CommitteeFor,
     store: CeremonyStore,
-    /// Edge-trigger fired (`notify_waiters`) the instant a share lands in `store`,
-    /// so a racing `epoch_manager::enter` wakes immediately instead of polling. The
-    /// SAME `Arc` is held by the manager (threaded via `SharedBeaconPlane`).
+    /// Edge-trigger fired (`notify_one`) the instant a share lands in `store`, so a
+    /// racing `epoch_manager::enter` wakes immediately instead of polling. The SAME
+    /// `Arc` is held by the manager (threaded via `SharedBeaconPlane`).
     share_notify: Arc<tokio::sync::Notify>,
+    /// Frozen `(dposActivationBlock, epochBlockInterval)` — the immutable epoch
+    /// geometry, resolved ONCE by the beacon plane's `EpochTransition` (the single
+    /// in-plane source) and handed in as plain values at spawn AFTER that freeze.
+    /// The actor never re-reads the chain for it, so there is no codeless/genesis-
+    /// fallback race in this path: the spawn site only constructs the actor once the
+    /// geometry is frozen (see `build_beacon_plane`).
     dpos_activation: u64,
     epoch_interval: u64,
     metrics: crate::beacon::metrics::BeaconMetrics,
@@ -197,7 +203,13 @@ where
     }
 
     async fn on_height(&mut self, height: u64, rng: &mut impl CryptoRngCore) {
-        self.last_height = height;
+        // Two feeders drive this clock: the local finalized-height poller
+        // (`fin + K`) and, during unified-supervisor catch-up, the LIVE upstream
+        // cert frontier (so a still-catching-up newcomer deals its first epoch on
+        // the live deadline). Take the max so an interleaved lagging tick can never
+        // pull the deal/seal clock backward; process at the monotone height.
+        self.last_height = self.last_height.max(height);
+        let height = self.last_height;
         let now = self.epoch_of(height);
         let mut to_send: Vec<Outgoing> = Vec::new();
 
@@ -227,6 +239,19 @@ where
         //    all-in completed by an incoming Reveal finalizes immediately — see
         //    [`Self::drive_finalization`].
         self.drive_finalization(height, rng);
+
+        // 2b. Evict any ceremony/`sealed` entry whose epoch boundary has passed without
+        //     finalizing. An under-quorum stall still gets SEALED in step 1 but never
+        //     reaches `ready()`, so `drive_finalization` never removes it — without this
+        //     sweep it lingers in `ceremonies`/`sealed` and re-probes `ready()` (an n=51
+        //     `observe` over cloned logs) on every height tick AND every incoming message
+        //     forever. Past its own boundary (`*e <= now`) the ceremony can only ever be
+        //     the option-A no-op (the boundary block already needed `PK_e` and is gone),
+        //     so dropping it is safe. Runs AFTER `drive_finalization` so a ceremony that
+        //     is finalizable on the boundary tick is completed first, never evicted out
+        //     from under it. Mirrors the `pending.retain` sweep above.
+        self.ceremonies.retain(|e, _| *e > now);
+        self.sealed.retain(|e| *e > now);
 
         // 3. Start the NEXT epoch's DKG ceremony. Retried on EVERY tick (not just
         //    once at the epoch transition): committee[E+1] is committed on-chain
@@ -298,8 +323,7 @@ where
                 let target = **e;
                 let n = (self.committee_for)(target).map_or(0, |s| s.len());
                 let all_in = n > 0 && c.recorded_log_count() == n;
-                let seal_deadline = (self.dpos_activation + target * self.epoch_interval)
-                    .saturating_sub(DKG_MARGIN_BLOCKS);
+                let seal_deadline = self.epoch_start(target).saturating_sub(DKG_MARGIN_BLOCKS);
                 let settle_due = height >= seal_deadline + DKG_SETTLE_BLOCKS;
                 all_in || settle_due
             })
@@ -331,10 +355,10 @@ where
                     }
                     // Edge-trigger the boundary-entry waiter: the share is now visible
                     // in the store, so a racing `enter(e)` wakes immediately rather than
-                    // polling. `notify_waiters` (not `notify_one`) wakes every armed
-                    // waiter; each re-checks its own epoch's resolver. See
-                    // `epoch_manager::wait_for_beacon`.
-                    self.share_notify.notify_waiters();
+                    // polling. `notify_one` stores a permit when no waiter is armed, so a
+                    // share that lands between the consumer's reconcile and its re-arm is
+                    // not lost (single consumer: `EpochManager::run`).
+                    self.share_notify.notify_one();
                     self.metrics.dkg_ceremony_ok.inc();
                     tracing::info!(epoch = e, "live DKG: PK_epoch + share computed + stored");
                 }
@@ -742,5 +766,89 @@ mod clock_tests {
             "early peer dealings that race ahead of `maybe_start` must be buffered + \
              drained (not dropped) so every dealer is acked and the victim seeds"
         );
+    }
+
+    /// Leak regression (H2). A ceremony whose committee has a quorum it never reaches
+    /// (here only the victim deals; its three peers never reveal) is SEALED at the
+    /// deadline but `ready()` stays false, so `drive_finalization` never removes it.
+    /// Once the clock crosses the epoch boundary the per-tick sweep must evict it from
+    /// `ceremonies`/`sealed` — otherwise it lingers and re-probes `ready()` forever.
+    /// Drives `on_height` directly (not `run`) to inspect the actor's internal state.
+    #[test]
+    fn stalled_ceremony_is_evicted_past_boundary() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle: Oracle<PeerPubkey, SimContext> = {
+                let (network, oracle) = Network::new(
+                    ctx.with_label("sim_net"),
+                    SimConfig {
+                        max_size: 1024 * 1024,
+                        disconnect_on_block: false,
+                        tracked_peer_sets: NZUsize!(4),
+                    },
+                );
+                network.start();
+                oracle
+            };
+            let mut rng = StdRng::seed_from_u64(3);
+            let keys: Vec<Ed25519PrivateKey> =
+                (0..4).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
+            // committee n=4 ⇒ quorum 3; only the victim runs ⇒ 1 valid log < quorum ⇒ stall.
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            oracle.manager().track(0, committee.clone()).await;
+            let me = keys[0].clone();
+            let pk = me.public_key();
+            let (sender, receiver) = oracle
+                .control(pk.clone())
+                .register(
+                    fluentbase_p2p::constants::BEACON_CHANNEL,
+                    fluentbase_p2p::constants::BEACON_QUOTA,
+                )
+                .await
+                .expect("register BEACON_CHANNEL");
+            let committee_for: CommitteeFor = {
+                let set = committee.clone();
+                Arc::new(move |_epoch: u64| Some(set.clone()))
+            };
+            let store: CeremonyStore = Arc::new(RwLock::new(BTreeMap::new()));
+            let mut actor = DkgActor::new(
+                b"FLUENT_DPOS_V1_leaktest".to_vec(),
+                me,
+                sender,
+                receiver,
+                committee_for,
+                store,
+                Arc::new(tokio::sync::Notify::new()),
+                ACTIVATION,
+                INTERVAL,
+                crate::beacon::metrics::BeaconMetrics::default(),
+                None,
+            );
+            let mut arng = StdRng::seed_from_u64(9);
+
+            // Through the seal deadline: committee[2] enters (height 10), seals (11),
+            // then stalls (1 valid log < quorum 3, so `ready()` never holds).
+            for h in 0..=(SEAL_DEADLINE + 2) {
+                actor.on_height(h, &mut arng).await;
+            }
+            assert!(
+                actor.ceremonies.contains_key(&DETERMINISTIC_BOOTSTRAP_EPOCH)
+                    && actor.sealed.contains(&DETERMINISTIC_BOOTSTRAP_EPOCH),
+                "precondition: committee[2] must be sealed-but-stalled before the boundary"
+            );
+
+            // Cross the epoch-2 boundary: the sweep must evict the stalled entry.
+            for h in (SEAL_DEADLINE + 3)..=(BOUNDARY + 1) {
+                actor.on_height(h, &mut arng).await;
+            }
+            assert!(
+                actor.ceremonies.is_empty(),
+                "stalled ceremony must be evicted once its boundary passes"
+            );
+            assert!(
+                actor.sealed.is_empty(),
+                "stalled `sealed` entry must be evicted once its boundary passes"
+            );
+        });
     }
 }

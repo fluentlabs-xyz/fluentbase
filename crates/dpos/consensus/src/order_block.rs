@@ -108,6 +108,24 @@ pub fn result_target(height: u64, anchor_height: u64) -> ResultTarget {
     }
 }
 
+/// True iff `result` matches what the locally-derived chain commits at the
+/// K-lagged result-final height. `executed_hash(h)` returns `None` while the
+/// derive at `h` is not yet locally resolved — the caller decides whether
+/// absence (`None`) is tolerable (executor: keep cursor) or a vote-false
+/// (verify). The single definition of the trustless result cross-check, shared
+/// by `FluentApp::verify` and the executor's finalized derive.
+pub fn result_matches(
+    result: B256,
+    height: u64,
+    anchor_height: u64,
+    executed_hash: impl Fn(u64) -> Option<B256>,
+) -> Option<bool> {
+    match result_target(height, anchor_height) {
+        ResultTarget::PreActivation => Some(result == B256::ZERO),
+        ResultTarget::Height(h) => executed_hash(h).map(|local| result == local),
+    }
+}
+
 /// The ordering-chain anchor for an EVM anchor block: empty tx list,
 /// `result` = the anchor's EVM hash, parent = EMPTY. Deterministic across
 /// nodes given the same anchor (devnet genesis / migration weak-subjectivity
@@ -457,6 +475,32 @@ mod tests {
 
         // Deterministic across construction sites: identity = digest equality.
         assert_eq!(anchor.digest(), anchor_order_block(&sealed).digest());
+    }
+
+    #[test]
+    fn result_matches_distinguishes_absence_match_and_mismatch() {
+        let anchor = 100;
+        let local = B256::repeat_byte(0x77);
+        // Pre-activation: must commit ZERO, resolvable without an executed hash.
+        assert_eq!(
+            result_matches(B256::ZERO, anchor + 1, anchor, |_| None),
+            Some(true)
+        );
+        assert_eq!(
+            result_matches(local, anchor + 1, anchor, |_| None),
+            Some(false)
+        );
+        // Post-activation, hash not yet locally derived → None (tolerable).
+        assert_eq!(result_matches(local, anchor + K, anchor, |_| None), None);
+        // Post-activation, present hash → exact match / mismatch.
+        assert_eq!(
+            result_matches(local, anchor + K, anchor, |_| Some(local)),
+            Some(true)
+        );
+        assert_eq!(
+            result_matches(local, anchor + K, anchor, |_| Some(B256::ZERO)),
+            Some(false)
+        );
     }
 
     #[test]

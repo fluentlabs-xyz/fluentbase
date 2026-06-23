@@ -244,7 +244,13 @@ echo "  v5 in committee(epoch $JOIN_E), current epoch $((JOIN_E - 1)); expecting
 # proves the supervisor promoted at the boundary and v5 follows as a signer.
 EPOCH_LEN=$(printf '%d' "$(pp_chainconfig_call 'getEpochBlockInterval()(uint32)')")
 JOIN_BOUNDARY=$(( ACT + JOIN_E * EPOCH_LEN ))
-pp_wait_converge 240 "$(printf '0x%x' "$JOIN_BOUNDARY")" >/dev/null \
+# The deadline must cover the FULL external-join flow, which the live-clock DKG fix
+# makes actually happen: v5 finishes Phase-1 catch-up, committee[E] deals its
+# epoch-E share (a multi-block ceremony that only seals near the E-1/E boundary),
+# v5 promotes at the boundary, then all 7 nodes align past it — ~2-3 min from JOIN
+# detection (which fires early, in epoch E-1). 240s was calibrated for the pre-fix
+# path (v5 never promoted) and is too tight for the real ceremony + join.
+pp_wait_converge 420 "$(printf '0x%x' "$JOIN_BOUNDARY")" >/dev/null \
     || { echo "FAIL: v5 did not enter consensus past its committee boundary (block $JOIN_BOUNDARY)"
          echo "--- v5 commonware peers (buffered_peer_total series) ---"
          { docker compose exec -T validator-5 sh -c 'wget -qO- http://localhost:9100 2>/dev/null' \
@@ -261,14 +267,14 @@ pp_wait_converge 240 "$(printf '0x%x' "$JOIN_BOUNDARY")" >/dev/null \
          exit 1; }
 echo "  v5 entered consensus: all 6 validators + full-node aligned past block $JOIN_BOUNDARY ✓"
 
-# The promotion must be the in-process PROMOTION cold-start (not a restart):
+# The promotion must be the in-process Verifier→Signer transition (not a restart):
 # logs go through a file — `docker logs | grep -q` SIGPIPEs under pipefail.
 V5_LOG=$(mktemp)
 docker compose logs validator-5 >"$V5_LOG" 2>&1 || true
-grep -q "PROMOTION cold-start" "$V5_LOG" \
-    || { echo "FAIL: v5 log has no PROMOTION cold-start (joined some other way?)"; rm -f "$V5_LOG"; exit 1; }
+grep -q "promoted to Signer in-process" "$V5_LOG" \
+    || { echo "FAIL: v5 log has no in-process promotion (joined some other way?)"; rm -f "$V5_LOG"; exit 1; }
 rm -f "$V5_LOG"
-echo "  v5 promoted in-process (PROMOTION cold-start) ✓"
+echo "  v5 promoted in-process (Verifier→Signer) ✓"
 
 E=$(pp_current_epoch)
 GOT=$(pp_committee "$E")
@@ -277,9 +283,11 @@ GOT=$(pp_committee "$E")
 echo "  committee rotated: v5 entered top-5, lowest dropped ✓"
 
 # ── DEMOTION: the validator v5 displaced must keep following ─────────────────
-# The displaced one demotes to the follower substrate in-process (rotation-out
-# → ModeEvent → supervisor) instead of wedging as a silent verifier. Identify
-# it as the initial-5 member missing from the rotated committee.
+# The displaced one demotes to verify-only in-process (rotation-out →
+# reconcile_roles drops its signer engine) and keeps following the chain via its
+# cert-inlet (its `--dpos.follower-upstream` is set), instead of wedging as a
+# silent verifier. Identify it as the initial-5 member missing from the rotated
+# committee.
 DISPLACED_IDX=""
 for i in 0 1 2 3 4; do
     a=$(tr 'A-F' 'a-f' <<<"$(pp_owner_addr "$i")")

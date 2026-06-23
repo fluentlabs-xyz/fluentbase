@@ -81,6 +81,17 @@ pub fn read_ed25519_key_from_file<P: AsRef<std::path::Path>>(
         .map_err(|e| eyre::eyre!("failed decoding peer key: {e:?}"))
 }
 
+/// Generate a fresh, OS-randomness ed25519 keypair for an EPHEMERAL peer
+/// identity. Used by a standalone `--cert-follow` follower, which carries no
+/// operator peer key but still builds ONE gossip-idle broadcast `Muxer` (it
+/// never gossips — no consensus bootstrappers — so the identity is never
+/// persisted or advertised). NOT for a validator (those load a durable key from
+/// disk via [`read_ed25519_key_from_file`]).
+pub fn generate_ephemeral_ed25519_key() -> ed25519::PrivateKey {
+    use commonware_math::algebra::Random as _;
+    ed25519::PrivateKey::random(&mut rand_08::rngs::OsRng)
+}
+
 /// Local newtype wrapper around the concrete commonware discovery
 /// `Oracle`. Required because Rust's orphan rule
 /// forbids `impl PeerSetSink for Oracle<…>` directly (both trait and

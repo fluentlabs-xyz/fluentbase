@@ -4,13 +4,7 @@
 //! [`fluentbase_consensus::dpos::DposLayer::launch`], then runs the
 //! shutdown supervisor `select!`.
 
-use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::PathBuf,
-    sync::Arc,
-};
-
-use commonware_runtime::tokio::Context;
+use crate::consensus_rpc::{feed_actor::FeedActor, FeedStateHandle};
 // `Clock` (ctx.current/sleep in the finalized-height poller) + `Metrics`
 // (ctx.with_label, ctx.encode) + `Spawner` (ctx.spawn) — used by the always-on
 // beacon plane, the cert-feed actor, and the feature-gated devnet metrics endpoint.
@@ -19,10 +13,10 @@ use commonware_p2p::{
     utils::mux::{Builder, Muxer},
     Ingress,
 };
-use commonware_runtime::{Clock as _, Handle, Metrics as _, Spawner as _};
+use commonware_runtime::{tokio::Context, Clock as _, Handle, Metrics as _, Spawner as _};
 use eyre::{eyre, OptionExt as _, WrapErr as _};
 use fluentbase_consensus::dpos::{
-    DposLayer, DposLayerConfig, DposLayerHandle, RethHandle, ResettableForward, SharedBeaconPlane,
+    DposLayer, DposLayerConfig, DposLayerHandle, ResettableForward, RethHandle, SharedBeaconPlane,
     VoteBackupItem,
 };
 pub use fluentbase_consensus::FeedSink;
@@ -30,8 +24,6 @@ use fluentbase_p2p::{FluentP2P, FluentP2PConfig};
 use fluentbase_staking_reader::{
     reader::RethStakingStateReader, EpochTransition, ValidatorSetCache,
 };
-
-use crate::consensus_rpc::{feed_actor::FeedActor, FeedStateHandle};
 use reth_chain_state::CanonicalInMemoryState;
 use reth_chainspec::EthChainSpec as _;
 use reth_ethereum_engine_primitives::EthEngineTypes;
@@ -43,7 +35,12 @@ use reth_storage_api::{
     BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider,
     StateProviderFactory,
 };
-use std::time::Duration;
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -71,7 +68,8 @@ use crate::ordering::{PoolAssembler, ProviderExecutedChain};
 /// Operator-supplied DPoS configuration (parsed from CLI/env in `main.rs`).
 ///
 /// Not `Clone`/`Debug`: it carries the move-only cert-feed `Receiver` (single
-/// consumer) and is built once then moved into `spawn_dpos`.
+/// consumer) and is built once then moved into the validator overlay of
+/// `spawn_node_stack`. The validator-only payload of [`NodeStackCfg`].
 pub struct DposConfig {
     /// DEV/TEST-ONLY plaintext hex BLS private key file. `load_bls_keypair`
     /// rejects it on deployed networks (devnet/testnet/mainnet chain_ids);
@@ -100,10 +98,11 @@ pub struct DposConfig {
     /// Cert-feed wiring for the `consensus` RPC namespace. `None` = node does not
     /// serve the cert feed (e.g. unit tests). Set on every production node.
     pub cert_feed: Option<CertFeed>,
-    /// `--dpos.follower-upstream` WS URLs. Non-empty enables the UNIFIED
-    /// supervisor: the node runs a cert-follow substrate while its key is
-    /// outside the committee and auto-promotes/demotes at epoch boundaries
-    /// (no restarts). Empty = legacy `--dpos` (signer-or-silent-verifier).
+    /// `--dpos.follower-upstream` WS URLs. Non-empty arms the cert-inlet as a
+    /// SECOND producer into this validator's own marshal: while in-committee its
+    /// locally-formed certs lead, and once rotated out `reconcile_roles` keeps it
+    /// a Verifier following the inlet-fed base — no restarts. Empty = plain
+    /// `--dpos` (signer-or-silent-verifier, no inlet).
     pub follower_upstreams: Vec<String>,
     /// DEVNET/TEST-ONLY byzantine mode string (`--dpos.byzantine`). Gated behind
     /// `dpos-devnet-byzantine`; the field does not exist in a production build.
@@ -203,11 +202,11 @@ pub struct DposArgs {
     #[arg(long = "dpos.metrics-port", env = "FLUENT_DPOS_METRICS_PORT")]
     pub dpos_metrics_port: Option<u16>,
 
-    /// Upstream `consensus` WS URL(s) for the unified supervisor's follower
-    /// substrate (repeatable — failover list). Presence enables unified mode:
-    /// the node cert-follows while its key is outside the committee and
-    /// auto-promotes to signer at its first committee epoch boundary (and
-    /// demotes back on rotation-out) — no restarts. Absent = legacy `--dpos`.
+    /// Upstream `consensus` WS URL(s) for the validator-side cert-inlet
+    /// (repeatable — failover list). Presence arms the inlet as a second producer
+    /// into this node's marshal: the node follows the inlet-fed base while its key
+    /// is outside the committee and re-promotes in place when it rejoins (via
+    /// `reconcile_roles`) — no restarts. Absent = plain `--dpos` (no inlet).
     #[arg(
         long = "dpos.follower-upstream",
         env = "FLUENT_DPOS_FOLLOWER_UPSTREAM",
@@ -278,11 +277,61 @@ impl DposConfig {
 
 pub type DposSpawn<N, AddOns> = crate::utils::ConsensusSpawn<N, AddOns>;
 
-/// Spawn the DPoS validator thread. The thread blocks on `handle_tx`
-/// until the reth `FullNode` is delivered, then constructs the commonware
-/// tokio runtime and calls [`run_dpos_stack`].
-pub fn spawn_dpos<N, AddOns>(
-    cfg: DposConfig,
+/// A WS cert-inlet upstream: a SECOND producer into this node's marshal. The
+/// driver field of [`NodeStackCfg`]: present for a `--cert-follow` follower
+/// (its sole producer) and for an upstream-configured `--dpos` validator (a
+/// rotated-out validator follows the inlet-fed base). Absent = a plain
+/// signer-or-silent validator (no inlet). `verify` is always `true` on every
+/// mapped inlet in v1 (the standalone `--sequencer-url` trust relay is the
+/// separate `launch_consensus_node` path, NOT an inlet).
+pub struct CertInletCfg {
+    pub urls: Vec<String>,
+}
+
+/// The ONE node-stack config (process-mode unification, Phase 5). A node is a
+/// single process body ([`run_node_stack`]) configured by two drivers —
+/// `is_validator` (has signer keys + the full beacon plane) and `cert_inlet`
+/// (an optional WS upstream producer) — plus the per-overlay payload behind one
+/// of `validator`/`follower`. `node_modes.rs` is the pure CLI-flag → this-config
+/// mapping; the spine branches on `is_validator` only at the plane build + the
+/// engine-start variant (the two `DposLayer::launch*` overlay shapes).
+pub struct NodeStackCfg {
+    /// `--dpos`: this node holds signer keys, runs the full 5-Muxer beacon plane
+    /// and the local-BFT engine. `false` = a near-planeless cert-follower.
+    pub is_validator: bool,
+    /// Optional WS cert-inlet upstream (deep catch-up jump + live self-heal).
+    /// `Some` for `--cert-follow` (always) and for a `--dpos` validator with
+    /// `--dpos.follower-upstream`; `None` for a plain validator. The inlet always
+    /// BLS-verifies (no no-verify mode in v1).
+    pub cert_inlet: Option<CertInletCfg>,
+    /// Validator overlay payload (BLS/peer/slasher keys, bootstrappers, ports,
+    /// cert-feed). `Some` iff `is_validator`.
+    pub validator: Option<DposConfig>,
+    /// Follower overlay payload (L1 checkpoint, cert-feed, staking config).
+    /// `Some` iff `!is_validator`.
+    pub follower: Option<FollowerCfg>,
+}
+
+/// Follower-overlay payload (the non-validator `--cert-follow` bits). The shared
+/// `cert_inlet.urls` carries the upstream WS list; this carries everything else
+/// the near-planeless follower needs.
+pub struct FollowerCfg {
+    /// `consensus` RPC state handle (serving side, D4). `Some` ⇒ verified pairs
+    /// feed a bounded window behind the same WS namespace validators serve.
+    pub feed: Option<FeedStateHandle>,
+    /// Staking system-contract config: per-epoch committee reads for the inlet.
+    pub staking_config_path: PathBuf,
+    /// L1 Rollup checkpoint source (D2). `None` = devnet fallback.
+    pub l1: Option<crate::cert_follow::l1::L1CheckpointConfig>,
+}
+
+/// Spawn the unified node-stack thread. The thread blocks on `handle_tx` until
+/// the reth `FullNode` is delivered, then constructs the commonware tokio
+/// runtime and calls [`run_node_stack`]. ONE thread-spawn + ONE body for both
+/// the `--dpos` validator and the `--cert-follow` follower modes; the executor
+/// is the sole reth writer in every mode.
+pub fn spawn_node_stack<N, AddOns>(
+    cfg: NodeStackCfg,
     shutdown_token: CancellationToken,
 ) -> DposSpawn<N, AddOns>
 where
@@ -298,6 +347,8 @@ where
         + BlockHashReader
         + BlockNumReader
         + BlockIdReader
+        + StateProviderFactory
+        + HeaderProvider<Header = alloy_consensus::Header>
         + CanonicalStateAccess
         + Send
         + Sync
@@ -310,23 +361,22 @@ where
         + Sync
         + 'static,
 {
-    crate::utils::spawn_consensus_thread("dpos", move |ctx, node| async move {
-        if cfg.follower_upstreams.is_empty() {
-            run_dpos_stack(ctx, node, cfg, shutdown_token).await
-        } else {
-            crate::unified::run_unified_stack(ctx, node, cfg, shutdown_token).await
-        }
+    crate::utils::spawn_consensus_thread("node", move |ctx, node| {
+        run_node_stack(ctx, node, cfg, shutdown_token)
     })
 }
 
-/// The DPoS thread body — runs entirely on the commonware tokio runtime.
-/// Loads operator keys + JSON configs from disk, builds `PoolTxSink` from
-/// `node.pool`, decomposes `FullNode` into `RethHandle`, hands everything
-/// to [`DposLayer::launch`], then runs the supervisor `select!`.
-async fn run_dpos_stack<N, AddOns>(
+/// The ONE node-stack body — runs entirely on the commonware tokio runtime. A
+/// single spine (devnet metrics → reth importer → WS upstream init → overlay
+/// build → uniform supervisor) with exactly ONE branch point: the overlay
+/// (`is_validator` selects the full beacon plane + `DposLayer::launch` vs the
+/// near-planeless broadcast Muxer + `DposLayer::launch_follower`). Each overlay
+/// returns the same `(DposLayerHandle, supervised handles)` shape, so the
+/// shutdown supervisor `select!` is one path.
+async fn run_node_stack<N, AddOns>(
     ctx: Context,
     node: FullNode<N, AddOns>,
-    mut cfg: DposConfig,
+    cfg: NodeStackCfg,
     shutdown_token: CancellationToken,
 ) -> eyre::Result<()>
 where
@@ -342,6 +392,150 @@ where
         + BlockHashReader
         + BlockNumReader
         + BlockIdReader
+        + StateProviderFactory
+        + HeaderProvider<Header = alloy_consensus::Header>
+        + CanonicalStateAccess
+        + Send
+        + Sync
+        + 'static,
+    <N as FullNodeComponents>::Evm: reth_evm::ConfigureEvm<
+            Primitives = EthPrimitives,
+            NextBlockEnvCtx = reth_evm::NextBlockEnvAttributes,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    let NodeStackCfg {
+        is_validator,
+        cert_inlet,
+        validator,
+        follower,
+    } = cfg;
+
+    // ── DIVERGENCE: the overlay. Validator = full 5-Muxer beacon plane +
+    //    local-BFT engine (+ optional inlet as a 2nd producer); follower =
+    //    near-planeless broadcast Muxer + inlet-only engine. Both return the
+    //    same `(DposLayerHandle, supervised handles)` shape so the supervisor is
+    //    a single path. ──
+    let (mut engine, supervised): (DposLayerHandle, Vec<SupervisedHandle>) = if is_validator {
+        let dpos_cfg = validator
+            .ok_or_else(|| eyre!("run_node_stack: is_validator=true requires a validator config"))?;
+        launch_validator_overlay(ctx, node, dpos_cfg, cert_inlet, shutdown_token.clone()).await?
+    } else {
+        let follow_cfg = follower
+            .ok_or_else(|| eyre!("run_node_stack: is_validator=false requires a follower config"))?;
+        let inlet = cert_inlet
+            .ok_or_else(|| eyre!("run_node_stack: a follower requires a cert_inlet upstream"))?;
+        crate::cert_follow::launch_follower_overlay(
+            ctx,
+            node,
+            follow_cfg,
+            inlet,
+            shutdown_token.clone(),
+        )
+        .await?
+    };
+
+    // ── SHARED SPINE: the shutdown supervisor over the engine + every overlay
+    //    handle, uniform for both modes. On any unexpected exit cancel the shared
+    //    token (so reth/main bring everything down) then abort the survivors. ──
+    let exit_reason = supervise(&shutdown_token, &mut engine.consensus_handle, supervised).await;
+    info!(reason = exit_reason, "node thread exiting");
+    Ok(())
+}
+
+/// One supervised overlay task: a label (for the exit log) + its abortable
+/// handle. The validator overlay yields the plane net/dkg/poller/mux handles
+/// (+ optional inlet); the follower overlay yields the WS / net / broadcast-mux
+/// handles. Collected into one `Vec` so the supervisor `select!` is mode-blind.
+pub(crate) type SupervisedHandle = (&'static str, Handle<()>);
+
+/// The shared shutdown supervisor: race the shutdown token, the engine handle,
+/// and every overlay handle. The FIRST resolution cancels the shared token (so
+/// reth + `main` tear down too) and aborts the rest. Returns a reason string for
+/// the exit log. Mode-blind — the only per-mode input is the `supervised` Vec.
+async fn supervise(
+    shutdown_token: &CancellationToken,
+    engine: &mut Handle<()>,
+    mut supervised: Vec<SupervisedHandle>,
+) -> &'static str {
+    use futures::future::{select_all, FutureExt as _};
+
+    // Labels are `&'static str` (Copy) — snapshot them BEFORE the mutable borrow
+    // of `supervised` for `select_all`, so the two borrows don't overlap.
+    let labels: Vec<&'static str> = supervised.iter().map(|(l, _)| *l).collect();
+
+    let reason = tokio::select! {
+        _ = shutdown_token.cancelled() => {
+            info!("node thread received shutdown signal, exiting");
+            "shutdown_token"
+        }
+        res = &mut *engine => {
+            match res {
+                Ok(()) => warn!("OuterEngine exited cleanly (unexpected)"),
+                Err(e) => error!(error = ?e, "OuterEngine task failed"),
+            }
+            shutdown_token.cancel();
+            "consensus_exit"
+        }
+        // Any overlay handle resolving is a fatal exit (network down, total
+        // upstream loss, mux failure). An empty `supervised` Vec can't happen
+        // (every overlay yields at least the network handle), but guard anyway.
+        (res, label) = async {
+            let futs: Vec<_> = supervised.iter_mut().map(|(_, h)| h.boxed()).collect();
+            if futs.is_empty() {
+                std::future::pending::<()>().await;
+                unreachable!()
+            }
+            let (res, idx, _rest) = select_all(futs).await;
+            (res, labels[idx])
+        } => {
+            match res {
+                Ok(()) => warn!(handle = label, "node overlay task exited cleanly (unexpected)"),
+                Err(e) => error!(handle = label, error = ?e, "node overlay task failed"),
+            }
+            shutdown_token.cancel();
+            label
+        }
+    };
+
+    // Abort the engine + every overlay handle so the runtime releases its
+    // resources (matches the per-mode bodies' explicit aborts before this merge).
+    engine.abort();
+    for (_, h) in &supervised {
+        h.abort();
+    }
+    reason
+}
+
+/// Build the VALIDATOR overlay: the always-on 5-Muxer beacon plane + the
+/// local-BFT engine (via `DposLayer::launch`), plus the optional cert-inlet as a
+/// SECOND producer into the same marshal. Returns the engine handle and the
+/// plane/inlet handles for the shared supervisor. Extracted from the former
+/// `run_dpos_stack` so the node body is one spine with one branch point.
+async fn launch_validator_overlay<N, AddOns>(
+    ctx: Context,
+    node: FullNode<N, AddOns>,
+    mut cfg: DposConfig,
+    cert_inlet: Option<CertInletCfg>,
+    shutdown_token: CancellationToken,
+) -> eyre::Result<(DposLayerHandle, Vec<SupervisedHandle>)>
+where
+    N: FullNodeComponents<
+        Types: reth_node_api::NodeTypes<
+            Payload = EthEngineTypes,
+            Primitives = reth_ethereum_primitives::EthPrimitives,
+        >,
+    >,
+    AddOns: RethRpcAddOns<N>,
+    <N as FullNodeTypes>::Provider: Clone
+        + BlockReader<Block = RethBlock>
+        + BlockHashReader
+        + BlockNumReader
+        + BlockIdReader
+        + StateProviderFactory
+        + HeaderProvider<Header = alloy_consensus::Header>
         + CanonicalStateAccess
         + Send
         + Sync
@@ -361,68 +555,110 @@ where
     let beacon_engine =
         crate::importer::RethImporter::from_env(node.add_ons_handle.beacon_engine_handle.clone())?;
 
+    // Cert-inlet: a SECOND producer into this validator's own marshal, armed
+    // whenever `--dpos.follower-upstream` URLs are configured (the production-path
+    // fix for a rotated-out validator: it follows the inlet-fed base while
+    // `reconcile_roles` keeps it a Verifier, then re-promotes in place when it
+    // rejoins the committee). Constructed BEFORE `launch_dpos_layer` consumes
+    // `ctx`/`cert_feed`. `None` when no upstream URLs are configured.
+    let inlet_setup = cert_inlet
+        .as_ref()
+        .map(|inlet| {
+            let chain_id = node.chain_spec().chain_id();
+            let staking_config =
+                fluentbase_staking_reader::reader::StakingReaderConfig::from_json_path(
+                    &cfg.staking_config_path,
+                )
+                .wrap_err_with(|| {
+                    format!(
+                        "cert-inlet: failed loading staking config from {}",
+                        cfg.staking_config_path.display()
+                    )
+                })?;
+            // Committees are epoch-frozen and content-invariant across any
+            // in-epoch executed hash, so the inlet reads committee[E] at the
+            // node's CURRENT FINALIZED tip — a guaranteed-committed block where
+            // committee[E] is committed (ahead-committed at epoch-(E-1)-start),
+            // with a bounded retry while the executor (which the inlet feeds)
+            // drains the queue that far.
+            let finalized_hash: std::sync::Arc<
+                dyn Fn() -> Option<alloy_primitives::B256> + Send + Sync,
+            > = {
+                let p = node.provider.clone();
+                std::sync::Arc::new(move || {
+                    let n = p.finalized_block_number().ok()??;
+                    p.block_hash(n).ok().flatten()
+                })
+            };
+            let committees = crate::cert_inlet::committee_source(
+                node.provider.clone(),
+                node.evm_config.clone(),
+                staking_config,
+                chain_id,
+                finalized_hash,
+            );
+            eyre::Ok((committees, ctx.clone(), inlet.urls.clone()))
+        })
+        .transpose()?;
+
     // Always-on beacon plane (one FluentP2P + 5 persistent Muxers + persistent
-    // DkgActor + shared store), built ONCE — the legacy `--dpos` path runs a single
-    // signer engine over it (it CLONES the shared plane, including the MuxHandles).
-    let mut plane = build_beacon_plane(&ctx, &node, &cfg).await?;
-    let mut handle = launch_dpos_layer(
+    // DkgActor + shared store), built ONCE — the engine CLONES the shared plane.
+    let plane = build_beacon_plane(&ctx, &node, &cfg).await?;
+    let handle = launch_dpos_layer(
         ctx,
         &node,
         &cfg,
         beacon_engine,
         cert_feed,
-        false,
-        None,
         plane.shared.clone(),
-        shutdown_token.clone(),
+        shutdown_token,
     )
     .await?;
 
-    // Supervisor: on any unexpected exit, cancel the shared
-    // shutdown_token so reth/main also bring everything down gracefully;
-    // abort the surviving handles to release runtime resources.
-    let exit_reason = tokio::select! {
-        _ = shutdown_token.cancelled() => {
-            info!("DPoS thread received shutdown signal, exiting");
-            "shutdown_token"
-        }
-        res = &mut handle.consensus_handle => {
-            match res {
-                Ok(()) => warn!("OuterEngine exited cleanly (unexpected)"),
-                Err(e) => error!(error = ?e, "OuterEngine task failed"),
-            }
-            shutdown_token.cancel();
-            "consensus_exit"
-        }
-        res = &mut plane.net_handle => {
-            match res {
-                Ok(()) => warn!("p2p Network exited cleanly (unexpected)"),
-                Err(e) => error!(error = ?e, "p2p Network task failed"),
-            }
-            shutdown_token.cancel();
-            "network_exit"
-        }
-    };
+    // Spawn the cert-inlet against the SAME marshal the local engine drives
+    // (`handle.cert_mailbox`). `None` when no upstreams are configured. The inlet
+    // also tees the LIVE upstream cert frontier into the beacon plane's
+    // `committee_for` read cursor + DkgActor deal clock (re-homed from the
+    // deleted unified supervisor) — so a still-catching-up validator resolves
+    // committee[E+1] and deals its DKG share at the live tip, not its lagging
+    // EL-finalized state.
+    let inlet_handle = inlet_setup.map(|(committees, inlet_ctx, urls)| {
+        crate::cert_inlet::spawn_cert_inlet(
+            inlet_ctx,
+            handle.cert_mailbox.clone(),
+            committees,
+            urls,
+            fluentbase_consensus::cert_inlet::LiveFrontierTee {
+                live_height: plane.live_height.clone(),
+                dkg_height_tx: plane.dkg_height_tx.clone(),
+            },
+        )
+    });
 
-    plane.net_handle.abort();
-    plane.dkg_handle.abort();
-    plane.poller_handle.abort();
-    for h in &plane.mux_handles {
-        h.abort();
+    // Collect every overlay handle for the shared supervisor. Total upstream
+    // loss / inner committee fatal resolves the inlet handle → the supervisor
+    // cancels the shared token (fail-closed-on-total-loss, Risk-3).
+    let mut supervised: Vec<SupervisedHandle> = vec![
+        ("network", plane.net_handle),
+        ("dkg", plane.dkg_handle),
+        ("poller", plane.poller_handle),
+    ];
+    for h in plane.mux_handles {
+        supervised.push(("mux", h));
     }
-    handle.consensus_handle.abort();
+    if let Some(h) = inlet_handle {
+        supervised.push(("inlet", h));
+    }
 
-    info!(reason = exit_reason, "DPoS thread exiting");
-    Ok(())
+    Ok((handle, supervised))
 }
 
 /// DEVNET-ONLY metrics endpoint (feature-gated so prod binaries can't serve
 /// it). Spawned on a child of the commonware runtime context; children share
 /// the runtime's prometheus registry, so `c.encode()` includes the p2p
 /// tracker `connected`/`tracked` gauges the DposLayer registers later (the
-/// smoke `case-peers.sh` scrapes them). Must bind exactly ONCE per process —
-/// the unified supervisor relaunches the layer per promotion, so this lives
-/// outside [`launch_dpos_layer`].
+/// smoke `case-peers.sh` scrapes them). Must bind exactly ONCE per process, so
+/// it lives in the thread body, not inside [`launch_dpos_layer`].
 pub(crate) fn spawn_devnet_metrics(ctx: &Context, cfg: &DposConfig) {
     #[cfg(feature = "dpos-devnet-metrics")]
     if let Some(port) = cfg.metrics_port {
@@ -463,6 +699,10 @@ pub(crate) struct BeaconPlane {
     /// The persistent `DkgActor` task — aborted ONLY at process shutdown.
     pub dkg_handle: Handle<()>,
     /// The finalized-height poller driving the plane's ET + `dkg_height` clock.
+    /// The poller owns its own `dkg_height_tx` clone (feeding the LOCAL
+    /// ordering-finalized height `fin + K`); the live-cert-frontier tee is
+    /// re-homed onto the cert-inlet (`live_height` + `dkg_height_tx` below),
+    /// fed only on an upstream-configured node.
     pub poller_handle: Handle<()>,
     /// The 5 persistent non-beacon `Muxer` broker tasks (vote/cert/resolver/
     /// broadcast/marshal) + the vote-backup forwarder — aborted ONLY at process
@@ -472,6 +712,19 @@ pub(crate) struct BeaconPlane {
     /// the vote-backup forwarder, CLONED into the signer engine per promotion (the
     /// engine never re-builds any of these or re-binds the network).
     pub shared: SharedBeaconPlane,
+    /// The `committee_for` live-read cursor (`max(EL-finalized, live_height)`).
+    /// Handed to an upstream-configured validator's cert-inlet so it tees the
+    /// LIVE upstream cert frontier here — committee[E+1] then resolves at the
+    /// live tip, not this node's lagging EL-finalized state (the production-path
+    /// "Option A" fix). Stays `0` on a no-upstream validator (no inlet to feed
+    /// it; its executor IS the tip).
+    pub live_height: Arc<std::sync::atomic::AtomicU64>,
+    /// The DkgActor deal clock. The inlet ALSO tees the live frontier here so a
+    /// still-catching-up early-joiner deals its first epoch's DKG share at the
+    /// live tip (the vrf-rotation early-join fix), not K blocks late. The
+    /// finalized poller feeds it `fin + K`; the DkgActor `on_height` clamps both
+    /// feeders to its running max (never rewound).
+    pub dkg_height_tx: mpsc::Sender<u64>,
 }
 
 /// Build the always-on beacon plane for a registered `--dpos` validator. Mirrors
@@ -507,7 +760,12 @@ where
 {
     let chain_id = node.chain_spec().chain_id();
     let peer_keypair = fluentbase_p2p::read_ed25519_key_from_file(&cfg.peer_key_path)
-        .wrap_err_with(|| format!("failed loading peer key from {}", cfg.peer_key_path.display()))?;
+        .wrap_err_with(|| {
+            format!(
+                "failed loading peer key from {}",
+                cfg.peer_key_path.display()
+            )
+        })?;
     let staking_config = fluentbase_staking_reader::reader::StakingReaderConfig::from_json_path(
         &cfg.staking_config_path,
     )
@@ -638,9 +896,21 @@ where
         }
     }
 
+    // Live cursor (consensus-finalized ≈ EL-finalized + K) for catch-up reads.
+    // The cert-inlet (on upstream-configured nodes) tees the live upstream cert
+    // frontier here so a still-catching-up newcomer resolves committee[E] — and
+    // therefore deals its first epoch's DKG share — at the live tip rather than
+    // its lagging EL-finalized state (the early-join wedge: committee[E] is
+    // ahead-committed during epoch E-1, but a lagging EL-finalized read returns it
+    // too late, after the deal deadline). Stays 0 on a plain --dpos validator (its
+    // executor IS the tip), so committee reads fall back to EL-finalized unchanged.
+    let live_height = Arc::new(std::sync::atomic::AtomicU64::new(0));
     // On-chain committee resolver (deal/carry-forward set), shared by the DkgActor
-    // and the per-engine verify gate. Reads committee[E] at the current finalized
-    // EVM hash (mirrors the resolver that used to live in `DposLayer::launch`).
+    // and the per-engine verify gate. Reads committee[E] at max(EL-finalized, live
+    // cursor) — committee[E] is content-invariant across any in-epoch executed hash
+    // and the cursor is cert-finalized (no reorg), so reading at the executed-but-
+    // not-yet-EL-finalized tip is sound and surfaces an ahead-committed committee[E]
+    // K blocks sooner.
     let committee_for: fluentbase_consensus::beacon::actor::CommitteeFor = {
         let reader = RethStakingStateReader::new(
             node.provider.clone(),
@@ -648,9 +918,25 @@ where
             staking_config.clone(),
         );
         let provider = node.provider.clone();
+        let live_height = live_height.clone();
         Arc::new(move |epoch: u64| {
-            let fin = provider.finalized_block_number().ok().flatten()?;
-            let hash = provider.block_hash(fin).ok().flatten()?;
+            let fin = provider.finalized_block_number().ok().flatten();
+            let live = live_height.load(std::sync::atomic::Ordering::Relaxed);
+            // No finalized marker AND no live cursor yet ⇒ not readable. `unwrap_or(0)`
+            // here would read committee at genesis (`block_hash(0)`) → the wrong
+            // committee on a genesis-committed devnet during the startup race.
+            if fin.is_none() && live == 0 {
+                return None;
+            }
+            let fin = fin.unwrap_or(0);
+            let read_at = fin.max(live);
+            // Fall back to the finalized hash if reth has not yet imported the
+            // cursor block (the cert can land a beat before the EL-sync import).
+            let hash = provider
+                .block_hash(read_at)
+                .ok()
+                .flatten()
+                .or_else(|| provider.block_hash(fin).ok().flatten())?;
             let snap = reader.epoch_committee_snapshot(epoch, hash).ok()?;
             if snap.validators.is_empty() {
                 return None;
@@ -683,7 +969,7 @@ where
         staking_config.clone(),
     );
     let provider_for_et = node.provider.clone();
-    let mut epoch_transition = EpochTransition::new(
+    let epoch_transition = EpochTransition::new(
         et_reader,
         cache,
         handles.oracle.clone(),
@@ -692,18 +978,27 @@ where
         Arc::new(move |n| provider_for_et.block_hash(n).ok().flatten()),
         fluentbase_consensus::K,
     );
-    let (cs_fin_num, cs_fin_hash) = node
+    // Seed only the height-clock cursor — NO synchronous initial `cold_start`. At
+    // process start reth may not have surfaced its persisted finalized marker yet
+    // (`finalized_block_num_hash` then falls back to GENESIS, where a runtime-deployed
+    // ChainConfig is still codeless ⇒ the geometry read reverts), so a cold-start
+    // HERE would race that fallback. The plane is uniformly POLLER-driven: the 500ms
+    // poller below runs the first `cold_start` off the LIVE finalized cursor — by its
+    // first tick reth has surfaced the marker, so the geometry freezes from a readable
+    // block (and `apply_at` stays codeless-tolerant for the rare slow tick).
+    let cs_fin_num = node
         .provider
-        .finalized_block_num_hash()
+        .finalized_block_number()
         .ok()
         .flatten()
-        .map(|nh| (nh.number, nh.hash))
-        .unwrap_or_else(|| (0, node.chain_spec().genesis_hash()));
-    epoch_transition
-        .cold_start(cs_fin_hash, cs_fin_num)
-        .await
-        .wrap_err("beacon-plane epoch_transition cold_start failed")?;
+        .unwrap_or(0);
     let et_arc = Arc::new(Mutex::new(epoch_transition));
+    // Fired ONCE by the poller the instant the ET freezes the geometry — the
+    // event the DkgActor's spawn wrapper awaits before it constructs the actor
+    // with plain `(activation, interval)`. Event-driven (not a poll/timer): the
+    // EpochTransition is the single in-plane geometry source, and the actor takes
+    // the value it already resolved instead of re-reading the chain itself.
+    let geometry_ready = Arc::new(tokio::sync::Notify::new());
 
     // Finalized-height poller, feeding TWO sinks off the SAME EL-finalized cursor:
     //   - `dkg_height` ← `fin + K` (ORDERING-finalized): the executor sets the
@@ -722,6 +1017,7 @@ where
         let provider = node.provider.clone();
         let et = et_arc.clone();
         let dkg_tx = dkg_height_tx.clone();
+        let geometry_ready = geometry_ready.clone();
         ctx.with_label("beacon_plane_poller")
             .spawn(move |c| async move {
                 let mut sent = cs_fin_num;
@@ -735,59 +1031,94 @@ where
                         sent += 1;
                         let _ = dkg_tx.try_send(sent + fluentbase_consensus::K);
                     }
-                    // Drive the boundary detection; errors here are non-fatal to the
-                    // beacon plane (the engine's own ET is the authoritative boundary
-                    // path) — log and keep the peer set tracking.
-                    let outcome = { et.lock().await.on_finalized(fin).await };
+                    // Bootstrap drive (event-driven on THIS existing poll, no second
+                    // timer): until the geometry is frozen, `cold_start` off the LIVE
+                    // finalized cursor — anchoring to the now-readable finalized block
+                    // and freezing the instant it is a readable, DPoS-scheduled block
+                    // (`apply_at` is codeless-tolerant, so a too-early tick defers). The
+                    // instant it freezes, signal `geometry_ready` so the DkgActor's
+                    // spawn wrapper takes the frozen `(activation, interval)`. Once
+                    // frozen, switch to the steady `on_finalized` boundary walk (which
+                    // REQUIRES the freeze).
+                    let frozen_before = { et.lock().await.frozen_geometry().is_some() };
+                    let outcome = if frozen_before {
+                        // Drive the boundary detection; errors here are non-fatal to the
+                        // beacon plane (the engine's own ET is the authoritative boundary
+                        // path) — log and keep the peer set tracking.
+                        et.lock().await.on_finalized(fin).await
+                    } else {
+                        // No `finalized_block_hash`-by-number on the provider here, so
+                        // resolve the hash from the height we already have.
+                        let Ok(Some(hash)) = provider.block_hash(fin) else {
+                            continue;
+                        };
+                        let out = et.lock().await.cold_start(hash, fin).await;
+                        // Freshly frozen on THIS tick ⇒ wake the DkgActor wrapper once.
+                        if et.lock().await.frozen_geometry().is_some() {
+                            geometry_ready.notify_one();
+                        }
+                        out
+                    };
                     if let Err(e) = outcome {
-                        warn!(finalized = fin, error = ?e, "beacon plane: ET on_finalized failed");
+                        warn!(finalized = fin, error = ?e, "beacon plane: ET on_finalized/cold_start failed");
                     }
                 }
             })
     };
 
-    // The persistent DkgActor — spawned ONCE, runs for the whole process.
+    // The persistent DkgActor — spawned ONCE, runs for the whole process. It is
+    // constructed AFTER the poller has frozen the geometry, so it takes plain
+    // `(activation, interval)` from the EpochTransition (the single in-plane source)
+    // and never re-reads the chain — there is no codeless/genesis-fallback race in
+    // this path. The wrapper awaits `geometry_ready` (the poller's freeze signal);
+    // height ticks accumulate in `dkg_height_rx` meanwhile (bounded buffer) and are
+    // drained by `on_height`'s monotone-max clamp once the actor runs — the first
+    // epoch boundary is one interval away (≫ the ~one-tick freeze latency), so no
+    // deal/seal is missed.
     let dkg_namespace = fluentbase_consensus::beacon::seed::seed_namespace(
         &fluentbase_bls::fluent_namespace(chain_id),
     );
-    let activation = {
-        let reader = RethStakingStateReader::new(
-            node.provider.clone(),
-            node.evm_config.clone(),
-            staking_config.clone(),
-        );
-        reader.dpos_activation_block(cs_fin_hash).unwrap_or(0)
+    let dkg_handle = {
+        let et = et_arc.clone();
+        let geometry_ready = geometry_ready.clone();
+        // Clones for the actor (the originals flow into `BeaconPlane.shared`).
+        let committee_for = committee_for.clone();
+        let ceremony_store = ceremony_store.clone();
+        let share_notify = share_notify.clone();
+        let beacon_metrics = beacon_metrics.clone();
+        ctx.with_label("dkg_actor").spawn(move |c| async move {
+            geometry_ready.notified().await;
+            let Some((activation, interval)) = et.lock().await.frozen_geometry() else {
+                // `notify_one` is only fired post-freeze, so this is unreachable for a
+                // healthy node. A validator whose geometry is unreadable/unscheduled
+                // already failed loud at launch (the raw-`0` guard + the ChainConfig
+                // `?` in `DposLayer::launch`, which runs after this wrapper is spawned
+                // and tears the process down), so this soft path is reached only by a
+                // mis-configured non-validator — where staying network/Muxers up
+                // (follower connectivity) with no DKG is the intended fail-soft.
+                error!("beacon plane: geometry_ready fired but geometry unfrozen; DkgActor not started");
+                return;
+            };
+            let dkg_actor = fluentbase_consensus::beacon::actor::DkgActor::new(
+                dkg_namespace,
+                peer_keypair,
+                handles.beacon_sender,
+                handles.beacon_receiver,
+                committee_for,
+                ceremony_store,
+                share_notify,
+                activation,
+                interval,
+                beacon_metrics,
+                Some(beacon_dir),
+            );
+            dkg_actor.run(dkg_height_rx, c).await
+        })
     };
-    let interval = {
-        let reader = RethStakingStateReader::new(
-            node.provider.clone(),
-            node.evm_config.clone(),
-            staking_config.clone(),
-        );
-        reader.epoch_block_interval(cs_fin_hash).unwrap_or(1).max(1)
-    };
-    let dkg_actor = fluentbase_consensus::beacon::actor::DkgActor::new(
-        dkg_namespace,
-        peer_keypair,
-        handles.beacon_sender,
-        handles.beacon_receiver,
-        committee_for.clone(),
-        ceremony_store.clone(),
-        share_notify.clone(),
-        activation,
-        interval as u64,
-        beacon_metrics.clone(),
-        Some(beacon_dir),
-    );
-    let dkg_handle = ctx
-        .with_label("dkg_actor")
-        .spawn(move |c| async move { dkg_actor.run(dkg_height_rx, c).await });
 
     info!(
         listen = %listen,
-        activation,
-        interval,
-        "always-on beacon plane built (one FluentP2P, persistent DkgActor)"
+        "always-on beacon plane built (one FluentP2P, persistent DkgActor; geometry frozen by the plane EpochTransition)"
     );
 
     Ok(BeaconPlane {
@@ -811,15 +1142,16 @@ where
             marshal_mux: Arc::new(Mutex::new(marshal_mux)),
             vote_backup,
         },
+        live_height,
+        dkg_height_tx,
     })
 }
 
 /// Build and launch the DPoS layer once: load operator keys + JSON configs,
 /// construct the `PoolTxSink`/deriver/assembler over the node's own
 /// provider, hand everything to [`DposLayer::launch`], wire the cert-feed
-/// actor and `set_marshal`. Extracted from [`run_dpos_stack`] so the unified
-/// supervisor can relaunch the signer stack per promotion; `promotion` /
-/// `mode_events` are the supervisor inputs (legacy passes `false` / `None`).
+/// actor and `set_marshal`. Extracted from [`run_dpos_stack`] so the
+/// always-on-plane wiring stays separable from the layer launch.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn launch_dpos_layer<N, AddOns>(
     ctx: Context,
@@ -827,8 +1159,6 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     cfg: &DposConfig,
     beacon_engine: crate::importer::RethImporter,
     cert_feed: Option<CertFeed>,
-    promotion: bool,
-    mode_events: Option<tokio::sync::mpsc::UnboundedSender<fluentbase_consensus::ModeEvent>>,
     shared_beacon: SharedBeaconPlane,
     shutdown_token: CancellationToken,
 ) -> eyre::Result<DposLayerHandle>
@@ -932,7 +1262,9 @@ where
     let byzantine = match cfg.byzantine_mode.as_deref() {
         None => None,
         Some("forge-beacon-pk") => {
-            tracing::warn!("DEVNET BYZANTINE MODE ACTIVE: forge-beacon-pk — NEVER use in production");
+            tracing::warn!(
+                "DEVNET BYZANTINE MODE ACTIVE: forge-beacon-pk — NEVER use in production"
+            );
             Some(fluentbase_consensus::application::ByzantineMode::ForgeBeaconPk)
         }
         Some("equivocate") => {
@@ -947,19 +1279,46 @@ where
         }
     };
 
+    // Cert upstream for an upstream-configured validator (`--dpos.follower-upstream`),
+    // serving TWO consensus-side consumers off ONE WS actor: (1) the single-shot,
+    // pre-engine cold-start EL-sync JUMP (`cold_start_jump`) — a deeply-behind
+    // external joiner / follower fast-forwards reth before its OuterEngine starts;
+    // and (2) the marshal's by-height backfill resolver, which `launch` keeps alive
+    // for the engine lifetime so an OUT-OF-COMMITTEE validator (zero consensus-plane
+    // connectivity) backfills the cold-start `[floor+1 .. first_live]` gap from the
+    // upstream instead of wedging (the validator-with-upstream wedge fix). The actor
+    // is started so the handle's `get_latest`/`get_finalization` round-trips work; it
+    // stays alive as long as the resolver holds the handle. A no-upstream validator
+    // passes `None` and catches up on the consensus-plane treadmill instead. `launch`
+    // itself gates: FreshMigration never jumps. NOTE this WS actor is independent of
+    // the live-stream cert-inlet's WS actor (`spawn_cert_inlet` in the overlay) — the
+    // inlet drives the live frontier; this one serves the marshal's by-height pulls.
+    let upstream = (!cfg.follower_upstreams.is_empty()).then(|| {
+        // This WS serves ONLY the marshal's by-height resolver pulls — its live
+        // stream + connection-generation token are unused here (the validator's
+        // live-stream inlet has its OWN WS actor in `spawn_cert_inlet`).
+        let (ws_actor, handle, _live_rx, _conn_gen) =
+            crate::cert_follow::upstream::init(ctx.clone(), cfg.follower_upstreams.clone());
+        drop(ws_actor.start());
+        handle
+    });
+
     let layer_cfg = DposLayerConfig {
         bls_keypair,
         peer_keypair,
         slasher_sink,
         staking_config,
+        upstream,
         deriver,
         executed,
         assembler,
         fee_recipient,
         target_gas_limit,
         feed: feed_sink,
-        promotion,
-        mode_events,
+        // Mid-epoch promotion trigger: the executor fires it on each finalized-advance
+        // and the EpochManager re-checks parked spawns. Created here, internal to the
+        // layer (executor producer + EpochManager consumer share this one Arc).
+        spawn_unblocked: std::sync::Arc::new(tokio::sync::Notify::new()),
         // The always-on beacon plane (shared store + committee resolver + the single
         // network's oracle + the once-registered metrics + the 5 non-beacon MuxHandles
         // + the vote-backup forwarder). The signer engine CLONES these per promotion;

@@ -52,4 +52,19 @@ pub trait CertUpstream: Clone + Send + Sync + 'static {
     /// unverifiable data (tampered/mismatched cert) — connection-level
     /// failures rotate inside the transport actor on their own.
     fn rotate(&self) -> impl Future<Output = ()> + Send;
+
+    /// Boxed [`crate::cert_inlet::RotateUpstream`] over [`Self::rotate`], for
+    /// wiring into `CertInlet::with_rotate`. The inlet's data-fault rotation
+    /// trigger is a `Box`ed closure (so the inlet gains no `U: CertUpstream`
+    /// generic); this is the one place that boxing lives — both the node-side
+    /// `spawn_cert_inlet` and the follower's inline inlet build their trigger
+    /// from this default method instead of hand-rolling the same `Arc::new(move
+    /// || Box::pin(async move { up.rotate().await }))`.
+    fn rotate_callback(&self) -> crate::cert_inlet::RotateUpstream {
+        let up = self.clone();
+        std::sync::Arc::new(move || {
+            let up = up.clone();
+            Box::pin(async move { up.rotate().await }) as futures::future::BoxFuture<'static, ()>
+        })
+    }
 }

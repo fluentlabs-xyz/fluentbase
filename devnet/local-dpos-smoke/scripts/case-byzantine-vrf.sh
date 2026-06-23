@@ -186,24 +186,16 @@ VERIFIER=$(forge_l2 forge create --rpc-url "$RPC" --private-key "$DEPLOYER_KEY" 
 echo "  token=$TOKEN verifier=$VERIFIER"
 
 pp_token_transfer "$TOKEN" "$(pp_owner_addr 5)" "10000000000000000000"
-# The Byzantine node's owner also needs BLEND on hand to self-delegate (its stake
-# boost below makes it permanently rotation-proof across the repeated flips).
-pp_token_transfer "$TOKEN" "$(pp_owner_addr "$BYZ_IDX")" "10000000000000000000"
-# A DEDICATED delegator (BIP44 index 7 — distinct from the spammer at 6 and from the
-# custom-derived validator owner keys) drives the v5 in/out toggles. Using a
-# third-party delegator (NOT v5's own owner) sidesteps the OwnerSelfStakeBelowMinimum
-# guard on undelegate (StakingEconomics.sol::_undelegateFrom) so v5 can be toggled out
-# cleanly, and its nonce never races the gov/deploy/spammer keys (it issues only the
-# sequential toggle txns in the loop below). Fund it with native gas + BLEND.
+# NOTE: the BYZ-owner + v5-toggle-delegator funding (extra DEPLOYER txns) is sent
+# AFTER DeployStaking below — sending it here would advance the deployer nonce and
+# shift the DeployStaking CREATE addresses off the genesis-init prediction baked
+# into staking-reader.json (`--staking-reader-create-nonces`), so the node would
+# read ChainConfig at the WRONG address and the --dpos cold-start would fail. The
+# deployer's pre-deploy tx sequence MUST match production-path exactly:
+# fund-spammer, token, verifier, BLEND→v5, then DeployStaking. (Toggle delegator
+# key index 7 is distinct from the spammer at 6 and the validator owner keys.)
 TOGGLE_KEY="$(cast wallet private-key --mnemonic "$MNEMONIC" --mnemonic-index 7)"
 TOGGLE_ADDR="$(cast wallet address --mnemonic "$MNEMONIC" --mnemonic-index 7)"
-cast send "$TOGGLE_ADDR" --value 1000000000000000 \
-    --rpc-url "$RPC" --private-key "$DEPLOYER_KEY" >/dev/null \
-    || { echo "FAIL (smoke-byzantine-vrf): fund v5-toggle delegator"; exit 1; }
-# Each delegate-IN pulls V5_IN_AMOUNT (2e18) of fresh BLEND; undelegate parks it in a
-# withdrawal queue (not re-spendable without an explicit claim), so fund enough to
-# cover all MAX_FLIPS in-flips without needing to claim back: 2e18 × 16 + headroom.
-pp_token_transfer "$TOKEN" "$TOGGLE_ADDR" "40000000000000000000"
 
 echo "== runtime deploy: staking cluster (DeployStaking) =="
 NETWORK=local-dpos-smoke/l2 DEPLOYER="$DEPLOYER_ADDR" INITIAL_OWNER="$DEPLOYER_ADDR" \
@@ -220,6 +212,41 @@ for v in STAKING_RT CHAIN_CONFIG_RT GOV_ADDR LIVENESS_RT; do
     [[ "${!v}" == 0x* ]] || { echo "FAIL (smoke-byzantine-vrf): manifest missing $v"; cat "$MANIFEST"; exit 1; }
 done
 echo "  staking=$STAKING_RT chainConfig=$CHAIN_CONFIG_RT gov=$GOV_ADDR liveness=$LIVENESS_RT"
+
+# Assert the pre-written staking-reader.json (genesis-init nonce prediction) equals
+# the actual deploy — a deployer-nonce drift (an extra early deployer tx) would land
+# ChainConfig at a different CREATE address than the node reads, and the --dpos
+# cold-start would read the WRONG ChainConfig. (Mirrors case-production-path.sh; its
+# ABSENCE here is what let the BYZ/toggle funding drift go undetected.)
+echo "== assert pre-written staking-reader.json matches the deploy manifest =="
+PRE=$(docker compose exec -T validator-0 cat /runtime/staking-reader.json)
+for pair in "staking_address:$STAKING_RT" \
+            "chain_config_address:$CHAIN_CONFIG_RT" \
+            "liveness_slashing_address:$LIVENESS_RT"; do
+    k=${pair%%:*} want=$(tr 'A-F' 'a-f' <<<"${pair#*:}")
+    got=$(jq -r ".$k" <<<"$PRE" | tr 'A-F' 'a-f')
+    [[ "$got" == "$want" ]] || { echo "FAIL (smoke-byzantine-vrf): pre-written $k=$got != deployed $want \
+(deployer nonce drift — an early deployer tx shifted DeployStaking's CREATE addresses; \
+keep the pre-deploy deployer tx sequence identical to case-production-path.sh)"; exit 1; }
+done
+echo "  pre-written config matches manifest ✓"
+
+# Extra DEPLOYER-funded transfers, sent ONLY NOW (post-DeployStaking) so they do not
+# shift the CREATE-address nonces asserted above. BYZ owner self-delegates to stay
+# rotation-proof; the toggle delegator (idx 7) drives the v5 in/out flips later.
+pp_token_transfer "$TOKEN" "$(pp_owner_addr "$BYZ_IDX")" "10000000000000000000"
+cast send "$TOGGLE_ADDR" --value 1000000000000000 \
+    --rpc-url "$RPC" --private-key "$DEPLOYER_KEY" >/dev/null \
+    || { echo "FAIL (smoke-byzantine-vrf): fund v5-toggle delegator"; exit 1; }
+# 2e18 × 16 in-flips + headroom (undelegate parks BLEND in a non-respendable queue).
+pp_token_transfer "$TOKEN" "$TOGGLE_ADDR" "40000000000000000000"
+# The floor-bump self-delegates 1e18 from EACH of v1/v3/v4's OWN owner key (see the
+# "stake setup" block below) — those owners hold ETH (genesis) but NO BLEND (the
+# runtime MockBlendToken), so fund them here (post-DeployStaking, nonce-safe).
+for i in 1 2 3 4; do
+    [[ "$i" == "$BYZ_IDX" ]] && continue
+    pp_token_transfer "$TOKEN" "$(pp_owner_addr "$i")" "10000000000000000000"
+done
 
 echo "== governance: setBlsVerifier (MUST precede setConsensusKeys) =="
 pp_gov_action "$CHAIN_CONFIG_RT" \
@@ -479,13 +506,19 @@ fi
 echo "  validator-$BYZ_IDX forged a PK_E at a change-epoch boundary x$forged_count (across $changes_seen observed committee changes)"
 
 # Pin the SAFETY/relive assertions to the boundary the byzantine ACTUALLY forged at
-# (its forge warn! carries the structured `epoch=<E>` field). Use the LAST such epoch
-# (the most recent forged boundary, certain to be finalised by the time we assert).
-# Fall back to E_new (the first observed v5-entry change boundary, where the byzantine
-# is also a stayer) if the field can't be parsed — both are change-epoch boundaries
-# where an honest leader commits the real key, so either is a valid safety anchor.
+# (its forge warn! carries the structured `epoch=<E>` field, E a bare u64). Use the
+# LAST such epoch (the most recent forged boundary, certain to be finalised by the
+# time we assert). The tracing renderer wraps the `=` in ANSI colour escapes
+# (`epoch␛[…m=␛[…m4`), so STRIP ANSI before the `epoch=` grep — otherwise the regex
+# never matches and, under `set -euo pipefail`, the unguarded `$(… | grep …)` exits
+# non-zero and aborts the script with NO diagnostic. `|| true` keeps the assignment
+# from tripping `set -e` on a genuine no-match. Fall back to E_new (the first observed
+# v5-entry change boundary, where the byzantine is also a stayer) if the field can't
+# be parsed — both are change-epoch boundaries where an honest leader commits the
+# real key, so either is a valid safety anchor.
+strip_ansi() { sed -E 's/\x1b\[[0-9;]*m//g'; }
 FORGE_EPOCH=$(docker compose logs "validator-$BYZ_IDX" 2>/dev/null \
-    | grep "$FORGE_LINE" | grep -oE 'epoch=[0-9]+' | tail -1 | cut -d= -f2)
+    | strip_ansi | grep -F "$FORGE_LINE" | grep -oE 'epoch=[0-9]+' | tail -1 | cut -d= -f2 || true)
 [[ "$FORGE_EPOCH" =~ ^[0-9]+$ ]] || FORGE_EPOCH="$E_new"
 [[ "$FORGE_EPOCH" =~ ^[0-9]+$ ]] || { echo "FAIL (smoke-byzantine-vrf): forge fired but could not determine the forged epoch \
 (neither the log's epoch= field nor a recorded v5-entry change boundary) — observability gap; raise the committee-poll cadence"; exit 1; }

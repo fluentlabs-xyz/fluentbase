@@ -62,7 +62,7 @@ impl Reporter for Mailbox {
         // Record the recovered seed for the certify gate (round-keyed). Fired
         // here, before `certify(round, _)` runs next loop iteration.
         if let (Some(store), Some(s)) = (self.seed_store.as_ref(), seed.as_ref()) {
-            crate::beacon::certify::record_seed(store, s.target_round, s.signature);
+            store.record(s.target_round, s.signature);
         }
         let msg = executor::Message {
             cause: Span::current(),

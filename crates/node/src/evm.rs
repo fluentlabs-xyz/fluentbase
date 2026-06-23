@@ -730,20 +730,87 @@ where
         .map_err(|e| BlockExecutionError::msg(format!("epoch_block_interval decode: {e:?}")))
 }
 
-/// Read `ChainConfig.getDposActivationBlock()` — origin for relative DPoS epoch
-/// numbering (zero ⇒ absolute) — via system call at the pre-execution state.
-fn read_dpos_activation_block<E>(
+/// DPoS activation height as a *scheduling state*, read resiliently against the
+/// pre-execution state — the executor-side mirror of
+/// [`fluentbase_staking_reader::reader::RethStakingStateReader::scheduled_dpos_activation`].
+///
+/// Returns:
+/// - `Ok(None)` when `ChainConfig` is not (yet) a readably-scheduled DPoS
+///   contract at this state: no code, OR `getDposActivationBlock()` reverts/halts
+///   (the contract exists but is mid-runtime-deploy / a proxy whose impl isn't
+///   coded yet), OR it returns the `0` "not scheduled" sentinel.
+/// - `Ok(Some(h))` once governance has stored a nonzero activation height (the
+///   setter requires `newValue >= block.number`, so a live chain never stores 0).
+///
+/// This is the SINGLE gate the DPoS epoch-commit pre-execution engages on. A
+/// pre-DPoS (Tempo-era) sequencer launched with `--dpos.staking-config`
+/// pointing at predicted-but-not-yet-deployed addresses must touch NO DPoS
+/// contract field until activation is both scheduled AND readable — otherwise a
+/// per-block read of a contract that is mid-runtime-deploy reverts, fails the
+/// payload, stalls the chain, and so prevents the very deploy txns that would
+/// finish the contract from ever mining (self-reinforcing deadlock). Reading
+/// the *scheduling* discriminator first, and treating "unreadable" exactly like
+/// "unscheduled", keeps that sequencer inert until DPoS is real.
+///
+/// A revert here is NOT swallowed error-handling on a hot read: it is the
+/// definition of "this contract is not a scheduled DPoS ChainConfig yet". Once
+/// `Some(h)` is observed the contract is fully initialized, so every subsequent
+/// read in the DPoS section (interval, cursors, committee) stays fail-loud.
+fn scheduled_dpos_activation<E>(
     evm: &mut E,
     chain_config_address: Address,
-) -> Result<u64, BlockExecutionError>
+) -> Result<Option<u64>, BlockExecutionError>
 where
     E: Evm,
 {
     use alloy_sol_types::SolCall;
+    use fluentbase_revm::revm::context_interface::result::{ExecutionResult, Output};
+
     let calldata = getDposActivationBlockCall {}.abi_encode().into();
-    let output = transact_view(evm, chain_config_address, calldata, "dpos_activation_block")?;
-    getDposActivationBlockCall::abi_decode_returns(&output)
-        .map_err(|e| BlockExecutionError::msg(format!("dpos_activation_block decode: {e:?}")))
+    let ras = evm
+        .transact_system_call(fluentbase_types::SYSTEM_ADDRESS, chain_config_address, calldata)
+        .map_err(|e| {
+            BlockExecutionError::msg(format!("dpos_activation_block read failed: {e:?}"))
+        })?;
+    let output = match ras.result {
+        ExecutionResult::Success { output, .. } => Some(match output {
+            Output::Call(b) | Output::Create(b, _) => b,
+        }),
+        // Codeless account / proxy whose impl isn't coded yet / not-yet-deployed
+        // contract → "not a scheduled DPoS ChainConfig at this state". Skip the
+        // whole DPoS section rather than wedging the payload builder.
+        ExecutionResult::Revert { .. } | ExecutionResult::Halt { .. } => None,
+    };
+    classify_scheduled_activation(output)
+}
+
+/// Pure decode+classify step of [`scheduled_dpos_activation`], split out so the
+/// gate's decision logic is unit-testable without a live EVM. Every "the
+/// ChainConfig is not a readable, scheduled DPoS config at this state" case folds
+/// to `Ok(None)` (skip the DPoS section), so a pre-DPoS / mid-runtime-deploy
+/// sequencer never wedges its payload builder:
+/// - `None` (the read reverted/halted ⇒ proxy mid-deploy) → `Ok(None)`;
+/// - `Some(empty)` — a CODELESS / not-yet-deployed account returns `Success` with
+///   EMPTY output (no revert); "no return data" ⇒ unreadable ⇒ `Ok(None)` (NOT a
+///   decode error — decoding empty bytes Overruns, which previously froze the
+///   pre-deploy sequencer at block 0);
+/// - `Some(bytes)` decoding to `0` (the unscheduled sentinel) → `Ok(None)`;
+/// - `Some(bytes)` decoding to a nonzero height → `Ok(Some(height))`.
+///
+/// `0` is the unscheduled sentinel: `setDposActivationBlock` requires
+/// `newValue >= block.number`, so a live chain never stores 0 — there is no DPoS
+/// epoch to account for yet.
+fn classify_scheduled_activation(
+    output: Option<Bytes>,
+) -> Result<Option<u64>, BlockExecutionError> {
+    use alloy_sol_types::SolCall;
+    let Some(output) = output else { return Ok(None) };
+    if output.is_empty() {
+        return Ok(None);
+    }
+    let activation = getDposActivationBlockCall::abi_decode_returns(&output)
+        .map_err(|e| BlockExecutionError::msg(format!("dpos_activation_block decode: {e:?}")))?;
+    Ok((activation != 0).then_some(activation))
 }
 
 /// Execute a `view` system call and return its raw output bytes (fail-loud on
@@ -922,53 +989,42 @@ where
             use alloy_sol_types::{SolCall, SolError as _};
             use fluentbase_revm::revm::context_interface::result::ExecutionResult;
             use fluentbase_revm::revm::context_interface::Block as _;
-            use fluentbase_revm::revm::{Database as _, DatabaseCommit as _};
+            use fluentbase_revm::revm::DatabaseCommit as _;
 
-            // P2-2: skip the entire DPoS section for a block whose PRE-execution
-            // state predates the staking/chain-config deployment. On a migrated
-            // prod chain the predeploys are NOT in the chainspec genesis, so a node
-            // resyncing history from genesis reaches codeless accounts; the view
-            // reads below would then decode an empty return and fail the block. The
-            // code-presence probe is a deterministic pure function of pre-block
-            // state, so every node skips the same blocks identically.
-            let chain_config_has_code = self
-                .inner
-                .evm_mut()
-                .db_mut()
-                .basic(self.chain_config_address)
-                .map_err(|e| {
-                    BlockExecutionError::msg(format!("chain_config account probe: {e:?}"))
-                })?
-                .is_some_and(|acc| !acc.is_empty_code_hash());
-            if !chain_config_has_code {
+            // SINGLE gate (P2-2): the whole DPoS epoch-commit section engages ONLY
+            // once DPoS activation is both SCHEDULED and READABLE at this
+            // pre-execution state. `scheduled_dpos_activation` folds three
+            // pre-DPoS states into the same `None` → skip:
+            //   - `ChainConfig` has no code yet (migrated prod chain resyncing
+            //     history from genesis where the predeploys aren't in the
+            //     chainspec; or a fresh chain before the runtime deploy);
+            //   - `ChainConfig` exists but `getDposActivationBlock()` reverts (a
+            //     proxy mid-runtime-deploy whose impl isn't coded yet) — this is
+            //     the case that used to wedge a `--dpos.staking-config` sequencer
+            //     mid-deploy: a per-block read reverted → payload failed → chain
+            //     stalled → the deploy txns couldn't mine → frozen forever;
+            //   - activation is the `0` "not scheduled" sentinel.
+            // Reading the SCHEDULING discriminator first (and treating unreadable
+            // exactly like unscheduled) means a pre-DPoS / pre-deploy sequencer
+            // touches NO other DPoS contract field. The probe is a deterministic
+            // pure function of pre-block state, so every node skips the same
+            // blocks identically (state-root symmetry). Once `Some(activation)` is
+            // observed the contract is fully initialized, so every read below
+            // stays fail-loud.
+            let Some(activation) =
+                scheduled_dpos_activation(self.inner.evm_mut(), self.chain_config_address)?
+            else {
                 return Ok(());
-            }
+            };
 
             let block_number: u64 = self.inner.evm().block().number().saturating_to();
-            let interval =
-                read_epoch_block_interval(self.inner.evm_mut(), self.chain_config_address)?;
             // Relative epoch numbering: the contract's commit cursor counts
             // epochs from `dposActivationBlock` (Staking._currentEpoch), so the
-            // ahead-commit horizon must match or the catch-up loop misfires.
-            // `saturating_sub` mirrors the contract's pre-activation clamp; zero
-            // activation ⇒ absolute (degenerate, pre-migration).
-            let activation =
-                read_dpos_activation_block(self.inner.evm_mut(), self.chain_config_address)?;
-
-            // `activation == 0` is the "DPoS not scheduled" sentinel, NOT a live
-            // operating mode: `setDposActivationBlock` can never store 0 on a live
-            // chain (it requires `newValue >= block.number`), every real deployment
-            // schedules a future activation block (devnet bakes 64), and `_currentEpoch`
-            // clamps to 0 below activation. So with `activation == 0` there is no DPoS
-            // epoch to account for, and running this section would (a) re-expose the
-            // legacy-extra_data fail-loud the gate below is meant to suppress
-            // (`block_number >= 0` is vacuously true), and (b) on a deep chain
-            // mistakenly enabled with `--dpos.staking-config` before activation is
-            // set, explode the commit loop into ~`block/interval` catch-up commits in
-            // one block. Skip the whole DPoS section until activation is scheduled (P2-2).
-            if activation == 0 {
-                return Ok(());
-            }
+            // ahead-commit horizon must match or the catch-up loop misfires. Safe
+            // to read fail-loud now — a scheduled activation implies an
+            // initialized ChainConfig with `epochBlockInterval > 0`.
+            let interval =
+                read_epoch_block_interval(self.inner.evm_mut(), self.chain_config_address)?;
 
             // System-call the `LivenessSlashing` predeploy with the previous
             // finalized cert's bitmap decoded from `block.header.extra_data`, but
@@ -1191,6 +1247,51 @@ mod tests {
         assert_eq!(
             cfg.liveness_slashing_address,
             fluentbase_types::PRECOMPILE_LIVENESS_SLASHING
+        );
+    }
+
+    /// The DPoS epoch-commit pre-execution gate must be INERT whenever the
+    /// `ChainConfig` activation read is unreadable or unscheduled — the root fix
+    /// for the runtime-deploy deadlock (a pre-DPoS sequencer launched with
+    /// `--dpos.staking-config` whose `ChainConfig` is mid-runtime-deploy must
+    /// NOT fail-loud per block, or it stalls the chain and the deploy txns can
+    /// never mine). `None` = the read reverted/halted (codeless / proxy whose
+    /// impl isn't coded yet); a decoded `0` = the unscheduled sentinel. Both map
+    /// to `Ok(None)` (skip); only a nonzero height engages the section.
+    #[test]
+    fn unreadable_or_unscheduled_chainconfig_is_inert() {
+        use super::classify_scheduled_activation;
+        use alloy_sol_types::SolValue;
+
+        // Read reverted/halted ⇒ skip (this is the deadlock-dissolving arm).
+        assert_eq!(
+            classify_scheduled_activation(None).expect("revert must not be fatal"),
+            None
+        );
+
+        // Decoded `0` (unscheduled sentinel) ⇒ skip. A single `uint64` return is
+        // ABI-encoded exactly as `u64::abi_encode()`, the wire the gate decodes.
+        let zero = alloy_primitives::Bytes::from(0u64.abi_encode());
+        assert_eq!(
+            classify_scheduled_activation(Some(zero)).expect("zero must decode"),
+            None
+        );
+
+        // Nonzero scheduled height ⇒ engage with that activation.
+        let scheduled = alloy_primitives::Bytes::from(128u64.abi_encode());
+        assert_eq!(
+            classify_scheduled_activation(Some(scheduled)).expect("nonzero must decode"),
+            Some(128)
+        );
+
+        // A CODELESS / not-yet-deployed account returns `Success` with EMPTY output
+        // (NOT a revert) — the real pre-deploy / mid-runtime-deploy state. Decoding
+        // empty bytes Overruns, which previously propagated as a fatal payload error
+        // and froze the bare chain at block 0; it MUST fold to `None` (skip).
+        assert_eq!(
+            classify_scheduled_activation(Some(alloy_primitives::Bytes::new()))
+                .expect("empty (codeless) output must not be a fatal decode error"),
+            None
         );
     }
 }

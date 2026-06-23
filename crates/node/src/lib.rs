@@ -1,4 +1,5 @@
 pub mod cert_follow;
+pub mod cert_inlet;
 pub mod certified_block;
 pub mod chainspec;
 pub mod consensus;
@@ -13,5 +14,4 @@ pub mod payload;
 pub mod slasher_sink;
 pub mod trusted_peers;
 pub mod types;
-pub mod unified;
 pub mod utils;

@@ -24,28 +24,105 @@ use crate::{
     scheme::soft_enter_verifier,
     slasher,
     timeouts::ConsensusTimeouts,
+    REPLAY_BUFFER, WRITE_BUFFER,
 };
-use crate::{REPLAY_BUFFER, WRITE_BUFFER};
 use alloy_primitives::{Address, B256};
 use commonware_broadcast::buffered;
 use commonware_consensus::{
     marshal::{
-        self, core::Actor as MarshalActor, resolver::p2p as marshal_p2p, standard::Standard,
+        self, core::Actor as MarshalActor, resolver::handler as marshal_handler,
+        resolver::p2p as marshal_p2p, standard::Standard,
     },
     simplex::types::Finalization,
     types::{Epoch, Height, ViewDelta},
     Reporters,
 };
 use commonware_cryptography::{certificate::Provider as CertProvider, ed25519::PublicKey};
-use commonware_p2p::{
-    utils::mux::MuxHandle, Blocker, Provider as PeerProvider, Receiver, Sender,
-};
+use commonware_p2p::{utils::mux::MuxHandle, Blocker, Provider as PeerProvider, Receiver, Sender};
 
 /// A plane-owned `Muxer` broker handle shared across promotions. `MuxHandle::register`
 /// takes `&mut self` (a boundary-rate control-channel round-trip), and the move-only
 /// `DiscReceiver` breaks the derived `Clone` bound on `MuxHandle`, so the handle is
 /// shared via `Arc<Mutex<_>>` (the `Arc` is also the per-promotion `Clone`).
 pub(crate) type SharedMux<HS, HR> = Arc<tokio::sync::Mutex<MuxHandle<HS, HR>>>;
+
+/// The validator marshal's by-height backfill resolver: either the consensus-plane
+/// p2p resolver (a plain `--dpos` validator catches up on the committee-peer
+/// treadmill) or the UPSTREAM-backed [`UpstreamResolver`](crate::cert_inlet::UpstreamResolver)
+/// (an `--dpos.follower-upstream` validator backfills from the upstream, so an
+/// OUT-OF-COMMITTEE joiner with zero consensus-plane connectivity still fills the
+/// cold-start gap — the validator-with-upstream wedge fix). One concrete `Resolver`
+/// type so [`OuterEngine::run`] hands the marshal a single resolver regardless of
+/// config. Distinct from [`crate::cert_inlet::FollowerResolver`] only in its `Plane`
+/// arm (a follower has no consensus-plane resolver to fall back to). Both arms key
+/// on the marshal `Request<Digest>` and ed25519 peers, so the marshal's
+/// `verify_delivered` BLS gate is unchanged.
+#[derive(Clone)]
+enum MarshalResolver<E, U> {
+    /// Consensus-plane p2p resolver (no upstream configured).
+    Plane(commonware_resolver::p2p::Mailbox<marshal_handler::Request<Digest>, PublicKey>),
+    /// Upstream-backed by-height backfill (an upstream is configured).
+    Upstream(crate::cert_inlet::UpstreamResolver<E, U>),
+}
+
+impl<E, U> commonware_resolver::Resolver for MarshalResolver<E, U>
+where
+    E: commonware_runtime::Spawner + commonware_runtime::Metrics + Clone + Send + Sync + 'static,
+    U: crate::cert_follow::CertUpstream,
+{
+    type Key = marshal_handler::Request<Digest>;
+    type PublicKey = PublicKey;
+
+    async fn fetch(&mut self, key: Self::Key) {
+        match self {
+            Self::Plane(r) => r.fetch(key).await,
+            Self::Upstream(r) => r.fetch(key).await,
+        }
+    }
+    async fn fetch_all(&mut self, keys: Vec<Self::Key>) {
+        match self {
+            Self::Plane(r) => r.fetch_all(keys).await,
+            Self::Upstream(r) => r.fetch_all(keys).await,
+        }
+    }
+    async fn fetch_targeted(
+        &mut self,
+        key: Self::Key,
+        targets: commonware_utils::vec::NonEmptyVec<Self::PublicKey>,
+    ) {
+        match self {
+            Self::Plane(r) => r.fetch_targeted(key, targets).await,
+            Self::Upstream(r) => r.fetch_targeted(key, targets).await,
+        }
+    }
+    async fn fetch_all_targeted(
+        &mut self,
+        requests: Vec<(Self::Key, commonware_utils::vec::NonEmptyVec<Self::PublicKey>)>,
+    ) {
+        match self {
+            Self::Plane(r) => r.fetch_all_targeted(requests).await,
+            Self::Upstream(r) => r.fetch_all_targeted(requests).await,
+        }
+    }
+    async fn cancel(&mut self, key: Self::Key) {
+        match self {
+            Self::Plane(r) => r.cancel(key).await,
+            Self::Upstream(r) => r.cancel(key).await,
+        }
+    }
+    async fn clear(&mut self) {
+        match self {
+            Self::Plane(r) => r.clear().await,
+            Self::Upstream(r) => r.clear().await,
+        }
+    }
+    async fn retain(&mut self, predicate: impl Fn(&Self::Key) -> bool + Send + 'static) {
+        match self {
+            Self::Plane(r) => r.retain(predicate).await,
+            Self::Upstream(r) => r.retain(predicate).await,
+        }
+    }
+}
 
 /// Bulk catch-up committee reader threaded from `dpos.rs` into [`OuterBuilder`]:
 /// given an inclusive epoch span `[from, to]`, returns the contiguous on-chain
@@ -58,7 +135,7 @@ use commonware_runtime::{
     buffer::paged::CacheRef, spawn_cell, BufferPooler, Clock, ContextCell, Handle, IoBuf, Metrics,
     Network as RNetwork, Pacer, Spawner, Storage,
 };
-use commonware_storage::archive::{immutable, Archive as _};
+use commonware_storage::archive::immutable;
 use commonware_utils::{NZUsize, NZU16, NZU64};
 use fluentbase_bls::{keys::ValidatorBlsKeypair, PeerPubkey, Scheme as BlsScheme};
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
@@ -84,8 +161,8 @@ const FREEZER_VALUE_TARGET_SIZE: u64 = 1 << 30;
 const FREEZER_VALUE_COMPRESSION: Option<u8> = Some(3);
 
 // EpochSchemeProvider — minimal per-epoch BlsScheme registry; pruned to the
-// trailing SCHEME_RETENTION_EPOCHS (the unified supervisor keeps one process
-// alive across months — unbounded growth is no longer hypothetical).
+// trailing SCHEME_RETENTION_EPOCHS (a validator keeps one process alive across
+// months — unbounded growth is no longer hypothetical).
 
 /// Trailing epochs of BLS schemes retained for cross-epoch cert verification
 /// (marshal backfill / catch-up register epochs in order, so older schemes
@@ -296,15 +373,23 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// (`OriginEpocher`). Zero ⇒ absolute (non-migration / pristine genesis).
     pub dpos_activation_block: u64,
     pub signer_keypair: Option<ValidatorBlsKeypair>,
-    /// Rotation-out signals to the unified supervisor (`None` = legacy).
-    pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<crate::dpos::ModeEvent>>,
     /// Per-epoch beacon resolver: returns each epoch's `BeaconKey` (live-DKG
     /// store + carry-forward + genesis fallback) so every per-epoch consensus
     /// scheme carries the seed partial under that epoch's `PK_epoch`.
     pub beacon_resolver: epoch_manager::BeaconResolver,
-    /// Edge-trigger the `DkgActor` fires when a share lands, so `enter` wakes the
-    /// instant its share is memoized rather than polling. Threaded to the manager.
+    /// Edge-trigger the `DkgActor` fires when a share lands, so the reconciler
+    /// re-runs the instant its share is memoized rather than polling. Threaded to
+    /// the manager.
     pub beacon_share_notify: std::sync::Arc<tokio::sync::Notify>,
+    /// Edge-trigger the executor fires when it records a finalized block — the
+    /// mid-epoch promotion trigger. Threaded to BOTH the executor (producer) and
+    /// the manager (consumer).
+    pub spawn_unblocked: std::sync::Arc<tokio::sync::Notify>,
+    /// Steady-state self-healing re-jump callback (see [`executor::ReJump`]),
+    /// threaded into the executor's `Config`. `Some` on any upstream-configured
+    /// node (follower or validator-with-upstream); `None` for a plain validator
+    /// and in tests.
+    pub re_jump: Option<executor::ReJump>,
     /// Bulk catch-up committee reader (built in `dpos.rs` over `et_arc` + the
     /// reth finalized-tip source). Given an inclusive epoch span `[from, to]`, it
     /// loads the node's current finalized tip, reads each committee from
@@ -333,15 +418,6 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
 
     // FluentApp constructor args.
     pub genesis: OrderBlock,
-    /// Unified-supervisor PROMOTION: write the synthesized anchor OrderBlock
-    /// into the finalized-blocks archive before the marshal starts. The
-    /// per-epoch `Inline::genesis(epoch > 0)` resolves the previous epoch's
-    /// terminal block via `marshal.get_block(last(prev))` — a promoted node
-    /// anchors exactly at that terminal block with an otherwise-empty (or
-    /// floored-stale) archive, so without this seed the first signer view
-    /// panics "missing starting epoch block". Idempotent (the archive
-    /// ignores duplicate indices).
-    pub seed_anchor_block: bool,
     pub beacon_engine: BE,
     /// OrderBlock → derived-EVM-block execution (node-side, reth-evm).
     pub deriver: D,
@@ -504,18 +580,8 @@ where
         let finalizations_by_height =
             init_finalizations_archive(&context, &self.partition_prefix, page_cache.clone()).await;
 
-        let mut finalized_blocks =
+        let finalized_blocks =
             init_finalized_blocks_archive(&context, &self.partition_prefix).await;
-        if self.seed_anchor_block {
-            finalized_blocks
-                .put(
-                    self.genesis.height,
-                    self.genesis.digest(),
-                    self.genesis.clone(),
-                )
-                .await
-                .map_err(|e| eyre::eyre!("seeding promotion anchor block into archive: {e:?}"))?;
-        }
 
         // Single cross-epoch FixedEpocher + scheme provider. The same
         // instance is threaded into marshal::Config below AND into
@@ -677,9 +743,12 @@ where
                 last_execution_finalized_height: self.last_execution_finalized_height,
                 initial_finalized,
                 initial_head,
+                dpos_activation_block: self.dpos_activation_block,
                 fcu_pace: self.fcu_pace,
                 peers_for_finalization,
                 beacon_metrics: self.beacon_metrics.clone(),
+                spawn_unblocked: self.spawn_unblocked.clone(),
+                re_jump: self.re_jump,
             },
         );
 
@@ -687,7 +756,7 @@ where
         // (`crate::beacon::certify`). The spec-exec reporter writes it (it already
         // recovers the seed per notarization); each per-epoch `BeaconCertify`
         // wrapper reads it. Cross-epoch singleton.
-        let seed_store = crate::beacon::certify::new_seed_store();
+        let seed_store = crate::beacon::certify::SeedStore::new();
 
         // Notarization arm of the simplex reporter — forwards `SpecNotarized`
         // to the executor for speculative execution. Built from a mailbox clone
@@ -712,6 +781,7 @@ where
                 self.assembler,
                 self.fee_recipient,
                 self.target_gas_limit,
+                self.dpos_activation_block,
             );
             match self.beacon_verify {
                 Some(bv) => app.with_beacon(bv),
@@ -795,12 +865,12 @@ where
                 chain_id: self.chain_id,
                 epocher: epocher.clone(),
                 signer_keypair: self.signer_keypair,
-                mode_events: self.mode_events,
                 app,
                 timeouts: self.timeouts,
                 mailbox_size: self.mailbox_size,
                 beacon_resolver: self.beacon_resolver,
                 beacon_share_notify: self.beacon_share_notify,
+                spawn_unblocked: self.spawn_unblocked,
                 marshal_mailbox: marshal_mailbox.clone(),
                 slasher_mailbox,
                 spec_exec_mailbox,
@@ -874,8 +944,21 @@ where
     /// Registration is async, so it happens inside `run` (keeps `start` sync); the
     /// muxes live in the always-on plane, so on demote the dropped `SubReceiver`s
     /// auto-deregister and the next promotion re-registers — restart-free.
+    ///
+    /// `upstream`: `Some` for an upstream-configured validator
+    /// (`--dpos.follower-upstream`) — the marshal's by-height backfill resolver is
+    /// the UPSTREAM-backed [`UpstreamResolver`](crate::cert_inlet::UpstreamResolver)
+    /// instead of the consensus-plane p2p resolver, so an OUT-OF-COMMITTEE node
+    /// (no consensus-plane connectivity — the peer set == committee) can still fill
+    /// the cold-start `[floor+1 .. first_live]` gap (the validator-with-upstream
+    /// wedge fix; the upstream serves ALL finalized certs by-height, in BOTH in- and
+    /// out-of-committee states). `None` for a plain `--dpos` validator — it keeps the
+    /// p2p resolver (it catches up on the consensus-plane treadmill). In either case
+    /// the marshal BLS-verifies every delivered cert against the per-epoch committee
+    /// (`verify_delivered`), so trustlessness is intact, and the resolver only
+    /// DELIVERS into the marshal — the executor stays the sole reth writer.
     #[allow(clippy::too_many_arguments)]
-    pub fn start<HS, HR>(
+    pub fn start<HS, HR, U>(
         mut self,
         ctx_for_resolver: E,
         vote_mux: SharedMux<HS, HR>,
@@ -884,10 +967,13 @@ where
         broadcast_mux: SharedMux<HS, HR>,
         marshal_mux: SharedMux<HS, HR>,
         vote_backup: mpsc::Receiver<(u64, (PublicKey, IoBuf))>,
+        upstream: Option<U>,
     ) -> Handle<()>
     where
+        E: Clone + Sync,
         HS: Sender<PublicKey = PublicKey>,
         HR: Receiver<PublicKey = PublicKey>,
+        U: crate::cert_follow::CertUpstream,
     {
         spawn_cell!(
             self.context,
@@ -899,13 +985,14 @@ where
                 broadcast_mux,
                 marshal_mux,
                 vote_backup,
+                upstream,
             )
             .await
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn run<HS, HR>(
+    async fn run<HS, HR, U>(
         self,
         ctx_for_resolver: E,
         vote_mux: SharedMux<HS, HR>,
@@ -914,23 +1001,17 @@ where
         broadcast_mux: SharedMux<HS, HR>,
         marshal_mux: SharedMux<HS, HR>,
         vote_backup: mpsc::Receiver<(u64, (PublicKey, IoBuf))>,
+        upstream: Option<U>,
     ) where
+        E: Clone + Sync,
         HS: Sender<PublicKey = PublicKey>,
         HR: Receiver<PublicKey = PublicKey>,
+        U: crate::cert_follow::CertUpstream,
     {
-        // Register subchannel 0 on the broadcast + marshal muxes (the global
-        // singletons that consume one fixed sub-channel each). A dedicated Muxer per
-        // top-level channel means subchannel 0 never collides with the per-epoch
-        // vote/cert/resolver registrations on their OWN muxes. On a `Closed` error
-        // (plane Muxer torn down at shutdown) the engine exits — the supervisor is
-        // already shutting down.
-        let marshal_sub = match marshal_mux.lock().await.register(0).await {
-            Ok(sub) => sub,
-            Err(e) => {
-                tracing::error!(error = ?e, "marshal mux register(0) failed — OuterEngine exiting");
-                return;
-            }
-        };
+        // Register subchannel 0 on the broadcast mux (the global singleton that
+        // consumes one fixed sub-channel). On a `Closed` error (plane Muxer torn
+        // down at shutdown) the engine exits — the supervisor is already shutting
+        // down.
         let broadcast = match broadcast_mux.lock().await.register(0).await {
             Ok(sub) => sub,
             Err(e) => {
@@ -939,22 +1020,65 @@ where
             }
         };
 
-        let (marshal_rx, marshal_resolver) = marshal_p2p::init::<_, _, _, Digest, _, _, _>(
-            &ctx_for_resolver,
-            marshal_p2p::Config {
-                public_key: self.me.clone(),
-                peer_provider: self.provider.clone(),
-                blocker: self.blocker.clone(),
-                mailbox_size: self.mailbox_size,
-                initial: self.resolver_initial,
-                timeout: self.resolver_timeout,
-                fetch_retry_timeout: self.resolver_fetch_retry,
-                priority_requests: true,
-                priority_responses: true,
-            },
-            marshal_sub,
-        );
-        let marshal_chan = (marshal_rx, marshal_resolver);
+        // The marshal's by-height backfill resolver. Two shapes:
+        //   * UPSTREAM-backed ([`UpstreamResolver`]) when `--dpos.follower-upstream`
+        //     is configured — an OUT-OF-COMMITTEE validator (a not-yet-committee
+        //     external joiner) has ZERO consensus-plane connectivity (the tracked
+        //     peer set == the on-chain committee), so the p2p resolver below could
+        //     never fetch the cold-start `[floor+1 .. first_live]` gap and the
+        //     executor would wedge (the same class as the follower wedge). The
+        //     upstream serves ALL finalized certs by-height — in BOTH in- and
+        //     out-of-committee states — so it is the marshal backfill source for the
+        //     WHOLE process lifetime, not just while out-of-committee (an
+        //     in-committee signer's local engine produces certs live; the resolver
+        //     only ever fires for catch-up gaps the upstream can equally serve). The
+        //     resolver (inside `marshal_chan`, owned by the marshal for its lifetime)
+        //     holds its own `upstream` clone, which keeps the WS actor alive (it exits
+        //     when all handles drop).
+        //   * Consensus-plane p2p ([`marshal_p2p::init`]) for a plain `--dpos`
+        //     validator — it catches up on the committee-peer treadmill (no upstream
+        //     to pull from). This registers subchannel 0 on the marshal mux.
+        // Either way the marshal BLS-verifies every delivered cert against the
+        // per-epoch committee (`verify_delivered`) — trustless — and the resolver
+        // only DELIVERS into the marshal; the executor stays the sole reth writer.
+        let marshal_chan = match upstream {
+            Some(up) => {
+                let (marshal_deliver_tx, marshal_rx) =
+                    mpsc::channel::<marshal_handler::Message<Digest>>(self.mailbox_size.max(1));
+                let handler = marshal_handler::Handler::<Digest>::new(marshal_deliver_tx);
+                let resolver = MarshalResolver::Upstream(crate::cert_inlet::UpstreamResolver::new(
+                    ctx_for_resolver,
+                    up,
+                    handler,
+                ));
+                (marshal_rx, resolver)
+            }
+            None => {
+                let marshal_sub = match marshal_mux.lock().await.register(0).await {
+                    Ok(sub) => sub,
+                    Err(e) => {
+                        tracing::error!(error = ?e, "marshal mux register(0) failed — OuterEngine exiting");
+                        return;
+                    }
+                };
+                let (marshal_rx, marshal_resolver) = marshal_p2p::init::<_, _, _, Digest, _, _, _>(
+                    &ctx_for_resolver,
+                    marshal_p2p::Config {
+                        public_key: self.me.clone(),
+                        peer_provider: self.provider.clone(),
+                        blocker: self.blocker.clone(),
+                        mailbox_size: self.mailbox_size,
+                        initial: self.resolver_initial,
+                        timeout: self.resolver_timeout,
+                        fetch_retry_timeout: self.resolver_fetch_retry,
+                        priority_requests: true,
+                        priority_responses: true,
+                    },
+                    marshal_sub,
+                );
+                (marshal_rx, MarshalResolver::Plane(marshal_resolver))
+            }
+        };
 
         // Start `epoch_manager` FIRST so its `boundary_rx` is
         // draining before `marshal` starts firing the `Update::Block`
@@ -963,9 +1087,14 @@ where
         // absorbed the original ordering gap, but starting epoch_manager
         // first eliminates the window for live epoch transitions when
         // bursty finalization races a still-uninitialized consumer.
-        let mut em_handle =
-            self.epoch_manager
-                .start(vote_mux, cert_mux, resolver_mux, vote_backup);
+        let mut em_handle = self.epoch_manager.start(
+            Some(epoch_manager::Muxes {
+                vote: vote_mux,
+                cert: cert_mux,
+                res: resolver_mux,
+            }),
+            vote_backup,
+        );
         let mut buffered_handle = self.buffered.start(broadcast);
         let mut executor_handle = self.executor.start();
         // Compose the cert-feed sink as a second application-Reporter so it
@@ -1001,6 +1130,136 @@ where
         executor_handle.abort();
         marshal_handle.abort();
         slasher_handle.abort();
+        em_handle.abort();
+    }
+
+    /// Near-planeless FOLLOWER start (Phase 3). A non-validator OuterEngine
+    /// (`signer_keypair: None`) runs marshal + executor + scheme provider + a
+    /// gossip-idle `buffered` engine, fed by the cert-inlet — NOT the local BFT
+    /// engine. It keeps exactly ONE plane piece: a minimal broadcast `Muxer` (so
+    /// the buffered engine is alive to answer the marshal's buffer-first body
+    /// lookup with `None`, after which either the verified-cache the inlet
+    /// populated via `verified()` resolves the body locally, OR — for the gap
+    /// between the cold-start floor and the upstream's live frontier — the
+    /// [`UpstreamResolver`](crate::cert_inlet::UpstreamResolver) backfills it
+    /// by-height from the cert upstream). It has NO vote/cert/resolver/marshal
+    /// muxes (the resolver is upstream-backed, not p2p), NO `SharedBeaconPlane` /
+    /// DkgActor / beacon oracle / signer, and DOES NOT start the slasher (a
+    /// non-signer can never submit slashing). `epoch_manager` runs with
+    /// `Option<Muxes>::None`, so `reconcile_roles` keeps it `Verifier` forever and
+    /// `spawn_engine` is unreachable.
+    pub fn start_follower<HS, HR, U>(
+        self,
+        broadcast_mux: SharedMux<HS, HR>,
+        resolver_ctx: E,
+        upstream: Option<U>,
+    ) -> Handle<()>
+    where
+        E: Clone + Sync,
+        HS: Sender<PublicKey = PublicKey>,
+        HR: Receiver<PublicKey = PublicKey>,
+        U: crate::cert_follow::CertUpstream,
+    {
+        let mut this = self;
+        spawn_cell!(
+            this.context,
+            this.run_follower(broadcast_mux, resolver_ctx, upstream).await
+        )
+    }
+
+    async fn run_follower<HS, HR, U>(
+        self,
+        broadcast_mux: SharedMux<HS, HR>,
+        resolver_ctx: E,
+        upstream: Option<U>,
+    ) where
+        E: Clone + Sync,
+        HS: Sender<PublicKey = PublicKey>,
+        HR: Receiver<PublicKey = PublicKey>,
+        U: crate::cert_follow::CertUpstream,
+    {
+        // Register subchannel 0 on the ONE broadcast mux for the buffered engine.
+        // NO marshal mux (the resolver is parked), NO vote/cert/resolver muxes
+        // (the manager never spawns an engine).
+        let broadcast = match broadcast_mux.lock().await.register(0).await {
+            Ok(sub) => sub,
+            Err(e) => {
+                tracing::error!(error = ?e, "follower broadcast mux register(0) failed — OuterEngine exiting");
+                return;
+            }
+        };
+
+        // The marshal resolver channel is LIVE on a follower. The inlet only
+        // pre-caches bodies for the heights it ingests off the upstream's LIVE
+        // stream — which starts at the upstream's CURRENT frontier, well above the
+        // cold-start marshal floor (`landing − 2K`). The marshal dispatches to the
+        // executor only CONTIGUOUSLY from `floor + 1`, so it must backfill the gap
+        // `[floor+1 .. first_live_height]` (and any live-stream drops) by-height.
+        // A follower has zero consensus-plane connectivity, so a peer resolver
+        // would find nothing — instead the resolver pulls each missing height from
+        // the cert UPSTREAM and delivers `(finalization, block)` back through this
+        // `Handler`, which the marshal BLS-verifies before storing (the trustless
+        // gate). With a `NoopResolver` here the gap never fills and the executor
+        // stays idle forever (the cert-follow wedge). The `handler` wraps the
+        // SENDER whose `marshal_rx` the actor consumes; both are held for the whole
+        // follower lifetime so `resolver_rx` never closes.
+        let (marshal_deliver_tx, marshal_rx) =
+            mpsc::channel::<marshal_handler::Message<Digest>>(self.mailbox_size.max(1));
+        // Parked clone of the sender: a `NoopResolver` (no-upstream config) does not
+        // hold a `Handler`, so without this the only sender would drop and the
+        // actor's `resolver_rx` would close → the marshal returns immediately. The
+        // `Upstream` resolver holds its own `Handler` clone, so this is dead weight
+        // there but harmless.
+        let _parked_marshal_tx = marshal_deliver_tx.clone();
+        let handler = marshal_handler::Handler::<Digest>::new(marshal_deliver_tx);
+        let marshal_resolver = match upstream {
+            Some(up) => crate::cert_inlet::FollowerResolver::Upstream(
+                crate::cert_inlet::UpstreamResolver::new(resolver_ctx, up, handler),
+            ),
+            None => crate::cert_inlet::FollowerResolver::Noop(
+                crate::cert_inlet::NoopResolver::default(),
+            ),
+        };
+        let marshal_chan = (marshal_rx, marshal_resolver);
+
+        // Vote-backup is PARKED: a follower's manager only soft-enters and never
+        // consumes catch-up hints, but `run` exits if its `vote_backup` receiver
+        // closes — so hold the sender alive for the lifetime.
+        let (_parked_vote_backup_tx, parked_vote_backup) = mpsc::channel(1);
+
+        let mut em_handle = self
+            .epoch_manager
+            .start::<HS, HR>(None, parked_vote_backup);
+        let mut buffered_handle = self.buffered.start(broadcast);
+        let mut executor_handle = self.executor.start();
+        let app_reporter: Reporters<marshal::Update<OrderBlock>, FluentApp<XC, A>, FeedSink> =
+            Reporters::from((self.marshal_reporter_app, self.feed));
+        let mut marshal_handle =
+            self.marshal
+                .start(app_reporter, self.buffer_mailbox, marshal_chan);
+        // The slasher is built (cheap, no WAL traffic without a started actor) but
+        // NOT started on a follower: dropping the unstarted actor omits it from the
+        // supervisor and its WAL/reader never run.
+        drop(self.slasher);
+
+        // Supervisor: on first subsystem exit, abort the others. Held alive across
+        // the select: `_parked_marshal_tx` + `_parked_vote_backup_tx` keep the
+        // marshal resolver_rx / manager vote_backup open.
+        let exit = tokio::select! {
+            r = &mut buffered_handle => ("buffered", r),
+            r = &mut executor_handle => ("executor", r),
+            r = &mut marshal_handle => ("marshal", r),
+            r = &mut em_handle => ("epoch_manager", r),
+        };
+
+        match exit.1 {
+            Ok(()) => tracing::warn!(subsystem = exit.0, "follower subsystem exited cleanly (unexpected)"),
+            Err(e) => tracing::error!(subsystem = exit.0, error = ?e, "follower subsystem failed"),
+        }
+
+        buffered_handle.abort();
+        executor_handle.abort();
+        marshal_handle.abort();
         em_handle.abort();
     }
 }

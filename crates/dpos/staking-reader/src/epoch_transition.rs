@@ -226,6 +226,20 @@ where
         self.pending_boundary.is_some()
     }
 
+    /// The frozen `(dposActivationBlock, epochBlockInterval)` once a readable,
+    /// DPoS-scheduled anchor has been applied; `None` until then. This is the
+    /// SINGLE in-plane source of the immutable epoch geometry: the beacon-plane
+    /// poller drives `cold_start`/`on_finalized` here (which freezes the geometry,
+    /// codeless-tolerant — see [`Self::apply_at`]), and the `DkgActor` reads its
+    /// activation/interval from the SAME resolution rather than re-reading the
+    /// chain itself. `Some(_)` also doubles as the bootstrap signal the poller
+    /// uses to switch from `cold_start` to the steady `on_finalized` boundary walk
+    /// (which REQUIRES the freeze), distinct from a plain `Intra` no-op (which can
+    /// also mean "already tracked").
+    pub fn frozen_geometry(&self) -> Option<(u64, u64)> {
+        Some((self.frozen_activation?, self.frozen_interval? as u64))
+    }
+
     /// The executed height committee reads resolve at for an
     /// ordering-finalized `number`: `number − result_lag`, clamped to the
     /// cold-start anchor (≤ anchor is executed by construction). Frozen
@@ -309,6 +323,22 @@ where
     /// cold-start bootstrap (incl. boundary-resume E+1) + boundary branch,
     /// reading committee state at the RESOLVED executed hash `at`.
     async fn apply_at(&mut self, number: u64, at: B256) -> Result<TransitionOutcome, ReadError> {
+        // Deferred bootstrap: until DPoS is actually a scheduled, deployed chain at
+        // `at`, the ChainConfig staticcalls below revert (codeless account) or read
+        // the `0` unscheduled sentinel. On a cold-restart into `--dpos` the anchor
+        // can momentarily be the genesis fallback (reth has not yet surfaced its
+        // persisted finalized marker), so freezing here would FATALLY mis-read the
+        // geometry. `scheduled_dpos_activation` folds both the codeless and the `0`
+        // cases to `None`; on `None` we return a benign no-op and leave the geometry
+        // UNFROZEN — the beacon-plane poller re-`cold_start`s each tick off the live
+        // finalized cursor (an existing event, NOT a new timer) and freezes the
+        // instant a readable, DPoS-scheduled finalized block exists, at which point
+        // `frozen_geometry()` becomes `Some(_)` (consumed by the poller's branch and
+        // the DkgActor). The resolved activation is reused for the freeze below so
+        // this adds no extra read.
+        let Some(scheduled_activation) = self.reader.scheduled_dpos_activation(at)? else {
+            return Ok(TransitionOutcome::Intra);
+        };
         // `epochBlockInterval` is treated as FIXED after genesis: the consensus
         // `FixedEpocher` is frozen at startup, so acting on a live governance
         // change here would diverge the two epoch authorities (a boundary-synced
@@ -324,11 +354,13 @@ where
             "epochBlockInterval (consensus FixedEpocher is frozen)",
         );
         // Freeze the relative-epoch origin on the first finalized block, mirroring
-        // the interval freeze (consensus OriginEpocher is frozen at startup).
-        let observed = self.reader.dpos_activation_block(at)?;
+        // the interval freeze (consensus OriginEpocher is frozen at startup). Reuse
+        // the value already resolved by `scheduled_dpos_activation` — the `0`-fold
+        // never reaches here (it returned `None` above), so this is the raw
+        // activation height (unscheduled `0` is impossible past the gate).
         let activation = freeze_or_warn(
             &mut self.frozen_activation,
-            observed,
+            scheduled_activation,
             "dposActivationBlock (consensus OriginEpocher is frozen)",
         );
         let epoch_e = epoch_of_block(number, interval, activation);

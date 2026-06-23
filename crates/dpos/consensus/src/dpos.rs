@@ -7,6 +7,7 @@ use crate::{
         derive_with_visibility_retry, BeaconEngineLike, DerivedBlock as _, DerivedBlockBuilder,
         ExecutedChain, OrderingAssembler,
     },
+    cold_start_jump::ElSync as _,
     order_block::{anchor_order_block, K},
     scheme::epoch_committee_from_snapshot,
     slasher::actor::{SharedCacheFallback, SlasherTxSink, StaleEpochFallback},
@@ -43,11 +44,10 @@ use std::{
     num::NonZeroU64,
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc,
+        Arc, Mutex as StdMutex,
     },
     time::Duration,
 };
-use std::sync::Mutex as StdMutex;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -337,11 +337,19 @@ where
 /// and permission checks); the slasher transport arrives pre-built
 /// because `PoolTxSink<P, Provider>` carries concrete
 /// `reth-transaction-pool` trait bounds that can't compile in this crate.
-pub struct DposLayerConfig<D, XC, A> {
+pub struct DposLayerConfig<D, XC, A, U> {
     pub bls_keypair: ValidatorBlsKeypair,
     pub peer_keypair: commonware_cryptography::ed25519::PrivateKey,
     pub slasher_sink: Arc<dyn SlasherTxSink>,
     pub staking_config: StakingReaderConfig,
+    /// Cert upstream for the single-shot, pre-engine cold-start EL-sync JUMP
+    /// ([`crate::cold_start_jump`]). `Some` ⇒ an upstream-configured node
+    /// (production-path external joiner / follower): a deep cold-start gap is
+    /// fast-forwarded via one FCU + devp2p backfill before the OuterEngine
+    /// starts. `None` ⇒ a no-upstream validator: it catches up on the
+    /// consensus-plane treadmill instead (no jump). FreshMigration never jumps
+    /// (the clean-halt invariant pins its anchor at `dposActivationBlock`).
+    pub upstream: Option<U>,
     /// OrderBlock → derived-EVM-block execution (node-built over reth-evm).
     pub deriver: D,
     /// Local derived-chain view (node-built over the reth provider).
@@ -355,19 +363,13 @@ pub struct DposLayerConfig<D, XC, A> {
     /// application-`Reporter` so a node-side feed actor can serve the
     /// `consensus` RPC. `None` for nodes that don't serve the cert feed.
     pub feed: Option<crate::feed_sink::FeedSink>,
-    /// Unified-supervisor promotion (NOT operator-set): the supervisor's own
-    /// follower phase just verified the chain up to the EL tip, so the
-    /// discriminator heuristics are bypassed entirely — anchor at the EL
-    /// finalized tip even over a populated-but-stale consensus archive (the
-    /// raises-only marshal floor masks the stale prefix). The heuristics
-    /// exist only because a restarted PROCESS loses this context; the
-    /// in-process supervisor has it.
-    pub promotion: bool,
-    /// Mode signals to the unified supervisor (rotation-out → demote).
-    /// `None` = legacy `--dpos` (no supervisor listening).
-    pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<ModeEvent>>,
+    /// Edge-trigger the executor fires on each finalized-advance — the mid-epoch
+    /// promotion trigger for the role reconciler (the executor is the sole reth
+    /// writer on a validator; it follows the chain by local derivation).
+    pub spawn_unblocked: std::sync::Arc<tokio::sync::Notify>,
     /// The always-on beacon/DKG plane, built ONCE per process in the node crate
-    /// (`unified.rs`) and shared across the follower↔signer phase switch. The
+    /// (`build_beacon_plane`) and shared across the follower↔signer phase switch.
+    /// The
     /// signer engine is a CONSUMER of its shared `ceremony_store` (the C-gate
     /// share source + the proposer's `beacon_outcome`) and `committee_for`, re-uses
     /// its `oracle` (the single network's peer set) + its already-registered
@@ -464,10 +466,10 @@ pub struct SharedBeaconPlane {
     /// The shared live-DKG store: written by the always-on `DkgActor`, read by the
     /// per-engine `BeaconVerify` (C gate + propose) and `beacon_resolver` (sign).
     pub ceremony_store: crate::beacon::actor::CeremonyStore,
-    /// Edge-trigger the `DkgActor` fires when a share lands in `ceremony_store`, so
-    /// `epoch_manager::enter` wakes the instant its share is memoized instead of
-    /// polling. Same `Arc` held by the actor (the producer) and the manager (the
-    /// waiter); see [`crate::epoch_manager::wait_for_beacon`].
+    /// Edge-trigger the `DkgActor` fires (`notify_one`) when a share lands in
+    /// `ceremony_store`, so `EpochManager::run` wakes the instant its share is
+    /// memoized instead of polling. Same `Arc` held by the actor (the producer) and
+    /// the manager (the single consumer).
     pub share_notify: Arc<tokio::sync::Notify>,
     /// On-chain committee resolver (the deal/carry-forward set), built once over the
     /// persistent reader+provider and shared with both the actor and the verify gate.
@@ -489,30 +491,10 @@ pub struct SharedBeaconPlane {
     pub vote_backup: ResettableForward<VoteBackupItem>,
 }
 
-/// Mode signal from the per-epoch engine construction to the unified
-/// supervisor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModeEvent {
-    /// The signer keypair is absent from `committee[epoch]` — the validator
-    /// was rotated out; the supervisor demotes the node to the follower
-    /// plane (the just-built verifier engine is aborted with the stack).
-    RotatedOut { epoch: u64 },
-    /// The validator IS in `committee[epoch]` but holds NO local beacon
-    /// polynomial for it (a joiner that missed the epoch's DKG: it has only the
-    /// on-chain group key `PK_epoch`, not the full `Sharing`). With just the
-    /// group key it can verify ASSEMBLED certs but NOT individual seed partials,
-    /// so it cannot run as a participating Simplex member (it would reject every
-    /// seeded peer vote and block its peers). The supervisor keeps it on the
-    /// cert-follow plane for this epoch — it rejoins as a full member once a
-    /// future reshare lands its share (see `dpos_beacon_share_reshare`).
-    NoBeaconPolynomial { epoch: u64 },
-}
-
 /// Cold-start kind resolved from durable state. Pure function of the inputs
-/// so the decision is unit-testable without a node. The unified supervisor's
-/// `Promotion` bypasses this resolver entirely (it KNOWS its follower phase
-/// verified the chain — the heuristics below exist only because a restarted
-/// process loses that context).
+/// so the decision is unit-testable without a node. A deeply-behind node with
+/// an upstream re-seeds its `Restart` anchor via the forward [`cold_start_jump`]
+/// (no separate kind) rather than anchoring at the EL tip directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColdStartKind {
     /// Empty archive, EL at/inside epoch 0: anchor at the activation block.
@@ -520,10 +502,6 @@ enum ColdStartKind {
     /// Populated archive: resume at its finalized height (real consensus
     /// state always wins).
     Restart,
-    /// Unified-supervisor promotion: anchor at the EL finalized tip
-    /// UNCONDITIONALLY (a stale archive is masked by the raises-only marshal
-    /// floor).
-    Promotion,
 }
 
 fn resolve_cold_start_kind(
@@ -532,6 +510,16 @@ fn resolve_cold_start_kind(
     interval: u32,
     cs_finalized: u64,
 ) -> eyre::Result<ColdStartKind> {
+    // `0` is the unscheduled sentinel (`setDposActivationBlock` requires a future
+    // block, so a live ChainConfig never stores `0` for a genuine migration). At the
+    // materialized geometry anchor a real migration always reads nonzero; a `0` here
+    // means an unscheduled / mis-configured chain — fail loud rather than anchor DPoS
+    // at block 0.
+    ensure!(
+        activation != 0,
+        "dposActivationBlock is 0 (the unscheduled sentinel); DPoS must not launch \
+         on an unscheduled ChainConfig"
+    );
     if archive_finalized > activation {
         return Ok(ColdStartKind::Restart);
     }
@@ -539,11 +527,49 @@ fn resolve_cold_start_kind(
         return Err(eyre!(
             "EL is past epoch 0 (finalized {cs_finalized} >= activation {activation} + interval \
              {interval}) with an empty consensus archive; refusing to anchor DPoS on a state of \
-             unknown provenance. Run unified mode (--dpos.follower-upstream) so the node \
-             verifies-and-promotes itself, or restore the consensus archive."
+             unknown provenance. Configure --dpos.follower-upstream so the node cert-follows and \
+             cold-start-jumps to the verified frontier, or restore the consensus archive."
         ));
     }
     Ok(ColdStartKind::FreshMigration)
+}
+
+/// Whether the single-shot, pre-engine cold-start EL-sync JUMP
+/// ([`crate::cold_start_jump`]) is eligible to run. FreshMigration is NEVER
+/// eligible: its anchor MUST equal `dposActivationBlock` (the clean-halt
+/// invariant) and the pre-DPoS sequencer is production-gated there, so there is
+/// no deep gap to jump and a jump would orphan the activation anchor. An
+/// upstream is required (a no-upstream validator catches up on the
+/// consensus-plane treadmill). The forward-only need-gate (target far enough
+/// ahead; landing actually advances) lives INSIDE `cold_start_jump`.
+fn cold_start_jump_eligible(kind: ColdStartKind, has_upstream: bool) -> bool {
+    kind != ColdStartKind::FreshMigration && has_upstream
+}
+
+/// Cold-start adapter for [`crate::cold_start_jump::cold_start_jump`]'s typed
+/// terminal [`JumpOutcome`]: maps it back to the `Result<Option<(landing, hash,
+/// floor)>>` the two single-shot pre-engine call sites consume.
+///
+/// The cold-start path is SINGLE-SHOT — it has no `Update::Tip` to retry on — so
+/// it DELIBERATELY re-fuses a `Stalled` transport error to `Err` (preserving the
+/// pre-existing `?`-abort behaviour), exactly like an `AuthFailed`. Only the
+/// steady-state executor spawn treats `Stalled` as non-fatal (§9.6). `Landed` ⇒
+/// `Ok(Some(..))`, `Lagging` ⇒ `Ok(None)`.
+fn jump_landing_or_abort(
+    outcome: crate::cold_start_jump::JumpOutcome,
+) -> eyre::Result<Option<(u64, B256, u64)>> {
+    use crate::cold_start_jump::JumpOutcome;
+    match outcome {
+        JumpOutcome::Landed {
+            landing,
+            hash,
+            floor,
+        } => Ok(Some((landing, hash, floor))),
+        JumpOutcome::Lagging => Ok(None),
+        // Single-shot cold-start: a transport stall is re-fused to fatal exactly
+        // like a forged-branch rejection (see the doc above).
+        JumpOutcome::Stalled(e) | JumpOutcome::AuthFailed(e) => Err(e),
+    }
 }
 
 /// Peek the consensus marshal archive's last-finalized height — the same value
@@ -578,10 +604,10 @@ impl DposLayer {
     /// handles. Caller also performs filesystem key loading
     /// and `PoolTxSink` construction before calling.
     #[allow(clippy::too_many_arguments)]
-    pub async fn launch<Provider, EvmConfig, BeaconEngine, D, XC, A>(
+    pub async fn launch<Provider, EvmConfig, BeaconEngine, D, XC, A, U>(
         ctx: Context,
         reth: RethHandle<Provider, EvmConfig, BeaconEngine>,
-        cfg: DposLayerConfig<D, XC, A>,
+        cfg: DposLayerConfig<D, XC, A, U>,
         shutdown: CancellationToken,
     ) -> eyre::Result<DposLayerHandle>
     where
@@ -600,20 +626,21 @@ impl DposLayer {
         D: DerivedBlockBuilder,
         XC: ExecutedChain,
         A: OrderingAssembler,
+        U: crate::cert_follow::CertUpstream,
     {
         let DposLayerConfig {
             bls_keypair,
             peer_keypair,
             slasher_sink,
             staking_config,
+            upstream,
             deriver,
             executed,
             assembler,
             fee_recipient,
             target_gas_limit,
             feed,
-            promotion,
-            mode_events,
+            spawn_unblocked,
             beacon_plane,
             #[cfg(feature = "dpos-devnet-byzantine")]
             byzantine,
@@ -672,7 +699,10 @@ impl DposLayer {
         // graceful-shutdown restart `get_finalized_num_hash()` returns
         // `Some(disk_finalized.num_hash())`. The genesis fallback
         // handles the pristine-network case (no FCU yet).
-        let (cs_finalized, cs_finalized_hash, head_num, head_hash) =
+        // Head (`head_num`/`head_hash`) is re-read AFTER the cold-start JUMP
+        // below (the jump drives reth's canonical head forward), so only the
+        // finalized pair is needed here for the discriminator.
+        let (cs_finalized, cs_finalized_hash, _head_num, _head_hash) =
             derive_cold_start_heights(&canonical_state, genesis_hash);
 
         // Activation origin + epoch length, read EARLY (at the reth-restored
@@ -680,41 +710,35 @@ impl DposLayer {
         // `initial_epoch`. `dposActivationBlock` is immutable and
         // `epochBlockInterval` is governance-stable across the short
         // migration/restart window, so reading at `cs_finalized_hash` matches
-        // reading at the resumed height.
+        // reading at the resumed height. The finalized hash is the one reth
+        // pre-populates into `canonical_in_memory_state` during init (via
+        // `with_latest`), so the read hits the ready in-memory state arm — a
+        // by-NUMBER hash would go to the DB historical arm and can revert before
+        // it materializes.
         let dpos_activation_block = reader.dpos_activation_block(cs_finalized_hash)?;
         let interval = reader.epoch_block_interval(cs_finalized_hash)?;
         let epoch_length_blocks =
             NonZeroU64::new(interval as u64).ok_or_eyre("epoch_block_interval must be > 0")?;
 
-        // Cold-start discriminator (restart vs fresh migration; the unified
-        // supervisor's Promotion bypasses it — see resolve_cold_start_kind).
-        // The marshal's durable application-metadata is the signal: an empty
-        // store (height <= activation) is a fresh Tempo→DPoS migration —
-        // unless the EL overshot epoch 0, which is fatal (state of unknown
-        // provenance). A populated store is a restart of an already-migrated
-        // node, which MUST resume at its real finalized height so the scheme
-        // cascade starts at the correct epoch.
+        // Cold-start discriminator (restart vs fresh migration). The marshal's
+        // durable application-metadata is the signal: an empty store (height <=
+        // activation) is a fresh Tempo→DPoS migration — unless the EL overshot
+        // epoch 0, which is fatal (state of unknown provenance). A populated
+        // store is a restart of an already-migrated node, which MUST resume at
+        // its real finalized height so the scheme cascade starts at the correct
+        // epoch. A deeply-behind restart with an upstream then fast-forwards via
+        // the forward `cold_start_jump` below.
         let archive_finalized =
             read_consensus_archive_last_finalized(&ctx, MARSHAL_PARTITION_PREFIX).await?;
-        let kind = if promotion {
-            ColdStartKind::Promotion
-        } else {
-            resolve_cold_start_kind(
-                archive_finalized,
-                dpos_activation_block,
-                interval,
-                cs_finalized,
-            )?
-        };
-        let (latest_finalized, latest_finalized_hash) = if kind == ColdStartKind::Promotion {
-            info!(
-                anchor = cs_finalized,
-                archive_finalized,
-                "PROMOTION cold-start: supervisor follower phase verified the chain; \
-                 anchoring at the EL finalized tip"
-            );
-            (cs_finalized, cs_finalized_hash)
-        } else if kind == ColdStartKind::FreshMigration {
+        let kind = resolve_cold_start_kind(
+            archive_finalized,
+            dpos_activation_block,
+            interval,
+            cs_finalized,
+        )?;
+        let (mut latest_finalized, mut latest_finalized_hash) = if kind
+            == ColdStartKind::FreshMigration
+        {
             // FRESH MIGRATION: anchor ≡ block@dposActivationBlock; wait for reth
             // to hold it, hash derived locally (canonical at a finalized height).
             // Checkpoint-provisioned EL-ahead start is deferred to Phase 2/β — a
@@ -751,8 +775,87 @@ impl DposLayer {
             (archive_finalized, hash)
         };
 
-        // Read AFTER the crash-survivor recovery above: recovery imports the
-        // lost reth tail, and a pre-recovery snapshot would make the executor
+        // Single-shot, forward-only, pre-engine EL-sync JUMP. For an
+        // upstream-configured, deeply-behind node (production-path external
+        // joiner / future follower) the resolved anchor can be millions of
+        // blocks below the live frontier; the JUMP fast-forwards reth via one
+        // FCU + devp2p backfill so the inlet+marshal then close the residual gap
+        // by ordinary pulls. Gated:
+        //   - `kind != FreshMigration` — a fresh migration MUST anchor at
+        //     `dposActivationBlock` (the clean-halt invariant below); it never
+        //     jumps.
+        //   - `upstream.is_some()` — a no-upstream validator catches up on the
+        //     consensus-plane treadmill (epoch_manager soft-enter), NOT here.
+        // SAFETY (single writer): this runs BEFORE `OuterBuilder::build` (and
+        // thus before the executor task starts) — mutually exclusive with the
+        // executor, the SAME property `recover_finalized_tail_into_reth` relies
+        // on. `sync_to` issues exactly one read-side fast-forward FCU; it is a
+        // cold-start prep path, never a concurrent second reth writer.
+        let mut jumped_marshal_floor: Option<Height> = None;
+        if cold_start_jump_eligible(kind, upstream.is_some()) {
+            // `upstream.is_some()` is the eligibility gate above, so this unwrap
+            // is total — destructure via `if let` to keep `up` borrowed.
+            if let Some(up) = &upstream {
+                let committees = crate::cert_inlet::RethCommitteeSource::new(
+                    RethStakingStateReader::new(
+                        provider.clone(),
+                        evm_config.clone(),
+                        staking_config.clone(),
+                    ),
+                    chain_id,
+                    {
+                        let p = provider.clone();
+                        Arc::new(move || {
+                            let n = p.finalized_block_number().ok()??;
+                            p.block_hash(n).ok().flatten()
+                        })
+                    },
+                );
+                let el = crate::cold_start_jump::RethElSync::new(
+                    ctx.clone(),
+                    provider.clone(),
+                    beacon_engine_handle.clone(),
+                    genesis_hash,
+                    dpos_activation_block,
+                );
+                // The post-sync cert `verify()` inside `verify_jump_authenticated`
+                // needs a `&mut CryptoRngCore`; clone `ctx` (a cheap handle) so the
+                // move does not consume the launcher's own `ctx`.
+                let mut jump_ctx = ctx.clone();
+                if let Some((h, hash, floor)) = jump_landing_or_abort(
+                    crate::cold_start_jump::cold_start_jump(
+                        latest_finalized,
+                        up,
+                        &committees,
+                        &el,
+                        // No L1 checkpoint on the validator path: the deep jump is
+                        // authenticated trustlessly by the POST-sync committee read at
+                        // the landing (`verify_jump_authenticated`), which fails closed
+                        // if the upstream serves a forged/unagreed branch. The L1
+                        // arg is only the operator-gated fallback for the degenerate
+                        // "committee unreadable even at the landing" case.
+                        None,
+                        dpos_activation_block,
+                        &mut jump_ctx,
+                    )
+                    .await,
+                )? {
+                    latest_finalized = h;
+                    latest_finalized_hash = hash;
+                    jumped_marshal_floor = Some(Height::new(floor));
+                }
+            }
+        }
+
+        // Read the EL head AFTER a possible jump: `sync_to` drives reth's
+        // canonical head forward via devp2p backfill, so a pre-jump snapshot
+        // would be stale. The clean-halt invariant below is FreshMigration-only
+        // (which never jumps), so it still sees the un-jumped head.
+        let (_cs_fin, _cs_fin_hash, head_num, head_hash) =
+            derive_cold_start_heights(&canonical_state, genesis_hash);
+
+        // Read AFTER the crash-survivor recovery + jump above: both import the
+        // missing reth tail, and a pre-recovery snapshot would make the executor
         // backfill re-derive exactly those blocks (idempotent but wasted V).
         let last_execution_finalized_height = provider
             .last_block_number()
@@ -1210,12 +1313,13 @@ impl DposLayer {
             let et = et_for_span.clone();
             let canonical = canonical_for_span.clone();
             Box::pin(async move {
-                let anchor = canonical
-                    .get_finalized_num_hash()
-                    .map_or(0, |nh| nh.number);
+                let anchor = canonical.get_finalized_num_hash().map_or(0, |nh| nh.number);
                 let collected = StdMutex::new(Vec::new());
                 let record = |epoch: u64, snap: ValidatorSetSnapshot| {
-                    collected.lock().expect("soft-enter span collector").push((epoch, snap));
+                    collected
+                        .lock()
+                        .expect("soft-enter span collector")
+                        .push((epoch, snap));
                 };
                 et.lock()
                     .await
@@ -1223,6 +1327,76 @@ impl DposLayer {
                     .await;
                 collected.into_inner().expect("soft-enter span collector")
             })
+        });
+
+        // Steady-state self-healing re-jump (finding #6): the executor's reaction
+        // to its own `Update::Tip` event. The cold-start `cold_start_jump` above
+        // runs ONCE pre-engine; this closure is its steady-state TWIN — same
+        // `upstream` / `RethCommitteeSource` / `RethElSync` / activation, same
+        // forward-only BLS-verified `cold_start_jump`, but re-runnable while the
+        // executor runs. Enabled wherever an upstream is configured (a follower OR
+        // a validator-with-upstream); `None` for a plain validator (it catches up
+        // on the consensus-plane treadmill). The executor runs it synchronously in
+        // its `select!` arm, so its `sync_to` FCU is serialized with every other
+        // reth write the executor makes — the executor stays the sole reth writer.
+        let re_jump: Option<crate::executor::ReJump> = upstream.as_ref().map(|up| {
+            let up = up.clone();
+            let provider = provider.clone();
+            let evm_config = evm_config.clone();
+            let staking_config = staking_config.clone();
+            let beacon_engine_handle = beacon_engine_handle.clone();
+            let ctx = ctx.clone();
+            let cb: crate::executor::ReJump = Arc::new(move |from: u64| {
+                let up = up.clone();
+                let provider = provider.clone();
+                let evm_config = evm_config.clone();
+                let staking_config = staking_config.clone();
+                let beacon_engine_handle = beacon_engine_handle.clone();
+                // `verify_jump_authenticated` needs a `&mut (Clock + CryptoRngCore)`;
+                // a fresh clone per call so the closure stays re-usable.
+                let mut jump_ctx = ctx.clone();
+                Box::pin(async move {
+                    let committees = crate::cert_inlet::RethCommitteeSource::new(
+                        RethStakingStateReader::new(
+                            provider.clone(),
+                            evm_config,
+                            staking_config,
+                        ),
+                        chain_id,
+                        {
+                            let p = provider.clone();
+                            Arc::new(move || {
+                                let n = p.finalized_block_number().ok()??;
+                                p.block_hash(n).ok().flatten()
+                            })
+                        },
+                    );
+                    let el = crate::cold_start_jump::RethElSync::new(
+                        jump_ctx.clone(),
+                        provider.clone(),
+                        beacon_engine_handle,
+                        genesis_hash,
+                        dpos_activation_block,
+                    );
+                    // Return the typed terminal `JumpOutcome` verbatim — the
+                    // executor's completion arm classifies it (Landed re-seeds;
+                    // Stalled is NON-fatal + retried on the next Tip; AuthFailed
+                    // is fail-closed). §9.6.
+                    crate::cold_start_jump::cold_start_jump(
+                        from,
+                        &up,
+                        &committees,
+                        &el,
+                        // No L1 checkpoint on the validator path (trustless
+                        // POST-sync committee read at the landing).
+                        None,
+                        dpos_activation_block,
+                        &mut jump_ctx,
+                    )
+                    .await
+                }) as futures::future::BoxFuture<'static, _>
+            });
+            cb
         });
 
         let outer = OuterBuilder {
@@ -1233,9 +1407,10 @@ impl DposLayer {
             epoch_length_blocks,
             dpos_activation_block,
             signer_keypair: Some(bls_keypair),
-            mode_events,
             beacon_resolver,
             beacon_share_notify: share_notify,
+            spawn_unblocked,
+            re_jump,
             soft_enter_committees,
             beacon_metrics,
             beacon_verify,
@@ -1262,12 +1437,14 @@ impl DposLayer {
             initial_finalized: (Height::new(latest_finalized), latest_finalized_hash),
             initial_head: (Height::new(initial_head_num), initial_head_hash),
             // DPoS-era floor: the marshal never dispatches pre-anchor history.
-            // Fresh migration: anchor = activation. Promotion: anchor = the
-            // EL-restored finalized tip (no pre-anchor certs exist locally).
-            // Restart: a raises-only no-op (the archive's floor is already
-            // at/above its own finalized).
-            marshal_floor: Some(Height::new(latest_finalized)),
-            seed_anchor_block: kind == ColdStartKind::Promotion,
+            // Fresh migration: anchor = activation. Restart: a raises-only no-op
+            // (the archive's floor is already at/above its own finalized). After
+            // a cold-start JUMP the floor is `landing − K` (the K below-landing
+            // blocks are derivable via the inlet's ordinary pulls + the executor
+            // gap-walk).
+            marshal_floor: Some(
+                jumped_marshal_floor.unwrap_or_else(|| Height::new(latest_finalized)),
+            ),
             fcu_heartbeat_interval: Duration::from_secs(8),
             fcu_pace: Duration::from_millis(20),
             canonical_state: canonical_state.clone(),
@@ -1322,6 +1499,18 @@ impl DposLayer {
         // this promotion's fresh vote-backup receiver. The OuterEngine registers its
         // sub-channels in `run`; on demote it drops them (auto-deregister) — the
         // plane's broker tasks stay live for the next promotion.
+        //
+        // `upstream` (the `--dpos.follower-upstream` handle, also used by the
+        // cold-start jump above by reference) is threaded into the marshal's
+        // by-height backfill resolver: when `Some`, the marshal pulls the cold-start
+        // `[floor+1 .. first_live]` gap from the UPSTREAM (not consensus-plane peers),
+        // so an OUT-OF-COMMITTEE validator (a not-yet-committee external joiner with
+        // zero consensus-plane connectivity) backfills exactly like a follower
+        // instead of wedging. The resolver keeps its own `upstream` clone alive
+        // (which keeps the WS actor alive). A no-upstream validator passes `None` and
+        // keeps the consensus-plane p2p resolver (the treadmill, unchanged). The
+        // marshal still BLS-verifies every delivered cert — trustless, single-writer
+        // intact.
         let consensus_handle = outer.start(
             ctx.with_label("marshal_resolver"),
             vote_mux,
@@ -1330,7 +1519,637 @@ impl DposLayer {
             broadcast_mux,
             marshal_mux,
             vote_backup_rx,
+            upstream,
         );
+
+        Ok(DposLayerHandle {
+            consensus_handle,
+            cert_mailbox,
+        })
+    }
+}
+
+/// Reth handles a near-planeless FOLLOWER needs (Phase 3). Distinct from
+/// [`RethHandle`] only in that a follower carries NO slasher/pool transport (it
+/// never signs) — the slasher actor is built (cheap) but never started.
+pub struct FollowerRethHandle<Provider, EvmConfig, BeaconEngine> {
+    pub provider: Provider,
+    pub evm_config: EvmConfig,
+    pub beacon_engine_handle: BeaconEngine,
+    pub chain_id: u64,
+    pub canonical_state: reth_chain_state::CanonicalInMemoryState<EthPrimitives>,
+    pub genesis_hash: B256,
+}
+
+/// Operator-supplied config for the near-planeless follower (Phase 3). The node
+/// owns the WS upstream + the ONE broadcast `Muxer`; this config carries the
+/// reth-evm collaborators + the cert-inlet feed channels.
+pub struct FollowerLayerConfig<D, XC, A, U> {
+    /// This node's ed25519 peer identity (the FluentP2P crypto's public key),
+    /// threaded from the node. A standalone follower never gossips, but
+    /// `buffered::Engine` + the marshal resolver are keyed on it.
+    pub me: commonware_cryptography::ed25519::PublicKey,
+    pub staking_config: StakingReaderConfig,
+    /// L1 Rollup-checkpoint hash (B2). `Some` ⇒ fail-closed post-EL-sync assert
+    /// (`cert-follow: L1 Rollup checkpoint …`); `None` ⇒ the upstream head is the
+    /// only trust input (devnet fallback).
+    pub l1_checkpoint_hash: Option<B256>,
+    /// OrderBlock → derived-EVM-block execution (node-built over reth-evm).
+    pub deriver: D,
+    /// Local derived-chain view (node-built over the reth provider).
+    pub executed: XC,
+    /// Pool-backed ordering assembly (node-built — pool trait bounds live there).
+    /// A follower never proposes, so this is never exercised; the OuterBuilder
+    /// requires it at the type level.
+    pub assembler: Arc<A>,
+    pub fee_recipient: Address,
+    pub target_gas_limit: u64,
+    /// Cert-feed sink (the marshal's 2nd application-`Reporter`) for this node's
+    /// `consensus` RPC latest-tier. `None` for nodes that don't serve the feed.
+    pub feed: Option<crate::feed_sink::FeedSink>,
+    pub fcu_heartbeat_interval: Duration,
+    /// Cert upstream for the single-shot, pre-engine cold-start EL-sync JUMP
+    /// (`get_latest`). A follower ALWAYS has an upstream (the WS the inlet uses);
+    /// `None` only in tests.
+    pub upstream: Option<U>,
+    /// The live finalized-cert stream the node's WS actor pushes — the inlet's
+    /// SOLE producer (a follower forms no certs locally).
+    pub finalized_rx: mpsc::Receiver<crate::cert_follow::UpstreamFinalized>,
+    /// Connection-generation token the node's WS actor bumps on each (re)connect
+    /// (#7). Wired into the inlet via `with_connection_token` so the data-fault
+    /// streak is scoped to the LIVE connection — a connection-level auto-rotation
+    /// (which the inlet cannot otherwise observe) resets the streak, so one
+    /// upstream's faults never bleed into the next URL's rotation budget. `None`
+    /// in tests.
+    pub conn_gen: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// B3 — the serving-window sink: each VERIFIED inlet pair is forwarded here
+    /// so a tier-2 follower aligns via THIS node's `consensus` WS window. `None`
+    /// = no serving (tests).
+    pub verified_tx:
+        Option<tokio::sync::mpsc::UnboundedSender<crate::cert_follow::UpstreamFinalized>>,
+}
+
+/// A no-op [`SlasherTxSink`] for a follower: the slasher actor is built (cheap)
+/// but never started, so `submit` is unreachable — a non-signer follower can
+/// never detect-and-submit equivocation. Avoids dragging the node's
+/// signer/pool `PoolTxSink` onto a keyless follower.
+struct NoopSlasherSink;
+
+impl SlasherTxSink for NoopSlasherSink {
+    fn submit<'a>(
+        &'a self,
+        _target: Address,
+        _calldata: alloy_primitives::Bytes,
+    ) -> std::pin::Pin<
+        Box<dyn core::future::Future<Output = crate::slasher::actor::SubmitOutcome> + Send + 'a>,
+    > {
+        Box::pin(async {
+            crate::slasher::actor::SubmitOutcome::Failed(
+                "follower NoopSlasherSink: a non-signer never submits slashing".into(),
+            )
+        })
+    }
+}
+
+impl DposLayer {
+    /// Launch the near-planeless FOLLOWER: an OuterEngine with
+    /// `signer_keypair: None` driven by the cert-inlet (the only producer for a
+    /// non-validator) instead of a local BFT engine. The executor is the SOLE reth
+    /// writer (plus the single-shot pre-engine `cold_start_jump`).
+    ///
+    /// Steps:
+    ///   1. resolve geometry (RESTART vs FRESH datadir via `read_geometry`) +
+    ///      EL-sync onto the upstream's attested tip,
+    ///   2. B2 — assert the L1 Rollup checkpoint (verbatim strings) post-EL-sync,
+    ///   3. `cold_start_jump` for a deep residual gap (forward-only, BLS-verified),
+    ///   4. build the follower OuterEngine (`signer_keypair: None`, no beacon
+    ///      plane/signer/slasher-start, `Option<Muxes>::None`),
+    ///   5. `start_follower` over the ONE broadcast `Muxer`, with an
+    ///      UPSTREAM-backed marshal resolver (`UpstreamResolver`) that backfills
+    ///      the by-height floor→frontier gap the live stream never carries,
+    ///   6. spawn the cert-inlet over `finalized_rx` → `marshal_mailbox()` (+ the
+    ///      B3 serving window).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn launch_follower<Provider, EvmConfig, BeaconEngine, D, XC, A, U>(
+        ctx: Context,
+        reth: FollowerRethHandle<Provider, EvmConfig, BeaconEngine>,
+        cfg: FollowerLayerConfig<D, XC, A, U>,
+        oracle: fluentbase_p2p::OracleHandle,
+        broadcast_mux: PlaneMux,
+        shutdown: CancellationToken,
+    ) -> eyre::Result<DposLayerHandle>
+    where
+        Provider: BlockReader<Block = RethBlock>
+            + BlockHashReader
+            + BlockNumReader
+            + BlockIdReader
+            + StateProviderFactory
+            + HeaderProvider<Header = Header>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+        EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
+        BeaconEngine: BeaconEngineLike<ExecutionData = D::Derived> + Clone + Send + Sync + 'static,
+        D: DerivedBlockBuilder,
+        XC: ExecutedChain,
+        A: OrderingAssembler,
+        U: crate::cert_follow::CertUpstream,
+    {
+        let FollowerRethHandle {
+            provider,
+            evm_config,
+            beacon_engine_handle,
+            chain_id,
+            canonical_state,
+            genesis_hash,
+        } = reth;
+        let FollowerLayerConfig {
+            me,
+            staking_config,
+            l1_checkpoint_hash,
+            deriver,
+            executed,
+            assembler,
+            fee_recipient,
+            target_gas_limit,
+            feed,
+            fcu_heartbeat_interval,
+            upstream,
+            finalized_rx,
+            conn_gen,
+            verified_tx,
+        } = cfg;
+
+        let reader = RethStakingStateReader::new(
+            provider.clone(),
+            evm_config.clone(),
+            staking_config.clone(),
+        );
+
+        // Epoch geometry. RESTART datadir: `ChainConfig` readable from local
+        // state. FRESH datadir (runtime-deployed cluster): geometry unreadable
+        // locally → EL-sync FIRST, then read it at the synced landing. `read_geometry`
+        // discriminates (it returns `None` when `ChainConfig`/activation are absent).
+        let (_rf_num, rf_hash, _h0_num, _h0_hash) =
+            derive_cold_start_heights(&canonical_state, genesis_hash);
+        let mk_el_sync = |activation: u64| {
+            crate::cold_start_jump::RethElSync::new(
+                ctx.clone(),
+                provider.clone(),
+                beacon_engine_handle.clone(),
+                genesis_hash,
+                activation,
+            )
+        };
+
+        let (activation, interval, mut anchor_height, mut anchor_hash) =
+            match crate::cert_follow::read_geometry(&reader, rf_hash)? {
+                Some((activation, interval)) => {
+                    let el = mk_el_sync(activation);
+                    let (h, hash) = match upstream.as_ref() {
+                        Some(up) => match up.get_latest().await {
+                            Some(latest) => el.sync_to(&latest).await?,
+                            None => {
+                                warn!(
+                                    "cert-follow: upstream getLatest returned none; relying on \
+                                     existing reth state"
+                                );
+                                let hash =
+                                    wait_for_activation_block(&ctx, &provider, activation).await?;
+                                (activation, hash)
+                            }
+                        },
+                        None => {
+                            let hash =
+                                wait_for_activation_block(&ctx, &provider, activation).await?;
+                            (activation, hash)
+                        }
+                    };
+                    (activation, interval, h, hash)
+                }
+                None => {
+                    // Fresh datadir: sync without an activation clamp (unknown
+                    // yet), then read geometry at the landing and re-clamp.
+                    let up = upstream.as_ref().ok_or_else(|| {
+                        eyre!(
+                            "cert-follow: fresh datadir without a local ChainConfig needs a \
+                             reachable upstream to EL-sync from"
+                        )
+                    })?;
+                    let latest = up.get_latest().await.ok_or_else(|| {
+                        eyre!(
+                            "cert-follow: fresh datadir without a local ChainConfig needs a \
+                             reachable upstream to EL-sync from"
+                        )
+                    })?;
+                    let (h, hash) = mk_el_sync(0).sync_to(&latest).await?;
+                    let (activation, interval) =
+                        crate::cert_follow::read_geometry(&reader, hash)?.ok_or_else(|| {
+                            eyre!(
+                                "cert-follow: ChainConfig still not deployed at the synced tip \
+                                 {h} — wrong chain, or the upstream predates DPoS activation"
+                            )
+                        })?;
+                    let h = h.max(activation);
+                    let hash = provider
+                        .block_hash(h)?
+                        .ok_or_else(|| eyre!("reth does not hold the clamped landing {h}"))?;
+                    (activation, interval, h, hash)
+                }
+            };
+
+        // B2 — L1 Rollup-checkpoint assert (verbatim strings), post-EL-sync,
+        // fail-closed: a bogus-checkpoint cert-cascade follower still errors with
+        // "is NOT in the local chain after EL-sync".
+        if let Some(l1_hash) = l1_checkpoint_hash {
+            crate::cold_start_jump::assert_l1_checkpoint(&provider, l1_hash)?;
+        }
+
+        // Deep catch-up: a residual gap above JUMP_THRESHOLD re-runs the EL-sync
+        // phase and re-seeds the anchor + marshal floor at landing − K. Forward-only,
+        // BLS-verified (or L1-gated). Runs BEFORE the OuterEngine/executor — the same
+        // single-writer mutual-exclusion `recover_finalized_tail_into_reth` relies on.
+        let mut jumped_marshal_floor: Option<Height> = None;
+        if let Some(up) = upstream.as_ref() {
+            let committees = crate::cert_inlet::RethCommitteeSource::new(
+                RethStakingStateReader::new(
+                    provider.clone(),
+                    evm_config.clone(),
+                    staking_config.clone(),
+                ),
+                chain_id,
+                {
+                    let p = provider.clone();
+                    Arc::new(move || {
+                        let n = p.finalized_block_number().ok()??;
+                        p.block_hash(n).ok().flatten()
+                    })
+                },
+            );
+            let el = mk_el_sync(activation);
+            let mut jump_ctx = ctx.clone();
+            if let Some((h, hash, floor)) = jump_landing_or_abort(
+                crate::cold_start_jump::cold_start_jump(
+                    anchor_height,
+                    up,
+                    &committees,
+                    &el,
+                    l1_checkpoint_hash,
+                    activation,
+                    &mut jump_ctx,
+                )
+                .await,
+            )? {
+                anchor_height = h;
+                anchor_hash = hash;
+                jumped_marshal_floor = Some(Height::new(floor));
+            }
+        }
+
+        // Two-tier seed: the landing block's own result attestation arrives only
+        // K blocks later, so the finalized tier starts at landing − K (clamped to
+        // activation). Seed reth's FCU at the floor so it never finalizes ahead of
+        // the result tier.
+        let finalized_floor = anchor_height.saturating_sub(K).max(activation);
+        let finalized_hash = provider
+            .block_hash(finalized_floor)?
+            .ok_or_else(|| eyre!("reth does not hold the finality floor {finalized_floor}"))?;
+        let _ = beacon_engine_handle
+            .fork_choice_updated(ForkchoiceState {
+                head_block_hash: anchor_hash,
+                safe_block_hash: finalized_hash,
+                finalized_block_hash: finalized_hash,
+            })
+            .await;
+
+        let initial_epoch_u64 =
+            fluentbase_staking_reader::reader::epoch_of_block(anchor_height, interval, activation);
+        info!(
+            chain_id,
+            activation,
+            interval,
+            anchor_height,
+            initial_epoch = initial_epoch_u64,
+            "cert-follow (inlet) cold-start resolved"
+        );
+
+        // Consensus genesis = the ordering-chain anchor artifact at the resumed
+        // height (every node derives the identical artifact; Simplex
+        // `set_genesis(digest)` matches view 1's parent). A follower never
+        // proposes, but the marshal/executor still need the genesis anchor.
+        let genesis_unsealed = provider
+            .block_by_number(anchor_height)
+            .map_err(|e| eyre!("follower genesis block read at height {anchor_height} failed: {e}"))?
+            .ok_or_else(|| {
+                eyre!("follower genesis block missing from MDBX at height {anchor_height}")
+            })?;
+        let genesis_sealed: SealedBlock<RethBlock> = SealedBlock::seal_slow(genesis_unsealed);
+        let genesis_block = anchor_order_block(&genesis_sealed);
+
+        let last_execution_finalized_height = provider
+            .last_block_number()
+            .wrap_err("provider failed to report chain head block number at startup")?;
+        let head_info = canonical_state.chain_info();
+
+        let epoch_length_blocks =
+            NonZeroU64::new(interval as u64).ok_or_eyre("epoch_block_interval must be > 0")?;
+
+        // A follower has NO beacon plane: no DKG share, no live-DKG store. The
+        // resolver always returns `None` (a keyless / verify-only node), and there
+        // is no `beacon_verify` propose/gate (it never proposes).
+        let beacon_resolver: crate::epoch_manager::BeaconResolver = Arc::new(|_| None);
+        let beacon_metrics = crate::beacon::metrics::BeaconMetrics::default();
+        beacon_metrics.register(&ctx);
+
+        // Slasher reader + fallback are required by the OuterBuilder type but the
+        // slasher is never STARTED on a follower (`run_follower` drops the unstarted
+        // actor) — a non-signer never submits slashing.
+        let slasher_reader = RethStakingStateReader::new(
+            provider.clone(),
+            evm_config.clone(),
+            staking_config.clone(),
+        );
+        let cache = Arc::new(Mutex::new(
+            ValidatorSetCache::init(ctx.with_label("follower_slasher_cache"))
+                .await
+                .wrap_err("failed initializing follower slasher ValidatorSetCache")?,
+        ));
+        let slasher_stale_fallback: Arc<dyn StaleEpochFallback> =
+            Arc::new(SharedCacheFallback(cache));
+        let provider_for_finalized = provider.clone();
+        let slasher_latest_finalized_hash: Arc<dyn Fn() -> Option<B256> + Send + Sync> =
+            Arc::new(move || {
+                let n = provider_for_finalized.finalized_block_number().ok()??;
+                provider_for_finalized.block_hash(n).ok().flatten()
+            });
+
+        // Bulk catch-up span reader: a follower soft-enters every live epoch but
+        // never spawns an engine, so this is still used to register verify-only
+        // schemes for the marshal across a gap. Read committees at the current
+        // finalized tip via a per-call EpochTransition-free reader.
+        let canonical_for_span = canonical_state.clone();
+        let provider_for_span = provider.clone();
+        let evm_for_span = evm_config.clone();
+        let staking_for_span = staking_config.clone();
+        let soft_enter_committees: SoftEnterCommittees = Arc::new(move |from: Epoch, to: Epoch| {
+            let canonical = canonical_for_span.clone();
+            let reader = RethStakingStateReader::new(
+                provider_for_span.clone(),
+                evm_for_span.clone(),
+                staking_for_span.clone(),
+            );
+            Box::pin(async move {
+                // Read each committee at the current finalized hash (committee[E]
+                // is content-invariant across any in-epoch executed hash). Truncate
+                // at the first missed/unreadable committee → a contiguous prefix.
+                let at_hash = canonical
+                    .get_finalized_num_hash()
+                    .map(|nh| nh.hash)
+                    .unwrap_or_default();
+                let mut out = Vec::new();
+                for e in from.get()..=to.get() {
+                    match reader.epoch_committee_snapshot(e, at_hash) {
+                        Ok(snap) if !snap.validators.is_empty() => out.push((e, snap)),
+                        _ => break,
+                    }
+                }
+                out
+            })
+        });
+
+        // Steady-state self-healing re-jump (finding #6): the follower's executor
+        // reaction to its own `Update::Tip` event — the steady-state twin of the
+        // pre-engine `cold_start_jump` above. Same upstream / committee source /
+        // EL-sync / activation / L1 checkpoint. A follower ALWAYS has an upstream
+        // (the WS the inlet uses), so this is set whenever `upstream.is_some()`.
+        let re_jump: Option<crate::executor::ReJump> = upstream.as_ref().map(|up| {
+            let up = up.clone();
+            let provider = provider.clone();
+            let evm_config = evm_config.clone();
+            let staking_config = staking_config.clone();
+            let beacon_engine_handle = beacon_engine_handle.clone();
+            let ctx = ctx.clone();
+            let cb: crate::executor::ReJump = Arc::new(move |from: u64| {
+                let up = up.clone();
+                let provider = provider.clone();
+                let evm_config = evm_config.clone();
+                let staking_config = staking_config.clone();
+                let beacon_engine_handle = beacon_engine_handle.clone();
+                let mut jump_ctx = ctx.clone();
+                Box::pin(async move {
+                    let committees = crate::cert_inlet::RethCommitteeSource::new(
+                        RethStakingStateReader::new(
+                            provider.clone(),
+                            evm_config,
+                            staking_config,
+                        ),
+                        chain_id,
+                        {
+                            let p = provider.clone();
+                            Arc::new(move || {
+                                let n = p.finalized_block_number().ok()??;
+                                p.block_hash(n).ok().flatten()
+                            })
+                        },
+                    );
+                    let el = crate::cold_start_jump::RethElSync::new(
+                        jump_ctx.clone(),
+                        provider.clone(),
+                        beacon_engine_handle,
+                        genesis_hash,
+                        activation,
+                    );
+                    // Return the typed terminal `JumpOutcome` verbatim — the
+                    // executor's completion arm classifies it (§9.6).
+                    crate::cold_start_jump::cold_start_jump(
+                        from,
+                        &up,
+                        &committees,
+                        &el,
+                        l1_checkpoint_hash,
+                        activation,
+                        &mut jump_ctx,
+                    )
+                    .await
+                }) as futures::future::BoxFuture<'static, _>
+            });
+            cb
+        });
+
+        let outer = OuterBuilder {
+            me: me.clone(),
+            blocker: oracle.clone(),
+            provider: oracle.clone(),
+            chain_id,
+            epoch_length_blocks,
+            dpos_activation_block: activation,
+            signer_keypair: None,
+            beacon_resolver,
+            beacon_share_notify: Arc::new(tokio::sync::Notify::new()),
+            spawn_unblocked: Arc::new(tokio::sync::Notify::new()),
+            re_jump,
+            soft_enter_committees,
+            beacon_metrics,
+            beacon_verify: None,
+            timeouts: ConsensusTimeouts::fluent_1s(),
+            mailbox_size: 256,
+            deque_size: 64,
+            partition_prefix: MARSHAL_PARTITION_PREFIX.into(),
+            resolver_initial: Duration::from_secs(1),
+            resolver_timeout: Duration::from_secs(2),
+            resolver_fetch_retry: Duration::from_millis(100),
+
+            genesis: genesis_block,
+            beacon_engine: beacon_engine_handle,
+            deriver,
+            executed,
+            assembler,
+            fee_recipient,
+            target_gas_limit,
+            boundary_hook: Arc::new(|_| {}),
+
+            last_execution_finalized_height,
+            initial_finalized: (Height::new(anchor_height), anchor_hash),
+            initial_head: (Height::new(head_info.best_number), head_info.best_hash),
+            marshal_floor: Some(
+                jumped_marshal_floor.unwrap_or_else(|| Height::new(finalized_floor)),
+            ),
+            fcu_heartbeat_interval,
+            fcu_pace: Duration::from_millis(20),
+            canonical_state: canonical_state.clone(),
+
+            slasher_staking_address: staking_config.staking_address,
+            slasher_reader,
+            slasher_latest_finalized_hash,
+            slasher_stale_fallback,
+            slasher_sink: Arc::new(NoopSlasherSink),
+            slasher_wal_partition: "slasher-wal".into(),
+
+            feed,
+
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            byzantine: None,
+        }
+        .build(ctx.with_label("outer_engine"))
+        .await?;
+
+        // Register the initial epoch's verify-only scheme so the marshal can
+        // verify the inlet's certs from cold-start (before any boundary fires).
+        let committees_src = crate::cert_inlet::RethCommitteeSource::new(
+            RethStakingStateReader::new(provider.clone(), evm_config.clone(), staking_config.clone()),
+            chain_id,
+            {
+                let p = provider.clone();
+                Arc::new(move || {
+                    let n = p.finalized_block_number().ok()??;
+                    p.block_hash(n).ok().flatten()
+                })
+            },
+        );
+        if let Ok(scheme) =
+            crate::cert_inlet::CommitteeSource::scheme_at(&committees_src, initial_epoch_u64, anchor_hash)
+        {
+            outer.cold_start_register(Epoch::new(initial_epoch_u64), scheme);
+        }
+
+        // Two clones: one drives the inlet, one is returned to the node for the
+        // `consensus`-RPC feed (`set_marshal`/`set_window`).
+        let cert_mailbox = outer.marshal_mailbox();
+        let inlet_marshal = outer.marshal_mailbox();
+
+        // Start the follower OuterEngine over the ONE broadcast Muxer. The marshal
+        // resolver is UPSTREAM-backed (not p2p): it backfills the by-height gap
+        // between the cold-start floor and the upstream's live frontier — the gap
+        // the inlet's live stream never carries — by pulling each missing height
+        // from the cert upstream and delivering it for the marshal to BLS-verify.
+        // `upstream` is `Clone` (CertUpstream), so the resolver gets its own handle
+        // while the inlet keeps one alive for the live stream + the WS actor. The
+        // executor is the sole reth writer from here.
+        let consensus_handle =
+            outer.start_follower(broadcast_mux, ctx.clone(), upstream.clone());
+
+        // The cert-inlet — the SOLE producer for a follower. Drives the marshal
+        // (which drives the executor) + the B3 serving window. Runs on a child
+        // task; fail-closed on TOTAL upstream loss (finalized_rx close).
+        let inlet_committees = crate::cert_inlet::RethCommitteeSource::new(
+            RethStakingStateReader::new(provider.clone(), evm_config.clone(), staking_config.clone()),
+            chain_id,
+            {
+                let p = provider.clone();
+                Arc::new(move || {
+                    let n = p.finalized_block_number().ok()??;
+                    p.block_hash(n).ok().flatten()
+                })
+            },
+        );
+        let shutdown_for_inlet = shutdown.clone();
+        // DATA-fault rotation trigger (#7): after MAX_UPSTREAM_FAULTS consecutive
+        // unverifiable certs over a healthy connection the inlet rotates to the
+        // next configured upstream URL (connection-level failover can never see a
+        // bad PAYLOAD on a live connection). Built from a clone of the SAME
+        // `CertUpstream` handle the keepalive holds; `rotate()` drops the
+        // connection so the WS actor's run loop advances to the next URL.
+        let inlet_rotate: Option<crate::cert_inlet::RotateUpstream> =
+            upstream.as_ref().map(crate::cert_follow::CertUpstream::rotate_callback);
+        drop(ctx.with_label("cert_inlet").spawn(move |c| async move {
+            // Hold the WS upstream REQUEST handle alive for the inlet's whole
+            // lifetime. The WS actor's `run` loop exits the instant ALL
+            // `UpstreamHandle`s drop (its `mailbox_rx` closes → `None => return`),
+            // and that SAME actor feeds `finalized_rx` (the inlet's sole producer).
+            // The cold-start only borrows it (`get_latest`/jump), so without this
+            // move it would drop when `launch_follower` returns → the WS actor
+            // exits cleanly → the node-stack supervisor tears the follower down
+            // before it ever follows. The marshal's `UpstreamResolver` holds its
+            // OWN clone of this same handle for by-height gap-repair pulls; this one
+            // keeps the live stream + WS actor alive.
+            let _upstream_keepalive = upstream;
+            // B4: `--cert-follow` is ALWAYS verify (the inlet has no no-verify mode).
+            // `with_epoch_math` arms the defense-in-depth height↔epoch bind: the
+            // follower fully trusts upstream committee reads, so it binds each
+            // cert's round-epoch to its block's height-derived epoch.
+            let mut inlet = crate::cert_inlet::CertInlet::new(
+                inlet_marshal,
+                inlet_committees,
+                c,
+            )
+            .with_epoch_math(activation, interval);
+            if let Some(rotate) = inlet_rotate {
+                inlet = inlet.with_rotate(rotate);
+            }
+            // Per-connection data-fault scoping (#7): a connection-level
+            // auto-rotation (the WS actor reconnecting to the next URL on a
+            // dropped/failed connection) bumps `conn_gen`; the inlet resets its
+            // streak on the change so A's faults never bleed into B's budget.
+            if let Some(conn_gen) = conn_gen {
+                inlet = inlet.with_connection_token(conn_gen);
+            }
+            if let Some(tx) = verified_tx {
+                inlet = inlet.with_window(tx);
+            }
+            let mut finalized_rx = finalized_rx;
+            info!("cert-inlet follower producer started");
+            loop {
+                match finalized_rx.recv().await {
+                    Some(uf) => {
+                        if let Err(e) = inlet.ingest(uf).await {
+                            error!(error = ?e, "cert-inlet fatal (committee read); fail-closed");
+                            break;
+                        }
+                    }
+                    None => {
+                        error!(
+                            "cert-inlet WS stream closed (all upstreams dead); exiting fail-closed"
+                        );
+                        break;
+                    }
+                }
+            }
+            // TOTAL upstream loss is fail-closed (Risk-3): cancel the shared
+            // shutdown so the host brings the node down (case-cert-cascade A3
+            // accepts an `exited` state; a silent hang would fail it).
+            shutdown_for_inlet.cancel();
+        }));
 
         Ok(DposLayerHandle {
             consensus_handle,
@@ -1341,13 +2160,59 @@ impl DposLayer {
 
 #[cfg(test)]
 mod cold_start_kind_tests {
-    use super::{resolve_cold_start_kind, ColdStartKind};
+    use super::{cold_start_jump_eligible, jump_landing_or_abort, resolve_cold_start_kind, ColdStartKind};
+    use crate::cold_start_jump::JumpOutcome;
+    use alloy_primitives::B256;
 
     const ACTIVATION: u64 = 192;
     const INTERVAL: u32 = 64;
 
+    // The single-shot cold-start adapter's mapping (the steady-state classifier
+    // is tested in cold_start_jump.rs; this pins the FATAL re-fuse the cold-start
+    // path deliberately applies — see `sync_to_stall_is_classified_stalled`).
     #[test]
-    fn overshoot_with_empty_archive_is_fatal_pointing_at_unified_mode() {
+    fn jump_landing_or_abort_maps_each_outcome() {
+        let hash = B256::repeat_byte(0x5A);
+        assert_eq!(
+            jump_landing_or_abort(JumpOutcome::Landed { landing: 700, hash, floor: 697 })
+                .expect("Landed is Ok"),
+            Some((700, hash, 697)),
+            "Landed ⇒ Ok(Some(landing, hash, floor))"
+        );
+        assert_eq!(
+            jump_landing_or_abort(JumpOutcome::Lagging).expect("Lagging is Ok"),
+            None,
+            "Lagging ⇒ Ok(None) (no-op; inlet pulls cover the residual gap)"
+        );
+        assert!(
+            jump_landing_or_abort(JumpOutcome::Stalled(eyre::eyre!("transport stall"))).is_err(),
+            "Stalled ⇒ Err (single-shot cold-start re-fuses a transport stall to fatal)"
+        );
+        assert!(
+            jump_landing_or_abort(JumpOutcome::AuthFailed(eyre::eyre!("forged branch"))).is_err(),
+            "AuthFailed ⇒ Err (forged/unagreed branch; fail closed)"
+        );
+    }
+
+    #[test]
+    fn fresh_migration_never_jumps_even_with_an_upstream() {
+        // The load-bearing #7 guard: a FreshMigration MUST anchor at
+        // dposActivationBlock (clean-halt invariant), so the cold-start jump is
+        // inert for it regardless of whether an upstream is configured.
+        assert!(!cold_start_jump_eligible(ColdStartKind::FreshMigration, true));
+        assert!(!cold_start_jump_eligible(ColdStartKind::FreshMigration, false));
+    }
+
+    #[test]
+    fn restart_jumps_only_with_an_upstream() {
+        // A no-upstream validator catches up on the consensus-plane treadmill,
+        // NOT via the jump (Risk-1).
+        assert!(cold_start_jump_eligible(ColdStartKind::Restart, true));
+        assert!(!cold_start_jump_eligible(ColdStartKind::Restart, false));
+    }
+
+    #[test]
+    fn overshoot_with_empty_archive_is_fatal_pointing_at_follower_upstream() {
         let err = resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + 500).unwrap_err();
         assert!(
             err.to_string().contains("--dpos.follower-upstream"),
@@ -1377,6 +2242,12 @@ mod cold_start_kind_tests {
         let err = resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + INTERVAL as u64)
             .unwrap_err();
         assert!(err.to_string().contains("past epoch 0"), "{err}");
+    }
+
+    #[test]
+    fn zero_activation_is_the_unscheduled_sentinel_and_fatal() {
+        let err = resolve_cold_start_kind(0, 0, INTERVAL, 0).unwrap_err();
+        assert!(err.to_string().contains("unscheduled sentinel"), "{err}");
     }
 }
 
@@ -1439,13 +2310,21 @@ mod broker_repromote_tests {
 
             // Plane-side broker over peer 1; the plane shares the registrar behind
             // Arc<Mutex> (PlaneMux).
-            let (s1, r1) = oracle.control(pk1.clone()).register(7, QUOTA).await.unwrap();
+            let (s1, r1) = oracle
+                .control(pk1.clone())
+                .register(7, QUOTA)
+                .await
+                .unwrap();
             let (mux1, handle1) = Muxer::new(ctx.with_label("mux1"), s1, r1, 8);
             mux1.start();
             let plane_mux = Arc::new(Mutex::new(handle1));
 
             // Sender side over peer 2.
-            let (s2, r2) = oracle.control(pk2.clone()).register(7, QUOTA).await.unwrap();
+            let (s2, r2) = oracle
+                .control(pk2.clone())
+                .register(7, QUOTA)
+                .await
+                .unwrap();
             let (mux2, mut handle2) = Muxer::new(ctx.with_label("mux2"), s2, r2, 8);
             mux2.start();
             let (mut tx2, _rx2) = handle2.register(SUBCHANNEL).await.unwrap();

@@ -6,9 +6,8 @@ use std::time::Duration;
 
 use alloy_primitives::Address;
 use fluentbase_node::{
-    cert_follow::CertFollowerConfig,
     consensus_rpc::FeedStateHandle,
-    dpos::{CertFeed, DposConfig, FeedSink},
+    dpos::{CertFeed, CertInletCfg, DposConfig, FeedSink, FollowerCfg, NodeStackCfg},
     trusted_peers::resolve_default_consensus_url,
 };
 use reth_chainspec::Chain;
@@ -22,10 +21,13 @@ use crate::{FluentNodeArgs, CERT_FEED_EVENT_CAP};
 pub(crate) struct ResolvedModes {
     pub consensus_url: Option<String>,
     pub block_producer: Option<Duration>,
-    pub dpos_config: Option<DposConfig>,
-    pub cert_follow_config: Option<CertFollowerConfig>,
+    /// The ONE unified node-stack config (Phase 5): `Some` for `--dpos`
+    /// (validator) OR `--cert-follow` (follower), `None` for a plain / trust-relay
+    /// full node (the standalone `--sequencer-url` path stays `consensus_url` →
+    /// `launch_consensus_node`, OUT OF SCOPE for `run_node_stack`).
+    pub node_stack: Option<NodeStackCfg>,
     /// Cert-feed state handle shared into the `consensus` RPC closure. Set
-    /// alongside `dpos_config` when DPoS is enabled.
+    /// alongside `node_stack` when DPoS or cert-follow is enabled.
     pub cert_rpc_feed: Option<FeedStateHandle>,
     /// Pipeline 2 (Tempo→DPoS migration): parsed from `--dpos.staking-config`
     /// independent of `--dpos`. Tempo and follower modes need non-zero addresses
@@ -68,9 +70,11 @@ pub(crate) fn resolve_node_modes(
         modes.block_producer = Some(ext.validator_block_time);
     }
 
-    // If DPoS mode is enabled, build the DposConfig from required args.
-    // `required_if_eq("dpos", "true")` on the underlying clap fields
-    // guarantees the `Option`s are `Some` here.
+    // `--dpos` → unified node-stack, VALIDATOR overlay. `required_if_eq("dpos",
+    // "true")` on the underlying clap fields guarantees the key/path `Option`s
+    // are `Some` inside `DposConfig::from_args`. The cert-inlet is armed iff
+    // `--dpos.follower-upstream` URLs are present (a rotated-out validator follows
+    // the inlet-fed base); always `verify:true`.
     if ext.dpos {
         // DPoS drives reth itself via its own marshal/executor. Clear any default
         // or debug consensus URL so `launch_consensus_node` (the unverified
@@ -81,25 +85,36 @@ pub(crate) fn resolve_node_modes(
         modes.consensus_url = None;
         // Cert-feed wiring: the FeedSink is the marshal's 2nd Reporter; the
         // handle is shared with the `consensus` RPC; the receiver drives the
-        // feed actor (spawned inside `run_dpos_stack`).
+        // feed actor (spawned inside the validator overlay).
         let feed_handle = FeedStateHandle::new(CERT_FEED_EVENT_CAP);
         let (feed_sink, feed_rx) = FeedSink::channel();
         modes.cert_rpc_feed = Some(feed_handle.clone());
-        modes.dpos_config = Some(DposConfig::from_args(
-            &ext.dpos_cfg,
-            Some(CertFeed {
-                sink: feed_sink,
-                rx: feed_rx,
-                handle: feed_handle,
-            }),
-        ));
+        let upstreams = ext.dpos_cfg.dpos_follower_upstream.clone();
+        let cert_inlet = if upstreams.is_empty() {
+            None
+        } else {
+            Some(CertInletCfg { urls: upstreams })
+        };
+        modes.node_stack = Some(NodeStackCfg {
+            is_validator: true,
+            cert_inlet,
+            validator: Some(DposConfig::from_args(
+                &ext.dpos_cfg,
+                Some(CertFeed {
+                    sink: feed_sink,
+                    rx: feed_rx,
+                    handle: feed_handle,
+                }),
+            )),
+            follower: None,
+        });
     }
 
-    // Cert-follower mode: drive reth from upstream-verified certs instead of
-    // the trust-follow block relay. `requires_all` (clap) guarantees both
-    // `--sequencer-url` and `--dpos.staking-config` are present. Clear
-    // `consensus_url` so `launch_consensus_node` (the trust path) does not
-    // also run — the follower drives reth itself.
+    // `--cert-follow` → unified node-stack, FOLLOWER overlay. Drives reth from
+    // upstream-verified certs (the cert-inlet's SOLE producer, always
+    // `verify:true`) instead of the trust-follow block relay. `requires_all`
+    // (clap) guarantees both `--sequencer-url` and `--dpos.staking-config` are
+    // present. Clear `consensus_url` so `launch_consensus_node` does not also run.
     if ext.cert_follow {
         assert!(
             !ext.sequencer_url.is_empty(),
@@ -118,15 +133,21 @@ pub(crate) fn resolve_node_modes(
                     .expect("clap `requires` pairs the two L1 flags"),
             }
         });
-        modes.cert_follow_config = Some(CertFollowerConfig {
-            feed: Some(feed_handle),
-            l1,
-            sequencer_urls: ext.sequencer_url.clone(),
-            staking_config_path: ext
-                .dpos_cfg
-                .dpos_staking_config
-                .clone()
-                .expect("requires_all guarantees --dpos.staking-config"),
+        modes.node_stack = Some(NodeStackCfg {
+            is_validator: false,
+            cert_inlet: Some(CertInletCfg {
+                urls: ext.sequencer_url.clone(),
+            }),
+            validator: None,
+            follower: Some(FollowerCfg {
+                feed: Some(feed_handle),
+                l1,
+                staking_config_path: ext
+                    .dpos_cfg
+                    .dpos_staking_config
+                    .clone()
+                    .expect("requires_all guarantees --dpos.staking-config"),
+            }),
         });
         modes.consensus_url = None;
     }

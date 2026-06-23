@@ -14,8 +14,8 @@ use crate::{
     scheme::epoch_committee_from_snapshot,
     slasher::Mailbox as SlasherMailbox,
     timeouts::ConsensusTimeouts,
+    REPLAY_BUFFER, WRITE_BUFFER,
 };
-use crate::{REPLAY_BUFFER, WRITE_BUFFER};
 use commonware_consensus::{
     marshal::{
         core::Mailbox as MarshalMailbox,
@@ -84,8 +84,6 @@ pub struct EpochEngineConfig<B, XC, A> {
     pub epocher: OriginEpocher,
     pub chain_id: u64,
     pub signer_keypair: Option<ValidatorBlsKeypair>,
-    /// Rotation-out signals to the unified supervisor (`None` = legacy).
-    pub mode_events: Option<tokio::sync::mpsc::UnboundedSender<crate::dpos::ModeEvent>>,
     pub app: FluentApp<XC, A>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
@@ -104,9 +102,6 @@ pub struct EpochEngineConfig<B, XC, A> {
     /// [`crate::outer::OuterEngine`]; written by the spec-exec reporter, read by
     /// this epoch's [`BeaconCertify`] wrapper.
     pub seed_store: SeedStore,
-    /// Beacon counters (cross-epoch singleton). This epoch's engine increments
-    /// the demote counters when it self-demotes to the cert-follow plane.
-    pub beacon_metrics: crate::beacon::metrics::BeaconMetrics,
     /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
     /// `dpos-devnet-byzantine`). `None` on every honest node. When
     /// `Some(ByzantineMode::Equivocate)` (and this node can sign), `new()` builds
@@ -185,114 +180,37 @@ where
         let bimap = committee.bimap;
         let namespace = fluent_namespace(cfg.chain_id);
 
-        // Graceful rotation-out. `build_signer` returns
-        // `Option<Scheme>` (crates/bls/src/scheme.rs:22-28) with `None`
-        // meaning exactly "signer keypair's public key is not in the
-        // committee BiMap" — the operator's validator was rotated out of
-        // this epoch's committee. Fall through to verifier mode + emit a
-        // metric so the operator can see the rotation event, instead of
-        // panicking and killing the per-epoch task.
-        //
-        // A SIGNER uses its OWN local DKG material (the full polynomial + share it
-        // computed) — never gated on the on-chain key, since it signs partials
-        // under its own share. The on-chain group key is only for nodes that have
-        // NO local material (a fresh joiner that missed the ceremony, or a
-        // non-member): they verify assembled certs against it.
-        // A member that holds the local polynomial (`Sharing`) is a SIGNER even
-        // if its `Share` is `None` (a joiner that missed E's DKG): the combined
-        // `sign()` self-suppresses the seed-bearing Notarize/Finalize (it returns
-        // `None` when `share == None`, combined_scheme.rs:280) while still
-        // producing a valid Nullify — so a shareless member stays out of the
-        // notarization/finalization (beacon) quorum but participates in
-        // view-changes. Per the joiner-share decision (2026-06-18, model B; see
-        // the `dpos_beacon_share_reshare` brief). Only a member with NO local
-        // polynomial in a beacon-active epoch falls back to verify-only against
-        // the authoritative on-chain key (it cannot self-suppress, so signing
-        // would emit a rejected seedless vote).
-        // Beacon-active from `DETERMINISTIC_BOOTSTRAP_EPOCH` on — a LOCAL,
-        // deterministic predicate that replaces the old on-chain `beacon_verify_pk`
-        // Some/None probe (the PK_E layer is gone). A member with no local
-        // polynomial in a beacon-active epoch still demotes (it cannot
-        // self-suppress, so signing would emit a rejected seedless vote).
-        let beacon_active = cfg.epoch.get() >= crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
-        let can_sign_locally = match (&cfg.beacon, beacon_active) {
-            // Have the local polynomial → signer (self-suppresses seed votes when
-            // it holds no share; always able to Nullify).
-            (Some(_), _) => true,
-            // Pre-beacon (pure-multisig) epoch → a normal signer.
-            (None, false) => true,
-            // Beacon-active epoch, no local polynomial → verify-only.
-            (None, true) => false,
-        };
-        // `build_signer` returns `None` exactly when the keypair is not in the
-        // committee BiMap (genuinely rotated out) — distinct from a member whose
-        // local key merely mismatches.
+        // The reconciler ([`crate::epoch_manager::Actor::reconcile_roles`]) owns
+        // the role decision: it routes non-members (Verifier) and shareless
+        // beacon-active members (the share-gate) to a verify-only scheme WITHOUT a
+        // participating engine, so this engine is built only for a signing member
+        // that holds a usable scheme — a member with the local polynomial+share,
+        // or a pre-beacon pure-multisig signer (`cfg.beacon == None` only for a
+        // pre-beacon epoch; a beacon-active no-share member never reaches here).
+        // `build_signer` returns `None` exactly when the keypair's BLS key is not
+        // in the committee BiMap; the `None` arm is therefore reachable only on a
+        // (peer,bls)-key mismatch — a misconfiguration safety net, not the wedge
+        // path. The reconciler aborts this engine on its next reconcile when it
+        // sees the node is not a signer for the epoch.
         let member_signer = cfg.signer_keypair.as_ref().and_then(|keypair| {
             build_signer(&namespace, bimap.clone(), keypair, cfg.beacon.clone())
         });
         // Verify-only scheme is MULTISIG-ONLY (`verify_certificate` ignores the
-        // seed now that the PK_E layer is gone) — no group key needed. The
-        // registered scheme only verifies assembled certs for the marshal (this
-        // node's engine is aborted on demotion).
+        // seed now that the PK_E layer is gone) — no group key needed.
         let verify_only = |bimap| build_verifier(&namespace, bimap, None);
-        // DEVNET/TEST-ONLY: whether this node is a signing committee member (the
-        // first match arm below). A byzantine equivocator can only double-sign if it
-        // holds a signing scheme; a non-member / no-local-polynomial node falls
-        // through to the honest engine (GOTCHA 7 — rotated-out / no-polynomial).
-        // NOTE: `can_sign_locally` is `(Some(_), _) => true` even for a member that
-        // holds the polynomial WITHOUT a share — such a node still routes here, but
-        // its combined `sign()` self-suppresses (returns `None`), so the
-        // `VoteEquivocator` produces nothing; its startup probe warns LOUDLY for
-        // that case rather than failing silently (the genesis smoke stack seeds it).
+        // DEVNET/TEST-ONLY: only a signing committee member can equivocate.
         #[cfg(feature = "dpos-devnet-byzantine")]
-        let can_sign = member_signer.is_some() && can_sign_locally;
+        let can_sign = member_signer.is_some();
         let scheme: BlsScheme = match member_signer {
-            Some(signer) if can_sign_locally => signer,
-            Some(_) => {
-                // Member with NO local beacon polynomial in a beacon-active epoch
-                // (a joiner that missed the epoch's DKG: it holds only the on-chain
-                // group key PK_E, not the full Sharing). A group-key-only scheme can
-                // verify ASSEMBLED certs but NOT individual seed partials, so it
-                // cannot run as a participating Simplex member — it would reject
-                // every seeded peer vote (`verify_attestation` has no polynomial to
-                // check the partial against) and block its peers into a wedge. Signal
-                // the unified supervisor to keep this node on the cert-follow plane
-                // for the epoch (it follows assembled certs via the group key, and
-                // rejoins as a full member once a reshare lands its share — see
-                // dpos_beacon_share_reshare). The verify-only engine built below is
-                // aborted with the stack on demotion; legacy --dpos (no supervisor
-                // listening) keeps the silent verifier.
-                tracing::warn!(
-                    epoch = ?cfg.epoch,
-                    "committee member without a local beacon polynomial — staying on cert-follow plane (no partial-verify without the Sharing)"
-                );
-                if cfg.signer_keypair.is_some() {
-                    cfg.beacon_metrics.engine_demoted_no_polynomial.inc();
-                    if let Some(tx) = &cfg.mode_events {
-                        let _ = tx.send(crate::dpos::ModeEvent::NoBeaconPolynomial {
-                            epoch: cfg.epoch.get(),
-                        });
-                    }
-                }
-                verify_only(bimap)
-            }
+            Some(signer) => signer,
             None => {
-                // Genuinely not a committee member: rotated out.
                 if cfg.signer_keypair.is_some() {
                     metrics::counter!("epoch_engine_rotated_out_total").increment(1);
-                    cfg.beacon_metrics.engine_demoted_rotated_out.inc();
                     tracing::warn!(
                         epoch = ?cfg.epoch,
-                        "validator rotated out of committee; falling through to verifier mode"
+                        "validator BLS key not in committee BiMap — verify-only \
+                         (reconciler aborts this engine on its next reconcile)"
                     );
-                    // Unified supervisor demotes on this signal (the verifier
-                    // engine built below is aborted with the stack); legacy
-                    // --dpos has no listener and keeps the silent verifier.
-                    if let Some(tx) = &cfg.mode_events {
-                        let _ = tx.send(crate::dpos::ModeEvent::RotatedOut {
-                            epoch: cfg.epoch.get(),
-                        });
-                    }
                 }
                 verify_only(bimap)
             }

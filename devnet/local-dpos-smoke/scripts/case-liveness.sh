@@ -112,6 +112,21 @@ liveness_cycle() {
     exit 1
 }
 
+# Establish the bootstrap DKG BEFORE any disruption. `bring_up_dpos` returns at the
+# migration anchor (relative epoch 0), but the bootstrap live-DKG for
+# DETERMINISTIC_BOOTSTRAP_EPOCH=2 only deals during epoch 1 and finalizes just
+# before epoch_start(2) = activation + 2*EPOCH_INTERVAL. A victim stopped before
+# that never attends ANY ceremony, so it is permanently shareless on rejoin (no
+# reshare in v1) and cannot re-promote to signer — out of v1 scope. Advancing past
+# epoch 2 first makes every validator (incl. the cycle-1 victim) deal + PERSIST its
+# share, so the deep-rejoin exercises the SUPPORTED path: a member that attended its
+# bootstrap DKG, restarts, reloads its on-disk share, and re-promotes by
+# carry-forward on the stable committee.
+echo "establishing bootstrap DKG: advancing past epoch 2 (shares persisted) before disruption"
+wait_finalized_ge $(( DPOS_ACTIVATION_BLOCK + 2 * EPOCH_INTERVAL + 8 )) 180 || {
+    echo "FAIL (smoke-liveness): chain did not reach epoch 2 (bootstrap DKG) before disruption (finalized=$(finalized_dec))"; exit 1; }
+echo "  bootstrap DKG epoch 2 finalized; all validators hold a persisted share"
+
 # Catch-up spectrum (one at a time, each fully rejoins before the next):
 #   cycle 1 (v3): DEEP — down across ~3 epoch boundaries; exercises the per-epoch
 #                 soft-enter walk over several boundaries (the real rejoin stress).

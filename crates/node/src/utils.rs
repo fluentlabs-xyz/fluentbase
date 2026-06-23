@@ -161,7 +161,7 @@ fn verify_detached_signature(_data_path: &Path, _sig_path: &Path) -> eyre::Resul
 /// Shared consensus-thread scaffold: oneshot `FullNode` handshake + dedicated
 /// OS thread + commonware tokio `Runner` + dead-channel. The body closure runs
 /// on the commonware runtime once reth delivers the `FullNode`. Used by
-/// `spawn_dpos` and `spawn_cert_follower` (host-adapter duplication collapsed).
+/// `spawn_node_stack` (the unified validator + cert-follower thread body).
 pub struct ConsensusSpawn<N, AddOns>
 where
     N: reth_node_api::FullNodeComponents,

@@ -3,9 +3,9 @@
 //! Mirrors tempo `feed/state.rs`: a snapshot (`latest_finalized`) updated by the
 //! feed actor, a `broadcast` channel for `consensus_subscribe`, and a SWAPPABLE
 //! by-height source for `getFinalization` (marshal mailbox in signer mode, the
-//! bounded window in follower mode — the unified supervisor re-wires it on every
-//! promotion/demotion). Cloneable + `Send + Sync` so the jsonrpsee server
-//! handler and the feed actor share it.
+//! bounded window in follower mode — set once at cold-start per node mode).
+//! Cloneable + `Send + Sync` so the jsonrpsee server handler and the feed actor
+//! share it.
 
 use std::{
     collections::BTreeMap,
@@ -71,14 +71,14 @@ impl FeedStateHandle {
     }
 
     /// Wire the marshal mailbox (node-side, once `DposLayer::launch` returns it).
-    /// Replaces a previously wired window on in-process promotion.
+    /// A validator serves the by-height feed from the full marshal archive.
     pub fn set_marshal(&self, marshal: MarshalMailbox) {
         *self.source.write().expect("feed source poisoned") =
             Some(ByHeightSource::Marshal(marshal));
     }
 
-    /// Wire a follower's bounded serving window (cert-follow mode). Replaces a
-    /// previously wired marshal on in-process demotion.
+    /// Wire a follower's bounded serving window (cert-follow mode). A follower
+    /// serves the by-height feed from the inlet-fed window instead of an archive.
     pub fn set_window(&self, window: CertWindow) {
         *self.source.write().expect("feed source poisoned") = Some(ByHeightSource::Window(window));
     }

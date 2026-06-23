@@ -23,7 +23,7 @@ use crate::{
     },
     digest::Digest,
     executor, extra_data,
-    order_block::{result_target, OrderBlock, ResultTarget, TX_BYTE_BUDGET},
+    order_block::{result_matches, result_target, OrderBlock, ResultTarget, TX_BYTE_BUDGET},
 };
 use alloy_consensus::Transaction as _;
 use alloy_primitives::{Address, Bytes, B256};
@@ -287,9 +287,15 @@ pub struct FluentApp<XC, A> {
     /// (agreed data once embedded); verify never reads them.
     fee_recipient: Address,
     target_gas_limit: u64,
-    /// Ordering-chain genesis height ([`crate::order_block::anchor_order_block`]);
-    /// origin of the `result_target` pre-activation window.
-    anchor_height: u64,
+    /// Chain-wide Tempo→DPoS activation block — origin of the `result_target`
+    /// pre-activation window (`height < activation + K` ⇒ `result` is ZERO). A
+    /// CHAIN constant, NOT this node's cold-start anchor (`genesis.height`): a
+    /// deep-catch-up node seeds its ordering-chain genesis at the live frontier
+    /// yet still proposes/verifies the K-below-anchor blocks, which are
+    /// post-activation and carry real (non-zero) results. Mirrors the executor's
+    /// `dpos_activation_block` so both the BFT and finalized cross-checks key the
+    /// window identically.
+    dpos_activation_block: u64,
 }
 
 impl<XC: Clone, A> Clone for FluentApp<XC, A> {
@@ -305,7 +311,7 @@ impl<XC: Clone, A> Clone for FluentApp<XC, A> {
             assembler: self.assembler.clone(),
             fee_recipient: self.fee_recipient,
             target_gas_limit: self.target_gas_limit,
-            anchor_height: self.anchor_height,
+            dpos_activation_block: self.dpos_activation_block,
         }
     }
 }
@@ -326,8 +332,8 @@ where
         assembler: Arc<A>,
         fee_recipient: Address,
         target_gas_limit: u64,
+        dpos_activation_block: u64,
     ) -> Self {
-        let anchor_height = genesis.height;
         Self {
             beacon: None,
             genesis: Arc::new(genesis),
@@ -339,7 +345,7 @@ where
             assembler,
             fee_recipient,
             target_gas_limit,
-            anchor_height,
+            dpos_activation_block,
         }
     }
 
@@ -427,7 +433,7 @@ where
         // the local derived hash at height − K; a lagging proposer skips the
         // view rather than guessing. Sampled after the pace sleep — the EL
         // gets the full inter-block interval to reach height − K.
-        let result = match result_target(height, self.anchor_height) {
+        let result = match result_target(height, self.dpos_activation_block) {
             ResultTarget::PreActivation => B256::ZERO,
             ResultTarget::Height(h) => match self.executed.executed_hash(h) {
                 Some(hash) => hash,
@@ -681,35 +687,30 @@ where
         }
 
         // Result gate: bounded await for own execution to reach height − K,
-        // then EXACT equality against the agreed commitment. Timeout → false
-        // (backpressure: consensus slows until execution catches up — the
-        // Monad "execution lags by at most K" enforcement semantic).
-        match result_target(block.height, self.anchor_height) {
-            ResultTarget::PreActivation => block.result == B256::ZERO,
-            ResultTarget::Height(h) => {
-                let polls = (VERIFY_EXEC_BUDGET.as_micros() / VERIFY_EXEC_POLL.as_micros()) as u32;
-                let mut ok = None;
-                for _ in 0..polls {
-                    if let Some(local) = self.executed.executed_hash(h) {
-                        ok = Some(block.result == local);
-                        break;
-                    }
-                    ctx.0.sleep(VERIFY_EXEC_POLL).await;
-                }
-                ok.unwrap_or_else(|| match self.executed.executed_hash(h) {
-                    Some(local) => block.result == local,
-                    None => {
-                        tracing::warn!(
-                            height = block.height,
-                            result_height = h,
-                            executed_tip = self.executed.executed_tip(),
-                            "verify exec budget exhausted; voting false (EL backpressure)"
-                        );
-                        false
-                    }
-                })
+        // then EXACT equality against the agreed commitment via the shared
+        // `result_matches` cross-check. Timeout → false (backpressure: consensus
+        // slows until execution catches up — the Monad "execution lags by at most
+        // K" enforcement semantic).
+        let check = |this: &Self| {
+            result_matches(block.result, block.height, this.dpos_activation_block, |h| {
+                this.executed.executed_hash(h)
+            })
+        };
+        let polls = (VERIFY_EXEC_BUDGET.as_micros() / VERIFY_EXEC_POLL.as_micros()) as u32;
+        for _ in 0..polls {
+            if let Some(matches) = check(self) {
+                return matches;
             }
+            ctx.0.sleep(VERIFY_EXEC_POLL).await;
         }
+        check(self).unwrap_or_else(|| {
+            tracing::warn!(
+                height = block.height,
+                executed_tip = self.executed.executed_tip(),
+                "verify exec budget exhausted; voting false (EL backpressure)"
+            );
+            false
+        })
     }
 }
 
@@ -920,6 +921,9 @@ mod tests {
             Arc::new(NoTxs),
             Address::ZERO,
             30_000_000,
+            // Tests anchor at activation (genesis.height == activation == 0),
+            // so the pre-activation window is unchanged by the anchor/activation split.
+            0,
         )
     }
 
