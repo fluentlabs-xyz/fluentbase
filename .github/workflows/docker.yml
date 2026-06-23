@@ -29,7 +29,7 @@ jobs:
           - name: "Build and push fluent image"
             command: "make IMAGE_NAME=$IMAGE_NAME DOCKER_IMAGE_NAME=$DOCKER_IMAGE_NAME PROFILE=maxperf docker-build-push"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: rui314/setup-mold@v1
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -65,7 +65,7 @@ jobs:
           - name: "Build and push fluent image"
             command: "make IMAGE_NAME=$IMAGE_NAME DOCKER_IMAGE_NAME=$DOCKER_IMAGE_NAME PROFILE=maxperf docker-build-push-latest"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: rui314/setup-mold@v1
       - uses: dtolnay/rust-toolchain@stable
         with:

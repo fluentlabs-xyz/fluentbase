@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-amd64-8core
     needs: extract-version
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify crate version matches tag
         # Check that the Cargo version starts with the tag,
@@ -68,7 +68,7 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: Swatinem/rust-cache@v2
@@ -232,7 +232,7 @@ jobs:
               jemalloc,otlp,otlp-logs,reth-revm/portable,js-tracer,
               keccak-cache-global,asm-keccak,min-debug-logs,rocksdb
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: rui314/setup-mold@v1
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -302,7 +302,7 @@ jobs:
     steps:
       # This is necessary for generating the changelog.
       # It has to come before "Download Artifacts" or else it deletes the artifacts.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Download artifacts
         uses: actions/download-artifact@v8
       - name: Generate full changelog
