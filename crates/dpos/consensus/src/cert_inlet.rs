@@ -222,9 +222,12 @@ impl MarshalSink for crate::MarshalMailbox {
 /// lets a still-catching-up early-joiner deal its first epoch's DKG share before
 /// the deal deadline (the vrf-rotation early-join fix) instead of K blocks late.
 ///
-/// Present ONLY on a validator-with-upstream (it owns the beacon plane). The
-/// near-planeless follower has no beacon plane → no tee (`None`); a no-upstream
-/// validator has no inlet at all → both cursors stay finalized-driven, unchanged.
+/// A validator-with-upstream wires BOTH cursors (it owns the beacon plane). A
+/// FOLLOWER also wires the tee — but only for `live_height` (its frontier-aware
+/// committee read: `committee[E]` at `max(EL-finalized, live_height)`, the
+/// boundary-wedge fix), with a NO-OP `dkg_height_tx` (the receiver is dropped —
+/// the follower has no beacon plane). A no-upstream validator has no inlet at all
+/// → both cursors stay finalized-driven, unchanged.
 pub struct LiveFrontierTee {
     /// `committee_for` read cursor, advanced monotonically (`fetch_max`).
     pub live_height: std::sync::Arc<std::sync::atomic::AtomicU64>,
@@ -242,8 +245,9 @@ pub struct CertInlet<C, E, M> {
     marshal: M,
     committees: C,
     /// The live-frontier tee — see [`LiveFrontierTee`]. `Some` on a
-    /// validator-with-upstream (the production-path / early-join fix), `None` on
-    /// a follower (no beacon plane) and in unit tests.
+    /// validator-with-upstream (the production-path / early-join fix) AND on a
+    /// follower (its frontier-aware committee read, with a no-op dkg clock);
+    /// `None` only in unit tests that do not exercise the frontier read.
     tee: Option<LiveFrontierTee>,
     /// B3 — the SECOND sink: each VERIFIED pair is also forwarded to the node's
     /// `consensus`-RPC serving window (the D4 `verified_tx` stream). A TIER-2
@@ -784,6 +788,144 @@ mod tests {
                 *marshal.calls.lock().unwrap(),
                 vec!["verified", "report"],
                 "matching-epoch cert proceeds to verify THEN report"
+            );
+        });
+    }
+
+    /// A committee source that models the follower's frontier-aware read at the
+    /// trait boundary: it resolves `committee[E]` only when `max(finalized,
+    /// live_frontier) >= committed_from` (epoch 0 — the cold-start epoch — is
+    /// always readable). This reproduces what the production `finalized_hash`
+    /// closure does after the boundary-wedge fix (read committee at `max(EL-
+    /// finalized, live-frontier)` instead of the lagging finalized tip alone). The
+    /// inlet's tee advances `live_frontier`, so a verified cert moves the cursor.
+    struct FrontierCommittees {
+        verifier: BlsScheme,
+        finalized: Arc<std::sync::atomic::AtomicU64>,
+        live_frontier: Arc<std::sync::atomic::AtomicU64>,
+        /// `committee[E]` for `E >= 1` is committed only at a tip `>=` this height.
+        committed_from: u64,
+    }
+
+    impl CommitteeSource for FrontierCommittees {
+        fn scheme_at(&self, _epoch: u64, _at_hash: B256) -> eyre::Result<BlsScheme> {
+            Ok(self.verifier.clone())
+        }
+        fn scheme_at_finalized_tip(&self, epoch: u64) -> eyre::Result<Option<BlsScheme>> {
+            let tip = self
+                .finalized
+                .load(std::sync::atomic::Ordering::Relaxed)
+                .max(self.live_frontier.load(std::sync::atomic::Ordering::Relaxed));
+            if epoch == 0 || tip >= self.committed_from {
+                Ok(Some(self.verifier.clone()))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    /// Drive a follower across the epoch-0→1 boundary: ingest the epoch-0 cert at
+    /// the last block of epoch 0 (height 95) then the epoch-1 boundary cert (height
+    /// 96), against a finalized tip frozen at 69 where `committee[1]` is committed
+    /// only at tip `>= 70`. Returns the marshal driving calls. With the tee wired,
+    /// the epoch-0 cert advances `live_frontier` to 95 so the boundary cert
+    /// resolves; without it, `live_frontier` stays 0 and the boundary cert defers.
+    async fn run_boundary(
+        ctx: deterministic::Context,
+        c: &Committee,
+        wire_tee: bool,
+    ) -> Vec<&'static str> {
+        let marshal = FakeMarshal::default();
+        let finalized = Arc::new(std::sync::atomic::AtomicU64::new(69));
+        let live_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let committees = FrontierCommittees {
+            verifier: c.verifier.clone(),
+            finalized,
+            live_frontier: live_frontier.clone(),
+            committed_from: 70,
+        };
+        let mut inlet = CertInlet::new(marshal.clone(), committees, ctx);
+        if wire_tee {
+            // Dropped receiver ⇒ the DkgActor clock is a benign no-op (the follower
+            // has no beacon plane); only `live_height` matters here.
+            let (dkg_tx, _dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
+            inlet = inlet.with_tee(super::LiveFrontierTee {
+                live_height: live_frontier,
+                dkg_height_tx: dkg_tx,
+            });
+        }
+        inlet
+            .ingest(certify(c, 0, &sample_order(Digest(B256::repeat_byte(0xaa)), 95)))
+            .await
+            .expect("epoch-0 cert ok");
+        inlet
+            .ingest(certify(c, 1, &sample_order(Digest(B256::repeat_byte(0xbb)), 96)))
+            .await
+            .expect("boundary cert ok (non-fatal even when deferred)");
+        let calls = marshal.calls.lock().unwrap().clone();
+        calls
+    }
+
+    #[test]
+    fn boundary_cert_reads_committee_at_live_frontier_not_lagging_finalized() {
+        // The follower epoch-boundary wedge + its fix, deterministically (no flaky
+        // docker). The finalized tip lags at 69 (cold-start anchor jitter);
+        // committee[1] is ahead-committed only at a tip >= 70. The FIRST cert of
+        // epoch 1 (height 96) is the very cert that must advance the executor's
+        // finalized tip — a producer↔consumer cycle when the committee read is
+        // anchored at that lagging tip.
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let c = committee(1);
+            // WITH the live-frontier tee: the epoch-0 height-95 cert advances
+            // live_frontier to 95, so the boundary cert resolves committee[1] at
+            // max(69,95)=95 >= 70 and drives the marshal — the wedge cannot form.
+            assert_eq!(
+                run_boundary(ctx.clone(), &c, true).await,
+                vec!["verified", "report", "verified", "report"],
+                "with the tee the boundary cert (96) verifies + drives the marshal"
+            );
+            // WITHOUT the tee (pre-fix): live_frontier stays 0, so the boundary
+            // cert reads committee[1] at max(69,0)=69 < 70 → defers-and-drops →
+            // the documented permanent wedge (only the epoch-0 cert ever drove).
+            assert_eq!(
+                run_boundary(ctx.clone(), &c, false).await,
+                vec!["verified", "report"],
+                "without the tee the boundary cert defers — the wedge this fix removes"
+            );
+        });
+    }
+
+    #[test]
+    fn boundary_cert_defers_when_committee_uncommitted_at_both_anchors() {
+        // Safe-degrade: a cert whose committee is committed at NEITHER the
+        // finalized tip NOR the live frontier defers non-fatally (no crash, no
+        // accept-unverified, no marshal drive) — exactly as before the fix.
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let c = committee(1);
+            let marshal = FakeMarshal::default();
+            let live_frontier = Arc::new(std::sync::atomic::AtomicU64::new(95));
+            let committees = FrontierCommittees {
+                verifier: c.verifier.clone(),
+                finalized: Arc::new(std::sync::atomic::AtomicU64::new(69)),
+                live_frontier: live_frontier.clone(),
+                committed_from: 200,
+            };
+            let (dkg_tx, _dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
+            let mut inlet = CertInlet::new(marshal.clone(), committees, ctx).with_tee(
+                super::LiveFrontierTee {
+                    live_height: live_frontier,
+                    dkg_height_tx: dkg_tx,
+                },
+            );
+            inlet
+                .ingest(certify(&c, 1, &sample_order(Digest(B256::repeat_byte(0xbb)), 96)))
+                .await
+                .expect("deferred cert is non-fatal Ok");
+            assert!(
+                marshal.calls.lock().unwrap().is_empty(),
+                "an uncommitted-at-both-anchors boundary cert drives the marshal with ZERO calls"
             );
         });
     }

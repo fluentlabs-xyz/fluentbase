@@ -2072,14 +2072,39 @@ impl DposLayer {
         // The cert-inlet — the SOLE producer for a follower. Drives the marshal
         // (which drives the executor) + the B3 serving window. Runs on a child
         // task; fail-closed on TOTAL upstream loss (finalized_rx close).
+        // Frontier-aware committee read (the boundary-wedge fix): resolve
+        // committee[E] at max(EL-finalized, live-frontier) instead of the lagging
+        // finalized tip alone. `live_frontier` is advanced off each BLS-VERIFIED
+        // upstream cert via the tee wired below; committee[E] is ahead-committed
+        // during epoch E-1 and content-invariant across any in-epoch hash, so
+        // reading at the cert-finalized (no-reorg) frontier surfaces it the moment
+        // the boundary cert verifies — breaking the producer↔consumer cycle that
+        // wedged a migration follower at an epoch boundary (the first cert of epoch
+        // E is the very cert that must advance the finalized tip the read was gated
+        // on). Mirrors the validator `committee_for` closure in node/dpos.rs.
+        let live_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let inlet_committees = crate::cert_inlet::RethCommitteeSource::new(
             RethStakingStateReader::new(provider.clone(), evm_config.clone(), staking_config.clone()),
             chain_id,
             {
                 let p = provider.clone();
+                let live_frontier = live_frontier.clone();
                 Arc::new(move || {
-                    let n = p.finalized_block_number().ok()??;
-                    p.block_hash(n).ok().flatten()
+                    let fin = p.finalized_block_number().ok().flatten();
+                    let live = live_frontier.load(std::sync::atomic::Ordering::Relaxed);
+                    // No finalized marker AND no live cursor yet ⇒ not readable
+                    // (a `unwrap_or(0)` would misread committee at genesis).
+                    if fin.is_none() && live == 0 {
+                        return None;
+                    }
+                    let fin = fin.unwrap_or(0);
+                    let read_at = fin.max(live);
+                    // Fall back to the finalized hash if reth has not yet imported
+                    // the cursor block (the cert can land a beat before EL-sync).
+                    p.block_hash(read_at)
+                        .ok()
+                        .flatten()
+                        .or_else(|| p.block_hash(fin).ok().flatten())
                 })
             },
         );
@@ -2108,12 +2133,23 @@ impl DposLayer {
             // `with_epoch_math` arms the defense-in-depth height↔epoch bind: the
             // follower fully trusts upstream committee reads, so it binds each
             // cert's round-epoch to its block's height-derived epoch.
+            //
+            // The live-frontier tee is wired ONLY for its `live_height` cursor (the
+            // frontier-aware committee read above — the boundary-wedge fix). The
+            // follower has no beacon plane, so the DkgActor deal clock is a no-op:
+            // drop the receiver and each `try_send` is a benign Closed.
+            let (dkg_tx, dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
+            drop(dkg_rx);
             let mut inlet = crate::cert_inlet::CertInlet::new(
                 inlet_marshal,
                 inlet_committees,
                 c,
             )
-            .with_epoch_math(activation, interval);
+            .with_epoch_math(activation, interval)
+            .with_tee(crate::cert_inlet::LiveFrontierTee {
+                live_height: live_frontier,
+                dkg_height_tx: dkg_tx,
+            });
             if let Some(rotate) = inlet_rotate {
                 inlet = inlet.with_rotate(rotate);
             }
