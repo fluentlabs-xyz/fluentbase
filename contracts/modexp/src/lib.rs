@@ -12,12 +12,10 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input = sdk.bytes_input();
     // call modexp function
     let result =
-        revm_precompile::modexp::berlin_run(input.as_ref(), gas_limit).map_err(
-            |err| match err {
-                PrecompileHalt::OutOfGas => ExitCode::OutOfFuel,
-                _ => ExitCode::PrecompileError,
-            },
-        )?;
+        revm_precompile::modexp::osaka_run(input.as_ref(), gas_limit).map_err(|err| match err {
+            PrecompileHalt::OutOfGas => ExitCode::OutOfFuel,
+            _ => ExitCode::PrecompileError,
+        })?;
     sdk.sync_evm_gas(result.gas_used)?;
     // write output
     sdk.write(result.bytes);
@@ -29,6 +27,7 @@ system_entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
     use fluentbase_sdk::{hex, Bytes, ContractContextV1, SharedAPI, FUEL_DENOM_RATE};
     use fluentbase_testing::TestingContextImpl;
 
@@ -48,12 +47,47 @@ mod tests {
         assert_eq!(gas_limit - gas_remaining, expected_gas);
     }
 
+    fn exec_evm_precompile_err(inputs: &[u8], expected: ExitCode) {
+        let gas_limit = 100_000_000;
+        let mut sdk = TestingContextImpl::default()
+            .with_input(Bytes::copy_from_slice(inputs))
+            .with_contract_context(ContractContextV1 {
+                gas_limit,
+                ..Default::default()
+            })
+            .with_gas_limit(gas_limit);
+        let err = main_entry(&mut sdk).unwrap_err();
+        assert_eq!(err, expected);
+    }
+
+    fn modexp_header(base_len: u64, exp_len: u64, mod_len: u64) -> Bytes {
+        let mut input = Vec::with_capacity(96);
+        for len in [base_len, exp_len, mod_len] {
+            input.extend_from_slice(&[0u8; 24]);
+            input.extend_from_slice(&len.to_be_bytes());
+        }
+        Bytes::from(input)
+    }
+
+    #[test]
+    fn empty_input_charges_osaka_min_gas() {
+        exec_evm_precompile(&[], &[], 500);
+    }
+
+    #[test]
+    fn oversized_base_len_fails_eip_7823() {
+        let input = modexp_header(1025, 0, 0);
+        let err = revm_precompile::modexp::osaka_run(input.as_ref(), 100_000_000).unwrap_err();
+        assert!(matches!(err, PrecompileHalt::ModexpEip7823LimitSize));
+        exec_evm_precompile_err(&input, ExitCode::PrecompileError);
+    }
+
     #[test]
     fn eip_example1() {
         exec_evm_precompile(
             &hex!("00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002003fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2efffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f"),
             &hex!("0000000000000000000000000000000000000000000000000000000000000001"),
-            1360,
+            4080,
         );
     }
 
@@ -62,7 +96,7 @@ mod tests {
         exec_evm_precompile(
             &hex!("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2efffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f"),
             &hex!("0000000000000000000000000000000000000000000000000000000000000000"),
-            1360,
+            4080,
         );
     }
 
@@ -71,7 +105,7 @@ mod tests {
         exec_evm_precompile(
             &hex!("000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000040e09ad9675465c53a109fac66a445c91b292d2bb2c5268addb30cd82f80fcb0033ff97c80a5fc6f39193ae969c6ede6710a6b7ac27078a06d90ef1c72e5c85fb502fc9e1f6beb81516545975218075ec2af118cd8798df6e08a147c60fd6095ac2bb02c2908cf4dd7c81f11c289e4bce98f3553768f392a80ce22bf5c4f4a248c6b"),
             &hex!("60008f1614cc01dcfb6bfb09c625cf90b47d4468db81b5f8b7a39d42f332eab9b2da8f2d95311648a8f243f4bb13cfb3d8f7f2a3c014122ebb3ed41b02783adc"),
-            200,
+            500,
         );
     }
 
@@ -80,7 +114,7 @@ mod tests {
         exec_evm_precompile(
             &hex!("000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000040e09ad9675465c53a109fac66a445c91b292d2bb2c5268addb30cd82f80fcb0033ff97c80a5fc6f39193ae969c6ede6710a6b7ac27078a06d90ef1c72e5c85fb503fc9e1f6beb81516545975218075ec2af118cd8798df6e08a147c60fd6095ac2bb02c2908cf4dd7c81f11c289e4bce98f3553768f392a80ce22bf5c4f4a248c6b"),
             &hex!("4834a46ba565db27903b1c720c9d593e84e4cbd6ad2e64b31885d944f68cd801f92225a8961c952ddf2797fa4701b330c85c4b363798100b921a1a22a46a7fec"),
-            200,
+            500,
         );
     }
 }
