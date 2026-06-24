@@ -1,5 +1,5 @@
 # Pipeline 2 phase-2 override: cold-restart validators 0-3 in
-# `--dpos` mode after Tempo (validator-0 with --validator) has
+# `--dpos` mode after the sequencer (validator-0 with --validator) has
 # produced a few finalized blocks. Apply with:
 #   docker compose -f docker-compose.yml -f docker-compose.dpos.yml \
 #     up -d --force-recreate validator-0 validator-1 validator-2 validator-3

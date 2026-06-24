@@ -21,7 +21,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::{sync::mpsc, time::Interval};
 use tracing::{error, info};
 
-/// Re-readable probe for the governance-scheduled Tempo→DPoS activation
+/// Re-readable probe for the governance-scheduled sequencer→DPoS activation
 /// height. `None` = staking cluster not deployed / activation not scheduled.
 /// Re-invoked per producer tick / received block: `setDposActivationBlock`
 /// may re-schedule while pending, so a launch-time snapshot goes stale.
@@ -74,7 +74,7 @@ pub struct BlockProducer<T: PayloadTypes, B> {
     payload_builder: PayloadBuilderHandle<T>,
     last_header: SealedHeaderFor<<T::BuiltPayload as BuiltPayload>::Primitives>,
     last_block_hash: B256,
-    /// Tempo→DPoS migration clean-halt: stop producing once the head reaches
+    /// sequencer→DPoS migration clean-halt: stop producing once the head reaches
     /// the on-chain `dposActivationBlock` (DPoS consensus produces from
     /// activation+1). Re-probed each tick, latched on `Some` into
     /// [`Self::activation_gate`]. `None` probe ⇒ pure sequencer, never gates.
@@ -132,7 +132,7 @@ where
                 // If shutdown arrives while this future is in progress, shutdown will wait
                 // until `advance_forkchoice_state()` finishes and only then exit the loop.
                 _ = block_time.tick() => {
-                    // Tempo→DPoS migration clean-halt: stop producing once the
+                    // sequencer→DPoS migration clean-halt: stop producing once the
                     // head reaches the on-chain activation block. DPoS
                     // consensus produces from activation+1.
                     if let Some(probe) = &self.activation_probe {
@@ -145,7 +145,7 @@ where
                             info!(
                                 target: "engine::local",
                                 activation = act,
-                                "reached DPoS activation block; halting Tempo block \
+                                "reached DPoS activation block; halting sequencer block \
                                  production (DPoS consensus produces from activation+1)"
                             );
                             break;
@@ -270,7 +270,7 @@ async fn new_block_fetcher<
     // receipt would overclaim by K and permanently desync this node's
     // `finalized` tag from the validators'. Lag finalized by K, clamped to
     // the activation anchor (the validators' own floor); pre-activation
-    // (Tempo era / activation not scheduled yet) keeps finalize-on-receipt.
+    // (sequencer-era / activation not scheduled yet) keeps finalize-on-receipt.
     // Activation is re-probed per block and latched on `Some` so a node
     // launched before `setDposActivationBlock` still picks it up.
     let mut two_tier_activation: Option<u64> = None;

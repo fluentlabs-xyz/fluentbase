@@ -305,7 +305,7 @@ fn main() {
         // provider clone out so the consensus thread's clone is never the last ref.
         let _ = rocksdb_keepalive_tx.send(Box::new(handle.node.provider.clone()));
 
-        // Tempo→DPoS activation probe, shared by the producer's clean-halt
+        // sequencer→DPoS activation probe, shared by the producer's clean-halt
         // gate and the trust-follower's two-tier finality mirror. Re-read per
         // tick/block (NOT once at launch): a node started before governance
         // schedules activation must still gate / mirror without a restart,

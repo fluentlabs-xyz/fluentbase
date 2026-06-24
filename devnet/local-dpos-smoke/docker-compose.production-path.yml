@@ -12,7 +12,7 @@ name: fluent-dpos-prod-path
 # dposActivationBlock without a mid-flight restart.
 #
 # Topology: 6 validators (committee of 5 + 1 external joiner) + a full node.
-# validator-0 is the Tempo sequencer (1s blocks); 1-5 + full-node follow via WS.
+# validator-0 is the sequencer (1s blocks); 1-5 + full-node follow via WS.
 #
 # Startup CPU mitigation (brief G10): one shared image (`<<: *fluent-build`),
 # per-service cpus limit, and depends_on chaining on the previous validator's

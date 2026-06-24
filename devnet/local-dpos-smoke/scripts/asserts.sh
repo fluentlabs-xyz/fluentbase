@@ -225,7 +225,7 @@ assert_vrf() {
     #     active-count to GROW — proves the beacon is live at probe time, not frozen
     #     post-warm-up on the digest fallback. The ACTIVE_LINE fires at the SPECULATIVE
     #     TIP (notarize-time derive under deferred execution), so growth must track the
-    #     HEAD, not finalized: right after the Tempo→DPoS migration the tip bursts ahead
+    #     HEAD, not finalized: right after the sequencer→DPoS migration the tip bursts ahead
     #     and finalized can catch up to it WITHOUT the tip producing new blocks — which
     #     froze the count under the old finalized-based wait (false "beacon stopped").
     local head0 hdeadline after
@@ -277,7 +277,7 @@ assert_vrf() {
         exit 1
     fi
     # Anchor on the most recent finalized blocks: many blocks past activation, so
-    # genuine beacon blocks (NOT the pre-DPoS Tempo prefix in step 1's window, whose
+    # genuine beacon blocks (NOT the pre-DPoS sequencer-era prefix in step 1's window, whose
     # mixHash is the digest fallback and was never logged as a beacon value).
     fin3=$(finalized_dec)
     chk_lo=$(( fin3 > 4 ? fin3 - 3 : 1 ))

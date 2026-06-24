@@ -743,7 +743,7 @@ where
 ///   setter requires `newValue >= block.number`, so a live chain never stores 0).
 ///
 /// This is the SINGLE gate the DPoS epoch-commit pre-execution engages on. A
-/// pre-DPoS (Tempo-era) sequencer launched with `--dpos.staking-config`
+/// pre-DPoS (sequencer-era) sequencer launched with `--dpos.staking-config`
 /// pointing at predicted-but-not-yet-deployed addresses must touch NO DPoS
 /// contract field until activation is both scheduled AND readable — otherwise a
 /// per-block read of a contract that is mid-runtime-deploy reverts, fails the
@@ -1028,7 +1028,7 @@ where
 
             // System-call the `LivenessSlashing` predeploy with the previous
             // finalized cert's bitmap decoded from `block.header.extra_data`, but
-            // ONLY at/after DPoS activation (P2-2). Pre-activation (Tempo-era)
+            // ONLY at/after DPoS activation (P2-2). Pre-activation (sequencer-era)
             // blocks carry the sequencer's legacy `extra_data`, which is not a DPoS
             // attestation and must not fail-loud-decode. Cold-start DPoS blocks
             // carry empty `extra_data` → decoder returns `None` → no system call.

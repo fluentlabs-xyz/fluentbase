@@ -29,8 +29,8 @@ pub(crate) struct ResolvedModes {
     /// Cert-feed state handle shared into the `consensus` RPC closure. Set
     /// alongside `node_stack` when DPoS or cert-follow is enabled.
     pub cert_rpc_feed: Option<FeedStateHandle>,
-    /// Pipeline 2 (Tempo→DPoS migration): parsed from `--dpos.staking-config`
-    /// independent of `--dpos`. Tempo and follower modes need non-zero addresses
+    /// Pipeline 2 (sequencer→DPoS migration): parsed from `--dpos.staking-config`
+    /// independent of `--dpos`. Sequencer and follower modes need non-zero addresses
     /// so the executor's `commitEpochCommittee` system call fires at epoch
     /// boundaries — required for prod migration past the first epoch boundary.
     pub staking_address: Address,
@@ -40,7 +40,7 @@ pub(crate) struct ResolvedModes {
     /// predeploy slot) so the whole cluster can be runtime-deployed. Unused when
     /// `staking_address` is zero (the system call is gated off).
     pub liveness_slashing_address: Address,
-    /// Retained to build the activation-block reader for the Tempo sequencer's
+    /// Retained to build the activation-block reader for the sequencer's
     /// production gate (clean-halt at `dposActivationBlock`).
     pub staking_reader_cfg: Option<fluentbase_staking_reader::reader::StakingReaderConfig>,
 }
@@ -152,8 +152,8 @@ pub(crate) fn resolve_node_modes(
         modes.consensus_url = None;
     }
 
-    // Tempo→DPoS migration: parse `--dpos.staking-config` independently of
-    // `--dpos`. Tempo and follower modes also need non-zero `staking_address` /
+    // sequencer→DPoS migration: parse `--dpos.staking-config` independently of
+    // `--dpos`. Sequencer and follower modes also need non-zero `staking_address` /
     // `chain_config_address` so the existing `commitEpochCommittee` system call
     // in `FluentBlockExecutor::apply_pre_execution_changes`
     // ([crates/node/src/evm.rs:848](../../../crates/node/src/evm.rs#L848)) fires
@@ -168,7 +168,7 @@ pub(crate) fn resolve_node_modes(
     // committee from the staking contract at runtime (`epoch_committee_snapshot`),
     // which against address zero fails post-launch with an opaque decode error and
     // exits 0 (audit P2-20). Fail loud at load instead. (Both-zero is legal only
-    // for plain / tempo-migration nodes, handled above.)
+    // for plain / sequencer-migration nodes, handled above.)
     if (ext.dpos || ext.cert_follow)
         && (modes.staking_address.is_zero() || modes.chain_config_address.is_zero())
     {

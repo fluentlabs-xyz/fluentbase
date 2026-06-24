@@ -1,4 +1,4 @@
-//! Origin-offset epoch boundaries for the Tempo→DPoS migration.
+//! Origin-offset epoch boundaries for the sequencer→DPoS migration.
 //!
 //! Marshal/reth block heights are absolute, but DPoS epochs are numbered
 //! relative to the on-chain `dposActivationBlock` (see the staking `ChainConfig`)

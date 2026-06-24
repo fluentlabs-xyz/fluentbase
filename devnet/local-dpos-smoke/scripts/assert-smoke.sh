@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Pipeline 2 acceptance: two-phase smoke (mirrors prod sequencer→DPoS migration).
 #
-# phase1 — bring up validator-0 as Tempo sequencer + 3 followers + full-node;
+# phase1 — bring up validator-0 as the sequencer + 3 followers + full-node;
 #          all 5 align finalized > 0 within 60s. Chain stays UP on success
 #          (so `phase2` can take over via compose override).
 # phase2 — cold-restart validators 0-3 with --dpos via docker-compose.dpos.yml
-#          override; all 5 align finalized > tempo_last within 60s; tear down.
+#          override; all 5 align finalized > sequencer_last within 60s; tear down.
 #
 # Shared RPC/convergence/migration helpers live in scripts/lib.sh.
 set -euo pipefail
@@ -29,14 +29,14 @@ case "$PHASE" in
       echo "  phase1 leaves up. Run phase1 first:  make smoke && make smoke-swap"
       exit 2
     fi
-    # Flush-gated Tempo→DPoS migration (sets PREV_FIN = anchor height).
+    # Flush-gated sequencer→DPoS migration (sets PREV_FIN = anchor height).
     _migrate_to_dpos
     ;;
   *) echo "unknown phase: $PHASE"; exit 2 ;;
 esac
 
 # phase2 (DPoS cold-start at a high migration anchor) needs a longer window than
-# phase1 (Tempo converges in seconds): the relative-epoch-0 anchor is ~block 64,
+# phase1 (the sequencer converges in seconds): the relative-epoch-0 anchor is ~block 64,
 # and post-swap convergence + finalized-pointer advance takes longer.
 if [[ "$PHASE" == "phase2" ]]; then WINDOW=120; else WINDOW=60; fi
 DEADLINE=$(( $(date +%s) + WINDOW ))
@@ -69,7 +69,7 @@ echo "  validator-1: $v1"
 echo "  validator-2: $v2"
 echo "  validator-3: $v3"
 echo "  full-node:   $fn"
-[[ "$PHASE" == "phase2" ]] && echo "  PREV_FIN (Tempo last): $PREV_FIN"
+[[ "$PHASE" == "phase2" ]] && echo "  PREV_FIN (sequencer last): $PREV_FIN"
 docker compose logs --tail=200
 tear_down
 exit 1

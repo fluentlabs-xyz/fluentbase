@@ -150,9 +150,9 @@ echo "  pre-written config matches manifest ✓"
 # ── wait for the SEQUENCER (validator-0) to clean-halt at $ACT ───────────────
 # No restart: every node has carried --dpos.staking-config since first boot, so
 # validator-0's dynamic activation gate (per-tick re-read, launcher.rs) picks up
-# setDposActivationBlock on-chain and halts Tempo production at exactly $ACT.
+# setDposActivationBlock on-chain and halts sequencer production at exactly $ACT.
 # DPoS refuses to anchor unless reth's head == dposActivationBlock exactly (no
-# orphaned Tempo tail past it — dpos.rs:523-531). The followers ride the
+# orphaned sequencer-era tail past it — dpos.rs:523-531). The followers ride the
 # uninterrupted WS stream to the same height.
 echo "== wait for sequencer (validator-0) to clean-halt at activation block $ACT =="
 wait_finalized_ge "$ACT" 200 || {

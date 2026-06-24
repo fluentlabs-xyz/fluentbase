@@ -34,11 +34,11 @@ down:
 logs:
 	docker compose logs -f
 
-# Two-phase Tempo→DPoS migration smoke. ORDER MATTERS and the phases are NOT
-# self-contained: `smoke` (phase1) brings the chain up as Tempo and LEAVES IT
+# Two-phase sequencer→DPoS migration smoke. ORDER MATTERS and the phases are NOT
+# self-contained: `smoke` (phase1) brings the chain up as the sequencer and LEAVES IT
 # RUNNING; `smoke-swap` (phase2) takes over that running chain and migrates it to
 # DPoS. Running `make smoke-swap` ALONE polls a chain that was never started and
-# times out after 180s ("Tempo did not reach dposActivationBlock=64"). Always run
+# times out after 180s ("sequencer did not reach dposActivationBlock=64"). Always run
 # them together:  make smoke && make smoke-swap
 # (The `smoke-<case>` targets below are different — each is self-contained.)
 smoke:
@@ -53,7 +53,7 @@ clean:
 # --- regression cases (each self-contained: brings up + tears down its own stack) ---
 # Read-only default-stack suite on ONE bring-up: tx + epoch + vrf + vrf-boundary.
 # These four never mutate consensus (no node stop/restart/jail), so they share a
-# single Tempo→DPoS migration instead of four. Each remains runnable standalone via
+# single sequencer→DPoS migration instead of four. Each remains runnable standalone via
 # its own smoke-<case> target below. This is what run-all uses (replaces the three
 # separate tx/epoch/vrf runs and adds boundary coverage).
 smoke-base:

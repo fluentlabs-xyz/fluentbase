@@ -100,7 +100,7 @@ _wait_aligned() {
 }
 
 # One "height|hash" reading per line: the 4 genesis validators + full-node.
-_read_tempo_nodes() {
+_read_sequencer_nodes() {
     check_external 8545
     check_node docker compose exec -T validator-1
     check_node docker compose exec -T validator-2
@@ -109,7 +109,7 @@ _read_tempo_nodes() {
 }
 
 # Wait (default 90s) for all 5 nodes to align finalized > 0; echo "height|hash".
-wait_converge() { _wait_aligned "${1:-90}" "" _read_tempo_nodes; }
+wait_converge() { _wait_aligned "${1:-90}" "" _read_sequencer_nodes; }
 
 # Poll (default 60s) until validator-0's finalized height reaches `target`
 # (decimal). Shared by every "wait for block N" loop in the case scripts —
@@ -288,22 +288,22 @@ peer_count() {
     [[ "$hx" == 0x* ]] && printf '%d' "$hx" || echo 0
 }
 
-# --- migration (Tempo → DPoS) ----------------------------------------------
+# --- migration (sequencer → DPoS) ------------------------------------------
 
 # Graceful-stop the 4 validators, verify each persisted via reth's native
 # graceful shutdown — exit 0 (retry up to 4×, bringing
-# Tempo back up to let a laggard re-obtain the anchor), then cold-restart them
+# the sequencer back up to let a laggard re-obtain the anchor), then cold-restart them
 # under --dpos with the migration anchor. Sets the global PREV_FIN (anchor height,
 # hex). Honours $DPOS_EXTRA_COMPOSE (extra `-f file.yml` args, e.g. byzantine).
 PREV_FIN="null"
 _migrate_to_dpos() {
     local anchor flush_ok=0 attempt v all_flushed
-    # R-contract migration: wait until Tempo finalizes past the (genesis-baked)
+    # R-contract migration: wait until the sequencer finalizes past the (genesis-baked)
     # dposActivationBlock so the swap anchor lands in relative epoch 0
     # ([activation, activation+EPOCH_INTERVAL)). Below activation OriginEpocher
     # rejects the cold-start height; at/above activation+interval the cold-start
     # epoch would be >= 1 and re-hit the empty-marshal genesis lookup (bug #2).
-    echo "waiting for Tempo to finalize >= dposActivationBlock=$DPOS_ACTIVATION_BLOCK (relative epoch 0)"
+    echo "waiting for the sequencer to finalize >= dposActivationBlock=$DPOS_ACTIVATION_BLOCK (relative epoch 0)"
     local _wstart _fin_hex _fin_dec
     _wstart=$(date +%s)
     while :; do
@@ -311,12 +311,12 @@ _migrate_to_dpos() {
         if [[ "$_fin_hex" != "null" ]]; then
             _fin_dec=$(printf '%d' "$_fin_hex")
             if (( _fin_dec >= DPOS_ACTIVATION_BLOCK )); then
-                echo "  Tempo finalized $_fin_dec >= activation $DPOS_ACTIVATION_BLOCK; proceeding to swap"
+                echo "  sequencer finalized $_fin_dec >= activation $DPOS_ACTIVATION_BLOCK; proceeding to swap"
                 break
             fi
         fi
         if (( $(date +%s) - _wstart > 180 )); then
-            echo "FAIL: Tempo did not reach dposActivationBlock=$DPOS_ACTIVATION_BLOCK within 180s"
+            echo "FAIL: sequencer did not reach dposActivationBlock=$DPOS_ACTIVATION_BLOCK within 180s"
             docker compose logs --tail=120; tear_down; exit 1
         fi
         sleep 3
@@ -332,9 +332,9 @@ _migrate_to_dpos() {
             echo "all validators flushed persistence on shutdown (attempt $attempt)"; flush_ok=1; break
         fi
         [[ "$attempt" == 4 ]] && break
-        echo "  bringing Tempo network back up to reconverge before retry"
+        echo "  bringing the sequencer network back up to reconverge before retry"
         docker compose start "${VALS[@]}"
-        wait_converge 90 >/dev/null || { echo "FAIL: Tempo did not reconverge during flush-retry"; docker compose logs --tail=120; tear_down; exit 1; }
+        wait_converge 90 >/dev/null || { echo "FAIL: sequencer did not reconverge during flush-retry"; docker compose logs --tail=120; tear_down; exit 1; }
     done
     if [[ "$flush_ok" != 1 ]]; then
         echo "FAIL: validators did not flush after 4 attempts — anchor block would be missing"; tear_down; exit 1
@@ -345,12 +345,12 @@ _migrate_to_dpos() {
     # Nodes self-discover the anchor from ChainConfig.dposActivationBlock and
     # anchor the consensus genesis there; the fresh-migration cold-start fails
     # loud unless reth's finalized tip sits in [activation, activation+EPOCH_INTERVAL)
-    # (relative epoch 0). A flush-retry that reconverged Tempo past the window
+    # (relative epoch 0). A flush-retry that reconverged the sequencer past the window
     # would trip that fail-loud — reject it here with an actionable message.
     if (( anchor_dec < DPOS_ACTIVATION_BLOCK || anchor_dec >= DPOS_ACTIVATION_BLOCK + EPOCH_INTERVAL )); then
-        echo "FAIL: Tempo finalized $anchor_dec outside relative epoch 0 \
+        echo "FAIL: sequencer finalized $anchor_dec outside relative epoch 0 \
 [$DPOS_ACTIVATION_BLOCK, $((DPOS_ACTIVATION_BLOCK + EPOCH_INTERVAL))) — a flush-retry likely \
-advanced Tempo past the window. Re-run, or widen the window (raise EPOCH_INTERVAL)."
+advanced the sequencer past the window. Re-run, or widen the window (raise EPOCH_INTERVAL)."
         tear_down; exit 1
     fi
     # No migration-anchor flags: nodes read dposActivationBlock from the contract
@@ -376,12 +376,12 @@ _read_dpos_nodes() {
 # is dropped from the alignment check and the honest quorum must align instead.
 wait_dpos_converge() { _wait_aligned "${1:-120}" "$PREV_FIN" _read_dpos_nodes; }
 
-# One-shot: bring up the full Tempo stack, converge, migrate to DPoS, and wait
+# One-shot: bring up the full sequencer-era stack, converge, migrate to DPoS, and wait
 # until the DPoS chain is live past the anchor. Leaves the stack UP. Used by every
 # case-*.sh so each is self-contained.
 bring_up_dpos() {
     docker compose up --build -d
-    wait_converge 90 >/dev/null || { echo "FAIL: phase1 Tempo did not converge"; docker compose logs --tail=120; tear_down; exit 1; }
+    wait_converge 90 >/dev/null || { echo "FAIL: phase1 sequencer did not converge"; docker compose logs --tail=120; tear_down; exit 1; }
     _migrate_to_dpos
     wait_dpos_converge 120 >/dev/null || { echo "FAIL: DPoS chain did not converge past anchor $PREV_FIN"; docker compose logs --tail=200; tear_down; exit 1; }
     echo "DPoS stack live (anchor=$PREV_FIN)"

@@ -3,7 +3,7 @@
 #
 # tx + epoch + vrf + vrf-boundary are all read-only w.r.t. consensus (none stops,
 # restarts, or jails a node — at most they send txns or deploy a throwaway probe),
-# so they cannot contaminate one another and share a single Tempo→DPoS bring-up
+# so they cannot contaminate one another and share a single sequencer→DPoS bring-up
 # instead of paying for four. Each assertion still exists as a standalone
 # `make smoke-<case>` (same assert_* function in asserts.sh, its own bring-up) for
 # isolated debugging.

@@ -3,7 +3,7 @@
 #
 # deferred + peers + vrf-fault + crash-survivor + full-restart each MUTATE the
 # stack (CPU-throttle / restart / stop / SIGKILL nodes) but each RESTORES it to a
-# healthy, realigned state before returning. So they chain on a single Tempo→DPoS
+# healthy, realigned state before returning. So they chain on a single sequencer→DPoS
 # bring-up instead of paying for five, with fail-fast: a case hands off to the next
 # only if its own recovery assertion passed. Each remains a standalone
 # `make smoke-<case>` (same assert_* function in asserts-fault.sh, its own

@@ -100,7 +100,7 @@ pub fn write(
 
     // Reth p2p enode URL for validator-0 — followers pin this as
     // `--trusted-peers=$(cat v0-enode.txt)` so eth/68 P2P sync can backfill
-    // historical Tempo blocks the sequencer-url WS feed never re-emits.
+    // historical sequencer-era blocks the sequencer-url WS feed never re-emits.
     {
         let secp = secp256k1::Secp256k1::new();
         let v0 = &keys.validators[0];

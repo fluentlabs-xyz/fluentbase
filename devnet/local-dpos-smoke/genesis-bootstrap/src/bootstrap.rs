@@ -330,11 +330,11 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
         minValidatorStakeAmount: smoke_min_stake,
         minStakingAmount: smoke_min_stake,
         // Aligned (% epochBlockInterval=32) future block at which DPoS epoch
-        // numbering rebases to 0 — the Tempo→DPoS migration anchor lands in
+        // numbering rebases to 0 — the sequencer→DPoS migration anchor lands in
         // relative epoch 0 ([64, 95]). `_migrate_to_dpos` (scripts/lib.sh) waits
-        // for Tempo to finalize >= this block before swapping; the two MUST
+        // for the sequencer to finalize >= this block before swapping; the two MUST
         // agree (DPOS_ACTIVATION_BLOCK there). `_currentEpoch` clamps to 0 for
-        // the pre-activation Tempo window. Absolute epoch here is 64/32 = 2, so
+        // the pre-activation sequencer-era window. Absolute epoch here is 64/32 = 2, so
         // the smoke exercises the epoch>=1 cold-start (the bug-#2 scenario).
         dposActivationBlock: 64,
     }

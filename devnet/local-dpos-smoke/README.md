@@ -1,23 +1,23 @@
 # DPoS Local Smoke (Pipeline 2 — sequencer→DPoS migration mirror)
 
 Two-phase smoke test that mirrors the production migration from a
-single Tempo sequencer to a 4-validator DPoS BFT set on isolated
+single sequencer to a 4-validator DPoS BFT set on isolated
 `chainId=2026`, deterministic from a BIP39 mnemonic:
 
-- **phase-1** (`make smoke`): validator-0 runs as a Tempo sequencer
+- **phase-1** (`make smoke`): validator-0 runs as the sequencer
   (1 block / sec); validators 1-3 and a non-staking full-node follow
   via `--sequencer-url ws://172.20.0.10:8546`. All 5 align finalized
   > 0 within 60 s.
 - **phase-2** (`make smoke-swap`): cold-restart validators 0-3 with
   `--dpos` via `docker-compose.dpos.yml` override; chain continues
-  past Tempo's last block via DPoS BFT. All 5 align finalized
-  > tempo_last within 60 s.
+  past the sequencer's last block via DPoS BFT. All 5 align finalized
+  > sequencer_last within 60 s.
 
 Every node passes `--dpos.staking-config=/runtime/staking-reader.json`
 in both phases — required so `FluentBlockExecutor::apply_pre_execution_changes`
 runs the `commitEpochCommittee` system call at epoch boundaries
 identically on every executor (otherwise followers compute a
-divergent state-root and reject Tempo's blocks). This is the same
+divergent state-root and reject the sequencer's blocks). This is the same
 constraint prod will face during migration.
 
 ## Prerequisites
@@ -32,7 +32,7 @@ constraint prod will face during migration.
 ## Quick start
 
     make regen-contracts        # one-time, after a Solidity change
-    make smoke                  # phase-1: Tempo + followers; leaves chain UP
+    make smoke                  # phase-1: sequencer + followers; leaves chain UP
     make smoke-swap             # phase-2: cold-restart to DPoS; tears down on success
 
 For phase-1 only (no migration test) run `make smoke` and clean up
@@ -62,7 +62,7 @@ override.
 **phase-2** (`make smoke-swap`) succeeds when within 60 s of the
 cold-restart:
 
-- all 5 nodes' finalized number > Tempo's last finalized number (chain
+- all 5 nodes' finalized number > the sequencer's last finalized number (chain
   visibly advanced post-swap, not stuck at the swap boundary)
 - all 5 nodes' finalized hash identical
 
@@ -91,10 +91,10 @@ cleans up.
   one (or more) of validators 1-3 / full-node missing
   `--dpos.staking-config`. State-root mismatch on
   `commitEpochCommittee` system call causes followers to reject
-  Tempo's blocks. All 5 nodes must pass identical
+  the sequencer's blocks. All 5 nodes must pass identical
   `--dpos.staking-config` in both phases.
 - **phase-2 `make smoke-swap` hangs at PREV_FIN** — the cold-restart
-  happened but DPoS BFT didn't make a block past Tempo's last
+  happened but DPoS BFT didn't make a block past the sequencer's last
   finalized. `docker compose logs validator-0` shows DPoS engine
   state; common cause is a swap fired past the first epoch boundary
   (block ≥ 32) without prior `commitEpochCommittee` for the new
@@ -127,7 +127,7 @@ The full prod lifecycle on a chain where the staking cluster is deployed at
 **runtime via forge** (not baked into genesis):
 
 1. 6 nodes + a full node boot a **bare** chain (no staking predeploys) — a
-   plain Tempo sequencer (validator-0) + WS followers. Every node carries
+   plain sequencer (validator-0) + WS followers. Every node carries
    `--dpos.staking-config` from first boot: `genesis-init` pre-writes
    `staking-reader.json` predicting the runtime CREATE addresses from deployer
    nonces (`--staking-reader-create-nonces`, see the compose comment), so all
@@ -142,7 +142,7 @@ The full prod lifecycle on a chain where the staking cluster is deployed at
    `setConsensusKeys` (the PoP is verified against the on-chain verifier), then
    `setDposActivationBlock` (governance).
 4. The sequencer's **dynamic activation gate** (per-tick on-chain re-read)
-   clean-halts Tempo production at exactly `dposActivationBlock` — no
+   clean-halts sequencer production at exactly `dposActivationBlock` — no
    mid-flight restart, so the followers ride the uninterrupted WS stream to
    the same height; once all nodes align, ALL six validators cold-restart into
    `--dpos` (`--dpos.follower-upstream` set): committee members cold-start as
