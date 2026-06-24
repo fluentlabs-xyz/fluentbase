@@ -255,7 +255,7 @@ where
 /// is not yet locally readable (the whole point of the jump is to sync TO the
 /// state that holds it). A structural mismatch is FATAL — never drive reth's
 /// devp2p backfill onto a tip whose served body does not match its cert.
-pub fn verify_jump_structural(latest: &UpstreamFinalized) -> eyre::Result<()> {
+pub(crate) fn verify_jump_structural(latest: &UpstreamFinalized) -> eyre::Result<()> {
     if latest.finalization.proposal.payload != latest.block.digest() {
         return Err(eyre!(
             "jump target cert payload != block digest at height {}",
@@ -292,7 +292,7 @@ pub fn verify_jump_structural(latest: &UpstreamFinalized) -> eyre::Result<()> {
 /// is the operator-gated alternative trust anchor: with an L1 checkpoint set the
 /// jump still authenticates via the L1 ancestry, so an unreadable committee is a
 /// LOUD warn-and-defer-to-L1; WITHOUT one it is FATAL (no trust anchor at all).
-pub fn verify_jump_authenticated<C: CommitteeSource>(
+pub(crate) fn verify_jump_authenticated<C: CommitteeSource>(
     latest: &UpstreamFinalized,
     committees: &C,
     landing_hash: B256,
