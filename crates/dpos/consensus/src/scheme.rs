@@ -25,7 +25,6 @@ use tracing::warn;
 /// of either key; a misconfigured operator or
 /// future contract bug surfaces here as a typed error rather than the
 /// previous `.expect(...)` panic at the engine boundary.
-/// **** мне кажется слишком жирно отдельный файл, найди лучышее место
 pub fn epoch_committee_from_snapshot(
     snap: &ValidatorSetSnapshot,
 ) -> Result<EpochCommittee, OrderedError> {

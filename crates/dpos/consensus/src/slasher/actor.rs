@@ -91,7 +91,6 @@ impl HandleError {
 /// production impl (in dpos.rs) wraps an
 /// `Arc<tokio::sync::Mutex<fluentbase_staking_reader::ValidatorSetCache<E>>>`.
 ///
-/// **** я не очень люблю подход где создается trait только чтобы создать тест, должен быть способ проще
 pub trait StaleEpochFallback: Send + Sync + 'static {
     fn get_by_epoch<'a>(
         &'a self,

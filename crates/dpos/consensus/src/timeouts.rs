@@ -8,8 +8,6 @@
 //! both as a typed `Err` *before* they reach the engine (same philosophy as
 //! the staking-reader committee-size guard).
 
-// **** выглядит так как можно пренести в другой файл, отдельный зажирно
-
 use crate::application::{BLOCK_INTERVAL, VERIFY_EXEC_BUDGET};
 use commonware_consensus::types::ViewDelta;
 use std::time::Duration;
