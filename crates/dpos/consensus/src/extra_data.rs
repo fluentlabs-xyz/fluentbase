@@ -20,6 +20,23 @@
 
 use commonware_consensus::types::{Epoch, Round, View};
 use commonware_cryptography::certificate::Signers;
+use core::mem::size_of;
+
+// Wire-format field widths (big-endian), mirrored byte-for-byte by the Solidity
+// decoder (`LivenessSlashing.processBitmap`). Derived from the serialized field
+// types so the layout cannot drift from `encode_simplex_attestation`'s
+// `to_be_bytes()`/`push` calls.
+const EPOCH_BYTES: usize = size_of::<u64>(); // epoch: u64 BE
+const VIEW_BYTES: usize = size_of::<u64>(); // view: u64 BE
+const SIZE_BYTES: usize = size_of::<u8>(); // committee_size: u8
+/// Byte offset of each field (epoch is first, at 0).
+const VIEW_OFFSET: usize = EPOCH_BYTES; // 8
+const SIZE_OFFSET: usize = VIEW_OFFSET + VIEW_BYTES; // 16
+/// Header length preceding the bitmap (`= 17`); the full encoding is
+/// `HDR + ceil(committee_size / 8)` bytes.
+const HDR: usize = SIZE_OFFSET + SIZE_BYTES;
+/// Bits packed per bitmap byte (LSB-first signer packing).
+const BITS_PER_BYTE: usize = 8;
 
 /// Encode `(round, signers)` into the canonical attestation byte format.
 ///
@@ -34,16 +51,15 @@ pub fn encode_simplex_attestation(round: Round, signers: &Signers) -> Vec<u8> {
     let committee_size: u8 = n
         .try_into()
         .expect("committee_size exceeds u8::MAX; widen wire format to u16 BE if this fires");
-    let bitmap_bytes = n.div_ceil(8);
-    // **** есть смысл вынести magic numbers, особенно если он преиспользуются
-    let mut out = Vec::with_capacity(8 + 8 + 1 + bitmap_bytes);
-    out.extend_from_slice(&round.epoch().get().to_be_bytes()); // 8 B
-    out.extend_from_slice(&round.view().get().to_be_bytes()); // 8 B
-    out.push(committee_size); // 1 B
+    let bitmap_bytes = n.div_ceil(BITS_PER_BYTE);
+    let mut out = Vec::with_capacity(HDR + bitmap_bytes);
+    out.extend_from_slice(&round.epoch().get().to_be_bytes()); // EPOCH_BYTES
+    out.extend_from_slice(&round.view().get().to_be_bytes()); // VIEW_BYTES
+    out.push(committee_size); // SIZE_BYTES
     let mut bitmap = vec![0u8; bitmap_bytes];
     for p in signers.iter() {
         let idx = p.get() as usize;
-        bitmap[idx >> 3] |= 1 << (idx & 7);
+        bitmap[idx / BITS_PER_BYTE] |= 1 << (idx % BITS_PER_BYTE);
     }
     out.extend_from_slice(&bitmap);
     out
@@ -68,24 +84,16 @@ pub fn decode_simplex_attestation(buf: &[u8]) -> Result<Option<DecodedAttestatio
     if buf.is_empty() {
         return Ok(None);
     }
-    const HDR: usize = 8 + 8 + 1;
     if buf.len() < HDR {
         return Err(DecodeError::TooShort);
     }
-    let epoch_u64 = u64::from_be_bytes(buf[0..8].try_into().unwrap());
-    let view_u64 = u64::from_be_bytes(buf[8..16].try_into().unwrap());
-    let committee_size = buf[16];
+    let epoch_u64 = u64::from_be_bytes(buf[..VIEW_OFFSET].try_into().unwrap());
+    let view_u64 = u64::from_be_bytes(buf[VIEW_OFFSET..SIZE_OFFSET].try_into().unwrap());
+    let committee_size = buf[SIZE_OFFSET];
     if committee_size == 0 {
-        // The encoder never emits a zero committee (it derives the size from a
-        // real `signers.len()`); a zero-size attestation is only craftable by a
-        // forger. Reject it rather than decode an empty bitmap (defense-in-depth;
-        // the `evm.rs` processBitmap decode is the other backstop. NOTE: verify()
-        // does NOT byte-bind extra_data to the verifier's own cert — that compare
-        // was unsound on the non-canonical bitmap and was reverted; see the
-        // liveness-bitmap open-design note in DPOS_ARCHITECTURE.md §2.3).
         return Err(DecodeError::ZeroCommittee);
     }
-    let expected_bitmap = (committee_size as usize).div_ceil(8);
+    let expected_bitmap = (committee_size as usize).div_ceil(BITS_PER_BYTE);
     if buf.len() != HDR + expected_bitmap {
         return Err(DecodeError::LengthMismatch {
             expected: HDR + expected_bitmap,
@@ -98,10 +106,12 @@ pub fn decode_simplex_attestation(buf: &[u8]) -> Result<Option<DecodedAttestatio
     // to perturb the byte layout the on-chain `processBitmap` / equivocation
     // counters read; the honest encoder never emits them (it only ever sets bits
     // < committee_size). `committee_size % 8 == 0` ⇒ no padding (full last byte).
-    let pad_bits = (8 - (committee_size as usize % 8)) % 8;
+    let pad_bits = (BITS_PER_BYTE - (committee_size as usize % BITS_PER_BYTE)) % BITS_PER_BYTE;
     if pad_bits != 0 {
         if let Some(&last) = bitmap.last() {
-            let pad_mask: u8 = (0xFFu16 << (8 - pad_bits)) as u8;
+            // Mask of the top `pad_bits` of a byte (the padding region); equals
+            // the old `(0xFF << (8 - pad_bits))`, byte-identical.
+            let pad_mask: u8 = !(u8::MAX >> pad_bits);
             if last & pad_mask != 0 {
                 return Err(DecodeError::NonzeroPadding);
             }
