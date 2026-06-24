@@ -65,17 +65,30 @@ assert_deferred() {
     # ~1 block/s so a sample can straddle an FCU — accept K..K+1 — but require the
     # exact K at least once (liveness half: the lag must not drift wide).
     saw_exact=0
+    # safe rides the BFT ordering-final tip (~latest), STRICTLY ahead of where
+    # finalized sits (latest−K): require at least one sample with latest−safe < K
+    # (pre-split safe == finalized == latest−K would never satisfy it).
+    saw_safe_ahead=0
     for _ in 1 2 3 4 5 6; do
         latest=$(block_number_of latest)
         final=$(block_number_of finalized)
+        safe=$(block_number_of safe)
         lag=$(( latest - final ))
         (( lag >= K )) || { echo "FAIL (smoke-deferred): finalized overclaims — lag=$lag < K=$K (latest=$latest finalized=$final)"; exit 1; }
         (( lag <= K + 1 )) || { echo "FAIL (smoke-deferred): finality lag drifted — lag=$lag > K+1 (latest=$latest finalized=$final)"; exit 1; }
         (( lag == K )) && saw_exact=1
+        # Ancestry: finalized ⊆ safe ⊆ head(latest).
+        (( safe >= final )) || { echo "FAIL (smoke-deferred): safe below finalized — safe=$safe < finalized=$final (ancestry finalized ⊆ safe violated)"; exit 1; }
+        (( safe <= latest )) || { echo "FAIL (smoke-deferred): safe above latest — safe=$safe > latest=$latest (ancestry safe ⊆ head violated)"; exit 1; }
+        # Steady-state tracking: safe ≈ latest (allow ≤1 for the ~1 blk/s straddle).
+        (( latest - safe <= 1 )) || { echo "FAIL (smoke-deferred): safe not tracking the ordering-final tip — latest−safe=$(( latest - safe )) > 1 (latest=$latest safe=$safe)"; exit 1; }
+        (( latest - safe < K )) && saw_safe_ahead=1
         sleep 2
     done
     (( saw_exact == 1 )) || { echo "FAIL (smoke-deferred): lag never sampled at exactly K=$K"; exit 1; }
+    (( saw_safe_ahead == 1 )) || { echo "FAIL (smoke-deferred): safe never sampled ahead of the finalized tier — latest−safe never < K=$K (the safe/finalized split did not take effect)"; exit 1; }
     echo "  K-lag (eth): latest − finalized == $K held across 6 samples"
+    echo "  safe-tier: finalized ≤ safe ≤ latest, latest−safe < $K held"
 
     # Consensus namespace must tell the same story as the eth tags. One snapshot
     # is two RPCs apart from the eth read, so allow ±1 skew on the cross-check but

@@ -271,6 +271,11 @@ async fn new_block_fetcher<
     // `finalized` tag from the validators'. Lag finalized by K, clamped to
     // the activation anchor (the validators' own floor); pre-activation
     // (sequencer-era / activation not scheduled yet) keeps finalize-on-receipt.
+    // The engine-API `safe` tag rides the latest landed ordering-final tip
+    // (`block_hash` — there is no speculative lead in the importer, each landed
+    // block is ordering-final on arrival), matching the validators' executor:
+    // `safe = head = block_hash`, `finalized` K behind. Ancestry `finalized ⊆
+    // safe ⊆ head` holds trivially.
     // Activation is re-probed per block and latched on `Some` so a node
     // launched before `setDposActivationBlock` still picks it up.
     let mut two_tier_activation: Option<u64> = None;
@@ -301,7 +306,7 @@ async fn new_block_fetcher<
         let _ = engine_handle.new_payload(payload).await;
         let state = ForkchoiceState {
             head_block_hash: block_hash,
-            safe_block_hash: finalized,
+            safe_block_hash: block_hash,
             finalized_block_hash: finalized,
         };
         let _ = engine_handle.fork_choice_updated(state, None).await;

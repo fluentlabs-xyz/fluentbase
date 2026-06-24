@@ -1,10 +1,13 @@
 //! Executor: drives the reth EL from ordering-finalized [`OrderBlock`]s —
 //! derive → execute (import via `new_payload`) → two-tier FCU.
 //!
-//! Two-tier forkchoice: `head` follows the locally derived executed tip;
-//! `safe`/`finalized` follow RESULT finality = `ordering_finalized − K`
-//! (clamped to the cold-start anchor), i.e. the height whose derived hash the
-//! committee has attested by agreeing the OrderBlock K heights above it.
+//! Three-tier forkchoice: `head` follows the locally derived (speculative)
+//! executed tip; `safe` rides the BFT ORDERING-finalized tip (~0 lag,
+//! content-immutable the moment it is finalized); `finalized` follows RESULT
+//! finality = `ordering_finalized − K` (clamped to the cold-start anchor), i.e.
+//! the height whose derived hash the committee has attested by agreeing the
+//! OrderBlock K heights above it. Invariant `finalized ⊆ safe ⊆ head` holds at
+//! every FCU (result-final ⊆ ordering-final ⊆ speculative tip, one chain).
 //!
 //! Ack flow: the marshal's `Exact` ack fires only after derive + import, so
 //! marshal backpressure (MAX_PENDING_ACKS) IS execution backpressure.
@@ -100,19 +103,57 @@ impl Mailbox {
 struct LastCanonicalized {
     forkchoice: ForkchoiceState,
     head_height: Height,
+    /// Ordering-final tier (the BFT cert tip): the engine-API `safe` tag. Its
+    /// OWN monotone guard, distinct from `finalized_height` — `safe` rides the
+    /// just-finalized ordering tip (~0 lag) while `finalized` lags by K (the
+    /// committee-attested result). Invariant: `finalized ⊆ safe ⊆ head`.
+    safe_height: Height,
     finalized_height: Height,
 }
 
 impl LastCanonicalized {
+    /// Result-final tier (committee-attested execution, `ordering − K`). Sets
+    /// ONLY `finalized` — `safe` is the ordering-final tier, advanced by
+    /// `update_safe`. The `head >=` clause is kept so a finalized delivery with
+    /// no speculative lead still pushes `head` (mirrors `update_safe`).
     fn update_finalized(mut self, height: Height, hash: B256) -> Self {
         if height > self.finalized_height {
             self.finalized_height = height;
-            self.forkchoice.safe_block_hash = hash;
             self.forkchoice.finalized_block_hash = hash;
         }
         if height >= self.head_height {
             self.head_height = height;
             self.forkchoice.head_block_hash = hash;
+        }
+        self
+    }
+
+    /// Ordering-final tier (the BFT cert tip) → the engine-API `safe` tag.
+    ///
+    /// Guard is `height >= self.safe_height` (NOT strict `>`), mirroring
+    /// `update_head`'s finalized-fork allow: monotone in HEIGHT (never rolls
+    /// backward) but lets the HASH FOLLOW a same-height re-finalization. A
+    /// same-height sibling reorg (`height == safe_height`) re-pins `safe` to
+    /// the freshly-finalized canonical hash the caller passes; a strict `>`
+    /// would pin `safe` to an orphaned sibling after `head` reorgs away from it
+    /// → `safe ⊄ head` → reth `-38002` (or a silent orphan-`safe`). Do NOT
+    /// tighten to `>`.
+    ///
+    /// A `height < safe_height` delivery is a NO-OP, and this is LEGITIMATE (not
+    /// asserted against): a deep-catch-up follower's `init` seeds `safe_height`
+    /// at the cold-start anchor (the live frontier), then the executor derives
+    /// the K blocks BELOW that anchor (marshal floor = `anchor − K`). Those
+    /// below-anchor finalized deliveries call `update_safe` with a height below
+    /// the seeded `safe_height`; the no-op keeps `safe` at the anchor (it must
+    /// not roll back below where the node trust-anchored).
+    ///
+    /// Touches ONLY `safe_*`: `head` is owned by `update_finalized`'s head
+    /// clause + `update_head`, so there is no `update_safe`-vs-`update_head`
+    /// head-write interaction in the rollback path (D1/D13).
+    fn update_safe(mut self, height: Height, hash: B256) -> Self {
+        if height >= self.safe_height {
+            self.safe_height = height;
+            self.forkchoice.safe_block_hash = hash;
         }
         self
     }
@@ -462,10 +503,14 @@ where
             last_canonicalized: LastCanonicalized {
                 forkchoice: ForkchoiceState {
                     head_block_hash: cfg.initial_head.1,
+                    // At cold-start there is no ordering-final tip above the
+                    // anchor yet: safe == finalized == head == anchor. They
+                    // diverge only once the chain advances (Phase 2).
                     safe_block_hash: cfg.initial_finalized.1,
                     finalized_block_hash: cfg.initial_finalized.1,
                 },
                 head_height: cfg.initial_head.0,
+                safe_height: cfg.initial_finalized.0,
                 finalized_height: cfg.initial_finalized.0,
             },
             ordering_finalized: cfg.last_execution_finalized_height,
@@ -500,10 +545,11 @@ where
     /// touches (the landing carries no new activation), so a follower whose
     /// activation ≠ anchor must keep its own value.
     #[cfg(test)]
-    fn seed_fields(&self) -> (u64, (Height, B256), Height, u64) {
+    fn seed_fields(&self) -> (u64, (Height, B256), Height, Height, u64) {
         (
             self.ordering_finalized,
             self.anchor_finalized,
+            self.last_canonicalized.safe_height,
             self.last_canonicalized.finalized_height,
             self.spec_head,
         )
@@ -838,29 +884,46 @@ where
         info!(landing_h, floor, "steady-state re-jump landed; re-seeding executor + marshal floor");
         let landing = Height::new(landing_h);
         self.anchor_finalized = (landing, landing_hash);
-        self.last_canonicalized = self.last_canonicalized.update_finalized(landing, landing_hash);
+        // The landing IS the ordering-final tip (`safe`); `floor = landing − K`
+        // is the result-final floor (`finalized`). `update_finalized(landing,…)`
+        // raises the in-memory `finalized_height`/`head` to the landing (mirrors
+        // `init`'s seed at the landing — pinned by `reseed_forward_agrees_with_init`);
+        // it no longer writes `safe`. `update_safe(landing,…)` raises `safe` to
+        // the landing. The FCU below re-pins the engine-API `finalized` to the
+        // floor (the landing's own result attestation still lags by K) while
+        // `safe` rides the landing — the in-memory `finalized_height` over-claim
+        // is benign because `result_final` is recomputed from `ordering_finalized`,
+        // not the model's `finalized_height` (B1 option a).
+        self.last_canonicalized = self
+            .last_canonicalized
+            .update_finalized(landing, landing_hash)
+            .update_safe(landing, landing_hash);
         // PARENT-VISIBILITY FCU (mirror of cold-start `init`'s floor-seed FCU in
-        // `dpos.rs`): `update_finalized` advanced the executor's INTERNAL model,
-        // but reth has so far made the backfilled landing segment visible only
-        // by NUMBER (the devp2p backfill index). The by-HASH header index that
-        // the deriver's `derive_sync` reads for the parent (`header(parent_hash)`)
-        // lags until an FCU lands. `head = landing` canonicalizes the whole
-        // `[old_canonical+1 ..= landing]` segment by hash (reth inserts every
-        // segment element synchronously), so the resumed contiguous dispatch's
-        // first derive (`floor + 1`) resolves its parent (= `floor`); `finalized
-        // = floor` honours the two-tier contract (the landing's own result
-        // attestation still lags by K). WITHOUT this, `floor + 1`'s derive hits
-        // `ParentHeaderMissing` and the floor freezes — the steady-state analogue
-        // of the cold-start parent-visibility race. `cold_start_jump::sync_to`
-        // already awaited the landing body, and `floor` is backfilled, so the
-        // by-NUMBER `executed_hash(floor)` resolves here (the typed
-        // ParentHeaderMissing derive-retry is the belt for the transient miss).
+        // `dpos.rs`): `update_finalized`/`update_safe` advanced the executor's
+        // INTERNAL model, but reth has so far made the backfilled landing segment
+        // visible only by NUMBER (the devp2p backfill index). The by-HASH header
+        // index that the deriver's `derive_sync` reads for the parent
+        // (`header(parent_hash)`) lags until an FCU lands. `head = landing`
+        // canonicalizes the whole `[old_canonical+1 ..= landing]` segment by hash
+        // (reth inserts every segment element synchronously), so the resumed
+        // contiguous dispatch's first derive (`floor + 1`) resolves its parent
+        // (= `floor`); `safe = landing` rides the ordering-final tip (the landing
+        // IS BFT-final) while `finalized = floor` honours the two-tier contract
+        // (the landing's own result attestation still lags by K). `floor ≤
+        // landing` and both lie on the segment `head = landing` just made
+        // canonical ⇒ `finalized ⊆ safe ⊆ head`. WITHOUT this FCU, `floor + 1`'s
+        // derive hits `ParentHeaderMissing` and the floor freezes — the
+        // steady-state analogue of the cold-start parent-visibility race.
+        // `cold_start_jump::sync_to` already awaited the landing body, and
+        // `floor` is backfilled, so the by-NUMBER `executed_hash(floor)` resolves
+        // here (the typed ParentHeaderMissing derive-retry is the belt for the
+        // transient miss).
         if let Some(floor_hash) = self.executed.executed_hash(floor) {
             let resp = self
                 .beacon_engine
                 .fork_choice_updated(ForkchoiceState {
                     head_block_hash: landing_hash,
-                    safe_block_hash: floor_hash,
+                    safe_block_hash: landing_hash,
                     finalized_block_hash: floor_hash,
                 })
                 .pace(&self.context, self.fcu_pace)
@@ -1136,9 +1199,26 @@ where
                 ),
             }
         }
+        // Ordering-final tier → engine-API `safe`: the just-finalized tip.
+        // `derived_hash` == executed_hash(height) (whether re-derived or
+        // correctly-speculated) and `height == ordering_finalized` here, so
+        // `safe` lands ~0 blocks behind head while `finalized` lags by K.
+        //
+        // `safe` is ALWAYS reth-canonical-findable at this FCU: `safe ≤ head` on
+        // the same derived chain (D2), and this same FCU names `head ≥ height`;
+        // reth commits the whole head→fork segment (incl. `safe`) into the
+        // canonical in-memory state (`on_canonical_chain_update`) BEFORE it
+        // validates `safe` (`ensure_consistent_forkchoice_state`), so
+        // `find_canonical_header(safe)` is `Some` → no `-38002`. If head
+        // canonicalization itself fails (a missing block), reth returns SYNCING
+        // via `handle_missing_block` and never reaches the safe check.
+        new = new.update_safe(Height::new(height), derived_hash);
         // Move the head onto the finalized block only when speculation did not
         // already place the correct block here (else we would roll back the
-        // speculative lead). A re-derive/rollback DOES move the head (reorg).
+        // speculative lead). A re-derive/rollback DOES move the head (reorg) —
+        // and `update_safe`'s `>=` guard above already re-pinned `safe` to the
+        // same `derived_hash`, so `safe == head` at the reorg point (never an
+        // orphaned sibling).
         if !correctly_speculated {
             new = new.update_head(Height::new(height), derived_hash);
         }
@@ -1760,6 +1840,7 @@ mod tests {
                 finalized_block_hash: anchor,
             },
             head_height: Height::new(12),
+            safe_height: Height::new(10),
             finalized_height: Height::new(10),
         };
 
@@ -1771,6 +1852,83 @@ mod tests {
         let unchanged = lc.update_head(Height::new(9), other);
         assert_eq!(unchanged.head_height, Height::new(12));
         assert_eq!(unchanged.forkchoice.head_block_hash, tail);
+    }
+
+    /// A pure `LastCanonicalized` literal seeded at the anchor (all three tiers
+    /// equal), used by the `update_safe` unit tests below.
+    fn lc_at(height: u64, hash: B256) -> LastCanonicalized {
+        LastCanonicalized {
+            forkchoice: ForkchoiceState {
+                head_block_hash: hash,
+                safe_block_hash: hash,
+                finalized_block_hash: hash,
+            },
+            head_height: Height::new(height),
+            safe_height: Height::new(height),
+            finalized_height: Height::new(height),
+        }
+    }
+
+    // `update_finalized` (result tier) + `update_safe` (ordering tier) advance
+    // their OWN monotone guards; `finalized_height ≤ safe_height ≤ head_height`
+    // and the three hashes stay consistent with the heights after each op.
+    #[test]
+    fn finalized_safe_head_ancestry_holds() {
+        let h10 = B256::repeat_byte(0x10);
+        let mut lc = lc_at(10, h10);
+
+        // ordering-final advances to 13 (safe + head), result-final still 10.
+        let h13 = B256::repeat_byte(0x13);
+        lc = lc.update_safe(Height::new(13), h13).update_head(Height::new(13), h13);
+        assert_eq!(lc.safe_height, Height::new(13));
+        assert_eq!(lc.forkchoice.safe_block_hash, h13);
+        assert_eq!(lc.head_height, Height::new(13));
+        assert_eq!(lc.finalized_height, Height::new(10));
+        assert!(lc.finalized_height <= lc.safe_height && lc.safe_height <= lc.head_height);
+
+        // result-final catches up to 11 (= 14 − K), safe to the new tip 14.
+        let h11 = B256::repeat_byte(0x11);
+        let h14 = B256::repeat_byte(0x14);
+        lc = lc
+            .update_finalized(Height::new(11), h11)
+            .update_safe(Height::new(14), h14)
+            .update_head(Height::new(14), h14);
+        assert_eq!(lc.forkchoice.finalized_block_hash, h11);
+        assert_eq!(lc.forkchoice.safe_block_hash, h14);
+        assert_eq!(lc.forkchoice.head_block_hash, h14);
+        assert!(lc.finalized_height <= lc.safe_height && lc.safe_height <= lc.head_height);
+    }
+
+    // An out-of-order / transient lower ordering-final delivery must NOT roll
+    // `safe` backward (its own monotone guard, distinct from `finalized_height`).
+    #[test]
+    fn safe_monotonic_guard() {
+        let h10 = B256::repeat_byte(0x10);
+        let h13 = B256::repeat_byte(0x13);
+        let lc = lc_at(10, h10).update_safe(Height::new(13), h13);
+
+        let stale = B256::repeat_byte(0x99);
+        let after = lc.update_safe(Height::new(12), stale);
+        assert_eq!(after.safe_height, Height::new(13), "safe must not regress");
+        assert_eq!(after.forkchoice.safe_block_hash, h13);
+    }
+
+    // The `>=` (not `>`) guard: a same-height re-finalization (sibling reorg at
+    // `H == safe_height`) lets the HASH follow onto the freshly-finalized tip —
+    // never pinning `safe` to an orphaned sibling.
+    #[test]
+    fn safe_follows_same_height_refinalize() {
+        let h10 = B256::repeat_byte(0x10);
+        let hash_a = B256::repeat_byte(0xAA);
+        let lc = lc_at(10, h10).update_safe(Height::new(13), hash_a);
+
+        let hash_b = B256::repeat_byte(0xBB);
+        let after = lc.update_safe(Height::new(13), hash_b);
+        assert_eq!(after.safe_height, Height::new(13), "height unchanged (lateral)");
+        assert_eq!(
+            after.forkchoice.safe_block_hash, hash_b,
+            "safe followed the same-height re-finalization onto hash_b"
+        );
     }
 
     // Pre-K window: finalized stays clamped to the anchor while head follows
@@ -1800,19 +1958,32 @@ mod tests {
 
             {
                 let fcus = fx.beacon.fcu_calls.lock().unwrap();
-                // Heights ANCHOR+1..=ANCHOR+K-1: finalized pinned to the anchor.
-                for fcu in &fcus[..(K - 1) as usize] {
+                // Heights ANCHOR+1..=ANCHOR+K-1: finalized pinned to the anchor
+                // while safe (ordering-final) climbs to each just-finalized tip.
+                for (i, fcu) in fcus[..(K - 1) as usize].iter().enumerate() {
+                    let ordering_tip = ANCHOR + 1 + i as u64;
                     assert_eq!(fcu.finalized_block_hash, fx.anchor_hash);
+                    assert_eq!(
+                        fcu.safe_block_hash,
+                        fx.chain.executed_hash(ordering_tip).unwrap(),
+                        "safe rides the ordering-final tip even while finalized is clamped"
+                    );
+                    assert_eq!(
+                        fcu.safe_block_hash, fcu.head_block_hash,
+                        "no speculative lead ⇒ safe == head"
+                    );
                 }
                 // Height ANCHOR+K: result_final = ANCHOR (still the anchor hash);
                 // height ANCHOR+K+1: result_final = ANCHOR+1 = derived hash.
                 let derived_anchor_plus_1 = fx.chain.executed_hash(ANCHOR + 1).unwrap();
+                let ordering_tip = fx.chain.executed_hash(ANCHOR + K + 1).unwrap();
                 let last = fcus.last().unwrap();
                 assert_eq!(last.finalized_block_hash, derived_anchor_plus_1);
-                assert_eq!(
-                    last.head_block_hash,
-                    fx.chain.executed_hash(ANCHOR + K + 1).unwrap()
-                );
+                // safe = the ordering-final tip = head (no spec lead), K ahead of
+                // finalized once past the clamp.
+                assert_eq!(last.safe_block_hash, ordering_tip);
+                assert_eq!(last.head_block_hash, ordering_tip);
+                assert_eq!(last.safe_block_hash, last.head_block_hash);
                 // Every block was imported exactly once.
                 assert_eq!(
                     fx.beacon.new_payload_calls.lock().unwrap().len() as u64,
@@ -2361,15 +2532,101 @@ mod tests {
                 )
                 .hash();
                 let fcus = fx.beacon.fcu_calls.lock().unwrap();
+                let last = fcus.last().unwrap();
                 assert_eq!(
-                    fcus.last().unwrap().head_block_hash,
-                    hash_b,
+                    last.head_block_hash, hash_b,
                     "head reorged back onto the finalized sibling at +2"
+                );
+                // The `>=` guard let `safe` FOLLOW the same-height sibling reorg
+                // onto the finalized hash — never stuck on the orphaned o2a.
+                // (FakeBeacon returns Valid unconditionally and does not model
+                // reth's `find_canonical_header`, so this VALUE assert is the
+                // only thing that catches an orphan-safe bug.)
+                assert_eq!(
+                    last.safe_block_hash, hash_b,
+                    "safe followed the reorg onto the finalized sibling (not orphaned o2a)"
+                );
+                assert_eq!(
+                    last.safe_block_hash, last.head_block_hash,
+                    "no surviving spec lead after the rollback ⇒ safe == head"
+                );
+                // D9 proxy: `safe` is a block reth was told about (imported) at a
+                // height ≤ head before the FCU named it — the precondition reth's
+                // real `find_canonical_header(safe) == Some` relies on.
+                assert!(
+                    payloads.iter().any(|p| p.hash() == last.safe_block_hash),
+                    "safe was imported (new_payload'd) before the FCU named it"
                 );
             }
 
             drop(mailbox);
             let _ = handle.await;
+        });
+    }
+
+    // A speculative head advance NEVER moves `safe`/`finalized`: `spec_execute`
+    // calls `update_head` only. After finalizing anchor+1 (which sets safe =
+    // h(anchor+1)), speculating +2 and +3 climbs head to h(anchor+3) while safe
+    // stays at h(anchor+1) and finalized stays at the anchor — the load-bearing
+    // `head > safe` speculative lead (the whole point of the split).
+    #[test]
+    fn safe_unchanged_across_speculative_head_advance() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            // Finalize anchor+1 first (sets safe = head = h(anchor+1); finalized
+            // clamped at the anchor in the pre-K window).
+            let o1 = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
+            let (m1, w1) = finalize_msg(o1.clone());
+            mailbox.send(m1).expect("send finalize 1");
+            w1.await.expect("ack 1");
+
+            let safe_after_finalize = fx.chain.executed_hash(ANCHOR + 1).unwrap();
+            {
+                let fcus = fx.beacon.fcu_calls.lock().unwrap();
+                let last = fcus.last().unwrap();
+                assert_eq!(last.safe_block_hash, safe_after_finalize);
+                assert_eq!(last.finalized_block_hash, fx.anchor_hash);
+            }
+
+            // Speculate +2, +3 (notarized, not finalized) — each parent is
+            // canonical from the prior FCU.
+            let o2 = sample_order(o1.digest(), ANCHOR + 2, B256::ZERO);
+            let o3 = sample_order(o2.digest(), ANCHOR + 3, B256::ZERO);
+            {
+                let mut canned = fx.marshal.canned.lock().unwrap();
+                canned.insert(ANCHOR + 2, o2.clone());
+                canned.insert(ANCHOR + 3, o3.clone());
+            }
+            // Spec messages are processed FIFO; dropping the mailbox makes the
+            // loop drain them then exit on `recv() == None`, so awaiting the
+            // handle is the barrier that guarantees +2/+3 speculation has run.
+            mailbox.send(spec_msg(&o2)).expect("spec 2");
+            mailbox.send(spec_msg(&o3)).expect("spec 3");
+            drop(mailbox);
+            let _ = handle.await;
+
+            {
+                let fcus = fx.beacon.fcu_calls.lock().unwrap();
+                let last = fcus.last().unwrap();
+                assert_eq!(
+                    last.head_block_hash,
+                    fx.chain.executed_hash(ANCHOR + 3).unwrap(),
+                    "head climbed to the speculative tip +3"
+                );
+                assert_eq!(
+                    last.safe_block_hash, safe_after_finalize,
+                    "safe stayed at the ordering-final tip — spec never moves safe"
+                );
+                assert_eq!(
+                    last.finalized_block_hash, fx.anchor_hash,
+                    "finalized stayed clamped at the anchor"
+                );
+            }
         });
     }
 
@@ -2653,14 +2910,18 @@ mod tests {
 
             actor.reseed_forward(landing, landing_hash, floor).await;
 
-            let (ordering_finalized, anchor_finalized, finalized_height, spec_head) =
+            let (ordering_finalized, anchor_finalized, safe_height, finalized_height, spec_head) =
                 actor.seed_fields();
             assert_eq!(
                 ordering_finalized, landing,
                 "off-by-K: cursor raised to the LANDING, not the floor ({floor})"
             );
             assert_eq!(anchor_finalized, (Height::new(landing), landing_hash));
+            // B1 option (a): the in-memory `finalized_height` is raised to the
+            // LANDING (the FCU re-pins the engine tag to the floor); `safe` rides
+            // the landing too.
             assert_eq!(finalized_height, Height::new(landing));
+            assert_eq!(safe_height, Height::new(landing), "safe raised to the landing");
             assert_eq!(spec_head, landing, "stale-spec: spec_head raised to the landing");
         });
     }
@@ -2755,15 +3016,19 @@ mod tests {
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             actor.reseed_forward(landing, landing_hash, floor).await;
 
-            // The reseed issued the canonicalization FCU: head = landing (covers
-            // the whole segment), finalized = floor (two-tier, never ahead of the
-            // result tier).
+            // The reseed issued the canonicalization FCU: head = safe = landing
+            // (covers the whole segment; the landing is BFT ordering-final),
+            // finalized = floor (two-tier, never ahead of the result tier).
             {
                 let fcus = fx.beacon.fcu_calls.lock().unwrap();
                 let reseed_fcu = fcus
                     .last()
                     .expect("reseed_forward must issue a canonicalization FCU");
                 assert_eq!(reseed_fcu.head_block_hash, landing_hash, "FCU head = landing");
+                assert_eq!(
+                    reseed_fcu.safe_block_hash, landing_hash,
+                    "FCU safe = landing (ordering-final tip)"
+                );
                 assert_eq!(
                     reseed_fcu.finalized_block_hash, floor_hash,
                     "FCU finalized = floor (two-tier; never finalize ahead of the result tier)"
