@@ -18,7 +18,6 @@ use crate::{
     epocher::OriginEpocher,
     order_block::OrderBlock,
     outer::SharedMux,
-    role::{role, Role},
     scheme::soft_enter_verifier,
     slasher::Mailbox as SlasherMailbox,
     timeouts::ConsensusTimeouts,
@@ -44,6 +43,39 @@ use std::{
 };
 use tokio::sync::{mpsc, Notify};
 use tracing::{info, warn};
+
+/// The per-epoch validator role — a pure function of current state, NOT the
+/// emergent product of a boundary-coupled transition zoo. A committee member
+/// becomes a [`Role::Signer`] the instant it is in `committee[E]` at the live
+/// frontier and caught up to the upstream tip — no epoch-boundary wait (the
+/// cycle-2 fix; see the `dpos_role_state_binding` plan).
+///
+/// The decision is BEACON-INDEPENDENT and SYNC-INDEPENDENT: whether a node holds
+/// a usable DKG share, and whether the E-1 boundary block has reached the local
+/// marshal yet, are SPAWN-time concerns [`Actor::reconcile_roles`] gates
+/// SEPARATELY (the share-gate and the `Inline::genesis` precondition) — a
+/// `Signer` that holds no share for a beacon-active epoch, or whose boundary
+/// block has not yet landed, stays on the verify-only scheme (no participating
+/// engine) until both hold, because a shareless Simplex member rejects honest
+/// peers' seeded votes and wedges the chain, and the engine `unreachable!`s
+/// without its boundary block. Neither is modelled by the role verdict itself.
+///
+/// "Caught up" is NOT a separate signal: a node reaches the live frontier when
+/// `is_live` (its f+1-corroborated `highest_observed_epoch` reaches `E`) and its
+/// always-on executor has derived the chain up to E-1's boundary (the
+/// `Inline::genesis` spawn gate). The validator's executor is the sole reth
+/// writer and follows the chain by LOCAL derivation, so no cert-follow plane and
+/// no `caught_up` flag are needed on a validator. The membership→role map is
+/// `Signer` iff `is_member`, evaluated inline at the sole call site in
+/// [`Actor::reconcile_roles`] (the caller only reaches it at the live frontier,
+/// so liveness is not a separate input).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// Run a participating Simplex engine for the epoch (propose / vote / sign).
+    Signer,
+    /// Verify-only: follow finalized certs, never propose or sign.
+    Verifier,
+}
 
 /// Resolves the per-epoch [`BeaconKey`] (live-DKG store + carry-forward + genesis
 /// fallback). `None` ⇒ a fallback (pure-multisig) epoch. Built at the launch site
@@ -229,7 +261,7 @@ pub struct Config<B, XC, A> {
     /// per-epoch [`EpochEngineConfig`] so the engine swaps in a
     /// [`crate::byzantine::VoteEquivocator`].
     #[cfg(feature = "dpos-devnet-byzantine")]
-    pub byzantine: Option<crate::application::ByzantineMode>,
+    pub byzantine: Option<crate::byzantine::ByzantineMode>,
 }
 
 impl<E, B, XC, A> Actor<E, B, XC, A>
@@ -511,7 +543,10 @@ where
             return;
         }
 
-        match role(is_member) {
+        // Role is a pure function of membership (the caller is already at the
+        // live frontier, so liveness is not a separate input); see [`Role`].
+        let assigned_role = if is_member { Role::Signer } else { Role::Verifier };
+        match assigned_role {
             // Not a member (rotated out). Register verify-only so the marshal
             // verifies this epoch's certs; no participating engine.
             Role::Verifier => {

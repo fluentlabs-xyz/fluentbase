@@ -7,7 +7,7 @@
 use alloy_consensus::Header;
 use alloy_primitives::B256;
 use eyre::WrapErr as _;
-use fluentbase_consensus::beacon::{seed::prev_randao_from_seed, types::Seed};
+use fluentbase_consensus::beacon::seed::{prev_randao_from_seed, Seed};
 use fluentbase_consensus::{DerivedBlock, DerivedBlockBuilder, OrderBlock, ParentHeaderMissing};
 use reth_ethereum_primitives::EthPrimitives;
 use reth_evm::{

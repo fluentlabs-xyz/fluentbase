@@ -4,17 +4,17 @@
 //! agreeing OrderBlock N+K is the committee's attestation of block N's
 //! execution result.
 
-use crate::beacon::types::{Seed, MAX_BEACON_OUTCOME_SIZE};
+use crate::beacon::{outcome::MAX_BEACON_OUTCOME_SIZE, seed::Seed};
 use crate::digest::Digest;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use bytes::{Buf, BufMut};
-use commonware_codec::{Encode as _, EncodeSize, Read, Write};
+use commonware_codec::{Encode as _, EncodeSize, FixedSize, Read, Write};
 use commonware_consensus::{types::Height, Heightable};
 use commonware_cryptography::{Committable, Digestible};
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::SealedBlock;
 
-/// Result lag in blocks (Monad D=3). Consensus-critical: MUST be
+/// Result lag in blocks (D=3). Consensus-critical: MUST be
 /// byte-identical across nodes (same class as MAX_MESSAGE_SIZE, G11).
 /// Changing it is a chain-spec release, not a config knob.
 pub const K: u64 = 3;
@@ -185,16 +185,26 @@ impl Write for OrderBlock {
 impl EncodeSize for OrderBlock {
     fn encode_size(&self) -> usize {
         use alloy_rlp::Encodable as _;
-        32 + 8
-            + 8
-            + 20
-            + 8
-            + 32
-            + 4
+        // Mirrors `write` field-for-field, drawing each term from the SAME size
+        // source the matching `write` line emits — so the two cannot drift:
+        // fixed-codec fields report their own `encode_size()`, raw `put_slice`
+        // fields their slice length, and each length-prefixed field a `u32`
+        // header. `LEN_PREFIX` is that header (the `(len as u32).write` in
+        // `write`); `FLAGS` is the single beacon-presence byte. The
+        // `codec_round_trip` test pins `encode_size() == encode().len()`.
+        const LEN_PREFIX: usize = u32::SIZE;
+        const FLAGS: usize = u8::SIZE;
+        self.parent.encode_size()
+            + self.height.encode_size()
+            + self.timestamp.encode_size()
+            + self.fee_recipient.as_slice().len()
+            + self.gas_limit.encode_size()
+            + self.result.as_slice().len()
+            + LEN_PREFIX
             + self.extra_data.len()
             + self.txs.length()
-            + 1
-            + self.beacon_outcome.as_ref().map_or(0, |o| 4 + o.len())
+            + FLAGS
+            + self.beacon_outcome.as_ref().map_or(0, |o| LEN_PREFIX + o.len())
             + self.beacon_seed.as_ref().map_or(0, |s| s.encode_size())
     }
 }

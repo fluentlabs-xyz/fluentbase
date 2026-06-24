@@ -541,7 +541,7 @@ mod tests {
     /// smoke relies on (where a colluding byzantine quorum reaches certify).
     #[test]
     fn certify_nullifies_the_production_forge_outcome() {
-        use crate::beacon::outcome::forge_outcome_same_committee;
+        use crate::byzantine::forge_outcome_same_committee;
         let ns = seed_namespace(&fluent_namespace(20994));
         let r = round_at(7);
         let (real_outcome, real_shares) = deal_committee(1, 5);

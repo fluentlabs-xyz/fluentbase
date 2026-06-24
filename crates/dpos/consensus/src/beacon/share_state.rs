@@ -156,7 +156,7 @@ fn write_mode_0600(path: &Path, data: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::beacon::dkg::run_local_dkg;
+    use crate::beacon::dkg_oracle::run_local_dkg;
     use commonware_cryptography::ed25519::PrivateKey as Ed25519PrivateKey;
     use commonware_math::algebra::Random as _;
     use rand_08::rngs::StdRng;

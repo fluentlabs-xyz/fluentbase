@@ -9,7 +9,8 @@
 //! [`run_local_dkg`] drives all roles in one process — the exact sequence the
 //! async actor performs with real `BEACON_CHANNEL` message passing (each node
 //! runs only its own dealer + player). It is the orchestration reference and
-//! the test oracle; a single-process devnet bootstrap can call it directly.
+//! the test oracle — `#[cfg(test)]`-only (the networked `DkgActor`/`DkgCeremony`
+//! path is what runs in production); see the module gate in `beacon/mod.rs`.
 //
 // TODO(dpos_vrf_live_dkg, v2 — reshare-heal on observers): cadence v1 runs a
 // FRESH ceremony only on committee CHANGE and carry-forwards an unchanged

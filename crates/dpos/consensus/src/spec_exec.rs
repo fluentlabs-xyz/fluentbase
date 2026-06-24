@@ -15,7 +15,7 @@
 //! there is no cross-actor race on the speculative state.
 
 use crate::{
-    beacon::{certify::SeedStore, types::Seed},
+    beacon::{certify::SeedStore, seed::Seed},
     executor,
     executor::{Command, Notarized},
 };

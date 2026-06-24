@@ -19,7 +19,7 @@ use crate::{
         actor::DETERMINISTIC_BOOTSTRAP_EPOCH,
         ceremony::CeremonyOutput,
         outcome::{encode_outcome, parse_outcome, validate_share_on_poly},
-        types::Seed,
+        seed::Seed,
     },
     digest::Digest,
     executor, extra_data,
@@ -143,29 +143,6 @@ pub type CommitteeForEpoch = Arc<dyn Fn(u64) -> Option<Set<PeerPubkey>> + Send +
 /// site over the live-DKG `CeremonyStore`.
 pub type BeaconForEpoch = Arc<dyn Fn(u64) -> Option<(CeremonyOutput, Share)> + Send + Sync>;
 
-/// DEVNET/TEST-ONLY byzantine validator behaviour, gated behind the
-/// `dpos-devnet-byzantine` cargo feature. Never compiled into a production build,
-/// so a deployed validator can never misbehave through this path.
-#[cfg(feature = "dpos-devnet-byzantine")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ByzantineMode {
-    /// At a CHANGE-epoch first block: propose a FORGED `PK_E` (different from the
-    /// real DKG outcome) AND, as a verifier, vote yes on any change-epoch boundary
-    /// block regardless of the "C" gate (so a colluding byzantine quorum can
-    /// notarize a forge and exercise the certify-hook Nullify path). See
-    /// [`crate::beacon::certify`] and the byzantine-vrf smoke.
-    ForgeBeaconPk,
-    /// Multisig double-sign: this node EQUIVOCATES on every Notarize/Finalize it
-    /// would cast (two conflicting votes — a random proposal + the real one — for
-    /// the SAME round) so honest peers report a `ConflictingNotarize` /
-    /// `ConflictingFinalize` and the slasher jails it. The trigger is VOTE-based
-    /// (fires every view the node participates in), NOT leadership-based, so it is
-    /// deterministic in docker. Consumed in [`crate::engine`] (the per-epoch
-    /// engine swaps in a [`crate::byzantine::VoteEquivocator`] in place of the
-    /// honest `simplex::Engine`). See the byzantine equivocation smoke.
-    Equivocate,
-}
-
 /// The per-epoch beacon-DKG context threaded into [`FluentApp`]'s verify/propose
 /// path: the boundary "C" share-on-polynomial qualification + the proposer's
 /// `beacon_outcome` assertion. `None` on `FluentApp` ⇒ no beacon context
@@ -179,7 +156,7 @@ pub struct BeaconVerify {
     /// DEVNET/TEST-ONLY byzantine behaviour; `None` (and absent without the
     /// feature) on every honest node.
     #[cfg(feature = "dpos-devnet-byzantine")]
-    byzantine: Option<ByzantineMode>,
+    byzantine: Option<crate::byzantine::ByzantineMode>,
 }
 
 impl BeaconVerify {
@@ -201,7 +178,7 @@ impl BeaconVerify {
 
     /// DEVNET/TEST-ONLY: attach a byzantine behaviour. No-op when `None`.
     #[cfg(feature = "dpos-devnet-byzantine")]
-    pub fn with_byzantine(mut self, mode: Option<ByzantineMode>) -> Self {
+    pub fn with_byzantine(mut self, mode: Option<crate::byzantine::ByzantineMode>) -> Self {
         self.byzantine = mode;
         self
     }
@@ -211,7 +188,7 @@ impl BeaconVerify {
     fn forges_beacon_pk(&self) -> bool {
         #[cfg(feature = "dpos-devnet-byzantine")]
         {
-            matches!(self.byzantine, Some(ByzantineMode::ForgeBeaconPk))
+            matches!(self.byzantine, Some(crate::byzantine::ByzantineMode::ForgeBeaconPk))
         }
         #[cfg(not(feature = "dpos-devnet-byzantine"))]
         {
@@ -287,7 +264,7 @@ pub struct FluentApp<XC, A> {
     /// (agreed data once embedded); verify never reads them.
     fee_recipient: Address,
     target_gas_limit: u64,
-    /// Chain-wide Tempo→DPoS activation block — origin of the `result_target`
+    /// Chain-wide sequencer→DPoS activation block — origin of the `result_target`
     /// pre-activation window (`height < activation + K` ⇒ `result` is ZERO). A
     /// CHAIN constant, NOT this node's cold-start anchor (`genesis.height`): a
     /// deep-catch-up node seeds its ordering-chain genesis at the live frontier
@@ -480,7 +457,7 @@ where
                                     epoch,
                                     "BYZANTINE: proposing forged PK_E at boundary"
                                 );
-                                crate::beacon::outcome::forge_outcome_same_committee(&out)
+                                crate::byzantine::forge_outcome_same_committee(&out)
                             } else {
                                 out
                             };
@@ -939,7 +916,7 @@ mod tests {
 
     #[test]
     fn beacon_gate_epoch_type_and_share_on_poly() {
-        use crate::beacon::dkg::run_local_dkg;
+        use crate::beacon::dkg_oracle::run_local_dkg;
         use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
         use commonware_math::algebra::Random as _;
         use rand_08::rngs::StdRng;
@@ -1011,7 +988,7 @@ mod tests {
     /// epoch_start(1)=10, epoch_start(2)=20.
     #[test]
     fn epoch_two_bootstrap_is_change_boundary_on_stable_committee() {
-        use crate::beacon::dkg::run_local_dkg;
+        use crate::beacon::dkg_oracle::run_local_dkg;
         use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
         use commonware_math::algebra::Random as _;
         use rand_08::rngs::StdRng;

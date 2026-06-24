@@ -444,7 +444,7 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     pub last_execution_finalized_height: u64,
     pub initial_finalized: (Height, B256),
     pub initial_head: (Height, B256),
-    /// When migrating (Tempo→DPoS), the anchor height to seed the marshal's
+    /// When migrating (sequencer→DPoS), the anchor height to seed the marshal's
     /// in-order dispatch floor so it does not backfill pre-anchor history it
     /// will never receive. `None` on normal restart (floor comes from metadata).
     pub marshal_floor: Option<Height>,
@@ -478,7 +478,7 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// [`epoch_manager::Config`] so the per-epoch engine can swap in a
     /// [`crate::byzantine::VoteEquivocator`].
     #[cfg(feature = "dpos-devnet-byzantine")]
-    pub byzantine: Option<crate::application::ByzantineMode>,
+    pub byzantine: Option<crate::byzantine::ByzantineMode>,
 }
 
 /// The global-singleton consensus driver wrapping a per-epoch
@@ -616,7 +616,7 @@ where
         )
         .await;
 
-        // Tempo→DPoS swap: seed the marshal's in-order floor to the anchor so it
+        // sequencer→DPoS swap: seed the marshal's in-order floor to the anchor so it
         // dispatches from anchor+1 instead of chasing pre-anchor history that no
         // DPoS node holds (would otherwise stall Update::Block forever). Buffered
         // in the mailbox until the marshal actor starts in `run`; SetFloor is
@@ -630,7 +630,7 @@ where
         // not yet supported.
         // Loud operator-actionable error beats a silent wrong-snapshot
         // read from staking_reader. Empty range = no-op for the
-        // Tempo→DPoS migration path (cons_fin = 0).
+        // sequencer→DPoS migration path (cons_fin = 0).
         let backfill_range =
             (self.last_execution_finalized_height + 1)..=last_consensus_finalized_height.get();
         if !backfill_range.is_empty() {

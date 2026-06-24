@@ -29,7 +29,7 @@ use reth_chainspec::EthChainSpec as _;
 use reth_ethereum_engine_primitives::EthEngineTypes;
 use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
 use reth_node_api::{FullNodeComponents, FullNodeTypes};
-use reth_node_builder::{rpc::RethRpcAddOns, FullNode};
+use reth_node_builder::{rpc::RethRpcAddOns, FullNode, PayloadBuilderConfig};
 use reth_provider::providers::{BlockchainProvider, ProviderNodeTypes};
 use reth_storage_api::{
     BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider,
@@ -1244,9 +1244,16 @@ where
     // The protocol fee manager — same recipient the pre-deferred attrs
     // builder used; uniform across honest nodes (agreed data once embedded).
     let fee_recipient = fluentbase_types::PRECOMPILE_FEE_MANAGER;
-    // Gas-limit target = the chain's genesis gas limit (protocol default; the
-    // EIP-1559 ±1/1024 step walks the agreed limit toward it).
-    let target_gas_limit = node.chain_spec().genesis().gas_limit;
+    // Gas-limit target = the operator's `--builder.gaslimit` (the canonical reth
+    // knob — the SAME source the payload builder reads via `gas_limit_for`),
+    // falling back to the chain's genesis gas limit when unset. The EIP-1559
+    // ±1/1024 step in `application::step_gas_limit` walks the agreed limit toward
+    // it; pinning to genesis would make that step a permanent no-op.
+    let target_gas_limit = node
+        .config
+        .builder
+        .gas_limit()
+        .unwrap_or_else(|| node.chain_spec().genesis().gas_limit);
 
     // Cert-feed: the FeedSink goes DOWN into the marshal as its 2nd Reporter; the
     // receiver + state handle stay here to drive the node-side feed actor + RPC.
@@ -1265,11 +1272,11 @@ where
             tracing::warn!(
                 "DEVNET BYZANTINE MODE ACTIVE: forge-beacon-pk — NEVER use in production"
             );
-            Some(fluentbase_consensus::application::ByzantineMode::ForgeBeaconPk)
+            Some(fluentbase_consensus::byzantine::ByzantineMode::ForgeBeaconPk)
         }
         Some("equivocate") => {
             tracing::warn!("DEVNET BYZANTINE MODE ACTIVE: equivocate — NEVER use in production");
-            Some(fluentbase_consensus::application::ByzantineMode::Equivocate)
+            Some(fluentbase_consensus::byzantine::ByzantineMode::Equivocate)
         }
         Some(other) => {
             eyre::bail!(

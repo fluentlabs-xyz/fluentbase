@@ -18,6 +18,12 @@ use fluentbase_p2p::constants::MAX_COMMITTEE_SIZE;
 
 use crate::beacon::seed::GroupPublic;
 
+/// Decode cap for an embedded DKG outcome (the encoded commonware `Output`
+/// for a committee ≤ `MAX_COMMITTEE_SIZE`: a MinSig public polynomial of
+/// degree `quorum-1` in G2 plus the dealer/player/revealed sets). 64 KiB is
+/// generous headroom over the ~5 KiB worst case at n=51.
+pub const MAX_BEACON_OUTCOME_SIZE: usize = 64 * 1024;
+
 /// The DKG outcome for our committee: MinSig keys, participants identified by
 /// their ed25519 peer pubkey (the commonware participant-ordering key).
 pub type DkgOutcome =
@@ -106,42 +112,6 @@ pub fn validate_share_on_poly(
     }
 }
 
-/// DEVNET/TEST-ONLY forge of a different per-epoch DKG outcome over the SAME
-/// committee. Deals a fresh anonymous DKG to `real.players()` (the proposer holds
-/// the committee's PUBLIC peer set, never the other validators' shares) with a
-/// fixed devnet RNG, yielding an `Output` whose `players()`/`total()` match the
-/// real committee — so it passes the epoch-type/shape gate — but whose `PK_E`
-/// differs. The forged polynomial does NOT thread the honest shares, so each
-/// honest share-holder's "C" gate ([`validate_share_on_poly`]) rejects it at
-/// verify; under the realistic `f=1` bound the forge cannot reach a notarization
-/// quorum, so it never finalizes (the consensus-level SAFETY observable). The
-/// certify hook ([`crate::beacon::certify`]) is the closure that would Nullify it
-/// IF a colluding byzantine quorum did notarize it — exercised by the gated
-/// certify tests where the collusion is constructible.
-///
-/// Gated behind `dpos-devnet-byzantine` (or `test`): the forge can never be reached
-/// in a production build.
-#[cfg(any(test, feature = "dpos-devnet-byzantine"))]
-pub fn forge_outcome_same_committee(real: &DkgOutcome) -> DkgOutcome {
-    use commonware_cryptography::bls12381::{dkg::deal, primitives::sharing::Mode};
-    use commonware_utils::N3f1;
-    use rand_08::rngs::StdRng;
-    use rand_core::SeedableRng as _;
-
-    // Fixed devnet seed → deterministic forge (every byzantine node forges the
-    // identical PK_E for a given committee, so they collude on one value).
-    let mut rng = StdRng::seed_from_u64(0xB17E_FACE);
-    let players = real.players().clone();
-    let (forged, _shares) = deal::<MinSig, PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players)
-        .expect("forge: deal over the real committee's public players");
-    debug_assert_ne!(
-        forged.public().public(),
-        real.public().public(),
-        "a forged outcome must carry a different PK_E than the real one"
-    );
-    forged
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,7 +171,7 @@ mod tests {
 
     #[test]
     fn share_on_poly_accepts_own_rejects_forged_and_wrong_committee() {
-        use crate::beacon::dkg::run_local_dkg;
+        use crate::beacon::dkg_oracle::run_local_dkg;
         let mut rng = StdRng::seed_from_u64(13);
         let keys: Vec<Ed25519PrivateKey> =
             (0..5).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
@@ -239,14 +209,14 @@ mod tests {
     /// mechanism (the forge cannot pass C → cannot reach a quorum at `f=1`).
     #[test]
     fn forge_differs_in_pk_keeps_committee_shape_and_fails_honest_c() {
-        use crate::beacon::dkg::run_local_dkg;
+        use crate::beacon::dkg_oracle::run_local_dkg;
         let mut rng = StdRng::seed_from_u64(21);
         let keys: Vec<Ed25519PrivateKey> =
             (0..5).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
         let committee: Set<PeerPubkey> = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
         let (real, real_shares) = run_local_dkg(&mut rng, b"ns", 0, &keys, &keys).expect("dkg");
 
-        let forged = forge_outcome_same_committee(&real);
+        let forged = crate::byzantine::forge_outcome_same_committee(&real);
 
         assert_ne!(
             group_public_key(&forged),

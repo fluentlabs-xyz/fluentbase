@@ -52,6 +52,30 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+/// Codeless-tolerant epoch-geometry read: `None` when `ChainConfig` is not
+/// deployed (or DPoS not yet scheduled) at `at` — the launch discriminator
+/// between "restart datadir / genesis-baked devnet" and "fresh datadir on a
+/// runtime-deployed chain", where geometry is only readable AFTER EL-sync. Used
+/// by the follower cold-start in [`DposLayer::launch_follower`].
+fn read_geometry<Provider, EvmConfig>(
+    reader: &RethStakingStateReader<Provider, EvmConfig>,
+    at: B256,
+) -> eyre::Result<Option<(u64, u32)>>
+where
+    Provider:
+        StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
+    EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
+{
+    match reader.scheduled_dpos_activation(at)? {
+        None => Ok(None),
+        Some(activation) => {
+            let interval = reader.epoch_block_interval(at)?;
+            ensure!(interval > 0, "epoch_block_interval must be > 0");
+            Ok(Some((activation, interval)))
+        }
+    }
+}
+
 /// Threshold for consecutive `on_finalized` errors before initiating shutdown.
 /// At 1 block/sec finalization, 3 = ~3 seconds tolerance. Survives transient
 /// errors (single bad read, reorg edge); fails fast on persistent (disk full,
@@ -285,7 +309,7 @@ where
         let seed = fin
             .certificate
             .seed()
-            .map(|signature| crate::beacon::types::Seed {
+            .map(|signature| crate::beacon::seed::Seed {
                 target_round: fin.proposal.round,
                 signature,
             });
@@ -381,7 +405,7 @@ pub struct DposLayerConfig<D, XC, A, U> {
     /// DEVNET/TEST-ONLY byzantine behaviour (gated behind `dpos-devnet-byzantine`).
     /// Absent — and the field does not exist — in a production build.
     #[cfg(feature = "dpos-devnet-byzantine")]
-    pub byzantine: Option<crate::application::ByzantineMode>,
+    pub byzantine: Option<crate::byzantine::ByzantineMode>,
 }
 
 /// A plane-owned broker handle for one of the 5 non-beacon channels: the single
@@ -722,7 +746,7 @@ impl DposLayer {
 
         // Cold-start discriminator (restart vs fresh migration). The marshal's
         // durable application-metadata is the signal: an empty store (height <=
-        // activation) is a fresh Tempo→DPoS migration — unless the EL overshot
+        // activation) is a fresh sequencer→DPoS migration — unless the EL overshot
         // epoch 0, which is fatal (state of unknown provenance). A populated
         // store is a restart of an already-migrated node, which MUST resume at
         // its real finalized height so the scheme cascade starts at the correct
@@ -875,7 +899,7 @@ impl DposLayer {
         // Clean-halt migration invariant: the pre-DPoS sequencer is production-gated
         // at `dposActivationBlock` (bins/fluent launcher), so on a fresh migration
         // reth's canonical head MUST already equal the activation anchor — there is
-        // no orphaned Tempo tail to reconcile. A mismatch means the gate did not run
+        // no orphaned sequencer-era tail to reconcile. A mismatch means the gate did not run
         // (mis-set chain-config, an ungated node, or a hand-rolled migration): fail
         // loud at cold-start rather than wedge silently in the executor ancestor-FCU
         // guard.
@@ -883,7 +907,7 @@ impl DposLayer {
             ensure!(
                 head_hash == latest_finalized_hash,
                 "fresh migration but reth head {head_num} ({head_hash:?}) != activation \
-                 anchor {latest_finalized} ({latest_finalized_hash:?}); the Tempo sequencer \
+                 anchor {latest_finalized} ({latest_finalized_hash:?}); the sequencer \
                  was not production-gated at dposActivationBlock — refusing to anchor DPoS \
                  on an orphaned tail"
             );
@@ -998,7 +1022,7 @@ impl DposLayer {
         //
         // `latest_finalized` is 0 for pristine cold-start (no FCU yet — canonical
         // state empty → falls to `BlockNumHash::new(0, genesis_hash)` at dpos.rs:220)
-        // and N for Tempo→DPoS migration (Tempo's last finalised height read from
+        // and N for sequencer→DPoS migration (the sequencer's last finalised height read from
         // disk by reth's `BlockchainProvider::with_latest`).
         //
         // For migration, anchoring the consensus genesis at block N (rather than
@@ -1704,7 +1728,7 @@ impl DposLayer {
         };
 
         let (activation, interval, mut anchor_height, mut anchor_hash) =
-            match crate::cert_follow::read_geometry(&reader, rf_hash)? {
+            match read_geometry(&reader, rf_hash)? {
                 Some((activation, interval)) => {
                     let el = mk_el_sync(activation);
                     let (h, hash) = match upstream.as_ref() {
@@ -1745,7 +1769,7 @@ impl DposLayer {
                     })?;
                     let (h, hash) = mk_el_sync(0).sync_to(&latest).await?;
                     let (activation, interval) =
-                        crate::cert_follow::read_geometry(&reader, hash)?.ok_or_else(|| {
+                        read_geometry(&reader, hash)?.ok_or_else(|| {
                             eyre!(
                                 "cert-follow: ChainConfig still not deployed at the synced tip \
                                  {h} — wrong chain, or the upstream predates DPoS activation"
@@ -2420,7 +2444,7 @@ mod visibility_retry_tests {
             &self,
             order: OrderBlock,
             parent_evm_hash: B256,
-            _seed: Option<crate::beacon::types::Seed>,
+            _seed: Option<crate::beacon::seed::Seed>,
         ) -> eyre::Result<SealedBlock<RethBlock>> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             if n < self.transient_failures {

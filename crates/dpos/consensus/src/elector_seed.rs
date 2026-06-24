@@ -8,8 +8,6 @@
 //! across all honest nodes (same `Staking.sol` state) so the leader
 //! permutation cannot desync.
 
-// **** вышлядит так как можно пренести в другой файл, отдельный зажирно
-
 use commonware_cryptography::{Hasher, Sha256};
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 
@@ -27,7 +25,7 @@ use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 /// independent of upstream ordering changes; the leader schedule cannot
 /// desync between honest nodes that observe the same epoch's keys in any
 /// order.
-pub fn epoch_leader_seed(snap: &ValidatorSetSnapshot) -> [u8; 32] {
+pub(crate) fn epoch_leader_seed(snap: &ValidatorSetSnapshot) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(&snap.epoch.to_be_bytes());
     let mut peers: Vec<&[u8]> = snap

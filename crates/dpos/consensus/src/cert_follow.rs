@@ -1,4 +1,4 @@
-//! Upstream abstraction for the cert-follower engine.
+//! Cert-follow transport seam (post unified-node-mode collapse).
 //!
 //! The follower engine is transport-agnostic: it pulls finalizations by height
 //! (the marshal's gap-repair path) and consumes a live stream of finalized
@@ -7,6 +7,16 @@
 //! names node RPC types. This mirrors tempo's `follow/upstream` trait seam
 //! (`UpstreamActor`, follow/upstream/mod.rs:22), adapted to fluentbase's
 //! consensus/node crate split.
+//!
+//! A non-validator follower is a near-planeless
+//! [`crate::dpos::DposLayer::launch_follower`] (inlet + executor, the executor
+//! being the sole reth writer); an upstream-configured validator runs the
+//! cert-inlet as a second producer into its own marshal. Both share only
+//! [`CertUpstream`] / [`UpstreamFinalized`] — the by-height pull + live
+//! finalized-cert stream the node's WS actor implements (the inlet's sole
+//! producer; the cold-start JUMP's `get_latest` source). The per-epoch BLS
+//! verifier read ([`crate::cert_inlet::RethCommitteeSource`]) and the EL-sync
+//! JUMP ([`crate::cold_start_jump::RethElSync`]) live in their own modules.
 
 use crate::{digest::Digest, order_block::OrderBlock};
 use commonware_consensus::{simplex::types::Finalization, types::Height};

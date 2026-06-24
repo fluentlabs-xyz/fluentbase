@@ -14,8 +14,11 @@
 
 pub mod application;
 pub mod beacon;
-/// DEVNET/TEST-ONLY byzantine validator actors (gated behind `dpos-devnet-byzantine`).
-#[cfg(feature = "dpos-devnet-byzantine")]
+/// DEVNET/TEST-ONLY byzantine code — the single home for all byzantine logic
+/// (`ByzantineMode`, `forge_outcome_same_committee`, `VoteEquivocator`). Gated
+/// behind `dpos-devnet-byzantine`; also built under `test` so in-crate forge/certify
+/// unit tests reach the helpers. Never compiled into a production build.
+#[cfg(any(test, feature = "dpos-devnet-byzantine"))]
 pub mod byzantine;
 pub mod cert_follow;
 pub mod cert_inlet;
@@ -31,7 +34,6 @@ pub mod extra_data;
 pub mod feed_sink;
 pub mod order_block;
 pub mod outer;
-pub mod role;
 pub mod scheme;
 pub mod slasher;
 pub mod spec_exec;
@@ -41,7 +43,7 @@ pub use application::{
     gas_limit_within_1_1024, step_gas_limit, BeaconEngineLike, DerivedBlock, DerivedBlockBuilder,
     ExecutedChain, FluentApp, OrderingAssembler, ParentHeaderMissing, VERIFY_EXEC_BUDGET,
 };
-pub use cert_follow::{read_geometry, CertUpstream, UpstreamFinalized};
+pub use cert_follow::{CertUpstream, UpstreamFinalized};
 pub use cert_inlet::{
     CertInlet, CommitteeSource, MarshalSink, NoopResolver, RethCommitteeSource, RotateUpstream,
     MAX_UPSTREAM_FAULTS,
@@ -55,7 +57,6 @@ pub use dpos::{
     FollowerLayerConfig, FollowerRethHandle, PlaneMux, ResettableForward, RethHandle,
     SharedBeaconPlane, VoteBackupItem,
 };
-pub use elector_seed::epoch_leader_seed;
 pub use epocher::OriginEpocher;
 pub use feed_sink::FeedSink;
 pub use order_block::{

@@ -64,7 +64,7 @@ pub enum Command {
 pub struct Notarized {
     pub round: commonware_consensus::types::Round,
     pub digest: crate::digest::Digest,
-    pub seed: Option<crate::beacon::types::Seed>,
+    pub seed: Option<crate::beacon::seed::Seed>,
 }
 
 #[derive(Clone)]
@@ -141,7 +141,7 @@ pub enum SeedLookup {
     /// gated `order.digest()` fallback is correct and agreed across nodes.
     NoBeacon,
     /// The cert is present and carries the round's threshold seed.
-    Seed(crate::beacon::types::Seed),
+    Seed(crate::beacon::seed::Seed),
 }
 
 pub trait BlockFetcher: Clone + Send + Sync + 'static {
@@ -200,7 +200,7 @@ impl BlockFetcher
         match self.get_finalization(height).await {
             None => SeedLookup::CertMissing,
             Some(fin) => match fin.certificate.seed() {
-                Some(signature) => SeedLookup::Seed(crate::beacon::types::Seed {
+                Some(signature) => SeedLookup::Seed(crate::beacon::seed::Seed {
                     target_round: fin.proposal.round,
                     signature,
                 }),
@@ -289,7 +289,7 @@ enum DeriveOutcome {
 /// Seed resolution for one height: either a usable seed (`Some` = beacon,
 /// `None` = agreed no-beacon fallback) or "cert not local — fetch it".
 enum SeedOr {
-    Seed(Option<crate::beacon::types::Seed>),
+    Seed(Option<crate::beacon::seed::Seed>),
     Need(Height),
 }
 
@@ -309,7 +309,7 @@ pub struct Config<BE, D, XC, MarshalMailbox> {
     pub last_execution_finalized_height: u64,
     pub initial_finalized: (Height, B256),
     pub initial_head: (Height, B256),
-    /// Chain-wide Tempo→DPoS activation block — the origin of the
+    /// Chain-wide sequencer→DPoS activation block — the origin of the
     /// `result_target` pre-activation window (`height < activation + K` ⇒
     /// `result` MUST be ZERO). A CHAIN constant, NOT this node's cold-start
     /// anchor: a deep-catch-up follower trust-anchors at the live frontier
@@ -913,7 +913,7 @@ where
         cause: Span,
         _round: commonware_consensus::types::Round,
         digest: crate::digest::Digest,
-        seed: Option<crate::beacon::types::Seed>,
+        seed: Option<crate::beacon::seed::Seed>,
     ) -> eyre::Result<()> {
         // A finalized block is deferred awaiting its cert (strict-order pause).
         // Speculating past it would advance head/spec_head OVER the deferred
@@ -1427,7 +1427,7 @@ mod tests {
         }
     }
 
-    type SeedsSeen = Arc<Mutex<Vec<(u64, Option<crate::beacon::types::Seed>)>>>;
+    type SeedsSeen = Arc<Mutex<Vec<(u64, Option<crate::beacon::seed::Seed>)>>>;
 
     #[derive(Clone)]
     struct FakeDeriver {
@@ -1454,7 +1454,7 @@ mod tests {
             &self,
             order: OrderBlock,
             parent_evm_hash: B256,
-            seed: Option<crate::beacon::types::Seed>,
+            seed: Option<crate::beacon::seed::Seed>,
         ) -> eyre::Result<RethExecBlock> {
             self.seeds_seen.lock().unwrap().push((order.height, seed));
             // Model derive_sync's by-HASH parent read: a parent not yet canonical
@@ -1545,7 +1545,7 @@ mod tests {
         MissingUntilHinted,
         /// Every height's cert carries this real beacon seed — `SeedLookup::Seed`
         /// flows through the executor into the deriver.
-        Beacon(crate::beacon::types::Seed),
+        Beacon(crate::beacon::seed::Seed),
     }
 
     #[derive(Clone, Default)]
@@ -1700,7 +1700,7 @@ mod tests {
 
     /// A real recovered threshold seed for `round` (the executor passes it
     /// through verbatim; it never re-verifies, so any valid `Seed` suffices).
-    fn real_seed(round: commonware_consensus::types::Round) -> crate::beacon::types::Seed {
+    fn real_seed(round: commonware_consensus::types::Round) -> crate::beacon::seed::Seed {
         use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
         use commonware_utils::{test_rng, N3f1, NZU32};
         use fluentbase_bls::beacon::{recover_seed, seed_namespace, sign_seed_partial};
@@ -1712,7 +1712,7 @@ mod tests {
             .iter()
             .map(|s| sign_seed_partial(s, &ns, round))
             .collect();
-        crate::beacon::types::Seed {
+        crate::beacon::seed::Seed {
             target_round: round,
             signature: recover_seed::<N3f1>(&sharing, &partials).expect("recover seed"),
         }

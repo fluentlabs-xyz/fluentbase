@@ -1,5 +1,9 @@
-//! DEVNET/TEST-ONLY byzantine validator actors, gated behind the
-//! `dpos-devnet-byzantine` cargo feature. Never compiled into a production build.
+//! DEVNET/TEST-ONLY byzantine validator code, gated behind the
+//! `dpos-devnet-byzantine` cargo feature (also built under `test`, so the in-crate
+//! forge/certify unit tests can reach [`forge_outcome_same_committee`]). Never
+//! compiled into a production build. This is the SINGLE home for byzantine logic:
+//! the behaviour selector [`ByzantineMode`], the beacon-`PK_E` forge
+//! [`forge_outcome_same_committee`], and the vote double-signer [`VoteEquivocator`].
 //!
 //! [`VoteEquivocator`] is a vote-reactive double-signer adapted from commonware's
 //! `simplex::mocks::conflicter::Conflicter`. It is vendored (rather than reused via
@@ -24,6 +28,7 @@
 //! quorum (n − f) does. Honest peers block the equivocator, but its first
 //! conflicting pair is enough for the slash.
 
+use crate::beacon::outcome::DkgOutcome;
 use crate::digest::Digest;
 use commonware_codec::{DecodeExt, Encode};
 use commonware_consensus::{
@@ -36,6 +41,63 @@ use commonware_runtime::{spawn_cell, Clock, ContextCell, Handle, Spawner};
 use fluentbase_bls::Scheme as BlsScheme;
 use rand_core::CryptoRngCore;
 use tracing::{debug, warn};
+
+/// DEVNET/TEST-ONLY byzantine validator behaviour selector. `None` (and absent
+/// without the feature) on every honest node, so a deployed validator can never
+/// misbehave through this path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ByzantineMode {
+    /// At a CHANGE-epoch first block: propose a FORGED `PK_E` (different from the
+    /// real DKG outcome) AND, as a verifier, vote yes on any change-epoch boundary
+    /// block regardless of the "C" gate (so a colluding byzantine quorum can
+    /// notarize a forge and exercise the certify-hook Nullify path). See
+    /// [`crate::beacon::certify`] and the byzantine-vrf smoke.
+    ForgeBeaconPk,
+    /// Multisig double-sign: this node EQUIVOCATES on every Notarize/Finalize it
+    /// would cast (two conflicting votes — a random proposal + the real one — for
+    /// the SAME round) so honest peers report a `ConflictingNotarize` /
+    /// `ConflictingFinalize` and the slasher jails it. The trigger is VOTE-based
+    /// (fires every view the node participates in), NOT leadership-based, so it is
+    /// deterministic in docker. Consumed in [`crate::engine`] (the per-epoch engine
+    /// swaps in a [`VoteEquivocator`] in place of the honest `simplex::Engine`).
+    /// See the byzantine equivocation smoke.
+    Equivocate,
+}
+
+/// DEVNET/TEST-ONLY forge of a different per-epoch DKG outcome over the SAME
+/// committee. Deals a fresh anonymous DKG to `real.players()` (the proposer holds
+/// the committee's PUBLIC peer set, never the other validators' shares) with a
+/// fixed devnet RNG, yielding an `Output` whose `players()`/`total()` match the
+/// real committee — so it passes the epoch-type/shape gate — but whose `PK_E`
+/// differs. The forged polynomial does NOT thread the honest shares, so each honest
+/// share-holder's "C" gate rejects it at verify; under the realistic `f=1` bound the
+/// forge cannot reach a notarization quorum, so it never finalizes (the
+/// consensus-level SAFETY observable). The certify hook ([`crate::beacon::certify`])
+/// is the closure that would Nullify it IF a colluding byzantine quorum did notarize
+/// it — exercised by the gated certify tests where the collusion is constructible.
+pub fn forge_outcome_same_committee(real: &DkgOutcome) -> DkgOutcome {
+    use commonware_cryptography::bls12381::{
+        dkg::deal,
+        primitives::{sharing::Mode, variant::MinSig},
+    };
+    use commonware_utils::N3f1;
+    use fluentbase_bls::PeerPubkey;
+    use rand_08::rngs::StdRng;
+    use rand_core::SeedableRng as _;
+
+    // Fixed devnet seed → deterministic forge (every byzantine node forges the
+    // identical PK_E for a given committee, so they collude on one value).
+    let mut rng = StdRng::seed_from_u64(0xB17E_FACE);
+    let players = real.players().clone();
+    let (forged, _shares) = deal::<MinSig, PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players)
+        .expect("forge: deal over the real committee's public players");
+    debug_assert_ne!(
+        forged.public().public(),
+        real.public().public(),
+        "a forged outcome must carry a different PK_E than the real one"
+    );
+    forged
+}
 
 /// Build the equivocation partner proposal: the SAME round and parent as the vote
 /// we are conflicting with, but a fresh RANDOM payload — so the two votes differ in

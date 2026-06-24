@@ -107,7 +107,7 @@ pub struct EpochEngineConfig<B, XC, A> {
     /// `Some(ByzantineMode::Equivocate)` (and this node can sign), `new()` builds
     /// the [`Inner::Equivocate`] variant instead of the honest `simplex::Engine`.
     #[cfg(feature = "dpos-devnet-byzantine")]
-    pub byzantine: Option<crate::application::ByzantineMode>,
+    pub byzantine: Option<crate::byzantine::ByzantineMode>,
 }
 
 /// The per-epoch engine variant chosen in [`EpochEngine::new`]. Honest nodes are
@@ -228,7 +228,7 @@ where
         #[cfg(feature = "dpos-devnet-byzantine")]
         if matches!(
             cfg.byzantine,
-            Some(crate::application::ByzantineMode::Equivocate)
+            Some(crate::byzantine::ByzantineMode::Equivocate)
         ) && can_sign
         {
             tracing::warn!(
