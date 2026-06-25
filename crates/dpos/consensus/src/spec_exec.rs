@@ -67,7 +67,6 @@ impl Reporter for Mailbox {
         let msg = executor::Message {
             cause: Span::current(),
             command: Command::SpecNotarized(Box::new(Notarized {
-                round: n.proposal.round,
                 digest: n.proposal.payload,
                 seed,
             })),

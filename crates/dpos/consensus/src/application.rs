@@ -16,7 +16,7 @@
 
 use crate::{
     beacon::{
-        actor::DETERMINISTIC_BOOTSTRAP_EPOCH,
+        actor::{CommitteeFor, DETERMINISTIC_BOOTSTRAP_EPOCH},
         ceremony::CeremonyOutput,
         outcome::{encode_outcome, parse_outcome, validate_share_on_poly},
         seed::Seed,
@@ -43,9 +43,11 @@ use commonware_cryptography::{
     bls12381::primitives::group::Share, certificate::Signers, ed25519::PublicKey,
 };
 use commonware_runtime::{Clock, Metrics, Spawner};
+#[cfg(test)]
 use commonware_utils::ordered::Set;
 /// The signing scheme bound for this Application.
 pub use fluentbase_bls::Scheme as BlsScheme;
+#[cfg(test)]
 use fluentbase_bls::PeerPubkey;
 use futures::StreamExt as _;
 use rand_08::Rng;
@@ -84,7 +86,11 @@ pub const BLOCK_INTERVAL: Duration = Duration::from_secs(1);
 /// block.timestamp permanently (strict-monotonicity ratchet) and makes
 /// every honest proposer sleep_until(fake_time) — a single-block chain
 /// halt. With it, such a proposal fails verify at the honest quorum and
-/// the view nullifies. Consensus rule — MUST be uniform across nodes.
+/// the view nullifies. Deliberately == `BLOCK_INTERVAL` (1s): do NOT widen it
+/// (e.g. to 2s for sloppy NTP) — that would let chain-time run up to ~1 block
+/// ahead of real time and weaken the hard "1 block ≈ 1 real second"
+/// requirement. Clock sync is an operator duty, not a reason to loosen this
+/// (decision 2026-06-24). Consensus rule — MUST be uniform across nodes.
 pub const TIMESTAMP_FUTURE_TOLERANCE_SECS: u64 = 1;
 
 /// EIP-1559 hard floor for a header gas limit.
@@ -133,10 +139,6 @@ pub fn step_gas_limit(parent: u64, target: u64) -> u64 {
     stepped.max(MIN_GAS_LIMIT)
 }
 
-/// Resolves committee[epoch] (the Commonware-ordered peer set) at the current
-/// finalized state — provided by the launch site over the staking reader.
-pub type CommitteeForEpoch = Arc<dyn Fn(u64) -> Option<Set<PeerPubkey>> + Send + Sync>;
-
 /// Resolves this node's memoized DKG result for an epoch it is a MEMBER of:
 /// the agreed `Output` (`PK_E`) + this node's share. `None` ⇒ observer / share
 /// not produced (⇒ withhold the qualifying beacon vote). Provided by the launch
@@ -150,7 +152,7 @@ pub type BeaconForEpoch = Arc<dyn Fn(u64) -> Option<(CeremonyOutput, Share)> + S
 #[derive(Clone)]
 pub struct BeaconVerify {
     beacon_for_epoch: BeaconForEpoch,
-    committee_for: CommitteeForEpoch,
+    committee_for: CommitteeFor,
     dpos_activation: u64,
     epoch_interval: u64,
     /// DEVNET/TEST-ONLY byzantine behaviour; `None` (and absent without the
@@ -162,7 +164,7 @@ pub struct BeaconVerify {
 impl BeaconVerify {
     pub fn new(
         beacon_for_epoch: BeaconForEpoch,
-        committee_for: CommitteeForEpoch,
+        committee_for: CommitteeFor,
         dpos_activation: u64,
         epoch_interval: u64,
     ) -> Self {
@@ -499,7 +501,6 @@ where
             result,
             txs,
             beacon_outcome,
-            beacon_seed: None,
         })
     }
 }
@@ -880,7 +881,6 @@ mod tests {
             result: B256::ZERO,
             txs: Vec::new(),
             beacon_outcome: None,
-            beacon_seed: None,
         }
     }
 
@@ -942,7 +942,7 @@ mod tests {
             } else {
                 committee.clone()
             };
-            let committee_for: CommitteeForEpoch = Arc::new(move |e: u64| match e {
+            let committee_for: CommitteeFor = Arc::new(move |e: u64| match e {
                 0 => Some(prev.clone()),
                 _ => Some(cur.clone()),
             });
@@ -1003,7 +1003,7 @@ mod tests {
         let (out, shares) = run_local_dkg(&mut rng, b"ns", 2, &keys, &keys).expect("dkg");
         let my_share = shares.get(&keys[0].public_key()).expect("share").clone();
 
-        let committee_for: CommitteeForEpoch = {
+        let committee_for: CommitteeFor = {
             let c = committee.clone();
             Arc::new(move |_e: u64| Some(c.clone()))
         };
@@ -1159,7 +1159,7 @@ mod tests {
             let c0: Set<PeerPubkey> = Set::from_iter_dedup(k0.iter().map(|k| k.public_key()));
             let c1: Set<PeerPubkey> = Set::from_iter_dedup(k1.iter().map(|k| k.public_key()));
             // c0 != c1 ⇒ epoch 1's first block is a CHANGE-epoch boundary.
-            let committee_for: CommitteeForEpoch = Arc::new(move |e: u64| match e {
+            let committee_for: CommitteeFor = Arc::new(move |e: u64| match e {
                 0 => Some(c0.clone()),
                 _ => Some(c1.clone()),
             });

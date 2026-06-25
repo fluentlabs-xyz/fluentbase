@@ -484,7 +484,6 @@ mod tests {
             result: Default::default(),
             txs: Vec::new(),
             beacon_outcome: beacon_outcome.map(Into::into),
-            beacon_seed: None,
         }
     }
 

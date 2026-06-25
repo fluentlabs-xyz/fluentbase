@@ -16,6 +16,7 @@
 
 use bytes::{Buf, BufMut};
 use commonware_codec::{EncodeSize, Error, Read, Write};
+use core::mem::size_of;
 use commonware_cryptography::{
     bls12381::{
         dkg::{DealerPrivMsg, DealerPubMsg, PlayerAck, SignedDealerLog},
@@ -58,6 +59,9 @@ pub struct DkgMsg {
     pub body: DkgBody,
 }
 
+// Wire: ceremony_epoch(u64) ‖ body_tag(u8) ‖ body. `body_tag` ∈ {Commitment 0,
+// Share 1, Ack 2, Reveal 3}; unknown → Err. Commitment/Reveal carry the
+// commitment polynomial / signed log, decode-bounded by the committee-size `Cfg`.
 impl Write for DkgMsg {
     fn write(&self, buf: &mut impl BufMut) {
         self.ceremony_epoch.write(buf);
@@ -85,7 +89,7 @@ impl Write for DkgMsg {
 impl EncodeSize for DkgMsg {
     fn encode_size(&self) -> usize {
         self.ceremony_epoch.encode_size()
-            + 1
+            + size_of::<u8>() // body tag
             + match &self.body {
                 DkgBody::Commitment(m) => m.encode_size(),
                 DkgBody::Share(m) => m.encode_size(),

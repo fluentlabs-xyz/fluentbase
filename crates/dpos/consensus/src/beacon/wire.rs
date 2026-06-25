@@ -7,6 +7,7 @@
 
 use bytes::{Buf, BufMut, Bytes};
 use commonware_codec::{EncodeSize, Read, Write};
+use core::mem::size_of;
 
 /// Decode cap for an opaque DKG protocol message (a signed dealer log for a
 /// committee ≤ MAX_COMMITTEE_SIZE is the largest; 64 KiB is ample headroom).
@@ -23,6 +24,9 @@ pub enum BeaconMessage {
     Dkg(Bytes),
 }
 
+// Wire: tag(u8) ‖ [ TAG_DKG ⇒ dkg_len(u32) ‖ dkg_bytes ]. An unknown tag decodes
+// to `Err` (forward-safe: a future variant takes a new tag; old readers reject
+// rather than misparse).
 impl Write for BeaconMessage {
     fn write(&self, buf: &mut impl BufMut) {
         match self {
@@ -37,9 +41,10 @@ impl Write for BeaconMessage {
 
 impl EncodeSize for BeaconMessage {
     fn encode_size(&self) -> usize {
-        1 + match self {
-            BeaconMessage::Dkg(bytes) => 4 + bytes.len(),
-        }
+        size_of::<u8>() // tag
+            + match self {
+                BeaconMessage::Dkg(bytes) => size_of::<u32>()/* len prefix */ + bytes.len(),
+            }
     }
 }
 

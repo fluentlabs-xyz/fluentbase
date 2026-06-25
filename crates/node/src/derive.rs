@@ -290,7 +290,6 @@ mod tests {
             result: B256::ZERO,
             txs: vec![signed_transfer(&signer, 0), signed_transfer(&signer, 7)],
             beacon_outcome: None,
-            beacon_seed: None,
         };
 
         let evm_config = FluentEvmConfig::new(

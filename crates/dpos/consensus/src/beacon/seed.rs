@@ -28,6 +28,7 @@ pub struct Seed {
     pub signature: BlsSignature,
 }
 
+// Wire: target_round ‖ signature — both fixed-size, no length prefix.
 impl Write for Seed {
     fn write(&self, buf: &mut impl BufMut) {
         self.target_round.write(buf);

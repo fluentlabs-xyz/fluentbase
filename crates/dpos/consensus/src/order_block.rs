@@ -4,7 +4,7 @@
 //! agreeing OrderBlock N+K is the committee's attestation of block N's
 //! execution result.
 
-use crate::beacon::{outcome::MAX_BEACON_OUTCOME_SIZE, seed::Seed};
+use crate::beacon::outcome::MAX_BEACON_OUTCOME_SIZE;
 use crate::digest::Digest;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use bytes::{Buf, BufMut};
@@ -41,15 +41,24 @@ pub struct OrderBlock {
     /// Digest of OrderBlock N−1 (the ordering chain, NOT the EVM parent hash).
     pub parent: Digest,
     pub height: u64,
-    /// Proposer-chosen; becomes the derived header timestamp. Verified
-    /// strictly monotonic vs the parent (no wall-clock check — verify must be
-    /// a pure function of agreed state).
+    /// Proposer-chosen; becomes the derived header timestamp. `verify`
+    /// (`structural_checks`) gates it on TWO bounds: strictly monotonic vs the
+    /// parent AND `<= local_now + TIMESTAMP_FUTURE_TOLERANCE_SECS` — the latter
+    /// a VOTE-time wall-clock upper bound (the verifier's own clock) that
+    /// rejects future-dated blocks and defeats the time-ratchet attack. The
+    /// wall-clock bound gates the VOTE only; the state transition copies this
+    /// verbatim (`derive.rs`), so STF determinism is unaffected.
     pub timestamp: u64,
     /// Proposer's fee recipient — derived header beneficiary.
     pub fee_recipient: Address,
-    /// Derived block gas limit. Agreed data, NOT local config (a local
-    /// `--builder.gaslimit` would diverge derived blocks across nodes).
-    /// Verified within the EIP-1559 ±1/1024 bound vs the parent.
+    /// Derived block gas limit, as AGREED in the artifact: derivation and
+    /// `verify` read THIS field — never a node's local config — so every node
+    /// derives an identical block. `verify` only bounds it within the EIP-1559
+    /// ±1/1024 step vs the parent. The PROPOSER nudges it one such step per
+    /// block toward its own `--builder.gaslimit` (the `target_gas_limit` fed to
+    /// `step_gas_limit` on the propose path): that flag sets the TARGET the
+    /// agreed value walks toward, NOT the per-block value itself — reading a
+    /// local `--builder.gaslimit` at derive/verify time would diverge nodes.
     pub gas_limit: u64,
     /// Simplex liveness attestation (same wire format as the executed-block
     /// era header extra_data); copied verbatim into the derived EVM header so
@@ -68,10 +77,6 @@ pub struct OrderBlock {
     /// layer (parsed by `beacon` with the committee-size config — `Output`'s
     /// decode needs it); the system call then publishes `PK_{E+1}` to L2.
     pub beacon_outcome: Option<Bytes>,
-    /// Per-height threshold randomness seed for a PAST height (see [`Seed`]),
-    /// embedded post-finalization by a later proposer in the `(h, h+K]` window;
-    /// `prev_randao(seed.target_height) = H(seed.signature)`.
-    pub beacon_seed: Option<Seed>,
 }
 
 impl OrderBlock {
@@ -143,19 +148,21 @@ pub fn anchor_order_block(anchor: &SealedBlock<reth_ethereum_primitives::Block>)
         result: anchor.hash(),
         txs: Vec::new(),
         beacon_outcome: None,
-        beacon_seed: None,
     }
 }
 
 // Wire format (all integers big-endian via commonware primitives):
 //   parent(32) ‖ height(8) ‖ timestamp(8) ‖ fee_recipient(20) ‖ gas_limit(8)
 //   ‖ result(32) ‖ extra_data_len(4)+bytes ‖ txs as one RLP list
-//   ‖ beacon_flags(1) ‖ [beacon_outcome_len(4)+bytes] ‖ [beacon_seed].
-// `beacon_flags` bit0 = outcome present, bit1 = seed present. The RLP tx list
-// reuses alloy's canonical encoding so tx bytes are identical to their
-// EVM-block representation. Both beacon fields are part of the encoding (hence
-// the digest): an unagreed beacon value would let two proposers embed
-// different randomness under one digest → derive/STF divergence.
+//   ‖ beacon_flags(1) ‖ [beacon_outcome_len(4)+bytes].
+// `beacon_flags` bit0 = outcome present; bit1 is RESERVED — it carried the
+// removed per-height seed (the seed now rides the consensus cert, recovered at
+// notarization; see `spec_exec`). A None-seed block always had bit1=0, so the
+// removal is byte-identical and the digest is unchanged; bit1 set now decodes as
+// an error. The RLP tx list reuses alloy's canonical encoding so tx bytes are
+// identical to their EVM-block representation. `beacon_outcome` is part of the
+// encoding (hence the digest): an unagreed next-epoch key under one digest would
+// diverge derive/STF.
 
 impl Write for OrderBlock {
     fn write(&self, buf: &mut impl BufMut) {
@@ -169,15 +176,13 @@ impl Write for OrderBlock {
         (self.extra_data.len() as u32).write(buf);
         buf.put_slice(&self.extra_data);
         self.txs.encode(buf);
-        let flags =
-            (self.beacon_outcome.is_some() as u8) | ((self.beacon_seed.is_some() as u8) << 1);
+        // bit0 = outcome present; bit1 reserved (removed per-height seed carrier),
+        // never set, so the byte is identical to the pre-removal encoding.
+        let flags = self.beacon_outcome.is_some() as u8;
         flags.write(buf);
         if let Some(outcome) = &self.beacon_outcome {
             (outcome.len() as u32).write(buf);
             buf.put_slice(outcome);
-        }
-        if let Some(seed) = &self.beacon_seed {
-            seed.write(buf);
         }
     }
 }
@@ -205,7 +210,6 @@ impl EncodeSize for OrderBlock {
             + self.txs.length()
             + FLAGS
             + self.beacon_outcome.as_ref().map_or(0, |o| LEN_PREFIX + o.len())
-            + self.beacon_seed.as_ref().map_or(0, |s| s.encode_size())
     }
 }
 
@@ -265,11 +269,15 @@ impl Read for OrderBlock {
         } else {
             None
         };
-        let beacon_seed = if flags & 2 != 0 {
-            Some(Seed::read_cfg(buf, &())?)
-        } else {
-            None
-        };
+        // bit1 was the now-removed per-height seed carrier; no producer ever sets
+        // it. Reject it (rather than silently leaving trailing bytes) so a forged
+        // / legacy seed-flagged artifact fails to decode.
+        if flags & 2 != 0 {
+            return Err(commonware_codec::Error::Invalid(
+                "order_block",
+                "reserved beacon_flags bit set (removed seed carrier)",
+            ));
+        }
         Ok(Self {
             parent,
             height,
@@ -280,7 +288,6 @@ impl Read for OrderBlock {
             result,
             txs,
             beacon_outcome,
-            beacon_seed,
         })
     }
 }
@@ -332,7 +339,6 @@ mod tests {
             result: B256::repeat_byte(0x33),
             txs: Vec::new(),
             beacon_outcome: None,
-            beacon_seed: None,
         }
     }
 

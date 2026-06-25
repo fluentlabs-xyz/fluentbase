@@ -14,6 +14,7 @@
 
 use bytes::{Buf, BufMut};
 use commonware_codec::{EncodeSize, Error as CodecError, Read, ReadExt as _, Write};
+use core::mem::size_of;
 
 use alloy_primitives::{Address, B256};
 use commonware_runtime::{buffer::paged::CacheRef, BufferPooler, Metrics, Storage};
@@ -40,6 +41,9 @@ const HASH_BYTES: usize = 32;
 const ADDR_BYTES: usize = 20;
 const PEER_BYTES: usize = 32;
 
+// Wire (all integers big-endian via the bytes crate):
+//   block_hash(32) ‖ block_number(u64) ‖ epoch(u64) ‖ count(u32)
+//   ‖ [ address(20) ‖ bls_pubkey ‖ peer_pubkey(32) ‖ activation_epoch(u64) ] × count
 impl Write for ValidatorSetSnapshot {
     fn write(&self, buf: &mut impl BufMut) {
         buf.put_slice(self.block_hash.as_slice());
@@ -57,11 +61,15 @@ impl Write for ValidatorSetSnapshot {
 
 impl EncodeSize for ValidatorSetSnapshot {
     fn encode_size(&self) -> usize {
+        // Mirrors `write` field-for-field (see the wire comment above): each term
+        // is the byte width its `write` line emits — fixed slices use their named
+        // byte const, integers their `size_of`.
         HASH_BYTES
-            + 8
-            + 8
-            + 4
-            + self.validators.len() * (ADDR_BYTES + PUBKEY_BYTES + PEER_BYTES + 8)
+            + size_of::<u64>() // block_number
+            + size_of::<u64>() // epoch
+            + size_of::<u32>() // validators count prefix
+            + self.validators.len()
+                * (ADDR_BYTES + PUBKEY_BYTES + PEER_BYTES + size_of::<u64>()/* activation_epoch */)
     }
 }
 

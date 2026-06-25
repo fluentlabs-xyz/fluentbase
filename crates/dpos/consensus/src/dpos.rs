@@ -2425,7 +2425,6 @@ mod visibility_retry_tests {
             result: B256::ZERO,
             txs: Vec::new(),
             beacon_outcome: None,
-            beacon_seed: None,
         }
     }
 

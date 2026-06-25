@@ -61,11 +61,11 @@ pub enum Command {
     SpecNotarized(Box<Notarized>),
 }
 
-/// Payload of [`Command::SpecNotarized`]: the ordering digest + round + the
-/// seed recovered from the Notarization certificate. The block body is fetched
-/// from the marshal by digest at execution time.
+/// Payload of [`Command::SpecNotarized`]: the ordering digest + the seed
+/// recovered from the Notarization certificate (the round rides in
+/// `seed.target_round`). The block body is fetched from the marshal by digest
+/// at execution time.
 pub struct Notarized {
-    pub round: commonware_consensus::types::Round,
     pub digest: crate::digest::Digest,
     pub seed: Option<crate::beacon::seed::Seed>,
 }
@@ -801,12 +801,8 @@ where
                 }
             },
             Command::SpecNotarized(n) => {
-                let Notarized {
-                    round,
-                    digest,
-                    seed,
-                } = *n;
-                if let Err(error) = self.spec_execute(cause, round, digest, seed).await {
+                let Notarized { digest, seed } = *n;
+                if let Err(error) = self.spec_execute(cause, digest, seed).await {
                     // Speculation is best-effort: a failure here is logged, never
                     // fatal — `try_derive` (finalized path) will derive the block at
                     // finalization regardless.
@@ -974,7 +970,6 @@ where
     async fn spec_execute(
         &mut self,
         cause: Span,
-        _round: commonware_consensus::types::Round,
         digest: crate::digest::Digest,
         seed: Option<crate::beacon::seed::Seed>,
     ) -> eyre::Result<()> {
@@ -1381,7 +1376,6 @@ mod tests {
             result,
             txs: Vec::new(),
             beacon_outcome: None,
-            beacon_seed: None,
         }
     }
 
@@ -1811,18 +1805,12 @@ mod tests {
         )
     }
 
-    /// A `SpecNotarized` command for `order` (seedless; the round view is a
-    /// stand-in — the executor keys speculation off the fetched block's height,
-    /// not the round).
+    /// A `SpecNotarized` command for `order` (seedless; the executor keys
+    /// speculation off the fetched block's height, not the round).
     fn spec_msg(order: &OrderBlock) -> Message {
-        use commonware_consensus::types::{Epoch, View};
         Message {
             cause: Span::current(),
             command: Command::SpecNotarized(Box::new(Notarized {
-                round: commonware_consensus::types::Round::new(
-                    Epoch::new(0),
-                    View::new(order.height),
-                ),
                 digest: order.digest(),
                 seed: None,
             })),
@@ -2742,7 +2730,6 @@ mod tests {
                 .send(Message {
                     cause: Span::current(),
                     command: Command::SpecNotarized(Box::new(Notarized {
-                        round,
                         digest: order.digest(),
                         seed: Some(seed.clone()),
                     })),

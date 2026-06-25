@@ -22,6 +22,7 @@
 
 use bytes::{Buf, BufMut};
 use commonware_codec::{EncodeSize, Error as CodecError, FixedSize, Read, ReadExt as _, Write};
+use core::mem::size_of;
 use commonware_consensus::{simplex::types::Subject, types::Round};
 use commonware_cryptography::{
     bls12381::primitives::{
@@ -42,6 +43,8 @@ type VoteCertificate = <VoteScheme as CertScheme>::Certificate;
 
 /// Compressed-G1 byte length — the seed slot width.
 const SEED_SLOT: usize = crate::SIGNATURE_BYTES;
+/// The seed-present flag byte preceding the [`SEED_SLOT`] (1 = Some, 0 = None).
+const SEED_FLAG: usize = size_of::<u8>();
 
 /// The round a subject is scoped to (used as the seed message domain).
 fn subject_round<D: Digest>(subject: &Subject<'_, D>) -> Round {
@@ -106,7 +109,7 @@ impl CombinedSignature {
 }
 
 impl FixedSize for CombinedSignature {
-    const SIZE: usize = crate::SIGNATURE_BYTES + 1 + SEED_SLOT;
+    const SIZE: usize = crate::SIGNATURE_BYTES + SEED_FLAG + SEED_SLOT;
 }
 
 impl Write for CombinedSignature {
@@ -150,7 +153,7 @@ impl Write for CombinedCertificate {
 
 impl EncodeSize for CombinedCertificate {
     fn encode_size(&self) -> usize {
-        self.vote.encode_size() + 1 + SEED_SLOT
+        self.vote.encode_size() + SEED_FLAG + SEED_SLOT
     }
 }
 
@@ -167,10 +170,10 @@ impl Read for CombinedCertificate {
 #[derive(Clone)]
 struct BeaconPart {
     /// Full public polynomial. REQUIRED to verify individual seed partials
-    /// (`verify_attestation`) and to recover the seed (`assemble`). `Some` for
-    /// signers; `None` for a no-share node (verify-only / fallback) that never
-    /// processes individual partials or assembles.
-    sharing: Option<Sharing<MinSig>>,
+    /// (`verify_attestation`) and to recover the seed (`assemble`). A no-share
+    /// node (verify-only / fallback) has no `BeaconPart` at all (`beacon: None`),
+    /// so once a `BeaconPart` exists the polynomial is always present.
+    sharing: Sharing<MinSig>,
     share: Option<Share>,
     seed_namespace: Vec<u8>,
 }
@@ -209,7 +212,7 @@ impl CombinedScheme {
                 );
             }
             BeaconPart {
-                sharing: Some(sharing),
+                sharing,
                 share,
                 seed_namespace,
             }
@@ -287,9 +290,21 @@ impl CertScheme for CombinedScheme {
             // group-key-only verifier (no polynomial) cannot check an
             // individual partial — it only ever verifies assembled certs, so
             // reject here rather than accept unchecked.
-            (Some(b), true) => match (&b.sharing, combined.seed) {
-                (Some(sharing), Some(value)) => beacon::verify_seed_partial(
-                    sharing,
+            //
+            // TODO(perf): per-partial verification is O(n) pairing checks per
+            // round (~one BLS verify per incoming vote, ~35–51 at n=51) vs O(1)
+            // for verifying the recovered aggregate once against the group key.
+            // It's load-bearing because t == consensus quorum (no slack: every
+            // counted partial must be valid to recover the seed) and it gives
+            // per-vote attribution of a bad partial. Affordable at n=51 / 1 blk/s
+            // (a few % of a core, and parallelizable), but REVISIT if seed verify
+            // becomes a bottleneck at larger n or higher block rates — options:
+            // batch-verify the partials (random-linear-combination, but loses
+            // per-vote attribution on failure) or aggregate-verify with t < quorum
+            // slack. Measure before changing — don't trade away attribution blind.
+            (Some(b), true) => match combined.seed {
+                Some(value) => beacon::verify_seed_partial(
+                    &b.sharing,
                     &b.seed_namespace,
                     round,
                     &PartialSignature::<MinSig> {
@@ -297,7 +312,7 @@ impl CertScheme for CombinedScheme {
                         value,
                     },
                 ),
-                _ => false,
+                None => false,
             },
             // Nullify, or a fallback epoch: the seed MUST be absent.
             _ => combined.seed.is_none(),
@@ -315,12 +330,10 @@ impl CertScheme for CombinedScheme {
             atts.iter().filter_map(Self::vote_attestation).collect();
         let vote = self.vote.assemble::<_, M>(vote_atts, strategy)?;
         let seed = match &self.beacon {
-            Some(BeaconPart {
-                sharing: Some(sharing),
-                ..
-            }) if atts
-                .iter()
-                .all(|a| a.signature.get().is_some_and(|c| c.seed.is_some())) =>
+            Some(BeaconPart { sharing, .. })
+                if atts
+                    .iter()
+                    .all(|a| a.signature.get().is_some_and(|c| c.seed.is_some())) =>
             {
                 let partials: Vec<PartialSignature<MinSig>> = atts
                     .iter()
