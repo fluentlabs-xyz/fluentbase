@@ -39,9 +39,12 @@ pub mod keys;
 pub mod keystore;
 pub mod pop;
 pub mod scheme;
+pub mod secret_store;
+pub mod share_seal;
 
 pub use error::Error;
 pub use scheme::EpochCommittee;
+pub use share_seal::ShareSealKey;
 
 /// BLS variant fixed to MinSig.
 pub type Variant = MinSig;

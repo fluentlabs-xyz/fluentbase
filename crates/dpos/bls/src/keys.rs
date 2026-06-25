@@ -1,8 +1,16 @@
 use commonware_codec::EncodeFixed;
 use commonware_cryptography::bls12381::primitives::{group::Private, ops};
+use hkdf::Hkdf;
 use rand_core::CryptoRngCore;
+use sha2::Sha256;
+use zeroize::Zeroizing;
 
-use crate::{error::Error, BlsPubkey, Variant, PUBKEY_BYTES, SECRET_BYTES};
+use crate::{
+    error::Error,
+    secret_store::SecretBackend,
+    share_seal::{ShareSealKey, SHARE_AT_REST_INFO},
+    BlsPubkey, Variant, PUBKEY_BYTES, SECRET_BYTES,
+};
 
 /// A validator's BLS keypair (MinSig: 32 B scalar private, 96 B G2 public).
 ///
@@ -39,6 +47,30 @@ impl ValidatorBlsKeypair {
         Ok(Self { secret, public })
     }
 
+    /// Derive the per-epoch DKG-share at-rest seal key (E2): HKDF-SHA256 over the
+    /// validator BLS secret as IKM, salted by the chain namespace and
+    /// domain-separated by [`SHARE_AT_REST_INFO`]. The raw scalar never crosses
+    /// the crate boundary — HKDF runs here over the exposed secret and only the
+    /// derived 32-byte [`ShareSealKey`] is returned. Derived ONCE at launch.
+    pub fn derive_share_seal_key(&self, chain_id: u64) -> ShareSealKey {
+        use commonware_codec::Encode as _;
+        use zeroize::Zeroize as _;
+        let salt = crate::fluent_namespace(chain_id);
+        let mut okm = [0u8; 32];
+        self.secret.expose(|s| {
+            let mut ikm = Zeroizing::new(s.encode().to_vec());
+            let hk = Hkdf::<Sha256>::new(Some(&salt), &ikm);
+            // HKDF-Expand over a 32-byte L cannot fail; the only error case is
+            // L > 255*HashLen.
+            hk.expand(SHARE_AT_REST_INFO, &mut okm)
+                .expect("HKDF-SHA256 expand of 32 bytes is infallible");
+            ikm.zeroize();
+        });
+        let key = ShareSealKey::from_bytes(okm);
+        okm.zeroize();
+        key
+    }
+
     /// Compressed BLS public key (G2, 96 B for MinSig).
     pub fn public_bytes(&self) -> [u8; PUBKEY_BYTES] {
         // `BlsPubkey::SIZE == PUBKEY_BYTES` for MinSig (G2 compressed);
@@ -61,18 +93,7 @@ impl ValidatorBlsKeypair {
     /// using an EIP-2335 keystore; prefer [`Self::read_from_keystore`] for
     /// encrypted storage.
     pub fn read_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
-        use zeroize::{Zeroize, Zeroizing};
-        let raw = Zeroizing::new(std::fs::read_to_string(path.as_ref())?);
-        let bytes = Zeroizing::new(
-            commonware_utils::from_hex_formatted(raw.trim()).ok_or(Error::InvalidHex)?,
-        );
-        let mut arr: [u8; SECRET_BYTES] = bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| Error::InvalidLength)?;
-        let result = Self::from_secret_bytes(&arr);
-        arr.zeroize();
-        result
+        Self::from_backend(SecretBackend::Plaintext, path.as_ref())
     }
 
     /// Load from an EIP-2335 keystore file (version 4).
@@ -80,11 +101,21 @@ impl ValidatorBlsKeypair {
         path: P,
         password: &[u8],
     ) -> Result<Self, Error> {
-        use zeroize::Zeroizing;
-        let raw = Zeroizing::new(std::fs::read_to_string(path.as_ref())?);
-        let ks = crate::keystore::EthKeystoreV4::from_json(&raw)?;
-        let secret = ks.decrypt(password)?;
-        Self::from_secret_bytes(&secret)
+        Self::from_backend(SecretBackend::Eip2335 { password }, path.as_ref())
+    }
+
+    /// Read raw secret bytes via the at-rest `backend`, then validate the
+    /// 32-byte scalar shape at the typed [`Self::from_secret_bytes`] boundary.
+    fn from_backend(backend: SecretBackend<'_>, path: &std::path::Path) -> Result<Self, Error> {
+        use zeroize::Zeroize as _;
+        let bytes = backend.open(path)?;
+        let mut arr: [u8; SECRET_BYTES] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::InvalidLength)?;
+        let result = Self::from_secret_bytes(&arr);
+        arr.zeroize();
+        result
     }
 
     /// Plaintext fallback writer (symmetric counterpart of
@@ -107,30 +138,10 @@ impl ValidatorBlsKeypair {
         });
         let mut hex_buf = Zeroizing::new(hex::encode(secret_bytes));
         secret_bytes.zeroize();
-        write_mode_0600(path.as_ref(), hex_buf.as_bytes())?;
+        crate::secret_store::write_mode_0600(path.as_ref(), hex_buf.as_bytes())?;
         hex_buf.zeroize();
         Ok(())
     }
-}
-
-#[cfg(all(feature = "plaintext-keys", unix))]
-fn write_mode_0600(path: &std::path::Path, data: &[u8]) -> Result<(), Error> {
-    use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(data)?;
-    Ok(())
-}
-
-#[cfg(all(feature = "plaintext-keys", not(unix)))]
-fn write_mode_0600(path: &std::path::Path, data: &[u8]) -> Result<(), Error> {
-    std::fs::write(path, data)?;
-    Ok(())
 }
 
 // Custom Debug that does NOT print the secret. Without this the derive
@@ -250,6 +261,45 @@ mod tests {
         assert!(
             !dbg.contains(&secret_hex),
             "Debug output leaked private scalar bytes"
+        );
+    }
+
+    #[test]
+    fn derive_share_seal_key_is_deterministic_per_key_and_chain() {
+        let kp = ValidatorBlsKeypair::generate(&mut StdRng::seed_from_u64(13));
+        let a = kp.derive_share_seal_key(20994);
+        let b = kp.derive_share_seal_key(20994);
+        assert_eq!(
+            a.as_bytes(),
+            b.as_bytes(),
+            "same key + chain_id derives the same seal key"
+        );
+        assert_ne!(
+            a.as_bytes(),
+            kp.derive_share_seal_key(1).as_bytes(),
+            "a different chain_id derives a different seal key"
+        );
+        let other = ValidatorBlsKeypair::generate(&mut StdRng::seed_from_u64(14));
+        assert_ne!(
+            a.as_bytes(),
+            other.derive_share_seal_key(20994).as_bytes(),
+            "a different validator key derives a different seal key"
+        );
+    }
+
+    #[test]
+    fn derive_share_seal_key_does_not_return_the_raw_scalar() {
+        let kp = ValidatorBlsKeypair::generate(&mut StdRng::seed_from_u64(15));
+        let scalar = kp.secret().expose(|s| {
+            use commonware_codec::Encode;
+            let mut out = [0u8; SECRET_BYTES];
+            out.copy_from_slice(s.encode().as_ref());
+            out
+        });
+        assert_ne!(
+            kp.derive_share_seal_key(20994).as_bytes(),
+            &scalar,
+            "derived seal key must not equal the raw BLS scalar (HKDF domain separation)"
         );
     }
 }

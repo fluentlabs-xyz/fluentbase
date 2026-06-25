@@ -13,6 +13,12 @@
 //! 3. Verify checksum: `SHA256(DK[16..32] || cipher.message) == checksum.message`.
 //! 4. AES-128-CTR decrypt with key=DK[0..16], iv=cipher.params.iv → secret bytes.
 //!
+//! [`EthKeystoreV4::decrypt`] is length-generic — it returns whatever-length
+//! plaintext the AES-CTR keystream yields. The 32-byte BLS-scalar shape is
+//! enforced one layer up at the typed [`crate::keys::ValidatorBlsKeypair::from_secret_bytes`]
+//! boundary (which also rejects zero / out-of-field); [`EthKeystoreV4::decrypt_fixed`]
+//! is the fixed-`[u8; N]` shim that call-site uses.
+//!
 //! Only the decrypt path is implemented; encrypt (keygen-CLI) is intentionally
 //! deferred. Adding it later must re-introduce serde::Serialize alongside an
 //! `encrypt()` constructor that gates KDF parameter selection.
@@ -24,7 +30,7 @@ use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 use zeroize::Zeroizing;
 
-use crate::{error::Error, SECRET_BYTES};
+use crate::error::Error;
 
 type Aes128Ctr = ctr::Ctr64BE<aes::Aes128>;
 
@@ -124,9 +130,12 @@ impl EthKeystoreV4 {
         Ok(ks)
     }
 
-    /// Decrypt the 32-byte BLS scalar. Caller wraps in
-    /// [`crate::keys::ValidatorBlsKeypair::from_secret_bytes`].
-    pub fn decrypt(&self, password: &[u8]) -> Result<Zeroizing<[u8; SECRET_BYTES]>, Error> {
+    /// Decrypt the keystore payload to its raw plaintext bytes (length-generic:
+    /// the AES-CTR keystream yields exactly `cipher.message.len()` bytes). The
+    /// shape of the plaintext (e.g. the 32-byte BLS scalar) is the caller's
+    /// concern — [`Self::decrypt_fixed`] / [`crate::keys::ValidatorBlsKeypair::from_secret_bytes`]
+    /// enforce it at the typed boundary.
+    pub fn decrypt(&self, password: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
         let pw = normalize_password(password);
         let dk = Zeroizing::new(self.derive_kdf_key(&pw)?);
 
@@ -156,17 +165,27 @@ impl EthKeystoreV4 {
         if iv.len() != 16 {
             return Err(Error::InvalidKeystore);
         }
-        // CTR keystream length == ciphertext length; reject wrong-sized payloads
-        // before doing any AES work.
-        if self.crypto.cipher.message.len() != SECRET_BYTES {
-            return Err(Error::InvalidLength);
-        }
         let mut cipher =
             Aes128Ctr::new_from_slices(&dk[0..16], iv).map_err(|_| Error::InvalidKeystore)?;
         let mut secret = Zeroizing::new(self.crypto.cipher.message.clone());
         cipher.apply_keystream(secret.as_mut_slice());
+        Ok(secret)
+    }
 
-        let mut out = Zeroizing::new([0u8; SECRET_BYTES]);
+    /// Decrypt and assert the plaintext is exactly `N` bytes, returning a
+    /// fixed-size `[u8; N]`. The validator-key call-site uses `decrypt_fixed::<32>`;
+    /// a wrong-length keystore message surfaces [`Error::InvalidLength`] here
+    /// (the length guard that the length-generic [`Self::decrypt`] no longer
+    /// applies inline).
+    pub fn decrypt_fixed<const N: usize>(
+        &self,
+        password: &[u8],
+    ) -> Result<Zeroizing<[u8; N]>, Error> {
+        let secret = self.decrypt(password)?;
+        if secret.len() != N {
+            return Err(Error::InvalidLength);
+        }
+        let mut out = Zeroizing::new([0u8; N]);
         out.copy_from_slice(&secret);
         Ok(out)
     }
@@ -254,5 +273,55 @@ mod tests {
         assert_eq!(ilog2_u32(262144), Some(18));
         assert_eq!(ilog2_u32(0), None);
         assert_eq!(ilog2_u32(3), None);
+    }
+
+    /// Build a valid PBKDF2(c=1) keystore JSON whose AES-CTR ciphertext decrypts
+    /// to `plaintext` of arbitrary length, with the correct EIP-2335 checksum —
+    /// so `decrypt` succeeds (length-generic) and the `decrypt_fixed::<N>` length
+    /// guard is the only thing that can reject a wrong-length payload.
+    fn keystore_for(plaintext: &[u8]) -> String {
+        let password = b"pw";
+        let salt = [0x11u8; 8];
+        let iv = [0x22u8; 16];
+        let mut dk = [0u8; 32];
+        pbkdf2::pbkdf2::<Hmac<Sha256>>(password, &salt, 1, &mut dk).unwrap();
+
+        let mut cipher = Aes128Ctr::new_from_slices(&dk[0..16], &iv).unwrap();
+        let mut message = plaintext.to_vec();
+        cipher.apply_keystream(&mut message);
+
+        let mut hasher = Sha256::new();
+        hasher.update(&dk[16..32]);
+        hasher.update(&message);
+        let checksum = hasher.finalize();
+
+        format!(
+            r#"{{"version":4,"uuid":"x","path":"","pubkey":"","crypto":{{"kdf":{{"function":"pbkdf2","params":{{"dklen":32,"c":1,"prf":"hmac-sha256","salt":"{}"}},"message":""}},"checksum":{{"function":"sha256","params":{{}},"message":"{}"}},"cipher":{{"function":"aes-128-ctr","params":{{"iv":"{}"}},"message":"{}"}}}}}}"#,
+            hex::encode(salt),
+            hex::encode(checksum),
+            hex::encode(iv),
+            hex::encode(&message),
+        )
+    }
+
+    #[test]
+    fn decrypt_fixed_rejects_wrong_length_message() {
+        for len in [31usize, 33] {
+            let ks = EthKeystoreV4::from_json(&keystore_for(&vec![0xAB; len])).expect("v4 parses");
+            // Length-generic decrypt yields the raw bytes unchanged.
+            assert_eq!(ks.decrypt(b"pw").unwrap().len(), len);
+            // The fixed-32 shim is where the moved length guard rejects it.
+            assert!(matches!(
+                ks.decrypt_fixed::<32>(b"pw"),
+                Err(Error::InvalidLength)
+            ));
+        }
+    }
+
+    #[test]
+    fn decrypt_fixed_round_trips_exact_length() {
+        let secret = [0xCDu8; 32];
+        let ks = EthKeystoreV4::from_json(&keystore_for(&secret)).expect("v4 parses");
+        assert_eq!(ks.decrypt_fixed::<32>(b"pw").unwrap().as_slice(), &secret);
     }
 }

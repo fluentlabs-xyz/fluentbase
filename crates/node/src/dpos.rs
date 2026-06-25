@@ -555,6 +555,22 @@ where
     let beacon_engine =
         crate::importer::RethImporter::from_env(node.add_ons_handle.beacon_engine_handle.clone())?;
 
+    // Load the validator BLS keypair UP FRONT (R2 reorder): the per-epoch
+    // DKG-share at-rest seal key (E2) is HKDF-derived from it, and the beacon
+    // plane's DkgActor + startup `load_all` both need it — but the plane is built
+    // BEFORE the layer. `build_beacon_plane` only reads the peer key / staking /
+    // bootstrappers (NOT this BLS key), so loading here changes failure ORDER
+    // only (a bad keystore now fails before the network binds — strictly better).
+    // The keypair itself flows DOWN into `launch_dpos_layer` (passed, not
+    // re-loaded). `Some(seal_key)` ⇒ keystore mode ⇒ shares persist TAG_ENCRYPTED;
+    // `None` ⇒ plaintext-dev ⇒ TAG_PLAINTEXT.
+    let chain_id = node.chain_spec().chain_id();
+    let (bls_keypair, share_seal_key) = load_bls_keypair(&cfg, chain_id)?;
+    let share_state = match share_seal_key {
+        Some(key) => fluentbase_consensus::beacon::share_state::ShareState::Encrypted(key),
+        None => fluentbase_consensus::beacon::share_state::ShareState::Plaintext,
+    };
+
     // Cert-inlet: a SECOND producer into this validator's own marshal, armed
     // whenever `--dpos.follower-upstream` URLs are configured (the production-path
     // fix for a rotated-out validator: it follows the inlet-fed base while
@@ -603,11 +619,12 @@ where
 
     // Always-on beacon plane (one FluentP2P + 5 persistent Muxers + persistent
     // DkgActor + shared store), built ONCE — the engine CLONES the shared plane.
-    let plane = build_beacon_plane(&ctx, &node, &cfg).await?;
+    let plane = build_beacon_plane(&ctx, &node, &cfg, share_state).await?;
     let handle = launch_dpos_layer(
         ctx,
         &node,
         &cfg,
+        bls_keypair,
         beacon_engine,
         cert_feed,
         plane.shared.clone(),
@@ -735,6 +752,7 @@ pub(crate) async fn build_beacon_plane<N, AddOns>(
     ctx: &Context,
     node: &FullNode<N, AddOns>,
     cfg: &DposConfig,
+    share_state: fluentbase_consensus::beacon::share_state::ShareState,
 ) -> eyre::Result<BeaconPlane>
 where
     N: FullNodeComponents<
@@ -886,7 +904,7 @@ where
     // `enter` waits on it (instead of polling) so a signer that reaches the
     // boundary before its share is memoized wakes the instant it lands.
     let share_notify = Arc::new(tokio::sync::Notify::new());
-    let reloaded = fluentbase_consensus::beacon::share_state::load_all(&beacon_dir);
+    let reloaded = fluentbase_consensus::beacon::share_state::load_all(&beacon_dir, &share_state);
     if !reloaded.is_empty() {
         if let Ok(mut store) = ceremony_store.write() {
             for (epoch, output, share) in reloaded {
@@ -1111,6 +1129,7 @@ where
                 interval,
                 beacon_metrics,
                 Some(beacon_dir),
+                share_state,
             );
             dkg_actor.run(dkg_height_rx, c).await
         })
@@ -1157,6 +1176,7 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     ctx: Context,
     node: &FullNode<N, AddOns>,
     cfg: &DposConfig,
+    bls_keypair: fluentbase_bls::keys::ValidatorBlsKeypair,
     beacon_engine: crate::importer::RethImporter,
     cert_feed: Option<CertFeed>,
     shared_beacon: SharedBeaconPlane,
@@ -1188,7 +1208,6 @@ where
         + 'static,
 {
     let chain_id = node.chain_spec().chain_id();
-    let bls_keypair = load_bls_keypair(cfg, chain_id)?;
     let peer_keypair = fluentbase_p2p::read_ed25519_key_from_file(&cfg.peer_key_path)
         .wrap_err_with(|| {
             format!(
@@ -1397,10 +1416,19 @@ async fn serve_metrics(ctx: Context, port: u16) {
 // Host-only key loading helpers (filesystem syscalls + permission checks)
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Load the validator BLS keypair AND, IFF it came from an EIP-2335 keystore (an
+/// off-disk operator secret exists), the HKDF-derived [`ShareSealKey`] that seals
+/// the per-epoch DKG shares at rest (E2). The plaintext-dev branch
+/// (`--dpos.bls-key-path`) returns `None` — its validator key is already plaintext
+/// beside the datadir, so a key derived from it buys nothing ⇒ shares stay
+/// `TAG_PLAINTEXT`.
 fn load_bls_keypair(
     cfg: &DposConfig,
     chain_id: u64,
-) -> eyre::Result<fluentbase_bls::keys::ValidatorBlsKeypair> {
+) -> eyre::Result<(
+    fluentbase_bls::keys::ValidatorBlsKeypair,
+    Option<fluentbase_bls::ShareSealKey>,
+)> {
     match (
         cfg.bls_keystore_path.as_deref(),
         cfg.bls_key_path.as_deref(),
@@ -1410,7 +1438,7 @@ fn load_bls_keypair(
                 "--dpos.bls-keystore-path requires --dpos.bls-keystore-password-file",
             )?;
             let password = read_password_file(password_path, "BLS keystore")?;
-            fluentbase_bls::keys::ValidatorBlsKeypair::read_from_keystore(
+            let keypair = fluentbase_bls::keys::ValidatorBlsKeypair::read_from_keystore(
                 keystore_path,
                 password.trim().as_bytes(),
             )
@@ -1419,7 +1447,9 @@ fn load_bls_keypair(
                     "failed loading BLS keystore from {}",
                     keystore_path.display()
                 )
-            })
+            })?;
+            let seal_key = keypair.derive_share_seal_key(chain_id);
+            Ok((keypair, Some(seal_key)))
         }
         (None, Some(plain_path)) => {
             use crate::chainspec::{
@@ -1437,8 +1467,11 @@ fn load_bls_keypair(
             }
             info!(chain_id, path = %plain_path.display(), "loading dev/test plaintext BLS key");
             check_mode_600(plain_path).wrap_err("plaintext BLS key file mode check")?;
-            fluentbase_bls::keys::ValidatorBlsKeypair::read_from_file(plain_path)
-                .wrap_err_with(|| format!("failed loading BLS key from {}", plain_path.display()))
+            let keypair = fluentbase_bls::keys::ValidatorBlsKeypair::read_from_file(plain_path)
+                .wrap_err_with(|| {
+                    format!("failed loading BLS key from {}", plain_path.display())
+                })?;
+            Ok((keypair, None))
         }
         _ => Err(eyre!(
             "exactly one of --dpos.bls-keystore-path | --dpos.bls-key-path must be set"

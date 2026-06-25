@@ -36,6 +36,9 @@ aes = { version = "0.8", default-features = false }
 ctr = { version = "0.9", default-features = false }
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
 hmac = { version = "0.12", default-features = false }
+# HKDF-SHA256 for deriving the per-epoch DKG-share at-rest seal key (E2) from
+# the validator BLS secret. Already in Cargo.lock transitively.
+hkdf = { version = "0.12", default-features = false }
 unicode-normalization = { version = "0.1", default-features = false, features = ["std"] }
 
 [dev-dependencies]

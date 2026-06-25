@@ -31,6 +31,7 @@
 use crate::beacon::{
     ceremony::{CeremonyOutput, DkgCeremony, Outgoing, Target},
     dkg_msg::{DkgBody, DkgMsg},
+    share_state::ShareState,
     wire::BeaconMessage,
 };
 use commonware_codec::{Encode as _, Read as _, ReadExt as _};
@@ -107,10 +108,17 @@ pub struct DkgActor<Se, Re> {
     dpos_activation: u64,
     epoch_interval: u64,
     metrics: crate::beacon::metrics::BeaconMetrics,
-    /// Directory for on-disk share persistence (item A): the parent of
-    /// `--dpos.beacon-share-path`. `None` ⇒ no share-path configured (e.g. a
-    /// case-(b) sharing-only node) ⇒ memoized shares stay in-memory only.
+    /// Directory for on-disk persistence of the live-DKG per-epoch shares this
+    /// actor memoizes into [`CeremonyStore`] — the always-on plane passes
+    /// `<datadir>/beacon/` (see `node/dpos.rs::build_beacon_plane`), reloaded once
+    /// at plane startup. `None` ⇒ no persistence dir (in-process/test default) ⇒
+    /// memoized shares stay in-memory only (lost on restart).
     share_dir: Option<PathBuf>,
+    /// At-rest framing for the persisted shares: [`ShareState::Encrypted`] (the
+    /// HKDF-derived seal key) on a keystore-mode validator, [`ShareState::Plaintext`]
+    /// otherwise. Built from the `Option<ShareSealKey>` the plane derives at launch
+    /// (gated on `--dpos.bls-keystore-path`).
+    share_state: ShareState,
     /// Active ceremonies keyed by their target epoch E.
     ceremonies: BTreeMap<u64, DkgCeremony>,
     /// Dealings (`Commitment`/`Share`) that arrived for an epoch BEFORE this node
@@ -149,6 +157,7 @@ where
         epoch_interval: u64,
         metrics: crate::beacon::metrics::BeaconMetrics,
         share_dir: Option<PathBuf>,
+        share_state: ShareState,
     ) -> Self {
         Self {
             namespace,
@@ -162,6 +171,7 @@ where
             epoch_interval,
             metrics,
             share_dir,
+            share_state,
             ceremonies: BTreeMap::new(),
             pending: BTreeMap::new(),
             sealed: BTreeSet::new(),
@@ -342,7 +352,9 @@ where
                     // Best-effort — the in-memory store is authoritative for the
                     // running process, so a write failure only warns.
                     if let Some(dir) = &self.share_dir {
-                        if let Err(err) = crate::beacon::share_state::persist(dir, e, &out, &share) {
+                        if let Err(err) =
+                            crate::beacon::share_state::persist(dir, e, &out, &share, &self.share_state)
+                        {
                             tracing::warn!(
                                 epoch = e,
                                 ?err,
@@ -572,6 +584,7 @@ mod clock_tests {
             interval,
             crate::beacon::metrics::BeaconMetrics::default(),
             None,
+            ShareState::Plaintext,
         );
         let (height_tx, height_rx) = tokio::sync::mpsc::channel::<u64>(256);
         let rng = StdRng::seed_from_u64(7);
@@ -823,6 +836,7 @@ mod clock_tests {
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
                 None,
+                ShareState::Plaintext,
             );
             let mut arng = StdRng::seed_from_u64(9);
 
