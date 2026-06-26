@@ -5,6 +5,7 @@ SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
         smoke-gov-interval smoke-full-restart smoke-cert-follow smoke-deferred \
         smoke-vrf smoke-vrf-rotation smoke-byzantine-vrf smoke-vrf-fault smoke-vrf-boundary \
         smoke-vrf-dkg-liveness smoke-vrf-dkg-restart-midwindow \
+        smoke-vrf-dkg-durability smoke-vrf-dkg-halt \
         smoke-production-path smoke-all
 
 regen-contracts:
@@ -138,6 +139,25 @@ smoke-vrf-dkg-liveness:
 # cannot fire it (the smoke-vrf-dkg-liveness blind spot). Heavy (~6-8 min); NOT in run-all.
 smoke-vrf-dkg-restart-midwindow:
 	@./scripts/case-vrf-dkg-restart-midwindow.sh
+# Consolidated live-DKG mid-window-restart durability suite on ONE rotation-stack
+# bring-up, each scenario on its own DKG ceremony, recoverable phases first: post-seal
+# fleet recovery + consensus-quorum stall (G1, subsumes the single-victim midwindow
+# baseline) on the epoch-2 ceremony -> torn-journal sit-out (G5) on the first driven
+# rotation. Runtime forge deploy + governance-driven rotation; needs foundry. Long
+# (~12-18 min); NOT in run-all (like smoke-vrf-rotation / smoke-byzantine-vrf /
+# smoke-production-path).
+smoke-vrf-dkg-durability:
+	@./scripts/case-vrf-dkg-durability.sh
+# >f PRE-SEAL TERMINAL halt (G2) — the negative control for smoke-vrf-dkg-durability's
+# post-seal recovery (same 2-of-5 kill, opposite seal state -> permanent boundary
+# freeze). Its OWN bring-up (plan §6.2 fallback: a second deterministic committee
+# change is not cleanly drivable on the 6-key equal-stake stack), driving the halt on
+# the first rotation C_r1. Kills 2 committee stayers PRE-seal + keeps them down ->
+# (beacon_for_epoch)(E_new)=None -> proposer skips the boundary view forever -> the
+# chain freezes permanently; asserts the sustained no-progress + the 'skipping propose'
+# log, then tears down. Needs foundry. Long (~10-14 min); NOT in run-all.
+smoke-vrf-dkg-halt:
+	@./scripts/case-vrf-dkg-halt.sh
 # TODO(deferred, after-forked-staking-state-harness): E2 wrong-key cert-follower
 # smoke (`smoke-vrf-wrongkey` + docker-compose.cert-follow-wrongkey.yml) — a
 # follower with a WRONG beacon key must derive a DIVERGENT mixHash (order.digest()

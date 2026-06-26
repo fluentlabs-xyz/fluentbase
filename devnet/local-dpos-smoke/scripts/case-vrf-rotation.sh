@@ -112,120 +112,16 @@ ACTIVE_LINE="beacon: threshold prev_randao active"
 
 # ════════════════════════════════════════════════════════════════════════════
 # Bring up the production-path DPoS stack with the initial 5-validator committee.
-# This block mirrors case-production-path.sh phases A..cold-restart verbatim
-# (deploy token+verifier+cluster via forge, setConsensusKeys, set activation,
-# clean-halt, --dpos cold-restart). The only difference from that case is what we
-# assert afterwards (beacon rotation, not the join/eject lifecycle).
+# The bring-up (phases A..cold-restart: forge-deploy token+verifier+cluster,
+# setConsensusKeys, set activation, clean-halt, --dpos cold-restart) is the
+# shared `pp_bring_up_rotation` helper in lib.sh — identical to the durability
+# case. It sets DEPLOYER_KEY/ADDR, TOKEN, VERIFIER, STAKING_RT, CHAIN_CONFIG_RT,
+# GOV_ADDR, LIVENESS_RT, ACT, ANCHOR, EPOCH_LEN, defines epoch_first_block(), and
+# starts the tx spammer. The only difference between the two cases is what they
+# assert afterwards (beacon rotation here, not the join/eject lifecycle).
 # ════════════════════════════════════════════════════════════════════════════
-echo "== phase A: bare sequencer chain =="
-docker compose up --build -d
-pp_wait_converge 240 >/dev/null || { echo "FAIL (smoke-vrf-rotation): bare chain did not converge"; docker compose logs --tail=120; exit 1; }
-echo "  converged plain chain"
-
-DEPLOYER_KEY="$(pp_owner_key 0)"
-DEPLOYER_ADDR="$(pp_owner_addr 0)"
-
-MNEMONIC="${FLUENT_DPOS_MNEMONIC:-test test test test test test test test test test test junk}"
-SPAMMER_KEY="$(cast wallet private-key --mnemonic "$MNEMONIC" --mnemonic-index 6)"
-SPAMMER_ADDR="$(cast wallet address --mnemonic "$MNEMONIC" --mnemonic-index 6)"
-cast send "$SPAMMER_ADDR" --value 1000000000000000 \
-    --rpc-url "$RPC" --private-key "$DEPLOYER_KEY" >/dev/null \
-    || { echo "FAIL (smoke-vrf-rotation): fund spammer account"; exit 1; }
-pp_spammer_start "$SPAMMER_KEY" "$DEPLOYER_ADDR"
-echo "  tx spammer started (pid $PP_SPAMMER_PID, from $SPAMMER_ADDR)"
-
-echo "== runtime deploy: token + BLS verifier =="
-TOKEN=$(forge_l2 forge create --rpc-url "$RPC" --private-key "$DEPLOYER_KEY" --broadcast --json \
-    "contracts/staking/mocks/MockBlendToken.sol:MockBlendToken" | jq -r '.deployedTo')
-[[ "$TOKEN" == 0x* ]] || { echo "FAIL (smoke-vrf-rotation): MockBlendToken deploy"; exit 1; }
-VERIFIER=$(forge_l2 forge create --rpc-url "$RPC" --private-key "$DEPLOYER_KEY" --broadcast --json \
-    "contracts/libraries/BLS12381Verifier.sol:BLS12381Verifier" | jq -r '.deployedTo')
-[[ "$VERIFIER" == 0x* ]] || { echo "FAIL (smoke-vrf-rotation): BLS12381Verifier deploy"; exit 1; }
-echo "  token=$TOKEN verifier=$VERIFIER"
-
-pp_token_transfer "$TOKEN" "$(pp_owner_addr 5)" "10000000000000000000"
-
-echo "== runtime deploy: staking cluster (DeployStaking) =="
-NETWORK=local-dpos-smoke/l2 DEPLOYER="$DEPLOYER_ADDR" INITIAL_OWNER="$DEPLOYER_ADDR" \
-  STAKING_TOKEN="$TOKEN" OUTPUT_PATH="$MANIFEST" \
-  forge_l2 forge script scripts/deploy/DeployStaking.s.sol:DeployStaking \
-    --rpc-url "$RPC" --private-key "$DEPLOYER_KEY" --broadcast --skip-simulation \
-  || { echo "FAIL (smoke-vrf-rotation): DeployStaking (EIP-170? see prereqs)"; exit 1; }
-
-STAKING_RT=$(jq -r '.staking' "$MANIFEST")
-CHAIN_CONFIG_RT=$(jq -r '.chain_config' "$MANIFEST")
-GOV_ADDR=$(jq -r '.governance' "$MANIFEST")
-LIVENESS_RT=$(jq -r '.liveness_slashing' "$MANIFEST")
-for v in STAKING_RT CHAIN_CONFIG_RT GOV_ADDR LIVENESS_RT; do
-    [[ "${!v}" == 0x* ]] || { echo "FAIL (smoke-vrf-rotation): manifest missing $v"; cat "$MANIFEST"; exit 1; }
-done
-echo "  staking=$STAKING_RT chainConfig=$CHAIN_CONFIG_RT gov=$GOV_ADDR liveness=$LIVENESS_RT"
-
-echo "== governance: setBlsVerifier (MUST precede setConsensusKeys) =="
-pp_gov_action "$CHAIN_CONFIG_RT" \
-    "$(cast calldata 'setBlsVerifier(address)' "$VERIFIER")" \
-    "setBlsVerifier" || { echo "FAIL (smoke-vrf-rotation): gov setBlsVerifier"; exit 1; }
-
-echo "== setConsensusKeys for committee v0..v4 =="
-for i in 0 1 2 3 4; do
-    ck=$(pp_consensus_keys "$i")
-    bls_pub=$(jq -r '.blsPubkeyUncompressed' <<<"$ck")
-    bls_pop=$(jq -r '.blsPoPUncompressed' <<<"$ck")
-    peer=$(jq -r '.peerPubkey' <<<"$ck")
-    addr=$(jq -r '.validatorAddress' <<<"$ck")
-    cast send "$STAKING_RT" "setConsensusKeys(address,bytes,bytes,bytes32)" \
-        "$addr" "$bls_pub" "$bls_pop" "$peer" \
-        --rpc-url "$RPC" --private-key "$(pp_owner_key "$i")" >/dev/null \
-        || { echo "FAIL (smoke-vrf-rotation): setConsensusKeys v$i"; exit 1; }
-done
-echo "  consensus keys set for 5 validators"
-
-HEAD=$(printf '%d' "$(check_external 8545 | cut -d'|' -f1)")
-ACT=$(( ((HEAD / 64) + 2) * 64 ))
-echo "== governance: setDposActivationBlock=$ACT (head=$HEAD) =="
-pp_gov_action "$CHAIN_CONFIG_RT" \
-    "$(cast calldata 'setDposActivationBlock(uint64)' "$ACT")" \
-    "setDposActivationBlock" || { echo "FAIL (smoke-vrf-rotation): gov setDposActivationBlock"; exit 1; }
-
-echo "== assert pre-written staking-reader.json matches the deploy manifest =="
-PRE=$(docker compose exec -T validator-0 cat /runtime/staking-reader.json)
-for pair in "staking_address:$STAKING_RT" \
-            "chain_config_address:$CHAIN_CONFIG_RT" \
-            "liveness_slashing_address:$LIVENESS_RT"; do
-    k=${pair%%:*} want=$(tr 'A-F' 'a-f' <<<"${pair#*:}")
-    got=$(jq -r ".$k" <<<"$PRE" | tr 'A-F' 'a-f')
-    [[ "$got" == "$want" ]] || { echo "FAIL (smoke-vrf-rotation): pre-written $k=$got != deployed $want (deployer nonce drift — update --staking-reader-create-nonces)"; exit 1; }
-done
-echo "  pre-written config matches manifest"
-
-echo "== wait for sequencer (validator-0) to clean-halt at activation block $ACT =="
-wait_finalized_ge "$ACT" 400 || {
-    echo "FAIL (smoke-vrf-rotation): sequencer did not reach activation block $ACT (head=$(finalized_dec))"
-    docker compose logs validator-0 --tail=80; exit 1
-}
-pp_wait_converge 180 >/dev/null \
-    || { echo "FAIL (smoke-vrf-rotation): followers did not align at the activation block"; docker compose logs --tail=120; exit 1; }
-echo "  all nodes aligned at $ACT; proceeding to --dpos cold-restart"
-
-echo "== cold-restart: all validators into unified --dpos (+ full-node into --cert-follow) =="
-ANCHOR=$(check_external 8545 | cut -d'|' -f1)
-export COMPOSE_FILE="docker-compose.production-path.yml:docker-compose.production-path.dpos.yml"
-# full-node is recreated too: the .dpos.yml overlay switches it from the
-# pre-DPoS trust-follow block relay to a CERT-FOLLOWER. A relay can't reproduce
-# the beacon (PK_E + seed live in the consensus OrderBlock cert, not the executed
-# block), so it diverges at the rotation; a cert-follower derives + verifies the
-# seed and survives.
-docker compose up -d --force-recreate "${PP_VALS[@]}" full-node \
-    || { echo "FAIL (smoke-vrf-rotation): cold-restart into --dpos (a validator exited)"; docker compose logs validator-0 --tail=80; exit 1; }
-pp_wait_converge 180 "$ANCHOR" >/dev/null \
-    || { echo "FAIL (smoke-vrf-rotation): DPoS chain did not converge past anchor $ANCHOR"; docker compose logs --tail=200; exit 1; }
-echo "  DPoS chain live past anchor $ANCHOR"
-
-# Epoch length (blocks) — read once, used to map epoch numbers to boundary blocks.
-EPOCH_LEN=$(printf '%d' "$(pp_chainconfig_call 'getEpochBlockInterval()(uint32)')")
-(( EPOCH_LEN > 0 )) || { echo "FAIL (smoke-vrf-rotation): getEpochBlockInterval()=0"; exit 1; }
-# Decimal block height of the FIRST block of relative epoch $1.
-epoch_first_block() { echo $(( ACT + $1 * EPOCH_LEN )); }
+PP_ROT_LABEL="smoke-vrf-rotation"
+pp_bring_up_rotation
 
 # ════════════════════════════════════════════════════════════════════════════
 # 1) BASELINE — the deterministic epoch-2 bootstrap brings the beacon

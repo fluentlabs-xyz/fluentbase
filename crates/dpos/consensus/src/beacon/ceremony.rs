@@ -360,6 +360,7 @@ impl DkgCeremony {
                     body: DkgBody::Reveal(Box::new(signed)),
                 },
             });
+            tracing::info!(epoch = self.epoch, "live DKG: dealings sealed — own log broadcast");
         } else {
             // Our OWN freshly-finalized dealer log failed self-`check` (a library/encoding
             // edge or `Info`/variant mismatch). Emitting no `OwnSeal`/`Reveal` is correct

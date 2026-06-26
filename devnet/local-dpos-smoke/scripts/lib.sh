@@ -581,3 +581,132 @@ pp_spammer_start() {
     PP_SPAMMER_PID=$!
 }
 pp_spammer_stop() { [[ -n "$PP_SPAMMER_PID" ]] && kill "$PP_SPAMMER_PID" 2>/dev/null || true; }
+
+# Bring up the production-path / rotation stack with the initial 5-validator
+# committee, identically for every rotation-stack case (case-vrf-rotation +
+# case-vrf-dkg-durability). Mirrors case-production-path.sh phases A..cold-restart
+# verbatim: bare sequencer chain → fund + start the tx spammer → forge-deploy
+# token + BLS verifier + the staking cluster → setBlsVerifier → setConsensusKeys
+# v0..v4 → setDposActivationBlock → clean-halt at activation → --dpos cold-restart
+# of v0..v5 + full-node → converge past the anchor.
+#
+# Caller contract (set BEFORE calling):
+#   - COMPOSE_FILE=docker-compose.production-path.yml (exported, before sourcing)
+#   - SOLIDITY_CONTRACTS_DIR, MANIFEST (deploy-output path), forge_l2() wrapper
+#   - PP_ROT_LABEL — FAIL-message label (e.g. "smoke-vrf-rotation")
+# Exports (read by the caller afterwards): DEPLOYER_KEY, DEPLOYER_ADDR, TOKEN,
+#   VERIFIER, STAKING_RT, CHAIN_CONFIG_RT, GOV_ADDR, LIVENESS_RT, ACT, ANCHOR,
+#   EPOCH_LEN; defines epoch_first_block(); starts the spammer (PP_SPAMMER_PID).
+# No behavior change vs the former inline block — a pure extraction so both cases
+# own ONE forge/governance bring-up.
+pp_bring_up_rotation() {
+    local L="${PP_ROT_LABEL:?pp_bring_up_rotation: set PP_ROT_LABEL}"
+    local MNEMONIC SPAMMER_KEY SPAMMER_ADDR ck bls_pub bls_pop peer addr HEAD PRE k want got pair v i
+
+    echo "== phase A: bare sequencer chain =="
+    docker compose up --build -d
+    pp_wait_converge 240 >/dev/null || { echo "FAIL ($L): bare chain did not converge"; docker compose logs --tail=120; exit 1; }
+    echo "  converged plain chain"
+
+    DEPLOYER_KEY="$(pp_owner_key 0)"
+    DEPLOYER_ADDR="$(pp_owner_addr 0)"
+
+    MNEMONIC="${FLUENT_DPOS_MNEMONIC:-test test test test test test test test test test test junk}"
+    SPAMMER_KEY="$(cast wallet private-key --mnemonic "$MNEMONIC" --mnemonic-index 6)"
+    SPAMMER_ADDR="$(cast wallet address --mnemonic "$MNEMONIC" --mnemonic-index 6)"
+    cast send "$SPAMMER_ADDR" --value 1000000000000000 \
+        --rpc-url "$RPC" --private-key "$DEPLOYER_KEY" >/dev/null \
+        || { echo "FAIL ($L): fund spammer account"; exit 1; }
+    pp_spammer_start "$SPAMMER_KEY" "$DEPLOYER_ADDR"
+    echo "  tx spammer started (pid $PP_SPAMMER_PID, from $SPAMMER_ADDR)"
+
+    echo "== runtime deploy: token + BLS verifier =="
+    TOKEN=$(forge_l2 forge create --rpc-url "$RPC" --private-key "$DEPLOYER_KEY" --broadcast --json \
+        "contracts/staking/mocks/MockBlendToken.sol:MockBlendToken" | jq -r '.deployedTo')
+    [[ "$TOKEN" == 0x* ]] || { echo "FAIL ($L): MockBlendToken deploy"; exit 1; }
+    VERIFIER=$(forge_l2 forge create --rpc-url "$RPC" --private-key "$DEPLOYER_KEY" --broadcast --json \
+        "contracts/libraries/BLS12381Verifier.sol:BLS12381Verifier" | jq -r '.deployedTo')
+    [[ "$VERIFIER" == 0x* ]] || { echo "FAIL ($L): BLS12381Verifier deploy"; exit 1; }
+    echo "  token=$TOKEN verifier=$VERIFIER"
+
+    pp_token_transfer "$TOKEN" "$(pp_owner_addr 5)" "10000000000000000000"
+
+    echo "== runtime deploy: staking cluster (DeployStaking) =="
+    NETWORK=local-dpos-smoke/l2 DEPLOYER="$DEPLOYER_ADDR" INITIAL_OWNER="$DEPLOYER_ADDR" \
+      STAKING_TOKEN="$TOKEN" OUTPUT_PATH="$MANIFEST" \
+      forge_l2 forge script scripts/deploy/DeployStaking.s.sol:DeployStaking \
+        --rpc-url "$RPC" --private-key "$DEPLOYER_KEY" --broadcast --skip-simulation \
+      || { echo "FAIL ($L): DeployStaking (EIP-170? see prereqs)"; exit 1; }
+
+    STAKING_RT=$(jq -r '.staking' "$MANIFEST")
+    CHAIN_CONFIG_RT=$(jq -r '.chain_config' "$MANIFEST")
+    GOV_ADDR=$(jq -r '.governance' "$MANIFEST")
+    LIVENESS_RT=$(jq -r '.liveness_slashing' "$MANIFEST")
+    for v in STAKING_RT CHAIN_CONFIG_RT GOV_ADDR LIVENESS_RT; do
+        [[ "${!v}" == 0x* ]] || { echo "FAIL ($L): manifest missing $v"; cat "$MANIFEST"; exit 1; }
+    done
+    echo "  staking=$STAKING_RT chainConfig=$CHAIN_CONFIG_RT gov=$GOV_ADDR liveness=$LIVENESS_RT"
+
+    echo "== governance: setBlsVerifier (MUST precede setConsensusKeys) =="
+    pp_gov_action "$CHAIN_CONFIG_RT" \
+        "$(cast calldata 'setBlsVerifier(address)' "$VERIFIER")" \
+        "setBlsVerifier" || { echo "FAIL ($L): gov setBlsVerifier"; exit 1; }
+
+    echo "== setConsensusKeys for committee v0..v4 =="
+    for i in 0 1 2 3 4; do
+        ck=$(pp_consensus_keys "$i")
+        bls_pub=$(jq -r '.blsPubkeyUncompressed' <<<"$ck")
+        bls_pop=$(jq -r '.blsPoPUncompressed' <<<"$ck")
+        peer=$(jq -r '.peerPubkey' <<<"$ck")
+        addr=$(jq -r '.validatorAddress' <<<"$ck")
+        cast send "$STAKING_RT" "setConsensusKeys(address,bytes,bytes,bytes32)" \
+            "$addr" "$bls_pub" "$bls_pop" "$peer" \
+            --rpc-url "$RPC" --private-key "$(pp_owner_key "$i")" >/dev/null \
+            || { echo "FAIL ($L): setConsensusKeys v$i"; exit 1; }
+    done
+    echo "  consensus keys set for 5 validators"
+
+    HEAD=$(printf '%d' "$(check_external 8545 | cut -d'|' -f1)")
+    ACT=$(( ((HEAD / 64) + 2) * 64 ))
+    echo "== governance: setDposActivationBlock=$ACT (head=$HEAD) =="
+    pp_gov_action "$CHAIN_CONFIG_RT" \
+        "$(cast calldata 'setDposActivationBlock(uint64)' "$ACT")" \
+        "setDposActivationBlock" || { echo "FAIL ($L): gov setDposActivationBlock"; exit 1; }
+
+    echo "== assert pre-written staking-reader.json matches the deploy manifest =="
+    PRE=$(docker compose exec -T validator-0 cat /runtime/staking-reader.json)
+    for pair in "staking_address:$STAKING_RT" \
+                "chain_config_address:$CHAIN_CONFIG_RT" \
+                "liveness_slashing_address:$LIVENESS_RT"; do
+        k=${pair%%:*} want=$(tr 'A-F' 'a-f' <<<"${pair#*:}")
+        got=$(jq -r ".$k" <<<"$PRE" | tr 'A-F' 'a-f')
+        [[ "$got" == "$want" ]] || { echo "FAIL ($L): pre-written $k=$got != deployed $want (deployer nonce drift — update --staking-reader-create-nonces)"; exit 1; }
+    done
+    echo "  pre-written config matches manifest"
+
+    echo "== wait for sequencer (validator-0) to clean-halt at activation block $ACT =="
+    wait_finalized_ge "$ACT" 400 || {
+        echo "FAIL ($L): sequencer did not reach activation block $ACT (head=$(finalized_dec))"
+        docker compose logs validator-0 --tail=80; exit 1
+    }
+    pp_wait_converge 180 >/dev/null \
+        || { echo "FAIL ($L): followers did not align at the activation block"; docker compose logs --tail=120; exit 1; }
+    echo "  all nodes aligned at $ACT; proceeding to --dpos cold-restart"
+
+    echo "== cold-restart: all validators into unified --dpos (+ full-node into --cert-follow) =="
+    ANCHOR=$(check_external 8545 | cut -d'|' -f1)
+    export COMPOSE_FILE="docker-compose.production-path.yml:docker-compose.production-path.dpos.yml"
+    docker compose up -d --force-recreate "${PP_VALS[@]}" full-node \
+        || { echo "FAIL ($L): cold-restart into --dpos (a validator exited)"; docker compose logs validator-0 --tail=80; exit 1; }
+    pp_wait_converge 180 "$ANCHOR" >/dev/null \
+        || { echo "FAIL ($L): DPoS chain did not converge past anchor $ANCHOR"; docker compose logs --tail=200; exit 1; }
+    echo "  DPoS chain live past anchor $ANCHOR"
+
+    EPOCH_LEN=$(printf '%d' "$(pp_chainconfig_call 'getEpochBlockInterval()(uint32)')")
+    (( EPOCH_LEN > 0 )) || { echo "FAIL ($L): getEpochBlockInterval()=0"; exit 1; }
+}
+
+# Decimal block height of the FIRST block of relative epoch $1 (ACT + $1*EPOCH_LEN).
+# Defined here (not inside pp_bring_up_rotation) so it survives the helper's local
+# scope; reads the globals ACT + EPOCH_LEN that the bring-up set.
+epoch_first_block() { echo $(( ACT + $1 * EPOCH_LEN )); }

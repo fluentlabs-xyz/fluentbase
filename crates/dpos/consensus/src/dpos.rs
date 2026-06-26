@@ -1294,27 +1294,47 @@ impl DposLayer {
         // genesis bootstrap key (epoch 0 / pre-first-rotation).
         //
         // The on-chain getEpochBeaconKey carry-forward cross-check is GONE (the
-        // PK_E layer was removed). A stored key is carried forward to E
-        // unconditionally; a stale carried share (committee changed at E) emits
-        // seed partials that peers reject via `verify_seed_partial` (the vote
-        // Nullifies → does not count toward quorum), and the certify hook gates the
-        // boundary, so a wrong carry-forward can NEVER finalize a bad seed. The
-        // dropped guard was only an early-demote LIVENESS optimization (a
-        // missed-ceremony member now signs doomed partials instead of demoting to
-        // cert-follow); fresh-share committee[E] members still form the quorum.
+        // PK_E layer was removed). A stored share is carried forward to E ONLY when
+        // its minting committee equals committee[E] (the `out.players() ==` guard in
+        // the closure below). An UNCONDITIONAL carry-forward across a committee CHANGE
+        // is unsafe: the stale share's Commonware-sorted index no longer matches the
+        // node's index in committee[E], so the signer spawn PANICS at
+        // `combined_scheme.rs:209` (`beacon share index != consensus participant
+        // index`) — it does NOT, as a prior comment claimed, merely sign rejectable
+        // partials. A mismatch (or a shareless change-epoch) → `None` → the
+        // `epoch_manager` share-gate demotes this node to verify-only (self-healing on
+        // the next reconcile edge); fresh-share committee[E] members still form the
+        // seed quorum.
         let beacon_resolver: crate::epoch_manager::BeaconResolver = {
             let store = ceremony_store.clone();
             let namespace = beacon_namespace;
             let genesis = genesis_beacon_key;
+            let committee_for = committee_for.clone();
             Arc::new(move |epoch: u64| {
                 if let Ok(m) = store.read() {
                     if let Some((_stored_epoch, (out, share))) = m.range(..=epoch).next_back() {
-                        // Exact-epoch hit OR carry-forward: return the local share.
-                        return Some((
-                            out.public().clone(),
-                            Some(share.clone()),
-                            namespace.clone(),
-                        ));
+                        // Carry-forward (`range(..=E).next_back()`) is valid ONLY when
+                        // committee[E] is byte-identical to the player set this share was
+                        // minted over: same players ⇒ same `PK_E` (the seed verifies) AND
+                        // same Commonware-sorted index ⇒ `share.index == vote.me()`, so
+                        // `CombinedScheme::new`'s index assert can never trip. A CHANGED
+                        // committee makes the carried share doubly invalid (wrong key AND
+                        // wrong index): returning it does NOT merely sign rejectable
+                        // partials — the stale `share.index` PANICS at
+                        // `combined_scheme.rs:209` on the signer spawn. So withhold
+                        // (`None`) on a mismatch (or a transiently-unreadable committee)
+                        // and let the `epoch_manager` share-gate demote to verify-only;
+                        // the node self-heals on the next reconcile edge once it holds a
+                        // share minted over committee[E]. This is the same `players() ==`
+                        // check the C-gate already performs (`outcome.rs`).
+                        return match (committee_for)(epoch) {
+                            Some(committee_e) if out.players() == &committee_e => Some((
+                                out.public().clone(),
+                                Some(share.clone()),
+                                namespace.clone(),
+                            )),
+                            _ => None,
+                        };
                     }
                 }
                 genesis.clone()
