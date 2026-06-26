@@ -21,7 +21,10 @@ EPOCH_INTERVAL="${EPOCH_INTERVAL:-32}"   # mirrors genesis-bootstrap epochBlockI
 # MUST equal genesis-bootstrap's ChainConfig.dposActivationBlock (bootstrap.rs).
 # DPoS epoch numbering rebases to 0 here; the migration anchor must land in
 # relative epoch 0 = [activation, activation+EPOCH_INTERVAL). Aligned, future.
-DPOS_ACTIVATION_BLOCK="${DPOS_ACTIVATION_BLOCK:-64}"
+# Default DERIVES from EPOCH_INTERVAL (== bootstrap's `2 * epochBlockInterval`), so a
+# tuned interval stays aligned without exporting DPOS_ACTIVATION_BLOCK separately —
+# one derivation rule across compose (empty → bootstrap derives), lib.sh, and bootstrap.
+DPOS_ACTIVATION_BLOCK="${DPOS_ACTIVATION_BLOCK:-$((2 * EPOCH_INTERVAL))}"
 
 VALS=(validator-0 validator-1 validator-2 validator-3)
 
@@ -145,6 +148,37 @@ wait_follower_align() {
 staking_call()     { cast call "$STAKING_ADDR"           "$@" --rpc-url "$RPC"; }
 chainconfig_call() { cast call "$CHAIN_CONFIG_ADDR"      "$@" --rpc-url "$RPC"; }
 liveness_call()    { cast call "$LIVENESS_SLASHING_ADDR" "$@" --rpc-url "$RPC"; }
+
+# On-chain validator status byte of address $1 (0 inactive, 1 pending, 2 active,
+# 3 jailed, 4 exiting) — `getValidatorStatus`'s second tuple field. Shared by every
+# case that reads the jail/active status (case-byzantine, the DKG-restart case) so the
+# 9-field ABI tuple has ONE definition; a Staking struct-shape change updates it once.
+validator_status() {
+    staking_call \
+        "getValidatorStatus(address)(address,uint8,uint256,uint32,uint64,uint64,uint64,uint16,uint96)" \
+        "$1" 2>/dev/null | sed -n '2p' | tr -d ' '
+}
+
+# 0-based peer-pubkey-sorted committee index of address $1 in epoch $2, or -1 if
+# absent. Shared by every liveness-slash case (case-liveness, the DKG-restart case).
+signer_idx() {
+    local addr="${1,,}" epoch="$2" comm
+    comm=$(staking_call "getEpochCommittee(uint64)(address[])" "$epoch")
+    grep -oE '0x[0-9a-fA-F]{40}' <<<"$comm" | nl -ba -v0 \
+        | awk -v v="$addr" 'tolower($2)==v{print $1; f=1} END{if(!f) print -1}'
+}
+
+# On-chain consecutive-miss count of address $2 in epoch $1. Sentinels: -1 = not in
+# committee; -2 = getter call FAILED (RPC error / empty output) — a -2 must be
+# retried, NEVER treated as a real 0 (a 0 would wrongly satisfy a "stayed at 0" /
+# "below threshold" assertion).
+misscount() {
+    local epoch="$1" idx out
+    idx=$(signer_idx "$2" "$epoch")
+    [[ "$idx" == "-1" ]] && { echo -1; return; }
+    out=$(liveness_call "missCount(uint64,uint32)(uint32)" "$epoch" "$idx" 2>/dev/null) || true
+    [[ -n "$out" ]] && printf '%s\n' "$out" || echo -2
+}
 
 # Decimal finalized height of the host-exposed producer (validator-0). NOTE: an
 # unreachable RPC coerces to 0 here (same as genesis) — fine for the `>= target`

@@ -7,7 +7,7 @@
 //! epoch_manager mux consumption) are deferred.
 //!
 //! Public API:
-//! - [`FluentP2P::build`] — sync constructor (Network::new + 6× register); returns the Network owner + [`FluentP2PHandles`] (clone-into-04/06).
+//! - [`FluentP2P::build`] — sync constructor (Network::new + 7× register); returns the Network owner + [`FluentP2PHandles`] (clone-into-04/06).
 //! - [`FluentP2P::start`] — consumes self, calls `Network::start`.
 //! - [`FluentP2PHandles`] — Fluent-domain handles (no commonware-p2p types leaked into 04's / 06's public API beyond the `OracleHandle` newtype and the `DiscSender` / `DiscReceiver` type aliases, which are intentional re-exports).
 
@@ -119,7 +119,7 @@ pub type DiscReceiver = Receiver<ed25519::PublicKey>;
 /// `epoch_manager` (see
 /// `crates/consensus/src/epoch_manager.rs`), which builds its own
 /// `Muxer`s over the raw channels. So 05 exposes
-/// the raw 6-channel `(Sender, Receiver)` pairs and does NOT pre-mux
+/// the raw 7-channel `(Sender, Receiver)` pairs and does NOT pre-mux
 /// vote/cert/resolver here — pre-muxing was redundant and would
 /// double-demux.
 pub struct FluentP2P<E>
@@ -164,6 +164,12 @@ where
     // in 04's launch. Per-epoch Muxing is deferred.
     pub beacon_sender: DiscSender<E>,
     pub beacon_receiver: DiscReceiver,
+
+    // BEACON_RESOLVER: global one-instance channel for the DKG-log recovery
+    // resolver (`commonware_resolver::p2p`). Consumed once by the beacon-plane
+    // resolver engine in `node/dpos.rs::build_beacon_plane`.
+    pub beacon_resolver_sender: DiscSender<E>,
+    pub beacon_resolver_receiver: DiscReceiver,
 }
 
 impl<E> FluentP2P<E>
@@ -171,7 +177,7 @@ where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Resolver,
 {
     /// Build the p2p layer: instantiate commonware Network, register
-    /// 6 top-level channels. Per-epoch demux for vote/cert/resolver is
+    /// 7 top-level channels. Per-epoch demux for vote/cert/resolver is
     /// handled inside the consensus `EpochManager` (it builds its own
     /// `Muxer`s), so this layer returns raw channels here.
     pub fn build(ctx: E, cfg: FluentP2PConfig) -> (Self, FluentP2PHandles<E>) {
@@ -214,6 +220,11 @@ where
             constants::BEACON_QUOTA,
             constants::BEACON_BACKLOG,
         );
+        let (beacon_res_s, beacon_res_r) = network.register(
+            constants::BEACON_RESOLVER_CHANNEL,
+            constants::BEACON_RESOLVER_QUOTA,
+            constants::BEACON_RESOLVER_BACKLOG,
+        );
 
         let handles = FluentP2PHandles {
             oracle: OracleHandle { inner: oracle },
@@ -229,6 +240,8 @@ where
             marshal_receiver: mr_r,
             beacon_sender: beacon_s,
             beacon_receiver: beacon_r,
+            beacon_resolver_sender: beacon_res_s,
+            beacon_resolver_receiver: beacon_res_r,
         };
         let me = Self { network };
         (me, handles)
@@ -280,6 +293,27 @@ impl Blocker for OracleHandle {
         tracing::warn!(target: "fluentbase_p2p::blocker", ?peer, "peer block requested");
         Blocker::block(&mut self.inner, peer).await
     }
+}
+
+/// A [`Blocker`] that does NOTHING. Wired into the BEACON-log recovery resolver
+/// (`commonware_resolver::p2p`) in place of the shared network [`OracleHandle`].
+///
+/// The resolver runs `blocker.block(peer)` on a `deliver=false` verdict (an undecodable
+/// or wrong-dealer DKG-log response). With the shared `OracleHandle` as blocker that hits
+/// the SINGLE global transport tracker, severing the peer from ALL channels (vote / cert /
+/// marshal / broadcast / beacon) for the 4-hour block — a self-inflicted consensus
+/// partition triggered by a benignly codec-skewed honest peer answering a recovery fetch
+/// (review [1013]). A no-op external blocker removes that collateral: the resolver's OWN
+/// abuse defense (`fetcher.block` excluded-set + inbound quota + `add_retry`) is
+/// INDEPENDENT of this hook and stays intact, so the beacon-log fetch path keeps its DoS
+/// protection while consensus connectivity is never collateral. (fix-plan-v3 Fix B.)
+#[derive(Clone, Default)]
+pub struct NoopBlocker;
+
+impl Blocker for NoopBlocker {
+    type PublicKey = ed25519::PublicKey;
+
+    async fn block(&mut self, _peer: Self::PublicKey) {}
 }
 
 impl Provider for OracleHandle {
@@ -389,9 +423,9 @@ mod tests {
             let mut sink = handles.oracle.clone();
             <OracleHandle as PeerSetSink>::track(&mut sink, 7, Set::default()).await;
 
-            // All 6 channels are exposed as raw (sender, receiver) — the five
-            // bound below plus BEACON via `..`. Bind by move to prove they are
-            // owned and usable.
+            // All 7 channels are exposed as raw (sender, receiver) — the five
+            // bound below plus BEACON + BEACON_RESOLVER via `..`. Bind by move to
+            // prove they are owned and usable.
             let FluentP2PHandles {
                 vote_sender: _vs,
                 vote_receiver: _vr,

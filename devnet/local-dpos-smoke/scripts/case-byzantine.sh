@@ -26,9 +26,7 @@ echo "smoke-byzantine: validator-3 ($VIC) equivocating; honest quorum live (anch
 deadline=$(( $(date +%s) + 200 ))
 status=""
 while (( $(date +%s) < deadline )); do
-    status=$(staking_call \
-        "getValidatorStatus(address)(address,uint8,uint256,uint32,uint64,uint64,uint64,uint16,uint96)" \
-        "$VIC" 2>/dev/null | sed -n '2p' | tr -d ' ' || true)
+    status=$(validator_status "$VIC" || true)
     if [[ "$status" == "3" ]]; then
         echo "smoke-byzantine: validator-3 jailed (status=Jail) by equivocation slashing"
         break

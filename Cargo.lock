@@ -5435,6 +5435,7 @@ dependencies = [
  "commonware-consensus",
  "commonware-cryptography",
  "commonware-p2p",
+ "commonware-resolver",
  "commonware-runtime",
  "commonware-utils",
  "crossbeam-channel",

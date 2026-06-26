@@ -9,6 +9,7 @@ use crate::consensus_rpc::{feed_actor::FeedActor, FeedStateHandle};
 // (ctx.with_label, ctx.encode) + `Spawner` (ctx.spawn) — used by the always-on
 // beacon plane, the cert-feed actor, and the feature-gated devnet metrics endpoint.
 use commonware_consensus::types::Height;
+use commonware_cryptography::Signer as _;
 use commonware_p2p::{
     utils::mux::{Builder, Muxer},
     Ingress,
@@ -659,6 +660,7 @@ where
         ("network", plane.net_handle),
         ("dkg", plane.dkg_handle),
         ("poller", plane.poller_handle),
+        ("beacon_resolver", plane.beacon_resolver_handle),
     ];
     for h in plane.mux_handles {
         supervised.push(("mux", h));
@@ -721,6 +723,10 @@ pub(crate) struct BeaconPlane {
     /// re-homed onto the cert-inlet (`live_height` + `dkg_height_tx` below),
     /// fed only on an upstream-configured node.
     pub poller_handle: Handle<()>,
+    /// The DKG-log recovery resolver engine (`commonware_resolver::p2p`) on
+    /// BEACON_RESOLVER_CHANNEL — aborted ONLY at process shutdown (it serves peers'
+    /// log fetches and drives our own recovery fetches for the whole process).
+    pub beacon_resolver_handle: Handle<()>,
     /// The 5 persistent non-beacon `Muxer` broker tasks (vote/cert/resolver/
     /// broadcast/marshal) + the vote-backup forwarder — aborted ONLY at process
     /// shutdown (they outlive every per-promotion signer engine).
@@ -970,6 +976,44 @@ where
     let beacon_metrics = fluentbase_consensus::beacon::metrics::BeaconMetrics::default();
     beacon_metrics.register(ctx);
 
+    // DKG-log recovery resolver (`commonware_resolver::p2p`) on BEACON_RESOLVER_CHANNEL
+    // — a mid-window-restarted committee member re-fetches the public dealer logs it
+    // never received, keyed by `{epoch, dealer}`, from peers that still hold them. The
+    // `Provider` is the SAME `OracleHandle` the EpochTransition tracks
+    // `registry ∪ committee[E]` on, so the log holders are in `latest.primary` during
+    // E-1 (committee[E] ⊆ registry); `fetch_targeted` aims at the roster. The `Blocker`
+    // is an isolated `NoopBlocker` (NOT the shared oracle): a `deliver=false` on a bad
+    // DKG-log response must never partition a peer from consensus channels (review
+    // [1013] / fix-plan-v3 Fix B). The
+    // `LogHandler` bridges the engine's Producer/Consumer to the DkgActor run loop
+    // (which owns the ceremony state single-threaded). Replaces the former
+    // best-effort BEACON_CHANNEL LogRequest/LogResponse gossip pull (§8.11.1).
+    let (log_resolver_tx, log_resolver_rx) =
+        mpsc::channel::<fluentbase_consensus::beacon::log_resolver::LogMessage>(256);
+    let log_handler =
+        fluentbase_consensus::beacon::log_resolver::LogHandler::new(log_resolver_tx);
+    let (log_resolver_engine, log_resolver_mailbox) =
+        commonware_resolver::p2p::Engine::new(
+            ctx.with_label("beacon_log_resolver"),
+            commonware_resolver::p2p::Config {
+                peer_provider: handles.oracle.clone(),
+                blocker: fluentbase_p2p::NoopBlocker,
+                consumer: log_handler.clone(),
+                producer: log_handler,
+                mailbox_size: 256,
+                me: Some(peer_keypair.public_key()),
+                // Mirror the MARSHAL resolver's backfill cadence (the other resolver
+                // rider). A DKG-log fetch is rare (one restarted member's catch-up).
+                initial: Duration::from_millis(100),
+                timeout: Duration::from_secs(5),
+                fetch_retry_timeout: Duration::from_millis(500),
+                priority_requests: false,
+                priority_responses: false,
+            },
+        );
+    let beacon_resolver_handle = log_resolver_engine
+        .start((handles.beacon_resolver_sender, handles.beacon_resolver_receiver));
+
     // EpochTransition-driven Oracle peer set + the `dkg_height` clock, both fed by a
     // persistent finalized-height poller (reth `finalized_block_number`) — a source
     // that exists in BOTH the follower and signer phases, unlike the per-engine
@@ -1122,6 +1166,8 @@ where
                 peer_keypair,
                 handles.beacon_sender,
                 handles.beacon_receiver,
+                Some(log_resolver_mailbox),
+                Some(log_resolver_rx),
                 committee_for,
                 ceremony_store,
                 share_notify,
@@ -1144,6 +1190,7 @@ where
         net_handle,
         dkg_handle,
         poller_handle,
+        beacon_resolver_handle,
         mux_handles,
         shared: SharedBeaconPlane {
             oracle: handles.oracle,

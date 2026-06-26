@@ -15,10 +15,11 @@ use commonware_utils::NZU32;
 // Channel IDs
 //
 // Three top-level Muxed channels (per-epoch demux): VOTE/CERT/RESOLVER.
-// Three top-level non-Muxed channels (global one-instance for the node):
+// Four top-level non-Muxed channels (global one-instance for the node):
 // BROADCAST (block-data dissemination via `buffered::Engine`),
-// MARSHAL (backfill via `marshal::resolver::p2p::init`), and BEACON
-// (randomness-beacon DKG + per-height seed partials; see BEACON_CHANNEL
+// MARSHAL (backfill via `marshal::resolver::p2p::init`), BEACON
+// (randomness-beacon DKG; see BEACON_CHANNEL below), and BEACON_RESOLVER
+// (DKG-log recovery via `commonware_resolver::p2p`; see BEACON_RESOLVER_CHANNEL
 // below). Order is arbitrary but fixed: changing it without coordinated
 // release silently misroutes consensus traffic across the network.
 pub const VOTE_CHANNEL: u64 = 0;
@@ -35,6 +36,17 @@ pub const MARSHAL_CHANNEL: u64 = 4;
 // the live `DkgActor` (`dpos.rs::launch` → `beacon/actor.rs`). Per-epoch Muxing
 // (so DKG-for-E and DKG-for-E+1 never interleave) is deferred.
 pub const BEACON_CHANNEL: u64 = 5;
+// Beacon-plane DKG-log recovery resolver (`commonware_resolver::p2p`): a
+// mid-window-restarted committee member re-fetches the public dealer logs it
+// never received, keyed by `{epoch, dealer}`, from peers that still hold them
+// (the always-on plane keeps committee[E] connected; the EpochTransition's
+// `registry ∪ committee` tracker keeps them in `latest.primary`). Replaces the
+// former best-effort `BEACON_CHANNEL` LogRequest/LogResponse gossip pull. A
+// GLOBAL one-instance channel like BROADCAST/MARSHAL, registered once in
+// `FluentP2P::build` and consumed by the beacon-plane resolver engine
+// (`node/dpos.rs::build_beacon_plane`). MUST be byte-identical across the
+// network (a new channel id all nodes agree on).
+pub const BEACON_RESOLVER_CHANNEL: u64 = 6;
 
 // Per-channel rate quotas
 //
@@ -60,6 +72,10 @@ pub const MARSHAL_QUOTA: Quota = Quota::per_second(NZU32!(16));
 // BEACON: DKG is bursty for one round per epoch (dealing/ack broadcast) then
 // idle. Matched to VOTE/CERT (same n=51 fan-out for the DKG round).
 pub const BEACON_QUOTA: Quota = Quota::per_second(NZU32!(128));
+// BEACON_RESOLVER: DKG-log recovery fetch — request-bursty during a single
+// restarted member's catch-up (≤ n keys, one per missing dealer), then idle.
+// Matched to MARSHAL (the other resolver backfill channel).
+pub const BEACON_RESOLVER_QUOTA: Quota = Quota::per_second(NZU32!(16));
 
 // Per-channel backlog (mailbox size before back-pressure)
 pub const VOTE_BACKLOG: usize = 256;
@@ -68,6 +84,7 @@ pub const RESOLVER_BACKLOG: usize = 64;
 pub const BROADCAST_BACKLOG: usize = 32;
 pub const MARSHAL_BACKLOG: usize = 128;
 pub const BEACON_BACKLOG: usize = 256;
+pub const BEACON_RESOLVER_BACKLOG: usize = 128;
 
 // Wire caps
 //

@@ -32,6 +32,20 @@ services:
       - --contracts-dir=/contracts
       - --chain-id=2026
       - --validator-ips=172.20.0.10,172.20.0.11,172.20.0.12,172.20.0.13
+    # Liveness-slash config tunables (bootstrap.rs reads these; unset ⇒ historic
+    # devnet defaults). Forwarded from the host so a tuned case (e.g.
+    # case-vrf-dkg-restart-midwindow) can raise epochBlockInterval ≥ missThreshold
+    # and lower felonyThreshold to exercise the liveness slash + jail.
+    environment:
+      EPOCH_BLOCK_INTERVAL: "${EPOCH_BLOCK_INTERVAL:-32}"
+      # Forward ONLY when the host set it; an empty value lets genesis-bootstrap
+      # derive its own default (`2 * EPOCH_BLOCK_INTERVAL`, bootstrap.rs) so the
+      # activation block tracks a tuned interval instead of a hardcoded literal that
+      # only agrees with bootstrap at interval=32 (a tuned case would otherwise mis-
+      # align the migration anchor off the epoch boundary).
+      DPOS_ACTIVATION_BLOCK: "${DPOS_ACTIVATION_BLOCK:-}"
+      MISDEMEANOR_THRESHOLD: "${MISDEMEANOR_THRESHOLD:-100}"
+      FELONY_THRESHOLD: "${FELONY_THRESHOLD:-1000}"
     volumes:
       - runtime:/runtime
       - ./contracts:/contracts:ro

@@ -31,28 +31,10 @@ mapfile -t ADDR < <(docker compose exec -T validator-0 cat /runtime/addresses.js
 (( ${#ADDR[@]} == 4 )) || { echo "FAIL (smoke-liveness): expected 4 validator addresses, got ${#ADDR[@]}: ${ADDR[*]}"; exit 1; }
 V0_ADDR="${ADDR[0]}"
 
-# 0-based committee index of address $1 in epoch $2 (peer-pubkey-sorted
-# getEpochCommittee order), or -1 if absent.
-signer_idx() {
-    local addr="${1,,}" epoch="$2" comm
-    comm=$(staking_call "getEpochCommittee(uint64)(address[])" "$epoch")
-    grep -oE '0x[0-9a-fA-F]{40}' <<<"$comm" | nl -ba -v0 \
-        | awk -v v="$addr" 'tolower($2)==v{print $1; f=1} END{if(!f) print -1}'
-}
-
-# On-chain miss-count of address $2 in epoch $1. Sentinels: -1 = not in
-# committee; -2 = getter call FAILED (RPC error / empty output). Distinguishing
-# -2 from a real 0 matters for the reference (hub) read: a failed read collapsing
-# to 0 would make the `vmc > refmc` assertion easier to satisfy and would hide a
-# regression that breaks the missCount getter. Callers must treat -2 as "retry",
-# never as a valid count.
-misscount() {
-    local epoch="$1" idx out
-    idx=$(signer_idx "$2" "$epoch")
-    [[ "$idx" == "-1" ]] && { echo -1; return; }
-    out=$(liveness_call "missCount(uint64,uint32)(uint32)" "$epoch" "$idx" 2>/dev/null) || true
-    [[ -n "$out" ]] && printf '%s\n' "$out" || echo -2
-}
+# `signer_idx` + `misscount` (the committee-index + consecutive-miss readers) live
+# in lib.sh — shared with case-vrf-dkg-restart-midwindow.sh. A -2 from misscount is
+# a FAILED read (retry), never a valid 0: a failed read collapsing to 0 would make
+# the `vmc > refmc` assertion easier to satisfy and hide a getter regression.
 
 # One kill/rejoin cycle. $1 = victim index (1..3), $2 = min blocks to advance
 # while down (> EPOCH_INTERVAL forces the pipeline-backfill rejoin path).

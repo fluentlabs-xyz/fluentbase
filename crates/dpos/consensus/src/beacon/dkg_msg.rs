@@ -13,6 +13,12 @@
 //! - `Share` — a dealer's private share for one player (sent point-to-point).
 //! - `Ack` — a player's acknowledgement of a dealer's commitment+share.
 //! - `Reveal` — a dealer's signed log (public reveal for un-acked players).
+//!
+//! DKG-log RECOVERY (a mid-window-restarted member re-fetching never-received dealer
+//! logs) is NOT a body here — it rides the `commonware_resolver::p2p` engine on
+//! `BEACON_RESOLVER_CHANNEL`, keyed by `{epoch, dealer}` (see
+//! [`crate::beacon::log_resolver`]). The former best-effort `LogRequest`/`LogResponse`
+//! gossip pull was replaced by it (§8.11.1).
 
 use bytes::{Buf, BufMut};
 use commonware_codec::{EncodeSize, Error, Read, Write};

@@ -69,3 +69,36 @@ pub fn write_mode_0600(path: &Path, data: &[u8]) -> std::io::Result<()> {
 pub fn write_mode_0600(path: &Path, data: &[u8]) -> std::io::Result<()> {
     std::fs::write(path, data)
 }
+
+/// Append `data` to `path`, creating it mode 0600 if absent. The append sibling of
+/// [`write_mode_0600`] for the per-epoch DKG ceremony journal, whose records are
+/// written one at a time as the ceremony progresses (an O_APPEND open avoids
+/// re-reading the whole file on every record).
+#[cfg(unix)]
+pub fn append_mode_0600(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(data)?;
+    // fsync the appended record before returning: write_all only reaches the
+    // page cache, so a crash before the OS flushes would lose the tail. The
+    // journal loader tolerates a torn tail (no corruption), but syncing each
+    // record minimizes lost dealings -> fewer unnecessary sit-outs on restart
+    // (matches tempo, which sync()s after every append).
+    file.sync_all()
+}
+
+#[cfg(not(unix))]
+pub fn append_mode_0600(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)?;
+    file.write_all(data)?;
+    file.sync_all()
+}

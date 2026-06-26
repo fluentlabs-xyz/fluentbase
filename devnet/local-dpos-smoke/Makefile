@@ -4,7 +4,7 @@ SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
         smoke-base smoke-fault smoke-tx smoke-epoch smoke-peers smoke-liveness smoke-crash-survivor smoke-byzantine \
         smoke-gov-interval smoke-full-restart smoke-cert-follow smoke-deferred \
         smoke-vrf smoke-vrf-rotation smoke-byzantine-vrf smoke-vrf-fault smoke-vrf-boundary \
-        smoke-vrf-dkg-liveness \
+        smoke-vrf-dkg-liveness smoke-vrf-dkg-restart-midwindow \
         smoke-production-path smoke-all
 
 regen-contracts:
@@ -130,6 +130,14 @@ smoke-vrf-boundary:
 # from the cert seed on restart. Heavy (~4-5 min); NOT in run-all.
 smoke-vrf-dkg-liveness:
 	@./scripts/case-vrf-dkg-liveness.sh
+# Durable mid-window DKG restart: a committee[2] member restarts AFTER its epoch-2 seal
+# but BEFORE the boundary; it RESUMES its ceremony from the on-disk journal + pull,
+# converges to (PK_2, share), and AVOIDS the liveness slash a shareless node would
+# suffer. Runs a TUNED config (epochBlockInterval=64 > missThreshold=50, felonyThreshold=1)
+# so the slash is actually reachable — the default config (epoch 32 < missThreshold 50)
+# cannot fire it (the smoke-vrf-dkg-liveness blind spot). Heavy (~6-8 min); NOT in run-all.
+smoke-vrf-dkg-restart-midwindow:
+	@./scripts/case-vrf-dkg-restart-midwindow.sh
 # TODO(deferred, after-forked-staking-state-harness): E2 wrong-key cert-follower
 # smoke (`smoke-vrf-wrongkey` + docker-compose.cert-follow-wrongkey.yml) — a
 # follower with a WRONG beacon key must derive a DIVERGENT mixHash (order.digest()

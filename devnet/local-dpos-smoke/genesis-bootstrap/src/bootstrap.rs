@@ -319,24 +319,37 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
     // is `1e10` (Staking.sol:78). Pick 1 BLEND (1e18) as min stake +
     // initial — multiple of 1e10, smoke uses no real economics.
     let smoke_min_stake = U256::from(10u128).pow(U256::from(18));
+    // Liveness-slash config is env-overridable so a tuned smoke (e.g.
+    // case-vrf-dkg-restart-midwindow) can make the per-(epoch,signerIdx) consecutive-
+    // miss counter actually REACH `missThreshold` within one epoch — the DEFAULT
+    // (epochBlockInterval=32 < missThreshold=50, per-epoch counter) is structurally
+    // incapable of firing the slash, so the env-tuned case raises epochBlockInterval
+    // ≥ missThreshold and lowers felonyThreshold to also exercise the JAIL escalation.
+    // Defaults reproduce the historic devnet config byte-for-byte when the env vars
+    // are unset. `dposActivationBlock` defaults to `2 * epochBlockInterval` so the
+    // migration anchor still lands in absolute epoch 2 (alignment invariant); both the
+    // interval and the activation block MUST match `lib.sh`'s `EPOCH_INTERVAL` /
+    // `DPOS_ACTIVATION_BLOCK`.
+    let env_u32 = |k: &str, default: u32| -> u32 {
+        std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    };
+    let env_u64 = |k: &str, default: u64| -> u64 {
+        std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    };
+    let epoch_block_interval = env_u32("EPOCH_BLOCK_INTERVAL", 32);
+    let dpos_activation_block =
+        env_u64("DPOS_ACTIVATION_BLOCK", 2 * u64::from(epoch_block_interval));
     let chain_config_init = abi::IChainConfig::initializeCall {
         initialOwner: deployer,
         activeValidatorsLength: keys.validators.len() as u32,
-        epochBlockInterval: 32,
-        misdemeanorThreshold: 100,
-        felonyThreshold: 1000,
+        epochBlockInterval: epoch_block_interval,
+        misdemeanorThreshold: env_u32("MISDEMEANOR_THRESHOLD", 100),
+        felonyThreshold: env_u32("FELONY_THRESHOLD", 1000),
         validatorJailEpochLength: 16,
         undelegatePeriod: 16,
         minValidatorStakeAmount: smoke_min_stake,
         minStakingAmount: smoke_min_stake,
-        // Aligned (% epochBlockInterval=32) future block at which DPoS epoch
-        // numbering rebases to 0 — the sequencer→DPoS migration anchor lands in
-        // relative epoch 0 ([64, 95]). `_migrate_to_dpos` (scripts/lib.sh) waits
-        // for the sequencer to finalize >= this block before swapping; the two MUST
-        // agree (DPOS_ACTIVATION_BLOCK there). `_currentEpoch` clamps to 0 for
-        // the pre-activation sequencer-era window. Absolute epoch here is 64/32 = 2, so
-        // the smoke exercises the epoch>=1 cold-start (the bug-#2 scenario).
-        dposActivationBlock: 64,
+        dposActivationBlock: dpos_activation_block,
     }
     .abi_encode();
     call_or_die(

@@ -66,6 +66,7 @@ fluentbase-p2p.workspace = true
 commonware-runtime.workspace = true
 commonware-p2p.workspace = true
 commonware-consensus.workspace = true
+commonware-resolver.workspace = true
 commonware-cryptography = { workspace = true, features = ["std"] }
 commonware-utils = { workspace = true, features = ["std"] }
 commonware-codec.workspace = true
