@@ -10,7 +10,7 @@
 
 use alloy_consensus::BlockHeader;
 use alloy_evm::Evm;
-use alloy_primitives::{address, Address, Bytes, B256};
+use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use commonware_codec::DecodeExt as _;
 use fluentbase_bls::{BlsPubkey, PeerPubkey, PUBKEY_BYTES};
@@ -47,9 +47,8 @@ mod abi {
         }
 
         // Staking contract
-        function getConsensusKeys(address validator)
-            external view returns (ConsensusKeys);
-        function getEpochCommittee(uint64 epoch) external view returns (address[]);
+        function getEpochCommitteeWithStakes(uint64 epoch)
+            external view returns (address[] addrs, ConsensusKeys[] keys, uint256[] stakes);
         function getRegistryWithKeys()
             external view returns (address[] addrs, ConsensusKeys[] keys);
 
@@ -71,11 +70,26 @@ mod abi {
 /// the off-chain cache vs on-chain pruning — update both in the same PR.
 pub const EPOCH_COMMITTEE_RETENTION_MARGIN: u64 = 8;
 
+/// Mirrors `StakingLayout.BALANCE_COMPACT_PRECISION` (`StakingLayout.sol:51`,
+/// `1e10`): on-chain `totalDelegated` is returned wei-scale (compacted ×1e10).
+/// The elector needs only relative weights, so we scale back to the compacted
+/// `uint112` (fits `u128`). MUST mirror Solidity — drift mis-weights leaders.
+pub const BALANCE_COMPACT_PRECISION: u128 = 10_000_000_000;
+
+/// Wei-scale `totalDelegated` → compacted `uint112` weight (`u128`). Delegations
+/// are exact multiples of [`BALANCE_COMPACT_PRECISION`] (`Staking.sol`), so the
+/// division is lossless; `try_from` guards the impossible `> u128` case.
+fn compact_stake(wei: U256) -> Result<u128, ReadError> {
+    u128::try_from(wei / U256::from(BALANCE_COMPACT_PRECISION))
+        .map_err(|_| ReadError::AbiDecode("stake exceeds u128".into()))
+}
+
 /// A validator's consensus identity, decoded and validated.
 ///
 /// `bls_pubkey` is subgroup-checked on decode; `peer_pubkey` is a 32-byte
 /// ed25519 key. Order in any `Vec` is **contract order, verbatim** — this
-/// crate never sorts. `stake_weight` is intentionally absent.
+/// crate never sorts. Stake is NOT a key property — it lives on
+/// [`ValidatorWithKeys::stake`] (the per-epoch frozen leader weight).
 #[derive(Clone, Debug)]
 pub struct ConsensusKeys {
     pub bls_pubkey: BlsPubkey,
@@ -88,6 +102,11 @@ pub struct ConsensusKeys {
 pub struct ValidatorWithKeys {
     pub address: Address,
     pub keys: ConsensusKeys,
+    /// Frozen effective stake at this snapshot's epoch, compacted
+    /// (`totalDelegated / BALANCE_COMPACT_PRECISION`). Same frozen source as
+    /// committee selection ⇒ byte-identical across nodes. Leader weight only;
+    /// NOT voting power.
+    pub stake: u128,
 }
 
 /// Validator set as read at one specific block. `epoch` is computed locally
@@ -431,24 +450,19 @@ where
     }
 
     /// Snapshot of the **frozen `epoch` committee** (authoritative for the
-    /// peer set / slashing window), each member joined with its full
-    /// consensus keys, at block `at`. This is what the cache persists —
-    /// NOT the stake-DESC `getValidatorsWithKeys` candidate set (removed).
+    /// peer set / slashing window / leader weights), each member joined with
+    /// its full consensus keys AND frozen effective stake, at block `at`. This
+    /// is what the cache persists.
     ///
-    /// One `getEpochCommittee` call + one `getConsensusKeys` per member —
-    /// keeps the full [`ConsensusKeys`] (bls + peer + activationEpoch) the
-    /// snapshot codec needs. A keyless committee member ⇒
+    /// One `getEpochCommitteeWithStakes` call returns the complete per-epoch
+    /// snapshot — `(addrs, keys, stakes)`, all frozen-at-epoch — keeping the
+    /// full [`ConsensusKeys`] (bls + peer + activationEpoch) the codec needs
+    /// plus the per-member [`ValidatorWithKeys::stake`] the leader elector
+    /// consumes. A keyless committee member ⇒
     /// [`ReadError::CommitteeMemberKeyless`] (on-chain invariant violation),
     /// never silently skipped. Empty / uncommitted epoch ⇒ a snapshot with
-    /// `validators: []`.
-    ///
-    /// All `1 + N` STATICCALLs run against a SINGLE EVM built once for `at`
-    /// (via [`Self::with_evm`]) — the header read + state-provider build are
-    /// invariant at a fixed `at`, so a 51-member committee no longer re-reads
-    /// the header / rebuilds the state provider ~52 times. Each
-    /// `transact_system_call` is a pure view that commits nothing, so reusing
-    /// the EVM is byte-for-byte the same as the prior per-call construction
-    /// (same calldata, same order, same decode, same error variants).
+    /// `validators: []`. A `(addrs, keys, stakes)` length mismatch ⇒
+    /// [`ReadError::AbiDecode`] (the contract returns equal-length arrays).
     pub fn epoch_committee_snapshot(
         &self,
         epoch: u64,
@@ -458,12 +472,18 @@ where
         let (block_number, validators) = self.with_evm(at, |evm, header| {
             // Block number from the already-read header — no second header read.
             let block_number = header.number();
-            let committee: Vec<Address> =
-                decode_view(evm, staking, &abi::getEpochCommitteeCall { epoch })?;
-            let validators = committee
+            let ret = decode_view(evm, staking, &abi::getEpochCommitteeWithStakesCall { epoch })?;
+            if ret.addrs.len() != ret.keys.len() || ret.addrs.len() != ret.stakes.len() {
+                return Err(ReadError::AbiDecode(
+                    "committee/keys/stakes length mismatch".into(),
+                ));
+            }
+            let validators = ret
+                .addrs
                 .into_iter()
-                .map(|address| {
-                    let k = decode_view(evm, staking, &abi::getConsensusKeysCall { validator: address })?;
+                .zip(ret.keys)
+                .zip(ret.stakes)
+                .map(|((address, k), stake_wei)| {
                     if is_unset(&k) {
                         return Err(ReadError::CommitteeMemberKeyless {
                             epoch,
@@ -473,6 +493,7 @@ where
                     Ok(ValidatorWithKeys {
                         address,
                         keys: decode_consensus_keys(k)?,
+                        stake: compact_stake(stake_wei)?,
                     })
                 })
                 .collect::<Result<Vec<_>, ReadError>>()?;
@@ -606,8 +627,8 @@ mod tests {
         is_unset, StakingReaderConfig,
     };
     use crate::error::ReadError;
-    use alloy_primitives::{address, Address, Bytes, FixedBytes};
-    use alloy_sol_types::{SolCall, SolValue};
+    use alloy_primitives::{address, Bytes, FixedBytes};
+    use alloy_sol_types::SolCall;
     use commonware_codec::Encode as _;
     use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer};
     use commonware_math::algebra::Random as _;
@@ -704,12 +725,19 @@ mod tests {
     }
 
     #[test]
-    fn empty_address_array_decodes_to_empty_vec() {
-        let empty: Vec<Address> = vec![];
-        let data = empty.abi_encode();
-        let ret = abi::getEpochCommitteeCall::abi_decode_returns(&data)
-            .expect("empty address[] must decode");
-        assert!(ret.is_empty());
+    fn empty_committee_decodes_to_empty_snapshot() {
+        let data = abi::getEpochCommitteeWithStakesCall::abi_encode_returns(
+            &abi::getEpochCommitteeWithStakesReturn {
+                addrs: vec![],
+                keys: vec![],
+                stakes: vec![],
+            },
+        );
+        let ret = abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&data)
+            .expect("empty committee must decode");
+        assert!(ret.addrs.is_empty());
+        assert!(ret.keys.is_empty());
+        assert!(ret.stakes.is_empty());
     }
 
     #[test]

@@ -173,7 +173,6 @@ impl<EStorage: CacheBackend> StaleEpochFallback for SharedCacheFallback<EStorage
 /// The consumer task hands `(target, calldata)` and waits for an outcome;
 /// the sink is responsible for nonce management and on-chain confirmation
 /// semantics (no HTTP RPC; uses `TransactionPool::add_consensus_transaction`).
-/// **** я не очень люблю подход где создается trait только чтобы создать тест, должен быть способ проще
 pub trait SlasherTxSink: Send + Sync + 'static {
     fn submit<'a>(
         &'a self,

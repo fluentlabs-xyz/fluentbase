@@ -3,7 +3,7 @@ SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
 .PHONY: regen-contracts smoke smoke-swap up down logs clean \
         smoke-base smoke-fault smoke-tx smoke-epoch smoke-peers smoke-liveness smoke-crash-survivor smoke-byzantine \
         smoke-gov-interval smoke-full-restart smoke-cert-follow smoke-deferred \
-        smoke-vrf smoke-vrf-rotation smoke-byzantine-vrf smoke-vrf-fault smoke-vrf-boundary \
+        smoke-vrf smoke-weighted-vrf smoke-vrf-rotation smoke-byzantine-vrf smoke-vrf-fault smoke-vrf-boundary \
         smoke-vrf-dkg-liveness smoke-vrf-dkg-restart-midwindow \
         smoke-vrf-dkg-durability smoke-vrf-dkg-halt \
         smoke-production-path smoke-all
@@ -96,6 +96,11 @@ smoke-deferred:
 # Threshold randomness beacon: prev_randao = H(verified threshold seed) under DPoS.
 smoke-vrf:
 	@./scripts/case-vrf.sh
+# Stake-weighted VRF leader election: skew validator-0's genesis stake 9x and assert
+# it proposes proportionally more blocks (the heavy validator leads ~75% of views vs
+# ~8.3% each for the three equal-stake peers), while the chain stays live.
+smoke-weighted-vrf:
+	@./scripts/case-weighted-vrf.sh
 # Live DKG beacon ROTATION: a committee change forces a fresh DKG → a rotated
 # on-chain group key; beacon relives from the new epoch's first block; a stable
 # epoch carries the key forward (no on-chain commit). Runtime forge deploy +

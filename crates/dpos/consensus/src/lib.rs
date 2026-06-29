@@ -5,7 +5,7 @@
 //!
 //! Frozen leaves (collaborator-free):
 //!   [`digest`] (the OrderBlock keccak digest wrapper),
-//!   [`elector_seed`] (per-epoch RoundRobin leader seed),
+//!   [`weighted_vrf`] (stake-weighted VRF leader elector),
 //!   [`timeouts`] (timeout family + commonware panic-invariant guard).
 //!
 //! Wiring layer ([`application`], [`order_block`], [`engine`], [`epoch_manager`],
@@ -25,7 +25,6 @@ pub mod cert_inlet;
 pub mod cold_start_jump;
 pub mod digest;
 pub mod dpos;
-pub mod elector_seed;
 pub mod engine;
 pub mod epoch_manager;
 pub mod epocher;
@@ -38,6 +37,8 @@ pub mod scheme;
 pub mod slasher;
 pub mod spec_exec;
 pub mod timeouts;
+/// Stake-weighted VRF leader elector (used only by [`engine`], same crate).
+mod weighted_vrf;
 
 pub use application::{
     gas_limit_within_1_1024, step_gas_limit, BeaconEngineLike, DerivedBlock, DerivedBlockBuilder,

@@ -15,7 +15,10 @@ cd "$(dirname "$0")/.."
 #                        the `dpos-devnet-byzantine` image feature
 #   case-gov-interval  — descoped: a ChainConfig setter change needs a full
 #                        FluentGovernance propose/vote/execute flow (onlyFromGovernance)
-CASES=(${SMOKE_CASES:-case-base case-peers case-liveness case-crash-survivor case-full-restart case-deferred case-cert-follow case-cert-cascade})
+# `case-fault` bundles the recoverable DESTRUCTIVE default-stack cases
+# (deferred + peers + vrf-fault + crash-survivor + full-restart) onto ONE bring-up,
+# so it replaces those four separate entries here (and adds vrf-fault coverage).
+CASES=(${SMOKE_CASES:-case-base case-fault case-liveness case-cert-follow case-cert-cascade})
 
 declare -A RESULT
 fail=0

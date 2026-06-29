@@ -19,7 +19,8 @@ use core::mem::size_of;
 use alloy_primitives::{Address, B256};
 use commonware_runtime::{buffer::paged::CacheRef, BufferPooler, Metrics, Storage};
 use commonware_storage::{
-    archive::{prunable, Archive as _, Identifier},
+    archive::{prunable, Archive as _, Error as ArchiveError, Identifier},
+    journal::Error as JournalError,
     translator::FourCap,
 };
 use commonware_utils::{sequence::FixedBytes, NZUsize, NZU16, NZU64};
@@ -37,15 +38,26 @@ use crate::{
 /// only a guard against a corrupt length prefix.
 pub(crate) const MAX_VALIDATORS: usize = 4096;
 
+/// Schema version — the FIRST byte of every encoded [`ValidatorSetSnapshot`]
+/// (seam-3 guard). Bump on ANY wire-layout change. A decode against a different
+/// version is REFUSED in [`ValidatorSetSnapshot::read`] (never misparsed into
+/// silently-wrong leader weights), and the [`ValidatorSetCache`] treats that as
+/// a cache miss and re-derives from chain — the cache is a derived store, fully
+/// reconstructible. `1` = first versioned layout (adds the per-validator
+/// `stake` the leader elector consumes; the pre-version layout had no leading
+/// byte).
+pub(crate) const SNAPSHOT_CODEC_VERSION: u8 = 1;
+
 const HASH_BYTES: usize = 32;
 const ADDR_BYTES: usize = 20;
 const PEER_BYTES: usize = 32;
 
 // Wire (all integers big-endian via the bytes crate):
-//   block_hash(32) ‖ block_number(u64) ‖ epoch(u64) ‖ count(u32)
-//   ‖ [ address(20) ‖ bls_pubkey ‖ peer_pubkey(32) ‖ activation_epoch(u64) ] × count
+//   version(u8) ‖ block_hash(32) ‖ block_number(u64) ‖ epoch(u64) ‖ count(u32)
+//   ‖ [ address(20) ‖ bls_pubkey ‖ peer_pubkey(32) ‖ activation_epoch(u64) ‖ stake(u128) ] × count
 impl Write for ValidatorSetSnapshot {
     fn write(&self, buf: &mut impl BufMut) {
+        buf.put_u8(SNAPSHOT_CODEC_VERSION);
         buf.put_slice(self.block_hash.as_slice());
         buf.put_u64(self.block_number);
         buf.put_u64(self.epoch);
@@ -55,6 +67,7 @@ impl Write for ValidatorSetSnapshot {
             v.keys.bls_pubkey.write(buf);
             v.keys.peer_pubkey.write(buf);
             buf.put_u64(v.keys.activation_epoch);
+            buf.put_u128(v.stake);
         }
     }
 }
@@ -64,12 +77,17 @@ impl EncodeSize for ValidatorSetSnapshot {
         // Mirrors `write` field-for-field (see the wire comment above): each term
         // is the byte width its `write` line emits — fixed slices use their named
         // byte const, integers their `size_of`.
-        HASH_BYTES
+        size_of::<u8>() // codec version
+            + HASH_BYTES
             + size_of::<u64>() // block_number
             + size_of::<u64>() // epoch
             + size_of::<u32>() // validators count prefix
             + self.validators.len()
-                * (ADDR_BYTES + PUBKEY_BYTES + PEER_BYTES + size_of::<u64>()/* activation_epoch */)
+                * (ADDR_BYTES
+                    + PUBKEY_BYTES
+                    + PEER_BYTES
+                    + size_of::<u64>()/* activation_epoch */
+                    + size_of::<u128>()/* stake */)
     }
 }
 
@@ -77,6 +95,22 @@ impl Read for ValidatorSetSnapshot {
     type Cfg = ();
 
     fn read_cfg(buf: &mut impl Buf, _cfg: &()) -> Result<Self, CodecError> {
+        // Seam-3 guard: a 1-byte schema version precedes the snapshot. A mismatch
+        // means the durable cache predates this codec layout (e.g. a binary
+        // upgrade across the stake-field addition). NEVER decode the old layout
+        // with the new reader — a misparse would feed silently-wrong stake weights
+        // into leader election (consensus split). Refuse here; the cache treats
+        // the resulting decode error as a miss and re-derives the (fully
+        // reconstructible) snapshot from chain state.
+        if buf.remaining() < size_of::<u8>() {
+            return Err(CodecError::EndOfBuffer);
+        }
+        if buf.get_u8() != SNAPSHOT_CODEC_VERSION {
+            return Err(CodecError::Invalid(
+                "ValidatorSetSnapshot",
+                "unsupported snapshot codec version (stale cache — re-derive)",
+            ));
+        }
         if buf.remaining() < HASH_BYTES + 8 + 8 + 4 {
             return Err(CodecError::EndOfBuffer);
         }
@@ -101,10 +135,11 @@ impl Read for ValidatorSetSnapshot {
             // Subgroup-checked decode (integrity check).
             let bls_pubkey = BlsPubkey::read(buf)?;
             let peer_pubkey = PeerPubkey::read(buf)?;
-            if buf.remaining() < 8 {
+            if buf.remaining() < size_of::<u64>() + size_of::<u128>() {
                 return Err(CodecError::EndOfBuffer);
             }
             let activation_epoch = buf.get_u64();
+            let stake = buf.get_u128();
             validators.push(ValidatorWithKeys {
                 address,
                 keys: ConsensusKeys {
@@ -112,6 +147,7 @@ impl Read for ValidatorSetSnapshot {
                     peer_pubkey,
                     activation_epoch,
                 },
+                stake,
             });
         }
         Ok(ValidatorSetSnapshot {
@@ -129,6 +165,28 @@ type Inner<E> = prunable::Archive<FourCap, E, Key, ValidatorSetSnapshot>;
 #[inline]
 fn key_of(block_hash: B256) -> Key {
     FixedBytes::new(block_hash.0)
+}
+
+/// Map an archive read whose stored value cannot be decoded — a stale
+/// [`SNAPSHOT_CODEC_VERSION`] entry left by an older binary, or local corruption
+/// — to a CACHE MISS (`Ok(None)`). The cache is a derived store: the snapshot is
+/// fully reconstructible from chain state, so the caller re-derives rather than
+/// failing. Any non-decode archive error is a real backend failure and
+/// propagates. Never panics (seam-3: fail-soft, never decode legacy as garbage).
+fn miss_on_undecodable(
+    r: Result<Option<ValidatorSetSnapshot>, ArchiveError>,
+) -> Result<Option<ValidatorSetSnapshot>, ReadError> {
+    match r {
+        Ok(v) => Ok(v),
+        Err(ArchiveError::Journal(JournalError::Codec(_))) => {
+            tracing::warn!(
+                "staking-reader cache: undecodable snapshot (stale codec / corruption) \
+                 — treating as miss, will re-derive from chain"
+            );
+            Ok(None)
+        }
+        Err(e) => Err(ReadError::Backend(e.to_string())),
+    }
 }
 
 /// Durable validator-set store: a write-once epoch-indexed
@@ -196,10 +254,7 @@ impl<E: Storage + Metrics + BufferPooler> ValidatorSetCache<E> {
 
     /// Durable archive lookup by `block_hash`.
     pub async fn get(&self, block_hash: B256) -> Result<Option<ValidatorSetSnapshot>, ReadError> {
-        self.archive
-            .get(Identifier::Key(&key_of(block_hash)))
-            .await
-            .map_err(|e| ReadError::Backend(e.to_string()))
+        miss_on_undecodable(self.archive.get(Identifier::Key(&key_of(block_hash))).await)
     }
 
     /// Durable archive lookup by `epoch`.
@@ -214,10 +269,7 @@ impl<E: Storage + Metrics + BufferPooler> ValidatorSetCache<E> {
         &self,
         epoch: u64,
     ) -> Result<Option<ValidatorSetSnapshot>, ReadError> {
-        self.archive
-            .get(Identifier::Index(epoch))
-            .await
-            .map_err(|e| ReadError::Backend(e.to_string()))
+        miss_on_undecodable(self.archive.get(Identifier::Index(epoch)).await)
     }
 
     /// Whether `block_hash` is in the durable archive.
@@ -278,6 +330,7 @@ mod codec_tests {
                         peer_pubkey: peer,
                         activation_epoch: 3 + i as u64,
                     },
+                    stake: 1_000 + i as u128,
                 }
             })
             .collect();
@@ -303,6 +356,20 @@ mod codec_tests {
             back.validators[2].keys.activation_epoch,
             s.validators[2].keys.activation_epoch
         );
+        assert_eq!(back.validators[2].stake, s.validators[2].stake);
+    }
+
+    #[test]
+    fn wrong_codec_version_rejected_not_misparsed() {
+        // Seam-3: a stale-layout (or wrong-version) buffer must be REFUSED, never
+        // misparsed into a garbage snapshot with silently-wrong stake weights.
+        let s = snapshot(2);
+        let mut bytes = s.encode().to_vec();
+        bytes[0] = SNAPSHOT_CODEC_VERSION.wrapping_add(1);
+        assert!(matches!(
+            ValidatorSetSnapshot::read(&mut &bytes[..]),
+            Err(CodecError::Invalid("ValidatorSetSnapshot", _))
+        ));
     }
 
     #[test]
@@ -325,8 +392,8 @@ mod codec_tests {
     fn tampered_bls_key_rejected_by_subgroup_check() {
         let s = snapshot(1);
         let mut bytes = s.encode().to_vec();
-        // [32 hash][8 num][8 epoch][4 len][20 addr] then 96B bls.
-        let bls_off = 32 + 8 + 8 + 4 + 20;
+        // [1 version][32 hash][8 num][8 epoch][4 len][20 addr] then 96B bls.
+        let bls_off = 1 + 32 + 8 + 8 + 4 + 20;
         for b in &mut bytes[bls_off..bls_off + PUBKEY_BYTES] {
             *b = 0xFF;
         }
@@ -364,6 +431,7 @@ mod cache_tests {
                     peer_pubkey: peer,
                     activation_epoch: epoch + 1,
                 },
+                stake: u128::from(epoch) * 1_000,
             }],
         }
     }

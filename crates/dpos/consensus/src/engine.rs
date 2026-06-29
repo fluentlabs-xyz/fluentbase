@@ -8,12 +8,12 @@ use crate::{
     application::{ExecutedChain, FluentApp, OrderingAssembler},
     beacon::certify::{BeaconCertify, SeedStore},
     digest::Digest,
-    elector_seed::epoch_leader_seed,
     epocher::OriginEpocher,
     order_block::OrderBlock,
     scheme::epoch_committee_from_snapshot,
     slasher::Mailbox as SlasherMailbox,
     timeouts::ConsensusTimeouts,
+    weighted_vrf::WeightedVrf,
     REPLAY_BUFFER, WRITE_BUFFER,
 };
 use commonware_consensus::{
@@ -21,11 +21,11 @@ use commonware_consensus::{
         core::Mailbox as MarshalMailbox,
         standard::{Inline, Standard},
     },
-    simplex::{self, config::ForwardingPolicy, elector::RoundRobin, types::Activity},
+    simplex::{self, config::ForwardingPolicy, types::Activity},
     types::Epoch,
     Reporters,
 };
-use commonware_cryptography::{ed25519, Sha256};
+use commonware_cryptography::ed25519;
 use commonware_p2p::{Blocker, Receiver, Sender};
 use commonware_parallel::Sequential;
 use commonware_runtime::{
@@ -52,7 +52,7 @@ type AutomatonFor<E, XC, A> = BeaconCertify<E, XC, A>;
 type ConsensusEngine<E, B, XC, A> = simplex::Engine<
     E,
     BlsScheme,
-    RoundRobin<Sha256>,
+    WeightedVrf,
     B,
     Digest,
     AutomatonFor<E, XC, A>,
@@ -267,7 +267,7 @@ where
             context.with_label("simplex"),
             simplex::Config {
                 scheme,
-                elector: RoundRobin::<Sha256>::shuffled(&epoch_leader_seed(&cfg.snapshot)),
+                elector: WeightedVrf::from_snapshot(&cfg.snapshot),
                 blocker: cfg.blocker,
                 automaton: automaton.clone(),
                 relay: automaton,

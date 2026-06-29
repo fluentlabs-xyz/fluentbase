@@ -360,8 +360,17 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
         "ChainConfig.initialize",
     )?;
 
-    let initial_stakes = vec![smoke_min_stake; keys.validators.len()];
-    let total_stake = smoke_min_stake * U256::from(keys.validators.len() as u64);
+    // `HEAVY_STAKE_MULT` (default 1 ⇒ byte-identical equal-stake genesis) skews
+    // validator-0's genesis stake k× the others, so the weighted-VRF smoke can
+    // assert it proposes proportionally more blocks. Committee membership is
+    // unaffected (n = validators.len() ≤ activeValidatorsLength ⇒ all selected),
+    // and validator-0 stays ≥ minValidatorStakeAmount.
+    let heavy_mult = U256::from(env_u64("HEAVY_STAKE_MULT", 1));
+    let mut initial_stakes = vec![smoke_min_stake; keys.validators.len()];
+    if let Some(first) = initial_stakes.first_mut() {
+        *first *= heavy_mult;
+    }
+    let total_stake = initial_stakes.iter().copied().fold(U256::ZERO, |acc, s| acc + s);
     let validator_addrs: Vec<Address> = keys
         .validators
         .iter()

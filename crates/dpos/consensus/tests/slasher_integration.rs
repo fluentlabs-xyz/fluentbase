@@ -151,6 +151,7 @@ fn snapshot_from_bimap(bimap: &BiMap<PeerPubkey, BlsPubkey>) -> ValidatorSetSnap
                     peer_pubkey: peer.clone(),
                     activation_epoch: 0,
                 },
+                stake: 1,
             }
         })
         .collect();

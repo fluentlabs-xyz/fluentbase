@@ -46,6 +46,10 @@ services:
       DPOS_ACTIVATION_BLOCK: "${DPOS_ACTIVATION_BLOCK:-}"
       MISDEMEANOR_THRESHOLD: "${MISDEMEANOR_THRESHOLD:-100}"
       FELONY_THRESHOLD: "${FELONY_THRESHOLD:-1000}"
+      # Stake-skew multiplier for validator-0's genesis stake (default 1 = equal
+      # stakes, byte-identical to the untuned genesis). case-weighted-vrf.sh sets it
+      # to verify stake-weighted VRF leader election end-to-end.
+      HEAVY_STAKE_MULT: "${HEAVY_STAKE_MULT:-1}"
     volumes:
       - runtime:/runtime
       - ./contracts:/contracts:ro
@@ -63,7 +67,12 @@ services:
       - node
       - --chain=/runtime/genesis-local.json
       - --validator
-      - --validator.block-time=1s
+      # Pre-swap SEQUENCER pacing only: speeds the pre-DPoS activation runway (the
+      # ~ACTIVATION blocks produced before the --dpos swap, which only position the
+      # migration anchor — not the system under test). Phase-2 (--dpos,
+      # docker-compose.dpos.yml) carries NO --validator.block-time; DPoS pacing is the
+      # application-layer BLOCK_INTERVAL=1s and is unchanged.
+      - --validator.block-time=250ms
       - --dpos.staking-config=/runtime/staking-reader.json
       - --builder.extradata=
       - --http

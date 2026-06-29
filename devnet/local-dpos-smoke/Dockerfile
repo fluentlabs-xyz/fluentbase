@@ -27,13 +27,25 @@ ENV CC_wasm32_unknown_unknown=clang
 ENV CFLAGS_wasm32_unknown_unknown="--target=wasm32-unknown-unknown"
 ENV AR_wasm32_unknown_unknown=llvm-ar
 
-COPY --exclude=.git --exclude=dist . .
-
-# `rust-toolchain` pins 1.92 — install the toolchain + wasm32 std AFTER
-# `COPY` so rustup honours the override; doing this before COPY adds
-# the target to the base image's default toolchain (e.g. 1.95) which
-# the cargo-build step then never uses.
+# Install the pinned toolchain + wasm32 std from `rust-toolchain` BEFORE the full
+# source COPY, so a source edit does NOT bust the ~108s rustup-install layer (it
+# depends only on the rust-toolchain file). `cat rust-toolchain` installs the pinned
+# version EXPLICITLY (not the base image's default 1.95), and the file is present in
+# WORKDIR so cargo honours the override for the build below.
+COPY rust-toolchain .
 RUN rustup toolchain install $(cat rust-toolchain) --target wasm32-unknown-unknown
+# Split the source COPY so devnet smoke-harness churn (scripts/*.sh, compose
+# *.yml, vendored contracts/, docs) does NOT bust the build. The first COPY
+# excludes ALL of devnet/; the second adds back ONLY the genesis-bootstrap
+# crate — the sole build input under devnet/ (verified: it is the only Cargo.toml
+# there, and its build-time include_str! targets crates/genesis/, not this dir).
+# Its siblings are host-side: scripts run on the host, contracts/ is a runtime
+# bind mount (./contracts:/contracts:ro), compose/Makefile/README never enter the
+# image. Editing a smoke script now leaves BOTH COPY layer digests unchanged ⇒ the
+# cargo-build layer below stays cached (no ~90s `fluent` recompile); only a
+# genesis-bootstrap or workspace-crate source edit recompiles, as it should.
+COPY --exclude=.git --exclude=dist --exclude=devnet . .
+COPY devnet/local-dpos-smoke/genesis-bootstrap devnet/local-dpos-smoke/genesis-bootstrap
 
 ARG BUILD_PROFILE=release
 ENV BUILD_PROFILE=$BUILD_PROFILE

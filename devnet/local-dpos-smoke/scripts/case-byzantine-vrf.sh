@@ -38,20 +38,21 @@
 # ── WHY REPEATED committee changes (the reliability fix) ────────────────────
 # The forge fires in `build_proposal` ONLY when the byzantine node is the LEADER of
 # a change-epoch first block (the height whose OrderBlock.beacon_outcome carries the
-# new PK_E). Commonware's leader for a view is `permutation_E[(epoch+view) % n]`
-# (simplex RoundRobin elector; the permutation is a per-epoch sha256 shuffle keyed by
-# the on-chain committee — elector_seed::epoch_leader_seed) — so on ANY ONE
-# change-epoch boundary the byzantine view-1-leads it only ~1/n of the time, and when
-# an honest node leads view 1 the boundary finalises immediately so the byzantine
-# never gets a later view to forge on. A SINGLE committee change (v5 join → ONE E_new
-# boundary, then the committee stabilises) therefore fires the forge only ~1/5 of the
-# time — that is the bug this case used to hit (validator-2 never led E_new, the poll
-# loop exhausted, FAIL).
+# new PK_E). The leader is the stake-weighted-VRF elector (consensus
+# `weighted_vrf`); on a change-epoch FIRST block the prior cert carries no seed so it
+# takes the view-1 fallback `weighted_cdf(stake, H(LEADER_DOMAIN ‖ fallback_seed ‖ view))`,
+# so the byzantine's lead probability == its committee STAKE SHARE. It is stake-boosted below
+# to ~72% share, so on ANY ONE change-epoch boundary it view-1-leads ~72% of the time, and
+# when an honest node leads view 1 the boundary finalises immediately so the byzantine never
+# gets a later view to forge on. A SINGLE committee change (v5 join → ONE E_new boundary, then
+# the committee stabilises) fires the forge ~72% of the time — so the case still drives a
+# SEQUENCE of boundaries for the residual miss margin (and historically, before the stake
+# boost, the ~1/5 single-shot was the bug this case used to hit: v2 never led E_new, FAIL).
 # The fix drives a SEQUENCE of change-epoch boundaries by toggling v5 in and out of
 # the committee: each membership flip is a fresh change-epoch first block, hence a
-# fresh ~1/n forge opportunity (the per-epoch reshuffle makes these effectively
-# INDEPENDENT draws). Over B boundaries P(byzantine never leads one) ≈ (1−1/n)^B, so
-# ~16–18 boundaries drives it to ≈2% — a very-high-probability, BOUNDED budget, and
+# fresh ~1/n forge opportunity (the per-epoch fallback_seed makes these effectively
+# INDEPENDENT draws). Over B boundaries P(byzantine never leads one) ≈ (1−0.72)^B, so
+# B=5 boundaries drives it to ≈0.17% — a very-high-probability, BOUNDED budget, and
 # the case FAILS LOUD with diagnostics if the forge still never fires. We keep the
 # byzantine node permanently rotation-proof (boost its delegated stake) so it stays in
 # committee[E] for EVERY E — hence it runs the per-epoch DKG and holds a real share to
@@ -234,7 +235,7 @@ echo "  pre-written config matches manifest ✓"
 # Extra DEPLOYER-funded transfers, sent ONLY NOW (post-DeployStaking) so they do not
 # shift the CREATE-address nonces asserted above. BYZ owner self-delegates to stay
 # rotation-proof; the toggle delegator (idx 7) drives the v5 in/out flips later.
-pp_token_transfer "$TOKEN" "$(pp_owner_addr "$BYZ_IDX")" "10000000000000000000"
+pp_token_transfer "$TOKEN" "$(pp_owner_addr "$BYZ_IDX")" "30000000000000000000"
 cast send "$TOGGLE_ADDR" --value 1000000000000000 \
     --rpc-url "$RPC" --private-key "$DEPLOYER_KEY" >/dev/null \
     || { echo "FAIL (smoke-byzantine-vrf): fund v5-toggle delegator"; exit 1; }
@@ -310,17 +311,19 @@ epoch_first_block() { echo $(( ACT + $1 * EPOCH_LEN )); }
 #   v5 OUT  → v5 EffBal 1e18  < {v1,v3,v4}=2e18 ⇒ v5 is strictly the lowest ⇒ excluded.
 #   v5 IN   → v5 EffBal 3e18  > 2e18            ⇒ v5 in, the lowest 2e18 node out.
 # Either way exactly ONE membership swap (v5 ↔ a 2e18 node) ⇒ a genuine change-epoch
-# boundary, and the byzantine (boosted to 4e18) is never the one swapped.
+# boundary, and the byzantine (boosted to 30e18) is never the one swapped.
 echo "== stake setup: boost byzantine (rotation-proof) + lift the v5-OUT committee floor =="
 BYZ_KEY="$(pp_owner_key "$BYZ_IDX")" ; BYZ_ADDR="$(pp_owner_addr "$BYZ_IDX")"
 byzl=$(tr 'A-F' 'a-f' <<<"$BYZ_ADDR")
-# Byzantine: +3e18 self-delegate ⇒ 4e18, above the 2e18 floor tier and above v5's max 3e18.
-cast send "$TOKEN" "approve(address,uint256)(bool)" "$STAKING_RT" "3000000000000000000" \
+# Byzantine: +29e18 self-delegate ⇒ 30e18 — DOMINANT committee stake (~72% share), so the
+# weighted view-1 fallback leads it ~72% of change-epoch boundaries (E[flips]≈1.4); far above
+# the 2e18 floor tier and v5's max 3e18, so v2 is always rank-1 / never the swapped node.
+cast send "$TOKEN" "approve(address,uint256)(bool)" "$STAKING_RT" "29000000000000000000" \
     --rpc-url "$RPC" --private-key "$BYZ_KEY" >/dev/null
-cast send "$STAKING_RT" "delegate(address,uint256)" "$BYZ_ADDR" "3000000000000000000" \
+cast send "$STAKING_RT" "delegate(address,uint256)" "$BYZ_ADDR" "29000000000000000000" \
     --rpc-url "$RPC" --private-key "$BYZ_KEY" >/dev/null \
     || { echo "FAIL (smoke-byzantine-vrf): self-delegate to byzantine validator-$BYZ_IDX"; exit 1; }
-echo "  validator-$BYZ_IDX boosted (+3e18 ⇒ 4e18) — permanently in the committee top-5"
+echo "  validator-$BYZ_IDX boosted (+29e18 ⇒ 30e18) — dominant leader stake (~72% of boundaries)"
 # Lift the other 1e18 validators (all initial v0..v4 except v0=5e18 and the byzantine)
 # +1e18 each (= minStakingAmount; a smaller bump reverts) so the v5-OUT committee floor
 # (2e18) is strictly above v5's 1e18 self-stake.
@@ -393,16 +396,19 @@ toggle_v5() {
 
 # ════════════════════════════════════════════════════════════════════════════
 # 1) The Byzantine node FORGES at a change-epoch boundary. The forge fires in
-#    build_proposal ONLY when the byzantine LEADS the boundary view, and commonware's
-#    view-1 leader is `permutation[(epoch+view) % n]` — so on ANY ONE boundary the
+#    build_proposal ONLY when the byzantine LEADS the boundary view, and the change-epoch
+#    first block takes the stake-weighted-VRF view-1 fallback (uniform under equal devnet
+#    stakes ⇒ ~1/n) — so on ANY ONE boundary the
 #    byzantine leads it only ~1/n of the time (this is the bug: a single rotation
 #    gives ONE boundary, hit ~1/5). We therefore drive a SEQUENCE of change-epoch
-#    boundaries by PIPELINING v5 in/out toggles — one toggle op roughly per epoch, so
-#    the membership flips surface at CONSECUTIVE epochs (a delegate at epoch e
-#    surfaces at committee[e+3], so toggles at e,e+1,e+2,… cascade to boundaries at
-#    e+3,e+4,e+5,…). Each boundary is a fresh ~1/n forge opportunity (the elector
-#    permutation reshuffles per epoch, so the draws are effectively independent); over
-#    B boundaries P(byzantine never leads) ≈ (1−1/n)^B, so ~16–18 boundaries ⇒ ≈2%.
+#    boundaries by toggling v5 in/out, WAITING for each flip to actually land in the
+#    committed committee before issuing the next. (The warmup is ASYMMETRIC —
+#    delegate→snapshot[e+2], undelegate→snapshot[e+1] — so rapid adjacent toggles cancel
+#    on the SAME snapshot epoch and surface ZERO changes; waiting puts each flip on a
+#    distinct snapshot epoch.) Each landed flip is a real change-epoch boundary = a fresh
+#    ~1/n forge opportunity (the elector's per-epoch `fallback_seed` changes with the
+#    committee, so the draws are effectively independent); over B boundaries
+#    P(byzantine never leads) ≈ (1−1/n)^B, so ~16–18 boundaries ⇒ ≈2%.
 #    The byzantine is kept permanently in the committee (stake boost), so it runs the
 #    DKG and holds a share to forge at EVERY boundary. We poll the forge-count
 #    throughout and stop as soon as it fires; fail loud (with diagnostics) if a
@@ -411,14 +417,16 @@ toggle_v5() {
 # ════════════════════════════════════════════════════════════════════════════
 echo "== 1) pipeline committee flips until the byzantine forges a PK_E at a boundary =="
 FORGE_LINE="BYZANTINE: proposing forged PK_E at boundary"
-MAX_TOGGLES="${BYZ_VRF_MAX_TOGGLES:-18}"        # toggle ops to issue (one per epoch);
-                                                # ≈18 ~1/n boundaries ⇒ ≈2% miss — the
-                                                # byzantine usually forges well before
-                                                # all 18 are issued.
-# Wall-clock budget for the whole drive (toggles + drain). Generous because the 6-node
-# stack runs well below 1 blk/s under load and a flip surfaces ~3 epochs after its
-# toggle (WARMUP_DELAY). Tunable via env if the parent's docker run is slower/faster.
-DRIVE_DEADLINE=$(( $(date +%s) + 60 * ${BYZ_VRF_BUDGET_MIN:-20} ))
+MAX_TOGGLES="${BYZ_VRF_MAX_TOGGLES:-5}"         # confirmed flips to drive; each is WAITED to
+                                                # land (~2-3 epochs) = a real boundary. With the
+                                                # byzantine at ~72% leader share (stake boost),
+                                                # P(never leads any of 5) = (1−0.72)^5 ≈ 0.17%
+                                                # (E[flips]≈1.4); usually forges on flip 1-2.
+# Wall-clock budget for the whole drive (toggles + drain). Each flip now BLOCKS until it
+# surfaces on-chain (~2-3 epochs ≈ 2-3 min at 64-block epochs / 1 blk/s), so 18 flips can
+# take ~45 min worst-case; the default budget covers that. Tunable via env for slower/
+# faster docker hosts.
+DRIVE_DEADLINE=$(( $(date +%s) + 60 * ${BYZ_VRF_BUDGET_MIN:-45} ))
 E_new=""                                        # FIRST change-epoch (v5 first enters)
 forged_count=0
 want_in=1
@@ -435,16 +443,20 @@ for ((t = 1; t <= MAX_TOGGLES; t++)); do
         || { docker compose logs "validator-$BYZ_IDX" --tail=60; exit 1; }
     want_in=$(( 1 - want_in ))
 
-    # Advance ~one epoch before the next toggle (so flips surface at consecutive
-    # epochs), checking the forge-count frequently meanwhile. Within this window, also
-    # observe the committee timeline: each epoch whose committee SET differs from the
-    # previous is a change-epoch boundary (a fresh forge opportunity), and the first
-    # one that ADDS v5 is recorded as E_new (the byzantine MUST be a stayer there).
-    epoch_window_start=$(pp_current_epoch)
-    wstop=$(( $(date +%s) + 60 * 3 ))           # at most ~3 min per toggle's epoch wait
-    while (( $(date +%s) < wstop && $(date +%s) < DRIVE_DEADLINE )); do
+    # BLOCK until THIS flip actually LANDS in the ahead-committed committee[E+1]
+    # before issuing the next toggle — mirrors case-vrf-rotation.sh's wait-for-change.
+    # The old "+1 epoch then next toggle" cadence collided with the ASYMMETRIC warmup
+    # (delegate→snapshot[e+2], undelegate→snapshot[e+1]): an IN at epoch e and the OUT at
+    # e+1 wrote the SAME snapshot epoch e+2 and cancelled, so committee[*] never changed
+    # (0 change-epoch boundaries → forge never fired). Waiting for each flip to surface
+    # puts consecutive flips on DISTINCT snapshot epochs, so every flip becomes a real
+    # change-epoch boundary = one ~1/n forge draw. Meanwhile keep counting boundaries /
+    # recording E_new and watching the forge-count.
+    flip_deadline=$(( $(date +%s) + 60 * 5 ))   # a flip surfaces ~2-3 epochs after its toggle
+    flip_surfaced=0
+    while (( $(date +%s) < flip_deadline && $(date +%s) < DRIVE_DEADLINE )); do
         forged_count=$(log_count "validator-$BYZ_IDX" "$FORGE_LINE"); forged_count=${forged_count:-0}
-        (( forged_count >= 1 )) && break
+        (( forged_count >= 1 )) && { flip_surfaced=1; break; }
         nowE=$(pp_current_epoch)
         cur_set=$(pp_committee "$nowE")
         if [[ -n "$cur_set" && "$cur_set" != "$prev_seen" ]]; then
@@ -465,9 +477,24 @@ despite the rotation-proof stake boost — raise the byzantine boost above v5's 
             fi
             prev_seen="$cur_set"
         fi
-        (( nowE >= epoch_window_start + 1 )) && break   # advanced one epoch → next toggle
+        # EXIT once THIS flip has landed in the ahead-committed committee[E+1]:
+        # IN ⇒ v5 now present; OUT ⇒ v5 now absent. Only then issue the next toggle, so
+        # adjacent flips occupy distinct snapshot epochs and cannot cancel.
+        ahead=$(pp_committee $(( nowE + 1 )))
+        if [[ -n "$ahead" ]]; then
+            if [[ "$desc" == "IN"  && " $ahead " == *" $v5l "* ]]; then flip_surfaced=1; break; fi
+            if [[ "$desc" == "OUT" && " $ahead " != *" $v5l "* ]]; then flip_surfaced=1; break; fi
+        fi
         sleep 3
     done
+    # A flip that never surfaced within its ~5-min window means the chain stalled or the
+    # warmup arithmetic drifted — stop toggling (issuing more would just re-collide) and
+    # let the drain + final assertion report with diagnostics, rather than silently
+    # spinning out colliding toggles that surface 0 boundaries.
+    if (( forged_count < 1 && flip_surfaced == 0 )); then
+        echo "  [flip $t] v5 $desc did NOT surface within ~5 min — stopping the drive (chain stalled / warmup drift)"
+        break
+    fi
 done
 
 # DRAIN: the last few toggles' committee flips surface ~3 epochs AFTER they were

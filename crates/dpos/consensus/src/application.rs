@@ -607,7 +607,16 @@ where
         mut ancestry: AncestorStream<P, OrderBlock>,
     ) -> Option<OrderBlock> {
         let parent = ancestry.next().await?;
-        self.build_proposal(&ctx.0, parent).await
+        let block = self.build_proposal(&ctx.0, parent).await;
+        if let Some(b) = &block {
+            // commonware invokes `propose` ONLY on the elected leader, so this
+            // fires exactly once per block this node proposes — the per-validator
+            // proposer signal the weighted-VRF smoke tallies (`log_count`) and the
+            // D2 proposer-share monitoring seam consumes (Prometheus counter).
+            tracing::info!(height = b.height, "dpos: proposing order block");
+            metrics::counter!("dpos_proposed_total").increment(1);
+        }
+        block
     }
 }
 

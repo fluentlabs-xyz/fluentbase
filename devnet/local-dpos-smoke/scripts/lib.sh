@@ -97,7 +97,7 @@ _wait_aligned() {
                 echo "${readings[0]}"; return 0
             fi
         fi
-        sleep 2
+        sleep 1
     done
     return 1
 }
@@ -353,7 +353,7 @@ _migrate_to_dpos() {
             echo "FAIL: sequencer did not reach dposActivationBlock=$DPOS_ACTIVATION_BLOCK within 180s"
             docker compose logs --tail=120; tear_down; exit 1
         fi
-        sleep 3
+        sleep 1
     done
     for attempt in 1 2 3 4; do
         anchor=$(check_external 8545)

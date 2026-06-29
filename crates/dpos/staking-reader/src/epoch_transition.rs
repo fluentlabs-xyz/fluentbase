@@ -595,6 +595,7 @@ mod tests {
                 peer_pubkey: peer,
                 activation_epoch: 1,
             },
+            stake: 1,
         }
     }
 

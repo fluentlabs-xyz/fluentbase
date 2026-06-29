@@ -107,6 +107,12 @@ services:
       - node
       - --chain=/runtime/genesis-local.json
       - --validator
+      # NOTE: kept at 1s. Lowering this (the #1 runway optimization) on the
+      # production-path/rotation/byzantine stack pushes the computed activation anchor
+      # higher (ACT = f(HEAD), and a 4×-faster sequencer ⇒ higher HEAD at gov time) and
+      # broke the post-swap "converge past anchor" step. The default stack
+      # (docker-compose.yml) keeps 250ms (validated by smoke-all); this heavy stack does
+      # not, pending a proper fix to the anchor/convergence interaction.
       - --validator.block-time=1s
       - --dpos.staking-config=/runtime/staking-reader.json
       - --builder.extradata=
