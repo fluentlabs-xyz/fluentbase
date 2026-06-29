@@ -1809,7 +1809,7 @@ dependencies = [
  "bitflags 2.11.1",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -5801,7 +5801,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -8558,7 +8558,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -8630,7 +8630,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.40",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -8668,7 +8668,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -9134,7 +9134,7 @@ checksum = "1e061d1b48cb8d38042de4ae0a7a6401009d6143dc80d2e2d6f31f0bdd6470c7"
 [[package]]
 name = "reth-basic-payload-builder"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -9161,7 +9161,7 @@ dependencies = [
 [[package]]
 name = "reth-chain-state"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -9191,7 +9191,7 @@ dependencies = [
 [[package]]
 name = "reth-chainspec"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-chains",
  "alloy-consensus 2.0.4",
@@ -9211,7 +9211,7 @@ dependencies = [
 [[package]]
 name = "reth-cli"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-genesis",
  "clap",
@@ -9224,7 +9224,7 @@ dependencies = [
 [[package]]
 name = "reth-cli-commands"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-chains",
  "alloy-consensus 2.0.4",
@@ -9312,7 +9312,7 @@ dependencies = [
 [[package]]
 name = "reth-cli-runner"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "reth-tasks",
  "tokio",
@@ -9322,7 +9322,7 @@ dependencies = [
 [[package]]
 name = "reth-cli-util"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eips 2.0.4",
  "alloy-primitives",
@@ -9385,7 +9385,7 @@ dependencies = [
 [[package]]
 name = "reth-config"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "eyre",
  "humantime-serde",
@@ -9401,7 +9401,7 @@ dependencies = [
 [[package]]
 name = "reth-consensus"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-primitives",
@@ -9414,7 +9414,7 @@ dependencies = [
 [[package]]
 name = "reth-consensus-common"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -9427,7 +9427,7 @@ dependencies = [
 [[package]]
 name = "reth-consensus-debug-client"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -9453,7 +9453,7 @@ dependencies = [
 [[package]]
 name = "reth-db"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "derive_more 2.1.1",
@@ -9480,7 +9480,7 @@ dependencies = [
 [[package]]
 name = "reth-db-api"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-primitives",
@@ -9506,7 +9506,7 @@ dependencies = [
 [[package]]
 name = "reth-db-common"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-genesis",
@@ -9536,7 +9536,7 @@ dependencies = [
 [[package]]
 name = "reth-db-models"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eips 2.0.4",
  "alloy-primitives",
@@ -9551,7 +9551,7 @@ dependencies = [
 [[package]]
 name = "reth-discv4"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -9576,7 +9576,7 @@ dependencies = [
 [[package]]
 name = "reth-discv5"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -9600,7 +9600,7 @@ dependencies = [
 [[package]]
 name = "reth-dns-discovery"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "dashmap",
@@ -9624,7 +9624,7 @@ dependencies = [
 [[package]]
 name = "reth-downloaders"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -9655,7 +9655,7 @@ dependencies = [
 [[package]]
 name = "reth-ecies"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "aes",
  "alloy-primitives",
@@ -9683,7 +9683,7 @@ dependencies = [
 [[package]]
 name = "reth-engine-local"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-primitives",
@@ -9706,7 +9706,7 @@ dependencies = [
 [[package]]
 name = "reth-engine-primitives"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -9731,7 +9731,7 @@ dependencies = [
 [[package]]
 name = "reth-engine-tree"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eip7928",
@@ -9784,7 +9784,7 @@ dependencies = [
 [[package]]
 name = "reth-engine-util"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-rpc-types-engine",
@@ -9812,7 +9812,7 @@ dependencies = [
 [[package]]
 name = "reth-era"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -9828,7 +9828,7 @@ dependencies = [
 [[package]]
 name = "reth-era-downloader"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "bytes",
@@ -9844,7 +9844,7 @@ dependencies = [
 [[package]]
 name = "reth-era-utils"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-primitives",
@@ -9866,7 +9866,7 @@ dependencies = [
 [[package]]
 name = "reth-errors"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "reth-consensus",
  "reth-execution-errors",
@@ -9877,7 +9877,7 @@ dependencies = [
 [[package]]
 name = "reth-eth-wire"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -9906,7 +9906,7 @@ dependencies = [
 [[package]]
 name = "reth-eth-wire-types"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-chains",
  "alloy-consensus 2.0.4",
@@ -9931,7 +9931,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth 2.0.4",
@@ -9951,7 +9951,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum-cli"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "clap",
  "eyre",
@@ -9974,7 +9974,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum-consensus"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -9990,7 +9990,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum-engine-primitives"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eips 2.0.4",
  "alloy-primitives",
@@ -10006,7 +10006,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum-forks"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eip2124",
  "alloy-hardforks",
@@ -10020,7 +10020,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum-payload-builder"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10050,7 +10050,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum-primitives"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10064,7 +10064,7 @@ dependencies = [
 [[package]]
 name = "reth-etl"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "rayon",
  "reth-db-api",
@@ -10074,7 +10074,7 @@ dependencies = [
 [[package]]
 name = "reth-evm"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10098,7 +10098,7 @@ dependencies = [
 [[package]]
 name = "reth-evm-ethereum"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10118,7 +10118,7 @@ dependencies = [
 [[package]]
 name = "reth-execution-cache"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "fixed-cache",
@@ -10136,7 +10136,7 @@ dependencies = [
 [[package]]
 name = "reth-execution-errors"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -10149,7 +10149,7 @@ dependencies = [
 [[package]]
 name = "reth-execution-types"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10168,7 +10168,7 @@ dependencies = [
 [[package]]
 name = "reth-exex"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10206,7 +10206,7 @@ dependencies = [
 [[package]]
 name = "reth-exex-types"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eips 2.0.4",
  "alloy-primitives",
@@ -10220,7 +10220,7 @@ dependencies = [
 [[package]]
 name = "reth-fs-util"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "serde",
  "serde_json",
@@ -10230,7 +10230,7 @@ dependencies = [
 [[package]]
 name = "reth-invalid-block-hooks"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-primitives",
@@ -10258,7 +10258,7 @@ dependencies = [
 [[package]]
 name = "reth-ipc"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "bytes",
  "futures",
@@ -10278,7 +10278,7 @@ dependencies = [
 [[package]]
 name = "reth-libmdbx"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "bitflags 2.11.1",
  "byteorder",
@@ -10295,7 +10295,7 @@ dependencies = [
 [[package]]
 name = "reth-mdbx-sys"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "bindgen",
  "cc",
@@ -10304,7 +10304,7 @@ dependencies = [
 [[package]]
 name = "reth-metrics"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "futures",
  "metrics",
@@ -10317,7 +10317,7 @@ dependencies = [
 [[package]]
 name = "reth-net-banlist"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "ipnet",
@@ -10326,7 +10326,7 @@ dependencies = [
 [[package]]
 name = "reth-net-nat"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "futures-util",
  "if-addrs",
@@ -10340,7 +10340,7 @@ dependencies = [
 [[package]]
 name = "reth-network"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10397,7 +10397,7 @@ dependencies = [
 [[package]]
 name = "reth-network-api"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-primitives",
@@ -10422,7 +10422,7 @@ dependencies = [
 [[package]]
 name = "reth-network-p2p"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10444,7 +10444,7 @@ dependencies = [
 [[package]]
 name = "reth-network-peers"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -10459,7 +10459,7 @@ dependencies = [
 [[package]]
 name = "reth-network-types"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eip2124",
  "humantime-serde",
@@ -10473,7 +10473,7 @@ dependencies = [
 [[package]]
 name = "reth-nippy-jar"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -10490,7 +10490,7 @@ dependencies = [
 [[package]]
 name = "reth-node-api"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-rpc-types-engine",
  "eyre",
@@ -10514,7 +10514,7 @@ dependencies = [
 [[package]]
 name = "reth-node-builder"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10582,7 +10582,7 @@ dependencies = [
 [[package]]
 name = "reth-node-core"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10637,7 +10637,7 @@ dependencies = [
 [[package]]
 name = "reth-node-ethereum"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eips 2.0.4",
  "alloy-network 2.0.4",
@@ -10675,7 +10675,7 @@ dependencies = [
 [[package]]
 name = "reth-node-ethstats"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-primitives",
@@ -10699,7 +10699,7 @@ dependencies = [
 [[package]]
 name = "reth-node-events"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10723,7 +10723,7 @@ dependencies = [
 [[package]]
 name = "reth-node-metrics"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "bytes",
  "eyre",
@@ -10752,7 +10752,7 @@ dependencies = [
 [[package]]
 name = "reth-node-types"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "reth-chainspec",
  "reth-db-api",
@@ -10764,7 +10764,7 @@ dependencies = [
 [[package]]
 name = "reth-payload-builder"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-primitives",
@@ -10788,7 +10788,7 @@ dependencies = [
 [[package]]
 name = "reth-payload-builder-primitives"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "pin-project",
  "reth-payload-primitives",
@@ -10800,7 +10800,7 @@ dependencies = [
 [[package]]
 name = "reth-payload-primitives"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10824,7 +10824,7 @@ dependencies = [
 [[package]]
 name = "reth-payload-validator"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-rpc-types-engine",
@@ -10866,7 +10866,7 @@ dependencies = [
 [[package]]
 name = "reth-provider"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10909,7 +10909,7 @@ dependencies = [
 [[package]]
 name = "reth-prune"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -10938,7 +10938,7 @@ dependencies = [
 [[package]]
 name = "reth-prune-types"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "arbitrary",
@@ -10954,7 +10954,7 @@ dependencies = [
 [[package]]
 name = "reth-revm"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -10969,7 +10969,7 @@ dependencies = [
 [[package]]
 name = "reth-rpc"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-dyn-abi",
@@ -11046,7 +11046,7 @@ dependencies = [
 [[package]]
 name = "reth-rpc-api"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eips 2.0.4",
  "alloy-genesis",
@@ -11076,7 +11076,7 @@ dependencies = [
 [[package]]
 name = "reth-rpc-builder"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-network 2.0.4",
  "alloy-provider",
@@ -11119,7 +11119,7 @@ dependencies = [
 [[package]]
 name = "reth-rpc-convert"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-evm",
@@ -11139,7 +11139,7 @@ dependencies = [
 [[package]]
 name = "reth-rpc-engine-api"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eips 2.0.4",
  "alloy-primitives",
@@ -11170,7 +11170,7 @@ dependencies = [
 [[package]]
 name = "reth-rpc-eth-api"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-dyn-abi",
@@ -11218,7 +11218,7 @@ dependencies = [
 [[package]]
 name = "reth-rpc-eth-types"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -11266,7 +11266,7 @@ dependencies = [
 [[package]]
 name = "reth-rpc-layer"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-rpc-types-engine",
  "http 1.4.0",
@@ -11280,7 +11280,7 @@ dependencies = [
 [[package]]
 name = "reth-rpc-server-types"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eips 2.0.4",
  "alloy-primitives",
@@ -11311,7 +11311,7 @@ dependencies = [
 [[package]]
 name = "reth-stages"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -11360,7 +11360,7 @@ dependencies = [
 [[package]]
 name = "reth-stages-api"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eips 2.0.4",
  "alloy-primitives",
@@ -11388,7 +11388,7 @@ dependencies = [
 [[package]]
 name = "reth-stages-types"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "arbitrary",
@@ -11402,7 +11402,7 @@ dependencies = [
 [[package]]
 name = "reth-static-file"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "parking_lot",
@@ -11422,7 +11422,7 @@ dependencies = [
 [[package]]
 name = "reth-static-file-types"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "clap",
@@ -11437,7 +11437,7 @@ dependencies = [
 [[package]]
 name = "reth-storage-api"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -11461,7 +11461,7 @@ dependencies = [
 [[package]]
 name = "reth-storage-errors"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eips 2.0.4",
  "alloy-primitives",
@@ -11479,7 +11479,7 @@ dependencies = [
 [[package]]
 name = "reth-tasks"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "crossbeam-utils",
  "dashmap",
@@ -11500,7 +11500,7 @@ dependencies = [
 [[package]]
 name = "reth-tokio-util"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -11510,7 +11510,7 @@ dependencies = [
 [[package]]
 name = "reth-tracing"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "clap",
  "eyre",
@@ -11529,7 +11529,7 @@ dependencies = [
 [[package]]
 name = "reth-tracing-otlp"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "clap",
  "eyre",
@@ -11547,7 +11547,7 @@ dependencies = [
 [[package]]
 name = "reth-transaction-pool"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -11591,7 +11591,7 @@ dependencies = [
 [[package]]
 name = "reth-trie"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -11616,7 +11616,7 @@ dependencies = [
 [[package]]
 name = "reth-trie-common"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-primitives",
@@ -11643,7 +11643,7 @@ dependencies = [
 [[package]]
 name = "reth-trie-db"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "metrics",
@@ -11663,7 +11663,7 @@ dependencies = [
 [[package]]
 name = "reth-trie-parallel"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-eip7928",
  "alloy-evm",
@@ -11692,7 +11692,7 @@ dependencies = [
 [[package]]
 name = "reth-trie-sparse"
 version = "2.2.0"
-source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#ad6b0ded18bdc99c5ffe0b1eb7405514fb70c08e"
+source = "git+https://github.com/fluentlabs-xyz/reth.git?branch=v2.2-patched#e6912be86e3edf23f63a6aba053cd9d63a910563"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -14175,7 +14175,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5f7c95348f20c1c913d72157b3c6dee6ea3e30b3d19502c5a7f6d3f160dacbf"
 dependencies = [
  "cc",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -15217,7 +15217,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
