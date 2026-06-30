@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 # `case-fault` bundles the recoverable DESTRUCTIVE default-stack cases
 # (deferred + peers + vrf-fault + crash-survivor + full-restart) onto ONE bring-up,
 # so it replaces those four separate entries here (and adds vrf-fault coverage).
-CASES=(${SMOKE_CASES:-case-base case-fault case-liveness case-cert-follow case-cert-cascade})
+CASES=(${SMOKE_CASES:-case-base case-fault case-liveness case-cert-follow case-cert-cascade case-tx-cascade})
 
 declare -A RESULT
 fail=0

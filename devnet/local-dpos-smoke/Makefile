@@ -2,11 +2,11 @@ SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
 
 .PHONY: regen-contracts smoke smoke-swap up down logs clean \
         smoke-base smoke-fault smoke-tx smoke-epoch smoke-peers smoke-liveness smoke-crash-survivor smoke-byzantine \
-        smoke-gov-interval smoke-full-restart smoke-cert-follow smoke-deferred \
+        smoke-gov-interval smoke-full-restart smoke-cert-follow smoke-cert-cascade smoke-tx-cascade smoke-deferred \
         smoke-vrf smoke-weighted-vrf smoke-vrf-rotation smoke-byzantine-vrf smoke-vrf-fault smoke-vrf-boundary \
         smoke-vrf-dkg-liveness smoke-vrf-dkg-restart-midwindow \
         smoke-vrf-dkg-durability smoke-vrf-dkg-halt \
-        smoke-production-path smoke-all
+        smoke-production-path smoke-soak smoke-soak-quick smoke-soak-gate smoke-all
 
 regen-contracts:
 	@test -d $(SOLIDITY_CONTRACTS_DIR) || \
@@ -90,6 +90,11 @@ smoke-cert-follow:
 # follower→follower cascade + bogus-checkpoint fail-closed reject.
 smoke-cert-cascade:
 	@./scripts/case-cert-cascade.sh
+# Tx WRITE PATH across the sentry cascade: a tx submitted to L3 (reaches ONLY L2)
+# is relayed via reth devp2p tx-gossip to a hidden validator's proposer, mined,
+# finalized, and synced back to L3. Privacy invariant + fail-loud monitor checked.
+smoke-tx-cascade:
+	@./scripts/case-tx-cascade.sh
 # Deferred-execution observables: K-lag invariant, result commitment, EL-slowed validator.
 smoke-deferred:
 	@./scripts/case-deferred.sh
@@ -175,6 +180,24 @@ smoke-vrf-dkg-halt:
 # by derive.rs::resolve_prev_randao_uses_verified_seed_else_falls_back, and the
 # forged-PK_E *attacker* angle is covered by the byzantine beacon smoke. Approved
 # deferred by user 2026-06-19.
+# Long-running production survivability soak (task dpos_production_soak_smoke).
+# ONE unified beacon-ON dynamic profile: a GENERATED N-validator stack, seeded
+# stochastic churn (stop/kill/throttle/liveness-jail/register/rotate/byzantine/
+# DKG-mid-window-restart) interleaved with clean epochs under tx load, a
+# DKG-window-aware safety gate (so any unexpected stall is a real bug), a
+# continuous invariant battery, the marked quorum-loss-and-recover probe, and a
+# replayable failure bundle. Needs foundry + the dpos-devnet-byzantine image.
+# Long / unbounded; NOT in run-all. Replay a failure from its logged seed:
+#   SOAK_SEED=<seed> SOAK_VALIDATORS=<n> SOAK_EPOCH_INTERVAL=<i> make smoke-soak
+smoke-soak:
+	@./scripts/case-soak.sh
+# ~5-8 min CI sanity gate (4 nodes, short epoch; byzantine + quorum-probe off).
+smoke-soak-quick:
+	@SOAK_QUICK=1 ./scripts/case-soak.sh
+# Pure unit test of the safety gate (no docker / no chain) — the §8.4 proof.
+smoke-soak-gate:
+	@./scripts/soak-gate-test.sh
+
 # Aggregate (CI entry point).
 smoke-all:
 	@./scripts/run-all.sh

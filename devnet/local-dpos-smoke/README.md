@@ -196,3 +196,57 @@ unified mode instead.
 - Production deployment — uses deprecated plaintext BLS key path,
   devnet-only Dockerfile (`fluent.image.kind=devnet-smoke` label)
 - CI integration — pure developer hand-tool
+
+## Soak — long-running survivability test (`make smoke-soak`)
+
+A seeded, stochastic, **long-running** DPoS production-path soak (task
+`dpos_production_soak_smoke`). ONE unified profile, **beacon ON throughout**, a
+**dynamic growing+shrinking committee**, churn interleaved with genuinely clean
+epochs under continuous tx load. A **DKG-window-aware safety gate** keeps the
+chain live, so any *unexpected* finalize-stall is a real bug → a replayable
+failure bundle + clean stop.
+
+```sh
+make smoke-soak-gate    # pure unit test of the safety gate (no docker) — fast
+make smoke-soak-quick   # ~5-8 min CI sanity gate (4 nodes, byzantine+probe off)
+make smoke-soak         # full run (default 10 validators, ~10-min epochs, unbounded)
+```
+
+Needs foundry (`forge`/`cast`) and the smoke image built with the
+`dpos-devnet-byzantine` feature (the Dockerfile enables it).
+
+### Knobs (env)
+
+| Knob | Full | Quick | Meaning |
+|---|---|---|---|
+| `SOAK_DURATION` | `0` (unbounded) | `5m` | wall bound; `0` = run until fail/Ctrl-C |
+| `SOAK_VALIDATORS` | `10` | `4` | target N the cluster grows toward (≤51) |
+| `SOAK_INITIAL_COMMITTEE` | `4` | `4` | starting committee; `MIN_COMMITTEE` floor derives from THIS |
+| `SOAK_EPOCH_INTERVAL` | `600` | `32` | blocks/epoch (runtime ChainConfig + env) |
+| `SOAK_CHURN_PERIOD` | `90s` | `20s` | mean delay between churn actions |
+| `SOAK_CHECK_PERIOD` | `10s` | `5s` | invariant battery cadence |
+| `SOAK_CALM_FRACTION` | `0.4` | `0.4` | fraction of epochs with zero churn |
+| `SOAK_BYZANTINE` / `SOAK_QUORUM_PROBE` | `1` / `1` | `0` / `0` | enable byzantine actions / the quorum-loss probe |
+| `SOAK_SEED` | fresh, printed | fresh, printed | PRNG seed — set it to replay the intent schedule |
+| `SOAK_OUT` / `SOAK_KEEP_UP` / `SOAK_STOP_ROUND` | `./soak-out` / – / – | | output dir / keep stack on fail / stop before a round |
+
+### Reading a failure + replaying
+
+The run streams a human mirror to stdout and writes machine-readable
+`$SOAK_OUT/events.jsonl` (one object per scheduled slot AND per invariant tick;
+the seed is on every line). After a failure:
+
+```sh
+jq 'select(.kind=="invariant_fail")' soak-out/events.jsonl   # broken invariant + round/block/epoch/committee
+jq -r '.seed' soak-out/events.jsonl | head -1                # the seed
+SOAK_SEED=<that seed> SOAK_VALIDATORS=<same> SOAK_EPOCH_INTERVAL=<same> make smoke-soak
+```
+
+The seed replays the **intent** schedule exactly. The *applied* churn is not
+bit-identical on replay — the gate reads live on-chain state, so its accept/skip
+verdict can differ run-to-run; `events.jsonl` records intent + verdict + applied
+per round so a post-mortem reconstructs precisely what ran (this honesty is by
+design — modelling committee state in-script to fake determinism would undermine
+the gate's live-safety guarantee). The full diagnostic bundle is at
+`soak-out/bundle-<ts>/` (summary, the events timeline, every node's logs, RPC
+snapshots, the generated compose + runtime topology).

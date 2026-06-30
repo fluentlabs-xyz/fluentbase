@@ -143,6 +143,15 @@ wait_follower_align() {
     return 1
 }
 
+# $1 = RPC url → the 128-hex enode pubkey of that node (via admin_nodeInfo). The
+# embedded IP in admin_nodeInfo is unreliable inside docker, so callers rebuild
+# the enode with the node's fixed compose IP + devp2p port. Shared by the cascade
+# cases (case-soak / case-tx-cascade).
+_enode_pubkey() {
+    cast rpc --rpc-url "$1" admin_nodeInfo 2>/dev/null \
+        | jq -r '.enode // empty' | sed -E 's#^enode://([0-9a-fA-F]+)@.*#\1#'
+}
+
 # --- cast read wrappers (host → validator-0 RPC) ---------------------------
 
 staking_call()     { cast call "$STAKING_ADDR"           "$@" --rpc-url "$RPC"; }
@@ -450,10 +459,16 @@ pp_owner_addr() { pp_runtime_cat addresses.json | jq -r ".validators[$1]"; }
 # Emit validator <idx> consensus-key material JSON (validatorAddress,
 # blsPubkeyUncompressed, blsPoPUncompressed, peerPubkey, ownerKey) by re-running
 # the bootstrap binary's consensus-keys subcommand inside the shared image.
+# `--peers` is the POOL SIZE: keys::derive() is peers-INDEPENDENT (derive_32 hashes
+# only seed|role|idx — keys.rs), so the byte output for a given idx is identical at
+# any peer count; but run_consensus_keys ASSERTS `idx < peers` (main.rs), so a soak
+# growing past the production-path 6 (joiners idx 6..N-1) MUST pass the larger pool
+# size or the assert aborts and growth silently breaks. PP_PEERS defaults to 6, so
+# every existing case (which never sets it) is byte-for-byte unchanged.
 pp_consensus_keys() {
     docker compose run --rm --no-deps -T \
         --entrypoint /usr/local/bin/genesis-bootstrap genesis-init \
-        consensus-keys --idx "$1" --peers 6 --chain-id "$CHAIN_ID" 2>/dev/null
+        consensus-keys --idx "$1" --peers "${PP_PEERS:-6}" --chain-id "$CHAIN_ID" 2>/dev/null
 }
 
 # Production-path reader: all 6 validators + full-node.
@@ -474,6 +489,16 @@ pp_wait_converge() { _wait_aligned "${1:-90}" "${2:-}" _read_pp_nodes; }
 # cast read wrappers against the runtime-deployed addresses (set post-deploy).
 pp_staking_call()     { cast call "$STAKING_RT"      "$@" --rpc-url "$RPC"; }
 pp_chainconfig_call() { cast call "$CHAIN_CONFIG_RT" "$@" --rpc-url "$RPC"; }
+
+# Validator status BYTE (ValidatorStatus: NotFound=0,Active=1,Pending=2,Jail=3) read
+# from the RUNTIME staking contract (STAKING_RT). The production-path/soak deploy
+# staking at runtime, so the lib.sh `validator_status` (staking_call→the hardcoded
+# 0x..5201 PREDEPLOY in STAKING_ADDR) reads the WRONG, codeless address there and
+# always yields "". Use THIS for any runtime-deploy lifecycle assertion.
+pp_validator_status() {
+    pp_staking_call "getValidatorStatus(address)(address,uint8,uint256,uint32,uint64,uint64,uint64,uint16,uint96)" "$1" 2>/dev/null \
+        | sed -n '2p' | tr -d ' '
+}
 
 # Committee member set at epoch $1 as a sorted, lowercased, space-joined string
 # (so set membership can be compared regardless of on-chain ordering).
@@ -545,9 +570,28 @@ pp_gov_action() {
     # (votingPeriod, l2.json) — the Succeeded poll below is the real
     # synchronization point, and the five voters are distinct keys (no nonce
     # races between them).
-    for i in 0 1 2 3 4; do
+    # Voter set scales past the hardcoded 5 for the soak's growing committee:
+    # vote the first ceil(2/3·voters)+1 owner keys (>= the governance
+    # super-majority). PP_GOV_VOTERS defaults to 5, so every existing case (which
+    # never sets it) draws exactly `0 1 2 3 4` — byte-identical to before.
+    local voters="${PP_GOV_VOTERS:-5}" need j
+    if [[ "${PP_GOV_VOTE_ALL:-0}" == 1 ]]; then
+        # FluentGovernance quorum is STAKE-WEIGHTED (= 2/3 of the total delegated stake
+        # across the active set; FluentGovernance.quorum/_votingSupply). With uneven
+        # stake the equal-weight ceil(2/3·count)+1 heuristic below can fall short of
+        # 2/3 of the POWER, so a caller over a grown/uneven committee opts into voting
+        # EVERY listed validator-owner. All votes are "for", so this only ever ADDS
+        # for-power — it can never flip a previously-passing proposal. (Default-off:
+        # every existing case keeps the byte-identical ceil(2/3·voters)+1 path.)
+        need="$voters"
+    else
+        need=$(( (2 * voters + 2) / 3 + 1 ))   # ceil(2/3·voters)+1 (equal-weight)
+    fi
+    (( need > voters )) && need="$voters"
+    (( need < 1 )) && need=1
+    for (( j = 0; j < need; j++ )); do
         cast send "$GOV_ADDR" "castVote(uint256,uint8)(uint256)" "$pid" 1 \
-            --rpc-url "$RPC" --private-key "$(pp_owner_key "$i")" --async >/dev/null
+            --rpc-url "$RPC" --private-key "$(pp_owner_key "$j")" --async >/dev/null
     done
     # Wait out the voting period until Succeeded (4), then execute.
     for i in $(seq 1 30); do
@@ -566,21 +610,33 @@ pp_gov_action() {
 # script checks the chain keeps finalizing across transitions; this just keeps
 # user tx pressure on the mempool throughout.
 PP_SPAMMER_PID=""
+PP_SPAMMER_PIDS=()
 pp_spammer_start() {
-    # $1 = funded sender key, $2 = recipient addr. The sender MUST be an account
-    # that issues no other txns during the run, else its nonce races the real
-    # deploy/registration txns (`replacement transaction underpriced`).
-    local from_key="$1" to_addr="$2"
+    # $1 = funded sender key, $2 = recipient addr, $3 = RPC (default $RPC). The
+    # sender MUST be an account that issues no other txns during the run, else its
+    # nonce races the real deploy/registration txns (`replacement transaction
+    # underpriced`). A NON-default $3 (an L3/L2 follower RPC) routes tx pressure
+    # THROUGH the sentry cascade — submit to the follower, which gossips
+    # L3→L2→validator into the proposer pool. `timeout` bounds a transient
+    # follower wedge (the loop retries instead of hanging); sync `cast send`
+    # self-paces the nonce (waits for the mined+synced receipt before the next).
+    local from_key="$1" to_addr="$2" rpc="${3:-$RPC}"
     (
         while :; do
-            cast send "$to_addr" --value 1 \
-                --rpc-url "$RPC" --private-key "$from_key" >/dev/null 2>&1 || true
+            timeout 90 cast send "$to_addr" --value 1 \
+                --rpc-url "$rpc" --private-key "$from_key" >/dev/null 2>&1 || true
             sleep 2
         done
     ) &
     PP_SPAMMER_PID=$!
+    PP_SPAMMER_PIDS+=("$!")
 }
-pp_spammer_stop() { [[ -n "$PP_SPAMMER_PID" ]] && kill "$PP_SPAMMER_PID" 2>/dev/null || true; }
+pp_spammer_stop() {
+    local p
+    for p in "${PP_SPAMMER_PIDS[@]}"; do [[ -n "$p" ]] && kill "$p" 2>/dev/null || true; done
+    PP_SPAMMER_PIDS=()
+    PP_SPAMMER_PID=""
+}
 
 # Bring up the production-path / rotation stack with the initial 5-validator
 # committee, identically for every rotation-stack case (case-vrf-rotation +

@@ -1,2 +1,5 @@
 runtime/
 __pycache__/
+# soak (case-soak.sh): generated compose pair + run outputs
+docker-compose.soak*.gen.yml
+soak-out/

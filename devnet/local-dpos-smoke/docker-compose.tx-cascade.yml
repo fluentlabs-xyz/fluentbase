@@ -1,0 +1,77 @@
+# Write-path SENTRY CASCADE overlay (task: close the DPoS tx write-path gaps).
+#
+# Models the operator's L1/L2/L3 sentry topology for the TRANSACTION write path:
+#   validators (L1, hidden) → sentry (L2, public, knows a validator) → downstream
+#   (L3, reaches ONLY L2). A tx submitted to L3 must reach a hidden validator's
+#   proposer pool via reth devp2p tx-gossip relayed L3→L2→validator — a link
+#   SEPARATE from the (tx-less) --sequencer-url cert feed.
+#
+# Layered on docker-compose.yml + docker-compose.dpos.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.dpos.yml \
+#       -f docker-compose.tx-cascade.yml up -d sentry
+#
+# `sentry` (L2) pins v0's enode for devp2p (it is ALLOWED to know validators) and
+# cert-follows v0's consensus WS. `downstream` (L3) pins ONLY the sentry's enode
+# (written at runtime by case-tx-cascade.sh) + --trusted-only + --disable-discovery
+# ⇒ it can reach NOTHING but the sentry (privacy invariant: validators stay hidden
+# from L3). Both started manually by the case (after the chain is live and the
+# upstream enode is captured), so NO depends_on. The sentry keeps --trusted-only
+# too (its own v0 backfill needs it); the case makes the sentry ACCEPT L3's inbound
+# via admin_addTrustedPeer so neither tier weakens --trusted-only.
+#
+# NOTE: unlike docker-compose.cert-cascade.yml (whose tier-2 pins v0 directly —
+# fine for cert-serving, but it bypasses tier-1 for devp2p), here L3's ONLY peer
+# is the sentry, which is what the sentry write path actually requires.
+services:
+  sentry:
+    image: fluent-dpos-smoke:local
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --cert-follow \
+          --sequencer-url=ws://172.20.0.10:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --rpc.eth-proof-window=50000 \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3,admin \
+          --ws --ws.addr=0.0.0.0 --ws.port=8546 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --port=30303 \
+          --datadir=/runtime/reth-data/sentry
+    volumes:
+      - runtime:/runtime
+    ports:
+      - "38545:8545"
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.30
+
+  downstream:
+    image: fluent-dpos-smoke:local
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --cert-follow \
+          --sequencer-url=ws://172.20.0.30:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --rpc.eth-proof-window=50000 \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3,admin \
+          --trusted-peers="$(cat /runtime/sentry-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --port=30303 \
+          --datadir=/runtime/reth-data/downstream
+    volumes:
+      - runtime:/runtime
+    ports:
+      - "28545:8545"
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.31
