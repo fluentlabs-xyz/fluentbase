@@ -402,6 +402,13 @@ pub struct DposLayerConfig<D, XC, A, U> {
     /// re-builds the network, re-spawns the `DkgActor`, re-registers the metrics, or
     /// re-binds `listen`.
     pub beacon_plane: SharedBeaconPlane,
+    /// The shared upstream-frontier atomic for the validator-with-upstream re-jump
+    /// (Rule Y). Created ONCE in the node crate (`node/dpos.rs::launch_validator_overlay`)
+    /// and threaded into BOTH the validator inlet's `LiveFrontierTee.upstream_frontier`
+    /// (writer) and this re-jump (reader) — the same inlet⇄executor signal the follower
+    /// has. HEIGHT-ONLY, never feeds committee/DKG selection (I6). A no-upstream
+    /// validator passes a standalone `0` atomic (nothing writes it; `re_jump` is `None`).
+    pub upstream_frontier: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// DEVNET/TEST-ONLY byzantine behaviour (gated behind `dpos-devnet-byzantine`).
     /// Absent — and the field does not exist — in a production build.
     #[cfg(feature = "dpos-devnet-byzantine")]
@@ -578,7 +585,9 @@ fn cold_start_jump_eligible(kind: ColdStartKind, has_upstream: bool) -> bool {
 /// it DELIBERATELY re-fuses a `Stalled` transport error to `Err` (preserving the
 /// pre-existing `?`-abort behaviour), exactly like an `AuthFailed`. Only the
 /// steady-state executor spawn treats `Stalled` as non-fatal (§9.6). `Landed` ⇒
-/// `Ok(Some(..))`, `Lagging` ⇒ `Ok(None)`.
+/// `Ok(Some(..))`, `Lagging` ⇒ `Ok(None)`, and `BadTarget` (a forgeable PRE-anchor
+/// structural mismatch, Rule S) ⇒ `Ok(None)` too — boot anyway, never crash on
+/// attacker-controlled pre-anchor input.
 fn jump_landing_or_abort(
     outcome: crate::cold_start_jump::JumpOutcome,
 ) -> eyre::Result<Option<(u64, B256, u64)>> {
@@ -590,6 +599,11 @@ fn jump_landing_or_abort(
             floor,
         } => Ok(Some((landing, hash, floor))),
         JumpOutcome::Lagging => Ok(None),
+        // Rule S: a forgeable PRE-anchor structural mismatch (`payload != digest`)
+        // is NON-fatal — boot anyway (the inlet's ordinary pulls cover the residual
+        // gap, and a structurally-bad upstream recurs in steady state where Phase 2
+        // WARNs + rotates). Distinct from the POST-anchor authenticated rejections.
+        JumpOutcome::BadTarget(_e) => Ok(None),
         // Single-shot cold-start: a transport stall is re-fused to fatal exactly
         // like a forged-branch rejection (see the doc above).
         JumpOutcome::Stalled(e) | JumpOutcome::AuthFailed(e) => Err(e),
@@ -666,6 +680,7 @@ impl DposLayer {
             feed,
             spawn_unblocked,
             beacon_plane,
+            upstream_frontier,
             #[cfg(feature = "dpos-devnet-byzantine")]
             byzantine,
         } = cfg;
@@ -839,7 +854,6 @@ impl DposLayer {
                     ctx.clone(),
                     provider.clone(),
                     beacon_engine_handle.clone(),
-                    genesis_hash,
                     dpos_activation_block,
                 );
                 // The post-sync cert `verify()` inside `verify_jump_authenticated`
@@ -1383,14 +1397,22 @@ impl DposLayer {
         // on the consensus-plane treadmill). The executor runs it synchronously in
         // its `select!` arm, so its `sync_to` FCU is serialized with every other
         // reth write the executor makes — the executor stays the sole reth writer.
+        //
+        // Rule Y: the validator-with-upstream re-jump is now SYMMETRIC with the
+        // follower — it shares the inlet⇄executor `upstream_frontier`, uses the
+        // epoch-relative threshold, and wires the same `rotate` escape.
+        let re_jump_threshold = crate::cold_start_jump::JUMP_THRESHOLD.min(interval as u64);
         let re_jump: Option<crate::executor::ReJump> = upstream.as_ref().map(|up| {
             let up = up.clone();
+            // The inlet's SAME upstream-rotation escape (Rule L/Y); bound BEFORE the
+            // cb moves `up`.
+            let rotate = up.rotate_callback();
             let provider = provider.clone();
             let evm_config = evm_config.clone();
             let staking_config = staking_config.clone();
             let beacon_engine_handle = beacon_engine_handle.clone();
             let ctx = ctx.clone();
-            let cb: crate::executor::ReJump = Arc::new(move |from: u64| {
+            let cb: crate::executor::ReJumpFn = Arc::new(move |from: u64| {
                 let up = up.clone();
                 let provider = provider.clone();
                 let evm_config = evm_config.clone();
@@ -1419,14 +1441,13 @@ impl DposLayer {
                         jump_ctx.clone(),
                         provider.clone(),
                         beacon_engine_handle,
-                        genesis_hash,
                         dpos_activation_block,
                     );
                     // Return the typed terminal `JumpOutcome` verbatim — the
                     // executor's completion arm classifies it (Landed re-seeds;
                     // Stalled is NON-fatal + retried on the next Tip; AuthFailed
                     // is fail-closed). §9.6.
-                    crate::cold_start_jump::cold_start_jump(
+                    crate::cold_start_jump::cold_start_jump_with_threshold(
                         from,
                         &up,
                         &committees,
@@ -1435,12 +1456,26 @@ impl DposLayer {
                         // POST-sync committee read at the landing).
                         None,
                         dpos_activation_block,
+                        re_jump_threshold,
                         &mut jump_ctx,
                     )
                     .await
                 }) as futures::future::BoxFuture<'static, _>
             });
-            cb
+            crate::executor::ReJump {
+                call: cb,
+                // Rule Y: SHARED inlet⇄executor frontier — the validator inlet (when
+                // this node is an inlet-fed joiner) advances it on every cert, so a
+                // frozen marshal tip can't mask a deep gap, exactly as on the follower.
+                upstream_frontier: upstream_frontier.clone(),
+                // Epoch-relative gate, mirroring the follower (real-prod epochs ≫ 1024
+                // keep the serving-window size; a compressed test epoch heals within
+                // an epoch).
+                threshold: re_jump_threshold,
+                // Rule L/Y: the same upstream-rotation escape the follower wires (T2 —
+                // safe now that BadTarget is NON-fatal).
+                rotate: Some(rotate),
+            }
         });
 
         let outer = OuterBuilder {
@@ -1742,7 +1777,6 @@ impl DposLayer {
                 ctx.clone(),
                 provider.clone(),
                 beacon_engine_handle.clone(),
-                genesis_hash,
                 activation,
             )
         };
@@ -1967,14 +2001,31 @@ impl DposLayer {
         // pre-engine `cold_start_jump` above. Same upstream / committee source /
         // EL-sync / activation / L1 checkpoint. A follower ALWAYS has an upstream
         // (the WS the inlet uses), so this is set whenever `upstream.is_some()`.
+        //
+        // The TRUE upstream frontier: the cert-inlet advances it on every received
+        // cert (INCLUDING the committee-not-committed deferred ones), and the
+        // executor's re-jump trigger reads it — so a follower whose marshal tip
+        // FROZE under the defer deadlock still sees the climbing frontier and
+        // re-jumps out. ONE atomic shared between the inlet (writer) and the
+        // re-jump trigger (reader). See [`crate::executor::ReJump::upstream_frontier`].
+        let upstream_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        // Epoch-relative re-jump gate: the defer deadlock is "≥2 epochs behind", so
+        // recovery fires at `min(serving-window, 1 epoch)` — real-prod epochs ≫ 1024
+        // keep 1024; a compressed test epoch heals within an epoch (see `ReJump::threshold`).
+        let re_jump_threshold = crate::cold_start_jump::JUMP_THRESHOLD.min(interval as u64);
         let re_jump: Option<crate::executor::ReJump> = upstream.as_ref().map(|up| {
             let up = up.clone();
+            // The inlet's SAME upstream-rotation escape (Rule L): the re-jump's
+            // terminal fault (`BadTarget` / repeated `Stalled`) rotates the SAME WS
+            // actor mailbox the inlet's `inlet_rotate` wraps → coalesced at the WS
+            // actor. Bound BEFORE the cb moves `up`.
+            let rotate = up.rotate_callback();
             let provider = provider.clone();
             let evm_config = evm_config.clone();
             let staking_config = staking_config.clone();
             let beacon_engine_handle = beacon_engine_handle.clone();
             let ctx = ctx.clone();
-            let cb: crate::executor::ReJump = Arc::new(move |from: u64| {
+            let cb: crate::executor::ReJumpFn = Arc::new(move |from: u64| {
                 let up = up.clone();
                 let provider = provider.clone();
                 let evm_config = evm_config.clone();
@@ -2001,24 +2052,29 @@ impl DposLayer {
                         jump_ctx.clone(),
                         provider.clone(),
                         beacon_engine_handle,
-                        genesis_hash,
                         activation,
                     );
                     // Return the typed terminal `JumpOutcome` verbatim — the
                     // executor's completion arm classifies it (§9.6).
-                    crate::cold_start_jump::cold_start_jump(
+                    crate::cold_start_jump::cold_start_jump_with_threshold(
                         from,
                         &up,
                         &committees,
                         &el,
                         l1_checkpoint_hash,
                         activation,
+                        re_jump_threshold,
                         &mut jump_ctx,
                     )
                     .await
                 }) as futures::future::BoxFuture<'static, _>
             });
-            cb
+            crate::executor::ReJump {
+                call: cb,
+                upstream_frontier: upstream_frontier.clone(),
+                threshold: re_jump_threshold,
+                rotate: Some(rotate),
+            }
         });
 
         let outer = OuterBuilder {
@@ -2192,6 +2248,10 @@ impl DposLayer {
             .with_epoch_math(activation, interval)
             .with_tee(crate::cert_inlet::LiveFrontierTee {
                 live_height: live_frontier,
+                // Same atomic the steady-state re-jump trigger reads: the inlet
+                // advances it on every cert (deferred ones included) so a frozen
+                // marshal tip can't freeze the re-jump (the cascade-wedge fix).
+                upstream_frontier: upstream_frontier.clone(),
                 dkg_height_tx: dkg_tx,
             });
             if let Some(rotate) = inlet_rotate {
@@ -2263,6 +2323,12 @@ mod cold_start_kind_tests {
             jump_landing_or_abort(JumpOutcome::Lagging).expect("Lagging is Ok"),
             None,
             "Lagging ⇒ Ok(None) (no-op; inlet pulls cover the residual gap)"
+        );
+        assert_eq!(
+            jump_landing_or_abort(JumpOutcome::BadTarget(eyre::eyre!("payload != digest")))
+                .expect("BadTarget is Ok"),
+            None,
+            "BadTarget ⇒ Ok(None) (forgeable pre-anchor mismatch — boot anyway, NON-fatal)"
         );
         assert!(
             jump_landing_or_abort(JumpOutcome::Stalled(eyre::eyre!("transport stall"))).is_err(),

@@ -621,6 +621,12 @@ where
     // Always-on beacon plane (one FluentP2P + 5 persistent Muxers + persistent
     // DkgActor + shared store), built ONCE — the engine CLONES the shared plane.
     let plane = build_beacon_plane(&ctx, &node, &cfg, share_state).await?;
+    // Rule Y: ONE shared upstream-frontier atomic threaded into BOTH the validator
+    // inlet tee (writer) and the layer's `executor::ReJump` (reader), so an
+    // inlet-fed joiner validator self-heals off the frontier exactly like a
+    // follower. Created unconditionally — harmless for a no-upstream validator
+    // (no inlet writes it; `re_jump` is `None` so nothing reads it).
+    let upstream_frontier = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let handle = launch_dpos_layer(
         ctx,
         &node,
@@ -629,6 +635,7 @@ where
         beacon_engine,
         cert_feed,
         plane.shared.clone(),
+        upstream_frontier.clone(),
         shutdown_token,
     )
     .await?;
@@ -648,6 +655,12 @@ where
             urls,
             fluentbase_consensus::cert_inlet::LiveFrontierTee {
                 live_height: plane.live_height.clone(),
+                // Rule Y: the SAME atomic shared with this node's `executor::ReJump`
+                // (the inlet⇄executor signal). When this validator is an inlet-fed
+                // joiner (rotated out, following the inlet base) its re-jump self-heals
+                // off the climbing frontier exactly like a follower — symmetric wiring.
+                // See [`LiveFrontierTee::upstream_frontier`].
+                upstream_frontier: upstream_frontier.clone(),
                 dkg_height_tx: plane.dkg_height_tx.clone(),
             },
         )
@@ -1227,6 +1240,7 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     beacon_engine: crate::importer::RethImporter,
     cert_feed: Option<CertFeed>,
     shared_beacon: SharedBeaconPlane,
+    upstream_frontier: std::sync::Arc<std::sync::atomic::AtomicU64>,
     shutdown_token: CancellationToken,
 ) -> eyre::Result<DposLayerHandle>
 where
@@ -1398,6 +1412,10 @@ where
         // it never rebuilds the network, re-spawns the DkgActor, or consumes a raw
         // channel half — so a demote→re-promote re-clones with no rebuild.
         beacon_plane: shared_beacon,
+        // Rule Y: the SAME atomic the validator inlet tee writes (created once in
+        // `launch_validator_overlay`, threaded into both sinks) — the validator's
+        // `executor::ReJump` reads it, mirroring the follower's inlet⇄executor signal.
+        upstream_frontier,
         #[cfg(feature = "dpos-devnet-byzantine")]
         byzantine,
     };

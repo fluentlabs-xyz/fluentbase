@@ -113,6 +113,15 @@ async fn recv_or_never(rx: Option<&mut tokio::sync::mpsc::Receiver<LogMessage>>)
     }
 }
 
+/// The two start-race dealings a single sender can contribute, latest-wins. Only
+/// `Commitment`/`Share` are ever bufferable (`is_bufferable`), so two `Option`s
+/// cover a sender exactly.
+#[derive(Default)]
+struct PendingDealings {
+    commitment: Option<DkgBody>,
+    share: Option<DkgBody>,
+}
+
 /// The networked DKG actor. Generic over the p2p sender/receiver (the spawn site
 /// passes the `BEACON_CHANNEL` halves) and over the DKG-log recovery resolver `R`
 /// (the `commonware_resolver::p2p::Mailbox` in production; a no-op in unit tests).
@@ -180,9 +189,12 @@ pub struct DkgActor<Se, Re, R> {
     /// `maybe_start` before any seal, so a peer dealing that raced ahead of our start
     /// is never silently dropped (which would leave that dealer un-acked ⇒
     /// `TooManyReveals` ⇒ `DkgFailed`). Bounded: only the next 1–2 epochs are
-    /// bufferable (`is_bufferable`), ≤ `MAX_COMMITTEE_SIZE * 2` entries per epoch, and
-    /// stale epochs are evicted each height tick.
-    pending: BTreeMap<u64, Vec<(PeerPubkey, DkgBody)>>,
+    /// bufferable (`is_bufferable`) and stale epochs are evicted each height tick.
+    /// PER-SENDER bounded (Rule R, N2): one Byzantine peer occupies at most its own
+    /// slot (≤1 Commitment + ≤1 Share, latest-wins), so it cannot evict honest
+    /// dealings from the shared per-epoch buffer. Size-bounded by the committee
+    /// roster (the only authenticated senders on `BEACON_CHANNEL`).
+    pending: BTreeMap<u64, BTreeMap<PeerPubkey, PendingDealings>>,
     /// Last finalized height seen on the `on_height` stream — the current chain time
     /// the event-driven `on_message` finalize uses for its deterministic-settle gate.
     last_height: u64,
@@ -680,10 +692,15 @@ where
         if let Some(buffered) = self.pending.remove(&target) {
             let mut drained = Vec::new();
             let c = self.ceremonies.get_mut(&target).expect("just started");
-            for (from, body) in buffered {
-                let step = c.handle(from, body);
-                out.extend(step.outgoing);
-                drained.extend(step.journal);
+            for (from, dealings) in buffered {
+                // Replay each present half (commitment-then-share). Order-independent
+                // (`try_ack` fires only once both halves are buffered), so `from` is
+                // re-used per replay → clone (PeerPubkey is Clone, NOT Copy).
+                for body in [dealings.commitment, dealings.share].into_iter().flatten() {
+                    let step = c.handle(from.clone(), body);
+                    out.extend(step.outgoing);
+                    drained.extend(step.journal);
+                }
             }
             self.append_journal(target, drained);
         }
@@ -827,9 +844,16 @@ where
                 self.drive_finalization(self.last_height, rng);
             }
         } else if self.is_bufferable(epoch, &body) {
-            let buf = self.pending.entry(epoch).or_default();
-            if buf.len() < fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as usize * 2 {
-                buf.push((from, body));
+            // PER-SENDER, latest-wins: a sender occupies at most its own slot (≤1
+            // Commitment + ≤1 Share), so a Byzantine peer cannot evict honest
+            // dealings (N2). The outer + inner maps are roster-bounded, so the
+            // prior `len() <` cap is redundant.
+            let slot = self.pending.entry(epoch).or_default().entry(from).or_default();
+            match body {
+                DkgBody::Commitment(_) => slot.commitment = Some(body),
+                DkgBody::Share(_) => slot.share = Some(body),
+                // `is_bufferable` admits ONLY Commitment/Share; defensive no-op.
+                _ => {}
             }
         }
     }
@@ -1606,6 +1630,112 @@ mod clock_tests {
             assert!(
                 actor.ceremonies.is_empty(),
                 "stalled ceremony must be evicted once its boundary passes"
+            );
+        });
+    }
+
+    /// N2 fairness regression: the start-race buffer is bounded PER SENDER. One peer
+    /// flooding its own `Commitment` occupies at most its single slot (latest-wins),
+    /// so it can never evict another sender's buffered dealing from the shared
+    /// per-epoch buffer. Drives `on_message` directly to inspect `actor.pending`.
+    #[test]
+    fn pending_buffer_is_per_sender_bounded() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle: Oracle<PeerPubkey, SimContext> = {
+                let (network, oracle) = Network::new(
+                    ctx.with_label("sim_net"),
+                    SimConfig {
+                        max_size: 1024 * 1024,
+                        disconnect_on_block: false,
+                        tracked_peer_sets: NZUsize!(4),
+                    },
+                );
+                network.start();
+                oracle
+            };
+            let mut rng = StdRng::seed_from_u64(11);
+            let keys: Vec<Ed25519PrivateKey> =
+                (0..4).map(|_| Ed25519PrivateKey::random(&mut rng)).collect();
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            oracle.manager().track(0, committee.clone()).await;
+            let me = keys[0].clone();
+            let (sender, receiver) = oracle
+                .control(me.public_key())
+                .register(
+                    fluentbase_p2p::constants::BEACON_CHANNEL,
+                    fluentbase_p2p::constants::BEACON_QUOTA,
+                )
+                .await
+                .expect("register BEACON_CHANNEL");
+            let committee_for: CommitteeFor = {
+                let set = committee.clone();
+                Arc::new(move |_epoch: u64| Some(set.clone()))
+            };
+            let store: CeremonyStore = Arc::new(RwLock::new(BTreeMap::new()));
+            let ns = b"FLUENT_DPOS_V1_n2test";
+            let mut actor = DkgActor::new(
+                ns.to_vec(),
+                me,
+                sender,
+                receiver,
+                None::<NoopResolver>,
+                None,
+                committee_for,
+                store,
+                Arc::new(tokio::sync::Notify::new()),
+                ACTIVATION,
+                INTERVAL,
+                crate::beacon::metrics::BeaconMetrics::default(),
+                None,
+                ShareState::Plaintext,
+            );
+            let mut arng = StdRng::seed_from_u64(13);
+
+            // A real, decodable `Commitment` dealing tagged for epoch 1 (bufferable
+            // at the default last_height=0 ⇒ now=0, so 0 < 1 ≤ now+2). The body is
+            // never verified before buffering, so the same bytes stand in for any
+            // sender's dealing — only the `from` key keys the per-sender slot.
+            let commitment: DkgBody = {
+                let (_cer, step) =
+                    DkgCeremony::start(&mut rng, ns, 1, committee.clone(), keys[0].clone())
+                        .expect("start");
+                step.outgoing
+                    .into_iter()
+                    .find_map(|o| match o.msg.body {
+                        b @ DkgBody::Commitment(_) => Some(b),
+                        _ => None,
+                    })
+                    .expect("a commitment dealing")
+            };
+            let wire = BeaconMessage::Dkg(
+                DkgMsg {
+                    ceremony_epoch: 1,
+                    body: commitment,
+                }
+                .encode(),
+            )
+            .encode();
+
+            let a = keys[1].public_key();
+            let b = keys[2].public_key();
+
+            // Sender A floods 5 copies → it overwrites its OWN slot (latest-wins).
+            for _ in 0..5 {
+                actor.on_message(a.clone(), wire.as_ref(), &mut arng).await;
+            }
+            assert_eq!(
+                actor.pending.get(&1).map(|m| m.len()),
+                Some(1),
+                "5 copies of sender A's commitment occupy exactly ONE slot (latest-wins)"
+            );
+
+            // Sender B contributes ONE → it gets its OWN slot; A is NOT evicted.
+            actor.on_message(b.clone(), wire.as_ref(), &mut arng).await;
+            assert_eq!(
+                actor.pending.get(&1).map(|m| m.len()),
+                Some(2),
+                "sender B gets its own slot; one peer's flood cannot starve another (N2)"
             );
         });
     }

@@ -296,9 +296,48 @@ pub type PeersForFinalization =
 /// stall (re-evaluated on the next `Update::Tip`); `AuthFailed` ⇒ fail-closed (a
 /// forged far-ahead target fails `verify_jump_authenticated`, the executor loop
 /// breaks and the node refuses to serve).
-pub type ReJump = std::sync::Arc<
+pub type ReJumpFn = std::sync::Arc<
     dyn Fn(u64) -> BoxFuture<'static, crate::cold_start_jump::JumpOutcome> + Send + Sync,
 >;
+
+/// The steady-state re-jump callback bundled with the signal its trigger reads.
+#[derive(Clone)]
+pub struct ReJump {
+    /// The forward-only, BLS-verified jump (the `u64` arg is `from` =
+    /// `ordering_finalized`); see the callback notes above.
+    pub call: ReJumpFn,
+    /// The TRUE upstream frontier, advanced by the cert-inlet on EVERY received
+    /// cert (pre-verify, height-only) — see
+    /// [`crate::cert_inlet::LiveFrontierTee::upstream_frontier`]. The marshal's
+    /// STORED frontier (`last_tip_height`, fed by `Update::Tip`) FREEZES during
+    /// the "committee[E] not committed" defer deadlock — the inlet keeps
+    /// receiving certs but stores none, so no `Update::Tip` fires — which is
+    /// exactly when the re-jump is needed. The trigger therefore measures the gap
+    /// against `max(marshal tip, upstream_frontier)` so a frozen marshal tip can
+    /// never mask a real deep gap. HEIGHT-ONLY: it MUST NOT feed the committee
+    /// read (that stays the verified-only `live_height`), else a malicious
+    /// upstream could steer committee selection. SHARED between the inlet (writer)
+    /// and this re-jump (reader) on BOTH the follower AND the validator-with-upstream
+    /// (Rule Y symmetry — the inlet-fed joiner advances it on every cert); a
+    /// no-upstream validator has no `ReJump` at all (this field never exists there).
+    pub upstream_frontier: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Forward-only re-jump need-gate, mirrored into the spawned jump's own gate
+    /// (`cold_start_jump_with_threshold`). The defer deadlock is EPOCH-relative
+    /// ("≥2 epochs behind ⇒ `committee[E]` uncommitted"), so its recovery gate is
+    /// epoch-relative too: the follower sets `min(JUMP_THRESHOLD,
+    /// epoch_block_interval)` (real-prod epochs ≫ 1024 keep the 1024 serving-window
+    /// size; a compressed test epoch scales down to ~1 epoch so a short-epoch
+    /// follower heals within an epoch instead of waiting for a fixed 1024-block
+    /// gap). The validator-with-upstream + tests keep `JUMP_THRESHOLD`.
+    pub threshold: u64,
+    /// The inlet's EXISTING upstream-rotation escape ([`crate::cert_inlet::RotateUpstream`]),
+    /// the SAME `CertUpstream::rotate_callback()` the data-fault inlet uses. Fired
+    /// when the re-jump's terminal outcome is a fault (Rule L): `BadTarget` (forgeable
+    /// structural mismatch) rotates immediately; `Stalled` rotates after
+    /// `MAX_UPSTREAM_FAULTS` (an honest transient stall must not insta-rotate). `Option`
+    /// so unit tests / a no-rotate config leave it `None`.
+    pub rotate: Option<crate::cert_inlet::RotateUpstream>,
+}
 
 /// A finalized block held while its beacon seed (finalization cert) is not local
 /// yet. The `pending_finalizations` drain is paused while this is `Some`, which
@@ -389,6 +428,15 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     /// the `Update::Tip` arm when the frontier runs > `JUMP_THRESHOLD` ahead of
     /// `ordering_finalized`.
     re_jump: Option<ReJump>,
+    /// Consecutive steady-state re-jump `Stalled` outcomes since the last reset. At
+    /// `MAX_UPSTREAM_FAULTS` the executor `rotate()`s (Rule L) and resets. Reset to 0
+    /// on ANY executor-side `rotate()` (incl. the `BadTarget` arm) and on
+    /// `Landed`/`Lagging` (progress / upstream agrees we're caught up) — so a streak
+    /// accrued on URL A NEVER carries into URL B (critic r2: cross-URL carryover →
+    /// A→B→A oscillation). A SECOND, independent streak from the inlet's data-fault
+    /// counter ([`crate::cert_inlet::CertInlet`]); both feed the SAME `rotate()` sink,
+    /// deduped at the WS actor.
+    rejump_fault_streak: u32,
     /// Completion channel of the in-flight spawned re-jump waiter. `Some` ⇒ a
     /// re-jump is running; its terminal [`crate::cold_start_jump::JumpOutcome`]
     /// is consumed in a dedicated `select!` arm (mirror of `pending_backfill`'s
@@ -495,6 +543,7 @@ where
             beacon_metrics: cfg.beacon_metrics,
             spawn_unblocked: cfg.spawn_unblocked,
             re_jump: cfg.re_jump,
+            rejump_fault_streak: 0,
             jump_done: OptionFuture::default(),
             jump_handle: None,
             // Best estimate of the marshal frontier at startup; refined by every
@@ -615,18 +664,39 @@ where
                     match outcome {
                         Ok(crate::cold_start_jump::JumpOutcome::Landed { landing, hash, floor }) => {
                             self.reseed_forward(landing, hash, floor).await;
+                            // Progress: clear any stale fault tally.
+                            self.rejump_fault_streak = 0;
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::Lagging) => {
                             debug!("steady-state re-jump: lagging / stale target — no-op");
+                            // The upstream's own `get_latest` says we're caught up
+                            // (U2) — clear any stale tally.
+                            self.rejump_fault_streak = 0;
+                        }
+                        Ok(crate::cold_start_jump::JumpOutcome::BadTarget(error)) => {
+                            // Rule S/L: a forgeable PRE-anchor structural mismatch is
+                            // NON-fatal but a bad-upstream signal — rotate immediately.
+                            warn!(%error, "steady-state re-jump target structurally invalid \
+                                (forgeable); rotating upstream (NON-fatal)");
+                            self.rotate_upstream().await;
+                            self.rejump_fault_streak = 0; // ANY rotate resets (critic r2)
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::Stalled(error)) => {
-                            // NON-fatal: the gap is re-evaluated on the next
-                            // `Update::Tip` (which re-calls `maybe_re_jump` while
-                            // no jump is in flight). THIS is the transient-stall
-                            // responsiveness fix — a stall no longer crashes the
-                            // executor.
-                            warn!(%error, "steady-state re-jump stalled (transport); \
-                                will re-evaluate the gap on the next frontier tip");
+                            // NON-fatal transient transport stall: count toward the
+                            // streak; an honest momentary stall must not insta-rotate.
+                            // At MAX consecutive stalls the upstream is failed over
+                            // (Rule L). The gap is re-evaluated on the next
+                            // `Update::Tip` / heartbeat re-poke regardless.
+                            self.rejump_fault_streak += 1;
+                            warn!(%error, faults = self.rejump_fault_streak,
+                                "steady-state re-jump stalled (transport); will re-evaluate \
+                                 on the next frontier tip");
+                            if self.rejump_fault_streak >= crate::cert_inlet::MAX_UPSTREAM_FAULTS {
+                                warn!("re-jump stalled {} times; rotating upstream",
+                                    crate::cert_inlet::MAX_UPSTREAM_FAULTS);
+                                self.rotate_upstream().await;
+                                self.rejump_fault_streak = 0;
+                            }
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::AuthFailed(error)) => {
                             // Fail-closed: a forged far-ahead target fails
@@ -744,8 +814,28 @@ where
         self.fcu_heartbeat_timer = Box::pin(self.context.sleep(self.fcu_heartbeat_interval));
     }
 
+    /// Fire the upstream-rotation escape (Rule L) if one is wired. Clones the Arc out
+    /// of `self.re_jump` so the immutable borrow does not span the `.await` (the
+    /// caller writes `self.rejump_fault_streak` after this returns).
+    async fn rotate_upstream(&mut self) {
+        let rotate = self.re_jump.as_ref().and_then(|rj| rj.rotate.clone());
+        if let Some(rotate) = rotate {
+            rotate().await;
+        }
+    }
+
     #[instrument(skip_all)]
     async fn send_forkchoice_update_heartbeat(&mut self) {
+        if self.jump_done.is_some() {
+            // A re-jump's `sync_to` is the EL driver during backfill; an interleaved
+            // heartbeat FCU returns reth `SYNCING`
+            // (engine/tree/src/tree/mod.rs:1173-1177: `if !backfill_sync_state.is_idle()
+            // { return ...syncing() }`), producing a spurious reth-side `Stalled` that —
+            // now that `Stalled` rotates — would churn rotation. The re-jump is the
+            // single EL writer while in flight.
+            debug!("FCU heartbeat suppressed; re-jump in flight (sync_to drives the EL)");
+            return;
+        }
         if !self.has_advanced_since_init {
             debug!(
                 head = %self.last_canonicalized.forkchoice.head_block_hash,
@@ -840,8 +930,15 @@ where
         if self.jump_done.is_some() {
             return Ok(());
         }
-        if height.get().saturating_sub(self.ordering_finalized)
-            <= crate::cold_start_jump::JUMP_THRESHOLD
+        // The marshal's STORED frontier (`height`) FREEZES under the
+        // committee-not-committed defer deadlock; the inlet-advanced
+        // `upstream_frontier` does not. Trigger off the larger of the two so a
+        // frozen marshal tip cannot mask a real deep gap (see `ReJump`).
+        let upstream_frontier =
+            re_jump.upstream_frontier.load(std::sync::atomic::Ordering::Relaxed);
+        let frontier = height.get().max(upstream_frontier);
+        if frontier.saturating_sub(self.ordering_finalized)
+            <= re_jump.threshold
             // Don't start a jump while a block is deferred awaiting its cert
             // (the reseed prunes below the floor; a deferred sub-floor block
             // would be reconciled mid-flight). Wait for the deferred drain.
@@ -851,6 +948,7 @@ where
         }
         info!(
             tip = %height,
+            upstream_frontier,
             ordering_finalized = self.ordering_finalized,
             "frontier ran past the serving window; spawning steady-state re-jump waiter"
         );
@@ -864,7 +962,7 @@ where
             .context
             .with_label("steady_state_rejump")
             .spawn(move |_| async move {
-                let _ = tx.send(re_jump(from).await);
+                let _ = tx.send((re_jump.call)(from).await);
             });
         self.jump_done.replace(rx);
         self.jump_handle = Some(handle);
@@ -2782,6 +2880,7 @@ mod tests {
         Landed { landing: u64, hash: B256, floor: u64 },
         Lagging,
         Stalled(String),
+        BadTarget(String),
         AuthFailed(String),
     }
 
@@ -2796,6 +2895,7 @@ mod tests {
                 },
                 Scripted::Lagging => JumpOutcome::Lagging,
                 Scripted::Stalled(s) => JumpOutcome::Stalled(eyre::eyre!(s.clone())),
+                Scripted::BadTarget(s) => JumpOutcome::BadTarget(eyre::eyre!(s.clone())),
                 Scripted::AuthFailed(s) => JumpOutcome::AuthFailed(eyre::eyre!(s.clone())),
             }
         }
@@ -2805,14 +2905,79 @@ mod tests {
     /// the scripted [`crate::cold_start_jump::JumpOutcome`].
     type RejumpCalls = Arc<Mutex<Vec<u64>>>;
     fn recording_re_jump(scripted: Scripted) -> (ReJump, RejumpCalls) {
+        let (cb, calls, _frontier) = recording_re_jump_with_frontier(scripted);
+        (cb, calls)
+    }
+
+    /// As [`recording_re_jump`] but also returns the `upstream_frontier` atomic so
+    /// a test can simulate the cert-inlet advancing it (the deadlock path, where
+    /// the marshal `Update::Tip` height stays frozen).
+    fn recording_re_jump_with_frontier(
+        scripted: Scripted,
+    ) -> (ReJump, RejumpCalls, Arc<std::sync::atomic::AtomicU64>) {
         let calls: RejumpCalls = Arc::new(Mutex::new(Vec::new()));
         let calls_cl = calls.clone();
-        let cb: ReJump = Arc::new(move |from| {
+        let call: ReJumpFn = Arc::new(move |from| {
             calls_cl.lock().unwrap().push(from);
             let scripted = scripted.clone();
             Box::pin(async move { scripted.build() })
         });
-        (cb, calls)
+        let upstream_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        (
+            ReJump {
+                call,
+                upstream_frontier: upstream_frontier.clone(),
+                threshold: JUMP_THRESHOLD,
+                rotate: None,
+            },
+            calls,
+            upstream_frontier,
+        )
+    }
+
+    /// As [`recording_re_jump`] but wires a RECORDING `rotate` escape (the
+    /// recording-rotate idiom from `cert_inlet::tests`), returning the rotation-count
+    /// atomic so a test can assert Rule-L failover fired the expected number of times.
+    /// `scripts` is a SATURATING sequence — call N returns `scripts[min(N, len−1)]` —
+    /// so a single-element vec is the single-outcome case and a longer vec scripts a
+    /// per-call outcome sequence (the cross-URL streak-reset test needs Stalled→…→
+    /// BadTarget→Stalled).
+    fn recording_re_jump_with_rotate(
+        scripts: Vec<Scripted>,
+    ) -> (ReJump, RejumpCalls, Arc<std::sync::atomic::AtomicU32>) {
+        assert!(!scripts.is_empty(), "need at least one scripted outcome");
+        let calls: RejumpCalls = Arc::new(Mutex::new(Vec::new()));
+        let calls_cl = calls.clone();
+        let scripts = Arc::new(scripts);
+        let idx = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let call: ReJumpFn = Arc::new(move |from| {
+            calls_cl.lock().unwrap().push(from);
+            let i = idx
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .min(scripts.len() - 1);
+            let scripted = scripts[i].clone();
+            Box::pin(async move { scripted.build() })
+        });
+        let rotations = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let rotate: crate::cert_inlet::RotateUpstream = {
+            let rotations = rotations.clone();
+            Arc::new(move || {
+                let rotations = rotations.clone();
+                Box::pin(async move {
+                    rotations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }) as BoxFuture<'static, ()>
+            })
+        };
+        (
+            ReJump {
+                call,
+                upstream_frontier: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                threshold: JUMP_THRESHOLD,
+                rotate: Some(rotate),
+            },
+            calls,
+            rotations,
+        )
     }
 
     // (a) The re-jump FIRES when `Update::Tip.height − ordering_finalized >
@@ -2873,6 +3038,45 @@ mod tests {
                 *fx.marshal.floors.lock().unwrap(),
                 vec![floor],
                 "running marshal floor advanced to landing − K (completion arm ran)"
+            );
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // DEADLOCK PATH: under the "committee[E] not committed" defer, the inlet
+    // stores nothing → the marshal `Update::Tip` height FREEZES just above the
+    // anchor, so the OLD trigger (gap measured off the marshal tip) never fired
+    // and the follower wedged forever. The inlet keeps advancing
+    // `upstream_frontier` off the deferred certs, so the trigger — now measuring
+    // `max(tip, upstream_frontier) − ordering_finalized` — fires on a LOW (frozen)
+    // tip once the true frontier runs past the serving window. This test sends a
+    // low tip while the frontier is far ahead and asserts the re-jump still fires
+    // (it would NOT under the pre-fix tip-only gate).
+    #[test]
+    fn re_jump_fires_off_upstream_frontier_when_marshal_tip_frozen() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let (cb, calls, frontier) = recording_re_jump_with_frontier(Scripted::Lagging);
+            let fx = Fixture::new(ANCHOR).with_re_jump(cb);
+            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            // The inlet has advanced the TRUE frontier far past the serving window
+            // (deferred certs climb it) while the marshal tip is frozen at the
+            // anchor.
+            frontier.store(ANCHOR + JUMP_THRESHOLD + 5_010, std::sync::atomic::Ordering::Relaxed);
+            // A LOW (frozen) marshal tip — gap off the tip alone is ≤ JUMP_THRESHOLD,
+            // so the pre-fix gate would NOT fire. The fix maxes in the frontier.
+            mailbox.send(tip_msg(ANCHOR + 5)).expect("send low tip");
+            ctx.sleep(Duration::from_millis(10)).await;
+
+            assert_eq!(
+                *calls.lock().unwrap(),
+                vec![ANCHOR],
+                "re-jump fires off the upstream frontier even with a frozen marshal tip"
             );
 
             drop(mailbox);
@@ -3183,6 +3387,154 @@ mod tests {
             assert!(
                 fx.marshal.floors.lock().unwrap().is_empty(),
                 "Lagging must NOT advance the marshal floor"
+            );
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // (d') Rule S/L: a `BadTarget` outcome (a forgeable PRE-anchor structural
+    // mismatch served by an untrusted upstream) is NON-fatal — the executor KEEPS
+    // RUNNING (a follow-up finalize still acks, no floor advance) AND it rotates the
+    // upstream exactly once (a structurally-bad upstream is failed over). A
+    // signature-free attacker-controlled input must never crash a node.
+    #[test]
+    fn re_jump_bad_target_rotates() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let (cb, calls, rotations) =
+                recording_re_jump_with_rotate(vec![Scripted::BadTarget("payload != block digest".into())]);
+            let fx = Fixture::new(ANCHOR).with_re_jump(cb);
+            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            mailbox
+                .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
+                .expect("send tip");
+            // Yield so the spawned waiter completes + its `jump_done` arm runs.
+            ctx.sleep(Duration::from_millis(10)).await;
+
+            // Follow-up finalize: must STILL ack ⇒ the loop survived BadTarget.
+            let (msg, waiter) =
+                finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
+            mailbox.send(msg).expect("send");
+            waiter
+                .await
+                .expect("ack after a BadTarget re-jump (NON-fatal)");
+
+            assert_eq!(
+                *calls.lock().unwrap(),
+                vec![ANCHOR],
+                "re-jump was invoked (gap > threshold) and returned BadTarget"
+            );
+            assert_eq!(
+                rotations.load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "a BadTarget re-jump rotates the upstream exactly once (Rule L)"
+            );
+            assert!(
+                fx.marshal.floors.lock().unwrap().is_empty(),
+                "a BadTarget re-jump must NOT advance the marshal floor"
+            );
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // (d'') Rule L: a single `Stalled` must NOT insta-rotate (an honest transient
+    // stall is tolerated); only at MAX_UPSTREAM_FAULTS consecutive stalls does the
+    // executor fail the upstream over — exactly ONCE — and then the streak resets,
+    // so a further single stall does not re-rotate. Mirrors the inlet's
+    // `consecutive_data_faults_rotate_once_…` for the SECOND (re-jump) streak.
+    #[test]
+    fn re_jump_stalled_rotates_after_streak_then_resets() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let (cb, calls, rotations) =
+                recording_re_jump_with_rotate(vec![Scripted::Stalled("reth EL-sync stalled".into())]);
+            let fx = Fixture::new(ANCHOR).with_re_jump(cb);
+            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            // Drive MAX_UPSTREAM_FAULTS consecutive Stalled re-jumps. Stalled never
+            // reseeds, so `ordering_finalized` stays at ANCHOR and the same tip
+            // re-triggers each time once the prior jump's `jump_done` arm has cleared.
+            for _ in 0..crate::cert_inlet::MAX_UPSTREAM_FAULTS {
+                mailbox
+                    .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
+                    .expect("send tip");
+                ctx.sleep(Duration::from_millis(10)).await;
+            }
+            assert_eq!(
+                rotations.load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "exactly ONE rotate at the MAX_UPSTREAM_FAULTS-th consecutive stall"
+            );
+
+            // Streak reset after the rotate: one more stall must NOT re-rotate.
+            mailbox
+                .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
+                .expect("send tip");
+            ctx.sleep(Duration::from_millis(10)).await;
+            assert_eq!(
+                rotations.load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "the streak reset after rotating: one post-reset stall must not re-rotate"
+            );
+            assert_eq!(
+                calls.lock().unwrap().len(),
+                crate::cert_inlet::MAX_UPSTREAM_FAULTS as usize + 1,
+                "every tip spawned a fresh re-jump (no jump skipped / doubled)"
+            );
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // (d''') CRITIC r2 regression: ANY executor-side rotate() resets the streak, so a
+    // tally accrued on URL A never carries into URL B. Accrue MAX_UPSTREAM_FAULTS−1
+    // Stalleds (streak just below the rotate threshold), then ONE BadTarget (which
+    // rotates + resets), then ONE Stalled — the post-BadTarget stall must NOT rotate
+    // (proving the BadTarget arm reset the streak; pre-fix it would have tipped to
+    // MAX on URL B's first stall → A→B→A oscillation).
+    #[test]
+    fn re_jump_bad_target_resets_cross_url_streak() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let mut scripts: Vec<Scripted> = (0..crate::cert_inlet::MAX_UPSTREAM_FAULTS - 1)
+                .map(|_| Scripted::Stalled("transient stall".into()))
+                .collect();
+            scripts.push(Scripted::BadTarget("payload != block digest".into()));
+            scripts.push(Scripted::Stalled("first stall on the rotated-to URL".into()));
+            let total = scripts.len();
+            let (cb, calls, rotations) = recording_re_jump_with_rotate(scripts);
+            let fx = Fixture::new(ANCHOR).with_re_jump(cb);
+            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            for _ in 0..total {
+                mailbox
+                    .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
+                    .expect("send tip");
+                ctx.sleep(Duration::from_millis(10)).await;
+            }
+
+            assert_eq!(
+                calls.lock().unwrap().len(),
+                total,
+                "every scripted outcome was driven"
+            );
+            assert_eq!(
+                rotations.load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "ONLY the BadTarget rotated; the post-BadTarget stall did NOT (streak reset \
+                 to 0, so URL A's MAX−1 tally never carried into URL B)"
             );
 
             drop(mailbox);

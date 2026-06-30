@@ -229,8 +229,21 @@ impl MarshalSink for crate::MarshalMailbox {
 /// the follower has no beacon plane). A no-upstream validator has no inlet at all
 /// → both cursors stay finalized-driven, unchanged.
 pub struct LiveFrontierTee {
-    /// `committee_for` read cursor, advanced monotonically (`fetch_max`).
+    /// `committee_for` read cursor, advanced monotonically (`fetch_max`) — ONLY
+    /// off VERIFIED certs (a trusted frontier; it must never be steerable by an
+    /// unverified upstream cert).
     pub live_height: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// The TRUE upstream frontier the executor's steady-state re-jump triggers
+    /// off (see [`crate::executor::ReJump::upstream_frontier`]). Unlike
+    /// `live_height` this is advanced on EVERY structurally-valid cert in
+    /// [`CertInlet::ingest`] — INCLUDING the "committee[E] not committed" deferred
+    /// ones — so a deadlocked follower (whose marshal tip has frozen because the
+    /// inlet stores nothing while it defers) still observes the climbing frontier
+    /// and re-jumps. HEIGHT-ONLY and NOT a trust input: it only sizes the re-jump
+    /// gap; the jump itself re-reads + BLS-authenticates the committee at the
+    /// landing, so an inflated frontier can at worst trigger a jump that then
+    /// fails closed — it can never select a committee.
+    pub upstream_frontier: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// DkgActor deal clock; its `on_height` clamps to its own running max, so a
     /// stale `try_send` never pulls the clock backward.
     pub dkg_height_tx: tokio::sync::mpsc::Sender<u64>,
@@ -430,6 +443,16 @@ where
                 self.record_data_fault().await;
                 return Ok(());
             }
+        }
+        // Advance the executor's steady-state re-jump frontier off EVERY
+        // structurally-valid cert — CRUCIALLY including the committee-not-committed
+        // deferred ones below — so a deadlocked follower (frozen marshal tip) still
+        // sees the climbing upstream frontier and re-jumps. HEIGHT-ONLY: the
+        // committee read uses the verified-only `live_height` tee, NOT this
+        // (see [`LiveFrontierTee::upstream_frontier`]).
+        if let Some(tee) = &self.tee {
+            tee.upstream_frontier
+                .fetch_max(uf.block.height, std::sync::atomic::Ordering::Relaxed);
         }
         // The inlet ALWAYS verifies. The certificate must sign THIS artifact: BLS
         // verify alone proves a quorum signed `proposal.payload`, NOT that the
@@ -850,6 +873,7 @@ mod tests {
             let (dkg_tx, _dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
             inlet = inlet.with_tee(super::LiveFrontierTee {
                 live_height: live_frontier,
+                upstream_frontier: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 dkg_height_tx: dkg_tx,
             });
         }
@@ -912,9 +936,11 @@ mod tests {
                 committed_from: 200,
             };
             let (dkg_tx, _dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
+            let upstream_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
             let mut inlet = CertInlet::new(marshal.clone(), committees, ctx).with_tee(
                 super::LiveFrontierTee {
                     live_height: live_frontier,
+                    upstream_frontier: upstream_frontier.clone(),
                     dkg_height_tx: dkg_tx,
                 },
             );
@@ -925,6 +951,13 @@ mod tests {
             assert!(
                 marshal.calls.lock().unwrap().is_empty(),
                 "an uncommitted-at-both-anchors boundary cert drives the marshal with ZERO calls"
+            );
+            // ...but a DEFERRED cert STILL advances the re-jump frontier (the
+            // deadlock fix: a frozen marshal must not freeze the re-jump trigger).
+            assert_eq!(
+                upstream_frontier.load(std::sync::atomic::Ordering::Relaxed),
+                96,
+                "deferred cert advances upstream_frontier so the executor can re-jump out of the wedge"
             );
         });
     }
@@ -1218,6 +1251,7 @@ mod tests {
             let (dkg_tx, mut dkg_rx) = tokio::sync::mpsc::channel::<u64>(8);
             let mut inlet = inlet.with_tee(super::LiveFrontierTee {
                 live_height: live_height.clone(),
+                upstream_frontier: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 dkg_height_tx: dkg_tx,
             });
 

@@ -86,18 +86,32 @@ pub enum JumpOutcome {
     /// single-shot caller deliberately re-fuses this to fatal (see
     /// [`crate::dpos::jump_landing_or_abort`]).
     Stalled(eyre::Report),
-    /// `verify_jump_structural` / `verify_jump_authenticated` / L1 `holds()`
-    /// rejected the target — FATAL (a forged / unagreed branch; fail closed).
+    /// `verify_jump_structural` rejected the target (`cert.payload !=
+    /// block.digest()`) — a SIGNATURE-FREE, attacker-controlled structural mismatch
+    /// served PRE-anchor. NON-fatal (Rule S): the steady-state caller `rotate()`s
+    /// to the next upstream URL (Phase 2); the cold-start caller boots anyway
+    /// (`jump_landing_or_abort` → `Ok(None)`). Distinct from `AuthFailed`, which is
+    /// reserved for POST-sync committee-BLS / L1 `holds()` rejection (genuine
+    /// equivocation on a block that canonicalized).
+    BadTarget(eyre::Report),
+    /// `verify_jump_authenticated` (POST-sync committee BLS) / L1 `holds()`
+    /// rejected the target — FATAL (a forged / unagreed branch that canonicalized;
+    /// fail closed). The PRE-sync structural mismatch is the NON-fatal
+    /// [`BadTarget`](JumpOutcome::BadTarget) instead.
     AuthFailed(eyre::Report),
 }
 
 /// Fatal only when reth's EL-sync makes NO forward progress for this long. An
 /// absolute deadline is wrong: a deep backfill (millions of blocks behind the
 /// DPoS activation point) legitimately takes hours — the failure signal is
-/// *stalled* progress, not elapsed time. Progress is read via
-/// `last_block_number()` (NEVER `best_number`, which freezes during pipeline
-/// backfill on reth 2.x — see project memory `reth-sync-progress`). Relocated
-/// from `cert_follow/mod.rs`.
+/// *stalled* progress, not elapsed time. The no-progress LIVENESS signal is
+/// `last_block_number()` (the static-file header tip, which advances as the
+/// pipeline's headers stage writes headers); the deadline resets whenever it
+/// moves. `best_block_number()` is NOT the liveness signal — it freezes for the
+/// entire pipeline backfill and is set only at `on_backfill_sync_finished` (see
+/// project memory `reth-sync-progress`), which is exactly why it is the
+/// *termination* signal instead (it flips true precisely when the landing's state
+/// is materialized). Relocated from `cert_follow/mod.rs`.
 const EL_SYNC_NO_PROGRESS: Duration = Duration::from_secs(120);
 
 /// EL-sync seam: drive reth onto the attested tip of `latest` (FCU + devp2p
@@ -125,7 +139,6 @@ pub struct RethElSync<Provider, BeaconEngine> {
     ctx: Context,
     provider: Provider,
     beacon_engine: BeaconEngine,
-    genesis_hash: B256,
     activation: u64,
 }
 
@@ -134,14 +147,12 @@ impl<Provider, BeaconEngine> RethElSync<Provider, BeaconEngine> {
         ctx: Context,
         provider: Provider,
         beacon_engine: BeaconEngine,
-        genesis_hash: B256,
         activation: u64,
     ) -> Self {
         Self {
             ctx,
             provider,
             beacon_engine,
-            genesis_hash,
             activation,
         }
     }
@@ -151,12 +162,16 @@ impl<Provider, BeaconEngine> RethElSync<Provider, BeaconEngine>
 where
     Provider: BlockHashReader + BlockNumReader + Clone + Send + Sync + 'static,
 {
-    /// The height/hash reth currently sits at, clamped to ≥ activation (the
-    /// ordering chain starts there; pre-activation blocks carry no certs).
+    /// The EXECUTED height/hash reth currently sits at, clamped to ≥ activation
+    /// (the ordering chain starts there; pre-activation blocks carry no certs).
+    /// Reads the canonical/executed head (`best_block_number`), NOT the static-file
+    /// header tip (`last_block_number`): a landing reseeds the anchor and feeds the
+    /// post-sync committee state read, so it must point at materialized state — a
+    /// header-only tip races ahead of execution (project memory `reth-sync-progress`).
     fn local_landing(&self) -> eyre::Result<(u64, B256)> {
         let tip = self
             .provider
-            .last_block_number()
+            .best_block_number()
             .wrap_err("provider failed to report chain head")?
             .max(self.activation);
         let hash = self
@@ -185,11 +200,14 @@ where
             );
             return self.local_landing();
         }
+        // Already EXECUTED past the target (e.g. a re-run after a prior landing)?
+        // Nothing to EL-sync. Gate on the executed head, not header presence — a
+        // header-only tip from an interrupted backfill is not yet a valid landing.
         if self
             .provider
-            .block_hash(tip_height)
-            .wrap_err("block_hash(tip) probe before EL-sync")?
-            .is_some()
+            .best_block_number()
+            .wrap_err("best_block_number probe before EL-sync")?
+            >= tip_height
         {
             return self.local_landing();
         }
@@ -197,25 +215,44 @@ where
             tip_height,
             "cold-start jump: driving reth EL-sync toward attested derived hash"
         );
+        // OPTIMISTIC / checkpoint-sync FCU: head == safe == finalized == the attested
+        // tip. Pointing `finalized` at the (missing) TARGET is what makes reth run the
+        // staged PIPELINE backfill. With `finalized = genesis` (already on disk) reth's
+        // `backfill_sync_target` short-circuits to "already synced to the finalized
+        // block" and instead does a live block-by-block download whose blocks stay
+        // disconnected (buffered) — and thus invisible to `last_block_number()`, which
+        // sits at 0 — until the WHOLE range connects back to genesis, so the
+        // no-progress detector degenerates into a flat total-time cap that a deep
+        // (> JUMP_THRESHOLD) gap cannot meet. Driving reth's EL onto the tip is NOT
+        // acceptance: the post-sync committee BLS + L1 `holds()` gates in
+        // `cold_start_jump` remain the trust root and fail closed on a forged branch.
         let _ = self
             .beacon_engine
             .fork_choice_updated(ForkchoiceState {
                 head_block_hash: tip_hash,
                 safe_block_hash: tip_hash,
-                finalized_block_hash: self.genesis_hash,
+                finalized_block_hash: tip_hash,
             })
             .await;
 
-        // Wait for reth's backward-sync to canonicalize the tip (block_hash
-        // present ⇒ executed ⇒ committee state queryable). Fail only on a
-        // *stall*: the deadline resets whenever `last_block_number()` advances.
+        // Wait for the staged-pipeline backfill to fully EXECUTE the target so the
+        // post-sync committee read at the landing has materialized state. Two distinct
+        // reth signals, never conflated:
+        //   • `last_block_number()` = static-file header tip — advances as the headers
+        //     stage writes headers, so it is the no-progress LIVENESS signal: the
+        //     deadline resets whenever it moves (tolerating slow peering / a long
+        //     download as long as SOME forward progress happens within the window).
+        //   • `best_block_number()` = canonical/executed head, set at
+        //     `on_backfill_sync_finished` once the whole pipeline (execution + state
+        //     root) completes — the TERMINATION signal that guarantees the landing's
+        //     committee state is readable.
         let mut last_progress = self.provider.last_block_number().unwrap_or(0);
         let mut stall_deadline = self.ctx.current() + EL_SYNC_NO_PROGRESS;
         while self
             .provider
-            .block_hash(tip_height)
-            .wrap_err("block_hash(tip) probe during EL-sync")?
-            .is_none()
+            .best_block_number()
+            .wrap_err("best_block_number probe during EL-sync")?
+            < tip_height
         {
             let now = self.provider.last_block_number().unwrap_or(last_progress);
             if now > last_progress {
@@ -253,8 +290,11 @@ where
 /// (`cert.payload == block.digest()`). This is the ONLY check that can run
 /// before `sync_to`, because the per-epoch committee that authenticates the cert
 /// is not yet locally readable (the whole point of the jump is to sync TO the
-/// state that holds it). A structural mismatch is FATAL — never drive reth's
-/// devp2p backfill onto a tip whose served body does not match its cert.
+/// state that holds it). A structural mismatch ABORTS the jump (the caller gets
+/// [`JumpOutcome::BadTarget`] and rotates / boots anyway) — still never drives
+/// reth's devp2p backfill onto a tip whose served body does not match its cert,
+/// but is NON-fatal (Rule S): a signature-free, attacker-controlled pre-anchor
+/// mismatch must not crash a node.
 pub(crate) fn verify_jump_structural(latest: &UpstreamFinalized) -> eyre::Result<()> {
     if latest.finalization.proposal.payload != latest.block.digest() {
         return Err(eyre!(
@@ -348,8 +388,13 @@ pub(crate) fn verify_jump_authenticated<C: CommitteeSource>(
 ///
 /// Classification ([`JumpOutcome`]):
 ///   - no `get_latest` / shallow gap / stale-or-backward landing ⇒ [`Lagging`];
-///   - `verify_jump_structural` / `verify_jump_authenticated` / L1 `holds()`
-///     reject ⇒ [`AuthFailed`] (FATAL — a forged / unagreed branch);
+///   - `verify_jump_structural` reject (PRE-sync `payload != digest`) ⇒
+///     [`BadTarget`] (NON-fatal, Rule S — a forgeable, attacker-controlled
+///     pre-anchor mismatch: the steady-state caller rotates, the cold-start
+///     caller boots anyway);
+///   - `verify_jump_authenticated` (POST-sync committee BLS) / L1 `holds()`
+///     reject ⇒ [`AuthFailed`] (FATAL — a forged / unagreed branch that
+///     canonicalized);
 ///   - `el.sync_to` transport stall ⇒ [`Stalled`] (NON-fatal in steady state —
 ///     was the `?` that propagated as fatal: THIS is the transient-stall-crash
 ///     fix);
@@ -361,6 +406,7 @@ pub(crate) fn verify_jump_authenticated<C: CommitteeSource>(
 /// landing that does not advance `anchor` is dropped (never reseed backward).
 ///
 /// [`Lagging`]: JumpOutcome::Lagging
+/// [`BadTarget`]: JumpOutcome::BadTarget
 /// [`AuthFailed`]: JumpOutcome::AuthFailed
 /// [`Stalled`]: JumpOutcome::Stalled
 /// [`Landed`]: JumpOutcome::Landed
@@ -378,11 +424,54 @@ where
     C: CommitteeSource,
     ES: ElSync,
 {
+    // The COLD-START callers use the fixed serving-window need-gate; the
+    // STEADY-STATE re-jump uses `cold_start_jump_with_threshold` with an
+    // epoch-relative gate (see `ReJump::threshold`).
+    cold_start_jump_with_threshold(
+        anchor,
+        upstream,
+        committees,
+        el,
+        l1_checkpoint,
+        activation,
+        JUMP_THRESHOLD,
+        ctx,
+    )
+    .await
+}
+
+/// As [`cold_start_jump`] but with a caller-supplied forward-only `jump_threshold`
+/// instead of the fixed [`JUMP_THRESHOLD`]. The cold-start path uses
+/// [`cold_start_jump`] (threshold = [`JUMP_THRESHOLD`], the serving-window size);
+/// the STEADY-STATE re-jump passes `min(JUMP_THRESHOLD, epoch_block_interval)` so
+/// the jump preempts the ≥2-epoch "committee[E] not committed" defer deadlock at
+/// ANY epoch interval (real-prod epochs ≫ 1024 keep 1024 unchanged; a compressed
+/// test epoch scales the gate down to ~1 epoch). The deadlock is epoch-relative,
+/// so its recovery gate is too. The post-sync trustless authentication
+/// (`verify_jump_authenticated` + L1 `holds()`) is UNCHANGED — a lower gate only
+/// makes the jump ATTEMPT a shallower gap; a forged target still fails closed.
+#[allow(clippy::too_many_arguments)]
+pub async fn cold_start_jump_with_threshold<U, C, ES>(
+    anchor: u64,
+    upstream: &U,
+    committees: &C,
+    el: &ES,
+    l1_checkpoint: Option<B256>,
+    activation: u64,
+    jump_threshold: u64,
+    ctx: &mut (impl Clock + CryptoRngCore),
+) -> JumpOutcome
+where
+    U: crate::cert_follow::CertUpstream,
+    C: CommitteeSource,
+    ES: ElSync,
+{
     let Some(latest) = upstream.get_latest().await else {
         return JumpOutcome::Lagging;
     };
-    // Forward-only need-gate: only re-run the EL-sync phase for a deep gap.
-    if latest.block.height <= anchor + JUMP_THRESHOLD {
+    // Forward-only need-gate: only re-run the EL-sync phase for a gap beyond
+    // `jump_threshold`.
+    if latest.block.height <= anchor + jump_threshold {
         return JumpOutcome::Lagging;
     }
     // PRE-sync structural gate: never devp2p-drive reth onto a tip whose served
@@ -391,7 +480,7 @@ where
     // authenticates a far-ahead target is only locally readable once `sync_to`
     // has materialized its state.
     if let Err(e) = verify_jump_structural(&latest) {
-        return JumpOutcome::AuthFailed(e);
+        return JumpOutcome::BadTarget(e);
     }
     // A `sync_to` transport stall is NON-fatal (was a `?` that propagated as
     // fatal): the steady-state caller retries on the next `Update::Tip`.
@@ -789,12 +878,13 @@ mod tests {
         });
     }
 
-    /// A structurally-broken jump target (cert payload != block digest) is fatal
-    /// regardless of L1 and must NOT drive `sync_to` — the PRE-sync structural
-    /// gate (`verify_jump_structural`). The committee-backed BLS authentication is
-    /// POST-sync and fail-closed (see `forged_far_ahead_target_is_rejected`).
+    /// A structurally-broken jump target (cert payload != block digest) is a
+    /// NON-fatal `BadTarget` (Rule S — a forgeable, signature-free PRE-anchor
+    /// mismatch) and must NOT drive `sync_to` — the PRE-sync structural gate
+    /// (`verify_jump_structural`). The committee-backed BLS authentication is
+    /// POST-sync and fail-closed `AuthFailed` (see `forged_far_ahead_target_is_rejected`).
     #[test]
-    fn unverifiable_jump_target_without_l1_fails_before_sync() {
+    fn unverifiable_jump_target_is_bad_target_before_sync() {
         let runtime = deterministic::Runner::default();
         runtime.start(|mut ctx| async move {
             let (committees, fx) = fixture((5000, B256::repeat_byte(0xe1)), true);
@@ -814,8 +904,8 @@ mod tests {
                 &mut ctx,
             )
             .await;
-            let JumpOutcome::AuthFailed(err) = out else {
-                panic!("expected AuthFailed (structural payload mismatch), got a different JumpOutcome");
+            let JumpOutcome::BadTarget(err) = out else {
+                panic!("expected BadTarget (structural payload mismatch), got a different JumpOutcome");
             };
             assert!(err.to_string().contains("payload != block digest"), "{err}");
             assert_eq!(

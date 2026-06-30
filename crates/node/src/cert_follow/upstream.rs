@@ -235,6 +235,33 @@ impl UpstreamActor {
                         Some(UpstreamMsg::Rotate { response }) => {
                             warn!(url = %url, "cert-follow: rotating upstream on engine request (data fault)");
                             let _ = response.send(());
+                            let (deferred, coalesced) = drain_after_rotate(&mut self.mailbox_rx);
+                            if coalesced > 0 {
+                                debug!(coalesced, "coalesced concurrent rotate burst into one reconnect");
+                            }
+                            // The `client` is still alive here (dropped only when the
+                            // outer loop iterates), so any pull that interleaved the
+                            // rotate burst is served on it — never dropped.
+                            for msg in deferred {
+                                match msg {
+                                    UpstreamMsg::GetFinalization { height, response } => {
+                                        let client = client.clone();
+                                        drop(self.ctx.with_label("get_finalization").spawn(move |_| async move {
+                                            let _ = response.send(
+                                                fetch_finalization(&client, Query::Height(height.get())).await);
+                                        }));
+                                    }
+                                    UpstreamMsg::GetLatest { response } => {
+                                        let client = client.clone();
+                                        drop(self.ctx.with_label("get_latest").spawn(move |_| async move {
+                                            let _ = response.send(fetch_finalization(&client, Query::Latest).await);
+                                        }));
+                                    }
+                                    UpstreamMsg::Rotate { .. } => {
+                                        unreachable!("drain_after_rotate kept no Rotate")
+                                    }
+                                }
+                            }
                             break;
                         }
                         None => return, // mailbox dropped → engine gone → shut down
@@ -243,6 +270,28 @@ impl UpstreamActor {
             }
         }
     }
+}
+
+/// Drain all immediately-queued mailbox messages after a `Rotate`: ACK + discard every
+/// further `Rotate` (coalescing a concurrent inlet+executor rotate burst into ONE
+/// reconnect, so `next_url` advances exactly once), and RETURN any interleaved
+/// non-Rotate pull to be re-served on the still-live connection. Returns
+/// `(deferred_pulls, coalesced_rotate_count)`.
+fn drain_after_rotate(
+    rx: &mut mpsc::UnboundedReceiver<UpstreamMsg>,
+) -> (Vec<UpstreamMsg>, usize) {
+    let mut deferred = Vec::new();
+    let mut coalesced = 0usize;
+    while let Ok(msg) = rx.try_recv() {
+        match msg {
+            UpstreamMsg::Rotate { response } => {
+                let _ = response.send(());
+                coalesced += 1;
+            }
+            other => deferred.push(other),
+        }
+    }
+    (deferred, coalesced)
 }
 
 /// Decode a live `Event::Finalized` into the engine's [`UpstreamFinalized`].
@@ -282,5 +331,38 @@ async fn fetch_finalization(client: &WsClient, query: Query) -> Option<UpstreamF
             debug!(error = %e, ?query, "cert-follow getFinalization failed");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A concurrent inlet+executor rotate burst (two `Rotate` on the SAME mailbox)
+    // must coalesce into ONE reconnect (so `next_url` advances exactly once), while
+    // an interleaved non-Rotate pull is preserved (re-served on the live connection,
+    // never dropped). The full next-url double-advance is integration-only; this
+    // unit-tests the Context-free coalescing seam.
+    #[test]
+    fn drain_after_rotate_coalesces_rotate_burst() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (r1, mut r1_rx) = oneshot::channel();
+        let (r2, mut r2_rx) = oneshot::channel();
+        let (rg, _rg_rx) = oneshot::channel();
+        tx.send(UpstreamMsg::Rotate { response: r1 }).expect("send r1");
+        tx.send(UpstreamMsg::Rotate { response: r2 }).expect("send r2");
+        tx.send(UpstreamMsg::GetLatest { response: rg }).expect("send pull");
+
+        let (deferred, coalesced) = drain_after_rotate(&mut rx);
+
+        assert_eq!(coalesced, 2, "both Rotates coalesced into one reconnect");
+        assert_eq!(deferred.len(), 1, "the interleaved pull is deferred, not discarded");
+        assert!(
+            matches!(deferred[0], UpstreamMsg::GetLatest { .. }),
+            "the deferred message is the GetLatest pull"
+        );
+        // Each coalesced Rotate's caller was still ACKed (so `rotate().await` returns).
+        r1_rx.try_recv().expect("r1 acked");
+        r2_rx.try_recv().expect("r2 acked");
     }
 }
