@@ -66,6 +66,72 @@ Treat it as compatibility debt, not target architecture.
 
 ---
 
+## Runtime-upgrade CLI
+
+The `runtime-upgrade` CLI prepares upgrade transactions from a Fluentbase release genesis file.
+It downloads `genesis-<release-tag>.json.gz`, extracts the target WASM bytecode, compares it with
+the current chain state, and builds calls to the runtime-upgrade precompile.
+
+The CLI always uses the runtime-upgrade precompile path:
+
+- transaction `to` is `PRECOMPILE_RUNTIME_UPGRADE`,
+- calldata is `UPDATE_GENESIS_PREFIX` followed by ABI-encoded
+  `(target, genesisHash, genesisVersion, wasmBytecode)`,
+- legacy direct-to-target upgrade calldata is not supported.
+
+Build the CLI before use:
+
+```bash
+cargo build -p fluentbase-runtime-upgrade --bin runtime-upgrade
+```
+
+Generate a Safe Transaction Builder bundle without signing or broadcasting:
+
+```bash
+cargo run -p fluentbase-runtime-upgrade --bin runtime-upgrade -- \
+  --genesis <release-tag> \
+  --test \
+  --contract PRECOMPILE_EVM_RUNTIME \
+  --safe-bundle /tmp/runtime-upgrade.json
+```
+
+Use `--dev` for devnet, `--test` for testnet, `--local` for `http://localhost:8545`, or
+`--rpc <url>` for a custom endpoint. To prepare every known contract, omit `--contract` and confirm
+the prompt:
+
+```bash
+cargo run -p fluentbase-runtime-upgrade --bin runtime-upgrade -- \
+  --genesis <release-tag> \
+  --test \
+  --safe-bundle /tmp/runtime-upgrade-all.json
+```
+
+Print a signed raw transaction instead of broadcasting. The signer comes from `--private-key`,
+`PRIVATE_KEY`, or an interactive hidden prompt:
+
+```bash
+PRIVATE_KEY=<hex-private-key> \
+cargo run -p fluentbase-runtime-upgrade --bin runtime-upgrade -- \
+  --genesis <release-tag> \
+  --test \
+  --contract PRECOMPILE_EVM_RUNTIME \
+  --print-raw-tx
+```
+
+Broadcast directly only after validating the generated transaction data and signer:
+
+```bash
+PRIVATE_KEY=<hex-private-key> \
+cargo run -p fluentbase-runtime-upgrade --bin runtime-upgrade -- \
+  --genesis <release-tag> \
+  --test \
+  --contract PRECOMPILE_EVM_RUNTIME
+```
+
+Use `--gas-limit <gas>` when the target network requires an explicit gas limit.
+
+---
+
 ## Operational expectations
 
 For real upgrades:

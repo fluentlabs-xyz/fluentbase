@@ -46,7 +46,7 @@ struct Args {
     #[arg(long)]
     gas_limit: Option<u64>,
 
-    /// Contract key name (e.g. EVM_RUNTIME) from CONTRACTS_TO_UPGRADE.
+    /// Contract key name (e.g. PRECOMPILE_EVM_RUNTIME) from CONTRACTS_TO_UPGRADE.
     /// If omitted, upgrades all known contracts (with a prompt).
     #[arg(long)]
     contract: Option<String>,
