@@ -79,14 +79,6 @@ struct Args {
     /// If set: write Safe Transaction Builder JSON and DO NOT sign or broadcast.
     #[arg(long, value_name = "PATH", conflicts_with = "print_raw_tx")]
     safe_bundle: Option<PathBuf>,
-
-    /// Use legacy upgrade mode
-    #[arg(long, default_value_t = false)]
-    force_legacy: bool,
-
-    /// Use legacy upgrade mode
-    #[arg(long, default_value_t = false)]
-    legacy_prefix: bool,
 }
 
 struct PreparedUpgradeTx {
@@ -95,7 +87,6 @@ struct PreparedUpgradeTx {
     to: Address,
     data: Vec<u8>,
     gas_limit: Option<u64>,
-    legacy: bool,
 }
 
 #[derive(Serialize)]
@@ -286,15 +277,14 @@ fn write_safe_bundle(
         .iter()
         .map(|tx| {
             format!(
-                "{}: contract={}, to={}, data_bytes={}, gas_limit={}, legacy={}",
+                "{}: contract={}, to={}, data_bytes={}, gas_limit={}",
                 tx.contract_key,
                 address_hex(tx.contract),
                 address_hex(tx.to),
                 tx.data.len(),
                 tx.gas_limit
                     .map(|gas| gas.to_string())
-                    .unwrap_or_else(|| "unset".to_string()),
-                tx.legacy
+                    .unwrap_or_else(|| "unset".to_string())
             )
         })
         .collect::<Vec<_>>()
@@ -463,17 +453,6 @@ async fn main() -> Result<()> {
         )))
     };
 
-    let runtime_upgrade_bytecode = provider
-        .get_code(
-            NameOrAddress::Address((*PRECOMPILE_RUNTIME_UPGRADE.0).into()),
-            None,
-        )
-        .await?;
-    let mut is_legacy_upgrade_scheme = runtime_upgrade_bytecode.is_empty();
-    if args.force_legacy {
-        is_legacy_upgrade_scheme = true;
-    }
-
     let mut prepared_txs = Vec::new();
     for contract in upgrade_list {
         print!("Upgrading contract {}... ", contract);
@@ -499,62 +478,37 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        let mut data = vec![];
-        if is_legacy_upgrade_scheme {
-            data.extend_from_slice(&[0x69, 0xbc, 0x6f, 0x65]);
-            data.extend_from_slice(&new_rwasm.hint_section);
-        } else {
-            data.extend_from_slice(&UPDATE_GENESIS_PREFIX);
-            let mut buffer = BytesMut::new();
-            if args.legacy_prefix {
-                SolidityABI::<(Address, B256, String, Bytes)>::encode(
-                    &(
-                        contract,
-                        genesis_hash,
-                        args.genesis.clone(),
-                        Bytes::copy_from_slice(&new_rwasm.hint_section),
-                    ),
-                    &mut buffer,
-                    0,
-                )
-                .unwrap();
-            } else {
-                SolidityABI::<(Address, B256, String, Bytes)>::encode_function_args(
-                    &(
-                        contract,
-                        genesis_hash,
-                        args.genesis.clone(),
-                        Bytes::copy_from_slice(&new_rwasm.hint_section),
-                    ),
-                    &mut buffer,
-                )
-                .unwrap();
-            }
-            let buffer = buffer.freeze();
-            data.extend_from_slice(buffer.as_ref());
-        }
-
-        let send_to = if is_legacy_upgrade_scheme {
-            contract
-        } else {
-            PRECOMPILE_RUNTIME_UPGRADE
-        };
+        let mut data = Vec::from(UPDATE_GENESIS_PREFIX);
+        let mut buffer = BytesMut::new();
+        SolidityABI::<(Address, B256, String, Bytes)>::encode_function_args(
+            &(
+                contract,
+                genesis_hash,
+                args.genesis.clone(),
+                Bytes::copy_from_slice(&new_rwasm.hint_section),
+            ),
+            &mut buffer,
+        )
+        .unwrap();
+        let buffer = buffer.freeze();
+        data.extend_from_slice(buffer.as_ref());
 
         if args.safe_bundle.is_some() {
             prepared_txs.push(PreparedUpgradeTx {
                 contract_key: contract_key_for(&contracts, contract).to_string(),
                 contract,
-                to: send_to,
+                to: PRECOMPILE_RUNTIME_UPGRADE,
                 data,
                 gas_limit: args.gas_limit,
-                legacy: is_legacy_upgrade_scheme,
             });
             println!("SAFE_BUNDLE_QUEUED");
             continue;
         }
 
         let mut tx = TransactionRequest::new()
-            .to(NameOrAddress::Address((*send_to.0).into()))
+            .to(NameOrAddress::Address(
+                (*PRECOMPILE_RUNTIME_UPGRADE.0).into(),
+            ))
             .data(data);
         if let Some(gas_limit) = args.gas_limit {
             tx = tx.gas(gas_limit);
