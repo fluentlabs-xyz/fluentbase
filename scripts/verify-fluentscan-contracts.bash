@@ -20,7 +20,6 @@ require_command() {
   fi
 }
 
-require_command curl
 require_command python3
 
 verify() {
@@ -84,6 +83,7 @@ PY
     return
   fi
 
+  require_command curl
   curl -fsS "https://api.${FLUENTSCAN_HOST}/api/v2/smart-contracts/${address}/verification/via/fluent" \
     -H 'content-type: application/json' \
     --data-raw "$payload"
