@@ -5,14 +5,11 @@ FLUENTSCAN_HOST="${FLUENTSCAN_HOST:-fluentscan.xyz}"
 GENESIS_VERSION="${GENESIS_VERSION:-v1.2.0}"
 RUST_TOOLCHAIN="${RUST_TOOLCHAIN:-1.93.1}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ABI_OUTPUT_ROOT="${ABI_OUTPUT_ROOT:-${REPO_ROOT}/contracts/out}"
-REGENERATE_ABI="${REGENERATE_ABI:-false}"
 DRY_RUN="${DRY_RUN:-false}"
 
 echo "Fluentscan: $FLUENTSCAN_HOST"
 echo "Genesis: $GENESIS_VERSION"
 echo "Rust toolchain: $RUST_TOOLCHAIN"
-echo "ABI output: $ABI_OUTPUT_ROOT"
 
 require_command() {
   local command_name="$1"
@@ -23,68 +20,28 @@ require_command() {
   fi
 }
 
-require_command cargo
 require_command curl
 require_command python3
-
-generate_abi() {
-  local manifest_path="$1"
-  local manifest_abs="${REPO_ROOT}/${manifest_path}"
-  local contract_dir
-  local contract_key
-  local abi_dir
-
-  if [[ ! -f "$manifest_abs" ]]; then
-    echo "error: manifest does not exist: $manifest_path" >&2
-    exit 1
-  fi
-
-  contract_dir="$(dirname "$manifest_abs")"
-  contract_key="$(basename "$contract_dir")"
-  abi_dir="${ABI_OUTPUT_ROOT}/${contract_key}"
-
-  if [[ "$REGENERATE_ABI" == "true" || ! -s "${abi_dir}/abi.json" ]]; then
-    echo "Generating ABI for $manifest_path" >&2
-    (
-      cd "$contract_dir"
-      cargo run \
-        --manifest-path "${REPO_ROOT}/Cargo.toml" \
-        -p fluentbase-build \
-        -- \
-        --rust-version "$RUST_TOOLCHAIN" \
-        --no-default-features \
-        --generate abi \
-        --output-path "$abi_dir" >&2
-    )
-  fi
-
-  if ! ABI_PATH="${abi_dir}/abi.json" python3 - <<'PY'
-import json
-import os
-
-with open(os.environ["ABI_PATH"], encoding="utf-8") as abi_file:
-    abi = json.load(abi_file)
-
-if not isinstance(abi, list):
-    raise SystemExit(1)
-PY
-  then
-    echo "error: generated ABI is missing or invalid: ${abi_dir}/abi.json" >&2
-    exit 1
-  fi
-
-  echo "${abi_dir}/abi.json"
-}
 
 verify() {
   local address="$1"
   local name="$2"
   local manifest_path="$3"
+  local manifest_abs="${REPO_ROOT}/${manifest_path}"
   local abi_path
   local payload
 
   echo "Verifying $name at $address"
-  abi_path="$(generate_abi "$manifest_path")"
+  if [[ ! -f "$manifest_abs" ]]; then
+    echo "error: manifest does not exist: $manifest_path" >&2
+    exit 1
+  fi
+  abi_path="$(dirname "$manifest_abs")/abi.json"
+  if [[ ! -f "$abi_path" ]]; then
+    echo "error: ABI file does not exist: $abi_path" >&2
+    echo "Run scripts/generate-contract-abis.bash and commit the generated abi.json files." >&2
+    exit 1
+  fi
 
   payload="$(CONTRACT_NAME="$name" \
     SDK_VERSION="$GENESIS_VERSION" \
@@ -98,6 +55,9 @@ import os
 
 with open(os.environ["ABI_PATH"], encoding="utf-8") as abi_file:
     abi = json.load(abi_file)
+
+if not isinstance(abi, list):
+    raise SystemExit("ABI must be a JSON array")
 
 payload = {
     "contract_name": os.environ["CONTRACT_NAME"],
