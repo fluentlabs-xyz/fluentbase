@@ -25,12 +25,14 @@ use reth_chainspec::{
 };
 use rpassword::read_password;
 use rwasm::RwasmModule;
+use serde::Serialize;
 use std::{
     collections::HashMap,
     fs,
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::LazyLock,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Parser, Debug)]
@@ -44,7 +46,7 @@ struct Args {
     #[arg(long)]
     gas_limit: Option<u64>,
 
-    /// Contract key name (e.g. EVM_RUNTIME) from CONTRACTS_TO_UPGRADE.
+    /// Contract key name (e.g. PRECOMPILE_EVM_RUNTIME) from CONTRACTS_TO_UPGRADE.
     /// If omitted, upgrades all known contracts (with a prompt).
     #[arg(long)]
     contract: Option<String>,
@@ -74,13 +76,52 @@ struct Args {
     #[arg(long)]
     print_raw_tx: bool,
 
-    /// Use legacy upgrade mode
-    #[arg(long, default_value_t = false)]
-    force_legacy: bool,
+    /// If set: write Safe Transaction Builder JSON and DO NOT sign or broadcast.
+    #[arg(long, value_name = "PATH", conflicts_with = "print_raw_tx")]
+    safe_bundle: Option<PathBuf>,
+}
 
-    /// Use legacy upgrade mode
-    #[arg(long, default_value_t = false)]
-    legacy_prefix: bool,
+struct PreparedUpgradeTx {
+    contract_key: String,
+    contract: Address,
+    to: Address,
+    data: Vec<u8>,
+    gas_limit: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct SafeBundle {
+    version: &'static str,
+    #[serde(rename = "chainId")]
+    chain_id: String,
+    #[serde(rename = "createdAt")]
+    created_at: u128,
+    meta: SafeBundleMeta,
+    transactions: Vec<SafeBundleTransaction>,
+}
+
+#[derive(Serialize)]
+struct SafeBundleMeta {
+    name: String,
+    description: String,
+    #[serde(rename = "txBuilderVersion")]
+    tx_builder_version: String,
+    #[serde(rename = "createdFromSafeAddress")]
+    created_from_safe_address: String,
+    #[serde(rename = "createdFromOwnerAddress")]
+    created_from_owner_address: String,
+    checksum: String,
+}
+
+#[derive(Serialize)]
+struct SafeBundleTransaction {
+    to: String,
+    value: &'static str,
+    data: String,
+    #[serde(rename = "contractMethod")]
+    contract_method: Option<serde_json::Value>,
+    #[serde(rename = "contractInputsValues")]
+    contract_inputs_values: Option<serde_json::Value>,
 }
 
 fn contracts_to_upgrade() -> HashMap<&'static str, Address> {
@@ -206,6 +247,87 @@ fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
 }
 
+fn ethers_address(address: Address) -> ethers::types::Address {
+    (*address.0).into()
+}
+
+fn address_hex(address: Address) -> String {
+    format!("{:#x}", ethers_address(address))
+}
+
+fn contract_key_for(contracts: &HashMap<&'static str, Address>, contract: Address) -> &'static str {
+    contracts
+        .iter()
+        .find_map(|(key, address)| (*address == contract).then_some(*key))
+        .unwrap_or("UNKNOWN")
+}
+
+fn write_safe_bundle(
+    path: &Path,
+    genesis_version: &str,
+    genesis_hash: B256,
+    chain_id: u64,
+    prepared_txs: &[PreparedUpgradeTx],
+) -> Result<()> {
+    let created_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock before UNIX_EPOCH")?
+        .as_millis();
+    let metadata = prepared_txs
+        .iter()
+        .map(|tx| {
+            format!(
+                "{}: contract={}, to={}, data_bytes={}, gas_limit={}",
+                tx.contract_key,
+                address_hex(tx.contract),
+                address_hex(tx.to),
+                tx.data.len(),
+                tx.gas_limit
+                    .map(|gas| gas.to_string())
+                    .unwrap_or_else(|| "unset".to_string())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let description = format!(
+        "Fluent runtime upgrade bundle\nGenesis version: {}\nGenesis hash: {}\nTransactions:\n{}",
+        genesis_version, genesis_hash, metadata
+    );
+    let transactions = prepared_txs
+        .iter()
+        .map(|tx| SafeBundleTransaction {
+            to: address_hex(tx.to),
+            value: "0",
+            data: format!("0x{}", hex::encode(&tx.data)),
+            contract_method: None,
+            contract_inputs_values: None,
+        })
+        .collect();
+    let bundle = SafeBundle {
+        version: "1.0",
+        chain_id: chain_id.to_string(),
+        created_at,
+        meta: SafeBundleMeta {
+            name: format!("Fluent runtime upgrade {}", genesis_version),
+            description,
+            tx_builder_version: "1.18.0".to_string(),
+            created_from_safe_address: String::new(),
+            created_from_owner_address: String::new(),
+            checksum: String::new(),
+        },
+        transactions,
+    };
+    let json = serde_json::to_string_pretty(&bundle).context("serializing Safe bundle")?;
+    if path == Path::new("-") {
+        println!("{}", json);
+    } else {
+        fs::write(path, format!("{}\n", json))
+            .with_context(|| format!("writing Safe bundle {}", path.display()))?;
+        println!("SAFE_BUNDLE={}", path.display());
+    }
+    Ok(())
+}
+
 fn load_wallet(args: &Args) -> Result<LocalWallet> {
     // Priority: CLI flag -> env -> prompt (hidden)
     let pk = if let Some(pk) = args.private_key.as_deref() {
@@ -310,10 +432,6 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Wallet from a private key
-    let wallet = load_wallet(&args)?;
-    println!("Wallet loaded ({})", wallet.address());
-
     let rpc = pick_rpc(&args)?;
     let provider = Provider::<Http>::try_from(rpc).context("creating provider")?;
 
@@ -323,21 +441,19 @@ async fn main() -> Result<()> {
         .context("get_chainid")?
         .as_u64();
 
-    let wallet = wallet.with_chain_id(chain_id);
-    let signer = SignerMiddleware::new(provider.clone(), wallet);
-    let signer = std::sync::Arc::new(signer);
+    let signer = if args.safe_bundle.is_some() {
+        None
+    } else {
+        let wallet = load_wallet(&args)?;
+        println!("Wallet loaded ({})", wallet.address());
+        let wallet = wallet.with_chain_id(chain_id);
+        Some(std::sync::Arc::new(SignerMiddleware::new(
+            provider.clone(),
+            wallet,
+        )))
+    };
 
-    let runtime_upgrade_bytecode = provider
-        .get_code(
-            NameOrAddress::Address((*PRECOMPILE_RUNTIME_UPGRADE.0).into()),
-            None,
-        )
-        .await?;
-    let mut is_legacy_upgrade_scheme = runtime_upgrade_bytecode.is_empty();
-    if args.force_legacy {
-        is_legacy_upgrade_scheme = true;
-    }
-
+    let mut prepared_txs = Vec::new();
     for contract in upgrade_list {
         print!("Upgrading contract {}... ", contract);
         std::io::stdout().flush().ok();
@@ -362,48 +478,37 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        let mut data = vec![];
-        if is_legacy_upgrade_scheme {
-            data.extend_from_slice(&[0x69, 0xbc, 0x6f, 0x65]);
-            data.extend_from_slice(&new_rwasm.hint_section);
-        } else {
-            data.extend_from_slice(&UPDATE_GENESIS_PREFIX);
-            let mut buffer = BytesMut::new();
-            if args.legacy_prefix {
-                SolidityABI::<(Address, B256, String, Bytes)>::encode(
-                    &(
-                        contract,
-                        genesis_hash,
-                        args.genesis.clone(),
-                        Bytes::copy_from_slice(&new_rwasm.hint_section),
-                    ),
-                    &mut buffer,
-                    0,
-                )
-                .unwrap();
-            } else {
-                SolidityABI::<(Address, B256, String, Bytes)>::encode_function_args(
-                    &(
-                        contract,
-                        genesis_hash,
-                        args.genesis.clone(),
-                        Bytes::copy_from_slice(&new_rwasm.hint_section),
-                    ),
-                    &mut buffer,
-                )
-                .unwrap();
-            }
-            let buffer = buffer.freeze();
-            data.extend_from_slice(buffer.as_ref());
+        let mut data = Vec::from(UPDATE_GENESIS_PREFIX);
+        let mut buffer = BytesMut::new();
+        SolidityABI::<(Address, B256, String, Bytes)>::encode_function_args(
+            &(
+                contract,
+                genesis_hash,
+                args.genesis.clone(),
+                Bytes::copy_from_slice(&new_rwasm.hint_section),
+            ),
+            &mut buffer,
+        )
+        .unwrap();
+        let buffer = buffer.freeze();
+        data.extend_from_slice(buffer.as_ref());
+
+        if args.safe_bundle.is_some() {
+            prepared_txs.push(PreparedUpgradeTx {
+                contract_key: contract_key_for(&contracts, contract).to_string(),
+                contract,
+                to: PRECOMPILE_RUNTIME_UPGRADE,
+                data,
+                gas_limit: args.gas_limit,
+            });
+            println!("SAFE_BUNDLE_QUEUED");
+            continue;
         }
 
-        let send_to = if is_legacy_upgrade_scheme {
-            contract
-        } else {
-            PRECOMPILE_RUNTIME_UPGRADE
-        };
         let mut tx = TransactionRequest::new()
-            .to(NameOrAddress::Address((*send_to.0).into()))
+            .to(NameOrAddress::Address(
+                (*PRECOMPILE_RUNTIME_UPGRADE.0).into(),
+            ))
             .data(data);
         if let Some(gas_limit) = args.gas_limit {
             tx = tx.gas(gas_limit);
@@ -411,6 +516,9 @@ async fn main() -> Result<()> {
 
         if args.print_raw_tx {
             let mut typed: TypedTransaction = tx.into();
+            let signer = signer
+                .as_ref()
+                .expect("signer must exist outside Safe mode");
             signer
                 .fill_transaction(&mut typed, None)
                 .await
@@ -426,6 +534,9 @@ async fn main() -> Result<()> {
         }
 
         // Normal path: broadcast
+        let signer = signer
+            .as_ref()
+            .expect("signer must exist outside Safe mode");
         match signer.send_transaction(tx, None).await {
             Ok(pending) => {
                 let tx_hash = *pending;
@@ -467,6 +578,10 @@ async fn main() -> Result<()> {
                 new_rwasm.hint_section.len()
             );
         }
+    }
+
+    if let Some(path) = args.safe_bundle.as_deref() {
+        write_safe_bundle(path, &args.genesis, genesis_hash, chain_id, &prepared_txs)?;
     }
 
     Ok(())
