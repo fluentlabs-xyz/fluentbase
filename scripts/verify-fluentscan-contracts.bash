@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-FLUENTSCAN_HOST="${FLUENTSCAN_HOST:-fluentscan.xyz}"
+FLUENTSCAN_API_BASE_URL="${FLUENTSCAN_API_BASE_URL:-https://api.fluentscan.xyz}"
 GENESIS_VERSION="${GENESIS_VERSION:-v1.2.0}"
 RUST_TOOLCHAIN="${RUST_TOOLCHAIN:-1.93.1}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN="${DRY_RUN:-false}"
 
-echo "Fluentscan: $FLUENTSCAN_HOST"
+echo "Fluentscan API: $FLUENTSCAN_API_BASE_URL"
 echo "Genesis: $GENESIS_VERSION"
 echo "Rust toolchain: $RUST_TOOLCHAIN"
 
@@ -84,7 +84,7 @@ PY
   fi
 
   require_command curl
-  curl -fsS "https://api.${FLUENTSCAN_HOST}/api/v2/smart-contracts/${address}/verification/via/fluent" \
+  curl -fsS "${FLUENTSCAN_API_BASE_URL}/api/v2/smart-contracts/${address}/verification/via/fluent" \
     -H 'content-type: application/json' \
     --data-raw "$payload"
 
