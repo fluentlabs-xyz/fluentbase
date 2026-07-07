@@ -8,12 +8,12 @@ use ethers::{
 };
 use flate2::read::GzDecoder;
 use fluentbase_sdk::{
-    bytes::BytesMut, codec::SolidityABI, Address, Bytes, B256, PRECOMPILE_BIG_MODEXP,
-    PRECOMPILE_BLAKE2F, PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BLS12_381_G1_MSM,
-    PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BLS12_381_MAP_G1,
-    PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING, PRECOMPILE_BN256_ADD,
-    PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR, PRECOMPILE_EIP2935, PRECOMPILE_EIP7951,
-    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_FEE_MANAGER, PRECOMPILE_IDENTITY,
+    bytes::BytesMut, codec::SolidityABI, crypto::crypto_keccak256, Address, Bytes, B256,
+    PRECOMPILE_BIG_MODEXP, PRECOMPILE_BLAKE2F, PRECOMPILE_BLS12_381_G1_ADD,
+    PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BLS12_381_G2_MSM,
+    PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
+    PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR, PRECOMPILE_EIP2935,
+    PRECOMPILE_EIP7951, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_FEE_MANAGER, PRECOMPILE_IDENTITY,
     PRECOMPILE_KZG_POINT_EVALUATION, PRECOMPILE_NITRO_VERIFIER, PRECOMPILE_OAUTH2_VERIFIER,
     PRECOMPILE_RIPEMD160, PRECOMPILE_RUNTIME_UPGRADE, PRECOMPILE_SECP256K1_RECOVER,
     PRECOMPILE_SHA256, PRECOMPILE_SVM_RUNTIME, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
@@ -79,13 +79,17 @@ struct Args {
     /// If set: write Safe Transaction Builder JSON and DO NOT sign or broadcast.
     #[arg(long, value_name = "PATH", conflicts_with = "print_raw_tx")]
     safe_bundle: Option<PathBuf>,
+
+    /// Authorized updater address for a planned runtime upgrade.
+    /// Required with --safe-bundle because Safe mode emits planUpgrade(...).
+    #[arg(long, value_name = "ADDRESS", requires = "safe_bundle")]
+    updater: Option<Address>,
 }
 
-struct PreparedUpgradeTx {
+struct PlannedUpgrade {
     contract_key: String,
     contract: Address,
-    to: Address,
-    data: Vec<u8>,
+    wasm_code_hash: B256,
 }
 
 #[derive(Serialize)]
@@ -254,6 +258,10 @@ fn address_hex(address: Address) -> String {
     format!("{:#x}", ethers_address(address))
 }
 
+fn hash_hex(hash: B256) -> String {
+    format!("0x{}", hex::encode(hash))
+}
+
 fn contract_key_for(contracts: &HashMap<&'static str, Address>, contract: Address) -> &'static str {
     contracts
         .iter()
@@ -261,49 +269,82 @@ fn contract_key_for(contracts: &HashMap<&'static str, Address>, contract: Addres
         .unwrap_or("UNKNOWN")
 }
 
+const PLAN_UPGRADE_PREFIX: [u8; 4] = [0x50, 0xc9, 0xc6, 0x68];
+
 fn write_safe_bundle(
     path: &Path,
     genesis_version: &str,
     genesis_hash: B256,
     chain_id: u64,
-    prepared_txs: &[PreparedUpgradeTx],
+    updater: Address,
+    planned_upgrades: &[PlannedUpgrade],
 ) -> Result<()> {
+    if planned_upgrades.is_empty() {
+        bail!("no runtime upgrades need planning");
+    }
+
     let created_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .context("system clock before UNIX_EPOCH")?
         .as_millis();
-    let metadata = prepared_txs
+    let metadata = planned_upgrades
         .iter()
-        .map(|tx| {
+        .map(|upgrade| {
             format!(
-                "{}: contract={}, data_bytes={}",
-                tx.contract_key,
-                address_hex(tx.contract),
-                tx.data.len(),
+                "{}: contract={}, wasm_hash={}",
+                upgrade.contract_key,
+                address_hex(upgrade.contract),
+                hash_hex(upgrade.wasm_code_hash),
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
     let description = format!(
-        "Fluent runtime upgrade bundle\nGenesis version: {}\nGenesis hash: {}\nTransactions:\n{}",
-        genesis_version, genesis_hash, metadata
+        "Fluent runtime upgrade plan bundle\nGenesis version: {}\nGenesis hash: {}\nUpdater: {}\nPlanned upgrades:\n{}",
+        genesis_version,
+        genesis_hash,
+        address_hex(updater),
+        metadata
     );
-    let transactions = prepared_txs
+
+    let target_addresses = planned_upgrades
         .iter()
-        .map(|tx| SafeBundleTransaction {
-            to: address_hex(tx.to),
-            value: "0",
-            data: format!("0x{}", hex::encode(&tx.data)),
-            contract_method: None,
-            contract_inputs_values: None,
-        })
-        .collect();
+        .map(|upgrade| upgrade.contract)
+        .collect::<Vec<_>>();
+    let wasm_code_hashes = planned_upgrades
+        .iter()
+        .map(|upgrade| upgrade.wasm_code_hash)
+        .collect::<Vec<_>>();
+
+    let mut data = Vec::from(PLAN_UPGRADE_PREFIX);
+    let mut buffer = BytesMut::new();
+    SolidityABI::<(B256, String, Vec<Address>, Vec<B256>, Address)>::encode_function_args(
+        &(
+            genesis_hash,
+            genesis_version.to_string(),
+            target_addresses,
+            wasm_code_hashes,
+            updater,
+        ),
+        &mut buffer,
+    )
+    .unwrap();
+    let buffer = buffer.freeze();
+    data.extend_from_slice(buffer.as_ref());
+
+    let transactions = vec![SafeBundleTransaction {
+        to: address_hex(PRECOMPILE_RUNTIME_UPGRADE),
+        value: "0",
+        data: format!("0x{}", hex::encode(&data)),
+        contract_method: None,
+        contract_inputs_values: None,
+    }];
     let bundle = SafeBundle {
         version: "1.0",
         chain_id: chain_id.to_string(),
         created_at,
         meta: SafeBundleMeta {
-            name: format!("Fluent runtime upgrade {}", genesis_version),
+            name: format!("Fluent runtime upgrade plan {}", genesis_version),
             description,
             tx_builder_version: "1.18.0".to_string(),
             created_from_safe_address: String::new(),
@@ -448,7 +489,7 @@ async fn main() -> Result<()> {
         )))
     };
 
-    let mut prepared_txs = Vec::new();
+    let mut planned_upgrades = Vec::new();
     for contract in upgrade_list {
         print!("Upgrading contract {}... ", contract);
         std::io::stdout().flush().ok();
@@ -473,6 +514,16 @@ async fn main() -> Result<()> {
             continue;
         }
 
+        if args.safe_bundle.is_some() {
+            planned_upgrades.push(PlannedUpgrade {
+                contract_key: contract_key_for(&contracts, contract).to_string(),
+                contract,
+                wasm_code_hash: crypto_keccak256(new_rwasm.hint_section.as_slice()),
+            });
+            println!("SAFE_PLAN_QUEUED");
+            continue;
+        }
+
         let mut data = Vec::from(UPDATE_GENESIS_PREFIX);
         let mut buffer = BytesMut::new();
         SolidityABI::<(Address, B256, String, Bytes)>::encode_function_args(
@@ -487,17 +538,6 @@ async fn main() -> Result<()> {
         .unwrap();
         let buffer = buffer.freeze();
         data.extend_from_slice(buffer.as_ref());
-
-        if args.safe_bundle.is_some() {
-            prepared_txs.push(PreparedUpgradeTx {
-                contract_key: contract_key_for(&contracts, contract).to_string(),
-                contract,
-                to: PRECOMPILE_RUNTIME_UPGRADE,
-                data,
-            });
-            println!("SAFE_BUNDLE_QUEUED");
-            continue;
-        }
 
         let mut tx = TransactionRequest::new()
             .to(NameOrAddress::Address(
@@ -575,7 +615,17 @@ async fn main() -> Result<()> {
     }
 
     if let Some(path) = args.safe_bundle.as_deref() {
-        write_safe_bundle(path, &args.genesis, genesis_hash, chain_id, &prepared_txs)?;
+        let updater = args
+            .updater
+            .ok_or_else(|| anyhow!("--updater is required with --safe-bundle"))?;
+        write_safe_bundle(
+            path,
+            &args.genesis,
+            genesis_hash,
+            chain_id,
+            updater,
+            &planned_upgrades,
+        )?;
     }
 
     Ok(())
