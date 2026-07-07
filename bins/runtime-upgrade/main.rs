@@ -86,7 +86,6 @@ struct PreparedUpgradeTx {
     contract: Address,
     to: Address,
     data: Vec<u8>,
-    gas_limit: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -277,14 +276,10 @@ fn write_safe_bundle(
         .iter()
         .map(|tx| {
             format!(
-                "{}: contract={}, to={}, data_bytes={}, gas_limit={}",
+                "{}: contract={}, data_bytes={}",
                 tx.contract_key,
                 address_hex(tx.contract),
-                address_hex(tx.to),
                 tx.data.len(),
-                tx.gas_limit
-                    .map(|gas| gas.to_string())
-                    .unwrap_or_else(|| "unset".to_string())
             )
         })
         .collect::<Vec<_>>()
@@ -499,7 +494,6 @@ async fn main() -> Result<()> {
                 contract,
                 to: PRECOMPILE_RUNTIME_UPGRADE,
                 data,
-                gas_limit: args.gas_limit,
             });
             println!("SAFE_BUNDLE_QUEUED");
             continue;
