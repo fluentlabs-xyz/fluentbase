@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Context, Result};
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 use ethers::{
     middleware::SignerMiddleware,
     providers::{Http, Middleware, Provider},
@@ -37,14 +37,28 @@ use std::{
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
-struct Args {
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Immediately upgrade contracts through upgradeTo(...)
+    DirectUpgrade(DirectUpgradeArgs),
+
+    /// Build a Safe bundle that plans approved target/hash pairs through planUpgrade(...)
+    PlanUpgrade(PlanUpgradeArgs),
+
+    /// Execute previously planned contracts through upgradeToPlanned(...)
+    UpgradePlanned(UpgradePlannedArgs),
+}
+
+#[derive(Args, Debug)]
+struct CommonArgs {
     /// Genesis release tag, e.g. v0.5.3
     #[arg(long)]
     genesis: String,
-
-    /// Gas limit to use for upgrade transactions
-    #[arg(long)]
-    gas_limit: Option<u64>,
 
     /// Contract key name (e.g. PRECOMPILE_EVM_RUNTIME) from CONTRACTS_TO_UPGRADE.
     /// If omitted, upgrades all known contracts (with a prompt).
@@ -66,6 +80,13 @@ struct Args {
     /// A custom RPC endpoint (overrides --local, --dev, --test)
     #[arg(long)]
     rpc: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct TxArgs {
+    /// Gas limit to use for upgrade transactions
+    #[arg(long)]
+    gas_limit: Option<u64>,
 
     /// Private key hex (0x... or raw hex).
     /// If omitted, reads env PRIVATE_KEY. If missing, prompts via hidden input.
@@ -75,15 +96,48 @@ struct Args {
     /// If set: sign tx, print raw tx hex (0x...), and DO NOT broadcast.
     #[arg(long)]
     print_raw_tx: bool,
+}
 
-    /// If set: write Safe Transaction Builder JSON and DO NOT sign or broadcast.
-    #[arg(long, value_name = "PATH", conflicts_with = "print_raw_tx")]
-    safe_bundle: Option<PathBuf>,
+#[derive(Args, Debug)]
+struct DirectUpgradeArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+
+    #[command(flatten)]
+    tx: TxArgs,
+}
+
+#[derive(Args, Debug)]
+struct PlanUpgradeArgs {
+    #[command(flatten)]
+    common: CommonArgs,
 
     /// Authorized updater address for a planned runtime upgrade.
-    /// Required with --safe-bundle because Safe mode emits planUpgrade(...).
-    #[arg(long, value_name = "ADDRESS", requires = "safe_bundle")]
-    updater: Option<Address>,
+    #[arg(long, value_name = "ADDRESS")]
+    updater: Address,
+
+    /// Write Safe Transaction Builder JSON and DO NOT sign or broadcast.
+    #[arg(long, value_name = "PATH")]
+    safe_bundle: PathBuf,
+}
+
+#[derive(Args, Debug)]
+struct UpgradePlannedArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+
+    #[command(flatten)]
+    tx: TxArgs,
+}
+
+impl Command {
+    fn common(&self) -> &CommonArgs {
+        match self {
+            Self::DirectUpgrade(args) => &args.common,
+            Self::PlanUpgrade(args) => &args.common,
+            Self::UpgradePlanned(args) => &args.common,
+        }
+    }
 }
 
 struct PlannedUpgrade {
@@ -226,7 +280,7 @@ fn ask_for_secret(prompt: &str) -> Result<String> {
     Ok(s)
 }
 
-fn pick_rpc(args: &Args) -> Result<String> {
+fn pick_rpc(args: &CommonArgs) -> Result<String> {
     if let Some(rpc) = &args.rpc {
         return Ok(rpc.clone());
     }
@@ -270,6 +324,7 @@ fn contract_key_for(contracts: &HashMap<&'static str, Address>, contract: Addres
 }
 
 const PLAN_UPGRADE_PREFIX: [u8; 4] = [0x50, 0xc9, 0xc6, 0x68];
+const UPGRADE_TO_PLANNED_SIGNATURE: &[u8] = b"upgradeToPlanned(address,bytes)";
 
 fn write_safe_bundle(
     path: &Path,
@@ -364,7 +419,7 @@ fn write_safe_bundle(
     Ok(())
 }
 
-fn load_wallet(args: &Args) -> Result<LocalWallet> {
+fn load_wallet(args: &TxArgs) -> Result<LocalWallet> {
     // Priority: CLI flag -> env -> prompt (hidden)
     let pk = if let Some(pk) = args.private_key.as_deref() {
         pk.to_string()
@@ -379,6 +434,140 @@ fn load_wallet(args: &Args) -> Result<LocalWallet> {
         bail!("private key must be 32 bytes (got {})", bytes.len());
     }
     LocalWallet::from_bytes(&bytes).context("creating wallet")
+}
+
+fn function_selector(signature: &[u8]) -> [u8; 4] {
+    let hash = crypto_keccak256(signature);
+    let mut selector = [0u8; 4];
+    selector.copy_from_slice(&hash.as_slice()[..4]);
+    selector
+}
+
+fn load_release_modules(genesis: &alloy_genesis::Genesis) -> Result<HashMap<Address, RwasmModule>> {
+    let mut rwasm_module_by_address: HashMap<Address, RwasmModule> = HashMap::new();
+    for (addr, entry) in genesis.alloc.iter() {
+        let Some(code) = entry.code.as_ref() else {
+            continue;
+        };
+        let Ok((module, _)) = RwasmModule::new_checked(code.as_ref()) else {
+            println!("WARN: Skipping malformed rwasm binary");
+            continue;
+        };
+        if module.hint_section.is_empty() {
+            bail!("Failed to extract WASM bytecode from {}", addr);
+        }
+        rwasm_module_by_address.insert(*addr, module);
+    }
+    Ok(rwasm_module_by_address)
+}
+
+fn select_contracts(
+    args: &CommonArgs,
+    contracts: &HashMap<&'static str, Address>,
+) -> Result<Vec<Address>> {
+    match args.contract.as_deref() {
+        None => {
+            let answer = ask_for("Upgrade ALL known contracts? (Y/n) ")?;
+            if !matches!(answer.to_lowercase().as_str(), "y" | "yes") {
+                return Ok(Vec::new());
+            }
+            Ok(contracts.values().copied().collect())
+        }
+        Some(key) => {
+            let addr = contracts
+                .get(key)
+                .ok_or_else(|| anyhow!("Unknown contract: {}", key))?;
+            Ok(vec![*addr])
+        }
+    }
+}
+
+fn encode_direct_upgrade_call(
+    contract: Address,
+    genesis_hash: B256,
+    genesis_version: &str,
+    wasm_bytecode: &[u8],
+) -> Vec<u8> {
+    let mut data = Vec::from(UPDATE_GENESIS_PREFIX);
+    let mut buffer = BytesMut::new();
+    SolidityABI::<(Address, B256, String, Bytes)>::encode_function_args(
+        &(
+            contract,
+            genesis_hash,
+            genesis_version.to_string(),
+            Bytes::copy_from_slice(wasm_bytecode),
+        ),
+        &mut buffer,
+    )
+    .unwrap();
+    let buffer = buffer.freeze();
+    data.extend_from_slice(buffer.as_ref());
+    data
+}
+
+fn encode_planned_upgrade_call(contract: Address, wasm_bytecode: &[u8]) -> Vec<u8> {
+    let mut data = Vec::from(function_selector(UPGRADE_TO_PLANNED_SIGNATURE));
+    let mut buffer = BytesMut::new();
+    SolidityABI::<(Address, Bytes)>::encode_function_args(
+        &(contract, Bytes::copy_from_slice(wasm_bytecode)),
+        &mut buffer,
+    )
+    .unwrap();
+    let buffer = buffer.freeze();
+    data.extend_from_slice(buffer.as_ref());
+    data
+}
+
+async fn send_runtime_upgrade_tx(
+    signer: &SignerMiddleware<Provider<Http>, LocalWallet>,
+    tx: TransactionRequest,
+    print_raw_tx: bool,
+) -> Result<bool> {
+    if print_raw_tx {
+        let mut typed: TypedTransaction = tx.into();
+        signer
+            .fill_transaction(&mut typed, None)
+            .await
+            .context("fill_transaction")?;
+        let sig = signer
+            .signer()
+            .sign_transaction(&typed)
+            .await
+            .context("sign_transaction")?;
+        let raw = typed.rlp_signed(&sig);
+        println!("RAW_TX=0x{}", hex::encode(raw));
+        return Ok(false);
+    }
+
+    match signer.send_transaction(tx, None).await {
+        Ok(pending) => {
+            let tx_hash = *pending;
+            match pending.await {
+                Ok(Some(rcpt)) => {
+                    let bn = rcpt.block_number.map(|v| v.as_u64()).unwrap_or_default();
+                    println!("DONE (tx_hash={:#x}, block_number={})", tx_hash, bn);
+                    Ok(true)
+                }
+                Ok(None) => {
+                    println!("DONE (tx_hash={:#x}, block_number=?)", tx_hash);
+                    Ok(true)
+                }
+                Err(e) => {
+                    println!("FAILED ({})", e);
+                    Ok(false)
+                }
+            }
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("intrinsic gas too low") {
+                println!("FAILED (intrinsic gas too low)");
+            } else {
+                println!("FAILED ({})", msg);
+            }
+            Ok(false)
+        }
+    }
 }
 
 pub static FLUENT_HARDFORKS: LazyLock<ChainHardforks> = LazyLock::new(|| {
@@ -429,46 +618,22 @@ pub static FLUENT_HARDFORKS: LazyLock<ChainHardforks> = LazyLock::new(|| {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let cli = Cli::parse();
+    let common = cli.command.common();
 
-    let genesis = download_genesis_file(&args.genesis).await?;
+    let genesis = download_genesis_file(&common.genesis).await?;
     let genesis_header = make_genesis_header(&genesis, &FLUENT_HARDFORKS);
     let genesis_hash = genesis_header.hash_slow();
-
-    let mut rwasm_module_by_address: HashMap<Address, RwasmModule> = HashMap::new();
-    for (addr, entry) in genesis.alloc.iter() {
-        let Some(code) = entry.code.as_ref() else {
-            continue;
-        };
-        let Ok((module, _)) = RwasmModule::new_checked(code.as_ref()) else {
-            println!("WARN: Skipping malformed rwasm binary");
-            continue;
-        };
-        if module.hint_section.is_empty() {
-            bail!("Failed to extract WASM bytecode from {}", addr);
-        }
-        rwasm_module_by_address.insert(*addr, module);
-    }
+    let rwasm_module_by_address = load_release_modules(&genesis)?;
 
     // Determine which contracts to upgrade.
     let contracts = contracts_to_upgrade();
-    let upgrade_list: Vec<Address> = match args.contract.as_deref() {
-        None => {
-            let answer = ask_for("Upgrade ALL known contracts? (Y/n) ")?;
-            if !matches!(answer.to_lowercase().as_str(), "y" | "yes") {
-                return Ok(());
-            }
-            contracts.values().copied().collect()
-        }
-        Some(key) => {
-            let addr = contracts
-                .get(key)
-                .ok_or_else(|| anyhow!("Unknown contract: {}", key))?;
-            vec![*addr]
-        }
-    };
+    let upgrade_list = select_contracts(common, &contracts)?;
+    if upgrade_list.is_empty() {
+        return Ok(());
+    }
 
-    let rpc = pick_rpc(&args)?;
+    let rpc = pick_rpc(common)?;
     let provider = Provider::<Http>::try_from(rpc).context("creating provider")?;
 
     let chain_id = provider
@@ -477,19 +642,97 @@ async fn main() -> Result<()> {
         .context("get_chainid")?
         .as_u64();
 
-    let signer = if args.safe_bundle.is_some() {
-        None
-    } else {
-        let wallet = load_wallet(&args)?;
-        println!("Wallet loaded ({})", wallet.address());
-        let wallet = wallet.with_chain_id(chain_id);
-        Some(std::sync::Arc::new(SignerMiddleware::new(
-            provider.clone(),
-            wallet,
-        )))
-    };
+    match &cli.command {
+        Command::PlanUpgrade(args) => {
+            let mut planned_upgrades = Vec::new();
+            for contract in upgrade_list {
+                print!("Planning contract {}... ", contract);
+                std::io::stdout().flush().ok();
 
-    let mut planned_upgrades = Vec::new();
+                let new_rwasm: RwasmModule = rwasm_module_by_address
+                    .get(&contract)
+                    .cloned()
+                    .unwrap_or_default();
+                if new_rwasm.hint_section.len() >= WASM_MAX_CODE_SIZE {
+                    println!("FAILED (contract exceeds 1MiB)");
+                    continue;
+                }
+
+                let on_chain_code = provider
+                    .get_code(NameOrAddress::Address((*contract.0).into()), None)
+                    .await
+                    .context("get_code")?;
+                let (onchain_rwasm, _) =
+                    RwasmModule::new_checked(on_chain_code.as_ref()).unwrap_or_default();
+                if onchain_rwasm == new_rwasm {
+                    println!("UP-TO-DATE");
+                    continue;
+                }
+
+                planned_upgrades.push(PlannedUpgrade {
+                    contract_key: contract_key_for(&contracts, contract).to_string(),
+                    contract,
+                    wasm_code_hash: crypto_keccak256(new_rwasm.hint_section.as_slice()),
+                });
+                println!("SAFE_PLAN_QUEUED");
+            }
+
+            write_safe_bundle(
+                &args.safe_bundle,
+                &args.common.genesis,
+                genesis_hash,
+                chain_id,
+                args.updater,
+                &planned_upgrades,
+            )?;
+        }
+        Command::DirectUpgrade(args) => {
+            run_upgrade_transactions(
+                &args.tx,
+                &provider,
+                chain_id,
+                &rwasm_module_by_address,
+                upgrade_list,
+                |contract, wasm_bytecode| {
+                    encode_direct_upgrade_call(
+                        contract,
+                        genesis_hash,
+                        &args.common.genesis,
+                        wasm_bytecode,
+                    )
+                },
+            )
+            .await?;
+        }
+        Command::UpgradePlanned(args) => {
+            run_upgrade_transactions(
+                &args.tx,
+                &provider,
+                chain_id,
+                &rwasm_module_by_address,
+                upgrade_list,
+                encode_planned_upgrade_call,
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_upgrade_transactions(
+    tx_args: &TxArgs,
+    provider: &Provider<Http>,
+    chain_id: u64,
+    rwasm_module_by_address: &HashMap<Address, RwasmModule>,
+    upgrade_list: Vec<Address>,
+    encode_call: impl Fn(Address, &[u8]) -> Vec<u8>,
+) -> Result<()> {
+    let wallet = load_wallet(tx_args)?;
+    println!("Wallet loaded ({})", wallet.address());
+    let wallet = wallet.with_chain_id(chain_id);
+    let signer = SignerMiddleware::new(provider.clone(), wallet);
+
     for contract in upgrade_list {
         print!("Upgrading contract {}... ", contract);
         std::io::stdout().flush().ok();
@@ -514,89 +757,19 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        if args.safe_bundle.is_some() {
-            planned_upgrades.push(PlannedUpgrade {
-                contract_key: contract_key_for(&contracts, contract).to_string(),
-                contract,
-                wasm_code_hash: crypto_keccak256(new_rwasm.hint_section.as_slice()),
-            });
-            println!("SAFE_PLAN_QUEUED");
-            continue;
-        }
-
-        let mut data = Vec::from(UPDATE_GENESIS_PREFIX);
-        let mut buffer = BytesMut::new();
-        SolidityABI::<(Address, B256, String, Bytes)>::encode_function_args(
-            &(
-                contract,
-                genesis_hash,
-                args.genesis.clone(),
-                Bytes::copy_from_slice(&new_rwasm.hint_section),
-            ),
-            &mut buffer,
-        )
-        .unwrap();
-        let buffer = buffer.freeze();
-        data.extend_from_slice(buffer.as_ref());
-
+        let data = encode_call(contract, &new_rwasm.hint_section);
         let mut tx = TransactionRequest::new()
             .to(NameOrAddress::Address(
                 (*PRECOMPILE_RUNTIME_UPGRADE.0).into(),
             ))
             .data(data);
-        if let Some(gas_limit) = args.gas_limit {
+        if let Some(gas_limit) = tx_args.gas_limit {
             tx = tx.gas(gas_limit);
         }
 
-        if args.print_raw_tx {
-            let mut typed: TypedTransaction = tx.into();
-            let signer = signer
-                .as_ref()
-                .expect("signer must exist outside Safe mode");
-            signer
-                .fill_transaction(&mut typed, None)
-                .await
-                .context("fill_transaction")?;
-            let sig = signer
-                .signer()
-                .sign_transaction(&typed)
-                .await
-                .context("sign_transaction")?;
-            let raw = typed.rlp_signed(&sig);
-            println!("RAW_TX=0x{}", hex::encode(raw));
+        let was_broadcast = send_runtime_upgrade_tx(&signer, tx, tx_args.print_raw_tx).await?;
+        if !was_broadcast {
             continue;
-        }
-
-        // Normal path: broadcast
-        let signer = signer
-            .as_ref()
-            .expect("signer must exist outside Safe mode");
-        match signer.send_transaction(tx, None).await {
-            Ok(pending) => {
-                let tx_hash = *pending;
-                match pending.await {
-                    Ok(Some(rcpt)) => {
-                        let bn = rcpt.block_number.map(|v| v.as_u64()).unwrap_or_default();
-                        println!("DONE (tx_hash={:#x}, block_number={})", tx_hash, bn);
-                    }
-                    Ok(None) => {
-                        println!("DONE (tx_hash={:#x}, block_number=?)", tx_hash);
-                    }
-                    Err(e) => {
-                        println!("FAILED ({})", e);
-                        continue;
-                    }
-                }
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("intrinsic gas too low") {
-                    println!("FAILED (intrinsic gas too low)");
-                } else {
-                    println!("FAILED ({})", msg);
-                }
-                continue;
-            }
         }
 
         let on_chain_code = provider
@@ -612,20 +785,6 @@ async fn main() -> Result<()> {
                 new_rwasm.hint_section.len()
             );
         }
-    }
-
-    if let Some(path) = args.safe_bundle.as_deref() {
-        let updater = args
-            .updater
-            .ok_or_else(|| anyhow!("--updater is required with --safe-bundle"))?;
-        write_safe_bundle(
-            path,
-            &args.genesis,
-            genesis_hash,
-            chain_id,
-            updater,
-            &planned_upgrades,
-        )?;
     }
 
     Ok(())
