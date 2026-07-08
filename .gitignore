@@ -1,4 +1,4 @@
-/target/
+target/
 **/*.rs.bk
 crates/rwasm/Cargo.lock
 crates/rwasm/spec/target
@@ -7,7 +7,7 @@ crates/rwasm/spec/target
 **/fuzz/target/
 **/fuzz/artifacts/
 
-/.idea
+.idea
 .vscode
 .DS_Store
 libzktrie.so
