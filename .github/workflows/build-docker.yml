@@ -144,22 +144,31 @@ jobs:
           no-cache: true
 
       - name: Inspect image
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          REGISTRY: ${{ env.REGISTRY }}
+          VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME}:${VERSION}"
 
       - name: Print summary
+        env:
+          GH_SHA: ${{ github.sha }}
+          RUST_TOOLCHAIN: ${{ env.RUST_TOOLCHAIN }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+          VERSION: ${{ steps.meta.outputs.version }}
         run: |
           echo "### 🚀 Docker Image Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| **Platform** | \`linux/amd64\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Rust** | \`${{ env.RUST_TOOLCHAIN }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **SDK Version** | \`${{ steps.meta.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Rust** | \`${RUST_TOOLCHAIN}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **SDK Version** | \`${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${GH_SHA}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Available tags:**" >> $GITHUB_STEP_SUMMARY
-          IFS=',' read -ra TAG_ARRAY <<< "${{ steps.meta.outputs.tags }}"
+          IFS=',' read -ra TAG_ARRAY <<< "${TAGS}"
           for tag in "${TAG_ARRAY[@]}"; do
             echo "- \`docker pull ${tag}\`" >> $GITHUB_STEP_SUMMARY
           done
