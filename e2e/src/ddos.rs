@@ -71,7 +71,7 @@ fn call_with_len(
     TxBuilder::call(ctx, contract)
         .caller(Address::ZERO)
         .gas_price(0)
-        .gas_limit(22_000)
+        .gas_limit(50_000)
         .input(calldata)
         .exec()
 }
