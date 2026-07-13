@@ -840,7 +840,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // Load account info (and optionally code) with Berlin warm/cold accounting.
             let result = ctx
                 .journal_mut()
-                .load_account_info_skip_cold_load(address, false, skip_cold);
+                .load_account_info_skip_cold_load(address, true, skip_cold);
             let account_info = unwrap_journal_load_error!(result);
             charge_regular_gas!(if account_info.is_cold {
                 gas::COLD_ACCOUNT_ACCESS_COST

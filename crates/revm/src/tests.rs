@@ -4,15 +4,17 @@ use crate::{
 };
 use alloy_primitives::{address, bytes, StorageValue, B256};
 use core::error::Error;
+use fluentbase_evm::EthereumMetadata;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LE},
     bytes::Buf,
     calc_create_metadata_address,
     syscall::{
-        SYSCALL_ID_BLOCK_HASH, SYSCALL_ID_CODE_COPY, SYSCALL_ID_METADATA_COPY,
-        SYSCALL_ID_METADATA_CREATE, SYSCALL_ID_METADATA_WRITE, SYSCALL_ID_STORAGE_WRITE,
+        SYSCALL_ID_BLOCK_HASH, SYSCALL_ID_CODE_COPY, SYSCALL_ID_CODE_HASH,
+        SYSCALL_ID_METADATA_COPY, SYSCALL_ID_METADATA_CREATE, SYSCALL_ID_METADATA_WRITE,
+        SYSCALL_ID_STORAGE_WRITE,
     },
-    Address, Bytes, PRECOMPILE_WASM_RUNTIME, STATE_MAIN, U256,
+    Address, Bytes, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_WASM_RUNTIME, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::Bytecode,
@@ -216,6 +218,116 @@ mod code_copy_tests {
         assert_eq!(output.len(), 200);
         assert_eq!(output[..], bytecode);
         assert_eq!(gas, expected_gas(200, false));
+    }
+}
+
+#[cfg(test)]
+mod code_hash_tests {
+    use super::*;
+    use revm::handler::system_interruption::SystemInterruptionInputs;
+
+    fn execute_syscall(
+        ctx: &mut RwasmContext<InMemoryDB>,
+        frame: &mut RwasmFrame,
+        code_hash: B256,
+        input: Bytes,
+    ) -> Bytes {
+        let mr = ForwardInputMemoryReader(input);
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            code_hash,
+            input: 0..mr.0.len(),
+            fuel_limit: 0,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
+            gas: Gas::new(10_000_000),
+            preloaded_slot_costs: None,
+        };
+
+        execute_rwasm_interruption::<_, NoOpInspector>(frame, None, ctx, interruption_inputs, mr)
+            .expect("syscall should execute");
+
+        frame
+            .interrupted_outcome
+            .as_ref()
+            .expect("syscall should produce an outcome")
+            .result
+            .as_ref()
+            .expect("syscall should return a result")
+            .output
+            .clone()
+    }
+
+    fn code_hash_input(address: Address) -> Bytes {
+        address.as_slice().to_vec().into()
+    }
+
+    fn code_copy_input(address: Address) -> Bytes {
+        let mut input = vec![0u8; 20 + 8 + 8];
+        input[0..20].copy_from_slice(address.as_slice());
+        input[20..28].copy_from_slice(&0u64.to_le_bytes());
+        input[28..36].copy_from_slice(&1u64.to_le_bytes());
+        input.into()
+    }
+
+    #[test]
+    fn test_code_hash_delegated_evm_contract_is_stable_across_cold_and_warm_access() {
+        let target = Address::from([0x42; 20]);
+        let evm_bytecode = bytes!("6080604052600055");
+        let metadata = EthereumMetadata::new_legacy(evm_bytecode.clone()).write_to_bytes();
+        let account_bytecode =
+            Bytecode::new_ownable_account(PRECOMPILE_EVM_RUNTIME, metadata.clone());
+        let wrapper_hash = account_bytecode.hash_slow();
+        let expected_hash = EthereumMetadata::read_from_bytes(&metadata)
+            .expect("metadata should decode")
+            .code_hash();
+
+        assert_ne!(
+            wrapper_hash, expected_hash,
+            "test must distinguish wrapper bytecode hash from EVM-visible hash"
+        );
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            target,
+            AccountInfo {
+                balance: U256::ONE,
+                nonce: 1,
+                code_hash: wrapper_hash,
+                code: Some(account_bytecode),
+                ..Default::default()
+            },
+        );
+
+        let mut ctx: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        let mut frame = RwasmFrame::default();
+
+        let cold_hash = execute_syscall(
+            &mut ctx,
+            &mut frame,
+            SYSCALL_ID_CODE_HASH,
+            code_hash_input(target),
+        );
+        assert_eq!(cold_hash.as_ref(), expected_hash.as_slice());
+
+        let _ = execute_syscall(
+            &mut ctx,
+            &mut frame,
+            SYSCALL_ID_CODE_COPY,
+            code_copy_input(target),
+        );
+        let warm_hash = execute_syscall(
+            &mut ctx,
+            &mut frame,
+            SYSCALL_ID_CODE_HASH,
+            code_hash_input(target),
+        );
+
+        assert_eq!(warm_hash.as_ref(), expected_hash.as_slice());
+        assert_eq!(cold_hash, warm_hash);
     }
 }
 
