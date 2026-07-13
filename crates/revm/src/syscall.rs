@@ -837,10 +837,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             debug_syscall!("CODE_HASH", "address={:?}", address);
             let skip_cold = frame.interpreter.gas.remaining()
                 < ctx.cfg().gas_params().cold_account_additional_cost();
-            // Load account info (and optionally code) with Berlin warm/cold accounting.
+            // Load account info together with bytecode using Berlin warm/cold accounting.
+            // Code must be loaded here (matching CODE_SIZE/CODE_COPY) so that the canonical
+            // EVM-visible code hash is read from EthereumMetadata regardless of prior access
+            // order within the transaction. On a cold load Reth supplies `code: None`, which
+            // would otherwise fall back to the wrapper/account hash.
             let result = ctx
                 .journal_mut()
-                .load_account_info_skip_cold_load(address, false, skip_cold);
+                .load_account_info_skip_cold_load(address, true, skip_cold);
             let account_info = unwrap_journal_load_error!(result);
             charge_regular_gas!(if account_info.is_cold {
                 gas::COLD_ACCOUNT_ACCESS_COST

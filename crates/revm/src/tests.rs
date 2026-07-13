@@ -797,3 +797,203 @@ mod storage_inspector_tests {
         assert_eq!(inspector.step_end_value, Some(new_value));
     }
 }
+
+#[cfg(test)]
+mod code_hash_tests {
+    use super::*;
+    use alloy_primitives::keccak256;
+    use fluentbase_evm::EthereumMetadata;
+    use fluentbase_sdk::{
+        syscall::{SYSCALL_ID_CODE_HASH, SYSCALL_ID_CODE_SIZE},
+        KECCAK_EMPTY, PRECOMPILE_EVM_RUNTIME,
+    };
+    use revm::{handler::system_interruption::SystemInterruptionInputs, state::AccountInfo};
+    use std::collections::HashMap;
+
+    /// Database that mimics Reth's cold-account behaviour: `basic` returns the account info
+    /// with `code: None`, and the actual bytecode is only available through `code_by_hash`.
+    /// This is exactly the situation in which a `load_code = false` account load leaves
+    /// `account_info.code` empty on a cold access.
+    #[derive(Default)]
+    struct ColdCodeDatabase {
+        accounts: HashMap<Address, AccountInfo>,
+        contracts: HashMap<B256, Bytecode>,
+    }
+
+    #[derive(Debug)]
+    struct ColdCodeDbError;
+
+    impl fmt::Display for ColdCodeDbError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "cold code database error")
+        }
+    }
+
+    impl Error for ColdCodeDbError {}
+    impl DBErrorMarker for ColdCodeDbError {}
+
+    impl Database for ColdCodeDatabase {
+        type Error = ColdCodeDbError;
+
+        fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+            // Simulate cold basic loads: never return inline bytecode.
+            Ok(self.accounts.get(&address).map(|info| {
+                let mut info = info.clone();
+                info.code = None;
+                info
+            }))
+        }
+
+        fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+            Ok(self.contracts.get(&code_hash).cloned().unwrap_or_default())
+        }
+
+        fn storage(
+            &mut self,
+            _address: Address,
+            _index: U256,
+        ) -> Result<StorageValue, Self::Error> {
+            Ok(StorageValue::default())
+        }
+
+        fn block_hash(&mut self, _number: u64) -> Result<B256, Self::Error> {
+            Ok(B256::ZERO)
+        }
+    }
+
+    fn new_ctx(db: ColdCodeDatabase) -> RwasmContext<ColdCodeDatabase> {
+        let mut ctx: RwasmContext<ColdCodeDatabase> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        ctx
+    }
+
+    /// Executes a single-address syscall (CODE_HASH / CODE_SIZE) and returns the raw output.
+    fn run_address_syscall(
+        ctx: &mut RwasmContext<ColdCodeDatabase>,
+        syscall_id: B256,
+        address: Address,
+    ) -> Bytes {
+        let mut frame = RwasmFrame::default();
+        // Provide ample gas so cold loads are not skipped.
+        frame.interpreter.gas = Gas::new(10_000_000);
+
+        let mut syscall_input = vec![0u8; 20];
+        syscall_input[0..20].copy_from_slice(address.as_slice());
+        let mr = ForwardInputMemoryReader(syscall_input.into());
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            code_hash: syscall_id,
+            input: 0..mr.0.len(),
+            fuel_limit: 0,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
+            gas: Gas::new(10_000_000),
+            preloaded_slot_costs: None,
+        };
+
+        execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            ctx,
+            interruption_inputs,
+            mr,
+        )
+        .unwrap();
+
+        frame
+            .interrupted_outcome
+            .as_ref()
+            .unwrap()
+            .result
+            .as_ref()
+            .unwrap()
+            .output
+            .clone()
+    }
+
+    /// Builds a delegated EVM contract account (owned by the EVM runtime) whose metadata
+    /// carries `runtime_bytecode`, returning the DB, its address, and the wrapper code hash.
+    fn delegated_evm_contract(runtime_bytecode: Bytes) -> (ColdCodeDatabase, Address, B256) {
+        let address = Address::from([0x42; 20]);
+        let metadata = EthereumMetadata::new_legacy(runtime_bytecode).write_to_bytes();
+        let ownable = Bytecode::new_ownable_account(PRECOMPILE_EVM_RUNTIME, metadata);
+        // Wrapper hash is the hash of the stored ownable-account bytecode.
+        let wrapper_hash = AccountInfo::from_bytecode(ownable.clone()).code_hash;
+
+        let cold_info = AccountInfo {
+            balance: U256::ONE,
+            nonce: 1,
+            code_hash: wrapper_hash,
+            ..Default::default()
+        };
+
+        let mut db = ColdCodeDatabase::default();
+        db.accounts.insert(address, cold_info);
+        db.contracts.insert(wrapper_hash, ownable);
+
+        (db, address, wrapper_hash)
+    }
+
+    /// Acceptance criteria: a freshly (cold) loaded delegated EVM contract must return the
+    /// canonical EVM code hash from EXTCODEHASH regardless of prior EXTCODESIZE access.
+    #[test]
+    fn cold_extcodehash_is_canonical_and_order_independent() {
+        let runtime_bytecode = Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xf3]);
+        let expected_hash = keccak256(runtime_bytecode.as_ref());
+        let (db, address, wrapper_hash) = delegated_evm_contract(runtime_bytecode.clone());
+        assert_ne!(
+            expected_hash, wrapper_hash,
+            "wrapper hash must differ from the canonical EVM hash for this test to be meaningful"
+        );
+
+        let mut ctx = new_ctx(db);
+
+        // 1. EXTCODEHASH on a cold account (first access within the transaction).
+        let h1 = B256::from_slice(&run_address_syscall(&mut ctx, SYSCALL_ID_CODE_HASH, address));
+        // 2. EXTCODESIZE loads the code into the journal.
+        let size = run_address_syscall(&mut ctx, SYSCALL_ID_CODE_SIZE, address);
+        // 3. EXTCODEHASH again, now warm.
+        let h2 = B256::from_slice(&run_address_syscall(&mut ctx, SYSCALL_ID_CODE_HASH, address));
+
+        assert_eq!(
+            h1, expected_hash,
+            "cold EXTCODEHASH must return the canonical EVM code hash"
+        );
+        assert_eq!(h1, h2, "EXTCODEHASH must not depend on access order");
+        assert_eq!(
+            U256::from_le_slice(&size),
+            U256::from(runtime_bytecode.len()),
+            "EXTCODESIZE must return the EVM runtime bytecode length"
+        );
+    }
+
+    #[test]
+    fn extcodehash_empty_account_returns_zero() {
+        // Account is absent from the DB entirely.
+        let mut ctx = new_ctx(ColdCodeDatabase::default());
+        let address = Address::from([0x77; 20]);
+        let hash = B256::from_slice(&run_address_syscall(&mut ctx, SYSCALL_ID_CODE_HASH, address));
+        assert_eq!(hash, B256::ZERO, "empty account must hash to zero");
+    }
+
+    #[test]
+    fn extcodehash_eoa_returns_keccak_empty() {
+        let address = Address::from([0x55; 20]);
+        let cold_info = AccountInfo {
+            balance: U256::ONE,
+            nonce: 1,
+            code_hash: KECCAK_EMPTY,
+            ..Default::default()
+        };
+
+        let mut db = ColdCodeDatabase::default();
+        db.accounts.insert(address, cold_info);
+
+        let mut ctx = new_ctx(db);
+        let hash = B256::from_slice(&run_address_syscall(&mut ctx, SYSCALL_ID_CODE_HASH, address));
+        assert_eq!(hash, KECCAK_EMPTY, "non-empty EOA must return KECCAK_EMPTY");
+    }
+}
