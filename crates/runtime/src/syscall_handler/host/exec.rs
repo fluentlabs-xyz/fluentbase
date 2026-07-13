@@ -69,7 +69,10 @@ pub fn syscall_exec_handler(
     let is_root = caller.data().call_depth == 0;
     let params = SyscallInvocationParams {
         code_hash,
-        input: input_ptr..(input_ptr + input_len),
+        input: input_ptr
+            ..input_ptr
+                .checked_add(input_len)
+                .ok_or(TrapCode::MemoryOutOfBounds)?,
         fuel_limit,
         state,
         fuel16_ptr: fuel16_ptr as u32,
