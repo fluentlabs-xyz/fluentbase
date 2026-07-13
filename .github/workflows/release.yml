@@ -130,19 +130,44 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
 
-      - name: Build Genesis
+      - name: Build and verify genesis reproducibility
         env:
           FLUENTBASE_CONTRACTS_DOCKER: "true"
           FLUENTBASE_BUILD_DOCKER_IMAGE: ${{ steps.build_image.outputs.image }}
           FLUENTBASE_BUILD_DOCKER_TAG: ${{ steps.build_image.outputs.tag }}
-        run: cargo b --release
+        run: |
+          cargo b --release
+          sha256sum \
+            ./crates/genesis/genesis-devnet.json \
+            ./crates/genesis/genesis-mainnet.json \
+            ./crates/genesis/evm-runtime-permissive.rwasm \
+            > /tmp/fluentbase-genesis.sha256
+          cargo b --release
+          sha256sum --check /tmp/fluentbase-genesis.sha256
 
       - name: Package genesis files
         run: |
           mkdir -p artifacts
-          gzip -c ./crates/genesis/genesis-devnet.json > ./artifacts/genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
-          gzip -c ./crates/genesis/genesis-mainnet.json > ./artifacts/genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz
-          gzip -c ./crates/genesis/evm-runtime-permissive.rwasm > ./artifacts/evm-runtime-permissive-${{ needs.extract-version.outputs.VERSION }}.rwasm.gz
+          gzip -n -c ./crates/genesis/genesis-devnet.json > ./artifacts/genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
+          gzip -n -c ./crates/genesis/genesis-mainnet.json > ./artifacts/genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz
+          gzip -n -c ./crates/genesis/evm-runtime-permissive.rwasm > ./artifacts/evm-runtime-permissive-${{ needs.extract-version.outputs.VERSION }}.rwasm.gz
+
+          {
+            echo "version=${{ needs.extract-version.outputs.VERSION }}"
+            echo "commit=${GITHUB_SHA}"
+            echo
+            echo "[raw]"
+            sha256sum \
+              ./crates/genesis/genesis-devnet.json \
+              ./crates/genesis/genesis-mainnet.json \
+              ./crates/genesis/evm-runtime-permissive.rwasm
+            echo
+            echo "[compressed]"
+            sha256sum \
+              ./artifacts/genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz \
+              ./artifacts/genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz \
+              ./artifacts/evm-runtime-permissive-${{ needs.extract-version.outputs.VERSION }}.rwasm.gz
+          } > ./artifacts/genesis-manifest-${{ needs.extract-version.outputs.VERSION }}.txt
 
       - name: Configure GPG and sign genesis artifacts
         if: ${{ github.event.inputs.dry_run != 'true' }}
@@ -153,8 +178,13 @@ jobs:
           export GPG_TTY=$(tty)
           echo -n "$GPG_SIGNING_KEY" | base64 --decode | gpg --batch --import
           cd artifacts
-          echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
-          echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz
+          for artifact in \
+            genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz \
+            genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz \
+            genesis-manifest-${{ needs.extract-version.outputs.VERSION }}.txt
+          do
+            echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab "$artifact"
+          done
           mv * ..
 
       - name: Upload devnet genesis
@@ -178,6 +208,13 @@ jobs:
           name: evm-runtime-permissive-${{ needs.extract-version.outputs.VERSION }}.rwasm.gz
           path: evm-runtime-permissive-${{ needs.extract-version.outputs.VERSION }}.rwasm.gz
 
+      - name: Upload genesis manifest
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: genesis-manifest-${{ needs.extract-version.outputs.VERSION }}.txt
+          path: genesis-manifest-${{ needs.extract-version.outputs.VERSION }}.txt
+
       - name: Upload devnet genesis signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: actions/upload-artifact@v7
@@ -191,6 +228,13 @@ jobs:
         with:
           name: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
           path: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
+
+      - name: Upload genesis manifest signature
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: genesis-manifest-${{ needs.extract-version.outputs.VERSION }}.txt.asc
+          path: genesis-manifest-${{ needs.extract-version.outputs.VERSION }}.txt.asc
 
   build:
     name: build release
@@ -353,6 +397,9 @@ jobs:
             assets+=("$d/$(basename "$d")")
           done
           for d in ./*evm-runtime-permissive-*.rwasm.gz*; do
+            assets+=("$d/$(basename "$d")")
+          done
+          for d in ./*genesis-manifest-*.txt*; do
             assets+=("$d/$(basename "$d")")
           done
           gh release create --draft $prerelease_flag -t "Genesis ${VERSION}" -F release-notes.md "${VERSION}" "${assets[@]}"

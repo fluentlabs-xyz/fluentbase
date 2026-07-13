@@ -17,7 +17,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     env, fs,
     path::PathBuf,
-    time::{Instant, SystemTime},
+    time::Instant,
 };
 
 #[rustfmt::skip]
@@ -52,6 +52,9 @@ const GENESIS_CONTRACTS: &[(Address, fluentbase_contracts::BuildOutput)] = &[
     (fluentbase_sdk::PRECOMPILE_SHA256, fluentbase_contracts::FLUENTBASE_CONTRACTS_SHA256),
     (fluentbase_sdk::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_WEBAUTHN),
 ];
+
+const DEVNET_GENESIS_TIMESTAMP: u64 = 0x69b8194c;
+const MAINNET_GENESIS_TIMESTAMP: u64 = 0x69b8194c;
 
 fn default_chain_config(chain_id: u64) -> ChainConfig {
     ChainConfig {
@@ -247,11 +250,6 @@ fn main() {
     code.push("];".to_string());
     let code = code.join("\n");
 
-    let timestamp = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
     // devnet/testnet genesis
     {
         let mut alloc = alloc.clone();
@@ -277,7 +275,7 @@ fn main() {
         let genesis = Genesis {
             config: default_chain_config(1337),
             nonce: 0,
-            timestamp,
+            timestamp: DEVNET_GENESIS_TIMESTAMP,
             extra_data: Bytes::new(),
             // Default gas limit is 100mil
             gas_limit: 0x5f5e100,
@@ -302,7 +300,7 @@ fn main() {
             config: default_chain_config(25363),
             nonce: 0,
             // A timestamp for first Fluent mainnet genesis creation
-            timestamp: 0x69b8194c,
+            timestamp: MAINNET_GENESIS_TIMESTAMP,
             extra_data: Bytes::new(),
             // Default gas limit is 100mil
             gas_limit: 0x5f5e100,
