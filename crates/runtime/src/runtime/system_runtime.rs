@@ -100,6 +100,12 @@ impl SystemRuntime {
         });
     }
 
+    fn evict_cached_runtime(&self) {
+        COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
+            compiled_runtimes.remove(&self.code_hash);
+        });
+    }
+
     /// Creates a new `SystemRuntime`.
     ///
     /// If a compiled runtime for `code_hash` is present in the thread-local cache, it will be reused.
@@ -240,9 +246,7 @@ impl SystemRuntime {
             // resources we consumed. But here we just terminate the runtime entirely. It means that all previous calls
             // will fail because they lose their state. It's the best here because we automatically terminate all nested
             // execution to avoid potential memory or stack access violations.
-            COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-                compiled_runtimes.remove(&self.code_hash);
-            });
+            self.evict_cached_runtime();
             // We return `Ok` here because the exit code is already set
             return Ok(());
         } else {
@@ -258,12 +262,11 @@ impl SystemRuntime {
                 // uncleaned memory. Since we can't handle it gracefully, then we can only reset the existing
                 // runtime to make sure memory and stack are clean. There is no ddos attack here because,
                 // to achieve this, the user must pay a penalty.
-                COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-                    compiled_runtimes.remove(&self.code_hash);
-                });
+                self.evict_cached_runtime();
                 // Forward the `OutOfFuel` trap to the outer executor, so it can handle it gracefully.
                 return Err(*trap_code);
             }
+            self.evict_cached_runtime();
             eprintln!(
                 "runtime: unexpected trap inside system runtime: {:?} ({}) (investigate)",
                 trap_code, trap_code,
@@ -351,5 +354,71 @@ impl SystemRuntime {
     /// Provides immutable access to the per-call runtime context.
     pub fn context(&self) -> &RuntimeContext {
         &self.ctx
+    }
+}
+
+#[cfg(all(test, feature = "wasmtime"))]
+mod tests {
+    use super::*;
+    use fluentbase_types::{import_linker_v1_preview, ExitCode};
+    use rwasm::{InstructionSet, RwasmModuleInner};
+
+    fn system_module(wat_source: &str) -> RwasmModule {
+        RwasmModuleInner {
+            code_section: InstructionSet::default(),
+            hint_section: wat::parse_str(wat_source).expect("test WAT must compile"),
+            data_section: vec![],
+            elem_section: vec![],
+            source_pc: 0,
+        }
+        .into()
+    }
+
+    fn test_code_hash() -> B256 {
+        B256::from([0x39; 32])
+    }
+
+    fn cache_contains(code_hash: B256) -> bool {
+        COMPILED_RUNTIMES
+            .with_borrow(|compiled_runtimes| compiled_runtimes.contains_key(&code_hash))
+    }
+
+    #[test]
+    fn unexpected_trap_evicts_cached_runtime() {
+        SystemRuntime::reset_cached_runtimes();
+
+        let code_hash = test_code_hash();
+        let trapping_module = system_module(
+            r#"
+            (module
+              (memory (export "memory") 1)
+              (func (export "main") (param i32 i32) (result i32)
+                i32.const 0
+                i32.const 7
+                i32.store
+                unreachable
+                i32.const 0))
+            "#,
+        );
+
+        let mut runtime = SystemRuntime::new(
+            trapping_module,
+            import_linker_v1_preview(),
+            code_hash,
+            RuntimeContext::default().with_fuel_limit(10_000),
+            false,
+        );
+
+        runtime
+            .execute()
+            .expect("unexpected traps are mapped to exit codes");
+
+        assert_eq!(
+            runtime.context().execution_result.exit_code,
+            ExitCode::UnexpectedFatalExecutionFailure.into_i32()
+        );
+        assert!(!cache_contains(code_hash));
+
+        SystemRuntime::reset_cached_runtimes();
     }
 }
