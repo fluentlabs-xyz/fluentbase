@@ -85,9 +85,15 @@ pub fn syscall_exec_handler(
 /// Continues an exec after an interruption, executing the delegated call.
 pub fn syscall_exec_continue(
     _caller: &mut impl StoreTr<RuntimeContext>,
-    _context: &InterruptionHolder,
+    context: &InterruptionHolder,
 ) -> (u64, i64, i32) {
-    unimplemented!("runtime: not supported until we finish zkVM");
+    // Continuation is gated until the root/STF resume ABI is fully defined.
+    // Fail deterministically instead of panicking in enabled runtimes.
+    (
+        context.params.fuel_limit,
+        0,
+        ExitCode::UnexpectedFatalExecutionFailure.into_i32(),
+    )
     // let fuel_limit = context.params.fuel_limit;
     // let (fuel_consumed, fuel_refunded, exit_code) = caller.context_mut(|ctx| {
     //     syscall_exec_impl(

@@ -296,8 +296,20 @@ impl RuntimeFactoryExecutor {
             // handler to pass into parent runtime.
             //
             // Safety: For system runtimes we don't save this
-            if let Some(resumable_return_data) = ctx.take_resumable_context_serialized() {
-                return_data = resumable_return_data;
+            match ctx.take_resumable_context_serialized() {
+                Ok(Some(resumable_return_data)) => {
+                    return_data = resumable_return_data;
+                }
+                Ok(None) => {}
+                Err(exit_code) => {
+                    return RuntimeResult::Result(ExecutionResult {
+                        exit_code: exit_code.into_i32(),
+                        fuel_consumed,
+                        fuel_refunded,
+                        output: vec![],
+                        return_data: vec![],
+                    });
+                }
             }
             return RuntimeResult::Interruption(ExecutionInterruption {
                 fuel_consumed,

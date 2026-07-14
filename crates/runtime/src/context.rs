@@ -1,5 +1,5 @@
 use crate::{executor::ExecutionResult, syscall_handler::InterruptionHolder};
-use fluentbase_types::{Bytes, CALL_DEPTH_ROOT, STATE_MAIN};
+use fluentbase_types::{Bytes, ExitCode, CALL_DEPTH_ROOT, STATE_MAIN};
 
 /// Per-invocation execution context carried inside the VM store.
 #[derive(Debug, Clone)]
@@ -57,22 +57,76 @@ impl RuntimeContext {
     }
 
     /// Extract serialized resumable context
-    pub fn take_resumable_context_serialized(&mut self) -> Option<Vec<u8>> {
+    pub fn take_resumable_context_serialized(&mut self) -> Result<Option<Vec<u8>>, ExitCode> {
         // Take resumable context from execution context
-        let resumable_context = self.resumable_context.take()?;
+        let Some(resumable_context) = self.resumable_context.take() else {
+            return Ok(None);
+        };
         if resumable_context.is_root {
-            unimplemented!("validate this logic, might not be ok in STF mode");
+            return Err(ExitCode::UnexpectedFatalExecutionFailure);
         }
         // serialize the delegated execution state,
         // but we don't serialize registers and stack state,
         // instead we remember it inside the internal structure
         // and assign a special identifier for recovery
         let result = resumable_context.params.encode();
-        Some(result)
+        Ok(Some(result))
     }
 
     /// Clears the accumulated output buffer.
     pub fn clear_output(&mut self) {
         self.execution_result.output.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluentbase_types::{SyscallInvocationParams, B256};
+
+    fn resumable_context(is_root: bool) -> InterruptionHolder {
+        InterruptionHolder {
+            params: SyscallInvocationParams {
+                code_hash: B256::default(),
+                input: 4..8,
+                fuel_limit: 13,
+                state: 2,
+                fuel16_ptr: 16,
+            },
+            is_root,
+        }
+    }
+
+    #[test]
+    fn root_resumable_context_returns_fatal_error_without_panicking() {
+        let mut ctx = RuntimeContext {
+            resumable_context: Some(resumable_context(true)),
+            ..Default::default()
+        };
+
+        let err = ctx.take_resumable_context_serialized().unwrap_err();
+
+        assert_eq!(err, ExitCode::UnexpectedFatalExecutionFailure);
+        assert!(ctx.resumable_context.is_none());
+    }
+
+    #[test]
+    fn child_resumable_context_still_serializes() {
+        let params = resumable_context(false).params;
+        let mut ctx = RuntimeContext {
+            resumable_context: Some(InterruptionHolder {
+                params: params.clone(),
+                is_root: false,
+            }),
+            ..Default::default()
+        };
+
+        let encoded = ctx
+            .take_resumable_context_serialized()
+            .unwrap()
+            .expect("child interruption should serialize");
+
+        assert_eq!(SyscallInvocationParams::decode(&encoded), Some(params));
+        assert!(ctx.resumable_context.is_none());
     }
 }
