@@ -14,6 +14,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.93.1"
 
 jobs:
   publish:
@@ -23,7 +24,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Extract and sanitize version
         id: extract_version
@@ -33,10 +34,12 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
@@ -55,19 +58,19 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cargo publish -p fluentbase-codec-derive
+          cargo publish --locked -p fluentbase-codec-derive
           cargo search fluentbase-codec-derive | head
-          cargo publish -p fluentbase-codec
+          cargo publish --locked -p fluentbase-codec
           cargo search fluentbase-codec | head
-          cargo publish -p fluentbase-types
+          cargo publish --locked -p fluentbase-types
           cargo search fluentbase-types | head
-          cargo publish -p fluentbase-runtime
+          cargo publish --locked -p fluentbase-runtime
           cargo search fluentbase-runtime | head
-          cargo publish -p fluentbase-crypto
+          cargo publish --locked -p fluentbase-crypto
           cargo search fluentbase-crypto | head
-          cargo publish -p fluentbase-sdk-derive-core
+          cargo publish --locked -p fluentbase-sdk-derive-core
           cargo search fluentbase-sdk-derive-core | head
-          cargo publish -p fluentbase-sdk-derive
+          cargo publish --locked -p fluentbase-sdk-derive
           cargo search fluentbase-sdk-derive | head
-          cargo publish -p fluentbase-sdk
+          cargo publish --locked -p fluentbase-sdk
           cargo search fluentbase-sdk | head

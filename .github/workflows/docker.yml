@@ -12,6 +12,9 @@ env:
   CARGO_TERM_COLOR: always
   DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/fluent
   DOCKER_USERNAME: ${{ github.actor }}
+  RUST_TOOLCHAIN: "1.93.1"
+  CROSS_REV: "64b5bb4d3d34de062552b9a2093affe77b4ad16a"
+  BINFMT_IMAGE: "tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   CC: clang
   CXX: clang++
@@ -31,24 +34,25 @@ jobs:
           - name: "Build and push fluent image"
             command: "make IMAGE_NAME=$IMAGE_NAME DOCKER_IMAGE_NAME=$DOCKER_IMAGE_NAME PROFILE=maxperf docker-build-push"
     steps:
-      - uses: actions/checkout@v7
-      - uses: rui314/setup-mold@v1
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           cache-on-failure: true
       - name: Install cross main
         id: cross_main
         run: |
-          cargo +1.93.1 install cross --git https://github.com/cross-rs/cross
+          cargo +${RUST_TOOLCHAIN} install cross --git https://github.com/cross-rs/cross --rev ${CROSS_REV} --locked
       - name: Log in to Docker
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username ${DOCKER_USERNAME} --password-stdin
       - name: Set up Docker builder
         run: |
-          docker run --privileged --rm tonistiigi/binfmt --install arm64,amd64
+          docker run --privileged --rm "${BINFMT_IMAGE}" --install arm64,amd64
           docker buildx create --use --name cross-builder
       - name: Build and push ${{ matrix.build.name }}
         run: ${{ matrix.build.command }}
@@ -67,24 +71,25 @@ jobs:
           - name: "Build and push fluent image"
             command: "make IMAGE_NAME=$IMAGE_NAME DOCKER_IMAGE_NAME=$DOCKER_IMAGE_NAME PROFILE=maxperf docker-build-push-latest"
     steps:
-      - uses: actions/checkout@v7
-      - uses: rui314/setup-mold@v1
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           cache-on-failure: true
       - name: Install cross main
         id: cross_main
         run: |
-          cargo +1.93.1 install cross --git https://github.com/cross-rs/cross
+          cargo +${RUST_TOOLCHAIN} install cross --git https://github.com/cross-rs/cross --rev ${CROSS_REV} --locked
       - name: Log in to Docker
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username ${DOCKER_USERNAME} --password-stdin
       - name: Set up Docker builder
         run: |
-          docker run --privileged --rm tonistiigi/binfmt --install arm64,amd64
+          docker run --privileged --rm "${BINFMT_IMAGE}" --install arm64,amd64
           docker buildx create --use --name cross-builder
       - name: Install clang and build tools
         run: |
