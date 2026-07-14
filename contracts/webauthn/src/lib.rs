@@ -7,12 +7,17 @@ mod webauthn;
 use fluentbase_sdk::{
     codec::SolidityABI, system_entrypoint, Bytes, ContextReader, ExitCode, SystemAPI, B256, U256,
 };
-use webauthn::{verify_webauthn, WebAuthnAuth};
+use webauthn::{verify_webauthn, verify_webauthn_with_policy, WebAuthnAuth, WebAuthnPolicy};
 
 /// Function selector: 0x94516dde
 /// Derived from:
 /// keccak256("verify(bytes,bool,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
 const VERIFY_SELECTOR: [u8; 4] = [0x94, 0x51, 0x6d, 0xde];
+
+/// Function selector: 0xd6b45308
+/// Derived from:
+/// keccak256("verifyStrict(bytes,bool,bytes32,bytes,uint256,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
+const VERIFY_STRICT_SELECTOR: [u8; 4] = [0xd6, 0xb4, 0x53, 0x08];
 
 /// Estimated verification cost, in EVM gas units.
 const WEBAUTHN_VERIFY_GAS: u64 = 22_000;
@@ -32,23 +37,53 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
 
     let input = sdk.bytes_input();
     let (selector, params) = input.split_at(4);
-    if selector != VERIFY_SELECTOR {
-        return Err(ExitCode::MalformedBuiltinParams);
-    }
-
-    let (challenge, require_user_verification, auth, x, y) =
-        SolidityABI::<(Bytes, bool, WebAuthnAuth, U256, U256)>::decode(&params, 0)
-            .map_err(|_| ExitCode::MalformedBuiltinParams)?;
 
     let gas_limit = sdk.context().contract_gas_limit();
-    let is_valid = verify_webauthn(
-        &challenge,
-        require_user_verification,
-        &auth,
-        x,
-        y,
-        gas_limit,
-    )?;
+    let is_valid = if selector == VERIFY_SELECTOR {
+        let (challenge, require_user_verification, auth, x, y) =
+            SolidityABI::<(Bytes, bool, WebAuthnAuth, U256, U256)>::decode(&params, 0)
+                .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+
+        verify_webauthn(
+            &challenge,
+            require_user_verification,
+            &auth,
+            x,
+            y,
+            gas_limit,
+        )?
+    } else if selector == VERIFY_STRICT_SELECTOR {
+        let (
+            challenge,
+            require_user_verification,
+            expected_rp_id_hash,
+            expected_origin,
+            origin_index,
+            auth,
+            x,
+            y,
+        ) = SolidityABI::<(Bytes, bool, B256, Bytes, U256, WebAuthnAuth, U256, U256)>::decode(
+            &params, 0,
+        )
+        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+
+        verify_webauthn_with_policy(
+            &challenge,
+            require_user_verification,
+            &WebAuthnPolicy {
+                expected_rp_id_hash,
+                expected_origin,
+                origin_index,
+            },
+            &auth,
+            x,
+            y,
+            gas_limit,
+        )?
+    } else {
+        return Err(ExitCode::MalformedBuiltinParams);
+    };
+
     let result = B256::with_last_byte(if is_valid { 0x01 } else { 0x00 });
     sdk.write(&result[..]);
 
@@ -68,6 +103,8 @@ mod tests {
         ecdsa::{signature::SignerMut, SigningKey, VerifyingKey},
         elliptic_curve::rand_core::OsRng,
     };
+
+    type StrictCallParams = (Bytes, bool, B256, Bytes, U256, WebAuthnAuth, U256, U256);
 
     fn valid_call_params(
         require_user_verification: bool,
@@ -133,6 +170,45 @@ mod tests {
         input
     }
 
+    fn encode_strict_call(params_tuple: &StrictCallParams) -> Vec<u8> {
+        let mut params = BytesMut::new();
+        SolidityABI::<(Bytes, bool, B256, Bytes, U256, WebAuthnAuth, U256, U256)>::encode(
+            params_tuple,
+            &mut params,
+            0,
+        )
+        .unwrap();
+
+        let mut input = VERIFY_STRICT_SELECTOR.to_vec();
+        input.extend_from_slice(&params);
+        input
+    }
+
+    fn valid_strict_call_input(require_user_verification: bool) -> (Vec<u8>, StrictCallParams) {
+        let (challenge, require_user_verification, auth, x, y) =
+            valid_call_params(require_user_verification);
+        let expected_rp_id_hash = B256::from_slice(&auth.authenticator_data[..32]);
+        let expected_origin = Bytes::copy_from_slice(b"http://localhost:3005");
+        let origin_index = U256::from(
+            auth.client_data_json
+                .windows(b"\"origin\"".len())
+                .position(|window| window == b"\"origin\"")
+                .unwrap(),
+        );
+        let params = (
+            challenge,
+            require_user_verification,
+            expected_rp_id_hash,
+            expected_origin,
+            origin_index,
+            auth,
+            x,
+            y,
+        );
+
+        (encode_strict_call(&params), params)
+    }
+
     fn valid_call_input(require_user_verification: bool) -> Vec<u8> {
         encode_call(&valid_call_params(require_user_verification))
     }
@@ -153,6 +229,34 @@ mod tests {
     fn valid_signature_returns_true_and_charges_fuel() {
         let (output, fuel) = exec(&valid_call_input(true), WEBAUTHN_VERIFY_GAS).unwrap();
         assert_eq!(output, B256::with_last_byte(1)[..]);
+        assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+    }
+
+    #[test]
+    fn strict_valid_signature_returns_true_and_charges_fuel() {
+        let (input, _) = valid_strict_call_input(true);
+        let (output, fuel) = exec(&input, WEBAUTHN_VERIFY_GAS).unwrap();
+        assert_eq!(output, B256::with_last_byte(1)[..]);
+        assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+    }
+
+    #[test]
+    fn strict_mismatched_rp_id_hash_returns_false() {
+        let (_, mut params) = valid_strict_call_input(true);
+        params.2 = B256::with_last_byte(1);
+
+        let (output, fuel) = exec(&encode_strict_call(&params), WEBAUTHN_VERIFY_GAS).unwrap();
+        assert_eq!(output, B256::default()[..]);
+        assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+    }
+
+    #[test]
+    fn strict_disallowed_origin_returns_false() {
+        let (_, mut params) = valid_strict_call_input(true);
+        params.3 = Bytes::copy_from_slice(b"https://example.com");
+
+        let (output, fuel) = exec(&encode_strict_call(&params), WEBAUTHN_VERIFY_GAS).unwrap();
+        assert_eq!(output, B256::default()[..]);
         assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
     }
 

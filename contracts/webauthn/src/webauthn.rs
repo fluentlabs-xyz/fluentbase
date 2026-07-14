@@ -1,5 +1,5 @@
-use alloc::{format, string::String, vec::Vec};
-use fluentbase_sdk::{codec::Codec, crypto::crypto_sha256, Bytes, ExitCode, U256};
+use alloc::{format, vec::Vec};
+use fluentbase_sdk::{codec::Codec, crypto::crypto_sha256, Bytes, ExitCode, B256, U256};
 
 /// WebAuthn authenticator data flag bits
 pub const AUTH_DATA_FLAGS_UP: u8 = 0x01; // User Present bit
@@ -40,6 +40,13 @@ pub struct WebAuthnAuth {
     /// Signature components (r, s) of the WebAuthn authentication assertion.
     pub r: U256,
     pub s: U256,
+}
+
+/// Caller-controlled relying-party policy for strict WebAuthn assertion checks.
+pub struct WebAuthnPolicy {
+    pub expected_rp_id_hash: B256,
+    pub expected_origin: Bytes,
+    pub origin_index: U256,
 }
 
 /// Verifies a WebAuthn Authentication Assertion
@@ -86,6 +93,60 @@ pub fn verify_webauthn(
 
     // Step 4: Verify signature
     verify_signature(message_hash, auth.r, auth.s, x, y, gas_limit)
+}
+
+/// Verifies a WebAuthn assertion and caller-controlled relying-party policy.
+pub fn verify_webauthn_with_policy(
+    challenge: &Bytes,
+    require_user_verification: bool,
+    policy: &WebAuthnPolicy,
+    auth: &WebAuthnAuth,
+    x: U256,
+    y: U256,
+    gas_limit: u64,
+) -> Result<bool, ExitCode> {
+    if !verify_rp_id_hash(&auth.authenticator_data, &policy.expected_rp_id_hash) {
+        return Ok(false);
+    }
+
+    if !verify_client_data_json_origin(
+        &auth.client_data_json,
+        &policy.expected_origin,
+        policy.origin_index,
+    ) {
+        return Ok(false);
+    }
+
+    verify_webauthn(challenge, require_user_verification, auth, x, y, gas_limit)
+}
+
+fn verify_rp_id_hash(authenticator_data: &Bytes, expected_rp_id_hash: &B256) -> bool {
+    if authenticator_data.len() < 32 {
+        return false;
+    }
+
+    &authenticator_data[..32] == expected_rp_id_hash.as_slice()
+}
+
+fn verify_client_data_json_origin(
+    client_data_json: &Bytes,
+    expected_origin: &Bytes,
+    origin_index: U256,
+) -> bool {
+    let origin_idx = match u32::try_from(origin_index) {
+        Ok(idx) => idx as usize,
+        Err(_) => return false,
+    };
+
+    if origin_idx >= client_data_json.len() {
+        return false;
+    }
+
+    let mut origin_str = Vec::with_capacity(b"\"origin\":\"\"".len() + expected_origin.len());
+    origin_str.extend_from_slice(b"\"origin\":\"");
+    origin_str.extend_from_slice(expected_origin.as_ref());
+    origin_str.extend_from_slice(b"\"");
+    contains_at(origin_str.as_slice(), client_data_json, origin_idx)
 }
 
 /// Verifies the client data JSON type and challenge
@@ -203,11 +264,16 @@ fn verify_signature(
 fn contains_at(substr: &[u8], full_str: &[u8], location: usize) -> bool {
     let substr_len = substr.len();
 
-    if location + substr_len > full_str.len() {
+    let end = match location.checked_add(substr_len) {
+        Some(end) => end,
+        None => return false,
+    };
+
+    if end > full_str.len() {
         return false;
     }
 
-    let slice = &full_str[location..location + substr_len];
+    let slice = &full_str[location..end];
     slice == substr
 }
 
@@ -388,6 +454,108 @@ mod tests {
             !result,
             "verify_client_data_json should return false for invalid data"
         );
+    }
+
+    #[test]
+    fn test_verify_client_data_json_origin() {
+        let (client_data_json, _, _, _) = create_valid_client_data_json_test_data();
+        let origin = Bytes::copy_from_slice(b"http://localhost:3005");
+        let origin_index = U256::from(
+            client_data_json
+                .windows(b"\"origin\"".len())
+                .position(|window| window == b"\"origin\"")
+                .unwrap(),
+        );
+
+        assert!(verify_client_data_json_origin(
+            &client_data_json,
+            &origin,
+            origin_index,
+        ));
+        assert!(!verify_client_data_json_origin(
+            &client_data_json,
+            &Bytes::copy_from_slice(b"https://example.com"),
+            origin_index,
+        ));
+        assert!(!verify_client_data_json_origin(
+            &client_data_json,
+            &origin,
+            U256::from(client_data_json.len()),
+        ));
+    }
+
+    #[test]
+    fn test_verify_rp_id_hash() {
+        let challenge = create_valid_challenge();
+        let (auth, _, _) = create_valid_webauthn(&challenge);
+        let expected = B256::from_slice(&auth.authenticator_data[..32]);
+        let wrong = B256::with_last_byte(1);
+
+        assert!(verify_rp_id_hash(&auth.authenticator_data, &expected));
+        assert!(!verify_rp_id_hash(&auth.authenticator_data, &wrong));
+        assert!(!verify_rp_id_hash(
+            &Bytes::copy_from_slice(&auth.authenticator_data[..31]),
+            &expected,
+        ));
+    }
+
+    #[test]
+    fn test_valid_signature_with_policy() {
+        let challenge = create_valid_challenge();
+        let (auth, x, y) = create_valid_webauthn(&challenge);
+        let expected_rp_id_hash = B256::from_slice(&auth.authenticator_data[..32]);
+        let expected_origin = Bytes::copy_from_slice(b"http://localhost:3005");
+        let origin_index = U256::from(
+            auth.client_data_json
+                .windows(b"\"origin\"".len())
+                .position(|window| window == b"\"origin\"")
+                .unwrap(),
+        );
+
+        assert!(verify_webauthn_with_policy(
+            &challenge,
+            true,
+            &WebAuthnPolicy {
+                expected_rp_id_hash,
+                expected_origin: expected_origin.clone(),
+                origin_index,
+            },
+            &auth,
+            x,
+            y,
+            100000,
+        )
+        .unwrap());
+
+        assert!(!verify_webauthn_with_policy(
+            &challenge,
+            true,
+            &WebAuthnPolicy {
+                expected_rp_id_hash: B256::with_last_byte(1),
+                expected_origin: expected_origin.clone(),
+                origin_index,
+            },
+            &auth,
+            x,
+            y,
+            100000,
+        )
+        .unwrap());
+
+        assert!(!verify_webauthn_with_policy(
+            &challenge,
+            true,
+            &WebAuthnPolicy {
+                expected_rp_id_hash,
+                expected_origin: Bytes::copy_from_slice(b"https://example.com"),
+                origin_index,
+            },
+            &auth,
+            x,
+            y,
+            100000,
+        )
+        .unwrap());
     }
 
     #[test]

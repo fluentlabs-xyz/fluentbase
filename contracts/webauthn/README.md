@@ -12,7 +12,7 @@ The implementation follows the cryptographic assertion-verification subset of th
 - [Daimo](https://github.com/daimo-eth/p256-verifier/blob/master/src/WebAuthn.sol)
 - [Coinbase](https://github.com/base-org/webauthn-sol/blob/main/src/WebAuthn.sol)
 
-This contract is not a complete WebAuthn Relying Party implementation by itself. Callers must bind the assertion to their own account, origin/RP policy, challenge lifecycle, and credential state.
+This contract exposes both the original assertion primitive and a stricter selector that enforces caller-controlled RP ID hash and origin policy. Callers must still bind the assertion to their own account, challenge lifecycle, and credential state.
 
 ## Features
 
@@ -26,15 +26,21 @@ This contract is not a complete WebAuthn Relying Party implementation by itself.
 
 ### Function Selector
 
-The contract exposes a single entry point with function selector `0x94516dde`, derived from:
+The contract exposes two entrypoint selectors. The legacy selector is `0x94516dde`, derived from:
 
 ```
 keccak256("verify(bytes,bool,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
 ```
 
-### Input Parameters
+The strict selector is `0xd6b45308`, derived from:
 
-The function takes the following parameters:
+```
+keccak256("verifyStrict(bytes,bool,bytes32,bytes,uint256,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
+```
+
+### Legacy Input Parameters
+
+The legacy selector takes the following parameters:
 
 1. `challenge` (bytes): The original challenge sent to the authenticator
 2. `require_user_verification` (bool): Whether to require the User Verified (UV) flag
@@ -47,6 +53,19 @@ The function takes the following parameters:
    - `s` (bytes32): The s component of the signature
 4. `x` (uint256): The x coordinate of the public key
 5. `y` (uint256): The y coordinate of the public key
+
+### Strict Input Parameters
+
+The strict selector takes the following parameters:
+
+1. `challenge` (bytes): The original challenge sent to the authenticator
+2. `require_user_verification` (bool): Whether to require the User Verified (UV) flag
+3. `expected_rp_id_hash` (bytes32): SHA-256 hash of the expected RP ID, compared with the first 32 bytes of `authenticator_data`
+4. `expected_origin` (bytes): Expected origin bytes, compared with `client_data_json` at `origin_index`
+5. `origin_index` (uint256): Start index of `"origin":"..."` in `client_data_json`
+6. `auth` (WebAuthnAuth struct): The WebAuthn authentication data
+7. `x` (uint256): The x coordinate of the public key
+8. `y` (uint256): The y coordinate of the public key
 
 ### Return Value
 
@@ -64,9 +83,11 @@ The contract performs the following verification steps:
    - Confirms the challenge matches the expected value
 
 2. **Authenticator Data Validation**:
+   - The strict selector verifies the RP ID hash matches `expected_rp_id_hash`
    - Checks the User Present (UP) flag is set
    - Verifies the User Verified (UV) flag if required
    - Validates backup state consistency
+   - The strict selector verifies the origin matches `expected_origin` at `origin_index`
 
 3. **Signature Verification**:
    - Computes the message hash: SHA-256(authenticator_data || SHA-256(client_data_json))
@@ -83,7 +104,7 @@ The W3C assertion verification procedure includes checks that require Relying Pa
 
 The caller is still responsible for enforcing:
 
-- Expected origin and RP ID policy. In particular, verify the RP ID hash in `authenticator_data` against the caller's expected RP ID hash.
+- Expected origin and RP ID policy when using the legacy selector. The strict selector enforces a single expected origin and RP ID hash supplied by the caller.
 - Credential binding. The supplied public key coordinates must be the registered credential public key for the authenticated account.
 - Challenge freshness and single use. A valid old assertion must not be replayable.
 - Signature counter policy, if the application relies on clone detection.
@@ -94,14 +115,14 @@ The `client_data_json`, `authenticator_data`, indexes, and public key are user-s
 
 ## Security Considerations
 
-This implementation deliberately omits some full Relying Party validations from the current ABI:
+This implementation deliberately omits some full Relying Party validations:
 
-- Origin and RP ID validation (delegated to authenticator)
+- Multiple allowed origins or richer origin parsing
 - Extension outputs
 - Signature counter
 - Attestation objects
 
-These omissions optimize gas usage for the current selector, but they mean the selector should be treated as a cryptographic assertion primitive. A future strict selector should take caller-controlled policy inputs such as expected origin, expected RP ID hash, credential ID/public key binding, and counter policy, then reject mismatches inside the contract.
+The legacy selector should be treated as a cryptographic assertion primitive. Prefer the strict selector when the caller wants the contract to reject RP ID hash or origin mismatches before returning signature success.
 
 ## License
 
