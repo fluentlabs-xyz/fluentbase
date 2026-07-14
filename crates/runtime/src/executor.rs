@@ -499,7 +499,7 @@ mod tests {
     fn call_id_overflow() {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
 
-        // Set counter to i32::MAX to trigger overflow on the next allocation
+        // Set counter past i32::MAX to trigger overflow on the next allocation.
         executor.transaction_call_id_counter = i32::MAX as u32 + 1;
 
         let interruption = RuntimeResult::Interruption(ExecutionInterruption {
@@ -511,7 +511,6 @@ mod tests {
         let engine = ExecutionEngine::acquire_shared();
         let module = RwasmModule::default();
         let ctx = RuntimeContext::default();
-
         let strategy_runtime = ContractRuntime::new(
             StrategyDefinition::Rwasm { module, engine },
             executor.import_linker.clone(),
@@ -521,10 +520,8 @@ mod tests {
         .unwrap();
         let runtime = ExecutionMode::Contract(strategy_runtime);
 
-        // Try to allocate call_id - should fail with overflow
         let result = executor.try_remember_runtime(interruption, runtime);
 
-        // Verify overflow error
         assert_eq!(result.exit_code, ExitCode::UnknownError.into_i32());
         assert_eq!(result.fuel_consumed, 100);
         assert_eq!(result.fuel_refunded, 0);

@@ -26,6 +26,7 @@ pub fn default_compilation_config_with_linker(
         })
         .with_import_linker(import_linker)
         .with_allow_malformed_entrypoint_func_type(false)
+        .with_consume_fuel_for_bulk_ops(true)
         .with_builtins_consume_fuel(true)
 }
 
@@ -61,6 +62,7 @@ pub fn compile_rwasm_maybe_system(
 
     let config = default_compilation_config()
         .with_consume_fuel(should_charge_fuel)
+        .with_consume_fuel_for_bulk_ops(!is_system_runtime)
         .with_consume_fuel_for_params_and_locals(!is_system_runtime)
         .with_builtins_consume_fuel(should_charge_fuel)
         .with_max_allowed_memory_pages(if is_system_runtime {
@@ -71,4 +73,17 @@ pub fn compile_rwasm_maybe_system(
         .with_allow_malformed_entrypoint_func_type(is_system_runtime);
 
     compile_wasm_to_rwasm_with_config(wasm_bytecode, config.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_meters_bulk_ops() {
+        let config = default_compilation_config();
+
+        assert!(config.consume_fuel);
+        assert!(config.consume_fuel_for_bulk_ops);
+    }
 }
