@@ -1,4 +1,6 @@
-use fluentbase_types::{BytecodeOrHash, B256};
+use fluentbase_types::{
+    BytecodeOrHash, CompilationBackend, CompilationConfigFingerprint, CompiledModuleCacheKey, B256,
+};
 use rwasm::RwasmModule;
 use schnellru::{Limiter, LruMap};
 use std::{
@@ -23,10 +25,28 @@ impl ModuleFactory {
 
     /// Returns a cached module for the given bytecode or compiles and caches it on first use.
     pub fn get_module_or_init(&mut self, bytecode_or_hash: BytecodeOrHash) -> RwasmModule {
-        let code_hash = bytecode_or_hash.code_hash();
         let mut ctx = self.inner.lock().unwrap();
+        let code_hash = bytecode_or_hash.code_hash();
+        let module_key = match &bytecode_or_hash {
+            BytecodeOrHash::Bytecode { address, .. } => CompiledModuleCacheKey::new(
+                code_hash,
+                CompilationConfigFingerprint::from_config(
+                    &fluentbase_sdk_config_for_runtime_cache(*address),
+                    CompilationBackend::Rwasm,
+                    *address,
+                ),
+            ),
+            BytecodeOrHash::Hash(_hash) => {
+                // Hash-only lookups are only valid after an earlier bytecode warmup. Keep this
+                // deterministic by resolving through the explicit code-hash index.
+                let Some(module_key) = ctx.module_keys_by_code_hash.get(&code_hash).copied() else {
+                    panic!("runtime: can't compile just by hash")
+                };
+                module_key
+            }
+        };
 
-        if let Some(entry) = ctx.cached_modules.get(&code_hash) {
+        if let Some(entry) = ctx.cached_modules.get(&module_key) {
             return entry.clone();
         }
 
@@ -38,13 +58,16 @@ impl ModuleFactory {
             }
         };
 
-        ctx.cached_modules.insert(code_hash, rwasm_module.clone());
+        ctx.module_keys_by_code_hash.insert(code_hash, module_key);
+        ctx.cached_modules.insert(module_key, rwasm_module.clone());
         rwasm_module
     }
 }
 
 struct ModuleFactoryInner {
-    pub cached_modules: LruMap<B256, RwasmModule, ModuleMemoryLimiter<RwasmModule>>,
+    pub cached_modules:
+        LruMap<CompiledModuleCacheKey, RwasmModule, ModuleMemoryLimiter<RwasmModule>>,
+    pub module_keys_by_code_hash: std::collections::HashMap<B256, CompiledModuleCacheKey>,
 }
 
 /// Maximum memory for module cache: 1 GB
@@ -59,8 +82,45 @@ impl Default for ModuleFactoryInner {
             cached_modules: LruMap::new(ModuleMemoryLimiter::<RwasmModule>::new(
                 CACHED_MODULES_SIZE_LIMIT,
             )),
+            module_keys_by_code_hash: std::collections::HashMap::new(),
         }
     }
+}
+
+fn fluentbase_sdk_config_for_runtime_cache(
+    address: fluentbase_types::Address,
+) -> rwasm::CompilationConfig {
+    let is_system_runtime = fluentbase_types::is_execute_using_system_runtime(&address);
+    let should_charge_fuel = false;
+
+    fluentbase_sdk_like_default_config()
+        .with_consume_fuel(should_charge_fuel)
+        .with_consume_fuel_for_bulk_ops(!is_system_runtime)
+        .with_consume_fuel_for_params_and_locals(!is_system_runtime)
+        .with_builtins_consume_fuel(should_charge_fuel)
+        .with_max_allowed_memory_pages(if is_system_runtime {
+            rwasm::N_MAX_ALLOWED_MEMORY_PAGES
+        } else {
+            rwasm::N_DEFAULT_MAX_MEMORY_PAGES
+        })
+        .with_allow_malformed_entrypoint_func_type(is_system_runtime)
+}
+
+fn fluentbase_sdk_like_default_config() -> rwasm::CompilationConfig {
+    rwasm::CompilationConfig::default()
+        .with_state_router(rwasm::StateRouterConfig {
+            states: Box::new([
+                ("deploy".into(), fluentbase_types::STATE_DEPLOY),
+                ("main".into(), fluentbase_types::STATE_MAIN),
+            ]),
+            opcode: Some(rwasm::Opcode::Call(
+                fluentbase_types::SysFuncIdx::STATE as u32,
+            )),
+        })
+        .with_import_linker(fluentbase_types::import_linker_v1_preview())
+        .with_allow_malformed_entrypoint_func_type(false)
+        .with_consume_fuel_for_bulk_ops(true)
+        .with_builtins_consume_fuel(true)
 }
 
 /// Trait for estimating heap-allocated memory size of cached values.
@@ -135,8 +195,8 @@ impl<V> ModuleMemoryLimiter<V> {
     }
 }
 
-impl<V: SizeEstimator> Limiter<B256, V> for ModuleMemoryLimiter<V> {
-    type KeyToInsert<'a> = B256;
+impl<V: SizeEstimator> Limiter<CompiledModuleCacheKey, V> for ModuleMemoryLimiter<V> {
+    type KeyToInsert<'a> = CompiledModuleCacheKey;
     type LinkType = u32;
 
     /// Checks if eviction is needed after an insert or replacement.
@@ -155,7 +215,7 @@ impl<V: SizeEstimator> Limiter<B256, V> for ModuleMemoryLimiter<V> {
         _length: usize,
         key: Self::KeyToInsert<'_>,
         value: V,
-    ) -> Option<(B256, V)> {
+    ) -> Option<(CompiledModuleCacheKey, V)> {
         let size = value.estimate_size();
 
         if size == 0 || size > self.max_bytes {
@@ -177,7 +237,7 @@ impl<V: SizeEstimator> Limiter<B256, V> for ModuleMemoryLimiter<V> {
     fn on_replace(
         &mut self,
         _length: usize,
-        _old_key: &mut B256,
+        _old_key: &mut CompiledModuleCacheKey,
         _new_key: Self::KeyToInsert<'_>,
         old_value: &mut V,
         new_value: &mut V,
@@ -198,7 +258,7 @@ impl<V: SizeEstimator> Limiter<B256, V> for ModuleMemoryLimiter<V> {
     }
 
     /// Updates size tracking after an entry is removed.
-    fn on_removed(&mut self, _key: &mut B256, value: &mut V) {
+    fn on_removed(&mut self, _key: &mut CompiledModuleCacheKey, value: &mut V) {
         let size = value.estimate_size();
         self.current_bytes = self.current_bytes.saturating_sub(size);
     }
@@ -248,7 +308,24 @@ mod tests {
     /// Fixed seed for deterministic hash table behavior.
     const TEST_SEED: [u64; 4] = [1, 2, 3, 4];
 
-    fn new_cache(max_bytes: usize) -> LruMap<B256, RwasmModule, ModuleMemoryLimiter<RwasmModule>> {
+    fn cache_key(id: u16) -> CompiledModuleCacheKey {
+        cache_key_with_address_byte(key(id), id as u8)
+    }
+
+    fn cache_key_with_address_byte(code_hash: B256, address_byte: u8) -> CompiledModuleCacheKey {
+        CompiledModuleCacheKey::new(
+            code_hash,
+            CompilationConfigFingerprint::from_config(
+                &fluentbase_sdk_like_default_config(),
+                CompilationBackend::Rwasm,
+                fluentbase_types::Address::repeat_byte(address_byte),
+            ),
+        )
+    }
+
+    fn new_cache(
+        max_bytes: usize,
+    ) -> LruMap<CompiledModuleCacheKey, RwasmModule, ModuleMemoryLimiter<RwasmModule>> {
         LruMap::with_seed(ModuleMemoryLimiter::new(max_bytes), TEST_SEED)
     }
 
@@ -258,19 +335,35 @@ mod tests {
     fn insert_and_retrieve() {
         let mut cache = new_cache(1000);
 
-        cache.insert(key(1), module(100));
+        cache.insert(cache_key(1), module(100));
 
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.limiter().current_bytes(), 100);
-        assert!(cache.get(&key(1)).is_some());
+        assert!(cache.get(&cache_key(1)).is_some());
+    }
+
+    #[test]
+    fn identical_code_hash_with_different_fingerprints_uses_distinct_entries() {
+        let mut cache = new_cache(1000);
+        let code_hash = key(42);
+        let key_a = cache_key_with_address_byte(code_hash, 0xaa);
+        let key_b = cache_key_with_address_byte(code_hash, 0xbb);
+
+        cache.insert(key_a, module(100));
+        cache.insert(key_b, module(100));
+
+        assert_ne!(key_a.config_fingerprint, key_b.config_fingerprint);
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get(&key_a).is_some());
+        assert!(cache.get(&key_b).is_some());
     }
 
     #[test]
     fn remove_updates_tracking() {
         let mut cache = new_cache(1000);
 
-        cache.insert(key(1), module(100));
-        cache.remove(&key(1));
+        cache.insert(cache_key(1), module(100));
+        cache.remove(&cache_key(1));
 
         assert_eq!(cache.len(), 0);
         assert_eq!(cache.limiter().current_bytes(), 0);
@@ -280,8 +373,8 @@ mod tests {
     fn clear_resets_tracking() {
         let mut cache = new_cache(1000);
 
-        cache.insert(key(1), module(100));
-        cache.insert(key(2), module(200));
+        cache.insert(cache_key(1), module(100));
+        cache.insert(cache_key(2), module(200));
         cache.clear();
 
         assert_eq!(cache.len(), 0);
@@ -295,7 +388,7 @@ mod tests {
         let mut cache = new_cache(500); // 5 × 100 bytes
 
         for i in 0..10u16 {
-            cache.insert(key(i), module(100));
+            cache.insert(cache_key(i), module(100));
         }
 
         assert_eq!(cache.len(), 5);
@@ -303,10 +396,13 @@ mod tests {
 
         // Oldest (0-4) evicted, newest (5-9) remain
         for i in 0..5u16 {
-            assert!(cache.get(&key(i)).is_none(), "key({i}) should be evicted");
+            assert!(
+                cache.get(&cache_key(i)).is_none(),
+                "key({i}) should be evicted"
+            );
         }
         for i in 5..10u16 {
-            assert!(cache.get(&key(i)).is_some(), "key({i}) should remain");
+            assert!(cache.get(&cache_key(i)).is_some(), "key({i}) should remain");
         }
     }
 
@@ -314,20 +410,23 @@ mod tests {
     fn access_promotes_entry() {
         let mut cache = new_cache(300); // 3 × 100 bytes
 
-        cache.insert(key(0), module(100));
-        cache.insert(key(1), module(100));
-        cache.insert(key(2), module(100));
+        cache.insert(cache_key(0), module(100));
+        cache.insert(cache_key(1), module(100));
+        cache.insert(cache_key(2), module(100));
 
         // Promote key(0) to MRU
-        let _ = cache.get(&key(0));
+        let _ = cache.get(&cache_key(0));
 
         // Insert key(3) → evicts LRU (key(1))
-        cache.insert(key(3), module(100));
+        cache.insert(cache_key(3), module(100));
 
-        assert!(cache.get(&key(0)).is_some(), "accessed entry should remain");
-        assert!(cache.get(&key(1)).is_none(), "LRU should be evicted");
-        assert!(cache.get(&key(2)).is_some());
-        assert!(cache.get(&key(3)).is_some());
+        assert!(
+            cache.get(&cache_key(0)).is_some(),
+            "accessed entry should remain"
+        );
+        assert!(cache.get(&cache_key(1)).is_none(), "LRU should be evicted");
+        assert!(cache.get(&cache_key(2)).is_some());
+        assert!(cache.get(&cache_key(3)).is_some());
     }
 
     // ==================== Replacement Behavior ====================
@@ -336,16 +435,19 @@ mod tests {
     fn replacement_triggers_eviction_not_removal() {
         let mut cache = new_cache(300); // 3 × 100 bytes
 
-        cache.insert(key(1), module(100));
-        cache.insert(key(2), module(100));
-        cache.insert(key(3), module(100));
+        cache.insert(cache_key(1), module(100));
+        cache.insert(cache_key(2), module(100));
+        cache.insert(cache_key(3), module(100));
 
         // Replace key(2): 100 → 150, total 350 → evicts key(1)
-        cache.insert(key(2), module(150));
+        cache.insert(cache_key(2), module(150));
 
-        assert!(cache.get(&key(2)).is_some(), "replaced entry must remain");
-        assert!(cache.get(&key(1)).is_none(), "LRU should be evicted");
-        assert!(cache.get(&key(3)).is_some());
+        assert!(
+            cache.get(&cache_key(2)).is_some(),
+            "replaced entry must remain"
+        );
+        assert!(cache.get(&cache_key(1)).is_none(), "LRU should be evicted");
+        assert!(cache.get(&cache_key(3)).is_some());
         assert_eq!(cache.len(), 2);
         assert_eq!(cache.limiter().current_bytes(), 250);
     }
@@ -354,8 +456,8 @@ mod tests {
     fn replacement_with_smaller_value() {
         let mut cache = new_cache(200);
 
-        cache.insert(key(1), module(150));
-        cache.insert(key(1), module(50));
+        cache.insert(cache_key(1), module(150));
+        cache.insert(cache_key(1), module(50));
 
         assert_eq!(cache.limiter().current_bytes(), 50);
         assert_eq!(cache.limiter().available_bytes(), 150);
@@ -367,7 +469,7 @@ mod tests {
     fn rejects_oversized_item() {
         let mut cache = new_cache(100);
 
-        let inserted = cache.insert(key(1), module(101));
+        let inserted = cache.insert(cache_key(1), module(101));
 
         assert!(!inserted);
         assert_eq!(cache.len(), 0);
@@ -378,7 +480,7 @@ mod tests {
     fn rejects_zero_size_item() {
         let mut cache = new_cache(100);
 
-        let inserted = cache.insert(key(1), module(0));
+        let inserted = cache.insert(cache_key(1), module(0));
 
         assert!(!inserted);
         assert_eq!(cache.len(), 0);
@@ -388,8 +490,8 @@ mod tests {
     fn replacement_with_oversized_removes_entry() {
         let mut cache = new_cache(100);
 
-        cache.insert(key(1), module(50));
-        cache.insert(key(1), module(101));
+        cache.insert(cache_key(1), module(50));
+        cache.insert(cache_key(1), module(101));
 
         assert_eq!(cache.len(), 0);
         assert_eq!(cache.limiter().current_bytes(), 0);
@@ -399,8 +501,8 @@ mod tests {
     fn replacement_with_zero_size_removes_entry() {
         let mut cache = new_cache(100);
 
-        cache.insert(key(1), module(50));
-        cache.insert(key(1), module(0));
+        cache.insert(cache_key(1), module(50));
+        cache.insert(cache_key(1), module(0));
 
         assert_eq!(cache.len(), 0);
         assert_eq!(cache.limiter().current_bytes(), 0);
@@ -420,7 +522,7 @@ mod tests {
     fn exact_capacity_fit() {
         let mut cache = new_cache(100);
 
-        let inserted = cache.insert(key(1), module(100));
+        let inserted = cache.insert(cache_key(1), module(100));
 
         assert!(inserted);
         assert_eq!(cache.len(), 1);
@@ -433,16 +535,16 @@ mod tests {
         let mut cache = new_cache(400); // 4 × 100 bytes
 
         for i in 0..4u16 {
-            cache.insert(key(i), module(100));
+            cache.insert(cache_key(i), module(100));
         }
         assert_eq!(cache.len(), 4);
 
         // Insert 250 bytes → evicts 3 items to fit
-        cache.insert(key(10), module(250));
+        cache.insert(cache_key(10), module(250));
 
         assert_eq!(cache.len(), 2);
         assert!(cache.limiter().current_bytes() <= 400);
-        assert!(cache.get(&key(10)).is_some());
+        assert!(cache.get(&cache_key(10)).is_some());
     }
 
     #[test]
@@ -450,15 +552,15 @@ mod tests {
         let mut cache = new_cache(100_000);
 
         for i in 0..500u16 {
-            cache.insert(key(i), module(100));
+            cache.insert(cache_key(i), module(100));
         }
 
         assert_eq!(cache.len(), 500);
         assert_eq!(cache.limiter().current_bytes(), 50_000);
 
         // Verify access after growth
-        assert!(cache.get(&key(0)).is_some());
-        assert!(cache.get(&key(250)).is_some());
-        assert!(cache.get(&key(499)).is_some());
+        assert!(cache.get(&cache_key(0)).is_some());
+        assert!(cache.get(&cache_key(250)).is_some());
+        assert!(cache.get(&cache_key(499)).is_some());
     }
 }

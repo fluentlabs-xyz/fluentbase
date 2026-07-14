@@ -3,6 +3,8 @@
 #![warn(unused_crate_dependencies)]
 extern crate alloc;
 extern crate core;
+#[cfg(test)]
+use wat as _;
 
 mod context;
 #[cfg(feature = "std")]

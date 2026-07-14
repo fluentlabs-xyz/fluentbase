@@ -350,6 +350,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
                 module,
                 self.import_linker.clone(),
                 code_hash,
+                address,
                 ctx,
                 consume_fuel,
             );
