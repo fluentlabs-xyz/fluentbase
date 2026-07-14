@@ -1,4 +1,4 @@
-use alloc::{format, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 use fluentbase_sdk::{codec::Codec, crypto::crypto_sha256, Bytes, ExitCode, B256, U256};
 
 /// WebAuthn authenticator data flag bits
