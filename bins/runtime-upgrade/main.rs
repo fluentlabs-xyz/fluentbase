@@ -4,7 +4,7 @@ use ethers::{
     middleware::SignerMiddleware,
     providers::{Http, Middleware, Provider},
     signers::{LocalWallet, Signer},
-    types::{transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest},
+    types::{transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest, U64},
 };
 use flate2::read::GzDecoder;
 use fluentbase_sdk::{
@@ -144,6 +144,30 @@ struct PlannedUpgrade {
     contract_key: String,
     contract: Address,
     wasm_code_hash: B256,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransactionOutcome {
+    Printed,
+    Mined {
+        tx_hash: ethers::types::H256,
+        receipt_status: u64,
+    },
+}
+
+#[derive(Serialize)]
+struct UpgradeResultManifest {
+    entries: Vec<UpgradeResultEntry>,
+}
+
+#[derive(Serialize)]
+struct UpgradeResultEntry {
+    target: String,
+    expected_hash: String,
+    transaction_hash: Option<String>,
+    receipt_status: Option<u64>,
+    verified_onchain_hash: Option<String>,
+    result: &'static str,
 }
 
 #[derive(Serialize)]
@@ -443,16 +467,24 @@ fn function_selector(signature: &[u8]) -> [u8; 4] {
     selector
 }
 
-fn load_release_modules(genesis: &alloy_genesis::Genesis) -> Result<HashMap<Address, RwasmModule>> {
+fn load_release_modules(
+    genesis: &alloy_genesis::Genesis,
+    upgrade_list: &[Address],
+) -> Result<HashMap<Address, RwasmModule>> {
     let mut rwasm_module_by_address: HashMap<Address, RwasmModule> = HashMap::new();
-    for (addr, entry) in genesis.alloc.iter() {
-        let Some(code) = entry.code.as_ref() else {
-            continue;
-        };
-        let Ok((module, _)) = RwasmModule::new_checked(code.as_ref()) else {
-            println!("WARN: Skipping malformed rwasm binary");
-            continue;
-        };
+    for addr in upgrade_list {
+        let entry = genesis.alloc.get(addr).ok_or_else(|| {
+            anyhow!(
+                "selected contract {} is missing from release artifacts",
+                addr
+            )
+        })?;
+        let code = entry
+            .code
+            .as_ref()
+            .ok_or_else(|| anyhow!("selected contract {} has no release bytecode", addr))?;
+        let (module, _) = RwasmModule::new_checked(code.as_ref())
+            .with_context(|| format!("malformed rwasm artifact in genesis allocation {}", addr))?;
         if module.hint_section.is_empty() {
             bail!("Failed to extract WASM bytecode from {}", addr);
         }
@@ -480,6 +512,30 @@ fn select_contracts(
             Ok(vec![*addr])
         }
     }
+}
+
+fn preflight_selected_modules(
+    rwasm_module_by_address: &HashMap<Address, RwasmModule>,
+    upgrade_list: &[Address],
+) -> Result<()> {
+    for contract in upgrade_list {
+        let module = rwasm_module_by_address.get(contract).ok_or_else(|| {
+            anyhow!(
+                "selected contract {} is missing from release artifacts",
+                contract
+            )
+        })?;
+        if module.hint_section.is_empty() {
+            bail!(
+                "selected contract {} has an empty Wasm hint section",
+                contract
+            );
+        }
+        if module.hint_section.len() >= WASM_MAX_CODE_SIZE {
+            bail!("selected contract {} exceeds 1MiB", contract);
+        }
+    }
+    Ok(())
 }
 
 fn encode_direct_upgrade_call(
@@ -522,7 +578,7 @@ async fn send_runtime_upgrade_tx(
     signer: &SignerMiddleware<Provider<Http>, LocalWallet>,
     tx: TransactionRequest,
     print_raw_tx: bool,
-) -> Result<bool> {
+) -> Result<TransactionOutcome> {
     if print_raw_tx {
         let mut typed: TypedTransaction = tx.into();
         signer
@@ -536,37 +592,44 @@ async fn send_runtime_upgrade_tx(
             .context("sign_transaction")?;
         let raw = typed.rlp_signed(&sig);
         println!("RAW_TX=0x{}", hex::encode(raw));
-        return Ok(false);
+        return Ok(TransactionOutcome::Printed);
     }
 
     match signer.send_transaction(tx, None).await {
         Ok(pending) => {
             let tx_hash = *pending;
-            match pending.await {
-                Ok(Some(rcpt)) => {
-                    let bn = rcpt.block_number.map(|v| v.as_u64()).unwrap_or_default();
-                    println!("DONE (tx_hash={:#x}, block_number={})", tx_hash, bn);
-                    Ok(true)
-                }
-                Ok(None) => {
-                    println!("DONE (tx_hash={:#x}, block_number=?)", tx_hash);
-                    Ok(true)
-                }
-                Err(e) => {
-                    println!("FAILED ({})", e);
-                    Ok(false)
-                }
-            }
+            let rcpt = pending
+                .await
+                .with_context(|| format!("waiting for receipt for tx {:#x}", tx_hash))?
+                .ok_or_else(|| anyhow!("missing receipt for tx {:#x}", tx_hash))?;
+            let status = receipt_success_status(rcpt.status)
+                .with_context(|| format!("tx {:#x} did not succeed", tx_hash))?;
+            let bn = rcpt.block_number.map(|v| v.as_u64()).unwrap_or_default();
+            println!(
+                "DONE (tx_hash={:#x}, block_number={}, status={})",
+                tx_hash, bn, status
+            );
+            Ok(TransactionOutcome::Mined {
+                tx_hash,
+                receipt_status: status,
+            })
         }
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("intrinsic gas too low") {
-                println!("FAILED (intrinsic gas too low)");
+                bail!("send_transaction failed: intrinsic gas too low");
             } else {
-                println!("FAILED ({})", msg);
+                bail!("send_transaction failed: {}", msg);
             }
-            Ok(false)
         }
+    }
+}
+
+fn receipt_success_status(status: Option<U64>) -> Result<u64> {
+    match status.map(|v| v.as_u64()) {
+        Some(1) => Ok(1),
+        Some(value) => bail!("receipt status is {}", value),
+        None => bail!("receipt status is missing"),
     }
 }
 
@@ -624,7 +687,6 @@ async fn main() -> Result<()> {
     let genesis = download_genesis_file(&common.genesis).await?;
     let genesis_header = make_genesis_header(&genesis, &FLUENT_HARDFORKS);
     let genesis_hash = genesis_header.hash_slow();
-    let rwasm_module_by_address = load_release_modules(&genesis)?;
 
     // Determine which contracts to upgrade.
     let contracts = contracts_to_upgrade();
@@ -632,6 +694,8 @@ async fn main() -> Result<()> {
     if upgrade_list.is_empty() {
         return Ok(());
     }
+    let rwasm_module_by_address = load_release_modules(&genesis, &upgrade_list)?;
+    preflight_selected_modules(&rwasm_module_by_address, &upgrade_list)?;
 
     let rpc = pick_rpc(common)?;
     let provider = Provider::<Http>::try_from(rpc).context("creating provider")?;
@@ -649,22 +713,17 @@ async fn main() -> Result<()> {
                 print!("Planning contract {}... ", contract);
                 std::io::stdout().flush().ok();
 
-                let new_rwasm: RwasmModule = rwasm_module_by_address
+                let new_rwasm = rwasm_module_by_address
                     .get(&contract)
-                    .cloned()
-                    .unwrap_or_default();
-                if new_rwasm.hint_section.len() >= WASM_MAX_CODE_SIZE {
-                    println!("FAILED (contract exceeds 1MiB)");
-                    continue;
-                }
+                    .expect("selected modules were preflighted");
 
                 let on_chain_code = provider
                     .get_code(NameOrAddress::Address((*contract.0).into()), None)
                     .await
                     .context("get_code")?;
-                let (onchain_rwasm, _) =
-                    RwasmModule::new_checked(on_chain_code.as_ref()).unwrap_or_default();
-                if onchain_rwasm == new_rwasm {
+                let (onchain_rwasm, _) = RwasmModule::new_checked(on_chain_code.as_ref())
+                    .with_context(|| format!("decoding on-chain rwasm for {}", contract))?;
+                if &onchain_rwasm == new_rwasm {
                     println!("UP-TO-DATE");
                     continue;
                 }
@@ -732,27 +791,36 @@ async fn run_upgrade_transactions(
     println!("Wallet loaded ({})", wallet.address());
     let wallet = wallet.with_chain_id(chain_id);
     let signer = SignerMiddleware::new(provider.clone(), wallet);
+    let mut manifest = UpgradeResultManifest {
+        entries: Vec::new(),
+    };
 
     for contract in upgrade_list {
         print!("Upgrading contract {}... ", contract);
         std::io::stdout().flush().ok();
 
-        let new_rwasm: RwasmModule = rwasm_module_by_address
+        let new_rwasm = rwasm_module_by_address
             .get(&contract)
-            .cloned()
-            .unwrap_or_default();
-        if new_rwasm.hint_section.len() >= WASM_MAX_CODE_SIZE {
-            println!("FAILED (contract exceeds 1MiB)");
-            continue;
-        }
+            .expect("selected modules were preflighted");
+        let expected_hash = crypto_keccak256(new_rwasm.hint_section.as_slice());
 
         let on_chain_code = provider
             .get_code(NameOrAddress::Address((*contract.0).into()), None)
             .await
             .context("get_code")?;
-        let (onchain_rwasm, _) =
-            RwasmModule::new_checked(on_chain_code.as_ref()).unwrap_or_default();
-        if onchain_rwasm == new_rwasm {
+        let (onchain_rwasm, _) = RwasmModule::new_checked(on_chain_code.as_ref())
+            .with_context(|| format!("decoding on-chain rwasm for {}", contract))?;
+        if &onchain_rwasm == new_rwasm {
+            manifest.entries.push(UpgradeResultEntry {
+                target: address_hex(contract),
+                expected_hash: hash_hex(expected_hash),
+                transaction_hash: None,
+                receipt_status: None,
+                verified_onchain_hash: Some(hash_hex(crypto_keccak256(
+                    onchain_rwasm.hint_section.as_slice(),
+                ))),
+                result: "up_to_date",
+            });
             println!("UP-TO-DATE");
             continue;
         }
@@ -767,8 +835,30 @@ async fn run_upgrade_transactions(
             tx = tx.gas(gas_limit);
         }
 
-        let was_broadcast = send_runtime_upgrade_tx(&signer, tx, tx_args.print_raw_tx).await?;
-        if !was_broadcast {
+        let outcome = match send_runtime_upgrade_tx(&signer, tx, tx_args.print_raw_tx).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                manifest.entries.push(UpgradeResultEntry {
+                    target: address_hex(contract),
+                    expected_hash: hash_hex(expected_hash),
+                    transaction_hash: None,
+                    receipt_status: None,
+                    verified_onchain_hash: None,
+                    result: "failed",
+                });
+                print_result_manifest(&manifest)?;
+                return Err(error);
+            }
+        };
+        if outcome == TransactionOutcome::Printed {
+            manifest.entries.push(UpgradeResultEntry {
+                target: address_hex(contract),
+                expected_hash: hash_hex(expected_hash),
+                transaction_hash: None,
+                receipt_status: None,
+                verified_onchain_hash: None,
+                result: "raw_tx_printed",
+            });
             continue;
         }
 
@@ -776,16 +866,103 @@ async fn run_upgrade_transactions(
             .get_code(NameOrAddress::Address((*contract.0).into()), None)
             .await
             .context("get_code")?;
-        let (onchain_rwasm, _) =
-            RwasmModule::new_checked(on_chain_code.as_ref()).unwrap_or_default();
-        if onchain_rwasm != new_rwasm {
-            println!(
-                " ~ WARNING: upgraded contract bytecode doesn't match: {}, should be {}",
-                onchain_rwasm.hint_section.len(),
-                new_rwasm.hint_section.len()
+        let (onchain_rwasm, _) = RwasmModule::new_checked(on_chain_code.as_ref())
+            .with_context(|| format!("decoding post-upgrade on-chain rwasm for {}", contract))?;
+        let verified_hash = crypto_keccak256(onchain_rwasm.hint_section.as_slice());
+        if &onchain_rwasm != new_rwasm {
+            manifest.entries.push(UpgradeResultEntry {
+                target: address_hex(contract),
+                expected_hash: hash_hex(expected_hash),
+                transaction_hash: transaction_hash(outcome),
+                receipt_status: receipt_status(outcome),
+                verified_onchain_hash: Some(hash_hex(verified_hash)),
+                result: "verification_failed",
+            });
+            print_result_manifest(&manifest)?;
+            bail!(
+                "post-upgrade bytecode mismatch for {}: verified {}, expected {}",
+                contract,
+                hash_hex(verified_hash),
+                hash_hex(expected_hash)
             );
         }
+        manifest.entries.push(UpgradeResultEntry {
+            target: address_hex(contract),
+            expected_hash: hash_hex(expected_hash),
+            transaction_hash: transaction_hash(outcome),
+            receipt_status: receipt_status(outcome),
+            verified_onchain_hash: Some(hash_hex(verified_hash)),
+            result: "upgraded",
+        });
     }
 
+    print_result_manifest(&manifest)?;
     Ok(())
+}
+
+fn transaction_hash(outcome: TransactionOutcome) -> Option<String> {
+    match outcome {
+        TransactionOutcome::Printed => None,
+        TransactionOutcome::Mined { tx_hash, .. } => Some(format!("{:#x}", tx_hash)),
+    }
+}
+
+fn receipt_status(outcome: TransactionOutcome) -> Option<u64> {
+    match outcome {
+        TransactionOutcome::Printed => None,
+        TransactionOutcome::Mined { receipt_status, .. } => Some(receipt_status),
+    }
+}
+
+fn print_result_manifest(manifest: &UpgradeResultManifest) -> Result<()> {
+    let json = serde_json::to_string(manifest).context("serializing result manifest")?;
+    println!("RESULT_MANIFEST_JSON={}", json);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preflight_fails_when_selected_contract_is_missing() {
+        let modules = HashMap::new();
+        let err = preflight_selected_modules(&modules, &[PRECOMPILE_EVM_RUNTIME])
+            .expect_err("missing selected contract must fail preflight");
+
+        assert!(err
+            .to_string()
+            .contains("is missing from release artifacts"));
+    }
+
+    #[test]
+    fn preflight_fails_when_selected_contract_has_empty_hint_section() {
+        let mut modules = HashMap::new();
+        modules.insert(PRECOMPILE_EVM_RUNTIME, RwasmModule::default());
+
+        let err = preflight_selected_modules(&modules, &[PRECOMPILE_EVM_RUNTIME])
+            .expect_err("empty hint section must fail preflight");
+
+        assert!(err.to_string().contains("empty Wasm hint section"));
+    }
+
+    #[test]
+    fn reverted_receipt_fails() {
+        let err =
+            receipt_success_status(Some(U64::zero())).expect_err("reverted receipt must fail");
+
+        assert!(err.to_string().contains("receipt status is 0"));
+    }
+
+    #[test]
+    fn missing_receipt_status_fails() {
+        let err = receipt_success_status(None).expect_err("missing receipt status must fail");
+
+        assert!(err.to_string().contains("receipt status is missing"));
+    }
+
+    #[test]
+    fn successful_receipt_status_is_returned() {
+        assert_eq!(receipt_success_status(Some(U64::one())).unwrap(), 1);
+    }
 }
