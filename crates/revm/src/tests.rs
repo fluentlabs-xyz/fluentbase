@@ -11,8 +11,8 @@ use fluentbase_sdk::{
     calc_create_metadata_address,
     syscall::{
         SYSCALL_ID_BLOCK_HASH, SYSCALL_ID_CODE_COPY, SYSCALL_ID_CODE_HASH,
-        SYSCALL_ID_METADATA_COPY, SYSCALL_ID_METADATA_CREATE, SYSCALL_ID_METADATA_WRITE,
-        SYSCALL_ID_STORAGE_WRITE,
+        SYSCALL_ID_METADATA_COPY, SYSCALL_ID_METADATA_CREATE, SYSCALL_ID_METADATA_STORAGE_READ,
+        SYSCALL_ID_METADATA_STORAGE_WRITE, SYSCALL_ID_METADATA_WRITE, SYSCALL_ID_STORAGE_WRITE,
     },
     Address, Bytes, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_WASM_RUNTIME, STATE_MAIN, U256,
 };
@@ -38,6 +38,196 @@ impl MemoryReaderTr for ForwardInputMemoryReader {
             .ok_or(TrapCode::MemoryOutOfBounds)?
             .copy_to_slice(buffer);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod metadata_storage_gas_tests {
+    use super::*;
+    use revm::{
+        context::Cfg, handler::system_interruption::SystemInterruptionInputs, state::Account,
+    };
+
+    fn new_context(owner: Address, storage: Option<(U256, U256)>) -> RwasmContext<InMemoryDB> {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(owner, AccountInfo::default());
+        if let Some((slot, value)) = storage {
+            db.insert_account_storage(owner, slot, value).unwrap();
+        }
+        let mut ctx = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        let transaction_id = ctx.journaled_state.inner.transaction_id;
+        ctx.journaled_state.inner.state.insert(
+            owner,
+            Account {
+                info: AccountInfo::default(),
+                original_info: Box::<AccountInfo>::default(),
+                transaction_id,
+                storage: Default::default(),
+                status: Default::default(),
+            },
+        );
+        ctx
+    }
+
+    fn execute_metadata_storage(
+        ctx: &mut RwasmContext<InMemoryDB>,
+        owner: Address,
+        code_hash: B256,
+        input: Vec<u8>,
+        gas_limit: u64,
+        is_static: bool,
+    ) -> (InstructionResult, Bytes, Gas, i64) {
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.account_owner = Some(owner);
+        frame.interpreter.runtime_flag.is_static = is_static;
+        frame.interpreter.gas = Gas::new(gas_limit);
+        let mr = ForwardInputMemoryReader(input.into());
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            code_hash,
+            input: 0..mr.0.len(),
+            fuel_limit: 0,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
+            gas: Gas::new(gas_limit),
+            preloaded_slot_costs: None,
+        };
+
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            ctx,
+            interruption_inputs,
+            mr,
+        )
+        .unwrap();
+
+        let refunded = frame.interpreter.gas.refunded();
+        match frame.interrupted_outcome {
+            Some(outcome) => {
+                let result = outcome.result.expect("metadata storage returns an outcome");
+                (result.result, result.output, result.gas, refunded)
+            }
+            None => {
+                let result = result.into_interpreter_action();
+                (
+                    result.instruction_result().unwrap(),
+                    Bytes::new(),
+                    Gas::new(0),
+                    refunded,
+                )
+            }
+        }
+    }
+
+    fn slot_input(slot: U256) -> Vec<u8> {
+        slot.to_le_bytes::<32>().to_vec()
+    }
+
+    fn write_input(slot: U256, value: U256) -> Vec<u8> {
+        let mut input = vec![0u8; 64];
+        input[0..32].copy_from_slice(&slot.to_le_bytes::<32>());
+        input[32..64].copy_from_slice(&value.to_le_bytes::<32>());
+        input
+    }
+
+    #[test]
+    fn metadata_storage_read_charges_cold_then_warm_storage_cost() {
+        let owner = address!("1111111111111111111111111111111111111111");
+        let slot = U256::from(7);
+        let value = U256::from(0xbeefu64);
+        let mut ctx = new_context(owner, Some((slot, value)));
+
+        let (cold_result, cold_output, cold_gas, _) = execute_metadata_storage(
+            &mut ctx,
+            owner,
+            SYSCALL_ID_METADATA_STORAGE_READ,
+            slot_input(slot),
+            10_000_000,
+            false,
+        );
+        let (warm_result, warm_output, warm_gas, _) = execute_metadata_storage(
+            &mut ctx,
+            owner,
+            SYSCALL_ID_METADATA_STORAGE_READ,
+            slot_input(slot),
+            10_000_000,
+            false,
+        );
+
+        assert_eq!(cold_result, InstructionResult::Return);
+        assert_eq!(warm_result, InstructionResult::Return);
+        assert_eq!(cold_output.as_ref(), value.to_le_bytes::<32>().as_slice());
+        assert_eq!(warm_output, cold_output);
+        assert_eq!(
+            cold_gas.total_gas_spent(),
+            ctx.cfg().gas_params().cold_storage_cost()
+        );
+        assert_eq!(
+            warm_gas.total_gas_spent(),
+            ctx.cfg().gas_params().warm_storage_read_cost()
+        );
+    }
+
+    #[test]
+    fn metadata_storage_write_charges_sstore_cost_and_records_refund() {
+        let owner = address!("1111111111111111111111111111111111111111");
+        let slot = U256::from(7);
+        let old_value = U256::from(0xbeefu64);
+        let mut ctx = new_context(owner, Some((slot, old_value)));
+
+        let (result, _, gas, refunded) = execute_metadata_storage(
+            &mut ctx,
+            owner,
+            SYSCALL_ID_METADATA_STORAGE_WRITE,
+            write_input(slot, U256::ZERO),
+            10_000_000,
+            false,
+        );
+
+        assert_eq!(result, InstructionResult::Stop);
+        assert_eq!(
+            gas.total_gas_spent(),
+            ctx.cfg().gas_params().sstore_static_gas()
+                + ctx.cfg().gas_params().cold_storage_cost()
+                + ctx.cfg().gas_params().sstore_reset_without_cold_load_cost()
+        );
+        assert_eq!(
+            refunded,
+            ctx.cfg().gas_params().sstore_clearing_slot_refund() as i64
+        );
+        assert_eq!(
+            ctx.journal_mut().sload(owner, slot).unwrap().data,
+            StorageValue::ZERO
+        );
+    }
+
+    #[test]
+    fn metadata_storage_write_oog_before_sstore_leaves_slot_unchanged() {
+        let owner = address!("1111111111111111111111111111111111111111");
+        let slot = U256::from(7);
+        let old_value = U256::from(0xbeefu64);
+        let mut ctx = new_context(owner, Some((slot, old_value)));
+        let gas_limit = ctx.cfg().gas_params().call_stipend();
+
+        let (result, _, _, _) = execute_metadata_storage(
+            &mut ctx,
+            owner,
+            SYSCALL_ID_METADATA_STORAGE_WRITE,
+            write_input(slot, U256::ZERO),
+            gas_limit,
+            false,
+        );
+
+        assert_eq!(result, InstructionResult::OutOfFuel);
+        assert_eq!(
+            ctx.journal_mut().sload(owner, slot).unwrap().data,
+            old_value
+        );
     }
 }
 
