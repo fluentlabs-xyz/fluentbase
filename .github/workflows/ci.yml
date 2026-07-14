@@ -35,11 +35,13 @@ jobs:
             manifest: ./contracts/Cargo.toml
             features: std
             kind: workspace
+            cache-key: contracts-std
 
           - name: examples / std
             manifest: ./examples/Cargo.toml
             features: std
             kind: workspace
+            cache-key: examples-std
 
           # ---------------------------
           # root e2e (workspace)
@@ -48,11 +50,13 @@ jobs:
             manifest: ./Cargo.toml
             features: std,wasmtime
             kind: workspace
+            cache-key: root-e2e-std-wasmtime
 
           - name: root e2e / std
             manifest: ./Cargo.toml
             features: std
             kind: workspace
+            cache-key: root-e2e-std
 
           # ---------------------------
           # evm-e2e suite (good_coverage_tests)
@@ -61,11 +65,13 @@ jobs:
             manifest: ./evm-e2e/Cargo.toml
             features: std
             kind: evm-e2e
+            cache-key: evm-e2e-std
 
           - name: evm-e2e / std,wasmtime
             manifest: ./evm-e2e/Cargo.toml
             features: std,wasmtime
             kind: evm-e2e
+            cache-key: evm-e2e-std-wasmtime
 
           # ---------------------------
           # evm-e2e suite (fixture)
@@ -74,11 +80,13 @@ jobs:
             manifest: ./evm-e2e/Cargo.toml
             features: std
             kind: fixture
+            cache-key: fixture-std
 
           - name: fixture / std,wasmtime
             manifest: ./evm-e2e/Cargo.toml
             features: std,wasmtime
             kind: fixture
+            cache-key: fixture-std-wasmtime
 
     steps:
       - uses: actions/checkout@v7
@@ -113,7 +121,7 @@ jobs:
           cache-workspace-crates: true
           cache-on-failure: true
           # Critical: avoid cross-feature stale artifacts ("works once until cargo clean")
-          shared-key: tests-${{ matrix.manifest }}-${{ matrix.features }}
+          shared-key: tests-${{ matrix.cache-key }}
 
       - name: Prefetch deps (root)
         run: cargo fetch --locked
