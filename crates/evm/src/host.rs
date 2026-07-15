@@ -56,10 +56,7 @@ impl<'a, SDK: SystemAPI> Host for HostWrapperImpl<'a, SDK> {
     }
 
     fn blob_gasprice(&self) -> U256 {
-        // TODO(dmitry123): Why block base fee works here and tests pass if blob price equals to base price?
-        //  Check test (cargo:test://evm_e2e::short_tests::good_coverage_tests::opc4_adiff_places)
-        //  P.S: We don't support blobs in Fluent yet, so need to check how it can affect the system.
-        self.sdk.context().block_base_fee()
+        U256::ZERO
     }
 
     fn gas_limit(&self) -> U256 {
