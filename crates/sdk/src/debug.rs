@@ -2,6 +2,42 @@ use core::fmt::{self, Write as _};
 
 pub const DEBUG_LOG_MAXIMUM_LEN: usize = 1_000;
 
+#[cfg(feature = "std")]
+fn debug_log_enabled_for_filter(filter: &str) -> bool {
+    let mut recognized_level = false;
+
+    for directive in filter
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let level = directive
+            .rsplit_once('=')
+            .map_or(directive, |(_, level)| level)
+            .trim();
+        if level.eq_ignore_ascii_case("debug") || level.eq_ignore_ascii_case("trace") {
+            return true;
+        }
+        if level.eq_ignore_ascii_case("off")
+            || level.eq_ignore_ascii_case("error")
+            || level.eq_ignore_ascii_case("warn")
+            || level.eq_ignore_ascii_case("info")
+        {
+            recognized_level = true;
+        }
+    }
+
+    // Preserve the previous behavior for malformed or unsupported filter syntax.
+    !recognized_level
+}
+
+#[cfg(feature = "std")]
+fn debug_log_enabled() -> bool {
+    std::env::var("RUST_LOG")
+        .or_else(|_| std::env::var("RUSTLOG"))
+        .map_or(true, |filter| debug_log_enabled_for_filter(&filter))
+}
+
 #[cfg(target_arch = "wasm32")]
 struct SyncUnsafeCell<T>(core::cell::UnsafeCell<T>);
 
@@ -213,10 +249,41 @@ pub fn debug_log_write_with_loc(
 
     #[cfg(feature = "std")]
     {
-        println!("{}", w.as_str());
+        if debug_log_enabled() {
+            println!("{}", w.as_str());
+        }
     }
 
     Ok(())
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::debug_log_enabled_for_filter;
+
+    #[test]
+    fn debug_log_filter_enables_debug_and_trace() {
+        assert!(debug_log_enabled_for_filter("debug"));
+        assert!(debug_log_enabled_for_filter("trace"));
+        assert!(debug_log_enabled_for_filter("info,my_crate=debug"));
+        assert!(debug_log_enabled_for_filter("my_crate=trace,other=off"));
+    }
+
+    #[test]
+    fn debug_log_filter_suppresses_levels_above_debug() {
+        assert!(!debug_log_enabled_for_filter("off"));
+        assert!(!debug_log_enabled_for_filter("error"));
+        assert!(!debug_log_enabled_for_filter("warn"));
+        assert!(!debug_log_enabled_for_filter("info"));
+        assert!(!debug_log_enabled_for_filter("my_crate=info,other=warn"));
+    }
+
+    #[test]
+    fn debug_log_filter_preserves_output_for_unknown_syntax() {
+        assert!(debug_log_enabled_for_filter(""));
+        assert!(debug_log_enabled_for_filter("my_crate"));
+        assert!(debug_log_enabled_for_filter("my_crate=custom"));
+    }
 }
 
 #[cfg(debug_assertions)]
