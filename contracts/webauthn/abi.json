@@ -1,1 +1,159 @@
-[]
+[
+  {
+    "inputs": [
+      {
+        "internalType": "bytes",
+        "name": "challenge",
+        "type": "bytes"
+      },
+      {
+        "internalType": "bool",
+        "name": "require_user_verification",
+        "type": "bool"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes",
+            "name": "authenticator_data",
+            "type": "bytes"
+          },
+          {
+            "internalType": "bytes",
+            "name": "client_data_json",
+            "type": "bytes"
+          },
+          {
+            "internalType": "uint256",
+            "name": "challenge_index",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "type_index",
+            "type": "uint256"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "r",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "s",
+            "type": "bytes32"
+          }
+        ],
+        "internalType": "struct WebAuthnAuth",
+        "name": "auth",
+        "type": "tuple"
+      },
+      {
+        "internalType": "uint256",
+        "name": "x",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "y",
+        "type": "uint256"
+      }
+    ],
+    "name": "verify",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "is_valid",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes",
+        "name": "challenge",
+        "type": "bytes"
+      },
+      {
+        "internalType": "bool",
+        "name": "require_user_verification",
+        "type": "bool"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expected_rp_id_hash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes",
+        "name": "expected_origin",
+        "type": "bytes"
+      },
+      {
+        "internalType": "uint256",
+        "name": "origin_index",
+        "type": "uint256"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes",
+            "name": "authenticator_data",
+            "type": "bytes"
+          },
+          {
+            "internalType": "bytes",
+            "name": "client_data_json",
+            "type": "bytes"
+          },
+          {
+            "internalType": "uint256",
+            "name": "challenge_index",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "type_index",
+            "type": "uint256"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "r",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "s",
+            "type": "bytes32"
+          }
+        ],
+        "internalType": "struct WebAuthnAuth",
+        "name": "auth",
+        "type": "tuple"
+      },
+      {
+        "internalType": "uint256",
+        "name": "x",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "y",
+        "type": "uint256"
+      }
+    ],
+    "name": "verifyStrict",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "is_valid",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]
