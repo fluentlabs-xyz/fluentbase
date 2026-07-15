@@ -258,7 +258,7 @@ pub fn debug_log_write_with_loc(
 }
 
 #[cfg(all(test, feature = "std"))]
-mod tests {
+mod filter_tests {
     use super::debug_log_enabled_for_filter;
 
     #[test]
