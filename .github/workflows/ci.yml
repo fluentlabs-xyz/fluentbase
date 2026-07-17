@@ -20,6 +20,14 @@ env:
   CXX: clang++
 
 jobs:
+  release-supply-chain:
+    name: Release supply-chain guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Check release workflow hardening
+        run: ./.github/scripts/check-release-supply-chain.sh .github/workflows/release.yml
+
   tests:
     name: Tests (${{ matrix.name }})
     runs-on: self-hosted
@@ -89,7 +97,7 @@ jobs:
             cache-key: fixture-std-wasmtime
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
           fetch-depth: 1
@@ -103,7 +111,7 @@ jobs:
         run: git config --global net.git-fetch-with-cli true
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
 
@@ -111,10 +119,10 @@ jobs:
         run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e # v0.0.10
 
       - name: Rust cache (registries + git)
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           cache-targets: false
           cache-all-crates: true
@@ -186,7 +194,7 @@ jobs:
     runs-on: self-hosted
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
           fetch-depth: 1
@@ -200,7 +208,7 @@ jobs:
         run: git config --global net.git-fetch-with-cli true
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
 
@@ -208,10 +216,10 @@ jobs:
         run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e # v0.0.10
 
       - name: Rust cache (registries + git)
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           cache-targets: false
           cache-all-crates: true
@@ -230,13 +238,13 @@ jobs:
           cargo tarpaulin --verbose --timeout 120 --out xml
 
       - name: Upload to codecov.io
-        uses: codecov/codecov-action@v7.0.0
+        uses: codecov/codecov-action@e53489f4d376d79066609109e7a95a29eb3740b1 # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
 
       - name: Archive code coverage results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: code-coverage-report
           path: cobertura.xml
@@ -246,7 +254,7 @@ jobs:
     runs-on: self-hosted
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
           fetch-depth: 1
@@ -255,7 +263,7 @@ jobs:
         run: git config --global net.git-fetch-with-cli true
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
           components: rustfmt, clippy
@@ -264,10 +272,10 @@ jobs:
         run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e # v0.0.10
 
       - name: Rust cache (registries + git)
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           cache-targets: false
           cache-all-crates: true

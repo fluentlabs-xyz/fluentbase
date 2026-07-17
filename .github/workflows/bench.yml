@@ -15,18 +15,18 @@ jobs:
       contents: read
       pull-requests: write  # needed to comment on PRs (won’t work for forks; see note below)
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Install clang and build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y clang libclang-dev pkg-config
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
 
       # Try to fetch the latest successful baseline from devel
       - name: Download baseline from devel
         id: dl
-        uses: dawidd6/action-download-artifact@v21
+        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
         continue-on-error: true            # allow first PRs without a baseline
         with:
           workflow: bench.yml
@@ -46,7 +46,7 @@ jobs:
           cd e2e && cargo bench | grep -v ignored | tee bench_output.txt
 
       - name: Upload full report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: criterion-report-${{ github.sha }}
           path: target/criterion
@@ -63,7 +63,7 @@ jobs:
             echo
             echo "_Heads-up_: runner perf is noisy; treat deltas as a smoke check."
           } > comment.md
-      - uses: marocchino/sticky-pull-request-comment@v3
+      - uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3
         if: ${{ !github.event.pull_request.head.repo.fork }}
         with:
           path: comment.md

@@ -1,5 +1,7 @@
 all: check build
 
+CARGO_LOCKED_FLAGS ?= --locked
+
 .PHONY: check
 check:
 	cargo check --all
@@ -15,7 +17,7 @@ pr: clippy test
 
 .PHONY: build
 build:
-	cargo build --all
+	cargo build $(CARGO_LOCKED_FLAGS) --all
 
 .PHONY: update-deps
 update-deps:
@@ -133,7 +135,7 @@ install: ## Build and install the fluent binary under `$(CARGO_HOME)/bin`.
 
 .PHONY: build-fluent
 build-fluent: ## Build the fluent binary into `target` directory.
-	cargo build --bin fluent --features "$(FEATURES)" --profile "$(PROFILE)"
+	cargo build $(CARGO_LOCKED_FLAGS) --bin fluent --features "$(FEATURES)" --profile "$(PROFILE)"
 
 # Environment variables for reproducible builds
 # Set timestamp from last git commit for reproducible builds
@@ -157,11 +159,11 @@ build-%-reproducible:
 
 .PHONY: build-debug
 build-debug: ## Build the fluent binary into `target/debug` directory.
-	cargo build --bin fluent --features "$(FEATURES)"
+	cargo build $(CARGO_LOCKED_FLAGS) --bin fluent --features "$(FEATURES)"
 
 # Builds the fluent binary natively.
 build-native-%:
-	cargo build --bin fluent --target $* --features "$(FEATURES)" --profile "$(PROFILE)"
+	cargo build $(CARGO_LOCKED_FLAGS) --bin fluent --target $* --features "$(FEATURES)" --profile "$(PROFILE)"
 
 # The following commands use `cross` to build a cross-compile.
 #
@@ -187,7 +189,7 @@ build-x86_64-pc-windows-gnu: FEATURES := $(filter-out jemalloc jemalloc-prof,$(F
 # See: https://github.com/cross-rs/cross/wiki/FAQ#undefined-reference-with-build-std
 build-%:
 	RUSTFLAGS="-C link-arg=-lgcc -Clink-arg=-static-libgcc" \
-		cross build --bin fluent --target $* $(NO_DEFAULT_FEATURES) --features "$(FEATURES)" --profile "$(PROFILE)"
+		cross build $(CARGO_LOCKED_FLAGS) --bin fluent --target $* $(NO_DEFAULT_FEATURES) --features "$(FEATURES)" --profile "$(PROFILE)"
 
 # Unfortunately we can't easily use cross to build for Darwin because of licensing issues.
 # If we wanted to, we would need to build a custom Docker image with the SDK available.
@@ -255,7 +257,7 @@ define docker_build_push
 		--platform linux/amd64,linux/arm64 \
 		--tag $(DOCKER_IMAGE_NAME):$(1) \
 		--tag $(DOCKER_IMAGE_NAME):$(2) \
-		--provenance=false \
+		--provenance=true \
 		--push
 endef
 
