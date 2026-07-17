@@ -5,7 +5,10 @@
 #![cfg_attr(not(feature = "std"), allow(unused_variables))]
 
 use crate::executor::ExecutionResult;
-use fluentbase_types::{ExitCode, STATE_DEPLOY, STATE_MAIN};
+use fluentbase_types::{
+    CompilationConfigFingerprint, ExitCode, COMPILATION_CONFIG_FINGERPRINT_VERSION, STATE_DEPLOY,
+    STATE_MAIN,
+};
 use rwasm::TrapCode;
 
 #[cfg(feature = "std")]
@@ -81,6 +84,7 @@ pub fn record_execution(
     let outcome = result_outcome(result);
     #[cfg(feature = "std")]
     {
+        set_compilation_cache_fingerprint_version();
         record_common("execution", mode, state, outcome, timer, result);
         metrics::counter!(
             "fluentbase_runtime_executions_total",
@@ -144,6 +148,43 @@ pub fn record_forget_runtime(mode: RuntimeModeLabel, state: &'static str) {
 pub fn set_recoverable_runtimes(count: usize) {
     #[cfg(feature = "std")]
     metrics::gauge!("fluentbase_runtime_recoverable_runtimes").set(count as f64);
+}
+
+/// Records whether a system runtime instance cache lookup reused an exact compatible key.
+pub fn record_system_runtime_cache_lookup(
+    fingerprint: CompilationConfigFingerprint,
+    cache_hit: bool,
+) {
+    #[cfg(feature = "std")]
+    metrics::counter!(
+        "fluentbase_system_runtime_cache_lookups_total",
+        "fingerprint_version" => fingerprint.version.to_string(),
+        "backend" => fingerprint.backend.as_str(),
+        "result" => if cache_hit { "hit" } else { "miss" },
+    )
+    .increment(1);
+}
+
+/// Records deterministic invalidation of a cached system runtime instance.
+pub fn record_system_runtime_cache_invalidation(
+    fingerprint: CompilationConfigFingerprint,
+    reason: &'static str,
+) {
+    #[cfg(feature = "std")]
+    metrics::counter!(
+        "fluentbase_system_runtime_cache_invalidations_total",
+        "fingerprint_version" => fingerprint.version.to_string(),
+        "backend" => fingerprint.backend.as_str(),
+        "reason" => reason,
+    )
+    .increment(1);
+}
+
+/// Exposes the active cache-key version for operational dashboards.
+pub fn set_compilation_cache_fingerprint_version() {
+    #[cfg(feature = "std")]
+    metrics::gauge!("fluentbase_compilation_cache_fingerprint_version")
+        .set(COMPILATION_CONFIG_FINGERPRINT_VERSION as f64);
 }
 
 #[cfg(feature = "std")]

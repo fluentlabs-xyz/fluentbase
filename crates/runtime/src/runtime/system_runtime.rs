@@ -23,15 +23,19 @@
 //! the first 4 bytes are the little-endian `exit_code`, and the remaining bytes are the payload.
 //!
 //! ## Caching model
-//! - `COMPILED_MODULES` caches compiled `wasmtime::Module` by code hash globally.
-//! - `COMPILED_RUNTIMES` caches instantiated `CompiledRuntime` per thread (thread-local) by code hash.
+//! - `COMPILED_MODULES` caches compiled `wasmtime::Module` by code hash + config fingerprint.
+//! - `COMPILED_RUNTIMES` caches instantiated `CompiledRuntime` per thread (thread-local) by
+//!   code hash + config fingerprint.
 //!
 //! The store is reused, so the `RuntimeContext` is swapped in/out on every call.
 
 use crate::{syscall_handler::runtime_syscall_handler, RuntimeContext};
 use alloc::sync::Arc;
 use core::{cell::RefCell, mem::take};
-use fluentbase_types::{ExitCode, HashMap, SysFuncIdx, B256, STATE_DEPLOY, STATE_MAIN};
+use fluentbase_types::{
+    Address, CompilationBackend, CompilationConfigFingerprint, CompiledModuleCacheKey, ExitCode,
+    HashMap, SysFuncIdx, B256, STATE_DEPLOY, STATE_MAIN,
+};
 use rwasm::{
     CompilationConfig, ImportLinker, Opcode, RwasmModule, StateRouterConfig, StoreTr,
     StrategyDefinition, StrategyExecutor, TrapCode, Value, N_MAX_ALLOWED_MEMORY_PAGES,
@@ -46,7 +50,8 @@ use rwasm::{
 /// - an optional resumable interruption state used when system runtimes request an interruption.
 /// - a flag indicating whether Wasmtime fuel metering is enabled (`consume_fuel`).
 ///
-/// The runtime is keyed by `code_hash` so that we can cache compiled artifacts and instances.
+/// The runtime is keyed by `code_hash` and config fingerprint so that we only reuse compatible
+/// compiled artifacts and instances.
 pub struct SystemRuntime {
     /// Cached compiled runtime (Module + Store + Instance + Memory + entry functions).
     ///
@@ -60,10 +65,10 @@ pub struct SystemRuntime {
     /// so that a single cached store/instance can serve multiple contract calls sequentially.
     ctx: RuntimeContext,
 
-    /// Code hash of the system runtime program.
+    /// Cache key of the system runtime program and execution policy.
     ///
-    /// Used as a cache key for both compiled modules and instantiated runtimes.
-    code_hash: B256,
+    /// Used to evict this exact compiled runtime after abnormal exits.
+    cache_key: CompiledModuleCacheKey,
 
     /// Whether Wasmtime fuel metering is enabled for this runtime.
     ///
@@ -82,11 +87,11 @@ pub struct SystemRuntime {
 type CompiledRuntime = StrategyExecutor<RuntimeContext>;
 
 thread_local! {
-    /// Thread-local cache of fully instantiated runtimes keyed by code hash.
+    /// Thread-local cache of fully instantiated runtimes keyed by code hash and config fingerprint.
     ///
     /// We keep this thread-local because Wasmtime components are not generally inexpensive to share across
     /// threads without careful synchronization, and because per-thread reuse is often enough.
-    pub static COMPILED_RUNTIMES: RefCell<HashMap<B256, Arc<RefCell<CompiledRuntime>>>> =
+    pub static COMPILED_RUNTIMES: RefCell<HashMap<CompiledModuleCacheKey, Arc<RefCell<CompiledRuntime>>>> =
         RefCell::new(HashMap::new());
 }
 
@@ -100,15 +105,19 @@ impl SystemRuntime {
         });
     }
 
-    fn evict_cached_runtime(&self) {
+    fn evict_cached_runtime(&self, reason: &'static str) {
         COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            compiled_runtimes.remove(&self.code_hash);
+            compiled_runtimes.remove(&self.cache_key);
         });
+        crate::metrics::record_system_runtime_cache_invalidation(
+            self.cache_key.config_fingerprint,
+            reason,
+        );
     }
 
     /// Creates a new `SystemRuntime`.
     ///
-    /// If a compiled runtime for `code_hash` is present in the thread-local cache, it will be reused.
+    /// If a compatible compiled runtime is present in the thread-local cache, it will be reused.
     /// Otherwise, this function compiles/loads the module and instantiates it with imports wired via
     /// `import_linker`.
     ///
@@ -121,28 +130,29 @@ impl SystemRuntime {
         rwasm_module: RwasmModule,
         import_linker: Arc<ImportLinker>,
         code_hash: B256,
+        address: Address,
         ctx: RuntimeContext,
         consume_fuel: bool,
     ) -> Self {
+        let config = system_runtime_compilation_config(import_linker.clone(), consume_fuel);
+        let cache_key = CompiledModuleCacheKey::new(
+            code_hash,
+            CompilationConfigFingerprint::from_config(
+                &config,
+                CompilationBackend::Wasmtime,
+                address,
+            ),
+        );
         let compiled_runtime = COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            if let Some(compiled_runtime) = compiled_runtimes.get(&code_hash).cloned() {
+            if let Some(compiled_runtime) = compiled_runtimes.get(&cache_key).cloned() {
+                crate::metrics::record_system_runtime_cache_lookup(
+                    cache_key.config_fingerprint,
+                    true,
+                );
                 return compiled_runtime;
             }
+            crate::metrics::record_system_runtime_cache_lookup(cache_key.config_fingerprint, false);
 
-            let config = CompilationConfig::default()
-                .with_state_router(StateRouterConfig {
-                    states: Box::new([
-                        ("deploy".into(), STATE_DEPLOY),
-                        ("main".into(), STATE_MAIN),
-                    ]),
-                    opcode: Some(Opcode::Call(SysFuncIdx::STATE as u32)),
-                })
-                .with_import_linker(import_linker.clone())
-                .with_allow_malformed_entrypoint_func_type(true)
-                .with_consume_fuel(consume_fuel)
-                .with_consume_fuel_for_params_and_locals(false)
-                .with_builtins_consume_fuel(false)
-                .with_max_allowed_memory_pages(N_MAX_ALLOWED_MEMORY_PAGES);
             // `hint_section` contains Wasmtime-compatible wasm bytes for the system runtime.
             // Any compilation failure here is fatal: genesis/runtime packaging is inconsistent.
             let typed_module =
@@ -161,14 +171,14 @@ impl SystemRuntime {
 
             #[allow(clippy::arc_with_non_send_sync)]
             let compiled_runtime = Arc::new(RefCell::new(executor));
-            compiled_runtimes.insert(code_hash, compiled_runtime.clone());
+            compiled_runtimes.insert(cache_key, compiled_runtime.clone());
             compiled_runtime
         });
 
         Self {
             compiled_runtime,
             ctx,
-            code_hash,
+            cache_key,
             consume_fuel,
         }
     }
@@ -246,7 +256,7 @@ impl SystemRuntime {
             // resources we consumed. But here we just terminate the runtime entirely. It means that all previous calls
             // will fail because they lose their state. It's the best here because we automatically terminate all nested
             // execution to avoid potential memory or stack access violations.
-            self.evict_cached_runtime();
+            self.evict_cached_runtime("exit_code");
             // We return `Ok` here because the exit code is already set
             return Ok(());
         } else {
@@ -262,11 +272,11 @@ impl SystemRuntime {
                 // uncleaned memory. Since we can't handle it gracefully, then we can only reset the existing
                 // runtime to make sure memory and stack are clean. There is no ddos attack here because,
                 // to achieve this, the user must pay a penalty.
-                self.evict_cached_runtime();
+                self.evict_cached_runtime("out_of_fuel");
                 // Forward the `OutOfFuel` trap to the outer executor, so it can handle it gracefully.
                 return Err(*trap_code);
             }
-            self.evict_cached_runtime();
+            self.evict_cached_runtime("unexpected_trap");
             eprintln!(
                 "runtime: unexpected trap inside system runtime: {:?} ({}) (investigate)",
                 trap_code, trap_code,
@@ -357,6 +367,23 @@ impl SystemRuntime {
     }
 }
 
+fn system_runtime_compilation_config(
+    import_linker: Arc<ImportLinker>,
+    consume_fuel: bool,
+) -> CompilationConfig {
+    CompilationConfig::default()
+        .with_state_router(StateRouterConfig {
+            states: Box::new([("deploy".into(), STATE_DEPLOY), ("main".into(), STATE_MAIN)]),
+            opcode: Some(Opcode::Call(SysFuncIdx::STATE as u32)),
+        })
+        .with_import_linker(import_linker)
+        .with_allow_malformed_entrypoint_func_type(true)
+        .with_consume_fuel(consume_fuel)
+        .with_consume_fuel_for_params_and_locals(false)
+        .with_builtins_consume_fuel(false)
+        .with_max_allowed_memory_pages(N_MAX_ALLOWED_MEMORY_PAGES)
+}
+
 #[cfg(all(test, feature = "wasmtime"))]
 mod tests {
     use super::*;
@@ -378,9 +405,9 @@ mod tests {
         B256::from([0x39; 32])
     }
 
-    fn cache_contains(code_hash: B256) -> bool {
+    fn cache_contains(cache_key: CompiledModuleCacheKey) -> bool {
         COMPILED_RUNTIMES
-            .with_borrow(|compiled_runtimes| compiled_runtimes.contains_key(&code_hash))
+            .with_borrow(|compiled_runtimes| compiled_runtimes.contains_key(&cache_key))
     }
 
     #[test]
@@ -405,9 +432,11 @@ mod tests {
             trapping_module,
             import_linker_v1_preview(),
             code_hash,
+            Address::ZERO,
             RuntimeContext::default().with_fuel_limit(10_000),
             false,
         );
+        let cache_key = runtime.cache_key;
 
         runtime
             .execute()
@@ -417,7 +446,7 @@ mod tests {
             runtime.context().execution_result.exit_code,
             ExitCode::UnexpectedFatalExecutionFailure.into_i32()
         );
-        assert!(!cache_contains(code_hash));
+        assert!(!cache_contains(cache_key));
 
         SystemRuntime::reset_cached_runtimes();
     }

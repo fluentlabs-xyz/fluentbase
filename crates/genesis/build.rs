@@ -10,8 +10,9 @@ use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_evm::EthereumMetadata;
 use fluentbase_revm::revm::bytecode::{rwasm::RWASM_MAGIC_BYTES, Bytecode};
 use fluentbase_sdk::{
-    address, compile_rwasm_maybe_system, keccak256, Address, Bytes, B256,
-    PRECOMPILE_CREATE2_FACTORY, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER, U256,
+    address, compilation_config_fingerprint_for_contract_address, compile_rwasm_maybe_system,
+    keccak256, Address, Bytes, B256, PRECOMPILE_CREATE2_FACTORY, PRECOMPILE_EVM_RUNTIME,
+    PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER, U256,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -97,23 +98,36 @@ fn default_chain_config(chain_id: u64) -> ChainConfig {
     }
 }
 
-/// Ensures each WASM artifact is compiled to RWASM exactly once, caching the results.
+/// Ensures each compatible WASM artifact is compiled to RWASM exactly once, caching the results.
 /// This optimization is particularly valuable for large, unoptimized contracts.
-fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
-    let mut cache = HashMap::new();
+fn compile_all_contracts() -> HashMap<Address, (B256, Bytes)> {
+    let mut compilation_cache = HashMap::new();
+    let mut artifacts_by_address = HashMap::new();
 
     for (address, contract) in GENESIS_CONTRACTS {
-        if cache.contains_key(contract.wasm_bytecode) {
+        let wasm_hash = keccak256(contract.wasm_bytecode);
+        let config_fingerprint =
+            compilation_config_fingerprint_for_contract_address(address).identity_hash();
+        let cache_key = (wasm_hash, config_fingerprint);
+
+        if let Some(result) = compilation_cache.get(&cache_key).cloned() {
+            artifacts_by_address.insert(*address, result);
             continue;
         }
+
         let start = Instant::now();
         let rwasm_bytecode = compile_rwasm_maybe_system(address, contract.wasm_bytecode)
             .expect(format!("failed to compile ({}), because of: ", contract.name).as_str());
+        assert_eq!(
+            rwasm_bytecode.config_fingerprint.identity_hash(),
+            config_fingerprint
+        );
         assert_eq!(rwasm_bytecode.constructor_params.len(), 0);
         let rwasm_bytecode: Bytes = rwasm_bytecode.rwasm_module.serialize().into();
         let hash = keccak256(rwasm_bytecode.as_ref());
         let result = (hash, rwasm_bytecode.clone());
-        cache.insert(contract.wasm_bytecode, result.clone());
+        compilation_cache.insert(cache_key, result.clone());
+        artifacts_by_address.insert(*address, result);
         eprintln!(
             "{} time={: <3}ms | wasm={: <5}KiB | rwasm={: <5}KiB | increased={:.1}x",
             format!("{: <30}", contract.name), // Pads with dots to 20 chars
@@ -123,7 +137,7 @@ fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
             rwasm_bytecode.len() as f64 / contract.wasm_bytecode.len() as f64,
         );
     }
-    cache
+    artifacts_by_address
 }
 
 fn write_permissive_evm_runtime() {
@@ -209,8 +223,7 @@ fn main() {
     write_permissive_evm_runtime();
 
     for (address, contract) in GENESIS_CONTRACTS {
-        let (rwasm_bytecode_hash, rwasm_bytecode) =
-            rwasm_artifacts.get(contract.wasm_bytecode).unwrap().clone();
+        let (rwasm_bytecode_hash, rwasm_bytecode) = rwasm_artifacts.get(address).unwrap().clone();
         init_contract(
             &mut code,
             &mut alloc,
