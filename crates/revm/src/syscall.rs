@@ -8,6 +8,7 @@
 
 use crate::{
     api::RwasmFrame,
+    gas::{sstore_gas, SstoreGasError},
     types::{is_evm_system_precompile, load_account_delegated},
     ExecutionResult, NextAction,
 };
@@ -317,50 +318,26 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 }};
             }
 
-            if frame.interpreter.gas.remaining() <= ctx.cfg().gas_params().call_stipend() {
-                finish_inspection!();
-                return_halt!(OutOfFuel);
-            }
-
-            if !frame
-                .interpreter
-                .gas
-                .record_regular_cost(ctx.cfg().gas_params().sstore_static_gas())
-            {
-                finish_inspection!();
-                return_halt!(OutOfFuel);
-            }
-
-            let skip_cold =
-                frame.interpreter.gas.remaining() < ctx.cfg().gas_params().cold_storage_cost();
-            let result = ctx.journal_mut().sstore_skip_cold_load(
-                current_target_address,
-                slot,
-                new_value,
-                skip_cold,
-            );
-            let state_load = match result {
-                Ok(v) => v,
-                Err(e) => {
-                    finish_inspection!();
-                    match e {
-                        JournalLoadError::ColdLoadSkipped => return_halt!(OutOfFuel),
-                        JournalLoadError::DBError(e) => return Err(ContextError::Db(e)),
-                    }
-                }
-            };
-            let gas_cost = ctx.cfg().gas_params().sstore_dynamic_gas(
-                true,
-                &state_load.data,
-                state_load.is_cold,
-            );
-            if !frame.interpreter.gas.record_regular_cost(gas_cost) {
-                finish_inspection!();
-                return_halt!(OutOfFuel);
-            }
-            let gas_refund = ctx.cfg().gas_params().sstore_refund(true, &state_load.data);
-            frame.interpreter.gas.record_refund(gas_refund);
+            let gas_params = ctx.cfg().gas_params().clone();
+            let result = sstore_gas(&mut frame.interpreter.gas, &gas_params, |skip_cold| {
+                ctx.journal_mut().sstore_skip_cold_load(
+                    current_target_address,
+                    slot,
+                    new_value,
+                    skip_cold,
+                )
+            });
             finish_inspection!();
+            match result {
+                Ok(()) => {}
+                Err(SstoreGasError::OutOfFuel)
+                | Err(SstoreGasError::Store(JournalLoadError::ColdLoadSkipped)) => {
+                    return_halt!(OutOfFuel)
+                }
+                Err(SstoreGasError::Store(JournalLoadError::DBError(error))) => {
+                    return Err(ContextError::Db(error))
+                }
+            }
             return_result!(Ok)
         }
 
@@ -1142,13 +1119,19 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 return_halt!(MalformedBuiltinParams);
             };
             let input = get_input_validated!(== U256::BYTES);
-
-            let Ok(slot): Result<[u8; U256::BYTES], _> = input[..U256::BYTES].try_into() else {
-                return_halt!(MalformedBuiltinParams)
-            };
-            let slot_u256 = U256::from_le_bytes(slot);
-            debug_syscall!("METADATA_STORAGE_READ", "slot={:?}", slot_u256);
-            let value = ctx.journal_mut().sload(account_owner_address, slot_u256)?;
+            let slot = U256::from_le_slice(&input[..U256::BYTES]);
+            debug_syscall!("METADATA_STORAGE_READ", "slot={:?}", slot);
+            let skip_cold =
+                frame.interpreter.gas.remaining() < ctx.cfg().gas_params().cold_storage_cost();
+            let result =
+                ctx.journal_mut()
+                    .sload_skip_cold_load(account_owner_address, slot, skip_cold);
+            let value = unwrap_journal_load_error!(result);
+            charge_regular_gas!(if value.is_cold {
+                ctx.cfg().gas_params().cold_storage_cost()
+            } else {
+                ctx.cfg().gas_params().warm_storage_read_cost()
+            });
             let output: [u8; U256::BYTES] = value.to_le_bytes();
             return_result!(output, Ok);
         }
@@ -1158,28 +1141,36 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 return_halt!(MalformedBuiltinParams);
             };
             assert_halt!(!is_static, StateChangeDuringStaticCall);
-            // Input: slot + value.
             let input = get_input_validated!(== U256::BYTES + U256::BYTES);
-
-            let Ok(slot): Result<[u8; U256::BYTES], _> = input[..U256::BYTES].try_into() else {
-                return_halt!(MalformedBuiltinParams)
-            };
-            let Ok(value): Result<[u8; U256::BYTES], _> = input[U256::BYTES..].try_into() else {
-                return_halt!(MalformedBuiltinParams)
-            };
-
-            let slot_u256 = U256::from_le_bytes(slot);
-            let value_u256 = U256::from_le_bytes(value);
+            let slot = U256::from_le_slice(&input[..U256::BYTES]);
+            let new_value = U256::from_le_slice(&input[U256::BYTES..]);
             debug_syscall!(
                 "METADATA_STORAGE_WRITE",
                 "slot={:?} value={:?}",
-                slot_u256,
-                value_u256
+                slot,
+                new_value
             );
-            ctx.journal_mut()
-                .sstore(account_owner_address, slot_u256, value_u256)?;
-            ctx.journal_mut().touch_account(account_owner_address);
 
+            let gas_params = ctx.cfg().gas_params().clone();
+            let result = sstore_gas(&mut frame.interpreter.gas, &gas_params, |skip_cold| {
+                ctx.journal_mut().sstore_skip_cold_load(
+                    account_owner_address,
+                    slot,
+                    new_value,
+                    skip_cold,
+                )
+            });
+            match result {
+                Ok(()) => {}
+                Err(SstoreGasError::OutOfFuel)
+                | Err(SstoreGasError::Store(JournalLoadError::ColdLoadSkipped)) => {
+                    return_halt!(OutOfFuel)
+                }
+                Err(SstoreGasError::Store(JournalLoadError::DBError(error))) => {
+                    return Err(ContextError::Db(error))
+                }
+            }
+            ctx.journal_mut().touch_account(account_owner_address);
             return_result!(Bytes::default(), Ok);
         }
 
