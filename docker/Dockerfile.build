@@ -44,7 +44,8 @@ RUN if [ -n "$SDK_VERSION_BRANCH" ]; then \
 # lib.rs
 RUN printf '#![cfg_attr(not(feature = "std"), no_std, no_main)]\n\nextern crate alloc;\nextern crate fluentbase_sdk;\n\nuse fluentbase_sdk::{\n    basic_entrypoint,\n    derive::{router, Contract},\n    SharedAPI,\n    U256,\n};\n\n#[derive(Contract, Default)]\nstruct Warmer<SDK> {\n    sdk: SDK,\n}\n\npub trait WarmerAPI {\n    fn warm(&self) -> U256;\n}\n\n#[router(mode = "solidity")]\nimpl<SDK: SharedAPI> WarmerAPI for Warmer<SDK> {\n    fn warm(&self) -> U256 {\n        U256::from(2)\n    }\n}\n\nimpl<SDK: SharedAPI> Warmer<SDK> {\n    pub fn deploy(&self) {}\n}\n\nbasic_entrypoint!(Warmer);\n' > lib.rs
 
-RUN cargo fetch --locked --target wasm32-unknown-unknown && \
+RUN cargo generate-lockfile && \
+    cargo fetch --locked --target wasm32-unknown-unknown && \
     cargo build --release --locked --target wasm32-unknown-unknown --lib
 
 #######################################
