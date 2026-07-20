@@ -2019,7 +2019,7 @@ dependencies = [
  "fluentbase-evm",
  "fluentbase-sdk",
  "fluentbase-testing",
- "spin",
+ "spin 0.10.0",
 ]
 
 [[package]]
@@ -2212,7 +2212,7 @@ dependencies = [
  "fluentbase-types",
  "hashbrown 0.16.1",
  "rwasm",
- "spin",
+ "spin 0.10.0",
 ]
 
 [[package]]
@@ -4187,13 +4187,12 @@ dependencies = [
 
 [[package]]
 name = "rwasm"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66ca3389842e77886fbea818729e0b19fdf5bfa2fe83f8847ba529c0f00817e8"
+checksum = "44e76cddefd31473f933059faa2b11efca2489337b2b785c2e2b7110fac45e1f"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
- "bytes",
  "downcast-rs",
  "hashbrown 0.17.1",
  "libm",
@@ -4204,7 +4203,7 @@ dependencies = [
  "rwasm-fuel-policy",
  "serde",
  "smallvec",
- "spin",
+ "spin 0.12.2",
  "tiny-keccak",
  "wasmparser-nostd",
  "wasmtime-rwasm",
@@ -4620,6 +4619,12 @@ name = "spin"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
+
+[[package]]
+name = "spin"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8abadc99fd9c7bbb7d0ca2b31d72a067d0c0dcd7aad25ab8cac71ba91417694b"
 dependencies = [
  "lock_api",
 ]

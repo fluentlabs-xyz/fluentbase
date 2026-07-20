@@ -379,6 +379,8 @@ fn system_runtime_compilation_config(
         .with_import_linker(import_linker)
         .with_allow_malformed_entrypoint_func_type(true)
         .with_consume_fuel(consume_fuel)
+        // Wasmtime meters bulk operations itself; rWasm instrumentation would diverge.
+        .with_consume_fuel_for_bulk_ops(false)
         .with_consume_fuel_for_params_and_locals(false)
         .with_builtins_consume_fuel(false)
         .with_max_allowed_memory_pages(N_MAX_ALLOWED_MEMORY_PAGES)
@@ -408,6 +410,14 @@ mod tests {
     fn cache_contains(cache_key: CompiledModuleCacheKey) -> bool {
         COMPILED_RUNTIMES
             .with_borrow(|compiled_runtimes| compiled_runtimes.contains_key(&cache_key))
+    }
+
+    #[test]
+    fn system_runtime_config_disables_rwasm_bulk_op_metering() {
+        let config = system_runtime_compilation_config(import_linker_v1_preview(), true);
+
+        assert!(config.consume_fuel);
+        assert!(!config.consume_fuel_for_bulk_ops);
     }
 
     #[test]
