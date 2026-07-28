@@ -2,46 +2,82 @@ use fluentbase_sdk::{derive::derive_keccak256_id, derive::erc7201_slot, U256};
 
 pub const SIG_LEN_BYTES: usize = 4;
 
-// Existing Solidity ABI selectors. Keeping these explicit makes accidental ABI
-// drift visible in review.
-pub const SIG_INITIALIZE: u32 = 0x01f6_bb50;
-pub const SIG_CURRENT_EPOCH: u32 = 0x7667_1808;
-pub const SIG_NEXT_EPOCH: u32 = 0xaea0_e78b;
-pub const SIG_OWNER: u32 = 0x8da5_cb5b;
-pub const SIG_IS_VALIDATOR: u32 = 0xfacd_743b;
-pub const SIG_IS_VALIDATOR_ACTIVE: u32 = 0x42ad_55ac;
-pub const SIG_GET_VALIDATOR_STATUS: u32 = 0xa310_624f;
-pub const SIG_GET_VALIDATOR_BY_OWNER: u32 = 0x3010_8c22;
-pub const SIG_GET_VALIDATORS: u32 = 0xb7ab_4db5;
-pub const SIG_ADD_VALIDATOR: u32 = 0x4d23_8c8e;
-pub const SIG_REMOVE_VALIDATOR: u32 = 0x40a1_41ff;
-pub const SIG_ACTIVATE_VALIDATOR: u32 = 0xb46e_5520;
-pub const SIG_DISABLE_VALIDATOR: u32 = 0x1fe9_7684;
-pub const SIG_CHANGE_VALIDATOR_COMMISSION_RATE: u32 = 0x14f8_649f;
-pub const SIG_CHANGE_VALIDATOR_OWNER: u32 = 0x0052_c9e1;
-pub const SIG_GET_STAKING: u32 = 0x7b13_91a6;
-pub const SIG_GET_GOVERNANCE: u32 = 0x289b_3c0d;
-pub const SIG_GET_CHAIN_CONFIG: u32 = 0x606c_0c94;
-pub const SIG_GET_STAKING_TOKEN: u32 = 0x9f91_06d1;
+// ABI selectors are derived from their canonical signatures. The pinned hex
+// values remain beside them to make ABI drift visible during review.
+// 0x01f6bb50
+pub const SIG_INITIALIZE: u32 =
+    derive_keccak256_id!("initialize(address,address[],uint256[],uint16)");
+// 0x76671808
+pub const SIG_CURRENT_EPOCH: u32 = derive_keccak256_id!("currentEpoch()");
+// 0xaea0e78b
+pub const SIG_NEXT_EPOCH: u32 = derive_keccak256_id!("nextEpoch()");
+// 0x8da5cb5b
+pub const SIG_OWNER: u32 = derive_keccak256_id!("owner()");
+// 0xfacd743b
+pub const SIG_IS_VALIDATOR: u32 = derive_keccak256_id!("isValidator(address)");
+// 0x42ad55ac
+pub const SIG_IS_VALIDATOR_ACTIVE: u32 = derive_keccak256_id!("isValidatorActive(address)");
+// 0xa310624f
+pub const SIG_GET_VALIDATOR_STATUS: u32 = derive_keccak256_id!("getValidatorStatus(address)");
+// 0x30108c22
+pub const SIG_GET_VALIDATOR_BY_OWNER: u32 = derive_keccak256_id!("getValidatorByOwner(address)");
+// 0xb7ab4db5
+pub const SIG_GET_VALIDATORS: u32 = derive_keccak256_id!("getValidators()");
+// 0x4d238c8e
+pub const SIG_ADD_VALIDATOR: u32 = derive_keccak256_id!("addValidator(address)");
+// 0x40a141ff
+pub const SIG_REMOVE_VALIDATOR: u32 = derive_keccak256_id!("removeValidator(address)");
+// 0xb46e5520
+pub const SIG_ACTIVATE_VALIDATOR: u32 = derive_keccak256_id!("activateValidator(address)");
+// 0x1fe97684
+pub const SIG_DISABLE_VALIDATOR: u32 = derive_keccak256_id!("disableValidator(address)");
+// 0x14f8649f
+pub const SIG_CHANGE_VALIDATOR_COMMISSION_RATE: u32 =
+    derive_keccak256_id!("changeValidatorCommissionRate(address,uint16)");
+// 0x0052c9e1
+pub const SIG_CHANGE_VALIDATOR_OWNER: u32 =
+    derive_keccak256_id!("changeValidatorOwner(address,address)");
+// 0x7b1391a6
+pub const SIG_GET_STAKING: u32 = derive_keccak256_id!("getStaking()");
+// 0x289b3c0d
+pub const SIG_GET_GOVERNANCE: u32 = derive_keccak256_id!("getGovernance()");
+// 0x606c0c94
+pub const SIG_GET_CHAIN_CONFIG: u32 = derive_keccak256_id!("getChainConfig()");
+// 0x9f9106d1
+pub const SIG_GET_STAKING_TOKEN: u32 = derive_keccak256_id!("getStakingToken()");
+// 0x32cc6f08
 pub const SIG_GET_ACTIVE_VALIDATORS_LENGTH: u32 =
     derive_keccak256_id!("getActiveValidatorsLength()");
+// 0x346c90a8
 pub const SIG_GET_EPOCH_BLOCK_INTERVAL: u32 = derive_keccak256_id!("getEpochBlockInterval()");
+// 0xa2a50528
 pub const SIG_GET_DPOS_ACTIVATION_BLOCK: u32 = derive_keccak256_id!("getDposActivationBlock()");
+// 0x5e7b72ad
 pub const SIG_GET_UNDELEGATE_PERIOD: u32 = derive_keccak256_id!("getUndelegatePeriod()");
+// 0x6f856847
 pub const SIG_GET_MIN_VALIDATOR_STAKE_AMOUNT: u32 =
     derive_keccak256_id!("getMinValidatorStakeAmount()");
+// 0xeea9a01b
 pub const SIG_GET_MIN_STAKING_AMOUNT: u32 = derive_keccak256_id!("getMinStakingAmount()");
+// 0xd951e186
 pub const SIG_GET_VALIDATOR_DELEGATION: u32 =
     derive_keccak256_id!("getValidatorDelegation(address,address)");
+// 0xe8810ea7
 pub const SIG_GET_VALIDATOR_DELEGATED_STAKE_AT: u32 =
     derive_keccak256_id!("getValidatorDelegatedStakeAt(address,uint256)");
+// 0xdd0fb5df
 pub const SIG_REGISTER_VALIDATOR: u32 =
     derive_keccak256_id!("registerValidator(address,uint16,uint256)");
+// 0x026e402b
 pub const SIG_DELEGATE: u32 = derive_keccak256_id!("delegate(address,uint256)");
+// 0x4d99dd16
 pub const SIG_UNDELEGATE: u32 = derive_keccak256_id!("undelegate(address,uint256)");
+// 0xdc871561
 pub const SIG_CONFIGURE: u32 =
     derive_keccak256_id!("configure(address,uint64,uint64,uint256,uint256)");
-pub const SIG_ERC20_TRANSFER_FROM: u32 = 0x23b8_72dd;
+// 0x23b872dd
+pub const SIG_ERC20_TRANSFER_FROM: u32 =
+    derive_keccak256_id!("transferFrom(address,address,uint256)");
 
 pub const ERR_ALREADY_INITIALIZED: u32 = derive_keccak256_id!("InvalidInitialization()");
 pub const ERR_NOT_INITIALIZED: u32 = derive_keccak256_id!("NotInitialized()");
