@@ -1,7 +1,10 @@
 use super::*;
+use crate::storage::{staking_storage, STATUS_ACTIVE};
+use crate::types::{AddressCommand, ConfigureCommand, InitializeCommand};
 use fluentbase_sdk::{
-    codec::SolidityABI, derive::derive_keccak256_id, Address, Bytes, ContractContextV1, ExitCode,
-    PRECOMPILE_STAKING,
+    bytes::BytesMut, codec::SolidityABI, derive::derive_keccak256_id, is_engine_metered_precompile,
+    is_execute_using_system_runtime, Address, Bytes, ContractContextV1, ExitCode,
+    GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
 use fluentbase_testing::TestingContextImpl;
 
@@ -29,8 +32,8 @@ impl Harness {
         let gas_limit = 1_000_000;
         let sdk = TestingContextImpl::default()
             .with_contract_context(ContractContextV1 {
-                address: PRECOMPILE_STAKING,
-                bytecode_address: PRECOMPILE_STAKING,
+                address: GENESIS_STAKING,
+                bytecode_address: GENESIS_STAKING,
                 gas_limit,
                 ..Default::default()
             })
@@ -93,6 +96,20 @@ fn implemented_selectors_match_pinned_solidity_abi() {
     assert_eq!(SIG_CURRENT_EPOCH, derive_keccak256_id!("currentEpoch()"));
     assert_eq!(SIG_NEXT_EPOCH, derive_keccak256_id!("nextEpoch()"));
     assert_eq!(SIG_OWNER, derive_keccak256_id!("owner()"));
+    assert_eq!(SIG_GET_STAKING, derive_keccak256_id!("getStaking()"));
+    assert_eq!(SIG_GET_GOVERNANCE, derive_keccak256_id!("getGovernance()"));
+    assert_eq!(
+        SIG_GET_CHAIN_CONFIG,
+        derive_keccak256_id!("getChainConfig()")
+    );
+    assert_eq!(
+        SIG_GET_STAKING_TOKEN,
+        derive_keccak256_id!("getStakingToken()")
+    );
+    assert_eq!(
+        SIG_CONFIGURE,
+        derive_keccak256_id!("configure(address,uint64,uint64,uint256,uint256)")
+    );
     assert_eq!(
         SIG_IS_VALIDATOR,
         derive_keccak256_id!("isValidator(address)")
@@ -209,13 +226,13 @@ fn epoch_number_is_rebased_to_initialization_block() {
 
 #[test]
 fn governance_lifecycle_updates_active_registry() {
-    let governance = Address::with_last_byte(0xa0);
+    let owner = Address::with_last_byte(0xa0);
     let outsider = Address::with_last_byte(0xb0);
     let validator = Address::with_last_byte(0x01);
     let mut harness = Harness::new(1_000);
-    harness.set_caller(governance);
+    harness.set_caller(owner);
     assert_eq!(
-        harness.initialize(governance, Vec::new(), Vec::new(), 0),
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
 
@@ -226,7 +243,7 @@ fn governance_lifecycle_updates_active_registry() {
     ));
     assert_eq!(exit, ExitCode::Panic);
 
-    harness.set_caller(governance);
+    harness.set_caller(GENESIS_GOVERNANCE);
     assert_eq!(
         harness
             .call(encode_call(
@@ -266,6 +283,65 @@ fn governance_lifecycle_updates_active_registry() {
             .0,
         ExitCode::Ok
     );
+}
+
+#[test]
+fn staking_is_a_genesis_rwasm_contract_not_a_system_precompile() {
+    assert!(!is_execute_using_system_runtime(&GENESIS_STAKING));
+    assert!(!is_engine_metered_precompile(&GENESIS_STAKING));
+}
+
+#[test]
+fn stores_reserved_governance_and_chain_configuration() {
+    let owner = Address::with_last_byte(0xa0);
+    let staking_token = Address::with_last_byte(0xb1);
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+
+    let (_, output) = harness.call(encode_empty_call(SIG_GET_GOVERNANCE));
+    assert_eq!(decode_output::<Address>(&output), GENESIS_GOVERNANCE);
+
+    let (_, output) = harness.call(encode_empty_call(SIG_GET_STAKING));
+    assert_eq!(decode_output::<Address>(&output), GENESIS_STAKING);
+    let (_, output) = harness.call(encode_empty_call(SIG_GET_CHAIN_CONFIG));
+    assert_eq!(decode_output::<Address>(&output), GENESIS_STAKING);
+
+    let configure = ConfigureCommand {
+        staking_token,
+        active_validators_length: 50,
+        epoch_block_interval: 100,
+        min_validator_stake_amount: U256::from(1_000),
+        min_staking_amount: U256::from(10),
+    };
+    assert_eq!(
+        harness.call(encode_call(SIG_CONFIGURE, &configure)).0,
+        ExitCode::Ok
+    );
+    let config = staking_storage().config_accessor();
+    assert_eq!(
+        config
+            .active_validators_length_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        50
+    );
+    assert_eq!(
+        config
+            .epoch_block_interval_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        100
+    );
+    let (_, output) = harness.call(encode_empty_call(SIG_GET_STAKING_TOKEN));
+    assert_eq!(decode_output::<Address>(&output), staking_token);
+
+    harness.set_block_number(1_100);
+    let (_, output) = harness.call(encode_empty_call(SIG_CURRENT_EPOCH));
+    assert_eq!(decode_output::<u64>(&output), 1);
 }
 
 #[test]
