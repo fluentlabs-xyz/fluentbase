@@ -13,7 +13,8 @@ use crate::{
     },
     util::{
         decode, ensure_initialized, ensure_mutable, ensure_non_payable, next_epoch, revert,
-        safe_transfer_from, set_validator, touch_validator_snapshot, validator_total_at, write_abi,
+        revert_with, safe_transfer_from, set_validator, touch_validator_snapshot,
+        validator_total_at, write_abi,
     },
 };
 
@@ -63,7 +64,7 @@ pub fn register_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
         .min_validator_stake_amount_accessor()
         .get_checked(sdk)?;
     if command.initial_stake < minimum {
-        return revert(sdk, ERR_INITIAL_STAKE_TOO_LOW);
+        return revert_with(sdk, ERR_INITIAL_STAKE_TOO_LOW, &command.initial_stake);
     }
     let owner = sdk.context().contract_caller();
     let since_epoch = next_epoch(sdk)?;
@@ -101,7 +102,7 @@ pub fn delegate_to<SDK: SharedAPI>(
         .min_staking_amount_accessor()
         .get_checked(sdk)?;
     if amount.is_zero() || amount < minimum {
-        return revert(sdk, ERR_AMOUNT_TOO_LOW);
+        return revert_with(sdk, ERR_AMOUNT_TOO_LOW, &amount);
     }
     if math::compact_balance(amount).is_none() {
         return revert(sdk, ERR_WRONG_AMOUNT_PRECISION);
@@ -113,7 +114,7 @@ pub fn delegate_to<SDK: SharedAPI>(
         .get_checked(sdk)?
         == STATUS_NOT_FOUND
     {
-        return revert(sdk, ERR_VALIDATOR_NOT_FOUND);
+        return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
     }
 
     let at_epoch = current_epoch(sdk)?
@@ -186,7 +187,7 @@ pub fn undelegate_from<SDK: SharedAPI>(
     let config = storage.config_accessor();
     let minimum = config.min_staking_amount_accessor().get_checked(sdk)?;
     if amount.is_zero() || amount < minimum {
-        return revert(sdk, ERR_AMOUNT_TOO_LOW);
+        return revert_with(sdk, ERR_AMOUNT_TOO_LOW, &amount);
     }
     if math::compact_balance(amount).is_none() {
         return revert(sdk, ERR_WRONG_AMOUNT_PRECISION);
@@ -194,7 +195,7 @@ pub fn undelegate_from<SDK: SharedAPI>(
     let record = storage.validators_accessor().entry(validator);
     let status = record.status_accessor().get_checked(sdk)?;
     if status == STATUS_NOT_FOUND {
-        return revert(sdk, ERR_VALIDATOR_NOT_FOUND);
+        return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
     }
 
     let before_epoch = next_epoch(sdk)?;

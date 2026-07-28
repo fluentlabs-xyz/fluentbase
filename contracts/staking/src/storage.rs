@@ -1,10 +1,10 @@
 use fluentbase_sdk::{
     derive::Storage,
     storage::{
-        StorageAddress, StorageBool, StorageMap, StorageU16, StorageU256, StorageU32, StorageU64,
-        StorageU8, StorageVec,
+        StorageAddress, StorageBool, StorageBytes, StorageBytes32, StorageMap, StorageU16,
+        StorageU256, StorageU32, StorageU64, StorageU8, StorageVec,
     },
-    Address, ContextReader, ExitCode, SharedAPI,
+    Address, ContextReader, ExitCode, SharedAPI, B256,
 };
 
 use crate::{consts::STAKING_STORAGE_SLOT, math};
@@ -12,6 +12,7 @@ use crate::{consts::STAKING_STORAGE_SLOT, math};
 pub const STATUS_NOT_FOUND: u8 = 0;
 pub const STATUS_ACTIVE: u8 = 1;
 pub const STATUS_PENDING: u8 = 2;
+pub const STATUS_JAIL: u8 = 3;
 
 /// Configuration formerly read from the external Solidity `ChainConfig`.
 ///
@@ -27,6 +28,19 @@ pub struct ChainConfigStorage {
     dpos_activation_block: StorageU64,
     min_validator_stake_amount: StorageU256,
     min_staking_amount: StorageU256,
+    felony_threshold: StorageU32,
+    validator_jail_epoch_length: StorageU32,
+    slash_reporter_reward_bps: StorageU32,
+    slash_fund_address: StorageAddress,
+    participation_floor_bps: StorageU32,
+    participation_jail_disabled: StorageBool,
+    blend_stipend_per_epoch: StorageU256,
+    bls_verifier: StorageAddress,
+    evidence_decoder: StorageAddress,
+    min_undelegate_blocks: StorageU256,
+    liveness_slashing: StorageAddress,
+    blend_reserve: StorageAddress,
+    configured: StorageBool,
 }
 
 /// Fixed-size validator metadata.
@@ -49,6 +63,7 @@ pub struct ValidatorSnapshotStorage {
     total_delegated: StorageU256,
     commission_rate: StorageU16,
     slashes_count: StorageU32,
+    total_blend_rewards: StorageU256,
 }
 
 /// Effective delegation balance beginning at `epoch`.
@@ -75,6 +90,24 @@ pub struct ValidatorDelegationStorage {
     undelegate_gap: StorageU64,
 }
 
+/// Epoch-stamped selection visibility. Status changes become visible from the
+/// following epoch so an in-flight committee derivation cannot drift.
+#[derive(Storage)]
+pub struct SelectionMembershipStorage {
+    visible: StorageBool,
+    prev_visible: StorageBool,
+    effective_from: StorageU64,
+    rostered: StorageBool,
+}
+
+/// One validator's immutable v1 consensus identity.
+#[derive(Storage)]
+pub struct ConsensusKeysStorage {
+    bls_pubkey: StorageBytes,
+    peer_pubkey: StorageBytes32,
+    activation_epoch: StorageU64,
+}
+
 /// Single ERC-7201 namespaced storage root for staking.
 ///
 /// Deriving the layout keeps packing and nested map/vector locations
@@ -87,8 +120,20 @@ pub struct StakingStorage {
     validators: StorageMap<Address, ValidatorStorage>,
     owner_validators: StorageMap<Address, StorageAddress>,
     active_validators: StorageVec<StorageAddress>,
+    jailed_validators: StorageVec<StorageAddress>,
+    selection_roster: StorageVec<StorageAddress>,
+    selection_membership: StorageMap<Address, SelectionMembershipStorage>,
     validator_snapshots: StorageMap<Address, StorageMap<u64, ValidatorSnapshotStorage>>,
     validator_delegations: StorageMap<Address, StorageMap<Address, ValidatorDelegationStorage>>,
+    consensus_keys: StorageMap<Address, ConsensusKeysStorage>,
+    peer_pubkey_owner: StorageMap<B256, StorageAddress>,
+    epoch_committees: StorageMap<u64, StorageVec<StorageAddress>>,
+    dkg_qual: StorageMap<u64, StorageBool>,
+    last_committed_epoch_p1: StorageU64,
+    pruned_up_to_p1: StorageU64,
+    tombstoned: StorageMap<Address, StorageBool>,
+    credited_blend: StorageU256,
+    last_rewarded_epoch_p1: StorageU64,
 }
 
 pub fn staking_storage() -> StakingStorage {

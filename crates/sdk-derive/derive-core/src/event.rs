@@ -232,7 +232,7 @@ fn generate_data(fields: &[&EventField]) -> TokenStream2 {
         let data = {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
             let values = (#(self.#names.clone(),)*);
-            SolidityABI::encode(&values, &mut buf, 0).expect("encode data fields");
+            SolidityABI::encode_function_args(&values, &mut buf).expect("encode data fields");
             buf.freeze()
         };
     }
