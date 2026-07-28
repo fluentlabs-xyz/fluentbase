@@ -1,6 +1,9 @@
 use super::*;
 use crate::storage::{staking_storage, STATUS_ACTIVE};
-use crate::types::{AddressCommand, ConfigureCommand, InitializeCommand};
+use crate::types::{
+    AddressCommand, ConfigureCommand, InitializeCommand, ValidatorBlockCommand,
+    ValidatorDelegatorCommand,
+};
 use fluentbase_sdk::{
     bytes::BytesMut, codec::SolidityABI, derive::derive_keccak256_id, is_engine_metered_precompile,
     is_execute_using_system_runtime, Address, Bytes, ContractContextV1, ExitCode,
@@ -109,6 +112,26 @@ fn implemented_selectors_match_pinned_solidity_abi() {
     assert_eq!(
         SIG_CONFIGURE,
         derive_keccak256_id!("configure(address,uint64,uint64,uint256,uint256)")
+    );
+    assert_eq!(
+        SIG_GET_VALIDATOR_DELEGATION,
+        derive_keccak256_id!("getValidatorDelegation(address,address)")
+    );
+    assert_eq!(
+        SIG_GET_VALIDATOR_DELEGATED_STAKE_AT,
+        derive_keccak256_id!("getValidatorDelegatedStakeAt(address,uint256)")
+    );
+    assert_eq!(
+        SIG_REGISTER_VALIDATOR,
+        derive_keccak256_id!("registerValidator(address,uint16,uint256)")
+    );
+    assert_eq!(
+        SIG_DELEGATE,
+        derive_keccak256_id!("delegate(address,uint256)")
+    );
+    assert_eq!(
+        SIG_UNDELEGATE,
+        derive_keccak256_id!("undelegate(address,uint256)")
     );
     assert_eq!(
         SIG_IS_VALIDATOR,
@@ -314,8 +337,8 @@ fn stores_reserved_governance_and_chain_configuration() {
         staking_token,
         active_validators_length: 50,
         epoch_block_interval: 100,
-        min_validator_stake_amount: U256::from(1_000),
-        min_staking_amount: U256::from(10),
+        min_validator_stake_amount: BALANCE_COMPACT_PRECISION,
+        min_staking_amount: BALANCE_COMPACT_PRECISION,
     };
     assert_eq!(
         harness.call(encode_call(SIG_CONFIGURE, &configure)).0,
@@ -357,4 +380,109 @@ fn initializer_rejects_mismatched_arrays_without_persisting_owner() {
 
     let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
     assert_eq!(decode_output::<Address>(&output), Address::ZERO);
+}
+
+#[test]
+fn delegation_and_undelegation_follow_epoch_snapshots() {
+    let owner = Address::with_last_byte(0xa0);
+    let delegator = Address::with_last_byte(0xb0);
+    let validator = Address::with_last_byte(0x01);
+    let token = Address::with_last_byte(0xc0);
+    let one_token = U256::from(1_000_000_000_000_000_000u64);
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(
+            owner,
+            vec![validator],
+            vec![one_token * U256::from(10)],
+            500,
+        ),
+        ExitCode::Ok
+    );
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CONFIGURE,
+                &ConfigureCommand {
+                    staking_token: token,
+                    active_validators_length: 21,
+                    epoch_block_interval: 200,
+                    min_validator_stake_amount: one_token,
+                    min_staking_amount: one_token,
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    economics::delegate_to(
+        &mut harness.sdk,
+        delegator,
+        validator,
+        one_token * U256::from(2),
+        false,
+    )
+    .unwrap();
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_VALIDATOR_DELEGATION,
+        &ValidatorDelegatorCommand {
+            validator,
+            delegator,
+        },
+    ));
+    assert_eq!(
+        decode_output::<(U256, u64)>(&output),
+        (one_token * U256::from(2), 2)
+    );
+
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_VALIDATOR_DELEGATED_STAKE_AT,
+        &ValidatorBlockCommand {
+            validator,
+            block_number: U256::from(1_399),
+        },
+    ));
+    assert_eq!(decode_output::<U256>(&output), one_token * U256::from(10));
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_VALIDATOR_DELEGATED_STAKE_AT,
+        &ValidatorBlockCommand {
+            validator,
+            block_number: U256::from(1_400),
+        },
+    ));
+    assert_eq!(decode_output::<U256>(&output), one_token * U256::from(12));
+
+    harness.set_block_number(1_400);
+    economics::undelegate_from(&mut harness.sdk, delegator, validator, one_token).unwrap();
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_VALIDATOR_DELEGATION,
+        &ValidatorDelegatorCommand {
+            validator,
+            delegator,
+        },
+    ));
+    assert_eq!(decode_output::<(U256, u64)>(&output), (one_token, 3));
+
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_VALIDATOR_DELEGATED_STAKE_AT,
+        &ValidatorBlockCommand {
+            validator,
+            block_number: U256::from(1_600),
+        },
+    ));
+    assert_eq!(decode_output::<U256>(&output), one_token * U256::from(11));
+}
+
+#[test]
+fn erc20_transfer_from_calldata_is_standard_abi() {
+    let from = Address::with_last_byte(0x11);
+    let to = Address::with_last_byte(0x22);
+    let amount = U256::from(123);
+    let input = util::erc20_transfer_from_input(from, to, amount).unwrap();
+    assert_eq!(&input[..4], &SIG_ERC20_TRANSFER_FROM.to_be_bytes());
+    assert_eq!(
+        SolidityABI::<(Address, Address, U256)>::decode(&&input[4..], 0).unwrap(),
+        (from, to, amount)
+    );
 }

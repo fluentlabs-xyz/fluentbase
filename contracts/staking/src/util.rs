@@ -9,7 +9,9 @@ use fluentbase_sdk::{
 use crate::{
     consts::*,
     events, math,
-    storage::{current_epoch, staking_storage, STATUS_ACTIVE, STATUS_NOT_FOUND},
+    storage::{
+        current_epoch, staking_storage, ValidatorSnapshotStorage, STATUS_ACTIVE, STATUS_NOT_FOUND,
+    },
     types::AddressCommand,
 };
 
@@ -83,11 +85,7 @@ pub fn validator_status<SDK: SharedAPI>(sdk: &SDK, validator: Address) -> Result
 }
 
 pub fn total_delegated<SDK: SharedAPI>(sdk: &SDK, validator: Address) -> Result<U256, ExitCode> {
-    staking_storage()
-        .validators_accessor()
-        .entry(validator)
-        .total_delegated_accessor()
-        .get_checked(sdk)
+    validator_total_at(sdk, validator, current_epoch(sdk)?)
 }
 
 pub fn set_validator<SDK: SharedAPI>(
@@ -130,15 +128,34 @@ pub fn set_validator<SDK: SharedAPI>(
     record
         .status_accessor()
         .set_checked(sdk, validator_status)?;
-    record.total_delegated_accessor().set_checked(sdk, stake)?;
     record.changed_at_accessor().set_checked(sdk, changed_at)?;
-    record
-        .commission_rate_accessor()
-        .set_checked(sdk, commission_rate)?;
     storage
         .owner_validators_accessor()
         .entry(validator_owner)
         .set_checked(sdk, validator)?;
+
+    let snapshot = storage
+        .validator_snapshots_accessor()
+        .entry(validator)
+        .entry(changed_at);
+    snapshot.initialized_accessor().set_checked(sdk, true)?;
+    snapshot
+        .total_delegated_accessor()
+        .set_checked(sdk, stake)?;
+    snapshot
+        .commission_rate_accessor()
+        .set_checked(sdk, commission_rate)?;
+
+    let delegation = storage
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(validator_owner);
+    if delegation.delegate_queue_accessor().len_checked(sdk)? != 0 {
+        return revert(sdk, ERR_DELEGATION_QUEUE_NOT_EMPTY);
+    }
+    let initial = delegation.delegate_queue_accessor().grow_checked(sdk)?;
+    initial.amount_accessor().set_checked(sdk, stake)?;
+    initial.epoch_accessor().set_checked(sdk, changed_at)?;
 
     if validator_status == STATUS_ACTIVE {
         storage
@@ -159,11 +176,12 @@ pub fn selected_validators<SDK: SharedAPI>(sdk: &SDK) -> Result<Vec<Address>, Ex
     let storage = staking_storage();
     let active = storage.active_validators_accessor();
     let active_len = active.len_checked(sdk)?;
+    let epoch = current_epoch(sdk)?;
     let mut ranked = Vec::with_capacity(active_len as usize);
     for index in 0..active_len {
         let validator = active.at(index).get_checked(sdk)?;
         if validator_status(sdk, validator)? == STATUS_ACTIVE {
-            ranked.push((validator, total_delegated(sdk, validator)?));
+            ranked.push((validator, validator_total_at(sdk, validator, epoch)?));
         }
     }
     ranked.sort_unstable_by(|(a_address, a_stake), (b_address, b_stake)| {
@@ -179,11 +197,16 @@ pub fn selected_validators<SDK: SharedAPI>(sdk: &SDK) -> Result<Vec<Address>, Ex
 
 pub fn emit_modified<SDK: SharedAPI>(sdk: &mut SDK, validator: Address) -> Result<(), ExitCode> {
     let record = staking_storage().validators_accessor().entry(validator);
+    let changed_at = record.changed_at_accessor().get_checked(sdk)?;
+    let snapshot = staking_storage()
+        .validator_snapshots_accessor()
+        .entry(validator)
+        .entry(changed_at);
     events::ValidatorModified {
         validator,
         owner: record.owner_accessor().get_checked(sdk)?,
         status: record.status_accessor().get_checked(sdk)?,
-        commission_rate: record.commission_rate_accessor().get_checked(sdk)?,
+        commission_rate: snapshot.commission_rate_accessor().get_checked(sdk)?,
     }
     .emit(sdk)
 }
@@ -192,4 +215,101 @@ pub fn next_epoch<SDK: SharedAPI>(sdk: &SDK) -> Result<u64, ExitCode> {
     current_epoch(sdk)?
         .checked_add(1)
         .ok_or(ExitCode::IntegerOverflow)
+}
+
+pub fn touch_validator_snapshot<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+    epoch: u64,
+) -> Result<ValidatorSnapshotStorage, ExitCode> {
+    let storage = staking_storage();
+    let snapshots = storage.validator_snapshots_accessor().entry(validator);
+    let snapshot = snapshots.entry(epoch);
+    if snapshot.initialized_accessor().get_checked(sdk)? {
+        return Ok(snapshot);
+    }
+
+    let record = storage.validators_accessor().entry(validator);
+    let changed_at = record.changed_at_accessor().get_checked(sdk)?;
+    let previous = snapshots.entry(changed_at);
+    snapshot.initialized_accessor().set_checked(sdk, true)?;
+    snapshot
+        .total_delegated_accessor()
+        .set_checked(sdk, previous.total_delegated_accessor().get_checked(sdk)?)?;
+    snapshot
+        .commission_rate_accessor()
+        .set_checked(sdk, previous.commission_rate_accessor().get_checked(sdk)?)?;
+    snapshot
+        .slashes_count_accessor()
+        .set_checked(sdk, previous.slashes_count_accessor().get_checked(sdk)?)?;
+    if epoch > changed_at {
+        record.changed_at_accessor().set_checked(sdk, epoch)?;
+    }
+    Ok(snapshot)
+}
+
+pub fn validator_total_at<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    epoch: u64,
+) -> Result<U256, ExitCode> {
+    let storage = staking_storage();
+    let record = storage.validators_accessor().entry(validator);
+    if record.status_accessor().get_checked(sdk)? == STATUS_NOT_FOUND {
+        return Ok(U256::ZERO);
+    }
+
+    let mut lookup = core::cmp::min(epoch, record.changed_at_accessor().get_checked(sdk)?);
+    let snapshots = storage.validator_snapshots_accessor().entry(validator);
+    loop {
+        let snapshot = snapshots.entry(lookup);
+        if snapshot.initialized_accessor().get_checked(sdk)? {
+            return snapshot.total_delegated_accessor().get_checked(sdk);
+        }
+        if lookup == 0 {
+            return Ok(U256::ZERO);
+        }
+        lookup -= 1;
+    }
+}
+
+pub fn erc20_transfer_from_input(
+    from: Address,
+    to: Address,
+    amount: U256,
+) -> Result<Vec<u8>, ExitCode> {
+    let mut params = BytesMut::new();
+    SolidityABI::<(Address, Address, U256)>::encode(&(from, to, amount), &mut params, 0)
+        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+    let mut input = SIG_ERC20_TRANSFER_FROM.to_be_bytes().to_vec();
+    input.extend_from_slice(&params);
+    Ok(input)
+}
+
+pub fn safe_transfer_from<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    from: Address,
+    amount: U256,
+) -> Result<(), ExitCode> {
+    let token = staking_storage()
+        .config_accessor()
+        .staking_token_accessor()
+        .get_checked(sdk)?;
+    if token.is_zero() {
+        return revert(sdk, ERR_ZERO_STAKING_TOKEN);
+    }
+    let recipient = sdk.context().contract_address();
+    let input = erc20_transfer_from_input(from, recipient, amount)?;
+    let result = sdk.call(token, U256::ZERO, &input, None);
+    if !result.status.is_ok() {
+        sdk.write(result.data);
+        return Err(result.status);
+    }
+    if !result.data.is_empty()
+        && !SolidityABI::<bool>::decode(&result.data, 0)
+            .map_err(|_| ExitCode::MalformedBuiltinParams)?
+    {
+        return revert(sdk, ERR_STAKING_TOKEN_CALL_FAILED);
+    }
+    Ok(())
 }

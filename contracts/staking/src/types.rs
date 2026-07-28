@@ -27,6 +27,31 @@ pub struct TwoAddressesCommand {
 }
 
 #[derive(Default, Debug, Codec)]
+pub struct ValidatorDelegatorCommand {
+    pub validator: Address,
+    pub delegator: Address,
+}
+
+#[derive(Default, Debug, Codec)]
+pub struct AddressAmountCommand {
+    pub validator: Address,
+    pub amount: U256,
+}
+
+#[derive(Default, Debug, Codec)]
+pub struct ValidatorBlockCommand {
+    pub validator: Address,
+    pub block_number: U256,
+}
+
+#[derive(Default, Debug, Codec)]
+pub struct RegisterValidatorCommand {
+    pub validator: Address,
+    pub commission_rate: u16,
+    pub initial_stake: U256,
+}
+
+#[derive(Default, Debug, Codec)]
 pub struct ConfigureCommand {
     pub staking_token: Address,
     pub active_validators_length: u64,

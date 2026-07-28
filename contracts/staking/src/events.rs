@@ -1,4 +1,4 @@
-use fluentbase_sdk::{derive::Event, Address};
+use fluentbase_sdk::{derive::Event, Address, U256};
 
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
 pub struct ValidatorAdded {
@@ -24,4 +24,24 @@ pub struct ValidatorModified {
 pub struct ValidatorRemoved {
     #[indexed]
     pub validator: Address,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Event)]
+pub struct Delegated {
+    #[indexed]
+    pub validator: Address,
+    #[indexed]
+    pub staker: Address,
+    pub amount: U256,
+    pub epoch: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Event)]
+pub struct Undelegated {
+    #[indexed]
+    pub validator: Address,
+    #[indexed]
+    pub staker: Address,
+    pub amount: U256,
+    pub epoch: u64,
 }
