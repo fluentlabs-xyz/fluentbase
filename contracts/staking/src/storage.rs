@@ -23,15 +23,16 @@ pub struct ChainConfigStorage {
     governance: StorageAddress,
     active_validators_length: StorageU64,
     epoch_block_interval: StorageU64,
+    undelegate_period: StorageU64,
     dpos_activation_block: StorageU64,
     min_validator_stake_amount: StorageU256,
     min_staking_amount: StorageU256,
 }
 
-/// Fixed-size validator metadata and its latest accounting snapshot.
+/// Fixed-size validator metadata.
 ///
-/// Queue/snapshot history will be added as separate derived storage types in
-/// the delegation slice.
+/// Epoch-varying stake, commission, and slash counters live exclusively in
+/// `ValidatorSnapshotStorage`, avoiding duplicate sources of truth.
 #[derive(Storage)]
 pub struct ValidatorStorage {
     owner: StorageAddress,
@@ -39,9 +40,39 @@ pub struct ValidatorStorage {
     changed_at: StorageU64,
     jailed_before: StorageU64,
     claimed_at: StorageU64,
+}
+
+/// Per-epoch validator accounting snapshot.
+#[derive(Storage)]
+pub struct ValidatorSnapshotStorage {
+    initialized: StorageBool,
+    total_delegated: StorageU256,
     commission_rate: StorageU16,
     slashes_count: StorageU32,
-    total_delegated: StorageU256,
+}
+
+/// Effective delegation balance beginning at `epoch`.
+#[derive(Storage)]
+pub struct DelegationOpStorage {
+    amount: StorageU256,
+    epoch: StorageU64,
+}
+
+/// Principal queued for release after the undelegation period.
+#[derive(Storage)]
+pub struct UndelegationOpStorage {
+    amount: StorageU256,
+    epoch: StorageU64,
+}
+
+/// Delegation history for one validator/delegator pair.
+#[derive(Storage)]
+#[allow(dead_code)]
+pub struct ValidatorDelegationStorage {
+    delegate_queue: StorageVec<DelegationOpStorage>,
+    delegate_gap: StorageU64,
+    undelegate_queue: StorageVec<UndelegationOpStorage>,
+    undelegate_gap: StorageU64,
 }
 
 /// Single ERC-7201 namespaced storage root for staking.
@@ -56,6 +87,8 @@ pub struct StakingStorage {
     validators: StorageMap<Address, ValidatorStorage>,
     owner_validators: StorageMap<Address, StorageAddress>,
     active_validators: StorageVec<StorageAddress>,
+    validator_snapshots: StorageMap<Address, StorageMap<u64, ValidatorSnapshotStorage>>,
+    validator_delegations: StorageMap<Address, StorageMap<Address, ValidatorDelegationStorage>>,
 }
 
 pub fn staking_storage() -> StakingStorage {
@@ -63,12 +96,18 @@ pub fn staking_storage() -> StakingStorage {
 }
 
 pub fn current_epoch<SDK: SharedAPI>(sdk: &SDK) -> Result<u64, ExitCode> {
+    current_epoch_at_block(sdk, sdk.context().block_number())
+}
+
+pub fn current_epoch_at_block<SDK: SharedAPI>(
+    sdk: &SDK,
+    block_number: u64,
+) -> Result<u64, ExitCode> {
     let storage = staking_storage();
     let config = storage.config_accessor();
     let activation = config.dpos_activation_block_accessor().get_checked(sdk)?;
     let interval = config.epoch_block_interval_accessor().get_checked(sdk)?;
-    math::epoch_at_block(sdk.context().block_number(), activation, interval)
-        .ok_or(ExitCode::IntegerDivisionByZero)
+    math::epoch_at_block(block_number, activation, interval).ok_or(ExitCode::IntegerDivisionByZero)
 }
 
 pub fn remove_active<SDK: SharedAPI>(sdk: &mut SDK, validator: Address) -> Result<(), ExitCode> {

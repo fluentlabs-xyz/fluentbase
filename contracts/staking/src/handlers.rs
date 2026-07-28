@@ -11,7 +11,7 @@ use crate::{
     util::{
         address_arg, decode, emit_modified, ensure_governance, ensure_initialized, ensure_mutable,
         ensure_non_payable, next_epoch, revert, selected_validators, set_validator,
-        total_delegated, validator_status, write_abi,
+        total_delegated, touch_validator_snapshot, validator_status, write_abi,
     },
 };
 
@@ -44,6 +44,9 @@ pub fn initialize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), Exi
     config
         .epoch_block_interval_accessor()
         .set_checked(sdk, DEFAULT_EPOCH_BLOCK_INTERVAL)?;
+    config
+        .undelegate_period_accessor()
+        .set_checked(sdk, DEFAULT_UNDELEGATE_PERIOD)?;
     config
         .active_validators_length_accessor()
         .set_checked(sdk, DEFAULT_ACTIVE_VALIDATORS_LENGTH)?;
@@ -86,7 +89,14 @@ pub fn configure<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), Exit
     if command.staking_token.is_zero() {
         return revert(sdk, ERR_ZERO_STAKING_TOKEN);
     }
-    if command.active_validators_length == 0 || command.epoch_block_interval == 0 {
+    if command.active_validators_length == 0
+        || command.active_validators_length > MAX_ACTIVE_VALIDATORS_LENGTH
+        || command.epoch_block_interval == 0
+        || command.min_validator_stake_amount.is_zero()
+        || command.min_staking_amount.is_zero()
+        || crate::math::compact_balance(command.min_validator_stake_amount).is_none()
+        || crate::math::compact_balance(command.min_staking_amount).is_none()
+    {
         return revert(sdk, ERR_INVALID_CHAIN_CONFIG);
     }
 
@@ -156,6 +166,60 @@ pub fn get_staking_token<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> 
     write_abi(sdk, &token)
 }
 
+pub fn get_active_validators_length<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    let value = staking_storage()
+        .config_accessor()
+        .active_validators_length_accessor()
+        .get_checked(sdk)?;
+    write_abi(sdk, &value)
+}
+
+pub fn get_epoch_block_interval<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    let value = staking_storage()
+        .config_accessor()
+        .epoch_block_interval_accessor()
+        .get_checked(sdk)?;
+    write_abi(sdk, &value)
+}
+
+pub fn get_dpos_activation_block<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    let value = staking_storage()
+        .config_accessor()
+        .dpos_activation_block_accessor()
+        .get_checked(sdk)?;
+    write_abi(sdk, &value)
+}
+
+pub fn get_undelegate_period<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    let value = staking_storage()
+        .config_accessor()
+        .undelegate_period_accessor()
+        .get_checked(sdk)?;
+    write_abi(sdk, &value)
+}
+
+pub fn get_min_validator_stake_amount<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    let value = staking_storage()
+        .config_accessor()
+        .min_validator_stake_amount_accessor()
+        .get_checked(sdk)?;
+    write_abi(sdk, &value)
+}
+
+pub fn get_min_staking_amount<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    let value = staking_storage()
+        .config_accessor()
+        .min_staking_amount_accessor()
+        .get_checked(sdk)?;
+    write_abi(sdk, &value)
+}
+
 pub fn is_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     let result = validator_status(sdk, address_arg(input)?)? != STATUS_NOT_FOUND;
@@ -174,15 +238,20 @@ pub fn get_validator_status<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resu
     ensure_non_payable(sdk)?;
     let validator = address_arg(input)?;
     let record = staking_storage().validators_accessor().entry(validator);
+    let changed_at = record.changed_at_accessor().get_checked(sdk)?;
+    let snapshot = staking_storage()
+        .validator_snapshots_accessor()
+        .entry(validator)
+        .entry(changed_at);
     let result = (
         record.owner_accessor().get_checked(sdk)?,
         record.status_accessor().get_checked(sdk)?,
-        record.total_delegated_accessor().get_checked(sdk)?,
-        record.slashes_count_accessor().get_checked(sdk)?,
-        record.changed_at_accessor().get_checked(sdk)?,
+        snapshot.total_delegated_accessor().get_checked(sdk)?,
+        snapshot.slashes_count_accessor().get_checked(sdk)?,
+        changed_at,
         record.jailed_before_accessor().get_checked(sdk)?,
         record.claimed_at_accessor().get_checked(sdk)?,
-        record.commission_rate_accessor().get_checked(sdk)?,
+        snapshot.commission_rate_accessor().get_checked(sdk)?,
     );
     write_abi(sdk, &result)
 }
@@ -300,7 +369,9 @@ pub fn change_commission<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     if validator_owner != sdk.context().contract_caller() {
         return revert(sdk, ERR_ONLY_VALIDATOR_OWNER);
     }
-    record
+    let changed_at = next_epoch(sdk)?;
+    let snapshot = touch_validator_snapshot(sdk, command.validator, changed_at)?;
+    snapshot
         .commission_rate_accessor()
         .set_checked(sdk, command.value)?;
     emit_modified(sdk, command.validator)

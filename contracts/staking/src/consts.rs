@@ -23,8 +23,25 @@ pub const SIG_GET_STAKING: u32 = 0x7b13_91a6;
 pub const SIG_GET_GOVERNANCE: u32 = 0x289b_3c0d;
 pub const SIG_GET_CHAIN_CONFIG: u32 = 0x606c_0c94;
 pub const SIG_GET_STAKING_TOKEN: u32 = 0x9f91_06d1;
+pub const SIG_GET_ACTIVE_VALIDATORS_LENGTH: u32 =
+    derive_keccak256_id!("getActiveValidatorsLength()");
+pub const SIG_GET_EPOCH_BLOCK_INTERVAL: u32 = derive_keccak256_id!("getEpochBlockInterval()");
+pub const SIG_GET_DPOS_ACTIVATION_BLOCK: u32 = derive_keccak256_id!("getDposActivationBlock()");
+pub const SIG_GET_UNDELEGATE_PERIOD: u32 = derive_keccak256_id!("getUndelegatePeriod()");
+pub const SIG_GET_MIN_VALIDATOR_STAKE_AMOUNT: u32 =
+    derive_keccak256_id!("getMinValidatorStakeAmount()");
+pub const SIG_GET_MIN_STAKING_AMOUNT: u32 = derive_keccak256_id!("getMinStakingAmount()");
+pub const SIG_GET_VALIDATOR_DELEGATION: u32 =
+    derive_keccak256_id!("getValidatorDelegation(address,address)");
+pub const SIG_GET_VALIDATOR_DELEGATED_STAKE_AT: u32 =
+    derive_keccak256_id!("getValidatorDelegatedStakeAt(address,uint256)");
+pub const SIG_REGISTER_VALIDATOR: u32 =
+    derive_keccak256_id!("registerValidator(address,uint16,uint256)");
+pub const SIG_DELEGATE: u32 = derive_keccak256_id!("delegate(address,uint256)");
+pub const SIG_UNDELEGATE: u32 = derive_keccak256_id!("undelegate(address,uint256)");
 pub const SIG_CONFIGURE: u32 =
     derive_keccak256_id!("configure(address,uint64,uint64,uint256,uint256)");
+pub const SIG_ERC20_TRANSFER_FROM: u32 = 0x23b8_72dd;
 
 pub const ERR_ALREADY_INITIALIZED: u32 = derive_keccak256_id!("InvalidInitialization()");
 pub const ERR_NOT_INITIALIZED: u32 = derive_keccak256_id!("NotInitialized()");
@@ -47,12 +64,24 @@ pub const ERR_ONLY_VALIDATOR_OWNER: u32 = derive_keccak256_id!("OnlyValidatorOwn
 pub const ERR_ONLY_OWNER: u32 = derive_keccak256_id!("OwnableUnauthorizedAccount(address)");
 pub const ERR_ZERO_STAKING_TOKEN: u32 = derive_keccak256_id!("ZeroStakingToken()");
 pub const ERR_INVALID_CHAIN_CONFIG: u32 = derive_keccak256_id!("InvalidChainConfig()");
+pub const ERR_AMOUNT_TOO_LOW: u32 = derive_keccak256_id!("AmountTooLow(uint256)");
+pub const ERR_INITIAL_STAKE_TOO_LOW: u32 = derive_keccak256_id!("InitialStakeTooLow(uint256)");
+pub const ERR_OWNER_SELF_STAKE_BELOW_MINIMUM: u32 =
+    derive_keccak256_id!("OwnerSelfStakeBelowMinimum()");
+pub const ERR_INSUFFICIENT_BALANCE: u32 = derive_keccak256_id!("InsufficientBalance()");
+pub const ERR_DELEGATION_QUEUE_EMPTY: u32 = derive_keccak256_id!("DelegationQueueEmpty()");
+pub const ERR_DELEGATION_QUEUE_NOT_EMPTY: u32 =
+    derive_keccak256_id!("DelegationQueueNotEmpty(uint256)");
+pub const ERR_STAKING_TOKEN_CALL_FAILED: u32 = derive_keccak256_id!("StakingTokenCallFailed()");
 pub const ERR_UNKNOWN_METHOD: u32 = derive_keccak256_id!("UnknownMethod()");
 
 pub const BALANCE_COMPACT_PRECISION: U256 = U256::from_limbs([10_000_000_000, 0, 0, 0]);
 pub const COMMISSION_RATE_MAX: u16 = 3_000;
 pub const DEFAULT_EPOCH_BLOCK_INTERVAL: u64 = 200;
 pub const DEFAULT_ACTIVE_VALIDATORS_LENGTH: u64 = 21;
+pub const MAX_ACTIVE_VALIDATORS_LENGTH: u64 = 51;
+pub const DEFAULT_UNDELEGATE_PERIOD: u64 = 7;
+pub const WARMUP_DELAY: u64 = 2;
 pub const DEFAULT_MIN_VALIDATOR_STAKE: U256 =
     U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 pub const DEFAULT_MIN_STAKING_AMOUNT: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
