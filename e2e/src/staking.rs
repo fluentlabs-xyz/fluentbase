@@ -2,7 +2,7 @@ use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{
     universal_token::{ApproveCommand, BalanceOfCommand, InitialSettings, UniversalTokenCommand},
-    Address, GENESIS_STAKING, U256,
+    Address, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
 use fluentbase_testing::EvmTestingContext;
 
@@ -53,6 +53,19 @@ fn call(
     result.output().cloned().unwrap_or_default().to_vec()
 }
 
+fn assert_reverts(
+    context: &mut EvmTestingContext,
+    caller: Address,
+    callee: Address,
+    input: Vec<u8>,
+) {
+    let result = context.call_evm_tx(caller, callee, input.into(), Some(20_000_000), None);
+    assert!(
+        !result.is_success(),
+        "call unexpectedly succeeded: {result:?}"
+    );
+}
+
 fn token_balance(context: &mut EvmTestingContext, token: Address, owner: Address) -> U256 {
     let mut input = Vec::new();
     BalanceOfCommand { owner }.encode_for_send(&mut input);
@@ -80,7 +93,7 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
 
     call(
         &mut context,
-        OWNER,
+        GENESIS_GOVERNANCE,
         GENESIS_STAKING,
         IStakingRwasm::configureCall {
             stakingToken: token,
@@ -98,6 +111,38 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
         }
         .abi_encode(),
     );
+    assert_reverts(
+        &mut context,
+        GENESIS_GOVERNANCE,
+        GENESIS_STAKING,
+        IStakingRwasm::configureCall {
+            stakingToken: token,
+            activeValidatorsLength: 21,
+            epochBlockInterval: 200,
+            felonyThreshold: 150,
+            validatorJailEpochLength: 7,
+            undelegatePeriod: 7,
+            minValidatorStakeAmount: TOKEN,
+            minStakingAmount: TOKEN,
+            dposActivationBlock: 1_000,
+            blsVerifier: Address::ZERO,
+            evidenceDecoder: Address::ZERO,
+            minUndelegateBlocks: U256::ZERO,
+        }
+        .abi_encode(),
+    );
+    assert_reverts(
+        &mut context,
+        OWNER,
+        GENESIS_STAKING,
+        IStakingRwasm::initializeCall {
+            initialOwner: OWNER,
+            validators: vec![VALIDATOR],
+            initialStakes: vec![TOKEN],
+            commissionRate: 0,
+        }
+        .abi_encode(),
+    );
 
     let mut approve = Vec::new();
     ApproveCommand {
@@ -108,7 +153,7 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
     call(&mut context, OWNER, token, approve);
     call(
         &mut context,
-        OWNER,
+        GENESIS_GOVERNANCE,
         GENESIS_STAKING,
         IStakingRwasm::initializeCall {
             initialOwner: OWNER,
@@ -146,6 +191,7 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
     let delegation =
         IStakingRwasm::getValidatorDelegationCall::abi_decode_returns(&output).unwrap();
     assert_eq!(delegation.delegatedAmount, TOKEN * U256::from(3));
+    // Block 1_400 is epoch 2: (1_400 - activation 1_000) / interval 200.
     assert_eq!(delegation.atEpoch, 2);
 
     call(

@@ -239,10 +239,11 @@ fn slash_equivocation<SDK: SharedAPI>(
         .entry(validator)
         .set_checked(sdk, true)?;
     let record = storage.validators_accessor().entry(validator);
-    if record.status_accessor().get_checked(sdk)? == STATUS_NOT_FOUND {
+    let status = record.status_accessor().get_checked(sdk)?;
+    if status == STATUS_NOT_FOUND {
         return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
     }
-    if record.status_accessor().get_checked(sdk)? == STATUS_ACTIVE {
+    if status == STATUS_ACTIVE {
         remove_active(sdk, validator)?;
     }
     record.status_accessor().set_checked(sdk, STATUS_JAIL)?;

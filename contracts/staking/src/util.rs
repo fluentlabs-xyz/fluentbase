@@ -159,7 +159,11 @@ pub fn set_validator<SDK: SharedAPI>(
         .get_checked(sdk)?
         .is_zero()
     {
-        return revert_with(sdk, ERR_VALIDATOR_OWNER_ALREADY_IN_USE, &validator);
+        return revert_with(
+            sdk,
+            ERR_VALIDATOR_OWNER_ALREADY_IN_USE,
+            &validator_owner,
+        );
     }
 
     record.owner_accessor().set_checked(sdk, validator_owner)?;
@@ -167,6 +171,14 @@ pub fn set_validator<SDK: SharedAPI>(
         .status_accessor()
         .set_checked(sdk, validator_status)?;
     record.changed_at_accessor().set_checked(sdk, changed_at)?;
+    record
+        .first_snapshot_epoch_p1_accessor()
+        .set_checked(
+            sdk,
+            changed_at
+                .checked_add(1)
+                .ok_or(ExitCode::IntegerOverflow)?,
+        )?;
     storage
         .owner_validators_accessor()
         .entry(validator_owner)
@@ -365,25 +377,31 @@ pub fn selected_validators<SDK: SharedAPI>(sdk: &SDK) -> Result<Vec<Address>, Ex
 /// choose a different committee at the top-k boundary.
 fn top_k_by_stake_at<SDK: SharedAPI>(
     sdk: &SDK,
-    mut candidates: Vec<Address>,
+    candidates: Vec<Address>,
     epoch: u64,
     cap: usize,
 ) -> Result<Vec<Address>, ExitCode> {
+    let mut candidates = candidates
+        .into_iter()
+        .map(|validator| Ok((validator, validator_total_at(sdk, validator, epoch)?)))
+        .collect::<Result<Vec<_>, ExitCode>>()?;
     let k = core::cmp::min(cap, candidates.len());
     for index in 0..k {
         let mut next = index;
-        let mut max_stake = validator_total_at(sdk, candidates[next], epoch)?;
-        for (candidate, validator) in candidates.iter().enumerate().skip(index + 1) {
-            let stake = validator_total_at(sdk, *validator, epoch)?;
-            if stake > max_stake {
+        let mut max_stake = candidates[next].1;
+        for (candidate, (_, stake)) in candidates.iter().enumerate().skip(index + 1) {
+            if *stake > max_stake {
                 next = candidate;
-                max_stake = stake;
+                max_stake = *stake;
             }
         }
         candidates.swap(index, next);
     }
     candidates.truncate(k);
-    Ok(candidates)
+    Ok(candidates
+        .into_iter()
+        .map(|(validator, _)| validator)
+        .collect())
 }
 
 pub fn emit_modified<SDK: SharedAPI>(sdk: &mut SDK, validator: Address) -> Result<(), ExitCode> {
@@ -451,6 +469,14 @@ pub fn touch_snapshot_at_or_before<SDK: SharedAPI>(
         return Ok(snapshot);
     }
     let record = storage.validators_accessor().entry(validator);
+    let first_p1 = record
+        .first_snapshot_epoch_p1_accessor()
+        .get_checked(sdk)?;
+    if first_p1 == 0 || epoch < first_p1 - 1 {
+        snapshot.initialized_accessor().set_checked(sdk, true)?;
+        return Ok(snapshot);
+    }
+    let floor = first_p1 - 1;
     let mut lookup = core::cmp::min(epoch, record.changed_at_accessor().get_checked(sdk)?);
     loop {
         let base = snapshots.entry(lookup);
@@ -470,7 +496,7 @@ pub fn touch_snapshot_at_or_before<SDK: SharedAPI>(
             }
             return Ok(snapshot);
         }
-        if lookup == 0 {
+        if lookup == floor {
             snapshot.initialized_accessor().set_checked(sdk, true)?;
             return Ok(snapshot);
         }
@@ -489,6 +515,13 @@ pub fn validator_total_at<SDK: SharedAPI>(
         return Ok(U256::ZERO);
     }
 
+    let first_p1 = record
+        .first_snapshot_epoch_p1_accessor()
+        .get_checked(sdk)?;
+    if first_p1 == 0 || epoch < first_p1 - 1 {
+        return Ok(U256::ZERO);
+    }
+    let floor = first_p1 - 1;
     let mut lookup = core::cmp::min(epoch, record.changed_at_accessor().get_checked(sdk)?);
     let snapshots = storage.validator_snapshots_accessor().entry(validator);
     loop {
@@ -496,7 +529,7 @@ pub fn validator_total_at<SDK: SharedAPI>(
         if snapshot.initialized_accessor().get_checked(sdk)? {
             return snapshot.total_delegated_accessor().get_checked(sdk);
         }
-        if lookup == 0 {
+        if lookup == floor {
             return Ok(U256::ZERO);
         }
         lookup -= 1;

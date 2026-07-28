@@ -95,6 +95,10 @@ fn validator_owner_rewards<SDK: SharedAPI>(
         return Ok(U256::ZERO);
     }
     let mut epoch = record.claimed_at_accessor().get_checked(sdk)?;
+    let before_epoch = core::cmp::min(
+        before_epoch,
+        epoch.saturating_add(MAX_EPOCHS_PER_CLAIM),
+    );
     let mut rewards = U256::ZERO;
     while epoch < before_epoch {
         rewards = rewards
@@ -398,13 +402,19 @@ pub fn get_delegator_fee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let command = decode::<ValidatorDelegatorCommand>(input)?;
+    let before_epoch = capped_delegator_claim_epoch(
+        sdk,
+        command.validator,
+        command.delegator,
+        current_epoch(sdk)?,
+    )?;
     write_abi(
         sdk,
         &delegator_claimable(
             sdk,
             command.validator,
             command.delegator,
-            current_epoch(sdk)?,
+            before_epoch,
         )?,
     )
 }
@@ -416,9 +426,15 @@ pub fn get_pending_delegator_fee<SDK: SharedAPI>(
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let command = decode::<ValidatorDelegatorCommand>(input)?;
+    let before_epoch = capped_delegator_claim_epoch(
+        sdk,
+        command.validator,
+        command.delegator,
+        next_epoch(sdk)?,
+    )?;
     write_abi(
         sdk,
-        &delegator_claimable(sdk, command.validator, command.delegator, next_epoch(sdk)?)?,
+        &delegator_claimable(sdk, command.validator, command.delegator, before_epoch)?,
     )
 }
 
@@ -494,11 +510,17 @@ pub fn calc_available_for_redelegate_amount<SDK: SharedAPI>(
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let command = decode::<ValidatorDelegatorCommand>(input)?;
-    let claimable = delegator_claimable(
+    let before_epoch = capped_delegator_claim_epoch(
         sdk,
         command.validator,
         command.delegator,
         current_epoch(sdk)?,
+    )?;
+    let claimable = delegator_claimable(
+        sdk,
+        command.validator,
+        command.delegator,
+        before_epoch,
     )?;
     write_abi(sdk, &available_for_redelegate(sdk, claimable)?)
 }
@@ -610,6 +632,12 @@ fn settle_one<SDK: SharedAPI>(
                         .tombstoned_accessor()
                         .entry(validator)
                         .get_checked(sdk)?
+                    || storage
+                        .validators_accessor()
+                        .entry(validator)
+                        .status_accessor()
+                        .get_checked(sdk)?
+                        == STATUS_NOT_FOUND
                 {
                     continue;
                 }
@@ -643,8 +671,7 @@ fn settle_one<SDK: SharedAPI>(
         let sent =
             call_decode::<_, _, U256>(sdk, reserve, SIG_RESERVE_DISBURSE, &(recipient, assigned))?;
         if sent != assigned {
-            assigned = U256::ZERO;
-            shares.fill(U256::ZERO);
+            return revert_with(sdk, ERR_RESERVE_SHORT_DISBURSEMENT, &(sent, assigned));
         }
     }
     if !assigned.is_zero() {
@@ -654,15 +681,6 @@ fn settle_one<SDK: SharedAPI>(
                 continue;
             }
             let validator = committee.at(index as u64).get_checked(sdk)?;
-            if storage
-                .validators_accessor()
-                .entry(validator)
-                .status_accessor()
-                .get_checked(sdk)?
-                == STATUS_NOT_FOUND
-            {
-                continue;
-            }
             let snapshot = touch_snapshot_at_or_before(sdk, validator, epoch)?;
             let next = snapshot
                 .total_blend_rewards_accessor()
