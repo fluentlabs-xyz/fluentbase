@@ -25,3 +25,4 @@ pub use encoder::*;
 pub use error::*;
 #[cfg(feature = "derive")]
 pub use fluentbase_codec_derive::Codec;
+pub use func::FunctionArgs;

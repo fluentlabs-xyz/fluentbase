@@ -28,7 +28,8 @@ impl DataStored {
         let data = {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
             let values = (self.key.clone(), self.value.clone());
-            SolidityABI::encode(&values, &mut buf, 0).expect("encode data fields");
+            SolidityABI::encode_function_args(&values, &mut buf)
+                .expect("encode data fields");
             buf.freeze()
         };
         sdk.emit_log(&topics, &data).ok()
