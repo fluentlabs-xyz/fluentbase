@@ -2106,6 +2106,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-staking"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-testing",
+]
+
+[[package]]
 name = "fluentbase-contracts-universal-token"
 version = "0.1.0"
 dependencies = [
