@@ -19,6 +19,12 @@ pub const SIG_ACTIVATE_VALIDATOR: u32 = 0xb46e_5520;
 pub const SIG_DISABLE_VALIDATOR: u32 = 0x1fe9_7684;
 pub const SIG_CHANGE_VALIDATOR_COMMISSION_RATE: u32 = 0x14f8_649f;
 pub const SIG_CHANGE_VALIDATOR_OWNER: u32 = 0x0052_c9e1;
+pub const SIG_GET_STAKING: u32 = 0x7b13_91a6;
+pub const SIG_GET_GOVERNANCE: u32 = 0x289b_3c0d;
+pub const SIG_GET_CHAIN_CONFIG: u32 = 0x606c_0c94;
+pub const SIG_GET_STAKING_TOKEN: u32 = 0x9f91_06d1;
+pub const SIG_CONFIGURE: u32 =
+    derive_keccak256_id!("configure(address,uint64,uint64,uint256,uint256)");
 
 pub const ERR_ALREADY_INITIALIZED: u32 = derive_keccak256_id!("InvalidInitialization()");
 pub const ERR_NOT_INITIALIZED: u32 = derive_keccak256_id!("NotInitialized()");
@@ -38,31 +44,17 @@ pub const ERR_NOT_ACTIVE_VALIDATOR: u32 = derive_keccak256_id!("NotActiveValidat
 pub const ERR_VALIDATOR_HAS_ACTIVE_DELEGATIONS: u32 =
     derive_keccak256_id!("ValidatorHasActiveDelegations(address)");
 pub const ERR_ONLY_VALIDATOR_OWNER: u32 = derive_keccak256_id!("OnlyValidatorOwner(address)");
+pub const ERR_ONLY_OWNER: u32 = derive_keccak256_id!("OwnableUnauthorizedAccount(address)");
+pub const ERR_ZERO_STAKING_TOKEN: u32 = derive_keccak256_id!("ZeroStakingToken()");
+pub const ERR_INVALID_CHAIN_CONFIG: u32 = derive_keccak256_id!("InvalidChainConfig()");
 pub const ERR_UNKNOWN_METHOD: u32 = derive_keccak256_id!("UnknownMethod()");
 
 pub const BALANCE_COMPACT_PRECISION: U256 = U256::from_limbs([10_000_000_000, 0, 0, 0]);
 pub const COMMISSION_RATE_MAX: u16 = 3_000;
 pub const DEFAULT_EPOCH_BLOCK_INTERVAL: u64 = 200;
 pub const DEFAULT_ACTIVE_VALIDATORS_LENGTH: u64 = 21;
+pub const DEFAULT_MIN_VALIDATOR_STAKE: U256 =
+    U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+pub const DEFAULT_MIN_STAKING_AMOUNT: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
-pub const INITIALIZED_SLOT: U256 = erc7201_slot!("Fluent.storage.Staking.initialized");
-pub const OWNER_SLOT: U256 = erc7201_slot!("Fluent.storage.Staking.owner");
-pub const ACTIVATION_BLOCK_SLOT: U256 = erc7201_slot!("Fluent.storage.Staking.activation-block");
-pub const EPOCH_INTERVAL_SLOT: U256 = erc7201_slot!("Fluent.storage.Staking.epoch-interval");
-pub const ACTIVE_VALIDATORS_LENGTH_SLOT: U256 =
-    erc7201_slot!("Fluent.storage.Staking.active-validators-length");
-pub const ACTIVE_VALIDATORS_SLOT: U256 = erc7201_slot!("Fluent.storage.Staking.active-validators");
-pub const VALIDATOR_OWNER_SLOT: U256 = erc7201_slot!("Fluent.storage.Staking.validator-owner");
-pub const OWNER_VALIDATOR_SLOT: U256 = erc7201_slot!("Fluent.storage.Staking.owner-validator");
-pub const VALIDATOR_STATUS_SLOT: U256 = erc7201_slot!("Fluent.storage.Staking.validator-status");
-pub const VALIDATOR_TOTAL_DELEGATED_SLOT: U256 =
-    erc7201_slot!("Fluent.storage.Staking.validator-total-delegated");
-pub const VALIDATOR_SLASHES_SLOT: U256 = erc7201_slot!("Fluent.storage.Staking.validator-slashes");
-pub const VALIDATOR_CHANGED_AT_SLOT: U256 =
-    erc7201_slot!("Fluent.storage.Staking.validator-changed-at");
-pub const VALIDATOR_JAILED_BEFORE_SLOT: U256 =
-    erc7201_slot!("Fluent.storage.Staking.validator-jailed-before");
-pub const VALIDATOR_CLAIMED_AT_SLOT: U256 =
-    erc7201_slot!("Fluent.storage.Staking.validator-claimed-at");
-pub const VALIDATOR_COMMISSION_RATE_SLOT: U256 =
-    erc7201_slot!("Fluent.storage.Staking.validator-commission-rate");
+pub const STAKING_STORAGE_SLOT: U256 = erc7201_slot!("Fluent.storage.StakingStorage");

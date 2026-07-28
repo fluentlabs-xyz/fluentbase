@@ -51,12 +51,11 @@ pub const PRECOMPILE_WASM_RUNTIME: Address = address!("0x00000000000000000000000
 pub const PRECOMPILE_RUNTIME_UPGRADE: Address =
     address!("0x0000000000000000000000000000000000520010");
 
-/// Validator staking system contract.
-///
-/// Staking is part of the consensus-critical runtime and is deployed at a
-/// fixed address so protocol callers do not depend on CREATE address
-/// derivation.
-pub const PRECOMPILE_STAKING: Address = address!("0x0000000000000000000000000000000000520011");
+/// Validator staking rWasm contract deployed directly in genesis.
+pub const GENESIS_STAKING: Address = address!("0x0000000000000000000000000000000000520011");
+
+/// Governance rWasm contract address reserved for genesis deployment.
+pub const GENESIS_GOVERNANCE: Address = address!("0x0000000000000000000000000000000000520012");
 
 /// A precompile smart contract that can deploy child contracts using CREATE/CREATE2.
 pub const PRECOMPILE_CREATE2_FACTORY: Address =
@@ -154,7 +153,6 @@ pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[
     PRECOMPILE_RIPEMD160,
     PRECOMPILE_SECP256K1_RECOVER,
     PRECOMPILE_SHA256,
-    PRECOMPILE_STAKING,
     // PRECOMPILE_SVM_RUNTIME,
     PRECOMPILE_WASM_RUNTIME,
     PRECOMPILE_WEBAUTHN_VERIFIER,
@@ -182,7 +180,6 @@ pub const ENGINE_METERED_PRECOMPILES: &[Address] = &[
     PRECOMPILE_WASM_RUNTIME,
     PRECOMPILE_WEBAUTHN_VERIFIER,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
-    PRECOMPILE_STAKING,
 ];
 
 /// Returns `true` if the contract at `address` should be charged fuel by the runtime.
