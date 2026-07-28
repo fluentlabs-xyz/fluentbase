@@ -54,6 +54,11 @@ pub struct ValidatorStorage {
     changed_at: StorageU64,
     jailed_before: StorageU64,
     claimed_at: StorageU64,
+    /// First initialized snapshot epoch plus one (`0` means no snapshot).
+    ///
+    /// Appended to preserve the existing storage layout while bounding
+    /// historical snapshot lookups.
+    first_snapshot_epoch_p1: StorageU64,
 }
 
 /// Per-epoch validator accounting snapshot.
@@ -134,6 +139,10 @@ pub struct StakingStorage {
     tombstoned: StorageMap<Address, StorageBool>,
     credited_blend: StorageU256,
     last_rewarded_epoch_p1: StorageU64,
+    /// Resumable cursor for bounded jailed-validator sweeps.
+    ///
+    /// Appended to preserve the existing ERC-7201 layout.
+    jailed_scan_cursor: StorageU64,
 }
 
 pub fn staking_storage() -> StakingStorage {

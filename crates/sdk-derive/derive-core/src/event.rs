@@ -199,7 +199,8 @@ fn generate_topics(indexed: &[&EventField], anonymous: bool, selector: &[u8; 32]
             {
                 let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
                 let value = self.#name.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                SolidityABI::encode(&value, &mut buf, 0)
+                    .map_err(|_| fluentbase_sdk::ExitCode::MalformedBuiltinParams)?;
 
                 if SolidityABI::<#ty>::is_dynamic() {
                     // Dynamic type: hash at runtime via SDK
@@ -232,7 +233,8 @@ fn generate_data(fields: &[&EventField]) -> TokenStream2 {
         let data = {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
             let values = (#(self.#names.clone(),)*);
-            SolidityABI::encode_function_args(&values, &mut buf).expect("encode data fields");
+            SolidityABI::encode_function_args(&values, &mut buf)
+                .map_err(|_| fluentbase_sdk::ExitCode::MalformedBuiltinParams)?;
             buf.freeze()
         };
     }

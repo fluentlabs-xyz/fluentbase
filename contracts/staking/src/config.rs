@@ -11,8 +11,8 @@ use crate::{
         U64Command,
     },
     util::{
-        decode, ensure_governance, ensure_initialized, ensure_mutable, ensure_non_payable, revert,
-        revert_with, write_abi,
+        decode, ensure_governance, ensure_mutable, ensure_non_payable, revert, revert_with,
+        write_abi,
     },
 };
 
@@ -86,14 +86,8 @@ fn require_undelegate_window<SDK: SharedAPI>(
 }
 
 pub fn configure_dependencies<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_mutable(sdk)?;
-    ensure_initialized(sdk)?;
+    ensure_governance_mutation(sdk)?;
     let storage = staking_storage();
-    let caller = sdk.context().contract_caller();
-    if caller != storage.owner_accessor().get_checked(sdk)? {
-        return revert_with(sdk, ERR_ONLY_OWNER, &caller);
-    }
     let command: ConfigureDependenciesCommand = decode(input)?;
     if command.liveness_slashing.is_zero() {
         return zero_value(sdk, "livenessSlashing");
@@ -392,10 +386,10 @@ pub fn set_epoch_block_interval<SDK: SharedAPI>(
     }
     let config = staking_storage().config_accessor();
     let activation = config.dpos_activation_block_accessor().get_checked(sdk)?;
-    if activation != 0 && sdk.context().block_number() >= activation {
+    if sdk.context().block_number() >= activation {
         return revert(sdk, ERR_DPOS_ALREADY_ACTIVE);
     }
-    if activation != 0 && activation % value as u64 != 0 {
+    if activation % value as u64 != 0 {
         return revert(sdk, ERR_UNALIGNED_ACTIVATION_BLOCK);
     }
     let undelegate = config.undelegate_period_accessor().get_checked(sdk)?;
@@ -418,7 +412,7 @@ pub fn set_dpos_activation_block<SDK: SharedAPI>(
     let value = decode::<U64Command>(input)?.value;
     let config = staking_storage().config_accessor();
     let previous = config.dpos_activation_block_accessor().get_checked(sdk)?;
-    if previous != 0 && sdk.context().block_number() >= previous {
+    if sdk.context().block_number() >= previous {
         return revert(sdk, ERR_DPOS_ALREADY_ACTIVE);
     }
     let interval = config.epoch_block_interval_accessor().get_checked(sdk)?;

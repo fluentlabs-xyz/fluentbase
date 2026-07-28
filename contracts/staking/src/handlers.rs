@@ -25,6 +25,15 @@ pub fn initialize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), Exi
     if storage.initialized_accessor().get_checked(sdk)? {
         return revert(sdk, ERR_ALREADY_INITIALIZED);
     }
+    let caller = sdk.context().contract_caller();
+    let configured_owner = storage.owner_accessor().get_checked(sdk)?;
+    if configured_owner.is_zero() {
+        if caller != fluentbase_sdk::GENESIS_GOVERNANCE {
+            return revert_with(sdk, ERR_ONLY_OWNER, &caller);
+        }
+    } else if caller != configured_owner {
+        return revert_with(sdk, ERR_ONLY_OWNER, &caller);
+    }
     let (initial_owner, validators, initial_stakes, commission_rate) =
         decode_args::<(Address, Vec<Address>, Vec<U256>, u16)>(input)?;
     let command = InitializeCommand {
@@ -39,8 +48,9 @@ pub fn initialize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), Exi
     if command.validators.len() != command.initial_stakes.len() {
         return revert(sdk, ERR_MALFORMED_INPUT_LENGTH);
     }
-
-    let configured_owner = storage.owner_accessor().get_checked(sdk)?;
+    if command.commission_rate > COMMISSION_RATE_MAX {
+        return revert_with(sdk, ERR_BAD_COMMISSION_RATE, &command.commission_rate);
+    }
     if !configured_owner.is_zero() && configured_owner != command.initial_owner {
         return revert_with(sdk, ERR_ONLY_OWNER, &command.initial_owner);
     }
@@ -136,11 +146,12 @@ pub fn configure<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), Exit
     let storage = staking_storage();
     let caller = sdk.context().contract_caller();
     let owner = storage.owner_accessor().get_checked(sdk)?;
-    if !owner.is_zero() && caller != owner {
-        return revert_with(sdk, ERR_ONLY_OWNER, &caller);
-    }
     if owner.is_zero() {
-        storage.owner_accessor().set_checked(sdk, caller)?;
+        if caller != fluentbase_sdk::GENESIS_GOVERNANCE {
+            return revert_with(sdk, ERR_ONLY_OWNER, &caller);
+        }
+    } else if caller != owner {
+        return revert_with(sdk, ERR_ONLY_OWNER, &caller);
     }
     let config = storage.config_accessor();
     if config.configured_accessor().get_checked(sdk)? {
@@ -502,7 +513,20 @@ pub fn remove_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(
     }
     remove_active(sdk, validator)?;
     remove_selection_member(sdk, validator)?;
+    crate::liveness::remove_jailed(sdk, validator)?;
     let storage = staking_storage();
+    let keys = storage.consensus_keys_accessor().entry(validator);
+    let peer_pubkey = keys.peer_pubkey_accessor().get_checked(sdk)?;
+    if !peer_pubkey.is_zero() {
+        storage
+            .peer_pubkey_owner_accessor()
+            .entry(peer_pubkey)
+            .set_checked(sdk, Address::ZERO)?;
+    }
+    keys.bls_pubkey_accessor().clear(sdk)?;
+    keys.peer_pubkey_accessor()
+        .set_checked(sdk, fluentbase_sdk::B256::ZERO)?;
+    keys.activation_epoch_accessor().set_checked(sdk, 0)?;
     let record = storage.validators_accessor().entry(validator);
     let validator_owner = record.owner_accessor().get_checked(sdk)?;
     storage
@@ -513,6 +537,7 @@ pub fn remove_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(
     record
         .status_accessor()
         .set_checked(sdk, STATUS_NOT_FOUND)?;
+    record.first_snapshot_epoch_p1_accessor().set_checked(sdk, 0)?;
     events::ValidatorRemoved { validator }.emit(sdk)?;
     Ok(())
 }

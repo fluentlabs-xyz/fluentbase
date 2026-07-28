@@ -59,6 +59,18 @@ pub fn register_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
     ensure_mutable(sdk)?;
     ensure_initialized(sdk)?;
     let command: RegisterValidatorCommand = decode(input)?;
+    if command.commission_rate > COMMISSION_RATE_MAX {
+        return revert_with(sdk, ERR_BAD_COMMISSION_RATE, &command.commission_rate);
+    }
+    if staking_storage()
+        .validators_accessor()
+        .entry(command.validator)
+        .status_accessor()
+        .get_checked(sdk)?
+        != STATUS_NOT_FOUND
+    {
+        return revert_with(sdk, ERR_VALIDATOR_ALREADY_EXISTS, &command.validator);
+    }
     let minimum = staking_storage()
         .config_accessor()
         .min_validator_stake_amount_accessor()
@@ -225,7 +237,9 @@ pub fn undelegate_from<SDK: SharedAPI>(
         let min_validator_stake = config
             .min_validator_stake_amount_accessor()
             .get_checked(sdk)?;
-        if next_delegated < min_validator_stake && next_total != next_delegated {
+        if next_delegated < min_validator_stake
+            && (!next_delegated.is_zero() || next_total != next_delegated)
+        {
             return revert(sdk, ERR_OWNER_SELF_STAKE_BELOW_MINIMUM);
         }
     }

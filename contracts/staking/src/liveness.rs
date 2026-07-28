@@ -28,7 +28,10 @@ fn ensure_liveness<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     Ok(())
 }
 
-fn remove_jailed<SDK: SharedAPI>(sdk: &mut SDK, validator: Address) -> Result<(), ExitCode> {
+pub(crate) fn remove_jailed<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+) -> Result<(), ExitCode> {
     let jailed = staking_storage().jailed_validators_accessor();
     let len = jailed.len_checked(sdk)?;
     for index in 0..len {
@@ -93,11 +96,27 @@ pub fn release_validator_from_jail<SDK: SharedAPI>(
 
 pub fn readmit_expired_jails<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_liveness(sdk)?;
-    let supplied_epoch = decode::<U64Command>(input)?.value;
+    let _: U64Command = decode(input)?;
+    let epoch = current_epoch(sdk)?;
     let storage = staking_storage();
     let jailed = storage.jailed_validators_accessor();
-    let mut index = 0;
-    while index < jailed.len_checked(sdk)? {
+    let len = jailed.len_checked(sdk)?;
+    if len == 0 {
+        storage.jailed_scan_cursor_accessor().set_checked(sdk, 0)?;
+        return Ok(());
+    }
+    let mut index = storage.jailed_scan_cursor_accessor().get_checked(sdk)? % len;
+    let mut examined = 0;
+    let budget = core::cmp::min(len, MAX_ACTIVE_VALIDATORS_LENGTH);
+    while examined < budget {
+        let current_len = jailed.len_checked(sdk)?;
+        if current_len == 0 {
+            index = 0;
+            break;
+        }
+        if index >= current_len {
+            index = 0;
+        }
         let validator = jailed.at(index).get_checked(sdk)?;
         let record = storage.validators_accessor().entry(validator);
         if storage
@@ -107,14 +126,18 @@ pub fn readmit_expired_jails<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Res
         {
             remove_jailed(sdk, validator)?;
         } else if record.status_accessor().get_checked(sdk)? == STATUS_JAIL
-            && supplied_epoch >= record.jailed_before_accessor().get_checked(sdk)?
+            && epoch >= record.jailed_before_accessor().get_checked(sdk)?
         {
             readmit(sdk, validator)?;
         } else {
-            index += 1;
+            index = (index + 1) % current_len;
         }
+        examined += 1;
     }
-    Ok(())
+    let remaining = jailed.len_checked(sdk)?;
+    storage
+        .jailed_scan_cursor_accessor()
+        .set_checked(sdk, if remaining == 0 { 0 } else { index % remaining })
 }
 
 fn quorum(n: u64) -> u64 {
@@ -129,7 +152,8 @@ pub fn slash<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode
     let validator = decode::<AddressCommand>(input)?.value;
     let storage = staking_storage();
     let record = storage.validators_accessor().entry(validator);
-    if record.status_accessor().get_checked(sdk)? == STATUS_NOT_FOUND {
+    let status = record.status_accessor().get_checked(sdk)?;
+    if status == STATUS_NOT_FOUND {
         return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
     }
     let epoch = current_epoch(sdk)?;
@@ -171,7 +195,7 @@ pub fn slash<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode
                         .get_checked(sdk)? as u64,
                 )
                 .ok_or(ExitCode::IntegerOverflow)?;
-            if record.status_accessor().get_checked(sdk)? != STATUS_JAIL {
+            if status != STATUS_JAIL {
                 record.status_accessor().set_checked(sdk, STATUS_JAIL)?;
                 record
                     .jailed_before_accessor()

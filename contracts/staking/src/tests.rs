@@ -2,8 +2,8 @@ use super::*;
 use crate::storage::{staking_storage, STATUS_ACTIVE, STATUS_JAIL, STATUS_PENDING};
 use crate::types::{
     AddressCommand, BoolCommand, ConfigureCommand, ConfigureDependenciesCommand,
-    EpochSignerCommand, TwoAddressesCommand, U256Command, U32Command, U64Command,
-    ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
+    EpochSignerCommand, RegisterValidatorCommand, TwoAddressesCommand, U256Command, U32Command,
+    U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
 };
 use fluentbase_sdk::{
     bytes::BytesMut, codec::SolidityABI, derive::derive_keccak256_id, is_engine_metered_precompile,
@@ -85,11 +85,15 @@ impl Harness {
         stakes: Vec<U256>,
         commission_rate: u16,
     ) -> ExitCode {
-        self.call(encode_args_call(
+        self.set_caller(GENESIS_GOVERNANCE);
+        let exit = self
+            .call(encode_args_call(
             SIG_INITIALIZE,
             &(owner, validators, stakes, commission_rate),
         ))
-        .0
+            .0;
+        self.set_caller(owner);
+        exit
     }
 }
 
@@ -109,6 +113,11 @@ where
 
 fn assert_revert_selector(result: (ExitCode, Vec<u8>), selector: u32) {
     assert_eq!(result.0, ExitCode::Panic);
+    assert!(
+        result.1.len() >= SIG_LEN_BYTES,
+        "revert payload is missing the four-byte selector: {:?}",
+        result.1
+    );
     assert_eq!(&result.1[..4], &selector.to_be_bytes());
 }
 
@@ -388,6 +397,75 @@ fn implemented_selectors_match_pinned_solidity_abi() {
 }
 
 #[test]
+fn derived_selectors_match_independent_hex_pins() {
+    for (actual, pinned) in [
+        (SIG_INITIALIZE, 0x01f6bb50),
+        (SIG_CURRENT_EPOCH, 0x76671808),
+        (SIG_NEXT_EPOCH, 0xaea0e78b),
+        (SIG_OWNER, 0x8da5cb5b),
+        (SIG_GET_STAKING, 0x7b1391a6),
+        (SIG_GET_GOVERNANCE, 0x289b3c0d),
+        (SIG_GET_CHAIN_CONFIG, 0x606c0c94),
+        (SIG_GET_STAKING_TOKEN, 0x9f9106d1),
+        (SIG_CONFIGURE, 0xc4bb1bdd),
+        (SIG_DEFAULT_PARTICIPATION_FLOOR_BPS, 0x2c1d88e8),
+        (SIG_DEFAULT_SLASH_REPORTER_BPS, 0x6cc69027),
+        (SIG_MAX_ACTIVE_VALIDATORS, 0x5d887462),
+        (SIG_MAX_BLEND_STIPEND_PER_EPOCH, 0x2bc2fec4),
+        (SIG_MAX_PARTICIPATION_FLOOR_BPS, 0x9dbdf12b),
+        (SIG_MAX_SLASH_REPORTER_BPS, 0x0a3a6183),
+        (SIG_GET_VALIDATOR_DELEGATION, 0xd951e186),
+        (SIG_GET_VALIDATOR_DELEGATED_STAKE_AT, 0xe8810ea7),
+        (SIG_REGISTER_VALIDATOR, 0xdd0fb5df),
+        (SIG_DELEGATE, 0x026e402b),
+        (SIG_UNDELEGATE, 0x4d99dd16),
+        (SIG_IS_VALIDATOR, 0xfacd743b),
+        (SIG_IS_VALIDATOR_ACTIVE, 0x42ad55ac),
+        (SIG_GET_VALIDATOR_STATUS, 0xa310624f),
+        (SIG_GET_VALIDATOR_BY_OWNER, 0x30108c22),
+        (SIG_GET_VALIDATORS, 0xb7ab4db5),
+        (SIG_ADD_VALIDATOR, 0x4d238c8e),
+        (SIG_REMOVE_VALIDATOR, 0x40a141ff),
+        (SIG_ACTIVATE_VALIDATOR, 0xb46e5520),
+        (SIG_DISABLE_VALIDATOR, 0x1fe97684),
+        (SIG_CHANGE_VALIDATOR_COMMISSION_RATE, 0x14f8649f),
+        (SIG_CHANGE_VALIDATOR_OWNER, 0x0052c9e1),
+        (SIG_CONFIGURE_DEPENDENCIES, 0xd2bcdd7b),
+        (SIG_SET_ACTIVE_VALIDATORS_LENGTH, 0xc227a412),
+        (SIG_SET_EPOCH_BLOCK_INTERVAL, 0xaf70fa2c),
+        (SIG_SET_DPOS_ACTIVATION_BLOCK, 0xf517ca6a),
+        (SIG_SET_FELONY_THRESHOLD, 0xfcd6cb3e),
+        (SIG_SET_VALIDATOR_JAIL_EPOCH_LENGTH, 0xc8652bd5),
+        (SIG_SET_SLASH_REPORTER_REWARD_BPS, 0x58702003),
+        (SIG_SET_SLASH_FUND_ADDRESS, 0xa79e7263),
+        (SIG_SET_PARTICIPATION_FLOOR_BPS, 0xd0a01007),
+        (SIG_SET_PARTICIPATION_JAIL_DISABLED, 0x8664f2e7),
+        (SIG_SET_BLEND_STIPEND_PER_EPOCH, 0x2c91b879),
+        (SIG_SET_UNDELEGATE_PERIOD, 0x41d8a080),
+        (SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT, 0xe1a2e863),
+        (SIG_SET_MIN_STAKING_AMOUNT, 0x612d669e),
+        (SIG_SET_BLS_VERIFIER, 0x466ae541),
+        (SIG_SET_EVIDENCE_DECODER, 0x00857c90),
+        (SIG_GET_VALIDATOR_FEE, 0x457179fd),
+        (SIG_GET_PENDING_VALIDATOR_FEE, 0xc6fb9065),
+        (SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH, 0xadf2a79c),
+        (SIG_GET_DELEGATOR_FEE, 0x52b7bea2),
+        (SIG_CLAIM_DELEGATOR_FEE_AT_EPOCH, 0xfe38ebef),
+        (SIG_CALC_AVAILABLE_FOR_REDELEGATE_AMOUNT, 0x5ef9e8c6),
+        (SIG_SETTLE_EPOCH_STIPEND, 0xa631344a),
+        (SIG_SET_CONSENSUS_KEYS, 0x225cba85),
+        (SIG_GET_VALIDATORS_WITH_KEYS_AT, 0x7cfba9f3),
+        (SIG_COMMIT_EPOCH_COMMITTEE, 0x87401d8a),
+        (SIG_GET_EPOCH_COMMITTEE_WITH_STAKES, 0xa4d160c1),
+        (SIG_RELEASE_VALIDATOR_FROM_JAIL, 0x73a3dda6),
+        (SIG_SLASH, 0xc96be4cb),
+        (SIG_SLASH_EQUIVOCATION_NOTARIZE, 0xe28d2f63),
+    ] {
+        assert_eq!(actual, pinned);
+    }
+}
+
+#[test]
 fn initializes_registry_and_preserves_solidity_read_abi() {
     let governance = Address::with_last_byte(0xa0);
     let validator_a = Address::with_last_byte(0x01);
@@ -556,7 +634,7 @@ fn stores_reserved_governance_and_chain_configuration() {
     let owner = Address::with_last_byte(0xa0);
     let staking_token = Address::with_last_byte(0xb1);
     let mut harness = Harness::new(1_000);
-    harness.set_caller(owner);
+    harness.set_caller(GENESIS_GOVERNANCE);
 
     let mut configure = ConfigureCommand {
         staking_token,
@@ -644,6 +722,7 @@ fn governance_updates_embedded_chain_configuration() {
         ExitCode::Ok
     );
 
+    harness.set_caller(GENESIS_GOVERNANCE);
     assert_eq!(
         harness
             .call(encode_call(
@@ -755,6 +834,90 @@ fn initializer_rejects_mismatched_arrays_without_persisting_owner() {
 
     let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
     assert_eq!(decode_output::<Address>(&output), Address::ZERO);
+}
+
+#[test]
+fn genesis_bootstrap_rejects_untrusted_first_callers() {
+    let owner = Address::with_last_byte(0xa0);
+    let outsider = Address::with_last_byte(0xb0);
+    let mut harness = Harness::new(0);
+    harness.set_caller(outsider);
+
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_INITIALIZE,
+            &(owner, Vec::<Address>::new(), Vec::<U256>::new(), 0u16),
+        )),
+        ERR_ONLY_OWNER,
+    );
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_CONFIGURE,
+            &ConfigureCommand {
+                staking_token: Address::with_last_byte(0xc0),
+                active_validators_length: 21,
+                epoch_block_interval: 200,
+                felony_threshold: 150,
+                validator_jail_epoch_length: 7,
+                undelegate_period: 7,
+                min_validator_stake_amount: DEFAULT_MIN_VALIDATOR_STAKE,
+                min_staking_amount: DEFAULT_MIN_STAKING_AMOUNT,
+                dpos_activation_block: 0,
+                bls_verifier: Address::ZERO,
+                evidence_decoder: Address::ZERO,
+                min_undelegate_blocks: U256::ZERO,
+            },
+        )),
+        ERR_ONLY_OWNER,
+    );
+
+    let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
+    assert_eq!(decode_output::<Address>(&output), Address::ZERO);
+}
+
+#[test]
+fn initialize_and_registration_reject_bad_commission_and_duplicate_validator() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(0);
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_INITIALIZE,
+            &(
+                owner,
+                vec![validator],
+                vec![DEFAULT_MIN_VALIDATOR_STAKE],
+                COMMISSION_RATE_MAX + 1,
+            ),
+        )),
+        ERR_BAD_COMMISSION_RATE,
+    );
+    assert_eq!(
+        harness.initialize(
+            owner,
+            vec![validator],
+            vec![DEFAULT_MIN_VALIDATOR_STAKE],
+            COMMISSION_RATE_MAX,
+        ),
+        ExitCode::Ok
+    );
+
+    let input = encode_call(
+        SIG_REGISTER_VALIDATOR,
+        &RegisterValidatorCommand {
+            validator,
+            commission_rate: 0,
+            initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+        },
+    );
+    assert_revert_selector(
+        (
+            economics::register_validator(&mut harness.sdk, &input[SIG_LEN_BYTES..]).unwrap_err(),
+            harness.sdk.take_output(),
+        ),
+        ERR_VALIDATOR_ALREADY_EXISTS,
+    );
 }
 
 #[test]
@@ -1109,6 +1272,7 @@ fn liveness_slash_jails_and_readmits_without_breaking_quorum() {
         ),
         ExitCode::Ok
     );
+    harness.set_caller(GENESIS_GOVERNANCE);
     assert_eq!(
         harness
             .call(encode_call(
@@ -1174,6 +1338,11 @@ fn chain_config_guards_match_solidity_boundaries() {
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
+    staking_storage()
+        .config_accessor()
+        .dpos_activation_block_accessor()
+        .set_checked(&mut harness.sdk, 400)
+        .unwrap();
     harness.set_caller(GENESIS_GOVERNANCE);
 
     assert_revert_selector(
@@ -1249,6 +1418,31 @@ fn chain_config_guards_match_solidity_boundaries() {
         harness.call(encode_call(
             SIG_SET_EPOCH_BLOCK_INTERVAL,
             &U32Command { value: 200 },
+        )),
+        ERR_DPOS_ALREADY_ACTIVE,
+    );
+}
+
+#[test]
+fn dpos_activation_at_block_zero_is_already_locked() {
+    let owner = Address::with_last_byte(0xa0);
+    let mut harness = Harness::new(0);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SET_EPOCH_BLOCK_INTERVAL,
+            &U32Command { value: 100 },
+        )),
+        ERR_DPOS_ALREADY_ACTIVE,
+    );
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SET_DPOS_ACTIVATION_BLOCK,
+            &U64Command { value: 200 },
         )),
         ERR_DPOS_ALREADY_ACTIVE,
     );
@@ -1372,6 +1566,36 @@ fn validator_owner_cannot_drop_below_minimum_while_delegators_remain() {
 }
 
 #[test]
+fn sole_validator_owner_cannot_leave_subminimum_dust() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(10);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![stake], 500),
+        ExitCode::Ok
+    );
+
+    let dust = DEFAULT_MIN_VALIDATOR_STAKE / U256::from(2);
+    let before = harness.sdk.dump_storage();
+    assert_revert_selector(
+        (
+            economics::undelegate_from(
+                &mut harness.sdk,
+                validator,
+                validator,
+                stake - dust,
+            )
+            .unwrap_err(),
+            harness.sdk.take_output(),
+        ),
+        ERR_OWNER_SELF_STAKE_BELOW_MINIMUM,
+    );
+    harness.sdk.restore_storage(before);
+    economics::undelegate_from(&mut harness.sdk, validator, validator, stake).unwrap();
+}
+
+#[test]
 fn reward_claims_are_bounded_to_one_thousand_epochs() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
@@ -1457,6 +1681,7 @@ fn liveness_halt_guard_and_equivocation_tombstone_are_enforced() {
         ),
         ExitCode::Ok
     );
+    harness.set_caller(GENESIS_GOVERNANCE);
     assert_eq!(
         harness
             .call(encode_call(
