@@ -253,6 +253,18 @@ define docker_build_push
 	mkdir -p $(BIN_DIR)/arm64
 	cp $(CARGO_TARGET_DIR)/aarch64-unknown-linux-gnu/$(PROFILE)/fluent $(BIN_DIR)/arm64/fluent
 
+	@set -eu; for arch in amd64 arm64; do \
+		image="fluent-smoke-$$arch:$(GIT_SHA)"; \
+		trap 'docker image rm -f "$$image" >/dev/null 2>&1 || true' 0; \
+		docker buildx build --file ./docker/Dockerfile.cross . \
+			--platform "linux/$$arch" \
+			--tag "$$image" \
+			--load; \
+		docker run --rm --platform "linux/$$arch" "$$image" --version; \
+		docker image rm "$$image"; \
+		trap - 0; \
+	done
+
 	docker buildx build --file ./docker/Dockerfile.cross . \
 		--platform linux/amd64,linux/arm64 \
 		--tag $(DOCKER_IMAGE_NAME):$(1) \
