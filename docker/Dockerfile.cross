@@ -1,7 +1,5 @@
-# This image is meant to enable cross-architecture builds.
-# It assumes the fluent binary has already been compiled for `$TARGETPLATFORM` and is
-# locatable in `./dist/bin/$TARGETARCH`
-FROM --platform=$TARGETPLATFORM ubuntu:22.04
+# Keep the runtime glibc aligned with the Ubuntu 24.04 cross-build sysroot.
+FROM --platform=$TARGETPLATFORM ubuntu:24.04
 
 LABEL org.opencontainers.image.source=https://github.com/fluentlabs-xyz/fluent
 LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
