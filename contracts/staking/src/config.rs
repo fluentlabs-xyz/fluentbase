@@ -1,3 +1,7 @@
+//! Governance-controlled staking parameters and external dependencies.
+//!
+//! Setters validate cross-field invariants before updating namespaced storage.
+
 use alloc::string::String;
 
 use fluentbase_sdk::{ContextReader, ExitCode, SharedAPI, U256};

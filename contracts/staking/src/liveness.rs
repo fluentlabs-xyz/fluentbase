@@ -1,3 +1,5 @@
+//! Authorized liveness slashing, jail transitions, and bounded readmission.
+
 use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
 
 use crate::{
@@ -107,6 +109,7 @@ pub fn readmit_expired_jails<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Res
     }
     let mut index = storage.jailed_scan_cursor_accessor().get_checked(sdk)? % len;
     let mut examined = 0;
+    // Persist the cursor so each call does bounded work without starving entries.
     let budget = core::cmp::min(len, MAX_ACTIVE_VALIDATORS_LENGTH);
     while examined < budget {
         let current_len = jailed.len_checked(sdk)?;

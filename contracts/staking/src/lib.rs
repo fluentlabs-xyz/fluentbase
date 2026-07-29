@@ -4,6 +4,8 @@
 //! Staking is deployed at a fixed genesis address but executes as a normal
 //! rWasm smart contract. Unlike a system precompile, it uses `SharedAPI`, so
 //! the delegation/reward implementation can call the canonical BLEND ERC-20.
+//!
+//! See `README.md` for lifecycle, scope, and accounting invariants.
 
 extern crate alloc;
 
@@ -28,6 +30,7 @@ use consts::*;
 use fluentbase_sdk::{entrypoint, ExitCode, SharedAPI};
 use util::revert;
 
+/// Decode Solidity calldata and route it to the matching staking operation.
 pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input = sdk.bytes_input();
     if input.len() < SIG_LEN_BYTES {
@@ -40,6 +43,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
             .map_err(|_| ExitCode::MalformedBuiltinParams)?,
     );
     match selector {
+        // Deployment and governance configuration.
         SIG_INITIALIZE => handlers::initialize(sdk, params),
         SIG_CONFIGURE => handlers::configure(sdk, params),
         SIG_CONFIGURE_DEPENDENCIES => config::configure_dependencies(sdk, params),
@@ -49,6 +53,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_MAX_BLEND_STIPEND_PER_EPOCH => config::max_blend_stipend_per_epoch(sdk),
         SIG_MAX_PARTICIPATION_FLOOR_BPS => config::max_participation_floor_bps(sdk),
         SIG_MAX_SLASH_REPORTER_BPS => config::max_slash_reporter_bps(sdk),
+        // Compatibility getters and governance parameter access.
         SIG_CURRENT_EPOCH => handlers::current_epoch_read(sdk),
         SIG_NEXT_EPOCH => handlers::next_epoch_read(sdk),
         SIG_OWNER => handlers::owner(sdk),
@@ -86,6 +91,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_SET_BLS_VERIFIER => config::set_bls_verifier(sdk, params),
         SIG_GET_EVIDENCE_DECODER => config::get_evidence_decoder(sdk),
         SIG_SET_EVIDENCE_DECODER => config::set_evidence_decoder(sdk, params),
+        // Validator stake and delegation principal.
         SIG_GET_VALIDATOR_DELEGATION => economics::get_validator_delegation(sdk, params),
         SIG_GET_VALIDATOR_DELEGATED_STAKE_AT => {
             economics::get_validator_delegated_stake_at(sdk, params)
@@ -93,6 +99,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_REGISTER_VALIDATOR => economics::register_validator(sdk, params),
         SIG_DELEGATE => economics::delegate(sdk, params),
         SIG_UNDELEGATE => economics::undelegate(sdk, params),
+        // Validator and delegator rewards.
         SIG_GET_VALIDATOR_FEE => rewards::get_validator_fee(sdk, params),
         SIG_GET_PENDING_VALIDATOR_FEE => rewards::get_pending_validator_fee(sdk, params),
         SIG_CLAIM_VALIDATOR_FEE => rewards::claim_validator_fee(sdk, params),
@@ -107,6 +114,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_REDELEGATE_DELEGATOR_FEE => rewards::redelegate_delegator_fee(sdk, params),
         SIG_GET_EPOCH_REWARDS => rewards::get_epoch_rewards(sdk, params),
         SIG_SETTLE_EPOCH_STIPEND => rewards::settle_epoch_stipend(sdk, params),
+        // Consensus identities and committed committees.
         SIG_SET_CONSENSUS_KEYS => consensus::set_consensus_keys(sdk, params),
         SIG_GET_CONSENSUS_KEYS => consensus::get_consensus_keys(sdk, params),
         SIG_GET_VALIDATORS_WITH_KEYS => consensus::get_validators_with_keys(sdk),
@@ -122,6 +130,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_GET_EPOCH_COMMITTEE_WITH_STAKES => {
             consensus::get_epoch_committee_with_stakes(sdk, params)
         }
+        // Liveness and equivocation penalties.
         SIG_RELEASE_VALIDATOR_FROM_JAIL => liveness::release_validator_from_jail(sdk, params),
         SIG_READMIT_EXPIRED_JAILS => liveness::readmit_expired_jails(sdk, params),
         SIG_SLASH => liveness::slash(sdk, params),
@@ -130,6 +139,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE => {
             equivocation::slash_nullify_finalize(sdk, params)
         }
+        // Validator lifecycle and ownership.
         SIG_IS_VALIDATOR => handlers::is_validator(sdk, params),
         SIG_IS_VALIDATOR_ACTIVE => handlers::is_validator_active(sdk, params),
         SIG_GET_VALIDATOR_STATUS => handlers::get_validator_status(sdk, params),

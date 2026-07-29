@@ -1,3 +1,5 @@
+//! Solidity-compatible staking event definitions.
+
 use alloc::vec::Vec;
 use fluentbase_sdk::{derive::Event, Address, B256, U256};
 

@@ -1,3 +1,5 @@
+//! Canonical ABI selectors, error IDs, protocol limits, and default values.
+
 use fluentbase_sdk::{address, derive::derive_keccak256_id, derive::erc7201_slot, Address, U256};
 
 pub const SIG_LEN_BYTES: usize = 4;

@@ -1,7 +1,10 @@
+//! Pure arithmetic shared by staking state transitions.
+
 use fluentbase_sdk::U256;
 
 use crate::consts::BALANCE_COMPACT_PRECISION;
 
+/// Convert an ABI balance into the compact protocol unit, rejecting dust.
 pub fn compact_balance(amount: U256) -> Option<U256> {
     if amount % BALANCE_COMPACT_PRECISION != U256::ZERO {
         return None;
@@ -9,6 +12,7 @@ pub fn compact_balance(amount: U256) -> Option<U256> {
     Some(amount / BALANCE_COMPACT_PRECISION)
 }
 
+/// Map a block to its activation-relative epoch, clamping pre-activation blocks.
 pub fn epoch_at_block(block_number: u64, activation_block: u64, interval: u64) -> Option<u64> {
     if interval == 0 {
         return None;
