@@ -1,3 +1,5 @@
+//! Permissionless equivocation proofs and permanent validator tombstoning.
+
 use alloc::vec::Vec;
 
 use fluentbase_sdk::{
@@ -234,6 +236,8 @@ fn slash_equivocation<SDK: SharedAPI>(
         return revert(sdk, ERR_EQUIVOCATION_SIGNATURE_INVALID);
     }
 
+    // A verified conflict is terminal: the validator cannot re-register keys
+    // or return through the ordinary jail-release path.
     storage
         .tombstoned_accessor()
         .entry(validator)

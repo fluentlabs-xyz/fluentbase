@@ -1,3 +1,5 @@
+//! Consensus-key registration and deterministic epoch committee commits.
+
 use alloc::vec::Vec;
 
 use fluentbase_sdk::{
@@ -279,6 +281,7 @@ fn prune_committees<SDK: SharedAPI>(sdk: &mut SDK, current: u64) -> Result<(), E
     let prune_to = current - retention - 1;
     let mut cursor = storage.pruned_up_to_p1_accessor().get_checked(sdk)?;
     let mut deleted = 0;
+    // Bound cleanup so a long-idle chain cannot make one system call unbounded.
     while cursor <= prune_to && deleted < 16 {
         storage
             .epoch_committees_accessor()
@@ -332,6 +335,7 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
         if !eligible.contains(validator) {
             return revert_with(sdk, ERR_COMMITTEE_MEMBER_NOT_IN_ACTIVE_SET, validator);
         }
+        // Peer-key order gives every producer one canonical committee encoding.
         if keys.peer_pubkey <= previous_peer {
             return revert_with(sdk, ERR_COMMITTEE_NOT_STRICTLY_ASCENDING, validator);
         }

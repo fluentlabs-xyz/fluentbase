@@ -1,3 +1,5 @@
+//! Initialization, compatibility getters, and governance validator lifecycle.
+
 use alloc::vec::Vec;
 
 use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};

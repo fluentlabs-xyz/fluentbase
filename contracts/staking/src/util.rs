@@ -1,3 +1,5 @@
+//! Shared ABI, validator-selection, snapshot, and ERC-20 helpers.
+
 use alloc::vec::Vec;
 use fluentbase_sdk::{
     byteorder::BE,

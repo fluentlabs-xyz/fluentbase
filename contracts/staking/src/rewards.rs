@@ -1,3 +1,5 @@
+//! Snapshot-based rewards, bounded claims, and finalized stipend settlement.
+
 use alloc::vec;
 use fluentbase_sdk::{
     bytes::BytesMut, codec::SolidityABI, Address, Bytes, ContextReader, ExitCode, SharedAPI, U256,
@@ -95,6 +97,7 @@ fn validator_owner_rewards<SDK: SharedAPI>(
         return Ok(U256::ZERO);
     }
     let mut epoch = record.claimed_at_accessor().get_checked(sdk)?;
+    // Bound historical work; callers can continue from the stored cursor.
     let before_epoch = core::cmp::min(
         before_epoch,
         epoch.saturating_add(MAX_EPOCHS_PER_CLAIM),
@@ -351,6 +354,8 @@ fn claim_validator_before<SDK: SharedAPI>(
         return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
     }
     let claimed_at = record.claimed_at_accessor().get_checked(sdk)?;
+    // Advancing the cursor before transfer is safe because a failed call
+    // reverts the whole contract transaction.
     let capped = core::cmp::min(
         before_epoch,
         claimed_at
@@ -622,6 +627,8 @@ fn settle_one<SDK: SharedAPI>(
                     passed[index as usize] = true;
                 }
             }
+            // During a partition, keep stake-weighted rewards available to
+            // participating and non-participating committee members alike.
             let partition = below > fault_tolerance(len as usize);
             let mut stakes = vec![U256::ZERO; len as usize];
             let mut total_stake = U256::ZERO;
@@ -670,6 +677,7 @@ fn settle_one<SDK: SharedAPI>(
         let recipient = sdk.context().contract_address();
         let sent =
             call_decode::<_, _, U256>(sdk, reserve, SIG_RESERVE_DISBURSE, &(recipient, assigned))?;
+        // Never credit accounting for BLEND the contract did not receive.
         if sent != assigned {
             return revert_with(sdk, ERR_RESERVE_SHORT_DISBURSEMENT, &(sent, assigned));
         }

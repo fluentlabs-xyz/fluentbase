@@ -1,3 +1,7 @@
+//! Validator registration and BLEND delegation principal accounting.
+//!
+//! Balance changes are recorded as epoch-stamped checkpoints.
+
 use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
 
 use crate::{
@@ -129,6 +133,7 @@ pub fn delegate_to<SDK: SharedAPI>(
         return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
     }
 
+    // New stake affects accounting only after the warm-up delay.
     let at_epoch = current_epoch(sdk)?
         .checked_add(WARMUP_DELAY)
         .ok_or(ExitCode::IntegerOverflow)?;
@@ -257,6 +262,7 @@ pub fn undelegate_from<SDK: SharedAPI>(
         operation.epoch_accessor().set_checked(sdk, before_epoch)?;
     }
 
+    // Principal remains custodial until the configured undelegation delay ends.
     let maturity_epoch = before_epoch
         .checked_add(config.undelegate_period_accessor().get_checked(sdk)?)
         .ok_or(ExitCode::IntegerOverflow)?;

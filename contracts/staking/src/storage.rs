@@ -1,3 +1,5 @@
+//! ERC-7201 storage layout, epoch calculation, and validator-set helpers.
+
 use fluentbase_sdk::{
     derive::Storage,
     storage::{

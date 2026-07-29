@@ -1,3 +1,5 @@
+//! Internal representations of Solidity ABI commands and dependency results.
+
 use alloc::vec::Vec;
 use fluentbase_sdk::{codec::Codec, Address, B256, U256};
 
