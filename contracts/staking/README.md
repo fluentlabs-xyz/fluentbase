@@ -32,6 +32,15 @@ dependencies.
 - BLEND transfers accept ERC-20 tokens that return `true` or no data; explicit `false` reverts.
 - Reserve settlement credits rewards only after the exact assigned amount is disbursed.
 - Equivocation tombstones are permanent and prevent key reuse or jail release.
+- A validator's `owner` is its immutable administrative, validator-fee, self-stake, and slashing
+  identity. `changeValidatorOwner` remains in the compatibility ABI but always reverts with
+  `ValidatorOwnerImmutable()`.
+
+## Solidity parity
+
+The Solidity staking source is not checked into this repository. Its mutable-owner self-stake lookup
+remains affected and must also disable validator ownership changes before it is deployed or used as
+the canonical implementation.
 
 ## Source Layout
 

@@ -51,6 +51,7 @@ pub struct ChainConfigStorage {
 /// `ValidatorSnapshotStorage`, avoiding duplicate sources of truth.
 #[derive(Storage)]
 pub struct ValidatorStorage {
+    /// Immutable administrative, fee, and slashable self-stake identity.
     owner: StorageAddress,
     status: StorageU8,
     changed_at: StorageU64,

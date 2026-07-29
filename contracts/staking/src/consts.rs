@@ -279,6 +279,7 @@ pub const ERR_NOT_ACTIVE_VALIDATOR: u32 = derive_keccak256_id!("NotActiveValidat
 pub const ERR_VALIDATOR_HAS_ACTIVE_DELEGATIONS: u32 =
     derive_keccak256_id!("ValidatorHasActiveDelegations(address)");
 pub const ERR_ONLY_VALIDATOR_OWNER: u32 = derive_keccak256_id!("OnlyValidatorOwner(address)");
+pub const ERR_VALIDATOR_OWNER_IMMUTABLE: u32 = derive_keccak256_id!("ValidatorOwnerImmutable()");
 pub const ERR_ONLY_OWNER: u32 = derive_keccak256_id!("OwnableUnauthorizedAccount(address)");
 pub const ERR_ZERO_STAKING_TOKEN: u32 = derive_keccak256_id!("ZeroStakingToken()");
 pub const ERR_INVALID_CHAIN_CONFIG: u32 = derive_keccak256_id!("InvalidChainConfig()");

@@ -1,16 +1,20 @@
 use super::*;
-use crate::storage::{
-    staking_storage, DelegationOpStorage, UndelegationOpStorage, ValidatorSnapshotStorage,
-    STATUS_ACTIVE, STATUS_JAIL, STATUS_PENDING,
-};
-use crate::types::{
-    AddressCommand, BoolCommand, ConfigureCommand, ConfigureDependenciesCommand,
-    EpochSignerCommand, RegisterValidatorCommand, TwoAddressesCommand, U256Command, U32Command,
-    U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
+use crate::{
+    storage::{
+        staking_storage, DelegationOpStorage, UndelegationOpStorage, ValidatorSnapshotStorage,
+        STATUS_ACTIVE, STATUS_JAIL, STATUS_PENDING,
+    },
+    types::{
+        AddressCommand, BoolCommand, ConfigureCommand, ConfigureDependenciesCommand,
+        EpochSignerCommand, RegisterValidatorCommand, TwoAddressesCommand, U256Command, U32Command,
+        U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
+    },
 };
 use fluentbase_sdk::{
-    bytes::BytesMut, codec::SolidityABI, derive::derive_keccak256_id, is_engine_metered_precompile,
-    is_execute_using_system_runtime,
+    bytes::BytesMut,
+    codec::SolidityABI,
+    derive::derive_keccak256_id,
+    is_engine_metered_precompile, is_execute_using_system_runtime,
     storage::{StorageDescriptor, StorageLayout},
     Address, Bytes, ContractContextV1, ExitCode, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
@@ -45,10 +49,7 @@ fn encode_empty_call(selector: u32) -> Vec<u8> {
 #[test]
 fn compact_storage_matches_solidity_struct_layouts() {
     assert_eq!(ValidatorSnapshotStorage::SLOTS, 1);
-    assert_eq!(
-        <ValidatorSnapshotStorage as StorageLayout>::BYTES,
-        32
-    );
+    assert_eq!(<ValidatorSnapshotStorage as StorageLayout>::BYTES, 32);
     assert_eq!(DelegationOpStorage::SLOTS, 1);
     assert_eq!(<DelegationOpStorage as StorageLayout>::BYTES, 22);
     assert_eq!(UndelegationOpStorage::SLOTS, 1);
@@ -113,9 +114,9 @@ impl Harness {
         self.set_caller(GENESIS_GOVERNANCE);
         let exit = self
             .call(encode_args_call(
-            SIG_INITIALIZE,
-            &(owner, validators, stakes, commission_rate),
-        ))
+                SIG_INITIALIZE,
+                &(owner, validators, stakes, commission_rate),
+            ))
             .0;
         self.set_caller(owner);
         exit
@@ -1480,7 +1481,6 @@ fn dpos_activation_at_block_zero_is_already_locked() {
 fn lifecycle_transitions_preserve_next_epoch_snapshot_frontier() {
     let contract_owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
-    let new_owner = Address::with_last_byte(0x02);
     let stake = DEFAULT_MIN_VALIDATOR_STAKE;
     let mut harness = Harness::new(1_000);
     harness.set_caller(contract_owner);
@@ -1531,33 +1531,9 @@ fn lifecycle_transitions_preserve_next_epoch_snapshot_frontier() {
             .0,
         ExitCode::Ok
     );
-    harness.set_caller(validator);
     assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_CHANGE_VALIDATOR_OWNER,
-                &TwoAddressesCommand {
-                    validator,
-                    value: new_owner,
-                },
-            ))
-            .0,
-        ExitCode::Ok
-    );
-    assert_eq!(
-        record
-            .changed_at_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        staking_storage()
-            .owner_validators_accessor()
-            .entry(new_owner)
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        validator
+        record.status_accessor().get_checked(&harness.sdk).unwrap(),
+        STATUS_ACTIVE
     );
 }
 
@@ -1608,19 +1584,63 @@ fn sole_validator_owner_cannot_leave_subminimum_dust() {
     let before = harness.sdk.dump_storage();
     assert_revert_selector(
         (
-            economics::undelegate_from(
-                &mut harness.sdk,
-                validator,
-                validator,
-                stake - dust,
-            )
-            .unwrap_err(),
+            economics::undelegate_from(&mut harness.sdk, validator, validator, stake - dust)
+                .unwrap_err(),
             harness.sdk.take_output(),
         ),
         ERR_OWNER_SELF_STAKE_BELOW_MINIMUM,
     );
     harness.sdk.restore_storage(before);
     economics::undelegate_from(&mut harness.sdk, validator, validator, stake).unwrap();
+}
+
+#[test]
+fn validator_owner_is_immutable_and_cannot_detach_self_stake() {
+    let contract_owner = Address::with_last_byte(0xa0);
+    let owner = Address::with_last_byte(0x01);
+    let attempted_owner = Address::with_last_byte(0x02);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(contract_owner, vec![owner], vec![stake], 500),
+        ExitCode::Ok
+    );
+
+    let before = harness.sdk.dump_storage();
+    harness.set_caller(owner);
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_CHANGE_VALIDATOR_OWNER,
+            &TwoAddressesCommand {
+                validator: owner,
+                value: attempted_owner,
+            },
+        )),
+        ERR_VALIDATOR_OWNER_IMMUTABLE,
+    );
+    assert_eq!(harness.sdk.dump_storage(), before);
+
+    let record = staking_storage().validators_accessor().entry(owner);
+    assert_eq!(
+        record.owner_accessor().get_checked(&harness.sdk).unwrap(),
+        owner
+    );
+    assert_eq!(
+        staking_storage()
+            .owner_validators_accessor()
+            .entry(owner)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        owner
+    );
+    assert_eq!(
+        staking_storage()
+            .owner_validators_accessor()
+            .entry(attempted_owner)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        Address::ZERO
+    );
 }
 
 #[test]

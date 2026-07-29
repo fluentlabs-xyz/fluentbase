@@ -575,35 +575,16 @@ pub fn change_owner<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), E
     ensure_mutable(sdk)?;
     ensure_initialized(sdk)?;
     let command: TwoAddressesCommand = decode(input)?;
-    let storage = staking_storage();
-    let record = storage.validators_accessor().entry(command.validator);
-    let old_owner = record.owner_accessor().get_checked(sdk)?;
-    if old_owner.is_zero() {
+    let owner = staking_storage()
+        .validators_accessor()
+        .entry(command.validator)
+        .owner_accessor()
+        .get_checked(sdk)?;
+    if owner.is_zero() {
         return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &command.validator);
     }
-    if old_owner != sdk.context().contract_caller() {
-        return revert_with(sdk, ERR_ONLY_VALIDATOR_OWNER, &old_owner);
+    if owner != sdk.context().contract_caller() {
+        return revert_with(sdk, ERR_ONLY_VALIDATOR_OWNER, &owner);
     }
-    if command.value.is_zero() {
-        return revert(sdk, ERR_ZERO_OWNER);
-    }
-    if !storage
-        .owner_validators_accessor()
-        .entry(command.value)
-        .get_checked(sdk)?
-        .is_zero()
-    {
-        return revert_with(sdk, ERR_VALIDATOR_OWNER_ALREADY_IN_USE, &command.validator);
-    }
-    storage
-        .owner_validators_accessor()
-        .entry(old_owner)
-        .set_checked(sdk, Address::ZERO)?;
-    storage
-        .owner_validators_accessor()
-        .entry(command.value)
-        .set_checked(sdk, command.validator)?;
-    record.owner_accessor().set_checked(sdk, command.value)?;
-    touch_validator_snapshot(sdk, command.validator, next_epoch(sdk)?)?;
-    emit_modified(sdk, command.validator)
+    revert(sdk, ERR_VALIDATOR_OWNER_IMMUTABLE)
 }
