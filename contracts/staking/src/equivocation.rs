@@ -87,10 +87,11 @@ fn seize_self_stake<SDK: SharedAPI>(
     if len == 0 {
         return Ok(());
     }
-    let seized = queue.at(len - 1).amount_accessor().get_checked(sdk)?;
-    if seized.is_zero() {
+    let compact_seized = queue.at(len - 1).amount_accessor().get_checked(sdk)?;
+    if compact_seized.is_zero() {
         return Ok(());
     }
+    let seized = crate::math::expand_balance(compact_seized);
     queue.clear_checked(sdk)?;
     delegation.delegate_gap_accessor().set_checked(sdk, 0)?;
 

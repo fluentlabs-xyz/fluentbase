@@ -296,6 +296,8 @@ storage_alias! {
     StorageUint16 => Uint<16, 1>,
     StorageUint32 => Uint<32, 1>,
     StorageUint64 => Uint<64, 1>,
+    StorageUint96 => Uint<96, 2>,
+    StorageUint112 => Uint<112, 2>,
     StorageUint128 => Uint<128, 2>,
     StorageUint256 => Uint<256, 4>,
 
@@ -349,6 +351,26 @@ mod tests {
         assert_eq!(u8_val.get(&sdk), 0xFF);
         assert_eq!(u16_val.get(&sdk), 0x5678);
         assert_eq!(u32_val.get(&sdk), 0x12345678);
+    }
+
+    #[test]
+    fn test_solidity_width_aliases_pack_into_one_slot() {
+        let mut sdk = MockStorage::new();
+        let slot = U256::from(1);
+        let u112 = StorageUint112::new(slot, 18);
+        let u32 = StorageU32::new(slot, 14);
+        let u16 = StorageU16::new(slot, 12);
+        let u96 = StorageUint96::new(slot, 0);
+
+        u112.set(&mut sdk, Uint::from(0x1122_u64));
+        u32.set(&mut sdk, 0x3344_5566);
+        u16.set(&mut sdk, 0x7788);
+        u96.set(&mut sdk, Uint::from(0x99aa_u64));
+
+        assert_eq!(
+            sdk.get_slot_hex(slot),
+            "0000000000000000000099aa7788334455660000000000000000000000001122"
+        );
     }
 
     #[test]

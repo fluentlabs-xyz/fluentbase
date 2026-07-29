@@ -1,5 +1,8 @@
 use super::*;
-use crate::storage::{staking_storage, STATUS_ACTIVE, STATUS_JAIL, STATUS_PENDING};
+use crate::storage::{
+    staking_storage, DelegationOpStorage, UndelegationOpStorage, ValidatorSnapshotStorage,
+    STATUS_ACTIVE, STATUS_JAIL, STATUS_PENDING,
+};
 use crate::types::{
     AddressCommand, BoolCommand, ConfigureCommand, ConfigureDependenciesCommand,
     EpochSignerCommand, RegisterValidatorCommand, TwoAddressesCommand, U256Command, U32Command,
@@ -7,8 +10,9 @@ use crate::types::{
 };
 use fluentbase_sdk::{
     bytes::BytesMut, codec::SolidityABI, derive::derive_keccak256_id, is_engine_metered_precompile,
-    is_execute_using_system_runtime, Address, Bytes, ContractContextV1, ExitCode, B256,
-    GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
+    is_execute_using_system_runtime,
+    storage::{StorageDescriptor, StorageLayout},
+    Address, Bytes, ContractContextV1, ExitCode, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
 use fluentbase_testing::TestingContextImpl;
 
@@ -36,6 +40,27 @@ where
 
 fn encode_empty_call(selector: u32) -> Vec<u8> {
     selector.to_be_bytes().to_vec()
+}
+
+#[test]
+fn compact_storage_matches_solidity_struct_layouts() {
+    assert_eq!(ValidatorSnapshotStorage::SLOTS, 1);
+    assert_eq!(
+        <ValidatorSnapshotStorage as StorageLayout>::BYTES,
+        32
+    );
+    assert_eq!(DelegationOpStorage::SLOTS, 1);
+    assert_eq!(<DelegationOpStorage as StorageLayout>::BYTES, 22);
+    assert_eq!(UndelegationOpStorage::SLOTS, 1);
+    assert_eq!(<UndelegationOpStorage as StorageLayout>::BYTES, 22);
+
+    let slot = U256::from(7);
+    let snapshot = ValidatorSnapshotStorage::new(slot, 0);
+    assert_eq!(snapshot.total_delegated_accessor().slot(), slot);
+    assert_eq!(snapshot.total_delegated_accessor().offset(), 18);
+    assert_eq!(snapshot.slashes_count_accessor().offset(), 14);
+    assert_eq!(snapshot.commission_rate_accessor().offset(), 12);
+    assert_eq!(snapshot.total_blend_rewards_accessor().offset(), 0);
 }
 
 struct Harness {
@@ -1051,7 +1076,10 @@ fn reward_views_split_blend_between_owner_and_delegators() {
         .entry(2);
     snapshot
         .total_blend_rewards_accessor()
-        .set_checked(&mut harness.sdk, ten_tokens)
+        .set_checked(
+            &mut harness.sdk,
+            math::narrow_reward(ten_tokens).expect("reward fits uint96"),
+        )
         .unwrap();
 
     harness.set_block_number(1_600);
@@ -1491,7 +1519,7 @@ fn lifecycle_transitions_preserve_next_epoch_snapshot_frontier() {
             .total_delegated_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        stake
+        math::compact_balance(stake).unwrap()
     );
 
     assert_eq!(
