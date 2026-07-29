@@ -18,7 +18,7 @@ use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
     calc_create_metadata_address, is_execute_using_system_runtime, Address, Bytes, ExitCode, Log,
-    LogData, B256, EXT_CODE_COPY_MAX_COPY_SIZE, FUEL_DENOM_RATE, KECCAK_EMPTY,
+    LogData, B256, EVM_MAX_CODE_SIZE, EXT_CODE_COPY_MAX_COPY_SIZE, FUEL_DENOM_RATE, KECCAK_EMPTY,
     PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
 };
 use revm::{
@@ -1231,7 +1231,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 MalformedBuiltinParams
             );
             let (input, lazy_contract_input) = get_input_validated!(>= 20);
-            let target_address = Address::from_slice(&input);
+            let target_address = Address::from_slice(&input[..Address::len_bytes()]);
             debug_syscall!("UPGRADE_RUNTIME", "target={:?}", target_address);
             // P.S: We can't validate the target address here, otherwise it will require a fork
             //  to release new contracts from genesis
@@ -1251,6 +1251,34 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             };
             let bytecode = Bytecode::Rwasm(rwasm_bytecode.into());
             // Make sure an account is loaded
+            _ = ctx.journal_mut().load_account_with_code(target_address)?;
+            ctx.journal_mut().set_code(target_address, bytecode);
+            return_result!(Ok);
+        }
+
+        SYSCALL_ID_UPGRADE_EVM_RUNTIME => {
+            assert_halt!(!is_static, StateChangeDuringStaticCall);
+            assert_halt!(
+                current_target_address == PRECOMPILE_RUNTIME_UPGRADE,
+                MalformedBuiltinParams
+            );
+            let (input, lazy_contract_input) = get_input_validated!(>= 21);
+            let target_address = Address::from_slice(&input[..Address::len_bytes()]);
+            let Ok(evm_binary) = lazy_contract_input() else {
+                return_halt!(MemoryOutOfBounds);
+            };
+            let evm_binary: Bytes = evm_binary.into();
+            if evm_binary.len() > EVM_MAX_CODE_SIZE {
+                return_halt!(MalformedBuiltinParams);
+            }
+            #[cfg(feature = "std")]
+            warn!(
+                ?target_address,
+                bytecode_size = evm_binary.len(),
+                "Upgrading EVM contract"
+            );
+            let metadata = EthereumMetadata::new_analyzed(evm_binary).write_to_bytes();
+            let bytecode = Bytecode::new_ownable_account(PRECOMPILE_EVM_RUNTIME, metadata);
             _ = ctx.journal_mut().load_account_with_code(target_address)?;
             ctx.journal_mut().set_code(target_address, bytecode);
             return_result!(Ok);

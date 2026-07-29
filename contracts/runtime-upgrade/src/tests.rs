@@ -81,6 +81,28 @@ fn test_recompile_encoding() {
 }
 
 #[test]
+fn test_upgrade_evm_to_encoding() {
+    let target = address!("2222222222222222222222222222222222222222");
+    let genesis_hash = B256::from([0xab; 32]);
+    let genesis_version = "v1.0.0".to_string();
+    let evm_bytecode = bytes!("6001600055");
+
+    let call = UpgradeEvmToCall::new((
+        target,
+        genesis_hash,
+        genesis_version.clone(),
+        evm_bytecode.clone(),
+    ));
+    let encoded = call.encode();
+
+    let decoded = UpgradeEvmToCall::decode(&&encoded[4..]).expect("failed to decode");
+    assert_eq!(decoded.0 .0, target);
+    assert_eq!(decoded.0 .1, genesis_hash);
+    assert_eq!(decoded.0 .2, genesis_version);
+    assert_eq!(decoded.0 .3, evm_bytecode);
+}
+
+#[test]
 fn test_plan_upgrade_encoding() {
     let genesis_hash = B256::from([0xab; 32]);
     let genesis_version = "v1.0.0".to_string();

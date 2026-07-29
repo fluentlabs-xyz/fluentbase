@@ -3,12 +3,86 @@ use bytes::BytesMut;
 use fluentbase_codec::SolidityABI;
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_sdk::{
-    address, bytes, compile_rwasm_maybe_system, Address, Bytes, B256, DEFAULT_UPDATE_GENESIS_AUTH,
-    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, UPDATE_GENESIS_PREFIX,
+    address, bytes, compile_rwasm_maybe_system, crypto::crypto_keccak256, Address, Bytes, B256,
+    DEFAULT_UPDATE_GENESIS_AUTH, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, U256,
+    UPDATE_GENESIS_PREFIX,
 };
 use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
 use revm::context::result::ExecutionResult;
+
+#[test]
+fn test_upgrade_solidity_contract_preserves_storage() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    const DEPLOYER_ADDRESS: Address = address!("0x7777777777777777777777777777777777777777");
+
+    // Runtime stores the first ABI argument in slot zero.
+    let (contract_address, _) = ctx.deploy_evm_tx_with_gas(
+        DEPLOYER_ADDRESS,
+        hex!("6007600c60003960076000f360043560005500").into(),
+    );
+    let old_code = ctx.get_code(contract_address).unwrap().original_bytes();
+    let stored_value = B256::from([0x42; 32]);
+    let mut store_input = vec![0u8; 4];
+    store_input.extend_from_slice(stored_value.as_slice());
+    assert!(ctx
+        .call_evm_tx(
+            DEPLOYER_ADDRESS,
+            contract_address,
+            store_input.into(),
+            None,
+            None,
+        )
+        .is_success());
+
+    // New deployed runtime returns slot zero.
+    let new_runtime = bytes!("60005460005260206000f3");
+    let mut upgrade_args = BytesMut::new();
+    SolidityABI::<(Address, B256, String, Bytes)>::encode_function_args(
+        &(
+            contract_address,
+            B256::ZERO,
+            "v1.0.1".to_string(),
+            new_runtime.clone(),
+        ),
+        &mut upgrade_args,
+    )
+    .unwrap();
+    let selector = crypto_keccak256(b"upgradeEvmTo(address,uint256,string,bytes)");
+    let mut upgrade_input = selector[..4].to_vec();
+    upgrade_input.extend_from_slice(&upgrade_args);
+
+    let result = ctx.call_evm_tx(
+        DEFAULT_UPDATE_GENESIS_AUTH,
+        PRECOMPILE_RUNTIME_UPGRADE,
+        upgrade_input.into(),
+        None,
+        None,
+    );
+    assert!(result.is_success(), "{result:?}");
+    let upgraded_code = ctx.get_code(contract_address).unwrap();
+    assert_ne!(upgraded_code.original_bytes(), old_code);
+    let account = ctx.db.cache.accounts.get(&contract_address).unwrap();
+    assert_eq!(
+        account.storage.get(&U256::ZERO),
+        Some(&U256::from_be_slice(stored_value.as_slice()))
+    );
+
+    let mut recompile_args = BytesMut::new();
+    SolidityABI::<(Address,)>::encode_function_args(&(contract_address,), &mut recompile_args)
+        .unwrap();
+    let selector = crypto_keccak256(b"recompile(address)");
+    let mut recompile_input = selector[..4].to_vec();
+    recompile_input.extend_from_slice(&recompile_args);
+    let result = ctx.call_evm_tx(
+        DEFAULT_UPDATE_GENESIS_AUTH,
+        PRECOMPILE_RUNTIME_UPGRADE,
+        recompile_input.into(),
+        None,
+        None,
+    );
+    assert!(!result.is_success());
+}
 
 #[test]
 #[should_panic(
