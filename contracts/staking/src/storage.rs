@@ -4,7 +4,7 @@ use fluentbase_sdk::{
     derive::Storage,
     storage::{
         StorageAddress, StorageBool, StorageBytes, StorageBytes32, StorageMap, StorageU16,
-        StorageU256, StorageU32, StorageU64, StorageU8, StorageVec,
+        StorageU256, StorageU32, StorageU64, StorageU8, StorageUint112, StorageUint96, StorageVec,
     },
     Address, ContextReader, ExitCode, SharedAPI, B256,
 };
@@ -66,24 +66,27 @@ pub struct ValidatorStorage {
 /// Per-epoch validator accounting snapshot.
 #[derive(Storage)]
 pub struct ValidatorSnapshotStorage {
-    initialized: StorageBool,
-    total_delegated: StorageU256,
-    commission_rate: StorageU16,
+    /// Stake in `BALANCE_COMPACT_PRECISION` units.
+    total_delegated: StorageUint112,
     slashes_count: StorageU32,
-    total_blend_rewards: StorageU256,
+    commission_rate: StorageU16,
+    /// Per-epoch BLEND reward in token base units; never copied forward.
+    total_blend_rewards: StorageUint96,
 }
 
 /// Effective delegation balance beginning at `epoch`.
 #[derive(Storage)]
 pub struct DelegationOpStorage {
-    amount: StorageU256,
+    /// Stake in `BALANCE_COMPACT_PRECISION` units.
+    amount: StorageUint112,
     epoch: StorageU64,
 }
 
 /// Principal queued for release after the undelegation period.
 #[derive(Storage)]
 pub struct UndelegationOpStorage {
-    amount: StorageU256,
+    /// Stake in `BALANCE_COMPACT_PRECISION` units.
+    amount: StorageUint112,
     epoch: StorageU64,
 }
 

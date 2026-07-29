@@ -39,7 +39,7 @@ pub fn get_validator_delegation<SDK: SharedAPI>(
     }
     let latest = queue.at(len - 1);
     let result = (
-        latest.amount_accessor().get_checked(sdk)?,
+        math::expand_balance(latest.amount_accessor().get_checked(sdk)?),
         latest.epoch_accessor().get_checked(sdk)?,
     );
     write_abi(sdk, &result)
@@ -120,9 +120,9 @@ pub fn delegate_to<SDK: SharedAPI>(
     if amount.is_zero() || amount < minimum {
         return revert_with(sdk, ERR_AMOUNT_TOO_LOW, &amount);
     }
-    if math::compact_balance(amount).is_none() {
+    let Some(compact_amount) = math::compact_balance(amount) else {
         return revert(sdk, ERR_WRONG_AMOUNT_PRECISION);
-    }
+    };
     if storage
         .validators_accessor()
         .entry(validator)
@@ -141,7 +141,7 @@ pub fn delegate_to<SDK: SharedAPI>(
     let next_total = snapshot
         .total_delegated_accessor()
         .get_checked(sdk)?
-        .checked_add(amount)
+        .checked_add(compact_amount)
         .ok_or(ExitCode::IntegerOverflow)?;
     snapshot
         .total_delegated_accessor()
@@ -155,13 +155,15 @@ pub fn delegate_to<SDK: SharedAPI>(
     let len = queue.len_checked(sdk)?;
     if len == 0 {
         let operation = queue.grow_checked(sdk)?;
-        operation.amount_accessor().set_checked(sdk, amount)?;
+        operation
+            .amount_accessor()
+            .set_checked(sdk, compact_amount)?;
         operation.epoch_accessor().set_checked(sdk, at_epoch)?;
     } else {
         let latest = queue.at(len - 1);
         let previous_amount = latest.amount_accessor().get_checked(sdk)?;
         let next_amount = previous_amount
-            .checked_add(amount)
+            .checked_add(compact_amount)
             .ok_or(ExitCode::IntegerOverflow)?;
         if latest.epoch_accessor().get_checked(sdk)? >= at_epoch {
             latest.amount_accessor().set_checked(sdk, next_amount)?;
@@ -206,9 +208,9 @@ pub fn undelegate_from<SDK: SharedAPI>(
     if amount.is_zero() || amount < minimum {
         return revert_with(sdk, ERR_AMOUNT_TOO_LOW, &amount);
     }
-    if math::compact_balance(amount).is_none() {
+    let Some(compact_amount) = math::compact_balance(amount) else {
         return revert(sdk, ERR_WRONG_AMOUNT_PRECISION);
-    }
+    };
     let record = storage.validators_accessor().entry(validator);
     let status = record.status_accessor().get_checked(sdk)?;
     if status == STATUS_NOT_FOUND {
@@ -218,7 +220,7 @@ pub fn undelegate_from<SDK: SharedAPI>(
     let before_epoch = next_epoch(sdk)?;
     let snapshot = touch_validator_snapshot(sdk, validator, before_epoch)?;
     let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
-    let Some(next_total) = total.checked_sub(amount) else {
+    let Some(next_total) = total.checked_sub(compact_amount) else {
         return revert(sdk, ERR_INSUFFICIENT_BALANCE);
     };
 
@@ -233,7 +235,7 @@ pub fn undelegate_from<SDK: SharedAPI>(
     }
     let latest = queue.at(len - 1);
     let delegated = latest.amount_accessor().get_checked(sdk)?;
-    let Some(next_delegated) = delegated.checked_sub(amount) else {
+    let Some(next_delegated) = delegated.checked_sub(compact_amount) else {
         return revert(sdk, ERR_INSUFFICIENT_BALANCE);
     };
 
@@ -242,7 +244,7 @@ pub fn undelegate_from<SDK: SharedAPI>(
         let min_validator_stake = config
             .min_validator_stake_amount_accessor()
             .get_checked(sdk)?;
-        if next_delegated < min_validator_stake
+        if math::expand_balance(next_delegated) < min_validator_stake
             && (!next_delegated.is_zero() || next_total != next_delegated)
         {
             return revert(sdk, ERR_OWNER_SELF_STAKE_BELOW_MINIMUM);
@@ -267,7 +269,9 @@ pub fn undelegate_from<SDK: SharedAPI>(
         .checked_add(config.undelegate_period_accessor().get_checked(sdk)?)
         .ok_or(ExitCode::IntegerOverflow)?;
     let pending = delegation.undelegate_queue_accessor().grow_checked(sdk)?;
-    pending.amount_accessor().set_checked(sdk, amount)?;
+    pending
+        .amount_accessor()
+        .set_checked(sdk, compact_amount)?;
     pending.epoch_accessor().set_checked(sdk, maturity_epoch)?;
 
     events::Undelegated {

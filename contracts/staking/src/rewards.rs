@@ -64,10 +64,11 @@ fn snapshot_payout<SDK: SharedAPI>(
         .validator_snapshots_accessor()
         .entry(validator)
         .entry(epoch);
-    if !snapshot.initialized_accessor().get_checked(sdk)? {
-        return Ok((U256::ZERO, U256::ZERO));
-    }
-    let total_reward = snapshot.total_blend_rewards_accessor().get_checked(sdk)?;
+    let total_reward = U256::from(
+        snapshot
+            .total_blend_rewards_accessor()
+            .get_checked(sdk)?,
+    );
     if total_reward.is_zero() {
         return Ok((U256::ZERO, U256::ZERO));
     }
@@ -154,9 +155,9 @@ fn delegator_claimable<SDK: SharedAPI>(
                 claimable = claimable
                     .checked_add(
                         delegator_pool
-                            .checked_mul(delegated)
+                            .checked_mul(U256::from(delegated))
                             .ok_or(ExitCode::IntegerOverflow)?
-                            / total,
+                            / U256::from(total),
                     )
                     .ok_or(ExitCode::IntegerOverflow)?;
             }
@@ -174,7 +175,9 @@ fn delegator_claimable<SDK: SharedAPI>(
             break;
         }
         claimable = claimable
-            .checked_add(operation.amount_accessor().get_checked(sdk)?)
+            .checked_add(crate::math::expand_balance(
+                operation.amount_accessor().get_checked(sdk)?,
+            ))
             .ok_or(ExitCode::IntegerOverflow)?;
         undelegate_gap += 1;
     }
@@ -269,9 +272,9 @@ fn consume_delegator_claim<SDK: SharedAPI>(
                 claimable = claimable
                     .checked_add(
                         delegator_pool
-                            .checked_mul(delegated)
+                            .checked_mul(U256::from(delegated))
                             .ok_or(ExitCode::IntegerOverflow)?
-                            / total,
+                            / U256::from(total),
                     )
                     .ok_or(ExitCode::IntegerOverflow)?;
             }
@@ -296,7 +299,9 @@ fn consume_delegator_claim<SDK: SharedAPI>(
             break;
         }
         claimable = claimable
-            .checked_add(operation.amount_accessor().get_checked(sdk)?)
+            .checked_add(crate::math::expand_balance(
+                operation.amount_accessor().get_checked(sdk)?,
+            ))
             .ok_or(ExitCode::IntegerOverflow)?;
         undelegate_gap += 1;
     }
@@ -553,12 +558,14 @@ pub fn get_epoch_rewards<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
         let validator = committee.at(index).get_checked(sdk)?;
         total = total
             .checked_add(
-                staking_storage()
-                    .validator_snapshots_accessor()
-                    .entry(validator)
-                    .entry(epoch)
-                    .total_blend_rewards_accessor()
-                    .get_checked(sdk)?,
+                U256::from(
+                    staking_storage()
+                        .validator_snapshots_accessor()
+                        .entry(validator)
+                        .entry(epoch)
+                        .total_blend_rewards_accessor()
+                        .get_checked(sdk)?,
+                ),
             )
             .ok_or(ExitCode::IntegerOverflow)?;
     }
@@ -690,6 +697,7 @@ fn settle_one<SDK: SharedAPI>(
             }
             let validator = committee.at(index as u64).get_checked(sdk)?;
             let snapshot = touch_snapshot_at_or_before(sdk, validator, epoch)?;
+            let share = crate::math::narrow_reward(share).ok_or(ExitCode::IntegerOverflow)?;
             let next = snapshot
                 .total_blend_rewards_accessor()
                 .get_checked(sdk)?
@@ -699,7 +707,7 @@ fn settle_one<SDK: SharedAPI>(
                 .total_blend_rewards_accessor()
                 .set_checked(sdk, next)?;
             credited_this_epoch = credited_this_epoch
-                .checked_add(share)
+                .checked_add(U256::from(share))
                 .ok_or(ExitCode::IntegerOverflow)?;
         }
         let credited = storage.credited_blend_accessor().get_checked(sdk)?;

@@ -419,7 +419,7 @@ pub fn get_validator_status<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resu
     let result = (
         record.owner_accessor().get_checked(sdk)?,
         record.status_accessor().get_checked(sdk)?,
-        snapshot.total_delegated_accessor().get_checked(sdk)?,
+        crate::math::expand_balance(snapshot.total_delegated_accessor().get_checked(sdk)?),
         snapshot.slashes_count_accessor().get_checked(sdk)?,
         changed_at,
         record.jailed_before_accessor().get_checked(sdk)?,
