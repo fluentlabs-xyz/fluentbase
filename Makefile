@@ -255,12 +255,14 @@ define docker_build_push
 
 	@set -eu; for arch in amd64 arm64; do \
 		image="fluent-smoke-$$arch:$(GIT_SHA)"; \
+		trap 'docker image rm -f "$$image" >/dev/null 2>&1 || true' 0; \
 		docker buildx build --file ./docker/Dockerfile.cross . \
 			--platform "linux/$$arch" \
 			--tag "$$image" \
 			--load; \
 		docker run --rm --platform "linux/$$arch" "$$image" --version; \
 		docker image rm "$$image"; \
+		trap - 0; \
 	done
 
 	docker buildx build --file ./docker/Dockerfile.cross . \
