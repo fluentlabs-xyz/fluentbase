@@ -26,32 +26,48 @@ fn ensure_governance_mutation<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitC
     ensure_governance(sdk)
 }
 
-pub fn default_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+/// Route the immutable configuration getters owned by this module.
+pub fn dispatch_constant<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    selector: u32,
+) -> Option<Result<(), ExitCode>> {
+    Some(match selector {
+        SIG_DEFAULT_PARTICIPATION_FLOOR_BPS => default_participation_floor_bps(sdk),
+        SIG_DEFAULT_SLASH_REPORTER_BPS => default_slash_reporter_bps(sdk),
+        SIG_MAX_ACTIVE_VALIDATORS => max_active_validators(sdk),
+        SIG_MAX_BLEND_STIPEND_PER_EPOCH => max_blend_stipend_per_epoch(sdk),
+        SIG_MAX_PARTICIPATION_FLOOR_BPS => max_participation_floor_bps(sdk),
+        SIG_MAX_SLASH_REPORTER_BPS => max_slash_reporter_bps(sdk),
+        _ => return None,
+    })
+}
+
+fn default_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &DEFAULT_PARTICIPATION_FLOOR_BPS)
 }
 
-pub fn default_slash_reporter_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+fn default_slash_reporter_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &DEFAULT_SLASH_REPORTER_REWARD_BPS)
 }
 
-pub fn max_active_validators<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+fn max_active_validators<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &(MAX_ACTIVE_VALIDATORS_LENGTH as u32))
 }
 
-pub fn max_blend_stipend_per_epoch<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+fn max_blend_stipend_per_epoch<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &MAX_BLEND_STIPEND_PER_EPOCH)
 }
 
-pub fn max_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+fn max_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &MAX_PARTICIPATION_FLOOR_BPS)
 }
 
-pub fn max_slash_reporter_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+fn max_slash_reporter_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &MAX_SLASH_REPORTER_REWARD_BPS)
 }

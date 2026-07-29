@@ -42,17 +42,14 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
             .try_into()
             .map_err(|_| ExitCode::MalformedBuiltinParams)?,
     );
+    if let Some(result) = config::dispatch_constant(sdk, selector) {
+        return result;
+    }
     match selector {
         // Deployment and governance configuration.
         SIG_INITIALIZE => handlers::initialize(sdk, params),
         SIG_CONFIGURE => handlers::configure(sdk, params),
         SIG_CONFIGURE_DEPENDENCIES => config::configure_dependencies(sdk, params),
-        SIG_DEFAULT_PARTICIPATION_FLOOR_BPS => config::default_participation_floor_bps(sdk),
-        SIG_DEFAULT_SLASH_REPORTER_BPS => config::default_slash_reporter_bps(sdk),
-        SIG_MAX_ACTIVE_VALIDATORS => config::max_active_validators(sdk),
-        SIG_MAX_BLEND_STIPEND_PER_EPOCH => config::max_blend_stipend_per_epoch(sdk),
-        SIG_MAX_PARTICIPATION_FLOOR_BPS => config::max_participation_floor_bps(sdk),
-        SIG_MAX_SLASH_REPORTER_BPS => config::max_slash_reporter_bps(sdk),
         // Compatibility getters and governance parameter access.
         SIG_CURRENT_EPOCH => handlers::current_epoch_read(sdk),
         SIG_NEXT_EPOCH => handlers::next_epoch_read(sdk),
