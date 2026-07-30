@@ -170,10 +170,7 @@ pub fn get_consensus_keys<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let keys = read_consensus_keys(sdk, decode::<AddressCommand>(input)?.value)?;
-    write_returns(
-        sdk,
-        &(keys.bls_pubkey, keys.peer_pubkey, keys.activation_epoch),
-    )
+    write_abi(sdk, &keys)
 }
 
 fn write_validators_with_keys<SDK: SharedAPI>(

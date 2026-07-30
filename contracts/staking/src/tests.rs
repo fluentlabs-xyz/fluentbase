@@ -335,6 +335,98 @@ fn solidity_bytes_outputs_and_event_match_cast_vectors() {
 }
 
 #[test]
+fn get_consensus_keys_matches_dynamic_struct_return_vectors() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+
+    let stored_keys = staking_storage().consensus_keys_accessor().entry(validator);
+    stored_keys
+        .peer_pubkey_accessor()
+        .set_checked(&mut harness.sdk, B256::with_last_byte(0xff))
+        .unwrap();
+    stored_keys
+        .activation_epoch_accessor()
+        .set_checked(&mut harness.sdk, 42)
+        .unwrap();
+
+    let (status, empty_output) = harness.call(encode_call(
+        SIG_GET_CONSENSUS_KEYS,
+        &AddressCommand { value: validator },
+    ));
+    assert_eq!(status, ExitCode::Ok);
+    // cast abi-encode "f((bytes,bytes32,uint64))" "(0x,0x...ff,42)"
+    assert_eq!(
+        empty_output,
+        hex!(
+            "0000000000000000000000000000000000000000000000000000000000000020
+             0000000000000000000000000000000000000000000000000000000000000060
+             00000000000000000000000000000000000000000000000000000000000000ff
+             000000000000000000000000000000000000000000000000000000000000002a
+             0000000000000000000000000000000000000000000000000000000000000000"
+        )
+    );
+
+    stored_keys
+        .bls_pubkey_accessor()
+        .store(&mut harness.sdk, &[0xaa, 0xbb, 0xcc])
+        .unwrap();
+    stored_keys
+        .peer_pubkey_accessor()
+        .set_checked(&mut harness.sdk, B256::with_last_byte(0x01))
+        .unwrap();
+    stored_keys
+        .activation_epoch_accessor()
+        .set_checked(&mut harness.sdk, 7)
+        .unwrap();
+
+    let (status, nonempty_output) = harness.call(encode_call(
+        SIG_GET_CONSENSUS_KEYS,
+        &AddressCommand { value: validator },
+    ));
+    assert_eq!(status, ExitCode::Ok);
+    // cast abi-encode "f((bytes,bytes32,uint64))" "(0xaabbcc,0x...01,7)"
+    assert_eq!(
+        nonempty_output,
+        hex!(
+            "0000000000000000000000000000000000000000000000000000000000000020
+             0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000007
+             0000000000000000000000000000000000000000000000000000000000000003
+            aabbcc0000000000000000000000000000000000000000000000000000000000"
+        )
+    );
+
+    let (status, multi_value_output) =
+        harness.call(encode_empty_call(SIG_GET_VALIDATORS_WITH_KEYS));
+    assert_eq!(status, ExitCode::Ok);
+    assert_eq!(
+        &multi_value_output[..64],
+        &hex!(
+            "0000000000000000000000000000000000000000000000000000000000000040
+             0000000000000000000000000000000000000000000000000000000000000080"
+        )
+    );
+    let (validators, keys): (Vec<Address>, Vec<ConsensusKeys>) =
+        decode_returns(&multi_value_output);
+    assert_eq!(validators, vec![validator]);
+    assert_eq!(
+        keys,
+        vec![ConsensusKeys {
+            bls_pubkey: Bytes::from_static(&[0xaa, 0xbb, 0xcc]),
+            peer_pubkey: B256::with_last_byte(0x01),
+            activation_epoch: 7,
+        }]
+    );
+}
+
+#[test]
 fn parameterized_custom_errors_use_solidity_abi() {
     let owner = Address::with_last_byte(0xa0);
     let outsider = Address::with_last_byte(0xb0);
@@ -1391,9 +1483,15 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
         SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
         &U64Command { value: 0 },
     ));
-    let (validators, _, stakes): (Vec<Address>, Vec<crate::types::ConsensusKeys>, Vec<U256>) =
+    let (validators, keys, stakes): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>) =
         decode_returns(&output);
     assert_eq!(validators, vec![validator_a, validator_b]);
+    assert_eq!(
+        keys.iter()
+            .map(|value| value.bls_pubkey[0])
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
     assert_eq!(stakes, vec![stake_a, stake_b]);
 
     let logs = harness.sdk.take_logs();

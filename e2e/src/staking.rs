@@ -12,6 +12,12 @@ const VALIDATOR: Address = Address::repeat_byte(0x22);
 const TOKEN: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
 sol! {
+    struct ConsensusKeys {
+        bytes blsPubkey;
+        bytes32 peerPubkey;
+        uint64 activationEpoch;
+    }
+
     interface IStakingRwasm {
         function initialize(
             address initialOwner,
@@ -42,6 +48,10 @@ sol! {
             bytes calldata blsPopUncompressed,
             bytes32 peerPubkey
         ) external;
+        function getConsensusKeys(address validator)
+            external
+            view
+            returns (ConsensusKeys memory keys);
         function getValidatorDelegation(address validator, address delegator)
             external
             view
@@ -154,6 +164,19 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
         }
         .abi_encode(),
     );
+    let output = call(
+        &mut context,
+        VALIDATOR,
+        GENESIS_STAKING,
+        IStakingRwasm::getConsensusKeysCall {
+            validator: VALIDATOR,
+        }
+        .abi_encode(),
+    );
+    let result = IStakingRwasm::getConsensusKeysCall::abi_decode_returns(&output).unwrap();
+    assert_eq!(result.blsPubkey.as_ref(), &[0; 96]);
+    assert_eq!(result.peerPubkey, B256::with_last_byte(0x01));
+    assert_eq!(result.activationEpoch, 0);
 }
 
 #[test]
