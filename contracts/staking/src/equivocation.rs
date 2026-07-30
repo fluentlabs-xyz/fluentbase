@@ -219,7 +219,7 @@ fn namespace<SDK: SharedAPI>(sdk: &SDK, kind: u8) -> Bytes {
     Bytes::from(result)
 }
 
-fn seize_self_stake<SDK: SharedAPI>(
+pub(crate) fn seize_self_stake<SDK: SharedAPI>(
     sdk: &mut SDK,
     validator: Address,
     owner: Address,

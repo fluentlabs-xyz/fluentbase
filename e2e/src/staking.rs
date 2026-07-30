@@ -300,6 +300,8 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
     // Block 1_400 is epoch 2: (1_400 - activation 1_000) / interval 200.
     assert_eq!(delegation.atEpoch, 2);
 
+    // The epoch-2 delegation is no longer ahead of nextEpoch at block 1_200.
+    context = context.with_block_number(1_200);
     call(
         &mut context,
         OWNER,

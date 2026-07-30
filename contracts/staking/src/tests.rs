@@ -1491,6 +1491,66 @@ fn delegation_and_undelegation_follow_epoch_snapshots() {
 }
 
 #[test]
+fn undelegation_rejects_a_later_pending_delegation_checkpoint() {
+    let owner = Address::with_last_byte(0xa0);
+    let delegator = Address::with_last_byte(0xb0);
+    let validator = Address::with_last_byte(0x01);
+    let delegated = DEFAULT_MIN_STAKING_AMOUNT * U256::from(2);
+    let undelegated = DEFAULT_MIN_STAKING_AMOUNT;
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(
+            owner,
+            vec![validator],
+            vec![DEFAULT_MIN_VALIDATOR_STAKE],
+            500,
+        ),
+        ExitCode::Ok
+    );
+
+    economics::delegate_to(&mut harness.sdk, delegator, validator, delegated, false).unwrap();
+    assert_direct_revert(
+        economics::undelegate_from(&mut harness.sdk, delegator, validator, undelegated),
+        &harness.sdk,
+        ERR_PENDING_DELEGATION,
+    );
+    assert_eq!(
+        crate::util::validator_total_at(&harness.sdk, validator, 1).unwrap(),
+        DEFAULT_MIN_VALIDATOR_STAKE
+    );
+    assert_eq!(
+        crate::util::validator_total_at(&harness.sdk, validator, 2).unwrap(),
+        DEFAULT_MIN_VALIDATOR_STAKE + delegated
+    );
+
+    harness.set_block_number(1_200);
+    economics::undelegate_from(&mut harness.sdk, delegator, validator, undelegated).unwrap();
+    assert_eq!(
+        crate::util::validator_total_at(&harness.sdk, validator, 1).unwrap(),
+        DEFAULT_MIN_VALIDATOR_STAKE
+    );
+    assert_eq!(
+        crate::util::validator_total_at(&harness.sdk, validator, 2).unwrap(),
+        DEFAULT_MIN_VALIDATOR_STAKE + delegated - undelegated
+    );
+    let latest = staking_storage()
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(delegator)
+        .delegate_queue_accessor()
+        .at(0);
+    assert_eq!(
+        math::expand_balance(latest.amount_accessor().get_checked(&harness.sdk).unwrap()),
+        delegated - undelegated
+    );
+    assert_eq!(
+        latest.epoch_accessor().get_checked(&harness.sdk).unwrap(),
+        2
+    );
+}
+
+#[test]
 fn erc20_transfer_from_calldata_is_standard_abi() {
     let from = Address::with_last_byte(0x11);
     let to = Address::with_last_byte(0x22);
@@ -2815,4 +2875,77 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         ),
         Ok(())
     );
+}
+
+#[test]
+fn equivocation_seizes_only_the_latest_cumulative_self_delegation() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let reporter = Address::with_last_byte(0xb0);
+    let token = Address::with_last_byte(0xc0);
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(
+            owner,
+            vec![validator],
+            vec![DEFAULT_MIN_VALIDATOR_STAKE],
+            500,
+        ),
+        ExitCode::Ok
+    );
+    staking_storage()
+        .config_accessor()
+        .staking_token_accessor()
+        .set_checked(&mut harness.sdk, token)
+        .unwrap();
+
+    let latest_stake = DEFAULT_MIN_VALIDATOR_STAKE + DEFAULT_MIN_STAKING_AMOUNT;
+    let queue = staking_storage()
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(validator)
+        .delegate_queue_accessor();
+    let latest = queue.grow_checked(&mut harness.sdk).unwrap();
+    latest
+        .amount_accessor()
+        .set_checked(
+            &mut harness.sdk,
+            math::compact_balance(latest_stake).unwrap(),
+        )
+        .unwrap();
+    latest
+        .epoch_accessor()
+        .set_checked(&mut harness.sdk, 2)
+        .unwrap();
+
+    let transfers = Rc::new(RefCell::new(Vec::<(Address, U256)>::new()));
+    let recorded = transfers.clone();
+    harness
+        .sdk
+        .set_call_handler(move |address, _value, input, _fuel_limit| {
+            assert_eq!(address, token);
+            assert_eq!(
+                u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap()),
+                SIG_ERC20_TRANSFER
+            );
+            let transfer =
+                SolidityABI::<(Address, U256)>::decode(&&input[SIG_LEN_BYTES..], 0).unwrap();
+            recorded.borrow_mut().push(transfer);
+            SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
+        });
+
+    crate::equivocation::seize_self_stake(&mut harness.sdk, validator, validator, reporter)
+        .unwrap();
+
+    let reporter_reward =
+        latest_stake * U256::from(DEFAULT_SLASH_REPORTER_REWARD_BPS) / U256::from(10_000);
+    assert_eq!(
+        transfers.borrow().as_slice(),
+        &[
+            (reporter, reporter_reward),
+            (EQUIVOCATION_BURN_SINK, latest_stake - reporter_reward),
+        ]
+    );
+    assert_eq!(queue.len_checked(&harness.sdk).unwrap(), 0);
 }

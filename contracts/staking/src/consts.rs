@@ -302,6 +302,7 @@ pub const ERR_INSUFFICIENT_BALANCE: u32 = derive_keccak256_id!("InsufficientBala
 pub const ERR_DELEGATION_QUEUE_EMPTY: u32 = derive_keccak256_id!("DelegationQueueEmpty()");
 pub const ERR_DELEGATION_QUEUE_NOT_EMPTY: u32 =
     derive_keccak256_id!("DelegationQueueNotEmpty(uint256)");
+pub const ERR_PENDING_DELEGATION: u32 = derive_keccak256_id!("PendingDelegation(uint64)");
 pub const ERR_STAKING_TOKEN_CALL_FAILED: u32 = derive_keccak256_id!("StakingTokenCallFailed()");
 pub const ERR_UNKNOWN_METHOD: u32 = derive_keccak256_id!("UnknownMethod()");
 pub const ERR_ONLY_SYSTEM_CALL: u32 = derive_keccak256_id!("OnlySystemCall()");

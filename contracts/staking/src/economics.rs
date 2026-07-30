@@ -216,13 +216,6 @@ pub fn undelegate_from<SDK: SharedAPI>(
         return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
     }
 
-    let before_epoch = next_epoch(sdk)?;
-    let snapshot = touch_validator_snapshot(sdk, validator, before_epoch)?;
-    let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
-    let Some(next_total) = total.checked_sub(compact_amount) else {
-        return revert(sdk, ERR_INSUFFICIENT_BALANCE);
-    };
-
     let delegation = storage
         .validator_delegations_accessor()
         .entry(validator)
@@ -233,8 +226,19 @@ pub fn undelegate_from<SDK: SharedAPI>(
         return revert(sdk, ERR_DELEGATION_QUEUE_EMPTY);
     }
     let latest = queue.at(len - 1);
+    let before_epoch = next_epoch(sdk)?;
+    let latest_epoch = latest.epoch_accessor().get_checked(sdk)?;
+    if latest_epoch > before_epoch {
+        return revert_with(sdk, ERR_PENDING_DELEGATION, &latest_epoch);
+    }
     let delegated = latest.amount_accessor().get_checked(sdk)?;
     let Some(next_delegated) = delegated.checked_sub(compact_amount) else {
+        return revert(sdk, ERR_INSUFFICIENT_BALANCE);
+    };
+
+    let snapshot = touch_validator_snapshot(sdk, validator, before_epoch)?;
+    let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
+    let Some(next_total) = total.checked_sub(compact_amount) else {
         return revert(sdk, ERR_INSUFFICIENT_BALANCE);
     };
 
@@ -253,7 +257,7 @@ pub fn undelegate_from<SDK: SharedAPI>(
     snapshot
         .total_delegated_accessor()
         .set_checked(sdk, next_total)?;
-    if latest.epoch_accessor().get_checked(sdk)? >= before_epoch {
+    if latest_epoch >= before_epoch {
         latest.amount_accessor().set_checked(sdk, next_delegated)?;
     } else {
         let operation = queue.grow_checked(sdk)?;
