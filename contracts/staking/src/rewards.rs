@@ -1,10 +1,5 @@
 //! Snapshot-based rewards, bounded claims, and finalized stipend settlement.
 
-use alloc::vec;
-use fluentbase_sdk::{
-    bytes::BytesMut, codec::SolidityABI, Address, Bytes, ContextReader, ExitCode, SharedAPI, U256,
-};
-
 use crate::{
     consts::*,
     economics::delegate_to,
@@ -15,6 +10,10 @@ use crate::{
         decode, ensure_initialized, ensure_mutable, ensure_non_payable, next_epoch, revert,
         revert_with, safe_transfer, touch_snapshot_at_or_before, write_abi,
     },
+};
+use alloc::vec;
+use fluentbase_sdk::{
+    bytes::BytesMut, codec::SolidityABI, Address, Bytes, ContextReader, ExitCode, SharedAPI, U256,
 };
 
 fn external_call<SDK, T>(
@@ -64,11 +63,7 @@ fn snapshot_payout<SDK: SharedAPI>(
         .validator_snapshots_accessor()
         .entry(validator)
         .entry(epoch);
-    let total_reward = U256::from(
-        snapshot
-            .total_blend_rewards_accessor()
-            .get_checked(sdk)?,
-    );
+    let total_reward = U256::from(snapshot.total_blend_rewards_accessor().get_checked(sdk)?);
     if total_reward.is_zero() {
         return Ok((U256::ZERO, U256::ZERO));
     }
@@ -99,10 +94,7 @@ fn validator_owner_rewards<SDK: SharedAPI>(
     }
     let mut epoch = record.claimed_at_accessor().get_checked(sdk)?;
     // Bound historical work; callers can continue from the stored cursor.
-    let before_epoch = core::cmp::min(
-        before_epoch,
-        epoch.saturating_add(MAX_EPOCHS_PER_CLAIM),
-    );
+    let before_epoch = core::cmp::min(before_epoch, epoch.saturating_add(MAX_EPOCHS_PER_CLAIM));
     let mut rewards = U256::ZERO;
     while epoch < before_epoch {
         rewards = rewards
@@ -420,12 +412,7 @@ pub fn get_delegator_fee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     )?;
     write_abi(
         sdk,
-        &delegator_claimable(
-            sdk,
-            command.validator,
-            command.delegator,
-            before_epoch,
-        )?,
+        &delegator_claimable(sdk, command.validator, command.delegator, before_epoch)?,
     )
 }
 
@@ -436,12 +423,8 @@ pub fn get_pending_delegator_fee<SDK: SharedAPI>(
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let command = decode::<ValidatorDelegatorCommand>(input)?;
-    let before_epoch = capped_delegator_claim_epoch(
-        sdk,
-        command.validator,
-        command.delegator,
-        next_epoch(sdk)?,
-    )?;
+    let before_epoch =
+        capped_delegator_claim_epoch(sdk, command.validator, command.delegator, next_epoch(sdk)?)?;
     write_abi(
         sdk,
         &delegator_claimable(sdk, command.validator, command.delegator, before_epoch)?,
@@ -526,12 +509,7 @@ pub fn calc_available_for_redelegate_amount<SDK: SharedAPI>(
         command.delegator,
         current_epoch(sdk)?,
     )?;
-    let claimable = delegator_claimable(
-        sdk,
-        command.validator,
-        command.delegator,
-        before_epoch,
-    )?;
+    let claimable = delegator_claimable(sdk, command.validator, command.delegator, before_epoch)?;
     write_abi(sdk, &available_for_redelegate(sdk, claimable)?)
 }
 
@@ -557,16 +535,14 @@ pub fn get_epoch_rewards<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     for index in 0..len {
         let validator = committee.at(index).get_checked(sdk)?;
         total = total
-            .checked_add(
-                U256::from(
-                    staking_storage()
-                        .validator_snapshots_accessor()
-                        .entry(validator)
-                        .entry(epoch)
-                        .total_blend_rewards_accessor()
-                        .get_checked(sdk)?,
-                ),
-            )
+            .checked_add(U256::from(
+                staking_storage()
+                    .validator_snapshots_accessor()
+                    .entry(validator)
+                    .entry(epoch)
+                    .total_blend_rewards_accessor()
+                    .get_checked(sdk)?,
+            ))
             .ok_or(ExitCode::IntegerOverflow)?;
     }
     write_abi(sdk, &total)

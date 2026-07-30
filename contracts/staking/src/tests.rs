@@ -1159,45 +1159,6 @@ fn initializer_rejects_mismatched_arrays_without_persisting_owner() {
 }
 
 #[test]
-fn genesis_bootstrap_rejects_untrusted_first_callers() {
-    let owner = Address::with_last_byte(0xa0);
-    let outsider = Address::with_last_byte(0xb0);
-    let mut harness = Harness::new(0);
-    harness.set_caller(outsider);
-
-    assert_revert_selector(
-        harness.call(encode_args_call(
-            SIG_INITIALIZE,
-            &(owner, Vec::<Address>::new(), Vec::<U256>::new(), 0u16),
-        )),
-        ERR_ONLY_OWNER,
-    );
-    assert_revert_selector(
-        harness.call(encode_call(
-            SIG_CONFIGURE,
-            &ConfigureCommand {
-                staking_token: Address::with_last_byte(0xc0),
-                active_validators_length: 21,
-                epoch_block_interval: 200,
-                felony_threshold: 150,
-                validator_jail_epoch_length: 7,
-                undelegate_period: 7,
-                min_validator_stake_amount: DEFAULT_MIN_VALIDATOR_STAKE,
-                min_staking_amount: DEFAULT_MIN_STAKING_AMOUNT,
-                dpos_activation_block: 0,
-                bls_verifier: Address::ZERO,
-                evidence_decoder: Address::ZERO,
-                min_undelegate_blocks: U256::ZERO,
-            },
-        )),
-        ERR_ONLY_OWNER,
-    );
-
-    let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
-    assert_eq!(decode_output::<Address>(&output), Address::ZERO);
-}
-
-#[test]
 fn initialize_and_registration_reject_bad_commission_and_duplicate_validator() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);

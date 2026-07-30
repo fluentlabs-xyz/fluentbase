@@ -1,11 +1,5 @@
 //! Consensus-key registration and deterministic epoch committee commits.
 
-use alloc::vec::Vec;
-
-use fluentbase_sdk::{
-    codec::SolidityABI, Address, Bytes, ContextReader, ExitCode, SharedAPI, B256, U256,
-};
-
 use crate::{
     consts::*,
     events,
@@ -18,6 +12,10 @@ use crate::{
         ensure_non_payable, next_epoch, revert, revert_with, selected_validators,
         selected_validators_at, selection_visible_at, validator_total_at, write_abi, write_returns,
     },
+};
+use alloc::vec::Vec;
+use fluentbase_sdk::{
+    codec::SolidityABI, Address, Bytes, ContextReader, ExitCode, SharedAPI, B256, U256,
 };
 
 const BLS_POP_DST: &[u8] = b"BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";

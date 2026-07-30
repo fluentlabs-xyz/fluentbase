@@ -1,7 +1,5 @@
 //! Authorized liveness slashing, jail transitions, and bounded readmission.
 
-use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
-
 use crate::{
     consts::*,
     events,
@@ -14,6 +12,7 @@ use crate::{
         set_selection_visible, touch_snapshot_at_or_before,
     },
 };
+use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
 
 fn ensure_liveness<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;

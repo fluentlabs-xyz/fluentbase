@@ -2,10 +2,6 @@
 //!
 //! Setters validate cross-field invariants before updating namespaced storage.
 
-use alloc::string::String;
-
-use fluentbase_sdk::{ContextReader, ExitCode, SharedAPI, U256};
-
 use crate::{
     consts::*,
     events,
@@ -19,6 +15,8 @@ use crate::{
         write_abi,
     },
 };
+use alloc::string::String;
+use fluentbase_sdk::{ContextReader, ExitCode, SharedAPI, U256};
 
 fn ensure_governance_mutation<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;

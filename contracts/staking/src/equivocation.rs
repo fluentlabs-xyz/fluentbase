@@ -1,11 +1,5 @@
 //! Permissionless equivocation proofs and permanent validator tombstoning.
 
-use alloc::vec::Vec;
-
-use fluentbase_sdk::{
-    codec::SolidityABI, keccak256, Address, Bytes, ContextReader, ExitCode, SharedAPI, B256, U256,
-};
-
 use crate::{
     consts::*,
     events,
@@ -17,6 +11,10 @@ use crate::{
         decode_args, encode_external_call, ensure_initialized, ensure_mutable, ensure_non_payable,
         revert, revert_with, safe_transfer, set_selection_visible, write_returns,
     },
+};
+use alloc::vec::Vec;
+use fluentbase_sdk::{
+    codec::SolidityABI, keccak256, Address, Bytes, ContextReader, ExitCode, SharedAPI, B256, U256,
 };
 
 const BLS_SIG_DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";

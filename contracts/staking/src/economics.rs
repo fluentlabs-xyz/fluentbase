@@ -2,8 +2,6 @@
 //!
 //! Balance changes are recorded as epoch-stamped checkpoints.
 
-use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
-
 use crate::{
     consts::*,
     events, math,
@@ -21,6 +19,7 @@ use crate::{
         validator_total_at, write_abi,
     },
 };
+use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
 
 pub fn get_validator_delegation<SDK: SharedAPI>(
     sdk: &mut SDK,
@@ -269,9 +268,7 @@ pub fn undelegate_from<SDK: SharedAPI>(
         .checked_add(config.undelegate_period_accessor().get_checked(sdk)?)
         .ok_or(ExitCode::IntegerOverflow)?;
     let pending = delegation.undelegate_queue_accessor().grow_checked(sdk)?;
-    pending
-        .amount_accessor()
-        .set_checked(sdk, compact_amount)?;
+    pending.amount_accessor().set_checked(sdk, compact_amount)?;
     pending.epoch_accessor().set_checked(sdk, maturity_epoch)?;
 
     events::Undelegated {

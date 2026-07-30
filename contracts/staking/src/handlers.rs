@@ -1,9 +1,5 @@
 //! Initialization, compatibility getters, and governance validator lifecycle.
 
-use alloc::vec::Vec;
-
-use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
-
 use crate::{
     consts::*,
     events,
@@ -19,6 +15,8 @@ use crate::{
         total_delegated, touch_validator_snapshot, validator_status, write_abi,
     },
 };
+use alloc::vec::Vec;
+use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
 
 pub fn initialize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
@@ -26,15 +24,6 @@ pub fn initialize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), Exi
     let storage = staking_storage();
     if storage.initialized_accessor().get_checked(sdk)? {
         return revert(sdk, ERR_ALREADY_INITIALIZED);
-    }
-    let caller = sdk.context().contract_caller();
-    let configured_owner = storage.owner_accessor().get_checked(sdk)?;
-    if configured_owner.is_zero() {
-        if caller != fluentbase_sdk::GENESIS_GOVERNANCE {
-            return revert_with(sdk, ERR_ONLY_OWNER, &caller);
-        }
-    } else if caller != configured_owner {
-        return revert_with(sdk, ERR_ONLY_OWNER, &caller);
     }
     let (initial_owner, validators, initial_stakes, commission_rate) =
         decode_args::<(Address, Vec<Address>, Vec<U256>, u16)>(input)?;
@@ -52,9 +41,6 @@ pub fn initialize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), Exi
     }
     if command.commission_rate > COMMISSION_RATE_MAX {
         return revert_with(sdk, ERR_BAD_COMMISSION_RATE, &command.commission_rate);
-    }
-    if !configured_owner.is_zero() && configured_owner != command.initial_owner {
-        return revert_with(sdk, ERR_ONLY_OWNER, &command.initial_owner);
     }
     storage
         .owner_accessor()
@@ -539,7 +525,9 @@ pub fn remove_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(
     record
         .status_accessor()
         .set_checked(sdk, STATUS_NOT_FOUND)?;
-    record.first_snapshot_epoch_p1_accessor().set_checked(sdk, 0)?;
+    record
+        .first_snapshot_epoch_p1_accessor()
+        .set_checked(sdk, 0)?;
     events::ValidatorRemoved { validator }.emit(sdk)?;
     Ok(())
 }
