@@ -14,8 +14,8 @@ dependencies.
 
 ## Lifecycle
 
-1. Genesis governance calls `configure` and `initialize` once each; non-zero initial stake requires
-   configuration first.
+1. Deployment atomically installs and initializes staking before public transactions can execute.
+   Genesis governance calls `configure` once; non-zero initial stake requires configuration first.
 2. Governance configures external dependencies and manages validator status.
 3. Validators register consensus keys; delegators approve and deposit BLEND.
 4. The system caller commits epoch committees and settles finalized epoch stipends.

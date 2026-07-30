@@ -1366,26 +1366,40 @@ fn initializer_rejects_mismatched_arrays_without_persisting_owner() {
 }
 
 #[test]
-fn initializer_rejects_non_genesis_callers_before_writing_state() {
+fn initializer_is_permissionless_for_atomic_deployment_but_one_shot() {
     let owner = Address::with_last_byte(0xa0);
-    let outsider = Address::with_last_byte(0xb0);
+    let deployer = Address::with_last_byte(0xb0);
+    let replacement = Address::with_last_byte(0xc0);
     let mut harness = Harness::new(0);
-    harness.set_caller(outsider);
+    harness.set_caller(deployer);
 
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_INITIALIZE,
+                &(owner, Vec::<Address>::new(), Vec::<U256>::new(), 0_u16),
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
+    assert_eq!(decode_output::<Address>(&output), owner);
+
+    harness.set_caller(replacement);
     assert_revert_selector(
         harness.call(encode_args_call(
             SIG_INITIALIZE,
-            &(owner, Vec::<Address>::new(), Vec::<U256>::new(), 0_u16),
+            &(
+                replacement,
+                Vec::<Address>::new(),
+                Vec::<U256>::new(),
+                0_u16,
+            ),
         )),
-        ERR_ONLY_GOVERNANCE,
+        ERR_ALREADY_INITIALIZED,
     );
     let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
-    assert_eq!(decode_output::<Address>(&output), Address::ZERO);
-
-    assert_eq!(
-        harness.initialize(owner, Vec::new(), Vec::new(), 0),
-        ExitCode::Ok
-    );
+    assert_eq!(decode_output::<Address>(&output), owner);
 }
 
 #[test]

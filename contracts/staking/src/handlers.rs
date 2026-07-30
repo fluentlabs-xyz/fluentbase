@@ -21,9 +21,9 @@ use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
 pub fn initialize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
-    if sdk.context().contract_caller() != fluentbase_sdk::GENESIS_GOVERNANCE {
-        return revert(sdk, ERR_ONLY_GOVERNANCE);
-    }
+    // Initialization is intentionally permissionless: deployment executes this
+    // call atomically with contract installation, before public transactions can
+    // race to initialize. The stored flag below keeps all later calls one-shot.
     let storage = staking_storage();
     if storage.initialized_accessor().get_checked(sdk)? {
         return revert(sdk, ERR_ALREADY_INITIALIZED);
