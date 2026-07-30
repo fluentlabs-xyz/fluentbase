@@ -135,10 +135,6 @@ pub fn validator_status<SDK: SharedAPI>(sdk: &SDK, validator: Address) -> Result
         .get_checked(sdk)
 }
 
-pub fn total_delegated<SDK: SharedAPI>(sdk: &SDK, validator: Address) -> Result<U256, ExitCode> {
-    validator_total_at(sdk, validator, current_epoch(sdk)?)
-}
-
 pub fn set_validator<SDK: SharedAPI>(
     sdk: &mut SDK,
     validator: Address,
@@ -308,31 +304,6 @@ pub fn selection_visible_at<SDK: SharedAPI>(
     } else {
         membership.prev_visible_accessor().get_checked(sdk)
     }
-}
-
-pub fn remove_selection_member<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    validator: Address,
-) -> Result<(), ExitCode> {
-    let storage = staking_storage();
-    let roster = storage.selection_roster_accessor();
-    let len = roster.len_checked(sdk)?;
-    for index in 0..len {
-        if roster.at(index).get_checked(sdk)? != validator {
-            continue;
-        }
-        if index + 1 != len {
-            let last = roster.at(len - 1).get_checked(sdk)?;
-            roster.at(index).set_checked(sdk, last)?;
-        }
-        roster.pop_checked(sdk)?;
-        break;
-    }
-    let membership = storage.selection_membership_accessor().entry(validator);
-    membership.visible_accessor().set_checked(sdk, false)?;
-    membership.prev_visible_accessor().set_checked(sdk, false)?;
-    membership.effective_from_accessor().set_checked(sdk, 0)?;
-    membership.rostered_accessor().set_checked(sdk, false)
 }
 
 pub fn selected_validators_at<SDK: SharedAPI>(

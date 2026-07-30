@@ -21,6 +21,10 @@ dependencies.
 4. The system caller commits epoch committees and settles finalized epoch stipends.
 5. Liveness and equivocation paths jail or permanently tombstone validators.
 
+Registered validator identities are permanent. Governance may disable and reactivate validators,
+but disabling never deletes their records, consensus-key state, ownership mappings, or stake
+history.
+
 ## Accounting Invariants
 
 - Stake and commission changes take effect through epoch snapshots; selection changes become visible

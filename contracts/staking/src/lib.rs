@@ -148,7 +148,6 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_GET_VALIDATOR_BY_OWNER => handlers::get_validator_by_owner(sdk, params),
         SIG_GET_VALIDATORS => handlers::get_validators(sdk),
         SIG_ADD_VALIDATOR => handlers::add_validator(sdk, params),
-        SIG_REMOVE_VALIDATOR => handlers::remove_validator(sdk, params),
         SIG_ACTIVATE_VALIDATOR => handlers::activate_validator(sdk, params),
         SIG_DISABLE_VALIDATOR => handlers::disable_validator(sdk, params),
         SIG_CHANGE_VALIDATOR_COMMISSION_RATE => handlers::change_commission(sdk, params),

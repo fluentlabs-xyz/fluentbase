@@ -563,10 +563,6 @@ fn implemented_selectors_match_pinned_solidity_abi() {
         derive_keccak256_id!("addValidator(address)")
     );
     assert_eq!(
-        SIG_REMOVE_VALIDATOR,
-        derive_keccak256_id!("removeValidator(address)")
-    );
-    assert_eq!(
         SIG_ACTIVATE_VALIDATOR,
         derive_keccak256_id!("activateValidator(address)")
     );
@@ -742,7 +738,6 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_GET_VALIDATOR_BY_OWNER, 0x30108c22),
         (SIG_GET_VALIDATORS, 0xb7ab4db5),
         (SIG_ADD_VALIDATOR, 0x4d238c8e),
-        (SIG_REMOVE_VALIDATOR, 0x40a141ff),
         (SIG_ACTIVATE_VALIDATOR, 0xb46e5520),
         (SIG_DISABLE_VALIDATOR, 0x1fe97684),
         (SIG_CHANGE_VALIDATOR_COMMISSION_RATE, 0x14f8649f),
@@ -907,6 +902,23 @@ fn governance_lifecycle_updates_active_registry() {
         &AddressCommand { value: validator },
     ));
     assert!(!decode_output::<bool>(&output));
+    let (_, output) = harness.call(encode_call(
+        SIG_IS_VALIDATOR,
+        &AddressCommand { value: validator },
+    ));
+    assert!(
+        decode_output::<bool>(&output),
+        "disabling must preserve the validator record"
+    );
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_VALIDATOR_BY_OWNER,
+        &AddressCommand { value: validator },
+    ));
+    assert_eq!(
+        decode_output::<Address>(&output),
+        validator,
+        "disabling must preserve the validator-owner mapping"
+    );
 
     assert_eq!(
         harness

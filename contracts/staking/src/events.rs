@@ -24,12 +24,6 @@ pub struct ValidatorModified {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
-pub struct ValidatorRemoved {
-    #[indexed]
-    pub validator: Address,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Event)]
 pub struct Delegated {
     #[indexed]
     pub validator: Address,

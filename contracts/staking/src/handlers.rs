@@ -10,9 +10,9 @@ use crate::{
     types::{AddressU16Command, ConfigureCommand, InitializeCommand, TwoAddressesCommand},
     util::{
         address_arg, decode, decode_args, emit_modified, ensure_governance, ensure_initialized,
-        ensure_mutable, ensure_non_payable, ensure_rostered, next_epoch, remove_selection_member,
-        revert, revert_with, selected_validators, set_selection_visible, set_validator,
-        total_delegated, touch_validator_snapshot, validator_status, write_abi,
+        ensure_mutable, ensure_non_payable, ensure_rostered, next_epoch, revert, revert_with,
+        selected_validators, set_selection_visible, set_validator, touch_validator_snapshot,
+        validator_status, write_abi,
     },
 };
 use alloc::vec::Vec;
@@ -486,50 +486,6 @@ pub fn disable_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     set_selection_visible(sdk, validator, false, current_epoch(sdk)?)?;
     touch_validator_snapshot(sdk, validator, next_epoch(sdk)?)?;
     emit_modified(sdk, validator)
-}
-
-pub fn remove_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_mutable(sdk)?;
-    ensure_governance(sdk)?;
-    let validator = address_arg(input)?;
-    if validator_status(sdk, validator)? == STATUS_NOT_FOUND {
-        return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
-    }
-    if !total_delegated(sdk, validator)?.is_zero() {
-        return revert_with(sdk, ERR_VALIDATOR_HAS_ACTIVE_DELEGATIONS, &validator);
-    }
-    remove_active(sdk, validator)?;
-    remove_selection_member(sdk, validator)?;
-    crate::liveness::remove_jailed(sdk, validator)?;
-    let storage = staking_storage();
-    let keys = storage.consensus_keys_accessor().entry(validator);
-    let peer_pubkey = keys.peer_pubkey_accessor().get_checked(sdk)?;
-    if !peer_pubkey.is_zero() {
-        storage
-            .peer_pubkey_owner_accessor()
-            .entry(peer_pubkey)
-            .set_checked(sdk, Address::ZERO)?;
-    }
-    keys.bls_pubkey_accessor().clear(sdk)?;
-    keys.peer_pubkey_accessor()
-        .set_checked(sdk, fluentbase_sdk::B256::ZERO)?;
-    keys.activation_epoch_accessor().set_checked(sdk, 0)?;
-    let record = storage.validators_accessor().entry(validator);
-    let validator_owner = record.owner_accessor().get_checked(sdk)?;
-    storage
-        .owner_validators_accessor()
-        .entry(validator_owner)
-        .set_checked(sdk, Address::ZERO)?;
-    record.owner_accessor().set_checked(sdk, Address::ZERO)?;
-    record
-        .status_accessor()
-        .set_checked(sdk, STATUS_NOT_FOUND)?;
-    record
-        .first_snapshot_epoch_p1_accessor()
-        .set_checked(sdk, 0)?;
-    events::ValidatorRemoved { validator }.emit(sdk)?;
-    Ok(())
 }
 
 pub fn change_commission<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {

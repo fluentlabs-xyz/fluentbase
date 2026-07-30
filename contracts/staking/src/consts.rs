@@ -31,8 +31,6 @@ pub const SIG_GET_VALIDATOR_BY_OWNER: u32 = derive_keccak256_id!("getValidatorBy
 pub const SIG_GET_VALIDATORS: u32 = derive_keccak256_id!("getValidators()");
 // 0x4d238c8e
 pub const SIG_ADD_VALIDATOR: u32 = derive_keccak256_id!("addValidator(address)");
-// 0x40a141ff
-pub const SIG_REMOVE_VALIDATOR: u32 = derive_keccak256_id!("removeValidator(address)");
 // 0xb46e5520
 pub const SIG_ACTIVATE_VALIDATOR: u32 = derive_keccak256_id!("activateValidator(address)");
 // 0x1fe97684
@@ -290,8 +288,6 @@ pub const ERR_VALIDATOR_OWNER_ALREADY_IN_USE: u32 =
     derive_keccak256_id!("ValidatorOwnerAlreadyInUse(address)");
 pub const ERR_NOT_PENDING_VALIDATOR: u32 = derive_keccak256_id!("NotPendingValidator(address)");
 pub const ERR_NOT_ACTIVE_VALIDATOR: u32 = derive_keccak256_id!("NotActiveValidator()");
-pub const ERR_VALIDATOR_HAS_ACTIVE_DELEGATIONS: u32 =
-    derive_keccak256_id!("ValidatorHasActiveDelegations(address)");
 pub const ERR_ONLY_VALIDATOR_OWNER: u32 = derive_keccak256_id!("OnlyValidatorOwner(address)");
 pub const ERR_VALIDATOR_OWNER_IMMUTABLE: u32 = derive_keccak256_id!("ValidatorOwnerImmutable()");
 pub const ERR_ONLY_OWNER: u32 = derive_keccak256_id!("OwnableUnauthorizedAccount(address)");
