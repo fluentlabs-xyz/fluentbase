@@ -81,58 +81,6 @@ the data path from untrusted input to sink; a concrete exploit scenario; the fix
 Before reasoning from scratch, read `SECURITY.md` → **Auditor's Checklist** for the known
 vulnerability classes that recur in this codebase — check those first.
 
-## Linear Task Tracking
-
-Agents must track assigned work in Linear. If Linear access is not connected, stop before task work
-and ask the user to connect it:
-
-- Codex: connect the Linear MCP/app integration for this workspace, then restart or refresh the agent
-  session so Linear tools are available.
-- Claude: connect Linear through the MCP connector configured for Claude, then restart or refresh the
-  session so Linear tools are available.
-
-If the requested work has no Linear task, create one with a clear title, description, expected
-outcome, and links to any relevant issue, branch, or PR.
-
-Linear status rules:
-
-- `Backlog`: manager-owned intake. If an agent is assigned a Backlog issue, do not implement it.
-  Read and analyze the issue, expand or rewrite the description with concrete context, expected
-  outcome, acceptance criteria, open questions, estimated story points when available, and the best
-  matching labels. Then move it to `Todo` and remove the assignee so it is ready for manager
-  prioritization.
-- `Todo`: manager-only. The task has been created and assigned. When an agent first picks it up,
-  move it to `Research`.
-- `Research`: the agent researches the task, gathers constraints, and prepares a development plan
-  with open questions and missing information. Every time an agent works on research, the task must
-  be in this status. When research is complete, move it to `Research Review`.
-- `Research Review`: the agent is waiting for manager input. The manager provides answers,
-  corrections, or missing details as Linear comments. After comments are provided, update the plan
-  in Linear. Do not begin implementation until the manager moves the task to `In Progress`.
-- `In Progress`: manager-only. The agent may implement the task and open a PR based on the configured
-  base branch. When implementation is complete, move the task to `Final Review`.
-- `Final Review`: the manager manually reviews the PR. If changes are requested, move the task back
-  to `In Progress`, address the comments, and repeat until review is complete.
-- `Done`: the task is complete and the work should be merged, rebased, or squashed into the base
-  branch according to the branch rules below.
-
-When multiple assigned issues exist, prioritize the highest-progress work first: `In Progress`,
-`Final Review` follow-up, `Research Review` with manager comments, `Research`, then `Backlog` or
-`Todo`. Backlog and Todo are intake/planning states and should be handled after active or
-review-blocked work.
-
-When a task is in `Todo`, the assigned agent must provide a working plan and ask any extra questions
-from the author in Linear comments before implementation. When a task is in `Backlog`, the assigned
-agent must refine the task, label and estimate it where possible, move it to `Todo`, and unassign it
-before implementation.
-
-If a Linear issue is estimated greater than 5 story points, decompose it before implementation.
-Do this during Backlog intake or Research, before any `In Progress` implementation work begins.
-Each child issue should include concrete context, expected outcome, acceptance criteria, relevant
-links, labels, and an estimate no greater than 5 where possible. Link the child issues from the
-parent, summarize the split in a Linear comment, and leave the parent in the appropriate planning or
-review status until the manager moves the approved implementation work to `In Progress`.
-
 ## Branch and Git Standards
 
 - Default remote base branch is `origin/devel` in this repo. Rebase/start branch work from the latest
