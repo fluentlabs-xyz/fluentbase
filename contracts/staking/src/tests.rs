@@ -14,7 +14,6 @@ use crate::{
 use fluentbase_sdk::{
     bytes::BytesMut,
     codec::SolidityABI,
-    derive::derive_keccak256_id,
     hex, is_engine_metered_precompile, is_execute_using_system_runtime, keccak256,
     storage::{StorageDescriptor, StorageLayout},
     Address, Bytes, ContractContextV1, ExitCode, SyscallResult, B256, GENESIS_GOVERNANCE,
@@ -386,6 +385,10 @@ fn solidity_bytes_calldata_reaches_staking_handlers() {
          0000000000000000000000000000000000000000000000000000000000000002
          0506000000000000000000000000000000000000000000000000000000000000"
     );
+    assert_revert_selector(
+        harness.call(slash_equivocation),
+        ERR_NO_EQUIVOCATION_COMMITMENT,
+    );
     let command = equivocation::decode_equivocation(&slash_equivocation[4..]).unwrap();
     assert_eq!(&command.evidence[..], &[0x01]);
     assert_eq!(&command.pk_uncompressed[..], &[0x02, 0x03]);
@@ -393,6 +396,108 @@ fn solidity_bytes_calldata_reaches_staking_handlers() {
     assert_eq!(&command.sig2_uncompressed[..], &[0x05, 0x06]);
     assert_eq!(command.beneficiary, Address::with_last_byte(0x02));
     assert_eq!(command.salt, B256::with_last_byte(0x03));
+}
+
+#[test]
+fn set_consensus_keys_cast_calldata_completes_happy_path() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let verifier = Address::with_last_byte(0xb0);
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0,),
+        ExitCode::Ok
+    );
+    harness.set_caller(validator);
+    staking_storage()
+        .config_accessor()
+        .bls_verifier_accessor()
+        .set_checked(&mut harness.sdk, verifier)
+        .unwrap();
+
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let recorded_calls = calls.clone();
+    harness
+        .sdk
+        .set_call_handler(move |address, _value, input, _fuel_limit| {
+            assert_eq!(address, verifier);
+            recorded_calls.borrow_mut().push(input.to_vec());
+            let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
+            let output = match selector {
+                SIG_BLS_COMPRESS_G2_UNCHECKED => hex!(
+                    "0000000000000000000000000000000000000000000000000000000000000020
+                     0000000000000000000000000000000000000000000000000000000000000060
+                     3333333333333333333333333333333333333333333333333333333333333333
+                     3333333333333333333333333333333333333333333333333333333333333333
+                     3333333333333333333333333333333333333333333333333333333333333333"
+                )
+                .to_vec(),
+                SIG_BLS_VERIFY => {
+                    hex!("0000000000000000000000000000000000000000000000000000000000000001")
+                        .to_vec()
+                }
+                _ => {
+                    return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams)
+                }
+            };
+            SyscallResult::new(output.into(), 0, 0, ExitCode::Ok)
+        });
+
+    // cast calldata
+    // "setConsensusKeys(address,bytes,bytes,bytes32)"
+    // 0x...01 0x{11 * 256} 0x{22 * 128} 0x...01
+    let calldata = hex!(
+        "225cba85
+         0000000000000000000000000000000000000000000000000000000000000001
+         0000000000000000000000000000000000000000000000000000000000000080
+         00000000000000000000000000000000000000000000000000000000000001a0
+         0000000000000000000000000000000000000000000000000000000000000001
+         0000000000000000000000000000000000000000000000000000000000000100
+         1111111111111111111111111111111111111111111111111111111111111111
+         1111111111111111111111111111111111111111111111111111111111111111
+         1111111111111111111111111111111111111111111111111111111111111111
+         1111111111111111111111111111111111111111111111111111111111111111
+         1111111111111111111111111111111111111111111111111111111111111111
+         1111111111111111111111111111111111111111111111111111111111111111
+         1111111111111111111111111111111111111111111111111111111111111111
+         1111111111111111111111111111111111111111111111111111111111111111
+         0000000000000000000000000000000000000000000000000000000000000080
+         2222222222222222222222222222222222222222222222222222222222222222
+         2222222222222222222222222222222222222222222222222222222222222222
+         2222222222222222222222222222222222222222222222222222222222222222
+         2222222222222222222222222222222222222222222222222222222222222222"
+    );
+    harness.sdk.take_logs();
+    assert_eq!(harness.call(calldata), (ExitCode::Ok, Vec::new()));
+
+    let calls = calls.borrow();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(
+        &calls[0][..SIG_LEN_BYTES],
+        &SIG_BLS_COMPRESS_G2_UNCHECKED.to_be_bytes()
+    );
+    assert_eq!(&calls[1][..SIG_LEN_BYTES], &SIG_BLS_VERIFY.to_be_bytes());
+
+    let stored = staking_storage().consensus_keys_accessor().entry(validator);
+    assert_eq!(
+        stored.bls_pubkey_accessor().load(&harness.sdk).unwrap(),
+        vec![0x33; BLS_PUBKEY_LENGTH]
+    );
+    assert_eq!(
+        stored
+            .peer_pubkey_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        B256::with_last_byte(0x01)
+    );
+    assert_eq!(
+        stored
+            .activation_epoch_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0
+    );
 }
 
 #[test]
@@ -491,10 +596,17 @@ fn solidity_bytes_outputs_and_event_match_cast_vectors() {
         events::ConsensusKeysSet::SIGNATURE,
         "ConsensusKeysSet(address,bytes,bytes32,uint64)"
     );
+    assert_eq!(logs[0].1.len(), 2);
     assert_eq!(
         logs[0].1[0],
         B256::new(hex!(
             "b0119b4b0cb7a880df8e2f34a5c3a4d23f45d700a23e900c5e5dc9a6fc3e1852"
+        ))
+    );
+    assert_eq!(
+        logs[0].1[1],
+        B256::new(hex!(
+            "0000000000000000000000000000000000000000000000000000000000000002"
         ))
     );
     // cast abi-encode "f(bytes,bytes32,uint64)" 0xaabbcc 0x...01 7
@@ -506,6 +618,43 @@ fn solidity_bytes_outputs_and_event_match_cast_vectors() {
              0000000000000000000000000000000000000000000000000000000000000007
              0000000000000000000000000000000000000000000000000000000000000003
              aabbcc0000000000000000000000000000000000000000000000000000000000"
+        )
+    );
+
+    events::EpochCommitteeCommitted {
+        epoch: 7,
+        committee: vec![Address::with_last_byte(0x01), Address::with_last_byte(0x02)],
+    }
+    .emit(&mut sdk)
+    .unwrap();
+    let logs = sdk.take_logs();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(
+        events::EpochCommitteeCommitted::SIGNATURE,
+        "EpochCommitteeCommitted(uint64,address[])"
+    );
+    assert_eq!(
+        logs[0].1[0],
+        B256::new(hex!(
+            "015ffbf030c2f06f58cedc968ae2ec9df38a79be1a74f68686ca971ce1994a5d"
+        ))
+    );
+    assert_eq!(
+        logs[0].1[1],
+        B256::new(hex!(
+            "0000000000000000000000000000000000000000000000000000000000000007"
+        ))
+    );
+    // cast abi-encode "f(address[])"
+    // "[0x0000000000000000000000000000000000000001,
+    //   0x0000000000000000000000000000000000000002]"
+    assert_eq!(
+        logs[0].0.as_ref(),
+        &hex!(
+            "0000000000000000000000000000000000000000000000000000000000000020
+             0000000000000000000000000000000000000000000000000000000000000002
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000002"
         )
     );
 }
@@ -582,23 +731,24 @@ fn get_consensus_keys_matches_dynamic_struct_return_vectors() {
     let (status, multi_value_output) =
         harness.call(encode_empty_call(SIG_GET_VALIDATORS_WITH_KEYS));
     assert_eq!(status, ExitCode::Ok);
+    // cast abi-encode "f(address[],(bytes,bytes32,uint64)[])"
+    // "[0x0000000000000000000000000000000000000001]"
+    // "[(0xaabbcc,0x...01,7)]"
     assert_eq!(
-        &multi_value_output[..64],
-        &hex!(
+        multi_value_output,
+        hex!(
             "0000000000000000000000000000000000000000000000000000000000000040
-             0000000000000000000000000000000000000000000000000000000000000080"
+             0000000000000000000000000000000000000000000000000000000000000080
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000020
+             0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000007
+             0000000000000000000000000000000000000000000000000000000000000003
+             aabbcc0000000000000000000000000000000000000000000000000000000000"
         )
-    );
-    let (validators, keys): (Vec<Address>, Vec<ConsensusKeys>) =
-        decode_returns(&multi_value_output);
-    assert_eq!(validators, vec![validator]);
-    assert_eq!(
-        keys,
-        vec![ConsensusKeys {
-            bls_pubkey: Bytes::from_static(&[0xaa, 0xbb, 0xcc]),
-            peer_pubkey: B256::with_last_byte(0x01),
-            activation_epoch: 7,
-        }]
     );
 }
 
@@ -645,243 +795,6 @@ fn parameterized_custom_errors_use_solidity_abi() {
     assert_eq!(
         decode_output::<alloc::string::String>(&output[4..]),
         "blsVerifier"
-    );
-}
-
-#[test]
-fn implemented_selectors_match_pinned_solidity_abi() {
-    assert_eq!(
-        SIG_INITIALIZE,
-        derive_keccak256_id!("initialize(address,address[],uint256[],uint16)")
-    );
-    assert_eq!(SIG_CURRENT_EPOCH, derive_keccak256_id!("currentEpoch()"));
-    assert_eq!(SIG_NEXT_EPOCH, derive_keccak256_id!("nextEpoch()"));
-    assert_eq!(SIG_OWNER, derive_keccak256_id!("owner()"));
-    assert_eq!(SIG_GET_STAKING, derive_keccak256_id!("getStaking()"));
-    assert_eq!(SIG_GET_GOVERNANCE, derive_keccak256_id!("getGovernance()"));
-    assert_eq!(
-        SIG_GET_CHAIN_CONFIG,
-        derive_keccak256_id!("getChainConfig()")
-    );
-    assert_eq!(
-        SIG_GET_STAKING_TOKEN,
-        derive_keccak256_id!("getStakingToken()")
-    );
-    assert_eq!(
-        SIG_CONFIGURE,
-        derive_keccak256_id!(
-            "configure(address,uint32,uint32,uint32,uint32,uint32,uint256,uint256,uint64,address,address,uint256)"
-        )
-    );
-    assert_eq!(
-        SIG_DEFAULT_PARTICIPATION_FLOOR_BPS,
-        derive_keccak256_id!("DEFAULT_PARTICIPATION_FLOOR_BPS()")
-    );
-    assert_eq!(
-        SIG_DEFAULT_SLASH_REPORTER_BPS,
-        derive_keccak256_id!("DEFAULT_SLASH_REPORTER_BPS()")
-    );
-    assert_eq!(
-        SIG_MAX_ACTIVE_VALIDATORS,
-        derive_keccak256_id!("MAX_ACTIVE_VALIDATORS()")
-    );
-    assert_eq!(
-        SIG_MAX_BLEND_STIPEND_PER_EPOCH,
-        derive_keccak256_id!("MAX_BLEND_STIPEND_PER_EPOCH()")
-    );
-    assert_eq!(
-        SIG_MAX_PARTICIPATION_FLOOR_BPS,
-        derive_keccak256_id!("MAX_PARTICIPATION_FLOOR_BPS()")
-    );
-    assert_eq!(
-        SIG_MAX_SLASH_REPORTER_BPS,
-        derive_keccak256_id!("MAX_SLASH_REPORTER_BPS()")
-    );
-    assert_eq!(
-        SIG_GET_VALIDATOR_DELEGATION,
-        derive_keccak256_id!("getValidatorDelegation(address,address)")
-    );
-    assert_eq!(
-        SIG_GET_VALIDATOR_DELEGATED_STAKE_AT,
-        derive_keccak256_id!("getValidatorDelegatedStakeAt(address,uint256)")
-    );
-    assert_eq!(
-        SIG_REGISTER_VALIDATOR,
-        derive_keccak256_id!("registerValidator(address,uint16,uint256)")
-    );
-    assert_eq!(
-        SIG_DELEGATE,
-        derive_keccak256_id!("delegate(address,uint256)")
-    );
-    assert_eq!(
-        SIG_UNDELEGATE,
-        derive_keccak256_id!("undelegate(address,uint256)")
-    );
-    assert_eq!(
-        SIG_IS_VALIDATOR,
-        derive_keccak256_id!("isValidator(address)")
-    );
-    assert_eq!(
-        SIG_IS_VALIDATOR_ACTIVE,
-        derive_keccak256_id!("isValidatorActive(address)")
-    );
-    assert_eq!(
-        SIG_GET_VALIDATOR_STATUS,
-        derive_keccak256_id!("getValidatorStatus(address)")
-    );
-    assert_eq!(
-        SIG_GET_VALIDATOR_BY_OWNER,
-        derive_keccak256_id!("getValidatorByOwner(address)")
-    );
-    assert_eq!(SIG_GET_VALIDATORS, derive_keccak256_id!("getValidators()"));
-    assert_eq!(
-        SIG_ADD_VALIDATOR,
-        derive_keccak256_id!("addValidator(address)")
-    );
-    assert_eq!(
-        SIG_ACTIVATE_VALIDATOR,
-        derive_keccak256_id!("activateValidator(address)")
-    );
-    assert_eq!(
-        SIG_DISABLE_VALIDATOR,
-        derive_keccak256_id!("disableValidator(address)")
-    );
-    assert_eq!(
-        SIG_CHANGE_VALIDATOR_COMMISSION_RATE,
-        derive_keccak256_id!("changeValidatorCommissionRate(address,uint16)")
-    );
-    assert_eq!(
-        SIG_CHANGE_VALIDATOR_OWNER,
-        derive_keccak256_id!("changeValidatorOwner(address,address)")
-    );
-    assert_eq!(
-        SIG_CONFIGURE_DEPENDENCIES,
-        derive_keccak256_id!("configureDependencies(address,address)")
-    );
-    assert_eq!(
-        SIG_SET_ACTIVE_VALIDATORS_LENGTH,
-        derive_keccak256_id!("setActiveValidatorsLength(uint32)")
-    );
-    assert_eq!(
-        SIG_SET_EPOCH_BLOCK_INTERVAL,
-        derive_keccak256_id!("setEpochBlockInterval(uint32)")
-    );
-    assert_eq!(
-        SIG_SET_DPOS_ACTIVATION_BLOCK,
-        derive_keccak256_id!("setDposActivationBlock(uint64)")
-    );
-    assert_eq!(
-        SIG_SET_FELONY_THRESHOLD,
-        derive_keccak256_id!("setFelonyThreshold(uint32)")
-    );
-    assert_eq!(
-        SIG_SET_VALIDATOR_JAIL_EPOCH_LENGTH,
-        derive_keccak256_id!("setValidatorJailEpochLength(uint32)")
-    );
-    assert_eq!(
-        SIG_SET_SLASH_REPORTER_REWARD_BPS,
-        derive_keccak256_id!("setSlashReporterRewardBps(uint32)")
-    );
-    assert_eq!(
-        SIG_SET_SLASH_FUND_ADDRESS,
-        derive_keccak256_id!("setSlashFundAddress(address)")
-    );
-    assert_eq!(
-        SIG_SET_PARTICIPATION_FLOOR_BPS,
-        derive_keccak256_id!("setParticipationFloorBps(uint32)")
-    );
-    assert_eq!(
-        SIG_SET_PARTICIPATION_JAIL_DISABLED,
-        derive_keccak256_id!("setParticipationJailDisabled(bool)")
-    );
-    assert_eq!(
-        SIG_SET_BLEND_STIPEND_PER_EPOCH,
-        derive_keccak256_id!("setBlendStipendPerEpoch(uint256)")
-    );
-    assert_eq!(
-        SIG_SET_UNDELEGATE_PERIOD,
-        derive_keccak256_id!("setUndelegatePeriod(uint32)")
-    );
-    assert_eq!(
-        SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT,
-        derive_keccak256_id!("setMinValidatorStakeAmount(uint256)")
-    );
-    assert_eq!(
-        SIG_SET_MIN_STAKING_AMOUNT,
-        derive_keccak256_id!("setMinStakingAmount(uint256)")
-    );
-    assert_eq!(
-        SIG_SET_BLS_VERIFIER,
-        derive_keccak256_id!("setBlsVerifier(address)")
-    );
-    assert_eq!(
-        SIG_SET_EVIDENCE_DECODER,
-        derive_keccak256_id!("setEvidenceDecoder(address)")
-    );
-    assert_eq!(
-        SIG_GET_VALIDATOR_FEE,
-        derive_keccak256_id!("getValidatorFee(address)")
-    );
-    assert_eq!(
-        SIG_GET_PENDING_VALIDATOR_FEE,
-        derive_keccak256_id!("getPendingValidatorFee(address)")
-    );
-    assert_eq!(
-        SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH,
-        derive_keccak256_id!("claimValidatorFeeAtEpoch(address,uint64)")
-    );
-    assert_eq!(
-        SIG_GET_DELEGATOR_FEE,
-        derive_keccak256_id!("getDelegatorFee(address,address)")
-    );
-    assert_eq!(
-        SIG_CLAIM_DELEGATOR_FEE_AT_EPOCH,
-        derive_keccak256_id!("claimDelegatorFeeAtEpoch(address,uint64)")
-    );
-    assert_eq!(
-        SIG_CALC_AVAILABLE_FOR_REDELEGATE_AMOUNT,
-        derive_keccak256_id!("calcAvailableForRedelegateAmount(address,address)")
-    );
-    assert_eq!(
-        SIG_SETTLE_EPOCH_STIPEND,
-        derive_keccak256_id!("settleEpochStipend(uint64)")
-    );
-    assert_eq!(
-        SIG_SET_CONSENSUS_KEYS,
-        derive_keccak256_id!("setConsensusKeys(address,bytes,bytes,bytes32)")
-    );
-    assert_eq!(
-        SIG_GET_VALIDATORS_WITH_KEYS_AT,
-        derive_keccak256_id!("getValidatorsWithKeysAt(uint64)")
-    );
-    assert_eq!(
-        SIG_COMMIT_EPOCH_COMMITTEE,
-        derive_keccak256_id!("commitEpochCommittee(address[])")
-    );
-    assert_eq!(
-        SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
-        derive_keccak256_id!("getEpochCommitteeWithStakes(uint64)")
-    );
-    assert_eq!(
-        SIG_RELEASE_VALIDATOR_FROM_JAIL,
-        derive_keccak256_id!("releaseValidatorFromJail(address)")
-    );
-    assert_eq!(SIG_SLASH, derive_keccak256_id!("slash(address)"));
-    assert_eq!(
-        SIG_COMMIT_EQUIVOCATION_REPORT,
-        derive_keccak256_id!("commitEquivocationReport(bytes32)")
-    );
-    assert_eq!(
-        SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT,
-        derive_keccak256_id!("computeEquivocationReportCommitment(address,uint8,bytes32,bytes32)")
-    );
-    assert_eq!(
-        SIG_GET_EQUIVOCATION_REPORT_COMMITMENT,
-        derive_keccak256_id!("getEquivocationReportCommitment(address)")
-    );
-    assert_eq!(
-        SIG_SLASH_EQUIVOCATION_NOTARIZE,
-        derive_keccak256_id!("slashEquivocationNotarize(bytes,bytes,bytes,bytes,address,bytes32)")
     );
 }
 

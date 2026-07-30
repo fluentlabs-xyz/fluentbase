@@ -74,6 +74,24 @@ The Solidity staking source is not checked into this repository. Its mutable-own
 remains affected and must also disable validator ownership changes before it is deployed or used as
 the canonical implementation.
 
+## Event ABI audit
+
+The SDK event derive encodes non-indexed fields as Solidity function arguments. This is the canonical
+event-data shape: the tuple head starts at byte zero, without the extra outer offset used when a
+dynamic tuple is encoded as a standalone value.
+
+The repository-wide `#[derive(Event)]` audit found four events whose emitted data changes:
+
+| Contract | Event | Dynamic non-indexed fields | Byte-shape change |
+| --- | --- | --- | --- |
+| staking | `ConsensusKeysSet(address,bytes,bytes32,uint64)` | `bytes blsPubkey` | Drops the standalone tuple's leading outer-offset word; the first data word is now the `bytes` offset (`0x60`). |
+| staking | `EpochCommitteeCommitted(uint64,address[])` | `address[] committee` | Drops the leading outer-offset word; event data begins with the array offset (`0x20`). |
+| runtime-upgrade | `RuntimeUpgraded(address,bytes32,string,bytes32)` | `string genesisVersion` | Drops the leading outer-offset word; the event-data head contains the string offset and `codeHash` directly. |
+| runtime-upgrade | `UpgradePlanned(bytes32,string,address[],bytes32[],address)` | `string genesisVersion`, `address[] targetAddresses`, `bytes32[] wasmCodeHashes` | Drops the leading outer-offset word; all three dynamic offsets are now relative to the event-data tuple head at byte zero. |
+
+All other repository events contain only static non-indexed fields (or no non-indexed fields), so
+their emitted data bytes are unchanged.
+
 ## Source Layout
 
 - `handlers.rs`: initialization, compatibility getters, and validator administration.
