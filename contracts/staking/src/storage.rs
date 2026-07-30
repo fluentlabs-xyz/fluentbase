@@ -160,6 +160,11 @@ pub struct StakingStorage {
     ///
     /// Appended to preserve the existing ERC-7201 layout.
     equivocation_commitments: StorageMap<Address, EquivocationCommitmentStorage>,
+    /// Sorted epochs with materialized validator snapshots.
+    ///
+    /// Appended to preserve the existing ERC-7201 layout and allow historical
+    /// lookups to use binary search instead of scanning every intervening epoch.
+    validator_snapshot_epochs: StorageMap<Address, StorageVec<StorageU64>>,
 }
 
 pub fn staking_storage() -> StakingStorage {

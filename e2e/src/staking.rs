@@ -140,6 +140,9 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
         }
         .abi_encode(),
     );
+    // Keep delegation explicitly pre-activation: current epoch is clamped to
+    // zero, so the two-epoch warm-up records the delegation at epoch 2.
+    context = context.with_block_number(999);
     call(
         &mut context,
         GENESIS_GOVERNANCE,
@@ -297,7 +300,6 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
     let delegation =
         IStakingRwasm::getValidatorDelegationCall::abi_decode_returns(&output).unwrap();
     assert_eq!(delegation.delegatedAmount, TOKEN * U256::from(3));
-    // Block 1_400 is epoch 2: (1_400 - activation 1_000) / interval 200.
     assert_eq!(delegation.atEpoch, 2);
 
     // The epoch-2 delegation is no longer ahead of nextEpoch at block 1_200.

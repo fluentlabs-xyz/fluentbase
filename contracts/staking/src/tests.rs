@@ -1171,6 +1171,20 @@ fn governance_updates_embedded_chain_configuration() {
     );
 
     harness.set_caller(GENESIS_GOVERNANCE);
+    for selector in [
+        SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT,
+        SIG_SET_MIN_STAKING_AMOUNT,
+    ] {
+        assert_revert_selector(
+            harness.call(encode_call(
+                selector,
+                &U256Command {
+                    value: DEFAULT_MIN_STAKING_AMOUNT + U256::from(1),
+                },
+            )),
+            ERR_WRONG_AMOUNT_PRECISION,
+        );
+    }
     for (selector, value) in [
         (SIG_SET_FELONY_THRESHOLD, 3),
         (SIG_SET_VALIDATOR_JAIL_EPOCH_LENGTH, 4),
@@ -1245,6 +1259,98 @@ fn governance_updates_embedded_chain_configuration() {
 }
 
 #[test]
+fn configure_events_report_initialized_defaults_as_previous_values() {
+    let owner = Address::with_last_byte(0xa0);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+    harness.sdk.take_logs();
+
+    let command = ConfigureCommand {
+        staking_token: Address::with_last_byte(0xb0),
+        active_validators_length: 31,
+        epoch_block_interval: 200,
+        felony_threshold: 3,
+        validator_jail_epoch_length: 4,
+        undelegate_period: 9,
+        min_validator_stake_amount: DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
+        min_staking_amount: DEFAULT_MIN_STAKING_AMOUNT * U256::from(2),
+        dpos_activation_block: 1_200,
+        bls_verifier: Address::ZERO,
+        evidence_decoder: Address::ZERO,
+        min_undelegate_blocks: U256::ZERO,
+    };
+    assert_eq!(
+        harness.call(encode_call(SIG_CONFIGURE, &command)).0,
+        ExitCode::Ok
+    );
+    let logs = harness.sdk.take_logs();
+
+    let u32_event = |selector: [u8; 32]| {
+        let data = &logs
+            .iter()
+            .find(|(_, topics)| topics.first() == Some(&B256::new(selector)))
+            .expect("u32 configuration event")
+            .0;
+        decode_output::<(u32, u32)>(data)
+    };
+    assert_eq!(
+        u32_event(events::ActiveValidatorsLengthChanged::SELECTOR),
+        (DEFAULT_ACTIVE_VALIDATORS_LENGTH as u32, 31)
+    );
+    assert_eq!(
+        u32_event(events::EpochBlockIntervalChanged::SELECTOR),
+        (DEFAULT_EPOCH_BLOCK_INTERVAL as u32, 200)
+    );
+    assert_eq!(
+        u32_event(events::FelonyThresholdChanged::SELECTOR),
+        (DEFAULT_FELONY_THRESHOLD, 3)
+    );
+    assert_eq!(
+        u32_event(events::ValidatorJailEpochLengthChanged::SELECTOR),
+        (DEFAULT_VALIDATOR_JAIL_EPOCH_LENGTH, 4)
+    );
+    assert_eq!(
+        u32_event(events::UndelegatePeriodChanged::SELECTOR),
+        (DEFAULT_UNDELEGATE_PERIOD as u32, 9)
+    );
+
+    let u256_event = |selector: [u8; 32]| {
+        let data = &logs
+            .iter()
+            .find(|(_, topics)| topics.first() == Some(&B256::new(selector)))
+            .expect("U256 configuration event")
+            .0;
+        decode_output::<(U256, U256)>(data)
+    };
+    assert_eq!(
+        u256_event(events::MinValidatorStakeAmountChanged::SELECTOR),
+        (
+            DEFAULT_MIN_VALIDATOR_STAKE,
+            command.min_validator_stake_amount
+        )
+    );
+    assert_eq!(
+        u256_event(events::MinStakingAmountChanged::SELECTOR),
+        (DEFAULT_MIN_STAKING_AMOUNT, command.min_staking_amount)
+    );
+
+    let activation_data = &logs
+        .iter()
+        .find(|(_, topics)| {
+            topics.first() == Some(&B256::new(events::DposActivationBlockChanged::SELECTOR))
+        })
+        .expect("activation configuration event")
+        .0;
+    assert_eq!(
+        decode_output::<(u64, u64)>(activation_data),
+        (1_000, command.dpos_activation_block)
+    );
+}
+
+#[test]
 fn initializer_rejects_mismatched_arrays_without_persisting_owner() {
     let governance = Address::with_last_byte(0xa0);
     let mut harness = Harness::new(1_000);
@@ -1257,6 +1363,29 @@ fn initializer_rejects_mismatched_arrays_without_persisting_owner() {
 
     let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
     assert_eq!(decode_output::<Address>(&output), Address::ZERO);
+}
+
+#[test]
+fn initializer_rejects_non_genesis_callers_before_writing_state() {
+    let owner = Address::with_last_byte(0xa0);
+    let outsider = Address::with_last_byte(0xb0);
+    let mut harness = Harness::new(0);
+    harness.set_caller(outsider);
+
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_INITIALIZE,
+            &(owner, Vec::<Address>::new(), Vec::<U256>::new(), 0_u16),
+        )),
+        ERR_ONLY_GOVERNANCE,
+    );
+    let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
+    assert_eq!(decode_output::<Address>(&output), Address::ZERO);
+
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
 }
 
 #[test]
@@ -1401,6 +1530,48 @@ fn delegation_and_undelegation_follow_epoch_snapshots() {
         },
     ));
     assert_eq!(decode_output::<U256>(&output), one_token * U256::from(11));
+}
+
+#[test]
+fn sparse_snapshot_lookup_uses_sorted_materialized_epochs() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let mut harness = Harness::new(0);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![stake], 0),
+        ExitCode::Ok
+    );
+
+    let future = crate::util::touch_validator_snapshot(&mut harness.sdk, validator, 1_000_000)
+        .unwrap();
+    future
+        .total_delegated_accessor()
+        .set_checked(
+            &mut harness.sdk,
+            math::compact_balance(stake * U256::from(2)).unwrap(),
+        )
+        .unwrap();
+    crate::util::touch_snapshot_at_or_before(&mut harness.sdk, validator, 500).unwrap();
+
+    let epochs = staking_storage()
+        .validator_snapshot_epochs_accessor()
+        .entry(validator);
+    assert_eq!(epochs.len_checked(&harness.sdk).unwrap(), 3);
+    assert_eq!(epochs.at(0).get_checked(&harness.sdk).unwrap(), 0);
+    assert_eq!(epochs.at(1).get_checked(&harness.sdk).unwrap(), 500);
+    assert_eq!(
+        epochs.at(2).get_checked(&harness.sdk).unwrap(),
+        1_000_000
+    );
+    assert_eq!(
+        crate::util::validator_total_at(&harness.sdk, validator, 999_999).unwrap(),
+        stake
+    );
+    assert_eq!(
+        crate::util::validator_total_at(&harness.sdk, validator, 1_000_000).unwrap(),
+        stake * U256::from(2)
+    );
 }
 
 #[test]

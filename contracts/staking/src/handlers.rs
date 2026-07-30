@@ -21,6 +21,9 @@ use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
 pub fn initialize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
+    if sdk.context().contract_caller() != fluentbase_sdk::GENESIS_GOVERNANCE {
+        return revert(sdk, ERR_ONLY_GOVERNANCE);
+    }
     let storage = staking_storage();
     if storage.initialized_accessor().get_checked(sdk)? {
         return revert(sdk, ERR_ALREADY_INITIALIZED);
@@ -179,6 +182,25 @@ pub fn configure<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), Exit
         );
     }
 
+    let previous_active_validators_length = config
+        .active_validators_length_accessor()
+        .get_checked(sdk)?;
+    let previous_epoch_block_interval =
+        config.epoch_block_interval_accessor().get_checked(sdk)?;
+    let previous_felony_threshold = config.felony_threshold_accessor().get_checked(sdk)?;
+    let previous_validator_jail_epoch_length = config
+        .validator_jail_epoch_length_accessor()
+        .get_checked(sdk)?;
+    let previous_undelegate_period = config.undelegate_period_accessor().get_checked(sdk)?;
+    let previous_min_validator_stake_amount = config
+        .min_validator_stake_amount_accessor()
+        .get_checked(sdk)?;
+    let previous_min_staking_amount =
+        config.min_staking_amount_accessor().get_checked(sdk)?;
+    let previous_dpos_activation_block = config
+        .dpos_activation_block_accessor()
+        .get_checked(sdk)?;
+
     config
         .staking_token_accessor()
         .set_checked(sdk, command.staking_token)?;
@@ -222,42 +244,42 @@ pub fn configure<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), Exit
     config.configured_accessor().set_checked(sdk, true)?;
 
     events::ActiveValidatorsLengthChanged {
-        prev_value: 0,
+        prev_value: previous_active_validators_length as u32,
         new_value: command.active_validators_length,
     }
     .emit(sdk)?;
     events::EpochBlockIntervalChanged {
-        prev_value: 0,
+        prev_value: previous_epoch_block_interval as u32,
         new_value: command.epoch_block_interval,
     }
     .emit(sdk)?;
     events::FelonyThresholdChanged {
-        prev_value: 0,
+        prev_value: previous_felony_threshold,
         new_value: command.felony_threshold,
     }
     .emit(sdk)?;
     events::ValidatorJailEpochLengthChanged {
-        prev_value: 0,
+        prev_value: previous_validator_jail_epoch_length,
         new_value: command.validator_jail_epoch_length,
     }
     .emit(sdk)?;
     events::UndelegatePeriodChanged {
-        prev_value: 0,
+        prev_value: previous_undelegate_period as u32,
         new_value: command.undelegate_period,
     }
     .emit(sdk)?;
     events::MinValidatorStakeAmountChanged {
-        prev_value: U256::ZERO,
+        prev_value: previous_min_validator_stake_amount,
         new_value: command.min_validator_stake_amount,
     }
     .emit(sdk)?;
     events::MinStakingAmountChanged {
-        prev_value: U256::ZERO,
+        prev_value: previous_min_staking_amount,
         new_value: command.min_staking_amount,
     }
     .emit(sdk)?;
     events::DposActivationBlockChanged {
-        prev_value: 0,
+        prev_value: previous_dpos_activation_block,
         new_value: command.dpos_activation_block,
     }
     .emit(sdk)?;

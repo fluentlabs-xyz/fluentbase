@@ -195,6 +195,7 @@ pub fn set_validator<SDK: SharedAPI>(
     snapshot
         .commission_rate_accessor()
         .set_checked(sdk, commission_rate)?;
+    insert_snapshot_epoch(sdk, validator, changed_at)?;
 
     let delegation = storage
         .validator_delegations_accessor()
@@ -426,10 +427,69 @@ pub fn touch_validator_snapshot<SDK: SharedAPI>(
     snapshot
         .commission_rate_accessor()
         .set_checked(sdk, previous.commission_rate_accessor().get_checked(sdk)?)?;
+    insert_snapshot_epoch(sdk, validator, epoch)?;
     if epoch > changed_at {
         record.changed_at_accessor().set_checked(sdk, epoch)?;
     }
     Ok(snapshot)
+}
+
+fn insert_snapshot_epoch<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+    epoch: u64,
+) -> Result<(), ExitCode> {
+    let epochs = staking_storage()
+        .validator_snapshot_epochs_accessor()
+        .entry(validator);
+    let len = epochs.len_checked(sdk)?;
+    let mut low = 0;
+    let mut high = len;
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if epochs.at(middle).get_checked(sdk)? < epoch {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    if low < len && epochs.at(low).get_checked(sdk)? == epoch {
+        return Ok(());
+    }
+
+    epochs.grow_checked(sdk)?;
+    let mut index = len;
+    while index > low {
+        let previous = epochs.at(index - 1).get_checked(sdk)?;
+        epochs.at(index).set_checked(sdk, previous)?;
+        index -= 1;
+    }
+    epochs.at(low).set_checked(sdk, epoch)
+}
+
+fn latest_snapshot_epoch_at_or_before<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    epoch: u64,
+) -> Result<Option<u64>, ExitCode> {
+    let epochs = staking_storage()
+        .validator_snapshot_epochs_accessor()
+        .entry(validator);
+    let len = epochs.len_checked(sdk)?;
+    let mut low = 0;
+    let mut high = len;
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if epochs.at(middle).get_checked(sdk)? <= epoch {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    if low == 0 {
+        return Ok(None);
+    }
+    Ok(Some(epochs.at(low - 1).get_checked(sdk)?))
 }
 
 pub fn touch_snapshot_at_or_before<SDK: SharedAPI>(
@@ -440,47 +500,25 @@ pub fn touch_snapshot_at_or_before<SDK: SharedAPI>(
     let storage = staking_storage();
     let snapshots = storage.validator_snapshots_accessor().entry(validator);
     let snapshot = snapshots.entry(epoch);
-    if !snapshot
+    let Some(base_epoch) = latest_snapshot_epoch_at_or_before(sdk, validator, epoch)? else {
+        return Ok(snapshot);
+    };
+    if base_epoch == epoch {
+        return Ok(snapshot);
+    }
+    let base = snapshots.entry(base_epoch);
+    snapshot
         .total_delegated_accessor()
-        .get_checked(sdk)?
-        .is_zero()
-    {
-        return Ok(snapshot);
-    }
+        .set_checked(sdk, base.total_delegated_accessor().get_checked(sdk)?)?;
+    snapshot
+        .commission_rate_accessor()
+        .set_checked(sdk, base.commission_rate_accessor().get_checked(sdk)?)?;
+    insert_snapshot_epoch(sdk, validator, epoch)?;
     let record = storage.validators_accessor().entry(validator);
-    let first_p1 = record.first_snapshot_epoch_p1_accessor().get_checked(sdk)?;
-    if first_p1 == 0 || epoch < first_p1 - 1 {
-        return Ok(snapshot);
+    if epoch > record.changed_at_accessor().get_checked(sdk)? {
+        record.changed_at_accessor().set_checked(sdk, epoch)?;
     }
-    let floor = first_p1 - 1;
-    let mut lookup = core::cmp::min(epoch, record.changed_at_accessor().get_checked(sdk)?);
-    loop {
-        let base = snapshots.entry(lookup);
-        if lookup == record.changed_at_accessor().get_checked(sdk)?
-            || !base.total_delegated_accessor().get_checked(sdk)?.is_zero()
-            || !base
-                .total_blend_rewards_accessor()
-                .get_checked(sdk)?
-                .is_zero()
-            || base.commission_rate_accessor().get_checked(sdk)? != 0
-            || base.slashes_count_accessor().get_checked(sdk)? != 0
-        {
-            snapshot
-                .total_delegated_accessor()
-                .set_checked(sdk, base.total_delegated_accessor().get_checked(sdk)?)?;
-            snapshot
-                .commission_rate_accessor()
-                .set_checked(sdk, base.commission_rate_accessor().get_checked(sdk)?)?;
-            if epoch > record.changed_at_accessor().get_checked(sdk)? {
-                record.changed_at_accessor().set_checked(sdk, epoch)?;
-            }
-            return Ok(snapshot);
-        }
-        if lookup == floor {
-            return Ok(snapshot);
-        }
-        lookup -= 1;
-    }
+    Ok(snapshot)
 }
 
 pub fn validator_total_at<SDK: SharedAPI>(
@@ -494,33 +532,16 @@ pub fn validator_total_at<SDK: SharedAPI>(
         return Ok(U256::ZERO);
     }
 
-    let first_p1 = record.first_snapshot_epoch_p1_accessor().get_checked(sdk)?;
-    if first_p1 == 0 || epoch < first_p1 - 1 {
+    let Some(snapshot_epoch) = latest_snapshot_epoch_at_or_before(sdk, validator, epoch)? else {
         return Ok(U256::ZERO);
-    }
-    let floor = first_p1 - 1;
-    let mut lookup = core::cmp::min(epoch, record.changed_at_accessor().get_checked(sdk)?);
-    let changed_at = record.changed_at_accessor().get_checked(sdk)?;
-    let snapshots = storage.validator_snapshots_accessor().entry(validator);
-    loop {
-        let snapshot = snapshots.entry(lookup);
-        let compact = snapshot.total_delegated_accessor().get_checked(sdk)?;
-        if lookup == changed_at
-            || !compact.is_zero()
-            || !snapshot
-                .total_blend_rewards_accessor()
-                .get_checked(sdk)?
-                .is_zero()
-            || snapshot.commission_rate_accessor().get_checked(sdk)? != 0
-            || snapshot.slashes_count_accessor().get_checked(sdk)? != 0
-        {
-            return Ok(math::expand_balance(compact));
-        }
-        if lookup == floor {
-            return Ok(U256::ZERO);
-        }
-        lookup -= 1;
-    }
+    };
+    let compact = storage
+        .validator_snapshots_accessor()
+        .entry(validator)
+        .entry(snapshot_epoch)
+        .total_delegated_accessor()
+        .get_checked(sdk)?;
+    Ok(math::expand_balance(compact))
 }
 
 pub fn erc20_transfer_from_input(

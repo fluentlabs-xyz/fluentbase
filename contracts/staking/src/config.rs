@@ -479,6 +479,9 @@ pub fn set_min_validator_stake_amount<SDK: SharedAPI>(
     ensure_governance_mutation(sdk)?;
     let value = decode::<U256Command>(input)?.value;
     require_nonzero(sdk, value, "minValidatorStakeAmount")?;
+    if crate::math::compact_balance(value).is_none() {
+        return revert(sdk, ERR_WRONG_AMOUNT_PRECISION);
+    }
     let field = staking_storage()
         .config_accessor()
         .min_validator_stake_amount_accessor();
@@ -495,6 +498,9 @@ pub fn set_min_staking_amount<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
     ensure_governance_mutation(sdk)?;
     let value = decode::<U256Command>(input)?.value;
     require_nonzero(sdk, value, "minStakingAmount")?;
+    if crate::math::compact_balance(value).is_none() {
+        return revert(sdk, ERR_WRONG_AMOUNT_PRECISION);
+    }
     let field = staking_storage()
         .config_accessor()
         .min_staking_amount_accessor();
