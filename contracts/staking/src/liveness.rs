@@ -174,21 +174,7 @@ pub fn slash<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode
         .felony_threshold_accessor()
         .get_checked(sdk)?;
     if slashes >= threshold {
-        let active_len = storage.active_validators_accessor().len_checked(sdk)?;
-        let cap = storage
-            .config_accessor()
-            .active_validators_length_accessor()
-            .get_checked(sdk)?;
-        let quorum_floor = quorum(core::cmp::min(active_len, cap));
-        if active_len == 0 || active_len - 1 < quorum_floor {
-            events::LivenessJailSkippedHaltGuard {
-                validator,
-                epoch,
-                active_set_size: U256::from(active_len),
-                quorum_floor: U256::from(quorum_floor),
-            }
-            .emit(sdk)?;
-        } else {
+        if status == STATUS_JAIL {
             let jail_until = epoch
                 .checked_add(
                     storage
@@ -197,7 +183,35 @@ pub fn slash<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode
                         .get_checked(sdk)? as u64,
                 )
                 .ok_or(ExitCode::IntegerOverflow)?;
-            if status != STATUS_JAIL {
+            let current_deadline = record.jailed_before_accessor().get_checked(sdk)?;
+            record
+                .jailed_before_accessor()
+                .set_checked(sdk, core::cmp::max(current_deadline, jail_until))?;
+            events::ValidatorJailed { validator, epoch }.emit(sdk)?;
+        } else {
+            let active_len = storage.active_validators_accessor().len_checked(sdk)?;
+            let cap = storage
+                .config_accessor()
+                .active_validators_length_accessor()
+                .get_checked(sdk)?;
+            let quorum_floor = quorum(core::cmp::min(active_len, cap));
+            if active_len == 0 || active_len - 1 < quorum_floor {
+                events::LivenessJailSkippedHaltGuard {
+                    validator,
+                    epoch,
+                    active_set_size: U256::from(active_len),
+                    quorum_floor: U256::from(quorum_floor),
+                }
+                .emit(sdk)?;
+            } else {
+                let jail_until = epoch
+                    .checked_add(
+                        storage
+                            .config_accessor()
+                            .validator_jail_epoch_length_accessor()
+                            .get_checked(sdk)? as u64,
+                    )
+                    .ok_or(ExitCode::IntegerOverflow)?;
                 record.status_accessor().set_checked(sdk, STATUS_JAIL)?;
                 record
                     .jailed_before_accessor()
@@ -207,12 +221,8 @@ pub fn slash<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode
                     .jailed_validators_accessor()
                     .push_checked(sdk, validator)?;
                 set_selection_visible(sdk, validator, false, epoch)?;
-            } else {
-                record
-                    .jailed_before_accessor()
-                    .set_checked(sdk, jail_until)?;
+                events::ValidatorJailed { validator, epoch }.emit(sdk)?;
             }
-            events::ValidatorJailed { validator, epoch }.emit(sdk)?;
         }
     }
     events::ValidatorSlashed {

@@ -2335,6 +2335,60 @@ fn liveness_halt_guard_and_equivocation_tombstone_are_enforced() {
         "the second jail would drop the active set below Simplex quorum"
     );
 
+    let jailed_record = staking_storage()
+        .validators_accessor()
+        .entry(validators[0]);
+    let initial_deadline = jailed_record
+        .jailed_before_accessor()
+        .get_checked(&harness.sdk)
+        .unwrap();
+    harness.set_block_number(1_200);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SLASH,
+                &AddressCommand {
+                    value: validators[0],
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    let extended_deadline = jailed_record
+        .jailed_before_accessor()
+        .get_checked(&harness.sdk)
+        .unwrap();
+    assert!(
+        extended_deadline > initial_deadline,
+        "re-slashing a jailed validator must extend its deadline despite the quorum guard"
+    );
+
+    staking_storage()
+        .config_accessor()
+        .validator_jail_epoch_length_accessor()
+        .set_checked(&mut harness.sdk, 0)
+        .unwrap();
+    harness.set_block_number(1_300);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SLASH,
+                &AddressCommand {
+                    value: validators[0],
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        jailed_record
+            .jailed_before_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        extended_deadline,
+        "a shorter jail configuration must not reduce an existing deadline"
+    );
+
     staking_storage()
         .tombstoned_accessor()
         .entry(validators[0])
