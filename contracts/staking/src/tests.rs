@@ -5,7 +5,7 @@ use crate::{
         STATUS_ACTIVE, STATUS_JAIL, STATUS_PENDING,
     },
     types::{
-        AddressCommand, BoolCommand, ConfigureCommand, ConfigureDependenciesCommand,
+        AddressCommand, BoolCommand, ConfigureCommand, ConfigureDependenciesCommand, ConsensusKeys,
         EpochSignerCommand, EquivocationCommand, RegisterValidatorCommand, TwoAddressesCommand,
         U256Command, U32Command, U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand,
         ValidatorEpochCommand,
@@ -15,7 +15,7 @@ use fluentbase_sdk::{
     bytes::BytesMut,
     codec::SolidityABI,
     derive::derive_keccak256_id,
-    is_engine_metered_precompile, is_execute_using_system_runtime, keccak256,
+    hex, is_engine_metered_precompile, is_execute_using_system_runtime, keccak256,
     storage::{StorageDescriptor, StorageLayout},
     Address, Bytes, ContractContextV1, ExitCode, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
@@ -150,6 +150,188 @@ fn assert_revert_selector(result: (ExitCode, Vec<u8>), selector: u32) {
 
 fn assert_direct_revert(result: Result<(), ExitCode>, sdk: &TestingContextImpl, selector: u32) {
     assert_revert_selector((result.unwrap_err(), sdk.take_output()), selector);
+}
+
+#[test]
+fn solidity_bytes_calldata_reaches_staking_handlers() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0,),
+        ExitCode::Ok
+    );
+    harness.set_caller(validator);
+
+    // cast calldata
+    // "setConsensusKeys(address,bytes,bytes,bytes32)"
+    // 0x0000000000000000000000000000000000000001 0xaabbcc 0xddee 0x...01
+    let set_consensus_keys = hex!(
+        "225cba85
+         0000000000000000000000000000000000000000000000000000000000000001
+         0000000000000000000000000000000000000000000000000000000000000080
+         00000000000000000000000000000000000000000000000000000000000000c0
+         0000000000000000000000000000000000000000000000000000000000000001
+         0000000000000000000000000000000000000000000000000000000000000003
+         aabbcc0000000000000000000000000000000000000000000000000000000000
+         0000000000000000000000000000000000000000000000000000000000000002
+         ddee000000000000000000000000000000000000000000000000000000000000"
+    );
+    assert_revert_selector(
+        harness.call(set_consensus_keys),
+        ERR_INVALID_CONSENSUS_KEY_ENCODING,
+    );
+    let mut truncated = set_consensus_keys.to_vec();
+    truncated.truncate(SIG_LEN_BYTES + 5 * 32);
+    assert_eq!(
+        harness.call(truncated).0,
+        ExitCode::MalformedBuiltinParams,
+        "truncated Solidity bytes must return a decode error instead of panicking"
+    );
+
+    // cast calldata
+    // "slashEquivocationNotarize(bytes,bytes,bytes,bytes,address,bytes32)"
+    // 0x01 0x0203 0x04 0x0506 0x0000000000000000000000000000000000000002 0x...03
+    let slash_equivocation = hex!(
+        "2bc5fb10
+         00000000000000000000000000000000000000000000000000000000000000c0
+         0000000000000000000000000000000000000000000000000000000000000100
+         0000000000000000000000000000000000000000000000000000000000000140
+         0000000000000000000000000000000000000000000000000000000000000180
+         0000000000000000000000000000000000000000000000000000000000000002
+         0000000000000000000000000000000000000000000000000000000000000003
+         0000000000000000000000000000000000000000000000000000000000000001
+         0100000000000000000000000000000000000000000000000000000000000000
+         0000000000000000000000000000000000000000000000000000000000000002
+         0203000000000000000000000000000000000000000000000000000000000000
+         0000000000000000000000000000000000000000000000000000000000000001
+         0400000000000000000000000000000000000000000000000000000000000000
+         0000000000000000000000000000000000000000000000000000000000000002
+         0506000000000000000000000000000000000000000000000000000000000000"
+    );
+    let command = equivocation::decode_equivocation(&slash_equivocation[4..]).unwrap();
+    assert_eq!(&command.evidence[..], &[0x01]);
+    assert_eq!(&command.pk_uncompressed[..], &[0x02, 0x03]);
+    assert_eq!(&command.sig1_uncompressed[..], &[0x04]);
+    assert_eq!(&command.sig2_uncompressed[..], &[0x05, 0x06]);
+    assert_eq!(command.beneficiary, Address::with_last_byte(0x02));
+    assert_eq!(command.salt, B256::with_last_byte(0x03));
+}
+
+#[test]
+fn solidity_bytes_outputs_and_event_match_cast_vectors() {
+    // cast abi-encode "f(bytes)" 0xaabbcc
+    let encoded_bytes = &hex!(
+        "0000000000000000000000000000000000000000000000000000000000000020
+         0000000000000000000000000000000000000000000000000000000000000003
+         aabbcc0000000000000000000000000000000000000000000000000000000000"
+    )[..];
+    assert_eq!(
+        SolidityABI::<Bytes>::decode(&encoded_bytes, 0).unwrap(),
+        Bytes::from_static(&[0xaa, 0xbb, 0xcc])
+    );
+
+    assert_eq!(
+        util::encode_external_call(
+            SIG_BLS_COMPRESS_G2_UNCHECKED,
+            &(Bytes::from_static(&[0xaa, 0xbb, 0xcc]),),
+        )
+        .unwrap(),
+        hex!(
+            "a5d2dd22
+             0000000000000000000000000000000000000000000000000000000000000020
+             0000000000000000000000000000000000000000000000000000000000000003
+             aabbcc0000000000000000000000000000000000000000000000000000000000"
+        )
+    );
+    assert_eq!(
+        util::encode_external_call(
+            SIG_BLS_VERIFY,
+            &(
+                Bytes::from_static(&[0x01]),
+                Bytes::from_static(&[0x02, 0x03]),
+                Bytes::from_static(&[0x04]),
+                Bytes::from_static(&[0x05, 0x06]),
+                Bytes::from_static(&[0x07]),
+            ),
+        )
+        .unwrap(),
+        hex!(
+            "8bf26133
+             00000000000000000000000000000000000000000000000000000000000000a0
+             00000000000000000000000000000000000000000000000000000000000000e0
+             0000000000000000000000000000000000000000000000000000000000000120
+             0000000000000000000000000000000000000000000000000000000000000160
+             00000000000000000000000000000000000000000000000000000000000001a0
+             0000000000000000000000000000000000000000000000000000000000000001
+             0100000000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000002
+             0203000000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000001
+             0400000000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000002
+             0506000000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000001
+             0700000000000000000000000000000000000000000000000000000000000000"
+        )
+    );
+
+    let keys = vec![ConsensusKeys {
+        bls_pubkey: Bytes::from_static(&[0xaa, 0xbb, 0xcc]),
+        peer_pubkey: B256::with_last_byte(0x01),
+        activation_epoch: 7,
+    }];
+    let mut encoded_keys = BytesMut::new();
+    SolidityABI::<Vec<ConsensusKeys>>::encode(&keys, &mut encoded_keys, 0).unwrap();
+    // cast abi-encode "f((bytes,bytes32,uint64)[])"
+    // "[(0xaabbcc,0x...01,7)]"
+    assert_eq!(
+        encoded_keys.as_ref(),
+        &hex!(
+            "0000000000000000000000000000000000000000000000000000000000000020
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000020
+             0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000007
+             0000000000000000000000000000000000000000000000000000000000000003
+             aabbcc0000000000000000000000000000000000000000000000000000000000"
+        )
+    );
+
+    let mut sdk = TestingContextImpl::default();
+    events::ConsensusKeysSet {
+        validator: Address::with_last_byte(0x02),
+        bls_pubkey: Bytes::from_static(&[0xaa, 0xbb, 0xcc]),
+        peer_pubkey: B256::with_last_byte(0x01),
+        activation_epoch: 7,
+    }
+    .emit(&mut sdk)
+    .unwrap();
+    let logs = sdk.take_logs();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(
+        events::ConsensusKeysSet::SIGNATURE,
+        "ConsensusKeysSet(address,bytes,bytes32,uint64)"
+    );
+    assert_eq!(
+        logs[0].1[0],
+        B256::new(hex!(
+            "b0119b4b0cb7a880df8e2f34a5c3a4d23f45d700a23e900c5e5dc9a6fc3e1852"
+        ))
+    );
+    // cast abi-encode "f(bytes,bytes32,uint64)" 0xaabbcc 0x...01 7
+    assert_eq!(
+        logs[0].0.as_ref(),
+        &hex!(
+            "0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000007
+             0000000000000000000000000000000000000000000000000000000000000003
+             aabbcc0000000000000000000000000000000000000000000000000000000000"
+        )
+    );
 }
 
 #[test]
@@ -2017,7 +2199,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
     let beneficiary = Address::with_last_byte(0xa1);
     let competing_beneficiary = Address::with_last_byte(0xa2);
     let front_runner = Address::with_last_byte(0xf0);
-    let evidence = b"public equivocation evidence".to_vec();
+    let evidence = Bytes::from_static(b"public equivocation evidence");
     let salt = B256::with_last_byte(0x51);
     let competing_salt = B256::with_last_byte(0x52);
     let mut harness = Harness::new(1_000);
@@ -2129,9 +2311,9 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
 
     let command = EquivocationCommand {
         evidence: evidence.clone(),
-        pk_uncompressed: Vec::new(),
-        sig1_uncompressed: Vec::new(),
-        sig2_uncompressed: Vec::new(),
+        pk_uncompressed: Bytes::new(),
+        sig1_uncompressed: Bytes::new(),
+        sig2_uncompressed: Bytes::new(),
         beneficiary,
         salt,
     };
@@ -2163,9 +2345,9 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         beneficiary: front_runner,
         ..EquivocationCommand {
             evidence: evidence.clone(),
-            pk_uncompressed: Vec::new(),
-            sig1_uncompressed: Vec::new(),
-            sig2_uncompressed: Vec::new(),
+            pk_uncompressed: Bytes::new(),
+            sig1_uncompressed: Bytes::new(),
+            sig2_uncompressed: Bytes::new(),
             beneficiary,
             salt,
         }
@@ -2184,9 +2366,9 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         salt: B256::with_last_byte(0x53),
         ..EquivocationCommand {
             evidence: evidence.clone(),
-            pk_uncompressed: Vec::new(),
-            sig1_uncompressed: Vec::new(),
-            sig2_uncompressed: Vec::new(),
+            pk_uncompressed: Bytes::new(),
+            sig1_uncompressed: Bytes::new(),
+            sig2_uncompressed: Bytes::new(),
             beneficiary,
             salt,
         }
@@ -2202,12 +2384,12 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
     );
 
     let wrong_evidence = EquivocationCommand {
-        evidence: b"modified evidence".to_vec(),
+        evidence: Bytes::from_static(b"modified evidence"),
         ..EquivocationCommand {
             evidence: evidence.clone(),
-            pk_uncompressed: Vec::new(),
-            sig1_uncompressed: Vec::new(),
-            sig2_uncompressed: Vec::new(),
+            pk_uncompressed: Bytes::new(),
+            sig1_uncompressed: Bytes::new(),
+            sig2_uncompressed: Bytes::new(),
             beneficiary,
             salt,
         }
@@ -2235,9 +2417,9 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
 
     let competing_command = EquivocationCommand {
         evidence,
-        pk_uncompressed: Vec::new(),
-        sig1_uncompressed: Vec::new(),
-        sig2_uncompressed: Vec::new(),
+        pk_uncompressed: Bytes::new(),
+        sig1_uncompressed: Bytes::new(),
+        sig2_uncompressed: Bytes::new(),
         beneficiary: competing_beneficiary,
         salt: competing_salt,
     };

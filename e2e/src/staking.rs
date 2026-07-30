@@ -1,8 +1,9 @@
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{
+    hex,
     universal_token::{ApproveCommand, BalanceOfCommand, InitialSettings, UniversalTokenCommand},
-    Address, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
+    Address, Bytes, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
 use fluentbase_testing::EvmTestingContext;
 
@@ -35,6 +36,12 @@ sol! {
         function delegate(address validator, uint256 amount) external;
         function undelegate(address validator, uint256 amount) external;
         function claimDelegatorFee(address validator) external;
+        function setConsensusKeys(
+            address validator,
+            bytes calldata blsPubkeyUncompressed,
+            bytes calldata blsPopUncompressed,
+            bytes32 peerPubkey
+        ) external;
         function getValidatorDelegation(address validator, address delegator)
             external
             view
@@ -71,6 +78,82 @@ fn token_balance(context: &mut EvmTestingContext, token: Address, owner: Address
     BalanceOfCommand { owner }.encode_for_send(&mut input);
     let output = call(context, OWNER, token, input);
     U256::try_from_be_slice(&output).expect("ERC-20 balanceOf output")
+}
+
+#[test]
+fn staking_accepts_solidity_bytes_for_consensus_keys() {
+    let mut context = EvmTestingContext::default().with_full_genesis();
+    // Init bytecode for a Solidity mock that returns bytes(96) from
+    // compressG2Unchecked(bytes) and true from verify(bytes,bytes,bytes,bytes,bytes).
+    let verifier = context.deploy_evm_tx(
+        OWNER,
+        Bytes::from_static(&hex!(
+            "6080604052348015600f57600080fd5b506102cd8061001f6000396000f3fe60806040523480156100
+             1057600080fd5b50600436106100365760003560e01c80638bf261331461003b578063a5d2dd221461
+             006e575b600080fd5b6100596100493660046100fc565b60019a9950505050505050505050565b6040
+             5190151581526020015b60405180910390f35b61008161007c366004610207565b61008e565b604051
+             6100659190610249565b60408051606080825260808201909252816020820181803683370190505093
+             92505050565b60008083601f8401126100c557600080fd5b50813567ffffffffffffffff8111156100
+             dd57600080fd5b6020830191508360208285010111156100f557600080fd5b9250929050565b600080
+             60008060008060008060008060a08b8d03121561011b57600080fd5b8a3567ffffffffffffffff8111
+             1561013257600080fd5b61013e8d828e016100b3565b909b5099505060208b013567ffffffffffffff
+             ff81111561015e57600080fd5b61016a8d828e016100b3565b90995097505060408b013567ffffffff
+             ffffffff81111561018a57600080fd5b6101968d828e016100b3565b90975095505060608b013567ff
+             ffffffffffffff8111156101b657600080fd5b6101c28d828e016100b3565b90955093505060808b01
+             3567ffffffffffffffff8111156101e257600080fd5b6101ee8d828e016100b3565b91508093505080
+             9150509295989b9194979a5092959850565b6000806020838503121561021a57600080fd5b823567ff
+             ffffffffffffff81111561023157600080fd5b61023d858286016100b3565b90969095509350505050
+             565b602081526000825180602084015260005b81811015610277576020818601810151604086840101
+             520161025a565b506000604082850101526040601f19601f8301168401019150509291505056fea264
+             6970667358221220f07b58ae9a9816fe76d1d4ededd0059334efa5a878d8eadfb08a543038e7910364
+             736f6c63430008220033"
+        )),
+    );
+
+    call(
+        &mut context,
+        GENESIS_GOVERNANCE,
+        GENESIS_STAKING,
+        IStakingRwasm::configureCall {
+            stakingToken: Address::repeat_byte(0x44),
+            activeValidatorsLength: 21,
+            epochBlockInterval: 200,
+            felonyThreshold: 150,
+            validatorJailEpochLength: 7,
+            undelegatePeriod: 7,
+            minValidatorStakeAmount: TOKEN,
+            minStakingAmount: TOKEN,
+            dposActivationBlock: 1_000,
+            blsVerifier: verifier,
+            evidenceDecoder: Address::ZERO,
+            minUndelegateBlocks: U256::ZERO,
+        }
+        .abi_encode(),
+    );
+    call(
+        &mut context,
+        GENESIS_GOVERNANCE,
+        GENESIS_STAKING,
+        IStakingRwasm::initializeCall {
+            initialOwner: OWNER,
+            validators: vec![VALIDATOR],
+            initialStakes: vec![U256::ZERO],
+            commissionRate: 0,
+        }
+        .abi_encode(),
+    );
+    call(
+        &mut context,
+        VALIDATOR,
+        GENESIS_STAKING,
+        IStakingRwasm::setConsensusKeysCall {
+            validator: VALIDATOR,
+            blsPubkeyUncompressed: vec![0x11; 256].into(),
+            blsPopUncompressed: vec![0x22; 128].into(),
+            peerPubkey: B256::with_last_byte(0x01),
+        }
+        .abi_encode(),
+    );
 }
 
 #[test]

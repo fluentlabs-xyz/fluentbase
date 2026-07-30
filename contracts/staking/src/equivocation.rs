@@ -3,8 +3,7 @@
 use alloc::vec::Vec;
 
 use fluentbase_sdk::{
-    bytes::BytesMut, codec::SolidityABI, keccak256, Address, Bytes, ContextReader, ExitCode,
-    SharedAPI, B256, U256,
+    codec::SolidityABI, keccak256, Address, Bytes, ContextReader, ExitCode, SharedAPI, B256, U256,
 };
 
 use crate::{
@@ -15,8 +14,8 @@ use crate::{
     },
     types::{DecodedEvidence, EquivocationCommand},
     util::{
-        decode_args, ensure_initialized, ensure_mutable, ensure_non_payable, revert, revert_with,
-        safe_transfer, set_selection_visible, write_returns,
+        decode_args, encode_external_call, ensure_initialized, ensure_mutable, ensure_non_payable,
+        revert, revert_with, safe_transfer, set_selection_visible, write_returns,
     },
 };
 
@@ -187,11 +186,7 @@ where
     SDK: SharedAPI,
     T: fluentbase_sdk::codec::FunctionArgs<fluentbase_sdk::byteorder::BE, 32, true, false>,
 {
-    let mut encoded = BytesMut::new();
-    SolidityABI::<T>::encode_function_args(params, &mut encoded)
-        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
-    let mut input = selector.to_be_bytes().to_vec();
-    input.extend_from_slice(&encoded);
+    let input = encode_external_call(selector, params)?;
     let result = sdk.call(target, U256::ZERO, &input, None);
     if !result.status.is_ok() {
         sdk.write(result.data);
@@ -215,7 +210,7 @@ where
     SolidityABI::<R>::decode(&output, 0).map_err(|_| ExitCode::MalformedBuiltinParams)
 }
 
-fn namespace<SDK: SharedAPI>(sdk: &SDK, kind: u8) -> Vec<u8> {
+fn namespace<SDK: SharedAPI>(sdk: &SDK, kind: u8) -> Bytes {
     let mut result = b"FLUENT_DPOS_V1_".to_vec();
     result.extend_from_slice(&sdk.context().block_chain_id().to_be_bytes());
     result.extend_from_slice(match kind {
@@ -223,7 +218,7 @@ fn namespace<SDK: SharedAPI>(sdk: &SDK, kind: u8) -> Vec<u8> {
         1 => b"_NULLIFY",
         _ => b"_FINALIZE",
     });
-    result
+    Bytes::from(result)
 }
 
 fn seize_self_stake<SDK: SharedAPI>(
@@ -340,7 +335,7 @@ fn slash_equivocation<SDK: SharedAPI>(
     if verifier.is_zero() {
         return revert(sdk, ERR_BLS_VERIFIER_NOT_CONFIGURED);
     }
-    let supplied_key = call_decode::<_, _, Vec<u8>>(
+    let supplied_key = call_decode::<_, _, Bytes>(
         sdk,
         verifier,
         SIG_BLS_COMPRESS_G2_UNCHECKED,
@@ -349,13 +344,13 @@ fn slash_equivocation<SDK: SharedAPI>(
     if keccak256(&supplied_key) != keccak256(&stored_key) {
         return revert(sdk, ERR_EQUIVOCATION_KEY_MISMATCH);
     }
-    let supplied_sig1 = call_decode::<_, _, Vec<u8>>(
+    let supplied_sig1 = call_decode::<_, _, Bytes>(
         sdk,
         verifier,
         SIG_BLS_COMPRESS_G1_UNCHECKED,
         &(command.sig1_uncompressed.clone(),),
     )?;
-    let supplied_sig2 = call_decode::<_, _, Vec<u8>>(
+    let supplied_sig2 = call_decode::<_, _, Bytes>(
         sdk,
         verifier,
         SIG_BLS_COMPRESS_G1_UNCHECKED,
@@ -373,7 +368,7 @@ fn slash_equivocation<SDK: SharedAPI>(
         &(
             namespace(sdk, evidence.kind1),
             evidence.msg1,
-            BLS_SIG_DST.to_vec(),
+            Bytes::from_static(BLS_SIG_DST),
             command.sig1_uncompressed,
             command.pk_uncompressed.clone(),
         ),
@@ -385,7 +380,7 @@ fn slash_equivocation<SDK: SharedAPI>(
         &(
             namespace(sdk, evidence.kind2),
             evidence.msg2,
-            BLS_SIG_DST.to_vec(),
+            Bytes::from_static(BLS_SIG_DST),
             command.sig2_uncompressed,
             command.pk_uncompressed,
         ),
@@ -464,9 +459,9 @@ pub fn slash_nullify_finalize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
     )
 }
 
-fn decode_equivocation(input: &[u8]) -> Result<EquivocationCommand, ExitCode> {
+pub(super) fn decode_equivocation(input: &[u8]) -> Result<EquivocationCommand, ExitCode> {
     let (evidence, pk_uncompressed, sig1_uncompressed, sig2_uncompressed, beneficiary, salt) =
-        decode_args::<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Address, B256)>(input)?;
+        decode_args::<(Bytes, Bytes, Bytes, Bytes, Address, B256)>(input)?;
     Ok(EquivocationCommand {
         evidence,
         pk_uncompressed,

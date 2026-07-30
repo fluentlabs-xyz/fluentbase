@@ -86,6 +86,18 @@ where
     SolidityABI::<T>::decode_function_args(&input).map_err(|_| ExitCode::MalformedBuiltinParams)
 }
 
+pub fn encode_external_call<T>(selector: u32, params: &T) -> Result<Vec<u8>, ExitCode>
+where
+    T: FunctionArgs<BE, 32, true, false>,
+{
+    let mut encoded = BytesMut::new();
+    SolidityABI::<T>::encode_function_args(params, &mut encoded)
+        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+    let mut input = selector.to_be_bytes().to_vec();
+    input.extend_from_slice(&encoded);
+    Ok(input)
+}
+
 pub fn write_abi<SDK, T>(sdk: &mut SDK, value: &T) -> Result<(), ExitCode>
 where
     SDK: SharedAPI,

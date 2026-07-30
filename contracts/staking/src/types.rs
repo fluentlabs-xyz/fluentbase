@@ -1,7 +1,7 @@
 //! Internal representations of Solidity ABI commands and dependency results.
 
 use alloc::vec::Vec;
-use fluentbase_sdk::{codec::Codec, Address, B256, U256};
+use fluentbase_sdk::{codec::Codec, Address, Bytes, B256, U256};
 
 #[derive(Default, Debug, Codec)]
 pub struct InitializeCommand {
@@ -103,7 +103,7 @@ pub struct BoolCommand {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Codec)]
 pub struct ConsensusKeys {
-    pub bls_pubkey: Vec<u8>,
+    pub bls_pubkey: Bytes,
     pub peer_pubkey: B256,
     pub activation_epoch: u64,
 }
@@ -111,8 +111,8 @@ pub struct ConsensusKeys {
 #[derive(Default, Debug, Codec)]
 pub struct SetConsensusKeysCommand {
     pub validator: Address,
-    pub bls_pubkey_uncompressed: Vec<u8>,
-    pub bls_pop_uncompressed: Vec<u8>,
+    pub bls_pubkey_uncompressed: Bytes,
+    pub bls_pop_uncompressed: Bytes,
     pub peer_pubkey: B256,
 }
 
@@ -124,10 +124,10 @@ pub struct EpochSignerCommand {
 
 #[derive(Default, Debug, Codec)]
 pub struct EquivocationCommand {
-    pub evidence: Vec<u8>,
-    pub pk_uncompressed: Vec<u8>,
-    pub sig1_uncompressed: Vec<u8>,
-    pub sig2_uncompressed: Vec<u8>,
+    pub evidence: Bytes,
+    pub pk_uncompressed: Bytes,
+    pub sig1_uncompressed: Bytes,
+    pub sig2_uncompressed: Bytes,
     pub beneficiary: Address,
     pub salt: B256,
 }
@@ -137,9 +137,9 @@ pub struct DecodedEvidence {
     pub epoch: u64,
     pub signer_idx: u32,
     pub kind1: u8,
-    pub msg1: Vec<u8>,
-    pub sig1: Vec<u8>,
+    pub msg1: Bytes,
+    pub sig1: Bytes,
     pub kind2: u8,
-    pub msg2: Vec<u8>,
-    pub sig2: Vec<u8>,
+    pub msg2: Bytes,
+    pub sig2: Bytes,
 }

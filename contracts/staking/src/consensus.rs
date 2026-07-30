@@ -3,8 +3,7 @@
 use alloc::vec::Vec;
 
 use fluentbase_sdk::{
-    bytes::BytesMut, codec::SolidityABI, Address, Bytes, ContextReader, ExitCode, SharedAPI, B256,
-    U256,
+    codec::SolidityABI, Address, Bytes, ContextReader, ExitCode, SharedAPI, B256, U256,
 };
 
 use crate::{
@@ -15,9 +14,9 @@ use crate::{
         AddressCommand, ConsensusKeys, EpochSignerCommand, SetConsensusKeysCommand, U64Command,
     },
     util::{
-        decode, decode_args, ensure_initialized, ensure_mutable, ensure_non_payable, next_epoch,
-        revert, revert_with, selected_validators, selected_validators_at, selection_visible_at,
-        validator_total_at, write_abi, write_returns,
+        decode, decode_args, encode_external_call, ensure_initialized, ensure_mutable,
+        ensure_non_payable, next_epoch, revert, revert_with, selected_validators,
+        selected_validators_at, selection_visible_at, validator_total_at, write_abi, write_returns,
     },
 };
 
@@ -33,11 +32,7 @@ where
     SDK: SharedAPI,
     T: fluentbase_sdk::codec::FunctionArgs<fluentbase_sdk::byteorder::BE, 32, true, false>,
 {
-    let mut encoded = BytesMut::new();
-    SolidityABI::<T>::encode_function_args(params, &mut encoded)
-        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
-    let mut input = selector.to_be_bytes().to_vec();
-    input.extend_from_slice(&encoded);
+    let input = encode_external_call(selector, params)?;
     let result = sdk.call(target, U256::ZERO, &input, None);
     if !result.status.is_ok() {
         sdk.write(result.data);
@@ -52,16 +47,16 @@ fn read_consensus_keys<SDK: SharedAPI>(
 ) -> Result<ConsensusKeys, ExitCode> {
     let keys = staking_storage().consensus_keys_accessor().entry(validator);
     Ok(ConsensusKeys {
-        bls_pubkey: keys.bls_pubkey_accessor().load(sdk)?,
+        bls_pubkey: Bytes::from(keys.bls_pubkey_accessor().load(sdk)?),
         peer_pubkey: keys.peer_pubkey_accessor().get_checked(sdk)?,
         activation_epoch: keys.activation_epoch_accessor().get_checked(sdk)?,
     })
 }
 
-fn fluent_namespace<SDK: SharedAPI>(sdk: &SDK) -> Vec<u8> {
+fn fluent_namespace<SDK: SharedAPI>(sdk: &SDK) -> Bytes {
     let mut namespace = b"FLUENT_DPOS_V1_".to_vec();
     namespace.extend_from_slice(&sdk.context().block_chain_id().to_be_bytes());
-    namespace
+    Bytes::from(namespace)
 }
 
 pub fn set_consensus_keys<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
@@ -69,7 +64,7 @@ pub fn set_consensus_keys<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
     ensure_mutable(sdk)?;
     ensure_initialized(sdk)?;
     let (validator, bls_pubkey_uncompressed, bls_pop_uncompressed, peer_pubkey) =
-        decode_args::<(Address, Vec<u8>, Vec<u8>, B256)>(input)?;
+        decode_args::<(Address, Bytes, Bytes, B256)>(input)?;
     let command = SetConsensusKeysCommand {
         validator,
         bls_pubkey_uncompressed,
@@ -128,7 +123,7 @@ pub fn set_consensus_keys<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
         SIG_BLS_COMPRESS_G2_UNCHECKED,
         &(command.bls_pubkey_uncompressed.clone(),),
     )?;
-    let compressed = SolidityABI::<Vec<u8>>::decode(&compressed_output, 0)
+    let compressed = SolidityABI::<Bytes>::decode(&compressed_output, 0)
         .map_err(|_| ExitCode::MalformedBuiltinParams)?;
     let verify_output = external_call(
         sdk,
@@ -137,7 +132,7 @@ pub fn set_consensus_keys<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
         &(
             fluent_namespace(sdk),
             compressed.clone(),
-            BLS_POP_DST.to_vec(),
+            Bytes::from_static(BLS_POP_DST),
             command.bls_pop_uncompressed,
             command.bls_pubkey_uncompressed,
         ),
@@ -153,7 +148,7 @@ pub fn set_consensus_keys<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
     } else {
         next_epoch(sdk)?
     };
-    keys.bls_pubkey_accessor().store(sdk, &compressed)?;
+    keys.bls_pubkey_accessor().store(sdk, compressed.as_ref())?;
     keys.peer_pubkey_accessor()
         .set_checked(sdk, command.peer_pubkey)?;
     keys.activation_epoch_accessor()

@@ -1,7 +1,7 @@
 //! Solidity-compatible staking event definitions.
 
 use alloc::vec::Vec;
-use fluentbase_sdk::{derive::Event, Address, B256, U256};
+use fluentbase_sdk::{derive::Event, Address, Bytes, B256, U256};
 
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
 pub struct ValidatorAdded {
@@ -185,7 +185,7 @@ pub struct StipendSkipped {
 pub struct ConsensusKeysSet {
     #[indexed]
     pub validator: Address,
-    pub bls_pubkey: Vec<u8>,
+    pub bls_pubkey: Bytes,
     pub peer_pubkey: B256,
     pub activation_epoch: u64,
 }
