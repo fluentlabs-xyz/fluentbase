@@ -1223,7 +1223,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             return_result!(hash, Ok);
         }
 
-        SYSCALL_ID_UPGRADE_RUNTIME => {
+        SYSCALL_ID_UPGRADE_WASM_RUNTIME => {
             assert_halt!(!is_static, StateChangeDuringStaticCall);
             // This syscall can be called only by runtime upgrade smart contract
             assert_halt!(

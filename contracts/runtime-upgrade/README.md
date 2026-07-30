@@ -50,7 +50,7 @@ Removing the pair prevents replaying the same planned target/hash entry after it
 
 - `owner` can perform direct upgrades, recompile existing targets, and replace the current plan.
 - `upgrador` can execute only owner-approved target/hash pairs from the current plan.
-- Host-side syscall enforcement remains the final boundary: `SYSCALL_ID_UPGRADE_RUNTIME` must only
+- Host-side syscall enforcement remains the final boundary: `SYSCALL_ID_UPGRADE_WASM_RUNTIME` must only
   be reachable through the runtime-upgrade precompile execution path.
 
 ## Operational Notes

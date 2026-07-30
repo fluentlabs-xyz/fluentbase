@@ -13,7 +13,7 @@ use fluentbase_sdk::{
     derive::{router, Contract, Event},
     hex,
     storage::{StorageAddress, StorageBytes32, StorageString, StorageVec},
-    syscall::{encode, SYSCALL_ID_UPGRADE_EVM_RUNTIME, SYSCALL_ID_UPGRADE_RUNTIME},
+    syscall::{encode, SYSCALL_ID_UPGRADE_EVM_RUNTIME, SYSCALL_ID_UPGRADE_WASM_RUNTIME},
     Address, Bytes, ContextReader, ExitCode, RwasmCompilationResult, SharedAPI, B256,
     DEFAULT_UPDATE_GENESIS_AUTH, EVM_MAX_CODE_SIZE, STATE_MAIN, SYSTEM_ADDRESS, WASM_MAGIC_BYTES,
 };
@@ -329,7 +329,7 @@ impl<SDK: SharedAPI> App<SDK> {
         let mut buffer = vec![0u8; encode::upgrade_runtime_size_hint(rwasm_bytecode.len())];
         encode::upgrade_runtime_into(&mut &mut buffer[..], &target_address, &rwasm_bytecode);
         let (_fuel_consumed, _fuel_refunded, exit_code) = self.sdk.native_exec(
-            SYSCALL_ID_UPGRADE_RUNTIME,
+            SYSCALL_ID_UPGRADE_WASM_RUNTIME,
             Cow::Owned(buffer),
             None,
             STATE_MAIN,
