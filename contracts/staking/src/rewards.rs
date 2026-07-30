@@ -656,16 +656,16 @@ fn settle_one<SDK: SharedAPI>(
         }
     }
 
+    let mut credited_amount = assigned;
     if !assigned.is_zero() {
         let recipient = sdk.context().contract_address();
         let sent =
             call_decode::<_, _, U256>(sdk, reserve, SIG_RESERVE_DISBURSE, &(recipient, assigned))?;
-        // Never credit accounting for BLEND the contract did not receive.
         if sent != assigned {
-            return revert_with(sdk, ERR_RESERVE_SHORT_DISBURSEMENT, &(sent, assigned));
+            credited_amount = U256::ZERO;
         }
     }
-    if !assigned.is_zero() {
+    if !credited_amount.is_zero() {
         let mut credited_this_epoch = U256::ZERO;
         for (index, share) in shares.into_iter().enumerate() {
             if share.is_zero() {
@@ -698,7 +698,7 @@ fn settle_one<SDK: SharedAPI>(
     }
     events::EpochBlendRewardsCommitted {
         epoch,
-        blend_amount: assigned,
+        blend_amount: credited_amount,
     }
     .emit(sdk)
 }

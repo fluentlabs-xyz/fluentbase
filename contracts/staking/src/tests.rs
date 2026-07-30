@@ -17,9 +17,11 @@ use fluentbase_sdk::{
     derive::derive_keccak256_id,
     hex, is_engine_metered_precompile, is_execute_using_system_runtime, keccak256,
     storage::{StorageDescriptor, StorageLayout},
-    Address, Bytes, ContractContextV1, ExitCode, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
+    Address, Bytes, ContractContextV1, ExitCode, SyscallResult, B256, GENESIS_GOVERNANCE,
+    GENESIS_STAKING, U256,
 };
 use fluentbase_testing::TestingContextImpl;
+use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
 fn encode_call<T>(selector: u32, value: &T) -> Vec<u8>
 where
@@ -124,6 +126,31 @@ impl Harness {
     }
 }
 
+enum MockDisbursement {
+    Amount(U256),
+    EmptyReturn,
+    Revert,
+}
+
+struct StipendCallState {
+    liveness: Address,
+    reserve: Address,
+    finalized_epoch_p1: u64,
+    reserve_balances: VecDeque<U256>,
+    disbursements: VecDeque<MockDisbursement>,
+    reserve_balance_reads: usize,
+    disburse_calls: Vec<(Address, U256)>,
+}
+
+fn encode_mock_return<T>(value: &T) -> Bytes
+where
+    T: fluentbase_sdk::codec::Encoder<fluentbase_sdk::byteorder::BE, 32, true, false>,
+{
+    let mut output = BytesMut::new();
+    SolidityABI::<T>::encode(value, &mut output, 0).unwrap();
+    output.freeze().into()
+}
+
 fn decode_output<T>(output: &[u8]) -> T
 where
     T: fluentbase_sdk::codec::Encoder<fluentbase_sdk::byteorder::BE, 32, true, false>,
@@ -150,6 +177,155 @@ fn assert_revert_selector(result: (ExitCode, Vec<u8>), selector: u32) {
 
 fn assert_direct_revert(result: Result<(), ExitCode>, sdk: &TestingContextImpl, selector: u32) {
     assert_revert_selector((result.unwrap_err(), sdk.take_output()), selector);
+}
+
+fn stipend_test_sdk(
+    reserve_balances: Vec<U256>,
+    disbursements: Vec<MockDisbursement>,
+) -> (Harness, Rc<RefCell<StipendCallState>>, Address) {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let liveness = Address::with_last_byte(0xb0);
+    let reserve = Address::with_last_byte(0xc0);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0,),
+        ExitCode::Ok
+    );
+
+    let config = staking_storage().config_accessor();
+    config
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::from(100))
+        .unwrap();
+    config
+        .liveness_slashing_accessor()
+        .set_checked(&mut harness.sdk, liveness)
+        .unwrap();
+    config
+        .blend_reserve_accessor()
+        .set_checked(&mut harness.sdk, reserve)
+        .unwrap();
+    staking_storage()
+        .epoch_committees_accessor()
+        .entry(0)
+        .push_checked(&mut harness.sdk, validator)
+        .unwrap();
+    harness.set_caller(SYSTEM_CALLER);
+    harness.sdk.take_logs();
+
+    let calls = Rc::new(RefCell::new(StipendCallState {
+        liveness,
+        reserve,
+        finalized_epoch_p1: 1,
+        reserve_balances: reserve_balances.into(),
+        disbursements: disbursements.into(),
+        reserve_balance_reads: 0,
+        disburse_calls: Vec::new(),
+    }));
+    let call_state = calls.clone();
+    harness
+        .sdk
+        .set_call_handler(move |address, _value, input, _fuel_limit| {
+            if input.len() < SIG_LEN_BYTES {
+                return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams);
+            }
+            let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
+            let mut calls = call_state.borrow_mut();
+            match (address, selector) {
+                (address, SIG_LAST_FINALIZED_EPOCH_P1) if address == calls.liveness => {
+                    SyscallResult::new(
+                        encode_mock_return(&calls.finalized_epoch_p1),
+                        0,
+                        0,
+                        ExitCode::Ok,
+                    )
+                }
+                (address, SIG_RESERVE_BALANCE) if address == calls.reserve => {
+                    calls.reserve_balance_reads += 1;
+                    let balance = calls.reserve_balances.pop_front().unwrap_or(U256::ZERO);
+                    SyscallResult::new(encode_mock_return(&balance), 0, 0, ExitCode::Ok)
+                }
+                (address, SIG_PARTICIPATION) if address == calls.liveness => {
+                    SyscallResult::new(encode_mock_return(&(1u32, 1u32)), 0, 0, ExitCode::Ok)
+                }
+                (address, SIG_RESERVE_DISBURSE) if address == calls.reserve => {
+                    let params = &input[SIG_LEN_BYTES..];
+                    let (recipient, assigned) =
+                        SolidityABI::<(Address, U256)>::decode(&params, 0).unwrap();
+                    calls.disburse_calls.push((recipient, assigned));
+                    match calls.disbursements.pop_front().unwrap() {
+                        MockDisbursement::Amount(sent) => {
+                            SyscallResult::new(encode_mock_return(&sent), 0, 0, ExitCode::Ok)
+                        }
+                        MockDisbursement::EmptyReturn => {
+                            SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
+                        }
+                        MockDisbursement::Revert => {
+                            SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Panic)
+                        }
+                    }
+                }
+                _ => SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Panic),
+            }
+        });
+    (harness, calls, validator)
+}
+
+fn stipend_accounting(sdk: &TestingContextImpl, validator: Address) -> (U256, U256, u64) {
+    let storage = staking_storage();
+    let validator_reward = U256::from(
+        storage
+            .validator_snapshots_accessor()
+            .entry(validator)
+            .entry(0)
+            .total_blend_rewards_accessor()
+            .get_checked(sdk)
+            .unwrap(),
+    );
+    (
+        validator_reward,
+        storage.credited_blend_accessor().get_checked(sdk).unwrap(),
+        storage
+            .last_rewarded_epoch_p1_accessor()
+            .get_checked(sdk)
+            .unwrap(),
+    )
+}
+
+fn assert_stipend_events(
+    sdk: &TestingContextImpl,
+    epoch: u64,
+    committed_amount: U256,
+    skipped: bool,
+) {
+    let logs = sdk.take_logs();
+    assert_eq!(logs.len(), if skipped { 2 } else { 1 });
+    let committed_signature = keccak256(events::EpochBlendRewardsCommitted::SIGNATURE.as_bytes());
+    let committed = logs
+        .iter()
+        .find(|(_, topics)| topics[0] == committed_signature)
+        .expect("EpochBlendRewardsCommitted must be emitted");
+    let committed_epoch = committed.1[1].as_slice();
+    assert_eq!(
+        SolidityABI::<u64>::decode(&committed_epoch, 0).unwrap(),
+        epoch
+    );
+    assert_eq!(decode_output::<U256>(&committed.0), committed_amount);
+
+    let skipped_signature = keccak256(events::StipendSkipped::SIGNATURE.as_bytes());
+    let skipped_log = logs
+        .iter()
+        .find(|(_, topics)| topics[0] == skipped_signature);
+    assert_eq!(skipped_log.is_some(), skipped);
+    if let Some((data, topics)) = skipped_log {
+        assert!(data.is_empty());
+        let skipped_epoch = topics[1].as_slice();
+        assert_eq!(
+            SolidityABI::<u64>::decode(&skipped_epoch, 0).unwrap(),
+            epoch
+        );
+    }
 }
 
 #[test]
@@ -1916,6 +2092,143 @@ fn validator_owner_is_immutable_and_cannot_detach_self_stake() {
             .unwrap(),
         Address::ZERO
     );
+}
+
+#[test]
+fn reserve_balance_caps_full_disbursement_and_credited_rewards() {
+    let funded = U256::from(60);
+    let (mut harness, calls, validator) =
+        stipend_test_sdk(vec![funded], vec![MockDisbursement::Amount(funded)]);
+
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 0 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        stipend_accounting(&harness.sdk, validator),
+        (funded, funded, 1)
+    );
+    assert_eq!(calls.borrow().reserve_balance_reads, 1);
+    assert_eq!(
+        calls.borrow().disburse_calls,
+        vec![(GENESIS_STAKING, funded)]
+    );
+    assert_stipend_events(&harness.sdk, 0, funded, false);
+}
+
+#[test]
+fn zero_and_partial_disbursements_skip_epoch_without_retry() {
+    for sent in [U256::ZERO, U256::from(40)] {
+        let assigned = U256::from(100);
+        let (mut harness, calls, validator) =
+            stipend_test_sdk(vec![assigned], vec![MockDisbursement::Amount(sent)]);
+
+        assert_eq!(
+            harness
+                .call(encode_call(
+                    SIG_SETTLE_EPOCH_STIPEND,
+                    &U64Command { value: 0 },
+                ))
+                .0,
+            ExitCode::Ok
+        );
+        assert_eq!(
+            stipend_accounting(&harness.sdk, validator),
+            (U256::ZERO, U256::ZERO, 1)
+        );
+        assert_eq!(calls.borrow().disburse_calls.len(), 1);
+        assert_stipend_events(&harness.sdk, 0, U256::ZERO, true);
+
+        assert_eq!(
+            harness
+                .call(encode_call(
+                    SIG_SETTLE_EPOCH_STIPEND,
+                    &U64Command { value: 0 },
+                ))
+                .0,
+            ExitCode::Ok
+        );
+        assert_eq!(
+            calls.borrow().disburse_calls.len(),
+            1,
+            "a skipped epoch must not be retried"
+        );
+        assert!(harness.sdk.take_logs().is_empty());
+    }
+}
+
+#[test]
+fn zero_reserve_balance_skips_without_disbursement_call() {
+    let (mut harness, calls, validator) = stipend_test_sdk(vec![U256::ZERO], Vec::new());
+
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 0 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        stipend_accounting(&harness.sdk, validator),
+        (U256::ZERO, U256::ZERO, 1)
+    );
+    assert!(calls.borrow().disburse_calls.is_empty());
+    assert_stipend_events(&harness.sdk, 0, U256::ZERO, true);
+}
+
+#[test]
+fn failed_or_malformed_disbursement_remains_retryable() {
+    for (first_response, expected_exit) in [
+        (
+            MockDisbursement::EmptyReturn,
+            ExitCode::MalformedBuiltinParams,
+        ),
+        (MockDisbursement::Revert, ExitCode::Panic),
+    ] {
+        let assigned = U256::from(100);
+        let (mut harness, calls, validator) = stipend_test_sdk(
+            vec![assigned, assigned],
+            vec![first_response, MockDisbursement::Amount(assigned)],
+        );
+
+        assert_eq!(
+            harness
+                .call(encode_call(
+                    SIG_SETTLE_EPOCH_STIPEND,
+                    &U64Command { value: 0 },
+                ))
+                .0,
+            expected_exit
+        );
+        assert_eq!(
+            stipend_accounting(&harness.sdk, validator),
+            (U256::ZERO, U256::ZERO, 0)
+        );
+        assert!(harness.sdk.take_logs().is_empty());
+
+        assert_eq!(
+            harness
+                .call(encode_call(
+                    SIG_SETTLE_EPOCH_STIPEND,
+                    &U64Command { value: 0 },
+                ))
+                .0,
+            ExitCode::Ok
+        );
+        assert_eq!(
+            stipend_accounting(&harness.sdk, validator),
+            (assigned, assigned, 1)
+        );
+        assert_eq!(calls.borrow().disburse_calls.len(), 2);
+        assert_stipend_events(&harness.sdk, 0, assigned, false);
+    }
 }
 
 #[test]

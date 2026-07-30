@@ -34,7 +34,9 @@ history.
   path.
 - Claims, stipend catch-up, committee pruning, and jail scans are bounded per call.
 - BLEND transfers accept ERC-20 tokens that return `true` or no data; explicit `false` reverts.
-- Reserve settlement credits rewards only after the exact assigned amount is disbursed.
+- Reserve settlement credits rewards only after the exact assigned amount is disbursed. A successful
+  zero or partial disbursement skips the epoch with zero credited rewards and advances the cursor;
+  reverted calls and malformed return values revert settlement and remain retryable.
 - Equivocation tombstones are permanent and prevent key reuse or jail release.
 - Equivocation reporter rewards use a beneficiary-owned commit/reveal flow; the transaction sender
   that reveals evidence is never used as the reward recipient.

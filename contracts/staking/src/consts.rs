@@ -366,8 +366,6 @@ pub const ERR_INVALID_EQUIVOCATION_PROOF_KIND: u32 =
     derive_keccak256_id!("InvalidEquivocationProofKind(uint8)");
 pub const ERR_VALIDATOR_NOT_IN_JAIL: u32 = derive_keccak256_id!("ValidatorNotInJail(address)");
 pub const ERR_STILL_IN_JAIL: u32 = derive_keccak256_id!("StillInJail(address)");
-pub const ERR_RESERVE_SHORT_DISBURSEMENT: u32 =
-    derive_keccak256_id!("ReserveShortDisbursement(uint256,uint256)");
 
 pub const BALANCE_COMPACT_PRECISION: U256 = U256::from_limbs([10_000_000_000, 0, 0, 0]);
 pub const COMMISSION_RATE_MAX: u16 = 3_000;
