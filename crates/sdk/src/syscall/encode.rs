@@ -331,3 +331,14 @@ pub fn upgrade_runtime_into<B: BufMut>(out: &mut B, address: &Address, rwasm_byt
     out.put_slice(address.as_slice());
     out.put_slice(rwasm_bytecode);
 }
+
+#[inline(always)]
+pub const fn upgrade_evm_runtime_size_hint(evm_bytecode_len: usize) -> usize {
+    Address::len_bytes() + evm_bytecode_len
+}
+
+#[inline(always)]
+pub fn upgrade_evm_runtime_into<B: BufMut>(out: &mut B, address: &Address, evm_bytecode: &[u8]) {
+    out.put_slice(address.as_slice());
+    out.put_slice(evm_bytecode);
+}

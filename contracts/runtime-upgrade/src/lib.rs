@@ -13,9 +13,9 @@ use fluentbase_sdk::{
     derive::{router, Contract, Event},
     hex,
     storage::{StorageAddress, StorageBytes32, StorageString, StorageVec},
-    syscall::{encode, SYSCALL_ID_UPGRADE_RUNTIME},
+    syscall::{encode, SYSCALL_ID_UPGRADE_EVM_RUNTIME, SYSCALL_ID_UPGRADE_WASM_RUNTIME},
     Address, Bytes, ContextReader, ExitCode, RwasmCompilationResult, SharedAPI, B256,
-    DEFAULT_UPDATE_GENESIS_AUTH, STATE_MAIN, SYSTEM_ADDRESS, WASM_MAGIC_BYTES,
+    DEFAULT_UPDATE_GENESIS_AUTH, EVM_MAX_CODE_SIZE, STATE_MAIN, SYSTEM_ADDRESS, WASM_MAGIC_BYTES,
 };
 
 #[derive(Event)]
@@ -71,6 +71,15 @@ trait RuntimeUpgradeTr {
         wasm_bytecode: Bytes,
     );
 
+    /// Upgrade a Solidity contract using its deployed EVM runtime bytecode.
+    fn upgrade_evm_to(
+        &mut self,
+        target_address: Address,
+        genesis_hash: B256,
+        genesis_version: String,
+        evm_bytecode: Bytes,
+    );
+
     /// Recompile already deployed WASM runtime smart contract
     fn recompile(&mut self, target_address: Address);
 
@@ -112,6 +121,26 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
     ) {
         _ = self.only_owner();
         let code_hash = self.compile_and_install(target_address, wasm_bytecode);
+        RuntimeUpgraded {
+            target_address,
+            genesis_hash,
+            genesis_version,
+            code_hash,
+        }
+        .emit(&mut self.sdk)
+        .unwrap();
+    }
+
+    #[function_id("upgradeEvmTo(address,uint256,string,bytes)")]
+    fn upgrade_evm_to(
+        &mut self,
+        target_address: Address,
+        genesis_hash: B256,
+        genesis_version: String,
+        evm_bytecode: Bytes,
+    ) {
+        _ = self.only_owner();
+        let code_hash = self.install_evm(target_address, evm_bytecode);
         RuntimeUpgraded {
             target_address,
             genesis_hash,
@@ -300,7 +329,7 @@ impl<SDK: SharedAPI> App<SDK> {
         let mut buffer = vec![0u8; encode::upgrade_runtime_size_hint(rwasm_bytecode.len())];
         encode::upgrade_runtime_into(&mut &mut buffer[..], &target_address, &rwasm_bytecode);
         let (_fuel_consumed, _fuel_refunded, exit_code) = self.sdk.native_exec(
-            SYSCALL_ID_UPGRADE_RUNTIME,
+            SYSCALL_ID_UPGRADE_WASM_RUNTIME,
             Cow::Owned(buffer),
             None,
             STATE_MAIN,
@@ -308,6 +337,34 @@ impl<SDK: SharedAPI> App<SDK> {
 
         if exit_code != ExitCode::Ok.into_i32() {
             panic!("runtime-upgrade: failed to upgrade");
+        }
+
+        let Ok(code_hash) = self.sdk.code_hash(&target_address).ok() else {
+            panic!("runtime-upgrade: can't obtain code hash");
+        };
+
+        code_hash
+    }
+
+    fn install_evm(&mut self, target_address: Address, evm_bytecode: Bytes) -> B256 {
+        if evm_bytecode.is_empty() {
+            panic!("runtime-upgrade: empty evm bytecode");
+        }
+        if evm_bytecode.len() > EVM_MAX_CODE_SIZE {
+            panic!("runtime-upgrade: evm bytecode exceeds maximum size");
+        }
+
+        let mut buffer = vec![0u8; encode::upgrade_evm_runtime_size_hint(evm_bytecode.len())];
+        encode::upgrade_evm_runtime_into(&mut &mut buffer[..], &target_address, &evm_bytecode);
+        let (_fuel_consumed, _fuel_refunded, exit_code) = self.sdk.native_exec(
+            SYSCALL_ID_UPGRADE_EVM_RUNTIME,
+            Cow::Owned(buffer),
+            None,
+            STATE_MAIN,
+        );
+
+        if exit_code != ExitCode::Ok.into_i32() {
+            panic!("runtime-upgrade: failed to upgrade evm contract");
         }
 
         let Ok(code_hash) = self.sdk.code_hash(&target_address).ok() else {
