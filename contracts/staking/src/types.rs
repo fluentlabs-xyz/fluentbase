@@ -128,6 +128,8 @@ pub struct EquivocationCommand {
     pub pk_uncompressed: Vec<u8>,
     pub sig1_uncompressed: Vec<u8>,
     pub sig2_uncompressed: Vec<u8>,
+    pub beneficiary: Address,
+    pub salt: B256,
 }
 
 #[derive(Default, Debug, Codec)]

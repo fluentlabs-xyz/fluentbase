@@ -131,6 +131,11 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_RELEASE_VALIDATOR_FROM_JAIL => liveness::release_validator_from_jail(sdk, params),
         SIG_READMIT_EXPIRED_JAILS => liveness::readmit_expired_jails(sdk, params),
         SIG_SLASH => liveness::slash(sdk, params),
+        SIG_COMMIT_EQUIVOCATION_REPORT => equivocation::commit_report(sdk, params),
+        SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT => {
+            equivocation::compute_report_commitment(sdk, params)
+        }
+        SIG_GET_EQUIVOCATION_REPORT_COMMITMENT => equivocation::get_report_commitment(sdk, params),
         SIG_SLASH_EQUIVOCATION_NOTARIZE => equivocation::slash_notarize(sdk, params),
         SIG_SLASH_EQUIVOCATION_FINALIZE => equivocation::slash_finalize(sdk, params),
         SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE => {

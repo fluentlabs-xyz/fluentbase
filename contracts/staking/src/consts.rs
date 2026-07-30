@@ -1,6 +1,10 @@
 //! Canonical ABI selectors, error IDs, protocol limits, and default values.
 
-use fluentbase_sdk::{address, derive::derive_keccak256_id, derive::erc7201_slot, Address, U256};
+use fluentbase_sdk::{
+    address,
+    derive::{derive_keccak256_id, erc7201_slot},
+    Address, U256,
+};
 
 pub const SIG_LEN_BYTES: usize = 4;
 
@@ -241,15 +245,25 @@ pub const SIG_PARTICIPATION: u32 = derive_keccak256_id!("participation(uint64,ui
 pub const SIG_RESERVE_BALANCE: u32 = derive_keccak256_id!("reserveBalance()");
 // 0x7f3bd56e
 pub const SIG_RESERVE_DISBURSE: u32 = derive_keccak256_id!("disburse(address,uint256)");
-// 0xe28d2f63
+// 0x32890bc0
+pub const SIG_COMMIT_EQUIVOCATION_REPORT: u32 =
+    derive_keccak256_id!("commitEquivocationReport(bytes32)");
+// 0xc289d76e
+pub const SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT: u32 =
+    derive_keccak256_id!("computeEquivocationReportCommitment(address,uint8,bytes32,bytes32)");
+// 0xa3aae5dd
+pub const SIG_GET_EQUIVOCATION_REPORT_COMMITMENT: u32 =
+    derive_keccak256_id!("getEquivocationReportCommitment(address)");
+// 0x2bc5fb10
 pub const SIG_SLASH_EQUIVOCATION_NOTARIZE: u32 =
-    derive_keccak256_id!("slashEquivocationNotarize(bytes,bytes,bytes,bytes)");
-// 0xadd07a3e
+    derive_keccak256_id!("slashEquivocationNotarize(bytes,bytes,bytes,bytes,address,bytes32)");
+// 0xb034c58b
 pub const SIG_SLASH_EQUIVOCATION_FINALIZE: u32 =
-    derive_keccak256_id!("slashEquivocationFinalize(bytes,bytes,bytes,bytes)");
-// 0xa10827e9
-pub const SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE: u32 =
-    derive_keccak256_id!("slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes)");
+    derive_keccak256_id!("slashEquivocationFinalize(bytes,bytes,bytes,bytes,address,bytes32)");
+// 0x337e1437
+pub const SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE: u32 = derive_keccak256_id!(
+    "slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes,address,bytes32)"
+);
 // 0x27e7ff4b
 pub const SIG_DECODE_CONFLICTING_NOTARIZE: u32 =
     derive_keccak256_id!("decodeConflictingNotarize(bytes)");
@@ -342,6 +356,18 @@ pub const ERR_EQUIVOCATION_SIGNATURE_INVALID: u32 =
 pub const ERR_EQUIVOCATION_KEY_MISMATCH: u32 = derive_keccak256_id!("EquivocationKeyMismatch()");
 pub const ERR_EVIDENCE_DECODER_NOT_CONFIGURED: u32 =
     derive_keccak256_id!("EvidenceDecoderNotConfigured()");
+pub const ERR_ZERO_EQUIVOCATION_BENEFICIARY: u32 =
+    derive_keccak256_id!("ZeroEquivocationBeneficiary()");
+pub const ERR_ZERO_EQUIVOCATION_COMMITMENT: u32 =
+    derive_keccak256_id!("ZeroEquivocationCommitment()");
+pub const ERR_NO_EQUIVOCATION_COMMITMENT: u32 =
+    derive_keccak256_id!("NoEquivocationCommitment(address)");
+pub const ERR_EQUIVOCATION_COMMITMENT_MISMATCH: u32 =
+    derive_keccak256_id!("EquivocationCommitmentMismatch(address,bytes32,bytes32)");
+pub const ERR_EQUIVOCATION_COMMITMENT_NOT_MATURE: u32 =
+    derive_keccak256_id!("EquivocationCommitmentNotMature(address,uint64,uint64)");
+pub const ERR_INVALID_EQUIVOCATION_PROOF_KIND: u32 =
+    derive_keccak256_id!("InvalidEquivocationProofKind(uint8)");
 pub const ERR_VALIDATOR_NOT_IN_JAIL: u32 = derive_keccak256_id!("ValidatorNotInJail(address)");
 pub const ERR_STILL_IN_JAIL: u32 = derive_keccak256_id!("StillInJail(address)");
 pub const ERR_RESERVE_SHORT_DISBURSEMENT: u32 =
@@ -360,6 +386,12 @@ pub const EPOCH_COMMITTEE_RETENTION_MARGIN: u64 = 8;
 pub const BLS_PUBKEY_UNCOMPRESSED_LENGTH: usize = 256;
 pub const BLS_POP_UNCOMPRESSED_LENGTH: usize = 128;
 pub const BLS_PUBKEY_LENGTH: usize = 96;
+
+pub const EQUIVOCATION_PROOF_KIND_NOTARIZE: u8 = 0;
+pub const EQUIVOCATION_PROOF_KIND_FINALIZE: u8 = 1;
+pub const EQUIVOCATION_PROOF_KIND_NULLIFY_FINALIZE: u8 = 2;
+pub const EQUIVOCATION_PROOF_KIND_COUNT: u8 = 3;
+
 pub const DEFAULT_FELONY_THRESHOLD: u32 = 1;
 pub const DEFAULT_VALIDATOR_JAIL_EPOCH_LENGTH: u32 = 1;
 pub const DEFAULT_SLASH_REPORTER_REWARD_BPS: u32 = 3_000;

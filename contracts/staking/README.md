@@ -32,9 +32,35 @@ dependencies.
 - BLEND transfers accept ERC-20 tokens that return `true` or no data; explicit `false` reverts.
 - Reserve settlement credits rewards only after the exact assigned amount is disbursed.
 - Equivocation tombstones are permanent and prevent key reuse or jail release.
+- Equivocation reporter rewards use a beneficiary-owned commit/reveal flow; the transaction sender
+  that reveals evidence is never used as the reward recipient.
 - A validator's `owner` is its immutable administrative, validator-fee, self-stake, and slashing
   identity. `changeValidatorOwner` remains in the compatibility ABI but always reverts with
   `ValidatorOwnerImmutable()`.
+
+## Equivocation reporting
+
+Reporting remains permissionless, but requires two transactions so an observer cannot copy public
+evidence from the mempool and redirect the reporter reward:
+
+1. The reward beneficiary computes
+   `keccak256(abi.encode(domainHash, chainId, staking, proofKind, keccak256(evidence), beneficiary, salt))`,
+   where `domainHash = keccak256("FluentStakingEquivocationReportV1")` and proof kinds are
+   `0 = notarize`, `1 = finalize`, and `2 = nullify-finalize`. The
+   `computeEquivocationReportCommitment` view returns this value without duplicating the encoding.
+   The salt must be an unpredictable 32-byte value and must remain private until reveal.
+2. The beneficiary sends `commitEquivocationReport(bytes32)`. One active commitment is stored per
+   beneficiary, so a later commit from that beneficiary replaces its earlier one.
+3. In a later block, any account may call the matching `slashEquivocation*` method with the four
+   evidence values plus the beneficiary and salt. A copied reveal still resolves and pays the
+   original beneficiary; changing the beneficiary, proof kind, evidence, or salt no longer matches
+   the prior commitment.
+4. A successful slash consumes the commitment and permanently tombstones the validator. Failed
+   evidence verification leaves the commitment available for retry.
+
+The repository does not contain a node-side equivocation submitter. Integrations only need an
+ordinary beneficiary account for the commit transaction; the reveal may be sent by any funded
+account after observing that the commit is included in an earlier block.
 
 ## Solidity parity
 

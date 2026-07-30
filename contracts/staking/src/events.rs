@@ -229,6 +229,15 @@ pub struct LivenessJailSkippedHaltGuard {
 }
 
 #[derive(Event)]
+pub struct EquivocationReportCommitted {
+    #[indexed]
+    pub beneficiary: Address,
+    #[indexed]
+    pub commitment: B256,
+    pub block_number: u64,
+}
+
+#[derive(Event)]
 pub struct EquivocationSlashed {
     #[indexed]
     pub validator: Address,

@@ -1,13 +1,5 @@
 //! Shared ABI, validator-selection, snapshot, and ERC-20 helpers.
 
-use alloc::vec::Vec;
-use fluentbase_sdk::{
-    byteorder::BE,
-    bytes::BytesMut,
-    codec::{Encoder, FunctionArgs, SolidityABI},
-    Address, ContextReader, ExitCode, SharedAPI, U256,
-};
-
 use crate::{
     consts::*,
     events, math,
@@ -15,6 +7,13 @@ use crate::{
         current_epoch, staking_storage, ValidatorSnapshotStorage, STATUS_ACTIVE, STATUS_NOT_FOUND,
     },
     types::AddressCommand,
+};
+use alloc::vec::Vec;
+use fluentbase_sdk::{
+    byteorder::BE,
+    bytes::BytesMut,
+    codec::{Encoder, FunctionArgs, SolidityABI},
+    Address, ContextReader, ExitCode, SharedAPI, U256,
 };
 
 pub fn revert<SDK: SharedAPI>(sdk: &mut SDK, code: u32) -> Result<(), ExitCode> {
@@ -25,7 +24,7 @@ pub fn revert<SDK: SharedAPI>(sdk: &mut SDK, code: u32) -> Result<(), ExitCode> 
 pub fn revert_with<SDK, T>(sdk: &mut SDK, code: u32, value: &T) -> Result<(), ExitCode>
 where
     SDK: SharedAPI,
-    T: Encoder<fluentbase_sdk::byteorder::BE, 32, true, false>,
+    T: Encoder<BE, 32, true, false>,
 {
     let mut params = BytesMut::new();
     SolidityABI::<T>::encode(value, &mut params, 0)
@@ -71,7 +70,7 @@ pub fn ensure_governance<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> 
 
 pub fn decode<T>(input: &[u8]) -> Result<T, ExitCode>
 where
-    T: Encoder<fluentbase_sdk::byteorder::BE, 32, true, false>,
+    T: Encoder<BE, 32, true, false>,
 {
     SolidityABI::<T>::decode(&input, 0).map_err(|_| ExitCode::MalformedBuiltinParams)
 }
@@ -90,7 +89,7 @@ where
 pub fn write_abi<SDK, T>(sdk: &mut SDK, value: &T) -> Result<(), ExitCode>
 where
     SDK: SharedAPI,
-    T: Encoder<fluentbase_sdk::byteorder::BE, 32, true, false>,
+    T: Encoder<BE, 32, true, false>,
 {
     let mut output = BytesMut::new();
     SolidityABI::<T>::encode(value, &mut output, 0)
@@ -161,11 +160,7 @@ pub fn set_validator<SDK: SharedAPI>(
         .get_checked(sdk)?
         .is_zero()
     {
-        return revert_with(
-            sdk,
-            ERR_VALIDATOR_OWNER_ALREADY_IN_USE,
-            &validator_owner,
-        );
+        return revert_with(sdk, ERR_VALIDATOR_OWNER_ALREADY_IN_USE, &validator_owner);
     }
 
     record.owner_accessor().set_checked(sdk, validator_owner)?;
@@ -173,14 +168,10 @@ pub fn set_validator<SDK: SharedAPI>(
         .status_accessor()
         .set_checked(sdk, validator_status)?;
     record.changed_at_accessor().set_checked(sdk, changed_at)?;
-    record
-        .first_snapshot_epoch_p1_accessor()
-        .set_checked(
-            sdk,
-            changed_at
-                .checked_add(1)
-                .ok_or(ExitCode::IntegerOverflow)?,
-        )?;
+    record.first_snapshot_epoch_p1_accessor().set_checked(
+        sdk,
+        changed_at.checked_add(1).ok_or(ExitCode::IntegerOverflow)?,
+    )?;
     storage
         .owner_validators_accessor()
         .entry(validator_owner)
@@ -210,9 +201,7 @@ pub fn set_validator<SDK: SharedAPI>(
         );
     }
     let initial = delegation.delegate_queue_accessor().grow_checked(sdk)?;
-    initial
-        .amount_accessor()
-        .set_checked(sdk, compact_stake)?;
+    initial.amount_accessor().set_checked(sdk, compact_stake)?;
     initial.epoch_accessor().set_checked(sdk, changed_at)?;
 
     if validator_status == STATUS_ACTIVE {
@@ -476,9 +465,7 @@ pub fn touch_snapshot_at_or_before<SDK: SharedAPI>(
         return Ok(snapshot);
     }
     let record = storage.validators_accessor().entry(validator);
-    let first_p1 = record
-        .first_snapshot_epoch_p1_accessor()
-        .get_checked(sdk)?;
+    let first_p1 = record.first_snapshot_epoch_p1_accessor().get_checked(sdk)?;
     if first_p1 == 0 || epoch < first_p1 - 1 {
         return Ok(snapshot);
     }
@@ -487,10 +474,7 @@ pub fn touch_snapshot_at_or_before<SDK: SharedAPI>(
     loop {
         let base = snapshots.entry(lookup);
         if lookup == record.changed_at_accessor().get_checked(sdk)?
-            || !base
-                .total_delegated_accessor()
-                .get_checked(sdk)?
-                .is_zero()
+            || !base.total_delegated_accessor().get_checked(sdk)?.is_zero()
             || !base
                 .total_blend_rewards_accessor()
                 .get_checked(sdk)?
@@ -527,9 +511,7 @@ pub fn validator_total_at<SDK: SharedAPI>(
         return Ok(U256::ZERO);
     }
 
-    let first_p1 = record
-        .first_snapshot_epoch_p1_accessor()
-        .get_checked(sdk)?;
+    let first_p1 = record.first_snapshot_epoch_p1_accessor().get_checked(sdk)?;
     if first_p1 == 0 || epoch < first_p1 - 1 {
         return Ok(U256::ZERO);
     }

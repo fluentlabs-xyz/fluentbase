@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use fluentbase_sdk::{
     bytes::BytesMut, codec::SolidityABI, keccak256, Address, Bytes, ContextReader, ExitCode,
-    SharedAPI, U256,
+    SharedAPI, B256, U256,
 };
 
 use crate::{
@@ -16,11 +16,166 @@ use crate::{
     types::{DecodedEvidence, EquivocationCommand},
     util::{
         decode_args, ensure_initialized, ensure_mutable, ensure_non_payable, revert, revert_with,
-        safe_transfer, set_selection_visible,
+        safe_transfer, set_selection_visible, write_returns,
     },
 };
 
 const BLS_SIG_DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
+const REPORT_COMMITMENT_DOMAIN: &[u8] = b"FluentStakingEquivocationReportV1";
+
+/// Computes the commitment consumed by an equivocation reveal.
+///
+/// This is equivalent to:
+/// `keccak256(abi.encode(domainHash, chainId, staking, proofKind,
+/// keccak256(evidence), beneficiary, salt))`.
+pub(crate) fn report_commitment_hash(
+    chain_id: u64,
+    staking: Address,
+    proof_kind: u8,
+    evidence_hash: B256,
+    beneficiary: Address,
+    salt: B256,
+) -> B256 {
+    let mut encoded = Vec::with_capacity(32 * 7);
+    encoded.extend_from_slice(keccak256(REPORT_COMMITMENT_DOMAIN).as_slice());
+    encoded.extend_from_slice(&U256::from(chain_id).to_be_bytes::<{ U256::BYTES }>());
+    encoded.extend_from_slice(staking.into_word().as_slice());
+    encoded.extend_from_slice(&U256::from(proof_kind).to_be_bytes::<{ U256::BYTES }>());
+    encoded.extend_from_slice(evidence_hash.as_slice());
+    encoded.extend_from_slice(beneficiary.into_word().as_slice());
+    encoded.extend_from_slice(salt.as_slice());
+    keccak256(&encoded)
+}
+
+fn command_commitment<SDK: SharedAPI>(
+    sdk: &SDK,
+    command: &EquivocationCommand,
+    proof_kind: u8,
+) -> B256 {
+    report_commitment_hash(
+        sdk.context().block_chain_id(),
+        sdk.context().contract_address(),
+        proof_kind,
+        keccak256(&command.evidence),
+        command.beneficiary,
+        command.salt,
+    )
+}
+
+pub(crate) fn verify_report_commitment<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    command: &EquivocationCommand,
+    proof_kind: u8,
+) -> Result<(), ExitCode> {
+    let beneficiary = command.beneficiary;
+    if beneficiary.is_zero() {
+        return revert(sdk, ERR_ZERO_EQUIVOCATION_BENEFICIARY);
+    }
+    let expected = command_commitment(sdk, command, proof_kind);
+    let entry = staking_storage()
+        .equivocation_commitments_accessor()
+        .entry(beneficiary);
+    let stored = entry.commitment_accessor().get_checked(sdk)?;
+    if stored.is_zero() {
+        return revert_with(sdk, ERR_NO_EQUIVOCATION_COMMITMENT, &beneficiary);
+    }
+    if stored != expected {
+        return revert_with(
+            sdk,
+            ERR_EQUIVOCATION_COMMITMENT_MISMATCH,
+            &(beneficiary, stored, expected),
+        );
+    }
+    let committed_at = entry.committed_at_accessor().get_checked(sdk)?;
+    let current_block = sdk.context().block_number();
+    if current_block <= committed_at {
+        return revert_with(
+            sdk,
+            ERR_EQUIVOCATION_COMMITMENT_NOT_MATURE,
+            &(beneficiary, committed_at, current_block),
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn consume_report_commitment<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    beneficiary: Address,
+) -> Result<(), ExitCode> {
+    let entry = staking_storage()
+        .equivocation_commitments_accessor()
+        .entry(beneficiary);
+    entry.commitment_accessor().set_checked(sdk, B256::ZERO)?;
+    entry.committed_at_accessor().set_checked(sdk, 0)
+}
+
+pub fn commit_report<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    ensure_mutable(sdk)?;
+    ensure_initialized(sdk)?;
+    let (commitment,) = decode_args::<(B256,)>(input)?;
+    if commitment.is_zero() {
+        return revert(sdk, ERR_ZERO_EQUIVOCATION_COMMITMENT);
+    }
+    let beneficiary = sdk.context().contract_caller();
+    if beneficiary.is_zero() {
+        return revert(sdk, ERR_ZERO_EQUIVOCATION_BENEFICIARY);
+    }
+    let committed_at = sdk.context().block_number();
+    let entry = staking_storage()
+        .equivocation_commitments_accessor()
+        .entry(beneficiary);
+    entry.commitment_accessor().set_checked(sdk, commitment)?;
+    entry
+        .committed_at_accessor()
+        .set_checked(sdk, committed_at)?;
+    events::EquivocationReportCommitted {
+        beneficiary,
+        commitment,
+        block_number: committed_at,
+    }
+    .emit(sdk)
+}
+
+pub fn compute_report_commitment<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    let (beneficiary, proof_kind, evidence_hash, salt) =
+        decode_args::<(Address, u8, B256, B256)>(input)?;
+    if beneficiary.is_zero() {
+        return revert(sdk, ERR_ZERO_EQUIVOCATION_BENEFICIARY);
+    }
+    if proof_kind >= EQUIVOCATION_PROOF_KIND_COUNT {
+        return revert_with(sdk, ERR_INVALID_EQUIVOCATION_PROOF_KIND, &proof_kind);
+    }
+    let commitment = report_commitment_hash(
+        sdk.context().block_chain_id(),
+        sdk.context().contract_address(),
+        proof_kind,
+        evidence_hash,
+        beneficiary,
+        salt,
+    );
+    write_returns(sdk, &(commitment,))
+}
+
+pub fn get_report_commitment<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    ensure_initialized(sdk)?;
+    let (beneficiary,) = decode_args::<(Address,)>(input)?;
+    let entry = staking_storage()
+        .equivocation_commitments_accessor()
+        .entry(beneficiary);
+    write_returns(
+        sdk,
+        &(
+            entry.commitment_accessor().get_checked(sdk)?,
+            entry.committed_at_accessor().get_checked(sdk)?,
+        ),
+    )
+}
 
 fn external_call<SDK, T>(
     sdk: &mut SDK,
@@ -138,7 +293,9 @@ fn slash_equivocation<SDK: SharedAPI>(
     sdk: &mut SDK,
     command: EquivocationCommand,
     decoder_selector: u32,
+    proof_kind: u8,
 ) -> Result<(), ExitCode> {
+    verify_report_commitment(sdk, &command, proof_kind)?;
     let storage = staking_storage();
     let config = storage.config_accessor();
     let decoder = config.evidence_decoder_accessor().get_checked(sdk)?;
@@ -255,7 +412,8 @@ fn slash_equivocation<SDK: SharedAPI>(
     let penalty_epoch = current_epoch(sdk)?;
     set_selection_visible(sdk, validator, false, penalty_epoch)?;
     let owner = record.owner_accessor().get_checked(sdk)?;
-    let reporter = sdk.context().contract_caller();
+    let reporter = command.beneficiary;
+    consume_report_commitment(sdk, reporter)?;
     seize_self_stake(sdk, validator, owner, reporter)?;
     events::ValidatorJailed {
         validator,
@@ -278,6 +436,7 @@ pub fn slash_notarize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(),
         sdk,
         decode_equivocation(input)?,
         SIG_DECODE_CONFLICTING_NOTARIZE,
+        EQUIVOCATION_PROOF_KIND_NOTARIZE,
     )
 }
 
@@ -289,6 +448,7 @@ pub fn slash_finalize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(),
         sdk,
         decode_equivocation(input)?,
         SIG_DECODE_CONFLICTING_FINALIZE,
+        EQUIVOCATION_PROOF_KIND_FINALIZE,
     )
 }
 
@@ -300,16 +460,19 @@ pub fn slash_nullify_finalize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
         sdk,
         decode_equivocation(input)?,
         SIG_DECODE_NULLIFY_FINALIZE,
+        EQUIVOCATION_PROOF_KIND_NULLIFY_FINALIZE,
     )
 }
 
 fn decode_equivocation(input: &[u8]) -> Result<EquivocationCommand, ExitCode> {
-    let (evidence, pk_uncompressed, sig1_uncompressed, sig2_uncompressed) =
-        decode_args::<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)>(input)?;
+    let (evidence, pk_uncompressed, sig1_uncompressed, sig2_uncompressed, beneficiary, salt) =
+        decode_args::<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Address, B256)>(input)?;
     Ok(EquivocationCommand {
         evidence,
         pk_uncompressed,
         sig1_uncompressed,
         sig2_uncompressed,
+        beneficiary,
+        salt,
     })
 }

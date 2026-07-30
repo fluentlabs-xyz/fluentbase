@@ -119,6 +119,13 @@ pub struct ConsensusKeysStorage {
     activation_epoch: StorageU64,
 }
 
+/// One beneficiary's active equivocation-report commitment.
+#[derive(Storage)]
+pub struct EquivocationCommitmentStorage {
+    commitment: StorageBytes32,
+    committed_at: StorageU64,
+}
+
 /// Single ERC-7201 namespaced storage root for staking.
 ///
 /// Deriving the layout keeps packing and nested map/vector locations
@@ -149,6 +156,10 @@ pub struct StakingStorage {
     ///
     /// Appended to preserve the existing ERC-7201 layout.
     jailed_scan_cursor: StorageU64,
+    /// One active, beneficiary-owned commitment per reward account.
+    ///
+    /// Appended to preserve the existing ERC-7201 layout.
+    equivocation_commitments: StorageMap<Address, EquivocationCommitmentStorage>,
 }
 
 pub fn staking_storage() -> StakingStorage {

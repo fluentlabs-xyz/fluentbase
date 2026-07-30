@@ -6,15 +6,16 @@ use crate::{
     },
     types::{
         AddressCommand, BoolCommand, ConfigureCommand, ConfigureDependenciesCommand,
-        EpochSignerCommand, RegisterValidatorCommand, TwoAddressesCommand, U256Command, U32Command,
-        U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
+        EpochSignerCommand, EquivocationCommand, RegisterValidatorCommand, TwoAddressesCommand,
+        U256Command, U32Command, U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand,
+        ValidatorEpochCommand,
     },
 };
 use fluentbase_sdk::{
     bytes::BytesMut,
     codec::SolidityABI,
     derive::derive_keccak256_id,
-    is_engine_metered_precompile, is_execute_using_system_runtime,
+    is_engine_metered_precompile, is_execute_using_system_runtime, keccak256,
     storage::{StorageDescriptor, StorageLayout},
     Address, Bytes, ContractContextV1, ExitCode, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
@@ -145,6 +146,10 @@ fn assert_revert_selector(result: (ExitCode, Vec<u8>), selector: u32) {
         result.1
     );
     assert_eq!(&result.1[..4], &selector.to_be_bytes());
+}
+
+fn assert_direct_revert(result: Result<(), ExitCode>, sdk: &TestingContextImpl, selector: u32) {
+    assert_revert_selector((result.unwrap_err(), sdk.take_output()), selector);
 }
 
 #[test]
@@ -417,8 +422,20 @@ fn implemented_selectors_match_pinned_solidity_abi() {
     );
     assert_eq!(SIG_SLASH, derive_keccak256_id!("slash(address)"));
     assert_eq!(
+        SIG_COMMIT_EQUIVOCATION_REPORT,
+        derive_keccak256_id!("commitEquivocationReport(bytes32)")
+    );
+    assert_eq!(
+        SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT,
+        derive_keccak256_id!("computeEquivocationReportCommitment(address,uint8,bytes32,bytes32)")
+    );
+    assert_eq!(
+        SIG_GET_EQUIVOCATION_REPORT_COMMITMENT,
+        derive_keccak256_id!("getEquivocationReportCommitment(address)")
+    );
+    assert_eq!(
         SIG_SLASH_EQUIVOCATION_NOTARIZE,
-        derive_keccak256_id!("slashEquivocationNotarize(bytes,bytes,bytes,bytes)")
+        derive_keccak256_id!("slashEquivocationNotarize(bytes,bytes,bytes,bytes,address,bytes32)")
     );
 }
 
@@ -485,7 +502,12 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_GET_EPOCH_COMMITTEE_WITH_STAKES, 0xa4d160c1),
         (SIG_RELEASE_VALIDATOR_FROM_JAIL, 0x73a3dda6),
         (SIG_SLASH, 0xc96be4cb),
-        (SIG_SLASH_EQUIVOCATION_NOTARIZE, 0xe28d2f63),
+        (SIG_COMMIT_EQUIVOCATION_REPORT, 0x32890bc0),
+        (SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT, 0xc289d76e),
+        (SIG_GET_EQUIVOCATION_REPORT_COMMITMENT, 0xa3aae5dd),
+        (SIG_SLASH_EQUIVOCATION_NOTARIZE, 0x2bc5fb10),
+        (SIG_SLASH_EQUIVOCATION_FINALIZE, 0xb034c58b),
+        (SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE, 0x337e1437),
     ] {
         assert_eq!(actual, pinned);
     }
@@ -1905,9 +1927,11 @@ fn external_dependency_flows_fail_closed_before_calls() {
                 Vec::<u8>::new(),
                 Vec::<u8>::new(),
                 Vec::<u8>::new(),
+                validator,
+                B256::ZERO,
             ),
         )),
-        ERR_EVIDENCE_DECODER_NOT_CONFIGURED,
+        ERR_NO_EQUIVOCATION_COMMITMENT,
     );
     assert_revert_selector(
         harness.call(encode_call(
@@ -1915,5 +1939,314 @@ fn external_dependency_flows_fail_closed_before_calls() {
             &U64Command { value: 0 },
         )),
         ERR_ONLY_SYSTEM_CALL,
+    );
+}
+
+#[test]
+fn equivocation_commitments_bind_every_reward_domain_field() {
+    let beneficiary = Address::with_last_byte(0xa1);
+    let staking = GENESIS_STAKING;
+    let evidence_hash = keccak256(b"equivocation evidence");
+    let salt = B256::with_last_byte(0x51);
+    let commitment = crate::equivocation::report_commitment_hash(
+        1337,
+        staking,
+        EQUIVOCATION_PROOF_KIND_NOTARIZE,
+        evidence_hash,
+        beneficiary,
+        salt,
+    );
+
+    for changed in [
+        crate::equivocation::report_commitment_hash(
+            1338,
+            staking,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+            evidence_hash,
+            beneficiary,
+            salt,
+        ),
+        crate::equivocation::report_commitment_hash(
+            1337,
+            Address::with_last_byte(0x99),
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+            evidence_hash,
+            beneficiary,
+            salt,
+        ),
+        crate::equivocation::report_commitment_hash(
+            1337,
+            staking,
+            EQUIVOCATION_PROOF_KIND_FINALIZE,
+            evidence_hash,
+            beneficiary,
+            salt,
+        ),
+        crate::equivocation::report_commitment_hash(
+            1337,
+            staking,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+            keccak256(b"modified evidence"),
+            beneficiary,
+            salt,
+        ),
+        crate::equivocation::report_commitment_hash(
+            1337,
+            staking,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+            evidence_hash,
+            Address::with_last_byte(0xa2),
+            salt,
+        ),
+        crate::equivocation::report_commitment_hash(
+            1337,
+            staking,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+            evidence_hash,
+            beneficiary,
+            B256::with_last_byte(0x52),
+        ),
+    ] {
+        assert_ne!(commitment, changed);
+    }
+}
+
+#[test]
+fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
+    let owner = Address::with_last_byte(0xa0);
+    let beneficiary = Address::with_last_byte(0xa1);
+    let competing_beneficiary = Address::with_last_byte(0xa2);
+    let front_runner = Address::with_last_byte(0xf0);
+    let evidence = b"public equivocation evidence".to_vec();
+    let salt = B256::with_last_byte(0x51);
+    let competing_salt = B256::with_last_byte(0x52);
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+
+    harness.set_caller(Address::ZERO);
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_COMMIT_EQUIVOCATION_REPORT,
+            &(B256::with_last_byte(1),),
+        )),
+        ERR_ZERO_EQUIVOCATION_BENEFICIARY,
+    );
+    harness.set_caller(beneficiary);
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_COMMIT_EQUIVOCATION_REPORT,
+            &(B256::ZERO,),
+        )),
+        ERR_ZERO_EQUIVOCATION_COMMITMENT,
+    );
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT,
+            &(
+                beneficiary,
+                EQUIVOCATION_PROOF_KIND_COUNT,
+                keccak256(&evidence),
+                salt,
+            ),
+        )),
+        ERR_INVALID_EQUIVOCATION_PROOF_KIND,
+    );
+
+    let (_, commitment_output) = harness.call(encode_args_call(
+        SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT,
+        &(
+            beneficiary,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+            keccak256(&evidence),
+            salt,
+        ),
+    ));
+    let (commitment,) = decode_returns::<(B256,)>(&commitment_output);
+    assert_eq!(
+        commitment,
+        crate::equivocation::report_commitment_hash(
+            0,
+            GENESIS_STAKING,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+            keccak256(&evidence),
+            beneficiary,
+            salt,
+        )
+    );
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_COMMIT_EQUIVOCATION_REPORT,
+                &(commitment,),
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    let competing_commitment = crate::equivocation::report_commitment_hash(
+        0,
+        GENESIS_STAKING,
+        EQUIVOCATION_PROOF_KIND_NOTARIZE,
+        keccak256(&evidence),
+        competing_beneficiary,
+        competing_salt,
+    );
+    harness.set_caller(competing_beneficiary);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_COMMIT_EQUIVOCATION_REPORT,
+                &(competing_commitment,),
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    // Copying the first transaction creates only a front-runner-owned entry.
+    // It cannot replace or authenticate the beneficiary's commitment.
+    harness.set_caller(front_runner);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_COMMIT_EQUIVOCATION_REPORT,
+                &(commitment,),
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    let (_, stored_output) = harness.call(encode_args_call(
+        SIG_GET_EQUIVOCATION_REPORT_COMMITMENT,
+        &(beneficiary,),
+    ));
+    assert_eq!(
+        decode_returns::<(B256, u64)>(&stored_output),
+        (commitment, 1_000)
+    );
+
+    let command = EquivocationCommand {
+        evidence: evidence.clone(),
+        pk_uncompressed: Vec::new(),
+        sig1_uncompressed: Vec::new(),
+        sig2_uncompressed: Vec::new(),
+        beneficiary,
+        salt,
+    };
+    assert_direct_revert(
+        crate::equivocation::verify_report_commitment(
+            &mut harness.sdk,
+            &command,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+        ),
+        &harness.sdk,
+        ERR_EQUIVOCATION_COMMITMENT_NOT_MATURE,
+    );
+
+    harness.set_block_number(1_001);
+    harness.set_caller(front_runner);
+
+    // A copied reveal may execute, but the authenticated reward beneficiary
+    // remains the account that made the mature commitment.
+    assert_eq!(
+        crate::equivocation::verify_report_commitment(
+            &mut harness.sdk,
+            &command,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+        ),
+        Ok(())
+    );
+
+    let redirected = EquivocationCommand {
+        beneficiary: front_runner,
+        ..EquivocationCommand {
+            evidence: evidence.clone(),
+            pk_uncompressed: Vec::new(),
+            sig1_uncompressed: Vec::new(),
+            sig2_uncompressed: Vec::new(),
+            beneficiary,
+            salt,
+        }
+    };
+    assert_direct_revert(
+        crate::equivocation::verify_report_commitment(
+            &mut harness.sdk,
+            &redirected,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+        ),
+        &harness.sdk,
+        ERR_EQUIVOCATION_COMMITMENT_MISMATCH,
+    );
+
+    let wrong_salt = EquivocationCommand {
+        salt: B256::with_last_byte(0x53),
+        ..EquivocationCommand {
+            evidence: evidence.clone(),
+            pk_uncompressed: Vec::new(),
+            sig1_uncompressed: Vec::new(),
+            sig2_uncompressed: Vec::new(),
+            beneficiary,
+            salt,
+        }
+    };
+    assert_direct_revert(
+        crate::equivocation::verify_report_commitment(
+            &mut harness.sdk,
+            &wrong_salt,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+        ),
+        &harness.sdk,
+        ERR_EQUIVOCATION_COMMITMENT_MISMATCH,
+    );
+
+    let wrong_evidence = EquivocationCommand {
+        evidence: b"modified evidence".to_vec(),
+        ..EquivocationCommand {
+            evidence: evidence.clone(),
+            pk_uncompressed: Vec::new(),
+            sig1_uncompressed: Vec::new(),
+            sig2_uncompressed: Vec::new(),
+            beneficiary,
+            salt,
+        }
+    };
+    assert_direct_revert(
+        crate::equivocation::verify_report_commitment(
+            &mut harness.sdk,
+            &wrong_evidence,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+        ),
+        &harness.sdk,
+        ERR_EQUIVOCATION_COMMITMENT_MISMATCH,
+    );
+
+    crate::equivocation::consume_report_commitment(&mut harness.sdk, beneficiary).unwrap();
+    assert_direct_revert(
+        crate::equivocation::verify_report_commitment(
+            &mut harness.sdk,
+            &command,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+        ),
+        &harness.sdk,
+        ERR_NO_EQUIVOCATION_COMMITMENT,
+    );
+
+    let competing_command = EquivocationCommand {
+        evidence,
+        pk_uncompressed: Vec::new(),
+        sig1_uncompressed: Vec::new(),
+        sig2_uncompressed: Vec::new(),
+        beneficiary: competing_beneficiary,
+        salt: competing_salt,
+    };
+    assert_eq!(
+        crate::equivocation::verify_report_commitment(
+            &mut harness.sdk,
+            &competing_command,
+            EQUIVOCATION_PROOF_KIND_NOTARIZE,
+        ),
+        Ok(())
     );
 }
