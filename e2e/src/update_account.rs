@@ -68,6 +68,10 @@ fn test_upgrade_solidity_contract_preserves_storage() {
         Some(&U256::from_be_slice(stored_value.as_slice()))
     );
 
+    let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, Bytes::new(), None, None);
+    assert!(result.is_success(), "{result:?}");
+    assert_eq!(result.output().unwrap(), stored_value.as_slice());
+
     let mut recompile_args = BytesMut::new();
     SolidityABI::<(Address,)>::encode_function_args(&(contract_address,), &mut recompile_args)
         .unwrap();
