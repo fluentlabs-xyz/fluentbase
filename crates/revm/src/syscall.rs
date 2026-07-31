@@ -1268,7 +1268,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 return_halt!(MemoryOutOfBounds);
             };
             let evm_binary: Bytes = evm_binary.into();
-            if evm_binary.len() > EVM_MAX_CODE_SIZE {
+            if evm_binary.is_empty() || evm_binary.len() > EVM_MAX_CODE_SIZE {
                 return_halt!(MalformedBuiltinParams);
             }
             #[cfg(feature = "std")]
