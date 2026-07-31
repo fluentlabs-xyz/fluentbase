@@ -1,14 +1,14 @@
 use super::*;
 use crate::{
     storage::{
-        staking_storage, DelegationOpStorage, UndelegationOpStorage, ValidatorSnapshotStorage,
-        STATUS_ACTIVE, STATUS_JAIL, STATUS_PENDING,
+        chain_config_storage, consensus_storage, initializer_storage, staking_storage,
+        DelegationOpStorage, UndelegationOpStorage, ValidatorSnapshotStorage, STATUS_ACTIVE,
+        STATUS_JAIL, STATUS_PENDING,
     },
     types::{
-        AddressCommand, BoolCommand, ConfigureCommand, ConfigureDependenciesCommand, ConsensusKeys,
-        EpochSignerCommand, EquivocationCommand, RegisterValidatorCommand, TwoAddressesCommand,
-        U256Command, U32Command, U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand,
-        ValidatorEpochCommand,
+        AddressCommand, BoolCommand, ConsensusKeys, EpochSignerCommand, EquivocationCommand,
+        InitializeCommand, RegisterValidatorCommand, TwoAddressesCommand, U256Command, U32Command,
+        U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
     },
 };
 use fluentbase_sdk::{
@@ -16,8 +16,8 @@ use fluentbase_sdk::{
     codec::SolidityABI,
     hex, is_engine_metered_precompile, is_execute_using_system_runtime, keccak256,
     storage::{StorageDescriptor, StorageLayout},
-    Address, Bytes, ContractContextV1, ExitCode, SyscallResult, B256, GENESIS_GOVERNANCE,
-    GENESIS_STAKING, U256,
+    Address, Bytes, ContextReader, ContractContextV1, ExitCode, SyscallResult, B256,
+    GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
 use fluentbase_testing::TestingContextImpl;
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
@@ -64,6 +64,25 @@ fn compact_storage_matches_solidity_struct_layouts() {
     assert_eq!(snapshot.slashes_count_accessor().offset(), 14);
     assert_eq!(snapshot.commission_rate_accessor().offset(), 12);
     assert_eq!(snapshot.total_blend_rewards_accessor().offset(), 0);
+}
+
+#[test]
+fn contract_storage_uses_separate_erc7201_namespaces() {
+    let initializer_slot = initializer_storage().initialized_accessor().slot();
+    let chain_config_slot = chain_config_storage().staking_token_accessor().slot();
+    let consensus_slot = consensus_storage().consensus_keys_accessor().slot();
+    let staking_slot = staking_storage().owner_accessor().slot();
+
+    assert_eq!(initializer_slot, INITIALIZER_STORAGE_SLOT);
+    assert_eq!(chain_config_slot, CHAIN_CONFIG_STORAGE_SLOT);
+    assert_eq!(consensus_slot, CONSENSUS_STORAGE_SLOT);
+    assert_eq!(staking_slot, STAKING_STORAGE_SLOT);
+    assert_ne!(initializer_slot, chain_config_slot);
+    assert_ne!(initializer_slot, consensus_slot);
+    assert_ne!(initializer_slot, staking_slot);
+    assert_ne!(chain_config_slot, consensus_slot);
+    assert_ne!(chain_config_slot, staking_slot);
+    assert_ne!(consensus_slot, staking_slot);
 }
 
 struct Harness {
@@ -114,12 +133,42 @@ impl Harness {
         commission_rate: u16,
     ) -> ExitCode {
         self.set_caller(GENESIS_GOVERNANCE);
-        let exit = self
-            .call(encode_args_call(
-                SIG_INITIALIZE,
-                &(owner, validators, stakes, commission_rate),
-            ))
-            .0;
+        let command = self.initialize_command(owner, validators, stakes, commission_rate);
+        self.initialize_with(command)
+    }
+
+    fn initialize_command(
+        &self,
+        owner: Address,
+        validators: Vec<Address>,
+        stakes: Vec<U256>,
+        commission_rate: u16,
+    ) -> InitializeCommand {
+        InitializeCommand {
+            initial_owner: owner,
+            validators,
+            initial_stakes: stakes,
+            commission_rate,
+            staking_token: Address::with_last_byte(0xf0),
+            active_validators_length: DEFAULT_ACTIVE_VALIDATORS_LENGTH as u32,
+            epoch_block_interval: DEFAULT_EPOCH_BLOCK_INTERVAL as u32,
+            felony_threshold: DEFAULT_FELONY_THRESHOLD,
+            validator_jail_epoch_length: DEFAULT_VALIDATOR_JAIL_EPOCH_LENGTH,
+            undelegate_period: DEFAULT_UNDELEGATE_PERIOD as u32,
+            min_validator_stake_amount: DEFAULT_MIN_VALIDATOR_STAKE,
+            min_staking_amount: DEFAULT_MIN_STAKING_AMOUNT,
+            dpos_activation_block: self.sdk.context().block_number(),
+            bls_verifier: Address::ZERO,
+            evidence_decoder: Address::ZERO,
+            min_undelegate_blocks: U256::ZERO,
+            liveness_slashing: Address::with_last_byte(0xf1),
+            blend_reserve: Address::with_last_byte(0xf2),
+        }
+    }
+
+    fn initialize_with(&mut self, command: InitializeCommand) -> ExitCode {
+        let owner = command.initial_owner;
+        let exit = self.call(encode_args_call(SIG_INITIALIZE, &command)).0;
         self.set_caller(owner);
         exit
     }
@@ -192,7 +241,7 @@ fn stipend_test_sdk(
         ExitCode::Ok
     );
 
-    let config = staking_storage().config_accessor();
+    let config = chain_config_storage();
     config
         .blend_stipend_per_epoch_accessor()
         .set_checked(&mut harness.sdk, U256::from(100))
@@ -205,7 +254,7 @@ fn stipend_test_sdk(
         .blend_reserve_accessor()
         .set_checked(&mut harness.sdk, reserve)
         .unwrap();
-    staking_storage()
+    consensus_storage()
         .epoch_committees_accessor()
         .entry(0)
         .push_checked(&mut harness.sdk, validator)
@@ -389,7 +438,7 @@ fn solidity_bytes_calldata_reaches_staking_handlers() {
         harness.call(slash_equivocation),
         ERR_NO_EQUIVOCATION_COMMITMENT,
     );
-    let command = equivocation::decode_equivocation(&slash_equivocation[4..]).unwrap();
+    let command = consensus::decode_equivocation(&slash_equivocation[4..]).unwrap();
     assert_eq!(&command.evidence[..], &[0x01]);
     assert_eq!(&command.pk_uncompressed[..], &[0x02, 0x03]);
     assert_eq!(&command.sig1_uncompressed[..], &[0x04]);
@@ -410,8 +459,7 @@ fn set_consensus_keys_cast_calldata_completes_happy_path() {
         ExitCode::Ok
     );
     harness.set_caller(validator);
-    staking_storage()
-        .config_accessor()
+    chain_config_storage()
         .bls_verifier_accessor()
         .set_checked(&mut harness.sdk, verifier)
         .unwrap();
@@ -479,7 +527,9 @@ fn set_consensus_keys_cast_calldata_completes_happy_path() {
     );
     assert_eq!(&calls[1][..SIG_LEN_BYTES], &SIG_BLS_VERIFY.to_be_bytes());
 
-    let stored = staking_storage().consensus_keys_accessor().entry(validator);
+    let stored = consensus_storage()
+        .consensus_keys_accessor()
+        .entry(validator);
     assert_eq!(
         stored.bls_pubkey_accessor().load(&harness.sdk).unwrap(),
         vec![0x33; BLS_PUBKEY_LENGTH]
@@ -514,11 +564,10 @@ fn solidity_bytes_outputs_and_event_match_cast_vectors() {
     );
 
     assert_eq!(
-        util::encode_external_call(
+        encode_args_call(
             SIG_BLS_COMPRESS_G2_UNCHECKED,
             &(Bytes::from_static(&[0xaa, 0xbb, 0xcc]),),
-        )
-        .unwrap(),
+        ),
         hex!(
             "a5d2dd22
              0000000000000000000000000000000000000000000000000000000000000020
@@ -527,7 +576,7 @@ fn solidity_bytes_outputs_and_event_match_cast_vectors() {
         )
     );
     assert_eq!(
-        util::encode_external_call(
+        encode_args_call(
             SIG_BLS_VERIFY,
             &(
                 Bytes::from_static(&[0x01]),
@@ -536,8 +585,7 @@ fn solidity_bytes_outputs_and_event_match_cast_vectors() {
                 Bytes::from_static(&[0x05, 0x06]),
                 Bytes::from_static(&[0x07]),
             ),
-        )
-        .unwrap(),
+        ),
         hex!(
             "8bf26133
              00000000000000000000000000000000000000000000000000000000000000a0
@@ -670,7 +718,9 @@ fn get_consensus_keys_matches_dynamic_struct_return_vectors() {
         ExitCode::Ok
     );
 
-    let stored_keys = staking_storage().consensus_keys_accessor().entry(validator);
+    let stored_keys = consensus_storage()
+        .consensus_keys_accessor()
+        .entry(validator);
     stored_keys
         .peer_pubkey_accessor()
         .set_checked(&mut harness.sdk, B256::with_last_byte(0xff))
@@ -755,35 +805,20 @@ fn get_consensus_keys_matches_dynamic_struct_return_vectors() {
 #[test]
 fn parameterized_custom_errors_use_solidity_abi() {
     let owner = Address::with_last_byte(0xa0);
-    let outsider = Address::with_last_byte(0xb0);
     let mut harness = Harness::new(1_000);
-    harness.set_caller(owner);
+    let mut command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
+    command.liveness_slashing = Address::ZERO;
+    let (_, output) = harness.call(encode_args_call(SIG_INITIALIZE, &command));
+    assert_eq!(&output[..4], &ERR_ZERO_VALUE.to_be_bytes());
+    assert_eq!(
+        decode_output::<alloc::string::String>(&output[4..]),
+        "livenessSlashing"
+    );
+
     assert_eq!(
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-
-    harness.set_caller(outsider);
-    let (_, output) = harness.call(encode_call(
-        SIG_CONFIGURE,
-        &ConfigureCommand {
-            staking_token: Address::with_last_byte(0xc0),
-            active_validators_length: 21,
-            epoch_block_interval: 200,
-            felony_threshold: 150,
-            validator_jail_epoch_length: 7,
-            undelegate_period: 7,
-            min_validator_stake_amount: DEFAULT_MIN_VALIDATOR_STAKE,
-            min_staking_amount: DEFAULT_MIN_STAKING_AMOUNT,
-            dpos_activation_block: 1_000,
-            bls_verifier: Address::ZERO,
-            evidence_decoder: Address::ZERO,
-            min_undelegate_blocks: U256::ZERO,
-        },
-    ));
-    assert_eq!(&output[..4], &ERR_ONLY_OWNER.to_be_bytes());
-    assert_eq!(decode_output::<Address>(&output[4..]), outsider);
-
     harness.set_caller(GENESIS_GOVERNANCE);
     let (_, output) = harness.call(encode_call(
         SIG_SET_BLS_VERIFIER,
@@ -801,15 +836,11 @@ fn parameterized_custom_errors_use_solidity_abi() {
 #[test]
 fn derived_selectors_match_independent_hex_pins() {
     for (actual, pinned) in [
-        (SIG_INITIALIZE, 0x01f6bb50),
+        (SIG_INITIALIZE, 0xdca9ac1b),
         (SIG_CURRENT_EPOCH, 0x76671808),
         (SIG_NEXT_EPOCH, 0xaea0e78b),
         (SIG_OWNER, 0x8da5cb5b),
-        (SIG_GET_STAKING, 0x7b1391a6),
-        (SIG_GET_GOVERNANCE, 0x289b3c0d),
-        (SIG_GET_CHAIN_CONFIG, 0x606c0c94),
         (SIG_GET_STAKING_TOKEN, 0x9f9106d1),
-        (SIG_CONFIGURE, 0xc4bb1bdd),
         (SIG_DEFAULT_PARTICIPATION_FLOOR_BPS, 0x2c1d88e8),
         (SIG_DEFAULT_SLASH_REPORTER_BPS, 0x6cc69027),
         (SIG_MAX_ACTIVE_VALIDATORS, 0x5d887462),
@@ -831,7 +862,6 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_DISABLE_VALIDATOR, 0x1fe97684),
         (SIG_CHANGE_VALIDATOR_COMMISSION_RATE, 0x14f8649f),
         (SIG_CHANGE_VALIDATOR_OWNER, 0x0052c9e1),
-        (SIG_CONFIGURE_DEPENDENCIES, 0xd2bcdd7b),
         (SIG_SET_ACTIVE_VALIDATORS_LENGTH, 0xc227a412),
         (SIG_SET_EPOCH_BLOCK_INTERVAL, 0xaf70fa2c),
         (SIG_SET_DPOS_ACTIVATION_BLOCK, 0xf517ca6a),
@@ -1053,53 +1083,42 @@ fn embedded_chain_config_exposes_solidity_public_constants() {
 }
 
 #[test]
-fn stores_reserved_governance_and_chain_configuration() {
+fn stores_chain_configuration_in_its_own_namespace() {
     let owner = Address::with_last_byte(0xa0);
     let staking_token = Address::with_last_byte(0xb1);
     let mut harness = Harness::new(1_000);
     harness.set_caller(GENESIS_GOVERNANCE);
 
-    let mut configure = ConfigureCommand {
-        staking_token,
-        active_validators_length: 50,
-        epoch_block_interval: 100,
-        felony_threshold: 150,
-        validator_jail_epoch_length: 7,
-        undelegate_period: 7,
-        min_validator_stake_amount: BALANCE_COMPACT_PRECISION,
-        min_staking_amount: BALANCE_COMPACT_PRECISION,
-        dpos_activation_block: 1_000,
-        bls_verifier: Address::with_last_byte(0xb2),
-        evidence_decoder: Address::with_last_byte(0xb3),
-        min_undelegate_blocks: U256::from(701),
-    };
+    let mut command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
+    command.staking_token = staking_token;
+    command.active_validators_length = 50;
+    command.epoch_block_interval = 100;
+    command.felony_threshold = 150;
+    command.validator_jail_epoch_length = 7;
+    command.undelegate_period = 7;
+    command.min_validator_stake_amount = BALANCE_COMPACT_PRECISION;
+    command.min_staking_amount = BALANCE_COMPACT_PRECISION;
+    command.dpos_activation_block = 1_000;
+    command.bls_verifier = Address::with_last_byte(0xb2);
+    command.evidence_decoder = Address::with_last_byte(0xb3);
+    command.min_undelegate_blocks = U256::from(701);
     assert_revert_selector(
-        harness.call(encode_call(SIG_CONFIGURE, &configure)),
+        harness.call(encode_args_call(SIG_INITIALIZE, &command)),
         ERR_UNDELEGATE_WINDOW_TOO_SHORT,
     );
-    configure.min_undelegate_blocks = U256::from(700);
-    assert_eq!(
-        harness.call(encode_call(SIG_CONFIGURE, &configure)).0,
-        ExitCode::Ok
-    );
-    assert_eq!(
-        harness.initialize(owner, Vec::new(), Vec::new(), 0),
-        ExitCode::Ok
-    );
+    command.min_undelegate_blocks = U256::from(700);
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    assert!(initializer_storage()
+        .initialized_accessor()
+        .get_checked(&harness.sdk)
+        .unwrap());
+    let retry = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
     assert_revert_selector(
-        harness.call(encode_call(SIG_CONFIGURE, &configure)),
-        ERR_ALREADY_CONFIGURED,
+        harness.call(encode_args_call(SIG_INITIALIZE, &retry)),
+        ERR_ALREADY_INITIALIZED,
     );
 
-    let (_, output) = harness.call(encode_empty_call(SIG_GET_GOVERNANCE));
-    assert_eq!(decode_output::<Address>(&output), GENESIS_GOVERNANCE);
-
-    let (_, output) = harness.call(encode_empty_call(SIG_GET_STAKING));
-    assert_eq!(decode_output::<Address>(&output), GENESIS_STAKING);
-    let (_, output) = harness.call(encode_empty_call(SIG_GET_CHAIN_CONFIG));
-    assert_eq!(decode_output::<Address>(&output), GENESIS_STAKING);
-
-    let config = staking_storage().config_accessor();
+    let config = chain_config_storage();
     assert_eq!(
         config
             .active_validators_length_accessor()
@@ -1140,24 +1159,10 @@ fn governance_updates_embedded_chain_configuration() {
     let blend_reserve = Address::with_last_byte(0xc5);
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
-    assert_eq!(
-        harness.initialize(owner, Vec::new(), Vec::new(), 0),
-        ExitCode::Ok
-    );
-
-    harness.set_caller(GENESIS_GOVERNANCE);
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_CONFIGURE_DEPENDENCIES,
-                &ConfigureDependenciesCommand {
-                    liveness_slashing,
-                    blend_reserve,
-                },
-            ))
-            .0,
-        ExitCode::Ok
-    );
+    let mut command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
+    command.liveness_slashing = liveness_slashing;
+    command.blend_reserve = blend_reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
 
     harness.set_caller(outsider);
     assert_eq!(
@@ -1259,31 +1264,21 @@ fn governance_updates_embedded_chain_configuration() {
 }
 
 #[test]
-fn configure_events_report_initialized_defaults_as_previous_values() {
+fn initialize_events_report_defaults_as_previous_values() {
     let owner = Address::with_last_byte(0xa0);
     let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
+    command.staking_token = Address::with_last_byte(0xb0);
+    command.active_validators_length = 31;
+    command.epoch_block_interval = 200;
+    command.felony_threshold = 3;
+    command.validator_jail_epoch_length = 4;
+    command.undelegate_period = 9;
+    command.min_validator_stake_amount = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2);
+    command.min_staking_amount = DEFAULT_MIN_STAKING_AMOUNT * U256::from(2);
+    command.dpos_activation_block = 1_200;
     assert_eq!(
-        harness.initialize(owner, Vec::new(), Vec::new(), 0),
-        ExitCode::Ok
-    );
-    harness.sdk.take_logs();
-
-    let command = ConfigureCommand {
-        staking_token: Address::with_last_byte(0xb0),
-        active_validators_length: 31,
-        epoch_block_interval: 200,
-        felony_threshold: 3,
-        validator_jail_epoch_length: 4,
-        undelegate_period: 9,
-        min_validator_stake_amount: DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
-        min_staking_amount: DEFAULT_MIN_STAKING_AMOUNT * U256::from(2),
-        dpos_activation_block: 1_200,
-        bls_verifier: Address::ZERO,
-        evidence_decoder: Address::ZERO,
-        min_undelegate_blocks: U256::ZERO,
-    };
-    assert_eq!(
-        harness.call(encode_call(SIG_CONFIGURE, &command)).0,
+        harness.call(encode_args_call(SIG_INITIALIZE, &command)).0,
         ExitCode::Ok
     );
     let logs = harness.sdk.take_logs();
@@ -1373,29 +1368,15 @@ fn initializer_is_permissionless_for_atomic_deployment_but_one_shot() {
     let mut harness = Harness::new(0);
     harness.set_caller(deployer);
 
-    assert_eq!(
-        harness
-            .call(encode_args_call(
-                SIG_INITIALIZE,
-                &(owner, Vec::<Address>::new(), Vec::<U256>::new(), 0_u16),
-            ))
-            .0,
-        ExitCode::Ok
-    );
+    let command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
     let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
     assert_eq!(decode_output::<Address>(&output), owner);
 
     harness.set_caller(replacement);
+    let command = harness.initialize_command(replacement, Vec::new(), Vec::new(), 0);
     assert_revert_selector(
-        harness.call(encode_args_call(
-            SIG_INITIALIZE,
-            &(
-                replacement,
-                Vec::<Address>::new(),
-                Vec::<U256>::new(),
-                0_u16,
-            ),
-        )),
+        harness.call(encode_args_call(SIG_INITIALIZE, &command)),
         ERR_ALREADY_INITIALIZED,
     );
     let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
@@ -1408,16 +1389,14 @@ fn initialize_and_registration_reject_bad_commission_and_duplicate_validator() {
     let validator = Address::with_last_byte(0x01);
     let mut harness = Harness::new(0);
     harness.set_caller(GENESIS_GOVERNANCE);
+    let command = harness.initialize_command(
+        owner,
+        vec![validator],
+        vec![DEFAULT_MIN_VALIDATOR_STAKE],
+        COMMISSION_RATE_MAX + 1,
+    );
     assert_revert_selector(
-        harness.call(encode_args_call(
-            SIG_INITIALIZE,
-            &(
-                owner,
-                vec![validator],
-                vec![DEFAULT_MIN_VALIDATOR_STAKE],
-                COMMISSION_RATE_MAX + 1,
-            ),
-        )),
+        harness.call(encode_args_call(SIG_INITIALIZE, &command)),
         ERR_BAD_COMMISSION_RATE,
     );
     assert_eq!(
@@ -1440,7 +1419,7 @@ fn initialize_and_registration_reject_bad_commission_and_duplicate_validator() {
     );
     assert_revert_selector(
         (
-            economics::register_validator(&mut harness.sdk, &input[SIG_LEN_BYTES..]).unwrap_err(),
+            staking::register_validator(&mut harness.sdk, &input[SIG_LEN_BYTES..]).unwrap_err(),
             harness.sdk.take_output(),
         ),
         ERR_VALIDATOR_ALREADY_EXISTS,
@@ -1456,39 +1435,24 @@ fn delegation_and_undelegation_follow_epoch_snapshots() {
     let one_token = U256::from(1_000_000_000_000_000_000u64);
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
-    assert_eq!(
-        harness.initialize(
-            owner,
-            vec![validator],
-            vec![one_token * U256::from(10)],
-            500,
-        ),
-        ExitCode::Ok
+    let mut command = harness.initialize_command(
+        owner,
+        vec![validator],
+        vec![one_token * U256::from(10)],
+        500,
     );
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_CONFIGURE,
-                &ConfigureCommand {
-                    staking_token: token,
-                    active_validators_length: 21,
-                    epoch_block_interval: 200,
-                    felony_threshold: 150,
-                    validator_jail_epoch_length: 7,
-                    undelegate_period: 7,
-                    min_validator_stake_amount: one_token,
-                    min_staking_amount: one_token,
-                    dpos_activation_block: 1_000,
-                    bls_verifier: Address::ZERO,
-                    evidence_decoder: Address::ZERO,
-                    min_undelegate_blocks: U256::ZERO,
-                },
-            ))
-            .0,
-        ExitCode::Ok
-    );
+    command.staking_token = token;
+    command.active_validators_length = 21;
+    command.epoch_block_interval = 200;
+    command.felony_threshold = 150;
+    command.validator_jail_epoch_length = 7;
+    command.undelegate_period = 7;
+    command.min_validator_stake_amount = one_token;
+    command.min_staking_amount = one_token;
+    command.dpos_activation_block = 1_000;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
 
-    economics::delegate_to(
+    staking::delegate_to(
         &mut harness.sdk,
         delegator,
         validator,
@@ -1526,7 +1490,7 @@ fn delegation_and_undelegation_follow_epoch_snapshots() {
     assert_eq!(decode_output::<U256>(&output), one_token * U256::from(12));
 
     harness.set_block_number(1_400);
-    economics::undelegate_from(&mut harness.sdk, delegator, validator, one_token).unwrap();
+    staking::undelegate_from(&mut harness.sdk, delegator, validator, one_token).unwrap();
     let (_, output) = harness.call(encode_call(
         SIG_GET_VALIDATOR_DELEGATION,
         &ValidatorDelegatorCommand {
@@ -1557,8 +1521,8 @@ fn sparse_snapshot_lookup_uses_sorted_materialized_epochs() {
         ExitCode::Ok
     );
 
-    let future = crate::util::touch_validator_snapshot(&mut harness.sdk, validator, 1_000_000)
-        .unwrap();
+    let future =
+        staking::touch_snapshot_at_or_before(&mut harness.sdk, validator, 1_000_000).unwrap();
     future
         .total_delegated_accessor()
         .set_checked(
@@ -1566,7 +1530,7 @@ fn sparse_snapshot_lookup_uses_sorted_materialized_epochs() {
             math::compact_balance(stake * U256::from(2)).unwrap(),
         )
         .unwrap();
-    crate::util::touch_snapshot_at_or_before(&mut harness.sdk, validator, 500).unwrap();
+    staking::touch_snapshot_at_or_before(&mut harness.sdk, validator, 500).unwrap();
 
     let epochs = staking_storage()
         .validator_snapshot_epochs_accessor()
@@ -1574,16 +1538,13 @@ fn sparse_snapshot_lookup_uses_sorted_materialized_epochs() {
     assert_eq!(epochs.len_checked(&harness.sdk).unwrap(), 3);
     assert_eq!(epochs.at(0).get_checked(&harness.sdk).unwrap(), 0);
     assert_eq!(epochs.at(1).get_checked(&harness.sdk).unwrap(), 500);
+    assert_eq!(epochs.at(2).get_checked(&harness.sdk).unwrap(), 1_000_000);
     assert_eq!(
-        epochs.at(2).get_checked(&harness.sdk).unwrap(),
-        1_000_000
-    );
-    assert_eq!(
-        crate::util::validator_total_at(&harness.sdk, validator, 999_999).unwrap(),
+        staking::validator_total_at(&harness.sdk, validator, 999_999).unwrap(),
         stake
     );
     assert_eq!(
-        crate::util::validator_total_at(&harness.sdk, validator, 1_000_000).unwrap(),
+        staking::validator_total_at(&harness.sdk, validator, 1_000_000).unwrap(),
         stake * U256::from(2)
     );
 }
@@ -1607,29 +1568,29 @@ fn undelegation_rejects_a_later_pending_delegation_checkpoint() {
         ExitCode::Ok
     );
 
-    economics::delegate_to(&mut harness.sdk, delegator, validator, delegated, false).unwrap();
+    staking::delegate_to(&mut harness.sdk, delegator, validator, delegated, false).unwrap();
     assert_direct_revert(
-        economics::undelegate_from(&mut harness.sdk, delegator, validator, undelegated),
+        staking::undelegate_from(&mut harness.sdk, delegator, validator, undelegated),
         &harness.sdk,
         ERR_PENDING_DELEGATION,
     );
     assert_eq!(
-        crate::util::validator_total_at(&harness.sdk, validator, 1).unwrap(),
+        staking::validator_total_at(&harness.sdk, validator, 1).unwrap(),
         DEFAULT_MIN_VALIDATOR_STAKE
     );
     assert_eq!(
-        crate::util::validator_total_at(&harness.sdk, validator, 2).unwrap(),
+        staking::validator_total_at(&harness.sdk, validator, 2).unwrap(),
         DEFAULT_MIN_VALIDATOR_STAKE + delegated
     );
 
     harness.set_block_number(1_200);
-    economics::undelegate_from(&mut harness.sdk, delegator, validator, undelegated).unwrap();
+    staking::undelegate_from(&mut harness.sdk, delegator, validator, undelegated).unwrap();
     assert_eq!(
-        crate::util::validator_total_at(&harness.sdk, validator, 1).unwrap(),
+        staking::validator_total_at(&harness.sdk, validator, 1).unwrap(),
         DEFAULT_MIN_VALIDATOR_STAKE
     );
     assert_eq!(
-        crate::util::validator_total_at(&harness.sdk, validator, 2).unwrap(),
+        staking::validator_total_at(&harness.sdk, validator, 2).unwrap(),
         DEFAULT_MIN_VALIDATOR_STAKE + delegated - undelegated
     );
     let latest = staking_storage()
@@ -1649,19 +1610,6 @@ fn undelegation_rejects_a_later_pending_delegation_checkpoint() {
 }
 
 #[test]
-fn erc20_transfer_from_calldata_is_standard_abi() {
-    let from = Address::with_last_byte(0x11);
-    let to = Address::with_last_byte(0x22);
-    let amount = U256::from(123);
-    let input = util::erc20_transfer_from_input(from, to, amount).unwrap();
-    assert_eq!(&input[..4], &SIG_ERC20_TRANSFER_FROM.to_be_bytes());
-    assert_eq!(
-        SolidityABI::<(Address, Address, U256)>::decode(&&input[4..], 0).unwrap(),
-        (from, to, amount)
-    );
-}
-
-#[test]
 fn reward_views_split_blend_between_owner_and_delegators() {
     let owner = Address::with_last_byte(0xa0);
     let delegator = Address::with_last_byte(0xb0);
@@ -1673,7 +1621,7 @@ fn reward_views_split_blend_between_owner_and_delegators() {
         harness.initialize(owner, vec![validator], vec![ten_tokens], 1_000),
         ExitCode::Ok
     );
-    economics::delegate_to(&mut harness.sdk, delegator, validator, ten_tokens, false).unwrap();
+    staking::delegate_to(&mut harness.sdk, delegator, validator, ten_tokens, false).unwrap();
     let snapshot = staking_storage()
         .validator_snapshots_accessor()
         .entry(validator)
@@ -1741,7 +1689,9 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
     );
 
     for (validator, last_byte) in [(validator_a, 1u8), (validator_b, 2u8)] {
-        let keys = staking_storage().consensus_keys_accessor().entry(validator);
+        let keys = consensus_storage()
+            .consensus_keys_accessor()
+            .entry(validator);
         keys.bls_pubkey_accessor()
             .store(&mut harness.sdk, &[last_byte; BLS_PUBKEY_LENGTH])
             .unwrap();
@@ -1835,8 +1785,7 @@ fn equal_stake_top_k_preserves_solidity_roster_order() {
         ),
         ExitCode::Ok
     );
-    staking_storage()
-        .config_accessor()
+    chain_config_storage()
         .active_validators_length_accessor()
         .set_checked(&mut harness.sdk, 1)
         .unwrap();
@@ -1861,14 +1810,16 @@ fn committee_pruning_keeps_dkg_history() {
             + DEFAULT_EPOCH_BLOCK_INTERVAL
                 * (DEFAULT_UNDELEGATE_PERIOD + EPOCH_COMMITTEE_RETENTION_MARGIN + 2),
     );
-    let keys = staking_storage().consensus_keys_accessor().entry(validator);
+    let keys = consensus_storage()
+        .consensus_keys_accessor()
+        .entry(validator);
     keys.bls_pubkey_accessor()
         .store(&mut harness.sdk, &[1; BLS_PUBKEY_LENGTH])
         .unwrap();
     keys.peer_pubkey_accessor()
         .set_checked(&mut harness.sdk, B256::with_last_byte(1))
         .unwrap();
-    staking_storage()
+    consensus_storage()
         .dkg_qual_accessor()
         .entry(1)
         .set_checked(&mut harness.sdk, true)
@@ -1884,7 +1835,7 @@ fn committee_pruning_keeps_dkg_history() {
             .0,
         ExitCode::Ok
     );
-    assert!(staking_storage()
+    assert!(consensus_storage()
         .dkg_qual_accessor()
         .entry(1)
         .get_checked(&harness.sdk)
@@ -1901,28 +1852,15 @@ fn liveness_slash_jails_and_readmits_without_breaking_quorum() {
         .collect::<Vec<Address>>();
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
-    assert_eq!(
-        harness.initialize(
-            owner,
-            validators.clone(),
-            vec![BALANCE_COMPACT_PRECISION; validators.len()],
-            500,
-        ),
-        ExitCode::Ok
+    let mut command = harness.initialize_command(
+        owner,
+        validators.clone(),
+        vec![BALANCE_COMPACT_PRECISION; validators.len()],
+        500,
     );
-    harness.set_caller(GENESIS_GOVERNANCE);
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_CONFIGURE_DEPENDENCIES,
-                &ConfigureDependenciesCommand {
-                    liveness_slashing: liveness,
-                    blend_reserve: reserve,
-                },
-            ))
-            .0,
-        ExitCode::Ok
-    );
+    command.liveness_slashing = liveness;
+    command.blend_reserve = reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
 
     harness.set_caller(liveness);
     assert_eq!(
@@ -1976,8 +1914,7 @@ fn chain_config_guards_match_solidity_boundaries() {
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    staking_storage()
-        .config_accessor()
+    chain_config_storage()
         .dpos_activation_block_accessor()
         .set_checked(&mut harness.sdk, 400)
         .unwrap();
@@ -2021,8 +1958,7 @@ fn chain_config_guards_match_solidity_boundaries() {
         ERR_UNALIGNED_ACTIVATION_BLOCK,
     );
 
-    staking_storage()
-        .config_accessor()
+    chain_config_storage()
         .min_undelegate_blocks_accessor()
         .set_checked(&mut harness.sdk, U256::from(1_000))
         .unwrap();
@@ -2158,7 +2094,7 @@ fn validator_owner_cannot_drop_below_minimum_while_delegators_remain() {
         harness.initialize(owner, vec![validator], vec![stake], 500),
         ExitCode::Ok
     );
-    economics::delegate_to(
+    staking::delegate_to(
         &mut harness.sdk,
         delegator,
         validator,
@@ -2170,7 +2106,7 @@ fn validator_owner_cannot_drop_below_minimum_while_delegators_remain() {
     let before = harness.sdk.dump_storage();
     assert_revert_selector(
         (
-            economics::undelegate_from(&mut harness.sdk, validator, validator, stake).unwrap_err(),
+            staking::undelegate_from(&mut harness.sdk, validator, validator, stake).unwrap_err(),
             harness.sdk.take_output(),
         ),
         ERR_OWNER_SELF_STAKE_BELOW_MINIMUM,
@@ -2193,14 +2129,14 @@ fn sole_validator_owner_cannot_leave_subminimum_dust() {
     let before = harness.sdk.dump_storage();
     assert_revert_selector(
         (
-            economics::undelegate_from(&mut harness.sdk, validator, validator, stake - dust)
+            staking::undelegate_from(&mut harness.sdk, validator, validator, stake - dust)
                 .unwrap_err(),
             harness.sdk.take_output(),
         ),
         ERR_OWNER_SELF_STAKE_BELOW_MINIMUM,
     );
     harness.sdk.restore_storage(before);
-    economics::undelegate_from(&mut harness.sdk, validator, validator, stake).unwrap();
+    staking::undelegate_from(&mut harness.sdk, validator, validator, stake).unwrap();
 }
 
 #[test]
@@ -2466,28 +2402,15 @@ fn liveness_halt_guard_and_equivocation_tombstone_are_enforced() {
         .collect::<Vec<Address>>();
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
-    assert_eq!(
-        harness.initialize(
-            owner,
-            validators.clone(),
-            vec![DEFAULT_MIN_VALIDATOR_STAKE; validators.len()],
-            500,
-        ),
-        ExitCode::Ok
+    let mut command = harness.initialize_command(
+        owner,
+        validators.clone(),
+        vec![DEFAULT_MIN_VALIDATOR_STAKE; validators.len()],
+        500,
     );
-    harness.set_caller(GENESIS_GOVERNANCE);
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_CONFIGURE_DEPENDENCIES,
-                &ConfigureDependenciesCommand {
-                    liveness_slashing: liveness,
-                    blend_reserve: Address::with_last_byte(0xc0),
-                },
-            ))
-            .0,
-        ExitCode::Ok
-    );
+    command.liveness_slashing = liveness;
+    command.blend_reserve = Address::with_last_byte(0xc0);
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
     harness.set_caller(liveness);
     for validator in &validators[..2] {
         assert_eq!(
@@ -2520,9 +2443,7 @@ fn liveness_halt_guard_and_equivocation_tombstone_are_enforced() {
         "the second jail would drop the active set below Simplex quorum"
     );
 
-    let jailed_record = staking_storage()
-        .validators_accessor()
-        .entry(validators[0]);
+    let jailed_record = staking_storage().validators_accessor().entry(validators[0]);
     let initial_deadline = jailed_record
         .jailed_before_accessor()
         .get_checked(&harness.sdk)
@@ -2548,8 +2469,7 @@ fn liveness_halt_guard_and_equivocation_tombstone_are_enforced() {
         "re-slashing a jailed validator must extend its deadline despite the quorum guard"
     );
 
-    staking_storage()
-        .config_accessor()
+    chain_config_storage()
         .validator_jail_epoch_length_accessor()
         .set_checked(&mut harness.sdk, 0)
         .unwrap();
@@ -2574,7 +2494,7 @@ fn liveness_halt_guard_and_equivocation_tombstone_are_enforced() {
         "a shorter jail configuration must not reduce an existing deadline"
     );
 
-    staking_storage()
+    consensus_storage()
         .tombstoned_accessor()
         .entry(validators[0])
         .set_checked(&mut harness.sdk, true)
@@ -2608,7 +2528,9 @@ fn committee_validation_is_canonical_and_membership_changes_mint_dkg_bit() {
         ExitCode::Ok
     );
     for (validator, last_byte) in [(validator_a, 1u8), (validator_b, 2u8)] {
-        let keys = staking_storage().consensus_keys_accessor().entry(validator);
+        let keys = consensus_storage()
+            .consensus_keys_accessor()
+            .entry(validator);
         keys.bls_pubkey_accessor()
             .store(&mut harness.sdk, &[last_byte; BLS_PUBKEY_LENGTH])
             .unwrap();
@@ -2726,7 +2648,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
     let staking = GENESIS_STAKING;
     let evidence_hash = keccak256(b"equivocation evidence");
     let salt = B256::with_last_byte(0x51);
-    let commitment = crate::equivocation::report_commitment_hash(
+    let commitment = crate::consensus::report_commitment_hash(
         1337,
         staking,
         EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2736,7 +2658,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
     );
 
     for changed in [
-        crate::equivocation::report_commitment_hash(
+        crate::consensus::report_commitment_hash(
             1338,
             staking,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2744,7 +2666,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
             beneficiary,
             salt,
         ),
-        crate::equivocation::report_commitment_hash(
+        crate::consensus::report_commitment_hash(
             1337,
             Address::with_last_byte(0x99),
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2752,7 +2674,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
             beneficiary,
             salt,
         ),
-        crate::equivocation::report_commitment_hash(
+        crate::consensus::report_commitment_hash(
             1337,
             staking,
             EQUIVOCATION_PROOF_KIND_FINALIZE,
@@ -2760,7 +2682,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
             beneficiary,
             salt,
         ),
-        crate::equivocation::report_commitment_hash(
+        crate::consensus::report_commitment_hash(
             1337,
             staking,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2768,7 +2690,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
             beneficiary,
             salt,
         ),
-        crate::equivocation::report_commitment_hash(
+        crate::consensus::report_commitment_hash(
             1337,
             staking,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2776,7 +2698,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
             Address::with_last_byte(0xa2),
             salt,
         ),
-        crate::equivocation::report_commitment_hash(
+        crate::consensus::report_commitment_hash(
             1337,
             staking,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2846,7 +2768,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
     let (commitment,) = decode_returns::<(B256,)>(&commitment_output);
     assert_eq!(
         commitment,
-        crate::equivocation::report_commitment_hash(
+        crate::consensus::report_commitment_hash(
             0,
             GENESIS_STAKING,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2865,7 +2787,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         ExitCode::Ok
     );
 
-    let competing_commitment = crate::equivocation::report_commitment_hash(
+    let competing_commitment = crate::consensus::report_commitment_hash(
         0,
         GENESIS_STAKING,
         EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2914,7 +2836,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         salt,
     };
     assert_direct_revert(
-        crate::equivocation::verify_report_commitment(
+        crate::consensus::verify_report_commitment(
             &mut harness.sdk,
             &command,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2929,7 +2851,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
     // A copied reveal may execute, but the authenticated reward beneficiary
     // remains the account that made the mature commitment.
     assert_eq!(
-        crate::equivocation::verify_report_commitment(
+        crate::consensus::verify_report_commitment(
             &mut harness.sdk,
             &command,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2949,7 +2871,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         }
     };
     assert_direct_revert(
-        crate::equivocation::verify_report_commitment(
+        crate::consensus::verify_report_commitment(
             &mut harness.sdk,
             &redirected,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2970,7 +2892,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         }
     };
     assert_direct_revert(
-        crate::equivocation::verify_report_commitment(
+        crate::consensus::verify_report_commitment(
             &mut harness.sdk,
             &wrong_salt,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2991,7 +2913,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         }
     };
     assert_direct_revert(
-        crate::equivocation::verify_report_commitment(
+        crate::consensus::verify_report_commitment(
             &mut harness.sdk,
             &wrong_evidence,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -3000,9 +2922,9 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         ERR_EQUIVOCATION_COMMITMENT_MISMATCH,
     );
 
-    crate::equivocation::consume_report_commitment(&mut harness.sdk, beneficiary).unwrap();
+    crate::consensus::consume_report_commitment(&mut harness.sdk, beneficiary).unwrap();
     assert_direct_revert(
-        crate::equivocation::verify_report_commitment(
+        crate::consensus::verify_report_commitment(
             &mut harness.sdk,
             &command,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -3020,7 +2942,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         salt: competing_salt,
     };
     assert_eq!(
-        crate::equivocation::verify_report_commitment(
+        crate::consensus::verify_report_commitment(
             &mut harness.sdk,
             &competing_command,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -3046,8 +2968,7 @@ fn equivocation_seizes_only_the_latest_cumulative_self_delegation() {
         ),
         ExitCode::Ok
     );
-    staking_storage()
-        .config_accessor()
+    chain_config_storage()
         .staking_token_accessor()
         .set_checked(&mut harness.sdk, token)
         .unwrap();
@@ -3087,8 +3008,7 @@ fn equivocation_seizes_only_the_latest_cumulative_self_delegation() {
             SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
         });
 
-    crate::equivocation::seize_self_stake(&mut harness.sdk, validator, validator, reporter)
-        .unwrap();
+    crate::consensus::seize_self_stake(&mut harness.sdk, validator, validator, reporter).unwrap();
 
     let reporter_reward =
         latest_stake * U256::from(DEFAULT_SLASH_REPORTER_REWARD_BPS) / U256::from(10_000);

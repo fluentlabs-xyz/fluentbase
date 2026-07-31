@@ -9,14 +9,17 @@ dependencies.
 - Implements validator lifecycle, delegation, rewards, committees, liveness jail, and equivocation
   slashing.
 - Owns the chain configuration previously read from `ChainConfig`.
+- Isolates initializer, chain configuration, consensus, and staking state in separate ERC-7201
+  namespaces: `Fluent.storage.Initializer`, `Fluent.storage.ChainConfig`,
+  `Fluent.storage.Consensus`, and `Fluent.storage.StakingStorage`.
 - Keeps `StakingPool` external and unchanged; this crate does not deploy or replace it.
 - Calls configured BLS verifier, evidence decoder, liveness, and BLEND reserve contracts.
 
 ## Lifecycle
 
-1. Deployment atomically installs and initializes staking before public transactions can execute.
-   Genesis governance calls `configure` once; non-zero initial stake requires configuration first.
-2. Governance configures external dependencies and manages validator status.
+1. Deployment atomically installs and initializes staking, chain configuration, and external
+   dependencies before public transactions can execute.
+2. Governance manages chain configuration and validator status.
 3. Validators register consensus keys; delegators approve and deposit BLEND.
 4. The system caller commits epoch committees and settles finalized epoch stipends.
 5. Liveness and equivocation paths jail or permanently tombstone validators.
@@ -94,13 +97,11 @@ their emitted data bytes are unchanged.
 
 ## Source Layout
 
-- `handlers.rs`: initialization, compatibility getters, and validator administration.
-- `economics.rs`: registration, delegation, and undelegation.
-- `rewards.rs`: reward claims, redelegation, and stipend settlement.
-- `consensus.rs`: consensus keys and epoch committees.
-- `liveness.rs` / `equivocation.rs`: jail and slashing paths.
-- `storage.rs`: ERC-7201 layout and epoch snapshots.
-- `config.rs`: governance-controlled parameters and dependencies.
+- `initializer.rs`: atomic one-shot initialization.
+- `config.rs`: chain configuration initialization, getters, setters, and dependencies.
+- `staking.rs`: epoch reads, validator administration, delegation, and rewards.
+- `consensus.rs`: consensus keys, epoch committees, liveness, and equivocation handling.
+- `storage.rs`: separate ERC-7201 roots and epoch snapshots.
 
 ## Verification
 

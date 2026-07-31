@@ -1,5 +1,12 @@
 //! ERC-7201 storage layout, epoch calculation, and validator-set helpers.
 
+use crate::{
+    consts::{
+        CHAIN_CONFIG_STORAGE_SLOT, CONSENSUS_STORAGE_SLOT, INITIALIZER_STORAGE_SLOT,
+        STAKING_STORAGE_SLOT,
+    },
+    math,
+};
 use fluentbase_sdk::{
     derive::Storage,
     storage::{
@@ -9,21 +16,21 @@ use fluentbase_sdk::{
     Address, ContextReader, ExitCode, SharedAPI, B256,
 };
 
-use crate::{consts::STAKING_STORAGE_SLOT, math};
-
 pub const STATUS_NOT_FOUND: u8 = 0;
 pub const STATUS_ACTIVE: u8 = 1;
 pub const STATUS_PENDING: u8 = 2;
 pub const STATUS_JAIL: u8 = 3;
 
-/// Configuration formerly read from the external Solidity `ChainConfig`.
-///
-/// The rWasm staking contract owns this state so consensus-critical reads do
-/// not require a second contract call.
+/// ERC-7201 namespaced initialization state.
+#[derive(Storage)]
+pub struct InitializerStorage {
+    initialized: StorageBool,
+}
+
+/// ERC-7201 namespaced chain configuration.
 #[derive(Storage)]
 pub struct ChainConfigStorage {
     staking_token: StorageAddress,
-    governance: StorageAddress,
     active_validators_length: StorageU64,
     epoch_block_interval: StorageU64,
     undelegate_period: StorageU64,
@@ -42,7 +49,6 @@ pub struct ChainConfigStorage {
     min_undelegate_blocks: StorageU256,
     liveness_slashing: StorageAddress,
     blend_reserve: StorageAddress,
-    configured: StorageBool,
 }
 
 /// Fixed-size validator metadata.
@@ -126,45 +132,54 @@ pub struct EquivocationCommitmentStorage {
     committed_at: StorageU64,
 }
 
-/// Single ERC-7201 namespaced storage root for staking.
-///
-/// Deriving the layout keeps packing and nested map/vector locations
-/// deterministic while avoiding a slot constant and map type for every field.
+/// ERC-7201 namespaced consensus, liveness, and equivocation state.
 #[derive(Storage)]
-pub struct StakingStorage {
-    initialized: StorageBool,
-    owner: StorageAddress,
-    config: ChainConfigStorage,
-    validators: StorageMap<Address, ValidatorStorage>,
-    owner_validators: StorageMap<Address, StorageAddress>,
-    active_validators: StorageVec<StorageAddress>,
-    jailed_validators: StorageVec<StorageAddress>,
-    selection_roster: StorageVec<StorageAddress>,
-    selection_membership: StorageMap<Address, SelectionMembershipStorage>,
-    validator_snapshots: StorageMap<Address, StorageMap<u64, ValidatorSnapshotStorage>>,
-    validator_delegations: StorageMap<Address, StorageMap<Address, ValidatorDelegationStorage>>,
+pub struct ConsensusStorage {
     consensus_keys: StorageMap<Address, ConsensusKeysStorage>,
     peer_pubkey_owner: StorageMap<B256, StorageAddress>,
     epoch_committees: StorageMap<u64, StorageVec<StorageAddress>>,
     dkg_qual: StorageMap<u64, StorageBool>,
     last_committed_epoch_p1: StorageU64,
     pruned_up_to_p1: StorageU64,
+    jailed_validators: StorageVec<StorageAddress>,
+    jailed_scan_cursor: StorageU64,
     tombstoned: StorageMap<Address, StorageBool>,
+    equivocation_commitments: StorageMap<Address, EquivocationCommitmentStorage>,
+}
+
+/// Single ERC-7201 namespaced storage root for staking.
+///
+/// Deriving the layout keeps packing and nested map/vector locations
+/// deterministic while avoiding a slot constant and map type for every field.
+#[derive(Storage)]
+pub struct StakingStorage {
+    owner: StorageAddress,
+    validators: StorageMap<Address, ValidatorStorage>,
+    owner_validators: StorageMap<Address, StorageAddress>,
+    active_validators: StorageVec<StorageAddress>,
+    selection_roster: StorageVec<StorageAddress>,
+    selection_membership: StorageMap<Address, SelectionMembershipStorage>,
+    validator_snapshots: StorageMap<Address, StorageMap<u64, ValidatorSnapshotStorage>>,
+    validator_delegations: StorageMap<Address, StorageMap<Address, ValidatorDelegationStorage>>,
     credited_blend: StorageU256,
     last_rewarded_epoch_p1: StorageU64,
-    /// Resumable cursor for bounded jailed-validator sweeps.
-    ///
-    /// Appended to preserve the existing ERC-7201 layout.
-    jailed_scan_cursor: StorageU64,
-    /// One active, beneficiary-owned commitment per reward account.
-    ///
-    /// Appended to preserve the existing ERC-7201 layout.
-    equivocation_commitments: StorageMap<Address, EquivocationCommitmentStorage>,
     /// Sorted epochs with materialized validator snapshots.
     ///
-    /// Appended to preserve the existing ERC-7201 layout and allow historical
-    /// lookups to use binary search instead of scanning every intervening epoch.
+    /// Allows historical lookups to use binary search instead of scanning every
+    /// intervening epoch.
     validator_snapshot_epochs: StorageMap<Address, StorageVec<StorageU64>>,
+}
+
+pub fn initializer_storage() -> InitializerStorage {
+    InitializerStorage::new(INITIALIZER_STORAGE_SLOT, 0)
+}
+
+pub fn chain_config_storage() -> ChainConfigStorage {
+    ChainConfigStorage::new(CHAIN_CONFIG_STORAGE_SLOT, 0)
+}
+
+pub fn consensus_storage() -> ConsensusStorage {
+    ConsensusStorage::new(CONSENSUS_STORAGE_SLOT, 0)
 }
 
 pub fn staking_storage() -> StakingStorage {
@@ -175,12 +190,17 @@ pub fn current_epoch<SDK: SharedAPI>(sdk: &SDK) -> Result<u64, ExitCode> {
     current_epoch_at_block(sdk, sdk.context().block_number())
 }
 
+pub(crate) fn next_epoch<SDK: SharedAPI>(sdk: &SDK) -> Result<u64, ExitCode> {
+    current_epoch(sdk)?
+        .checked_add(1)
+        .ok_or(ExitCode::IntegerOverflow)
+}
+
 pub fn current_epoch_at_block<SDK: SharedAPI>(
     sdk: &SDK,
     block_number: u64,
 ) -> Result<u64, ExitCode> {
-    let storage = staking_storage();
-    let config = storage.config_accessor();
+    let config = chain_config_storage();
     let activation = config.dpos_activation_block_accessor().get_checked(sdk)?;
     let interval = config.epoch_block_interval_accessor().get_checked(sdk)?;
     math::epoch_at_block(block_number, activation, interval).ok_or(ExitCode::IntegerDivisionByZero)

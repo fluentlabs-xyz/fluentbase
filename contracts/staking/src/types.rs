@@ -1,7 +1,11 @@
 //! Internal representations of Solidity ABI commands and dependency results.
 
 use alloc::vec::Vec;
-use fluentbase_sdk::{codec::Codec, Address, Bytes, B256, U256};
+use fluentbase_sdk::{
+    byteorder::BE,
+    codec::{Codec, FunctionArgs},
+    Address, Bytes, B256, U256,
+};
 
 #[derive(Default, Debug, Codec)]
 pub struct InitializeCommand {
@@ -9,7 +13,23 @@ pub struct InitializeCommand {
     pub validators: Vec<Address>,
     pub initial_stakes: Vec<U256>,
     pub commission_rate: u16,
+    pub staking_token: Address,
+    pub active_validators_length: u32,
+    pub epoch_block_interval: u32,
+    pub felony_threshold: u32,
+    pub validator_jail_epoch_length: u32,
+    pub undelegate_period: u32,
+    pub min_validator_stake_amount: U256,
+    pub min_staking_amount: U256,
+    pub dpos_activation_block: u64,
+    pub bls_verifier: Address,
+    pub evidence_decoder: Address,
+    pub min_undelegate_blocks: U256,
+    pub liveness_slashing: Address,
+    pub blend_reserve: Address,
 }
+
+impl FunctionArgs<BE, 32, true, false> for InitializeCommand {}
 
 #[derive(Default, Debug, Codec)]
 pub struct AddressCommand {
@@ -57,28 +77,6 @@ pub struct RegisterValidatorCommand {
     pub validator: Address,
     pub commission_rate: u16,
     pub initial_stake: U256,
-}
-
-#[derive(Default, Debug, Codec)]
-pub struct ConfigureCommand {
-    pub staking_token: Address,
-    pub active_validators_length: u32,
-    pub epoch_block_interval: u32,
-    pub felony_threshold: u32,
-    pub validator_jail_epoch_length: u32,
-    pub undelegate_period: u32,
-    pub min_validator_stake_amount: U256,
-    pub min_staking_amount: U256,
-    pub dpos_activation_block: u64,
-    pub bls_verifier: Address,
-    pub evidence_decoder: Address,
-    pub min_undelegate_blocks: U256,
-}
-
-#[derive(Default, Debug, Codec)]
-pub struct ConfigureDependenciesCommand {
-    pub liveness_slashing: Address,
-    pub blend_reserve: Address,
 }
 
 #[derive(Default, Debug, Codec)]

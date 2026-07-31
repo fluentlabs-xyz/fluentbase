@@ -5,18 +5,15 @@
 use crate::{
     consts::*,
     events,
-    storage::staking_storage,
-    types::{
-        AddressCommand, BoolCommand, ConfigureDependenciesCommand, U256Command, U32Command,
-        U64Command,
-    },
+    storage::chain_config_storage,
+    types::{AddressCommand, BoolCommand, InitializeCommand, U256Command, U32Command, U64Command},
     util::{
         decode, ensure_governance, ensure_mutable, ensure_non_payable, revert, revert_with,
         write_abi,
     },
 };
 use alloc::string::String;
-use fluentbase_sdk::{ContextReader, ExitCode, SharedAPI, U256};
+use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
 
 fn ensure_governance_mutation<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
@@ -24,50 +21,300 @@ fn ensure_governance_mutation<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitC
     ensure_governance(sdk)
 }
 
-/// Route the immutable configuration getters owned by this module.
-pub fn dispatch_constant<SDK: SharedAPI>(
+/// Initialize all chain configuration and dependency fields.
+pub(crate) fn apply_initial_config<SDK: SharedAPI>(
     sdk: &mut SDK,
-    selector: u32,
-) -> Option<Result<(), ExitCode>> {
-    Some(match selector {
-        SIG_DEFAULT_PARTICIPATION_FLOOR_BPS => default_participation_floor_bps(sdk),
-        SIG_DEFAULT_SLASH_REPORTER_BPS => default_slash_reporter_bps(sdk),
-        SIG_MAX_ACTIVE_VALIDATORS => max_active_validators(sdk),
-        SIG_MAX_BLEND_STIPEND_PER_EPOCH => max_blend_stipend_per_epoch(sdk),
-        SIG_MAX_PARTICIPATION_FLOOR_BPS => max_participation_floor_bps(sdk),
-        SIG_MAX_SLASH_REPORTER_BPS => max_slash_reporter_bps(sdk),
-        _ => return None,
-    })
+    command: &InitializeCommand,
+) -> Result<(), ExitCode> {
+    validate_initialization(sdk, command)?;
+    let initialization_block = sdk.context().block_number();
+    let config = chain_config_storage();
+    config
+        .staking_token_accessor()
+        .set_checked(sdk, command.staking_token)?;
+    config
+        .active_validators_length_accessor()
+        .set_checked(sdk, command.active_validators_length as u64)?;
+    config
+        .epoch_block_interval_accessor()
+        .set_checked(sdk, command.epoch_block_interval as u64)?;
+    config
+        .felony_threshold_accessor()
+        .set_checked(sdk, command.felony_threshold)?;
+    config
+        .validator_jail_epoch_length_accessor()
+        .set_checked(sdk, command.validator_jail_epoch_length)?;
+    config
+        .undelegate_period_accessor()
+        .set_checked(sdk, command.undelegate_period as u64)?;
+    config
+        .min_validator_stake_amount_accessor()
+        .set_checked(sdk, command.min_validator_stake_amount)?;
+    config
+        .min_staking_amount_accessor()
+        .set_checked(sdk, command.min_staking_amount)?;
+    config
+        .min_undelegate_blocks_accessor()
+        .set_checked(sdk, command.min_undelegate_blocks)?;
+    config
+        .dpos_activation_block_accessor()
+        .set_checked(sdk, command.dpos_activation_block)?;
+    config
+        .liveness_slashing_accessor()
+        .set_checked(sdk, command.liveness_slashing)?;
+    config
+        .blend_reserve_accessor()
+        .set_checked(sdk, command.blend_reserve)?;
+    if !command.bls_verifier.is_zero() {
+        config
+            .bls_verifier_accessor()
+            .set_checked(sdk, command.bls_verifier)?;
+    }
+    if !command.evidence_decoder.is_zero() {
+        config
+            .evidence_decoder_accessor()
+            .set_checked(sdk, command.evidence_decoder)?;
+    }
+
+    events::ActiveValidatorsLengthChanged {
+        prev_value: DEFAULT_ACTIVE_VALIDATORS_LENGTH as u32,
+        new_value: command.active_validators_length,
+    }
+    .emit(sdk)?;
+    events::EpochBlockIntervalChanged {
+        prev_value: DEFAULT_EPOCH_BLOCK_INTERVAL as u32,
+        new_value: command.epoch_block_interval,
+    }
+    .emit(sdk)?;
+    events::FelonyThresholdChanged {
+        prev_value: DEFAULT_FELONY_THRESHOLD,
+        new_value: command.felony_threshold,
+    }
+    .emit(sdk)?;
+    events::ValidatorJailEpochLengthChanged {
+        prev_value: DEFAULT_VALIDATOR_JAIL_EPOCH_LENGTH,
+        new_value: command.validator_jail_epoch_length,
+    }
+    .emit(sdk)?;
+    events::UndelegatePeriodChanged {
+        prev_value: DEFAULT_UNDELEGATE_PERIOD as u32,
+        new_value: command.undelegate_period,
+    }
+    .emit(sdk)?;
+    events::MinValidatorStakeAmountChanged {
+        prev_value: DEFAULT_MIN_VALIDATOR_STAKE,
+        new_value: command.min_validator_stake_amount,
+    }
+    .emit(sdk)?;
+    events::MinStakingAmountChanged {
+        prev_value: DEFAULT_MIN_STAKING_AMOUNT,
+        new_value: command.min_staking_amount,
+    }
+    .emit(sdk)?;
+    events::DposActivationBlockChanged {
+        prev_value: initialization_block,
+        new_value: command.dpos_activation_block,
+    }
+    .emit(sdk)?;
+    if !command.bls_verifier.is_zero() {
+        events::BlsVerifierChanged {
+            prev_value: Address::ZERO,
+            new_value: command.bls_verifier,
+        }
+        .emit(sdk)?;
+    }
+    if !command.evidence_decoder.is_zero() {
+        events::EvidenceDecoderChanged {
+            prev_value: Address::ZERO,
+            new_value: command.evidence_decoder,
+        }
+        .emit(sdk)?;
+    }
+    Ok(())
 }
 
-fn default_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+fn validate_initialization<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    command: &InitializeCommand,
+) -> Result<(), ExitCode> {
+    if command.staking_token.is_zero() {
+        return revert(sdk, ERR_ZERO_STAKING_TOKEN);
+    }
+    if command.active_validators_length == 0
+        || command.active_validators_length as u64 > MAX_ACTIVE_VALIDATORS_LENGTH
+        || command.epoch_block_interval == 0
+        || command.felony_threshold == 0
+        || command.validator_jail_epoch_length == 0
+        || command.undelegate_period == 0
+        || command.min_validator_stake_amount.is_zero()
+        || command.min_staking_amount.is_zero()
+        || crate::math::compact_balance(command.min_validator_stake_amount).is_none()
+        || crate::math::compact_balance(command.min_staking_amount).is_none()
+    {
+        return revert(sdk, ERR_INVALID_CHAIN_CONFIG);
+    }
+    if !command
+        .dpos_activation_block
+        .is_multiple_of(command.epoch_block_interval as u64)
+    {
+        return revert(sdk, ERR_UNALIGNED_ACTIVATION_BLOCK);
+    }
+    let undelegate_window = U256::from(command.undelegate_period)
+        .checked_mul(U256::from(command.epoch_block_interval))
+        .ok_or(ExitCode::IntegerOverflow)?;
+    if undelegate_window < command.min_undelegate_blocks {
+        return revert_with(
+            sdk,
+            ERR_UNDELEGATE_WINDOW_TOO_SHORT,
+            &(undelegate_window, command.min_undelegate_blocks),
+        );
+    }
+    if command.liveness_slashing.is_zero() {
+        return revert_with(sdk, ERR_ZERO_VALUE, &String::from("livenessSlashing"));
+    }
+    if command.blend_reserve.is_zero() {
+        return revert_with(sdk, ERR_ZERO_VALUE, &String::from("blendReserve"));
+    }
+    Ok(())
+}
+
+/// Public handler `0x2c1d88e8` (`DEFAULT_PARTICIPATION_FLOOR_BPS`).
+///
+/// Returns the protocol default participation floor BPS constant.
+pub fn default_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &DEFAULT_PARTICIPATION_FLOOR_BPS)
 }
 
-fn default_slash_reporter_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+/// Public handler `0x6cc69027` (`DEFAULT_SLASH_REPORTER_BPS`).
+///
+/// Returns the protocol default slash reporter BPS constant.
+pub fn default_slash_reporter_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &DEFAULT_SLASH_REPORTER_REWARD_BPS)
 }
 
-fn max_active_validators<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+/// Public handler `0x5d887462` (`MAX_ACTIVE_VALIDATORS`).
+///
+/// Returns the protocol max active validators limit.
+pub fn max_active_validators<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &(MAX_ACTIVE_VALIDATORS_LENGTH as u32))
 }
 
-fn max_blend_stipend_per_epoch<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+/// Public handler `0x2bc2fec4` (`MAX_BLEND_STIPEND_PER_EPOCH`).
+///
+/// Returns the protocol max blend stipend per epoch limit.
+pub fn max_blend_stipend_per_epoch<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &MAX_BLEND_STIPEND_PER_EPOCH)
 }
 
-fn max_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+/// Public handler `0x9dbdf12b` (`MAX_PARTICIPATION_FLOOR_BPS`).
+///
+/// Returns the protocol max participation floor BPS limit.
+pub fn max_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &MAX_PARTICIPATION_FLOOR_BPS)
 }
 
-fn max_slash_reporter_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+/// Public handler `0x0a3a6183` (`MAX_SLASH_REPORTER_BPS`).
+///
+/// Returns the protocol max slash reporter BPS limit.
+pub fn max_slash_reporter_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &MAX_SLASH_REPORTER_REWARD_BPS)
+}
+
+/// Public handler `0x9f9106d1` (`getStakingToken`).
+///
+/// Returns the configured staking token.
+pub fn get_staking_token<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(
+        sdk,
+        &chain_config_storage()
+            .staking_token_accessor()
+            .get_checked(sdk)?,
+    )
+}
+
+/// Public handler `0x32cc6f08` (`getActiveValidatorsLength`).
+///
+/// Returns the configured active validator count.
+pub fn get_active_validators_length<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(
+        sdk,
+        &chain_config_storage()
+            .active_validators_length_accessor()
+            .get_checked(sdk)?,
+    )
+}
+
+/// Public handler `0x346c90a8` (`getEpochBlockInterval`).
+///
+/// Returns the configured epoch block interval.
+pub fn get_epoch_block_interval<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(
+        sdk,
+        &chain_config_storage()
+            .epoch_block_interval_accessor()
+            .get_checked(sdk)?,
+    )
+}
+
+/// Public handler `0xa2a50528` (`getDposActivationBlock`).
+///
+/// Returns the configured DPoS activation block.
+pub fn get_dpos_activation_block<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(
+        sdk,
+        &chain_config_storage()
+            .dpos_activation_block_accessor()
+            .get_checked(sdk)?,
+    )
+}
+
+/// Public handler `0x5e7b72ad` (`getUndelegatePeriod`).
+///
+/// Returns the configured undelegate period.
+pub fn get_undelegate_period<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(
+        sdk,
+        &chain_config_storage()
+            .undelegate_period_accessor()
+            .get_checked(sdk)?,
+    )
+}
+
+/// Public handler `0x6f856847` (`getMinValidatorStakeAmount`).
+///
+/// Returns the configured min validator stake amount.
+pub fn get_min_validator_stake_amount<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(
+        sdk,
+        &chain_config_storage()
+            .min_validator_stake_amount_accessor()
+            .get_checked(sdk)?,
+    )
+}
+
+/// Public handler `0xeea9a01b` (`getMinStakingAmount`).
+///
+/// Returns the configured min staking amount.
+pub fn get_min_staking_amount<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(
+        sdk,
+        &chain_config_storage()
+            .min_staking_amount_accessor()
+            .get_checked(sdk)?,
+    )
 }
 
 fn require_nonzero<SDK: SharedAPI>(
@@ -93,8 +340,7 @@ fn require_undelegate_window<SDK: SharedAPI>(
     let window = U256::from(period)
         .checked_mul(U256::from(interval))
         .ok_or(ExitCode::IntegerOverflow)?;
-    let minimum = staking_storage()
-        .config_accessor()
+    let minimum = chain_config_storage()
         .min_undelegate_blocks_accessor()
         .get_checked(sdk)?;
     if window < minimum {
@@ -103,45 +349,29 @@ fn require_undelegate_window<SDK: SharedAPI>(
     Ok(())
 }
 
-pub fn configure_dependencies<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_governance_mutation(sdk)?;
-    let storage = staking_storage();
-    let command: ConfigureDependenciesCommand = decode(input)?;
-    if command.liveness_slashing.is_zero() {
-        return zero_value(sdk, "livenessSlashing");
-    }
-    if command.blend_reserve.is_zero() {
-        return zero_value(sdk, "blendReserve");
-    }
-    let config = storage.config_accessor();
-    config
-        .liveness_slashing_accessor()
-        .set_checked(sdk, command.liveness_slashing)?;
-    config
-        .blend_reserve_accessor()
-        .set_checked(sdk, command.blend_reserve)
-}
-
+/// Public handler `0xbe199738` (`getFelonyThreshold`).
+///
+/// Returns the configured felony threshold.
 pub fn get_felony_threshold<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(
         sdk,
-        &staking_storage()
-            .config_accessor()
+        &chain_config_storage()
             .felony_threshold_accessor()
             .get_checked(sdk)?,
     )
 }
 
+/// Public handler `0xfcd6cb3e` (`setFelonyThreshold`).
+///
+/// Updates the configured felony threshold.
 pub fn set_felony_threshold<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<U32Command>(input)?.value;
     if value == 0 {
         return zero_value(sdk, "felonyThreshold");
     }
-    let field = staking_storage()
-        .config_accessor()
-        .felony_threshold_accessor();
+    let field = chain_config_storage().felony_threshold_accessor();
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::FelonyThresholdChanged {
@@ -151,17 +381,22 @@ pub fn set_felony_threshold<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resu
     .emit(sdk)
 }
 
+/// Public handler `0x6cbe6cd8` (`getValidatorJailEpochLength`).
+///
+/// Returns the configured validator jail epoch length.
 pub fn get_validator_jail_epoch_length<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(
         sdk,
-        &staking_storage()
-            .config_accessor()
+        &chain_config_storage()
             .validator_jail_epoch_length_accessor()
             .get_checked(sdk)?,
     )
 }
 
+/// Public handler `0xc8652bd5` (`setValidatorJailEpochLength`).
+///
+/// Updates the configured validator jail epoch length.
 pub fn set_validator_jail_epoch_length<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
@@ -171,9 +406,7 @@ pub fn set_validator_jail_epoch_length<SDK: SharedAPI>(
     if value == 0 {
         return zero_value(sdk, "validatorJailEpochLength");
     }
-    let field = staking_storage()
-        .config_accessor()
-        .validator_jail_epoch_length_accessor();
+    let field = chain_config_storage().validator_jail_epoch_length_accessor();
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::ValidatorJailEpochLengthChanged {
@@ -183,10 +416,12 @@ pub fn set_validator_jail_epoch_length<SDK: SharedAPI>(
     .emit(sdk)
 }
 
+/// Public handler `0xce534df5` (`getSlashReporterRewardBps`).
+///
+/// Returns the configured slash reporter reward BPS.
 pub fn get_slash_reporter_reward_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
-    let stored = staking_storage()
-        .config_accessor()
+    let stored = chain_config_storage()
         .slash_reporter_reward_bps_accessor()
         .get_checked(sdk)?;
     write_abi(
@@ -199,6 +434,9 @@ pub fn get_slash_reporter_reward_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<()
     )
 }
 
+/// Public handler `0x58702003` (`setSlashReporterRewardBps`).
+///
+/// Updates the configured slash reporter reward BPS.
 pub fn set_slash_reporter_reward_bps<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
@@ -215,9 +453,7 @@ pub fn set_slash_reporter_reward_bps<SDK: SharedAPI>(
             &(value, MAX_SLASH_REPORTER_REWARD_BPS),
         );
     }
-    let field = staking_storage()
-        .config_accessor()
-        .slash_reporter_reward_bps_accessor();
+    let field = chain_config_storage().slash_reporter_reward_bps_accessor();
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::SlashReporterRewardBpsChanged {
@@ -227,26 +463,29 @@ pub fn set_slash_reporter_reward_bps<SDK: SharedAPI>(
     .emit(sdk)
 }
 
+/// Public handler `0xc910df38` (`getSlashFundAddress`).
+///
+/// Returns the configured slash fund address.
 pub fn get_slash_fund_address<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(
         sdk,
-        &staking_storage()
-            .config_accessor()
+        &chain_config_storage()
             .slash_fund_address_accessor()
             .get_checked(sdk)?,
     )
 }
 
+/// Public handler `0xa79e7263` (`setSlashFundAddress`).
+///
+/// Updates the configured slash fund address.
 pub fn set_slash_fund_address<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<AddressCommand>(input)?.value;
     if value.is_zero() {
         return zero_value(sdk, "slashFundAddress");
     }
-    let field = staking_storage()
-        .config_accessor()
-        .slash_fund_address_accessor();
+    let field = chain_config_storage().slash_fund_address_accessor();
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::SlashFundAddressChanged {
@@ -256,10 +495,12 @@ pub fn set_slash_fund_address<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
     .emit(sdk)
 }
 
+/// Public handler `0x4baffdc4` (`getParticipationFloorBps`).
+///
+/// Returns the configured participation floor BPS.
 pub fn get_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
-    let stored = staking_storage()
-        .config_accessor()
+    let stored = chain_config_storage()
         .participation_floor_bps_accessor()
         .get_checked(sdk)?;
     write_abi(
@@ -272,6 +513,9 @@ pub fn get_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), 
     )
 }
 
+/// Public handler `0xd0a01007` (`setParticipationFloorBps`).
+///
+/// Updates the configured participation floor BPS.
 pub fn set_participation_floor_bps<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
@@ -288,9 +532,7 @@ pub fn set_participation_floor_bps<SDK: SharedAPI>(
             &(value, MAX_PARTICIPATION_FLOOR_BPS),
         );
     }
-    let field = staking_storage()
-        .config_accessor()
-        .participation_floor_bps_accessor();
+    let field = chain_config_storage().participation_floor_bps_accessor();
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::ParticipationFloorBpsChanged {
@@ -300,26 +542,29 @@ pub fn set_participation_floor_bps<SDK: SharedAPI>(
     .emit(sdk)
 }
 
+/// Public handler `0x485fd959` (`getParticipationJailDisabled`).
+///
+/// Returns the configured participation jail disabled.
 pub fn get_participation_jail_disabled<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(
         sdk,
-        &staking_storage()
-            .config_accessor()
+        &chain_config_storage()
             .participation_jail_disabled_accessor()
             .get_checked(sdk)?,
     )
 }
 
+/// Public handler `0x8664f2e7` (`setParticipationJailDisabled`).
+///
+/// Updates the configured participation jail disabled.
 pub fn set_participation_jail_disabled<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<BoolCommand>(input)?.value;
-    let field = staking_storage()
-        .config_accessor()
-        .participation_jail_disabled_accessor();
+    let field = chain_config_storage().participation_jail_disabled_accessor();
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::ParticipationJailDisabledChanged {
@@ -329,17 +574,22 @@ pub fn set_participation_jail_disabled<SDK: SharedAPI>(
     .emit(sdk)
 }
 
+/// Public handler `0xc8f45d87` (`getBlendStipendPerEpoch`).
+///
+/// Returns the configured blend stipend per epoch.
 pub fn get_blend_stipend_per_epoch<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(
         sdk,
-        &staking_storage()
-            .config_accessor()
+        &chain_config_storage()
             .blend_stipend_per_epoch_accessor()
             .get_checked(sdk)?,
     )
 }
 
+/// Public handler `0x2c91b879` (`setBlendStipendPerEpoch`).
+///
+/// Updates the configured blend stipend per epoch.
 pub fn set_blend_stipend_per_epoch<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
@@ -353,9 +603,7 @@ pub fn set_blend_stipend_per_epoch<SDK: SharedAPI>(
             &(value, MAX_BLEND_STIPEND_PER_EPOCH),
         );
     }
-    let field = staking_storage()
-        .config_accessor()
-        .blend_stipend_per_epoch_accessor();
+    let field = chain_config_storage().blend_stipend_per_epoch_accessor();
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::BlendStipendPerEpochChanged {
@@ -365,6 +613,9 @@ pub fn set_blend_stipend_per_epoch<SDK: SharedAPI>(
     .emit(sdk)
 }
 
+/// Public handler `0xc227a412` (`setActiveValidatorsLength`).
+///
+/// Updates the configured active validator count.
 pub fn set_active_validators_length<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
@@ -381,9 +632,7 @@ pub fn set_active_validators_length<SDK: SharedAPI>(
             &(value, MAX_ACTIVE_VALIDATORS_LENGTH as u32),
         );
     }
-    let field = staking_storage()
-        .config_accessor()
-        .active_validators_length_accessor();
+    let field = chain_config_storage().active_validators_length_accessor();
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value as u64)?;
     events::ActiveValidatorsLengthChanged {
@@ -393,6 +642,9 @@ pub fn set_active_validators_length<SDK: SharedAPI>(
     .emit(sdk)
 }
 
+/// Public handler `0xaf70fa2c` (`setEpochBlockInterval`).
+///
+/// Updates the configured epoch block interval.
 pub fn set_epoch_block_interval<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
@@ -402,7 +654,7 @@ pub fn set_epoch_block_interval<SDK: SharedAPI>(
     if value == 0 {
         return zero_value(sdk, "epochBlockInterval");
     }
-    let config = staking_storage().config_accessor();
+    let config = chain_config_storage();
     let activation = config.dpos_activation_block_accessor().get_checked(sdk)?;
     if sdk.context().block_number() >= activation {
         return revert(sdk, ERR_DPOS_ALREADY_ACTIVE);
@@ -422,13 +674,16 @@ pub fn set_epoch_block_interval<SDK: SharedAPI>(
     .emit(sdk)
 }
 
+/// Public handler `0xf517ca6a` (`setDposActivationBlock`).
+///
+/// Updates the configured DPoS activation block.
 pub fn set_dpos_activation_block<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<U64Command>(input)?.value;
-    let config = staking_storage().config_accessor();
+    let config = chain_config_storage();
     let previous = config.dpos_activation_block_accessor().get_checked(sdk)?;
     if sdk.context().block_number() >= previous {
         return revert(sdk, ERR_DPOS_ALREADY_ACTIVE);
@@ -450,13 +705,16 @@ pub fn set_dpos_activation_block<SDK: SharedAPI>(
     .emit(sdk)
 }
 
+/// Public handler `0x41d8a080` (`setUndelegatePeriod`).
+///
+/// Updates the configured undelegate period.
 pub fn set_undelegate_period<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<U32Command>(input)?.value;
     if value == 0 {
         return zero_value(sdk, "undelegatePeriod");
     }
-    let config = staking_storage().config_accessor();
+    let config = chain_config_storage();
     require_undelegate_window(
         sdk,
         value as u64,
@@ -472,6 +730,9 @@ pub fn set_undelegate_period<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Res
     .emit(sdk)
 }
 
+/// Public handler `0xe1a2e863` (`setMinValidatorStakeAmount`).
+///
+/// Updates the configured min validator stake amount.
 pub fn set_min_validator_stake_amount<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
@@ -482,9 +743,7 @@ pub fn set_min_validator_stake_amount<SDK: SharedAPI>(
     if crate::math::compact_balance(value).is_none() {
         return revert(sdk, ERR_WRONG_AMOUNT_PRECISION);
     }
-    let field = staking_storage()
-        .config_accessor()
-        .min_validator_stake_amount_accessor();
+    let field = chain_config_storage().min_validator_stake_amount_accessor();
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::MinValidatorStakeAmountChanged {
@@ -494,6 +753,9 @@ pub fn set_min_validator_stake_amount<SDK: SharedAPI>(
     .emit(sdk)
 }
 
+/// Public handler `0x612d669e` (`setMinStakingAmount`).
+///
+/// Updates the configured min staking amount.
 pub fn set_min_staking_amount<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<U256Command>(input)?.value;
@@ -501,9 +763,7 @@ pub fn set_min_staking_amount<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
     if crate::math::compact_balance(value).is_none() {
         return revert(sdk, ERR_WRONG_AMOUNT_PRECISION);
     }
-    let field = staking_storage()
-        .config_accessor()
-        .min_staking_amount_accessor();
+    let field = chain_config_storage().min_staking_amount_accessor();
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::MinStakingAmountChanged {
@@ -513,24 +773,29 @@ pub fn set_min_staking_amount<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
     .emit(sdk)
 }
 
+/// Public handler `0xc6b904ad` (`getBlsVerifier`).
+///
+/// Returns the configured BLS verifier.
 pub fn get_bls_verifier<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(
         sdk,
-        &staking_storage()
-            .config_accessor()
+        &chain_config_storage()
             .bls_verifier_accessor()
             .get_checked(sdk)?,
     )
 }
 
+/// Public handler `0x466ae541` (`setBlsVerifier`).
+///
+/// Updates the configured BLS verifier.
 pub fn set_bls_verifier<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<AddressCommand>(input)?.value;
     if value.is_zero() {
         return zero_value(sdk, "blsVerifier");
     }
-    let field = staking_storage().config_accessor().bls_verifier_accessor();
+    let field = chain_config_storage().bls_verifier_accessor();
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::BlsVerifierChanged {
@@ -540,26 +805,29 @@ pub fn set_bls_verifier<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(
     .emit(sdk)
 }
 
+/// Public handler `0xe2cf72f9` (`getEvidenceDecoder`).
+///
+/// Returns the configured evidence decoder.
 pub fn get_evidence_decoder<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(
         sdk,
-        &staking_storage()
-            .config_accessor()
+        &chain_config_storage()
             .evidence_decoder_accessor()
             .get_checked(sdk)?,
     )
 }
 
+/// Public handler `0x00857c90` (`setEvidenceDecoder`).
+///
+/// Updates the configured evidence decoder.
 pub fn set_evidence_decoder<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<AddressCommand>(input)?.value;
     if value.is_zero() {
         return zero_value(sdk, "evidenceDecoder");
     }
-    let field = staking_storage()
-        .config_accessor()
-        .evidence_decoder_accessor();
+    let field = chain_config_storage().evidence_decoder_accessor();
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::EvidenceDecoderChanged {

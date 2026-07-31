@@ -23,9 +23,7 @@ sol! {
             address initialOwner,
             address[] validators,
             uint256[] initialStakes,
-            uint16 commissionRate
-        ) external;
-        function configure(
+            uint16 commissionRate,
             address stakingToken,
             uint32 activeValidatorsLength,
             uint32 epochBlockInterval,
@@ -37,7 +35,9 @@ sol! {
             uint64 dposActivationBlock,
             address blsVerifier,
             address evidenceDecoder,
-            uint256 minUndelegateBlocks
+            uint256 minUndelegateBlocks,
+            address livenessSlashing,
+            address blendReserve
         ) external;
         function delegate(address validator, uint256 amount) external;
         function undelegate(address validator, uint256 amount) external;
@@ -90,6 +90,34 @@ fn token_balance(context: &mut EvmTestingContext, token: Address, owner: Address
     U256::try_from_be_slice(&output).expect("ERC-20 balanceOf output")
 }
 
+fn initialize_calldata(
+    staking_token: Address,
+    bls_verifier: Address,
+    initial_stakes: Vec<U256>,
+) -> Vec<u8> {
+    IStakingRwasm::initializeCall {
+        initialOwner: OWNER,
+        validators: vec![VALIDATOR],
+        initialStakes: initial_stakes,
+        commissionRate: 0,
+        stakingToken: staking_token,
+        activeValidatorsLength: 21,
+        epochBlockInterval: 200,
+        felonyThreshold: 150,
+        validatorJailEpochLength: 7,
+        undelegatePeriod: 7,
+        minValidatorStakeAmount: TOKEN,
+        minStakingAmount: TOKEN,
+        dposActivationBlock: 1_000,
+        blsVerifier: bls_verifier,
+        evidenceDecoder: Address::ZERO,
+        minUndelegateBlocks: U256::ZERO,
+        livenessSlashing: Address::repeat_byte(0x55),
+        blendReserve: Address::repeat_byte(0x66),
+    }
+    .abi_encode()
+}
+
 #[test]
 fn staking_accepts_solidity_bytes_for_consensus_keys() {
     let mut context = EvmTestingContext::default().with_full_genesis();
@@ -120,26 +148,6 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
         )),
     );
 
-    call(
-        &mut context,
-        GENESIS_GOVERNANCE,
-        GENESIS_STAKING,
-        IStakingRwasm::configureCall {
-            stakingToken: Address::repeat_byte(0x44),
-            activeValidatorsLength: 21,
-            epochBlockInterval: 200,
-            felonyThreshold: 150,
-            validatorJailEpochLength: 7,
-            undelegatePeriod: 7,
-            minValidatorStakeAmount: TOKEN,
-            minStakingAmount: TOKEN,
-            dposActivationBlock: 1_000,
-            blsVerifier: verifier,
-            evidenceDecoder: Address::ZERO,
-            minUndelegateBlocks: U256::ZERO,
-        }
-        .abi_encode(),
-    );
     // Keep delegation explicitly pre-activation: current epoch is clamped to
     // zero, so the two-epoch warm-up records the delegation at epoch 2.
     context = context.with_block_number(999);
@@ -147,13 +155,7 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
         &mut context,
         GENESIS_GOVERNANCE,
         GENESIS_STAKING,
-        IStakingRwasm::initializeCall {
-            initialOwner: OWNER,
-            validators: vec![VALIDATOR],
-            initialStakes: vec![U256::ZERO],
-            commissionRate: 0,
-        }
-        .abi_encode(),
+        initialize_calldata(Address::repeat_byte(0x44), verifier, vec![U256::ZERO]),
     );
     call(
         &mut context,
@@ -200,57 +202,11 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
         .encode_with_prefix(),
     );
 
-    call(
-        &mut context,
-        GENESIS_GOVERNANCE,
-        GENESIS_STAKING,
-        IStakingRwasm::configureCall {
-            stakingToken: token,
-            activeValidatorsLength: 21,
-            epochBlockInterval: 200,
-            felonyThreshold: 150,
-            validatorJailEpochLength: 7,
-            undelegatePeriod: 7,
-            minValidatorStakeAmount: TOKEN,
-            minStakingAmount: TOKEN,
-            dposActivationBlock: 1_000,
-            blsVerifier: Address::ZERO,
-            evidenceDecoder: Address::ZERO,
-            minUndelegateBlocks: U256::ZERO,
-        }
-        .abi_encode(),
-    );
-    assert_reverts(
-        &mut context,
-        GENESIS_GOVERNANCE,
-        GENESIS_STAKING,
-        IStakingRwasm::configureCall {
-            stakingToken: token,
-            activeValidatorsLength: 21,
-            epochBlockInterval: 200,
-            felonyThreshold: 150,
-            validatorJailEpochLength: 7,
-            undelegatePeriod: 7,
-            minValidatorStakeAmount: TOKEN,
-            minStakingAmount: TOKEN,
-            dposActivationBlock: 1_000,
-            blsVerifier: Address::ZERO,
-            evidenceDecoder: Address::ZERO,
-            minUndelegateBlocks: U256::ZERO,
-        }
-        .abi_encode(),
-    );
     assert_reverts(
         &mut context,
         OWNER,
         GENESIS_STAKING,
-        IStakingRwasm::initializeCall {
-            initialOwner: OWNER,
-            validators: vec![VALIDATOR],
-            initialStakes: vec![TOKEN],
-            commissionRate: 0,
-        }
-        .abi_encode(),
+        initialize_calldata(token, Address::ZERO, vec![TOKEN]),
     );
 
     let mut approve = Vec::new();
@@ -264,13 +220,13 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
         &mut context,
         GENESIS_GOVERNANCE,
         GENESIS_STAKING,
-        IStakingRwasm::initializeCall {
-            initialOwner: OWNER,
-            validators: vec![VALIDATOR],
-            initialStakes: vec![TOKEN],
-            commissionRate: 0,
-        }
-        .abi_encode(),
+        initialize_calldata(token, Address::ZERO, vec![TOKEN]),
+    );
+    assert_reverts(
+        &mut context,
+        GENESIS_GOVERNANCE,
+        GENESIS_STAKING,
+        initialize_calldata(token, Address::ZERO, vec![TOKEN]),
     );
     call(
         &mut context,

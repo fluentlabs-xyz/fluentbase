@@ -10,9 +10,12 @@ pub const SIG_LEN_BYTES: usize = 4;
 
 // ABI selectors are derived from their canonical signatures. The pinned hex
 // values remain beside them to make ABI drift visible during review.
-// 0x01f6bb50
+
+// 0xdca9ac1b
 pub const SIG_INITIALIZE: u32 =
-    derive_keccak256_id!("initialize(address,address[],uint256[],uint16)");
+    derive_keccak256_id!(
+        "initialize(address,address[],uint256[],uint16,address,uint32,uint32,uint32,uint32,uint32,uint256,uint256,uint64,address,address,uint256,address,address)"
+    );
 // 0x76671808
 pub const SIG_CURRENT_EPOCH: u32 = derive_keccak256_id!("currentEpoch()");
 // 0xaea0e78b
@@ -41,12 +44,6 @@ pub const SIG_CHANGE_VALIDATOR_COMMISSION_RATE: u32 =
 // 0x0052c9e1
 pub const SIG_CHANGE_VALIDATOR_OWNER: u32 =
     derive_keccak256_id!("changeValidatorOwner(address,address)");
-// 0x7b1391a6
-pub const SIG_GET_STAKING: u32 = derive_keccak256_id!("getStaking()");
-// 0x289b3c0d
-pub const SIG_GET_GOVERNANCE: u32 = derive_keccak256_id!("getGovernance()");
-// 0x606c0c94
-pub const SIG_GET_CHAIN_CONFIG: u32 = derive_keccak256_id!("getChainConfig()");
 // 0x9f9106d1
 pub const SIG_GET_STAKING_TOKEN: u32 = derive_keccak256_id!("getStakingToken()");
 // 0x32cc6f08
@@ -76,14 +73,6 @@ pub const SIG_REGISTER_VALIDATOR: u32 =
 pub const SIG_DELEGATE: u32 = derive_keccak256_id!("delegate(address,uint256)");
 // 0x4d99dd16
 pub const SIG_UNDELEGATE: u32 = derive_keccak256_id!("undelegate(address,uint256)");
-// 0xc4bb1bdd
-pub const SIG_CONFIGURE: u32 =
-    derive_keccak256_id!(
-        "configure(address,uint32,uint32,uint32,uint32,uint32,uint256,uint256,uint64,address,address,uint256)"
-    );
-// 0xd2bcdd7b
-pub const SIG_CONFIGURE_DEPENDENCIES: u32 =
-    derive_keccak256_id!("configureDependencies(address,address)");
 // 0x2c1d88e8
 pub const SIG_DEFAULT_PARTICIPATION_FLOOR_BPS: u32 =
     derive_keccak256_id!("DEFAULT_PARTICIPATION_FLOOR_BPS()");
@@ -290,10 +279,8 @@ pub const ERR_NOT_PENDING_VALIDATOR: u32 = derive_keccak256_id!("NotPendingValid
 pub const ERR_NOT_ACTIVE_VALIDATOR: u32 = derive_keccak256_id!("NotActiveValidator()");
 pub const ERR_ONLY_VALIDATOR_OWNER: u32 = derive_keccak256_id!("OnlyValidatorOwner(address)");
 pub const ERR_VALIDATOR_OWNER_IMMUTABLE: u32 = derive_keccak256_id!("ValidatorOwnerImmutable()");
-pub const ERR_ONLY_OWNER: u32 = derive_keccak256_id!("OwnableUnauthorizedAccount(address)");
 pub const ERR_ZERO_STAKING_TOKEN: u32 = derive_keccak256_id!("ZeroStakingToken()");
 pub const ERR_INVALID_CHAIN_CONFIG: u32 = derive_keccak256_id!("InvalidChainConfig()");
-pub const ERR_ALREADY_CONFIGURED: u32 = derive_keccak256_id!("AlreadyConfigured()");
 pub const ERR_AMOUNT_TOO_LOW: u32 = derive_keccak256_id!("AmountTooLow(uint256)");
 pub const ERR_INITIAL_STAKE_TOO_LOW: u32 = derive_keccak256_id!("InitialStakeTooLow(uint256)");
 pub const ERR_OWNER_SELF_STAKE_BELOW_MINIMUM: u32 =
@@ -401,4 +388,7 @@ pub const DEFAULT_MIN_VALIDATOR_STAKE: U256 =
     U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 pub const DEFAULT_MIN_STAKING_AMOUNT: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
+pub const INITIALIZER_STORAGE_SLOT: U256 = erc7201_slot!("Fluent.storage.Initializer");
+pub const CHAIN_CONFIG_STORAGE_SLOT: U256 = erc7201_slot!("Fluent.storage.ChainConfig");
+pub const CONSENSUS_STORAGE_SLOT: U256 = erc7201_slot!("Fluent.storage.Consensus");
 pub const STAKING_STORAGE_SLOT: U256 = erc7201_slot!("Fluent.storage.StakingStorage");

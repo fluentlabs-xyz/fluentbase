@@ -49,7 +49,10 @@ mod tests {
         assert_eq!(compact_balance(U256::from(10_000_000_001u64)), None);
         let overflow = (U256::from(U112::MAX) + U256::ONE) * BALANCE_COMPACT_PRECISION;
         assert_eq!(compact_balance(overflow), None);
-        assert_eq!(expand_balance(U112::MAX), overflow - BALANCE_COMPACT_PRECISION);
+        assert_eq!(
+            expand_balance(U112::MAX),
+            overflow - BALANCE_COMPACT_PRECISION
+        );
     }
 
     #[test]
