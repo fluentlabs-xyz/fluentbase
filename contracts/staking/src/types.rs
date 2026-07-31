@@ -12,6 +12,9 @@ pub struct InitializeCommand {
     pub initial_owner: Address,
     pub validators: Vec<Address>,
     pub initial_stakes: Vec<U256>,
+    pub bls_pubkeys_uncompressed: Vec<Bytes>,
+    pub bls_pops_uncompressed: Vec<Bytes>,
+    pub peer_pubkeys: Vec<B256>,
     pub commission_rate: u16,
     pub staking_token: Address,
     pub active_validators_length: u32,
@@ -73,11 +76,26 @@ pub struct ValidatorEpochCommand {
 }
 
 #[derive(Default, Debug, Codec)]
+pub struct AddValidatorCommand {
+    pub validator: Address,
+    pub bls_pubkey_uncompressed: Bytes,
+    pub bls_pop_uncompressed: Bytes,
+    pub peer_pubkey: B256,
+}
+
+impl FunctionArgs<BE, 32, true, false> for AddValidatorCommand {}
+
+#[derive(Default, Debug, Codec)]
 pub struct RegisterValidatorCommand {
     pub validator: Address,
     pub commission_rate: u16,
     pub initial_stake: U256,
+    pub bls_pubkey_uncompressed: Bytes,
+    pub bls_pop_uncompressed: Bytes,
+    pub peer_pubkey: B256,
 }
+
+impl FunctionArgs<BE, 32, true, false> for RegisterValidatorCommand {}
 
 #[derive(Default, Debug, Codec)]
 pub struct U32Command {
@@ -104,14 +122,6 @@ pub struct ConsensusKeys {
     pub bls_pubkey: Bytes,
     pub peer_pubkey: B256,
     pub activation_epoch: u64,
-}
-
-#[derive(Default, Debug, Codec)]
-pub struct SetConsensusKeysCommand {
-    pub validator: Address,
-    pub bls_pubkey_uncompressed: Bytes,
-    pub bls_pop_uncompressed: Bytes,
-    pub peer_pubkey: B256,
 }
 
 #[derive(Default, Debug, Codec)]

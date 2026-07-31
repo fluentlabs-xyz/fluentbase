@@ -3,13 +3,13 @@ use crate::{
     consts::{STATUS_ACTIVE, STATUS_JAIL, STATUS_PENDING},
     storage::{
         chain_config_storage, consensus_storage, initializer_storage, staking_storage,
-        DelegationOpStorage, UndelegationOpStorage, ValidatorSnapshotStorage,
+        ConsensusKeysStorage, DelegationOpStorage, UndelegationOpStorage, ValidatorSnapshotStorage,
     },
     types::{
-        AddressCommand, AddressU16Command, BoolCommand, ConsensusKeys, EpochSignerCommand,
-        EquivocationCommand, InitializeCommand, RegisterValidatorCommand, TwoAddressesCommand,
-        U256Command, U32Command, U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand,
-        ValidatorEpochCommand,
+        AddValidatorCommand, AddressCommand, AddressU16Command, BoolCommand, ConsensusKeys,
+        EpochSignerCommand, EquivocationCommand, InitializeCommand, RegisterValidatorCommand,
+        TwoAddressesCommand, U256Command, U32Command, U64Command, ValidatorBlockCommand,
+        ValidatorDelegatorCommand, ValidatorEpochCommand,
     },
 };
 use fluentbase_sdk::{
@@ -57,6 +57,7 @@ fn compact_storage_matches_solidity_struct_layouts() {
     assert_eq!(<DelegationOpStorage as StorageLayout>::BYTES, 22);
     assert_eq!(UndelegationOpStorage::SLOTS, 1);
     assert_eq!(<UndelegationOpStorage as StorageLayout>::BYTES, 22);
+    assert_eq!(ConsensusKeysStorage::SLOTS, 5);
 
     let slot = U256::from(7);
     let snapshot = ValidatorSnapshotStorage::new(slot, 0);
@@ -102,6 +103,23 @@ impl Harness {
             })
             .with_block_number(block_number)
             .with_gas_limit(gas_limit);
+        sdk.set_call_handler(|_address, _value, input, _fuel_limit| {
+            if input.len() < SIG_LEN_BYTES {
+                return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams);
+            }
+            let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
+            let output = match selector {
+                SIG_BLS_COMPRESS_G2_UNCHECKED => {
+                    encode_mock_return(&Bytes::from(vec![0x33; BLS_PUBKEY_LENGTH]))
+                }
+                SIG_BLS_VERIFY => encode_mock_return(&true),
+                SIG_ERC20_TRANSFER_FROM | SIG_ERC20_TRANSFER => encode_mock_return(&true),
+                _ => {
+                    return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams)
+                }
+            };
+            SyscallResult::new(output, 0, 0, ExitCode::Ok)
+        });
         Self { sdk }
     }
 
@@ -145,10 +163,22 @@ impl Harness {
         stakes: Vec<U256>,
         commission_rate: u16,
     ) -> InitializeCommand {
+        let validator_count = validators.len();
         InitializeCommand {
             initial_owner: owner,
             validators,
             initial_stakes: stakes,
+            bls_pubkeys_uncompressed: vec![
+                Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]);
+                validator_count
+            ],
+            bls_pops_uncompressed: vec![
+                Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]);
+                validator_count
+            ],
+            peer_pubkeys: (1..=validator_count)
+                .map(|index| B256::with_last_byte(index as u8))
+                .collect(),
             commission_rate,
             staking_token: Address::with_last_byte(0xf0),
             active_validators_length: DEFAULT_ACTIVE_VALIDATORS_LENGTH as u32,
@@ -159,7 +189,11 @@ impl Harness {
             min_validator_stake_amount: DEFAULT_MIN_VALIDATOR_STAKE,
             min_staking_amount: DEFAULT_MIN_STAKING_AMOUNT,
             dpos_activation_block: self.sdk.context().block_number(),
-            bls_verifier: Address::ZERO,
+            bls_verifier: if validator_count == 0 {
+                Address::ZERO
+            } else {
+                Address::with_last_byte(0xb0)
+            },
             evidence_decoder: Address::ZERO,
             min_undelegate_blocks: U256::ZERO,
             liveness_slashing: Address::with_last_byte(0xf1),
@@ -173,6 +207,36 @@ impl Harness {
         self.set_caller(owner);
         exit
     }
+}
+
+fn store_test_consensus_keys(
+    sdk: &mut TestingContextImpl,
+    validator: Address,
+    key_byte: u8,
+    peer_pubkey: B256,
+    activation_epoch: u64,
+) {
+    let keys = consensus_storage()
+        .consensus_keys_accessor()
+        .entry(validator);
+    let parts = keys.bls_pubkey_accessor();
+    for index in 0..3 {
+        parts
+            .at(index)
+            .set_checked(sdk, B256::repeat_byte(key_byte))
+            .unwrap();
+    }
+    keys.peer_pubkey_accessor()
+        .set_checked(sdk, peer_pubkey)
+        .unwrap();
+    keys.activation_epoch_accessor()
+        .set_checked(sdk, activation_epoch)
+        .unwrap();
+    consensus_storage()
+        .peer_pubkey_owner_accessor()
+        .entry(peer_pubkey)
+        .set_checked(sdk, validator)
+        .unwrap();
 }
 
 enum MockDisbursement {
@@ -384,30 +448,25 @@ fn solidity_bytes_calldata_reaches_staking_handlers() {
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
     assert_eq!(
-        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0,),
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    harness.set_caller(validator);
-
-    // cast calldata
-    // "setConsensusKeys(address,bytes,bytes,bytes32)"
-    // 0x0000000000000000000000000000000000000001 0xaabbcc 0xddee 0x...01
-    let set_consensus_keys = hex!(
-        "225cba85
-         0000000000000000000000000000000000000000000000000000000000000001
-         0000000000000000000000000000000000000000000000000000000000000080
-         00000000000000000000000000000000000000000000000000000000000000c0
-         0000000000000000000000000000000000000000000000000000000000000001
-         0000000000000000000000000000000000000000000000000000000000000003
-         aabbcc0000000000000000000000000000000000000000000000000000000000
-         0000000000000000000000000000000000000000000000000000000000000002
-         ddee000000000000000000000000000000000000000000000000000000000000"
+    let register_validator = encode_args_call(
+        SIG_REGISTER_VALIDATOR,
+        &RegisterValidatorCommand {
+            validator,
+            commission_rate: 0,
+            initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+            bls_pubkey_uncompressed: Bytes::from_static(&[0xaa, 0xbb, 0xcc]),
+            bls_pop_uncompressed: Bytes::from_static(&[0xdd, 0xee]),
+            peer_pubkey: B256::with_last_byte(1),
+        },
     );
     assert_revert_selector(
-        harness.call(set_consensus_keys),
+        harness.call(register_validator.clone()),
         ERR_INVALID_CONSENSUS_KEY_ENCODING,
     );
-    let mut truncated = set_consensus_keys.to_vec();
+    let mut truncated = register_validator.to_vec();
     truncated.truncate(SIG_LEN_BYTES + 5 * 32);
     assert_eq!(
         harness.call(truncated).0,
@@ -449,17 +508,17 @@ fn solidity_bytes_calldata_reaches_staking_handlers() {
 }
 
 #[test]
-fn set_consensus_keys_cast_calldata_completes_happy_path() {
+fn add_validator_cast_calldata_registers_consensus_keys_atomically() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
     let verifier = Address::with_last_byte(0xb0);
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
     assert_eq!(
-        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0,),
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    harness.set_caller(validator);
+    harness.set_caller(GENESIS_GOVERNANCE);
     chain_config_storage()
         .bls_verifier_accessor()
         .set_checked(&mut harness.sdk, verifier)
@@ -494,10 +553,10 @@ fn set_consensus_keys_cast_calldata_completes_happy_path() {
         });
 
     // cast calldata
-    // "setConsensusKeys(address,bytes,bytes,bytes32)"
+    // "addValidator(address,bytes,bytes,bytes32)"
     // 0x...01 0x{11 * 256} 0x{22 * 128} 0x...01
     let calldata = hex!(
-        "225cba85
+        "fff952d5
          0000000000000000000000000000000000000000000000000000000000000001
          0000000000000000000000000000000000000000000000000000000000000080
          00000000000000000000000000000000000000000000000000000000000001a0
@@ -532,8 +591,8 @@ fn set_consensus_keys_cast_calldata_completes_happy_path() {
         .consensus_keys_accessor()
         .entry(validator);
     assert_eq!(
-        stored.bls_pubkey_accessor().load(&harness.sdk).unwrap(),
-        vec![0x33; BLS_PUBKEY_LENGTH]
+        consensus::read_bls_pubkey(&harness.sdk, validator).unwrap(),
+        Bytes::from(vec![0x33; BLS_PUBKEY_LENGTH])
     );
     assert_eq!(
         stored
@@ -547,7 +606,7 @@ fn set_consensus_keys_cast_calldata_completes_happy_path() {
             .activation_epoch_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        0
+        1
     );
 }
 
@@ -719,86 +778,44 @@ fn get_consensus_keys_matches_dynamic_struct_return_vectors() {
         ExitCode::Ok
     );
 
-    let stored_keys = consensus_storage()
-        .consensus_keys_accessor()
-        .entry(validator);
-    stored_keys
-        .peer_pubkey_accessor()
-        .set_checked(&mut harness.sdk, B256::with_last_byte(0xff))
-        .unwrap();
-    stored_keys
-        .activation_epoch_accessor()
-        .set_checked(&mut harness.sdk, 42)
-        .unwrap();
-
     let (status, empty_output) = harness.call(encode_call(
         SIG_GET_CONSENSUS_KEYS,
-        &AddressCommand { value: validator },
+        &AddressCommand {
+            value: Address::with_last_byte(0xff),
+        },
     ));
     assert_eq!(status, ExitCode::Ok);
-    // cast abi-encode "f((bytes,bytes32,uint64))" "(0x,0x...ff,42)"
     assert_eq!(
-        empty_output,
-        hex!(
-            "0000000000000000000000000000000000000000000000000000000000000020
-             0000000000000000000000000000000000000000000000000000000000000060
-             00000000000000000000000000000000000000000000000000000000000000ff
-             000000000000000000000000000000000000000000000000000000000000002a
-             0000000000000000000000000000000000000000000000000000000000000000"
-        )
+        decode_output::<ConsensusKeys>(&empty_output),
+        ConsensusKeys::default()
     );
-
-    stored_keys
-        .bls_pubkey_accessor()
-        .store(&mut harness.sdk, &[0xaa, 0xbb, 0xcc])
-        .unwrap();
-    stored_keys
-        .peer_pubkey_accessor()
-        .set_checked(&mut harness.sdk, B256::with_last_byte(0x01))
-        .unwrap();
-    stored_keys
-        .activation_epoch_accessor()
-        .set_checked(&mut harness.sdk, 7)
-        .unwrap();
 
     let (status, nonempty_output) = harness.call(encode_call(
         SIG_GET_CONSENSUS_KEYS,
         &AddressCommand { value: validator },
     ));
     assert_eq!(status, ExitCode::Ok);
-    // cast abi-encode "f((bytes,bytes32,uint64))" "(0xaabbcc,0x...01,7)"
     assert_eq!(
-        nonempty_output,
-        hex!(
-            "0000000000000000000000000000000000000000000000000000000000000020
-             0000000000000000000000000000000000000000000000000000000000000060
-             0000000000000000000000000000000000000000000000000000000000000001
-             0000000000000000000000000000000000000000000000000000000000000007
-             0000000000000000000000000000000000000000000000000000000000000003
-            aabbcc0000000000000000000000000000000000000000000000000000000000"
-        )
+        decode_output::<ConsensusKeys>(&nonempty_output),
+        ConsensusKeys {
+            bls_pubkey: Bytes::from(vec![0x33; BLS_PUBKEY_LENGTH]),
+            peer_pubkey: B256::with_last_byte(1),
+            activation_epoch: 0,
+        }
     );
 
     let (status, multi_value_output) =
         harness.call(encode_empty_call(SIG_GET_VALIDATORS_WITH_KEYS));
     assert_eq!(status, ExitCode::Ok);
-    // cast abi-encode "f(address[],(bytes,bytes32,uint64)[])"
-    // "[0x0000000000000000000000000000000000000001]"
-    // "[(0xaabbcc,0x...01,7)]"
     assert_eq!(
-        multi_value_output,
-        hex!(
-            "0000000000000000000000000000000000000000000000000000000000000040
-             0000000000000000000000000000000000000000000000000000000000000080
-             0000000000000000000000000000000000000000000000000000000000000001
-             0000000000000000000000000000000000000000000000000000000000000001
-             0000000000000000000000000000000000000000000000000000000000000001
-             0000000000000000000000000000000000000000000000000000000000000020
-             0000000000000000000000000000000000000000000000000000000000000060
-             0000000000000000000000000000000000000000000000000000000000000001
-             0000000000000000000000000000000000000000000000000000000000000007
-             0000000000000000000000000000000000000000000000000000000000000003
-             aabbcc0000000000000000000000000000000000000000000000000000000000"
+        decode_returns::<(Vec<Address>, Vec<ConsensusKeys>)>(&multi_value_output),
+        (
+            vec![validator],
+            vec![ConsensusKeys {
+                bls_pubkey: Bytes::from(vec![0x33; BLS_PUBKEY_LENGTH]),
+                peer_pubkey: B256::with_last_byte(1),
+                activation_epoch: 0,
+            }],
         )
     );
 }
@@ -831,7 +848,7 @@ fn parameterized_custom_errors_use_solidity_abi() {
 #[test]
 fn derived_selectors_match_independent_hex_pins() {
     for (actual, pinned) in [
-        (SIG_INITIALIZE, 0xdca9ac1b),
+        (SIG_INITIALIZE, 0x4b4b21a5),
         (SIG_CURRENT_EPOCH, 0x76671808),
         (SIG_NEXT_EPOCH, 0xaea0e78b),
         (SIG_OWNER, 0x8da5cb5b),
@@ -844,7 +861,7 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_MAX_SLASH_REPORTER_BPS, 0x0a3a6183),
         (SIG_GET_VALIDATOR_DELEGATION, 0xd951e186),
         (SIG_GET_VALIDATOR_DELEGATED_STAKE_AT, 0xe8810ea7),
-        (SIG_REGISTER_VALIDATOR, 0xdd0fb5df),
+        (SIG_REGISTER_VALIDATOR, 0x8d6067ed),
         (SIG_DELEGATE, 0x026e402b),
         (SIG_UNDELEGATE, 0x4d99dd16),
         (SIG_IS_VALIDATOR, 0xfacd743b),
@@ -852,7 +869,7 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_GET_VALIDATOR_STATUS, 0xa310624f),
         (SIG_GET_VALIDATOR_BY_OWNER, 0x30108c22),
         (SIG_GET_VALIDATORS, 0xb7ab4db5),
-        (SIG_ADD_VALIDATOR, 0x4d238c8e),
+        (SIG_ADD_VALIDATOR, 0xfff952d5),
         (SIG_ACTIVATE_VALIDATOR, 0xb46e5520),
         (SIG_DISABLE_VALIDATOR, 0x1fe97684),
         (SIG_CHANGE_VALIDATOR_COMMISSION_RATE, 0x14f8649f),
@@ -879,7 +896,6 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_CLAIM_DELEGATOR_FEE_AT_EPOCH, 0xfe38ebef),
         (SIG_CALC_AVAILABLE_FOR_REDELEGATE_AMOUNT, 0x5ef9e8c6),
         (SIG_SETTLE_EPOCH_STIPEND, 0xa631344a),
-        (SIG_SET_CONSENSUS_KEYS, 0x225cba85),
         (SIG_GET_VALIDATORS_WITH_KEYS_AT, 0x7cfba9f3),
         (SIG_COMMIT_EPOCH_COMMITTEE, 0x87401d8a),
         (SIG_GET_EPOCH_COMMITTEE_WITH_STAKES, 0xa4d160c1),
@@ -978,20 +994,31 @@ fn governance_lifecycle_updates_active_registry() {
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
+    chain_config_storage()
+        .bls_verifier_accessor()
+        .set_checked(&mut harness.sdk, Address::with_last_byte(0xb0))
+        .unwrap();
+
+    let add_validator_command = || AddValidatorCommand {
+        validator,
+        bls_pubkey_uncompressed: Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
+        bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
+        peer_pubkey: B256::with_last_byte(1),
+    };
 
     harness.set_caller(outsider);
-    let (exit, _) = harness.call(encode_call(
+    let (exit, _) = harness.call(encode_args_call(
         SIG_ADD_VALIDATOR,
-        &AddressCommand { value: validator },
+        &add_validator_command(),
     ));
     assert_eq!(exit, ExitCode::Panic);
 
     harness.set_caller(GENESIS_GOVERNANCE);
     assert_eq!(
         harness
-            .call(encode_call(
+            .call(encode_args_call(
                 SIG_ADD_VALIDATOR,
-                &AddressCommand { value: validator },
+                &add_validator_command(),
             ))
             .0,
         ExitCode::Ok
@@ -1397,6 +1424,18 @@ fn initializer_rejects_mismatched_arrays_without_persisting_owner() {
         ExitCode::Panic
     );
 
+    let mut command = harness.initialize_command(
+        governance,
+        vec![Address::with_last_byte(1)],
+        vec![DEFAULT_MIN_VALIDATOR_STAKE],
+        0,
+    );
+    command.bls_pops_uncompressed.clear();
+    assert_revert_selector(
+        harness.call(encode_args_call(SIG_INITIALIZE, &command)),
+        ERR_MALFORMED_INPUT_LENGTH,
+    );
+
     let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
     assert_eq!(decode_output::<Address>(&output), Address::ZERO);
 }
@@ -1477,12 +1516,15 @@ fn initialize_and_registration_reject_bad_commission_and_duplicate_validator() {
         ExitCode::Ok
     );
 
-    let input = encode_call(
+    let input = encode_args_call(
         SIG_REGISTER_VALIDATOR,
         &RegisterValidatorCommand {
             validator,
             commission_rate: 0,
             initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+            bls_pubkey_uncompressed: Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
+            bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
+            peer_pubkey: B256::with_last_byte(0xff),
         },
     );
     assert_revert_selector(
@@ -1492,6 +1534,136 @@ fn initialize_and_registration_reject_bad_commission_and_duplicate_validator() {
         ),
         ERR_VALIDATOR_ALREADY_EXISTS,
     );
+}
+
+#[test]
+fn register_validator_verifies_and_stores_consensus_keys_in_one_call() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let verifier = Address::with_last_byte(0xb0);
+    let peer_pubkey = B256::with_last_byte(0x11);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .bls_verifier_accessor()
+        .set_checked(&mut harness.sdk, verifier)
+        .unwrap();
+    harness.set_caller(owner);
+
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_REGISTER_VALIDATOR,
+                &RegisterValidatorCommand {
+                    validator,
+                    commission_rate: 500,
+                    initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                    bls_pubkey_uncompressed: Bytes::from(vec![
+                        0x11;
+                        BLS_PUBKEY_UNCOMPRESSED_LENGTH
+                    ]),
+                    bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
+                    peer_pubkey,
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    let record = staking_storage().validators_accessor().entry(validator);
+    assert_eq!(
+        record.owner_accessor().get_checked(&harness.sdk).unwrap(),
+        owner
+    );
+    assert_eq!(
+        record.status_accessor().get_checked(&harness.sdk).unwrap(),
+        STATUS_PENDING
+    );
+    assert_eq!(
+        consensus::read_bls_pubkey(&harness.sdk, validator).unwrap(),
+        Bytes::from(vec![0x33; BLS_PUBKEY_LENGTH])
+    );
+    let keys = consensus_storage()
+        .consensus_keys_accessor()
+        .entry(validator);
+    assert_eq!(
+        keys.peer_pubkey_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        peer_pubkey
+    );
+    assert_eq!(
+        keys.activation_epoch_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn registration_rejects_non_96_byte_compressed_key_without_partial_state() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let verifier = Address::with_last_byte(0xb0);
+    let peer_pubkey = B256::with_last_byte(0x11);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .bls_verifier_accessor()
+        .set_checked(&mut harness.sdk, verifier)
+        .unwrap();
+    harness
+        .sdk
+        .set_call_handler(move |address, _value, input, _fuel_limit| {
+            assert_eq!(address, verifier);
+            assert_eq!(
+                u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap()),
+                SIG_BLS_COMPRESS_G2_UNCHECKED
+            );
+            SyscallResult::new(
+                encode_mock_return(&Bytes::from(vec![0x33; BLS_PUBKEY_LENGTH - 1])),
+                0,
+                0,
+                ExitCode::Ok,
+            )
+        });
+    harness.set_caller(owner);
+
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_REGISTER_VALIDATOR,
+            &RegisterValidatorCommand {
+                validator,
+                commission_rate: 0,
+                initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                bls_pubkey_uncompressed: Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
+                bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
+                peer_pubkey,
+            },
+        )),
+        ERR_INVALID_CONSENSUS_KEY_ENCODING,
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_NOT_FOUND
+    );
+    assert!(consensus_storage()
+        .peer_pubkey_owner_accessor()
+        .entry(peer_pubkey)
+        .get_checked(&harness.sdk)
+        .unwrap()
+        .is_zero());
 }
 
 #[test]
@@ -1902,21 +2074,6 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
         ExitCode::Ok
     );
 
-    for (validator, last_byte) in [(validator_a, 1u8), (validator_b, 2u8)] {
-        let keys = consensus_storage()
-            .consensus_keys_accessor()
-            .entry(validator);
-        keys.bls_pubkey_accessor()
-            .store(&mut harness.sdk, &[last_byte; BLS_PUBKEY_LENGTH])
-            .unwrap();
-        keys.peer_pubkey_accessor()
-            .set_checked(&mut harness.sdk, B256::with_last_byte(last_byte))
-            .unwrap();
-        keys.activation_epoch_accessor()
-            .set_checked(&mut harness.sdk, 0)
-            .unwrap();
-    }
-
     let committee = (vec![validator_a, validator_b],);
     assert_eq!(
         harness
@@ -1961,7 +2118,7 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
         keys.iter()
             .map(|value| value.bls_pubkey[0])
             .collect::<Vec<_>>(),
-        vec![1, 2]
+        vec![0x33, 0x33]
     );
     assert_eq!(stakes, vec![stake_a, stake_b]);
 
@@ -1981,6 +2138,115 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
         .expect("committee event");
     let (event_committee,): (Vec<Address>,) = decode_returns(data);
     assert_eq!(event_committee, vec![validator_a, validator_b]);
+}
+
+#[test]
+fn committee_filters_keyless_validators_before_top_k_ranking() {
+    let owner = Address::with_last_byte(0xa0);
+    let keyless = Address::with_last_byte(0x01);
+    let keyed_a = Address::with_last_byte(0x02);
+    let keyed_b = Address::with_last_byte(0x03);
+    let validators = vec![keyless, keyed_a, keyed_b];
+    let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(
+        owner,
+        validators.clone(),
+        vec![
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(100),
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3),
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
+        ],
+        500,
+    );
+    command.active_validators_length = 2;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    let keyless_keys = consensus_storage().consensus_keys_accessor().entry(keyless);
+    keyless_keys
+        .peer_pubkey_accessor()
+        .set_checked(&mut harness.sdk, B256::ZERO)
+        .unwrap();
+
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_COMMIT_EPOCH_COMMITTEE,
+                &(vec![keyed_a, keyed_b],),
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE,
+        &U64Command { value: 0 },
+    ));
+    assert_eq!(
+        decode_output::<Vec<Address>>(&output),
+        vec![keyed_a, keyed_b]
+    );
+}
+
+#[test]
+fn fully_keyless_committee_reverts_without_advancing_commit_pointer() {
+    let owner = Address::with_last_byte(0xa0);
+    let validators = vec![Address::with_last_byte(0x01), Address::with_last_byte(0x02)];
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(
+            owner,
+            validators.clone(),
+            vec![DEFAULT_MIN_VALIDATOR_STAKE; validators.len()],
+            500,
+        ),
+        ExitCode::Ok
+    );
+    for validator in &validators {
+        consensus_storage()
+            .consensus_keys_accessor()
+            .entry(*validator)
+            .peer_pubkey_accessor()
+            .set_checked(&mut harness.sdk, B256::ZERO)
+            .unwrap();
+    }
+    harness.set_caller(SYSTEM_CALLER);
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_COMMIT_EPOCH_COMMITTEE,
+            &(Vec::<Address>::new(),),
+        )),
+        ERR_COMMITTEE_TOO_SMALL,
+    );
+
+    let (_, output) = harness.call(encode_empty_call(SIG_NEXT_EPOCH_TO_COMMIT));
+    assert_eq!(decode_output::<u64>(&output), 0);
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE_LENGTH,
+        &U64Command { value: 0 },
+    ));
+    assert_eq!(decode_output::<U256>(&output), U256::ZERO);
+
+    for (index, validator) in validators.iter().enumerate() {
+        let key_byte = (index + 1) as u8;
+        store_test_consensus_keys(
+            &mut harness.sdk,
+            *validator,
+            key_byte,
+            B256::with_last_byte(key_byte),
+            0,
+        );
+    }
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_COMMIT_EPOCH_COMMITTEE,
+                &(validators.clone(),),
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    let (_, output) = harness.call(encode_empty_call(SIG_NEXT_EPOCH_TO_COMMIT));
+    assert_eq!(decode_output::<u64>(&output), 1);
 }
 
 #[test]
@@ -2058,15 +2324,6 @@ fn committee_pruning_keeps_dkg_history() {
             + DEFAULT_EPOCH_BLOCK_INTERVAL
                 * (DEFAULT_UNDELEGATE_PERIOD + EPOCH_COMMITTEE_RETENTION_MARGIN + 2),
     );
-    let keys = consensus_storage()
-        .consensus_keys_accessor()
-        .entry(validator);
-    keys.bls_pubkey_accessor()
-        .store(&mut harness.sdk, &[1; BLS_PUBKEY_LENGTH])
-        .unwrap();
-    keys.peer_pubkey_accessor()
-        .set_checked(&mut harness.sdk, B256::with_last_byte(1))
-        .unwrap();
     consensus_storage()
         .dkg_qual_accessor()
         .entry(1)
@@ -2172,18 +2429,6 @@ fn liveness_slashing_preserves_fixed_committed_committee_quorum() {
     command.liveness_slashing = liveness;
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
 
-    for (index, validator) in validators.iter().enumerate() {
-        let key_byte = (index + 1) as u8;
-        let keys = consensus_storage()
-            .consensus_keys_accessor()
-            .entry(*validator);
-        keys.bls_pubkey_accessor()
-            .store(&mut harness.sdk, &[key_byte; BLS_PUBKEY_LENGTH])
-            .unwrap();
-        keys.peer_pubkey_accessor()
-            .set_checked(&mut harness.sdk, B256::with_last_byte(key_byte))
-            .unwrap();
-    }
     harness.set_caller(SYSTEM_CALLER);
     assert_eq!(
         harness
@@ -3000,17 +3245,6 @@ fn committee_validation_is_canonical_and_membership_changes_mint_dkg_bit() {
         ),
         ExitCode::Ok
     );
-    for (validator, last_byte) in [(validator_a, 1u8), (validator_b, 2u8)] {
-        let keys = consensus_storage()
-            .consensus_keys_accessor()
-            .entry(validator);
-        keys.bls_pubkey_accessor()
-            .store(&mut harness.sdk, &[last_byte; BLS_PUBKEY_LENGTH])
-            .unwrap();
-        keys.peer_pubkey_accessor()
-            .set_checked(&mut harness.sdk, B256::with_last_byte(last_byte))
-            .unwrap();
-    }
 
     harness.set_caller(SYSTEM_CALLER);
     assert_revert_selector(
@@ -3087,8 +3321,15 @@ fn external_dependency_flows_fail_closed_before_calls() {
     harness.set_caller(validator);
     assert_revert_selector(
         harness.call(encode_args_call(
-            SIG_SET_CONSENSUS_KEYS,
-            &(validator, Vec::<u8>::new(), Vec::<u8>::new(), B256::ZERO),
+            SIG_REGISTER_VALIDATOR,
+            &RegisterValidatorCommand {
+                validator: Address::with_last_byte(2),
+                commission_rate: 0,
+                initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                bls_pubkey_uncompressed: Bytes::new(),
+                bls_pop_uncompressed: Bytes::new(),
+                peer_pubkey: B256::ZERO,
+            },
         )),
         ERR_INVALID_CONSENSUS_KEY_ENCODING,
     );
@@ -3553,19 +3794,6 @@ fn committee_liability_locks_pending_self_stake_through_evidence_window() {
     chain_config_storage()
         .staking_token_accessor()
         .set_checked(&mut harness.sdk, token)
-        .unwrap();
-
-    let keys = consensus_storage()
-        .consensus_keys_accessor()
-        .entry(validator);
-    keys.bls_pubkey_accessor()
-        .store(&mut harness.sdk, &[1; BLS_PUBKEY_LENGTH])
-        .unwrap();
-    keys.peer_pubkey_accessor()
-        .set_checked(&mut harness.sdk, B256::with_last_byte(1))
-        .unwrap();
-    keys.activation_epoch_accessor()
-        .set_checked(&mut harness.sdk, 0)
         .unwrap();
 
     harness.set_caller(SYSTEM_CALLER);

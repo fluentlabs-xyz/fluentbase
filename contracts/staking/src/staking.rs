@@ -1,18 +1,19 @@
 //! Staking ownership, epoch reads, and validator lifecycle methods.
 
 use crate::{
+    consensus::{store_consensus_keys, verify_consensus_keys},
     consts::*,
     events, math,
     storage::{chain_config_storage, consensus_storage, staking_storage, ValidatorSnapshotStorage},
     types::{
-        AddressAmountCommand, AddressCommand, AddressU16Command, RegisterValidatorCommand,
-        TwoAddressesCommand, U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand,
-        ValidatorEpochCommand,
+        AddValidatorCommand, AddressAmountCommand, AddressCommand, AddressU16Command,
+        RegisterValidatorCommand, TwoAddressesCommand, U64Command, ValidatorBlockCommand,
+        ValidatorDelegatorCommand, ValidatorEpochCommand,
     },
     util::{
-        current_epoch, current_epoch_at_block, decode, ensure_governance, ensure_initialized,
-        ensure_mutable, ensure_non_payable, next_epoch, revert, revert_with, safe_transfer,
-        safe_transfer_from, write_abi,
+        current_epoch, current_epoch_at_block, decode, decode_args, ensure_governance,
+        ensure_initialized, ensure_mutable, ensure_non_payable, next_epoch, revert, revert_with,
+        safe_transfer, safe_transfer_from, write_abi,
     },
 };
 use alloc::{vec, vec::Vec};
@@ -238,7 +239,7 @@ pub(crate) fn selection_visible_at<SDK: SharedAPI>(
     }
 }
 
-pub(crate) fn selected_validators_at<SDK: SharedAPI>(
+pub(crate) fn selection_candidates_at<SDK: SharedAPI>(
     sdk: &SDK,
     epoch: u64,
 ) -> Result<Vec<Address>, ExitCode> {
@@ -252,6 +253,14 @@ pub(crate) fn selected_validators_at<SDK: SharedAPI>(
             candidates.push(validator);
         }
     }
+    Ok(candidates)
+}
+
+pub(crate) fn selected_validators_at<SDK: SharedAPI>(
+    sdk: &SDK,
+    epoch: u64,
+) -> Result<Vec<Address>, ExitCode> {
+    let candidates = selection_candidates_at(sdk, epoch)?;
     let cap = chain_config_storage()
         .active_validators_length_accessor()
         .get_checked(sdk)? as usize;
@@ -280,7 +289,7 @@ pub(crate) fn selected_validators<SDK: SharedAPI>(sdk: &SDK) -> Result<Vec<Addre
 ///
 /// Equal-stake candidates retain roster order; an address tie-breaker would
 /// choose a different committee at the top-k boundary.
-fn top_k_by_stake_at<SDK: SharedAPI>(
+pub(crate) fn top_k_by_stake_at<SDK: SharedAPI>(
     sdk: &SDK,
     candidates: Vec<Address>,
     epoch: u64,
@@ -692,7 +701,7 @@ pub fn get_validators<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     write_abi(sdk, &selected_validators(sdk)?)
 }
 
-/// Public handler `0x4d238c8e` (`addValidator`).
+/// Public handler `addValidator(address,bytes,bytes,bytes32)`.
 ///
 /// Adds a pending validator under governance control.
 ///
@@ -702,17 +711,28 @@ pub fn add_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), 
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
     ensure_governance(sdk)?;
-    let validator = address_arg(input)?;
+    let command = decode_args::<AddValidatorCommand>(input)?;
+    if validator_status(sdk, command.validator)? != STATUS_NOT_FOUND {
+        return revert_with(sdk, ERR_VALIDATOR_ALREADY_EXISTS, &command.validator);
+    }
+    let verified = verify_consensus_keys(
+        sdk,
+        command.validator,
+        command.bls_pubkey_uncompressed,
+        command.bls_pop_uncompressed,
+        command.peer_pubkey,
+    )?;
     let changed_at = next_epoch(sdk)?;
     set_validator(
         sdk,
-        validator,
-        validator,
+        command.validator,
+        command.validator,
         STATUS_PENDING,
         0,
         U256::ZERO,
         changed_at,
-    )
+    )?;
+    store_consensus_keys(sdk, command.validator, verified, changed_at)
 }
 
 /// Public handler `0xb46e5520` (`activateValidator`).
@@ -852,14 +872,14 @@ pub fn get_validator_delegated_stake_at<SDK: SharedAPI>(
     write_abi(sdk, &validator_total_at(sdk, command.validator, epoch)?)
 }
 
-/// Public handler `0xdd0fb5df` (`registerValidator`).
+/// Public handler `registerValidator(address,uint16,uint256,bytes,bytes,bytes32)`.
 ///
 /// Registers a pending validator and pulls its initial self-stake.
 pub fn register_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
     ensure_initialized(sdk)?;
-    let command: RegisterValidatorCommand = decode(input)?;
+    let command = decode_args::<RegisterValidatorCommand>(input)?;
     if command.commission_rate > COMMISSION_RATE_MAX {
         return revert_with(sdk, ERR_BAD_COMMISSION_RATE, &command.commission_rate);
     }
@@ -878,6 +898,13 @@ pub fn register_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
     if command.initial_stake < minimum {
         return revert_with(sdk, ERR_INITIAL_STAKE_TOO_LOW, &command.initial_stake);
     }
+    let verified = verify_consensus_keys(
+        sdk,
+        command.validator,
+        command.bls_pubkey_uncompressed,
+        command.bls_pop_uncompressed,
+        command.peer_pubkey,
+    )?;
     let owner = sdk.context().contract_caller();
     let since_epoch = next_epoch(sdk)?;
     set_validator(
@@ -889,6 +916,7 @@ pub fn register_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
         command.initial_stake,
         since_epoch,
     )?;
+    store_consensus_keys(sdk, command.validator, verified, since_epoch)?;
     safe_transfer_from(sdk, owner, command.initial_stake)
 }
 

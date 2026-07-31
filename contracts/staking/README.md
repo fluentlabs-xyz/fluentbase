@@ -18,14 +18,15 @@ The core validator staking contract implemented as a normal rWasm contract and d
 1. Deployment atomically installs and initializes staking, chain configuration, and external dependencies before public
    transactions can execute.
 2. Governance manages chain configuration and validator status.
-3. Validators register consensus keys; delegators approve and deposit BLEND.
+3. Validator creation verifies and stores consensus keys atomically; delegators approve and deposit BLEND.
 4. The system caller commits epoch committees and settles finalized epoch stipends.
 5. Liveness and equivocation paths jail or permanently tombstone validators.
 
 Registered validator identities are permanent. Governance may disable and reactivate validators, but disabling never
 deletes their records, consensus-key state, ownership mappings, or stake history.
 Governance-added validators begin pending with zero stake and cannot become active until their self-stake is effective
-at or above the configured validator minimum.
+at or above the configured validator minimum. Genesis, governance, and permissionless registration all require the BLS
+key, proof of possession, and peer key in the validator-creation call; there is no separate key-registration phase.
 
 ## Accounting Invariants
 
@@ -46,8 +47,12 @@ at or above the configured validator minimum.
   disbursement skips the epoch with zero credited rewards and advances the cursor; reverted calls and malformed return
   values revert settlement and remain retryable.
 - Equivocation tombstones are permanent and prevent key reuse or jail release.
+- Compressed BLS public keys are stored as three fixed `bytes32` words. Validator creation rejects any verifier output
+  that is not exactly 96 bytes, avoiding dynamic-bytes metadata and making malformed stored key lengths unrepresentable.
 - Liveness jailing protects the fixed committed committee for the current epoch (or its selected
   pre-commit fallback); sequential reports cannot ratchet down the quorum floor.
+- Committee selection filters validators without active, correctly shaped consensus keys before
+  stake ranking and rejects empty committees without advancing the commit epoch.
 - Equivocation reporter rewards use a beneficiary-owned commit/reveal flow; the transaction sender that reveals evidence
   is never used as the reward recipient.
 - A validator's `owner` is its immutable administrative, validator-fee, self-stake, and slashing identity.

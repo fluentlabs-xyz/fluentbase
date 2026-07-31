@@ -13,12 +13,12 @@ use fluentbase_sdk::{
     Address, ContextReader, ExitCode, SharedAPI, GENESIS_GOVERNANCE, U256,
 };
 
-pub(crate) fn revert<SDK: SharedAPI>(sdk: &mut SDK, code: u32) -> Result<(), ExitCode> {
+pub(crate) fn revert<SDK: SharedAPI, T>(sdk: &mut SDK, code: u32) -> Result<T, ExitCode> {
     sdk.write(code.to_be_bytes());
     Err(ExitCode::Panic)
 }
 
-pub(crate) fn revert_with<SDK, T>(sdk: &mut SDK, code: u32, value: &T) -> Result<(), ExitCode>
+pub(crate) fn revert_with<SDK, T, R>(sdk: &mut SDK, code: u32, value: &T) -> Result<R, ExitCode>
 where
     SDK: SharedAPI,
     T: Encoder<BE, 32, true, false>,

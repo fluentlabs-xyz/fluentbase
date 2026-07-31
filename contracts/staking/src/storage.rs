@@ -7,7 +7,7 @@ use crate::consts::{
 use fluentbase_sdk::{
     derive::Storage,
     storage::{
-        StorageAddress, StorageBool, StorageBytes, StorageBytes32, StorageMap, StorageU16,
+        StorageAddress, StorageArray, StorageBool, StorageBytes32, StorageMap, StorageU16,
         StorageU256, StorageU32, StorageU64, StorageU8, StorageUint112, StorageUint96, StorageVec,
     },
     Address, B256,
@@ -17,6 +17,7 @@ use fluentbase_sdk::{
 #[derive(Storage)]
 pub struct InitializerStorage {
     initialized: StorageBool,
+    initializing: StorageBool,
 }
 
 /// ERC-7201 namespaced chain configuration.
@@ -122,7 +123,8 @@ pub struct SelectionMembershipStorage {
 /// One validator's immutable v1 consensus identity.
 #[derive(Storage)]
 pub struct ConsensusKeysStorage {
-    bls_pubkey: StorageBytes,
+    /// Compressed 96-byte BLS12-381 G2 key, stored without dynamic-bytes metadata.
+    bls_pubkey: StorageArray<StorageBytes32, 3>,
     peer_pubkey: StorageBytes32,
     activation_epoch: StorageU64,
 }

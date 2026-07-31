@@ -119,7 +119,6 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_SETTLE_EPOCH_STIPEND => staking::settle_epoch_stipend(sdk, params),
 
         // Consensus
-        SIG_SET_CONSENSUS_KEYS => consensus::set_consensus_keys(sdk, params),
         SIG_GET_CONSENSUS_KEYS => consensus::get_consensus_keys(sdk, params),
         SIG_GET_VALIDATORS_WITH_KEYS => consensus::get_validators_with_keys(sdk),
         SIG_GET_REGISTRY_WITH_KEYS => consensus::get_registry_with_keys(sdk),

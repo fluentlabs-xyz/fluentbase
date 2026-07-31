@@ -4,14 +4,14 @@ use crate::{
     consts::*,
     events, math,
     staking::{
-        remove_active, selected_validators, selected_validators_at, selection_visible_at,
-        set_selection_visible, touch_snapshot_at_or_before, validator_has_minimum_self_stake_at,
-        validator_total_at,
+        remove_active, selected_validators, selected_validators_at, selection_candidates_at,
+        set_selection_visible, top_k_by_stake_at, touch_snapshot_at_or_before,
+        validator_has_minimum_self_stake_at, validator_total_at,
     },
     storage::{chain_config_storage, consensus_storage, staking_storage},
     types::{
         AddressCommand, ConsensusKeys, DecodedEvidence, EpochSignerCommand, EquivocationCommand,
-        SetConsensusKeysCommand, U64Command,
+        U64Command,
     },
     util::{
         current_epoch, decode, decode_args, ensure_initialized, ensure_mutable, ensure_non_payable,
@@ -79,11 +79,30 @@ fn read_consensus_keys<SDK: SharedAPI>(
     let keys = consensus_storage()
         .consensus_keys_accessor()
         .entry(validator);
+    let peer_pubkey = keys.peer_pubkey_accessor().get_checked(sdk)?;
+    if peer_pubkey.is_zero() {
+        return Ok(ConsensusKeys::default());
+    }
     Ok(ConsensusKeys {
-        bls_pubkey: Bytes::from(keys.bls_pubkey_accessor().load(sdk)?),
-        peer_pubkey: keys.peer_pubkey_accessor().get_checked(sdk)?,
+        bls_pubkey: read_bls_pubkey(sdk, validator)?,
+        peer_pubkey,
         activation_epoch: keys.activation_epoch_accessor().get_checked(sdk)?,
     })
+}
+
+pub(crate) fn read_bls_pubkey<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+) -> Result<Bytes, ExitCode> {
+    let parts = consensus_storage()
+        .consensus_keys_accessor()
+        .entry(validator)
+        .bls_pubkey_accessor();
+    let mut key = Vec::with_capacity(BLS_PUBKEY_LENGTH);
+    for index in 0..3 {
+        key.extend_from_slice(parts.at(index).get_checked(sdk)?.as_slice());
+    }
+    Ok(Bytes::from(key))
 }
 
 fn fluent_namespace<SDK: SharedAPI>(sdk: &SDK) -> Bytes {
@@ -92,59 +111,42 @@ fn fluent_namespace<SDK: SharedAPI>(sdk: &SDK) -> Bytes {
     Bytes::from(namespace)
 }
 
-/// Public handler `0x225cba85` (`setConsensusKeys`).
-///
-/// Registers a validator's BLS and peer consensus keys after proof verification.
-pub fn set_consensus_keys<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_mutable(sdk)?;
-    ensure_initialized(sdk)?;
-    let (validator, bls_pubkey_uncompressed, bls_pop_uncompressed, peer_pubkey) =
-        decode_args::<(Address, Bytes, Bytes, B256)>(input)?;
-    let command = SetConsensusKeysCommand {
-        validator,
-        bls_pubkey_uncompressed,
-        bls_pop_uncompressed,
-        peer_pubkey,
-    };
-    let staking = staking_storage();
+pub(crate) struct VerifiedConsensusKeys {
+    bls_pubkey: [B256; 3],
+    encoded_bls_pubkey: Bytes,
+    peer_pubkey: B256,
+}
+
+/// Validates a validator's proof of possession and converts its BLS key to the
+/// fixed three-word representation used in storage.
+pub(crate) fn verify_consensus_keys<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+    bls_pubkey_uncompressed: Bytes,
+    bls_pop_uncompressed: Bytes,
+    peer_pubkey: B256,
+) -> Result<VerifiedConsensusKeys, ExitCode> {
     let consensus = consensus_storage();
     if consensus
         .tombstoned_accessor()
-        .entry(command.validator)
+        .entry(validator)
         .get_checked(sdk)?
     {
-        return revert_with(
-            sdk,
-            ERR_ALREADY_SLASHED_FOR_EQUIVOCATION,
-            &command.validator,
-        );
+        return revert_with(sdk, ERR_ALREADY_SLASHED_FOR_EQUIVOCATION, &validator);
     }
-    let record = staking.validators_accessor().entry(command.validator);
-    if record.status_accessor().get_checked(sdk)? == STATUS_NOT_FOUND {
-        return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &command.validator);
-    }
-    let owner = record.owner_accessor().get_checked(sdk)?;
-    if sdk.context().contract_caller() != owner {
-        return revert_with(sdk, ERR_ONLY_VALIDATOR_OWNER, &owner);
-    }
-    if command.bls_pubkey_uncompressed.len() != BLS_PUBKEY_UNCOMPRESSED_LENGTH
-        || command.bls_pop_uncompressed.len() != BLS_POP_UNCOMPRESSED_LENGTH
-        || command.peer_pubkey.is_zero()
+    if bls_pubkey_uncompressed.len() != BLS_PUBKEY_UNCOMPRESSED_LENGTH
+        || bls_pop_uncompressed.len() != BLS_POP_UNCOMPRESSED_LENGTH
+        || peer_pubkey.is_zero()
     {
         return revert(sdk, ERR_INVALID_CONSENSUS_KEY_ENCODING);
     }
-    let keys = consensus.consensus_keys_accessor().entry(command.validator);
-    if keys.bls_pubkey_accessor().len(sdk) != 0 {
-        return revert_with(sdk, ERR_CONSENSUS_KEYS_ALREADY_SET, &command.validator);
-    }
     if !consensus
         .peer_pubkey_owner_accessor()
-        .entry(command.peer_pubkey)
+        .entry(peer_pubkey)
         .get_checked(sdk)?
         .is_zero()
     {
-        return revert_with(sdk, ERR_PEER_PUBKEY_ALREADY_IN_USE, &command.peer_pubkey);
+        return revert_with(sdk, ERR_PEER_PUBKEY_ALREADY_IN_USE, &peer_pubkey);
     }
 
     let verifier = chain_config_storage()
@@ -157,10 +159,13 @@ pub fn set_consensus_keys<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
         sdk,
         verifier,
         SIG_BLS_COMPRESS_G2_UNCHECKED,
-        &(command.bls_pubkey_uncompressed.clone(),),
+        &(bls_pubkey_uncompressed.clone(),),
     )?;
     let compressed = SolidityABI::<Bytes>::decode(&compressed_output, 0)
         .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+    if compressed.len() != BLS_PUBKEY_LENGTH {
+        return revert(sdk, ERR_INVALID_CONSENSUS_KEY_ENCODING);
+    }
     let verify_output = external_call(
         sdk,
         verifier,
@@ -169,34 +174,65 @@ pub fn set_consensus_keys<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
             fluent_namespace(sdk),
             compressed.clone(),
             Bytes::from_static(BLS_POP_DST),
-            command.bls_pop_uncompressed,
-            command.bls_pubkey_uncompressed,
+            bls_pop_uncompressed,
+            bls_pubkey_uncompressed,
         ),
     )?;
     let valid = SolidityABI::<bool>::decode(&verify_output, 0)
         .map_err(|_| ExitCode::MalformedBuiltinParams)?;
     if !valid {
-        return revert_with(sdk, ERR_INVALID_PROOF_OF_POSSESSION, &command.validator);
+        return revert_with(sdk, ERR_INVALID_PROOF_OF_POSSESSION, &validator);
     }
 
-    let activation_epoch = if selection_visible_at(sdk, command.validator, 0)? {
-        0
-    } else {
-        next_epoch(sdk)?
-    };
-    keys.bls_pubkey_accessor().store(sdk, compressed.as_ref())?;
+    Ok(VerifiedConsensusKeys {
+        bls_pubkey: [
+            B256::from_slice(&compressed[..32]),
+            B256::from_slice(&compressed[32..64]),
+            B256::from_slice(&compressed[64..]),
+        ],
+        encoded_bls_pubkey: compressed,
+        peer_pubkey,
+    })
+}
+
+/// Stores already-verified keys atomically with validator creation.
+pub(crate) fn store_consensus_keys<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+    verified: VerifiedConsensusKeys,
+    activation_epoch: u64,
+) -> Result<(), ExitCode> {
+    let consensus = consensus_storage();
+    let keys = consensus.consensus_keys_accessor().entry(validator);
+    if !keys.peer_pubkey_accessor().get_checked(sdk)?.is_zero() {
+        return revert_with(sdk, ERR_CONSENSUS_KEYS_ALREADY_SET, &validator);
+    }
+    // Recheck after verifier calls so a reentrant peer-key claim cannot be
+    // overwritten when the external call returns.
+    if !consensus
+        .peer_pubkey_owner_accessor()
+        .entry(verified.peer_pubkey)
+        .get_checked(sdk)?
+        .is_zero()
+    {
+        return revert_with(sdk, ERR_PEER_PUBKEY_ALREADY_IN_USE, &verified.peer_pubkey);
+    }
+    let parts = keys.bls_pubkey_accessor();
+    for (index, part) in verified.bls_pubkey.into_iter().enumerate() {
+        parts.at(index).set_checked(sdk, part)?;
+    }
     keys.peer_pubkey_accessor()
-        .set_checked(sdk, command.peer_pubkey)?;
+        .set_checked(sdk, verified.peer_pubkey)?;
     keys.activation_epoch_accessor()
         .set_checked(sdk, activation_epoch)?;
     consensus
         .peer_pubkey_owner_accessor()
-        .entry(command.peer_pubkey)
-        .set_checked(sdk, command.validator)?;
+        .entry(verified.peer_pubkey)
+        .set_checked(sdk, validator)?;
     events::ConsensusKeysSet {
-        validator: command.validator,
-        bls_pubkey: compressed,
-        peer_pubkey: command.peer_pubkey,
+        validator,
+        bls_pubkey: verified.encoded_bls_pubkey,
+        peer_pubkey: verified.peer_pubkey,
         activation_epoch,
     }
     .emit(sdk)
@@ -313,6 +349,29 @@ fn committee_changed<SDK: SharedAPI>(
     Ok(false)
 }
 
+fn has_active_consensus_keys_at<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    epoch: u64,
+) -> Result<bool, ExitCode> {
+    let keys = read_consensus_keys(sdk, validator)?;
+    Ok(!keys.peer_pubkey.is_zero() && keys.activation_epoch <= epoch)
+}
+
+fn selected_committee_at<SDK: SharedAPI>(sdk: &SDK, epoch: u64) -> Result<Vec<Address>, ExitCode> {
+    let candidates = selection_candidates_at(sdk, epoch)?;
+    let mut eligible = Vec::with_capacity(candidates.len());
+    for validator in candidates {
+        if has_active_consensus_keys_at(sdk, validator, epoch)? {
+            eligible.push(validator);
+        }
+    }
+    let cap = chain_config_storage()
+        .active_validators_length_accessor()
+        .get_checked(sdk)? as usize;
+    top_k_by_stake_at(sdk, eligible, epoch, cap)
+}
+
 fn prune_committees<SDK: SharedAPI>(sdk: &mut SDK, current: u64) -> Result<(), ExitCode> {
     let storage = consensus_storage();
     let retention = chain_config_storage()
@@ -358,13 +417,13 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
         return revert_with(sdk, ERR_EPOCH_NOT_YET_COMMITTABLE, &(target, current));
     }
     let selection_epoch = target.saturating_sub(2);
-    let top = selected_validators_at(sdk, selection_epoch)?;
-    let mut eligible = Vec::new();
-    for validator in top {
-        let keys = read_consensus_keys(sdk, validator)?;
-        if !keys.peer_pubkey.is_zero() && keys.activation_epoch <= selection_epoch {
-            eligible.push(validator);
-        }
+    let eligible = selected_committee_at(sdk, selection_epoch)?;
+    if eligible.len() < MIN_COMMITTEE_LENGTH {
+        return revert_with(
+            sdk,
+            ERR_COMMITTEE_TOO_SMALL,
+            &(U256::from(eligible.len()), U256::from(MIN_COMMITTEE_LENGTH)),
+        );
     }
     if submitted.len() != eligible.len() {
         return revert_with(
@@ -1102,14 +1161,11 @@ fn slash_equivocation<SDK: SharedAPI>(
     {
         return revert_with(sdk, ERR_ALREADY_SLASHED_FOR_EQUIVOCATION, &validator);
     }
-    let stored_key = consensus
-        .consensus_keys_accessor()
-        .entry(validator)
-        .bls_pubkey_accessor()
-        .load(sdk)?;
-    if stored_key.len() != BLS_PUBKEY_LENGTH {
+    let registered_keys = read_consensus_keys(sdk, validator)?;
+    if registered_keys.peer_pubkey.is_zero() {
         return revert_with(sdk, ERR_CONSENSUS_KEYS_NOT_SET, &validator);
     }
+    let stored_key = registered_keys.bls_pubkey;
     let verifier = config.bls_verifier_accessor().get_checked(sdk)?;
     if verifier.is_zero() {
         return revert(sdk, ERR_BLS_VERIFIER_NOT_CONFIGURED);

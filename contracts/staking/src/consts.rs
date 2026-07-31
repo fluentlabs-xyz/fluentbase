@@ -16,10 +16,10 @@ pub const STATUS_JAIL: u8 = 3;
 // ABI selectors are derived from their canonical signatures. The pinned hex
 // values remain beside them to make ABI drift visible during review.
 
-// 0xdca9ac1b
+// 0x4b4b21a5
 pub const SIG_INITIALIZE: u32 =
     derive_keccak256_id!(
-        "initialize(address,address[],uint256[],uint16,address,uint32,uint32,uint32,uint32,uint32,uint256,uint256,uint64,address,address,uint256,address,address)"
+        "initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],uint16,address,uint32,uint32,uint32,uint32,uint32,uint256,uint256,uint64,address,address,uint256,address,address)"
     );
 // 0x76671808
 pub const SIG_CURRENT_EPOCH: u32 = derive_keccak256_id!("currentEpoch()");
@@ -37,8 +37,9 @@ pub const SIG_GET_VALIDATOR_STATUS: u32 = derive_keccak256_id!("getValidatorStat
 pub const SIG_GET_VALIDATOR_BY_OWNER: u32 = derive_keccak256_id!("getValidatorByOwner(address)");
 // 0xb7ab4db5
 pub const SIG_GET_VALIDATORS: u32 = derive_keccak256_id!("getValidators()");
-// 0x4d238c8e
-pub const SIG_ADD_VALIDATOR: u32 = derive_keccak256_id!("addValidator(address)");
+// 0xfff952d5
+pub const SIG_ADD_VALIDATOR: u32 =
+    derive_keccak256_id!("addValidator(address,bytes,bytes,bytes32)");
 // 0xb46e5520
 pub const SIG_ACTIVATE_VALIDATOR: u32 = derive_keccak256_id!("activateValidator(address)");
 // 0x1fe97684
@@ -71,9 +72,9 @@ pub const SIG_GET_VALIDATOR_DELEGATION: u32 =
 // 0xe8810ea7
 pub const SIG_GET_VALIDATOR_DELEGATED_STAKE_AT: u32 =
     derive_keccak256_id!("getValidatorDelegatedStakeAt(address,uint256)");
-// 0xdd0fb5df
+// 0x8d6067ed
 pub const SIG_REGISTER_VALIDATOR: u32 =
-    derive_keccak256_id!("registerValidator(address,uint16,uint256)");
+    derive_keccak256_id!("registerValidator(address,uint16,uint256,bytes,bytes,bytes32)");
 // 0x026e402b
 pub const SIG_DELEGATE: u32 = derive_keccak256_id!("delegate(address,uint256)");
 // 0x4d99dd16
@@ -188,9 +189,6 @@ pub const SIG_REDELEGATE_DELEGATOR_FEE: u32 =
 pub const SIG_SETTLE_EPOCH_STIPEND: u32 = derive_keccak256_id!("settleEpochStipend(uint64)");
 // 0x54c3e84b
 pub const SIG_GET_EPOCH_REWARDS: u32 = derive_keccak256_id!("getEpochRewards(uint64)");
-// 0x225cba85
-pub const SIG_SET_CONSENSUS_KEYS: u32 =
-    derive_keccak256_id!("setConsensusKeys(address,bytes,bytes,bytes32)");
 // 0xad36f42f
 pub const SIG_GET_CONSENSUS_KEYS: u32 = derive_keccak256_id!("getConsensusKeys(address)");
 // 0xd41c52eb
@@ -325,6 +323,7 @@ pub const ERR_SIGNER_INDEX_OUT_OF_RANGE: u32 =
     derive_keccak256_id!("SignerIndexOutOfRange(uint64,uint32,uint256)");
 pub const ERR_COMMITTEE_LENGTH_MISMATCH: u32 =
     derive_keccak256_id!("CommitteeLengthMismatch(uint256,uint256)");
+pub const ERR_COMMITTEE_TOO_SMALL: u32 = derive_keccak256_id!("CommitteeTooSmall(uint256,uint256)");
 pub const ERR_EPOCH_NOT_YET_COMMITTABLE: u32 =
     derive_keccak256_id!("EpochNotYetCommittable(uint64,uint64)");
 pub const ERR_COMMITTEE_MEMBER_KEYLESS: u32 =
@@ -365,6 +364,7 @@ pub const COMMISSION_RATE_MAX: u16 = 3_000;
 pub const DEFAULT_EPOCH_BLOCK_INTERVAL: u64 = 200;
 pub const DEFAULT_ACTIVE_VALIDATORS_LENGTH: u64 = 21;
 pub const MAX_ACTIVE_VALIDATORS_LENGTH: u64 = 51;
+pub const MIN_COMMITTEE_LENGTH: usize = 1;
 pub const DEFAULT_UNDELEGATE_PERIOD: u64 = 7;
 pub const WARMUP_DELAY: u64 = 2;
 pub const MAX_EPOCHS_PER_CLAIM: u64 = 1_000;

@@ -23,6 +23,9 @@ sol! {
             address initialOwner,
             address[] validators,
             uint256[] initialStakes,
+            bytes[] blsPubkeysUncompressed,
+            bytes[] blsPopsUncompressed,
+            bytes32[] peerPubkeys,
             uint16 commissionRate,
             address stakingToken,
             uint32 activeValidatorsLength,
@@ -39,16 +42,15 @@ sol! {
             address livenessSlashing,
             address blendReserve
         ) external;
-        function addValidator(address validator) external;
-        function delegate(address validator, uint256 amount) external;
-        function undelegate(address validator, uint256 amount) external;
-        function claimDelegatorFee(address validator) external;
-        function setConsensusKeys(
+        function addValidator(
             address validator,
             bytes calldata blsPubkeyUncompressed,
             bytes calldata blsPopUncompressed,
             bytes32 peerPubkey
         ) external;
+        function delegate(address validator, uint256 amount) external;
+        function undelegate(address validator, uint256 amount) external;
+        function claimDelegatorFee(address validator) external;
         function getConsensusKeys(address validator)
             external
             view
@@ -96,7 +98,8 @@ fn initialize_calldata(
     bls_verifier: Address,
     initial_stakes: Vec<U256>,
 ) -> Vec<u8> {
-    let validators = if initial_stakes.is_empty() {
+    let has_initial_validator = !initial_stakes.is_empty();
+    let validators = if !has_initial_validator {
         Vec::new()
     } else {
         vec![VALIDATOR]
@@ -105,6 +108,21 @@ fn initialize_calldata(
         initialOwner: OWNER,
         validators,
         initialStakes: initial_stakes,
+        blsPubkeysUncompressed: if !has_initial_validator {
+            Vec::new()
+        } else {
+            vec![vec![0x11; 256].into()]
+        },
+        blsPopsUncompressed: if !has_initial_validator {
+            Vec::new()
+        } else {
+            vec![vec![0x22; 128].into()]
+        },
+        peerPubkeys: if !has_initial_validator {
+            Vec::new()
+        } else {
+            vec![B256::with_last_byte(1)]
+        },
         commissionRate: 0,
         stakingToken: staking_token,
         activeValidatorsLength: 21,
@@ -124,12 +142,10 @@ fn initialize_calldata(
     .abi_encode()
 }
 
-#[test]
-fn staking_accepts_solidity_bytes_for_consensus_keys() {
-    let mut context = EvmTestingContext::default().with_full_genesis();
+fn deploy_mock_bls_verifier(context: &mut EvmTestingContext) -> Address {
     // Init bytecode for a Solidity mock that returns bytes(96) from
     // compressG2Unchecked(bytes) and true from verify(bytes,bytes,bytes,bytes,bytes).
-    let verifier = context.deploy_evm_tx(
+    context.deploy_evm_tx(
         OWNER,
         Bytes::from_static(&hex!(
             "6080604052348015600f57600080fd5b506102cd8061001f6000396000f3fe60806040523480156100
@@ -152,7 +168,13 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
              6970667358221220f07b58ae9a9816fe76d1d4ededd0059334efa5a878d8eadfb08a543038e7910364
              736f6c63430008220033"
         )),
-    );
+    )
+}
+
+#[test]
+fn staking_accepts_solidity_bytes_for_consensus_keys() {
+    let mut context = EvmTestingContext::default().with_full_genesis();
+    let verifier = deploy_mock_bls_verifier(&mut context);
 
     // Keep key activation explicitly pre-activation: the current epoch is
     // clamped to zero.
@@ -168,15 +190,6 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
         GENESIS_GOVERNANCE,
         GENESIS_STAKING,
         IStakingRwasm::addValidatorCall {
-            validator: VALIDATOR,
-        }
-        .abi_encode(),
-    );
-    call(
-        &mut context,
-        VALIDATOR,
-        GENESIS_STAKING,
-        IStakingRwasm::setConsensusKeysCall {
             validator: VALIDATOR,
             blsPubkeyUncompressed: vec![0x11; 256].into(),
             blsPopUncompressed: vec![0x22; 128].into(),
@@ -202,6 +215,7 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
 #[test]
 fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
     let mut context = EvmTestingContext::default().with_full_genesis();
+    let verifier = deploy_mock_bls_verifier(&mut context);
     let initial_supply = TOKEN * U256::from(1_000);
     let token = context.deploy_evm_tx(
         OWNER,
@@ -221,7 +235,7 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
         &mut context,
         OWNER,
         GENESIS_STAKING,
-        initialize_calldata(token, Address::ZERO, vec![TOKEN]),
+        initialize_calldata(token, verifier, vec![TOKEN]),
     );
 
     let mut approve = Vec::new();
@@ -235,13 +249,13 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
         &mut context,
         GENESIS_GOVERNANCE,
         GENESIS_STAKING,
-        initialize_calldata(token, Address::ZERO, vec![TOKEN]),
+        initialize_calldata(token, verifier, vec![TOKEN]),
     );
     assert_reverts(
         &mut context,
         GENESIS_GOVERNANCE,
         GENESIS_STAKING,
-        initialize_calldata(token, Address::ZERO, vec![TOKEN]),
+        initialize_calldata(token, verifier, vec![TOKEN]),
     );
     call(
         &mut context,
