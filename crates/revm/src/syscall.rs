@@ -1230,7 +1230,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 current_target_address == PRECOMPILE_RUNTIME_UPGRADE,
                 MalformedBuiltinParams
             );
-            let (input, lazy_contract_input) = get_input_validated!(>= 20);
+            let (input, lazy_contract_input) = get_input_validated!(>= Address::len_bytes());
             let target_address = Address::from_slice(&input[..Address::len_bytes()]);
             debug_syscall!("UPGRADE_RUNTIME", "target={:?}", target_address);
             // P.S: We can't validate the target address here, otherwise it will require a fork
@@ -1262,13 +1262,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 current_target_address == PRECOMPILE_RUNTIME_UPGRADE,
                 MalformedBuiltinParams
             );
-            let (input, lazy_contract_input) = get_input_validated!(>= 21);
+            let (input, lazy_contract_input) = get_input_validated!(>= Address::len_bytes());
             let target_address = Address::from_slice(&input[..Address::len_bytes()]);
             let Ok(evm_binary) = lazy_contract_input() else {
                 return_halt!(MemoryOutOfBounds);
             };
             let evm_binary: Bytes = evm_binary.into();
-            if evm_binary.len() > EVM_MAX_CODE_SIZE {
+            if evm_binary.is_empty() || evm_binary.len() > EVM_MAX_CODE_SIZE {
                 return_halt!(MalformedBuiltinParams);
             }
             #[cfg(feature = "std")]
