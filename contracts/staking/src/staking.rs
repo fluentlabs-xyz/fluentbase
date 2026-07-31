@@ -328,38 +328,6 @@ fn emit_modified<SDK: SharedAPI>(sdk: &mut SDK, validator: Address) -> Result<()
     .emit(sdk)
 }
 
-fn touch_validator_snapshot<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    validator: Address,
-    epoch: u64,
-) -> Result<ValidatorSnapshotStorage, ExitCode> {
-    let storage = staking_storage();
-    let snapshots = storage.validator_snapshots_accessor().entry(validator);
-    let snapshot = snapshots.entry(epoch);
-    if !snapshot
-        .total_delegated_accessor()
-        .get_checked(sdk)?
-        .is_zero()
-    {
-        return Ok(snapshot);
-    }
-
-    let record = storage.validators_accessor().entry(validator);
-    let changed_at = record.changed_at_accessor().get_checked(sdk)?;
-    let previous = snapshots.entry(changed_at);
-    snapshot
-        .total_delegated_accessor()
-        .set_checked(sdk, previous.total_delegated_accessor().get_checked(sdk)?)?;
-    snapshot
-        .commission_rate_accessor()
-        .set_checked(sdk, previous.commission_rate_accessor().get_checked(sdk)?)?;
-    insert_snapshot_epoch(sdk, validator, epoch)?;
-    if epoch > changed_at {
-        record.changed_at_accessor().set_checked(sdk, epoch)?;
-    }
-    Ok(snapshot)
-}
-
 fn insert_snapshot_epoch<SDK: SharedAPI>(
     sdk: &mut SDK,
     validator: Address,
@@ -418,6 +386,10 @@ fn latest_snapshot_epoch_at_or_before<SDK: SharedAPI>(
     Ok(Some(epochs.at(low - 1).get_checked(sdk)?))
 }
 
+/// Materializes `epoch` from the latest snapshot that was already effective.
+///
+/// `record.changed_at` is only the highest materialized epoch and can point to
+/// a future warm-up checkpoint, so it must never be used as the copy source.
 pub(crate) fn touch_snapshot_at_or_before<SDK: SharedAPI>(
     sdk: &mut SDK,
     validator: Address,
@@ -445,6 +417,115 @@ pub(crate) fn touch_snapshot_at_or_before<SDK: SharedAPI>(
         record.changed_at_accessor().set_checked(sdk, epoch)?;
     }
     Ok(snapshot)
+}
+
+fn first_snapshot_index_at_or_after<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    epoch: u64,
+) -> Result<u64, ExitCode> {
+    let epochs = staking_storage()
+        .validator_snapshot_epochs_accessor()
+        .entry(validator);
+    let len = epochs.len_checked(sdk)?;
+    let mut low = 0;
+    let mut high = len;
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if epochs.at(middle).get_checked(sdk)? < epoch {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    Ok(low)
+}
+
+fn update_total_delegated_from<SDK, F>(
+    sdk: &mut SDK,
+    validator: Address,
+    epoch: u64,
+    update: F,
+) -> Result<(), ExitCode>
+where
+    SDK: SharedAPI,
+    F: Fn(math::U112) -> Option<math::U112>,
+{
+    touch_snapshot_at_or_before(sdk, validator, epoch)?;
+    // Contract entrypoints can materialize only the current epoch or the
+    // E+1/E+2 scheduling horizon, so this future tail remains bounded.
+    let storage = staking_storage();
+    let epochs = storage
+        .validator_snapshot_epochs_accessor()
+        .entry(validator);
+    let len = epochs.len_checked(sdk)?;
+    let start = first_snapshot_index_at_or_after(sdk, validator, epoch)?;
+    for index in start..len {
+        let snapshot_epoch = epochs.at(index).get_checked(sdk)?;
+        let total = storage
+            .validator_snapshots_accessor()
+            .entry(validator)
+            .entry(snapshot_epoch)
+            .total_delegated_accessor();
+        let next = update(total.get_checked(sdk)?).ok_or(ExitCode::IntegerOverflow)?;
+        total.set_checked(sdk, next)?;
+    }
+    Ok(())
+}
+
+fn set_commission_from<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+    epoch: u64,
+    commission_rate: u16,
+) -> Result<(), ExitCode> {
+    touch_snapshot_at_or_before(sdk, validator, epoch)?;
+    // Preserve the new commission in already-materialized warm-up snapshots.
+    let storage = staking_storage();
+    let epochs = storage
+        .validator_snapshot_epochs_accessor()
+        .entry(validator);
+    let len = epochs.len_checked(sdk)?;
+    let start = first_snapshot_index_at_or_after(sdk, validator, epoch)?;
+    for index in start..len {
+        let snapshot_epoch = epochs.at(index).get_checked(sdk)?;
+        storage
+            .validator_snapshots_accessor()
+            .entry(validator)
+            .entry(snapshot_epoch)
+            .commission_rate_accessor()
+            .set_checked(sdk, commission_rate)?;
+    }
+    Ok(())
+}
+
+fn only_self_stake_remains_after_decrease<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    epoch: u64,
+    amount: math::U112,
+    remaining_self_stake: math::U112,
+) -> Result<bool, ExitCode> {
+    let storage = staking_storage();
+    let epochs = storage
+        .validator_snapshot_epochs_accessor()
+        .entry(validator);
+    let len = epochs.len_checked(sdk)?;
+    let start = first_snapshot_index_at_or_after(sdk, validator, epoch)?;
+    for index in start..len {
+        let snapshot_epoch = epochs.at(index).get_checked(sdk)?;
+        let total = storage
+            .validator_snapshots_accessor()
+            .entry(validator)
+            .entry(snapshot_epoch)
+            .total_delegated_accessor()
+            .get_checked(sdk)?;
+        let next = total.checked_sub(amount).ok_or(ExitCode::IntegerOverflow)?;
+        if next != remaining_self_stake {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 pub(crate) fn validator_total_at<SDK: SharedAPI>(
@@ -660,7 +741,7 @@ pub fn activate_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
         .push_checked(sdk, validator)?;
     ensure_rostered(sdk, validator)?;
     set_selection_visible(sdk, validator, true, current_epoch(sdk)?)?;
-    touch_validator_snapshot(sdk, validator, activation_epoch)?;
+    touch_snapshot_at_or_before(sdk, validator, activation_epoch)?;
     emit_modified(sdk, validator)
 }
 
@@ -676,7 +757,7 @@ pub fn disable_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
         return revert(sdk, ERR_NOT_ACTIVE_VALIDATOR);
     }
     deactivate_validator_at(sdk, validator, current_epoch(sdk)?)?;
-    touch_validator_snapshot(sdk, validator, next_epoch(sdk)?)?;
+    touch_snapshot_at_or_before(sdk, validator, next_epoch(sdk)?)?;
     emit_modified(sdk, validator)
 }
 
@@ -702,10 +783,7 @@ pub fn change_commission<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
         return revert_with(sdk, ERR_ONLY_VALIDATOR_OWNER, &validator_owner);
     }
     let changed_at = next_epoch(sdk)?;
-    let snapshot = touch_validator_snapshot(sdk, command.validator, changed_at)?;
-    snapshot
-        .commission_rate_accessor()
-        .set_checked(sdk, command.value)?;
+    set_commission_from(sdk, command.validator, changed_at, command.value)?;
     emit_modified(sdk, command.validator)
 }
 
@@ -857,15 +935,9 @@ pub(crate) fn delegate_to<SDK: SharedAPI>(
     let at_epoch = current_epoch(sdk)?
         .checked_add(WARMUP_DELAY)
         .ok_or(ExitCode::IntegerOverflow)?;
-    let snapshot = touch_validator_snapshot(sdk, validator, at_epoch)?;
-    let next_total = snapshot
-        .total_delegated_accessor()
-        .get_checked(sdk)?
-        .checked_add(compact_amount)
-        .ok_or(ExitCode::IntegerOverflow)?;
-    snapshot
-        .total_delegated_accessor()
-        .set_checked(sdk, next_total)?;
+    update_total_delegated_from(sdk, validator, at_epoch, |total| {
+        total.checked_add(compact_amount)
+    })?;
 
     let queue = storage
         .validator_delegations_accessor()
@@ -960,9 +1032,9 @@ pub(crate) fn undelegate_from<SDK: SharedAPI>(
         return revert(sdk, ERR_INSUFFICIENT_BALANCE);
     };
 
-    let snapshot = touch_validator_snapshot(sdk, validator, before_epoch)?;
+    let snapshot = touch_snapshot_at_or_before(sdk, validator, before_epoch)?;
     let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
-    let Some(next_total) = total.checked_sub(compact_amount) else {
+    let Some(_next_total) = total.checked_sub(compact_amount) else {
         return revert(sdk, ERR_INSUFFICIENT_BALANCE);
     };
 
@@ -975,15 +1047,22 @@ pub(crate) fn undelegate_from<SDK: SharedAPI>(
             .min_validator_stake_amount_accessor()
             .get_checked(sdk)?;
         if math::expand_balance(next_delegated) < min_validator_stake
-            && (!next_delegated.is_zero() || next_total != next_delegated)
+            && (!next_delegated.is_zero()
+                || !only_self_stake_remains_after_decrease(
+                    sdk,
+                    validator,
+                    before_epoch,
+                    compact_amount,
+                    next_delegated,
+                )?)
         {
             return revert(sdk, ERR_OWNER_SELF_STAKE_BELOW_MINIMUM);
         }
     }
 
-    snapshot
-        .total_delegated_accessor()
-        .set_checked(sdk, next_total)?;
+    update_total_delegated_from(sdk, validator, before_epoch, |total| {
+        total.checked_sub(compact_amount)
+    })?;
     if latest_epoch >= before_epoch {
         latest.amount_accessor().set_checked(sdk, next_delegated)?;
     } else {

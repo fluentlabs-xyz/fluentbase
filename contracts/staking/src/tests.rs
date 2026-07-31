@@ -6,9 +6,10 @@ use crate::{
         DelegationOpStorage, UndelegationOpStorage, ValidatorSnapshotStorage,
     },
     types::{
-        AddressCommand, BoolCommand, ConsensusKeys, EpochSignerCommand, EquivocationCommand,
-        InitializeCommand, RegisterValidatorCommand, TwoAddressesCommand, U256Command, U32Command,
-        U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
+        AddressCommand, AddressU16Command, BoolCommand, ConsensusKeys, EpochSignerCommand,
+        EquivocationCommand, InitializeCommand, RegisterValidatorCommand, TwoAddressesCommand,
+        U256Command, U32Command, U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand,
+        ValidatorEpochCommand,
     },
 };
 use fluentbase_sdk::{
@@ -1578,6 +1579,152 @@ fn delegation_and_undelegation_follow_epoch_snapshots() {
 }
 
 #[test]
+fn future_delegation_and_noop_commission_do_not_bypass_warmup() {
+    let contract_owner = Address::with_last_byte(0xa0);
+    let validator_a = Address::with_last_byte(0x01);
+    let validator_b = Address::with_last_byte(0x02);
+    let delegator = Address::with_last_byte(0xb0);
+    let initial_a = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2);
+    let initial_b = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3);
+    let delegated = DEFAULT_MIN_STAKING_AMOUNT * U256::from(2);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(
+            contract_owner,
+            vec![validator_a, validator_b],
+            vec![initial_a, initial_b],
+            0,
+        ),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .active_validators_length_accessor()
+        .set_checked(&mut harness.sdk, 1)
+        .unwrap();
+
+    staking::delegate_to(&mut harness.sdk, delegator, validator_a, delegated, false).unwrap();
+    harness.set_caller(validator_a);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CHANGE_VALIDATOR_COMMISSION_RATE,
+                &AddressU16Command {
+                    validator: validator_a,
+                    value: 0,
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    assert_eq!(
+        staking::validator_total_at(&harness.sdk, validator_a, 1).unwrap(),
+        initial_a,
+        "the E+2 delegation must not be copied into the E+1 commission snapshot"
+    );
+    assert_eq!(
+        staking::validator_total_at(&harness.sdk, validator_a, 2).unwrap(),
+        initial_a + delegated
+    );
+    assert_eq!(
+        staking::selected_validators_at(&harness.sdk, 1).unwrap(),
+        vec![validator_b]
+    );
+    assert_eq!(
+        staking::selected_validators_at(&harness.sdk, 2).unwrap(),
+        vec![validator_a]
+    );
+
+    let reward = DEFAULT_MIN_STAKING_AMOUNT;
+    staking_storage()
+        .validator_snapshots_accessor()
+        .entry(validator_a)
+        .entry(1)
+        .total_blend_rewards_accessor()
+        .set_checked(
+            &mut harness.sdk,
+            math::narrow_reward(reward).expect("reward fits uint96"),
+        )
+        .unwrap();
+    harness.set_block_number(1_400);
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_DELEGATOR_FEE,
+        &ValidatorDelegatorCommand {
+            validator: validator_a,
+            delegator: validator_a,
+        },
+    ));
+    assert_eq!(
+        decode_output::<U256>(&output),
+        reward,
+        "future stake must not dilute rewards before its warm-up completes"
+    );
+}
+
+#[test]
+fn commission_change_carries_forward_without_copying_future_stake_backward() {
+    let contract_owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let delegator = Address::with_last_byte(0xb0);
+    let initial = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2);
+    let delegated = DEFAULT_MIN_STAKING_AMOUNT;
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(contract_owner, vec![validator], vec![initial], 500),
+        ExitCode::Ok
+    );
+    staking::delegate_to(&mut harness.sdk, delegator, validator, delegated, false).unwrap();
+
+    harness.set_caller(validator);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CHANGE_VALIDATOR_COMMISSION_RATE,
+                &AddressU16Command {
+                    validator,
+                    value: 1_000,
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    let snapshots = staking_storage()
+        .validator_snapshots_accessor()
+        .entry(validator);
+    assert_eq!(
+        math::expand_balance(
+            snapshots
+                .entry(1)
+                .total_delegated_accessor()
+                .get_checked(&harness.sdk)
+                .unwrap()
+        ),
+        initial
+    );
+    assert_eq!(
+        math::expand_balance(
+            snapshots
+                .entry(2)
+                .total_delegated_accessor()
+                .get_checked(&harness.sdk)
+                .unwrap()
+        ),
+        initial + delegated
+    );
+    for epoch in [1, 2] {
+        assert_eq!(
+            snapshots
+                .entry(epoch)
+                .commission_rate_accessor()
+                .get_checked(&harness.sdk)
+                .unwrap(),
+            1_000
+        );
+    }
+}
+
+#[test]
 fn sparse_snapshot_lookup_uses_sorted_materialized_epochs() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
@@ -2278,6 +2425,18 @@ fn validator_owner_cannot_drop_below_minimum_while_delegators_remain() {
         ERR_OWNER_SELF_STAKE_BELOW_MINIMUM,
     );
     harness.sdk.restore_storage(before);
+
+    let withdrawn = stake / U256::from(2);
+    staking::undelegate_from(&mut harness.sdk, validator, validator, withdrawn).unwrap();
+    assert_eq!(
+        staking::validator_total_at(&harness.sdk, validator, 1).unwrap(),
+        stake - withdrawn
+    );
+    assert_eq!(
+        staking::validator_total_at(&harness.sdk, validator, 2).unwrap(),
+        stake - withdrawn + DEFAULT_MIN_STAKING_AMOUNT * U256::from(2),
+        "the earlier owner withdrawal must carry into the future delegation snapshot"
+    );
 }
 
 #[test]

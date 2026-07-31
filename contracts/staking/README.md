@@ -31,6 +31,8 @@ at or above the configured validator minimum.
 
 - Stake and commission changes take effect through epoch snapshots; selection changes become visible in the following
   epoch.
+- A newly materialized snapshot copies only the latest state already effective at that epoch. Earlier-effective stake
+  and commission changes are carried forward through any scheduled warm-up snapshots, never copied backward from them.
 - Initialization, activation, jail readmission, and committee selection each require the validator owner's effective
   self-stake to meet the configured minimum. A full owner exit moves an active validator to pending in the same
   transaction and removes its next-epoch selection visibility.
