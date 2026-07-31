@@ -316,6 +316,8 @@ pub const ERR_CONSENSUS_KEYS_ALREADY_SET: u32 =
     derive_keccak256_id!("ConsensusKeysAlreadySet(address)");
 pub const ERR_PEER_PUBKEY_ALREADY_IN_USE: u32 =
     derive_keccak256_id!("PeerPubkeyAlreadyInUse(bytes32)");
+pub const ERR_BLS_PUBKEY_ALREADY_IN_USE: u32 =
+    derive_keccak256_id!("BlsPubkeyAlreadyInUse(bytes32)");
 pub const ERR_CONSENSUS_KEYS_NOT_SET: u32 = derive_keccak256_id!("ConsensusKeysNotSet(address)");
 pub const ERR_EPOCH_COMMITTEE_NOT_COMMITTED: u32 =
     derive_keccak256_id!("EpochCommitteeNotCommitted(uint64)");

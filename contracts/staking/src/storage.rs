@@ -149,6 +149,10 @@ pub struct ConsensusStorage {
     jailed_scan_cursor: StorageU64,
     tombstoned: StorageMap<Address, StorageBool>,
     equivocation_commitments: StorageMap<Address, EquivocationCommitmentStorage>,
+    /// Validator owning a canonical compressed BLS key, indexed by its keccak256 hash.
+    ///
+    /// Consensus identities are immutable in v1, so ownership is never released.
+    bls_pubkey_owner: StorageMap<B256, StorageAddress>,
 }
 
 /// Single ERC-7201 namespaced storage root for staking.

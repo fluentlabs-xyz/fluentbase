@@ -113,6 +113,7 @@ fn fluent_namespace<SDK: SharedAPI>(sdk: &SDK) -> Bytes {
 
 pub(crate) struct VerifiedConsensusKeys {
     bls_pubkey: [B256; 3],
+    bls_pubkey_hash: B256,
     encoded_bls_pubkey: Bytes,
     peer_pubkey: B256,
 }
@@ -166,6 +167,15 @@ pub(crate) fn verify_consensus_keys<SDK: SharedAPI>(
     if compressed.len() != BLS_PUBKEY_LENGTH {
         return revert(sdk, ERR_INVALID_CONSENSUS_KEY_ENCODING);
     }
+    let bls_pubkey_hash = keccak256(&compressed);
+    if !consensus
+        .bls_pubkey_owner_accessor()
+        .entry(bls_pubkey_hash)
+        .get_checked(sdk)?
+        .is_zero()
+    {
+        return revert_with(sdk, ERR_BLS_PUBKEY_ALREADY_IN_USE, &bls_pubkey_hash);
+    }
     let verify_output = external_call(
         sdk,
         verifier,
@@ -190,6 +200,7 @@ pub(crate) fn verify_consensus_keys<SDK: SharedAPI>(
             B256::from_slice(&compressed[32..64]),
             B256::from_slice(&compressed[64..]),
         ],
+        bls_pubkey_hash,
         encoded_bls_pubkey: compressed,
         peer_pubkey,
     })
@@ -217,6 +228,20 @@ pub(crate) fn store_consensus_keys<SDK: SharedAPI>(
     {
         return revert_with(sdk, ERR_PEER_PUBKEY_ALREADY_IN_USE, &verified.peer_pubkey);
     }
+    // Recheck after verifier calls so a reentrant BLS-key claim cannot be
+    // overwritten when the external call returns.
+    if !consensus
+        .bls_pubkey_owner_accessor()
+        .entry(verified.bls_pubkey_hash)
+        .get_checked(sdk)?
+        .is_zero()
+    {
+        return revert_with(
+            sdk,
+            ERR_BLS_PUBKEY_ALREADY_IN_USE,
+            &verified.bls_pubkey_hash,
+        );
+    }
     let parts = keys.bls_pubkey_accessor();
     for (index, part) in verified.bls_pubkey.into_iter().enumerate() {
         parts.at(index).set_checked(sdk, part)?;
@@ -228,6 +253,10 @@ pub(crate) fn store_consensus_keys<SDK: SharedAPI>(
     consensus
         .peer_pubkey_owner_accessor()
         .entry(verified.peer_pubkey)
+        .set_checked(sdk, validator)?;
+    consensus
+        .bls_pubkey_owner_accessor()
+        .entry(verified.bls_pubkey_hash)
         .set_checked(sdk, validator)?;
     events::ConsensusKeysSet {
         validator,

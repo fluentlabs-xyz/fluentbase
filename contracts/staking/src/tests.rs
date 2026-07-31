@@ -110,7 +110,13 @@ impl Harness {
             let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
             let output = match selector {
                 SIG_BLS_COMPRESS_G2_UNCHECKED => {
-                    encode_mock_return(&Bytes::from(vec![0x33; BLS_PUBKEY_LENGTH]))
+                    let args = &input[SIG_LEN_BYTES..];
+                    let (uncompressed,) =
+                        SolidityABI::<(Bytes,)>::decode_function_args(&args).unwrap();
+                    encode_mock_return(&Bytes::from(vec![
+                        uncompressed[0].wrapping_add(0x22);
+                        BLS_PUBKEY_LENGTH
+                    ]))
                 }
                 SIG_BLS_VERIFY => encode_mock_return(&true),
                 SIG_ERC20_TRANSFER_FROM | SIG_ERC20_TRANSFER => encode_mock_return(&true),
@@ -168,14 +174,22 @@ impl Harness {
             initial_owner: owner,
             validators,
             initial_stakes: stakes,
-            bls_pubkeys_uncompressed: vec![
-                Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]);
-                validator_count
-            ],
-            bls_pops_uncompressed: vec![
-                Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]);
-                validator_count
-            ],
+            bls_pubkeys_uncompressed: (0..validator_count)
+                .map(|index| {
+                    Bytes::from(vec![
+                        0x11u8.wrapping_add(index as u8);
+                        BLS_PUBKEY_UNCOMPRESSED_LENGTH
+                    ])
+                })
+                .collect(),
+            bls_pops_uncompressed: (0..validator_count)
+                .map(|index| {
+                    Bytes::from(vec![
+                        0x22u8.wrapping_add(index as u8);
+                        BLS_POP_UNCOMPRESSED_LENGTH
+                    ])
+                })
+                .collect(),
             peer_pubkeys: (1..=validator_count)
                 .map(|index| B256::with_last_byte(index as u8))
                 .collect(),
@@ -235,6 +249,11 @@ fn store_test_consensus_keys(
     consensus_storage()
         .peer_pubkey_owner_accessor()
         .entry(peer_pubkey)
+        .set_checked(sdk, validator)
+        .unwrap();
+    consensus_storage()
+        .bls_pubkey_owner_accessor()
+        .entry(keccak256(vec![key_byte; BLS_PUBKEY_LENGTH]))
         .set_checked(sdk, validator)
         .unwrap();
 }
@@ -1601,6 +1620,101 @@ fn register_validator_verifies_and_stores_consensus_keys_in_one_call() {
             .unwrap(),
         1
     );
+    assert_eq!(
+        consensus_storage()
+            .bls_pubkey_owner_accessor()
+            .entry(keccak256(vec![0x33; BLS_PUBKEY_LENGTH]))
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        validator
+    );
+}
+
+#[test]
+fn registration_rejects_replayed_bls_key_and_pop_without_partial_state() {
+    let first_owner = Address::with_last_byte(0xa0);
+    let second_owner = Address::with_last_byte(0xa1);
+    let first_validator = Address::with_last_byte(0x01);
+    let second_validator = Address::with_last_byte(0x02);
+    let verifier = Address::with_last_byte(0xb0);
+    let first_peer_pubkey = B256::with_last_byte(0x11);
+    let second_peer_pubkey = B256::with_last_byte(0x12);
+    let bls_pubkey_uncompressed = Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]);
+    let bls_pop_uncompressed = Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]);
+    let bls_pubkey_hash = keccak256(vec![0x33; BLS_PUBKEY_LENGTH]);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(first_owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .bls_verifier_accessor()
+        .set_checked(&mut harness.sdk, verifier)
+        .unwrap();
+
+    harness.set_caller(first_owner);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_REGISTER_VALIDATOR,
+                &RegisterValidatorCommand {
+                    validator: first_validator,
+                    commission_rate: 0,
+                    initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                    bls_pubkey_uncompressed: bls_pubkey_uncompressed.clone(),
+                    bls_pop_uncompressed: bls_pop_uncompressed.clone(),
+                    peer_pubkey: first_peer_pubkey,
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    harness.set_caller(second_owner);
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_REGISTER_VALIDATOR,
+            &RegisterValidatorCommand {
+                validator: second_validator,
+                commission_rate: 0,
+                initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                bls_pubkey_uncompressed,
+                bls_pop_uncompressed,
+                peer_pubkey: second_peer_pubkey,
+            },
+        )),
+        ERR_BLS_PUBKEY_ALREADY_IN_USE,
+    );
+
+    assert_eq!(
+        consensus_storage()
+            .bls_pubkey_owner_accessor()
+            .entry(bls_pubkey_hash)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        first_validator
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(second_validator)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_NOT_FOUND
+    );
+    assert!(staking_storage()
+        .owner_validators_accessor()
+        .entry(second_owner)
+        .get_checked(&harness.sdk)
+        .unwrap()
+        .is_zero());
+    assert!(consensus_storage()
+        .peer_pubkey_owner_accessor()
+        .entry(second_peer_pubkey)
+        .get_checked(&harness.sdk)
+        .unwrap()
+        .is_zero());
 }
 
 #[test]
@@ -2126,7 +2240,7 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
         keys.iter()
             .map(|value| value.bls_pubkey[0])
             .collect::<Vec<_>>(),
-        vec![0x33, 0x33]
+        vec![0x33, 0x34]
     );
     assert_eq!(stakes, vec![stake_a, stake_b]);
 
