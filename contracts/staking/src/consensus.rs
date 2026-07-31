@@ -63,7 +63,7 @@ fn external_call<SDK, T>(
 ) -> Result<Bytes, ExitCode>
 where
     SDK: SharedAPI,
-    T: fluentbase_sdk::codec::FunctionArgs<fluentbase_sdk::byteorder::BE, 32, true, false>,
+    T: FunctionArgs<BE, 32, true, false>,
 {
     let input = encode_external_call(selector, params)?;
     let result = sdk.call(target, U256::ZERO, &input, None);

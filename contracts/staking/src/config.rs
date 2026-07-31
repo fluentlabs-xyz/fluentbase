@@ -5,6 +5,7 @@
 use crate::{
     consts::*,
     events,
+    math::compact_balance,
     storage::chain_config_storage,
     types::{AddressCommand, BoolCommand, InitializeCommand, U256Command, U32Command, U64Command},
     util::{
@@ -148,8 +149,8 @@ fn validate_initialization<SDK: SharedAPI>(
         || command.undelegate_period == 0
         || command.min_validator_stake_amount.is_zero()
         || command.min_staking_amount.is_zero()
-        || crate::math::compact_balance(command.min_validator_stake_amount).is_none()
-        || crate::math::compact_balance(command.min_staking_amount).is_none()
+        || compact_balance(command.min_validator_stake_amount).is_none()
+        || compact_balance(command.min_staking_amount).is_none()
     {
         return revert(sdk, ERR_INVALID_CHAIN_CONFIG);
     }
