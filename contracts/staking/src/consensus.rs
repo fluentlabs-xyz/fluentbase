@@ -2,7 +2,7 @@
 
 use crate::{
     consts::*,
-    events,
+    events, math,
     staking::{
         remove_active, selected_validators, selected_validators_at, selection_visible_at,
         set_selection_visible, touch_snapshot_at_or_before, validator_total_at,
@@ -391,8 +391,16 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
 
     let changed = committee_changed(sdk, target, &submitted)?;
     let stored = storage.epoch_committees_accessor().entry(target);
+    let committee_epoch_p1 = target.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
     for validator in &submitted {
         stored.push_checked(sdk, *validator)?;
+        let latest_committee = staking_storage()
+            .validators_accessor()
+            .entry(*validator)
+            .last_committee_epoch_p1_accessor();
+        if latest_committee.get_checked(sdk)? < committee_epoch_p1 {
+            latest_committee.set_checked(sdk, committee_epoch_p1)?;
+        }
     }
     storage
         .dkg_qual_accessor()
@@ -945,16 +953,25 @@ pub(crate) fn seize_self_stake<SDK: SharedAPI>(
         .entry(owner);
     let queue = delegation.delegate_queue_accessor();
     let len = queue.len_checked(sdk)?;
-    if len == 0 {
+    let mut seized = U256::ZERO;
+    if len != 0 {
+        seized = math::expand_balance(queue.at(len - 1).amount_accessor().get_checked(sdk)?);
+    }
+
+    let undelegates = delegation.undelegate_queue_accessor();
+    let pending_undelegated = delegation.pending_undelegated_accessor();
+    seized = seized
+        .checked_add(pending_undelegated.get_checked(sdk)?)
+        .ok_or(ExitCode::IntegerOverflow)?;
+    if seized.is_zero() {
         return Ok(());
     }
-    let compact_seized = queue.at(len - 1).amount_accessor().get_checked(sdk)?;
-    if compact_seized.is_zero() {
-        return Ok(());
-    }
-    let seized = crate::math::expand_balance(compact_seized);
+
     queue.clear_checked(sdk)?;
     delegation.delegate_gap_accessor().set_checked(sdk, 0)?;
+    undelegates.clear_checked(sdk)?;
+    delegation.undelegate_gap_accessor().set_checked(sdk, 0)?;
+    pending_undelegated.set_checked(sdk, U256::ZERO)?;
 
     let config = chain_config_storage();
     let stored_bps = config

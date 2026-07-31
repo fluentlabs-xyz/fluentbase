@@ -60,6 +60,11 @@ pub struct ValidatorStorage {
     /// Appended to preserve the existing storage layout while bounding
     /// historical snapshot lookups.
     first_snapshot_epoch_p1: StorageU64,
+    /// Latest committed committee epoch plus one (`0` means no committee).
+    ///
+    /// Queued self-principal remains locked while that committee entry exists,
+    /// keeping it slashable until equivocation evidence is no longer accepted.
+    last_committee_epoch_p1: StorageU64,
 }
 
 /// Per-epoch validator accounting snapshot.
@@ -97,6 +102,11 @@ pub struct ValidatorDelegationStorage {
     delegate_gap: StorageU64,
     undelegate_queue: StorageVec<UndelegationOpStorage>,
     undelegate_gap: StorageU64,
+    /// Unclaimed queued principal in full-precision token units.
+    ///
+    /// Keeping the aggregate beside the operation history lets equivocation
+    /// seizure remain constant-time even when the queue is fragmented.
+    pending_undelegated: StorageU256,
 }
 
 /// Epoch-stamped selection visibility. Status changes become visible from the

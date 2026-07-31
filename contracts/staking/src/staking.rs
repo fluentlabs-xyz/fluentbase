@@ -930,6 +930,14 @@ pub(crate) fn undelegate_from<SDK: SharedAPI>(
     let pending = delegation.undelegate_queue_accessor().grow_checked(sdk)?;
     pending.amount_accessor().set_checked(sdk, compact_amount)?;
     pending.epoch_accessor().set_checked(sdk, maturity_epoch)?;
+    let pending_undelegated = delegation.pending_undelegated_accessor();
+    pending_undelegated.set_checked(
+        sdk,
+        pending_undelegated
+            .get_checked(sdk)?
+            .checked_add(amount)
+            .ok_or(ExitCode::IntegerOverflow)?,
+    )?;
 
     events::Undelegated {
         validator,
@@ -1087,9 +1095,10 @@ fn delegator_claimable<SDK: SharedAPI>(
     let undelegates = delegation.undelegate_queue_accessor();
     let undelegate_len = undelegates.len_checked(sdk)?;
     let mut undelegate_gap = delegation.undelegate_gap_accessor().get_checked(sdk)?;
+    let self_stake_locked = validator_self_stake_is_locked(sdk, validator, delegator)?;
     while undelegate_gap < undelegate_len {
         let operation = undelegates.at(undelegate_gap);
-        if operation.epoch_accessor().get_checked(sdk)? > before_epoch {
+        if self_stake_locked || operation.epoch_accessor().get_checked(sdk)? > before_epoch {
             break;
         }
         claimable = claimable
@@ -1100,6 +1109,26 @@ fn delegator_claimable<SDK: SharedAPI>(
         undelegate_gap += 1;
     }
     Ok(claimable)
+}
+
+fn validator_self_stake_is_locked<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    delegator: Address,
+) -> Result<bool, ExitCode> {
+    let record = staking_storage().validators_accessor().entry(validator);
+    if record.owner_accessor().get_checked(sdk)? != delegator {
+        return Ok(false);
+    }
+    let committee_epoch_p1 = record.last_committee_epoch_p1_accessor().get_checked(sdk)?;
+    if committee_epoch_p1 == 0 {
+        return Ok(false);
+    }
+    Ok(consensus_storage()
+        .epoch_committees_accessor()
+        .entry(committee_epoch_p1 - 1)
+        .len_checked(sdk)?
+        != 0)
 }
 
 fn capped_delegator_claim_epoch<SDK: SharedAPI>(
@@ -1211,21 +1240,27 @@ fn consume_delegator_claim<SDK: SharedAPI>(
     let undelegates = delegation.undelegate_queue_accessor();
     let undelegate_len = undelegates.len_checked(sdk)?;
     let mut undelegate_gap = delegation.undelegate_gap_accessor().get_checked(sdk)?;
+    let pending_undelegated = delegation.pending_undelegated_accessor();
+    let mut pending_principal = pending_undelegated.get_checked(sdk)?;
+    let self_stake_locked = validator_self_stake_is_locked(sdk, validator, delegator)?;
     while undelegate_gap < undelegate_len {
         let operation = undelegates.at(undelegate_gap);
-        if operation.epoch_accessor().get_checked(sdk)? > before_epoch {
+        if self_stake_locked || operation.epoch_accessor().get_checked(sdk)? > before_epoch {
             break;
         }
+        let principal = math::expand_balance(operation.amount_accessor().get_checked(sdk)?);
         claimable = claimable
-            .checked_add(math::expand_balance(
-                operation.amount_accessor().get_checked(sdk)?,
-            ))
+            .checked_add(principal)
+            .ok_or(ExitCode::IntegerOverflow)?;
+        pending_principal = pending_principal
+            .checked_sub(principal)
             .ok_or(ExitCode::IntegerOverflow)?;
         undelegate_gap += 1;
     }
     delegation
         .undelegate_gap_accessor()
         .set_checked(sdk, undelegate_gap)?;
+    pending_undelegated.set_checked(sdk, pending_principal)?;
     Ok(claimable)
 }
 
