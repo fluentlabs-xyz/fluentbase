@@ -46,6 +46,8 @@ at or above the configured validator minimum.
   disbursement skips the epoch with zero credited rewards and advances the cursor; reverted calls and malformed return
   values revert settlement and remain retryable.
 - Equivocation tombstones are permanent and prevent key reuse or jail release.
+- Liveness jailing protects the fixed committed committee for the current epoch (or its selected
+  pre-commit fallback); sequential reports cannot ratchet down the quorum floor.
 - Equivocation reporter rewards use a beneficiary-owned commit/reveal flow; the transaction sender that reveals evidence
   is never used as the reward recipient.
 - A validator's `owner` is its immutable administrative, validator-fee, self-stake, and slashing identity.

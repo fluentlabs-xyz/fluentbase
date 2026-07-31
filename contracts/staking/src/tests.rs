@@ -2154,6 +2154,117 @@ fn liveness_slash_jails_and_readmits_without_breaking_quorum() {
 }
 
 #[test]
+fn liveness_slashing_preserves_fixed_committed_committee_quorum() {
+    let owner = Address::with_last_byte(0xa0);
+    let liveness = Address::with_last_byte(0xb0);
+    let validators = (1..=8)
+        .map(Address::with_last_byte)
+        .collect::<Vec<Address>>();
+    let committee = validators[..7].to_vec();
+    let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(
+        owner,
+        validators.clone(),
+        vec![DEFAULT_MIN_VALIDATOR_STAKE; validators.len()],
+        500,
+    );
+    command.active_validators_length = committee.len() as u32;
+    command.liveness_slashing = liveness;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    for (index, validator) in validators.iter().enumerate() {
+        let key_byte = (index + 1) as u8;
+        let keys = consensus_storage()
+            .consensus_keys_accessor()
+            .entry(*validator);
+        keys.bls_pubkey_accessor()
+            .store(&mut harness.sdk, &[key_byte; BLS_PUBKEY_LENGTH])
+            .unwrap();
+        keys.peer_pubkey_accessor()
+            .set_checked(&mut harness.sdk, B256::with_last_byte(key_byte))
+            .unwrap();
+    }
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_COMMIT_EPOCH_COMMITTEE,
+                &(committee.clone(),),
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    harness.set_caller(liveness);
+    for validator in &committee[..2] {
+        assert_eq!(
+            harness
+                .call(encode_call(
+                    SIG_SLASH,
+                    &AddressCommand { value: *validator },
+                ))
+                .0,
+            ExitCode::Ok
+        );
+    }
+    assert_eq!(
+        staking_storage()
+            .active_validators_accessor()
+            .len_checked(&harness.sdk),
+        Ok(6)
+    );
+
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SLASH,
+                &AddressCommand {
+                    value: committee[2],
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(committee[2])
+            .status_accessor()
+            .get_checked(&harness.sdk),
+        Ok(STATUS_ACTIVE),
+        "a seven-member committee must retain its five-member quorum floor"
+    );
+
+    let non_committee = validators[7];
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SLASH,
+                &AddressCommand {
+                    value: non_committee,
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(non_committee)
+            .status_accessor()
+            .get_checked(&harness.sdk),
+        Ok(STATUS_JAIL),
+        "a non-committee jail must not consume the protected committee quorum"
+    );
+    assert_eq!(
+        staking_storage()
+            .active_validators_accessor()
+            .len_checked(&harness.sdk),
+        Ok(5)
+    );
+}
+
+#[test]
 fn jail_readmission_rejects_validator_below_minimum_self_stake() {
     let owner = Address::with_last_byte(0xa0);
     let liveness = Address::with_last_byte(0xb0);

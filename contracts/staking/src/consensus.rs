@@ -672,6 +672,47 @@ fn quorum(n: u64) -> u64 {
     n - (n - 1) / 3
 }
 
+/// Returns the fixed committee size, its currently active members, and whether
+/// `validator` belongs to it for the liveness incident at `epoch`.
+///
+/// A committed committee is the canonical checkpoint. Before that checkpoint
+/// exists (notably in genesis/unit-test flows), epoch-selected membership is
+/// already historical: liveness removals only change visibility from E+1.
+fn liveness_committee_state<SDK: SharedAPI>(
+    sdk: &SDK,
+    epoch: u64,
+    validator: Address,
+) -> Result<(u64, u64, bool), ExitCode> {
+    let consensus = consensus_storage();
+    let committed = consensus
+        .last_committed_epoch_p1_accessor()
+        .get_checked(sdk)?
+        > epoch;
+    let committee = if committed {
+        read_committee(sdk, epoch)?
+    } else {
+        selected_validators_at(sdk, epoch)?
+    };
+    let storage = staking_storage();
+    let mut active_members = 0u64;
+    let mut contains_validator = false;
+    for member in &committee {
+        if *member == validator {
+            contains_validator = true;
+        }
+        if storage
+            .validators_accessor()
+            .entry(*member)
+            .status_accessor()
+            .get_checked(sdk)?
+            == STATUS_ACTIVE
+        {
+            active_members += 1;
+        }
+    }
+    Ok((committee.len() as u64, active_members, contains_validator))
+}
+
 /// Public handler `0xc96be4cb` (`slash`).
 ///
 /// Applies liveness slashing to a validator on an authorized system call.
@@ -713,16 +754,17 @@ pub fn slash<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode
                 .set_checked(sdk, core::cmp::max(current_deadline, jail_until))?;
             events::ValidatorJailed { validator, epoch }.emit(sdk)?;
         } else {
-            let active_len = storage.active_validators_accessor().len_checked(sdk)?;
-            let cap = chain_config_storage()
-                .active_validators_length_accessor()
-                .get_checked(sdk)?;
-            let quorum_floor = quorum(core::cmp::min(active_len, cap));
-            if active_len == 0 || active_len - 1 < quorum_floor {
+            let (committee_len, active_members, is_committee_member) =
+                liveness_committee_state(sdk, epoch, validator)?;
+            let quorum_floor = quorum(committee_len);
+            if status == STATUS_ACTIVE
+                && is_committee_member
+                && (active_members == 0 || active_members - 1 < quorum_floor)
+            {
                 events::LivenessJailSkippedHaltGuard {
                     validator,
                     epoch,
-                    active_set_size: U256::from(active_len),
+                    active_set_size: U256::from(active_members),
                     quorum_floor: U256::from(quorum_floor),
                 }
                 .emit(sdk)?;
