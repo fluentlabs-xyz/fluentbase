@@ -1213,8 +1213,14 @@ fn validator_owner_rewards<SDK: SharedAPI>(
         return Ok(U256::ZERO);
     }
     let mut epoch = record.claimed_at_accessor().get_checked(sdk)?;
+    let settled_epoch_p1 = staking_storage()
+        .last_rewarded_epoch_p1_accessor()
+        .get_checked(sdk)?;
     // Bound historical work; callers can continue from the stored cursor.
-    let before_epoch = core::cmp::min(before_epoch, epoch.saturating_add(MAX_EPOCHS_PER_CLAIM));
+    let before_epoch = core::cmp::min(
+        core::cmp::min(before_epoch, settled_epoch_p1),
+        epoch.saturating_add(MAX_EPOCHS_PER_CLAIM),
+    );
     let mut rewards = U256::ZERO;
     while epoch < before_epoch {
         rewards = rewards
@@ -1229,7 +1235,8 @@ fn delegator_claimable<SDK: SharedAPI>(
     sdk: &SDK,
     validator: Address,
     delegator: Address,
-    before_epoch: u64,
+    reward_before_epoch: u64,
+    principal_before_epoch: u64,
 ) -> Result<U256, ExitCode> {
     let delegation = staking_storage()
         .validator_delegations_accessor()
@@ -1243,7 +1250,7 @@ fn delegator_claimable<SDK: SharedAPI>(
     while delegate_gap < delegate_len {
         let operation = delegates.at(delegate_gap);
         let mut epoch = operation.epoch_accessor().get_checked(sdk)?;
-        if epoch >= before_epoch {
+        if epoch >= reward_before_epoch {
             break;
         }
         let changed_at = if delegate_gap + 1 < delegate_len {
@@ -1252,9 +1259,9 @@ fn delegator_claimable<SDK: SharedAPI>(
                 .epoch_accessor()
                 .get_checked(sdk)?
         } else {
-            before_epoch
+            reward_before_epoch
         };
-        let end = core::cmp::min(before_epoch, changed_at);
+        let end = core::cmp::min(reward_before_epoch, changed_at);
         let delegated = operation.amount_accessor().get_checked(sdk)?;
         while epoch < end {
             let (delegator_pool, _) = snapshot_payout(sdk, validator, epoch)?;
@@ -1284,7 +1291,9 @@ fn delegator_claimable<SDK: SharedAPI>(
     let self_stake_locked = validator_self_stake_is_locked(sdk, validator, delegator)?;
     while undelegate_gap < undelegate_len {
         let operation = undelegates.at(undelegate_gap);
-        if self_stake_locked || operation.epoch_accessor().get_checked(sdk)? > before_epoch {
+        if self_stake_locked
+            || operation.epoch_accessor().get_checked(sdk)? > principal_before_epoch
+        {
             break;
         }
         claimable = claimable
@@ -1317,7 +1326,7 @@ fn validator_self_stake_is_locked<SDK: SharedAPI>(
         != 0)
 }
 
-fn capped_delegator_claim_epoch<SDK: SharedAPI>(
+fn capped_delegator_reward_epoch<SDK: SharedAPI>(
     sdk: &SDK,
     validator: Address,
     delegator: Address,
@@ -1329,30 +1338,44 @@ fn capped_delegator_claim_epoch<SDK: SharedAPI>(
         .entry(delegator);
     let delegates = delegation.delegate_queue_accessor();
     let delegate_gap = delegation.delegate_gap_accessor().get_checked(sdk)?;
-    let first = if delegate_gap < delegates.len_checked(sdk)? {
-        Some(
-            delegates
-                .at(delegate_gap)
-                .epoch_accessor()
-                .get_checked(sdk)?,
-        )
-    } else {
-        let undelegates = delegation.undelegate_queue_accessor();
-        let undelegate_gap = delegation.undelegate_gap_accessor().get_checked(sdk)?;
-        if undelegate_gap < undelegates.len_checked(sdk)? {
-            Some(
-                undelegates
-                    .at(undelegate_gap)
-                    .epoch_accessor()
-                    .get_checked(sdk)?,
-            )
-        } else {
-            None
-        }
-    };
-    let Some(first) = first else {
+    let settled_epoch_p1 = staking_storage()
+        .last_rewarded_epoch_p1_accessor()
+        .get_checked(sdk)?;
+    let before_epoch = core::cmp::min(before_epoch, settled_epoch_p1);
+    if delegate_gap >= delegates.len_checked(sdk)? {
         return Ok(before_epoch);
-    };
+    }
+    let first = delegates
+        .at(delegate_gap)
+        .epoch_accessor()
+        .get_checked(sdk)?;
+    Ok(core::cmp::min(
+        before_epoch,
+        first
+            .checked_add(MAX_EPOCHS_PER_CLAIM)
+            .ok_or(ExitCode::IntegerOverflow)?,
+    ))
+}
+
+fn capped_delegator_principal_epoch<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    delegator: Address,
+    before_epoch: u64,
+) -> Result<u64, ExitCode> {
+    let delegation = staking_storage()
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(delegator);
+    let undelegates = delegation.undelegate_queue_accessor();
+    let undelegate_gap = delegation.undelegate_gap_accessor().get_checked(sdk)?;
+    if undelegate_gap >= undelegates.len_checked(sdk)? {
+        return Ok(before_epoch);
+    }
+    let first = undelegates
+        .at(undelegate_gap)
+        .epoch_accessor()
+        .get_checked(sdk)?;
     Ok(core::cmp::min(
         before_epoch,
         first
@@ -1365,7 +1388,8 @@ fn consume_delegator_claim<SDK: SharedAPI>(
     sdk: &mut SDK,
     validator: Address,
     delegator: Address,
-    before_epoch: u64,
+    reward_before_epoch: u64,
+    principal_before_epoch: u64,
 ) -> Result<U256, ExitCode> {
     let storage = staking_storage();
     let delegation = storage
@@ -1380,7 +1404,7 @@ fn consume_delegator_claim<SDK: SharedAPI>(
     while delegate_gap < delegate_len {
         let operation = delegates.at(delegate_gap);
         let mut epoch = operation.epoch_accessor().get_checked(sdk)?;
-        if epoch >= before_epoch {
+        if epoch >= reward_before_epoch {
             break;
         }
         let has_next = delegate_gap + 1 < delegate_len;
@@ -1390,9 +1414,9 @@ fn consume_delegator_claim<SDK: SharedAPI>(
                 .epoch_accessor()
                 .get_checked(sdk)?
         } else {
-            before_epoch
+            reward_before_epoch
         };
-        let end = core::cmp::min(before_epoch, changed_at);
+        let end = core::cmp::min(reward_before_epoch, changed_at);
         let delegated = operation.amount_accessor().get_checked(sdk)?;
         while epoch < end {
             let (delegator_pool, _) = snapshot_payout(sdk, validator, epoch)?;
@@ -1431,7 +1455,9 @@ fn consume_delegator_claim<SDK: SharedAPI>(
     let self_stake_locked = validator_self_stake_is_locked(sdk, validator, delegator)?;
     while undelegate_gap < undelegate_len {
         let operation = undelegates.at(undelegate_gap);
-        if self_stake_locked || operation.epoch_accessor().get_checked(sdk)? > before_epoch {
+        if self_stake_locked
+            || operation.epoch_accessor().get_checked(sdk)? > principal_before_epoch
+        {
             break;
         }
         let principal = math::expand_balance(operation.amount_accessor().get_checked(sdk)?);
@@ -1503,10 +1529,13 @@ fn claim_validator_before<SDK: SharedAPI>(
         return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
     }
     let claimed_at = record.claimed_at_accessor().get_checked(sdk)?;
+    let settled_epoch_p1 = staking_storage()
+        .last_rewarded_epoch_p1_accessor()
+        .get_checked(sdk)?;
     // Advancing the cursor before transfer is safe because a failed call
     // reverts the whole contract transaction.
     let capped = core::cmp::min(
-        before_epoch,
+        core::cmp::min(before_epoch, settled_epoch_p1),
         claimed_at
             .checked_add(MAX_EPOCHS_PER_CLAIM)
             .ok_or(ExitCode::IntegerOverflow)?,
@@ -1525,7 +1554,7 @@ fn claim_validator_before<SDK: SharedAPI>(
     events::ValidatorOwnerClaimed {
         validator,
         amount,
-        epoch: capped,
+        epoch,
     }
     .emit(sdk)
 }
@@ -1565,15 +1594,24 @@ pub fn get_delegator_fee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let command = decode::<ValidatorDelegatorCommand>(input)?;
-    let before_epoch = capped_delegator_claim_epoch(
+    let requested_epoch = current_epoch(sdk)?;
+    let reward_before_epoch =
+        capped_delegator_reward_epoch(sdk, command.validator, command.delegator, requested_epoch)?;
+    let principal_before_epoch = capped_delegator_principal_epoch(
         sdk,
         command.validator,
         command.delegator,
-        current_epoch(sdk)?,
+        requested_epoch,
     )?;
     write_abi(
         sdk,
-        &delegator_claimable(sdk, command.validator, command.delegator, before_epoch)?,
+        &delegator_claimable(
+            sdk,
+            command.validator,
+            command.delegator,
+            reward_before_epoch,
+            principal_before_epoch,
+        )?,
     )
 }
 
@@ -1587,11 +1625,24 @@ pub fn get_pending_delegator_fee<SDK: SharedAPI>(
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let command = decode::<ValidatorDelegatorCommand>(input)?;
-    let before_epoch =
-        capped_delegator_claim_epoch(sdk, command.validator, command.delegator, next_epoch(sdk)?)?;
+    let requested_epoch = next_epoch(sdk)?;
+    let reward_before_epoch =
+        capped_delegator_reward_epoch(sdk, command.validator, command.delegator, requested_epoch)?;
+    let principal_before_epoch = capped_delegator_principal_epoch(
+        sdk,
+        command.validator,
+        command.delegator,
+        requested_epoch,
+    )?;
     write_abi(
         sdk,
-        &delegator_claimable(sdk, command.validator, command.delegator, before_epoch)?,
+        &delegator_claimable(
+            sdk,
+            command.validator,
+            command.delegator,
+            reward_before_epoch,
+            principal_before_epoch,
+        )?,
     )
 }
 
@@ -1602,8 +1653,17 @@ fn claim_delegator_before<SDK: SharedAPI>(
     before_epoch: u64,
     redelegate: bool,
 ) -> Result<(), ExitCode> {
-    let capped = capped_delegator_claim_epoch(sdk, validator, delegator, before_epoch)?;
-    let claimable = consume_delegator_claim(sdk, validator, delegator, capped)?;
+    let reward_before_epoch =
+        capped_delegator_reward_epoch(sdk, validator, delegator, before_epoch)?;
+    let principal_before_epoch =
+        capped_delegator_principal_epoch(sdk, validator, delegator, before_epoch)?;
+    let claimable = consume_delegator_claim(
+        sdk,
+        validator,
+        delegator,
+        reward_before_epoch,
+        principal_before_epoch,
+    )?;
     if redelegate {
         let (amount, dust) = available_for_redelegate(sdk, claimable)?;
         if !amount.is_zero() {
@@ -1615,7 +1675,7 @@ fn claim_delegator_before<SDK: SharedAPI>(
             staker: delegator,
             amount,
             dust,
-            epoch: capped,
+            epoch: reward_before_epoch,
         }
         .emit(sdk)
     } else {
@@ -1624,7 +1684,7 @@ fn claim_delegator_before<SDK: SharedAPI>(
             validator,
             staker: delegator,
             amount: claimable,
-            epoch: capped,
+            epoch: reward_before_epoch,
         }
         .emit(sdk)
     }
@@ -1676,13 +1736,22 @@ pub fn calc_available_for_redelegate_amount<SDK: SharedAPI>(
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let command = decode::<ValidatorDelegatorCommand>(input)?;
-    let before_epoch = capped_delegator_claim_epoch(
+    let requested_epoch = current_epoch(sdk)?;
+    let reward_before_epoch =
+        capped_delegator_reward_epoch(sdk, command.validator, command.delegator, requested_epoch)?;
+    let principal_before_epoch = capped_delegator_principal_epoch(
         sdk,
         command.validator,
         command.delegator,
-        current_epoch(sdk)?,
+        requested_epoch,
     )?;
-    let claimable = delegator_claimable(sdk, command.validator, command.delegator, before_epoch)?;
+    let claimable = delegator_claimable(
+        sdk,
+        command.validator,
+        command.delegator,
+        reward_before_epoch,
+        principal_before_epoch,
+    )?;
     write_abi(sdk, &available_for_redelegate(sdk, claimable)?)
 }
 

@@ -1818,6 +1818,10 @@ fn future_delegation_and_noop_commission_do_not_bypass_warmup() {
             math::narrow_reward(reward).expect("reward fits uint96"),
         )
         .unwrap();
+    staking_storage()
+        .last_rewarded_epoch_p1_accessor()
+        .set_checked(&mut harness.sdk, 2)
+        .unwrap();
     harness.set_block_number(1_400);
     let (_, output) = harness.call(encode_call(
         SIG_GET_DELEGATOR_FEE,
@@ -2018,6 +2022,10 @@ fn reward_views_split_blend_between_owner_and_delegators() {
             &mut harness.sdk,
             math::narrow_reward(ten_tokens).expect("reward fits uint96"),
         )
+        .unwrap();
+    staking_storage()
+        .last_rewarded_epoch_p1_accessor()
+        .set_checked(&mut harness.sdk, 3)
         .unwrap();
 
     harness.set_block_number(1_600);
@@ -3044,6 +3052,203 @@ fn failed_or_malformed_disbursement_remains_retryable() {
 }
 
 #[test]
+fn permissionless_validator_claim_waits_for_stipend_settlement() {
+    let assigned = U256::from(100);
+    let attacker = Address::with_last_byte(0xd0);
+    let token = Address::with_last_byte(0xf0);
+    let (mut harness, _calls, validator) =
+        stipend_test_sdk(vec![assigned], vec![MockDisbursement::Amount(assigned)]);
+    staking_storage()
+        .validator_snapshots_accessor()
+        .entry(validator)
+        .entry(0)
+        .commission_rate_accessor()
+        .set_checked(&mut harness.sdk, 1_000)
+        .unwrap();
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL);
+
+    harness.set_caller(attacker);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CLAIM_VALIDATOR_FEE,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .claimed_at_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0,
+        "an unsettled epoch must remain claimable after a permissionless call"
+    );
+
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 0 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        staking_storage()
+            .last_rewarded_epoch_p1_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1
+    );
+
+    let transfers = Rc::new(RefCell::new(Vec::<(Address, U256)>::new()));
+    let recorded = transfers.clone();
+    harness
+        .sdk
+        .set_call_handler(move |address, _value, input, _fuel_limit| {
+            assert_eq!(address, token);
+            assert_eq!(
+                u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap()),
+                SIG_ERC20_TRANSFER
+            );
+            let transfer =
+                SolidityABI::<(Address, U256)>::decode(&&input[SIG_LEN_BYTES..], 0).unwrap();
+            recorded.borrow_mut().push(transfer);
+            SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
+        });
+    harness.set_caller(attacker);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CLAIM_VALIDATOR_FEE,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        transfers.borrow().as_slice(),
+        &[(validator, U256::from(10))]
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .claimed_at_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn delayed_reward_settlement_does_not_block_matured_principal() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let token = Address::with_last_byte(0xf0);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let reward = DEFAULT_MIN_STAKING_AMOUNT;
+    let activation_block = 1_000;
+    let mut harness = Harness::new(activation_block);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![stake], 0),
+        ExitCode::Ok
+    );
+    staking::undelegate_from(&mut harness.sdk, validator, validator, stake).unwrap();
+    let delegation = staking_storage()
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(validator);
+
+    let transfers = Rc::new(RefCell::new(Vec::<(Address, U256)>::new()));
+    let recorded = transfers.clone();
+    harness
+        .sdk
+        .set_call_handler(move |address, _value, input, _fuel_limit| {
+            assert_eq!(address, token);
+            assert_eq!(
+                u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap()),
+                SIG_ERC20_TRANSFER
+            );
+            let transfer =
+                SolidityABI::<(Address, U256)>::decode(&&input[SIG_LEN_BYTES..], 0).unwrap();
+            recorded.borrow_mut().push(transfer);
+            SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
+        });
+
+    harness.set_caller(validator);
+    harness.set_block_number(
+        activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * (DEFAULT_UNDELEGATE_PERIOD + 1),
+    );
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CLAIM_DELEGATOR_FEE,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(transfers.borrow().as_slice(), &[(validator, stake)]);
+    assert_eq!(
+        delegation
+            .delegate_gap_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0,
+        "principal maturity must not consume the unsettled reward cursor"
+    );
+    assert_eq!(
+        delegation
+            .undelegate_gap_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1
+    );
+
+    staking_storage()
+        .validator_snapshots_accessor()
+        .entry(validator)
+        .entry(0)
+        .total_blend_rewards_accessor()
+        .set_checked(
+            &mut harness.sdk,
+            math::narrow_reward(reward).expect("reward fits uint96"),
+        )
+        .unwrap();
+    staking_storage()
+        .last_rewarded_epoch_p1_accessor()
+        .set_checked(&mut harness.sdk, 1)
+        .unwrap();
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CLAIM_DELEGATOR_FEE,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        transfers.borrow().as_slice(),
+        &[(validator, stake), (validator, reward)]
+    );
+    assert_eq!(
+        delegation
+            .delegate_gap_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
 fn reward_claims_are_bounded_to_one_thousand_epochs() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
@@ -3059,6 +3264,10 @@ fn reward_claims_are_bounded_to_one_thousand_epochs() {
         ExitCode::Ok
     );
     harness.set_block_number(DEFAULT_EPOCH_BLOCK_INTERVAL * (MAX_EPOCHS_PER_CLAIM + 1));
+    staking_storage()
+        .last_rewarded_epoch_p1_accessor()
+        .set_checked(&mut harness.sdk, MAX_EPOCHS_PER_CLAIM + 1)
+        .unwrap();
     harness.set_caller(validator);
     assert_eq!(
         harness

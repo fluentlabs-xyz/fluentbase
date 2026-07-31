@@ -39,6 +39,8 @@ key, proof of possession, and peer key in the validator-creation call; there is 
   transaction and removes its next-epoch selection visibility.
 - Delegation amounts must use `BALANCE_COMPACT_PRECISION`.
 - Undelegated principal is released only after its maturity epoch and is claimed through the reward path.
+- Reward claims and views never consume epochs at or beyond the exclusive settled frontier. Matured undelegated
+  principal is processed against its own bounded cursor, so delayed reward settlement cannot block withdrawals.
 - Validator-owner principal remains custodial through the latest committed committee's evidence window, and equivocation
   seizure consumes both active and pending self-principal.
 - Claims, stipend catch-up, committee pruning, and jail scans are bounded per call.
