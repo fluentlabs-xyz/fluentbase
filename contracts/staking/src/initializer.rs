@@ -4,14 +4,12 @@ use crate::{
     config,
     consts::{
         COMMISSION_RATE_MAX, ERR_ALREADY_INITIALIZED, ERR_BAD_COMMISSION_RATE,
-        ERR_MALFORMED_INPUT_LENGTH, ERR_ZERO_OWNER,
+        ERR_MALFORMED_INPUT_LENGTH, ERR_ZERO_OWNER, STATUS_ACTIVE,
     },
     staking::set_validator,
-    storage::{initializer_storage, staking_storage, STATUS_ACTIVE},
+    storage::{initializer_storage, staking_storage},
     types::InitializeCommand,
-    util::{
-        decode_args, ensure_mutable, ensure_non_payable, revert, revert_with, safe_transfer_from,
-    },
+    util::{decode_args, ensure_mutable, ensure_non_payable, revert, revert_with},
 };
 use fluentbase_sdk::{Address, ExitCode, SharedAPI, U256};
 
@@ -82,7 +80,7 @@ fn pull_initial_stakes<SDK: SharedAPI>(
     if total_stakes.is_zero() {
         return Ok(());
     }
-    safe_transfer_from(sdk, owner, total_stakes)
+    crate::util::safe_transfer_from(sdk, owner, total_stakes)
 }
 
 // Unit storage tests use a host without nested-call support. The real genesis

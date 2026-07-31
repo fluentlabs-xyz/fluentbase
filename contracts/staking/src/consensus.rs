@@ -4,27 +4,24 @@ use crate::{
     consts::*,
     events,
     staking::{
-        selected_validators, selected_validators_at, selection_visible_at, set_selection_visible,
-        touch_snapshot_at_or_before, validator_total_at,
+        remove_active, selected_validators, selected_validators_at, selection_visible_at,
+        set_selection_visible, touch_snapshot_at_or_before, validator_total_at,
     },
-    storage::{
-        chain_config_storage, consensus_storage, current_epoch, next_epoch, remove_active,
-        staking_storage, STATUS_ACTIVE, STATUS_JAIL, STATUS_NOT_FOUND,
-    },
+    storage::{chain_config_storage, consensus_storage, staking_storage},
     types::{
         AddressCommand, ConsensusKeys, DecodedEvidence, EpochSignerCommand, EquivocationCommand,
         SetConsensusKeysCommand, U64Command,
     },
     util::{
-        decode, decode_args, ensure_initialized, ensure_mutable, ensure_non_payable, revert,
-        revert_with, safe_transfer, write_abi,
+        current_epoch, decode, decode_args, ensure_initialized, ensure_mutable, ensure_non_payable,
+        next_epoch, revert, revert_with, safe_transfer, write_abi,
     },
 };
 use alloc::vec::Vec;
 use fluentbase_sdk::{
     byteorder::BE,
     bytes::BytesMut,
-    codec::{FunctionArgs, SolidityABI},
+    codec::{Encoder, FunctionArgs, SolidityABI},
     keccak256, Address, Bytes, ContextReader, ExitCode, SharedAPI, B256, U256,
 };
 
@@ -917,8 +914,8 @@ fn call_decode<SDK, T, R>(
 ) -> Result<R, ExitCode>
 where
     SDK: SharedAPI,
-    T: fluentbase_sdk::codec::FunctionArgs<fluentbase_sdk::byteorder::BE, 32, true, false>,
-    R: fluentbase_sdk::codec::Encoder<fluentbase_sdk::byteorder::BE, 32, true, false>,
+    T: FunctionArgs<BE, 32, true, false>,
+    R: Encoder<BE, 32, true, false>,
 {
     let output = external_call(sdk, target, selector, params)?;
     SolidityABI::<R>::decode(&output, 0).map_err(|_| ExitCode::MalformedBuiltinParams)

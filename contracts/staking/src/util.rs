@@ -2,6 +2,7 @@
 
 use crate::{
     consts::*,
+    math,
     storage::{chain_config_storage, initializer_storage},
 };
 use alloc::vec::Vec;
@@ -61,6 +62,26 @@ pub(crate) fn ensure_governance<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), Exi
         return revert(sdk, ERR_ONLY_GOVERNANCE);
     }
     Ok(())
+}
+
+pub(crate) fn current_epoch<SDK: SharedAPI>(sdk: &SDK) -> Result<u64, ExitCode> {
+    current_epoch_at_block(sdk, sdk.context().block_number())
+}
+
+pub(crate) fn next_epoch<SDK: SharedAPI>(sdk: &SDK) -> Result<u64, ExitCode> {
+    current_epoch(sdk)?
+        .checked_add(1)
+        .ok_or(ExitCode::IntegerOverflow)
+}
+
+pub(crate) fn current_epoch_at_block<SDK: SharedAPI>(
+    sdk: &SDK,
+    block_number: u64,
+) -> Result<u64, ExitCode> {
+    let config = chain_config_storage();
+    let activation = config.dpos_activation_block_accessor().get_checked(sdk)?;
+    let interval = config.epoch_block_interval_accessor().get_checked(sdk)?;
+    math::epoch_at_block(block_number, activation, interval).ok_or(ExitCode::IntegerDivisionByZero)
 }
 
 pub(crate) fn decode<T>(input: &[u8]) -> Result<T, ExitCode>

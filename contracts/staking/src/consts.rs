@@ -8,6 +8,11 @@ use fluentbase_sdk::{
 
 pub const SIG_LEN_BYTES: usize = 4;
 
+pub const STATUS_NOT_FOUND: u8 = 0;
+pub const STATUS_ACTIVE: u8 = 1;
+pub const STATUS_PENDING: u8 = 2;
+pub const STATUS_JAIL: u8 = 3;
+
 // ABI selectors are derived from their canonical signatures. The pinned hex
 // values remain beside them to make ABI drift visible during review.
 

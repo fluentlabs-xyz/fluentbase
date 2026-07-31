@@ -3,19 +3,16 @@
 use crate::{
     consts::*,
     events, math,
-    storage::{
-        chain_config_storage, consensus_storage, current_epoch, current_epoch_at_block, next_epoch,
-        remove_active, staking_storage, ValidatorSnapshotStorage, STATUS_ACTIVE, STATUS_NOT_FOUND,
-        STATUS_PENDING,
-    },
+    storage::{chain_config_storage, consensus_storage, staking_storage, ValidatorSnapshotStorage},
     types::{
         AddressAmountCommand, AddressCommand, AddressU16Command, RegisterValidatorCommand,
         TwoAddressesCommand, U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand,
         ValidatorEpochCommand,
     },
     util::{
-        decode, ensure_governance, ensure_initialized, ensure_mutable, ensure_non_payable, revert,
-        revert_with, safe_transfer, safe_transfer_from, write_abi,
+        current_epoch, current_epoch_at_block, decode, ensure_governance, ensure_initialized,
+        ensure_mutable, ensure_non_payable, next_epoch, revert, revert_with, safe_transfer,
+        safe_transfer_from, write_abi,
     },
 };
 use alloc::{vec, vec::Vec};
@@ -33,6 +30,26 @@ fn validator_status<SDK: SharedAPI>(sdk: &SDK, validator: Address) -> Result<u8,
         .entry(validator)
         .status_accessor()
         .get_checked(sdk)
+}
+
+pub(crate) fn remove_active<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+) -> Result<(), ExitCode> {
+    let active = staking_storage().active_validators_accessor();
+    let len = active.len_checked(sdk)?;
+    for index in 0..len {
+        if active.at(index).get_checked(sdk)? != validator {
+            continue;
+        }
+        if index + 1 != len {
+            let last = active.at(len - 1).get_checked(sdk)?;
+            active.at(index).set_checked(sdk, last)?;
+        }
+        active.pop_checked(sdk)?;
+        break;
+    }
+    Ok(())
 }
 
 pub(crate) fn set_validator<SDK: SharedAPI>(
@@ -497,7 +514,7 @@ pub fn get_validator_status<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resu
     let result = (
         record.owner_accessor().get_checked(sdk)?,
         record.status_accessor().get_checked(sdk)?,
-        crate::math::expand_balance(snapshot.total_delegated_accessor().get_checked(sdk)?),
+        math::expand_balance(snapshot.total_delegated_accessor().get_checked(sdk)?),
         snapshot.slashes_count_accessor().get_checked(sdk)?,
         changed_at,
         record.jailed_before_accessor().get_checked(sdk)?,
@@ -1076,7 +1093,7 @@ fn delegator_claimable<SDK: SharedAPI>(
             break;
         }
         claimable = claimable
-            .checked_add(crate::math::expand_balance(
+            .checked_add(math::expand_balance(
                 operation.amount_accessor().get_checked(sdk)?,
             ))
             .ok_or(ExitCode::IntegerOverflow)?;
@@ -1200,7 +1217,7 @@ fn consume_delegator_claim<SDK: SharedAPI>(
             break;
         }
         claimable = claimable
-            .checked_add(crate::math::expand_balance(
+            .checked_add(math::expand_balance(
                 operation.amount_accessor().get_checked(sdk)?,
             ))
             .ok_or(ExitCode::IntegerOverflow)?;

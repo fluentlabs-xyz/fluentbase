@@ -1,9 +1,9 @@
 use super::*;
 use crate::{
+    consts::{STATUS_ACTIVE, STATUS_JAIL, STATUS_PENDING},
     storage::{
         chain_config_storage, consensus_storage, initializer_storage, staking_storage,
-        DelegationOpStorage, UndelegationOpStorage, ValidatorSnapshotStorage, STATUS_ACTIVE,
-        STATUS_JAIL, STATUS_PENDING,
+        DelegationOpStorage, UndelegationOpStorage, ValidatorSnapshotStorage,
     },
     types::{
         AddressCommand, BoolCommand, ConsensusKeys, EpochSignerCommand, EquivocationCommand,
@@ -810,10 +810,7 @@ fn parameterized_custom_errors_use_solidity_abi() {
     command.liveness_slashing = Address::ZERO;
     let (_, output) = harness.call(encode_args_call(SIG_INITIALIZE, &command));
     assert_eq!(&output[..4], &ERR_ZERO_VALUE.to_be_bytes());
-    assert_eq!(
-        decode_output::<alloc::string::String>(&output[4..]),
-        "livenessSlashing"
-    );
+    assert_eq!(decode_output::<String>(&output[4..]), "livenessSlashing");
 
     assert_eq!(
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
@@ -827,10 +824,7 @@ fn parameterized_custom_errors_use_solidity_abi() {
         },
     ));
     assert_eq!(&output[..4], &ERR_ZERO_VALUE.to_be_bytes());
-    assert_eq!(
-        decode_output::<alloc::string::String>(&output[4..]),
-        "blsVerifier"
-    );
+    assert_eq!(decode_output::<String>(&output[4..]), "blsVerifier");
 }
 
 #[test]
@@ -1881,7 +1875,7 @@ fn liveness_slash_jails_and_readmits_without_breaking_quorum() {
             .status_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        crate::storage::STATUS_JAIL
+        crate::consts::STATUS_JAIL
     );
 
     harness.set_block_number(1_200);
@@ -2648,7 +2642,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
     let staking = GENESIS_STAKING;
     let evidence_hash = keccak256(b"equivocation evidence");
     let salt = B256::with_last_byte(0x51);
-    let commitment = crate::consensus::report_commitment_hash(
+    let commitment = consensus::report_commitment_hash(
         1337,
         staking,
         EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2658,7 +2652,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
     );
 
     for changed in [
-        crate::consensus::report_commitment_hash(
+        consensus::report_commitment_hash(
             1338,
             staking,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2666,7 +2660,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
             beneficiary,
             salt,
         ),
-        crate::consensus::report_commitment_hash(
+        consensus::report_commitment_hash(
             1337,
             Address::with_last_byte(0x99),
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2674,7 +2668,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
             beneficiary,
             salt,
         ),
-        crate::consensus::report_commitment_hash(
+        consensus::report_commitment_hash(
             1337,
             staking,
             EQUIVOCATION_PROOF_KIND_FINALIZE,
@@ -2682,7 +2676,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
             beneficiary,
             salt,
         ),
-        crate::consensus::report_commitment_hash(
+        consensus::report_commitment_hash(
             1337,
             staking,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2690,7 +2684,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
             beneficiary,
             salt,
         ),
-        crate::consensus::report_commitment_hash(
+        consensus::report_commitment_hash(
             1337,
             staking,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2698,7 +2692,7 @@ fn equivocation_commitments_bind_every_reward_domain_field() {
             Address::with_last_byte(0xa2),
             salt,
         ),
-        crate::consensus::report_commitment_hash(
+        consensus::report_commitment_hash(
             1337,
             staking,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2768,7 +2762,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
     let (commitment,) = decode_returns::<(B256,)>(&commitment_output);
     assert_eq!(
         commitment,
-        crate::consensus::report_commitment_hash(
+        consensus::report_commitment_hash(
             0,
             GENESIS_STAKING,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2787,7 +2781,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         ExitCode::Ok
     );
 
-    let competing_commitment = crate::consensus::report_commitment_hash(
+    let competing_commitment = consensus::report_commitment_hash(
         0,
         GENESIS_STAKING,
         EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2836,7 +2830,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         salt,
     };
     assert_direct_revert(
-        crate::consensus::verify_report_commitment(
+        consensus::verify_report_commitment(
             &mut harness.sdk,
             &command,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2851,7 +2845,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
     // A copied reveal may execute, but the authenticated reward beneficiary
     // remains the account that made the mature commitment.
     assert_eq!(
-        crate::consensus::verify_report_commitment(
+        consensus::verify_report_commitment(
             &mut harness.sdk,
             &command,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2871,7 +2865,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         }
     };
     assert_direct_revert(
-        crate::consensus::verify_report_commitment(
+        consensus::verify_report_commitment(
             &mut harness.sdk,
             &redirected,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2892,7 +2886,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         }
     };
     assert_direct_revert(
-        crate::consensus::verify_report_commitment(
+        consensus::verify_report_commitment(
             &mut harness.sdk,
             &wrong_salt,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2913,7 +2907,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         }
     };
     assert_direct_revert(
-        crate::consensus::verify_report_commitment(
+        consensus::verify_report_commitment(
             &mut harness.sdk,
             &wrong_evidence,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2922,9 +2916,9 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         ERR_EQUIVOCATION_COMMITMENT_MISMATCH,
     );
 
-    crate::consensus::consume_report_commitment(&mut harness.sdk, beneficiary).unwrap();
+    consensus::consume_report_commitment(&mut harness.sdk, beneficiary).unwrap();
     assert_direct_revert(
-        crate::consensus::verify_report_commitment(
+        consensus::verify_report_commitment(
             &mut harness.sdk,
             &command,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -2942,7 +2936,7 @@ fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
         salt: competing_salt,
     };
     assert_eq!(
-        crate::consensus::verify_report_commitment(
+        consensus::verify_report_commitment(
             &mut harness.sdk,
             &competing_command,
             EQUIVOCATION_PROOF_KIND_NOTARIZE,
@@ -3008,7 +3002,7 @@ fn equivocation_seizes_only_the_latest_cumulative_self_delegation() {
             SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
         });
 
-    crate::consensus::seize_self_stake(&mut harness.sdk, validator, validator, reporter).unwrap();
+    consensus::seize_self_stake(&mut harness.sdk, validator, validator, reporter).unwrap();
 
     let reporter_reward =
         latest_stake * U256::from(DEFAULT_SLASH_REPORTER_REWARD_BPS) / U256::from(10_000);

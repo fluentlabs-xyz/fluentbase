@@ -1,11 +1,8 @@
-//! ERC-7201 storage layout, epoch calculation, and validator-set helpers.
+//! ERC-7201 storage layout.
 
-use crate::{
-    consts::{
-        CHAIN_CONFIG_STORAGE_SLOT, CONSENSUS_STORAGE_SLOT, INITIALIZER_STORAGE_SLOT,
-        STAKING_STORAGE_SLOT,
-    },
-    math,
+use crate::consts::{
+    CHAIN_CONFIG_STORAGE_SLOT, CONSENSUS_STORAGE_SLOT, INITIALIZER_STORAGE_SLOT,
+    STAKING_STORAGE_SLOT,
 };
 use fluentbase_sdk::{
     derive::Storage,
@@ -13,13 +10,8 @@ use fluentbase_sdk::{
         StorageAddress, StorageBool, StorageBytes, StorageBytes32, StorageMap, StorageU16,
         StorageU256, StorageU32, StorageU64, StorageU8, StorageUint112, StorageUint96, StorageVec,
     },
-    Address, ContextReader, ExitCode, SharedAPI, B256,
+    Address, B256,
 };
-
-pub const STATUS_NOT_FOUND: u8 = 0;
-pub const STATUS_ACTIVE: u8 = 1;
-pub const STATUS_PENDING: u8 = 2;
-pub const STATUS_JAIL: u8 = 3;
 
 /// ERC-7201 namespaced initialization state.
 #[derive(Storage)]
@@ -184,41 +176,4 @@ pub fn consensus_storage() -> ConsensusStorage {
 
 pub fn staking_storage() -> StakingStorage {
     StakingStorage::new(STAKING_STORAGE_SLOT, 0)
-}
-
-pub fn current_epoch<SDK: SharedAPI>(sdk: &SDK) -> Result<u64, ExitCode> {
-    current_epoch_at_block(sdk, sdk.context().block_number())
-}
-
-pub(crate) fn next_epoch<SDK: SharedAPI>(sdk: &SDK) -> Result<u64, ExitCode> {
-    current_epoch(sdk)?
-        .checked_add(1)
-        .ok_or(ExitCode::IntegerOverflow)
-}
-
-pub fn current_epoch_at_block<SDK: SharedAPI>(
-    sdk: &SDK,
-    block_number: u64,
-) -> Result<u64, ExitCode> {
-    let config = chain_config_storage();
-    let activation = config.dpos_activation_block_accessor().get_checked(sdk)?;
-    let interval = config.epoch_block_interval_accessor().get_checked(sdk)?;
-    math::epoch_at_block(block_number, activation, interval).ok_or(ExitCode::IntegerDivisionByZero)
-}
-
-pub fn remove_active<SDK: SharedAPI>(sdk: &mut SDK, validator: Address) -> Result<(), ExitCode> {
-    let active = staking_storage().active_validators_accessor();
-    let len = active.len_checked(sdk)?;
-    for index in 0..len {
-        if active.at(index).get_checked(sdk)? != validator {
-            continue;
-        }
-        if index + 1 != len {
-            let last = active.at(len - 1).get_checked(sdk)?;
-            active.at(index).set_checked(sdk, last)?;
-        }
-        active.pop_checked(sdk)?;
-        break;
-    }
-    Ok(())
 }
