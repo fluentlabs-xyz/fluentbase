@@ -5,7 +5,8 @@ use crate::{
     events, math,
     staking::{
         remove_active, selected_validators, selected_validators_at, selection_visible_at,
-        set_selection_visible, touch_snapshot_at_or_before, validator_total_at,
+        set_selection_visible, touch_snapshot_at_or_before, validator_has_minimum_self_stake_at,
+        validator_total_at,
     },
     storage::{chain_config_storage, consensus_storage, staking_storage},
     types::{
@@ -556,6 +557,9 @@ fn remove_jailed<SDK: SharedAPI>(sdk: &mut SDK, validator: Address) -> Result<()
 }
 
 fn readmit<SDK: SharedAPI>(sdk: &mut SDK, validator: Address) -> Result<(), ExitCode> {
+    if !validator_has_minimum_self_stake_at(sdk, validator, next_epoch(sdk)?)? {
+        return revert(sdk, ERR_OWNER_SELF_STAKE_BELOW_MINIMUM);
+    }
     let storage = staking_storage();
     storage
         .validators_accessor()
@@ -645,7 +649,11 @@ pub fn readmit_expired_jails<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Res
         } else if record.status_accessor().get_checked(sdk)? == STATUS_JAIL
             && epoch >= record.jailed_before_accessor().get_checked(sdk)?
         {
-            readmit(sdk, validator)?;
+            if validator_has_minimum_self_stake_at(sdk, validator, next_epoch(sdk)?)? {
+                readmit(sdk, validator)?;
+            } else {
+                index = (index + 1) % current_len;
+            }
         } else {
             index = (index + 1) % current_len;
         }

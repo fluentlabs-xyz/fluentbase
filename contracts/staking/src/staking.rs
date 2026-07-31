@@ -52,6 +52,20 @@ pub(crate) fn remove_active<SDK: SharedAPI>(
     Ok(())
 }
 
+fn deactivate_validator_at<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+    epoch: u64,
+) -> Result<(), ExitCode> {
+    remove_active(sdk, validator)?;
+    staking_storage()
+        .validators_accessor()
+        .entry(validator)
+        .status_accessor()
+        .set_checked(sdk, STATUS_PENDING)?;
+    set_selection_visible(sdk, validator, false, epoch)
+}
+
 pub(crate) fn set_validator<SDK: SharedAPI>(
     sdk: &mut SDK,
     validator: Address,
@@ -272,10 +286,13 @@ fn top_k_by_stake_at<SDK: SharedAPI>(
     epoch: u64,
     cap: usize,
 ) -> Result<Vec<Address>, ExitCode> {
-    let mut candidates = candidates
-        .into_iter()
-        .map(|validator| Ok((validator, validator_total_at(sdk, validator, epoch)?)))
-        .collect::<Result<Vec<_>, ExitCode>>()?;
+    let mut eligible = Vec::with_capacity(candidates.len());
+    for validator in candidates {
+        if validator_has_minimum_self_stake_at(sdk, validator, epoch)? {
+            eligible.push((validator, validator_total_at(sdk, validator, epoch)?));
+        }
+    }
+    let mut candidates = eligible;
     let k = core::cmp::min(cap, candidates.len());
     for index in 0..k {
         let mut next = index;
@@ -453,6 +470,56 @@ pub(crate) fn validator_total_at<SDK: SharedAPI>(
     Ok(math::expand_balance(compact))
 }
 
+pub(crate) fn validator_self_stake_at<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    epoch: u64,
+) -> Result<U256, ExitCode> {
+    let storage = staking_storage();
+    let owner = storage
+        .validators_accessor()
+        .entry(validator)
+        .owner_accessor()
+        .get_checked(sdk)?;
+    if owner.is_zero() {
+        return Ok(U256::ZERO);
+    }
+
+    let queue = storage
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(owner)
+        .delegate_queue_accessor();
+    let len = queue.len_checked(sdk)?;
+    let mut low = 0;
+    let mut high = len;
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if queue.at(middle).epoch_accessor().get_checked(sdk)? <= epoch {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    if low == 0 {
+        return Ok(U256::ZERO);
+    }
+    Ok(math::expand_balance(
+        queue.at(low - 1).amount_accessor().get_checked(sdk)?,
+    ))
+}
+
+pub(crate) fn validator_has_minimum_self_stake_at<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    epoch: u64,
+) -> Result<bool, ExitCode> {
+    let minimum = chain_config_storage()
+        .min_validator_stake_amount_accessor()
+        .get_checked(sdk)?;
+    Ok(validator_self_stake_at(sdk, validator, epoch)? >= minimum)
+}
+
 /// Public handler `0x76671808` (`currentEpoch`).
 ///
 /// Returns the epoch containing the current block.
@@ -546,7 +613,10 @@ pub fn get_validators<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
 
 /// Public handler `0x4d238c8e` (`addValidator`).
 ///
-/// Adds an active validator under governance control.
+/// Adds a pending validator under governance control.
+///
+/// The validator must self-delegate the configured minimum before governance
+/// can activate it.
 pub fn add_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
@@ -557,7 +627,7 @@ pub fn add_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), 
         sdk,
         validator,
         validator,
-        STATUS_ACTIVE,
+        STATUS_PENDING,
         0,
         U256::ZERO,
         changed_at,
@@ -575,6 +645,10 @@ pub fn activate_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
     if validator_status(sdk, validator)? != STATUS_PENDING {
         return revert_with(sdk, ERR_NOT_PENDING_VALIDATOR, &validator);
     }
+    let activation_epoch = next_epoch(sdk)?;
+    if !validator_has_minimum_self_stake_at(sdk, validator, activation_epoch)? {
+        return revert(sdk, ERR_OWNER_SELF_STAKE_BELOW_MINIMUM);
+    }
     let storage = staking_storage();
     storage
         .validators_accessor()
@@ -586,7 +660,7 @@ pub fn activate_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
         .push_checked(sdk, validator)?;
     ensure_rostered(sdk, validator)?;
     set_selection_visible(sdk, validator, true, current_epoch(sdk)?)?;
-    touch_validator_snapshot(sdk, validator, next_epoch(sdk)?)?;
+    touch_validator_snapshot(sdk, validator, activation_epoch)?;
     emit_modified(sdk, validator)
 }
 
@@ -601,13 +675,7 @@ pub fn disable_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     if validator_status(sdk, validator)? != STATUS_ACTIVE {
         return revert(sdk, ERR_NOT_ACTIVE_VALIDATOR);
     }
-    remove_active(sdk, validator)?;
-    staking_storage()
-        .validators_accessor()
-        .entry(validator)
-        .status_accessor()
-        .set_checked(sdk, STATUS_PENDING)?;
-    set_selection_visible(sdk, validator, false, current_epoch(sdk)?)?;
+    deactivate_validator_at(sdk, validator, current_epoch(sdk)?)?;
     touch_validator_snapshot(sdk, validator, next_epoch(sdk)?)?;
     emit_modified(sdk, validator)
 }
@@ -899,6 +967,9 @@ pub(crate) fn undelegate_from<SDK: SharedAPI>(
     };
 
     let owner = record.owner_accessor().get_checked(sdk)?;
+    let full_owner_exit = delegator == owner
+        && (status == STATUS_ACTIVE || status == STATUS_PENDING)
+        && next_delegated.is_zero();
     if delegator == owner && (status == STATUS_ACTIVE || status == STATUS_PENDING) {
         let min_validator_stake = config
             .min_validator_stake_amount_accessor()
@@ -938,6 +1009,14 @@ pub(crate) fn undelegate_from<SDK: SharedAPI>(
             .checked_add(amount)
             .ok_or(ExitCode::IntegerOverflow)?,
     )?;
+
+    if full_owner_exit {
+        // Stake and membership both change at `before_epoch`. The active
+        // registry is updated immediately, while historical selection for the
+        // current epoch remains available for committee validation.
+        deactivate_validator_at(sdk, validator, before_epoch - 1)?;
+        emit_modified(sdk, validator)?;
+    }
 
     events::Undelegated {
         validator,

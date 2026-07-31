@@ -4,7 +4,7 @@ use crate::{
     config,
     consts::{
         COMMISSION_RATE_MAX, ERR_ALREADY_INITIALIZED, ERR_BAD_COMMISSION_RATE,
-        ERR_MALFORMED_INPUT_LENGTH, ERR_ZERO_OWNER, STATUS_ACTIVE,
+        ERR_INITIAL_STAKE_TOO_LOW, ERR_MALFORMED_INPUT_LENGTH, ERR_ZERO_OWNER, STATUS_ACTIVE,
     },
     staking::set_validator,
     storage::{initializer_storage, staking_storage},
@@ -67,6 +67,13 @@ fn validate<SDK: SharedAPI>(sdk: &mut SDK, command: &InitializeCommand) -> Resul
     }
     if command.commission_rate > COMMISSION_RATE_MAX {
         return revert_with(sdk, ERR_BAD_COMMISSION_RATE, &command.commission_rate);
+    }
+    if let Some(stake) = command
+        .initial_stakes
+        .iter()
+        .find(|stake| **stake < command.min_validator_stake_amount)
+    {
+        return revert_with(sdk, ERR_INITIAL_STAKE_TOO_LOW, stake);
     }
     Ok(())
 }

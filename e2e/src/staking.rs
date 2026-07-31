@@ -39,6 +39,7 @@ sol! {
             address livenessSlashing,
             address blendReserve
         ) external;
+        function addValidator(address validator) external;
         function delegate(address validator, uint256 amount) external;
         function undelegate(address validator, uint256 amount) external;
         function claimDelegatorFee(address validator) external;
@@ -95,9 +96,14 @@ fn initialize_calldata(
     bls_verifier: Address,
     initial_stakes: Vec<U256>,
 ) -> Vec<u8> {
+    let validators = if initial_stakes.is_empty() {
+        Vec::new()
+    } else {
+        vec![VALIDATOR]
+    };
     IStakingRwasm::initializeCall {
         initialOwner: OWNER,
-        validators: vec![VALIDATOR],
+        validators,
         initialStakes: initial_stakes,
         commissionRate: 0,
         stakingToken: staking_token,
@@ -148,14 +154,23 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
         )),
     );
 
-    // Keep delegation explicitly pre-activation: current epoch is clamped to
-    // zero, so the two-epoch warm-up records the delegation at epoch 2.
+    // Keep key activation explicitly pre-activation: the current epoch is
+    // clamped to zero.
     context = context.with_block_number(999);
     call(
         &mut context,
         GENESIS_GOVERNANCE,
         GENESIS_STAKING,
-        initialize_calldata(Address::repeat_byte(0x44), verifier, vec![U256::ZERO]),
+        initialize_calldata(Address::repeat_byte(0x44), verifier, Vec::new()),
+    );
+    call(
+        &mut context,
+        GENESIS_GOVERNANCE,
+        GENESIS_STAKING,
+        IStakingRwasm::addValidatorCall {
+            validator: VALIDATOR,
+        }
+        .abi_encode(),
     );
     call(
         &mut context,
@@ -181,7 +196,7 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
     let result = IStakingRwasm::getConsensusKeysCall::abi_decode_returns(&output).unwrap();
     assert_eq!(result.blsPubkey.as_ref(), &[0; 96]);
     assert_eq!(result.peerPubkey, B256::with_last_byte(0x01));
-    assert_eq!(result.activationEpoch, 0);
+    assert_eq!(result.activationEpoch, 1);
 }
 
 #[test]

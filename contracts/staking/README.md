@@ -24,11 +24,16 @@ The core validator staking contract implemented as a normal rWasm contract and d
 
 Registered validator identities are permanent. Governance may disable and reactivate validators, but disabling never
 deletes their records, consensus-key state, ownership mappings, or stake history.
+Governance-added validators begin pending with zero stake and cannot become active until their self-stake is effective
+at or above the configured validator minimum.
 
 ## Accounting Invariants
 
 - Stake and commission changes take effect through epoch snapshots; selection changes become visible in the following
   epoch.
+- Initialization, activation, jail readmission, and committee selection each require the validator owner's effective
+  self-stake to meet the configured minimum. A full owner exit moves an active validator to pending in the same
+  transaction and removes its next-epoch selection visibility.
 - Delegation amounts must use `BALANCE_COMPACT_PRECISION`.
 - Undelegated principal is released only after its maturity epoch and is claimed through the reward path.
 - Validator-owner principal remains custodial through the latest committed committee's evidence window, and equivocation

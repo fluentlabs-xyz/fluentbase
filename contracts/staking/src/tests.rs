@@ -908,8 +908,8 @@ fn initializes_registry_and_preserves_solidity_read_abi() {
             governance,
             vec![validator_a, validator_b],
             vec![
-                U256::from(10) * BALANCE_COMPACT_PRECISION,
-                U256::from(20) * BALANCE_COMPACT_PRECISION,
+                U256::from(10) * DEFAULT_MIN_VALIDATOR_STAKE,
+                U256::from(20) * DEFAULT_MIN_VALIDATOR_STAKE,
             ],
             500,
         ),
@@ -937,7 +937,7 @@ fn initializes_registry_and_preserves_solidity_read_abi() {
         (
             validator_a,
             STATUS_ACTIVE,
-            U256::from(10) * BALANCE_COMPACT_PRECISION,
+            U256::from(10) * DEFAULT_MIN_VALIDATOR_STAKE,
             0,
             0,
             0,
@@ -995,6 +995,52 @@ fn governance_lifecycle_updates_active_registry() {
             .0,
         ExitCode::Ok
     );
+    let record = staking_storage().validators_accessor().entry(validator);
+    assert_eq!(
+        record.status_accessor().get_checked(&harness.sdk).unwrap(),
+        STATUS_PENDING,
+        "governance additions cannot start active without self-stake"
+    );
+    let (_, output) = harness.call(encode_call(
+        SIG_IS_VALIDATOR_ACTIVE,
+        &AddressCommand { value: validator },
+    ));
+    assert!(!decode_output::<bool>(&output));
+
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_ACTIVATE_VALIDATOR,
+            &AddressCommand { value: validator },
+        )),
+        ERR_OWNER_SELF_STAKE_BELOW_MINIMUM,
+    );
+    staking::delegate_to(
+        &mut harness.sdk,
+        validator,
+        validator,
+        DEFAULT_MIN_VALIDATOR_STAKE,
+        false,
+    )
+    .unwrap();
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_ACTIVATE_VALIDATOR,
+            &AddressCommand { value: validator },
+        )),
+        ERR_OWNER_SELF_STAKE_BELOW_MINIMUM,
+    );
+
+    harness.set_block_number(1_200);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_ACTIVATE_VALIDATOR,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    harness.set_block_number(1_400);
     let (_, output) = harness.call(encode_call(
         SIG_IS_VALIDATOR_ACTIVE,
         &AddressCommand { value: validator },
@@ -1355,6 +1401,33 @@ fn initializer_rejects_mismatched_arrays_without_persisting_owner() {
 }
 
 #[test]
+fn initializer_rejects_subminimum_active_validator() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    let command = harness.initialize_command(
+        owner,
+        vec![validator],
+        vec![DEFAULT_MIN_VALIDATOR_STAKE - BALANCE_COMPACT_PRECISION],
+        0,
+    );
+
+    assert_revert_selector(
+        harness.call(encode_args_call(SIG_INITIALIZE, &command)),
+        ERR_INITIAL_STAKE_TOO_LOW,
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_NOT_FOUND
+    );
+}
+
+#[test]
 fn initializer_is_permissionless_for_atomic_deployment_but_one_shot() {
     let owner = Address::with_last_byte(0xa0);
     let deployer = Address::with_last_byte(0xb0);
@@ -1668,8 +1741,8 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
     let owner = Address::with_last_byte(0xa0);
     let validator_a = Address::with_last_byte(0x01);
     let validator_b = Address::with_last_byte(0x02);
-    let stake_a = U256::from(10) * BALANCE_COMPACT_PRECISION;
-    let stake_b = U256::from(20) * BALANCE_COMPACT_PRECISION;
+    let stake_a = U256::from(10) * DEFAULT_MIN_VALIDATOR_STAKE;
+    let stake_b = U256::from(20) * DEFAULT_MIN_VALIDATOR_STAKE;
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
     assert_eq!(
@@ -1789,6 +1862,40 @@ fn equal_stake_top_k_preserves_solidity_roster_order() {
 }
 
 #[test]
+fn selection_filters_active_validator_below_current_minimum() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0,),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .min_validator_stake_amount_accessor()
+        .set_checked(
+            &mut harness.sdk,
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
+        )
+        .unwrap();
+
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_ACTIVE,
+        "selection must defend independently from lifecycle status"
+    );
+    let (_, output) = harness.call(encode_empty_call(SIG_GET_VALIDATORS));
+    assert!(decode_output::<Vec<Address>>(&output).is_empty());
+    assert!(staking::selected_validators_at(&harness.sdk, 0)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn committee_pruning_keeps_dkg_history() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
@@ -1849,7 +1956,7 @@ fn liveness_slash_jails_and_readmits_without_breaking_quorum() {
     let mut command = harness.initialize_command(
         owner,
         validators.clone(),
-        vec![BALANCE_COMPACT_PRECISION; validators.len()],
+        vec![DEFAULT_MIN_VALIDATOR_STAKE; validators.len()],
         500,
     );
     command.liveness_slashing = liveness;
@@ -1896,6 +2003,71 @@ fn liveness_slash_jails_and_readmits_without_breaking_quorum() {
             .get_checked(&harness.sdk)
             .unwrap(),
         STATUS_ACTIVE
+    );
+}
+
+#[test]
+fn jail_readmission_rejects_validator_below_minimum_self_stake() {
+    let owner = Address::with_last_byte(0xa0);
+    let liveness = Address::with_last_byte(0xb0);
+    let validators = (1..=4)
+        .map(Address::with_last_byte)
+        .collect::<Vec<Address>>();
+    let validator = validators[0];
+    let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(
+        owner,
+        validators.clone(),
+        vec![DEFAULT_MIN_VALIDATOR_STAKE; validators.len()],
+        0,
+    );
+    command.liveness_slashing = liveness;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    harness.set_caller(liveness);
+    assert_eq!(
+        harness
+            .call(encode_call(SIG_SLASH, &AddressCommand { value: validator },))
+            .0,
+        ExitCode::Ok
+    );
+    staking::undelegate_from(
+        &mut harness.sdk,
+        validator,
+        validator,
+        DEFAULT_MIN_VALIDATOR_STAKE,
+    )
+    .unwrap();
+    harness.set_block_number(1_200);
+
+    harness.set_caller(validator);
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_RELEASE_VALIDATOR_FROM_JAIL,
+            &AddressCommand { value: validator },
+        )),
+        ERR_OWNER_SELF_STAKE_BELOW_MINIMUM,
+    );
+
+    harness.set_caller(liveness);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_READMIT_EXPIRED_JAILS,
+                &U64Command { value: 1 },
+            ))
+            .0,
+        ExitCode::Ok,
+        "automated readmission must skip an ineligible validator without blocking the scan"
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_JAIL
     );
 }
 
@@ -2109,7 +2281,7 @@ fn validator_owner_cannot_drop_below_minimum_while_delegators_remain() {
 }
 
 #[test]
-fn sole_validator_owner_cannot_leave_subminimum_dust() {
+fn sole_validator_owner_full_exit_deactivates_without_leaving_subminimum_dust() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
     let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(10);
@@ -2131,6 +2303,43 @@ fn sole_validator_owner_cannot_leave_subminimum_dust() {
     );
     harness.sdk.restore_storage(before);
     staking::undelegate_from(&mut harness.sdk, validator, validator, stake).unwrap();
+
+    let storage = staking_storage();
+    assert_eq!(
+        storage
+            .validators_accessor()
+            .entry(validator)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_PENDING
+    );
+    assert_eq!(
+        storage
+            .active_validators_accessor()
+            .len_checked(&harness.sdk),
+        Ok(0)
+    );
+    let membership = storage.selection_membership_accessor().entry(validator);
+    assert!(!membership
+        .visible_accessor()
+        .get_checked(&harness.sdk)
+        .unwrap());
+    assert_eq!(
+        membership
+            .effective_from_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        staking::selected_validators_at(&harness.sdk, 0).unwrap(),
+        vec![validator],
+        "the completed epoch remains available for historical committee validation"
+    );
+    assert!(staking::selected_validators_at(&harness.sdk, 1)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
