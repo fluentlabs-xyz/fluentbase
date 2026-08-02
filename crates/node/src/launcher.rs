@@ -1,5 +1,6 @@
 //! This is temporary single-node consensus that is used for block production for Fluent,
 //! it will be replaced with DPoS consensus later.
+use alloy_consensus::BlockHeader;
 use alloy_network::AnyNetwork;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
@@ -20,10 +21,20 @@ use std::{sync::Arc, time::Duration};
 use tokio::{sync::mpsc, time::Interval};
 use tracing::{error, info};
 
+/// Re-readable probe for the governance-scheduled sequencer→DPoS activation
+/// height. `None` = staking cluster not deployed / activation not scheduled.
+/// Re-invoked per producer tick / received block: `setDposActivationBlock`
+/// may re-schedule while pending, so a launch-time snapshot goes stale.
+/// Callers latch the last `Some` — an on-chain `Some → None` transition is
+/// impossible (the setter cannot store 0 on a live chain), so `None` after a
+/// `Some` only ever means a transient read failure and must not un-gate.
+pub type ActivationProbe = Arc<dyn Fn() -> Option<u64> + Send + Sync>;
+
 pub async fn launch_consensus_validator<N, AddOns: RethRpcAddOns<N>, B>(
     handle: &NodeHandle<N, AddOns>,
     block_time: Duration,
     payload_attributes_builder: B,
+    activation_probe: Option<ActivationProbe>,
 ) -> eyre::Result<()>
 where
     N: FullNodeComponents<Types: DebugNode<N>>,
@@ -40,7 +51,8 @@ where
         payload_attributes_builder,
         payload_builder_handle,
         beacon_engine_handle,
-    );
+        activation_probe,
+    )?;
 
     handle
         .node
@@ -54,13 +66,20 @@ where
     Ok(())
 }
 
-#[derive(Debug)]
+// No `derive(Debug)`: the `ActivationProbe` closure is not `Debug`, and the
+// producer is only ever moved into its worker task, never formatted.
 pub struct BlockProducer<T: PayloadTypes, B> {
     to_engine: ConsensusEngineHandle<T>,
     payload_attributes_builder: B,
     payload_builder: PayloadBuilderHandle<T>,
     last_header: SealedHeaderFor<<T::BuiltPayload as BuiltPayload>::Primitives>,
     last_block_hash: B256,
+    /// sequencer→DPoS migration clean-halt: stop producing once the head reaches
+    /// the on-chain `dposActivationBlock` (DPoS consensus produces from
+    /// activation+1). Re-probed each tick, latched on `Some` into
+    /// [`Self::activation_gate`]. `None` probe ⇒ pure sequencer, never gates.
+    activation_probe: Option<ActivationProbe>,
+    activation_gate: Option<u64>,
 }
 
 impl<T: PayloadTypes, B> BlockProducer<T, B>
@@ -75,19 +94,25 @@ where
         payload_attributes_builder: B,
         payload_builder: PayloadBuilderHandle<T>,
         to_engine: ConsensusEngineHandle<T>,
-    ) -> Self {
+        activation_probe: Option<ActivationProbe>,
+    ) -> eyre::Result<Self> {
+        let best = provider.best_block_number().map_err(|e| {
+            eyre::eyre!("BlockProducer: provider has no best block number (empty datadir?): {e}")
+        })?;
         let last_header = provider
-            .sealed_header(provider.best_block_number().unwrap())
-            .unwrap()
-            .unwrap();
+            .sealed_header(best)
+            .map_err(|e| eyre::eyre!("BlockProducer: sealed_header(best) read failed: {e}"))?
+            .ok_or_eyre("BlockProducer: no sealed header at best block — chain not initialized")?;
         let last_block_hash = last_header.hash();
-        Self {
+        Ok(Self {
             to_engine,
             payload_attributes_builder,
             payload_builder,
             last_header,
             last_block_hash,
-        }
+            activation_probe,
+            activation_gate: None,
+        })
     }
 
     pub async fn run(mut self, mut block_time: Interval, shutdown: GracefulShutdown) {
@@ -107,6 +132,25 @@ where
                 // If shutdown arrives while this future is in progress, shutdown will wait
                 // until `advance_forkchoice_state()` finishes and only then exit the loop.
                 _ = block_time.tick() => {
+                    // sequencer→DPoS migration clean-halt: stop producing once the
+                    // head reaches the on-chain activation block. DPoS
+                    // consensus produces from activation+1.
+                    if let Some(probe) = &self.activation_probe {
+                        if let Some(act) = probe() {
+                            self.activation_gate = Some(act);
+                        }
+                    }
+                    if let Some(act) = self.activation_gate {
+                        if self.last_header.number() >= act {
+                            info!(
+                                target: "engine::local",
+                                activation = act,
+                                "reached DPoS activation block; halting sequencer block \
+                                 production (DPoS consensus produces from activation+1)"
+                            );
+                            break;
+                        }
+                    }
                     if let Err(e) = self.advance_forkchoice_state().await {
                         error!(target: "engine::local", "Error advancing the chain: {:?}", e);
                     }
@@ -171,6 +215,7 @@ where
 pub async fn launch_consensus_node<Node, AddOns: RethRpcAddOns<Node>>(
     handle: &NodeHandle<Node, AddOns>,
     consensus_url: String,
+    activation_probe: Option<ActivationProbe>,
 ) -> eyre::Result<()>
 where
     Node: FullNodeComponents<Types: DebugNode<Node>>,
@@ -192,7 +237,12 @@ where
         .node
         .task_executor
         .spawn_critical_task("consensus node worker", async move {
-            new_block_fetcher(beacon_engine_handle, Arc::new(block_provider)).await
+            new_block_fetcher(
+                beacon_engine_handle,
+                Arc::new(block_provider),
+                activation_probe,
+            )
+            .await
         });
     Ok(())
 }
@@ -203,6 +253,7 @@ async fn new_block_fetcher<
 >(
     engine_handle: ConsensusEngineHandle<T>,
     block_provider: P,
+    activation_probe: Option<ActivationProbe>,
 ) {
     let mut block_stream = {
         let (tx, rx) = mpsc::channel::<P::Block>(64);
@@ -213,12 +264,51 @@ async fn new_block_fetcher<
         rx
     };
 
+    // Two-tier finality mirror (DPoS era only): an upstream block at height
+    // N > activation is INCLUSION-level — its execution result becomes
+    // committee-attested K blocks later (deferred execution). Finalizing on
+    // receipt would overclaim by K and permanently desync this node's
+    // `finalized` tag from the validators'. Lag finalized by K, clamped to
+    // the activation anchor (the validators' own floor); pre-activation
+    // (sequencer-era / activation not scheduled yet) keeps finalize-on-receipt.
+    // The engine-API `safe` tag rides the latest landed ordering-final tip
+    // (`block_hash` — there is no speculative lead in the importer, each landed
+    // block is ordering-final on arrival), matching the validators' executor:
+    // `safe = head = block_hash`, `finalized` K behind. Ancestry `finalized ⊆
+    // safe ⊆ head` holds trivially.
+    // Activation is re-probed per block and latched on `Some` so a node
+    // launched before `setDposActivationBlock` still picks it up.
+    let mut two_tier_activation: Option<u64> = None;
+    let mut recent: std::collections::BTreeMap<u64, B256> = std::collections::BTreeMap::new();
     while let Some(block) = block_stream.recv().await {
+        if let Some(probe) = &activation_probe {
+            if let Some(act) = probe() {
+                two_tier_activation = Some(act);
+            }
+        }
         let payload = T::block_to_payload(SealedBlock::new_unhashed(block));
         let block_hash = payload.block_hash();
+        let number = payload.block_number();
+        recent.insert(number, block_hash);
+        recent.retain(|n, _| n.saturating_add(64) > number);
+        let finalized = match two_tier_activation {
+            Some(activation) if number > activation => {
+                let result_final = fluentbase_consensus::result_final_height(number, activation);
+                recent
+                    .range(..=result_final)
+                    .next_back()
+                    .map(|(_, h)| *h)
+                    .unwrap_or(B256::ZERO)
+            }
+            _ => block_hash,
+        };
         // Send new events to execution client
         let _ = engine_handle.new_payload(payload).await;
-        let state = ForkchoiceState::same_hash(block_hash);
+        let state = ForkchoiceState {
+            head_block_hash: block_hash,
+            safe_block_hash: block_hash,
+            finalized_block_hash: finalized,
+        };
         let _ = engine_handle.fork_choice_updated(state, None).await;
     }
 }

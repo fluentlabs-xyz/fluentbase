@@ -1,13 +1,17 @@
 #![allow(missing_docs, dead_code)]
 
+mod node_modes;
+
 use clap::{Args, Parser};
 use fluentbase_node::{
     chainspec::FluentChainSpecParser,
     consensus::FluentConsensus,
+    consensus_rpc::{ConsensusApiServer, ConsensusRpc},
+    dpos::{spawn_node_stack, DposArgs},
     evm::{FluentEvmConfig, FluentExecutorBuilder, FluentNode},
-    launcher::{launch_consensus_node, launch_consensus_validator},
+    launcher::{launch_consensus_node, launch_consensus_validator, ActivationProbe},
     payload::FluentPayloadAttributesBuilder,
-    trusted_peers::{resolve_default_consensus_url, resolve_default_trusted_peers},
+    trusted_peers::resolve_default_trusted_peers,
 };
 use humantime::parse_duration;
 use reth_chainspec::ChainSpec;
@@ -16,8 +20,13 @@ use reth_ethereum_cli::{Cli, Commands};
 use reth_node_builder::{DebugNodeLauncherFuture, Node};
 use reth_node_core::version::{default_reth_version_metadata, try_init_version_metadata};
 use reth_node_ethereum::EthereumAddOns;
+use reth_storage_api::{BlockNumReader, HeaderProvider};
 use std::{borrow::Cow, sync::Arc, time::Duration};
-use tracing::info;
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info};
+
+/// `consensus_subscribe` broadcast buffer (slow consumers lag, not block).
+const CERT_FEED_EVENT_CAP: usize = 1024;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
@@ -69,7 +78,11 @@ fn init_fluent_version_metadata() {
 #[derive(Debug, Clone, Default, Args)]
 #[non_exhaustive]
 pub struct FluentNodeArgs {
-    #[arg(long = "validator", default_value_t = false)]
+    #[arg(
+        long = "validator",
+        default_value_t = false,
+        conflicts_with = "cert_upstream"
+    )]
     pub validator: bool,
 
     #[arg(
@@ -79,8 +92,70 @@ pub struct FluentNodeArgs {
     )]
     pub validator_block_time: Duration,
 
-    #[arg(long = "sequencer-url")]
-    pub sequencer_url: Option<String>,
+    /// Upstream `consensus`-RPC WebSocket(s) a follower syncs certs from.
+    /// Repeatable: extra occurrences form the cert-follow failover list (rotated
+    /// on connect failure/disconnect); trust-follow uses the first. Deprecated
+    /// alias `--sequencer-url` is kept for one release (there is no sequencer
+    /// post-DPoS).
+    #[arg(
+        long = "cert-upstream",
+        visible_alias = "sequencer-url",
+        action = clap::ArgAction::Append
+    )]
+    pub cert_upstream: Vec<String>,
+
+    /// Run as a DPoS validator (BFT consensus + p2p + finality-gated peer set).
+    /// Mutually exclusive with --validator and --cert-upstream.
+    #[arg(
+        long = "dpos",
+        default_value_t = false,
+        conflicts_with_all = &["validator", "cert_upstream"],
+        // Require exactly one BLS key flag when --dpos: the `bls` ArgGroup
+        // (both flags, `conflicts_with` ⇒ at-most-one) plus this `requires_if`
+        // (⇒ at-least-one) = exactly-one, caught at PARSE time instead of after
+        // reth has fully launched (the exit-0-after-launch class; audit P2-18).
+        requires_if("true", "bls"),
+        // Same exactly-one pattern for the slasher EOA backend (keystore vs KMS):
+        // the `slasher` ArgGroup (at-most-one) + this `requires_if` (at-least-one).
+        requires_if("true", "slasher"),
+        // The randomness beacon is MANDATORY and always-on under --dpos (live DKG —
+        // no opt-out): there is no beacon-mode flag, so no `beacon` ArgGroup gate.
+    )]
+    pub dpos: bool,
+
+    /// Run as a trustless cert-follower: pull finality certs from
+    /// `--cert-upstream` (a `consensus`-RPC WebSocket), verify each against the
+    /// on-chain epoch committee, and drive this node's own reth. Mutually
+    /// exclusive with `--dpos`/`--validator`; requires `--cert-upstream` (the
+    /// upstream WS) and `--dpos.staking-config` (committee reads).
+    #[arg(
+        long = "cert-follow",
+        default_value_t = false,
+        conflicts_with_all = &["dpos", "validator"],
+        requires_all = &["cert_upstream", "dpos_staking_config"],
+    )]
+    pub cert_follow: bool,
+
+    /// L1 RPC for the cert-follower's Rollup trust-root checkpoint
+    /// (read at the `finalized` tag). Absent = devnet fallback (the upstream
+    /// head stays the only trust input).
+    #[arg(
+        long = "cert-follow.l1-rpc-url",
+        requires = "cert_follow_l1_rollup_address"
+    )]
+    pub cert_follow_l1_rpc_url: Option<String>,
+
+    /// Rollup contract address on L1 (pairs with --cert-follow.l1-rpc-url).
+    #[arg(
+        long = "cert-follow.l1-rollup-address",
+        requires = "cert_follow_l1_rpc_url"
+    )]
+    pub cert_follow_l1_rollup_address: Option<alloy_primitives::Address>,
+
+    /// DPoS validator configuration (`--dpos.*`): keys, paths, ports. Flattened
+    /// so the long flag list lives next to `DposConfig` in `fluentbase-node`.
+    #[command(flatten)]
+    pub dpos_cfg: DposArgs,
 }
 
 fn init_downloads_defaults() {
@@ -112,64 +187,407 @@ fn main() {
     // Override default reth version metadata with fluentbase-specific build metadata.
     init_fluent_version_metadata();
 
-    let mut consensus_url: Option<String> = None;
-    let mut block_producer: Option<Duration> = None;
-
     let mut cli = Cli::<FluentChainSpecParser, FluentNodeArgs>::parse();
 
-    // Adjust several params for node execution
-    if let Commands::Node(node) = &mut cli.command {
-        // Merge default public trusted peers
+    // Adjust several params for node execution + resolve the fluent node modes.
+    let modes = if let Commands::Node(node) = &mut cli.command {
+        // Merge default public trusted peers (reth network config).
         let new_trusted_peers = resolve_default_trusted_peers(node.chain.chain);
         node.network.trusted_peers.extend(new_trusted_peers);
 
-        // If consensus URL is not specified, resolve default
-        if let Some(sequencer_url) = &node.ext.sequencer_url {
-            consensus_url = Some(sequencer_url.clone());
-        } else if let Some(debug_consensus_url) = &node.debug.rpc_consensus_url {
-            consensus_url = Some(debug_consensus_url.clone());
-        } else {
-            consensus_url = resolve_default_consensus_url(node.chain.chain);
-        }
+        node_modes::resolve_node_modes(
+            &node.ext,
+            node.chain.chain,
+            node.debug.rpc_consensus_url.as_deref(),
+        )
+    } else {
+        node_modes::resolve_non_node_modes()
+    };
+    let node_modes::ResolvedModes {
+        consensus_url,
+        block_producer,
+        node_stack,
+        cert_rpc_feed,
+        staking_address,
+        chain_config_address,
+        liveness_slashing_address,
+        staking_reader_cfg,
+    } = modes;
 
-        // If validator mode is enabled then specify block production time
-        if node.ext.validator {
-            block_producer = Some(node.ext.validator_block_time);
-        }
-    }
+    // Pre-spawn the unified consensus thread before reth's runtime starts. The
+    // thread blocks on a oneshot until the closure below forwards the reth
+    // FullNode. ONE spawn for both `--dpos` (validator) and `--cert-follow`
+    // (follower) — `resolve_node_modes` produced exactly one `NodeStackCfg` (they
+    // are mutually exclusive via clap `conflicts_with`); the standalone
+    // bare `--cert-upstream` trust relay is the separate `launch_consensus_node`
+    // path and never yields a `NodeStackCfg`.
+    let consensus_setup = node_stack.map(|cfg| {
+        let shutdown_token = CancellationToken::new();
+        let spawn = spawn_node_stack::<_, EthereumAddOns<_, _, _>>(cfg, shutdown_token.clone());
+        (spawn, shutdown_token)
+    });
 
-    let components = |spec: Arc<ChainSpec>| {
+    // Split the consensus thread setup so cancel + join run AFTER
+    // cli.run_with_components returns (Tempo pattern at bin/tempo/src/main.rs:734-742).
+    // Joining inside the async closure risks deadlock when reth's engine shutdown
+    // races with the consensus thread's in-flight beacon_engine_handle calls.
+    let (consensus_thread_inner, consensus_thread_cleanup) = match consensus_setup {
+        Some((spawn, token)) => (
+            Some((spawn.handle_tx, spawn.dead_rx)),
+            Some((spawn.join, token)),
+        ),
+        None => (None, None),
+    };
+
+    let components = move |spec: Arc<ChainSpec>| {
         (
-            FluentEvmConfig::new_with_default_factory(spec.clone()),
+            FluentEvmConfig::new(
+                spec.clone(),
+                fluentbase_node::evm::FluentEvmFactory::default(),
+                staking_address,
+                chain_config_address,
+                liveness_slashing_address,
+            ),
             Arc::new(FluentConsensus::new(spec)),
         )
     };
 
-    if let Err(err) = cli.run_with_components::<FluentNode>(components, async move |builder, _| {
+    // RocksDB close-order guard. The consensus thread (slasher `PoolTxSink`, and
+    // any other DPoS/cert-follow consumer) clones reth's provider, which owns a
+    // RocksDB instance. If such a clone is the LAST reference it closes RocksDB
+    // from the commonware runtime-teardown path, where RocksDB's process-global
+    // `PeriodicTaskScheduler::timer_mutex` is torn down concurrently -> a glibc
+    // "pthread lock: Invalid argument" abort (intermittent shutdown SIGABRT,
+    // exit 134/139 AFTER a successful flush — data is safe, but the process
+    // crashes on the way out). Send a provider clone out to `main` and hold it
+    // until AFTER the consensus thread is joined, so RocksDB's final close runs
+    // exactly once, on the main thread, in a clean context after every other ref
+    // is gone.
+    let (rocksdb_keepalive_tx, rocksdb_keepalive_rx) =
+        std::sync::mpsc::sync_channel::<Box<dyn std::any::Any + Send>>(1);
+
+    let run_result = cli.run_with_components::<FluentNode>(components, async move |builder, _| {
         info!(target: "reth::cli", "Launching node");
 
-        let components_builder = FluentNode::default()
+        let components_builder = FluentNode::with_dpos_active(!staking_address.is_zero())
             .components_builder()
-            .executor(FluentExecutorBuilder::default());
+            .executor(FluentExecutorBuilder::new(
+                staking_address,
+                chain_config_address,
+                liveness_slashing_address,
+            ));
         let add_ons = EthereumAddOns::default();
 
         let handle: DebugNodeLauncherFuture<_, _, _> = builder
             .with_types::<FluentNode>()
             .with_components(components_builder)
             .with_add_ons(add_ons)
+            .extend_rpc_modules(move |ctx| {
+                // Register the `consensus` namespace (cert-follower server) when
+                // this node serves the cert feed (DPoS enabled). Rides the
+                // existing `--http`/`--ws` transports.
+                if let Some(feed) = cert_rpc_feed {
+                    ctx.modules
+                        .merge_configured(ConsensusRpc::new(feed).into_rpc())?;
+                }
+                Ok(())
+            })
             .launch_with_debug_capabilities();
 
         let handle = handle.await?;
 
+        // Defer RocksDB's final close to `main` (see rocksdb_keepalive_tx): hand a
+        // provider clone out so the consensus thread's clone is never the last ref.
+        let _ = rocksdb_keepalive_tx.send(Box::new(handle.node.provider.clone()));
+
+        // sequencer→DPoS activation probe, shared by the producer's clean-halt
+        // gate and the trust-follower's two-tier finality mirror. Re-read per
+        // tick/block (NOT once at launch): a node started before governance
+        // schedules activation must still gate / mirror without a restart,
+        // and a pending activation may be re-scheduled. Pre-deploy (codeless
+        // ChainConfig) and unscheduled (0) both map to None; consumers latch
+        // the last Some, so every failure path below must be observable
+        // (warn) — a silent None is indistinguishable from "not scheduled
+        // yet" and would hide a degraded provider from operators.
+        let activation_probe: Option<ActivationProbe> = match &staking_reader_cfg {
+            Some(cfg) if !cfg.chain_config_address.is_zero() => {
+                let reader = fluentbase_staking_reader::RethStakingStateReader::new(
+                    handle.node.provider.clone(),
+                    handle.node.evm_config.clone(),
+                    cfg.clone(),
+                );
+                let provider = handle.node.provider.clone();
+                Some(Arc::new(move || {
+                    let best_hash = match provider
+                        .best_block_number()
+                        .ok()
+                        .and_then(|n| provider.sealed_header(n).ok().flatten())
+                        .map(|h| h.hash())
+                    {
+                        Some(hash) => hash,
+                        None => {
+                            tracing::warn!(
+                                target: "reth::cli",
+                                "DPoS activation probe: best-header read failed; \
+                                 keeping last known value"
+                            );
+                            return None;
+                        }
+                    };
+                    match reader.scheduled_dpos_activation(best_hash) {
+                        Ok(act) => act,
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "reth::cli",
+                                error = %e,
+                                "DPoS activation probe failed; keeping last known value"
+                            );
+                            None
+                        }
+                    }
+                }) as ActivationProbe)
+            }
+            _ => None,
+        };
         if let Some(block_time) = block_producer {
-            launch_consensus_validator(&handle, block_time, FluentPayloadAttributesBuilder {})
-                .await?;
+            launch_consensus_validator(
+                &handle,
+                block_time,
+                FluentPayloadAttributesBuilder {},
+                activation_probe,
+            )
+            .await?;
         } else if let Some(consensus_url) = consensus_url {
-            launch_consensus_node(&handle, consensus_url).await?;
+            launch_consensus_node(&handle, consensus_url, activation_probe).await?;
         }
-        handle.node_exit_future.await
-    }) {
+
+        if let Some((handle_tx, dead_rx)) = consensus_thread_inner {
+            info!(target: "reth::cli", "Handing reth FullNode to consensus thread");
+            if handle_tx.send(handle.node.clone()).is_err() {
+                eyre::bail!("consensus thread exited before NodeHandle could be sent");
+            }
+
+            tokio::select! {
+                _ = handle.node_exit_future => {
+                    info!("reth execution node exited");
+                }
+                _ = dead_rx => {
+                    // No flush: reth persists its in-memory tail on its own graceful
+                    // exit, and any unpersisted tail is rebuilt on the next cold-start
+                    // via `recover_finalized_tail_into_reth` (marshal durable archive).
+                    info!("DPoS thread exited; reth persists natively, lost tail \
+                           recovers on next cold-start");
+                }
+            }
+            Ok(())
+        } else {
+            handle.node_exit_future.await
+        }
+    });
+
+    // Hold reth's provider (the RocksDB owner) alive across the consensus-thread
+    // join so the slasher's clone can never be the last reference (see
+    // rocksdb_keepalive_tx). `None` if the node closure errored before sending.
+    let rocksdb_keepalive = rocksdb_keepalive_rx.recv().ok();
+
+    // Consensus-thread cleanup runs AFTER reth returns, regardless of
+    // run_result — the thread (DPoS or cert-follow) always gets a chance to exit
+    // cleanly.
+    let mut consensus_failed = false;
+    if let Some((join, shutdown_token)) = consensus_thread_cleanup {
+        shutdown_token.cancel();
+        match join.join() {
+            Ok(Ok(())) => info!("consensus thread joined cleanly"),
+            Ok(Err(e)) => {
+                // A dead validator/follower (boot misconfig, wrong keystore
+                // password, or a mid-run consensus fault that cancelled the shared
+                // token via the 3-strike escalation) must exit NON-ZERO so systemd
+                // `Restart=on-failure` and exit-code alerting fire — otherwise the
+                // node silently stops attesting (audit P2-4 / P2-17).
+                error!(?e, "consensus thread exited with error");
+                consensus_failed = true;
+            }
+            Err(panic) => {
+                error!("consensus thread panicked");
+                std::panic::resume_unwind(panic);
+            }
+        }
+    }
+
+    // Every other reth/consensus reference is now gone; drop the keepalive so
+    // RocksDB's final close runs here, on the main thread, in a clean context
+    // (not from the consensus runtime teardown that triggered the SIGABRT).
+    drop(rocksdb_keepalive);
+
+    // Print reth's error FIRST (it is often the root cause of a correlated crash),
+    // then exit non-zero if either reth or the consensus thread failed — don't let
+    // the consensus-thread failure shadow reth's reason from stderr.
+    if let Err(err) = &run_result {
         eprintln!("Error: {err:?}");
+    }
+    if consensus_failed || run_result.is_err() {
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod beacon_arggroup_tests {
+    use super::FluentNodeArgs;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: FluentNodeArgs,
+    }
+
+    /// Minimal flags that satisfy every `required_if_eq("dpos","true")` / `bls`
+    /// rule. The beacon is MANDATORY always-on live DKG now — there is NO
+    /// beacon-mode flag and no `beacon` ArgGroup, so a `--dpos` node parses with
+    /// none of the removed `--dpos.beacon-*` flags.
+    #[test]
+    fn dpos_parses_with_no_beacon_flags() {
+        let argv = [
+            "test",
+            "--dpos",
+            "--dpos.bls-key-path",
+            "/k/bls.hex",
+            "--dpos.peer-key-path",
+            "/k/peer.hex",
+            "--dpos.staking-config",
+            "/k/staking.json",
+            "--dpos.bootstrappers",
+            "/k/boot.json",
+            "--dpos.slasher-keystore-path",
+            "/k/slasher.json",
+            "--dpos.slasher-keystore-password-file",
+            "/k/slasher.pw",
+        ];
+        assert!(
+            TestCli::try_parse_from(argv).is_ok(),
+            "--dpos must parse with no beacon flags (beacon is always-on live DKG)"
+        );
+    }
+
+    #[test]
+    fn dpos_parses_with_bls_and_slasher_kms_backends() {
+        let argv = [
+            "test",
+            "--dpos",
+            "--dpos.bls-kms-key-id",
+            "arn:aws:kms:us-east-1:1:key/bls",
+            "--dpos.bls-kms-ciphertext-path",
+            "/k/bls.ct",
+            "--dpos.peer-key-path",
+            "/k/peer.hex",
+            "--dpos.staking-config",
+            "/k/staking.json",
+            "--dpos.bootstrappers",
+            "/k/boot.json",
+            "--dpos.slasher-kms-key-id",
+            "arn:aws:kms:us-east-1:1:key/slasher",
+        ];
+        assert!(
+            TestCli::try_parse_from(argv).is_ok(),
+            "--dpos must parse with KMS-backed BLS + slasher"
+        );
+    }
+
+    #[test]
+    fn dpos_bls_kms_key_id_requires_ciphertext_path() {
+        let argv = [
+            "test",
+            "--dpos",
+            "--dpos.bls-kms-key-id",
+            "arn:aws:kms:us-east-1:1:key/bls",
+            "--dpos.peer-key-path",
+            "/k/peer.hex",
+            "--dpos.staking-config",
+            "/k/staking.json",
+            "--dpos.bootstrappers",
+            "/k/boot.json",
+            "--dpos.slasher-keystore-path",
+            "/k/slasher.json",
+            "--dpos.slasher-keystore-password-file",
+            "/k/slasher.pw",
+        ];
+        assert!(
+            TestCli::try_parse_from(argv).is_err(),
+            "--dpos.bls-kms-key-id without --dpos.bls-kms-ciphertext-path must fail to parse"
+        );
+    }
+
+    #[test]
+    fn dpos_rejects_multiple_bls_backends() {
+        let argv = [
+            "test",
+            "--dpos",
+            "--dpos.bls-key-path",
+            "/k/bls.hex",
+            "--dpos.bls-kms-key-id",
+            "arn:aws:kms:us-east-1:1:key/bls",
+            "--dpos.bls-kms-ciphertext-path",
+            "/k/bls.ct",
+            "--dpos.peer-key-path",
+            "/k/peer.hex",
+            "--dpos.staking-config",
+            "/k/staking.json",
+            "--dpos.bootstrappers",
+            "/k/boot.json",
+            "--dpos.slasher-keystore-path",
+            "/k/slasher.json",
+            "--dpos.slasher-keystore-password-file",
+            "/k/slasher.pw",
+        ];
+        assert!(
+            TestCli::try_parse_from(argv).is_err(),
+            "plaintext + KMS BLS backends together must fail to parse (bls ArgGroup)"
+        );
+    }
+
+    #[test]
+    fn dpos_rejects_multiple_slasher_backends() {
+        let argv = [
+            "test",
+            "--dpos",
+            "--dpos.bls-key-path",
+            "/k/bls.hex",
+            "--dpos.peer-key-path",
+            "/k/peer.hex",
+            "--dpos.staking-config",
+            "/k/staking.json",
+            "--dpos.bootstrappers",
+            "/k/boot.json",
+            "--dpos.slasher-keystore-path",
+            "/k/slasher.json",
+            "--dpos.slasher-keystore-password-file",
+            "/k/slasher.pw",
+            "--dpos.slasher-kms-key-id",
+            "arn:aws:kms:us-east-1:1:key/slasher",
+        ];
+        assert!(
+            TestCli::try_parse_from(argv).is_err(),
+            "keystore + KMS slasher backends together must fail to parse (slasher ArgGroup)"
+        );
+    }
+
+    #[test]
+    fn dpos_requires_a_slasher_backend() {
+        let argv = [
+            "test",
+            "--dpos",
+            "--dpos.bls-key-path",
+            "/k/bls.hex",
+            "--dpos.peer-key-path",
+            "/k/peer.hex",
+            "--dpos.staking-config",
+            "/k/staking.json",
+            "--dpos.bootstrappers",
+            "/k/boot.json",
+        ];
+        assert!(
+            TestCli::try_parse_from(argv).is_err(),
+            "--dpos with no slasher backend must fail to parse (requires_if(\"true\", \"slasher\"))"
+        );
     }
 }
