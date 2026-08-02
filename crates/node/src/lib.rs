@@ -1,8 +1,18 @@
+pub mod cert_follow;
+pub mod cert_inlet;
+pub mod certified_block;
 pub mod chainspec;
 pub mod consensus;
+pub mod consensus_rpc;
+pub mod derive;
+pub mod dpos;
 pub mod evm;
+pub mod importer;
+mod kms;
 pub mod launcher;
+pub mod ordering;
 pub mod payload;
+pub mod slasher_sink;
 pub mod trusted_peers;
 pub mod types;
 pub mod utils;

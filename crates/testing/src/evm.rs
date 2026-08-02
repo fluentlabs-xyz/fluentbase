@@ -456,6 +456,10 @@ impl<'a> TxBuilder<'a> {
             let mut context: MainnetContext<InMemoryDB> = MainnetContext::new(db, PRAGUE);
             context.cfg = self.ctx.cfg.clone();
             context.cfg.legacy_bytecode_enabled = true;
+            // revm v107 enforces EIP-7825 (per-tx gas cap, 2^24). This is a
+            // deployment/simulation EVM (predeploy bootstrap uses ~100M gas),
+            // not consensus — disable the cap like the other genesis quirks.
+            context.cfg.tx_gas_limit_cap = Some(u64::MAX);
             context.block = self.block.clone();
             context.tx = self.tx.clone();
             let mut evm = context.build_mainnet();
@@ -467,6 +471,9 @@ impl<'a> TxBuilder<'a> {
             let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, PRAGUE);
             context.cfg = self.ctx.cfg.clone();
             context.cfg.legacy_bytecode_enabled = false;
+            // revm v107 EIP-7825 per-tx gas cap (2^24) — disable for the
+            // deployment/simulation EVM (predeploy bootstrap uses ~100M gas).
+            context.cfg.tx_gas_limit_cap = Some(u64::MAX);
             context.block = self.block.clone();
             context.tx = self.tx.clone();
             let mut evm = context.build_rwasm();

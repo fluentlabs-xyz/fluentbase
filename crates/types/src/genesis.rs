@@ -68,6 +68,15 @@ pub const PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER: Address =
 /// A precompile smart contract that handles fee management.
 pub const PRECOMPILE_FEE_MANAGER: Address = address!("0x0000000000000000000000000000000000520fee");
 
+/// Liveness predeploy address — holds `ProductionLiveness`.
+/// Called from `FluentBlockExecutor::apply_pre_execution_changes` via
+/// `transact_system_call(SYSTEM_ADDRESS, …)` with this block's production
+/// record; credits the producer, and at an epoch boundary closes the epoch
+/// (verdicts, temporary exclusions, and the stipend settlement). The
+/// `SYSTEM_ADDRESS` sentinel itself lives at [`crate::SYSTEM_ADDRESS`].
+pub const PRECOMPILE_LIVENESS_SLASHING: Address =
+    address!("0x0000000000000000000000000000000000520020");
+
 /// EIP-2935 system contract / precompile address (as specified by the EIP).
 ///
 /// Kept as a standalone constant so fork-activation logic can include/exclude it.
