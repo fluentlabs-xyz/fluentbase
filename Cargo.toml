@@ -1,7 +1,22 @@
 [workspace]
 members = [
     "bins/*",
-    "crates/*",
+    "crates/build",
+    "crates/codec",
+    "crates/codec-derive",
+    "crates/contracts",
+    "crates/crypto",
+    "crates/evm",
+    "crates/genesis",
+    "crates/node",
+    "crates/revm",
+    "crates/runtime",
+    "crates/sdk",
+    "crates/sdk-derive",
+    "crates/testing",
+    "crates/types",
+    "crates/dpos/*",
+    "devnet/local-dpos-smoke/genesis-bootstrap",
     "e2e",
 ]
 exclude = [
@@ -39,6 +54,10 @@ fluentbase-crypto = { path = "./crates/crypto", default-features = false, versio
 fluentbase-evm = { path = "./crates/evm", default-features = false, version = "1.3.3" }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false, version = "1.3.3" }
 fluentbase-node = { path = "./crates/node", default-features = false, version = "1.3.3" }
+fluentbase-bls = { path = "./crates/dpos/bls", version = "1.3.3" }
+fluentbase-staking-reader = { path = "./crates/dpos/staking-reader", version = "1.3.3" }
+fluentbase-p2p = { path = "./crates/dpos/p2p", default-features = false, version = "1.3.3" }
+fluentbase-consensus = { path = "./crates/dpos/consensus", default-features = false, version = "1.3.3" }
 fluentbase-revm = { path = "./crates/revm", default-features = false, version = "1.3.3" }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false, version = "1.3.3" }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false, version = "1.3.3" }
@@ -112,6 +131,14 @@ rwasm = { version = "0.4.5", default-features = false }
 alloy-primitives = { version = "1.5.6", default-features = false, features = ["map-foldhash", "sha3-keccak", "rlp"] }
 alloy-rlp = { version = "0.3.13", default-features = false, features = ["core-net"] }
 alloy-sol-types = { version = "1.5.0", default-features = false, features = ["json"] }
+alloy-signer = { version = "1", default-features = false }
+alloy-signer-local = { version = "1", features = ["keystore"] }
+alloy-signer-aws = { version = "1", default-features = false }
+aws-config = { version = "1", default-features = false, features = ["rustls", "behavior-version-latest"] }
+aws-sdk-kms = { version = "1", default-features = false, features = ["rustls", "behavior-version-latest"] }
+tokio-util = { version = "0.7", default-features = false }
+alloy-provider = { version = "1", default-features = false }
+blst = { version = "0.3.16", default-features = false, features = ["no-threads"] }
 alloy-genesis = { version = "2.0.4", default-features = false }
 alloy-evm = { version = "0.34.0", default-features = false }
 alloy-consensus = { version = "2.0.4", default-features = false }
@@ -155,6 +182,7 @@ auto_impl = { version = "1.2", default-features = false }
 metrics = { version = "0.24.3", default-features = false }
 bytes = { version = "1.10.1", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+jsonrpsee = { version = "0.26", default-features = false, features = ["server", "client", "macros", "ws-client", "http-client"] }
 hex-literal = { version = "1.0.0" }
 strum_macros = { version = "0.27.1" }
 lazy_static = { version = "1.5.0", default-features = false, features = ["spin_no_std"] }
@@ -192,47 +220,54 @@ sha2 = { version = "0.10.9", default-features = false }
 clap = { version = "4", features = ["derive"] }
 
 # reth
-reth-ethereum-cli = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-chainspec = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
+reth-ethereum-cli = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-chainspec = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
 reth-primitives-traits = { version = "0.3.1", default-features = false }
-reth-ethereum-primitives = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-db = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched", features = ["mdbx"] }
-reth-provider = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-revm = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-transaction-pool = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-cli = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-cli-commands = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-cli-runner = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-cli-util = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-consensus-common = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-rpc-builder = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-rpc = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-rpc-convert = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-rpc-api = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched", features = ["client"] }
-reth-rpc-eth-types = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-rpc-server-types = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-network = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched", features = ["serde"] }
-reth-network-api = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-network-peers = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-tasks = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-payload-builder = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-payload-primitives = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-node-api = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-node-core = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-ethereum-payload-builder = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-node-ethereum = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-node-builder = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-node-metrics = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-consensus = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-ethereum-consensus = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-node-types = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-storage-api = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-ethereum = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-ethereum-engine-primitives = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-evm = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-evm-ethereum = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-consensus-debug-client = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
-reth-engine-primitives = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched" }
+reth-ethereum-primitives = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-db = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow", features = ["mdbx"] }
+reth-db-common = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-provider = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-revm = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-transaction-pool = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-cli = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-cli-commands = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-cli-runner = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-cli-util = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-consensus-common = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-rpc-builder = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-rpc = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-rpc-convert = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-rpc-api = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow", features = ["client"] }
+reth-rpc-eth-types = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-rpc-server-types = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-network = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow", features = ["serde"] }
+reth-network-api = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-network-peers = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-tasks = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-payload-builder = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-payload-primitives = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-basic-payload-builder = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-chain-state = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-payload-builder-primitives = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-node-api = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-node-core = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-ethereum-payload-builder = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-node-ethereum = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-node-builder = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-node-metrics = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-consensus = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-ethereum-consensus = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-node-types = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-storage-api = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-ethereum = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-ethereum-engine-primitives = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-evm = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-evm-ethereum = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-consensus-debug-client = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-engine-primitives = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-engine-tree = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+crossbeam-channel = "0.5"
+reth-trie-common = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
 
 # alloy-rpc-types
 alloy-rpc-types = { version = "2.0.4", features = ["eth"], default-features = false }
@@ -242,6 +277,9 @@ alloy-rpc-types-engine = { version = "2.0.4", default-features = false }
 # reth deps
 tracing = { version = "0.1.0", default-features = false }
 tokio = { version = "1.44.2", default-features = false }
+# TXT-record resolution for `--dpos.bootstrappers=dns:<domain>` seed discovery.
+# Minimal: system /etc/resolv.conf config + tokio async runtime only.
+hickory-resolver = { version = "0.24", default-features = false, features = ["system-config", "tokio-runtime"] }
 aquamarine = { version = "0.6" }
 backon = { version = "1.2", default-features = false, features = ["std-blocking-sleep", "tokio-sleep"] }
 tempfile = { version = "3.20" }
@@ -251,6 +289,20 @@ eyre = "0.6"
 bitflags = { version = "2.6.0", default-features = false }
 once_cell = { version = "1.19", default-features = false, features = ["alloc"] }
 rand = "0.9.2"
+rand_08 = { package = "rand", version = "0.8.5" }
+rand_core = "0.6.4"
+prometheus-client = "0.24.0"
+commonware-cryptography = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-consensus = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-utils = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-codec = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-math = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-storage = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-runtime = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-p2p = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-broadcast = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-parallel = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
+commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.4.0", default-features = false }
 num-bigint = { version = "0.4.6", default-features = false, features = [] }
 curve25519-dalek = { version = "4.1.3", default-features = false, features = ["alloc"] }
 flate2 = "1.1.9"
@@ -371,3 +423,4 @@ inherits = "release"
 panic = "abort"
 codegen-units = 1
 incremental = false
+

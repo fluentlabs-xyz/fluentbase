@@ -60,6 +60,12 @@ temp/
 *.tmp
 *.temp
 
+# graphify knowledge-graph artifacts (tooling side-output; a stray copy inside
+# crates/* breaks the cargo workspace member glob in the docker build — the dir
+# is recreated intermittently by tooling hooks, so exclude it everywhere)
+graphify-out/
+**/graphify-out/
+
 # Package manager files
 node_modules/
 yarn.lock
