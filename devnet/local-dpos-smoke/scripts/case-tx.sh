@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# smoke-tx (standalone): bring up its own DPoS stack and run the assert_tx body.
+# The assertion (value transfer + MockBlendToken.approve execute/finalize/apply) is
+# read-only w.r.t. consensus and lives in asserts.sh, shared with case-base.sh.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+# shellcheck source=lib.sh
+source "$(dirname "$0")/lib.sh"
+# shellcheck source=asserts.sh
+source "$(dirname "$0")/asserts.sh"
+
+bring_up_dpos
+trap tear_down EXIT
+assert_tx
