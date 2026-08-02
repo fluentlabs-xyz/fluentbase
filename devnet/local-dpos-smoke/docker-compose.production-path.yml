@@ -1,0 +1,234 @@
+name: fluent-dpos-prod-path
+
+# Production-path smoke phase-A: a PLAIN chain (no staking in genesis). The
+# staking cluster is deployed at runtime via `forge` by the driver, which then
+# cold-restarts validators into `--dpos` via
+# docker-compose.production-path.dpos.yml. Every node carries
+# --dpos.staking-config from first boot: genesis-init pre-writes
+# /runtime/staking-reader.json predicting the runtime CREATE addresses (see
+# --staking-reader-create-nonces below), so all 7 nodes execute the
+# commitEpochCommittee system call identically from block 1 (state-root
+# symmetry) and the sequencer's dynamic activation gate clean-halts at
+# dposActivationBlock without a mid-flight restart.
+#
+# Topology: 6 validators (committee of 5 + 1 external joiner) + a full node.
+# validator-0 is the sequencer (1s blocks); 1-5 + full-node follow via WS.
+#
+# Startup CPU mitigation (brief G10): one shared image (`<<: *fluent-build`),
+# per-service cpus limit, and depends_on chaining on the previous validator's
+# healthcheck so the 6 nodes boot staggered, not all at once.
+networks:
+  fluent-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+# Image-only anchor merged by every follower/validator/full-node service. The build
+# section lives on genesis-init ALONE (via *fluent-build-def below) so 'docker compose
+# up --build' builds the image EXACTLY ONCE (not once per service). genesis-init runs
+# first and everything transitively depends_on it (service_completed_successfully), so
+# the image is built+tagged before any node starts, and they all reuse
+# fluent-dpos-smoke:local. (Previously this anchor carried the build section too, so all
+# 8 services declared the identical build+tag, and up --build ran 8 SEPARATE Rust
+# compiles → OOM on a cold cache.)
+x-fluent-build: &fluent-build
+  image: fluent-dpos-smoke:local
+
+# The SOLE build definition. Merged into genesis-init only.
+x-fluent-build-def: &fluent-build-def
+  build:
+    context: ../..
+    dockerfile: devnet/local-dpos-smoke/Dockerfile
+  image: fluent-dpos-smoke:local
+
+x-cpu-limit: &cpu-limit
+  deploy:
+    resources:
+      limits:
+        cpus: "2.0"
+
+x-follower-health: &follower-health
+  healthcheck:
+    test:
+      - "CMD-SHELL"
+      - "curl -s -X POST -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' http://localhost:8545 | grep -q result"
+    interval: 2s
+    timeout: 2s
+    retries: 30
+    start_period: 5s
+
+# One shared follower command for validators 1-5 + full-node: per-service
+# differences come in via `environment` ($$ = compose-escaped, expanded by the
+# in-container sh) — NODE_DIR (datadir suffix) and EXTRA_NODE_FLAGS (optional,
+# e.g. the full-node's proof window). A flag change edits ONE block, not 6 —
+# a hand-edited copy missing one flag is exactly the config-asymmetry
+# follower-wedge class this suite exists to catch.
+x-follower-cmd: &follower-cmd
+  entrypoint: ["/bin/sh", "-c"]
+  command:
+    - |
+      exec /usr/local/bin/fluent node \
+        --chain=/runtime/genesis-local.json \
+        --cert-upstream=ws://172.20.0.10:8546 \
+        --dpos.staking-config=/runtime/staking-reader.json \
+        --builder.extradata= \
+        $$EXTRA_NODE_FLAGS \
+        --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+        --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+        --trusted-only \
+        --disable-discovery \
+        --datadir=/runtime/reth-data/$$NODE_DIR
+
+services:
+  genesis-init:
+    <<: *fluent-build-def
+    entrypoint: ["/usr/local/bin/genesis-bootstrap"]
+    command:
+      - bare
+      - --peers=6
+      # Two bootstrappers (v0+v1): with ONE, a joiner promoting mid-rotation
+      # has a single dialable address — if that node is itself mid-churn, the
+      # joiner is stranded (no address gossip without a first connection).
+      - --bootstrappers=2
+      - --output=/runtime
+      - --chain-id=2026
+      - --validator-ips=172.20.0.10,172.20.0.11,172.20.0.12,172.20.0.13,172.20.0.14,172.20.0.15
+      # Pre-write staking-reader.json predicting the runtime forge deploy.
+      # Deployer = owner-0; driver tx prefix: fund-spammer(0), token(1),
+      # BLS verifier(2), BLEND→v5(3); DeployStaking: CREATE2 linked-library
+      # txs burn nonces 4-5 (StakingDpos, StakingEconomics), approve 6, then
+      # in-script BLS12381Verifier(7) + SimplexEvidenceDecoder(8) + one more
+      # early deploy(9), then impl/proxy pairs 10.. → proxies at nonce 11
+      # (Staking), 17 (ChainConfig), 21 (LivenessSlashing). Adding/removing a
+      # linked library or an early driver tx SHIFTS these —
+      # case-production-path.sh asserts the deploy manifest equals this file
+      # and fails loud with the fix hint.
+      - --staking-reader-create-nonces=11,17,21
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.5
+
+  validator-0:
+    <<: [*fluent-build, *cpu-limit, *follower-health]
+    depends_on:
+      genesis-init:
+        condition: service_completed_successfully
+    entrypoint: ["/usr/local/bin/fluent"]
+    command:
+      - node
+      - --chain=/runtime/genesis-local.json
+      - --validator
+      # NOTE: kept at 1s. Lowering this (the #1 runway optimization) on the
+      # production-path/rotation/byzantine stack pushes the computed activation anchor
+      # higher (ACT = f(HEAD), and a 4×-faster sequencer ⇒ higher HEAD at gov time) and
+      # broke the post-swap "converge past anchor" step. The default stack
+      # (docker-compose.yml) keeps 250ms (validated by smoke-all); this heavy stack does
+      # not, pending a proper fix to the anchor/convergence interaction.
+      - --validator.block-time=1s
+      - --dpos.staking-config=/runtime/staking-reader.json
+      - --builder.extradata=
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.api=eth,net,web3
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=8546
+      - --p2p-secret-key=/runtime/v0-p2p-secret.hex
+      - --port=30303
+      - --datadir=/runtime/reth-data/v0
+    volumes:
+      - runtime:/runtime
+    ports:
+      - "8545:8545"
+      - "8546:8546"
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.10
+
+  validator-1:
+    <<: [*fluent-build, *cpu-limit, *follower-health, *follower-cmd]
+    depends_on:
+      validator-0:
+        condition: service_healthy
+    environment:
+      NODE_DIR: v1
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.11
+
+  validator-2:
+    <<: [*fluent-build, *cpu-limit, *follower-health, *follower-cmd]
+    depends_on:
+      validator-1:
+        condition: service_healthy
+    environment:
+      NODE_DIR: v2
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.12
+
+  validator-3:
+    <<: [*fluent-build, *cpu-limit, *follower-health, *follower-cmd]
+    depends_on:
+      validator-2:
+        condition: service_healthy
+    environment:
+      NODE_DIR: v3
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.13
+
+  validator-4:
+    <<: [*fluent-build, *cpu-limit, *follower-health, *follower-cmd]
+    depends_on:
+      validator-3:
+        condition: service_healthy
+    environment:
+      NODE_DIR: v4
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.14
+
+  validator-5:
+    <<: [*fluent-build, *cpu-limit, *follower-health, *follower-cmd]
+    depends_on:
+      validator-4:
+        condition: service_healthy
+    environment:
+      NODE_DIR: v5
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.15
+
+  full-node:
+    <<: [*fluent-build, *cpu-limit, *follower-cmd]
+    depends_on:
+      validator-5:
+        condition: service_healthy
+    environment:
+      NODE_DIR: full-node
+      EXTRA_NODE_FLAGS: --rpc.eth-proof-window=50000
+    volumes:
+      - runtime:/runtime
+    ports:
+      - "18545:8545"
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.20
+
+volumes:
+  runtime: {}

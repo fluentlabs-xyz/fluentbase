@@ -1,0 +1,220 @@
+name: fluent-dpos-smoke
+
+# Pipeline 2 phase-1: validator-0 is the sequencer producing
+# blocks at 1s cadence, validators 1-3 + full-node follow via
+# `--cert-upstream ws://172.20.0.10:8546`. Every node passes
+# `--dpos.staking-config=/runtime/staking-reader.json` so the
+# `commitEpochCommittee` system call runs identically on every
+# executor (state-root convergence). Phase-2 (cold-restart to
+# `--dpos`) is in `docker-compose.dpos.yml`.
+networks:
+  fluent-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+# Image-only anchor merged by every validator/full-node service. The build section lives
+# on genesis-init ALONE (via *fluent-build-def below) so 'docker compose up --build'
+# builds the image EXACTLY ONCE (not once per service). genesis-init runs first and
+# everything transitively depends_on it (service_completed_successfully), so the image is
+# built+tagged before any node starts, and they all reuse fluent-dpos-smoke:local.
+# (Previously this anchor carried the build section too, so all 6 services declared the
+# identical build+tag, and up --build ran 6 SEPARATE Rust compiles → OOM on a cold cache.)
+x-fluent-build: &fluent-build
+  image: fluent-dpos-smoke:local
+
+# The SOLE build definition. Merged into genesis-init only.
+x-fluent-build-def: &fluent-build-def
+  build:
+    context: ../..
+    dockerfile: devnet/local-dpos-smoke/Dockerfile
+  image: fluent-dpos-smoke:local
+
+services:
+  genesis-init:
+    <<: *fluent-build-def
+    entrypoint: ["/usr/local/bin/genesis-bootstrap"]
+    command:
+      - full
+      - --peers=4
+      - --bootstrappers=1
+      - --output=/runtime
+      - --contracts-dir=/contracts
+      - --chain-id=2026
+      - --validator-ips=172.20.0.10,172.20.0.11,172.20.0.12,172.20.0.13
+    # Epoch-numbering tunables (bootstrap.rs reads these; unset ⇒ historic devnet
+    # defaults). Forwarded from the host so a tuned case (e.g.
+    # case-vrf-dkg-restart-midwindow) can widen the epoch and keep the migration
+    # anchor on a boundary. There is no liveness-slash knob left to forward: the
+    # participation-floor jail and its felony ladder are deleted, and the successor
+    # production-liveness tier ships flag-off with its own knob (minVerdictDueBlocks)
+    # which no case tunes yet.
+    environment:
+      EPOCH_BLOCK_INTERVAL: "${EPOCH_BLOCK_INTERVAL:-32}"
+      # Forward ONLY when the host set it; an empty value lets genesis-bootstrap
+      # derive its own default (`2 * EPOCH_BLOCK_INTERVAL`, bootstrap.rs) so the
+      # activation block tracks a tuned interval instead of a hardcoded literal that
+      # only agrees with bootstrap at interval=32 (a tuned case would otherwise mis-
+      # align the migration anchor off the epoch boundary).
+      DPOS_ACTIVATION_BLOCK: "${DPOS_ACTIVATION_BLOCK:-}"
+      # Stake-skew multiplier for validator-0's genesis stake (default 1 = equal
+      # stakes, byte-identical to the untuned genesis). case-weighted-vrf.sh sets it
+      # to verify stake-weighted VRF leader election end-to-end.
+      HEAVY_STAKE_MULT: "${HEAVY_STAKE_MULT:-1}"
+    volumes:
+      - runtime:/runtime
+      - ./contracts:/contracts:ro
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.5
+
+  validator-0:
+    <<: *fluent-build
+    depends_on:
+      genesis-init:
+        condition: service_completed_successfully
+    entrypoint: ["/usr/local/bin/fluent"]
+    command:
+      - node
+      - --chain=/runtime/genesis-local.json
+      - --validator
+      # Pre-swap SEQUENCER pacing only: speeds the pre-DPoS activation runway (the
+      # ~ACTIVATION blocks produced before the --dpos swap, which only position the
+      # migration anchor — not the system under test). Phase-2 (--dpos,
+      # docker-compose.dpos.yml) carries NO --validator.block-time; DPoS pacing is the
+      # application-layer BLOCK_INTERVAL=1s and is unchanged.
+      - --validator.block-time=250ms
+      - --dpos.staking-config=/runtime/staking-reader.json
+      - --builder.extradata=
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.api=eth,net,web3
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=8546
+      # Deterministic enode identity — followers pin this as `--trusted-peers`.
+      - --p2p-secret-key=/runtime/v0-p2p-secret.hex
+      - --port=30303
+      # Persist reth DB on the shared volume so phase-2 cold-restart
+      # (`--force-recreate`) doesn't wipe the chain state.
+      - --datadir=/runtime/reth-data/v0
+    volumes:
+      - runtime:/runtime
+    ports:
+      - "8545:8545"
+      - "8546:8546"
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.10
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "curl -s -X POST -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' http://localhost:8545 | grep -q result"
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+
+  validator-1:
+    <<: *fluent-build
+    depends_on:
+      validator-0:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --cert-upstream=ws://172.20.0.10:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --datadir=/runtime/reth-data/v1
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.11
+
+  validator-2:
+    <<: *fluent-build
+    depends_on:
+      validator-0:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --cert-upstream=ws://172.20.0.10:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --datadir=/runtime/reth-data/v2
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.12
+
+  validator-3:
+    <<: *fluent-build
+    depends_on:
+      validator-0:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --cert-upstream=ws://172.20.0.10:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --datadir=/runtime/reth-data/v3
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.13
+
+  full-node:
+    <<: *fluent-build
+    depends_on:
+      validator-0:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --cert-upstream=ws://172.20.0.10:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --rpc.eth-proof-window=50000 \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --datadir=/runtime/reth-data/full-node
+    volumes:
+      - runtime:/runtime
+    ports:
+      - "18545:8545"
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.20
+
+volumes:
+  runtime: {}

@@ -1,0 +1,47 @@
+# DEVNET-ONLY smoke-cert-catchup override. Layered ON TOP of docker-compose.yml +
+# docker-compose.dpos.yml — bash via `DPOS_EXTRA_COMPOSE` (scripts/case-cert-catchup.sh),
+# the port via `driver.run(overlays=…)` (cases/smoke/cert_catchup.py). It grants ONE
+# thing, NET_ADMIN, which is what `tc qdisc add` needs. It shapes nothing by itself: the
+# only traffic shaping in this case is the case's own explicit `tc` exec, and that targets
+# exactly one service for exactly the catch-up window.
+#
+# WHY THE CASE SHAPES TRAFFIC AT ALL. Guard #2 parks only where the executor's derive
+# DRAINS the marshal's contiguous dispatched prefix faster than repair extends it — the
+# marshal repairs in MAX_REPAIR=20 block batches and dispatches up to MAX_PENDING_ACKS=16
+# ahead of the acks (outer.rs:223,229). On a zero-latency 4-node LAN with small bodies the
+# fetch always wins, so the park fires at NO value of CERT_CATCHUP_GAP — and depth is not
+# the lever (a deeper gap keeps the same body-ahead-of-derive margin and only risks
+# crossing re_jump_threshold). Empirically the SOAK does produce parks (43 of 323 bundles;
+# e.g. bundle-20260724T181031Z/logs/validator-8.log, derived h=25800, parked, re-derived
+# 153 ms later) and the one relevant difference is SOAK_GEO_LATENCY=1, which bakes
+# per-region `tc netem` into every validator (gen-soak-compose.sh:146-168). A zero-RTT LAN
+# is the unrealistic condition here, not the delay: real validators are geographically
+# distributed and always pay an RTT, so this restores the production condition rather than
+# manufacturing an artificial one.
+#
+# `delay`, NEVER `rate`. Bandwidth throttling would also slow the live finalization stream
+# that keeps the ordering tip climbing — the wrong side of the race. A CPU throttle (the
+# `docker update --cpus` lever asserts_fault uses) was rejected for the same reason twice
+# over: it slows the DERIVE, the side that must stay fast, making parks strictly less
+# likely.
+#
+# NET_ADMIN ON ALL FOUR VALIDATORS, not only validator-2: the victim is operator-overridable
+# in both trees (`CERT_CATCHUP_VICTIM`), and a victim without the capability would die at
+# `tc qdisc add` six minutes into an eight-minute case. The capability is inert without the
+# exec; granting it to the committee costs nothing and removes a foot-gun.
+services:
+  validator-0:
+    cap_add:
+      - NET_ADMIN
+
+  validator-1:
+    cap_add:
+      - NET_ADMIN
+
+  validator-2:
+    cap_add:
+      - NET_ADMIN
+
+  validator-3:
+    cap_add:
+      - NET_ADMIN

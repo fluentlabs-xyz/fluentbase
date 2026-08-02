@@ -1,0 +1,8 @@
+runtime/
+__pycache__/
+# sim (python harness): generated compose pair + run outputs
+docker-compose.sim*.gen.yml
+sim-out/
+# legacy bash soak (case-soak.sh) — remove together with the bash tree
+docker-compose.soak*.gen.yml
+soak-out/

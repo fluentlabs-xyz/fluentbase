@@ -1,0 +1,165 @@
+# Production-path phase-B override: after the driver has runtime-deployed the
+# staking cluster and written /runtime/staking-reader.json (with the runtime
+# addresses incl. the now-configurable liveness address), cold-restart the
+# validators into `--dpos`. Apply with:
+#   docker compose -f docker-compose.production-path.yml \
+#     -f docker-compose.production-path.dpos.yml \
+#     up -d --force-recreate validator-0 validator-1 validator-2 validator-3 validator-4 validator-5
+#
+# Committee = validators 0-4 (activeValidatorsLength=5). validator-5 is the
+# EXTERNAL joiner. DE-HUBBED (task dpos_sync_plane_upstream): the Active
+# committee validators v0-v4 carry NO `--dpos.follower-upstream` — they are
+# PLANE-NATIVE (frontier resolver + by-height finalization backfill over the
+# consensus p2p plane), the Gap-A win (no WS hub for Active validators). A node
+# whose key is outside the committee but is Active (a rotated-out validator)
+# follows via the plane's marshal resolver and auto-promotes/demotes in-process
+# — NO restarts. v5 is the SOLE exception: it is UNREGISTERED (Pending) from
+# cold-restart until the governance activation step, and the authenticated plane
+# only serves the tracked set (`active_registry ∪ committee`), so a plane-native
+# v5 would freeze at the anchor (Gap C, pre-Active onboarding — DEFERRED). v5
+# therefore keeps `--dpos.follower-upstream` as the sanctioned WS escape for a
+# not-yet-tracked node (plan_questions P4) until it is activated. full-node is a
+# cert-follower.
+
+# One shared command for validators 1-4 (v5 has its own block — WS escape): the
+# index arrives via `environment: IDX` ($$ = compose-escaped, expanded by the
+# in-container sh) and drives the datadir, key paths, and the dialable IP
+# (172.20.0.1$IDX). One block to edit instead of four — a hand-edited copy
+# missing one flag is exactly the config-asymmetry follower-wedge class this
+# suite exists to catch.
+x-dpos-validator-cmd: &dpos-validator-cmd
+  entrypoint: ["/bin/sh", "-c"]
+  command:
+    - |
+      exec /usr/local/bin/fluent node \
+        --chain=/runtime/genesis-local.json \
+        --datadir=/runtime/reth-data/v$$IDX \
+        --dpos \
+        --dpos.bls-key-path=/runtime/keys/validator-$$IDX/bls.hex \
+        --dpos.peer-key-path=/runtime/keys/validator-$$IDX/peer.hex \
+        --dpos.staking-config=/runtime/staking-reader.json \
+        --dpos.bootstrappers=/runtime/peers.json \
+        --dpos.dialable=172.20.0.1$$IDX:9000 \
+        --dpos.metrics-port=9100 \
+        --dpos.slasher-keystore-path=/runtime/keys/validator-$$IDX/slasher.json \
+        --dpos.slasher-keystore-password-file=/runtime/keys/validator-$$IDX/slasher.pwd \
+        --builder.extradata= \
+        --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+        --ws --ws.addr=0.0.0.0 --ws.port=8546 \
+        --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+        --trusted-only \
+        --disable-discovery
+
+services:
+  # validator-0 keeps its explicit block (WS server + host ports). Plane-native
+  # (no --dpos.follower-upstream): an Active committee validator syncs over the
+  # consensus plane, no WS hub.
+  validator-0:
+    command:
+      - node
+      - --chain=/runtime/genesis-local.json
+      - --datadir=/runtime/reth-data/v0
+      - --dpos
+      - --dpos.bls-key-path=/runtime/keys/validator-0/bls.hex
+      - --dpos.peer-key-path=/runtime/keys/validator-0/peer.hex
+      - --dpos.staking-config=/runtime/staking-reader.json
+      - --dpos.bootstrappers=/runtime/peers.json
+      - --dpos.dialable=172.20.0.10:9000
+      - --dpos.metrics-port=9100
+      - --dpos.slasher-keystore-path=/runtime/keys/validator-0/slasher.json
+      - --dpos.slasher-keystore-password-file=/runtime/keys/validator-0/slasher.pwd
+      - --builder.extradata=
+      - --p2p-secret-key=/runtime/v0-p2p-secret.hex
+      - --port=30303
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.api=eth,net,web3
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=8546
+    ports:
+      - "19100:9100"
+
+  validator-1:
+    <<: *dpos-validator-cmd
+    environment:
+      IDX: "1"
+
+  validator-2:
+    <<: *dpos-validator-cmd
+    environment:
+      IDX: "2"
+
+  validator-3:
+    <<: *dpos-validator-cmd
+    environment:
+      IDX: "3"
+
+  validator-4:
+    <<: *dpos-validator-cmd
+    environment:
+      IDX: "4"
+
+  # External joiner v5 — the ONE node that KEEPS --dpos.follower-upstream (WS
+  # escape, ws://v0). It is UNREGISTERED (Pending) from cold-restart until the
+  # governance activation step, and the authenticated plane serves only the
+  # tracked set (`active_registry ∪ committee`) — so a plane-native v5 would have
+  # NO consensus sync path (post-merge devp2p does not gossip DPoS blocks) and
+  # would freeze at the anchor. This is Gap C (pre-Active onboarding), DEFERRED;
+  # per plan_questions P4 the deprecated `--dpos.follower-upstream` is retained as
+  # exactly this "not-yet-plane-tracked node" escape. Its cert-inlet rides v0's WS
+  # so it follows through registration, then auto-promotes to Signer in-process at
+  # its first committee boundary (and, once Active, a rotation-out would follow via
+  # the plane like the other Active validators). Its own block (not the shared
+  # plane-native one) precisely because it needs the WS flag the others dropped.
+  validator-5:
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --datadir=/runtime/reth-data/v5 \
+          --dpos \
+          --dpos.follower-upstream=ws://172.20.0.10:8546 \
+          --dpos.bls-key-path=/runtime/keys/validator-5/bls.hex \
+          --dpos.peer-key-path=/runtime/keys/validator-5/peer.hex \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --dpos.bootstrappers=/runtime/peers.json \
+          --dpos.dialable=172.20.0.15:9000 \
+          --dpos.metrics-port=9100 \
+          --dpos.slasher-keystore-path=/runtime/keys/validator-5/slasher.json \
+          --dpos.slasher-keystore-password-file=/runtime/keys/validator-5/slasher.pwd \
+          --builder.extradata= \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --ws --ws.addr=0.0.0.0 --ws.port=8546 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery
+
+  # Full node as a CERT-FOLLOWER (not the pre-DPoS trust-follow block relay).
+  # A trust-follow relay re-executes each block via new_payload, but the beacon
+  # boundary block's `commitEpochBeaconKey` system call needs PK_E from the
+  # consensus-layer `OrderBlock.beacon_outcome` (a deriver side-channel a relay
+  # never populates) — so a relay diverges (skips the commit → wrong state root)
+  # at every committee-change boundary. A cert-follower pulls the OrderBlock,
+  # runs the deriver (which stages PK_E) and verifies the seed against the
+  # in-block/on-chain key — the only follower mode that survives a beacon
+  # rotation. (Production implication: followers on a beacon-DPoS chain must
+  # cert-follow, or PK_E must be embedded in the executed block.)
+  full-node:
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --cert-follow \
+          --cert-upstream=ws://172.20.0.10:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --rpc.eth-proof-window=50000 \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --datadir=/runtime/reth-data/full-node
