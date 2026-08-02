@@ -1,0 +1,89 @@
+[package]
+name = "fluentbase-consensus"
+version.workspace = true
+description = "Fluent DPoS consensus: Commonware Simplex ⇄ Reth integration (injection-style library)"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-rlp = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+alloy-provider = { workspace = true, default-features = false, features = ["reqwest", "reqwest-rustls-tls"] }
+alloy-signer-local = { workspace = true }
+alloy-network = { workspace = true }
+alloy-rpc-types-eth = { workspace = true, default-features = false }
+alloy-sol-types = { workspace = true, default-features = false, features = ["json"] }
+metrics = { workspace = true }
+url = "2"
+commonware-codec = { workspace = true, features = ["std"] }
+commonware-cryptography = { workspace = true, features = ["std"] }
+commonware-consensus = { workspace = true }
+commonware-utils = { workspace = true, features = ["std"] }
+commonware-math = { workspace = true, features = ["std"] }
+commonware-runtime = { workspace = true, features = ["external"] }
+bytes = { workspace = true }
+pin-project = "1.1"
+rand_core = { workspace = true }
+rand_08 = { workspace = true }
+eyre = { workspace = true }
+futures = "0.3"
+tracing = { workspace = true }
+reth-ethereum-primitives.workspace = true
+reth-chain-state = { workspace = true }
+reth-primitives-traits = { workspace = true, default-features = false }
+reth-storage-api.workspace = true
+reth-evm.workspace = true
+reth-payload-primitives = { workspace = true }
+reth-payload-builder = { workspace = true }
+reth-engine-primitives = { workspace = true, features = ["std"] }
+reth-ethereum-engine-primitives = { workspace = true }
+commonware-p2p = { workspace = true }
+commonware-storage = { workspace = true }
+commonware-parallel = { workspace = true }
+commonware-broadcast = { workspace = true }
+commonware-resolver = { workspace = true }
+fluentbase-staking-reader = { workspace = true }
+fluentbase-bls = { workspace = true }
+fluentbase-p2p = { workspace = true }
+prometheus-client = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"] }
+tokio-util = { workspace = true }
+zeroize = { version = "1", default-features = false }
+# XChaCha20-Poly1305 AEAD for the per-epoch DKG-share at-rest envelope (E2,
+# `beacon/share_state.rs`). `getrandom` provides the OS-backed random nonce.
+# Already in Cargo.lock transitively.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
+
+[dev-dependencies]
+commonware-cryptography = { workspace = true, features = ["std"] }
+commonware-math = { workspace = true, features = ["std"] }
+commonware-runtime = { workspace = true }
+rand_08 = { workspace = true }
+rand_core = { workspace = true }
+alloy-consensus = { workspace = true }
+hex = { workspace = true }
+commonware-codec = { workspace = true, features = ["std"] }
+# `executed::tests` mock provider implements `BlockNumReader`, whose `chain_info`
+# returns `reth_chainspec::ChainInfo` (not re-exported by `reth-storage-api`).
+reth-chainspec = { workspace = true }
+# The parent-seed witness-gate tests assert `metrics::counter!` values and
+# labels (reject reasons, unverified{unknown|read_failed}, ladder source) via a
+# thread-local DebuggingRecorder.
+metrics-util = { version = "0.20", default-features = false, features = ["debugging"] }
+
+[features]
+default = ["std"]
+std = []
+# DEVNET/TEST-ONLY: compiles in the byzantine beacon-PK_E forge (`--dpos.byzantine
+# forge-beacon-pk`) used by the byzantine-vrf smoke. Off in prod builds — the flag
+# and the forge code do not exist without it.
+dpos-devnet-byzantine = []
