@@ -1,0 +1,26 @@
+# DEVNET-ONLY byzantine-beacon override. Layered ON TOP of
+# docker-compose.production-path.yml + docker-compose.production-path.dpos.yml
+# (via COMPOSE_FILE in scripts/case-byzantine-vrf.sh) to make ONE committee STAYER
+# (validator-2 by default) assert a FORGED PK_E in OrderBlock.beacon_outcome at the
+# change-epoch first block. The honest share-holders reject it at the "C" gate
+# (their real shares do not lie on the forged poly) → it cannot notarize → the
+# forged PK_E never finalizes; an honest leader crosses the boundary with the real
+# key. Reads via the `--dpos.byzantine` clap arg's env binding
+# (FLUENT_DPOS_BYZANTINE) — no command duplication; the production-path .dpos.yml
+# command never passes the flag, clap picks it up from the env. Requires the image
+# built with the `dpos-devnet-byzantine` cargo feature (the smoke Dockerfile enables
+# it). NEVER in prod.
+#
+# WHY validator-2 (not validator-0/1): validator-0 is the host-RPC node kept honest
+# for greps; v5 displaces ONE of v1..v4 on rotation (tie-break dependent) and the
+# case fails-loud if the chosen byzantine node was displaced (re-run, or set
+# BYZ_VRF_IDX). Single byzantine = realistic f=1 (n=5 ⇒ quorum 4): a colluding
+# quorum would break liveness, so the certify-hook Nullify path is proven by the
+# gated unit tests instead. See scripts/case-byzantine-vrf.sh header.
+services:
+  validator-2:
+    # Compose merges `environment` maps additively, so IDX from the base
+    # production-path .dpos.yml is preserved and this only ADDS the byzantine var
+    # (same proven pattern as docker-compose.byzantine.yml).
+    environment:
+      FLUENT_DPOS_BYZANTINE: forge-beacon-pk
