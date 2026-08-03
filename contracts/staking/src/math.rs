@@ -38,11 +38,19 @@ pub fn fault_tolerance(n: usize) -> usize {
 }
 
 /// Map a block to its activation-relative epoch, clamping pre-activation blocks.
+///
+/// A zero activation block is the unarmed sentinel, not "armed at genesis".
+/// `ensure_dpos_not_active` keeps the governance setters open on it and the node
+/// reads it the same way, so this must not disagree with them. Without the first
+/// half of the clamp an unsigned `block_number < 0` is never true, so an unarmed
+/// chain counts epochs from genesis and then drops them back to zero the moment
+/// a real activation block is scheduled — a backwards jump that rewrites which
+/// delegation checkpoint a stake belongs to.
 pub fn epoch_at_block(block_number: u64, activation_block: u64, interval: u64) -> Option<u64> {
     if interval == 0 {
         return None;
     }
-    if block_number < activation_block {
+    if activation_block == 0 || block_number < activation_block {
         return Some(0);
     }
     Some((block_number - activation_block) / interval)
@@ -80,5 +88,12 @@ mod tests {
         assert_eq!(epoch_at_block(139, 100, 20), Some(1));
         assert_eq!(epoch_at_block(140, 100, 20), Some(2));
         assert_eq!(epoch_at_block(140, 100, 0), None);
+    }
+
+    #[test]
+    fn unarmed_activation_pins_the_epoch_regardless_of_height() {
+        assert_eq!(epoch_at_block(0, 0, 200), Some(0));
+        assert_eq!(epoch_at_block(4_000, 0, 200), Some(0));
+        assert_eq!(epoch_at_block(u64::MAX, 0, 200), Some(0));
     }
 }

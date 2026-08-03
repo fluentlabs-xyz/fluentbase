@@ -3165,6 +3165,15 @@ fn dpos_activation_at_block_zero_remains_configurable() {
             .0,
         ExitCode::Ok
     );
+
+    // Still unarmed here: the height crosses several interval boundaries and the
+    // epoch must not follow it. Configurable and running are two different
+    // states, and the zero activation block means the first one.
+    harness.set_block_number(4_000);
+    let (_, output) = harness.call(encode_empty_call(SIG_CURRENT_EPOCH));
+    assert_eq!(decode_output::<u64>(&output), 0);
+    harness.set_block_number(0);
+
     assert_eq!(
         harness
             .call(encode_call(
@@ -3173,6 +3182,59 @@ fn dpos_activation_at_block_zero_remains_configurable() {
             ))
             .0,
         ExitCode::Ok
+    );
+}
+
+#[test]
+fn scheduling_activation_never_moves_the_epoch_backwards() {
+    let owner = Address::with_last_byte(0xa0);
+    let mut harness = Harness::new(0);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+
+    fn epoch(harness: &mut Harness) -> u64 {
+        let (_, output) = harness.call(encode_empty_call(SIG_CURRENT_EPOCH));
+        decode_output::<u64>(&output)
+    }
+
+    harness.set_block_number(4_000);
+    assert_eq!(
+        epoch(&mut harness),
+        0,
+        "an unarmed chain must not accrue epochs from genesis"
+    );
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_DPOS_ACTIVATION_BLOCK,
+                &U64Command { value: 6_000 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    // Arming is what used to drop a running counter back to zero: the epoch was
+    // derived from the height alone while unarmed, so scheduling a real
+    // activation rebased it downward and rewrote which checkpoint a stake fell
+    // under. Every step from here must be non-decreasing.
+    let mut previous = epoch(&mut harness);
+    assert_eq!(previous, 0);
+    for height in [4_001u64, 5_999, 6_000, 6_199, 6_200, 6_400] {
+        harness.set_block_number(height);
+        let current = epoch(&mut harness);
+        assert!(
+            current >= previous,
+            "epoch moved backwards at block {height}: {previous} -> {current}"
+        );
+        previous = current;
+    }
+    assert_eq!(
+        previous, 2,
+        "epochs count from the activation block once armed"
     );
 }
 
@@ -4145,7 +4207,11 @@ fn claiming_rewards_does_not_rewrite_historical_self_stake() {
 fn reward_claims_are_bounded_to_one_thousand_epochs() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
-    let mut harness = Harness::new(0);
+    // Not block 0: the harness seeds the activation block from the current
+    // height, and a zero activation is the unarmed sentinel, which pins every
+    // epoch at 0 and leaves this claim window empty.
+    let activation = DEFAULT_EPOCH_BLOCK_INTERVAL;
+    let mut harness = Harness::new(activation);
     harness.set_caller(owner);
     assert_eq!(
         harness.initialize(
@@ -4156,7 +4222,8 @@ fn reward_claims_are_bounded_to_one_thousand_epochs() {
         ),
         ExitCode::Ok
     );
-    harness.set_block_number(DEFAULT_EPOCH_BLOCK_INTERVAL * (MAX_EPOCHS_PER_CLAIM + 1));
+    harness
+        .set_block_number(activation + DEFAULT_EPOCH_BLOCK_INTERVAL * (MAX_EPOCHS_PER_CLAIM + 1));
     staking_storage()
         .last_rewarded_epoch_p1_accessor()
         .set_checked(&mut harness.sdk, MAX_EPOCHS_PER_CLAIM + 1)
