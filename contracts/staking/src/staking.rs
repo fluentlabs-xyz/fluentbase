@@ -1975,9 +1975,19 @@ fn settle_one<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64, reserve: Address) -> Re
     }
     let committee = consensus.epoch_committees_accessor().entry(epoch);
     let len = committee.len_checked(sdk)?;
-    let desired = chain_config_storage()
-        .blend_stipend_per_epoch_accessor()
+    // The rate this epoch worked under, pinned by its own close. Reading the
+    // live config here would let a rate change between the epoch ending and the
+    // epoch being paid rewrite what it earned, and the cursor never comes back.
+    let pinned = production_liveness_storage()
+        .stipend_rate_at_close_p1_accessor()
+        .entry(epoch)
         .get_checked(sdk)?;
+    if pinned.is_zero() {
+        // A revert defers, a guard return forfeits — see this function's caller.
+        // An epoch whose price is unknown belongs on the deferred side.
+        return revert_with(sdk, ERR_STIPEND_RATE_NOT_SNAPSHOTTED, &epoch);
+    }
+    let desired = pinned - U256::ONE;
     if desired.is_zero() {
         events::EpochBlendRewardsCommitted {
             epoch,

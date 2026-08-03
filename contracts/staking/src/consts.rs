@@ -345,6 +345,8 @@ pub const ERR_COMMITTEE_LENGTH_MISMATCH: u32 =
 pub const ERR_COMMITTEE_TOO_SMALL: u32 = derive_keccak256_id!("CommitteeTooSmall(uint256,uint256)");
 pub const ERR_LEADER_STAKES_LENGTH_MISMATCH: u32 =
     derive_keccak256_id!("LeaderStakesLengthMismatch(uint64,uint256,uint256)");
+pub const ERR_STIPEND_RATE_NOT_SNAPSHOTTED: u32 =
+    derive_keccak256_id!("StipendRateNotSnapshotted(uint64)");
 pub const ERR_EPOCH_NOT_YET_COMMITTABLE: u32 =
     derive_keccak256_id!("EpochNotYetCommittable(uint64,uint64)");
 pub const ERR_COMMITTEE_MEMBER_KEYLESS: u32 =

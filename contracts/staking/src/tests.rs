@@ -317,6 +317,26 @@ fn record_test_production(sdk: &mut TestingContextImpl, epoch: u64, blocks: u32)
         .entry(epoch)
         .set_checked(sdk, blocks)
         .unwrap();
+    pin_test_stipend_rate(sdk, epoch);
+}
+
+/// Pin the stipend rate the way `close_epoch` does.
+///
+/// Seeding the counters without the rate leaves settlement unable to price the
+/// epoch, which the contract now rejects. Pinning inside the seeding helpers
+/// rather than at their call sites is what keeps the stand-in from drifting away
+/// from the production path again — the callers must only make sure the rate is
+/// configured *before* they seed.
+fn pin_test_stipend_rate(sdk: &mut TestingContextImpl, epoch: u64) {
+    let rate = chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .get_checked(sdk)
+        .unwrap();
+    production_liveness_storage()
+        .stipend_rate_at_close_p1_accessor()
+        .entry(epoch)
+        .set_checked(sdk, rate + U256::ONE)
+        .unwrap();
 }
 
 enum MockDisbursement {
@@ -3795,6 +3815,146 @@ fn an_epoch_that_recorded_no_blocks_is_skipped_when_a_later_one_settles() {
 // committee prefix and then advance the cursor past the epoch for good, so the
 // settle path must refuse a mismatch exactly as the reader does.
 #[test]
+fn stipend_pays_the_rate_pinned_at_close_not_the_live_one() {
+    let pot = U256::from(100);
+    let (mut harness, calls, validator) =
+        stipend_test_sdk(vec![pot], vec![MockDisbursement::Amount(pot)]);
+
+    // The rate the epoch worked under is already pinned. Dropping the live one to
+    // zero afterwards is the governance action that used to erase the epoch's pay
+    // outright: settlement returns Ok, the cursor moves past it, and no later
+    // call can revisit it.
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::ZERO)
+        .unwrap();
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 0 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(stipend_accounting(&harness.sdk, validator), (pot, pot, 1));
+    assert_eq!(calls.borrow().disburse_calls, vec![(GENESIS_STAKING, pot)]);
+    assert_stipend_events(&harness.sdk, 0, pot, false);
+
+    // The mirror image: a raised live rate must not enrich an epoch that closed
+    // under a lower one either.
+    let (mut harness, calls, validator) =
+        stipend_test_sdk(vec![pot], vec![MockDisbursement::Amount(pot)]);
+    production_liveness_storage()
+        .stipend_rate_at_close_p1_accessor()
+        .entry(0)
+        .set_checked(&mut harness.sdk, U256::ONE)
+        .unwrap();
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 0 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        stipend_accounting(&harness.sdk, validator),
+        (U256::ZERO, U256::ZERO, 1)
+    );
+    assert!(calls.borrow().disburse_calls.is_empty());
+    assert_stipend_events(&harness.sdk, 0, U256::ZERO, false);
+}
+
+#[test]
+fn closing_an_epoch_pins_the_stipend_rate() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::from(250))
+        .unwrap();
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(validator, DEFAULT_MIN_VALIDATOR_STAKE)],
+    );
+    // Written raw rather than through `record_test_production`, which pins the
+    // rate itself. The whole point of this test is that the contract pins it, so
+    // seeding through the stand-in would prove nothing.
+    production_liveness_storage()
+        .blocks_in_epoch_accessor()
+        .entry(0)
+        .set_checked(&mut harness.sdk, DEFAULT_EPOCH_BLOCK_INTERVAL as u32)
+        .unwrap();
+    let pinned = production_liveness_storage()
+        .stipend_rate_at_close_p1_accessor()
+        .entry(0);
+    assert_eq!(pinned.get_checked(&harness.sdk).unwrap(), U256::ZERO);
+
+    assert_eq!(close_epoch_via_record(&mut harness, 0), ExitCode::Ok);
+
+    assert_eq!(
+        pinned.get_checked(&harness.sdk).unwrap(),
+        U256::from(251),
+        "the close pins rate + 1 for the epoch it closes"
+    );
+}
+
+#[test]
+fn settling_an_unclosed_epoch_reverts_instead_of_forfeiting_it() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::from(100))
+        .unwrap();
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(validator, DEFAULT_MIN_VALIDATOR_STAKE)],
+    );
+    // An epoch that recorded blocks but whose close never ran: seeded raw, so no
+    // rate was pinned for it.
+    production_liveness_storage()
+        .blocks_in_epoch_accessor()
+        .entry(0)
+        .set_checked(&mut harness.sdk, DEFAULT_EPOCH_BLOCK_INTERVAL as u32)
+        .unwrap();
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL);
+    harness.set_caller(SYSTEM_CALLER);
+
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SETTLE_EPOCH_STIPEND,
+            &U64Command { value: 0 },
+        )),
+        ERR_STIPEND_RATE_NOT_SNAPSHOTTED,
+    );
+    assert_eq!(
+        staking_storage()
+            .last_rewarded_epoch_p1_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0,
+        "a revert leaves the epoch for a retry; a guard return would forfeit it"
+    );
+}
+
+#[test]
 fn settlement_rejects_a_committee_without_matching_frozen_weights() {
     let owner = Address::with_last_byte(0xa0);
     let seated = Address::with_last_byte(0x01);
@@ -5665,6 +5825,7 @@ fn seed_epoch_production(
         .entry(epoch)
         .set_checked(sdk, recorded)
         .unwrap();
+    pin_test_stipend_rate(sdk, epoch);
 }
 
 /// Drives the close of `epoch` by recording the first block of `epoch + 1`.

@@ -185,6 +185,19 @@ fn close_epoch<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<(), ExitCode
     // An epoch that was never recorded at all is reachable and must not draw a
     // full pot for no work.
     if recorded > 0 {
+        // Pin the rate before settling. `settle_up_to` walks the cursor across a
+        // range, so a rate read at payment time prices every caught-up epoch at
+        // today's value. Stored `+1` so "never closed" stays distinguishable
+        // from "closed at a rate of zero".
+        let rate = config.blend_stipend_per_epoch_accessor().get_checked(sdk)?;
+        production_liveness_storage()
+            .stipend_rate_at_close_p1_accessor()
+            .entry(epoch)
+            .set_checked(
+                sdk,
+                rate.checked_add(U256::ONE)
+                    .ok_or(ExitCode::IntegerOverflow)?,
+            )?;
         settle_stipend_leg(sdk, epoch)?;
     }
     Ok(())
