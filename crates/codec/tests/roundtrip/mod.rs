@@ -9,5 +9,6 @@ use fluentbase_codec::{
 };
 
 mod func;
+mod solidity_array_head;
 mod structs;
 mod tuples;
