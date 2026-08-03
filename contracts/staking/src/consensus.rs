@@ -403,27 +403,49 @@ fn selected_committee_at<SDK: SharedAPI>(sdk: &SDK, epoch: u64) -> Result<Vec<Ad
 
 fn prune_committees<SDK: SharedAPI>(sdk: &mut SDK, current: u64) -> Result<(), ExitCode> {
     let storage = consensus_storage();
-    let retention = chain_config_storage()
-        .undelegate_period_accessor()
-        .get_checked(sdk)?
-        .checked_add(EPOCH_COMMITTEE_RETENTION_MARGIN)
-        .ok_or(ExitCode::IntegerOverflow)?;
-    if current <= retention {
-        return Ok(());
-    }
-    let prune_to = current - retention - 1;
     let mut cursor = storage.pruned_up_to_p1_accessor().get_checked(sdk)?;
     let mut deleted = 0;
     // Bound cleanup so a long-idle chain cannot make one system call unbounded.
-    while cursor <= prune_to && deleted < 16 {
+    while deleted < 16 {
+        let liability_end = storage
+            .committee_liability_end_epochs_accessor()
+            .entry(cursor);
+        let liability_end_epoch = liability_end.get_checked(sdk)?;
+        // Committee commits are sequential. A missing deadline therefore means
+        // that the pruning cursor has reached the first uncommitted epoch.
+        if liability_end_epoch == 0 || current < liability_end_epoch {
+            break;
+        }
         storage
             .epoch_committees_accessor()
             .entry(cursor)
             .clear_checked(sdk)?;
-        cursor += 1;
+        liability_end.set_checked(sdk, 0)?;
+        cursor = cursor.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
         deleted += 1;
     }
     storage.pruned_up_to_p1_accessor().set_checked(sdk, cursor)
+}
+
+pub(crate) fn ensure_equivocation_evidence_unexpired<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    epoch: u64,
+) -> Result<(), ExitCode> {
+    let liability_end_epoch = consensus_storage()
+        .committee_liability_end_epochs_accessor()
+        .entry(epoch)
+        .get_checked(sdk)?;
+    if liability_end_epoch == 0 {
+        return revert_with(sdk, ERR_EPOCH_COMMITTEE_NOT_COMMITTED, &epoch);
+    }
+    if current_epoch(sdk)? >= liability_end_epoch {
+        return revert_with(
+            sdk,
+            ERR_EQUIVOCATION_EVIDENCE_EXPIRED,
+            &(epoch, liability_end_epoch),
+        );
+    }
+    Ok(())
 }
 
 /// Public handler `0x87401d8a` (`commitEpochCommittee`).
@@ -442,10 +464,14 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
     let target = storage
         .last_committed_epoch_p1_accessor()
         .get_checked(sdk)?;
-    if target > current.checked_add(2).ok_or(ExitCode::IntegerOverflow)? {
+    if target
+        > current
+            .checked_add(MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
+            .ok_or(ExitCode::IntegerOverflow)?
+    {
         return revert_with(sdk, ERR_EPOCH_NOT_YET_COMMITTABLE, &(target, current));
     }
-    let selection_epoch = target.saturating_sub(2);
+    let selection_epoch = target.saturating_sub(MAX_COMMITTEE_LOOKAHEAD_EPOCHS);
     let eligible = selected_committee_at(sdk, selection_epoch)?;
     if eligible.len() < MIN_COMMITTEE_LENGTH {
         return revert_with(
@@ -478,19 +504,24 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
         previous_peer = keys.peer_pubkey;
     }
 
+    let liability_end_epoch = target
+        .checked_add(
+            chain_config_storage()
+                .undelegate_period_accessor()
+                .get_checked(sdk)?,
+        )
+        .and_then(|epoch| epoch.checked_add(EPOCH_COMMITTEE_RETENTION_MARGIN))
+        .and_then(|epoch| epoch.checked_add(1))
+        .ok_or(ExitCode::IntegerOverflow)?;
     let changed = committee_changed(sdk, target, &submitted)?;
     let stored = storage.epoch_committees_accessor().entry(target);
-    let committee_epoch_p1 = target.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
     for validator in &submitted {
         stored.push_checked(sdk, *validator)?;
-        let latest_committee = staking_storage()
-            .validators_accessor()
-            .entry(*validator)
-            .last_committee_epoch_p1_accessor();
-        if latest_committee.get_checked(sdk)? < committee_epoch_p1 {
-            latest_committee.set_checked(sdk, committee_epoch_p1)?;
-        }
     }
+    storage
+        .committee_liability_end_epochs_accessor()
+        .entry(target)
+        .set_checked(sdk, liability_end_epoch)?;
     storage
         .dkg_qual_accessor()
         .entry(target)
@@ -1101,6 +1132,11 @@ pub(crate) fn seize_self_stake<SDK: SharedAPI>(
     seized = seized
         .checked_add(pending_undelegated.get_checked(sdk)?)
         .ok_or(ExitCode::IntegerOverflow)?;
+    storage
+        .validators_accessor()
+        .entry(validator)
+        .self_stake_unlock_epoch_accessor()
+        .set_checked(sdk, 0)?;
     if seized.is_zero() {
         return Ok(());
     }
@@ -1171,6 +1207,7 @@ fn slash_equivocation<SDK: SharedAPI>(
     if committee_len == 0 {
         return revert_with(sdk, ERR_EPOCH_COMMITTEE_NOT_COMMITTED, &evidence.epoch);
     }
+    ensure_equivocation_evidence_unexpired(sdk, evidence.epoch)?;
     if evidence.signer_idx as u64 >= committee_len {
         return revert_with(
             sdk,

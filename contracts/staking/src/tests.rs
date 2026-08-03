@@ -56,7 +56,7 @@ fn compact_storage_matches_solidity_struct_layouts() {
     assert_eq!(DelegationOpStorage::SLOTS, 1);
     assert_eq!(<DelegationOpStorage as StorageLayout>::BYTES, 22);
     assert_eq!(UndelegationOpStorage::SLOTS, 1);
-    assert_eq!(<UndelegationOpStorage as StorageLayout>::BYTES, 22);
+    assert_eq!(<UndelegationOpStorage as StorageLayout>::BYTES, 30);
     assert_eq!(ConsensusKeysStorage::SLOTS, 5);
 
     let slot = U256::from(7);
@@ -912,6 +912,7 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_GET_PENDING_VALIDATOR_FEE, 0xc6fb9065),
         (SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH, 0xadf2a79c),
         (SIG_GET_DELEGATOR_FEE, 0x52b7bea2),
+        (SIG_GET_VALIDATOR_SELF_STAKE_LOCK, 0xc72e0d73),
         (SIG_CLAIM_DELEGATOR_FEE_AT_EPOCH, 0xfe38ebef),
         (SIG_CALC_AVAILABLE_FOR_REDELEGATE_AMOUNT, 0x5ef9e8c6),
         (SIG_SETTLE_EPOCH_STIPEND, 0xa631344a),
@@ -4102,11 +4103,12 @@ fn equivocation_seizes_active_and_pending_self_delegation() {
 }
 
 #[test]
-fn committee_liability_locks_pending_self_stake_through_evidence_window() {
+fn continuously_seated_validator_self_stake_unlocks_at_bounded_liability_deadline() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
     let token = Address::with_last_byte(0xc0);
-    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let withdrawn = DEFAULT_MIN_VALIDATOR_STAKE;
+    let stake = withdrawn * U256::from(2);
     let activation_block = 1_000;
     let mut harness = Harness::new(activation_block);
     harness.set_caller(owner);
@@ -4129,29 +4131,40 @@ fn committee_liability_locks_pending_self_stake_through_evidence_window() {
             .0,
         ExitCode::Ok
     );
-    assert_eq!(
-        staking_storage()
-            .validators_accessor()
-            .entry(validator)
-            .last_committee_epoch_p1_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        1
-    );
 
-    staking::undelegate_from(&mut harness.sdk, validator, validator, stake).unwrap();
+    staking::undelegate_from(&mut harness.sdk, validator, validator, withdrawn).unwrap();
     let delegation = staking_storage()
         .validator_delegations_accessor()
         .entry(validator)
         .entry(validator);
     let undelegates = delegation.undelegate_queue_accessor();
+    let maturity_epoch = DEFAULT_UNDELEGATE_PERIOD + 1;
+    let liability_end_epoch =
+        maturity_epoch + EPOCH_COMMITTEE_RETENTION_MARGIN + MAX_COMMITTEE_LOOKAHEAD_EPOCHS;
     assert_eq!(
         undelegates
             .at(0)
             .epoch_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        DEFAULT_UNDELEGATE_PERIOD + 1
+        maturity_epoch
+    );
+    assert_eq!(
+        undelegates
+            .at(0)
+            .self_stake_unlock_epoch_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        liability_end_epoch
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .self_stake_unlock_epoch_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        liability_end_epoch
     );
 
     let transfers = Rc::new(RefCell::new(Vec::<(Address, U256)>::new()));
@@ -4170,31 +4183,111 @@ fn committee_liability_locks_pending_self_stake_through_evidence_window() {
             SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
         });
 
-    harness.set_caller(validator);
-    harness.set_block_number(
-        activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * (DEFAULT_UNDELEGATE_PERIOD + 1),
-    );
+    // Keep committing this still-active validator after its partial self-exit.
+    // New committees are secured by the remaining self-stake and must not keep
+    // extending the already-queued principal's fixed liability deadline.
+    harness.set_caller(SYSTEM_CALLER);
     assert_eq!(
         harness
-            .call(encode_call(
-                SIG_CLAIM_DELEGATOR_FEE,
-                &AddressCommand { value: validator },
+            .call(encode_args_call(
+                SIG_COMMIT_EPOCH_COMMITTEE,
+                &(vec![validator],),
             ))
             .0,
         ExitCode::Ok
     );
-    assert!(transfers.borrow().is_empty());
     assert_eq!(
-        delegation
-            .undelegate_gap_accessor()
+        harness
+            .call(encode_args_call(
+                SIG_COMMIT_EPOCH_COMMITTEE,
+                &(vec![validator],),
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    for epoch in 1..liability_end_epoch {
+        harness.set_block_number(activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * epoch);
+        harness.set_caller(SYSTEM_CALLER);
+        assert_eq!(
+            harness
+                .call(encode_args_call(
+                    SIG_COMMIT_EPOCH_COMMITTEE,
+                    &(vec![validator],),
+                ))
+                .0,
+            ExitCode::Ok
+        );
+
+        if epoch == maturity_epoch {
+            harness.set_caller(validator);
+            let (exit, output) = harness.call(encode_call(
+                SIG_GET_VALIDATOR_SELF_STAKE_LOCK,
+                &AddressCommand { value: validator },
+            ));
+            assert_eq!(exit, ExitCode::Ok);
+            assert_eq!(
+                decode_output::<(bool, u64)>(&output),
+                (true, liability_end_epoch)
+            );
+            consensus::ensure_equivocation_evidence_unexpired(&mut harness.sdk, 2).unwrap();
+            assert_eq!(
+                harness
+                    .call(encode_call(
+                        SIG_CLAIM_DELEGATOR_FEE,
+                        &AddressCommand { value: validator },
+                    ))
+                    .0,
+                ExitCode::Ok
+            );
+            assert!(transfers.borrow().is_empty());
+            assert_eq!(
+                delegation
+                    .undelegate_gap_accessor()
+                    .get_checked(&harness.sdk)
+                    .unwrap(),
+                0
+            );
+        }
+    }
+
+    harness.set_block_number(activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * liability_end_epoch);
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .status_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        0
+        STATUS_ACTIVE
     );
-
-    let evidence_window_end = DEFAULT_UNDELEGATE_PERIOD + EPOCH_COMMITTEE_RETENTION_MARGIN;
-    harness.set_block_number(
-        activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * (evidence_window_end + 1),
+    assert!(
+        staking::selected_validators_at(&harness.sdk, liability_end_epoch)
+            .unwrap()
+            .contains(&validator)
+    );
+    assert_eq!(
+        consensus_storage()
+            .epoch_committees_accessor()
+            .entry(2)
+            .len_checked(&harness.sdk)
+            .unwrap(),
+        1,
+        "time-based release must not depend on a later committee commit pruning storage"
+    );
+    harness.set_caller(validator);
+    let (exit, output) = harness.call(encode_call(
+        SIG_GET_VALIDATOR_SELF_STAKE_LOCK,
+        &AddressCommand { value: validator },
+    ));
+    assert_eq!(exit, ExitCode::Ok);
+    assert_eq!(
+        decode_output::<(bool, u64)>(&output),
+        (false, liability_end_epoch)
+    );
+    assert_direct_revert(
+        consensus::ensure_equivocation_evidence_unexpired(&mut harness.sdk, 2),
+        &harness.sdk,
+        ERR_EQUIVOCATION_EVIDENCE_EXPIRED,
     );
     assert_eq!(
         harness
@@ -4205,23 +4298,7 @@ fn committee_liability_locks_pending_self_stake_through_evidence_window() {
             .0,
         ExitCode::Ok
     );
-    assert!(transfers.borrow().is_empty());
-
-    consensus_storage()
-        .epoch_committees_accessor()
-        .entry(0)
-        .clear_checked(&mut harness.sdk)
-        .unwrap();
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_CLAIM_DELEGATOR_FEE,
-                &AddressCommand { value: validator },
-            ))
-            .0,
-        ExitCode::Ok
-    );
-    assert_eq!(transfers.borrow().as_slice(), &[(validator, stake)]);
+    assert_eq!(transfers.borrow().as_slice(), &[(validator, withdrawn)]);
     assert_eq!(
         delegation
             .pending_undelegated_accessor()
@@ -4235,5 +4312,14 @@ fn committee_liability_locks_pending_self_stake_through_evidence_window() {
             .get_checked(&harness.sdk)
             .unwrap(),
         1
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .self_stake_unlock_epoch_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0
     );
 }

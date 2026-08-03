@@ -171,6 +171,9 @@ pub const SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH: u32 =
     derive_keccak256_id!("claimValidatorFeeAtEpoch(address,uint64)");
 // 0x52b7bea2
 pub const SIG_GET_DELEGATOR_FEE: u32 = derive_keccak256_id!("getDelegatorFee(address,address)");
+// 0xc72e0d73
+pub const SIG_GET_VALIDATOR_SELF_STAKE_LOCK: u32 =
+    derive_keccak256_id!("getValidatorSelfStakeLock(address)");
 // 0xc2fd58fc
 pub const SIG_GET_PENDING_DELEGATOR_FEE: u32 =
     derive_keccak256_id!("getPendingDelegatorFee(address,address)");
@@ -344,6 +347,8 @@ pub const ERR_INVALID_CONSENSUS_KEY_ENCODING: u32 =
 pub const ERR_EQUIVOCATION_SIGNATURE_INVALID: u32 =
     derive_keccak256_id!("EquivocationSignatureInvalid()");
 pub const ERR_EQUIVOCATION_KEY_MISMATCH: u32 = derive_keccak256_id!("EquivocationKeyMismatch()");
+pub const ERR_EQUIVOCATION_EVIDENCE_EXPIRED: u32 =
+    derive_keccak256_id!("EquivocationEvidenceExpired(uint64,uint64)");
 pub const ERR_EVIDENCE_DECODER_NOT_CONFIGURED: u32 =
     derive_keccak256_id!("EvidenceDecoderNotConfigured()");
 pub const ERR_ZERO_EQUIVOCATION_BENEFICIARY: u32 =
@@ -372,6 +377,7 @@ pub const WARMUP_DELAY: u64 = 2;
 pub const MAX_EPOCHS_PER_CLAIM: u64 = 1_000;
 pub const MAX_SETTLE_CATCHUP: u64 = 32;
 pub const EPOCH_COMMITTEE_RETENTION_MARGIN: u64 = 8;
+pub const MAX_COMMITTEE_LOOKAHEAD_EPOCHS: u64 = 2;
 pub const BLS_PUBKEY_UNCOMPRESSED_LENGTH: usize = 256;
 pub const BLS_POP_UNCOMPRESSED_LENGTH: usize = 128;
 pub const BLS_PUBKEY_LENGTH: usize = 96;

@@ -41,8 +41,11 @@ key, proof of possession, and peer key in the validator-creation call; there is 
 - Undelegated principal is released only after its maturity epoch and is claimed through the reward path.
 - Reward claims and views never consume epochs at or beyond the exclusive settled frontier. Matured undelegated
   principal is processed against its own bounded cursor, so delayed reward settlement cannot block withdrawals.
-- Validator-owner principal remains custodial through the latest committed committee's evidence window, and equivocation
-  seizure consumes both active and pending self-principal.
+- Each validator-owner undelegation snapshots a fixed liability deadline covering the committee lookahead and evidence
+  retention window. Later committees secured by the remaining self-stake do not extend queued principal, and stalled
+  committee pruning cannot delay release. The same absolute committee deadlines expire equivocation evidence;
+  `getValidatorSelfStakeLock` exposes the current lock state and exclusive unlock epoch.
+- Equivocation seizure consumes both active and pending self-principal.
 - Claims, stipend catch-up, committee pruning, and jail scans are bounded per call.
 - BLEND transfers accept ERC-20 tokens that return `true` or no data; explicit `false` reverts.
 - Reserve settlement credits rewards only after the exact assigned amount is disbursed. A successful zero or partial

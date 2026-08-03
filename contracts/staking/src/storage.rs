@@ -61,11 +61,11 @@ pub struct ValidatorStorage {
     /// Appended to preserve the existing storage layout while bounding
     /// historical snapshot lookups.
     first_snapshot_epoch_p1: StorageU64,
-    /// Latest committed committee epoch plus one (`0` means no committee).
+    /// Latest exclusive unlock epoch among queued self-principal operations.
     ///
-    /// Queued self-principal remains locked while that committee entry exists,
-    /// keeping it slashable until equivocation evidence is no longer accepted.
-    last_committee_epoch_p1: StorageU64,
+    /// New owner undelegations extend it; a complete claim or equivocation
+    /// seizure clears it. Claim accounting uses each operation's own deadline.
+    self_stake_unlock_epoch: StorageU64,
 }
 
 /// Per-epoch validator accounting snapshot.
@@ -93,6 +93,9 @@ pub struct UndelegationOpStorage {
     /// Stake in `BALANCE_COMPACT_PRECISION` units.
     amount: StorageUint112,
     epoch: StorageU64,
+    /// Exclusive epoch when validator-owner principal stops being slashable.
+    /// Zero for ordinary delegators.
+    self_stake_unlock_epoch: StorageU64,
 }
 
 /// Delegation history for one validator/delegator pair.
@@ -153,6 +156,8 @@ pub struct ConsensusStorage {
     ///
     /// Consensus identities are immutable in v1, so ownership is never released.
     bls_pubkey_owner: StorageMap<B256, StorageAddress>,
+    /// Exclusive equivocation-evidence deadline snapshotted for each committee.
+    committee_liability_end_epochs: StorageMap<u64, StorageU64>,
 }
 
 /// Single ERC-7201 namespaced storage root for staking.

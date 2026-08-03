@@ -1105,9 +1105,20 @@ pub(crate) fn undelegate_from<SDK: SharedAPI>(
     let maturity_epoch = before_epoch
         .checked_add(config.undelegate_period_accessor().get_checked(sdk)?)
         .ok_or(ExitCode::IntegerOverflow)?;
+    let self_stake_unlock_epoch = if delegator == owner {
+        maturity_epoch
+            .checked_add(EPOCH_COMMITTEE_RETENTION_MARGIN)
+            .and_then(|epoch| epoch.checked_add(MAX_COMMITTEE_LOOKAHEAD_EPOCHS))
+            .ok_or(ExitCode::IntegerOverflow)?
+    } else {
+        0
+    };
     let pending = delegation.undelegate_queue_accessor().grow_checked(sdk)?;
     pending.amount_accessor().set_checked(sdk, compact_amount)?;
     pending.epoch_accessor().set_checked(sdk, maturity_epoch)?;
+    pending
+        .self_stake_unlock_epoch_accessor()
+        .set_checked(sdk, self_stake_unlock_epoch)?;
     let pending_undelegated = delegation.pending_undelegated_accessor();
     pending_undelegated.set_checked(
         sdk,
@@ -1116,6 +1127,12 @@ pub(crate) fn undelegate_from<SDK: SharedAPI>(
             .checked_add(amount)
             .ok_or(ExitCode::IntegerOverflow)?,
     )?;
+    if self_stake_unlock_epoch != 0 {
+        let observable_unlock = record.self_stake_unlock_epoch_accessor();
+        if observable_unlock.get_checked(sdk)? < self_stake_unlock_epoch {
+            observable_unlock.set_checked(sdk, self_stake_unlock_epoch)?;
+        }
+    }
 
     if full_owner_exit {
         // Stake and membership both change at `before_epoch`. The active
@@ -1288,11 +1305,25 @@ fn delegator_claimable<SDK: SharedAPI>(
     let undelegates = delegation.undelegate_queue_accessor();
     let undelegate_len = undelegates.len_checked(sdk)?;
     let mut undelegate_gap = delegation.undelegate_gap_accessor().get_checked(sdk)?;
-    let self_stake_locked = validator_self_stake_is_locked(sdk, validator, delegator)?;
+    let self_stake_owner = staking_storage()
+        .validators_accessor()
+        .entry(validator)
+        .owner_accessor()
+        .get_checked(sdk)?
+        == delegator;
+    let epoch = if self_stake_owner {
+        current_epoch(sdk)?
+    } else {
+        0
+    };
     while undelegate_gap < undelegate_len {
         let operation = undelegates.at(undelegate_gap);
-        if self_stake_locked
-            || operation.epoch_accessor().get_checked(sdk)? > principal_before_epoch
+        if operation.epoch_accessor().get_checked(sdk)? > principal_before_epoch
+            || (self_stake_owner
+                && epoch
+                    < operation
+                        .self_stake_unlock_epoch_accessor()
+                        .get_checked(sdk)?)
         {
             break;
         }
@@ -1306,24 +1337,19 @@ fn delegator_claimable<SDK: SharedAPI>(
     Ok(claimable)
 }
 
-fn validator_self_stake_is_locked<SDK: SharedAPI>(
+fn validator_self_stake_lock<SDK: SharedAPI>(
     sdk: &SDK,
     validator: Address,
-    delegator: Address,
-) -> Result<bool, ExitCode> {
-    let record = staking_storage().validators_accessor().entry(validator);
-    if record.owner_accessor().get_checked(sdk)? != delegator {
-        return Ok(false);
-    }
-    let committee_epoch_p1 = record.last_committee_epoch_p1_accessor().get_checked(sdk)?;
-    if committee_epoch_p1 == 0 {
-        return Ok(false);
-    }
-    Ok(consensus_storage()
-        .epoch_committees_accessor()
-        .entry(committee_epoch_p1 - 1)
-        .len_checked(sdk)?
-        != 0)
+) -> Result<(bool, u64), ExitCode> {
+    let unlock_epoch = staking_storage()
+        .validators_accessor()
+        .entry(validator)
+        .self_stake_unlock_epoch_accessor()
+        .get_checked(sdk)?;
+    Ok((
+        unlock_epoch != 0 && current_epoch(sdk)? < unlock_epoch,
+        unlock_epoch,
+    ))
 }
 
 fn capped_delegator_reward_epoch<SDK: SharedAPI>(
@@ -1452,11 +1478,21 @@ fn consume_delegator_claim<SDK: SharedAPI>(
     let mut undelegate_gap = delegation.undelegate_gap_accessor().get_checked(sdk)?;
     let pending_undelegated = delegation.pending_undelegated_accessor();
     let mut pending_principal = pending_undelegated.get_checked(sdk)?;
-    let self_stake_locked = validator_self_stake_is_locked(sdk, validator, delegator)?;
+    let record = storage.validators_accessor().entry(validator);
+    let self_stake_owner = record.owner_accessor().get_checked(sdk)? == delegator;
+    let epoch = if self_stake_owner {
+        current_epoch(sdk)?
+    } else {
+        0
+    };
     while undelegate_gap < undelegate_len {
         let operation = undelegates.at(undelegate_gap);
-        if self_stake_locked
-            || operation.epoch_accessor().get_checked(sdk)? > principal_before_epoch
+        if operation.epoch_accessor().get_checked(sdk)? > principal_before_epoch
+            || (self_stake_owner
+                && epoch
+                    < operation
+                        .self_stake_unlock_epoch_accessor()
+                        .get_checked(sdk)?)
         {
             break;
         }
@@ -1473,6 +1509,11 @@ fn consume_delegator_claim<SDK: SharedAPI>(
         .undelegate_gap_accessor()
         .set_checked(sdk, undelegate_gap)?;
     pending_undelegated.set_checked(sdk, pending_principal)?;
+    if self_stake_owner && pending_principal.is_zero() {
+        record
+            .self_stake_unlock_epoch_accessor()
+            .set_checked(sdk, 0)?;
+    }
     Ok(claimable)
 }
 
@@ -1501,6 +1542,19 @@ pub fn get_validator_fee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
         sdk,
         &validator_owner_rewards(sdk, validator, current_epoch(sdk)?)?,
     )
+}
+
+/// Public handler `0xc72e0d73` (`getValidatorSelfStakeLock`).
+///
+/// Returns whether queued validator-owner principal is locked and its exclusive unlock epoch.
+pub fn get_validator_self_stake_lock<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    ensure_initialized(sdk)?;
+    let validator = decode::<AddressCommand>(input)?.value;
+    write_abi(sdk, &validator_self_stake_lock(sdk, validator)?)
 }
 
 /// Public handler `0xc6fb9065` (`getPendingValidatorFee`).
