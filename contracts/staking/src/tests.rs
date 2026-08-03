@@ -3445,6 +3445,7 @@ fn permissionless_validator_claim_waits_for_stipend_settlement() {
 fn delayed_reward_settlement_does_not_block_matured_principal() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
+    let delegator = Address::with_last_byte(0x02);
     let token = Address::with_last_byte(0xf0);
     let stake = DEFAULT_MIN_VALIDATOR_STAKE;
     let reward = DEFAULT_MIN_STAKING_AMOUNT;
@@ -3455,11 +3456,16 @@ fn delayed_reward_settlement_does_not_block_matured_principal() {
         harness.initialize(owner, vec![validator], vec![stake], 0),
         ExitCode::Ok
     );
-    staking::undelegate_from(&mut harness.sdk, validator, validator, stake).unwrap();
+    // Keep this regression focused on the independent reward/principal cursors.
+    // Validator-owner principal is deliberately subject to the separate
+    // self-stake liability deadline covered by the bounded-lock tests.
+    staking::delegate_to(&mut harness.sdk, delegator, validator, stake, false).unwrap();
+    harness.set_block_number(activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * WARMUP_DELAY);
+    staking::undelegate_from(&mut harness.sdk, delegator, validator, stake).unwrap();
     let delegation = staking_storage()
         .validator_delegations_accessor()
         .entry(validator)
-        .entry(validator);
+        .entry(delegator);
 
     let transfers = Rc::new(RefCell::new(Vec::<(Address, U256)>::new()));
     let recorded = transfers.clone();
@@ -3477,10 +3483,9 @@ fn delayed_reward_settlement_does_not_block_matured_principal() {
             SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
         });
 
-    harness.set_caller(validator);
-    harness.set_block_number(
-        activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * (DEFAULT_UNDELEGATE_PERIOD + 1),
-    );
+    harness.set_caller(delegator);
+    let maturity_epoch = WARMUP_DELAY + 1 + DEFAULT_UNDELEGATE_PERIOD;
+    harness.set_block_number(activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * maturity_epoch);
     assert_eq!(
         harness
             .call(encode_call(
@@ -3490,7 +3495,7 @@ fn delayed_reward_settlement_does_not_block_matured_principal() {
             .0,
         ExitCode::Ok
     );
-    assert_eq!(transfers.borrow().as_slice(), &[(validator, stake)]);
+    assert_eq!(transfers.borrow().as_slice(), &[(delegator, stake)]);
     assert_eq!(
         delegation
             .delegate_gap_accessor()
@@ -3510,16 +3515,16 @@ fn delayed_reward_settlement_does_not_block_matured_principal() {
     staking_storage()
         .validator_snapshots_accessor()
         .entry(validator)
-        .entry(0)
+        .entry(WARMUP_DELAY)
         .total_blend_rewards_accessor()
         .set_checked(
             &mut harness.sdk,
-            math::narrow_reward(reward).expect("reward fits uint96"),
+            math::narrow_reward(reward * U256::from(2)).expect("reward fits uint96"),
         )
         .unwrap();
     staking_storage()
         .last_rewarded_epoch_p1_accessor()
-        .set_checked(&mut harness.sdk, 1)
+        .set_checked(&mut harness.sdk, WARMUP_DELAY + 1)
         .unwrap();
     assert_eq!(
         harness
@@ -3532,7 +3537,7 @@ fn delayed_reward_settlement_does_not_block_matured_principal() {
     );
     assert_eq!(
         transfers.borrow().as_slice(),
-        &[(validator, stake), (validator, reward)]
+        &[(delegator, stake), (delegator, reward)]
     );
     assert_eq!(
         delegation
