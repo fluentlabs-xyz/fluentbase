@@ -38,3 +38,4 @@ node_modules/
 evm-e2e/tests/
 datadir/
 graphify-out/
+.claude

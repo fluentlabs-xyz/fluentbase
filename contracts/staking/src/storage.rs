@@ -2,7 +2,7 @@
 
 use crate::consts::{
     CHAIN_CONFIG_STORAGE_SLOT, CONSENSUS_STORAGE_SLOT, INITIALIZER_STORAGE_SLOT,
-    STAKING_STORAGE_SLOT,
+    PRODUCTION_LIVENESS_STORAGE_SLOT, STAKING_STORAGE_SLOT,
 };
 use fluentbase_sdk::{
     derive::Storage,
@@ -30,23 +30,35 @@ pub struct ChainConfigStorage {
     dpos_activation_block: StorageU64,
     min_validator_stake_amount: StorageU256,
     min_staking_amount: StorageU256,
-    felony_threshold: StorageU32,
-    validator_jail_epoch_length: StorageU32,
     slash_reporter_reward_bps: StorageU32,
     slash_fund_address: StorageAddress,
-    participation_floor_bps: StorageU32,
-    participation_jail_disabled: StorageBool,
     blend_stipend_per_epoch: StorageU256,
     bls_verifier: StorageAddress,
     evidence_decoder: StorageAddress,
     min_undelegate_blocks: StorageU256,
+    /// Unread. The jail tier that consumed it is gone and the production-liveness
+    /// tier that replaced it runs inside this contract, so the principal is the
+    /// contract itself. Still required non-zero at initialization, and the
+    /// initializer's selector is pinned, so removing it is a deliberate ABI break.
     liveness_slashing: StorageAddress,
     blend_reserve: StorageAddress,
+    /// Committee size cap history, ascending by `from_epoch`.
+    ///
+    /// Appended, never inserted: declaration order is the storage layout.
+    cap_checkpoints: StorageVec<CapCheckpointStorage>,
+    min_verdict_due_blocks: StorageU32,
+    exclusion_backoff_cap: StorageU32,
+    /// Kill switch for the production-liveness tier, seeded `true` at init.
+    ///
+    /// Raw, never sentinel-on-zero: a fresh slot reads `false`, which is the
+    /// opposite of the intended default, so the seed is the only thing keeping
+    /// the tier off on a new chain.
+    production_liveness_disabled: StorageBool,
 }
 
 /// Fixed-size validator metadata.
 ///
-/// Epoch-varying stake, commission, and slash counters live exclusively in
+/// Epoch-varying stake and commission live exclusively in
 /// `ValidatorSnapshotStorage`, avoiding duplicate sources of truth.
 #[derive(Storage)]
 pub struct ValidatorStorage {
@@ -54,7 +66,6 @@ pub struct ValidatorStorage {
     owner: StorageAddress,
     status: StorageU8,
     changed_at: StorageU64,
-    jailed_before: StorageU64,
     claimed_at: StorageU64,
     /// First initialized snapshot epoch plus one (`0` means no snapshot).
     ///
@@ -73,10 +84,21 @@ pub struct ValidatorStorage {
 pub struct ValidatorSnapshotStorage {
     /// Stake in `BALANCE_COMPACT_PRECISION` units.
     total_delegated: StorageUint112,
-    slashes_count: StorageU32,
     commission_rate: StorageU16,
     /// Per-epoch BLEND reward in token base units; never copied forward.
     total_blend_rewards: StorageUint96,
+}
+
+/// Committee size cap in force from `from_epoch` onward.
+///
+/// The epoch-frozen selection view stands on three epoch-addressed legs:
+/// visibility, stake, and this cap. Reading the cap live was the missing leg —
+/// a governance change would retroactively rewrite the committee of an epoch
+/// that had already been committed.
+#[derive(Storage)]
+pub struct CapCheckpointStorage {
+    from_epoch: StorageU64,
+    value: StorageU32,
 }
 
 /// Effective delegation balance beginning at `epoch`.
@@ -139,7 +161,7 @@ pub struct EquivocationCommitmentStorage {
     committed_at: StorageU64,
 }
 
-/// ERC-7201 namespaced consensus, liveness, and equivocation state.
+/// ERC-7201 namespaced consensus, committee, and equivocation state.
 #[derive(Storage)]
 pub struct ConsensusStorage {
     consensus_keys: StorageMap<Address, ConsensusKeysStorage>,
@@ -148,8 +170,6 @@ pub struct ConsensusStorage {
     dkg_qual: StorageMap<u64, StorageBool>,
     last_committed_epoch_p1: StorageU64,
     pruned_up_to_p1: StorageU64,
-    jailed_validators: StorageVec<StorageAddress>,
-    jailed_scan_cursor: StorageU64,
     tombstoned: StorageMap<Address, StorageBool>,
     equivocation_commitments: StorageMap<Address, EquivocationCommitmentStorage>,
     /// Validator owning a canonical compressed BLS key, indexed by its keccak256 hash.
@@ -158,6 +178,13 @@ pub struct ConsensusStorage {
     bls_pubkey_owner: StorageMap<B256, StorageAddress>,
     /// Exclusive equivocation-evidence deadline snapshotted for each committee.
     committee_liability_end_epochs: StorageMap<u64, StorageU64>,
+    /// Leader weights stamped at commit time, positional with `epoch_committees`.
+    ///
+    /// Stored in `BALANCE_COMPACT_PRECISION` units. Computing the weight live at
+    /// read time makes it depend on the block height each node happens to read
+    /// at, and the leader is drawn from those weights — so an unfrozen weight is
+    /// a per-node leader split, not an accounting rounding error.
+    leader_stakes: StorageMap<u64, StorageVec<StorageUint112>>,
 }
 
 /// Single ERC-7201 namespaced storage root for staking.
@@ -182,6 +209,43 @@ pub struct StakingStorage {
     validator_snapshot_epochs: StorageMap<Address, StorageVec<StorageU64>>,
 }
 
+/// One validator's block-production record.
+///
+/// Field order is split by write frequency: the two counters the per-block
+/// credit touches share one slot, so recording a block costs a single store no
+/// matter how the epoch-close fields below them grow.
+#[derive(Storage)]
+pub struct ProductionValidatorStorage {
+    total_produced: StorageU64,
+    /// Epoch of the most recent credited block plus one (`0` means never).
+    last_produced_epoch_p1: StorageU64,
+    /// Epoch of the most recent failing verdict plus one (`0` means never).
+    last_failed_epoch_p1: StorageU64,
+    /// Epoch at whose close the exclusion is released (`0` means not excluded).
+    readmit_at_epoch: StorageU64,
+    /// Exclusion episodes, not verdicts. Never decays.
+    kick_count: StorageU32,
+}
+
+/// ERC-7201 namespaced block-production accounting.
+#[derive(Storage)]
+pub struct ProductionLivenessStorage {
+    /// Highest recorded block: both the idempotency belt and the epoch cursor.
+    ///
+    /// There is deliberately no second epoch scalar. The epoch is a pure
+    /// function of the height, and two cursors obliged to agree can disagree.
+    last_processed_block: StorageU64,
+    /// Blocks credited per (epoch, committee index).
+    ///
+    /// Keyed by index rather than by address because index `i` names a
+    /// different validator in every epoch.
+    produced: StorageMap<u64, StorageMap<u32, StorageU32>>,
+    blocks_in_epoch: StorageMap<u64, StorageU32>,
+    /// Live exclusions; the length is the concurrent count.
+    pending_exclusions: StorageVec<StorageAddress>,
+    validators: StorageMap<Address, ProductionValidatorStorage>,
+}
+
 pub fn initializer_storage() -> InitializerStorage {
     InitializerStorage::new(INITIALIZER_STORAGE_SLOT, 0)
 }
@@ -196,4 +260,8 @@ pub fn consensus_storage() -> ConsensusStorage {
 
 pub fn staking_storage() -> StakingStorage {
     StakingStorage::new(STAKING_STORAGE_SLOT, 0)
+}
+
+pub fn production_liveness_storage() -> ProductionLivenessStorage {
+    ProductionLivenessStorage::new(PRODUCTION_LIVENESS_STORAGE_SLOT, 0)
 }

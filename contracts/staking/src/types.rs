@@ -23,8 +23,6 @@ pub struct InitializeCommand {
     pub staking_token: Address,
     pub active_validators_length: u32,
     pub epoch_block_interval: u32,
-    pub felony_threshold: u32,
-    pub validator_jail_epoch_length: u32,
     pub undelegate_period: u32,
     pub min_validator_stake_amount: U256,
     pub min_staking_amount: U256,
@@ -102,6 +100,11 @@ pub struct RegisterValidatorCommand {
 impl FunctionArgs<BE, 32, true, false> for RegisterValidatorCommand {}
 
 #[derive(Default, Debug, Codec)]
+pub struct BoolCommand {
+    pub value: bool,
+}
+
+#[derive(Default, Debug, Codec)]
 pub struct U32Command {
     pub value: u32,
 }
@@ -116,16 +119,17 @@ pub struct U256Command {
     pub value: U256,
 }
 
-#[derive(Default, Debug, Codec)]
-pub struct BoolCommand {
-    pub value: bool,
-}
-
 #[derive(Default, Debug, Clone, PartialEq, Eq, Codec)]
 pub struct ConsensusKeys {
     pub bls_pubkey: Bytes,
     pub peer_pubkey: B256,
     pub activation_epoch: u64,
+}
+
+#[derive(Default, Debug, Codec)]
+pub struct RecordProductionCommand {
+    pub block_number: u64,
+    pub leader_index: u8,
 }
 
 #[derive(Default, Debug, Codec)]

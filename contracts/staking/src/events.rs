@@ -47,6 +47,8 @@ pub struct Undelegated {
 pub struct ActiveValidatorsLengthChanged {
     pub prev_value: u32,
     pub new_value: u32,
+    /// First epoch the new cap governs committee selection.
+    pub effective_epoch: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
@@ -62,18 +64,6 @@ pub struct DposActivationBlockChanged {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
-pub struct FelonyThresholdChanged {
-    pub prev_value: u32,
-    pub new_value: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Event)]
-pub struct ValidatorJailEpochLengthChanged {
-    pub prev_value: u32,
-    pub new_value: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Event)]
 pub struct SlashReporterRewardBpsChanged {
     pub prev_value: u32,
     pub new_value: u32,
@@ -83,18 +73,6 @@ pub struct SlashReporterRewardBpsChanged {
 pub struct SlashFundAddressChanged {
     pub prev_value: Address,
     pub new_value: Address,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Event)]
-pub struct ParticipationFloorBpsChanged {
-    pub prev_value: u32,
-    pub new_value: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Event)]
-pub struct ParticipationJailDisabledChanged {
-    pub prev_value: bool,
-    pub new_value: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
@@ -143,6 +121,79 @@ pub struct LivenessSlashingChanged {
 pub struct BlendReserveChanged {
     pub prev_value: Address,
     pub new_value: Address,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Event)]
+pub struct MinVerdictDueBlocksChanged {
+    pub prev_value: u32,
+    pub new_value: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Event)]
+pub struct ExclusionBackoffCapChanged {
+    pub prev_value: u32,
+    pub new_value: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Event)]
+pub struct ProductionLivenessDisabledChanged {
+    pub prev_value: bool,
+    pub new_value: bool,
+}
+
+#[derive(Event)]
+pub struct ProductionExclusionApplied {
+    #[indexed]
+    pub validator: Address,
+    pub bite_epoch: u64,
+}
+
+#[derive(Event)]
+pub struct ProductionExclusionReleased {
+    #[indexed]
+    pub validator: Address,
+    pub bite_epoch: u64,
+}
+
+/// Mandatory rather than diagnostic: the partial-epoch taint is derived from
+/// the block count instead of stored, so one unrecorded block silently costs a
+/// whole epoch its verdicts while the tier still reads as enabled.
+#[derive(Event)]
+pub struct PartialEpoch {
+    #[indexed]
+    pub epoch: u64,
+    pub recorded: u32,
+    pub expected: u32,
+}
+
+/// Emitted per failing member whether or not a stamp follows; a verdict without
+/// a stamp is the normal case.
+#[derive(Event)]
+pub struct ProductionVerdictFailed {
+    #[indexed]
+    pub epoch: u64,
+    #[indexed]
+    pub validator: Address,
+    pub produced: u32,
+    pub due: U256,
+}
+
+/// More than `f` members failing for the first time in one epoch reads as an
+/// environment rather than as individual faults. No stamps that close.
+#[derive(Event)]
+pub struct CorrelatedFailureEpoch {
+    #[indexed]
+    pub epoch: u64,
+    pub new_failures: U256,
+    pub tolerance: U256,
+}
+
+/// The liveness legs of this close have already committed; the reward cursor
+/// did not advance, so the next close retries contiguously.
+#[derive(Event)]
+pub struct StipendLegSkipped {
+    #[indexed]
+    pub epoch: u64,
 }
 
 #[derive(Event)]
@@ -204,34 +255,10 @@ pub struct EpochCommitteeCommitted {
 }
 
 #[derive(Event)]
-pub struct ValidatorReleased {
-    #[indexed]
-    pub validator: Address,
-    pub epoch: u64,
-}
-
-#[derive(Event)]
 pub struct ValidatorJailed {
     #[indexed]
     pub validator: Address,
     pub epoch: u64,
-}
-
-#[derive(Event)]
-pub struct ValidatorSlashed {
-    #[indexed]
-    pub validator: Address,
-    pub slashes: u32,
-    pub epoch: u64,
-}
-
-#[derive(Event)]
-pub struct LivenessJailSkippedHaltGuard {
-    #[indexed]
-    pub validator: Address,
-    pub epoch: u64,
-    pub active_set_size: U256,
-    pub quorum_floor: U256,
 }
 
 #[derive(Event)]

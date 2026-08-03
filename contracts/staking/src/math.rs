@@ -25,6 +25,18 @@ pub fn narrow_reward(amount: U256) -> Option<U96> {
     U96::checked_from_limbs_slice(amount.as_limbs())
 }
 
+/// Simplex fault tolerance `f = ⌊(n−1)/3⌋`.
+///
+/// Kept byte-equal to the off-chain consensus so the correlation guard and the
+/// concurrent-exclusion ceiling cannot disagree with it.
+pub fn fault_tolerance(n: usize) -> usize {
+    if n == 0 {
+        0
+    } else {
+        (n - 1) / 3
+    }
+}
+
 /// Map a block to its activation-relative epoch, clamping pre-activation blocks.
 pub fn epoch_at_block(block_number: u64, activation_block: u64, interval: u64) -> Option<u64> {
     if interval == 0 {
