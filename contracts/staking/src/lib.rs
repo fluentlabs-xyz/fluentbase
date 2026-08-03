@@ -50,7 +50,6 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_MAX_BLEND_STIPEND_PER_EPOCH => config::max_blend_stipend_per_epoch(sdk),
         SIG_MAX_PARTICIPATION_FLOOR_BPS => config::max_participation_floor_bps(sdk),
         SIG_MAX_SLASH_REPORTER_BPS => config::max_slash_reporter_bps(sdk),
-        SIG_GET_GOVERNANCE => config::get_governance(sdk),
         SIG_GET_STAKING_TOKEN => config::get_staking_token(sdk),
         SIG_GET_ACTIVE_VALIDATORS_LENGTH => config::get_active_validators_length(sdk),
         SIG_GET_EPOCH_BLOCK_INTERVAL => config::get_epoch_block_interval(sdk),

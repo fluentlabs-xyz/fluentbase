@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use alloc::string::String;
-use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, GENESIS_GOVERNANCE, U256};
+use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
 
 fn ensure_governance_mutation<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
@@ -255,14 +255,6 @@ pub fn get_staking_token<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> 
             .staking_token_accessor()
             .get_checked(sdk)?,
     )
-}
-
-/// Public handler `0x289b3c0d` (`getGovernance`).
-///
-/// Returns the compile-time governance authority reserved by genesis.
-pub fn get_governance<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(sdk, &GENESIS_GOVERNANCE)
 }
 
 /// Public handler `0x32cc6f08` (`getActiveValidatorsLength`).

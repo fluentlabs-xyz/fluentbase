@@ -25,8 +25,6 @@ pub const SIG_INITIALIZE: u32 =
 pub const SIG_CURRENT_EPOCH: u32 = derive_keccak256_id!("currentEpoch()");
 // 0xaea0e78b
 pub const SIG_NEXT_EPOCH: u32 = derive_keccak256_id!("nextEpoch()");
-// 0x289b3c0d
-pub const SIG_GET_GOVERNANCE: u32 = derive_keccak256_id!("getGovernance()");
 // 0xfacd743b
 pub const SIG_IS_VALIDATOR: u32 = derive_keccak256_id!("isValidator(address)");
 // 0x42ad55ac

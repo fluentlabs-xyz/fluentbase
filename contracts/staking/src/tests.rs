@@ -876,7 +876,6 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_INITIALIZE, 0x4b4b21a5),
         (SIG_CURRENT_EPOCH, 0x76671808),
         (SIG_NEXT_EPOCH, 0xaea0e78b),
-        (SIG_GET_GOVERNANCE, 0x289b3c0d),
         (SIG_GET_STAKING_TOKEN, 0x9f9106d1),
         (SIG_DEFAULT_PARTICIPATION_FLOOR_BPS, 0x2c1d88e8),
         (SIG_DEFAULT_SLASH_REPORTER_BPS, 0x6cc69027),
@@ -962,10 +961,6 @@ fn initializes_registry_and_preserves_solidity_read_abi() {
         ),
         ExitCode::Ok
     );
-
-    let (exit, output) = harness.call(encode_empty_call(SIG_GET_GOVERNANCE));
-    assert_eq!(exit, ExitCode::Ok);
-    assert_eq!(decode_output::<Address>(&output), GENESIS_GOVERNANCE);
 
     let (_, output) = harness.call(encode_empty_call(SIG_GET_VALIDATORS));
     assert_eq!(
@@ -1367,7 +1362,6 @@ fn governance_updates_embedded_chain_configuration() {
         (SIG_GET_SLASH_FUND_ADDRESS, slash_fund),
         (SIG_GET_BLS_VERIFIER, bls_verifier),
         (SIG_GET_EVIDENCE_DECODER, evidence_decoder),
-        (SIG_GET_GOVERNANCE, GENESIS_GOVERNANCE),
         (SIG_GET_LIVENESS_SLASHING, replacement_liveness),
         (SIG_GET_BLEND_RESERVE, replacement_reserve),
     ] {
@@ -1574,8 +1568,10 @@ fn initializer_is_permissionless_for_atomic_deployment_but_one_shot() {
 
     let command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
-    let (_, output) = harness.call(encode_empty_call(SIG_GET_GOVERNANCE));
-    assert_eq!(decode_output::<Address>(&output), GENESIS_GOVERNANCE);
+    assert!(initializer_storage()
+        .initialized_accessor()
+        .get_checked(&harness.sdk)
+        .unwrap());
 
     harness.set_caller(replacement);
     let command = harness.initialize_command(replacement, Vec::new(), Vec::new(), 0);
@@ -1583,8 +1579,10 @@ fn initializer_is_permissionless_for_atomic_deployment_but_one_shot() {
         harness.call(encode_args_call(SIG_INITIALIZE, &command)),
         ERR_ALREADY_INITIALIZED,
     );
-    let (_, output) = harness.call(encode_empty_call(SIG_GET_GOVERNANCE));
-    assert_eq!(decode_output::<Address>(&output), GENESIS_GOVERNANCE);
+    assert!(initializer_storage()
+        .initialized_accessor()
+        .get_checked(&harness.sdk)
+        .unwrap());
 }
 
 #[test]

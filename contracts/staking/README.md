@@ -24,10 +24,10 @@ The core validator staking contract implemented as a normal rWasm contract and d
 5. The system caller commits epoch committees and settles finalized epoch stipends.
 6. Liveness and equivocation paths jail or permanently tombstone validators.
 
-Governance is the compile-time `GENESIS_GOVERNANCE` address and is observable through `getGovernance()`. Changing it
-requires a coordinated code/genesis rebuild. The base genesis builder embeds staking but does not install governance
-code at the reserved address, so a production network genesis must provide the governance deployment or equivalent
-authority there before privileged staking operations are needed.
+Governance is fixed at compile time to the `GENESIS_GOVERNANCE` address. Changing it requires a coordinated code/genesis
+rebuild. The base genesis builder embeds staking but does not install governance code at the reserved address, so a
+production network genesis must provide the governance deployment or equivalent authority there before privileged
+staking operations are needed.
 
 The liveness-slashing and BLEND-reserve dependencies are observable and independently rotatable by governance. Every
 initial assignment and later rotation emits its previous and new address. Epoch interval, DPoS activation, and
