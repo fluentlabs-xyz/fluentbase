@@ -729,26 +729,52 @@ fn solidity_bytes_outputs_and_event_match_cast_vectors() {
         )
     );
 
-    let keys = vec![ConsensusKeys {
-        bls_pubkey: Bytes::from_static(&[0xaa, 0xbb, 0xcc]),
-        peer_pubkey: B256::with_last_byte(0x01),
-        activation_epoch: 7,
-    }];
+    // Three elements, not one: a single-element array puts every head slot at offset 0, so it
+    // cannot catch a wrong stride between slots.
+    let keys = vec![
+        ConsensusKeys {
+            bls_pubkey: Bytes::from_static(&[0xaa, 0xbb, 0xcc]),
+            peer_pubkey: B256::with_last_byte(0x01),
+            activation_epoch: 7,
+        },
+        ConsensusKeys {
+            bls_pubkey: Bytes::from_static(&[0xdd, 0xee]),
+            peer_pubkey: B256::with_last_byte(0x02),
+            activation_epoch: 8,
+        },
+        ConsensusKeys {
+            bls_pubkey: Bytes::from_static(&[0xff]),
+            peer_pubkey: B256::with_last_byte(0x03),
+            activation_epoch: 9,
+        },
+    ];
     let mut encoded_keys = BytesMut::new();
     SolidityABI::<Vec<ConsensusKeys>>::encode(&keys, &mut encoded_keys, 0).unwrap();
     // cast abi-encode "f((bytes,bytes32,uint64)[])"
-    // "[(0xaabbcc,0x...01,7)]"
+    // "[(0xaabbcc,0x...01,7),(0xddee,0x...02,8),(0xff,0x...03,9)]"
     assert_eq!(
         encoded_keys.as_ref(),
         &hex!(
             "0000000000000000000000000000000000000000000000000000000000000020
-             0000000000000000000000000000000000000000000000000000000000000001
-             0000000000000000000000000000000000000000000000000000000000000020
+             0000000000000000000000000000000000000000000000000000000000000003
+             0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000100
+             00000000000000000000000000000000000000000000000000000000000001a0
              0000000000000000000000000000000000000000000000000000000000000060
              0000000000000000000000000000000000000000000000000000000000000001
              0000000000000000000000000000000000000000000000000000000000000007
              0000000000000000000000000000000000000000000000000000000000000003
-             aabbcc0000000000000000000000000000000000000000000000000000000000"
+             aabbcc0000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000002
+             0000000000000000000000000000000000000000000000000000000000000008
+             0000000000000000000000000000000000000000000000000000000000000002
+             ddee000000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000003
+             0000000000000000000000000000000000000000000000000000000000000009
+             0000000000000000000000000000000000000000000000000000000000000001
+             ff00000000000000000000000000000000000000000000000000000000000000"
         )
     );
 
@@ -4007,11 +4033,11 @@ fn delayed_reward_settlement_does_not_block_matured_principal() {
     assert_eq!(transfers.borrow().as_slice(), &[(delegator, stake)]);
     assert_eq!(
         delegation
-            .delegate_gap_accessor()
+            .claimed_through_epoch_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        0,
-        "principal maturity must not consume the unsettled reward cursor"
+        u64::from(WARMUP_DELAY),
+        "principal maturity must not advance the reward cursor past the settled frontier"
     );
     assert_eq!(
         delegation
@@ -4050,10 +4076,68 @@ fn delayed_reward_settlement_does_not_block_matured_principal() {
     );
     assert_eq!(
         delegation
-            .delegate_gap_accessor()
+            .claimed_through_epoch_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        1
+        u64::from(WARMUP_DELAY) + 1,
+        "the settled epoch is now paid, so the cursor sits one past it"
+    );
+}
+
+#[test]
+fn claiming_rewards_does_not_rewrite_historical_self_stake() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(0);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(
+            owner,
+            vec![validator],
+            vec![DEFAULT_MIN_VALIDATOR_STAKE],
+            0,
+        ),
+        ExitCode::Ok
+    );
+
+    // A genesis validator is its own delegator, so its self-stake is the single delegate-queue
+    // entry the claim walks. Settling a frontier is what makes the claim advance at all.
+    let past_epoch = 20;
+    harness.set_block_number(DEFAULT_EPOCH_BLOCK_INTERVAL * 40);
+    staking_storage()
+        .last_rewarded_epoch_p1_accessor()
+        .set_checked(&mut harness.sdk, 40)
+        .unwrap();
+
+    let stake_before =
+        staking::validator_self_stake_at(&harness.sdk, validator, past_epoch).unwrap();
+    assert!(!stake_before.is_zero());
+    assert!(staking::selected_validators_at(&harness.sdk, past_epoch)
+        .unwrap()
+        .contains(&validator));
+
+    harness.set_caller(validator);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CLAIM_DELEGATOR_FEE,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    assert_eq!(
+        staking::validator_self_stake_at(&harness.sdk, validator, past_epoch).unwrap(),
+        stake_before,
+        "a claim must not change what the self-stake was at an already-committed epoch"
+    );
+    assert!(
+        staking::selected_validators_at(&harness.sdk, past_epoch)
+            .unwrap()
+            .contains(&validator),
+        "the off-chain deriver re-reads past-epoch selection to rebuild committees; a claim must \
+         not drop the validator out of it"
     );
 }
 
@@ -4087,17 +4171,28 @@ fn reward_claims_are_bounded_to_one_thousand_epochs() {
             .0,
         ExitCode::Ok
     );
+    let delegation = staking_storage()
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(validator);
     assert_eq!(
-        staking_storage()
-            .validator_delegations_accessor()
-            .entry(validator)
-            .entry(validator)
+        delegation
+            .claimed_through_epoch_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        MAX_EPOCHS_PER_CLAIM,
+        "the claim advances its own cursor by at most the per-claim bound"
+    );
+    assert_eq!(
+        delegation
             .delegate_queue_accessor()
             .at(0)
             .epoch_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        MAX_EPOCHS_PER_CLAIM
+        0,
+        "the effective-from epoch is immutable: historical self-stake lookups binary-search it, \
+         so a claim that moved it would rewrite past-epoch committee views"
     );
     assert_eq!(
         harness
@@ -4651,10 +4746,11 @@ fn equivocation_seizes_active_and_pending_self_delegation() {
     );
     assert_eq!(
         delegation
-            .delegate_gap_accessor()
+            .claimed_through_epoch_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        0
+        0,
+        "seizure resets the reward cursor with the queues"
     );
     assert_eq!(
         delegation

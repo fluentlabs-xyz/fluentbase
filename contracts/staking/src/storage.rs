@@ -125,7 +125,6 @@ pub struct UndelegationOpStorage {
 #[allow(dead_code)]
 pub struct ValidatorDelegationStorage {
     delegate_queue: StorageVec<DelegationOpStorage>,
-    delegate_gap: StorageU64,
     undelegate_queue: StorageVec<UndelegationOpStorage>,
     undelegate_gap: StorageU64,
     /// Unclaimed queued principal in full-precision token units.
@@ -133,6 +132,13 @@ pub struct ValidatorDelegationStorage {
     /// Keeping the aggregate beside the operation history lets equivocation
     /// seizure remain constant-time even when the queue is fragmented.
     pending_undelegated: StorageU256,
+    /// Exclusive epoch through which rewards have been paid.
+    ///
+    /// Separate from `DelegationOpStorage::epoch`, which is the epoch a balance
+    /// takes effect from and must stay immutable: historical stake lookups
+    /// binary-search that field, so advancing it as a payment cursor rewrites
+    /// past-epoch committee views.
+    claimed_through_epoch: StorageU64,
 }
 
 /// Epoch-stamped selection visibility. Status changes become visible from the

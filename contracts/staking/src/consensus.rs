@@ -904,7 +904,9 @@ pub(crate) fn seize_self_stake<SDK: SharedAPI>(
     }
 
     queue.clear_checked(sdk)?;
-    delegation.delegate_gap_accessor().set_checked(sdk, 0)?;
+    delegation
+        .claimed_through_epoch_accessor()
+        .set_checked(sdk, 0)?;
     undelegates.clear_checked(sdk)?;
     delegation.undelegate_gap_accessor().set_checked(sdk, 0)?;
     pending_undelegated.set_checked(sdk, U256::ZERO)?;

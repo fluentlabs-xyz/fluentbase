@@ -1352,45 +1352,38 @@ fn delegator_claimable<SDK: SharedAPI>(
         .entry(delegator);
     let delegates = delegation.delegate_queue_accessor();
     let delegate_len = delegates.len_checked(sdk)?;
-    let mut delegate_gap = delegation.delegate_gap_accessor().get_checked(sdk)?;
     let mut claimable = U256::ZERO;
 
-    while delegate_gap < delegate_len {
-        let operation = delegates.at(delegate_gap);
-        let mut epoch = operation.epoch_accessor().get_checked(sdk)?;
-        if epoch >= reward_before_epoch {
-            break;
-        }
-        let changed_at = if delegate_gap + 1 < delegate_len {
-            delegates
-                .at(delegate_gap + 1)
-                .epoch_accessor()
-                .get_checked(sdk)?
-        } else {
-            reward_before_epoch
-        };
-        let end = core::cmp::min(reward_before_epoch, changed_at);
-        let delegated = operation.amount_accessor().get_checked(sdk)?;
-        while epoch < end {
-            let (delegator_pool, _) = snapshot_payout(sdk, validator, epoch)?;
-            let snapshot = staking_storage()
-                .validator_snapshots_accessor()
-                .entry(validator)
-                .entry(epoch);
-            let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
-            if !total.is_zero() {
-                claimable = claimable
-                    .checked_add(
-                        delegator_pool
-                            .checked_mul(U256::from(delegated))
-                            .ok_or(ExitCode::IntegerOverflow)?
-                            / U256::from(total),
-                    )
-                    .ok_or(ExitCode::IntegerOverflow)?;
+    if let Some((mut index, mut epoch)) = delegate_claim_start(sdk, validator, delegator)? {
+        while index < delegate_len && epoch < reward_before_epoch {
+            let changed_at = if index + 1 < delegate_len {
+                delegates.at(index + 1).epoch_accessor().get_checked(sdk)?
+            } else {
+                reward_before_epoch
+            };
+            let end = core::cmp::min(reward_before_epoch, changed_at);
+            let delegated = delegates.at(index).amount_accessor().get_checked(sdk)?;
+            while epoch < end {
+                let (delegator_pool, _) = snapshot_payout(sdk, validator, epoch)?;
+                let snapshot = staking_storage()
+                    .validator_snapshots_accessor()
+                    .entry(validator)
+                    .entry(epoch);
+                let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
+                if !total.is_zero() {
+                    claimable = claimable
+                        .checked_add(
+                            delegator_pool
+                                .checked_mul(U256::from(delegated))
+                                .ok_or(ExitCode::IntegerOverflow)?
+                                / U256::from(total),
+                        )
+                        .ok_or(ExitCode::IntegerOverflow)?;
+                }
+                epoch = epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
             }
-            epoch = epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
+            index += 1;
         }
-        delegate_gap += 1;
     }
 
     let undelegates = delegation.undelegate_queue_accessor();
@@ -1443,32 +1436,62 @@ fn validator_self_stake_lock<SDK: SharedAPI>(
     ))
 }
 
+/// Position to resume a reward claim from: the delegate-queue entry in force at the reward
+/// cursor, and the epoch to start accruing at. `None` when the delegator has no delegations.
+///
+/// The resume epoch is `max(cursor, first entry)` rather than the bare cursor: a delegator who
+/// has never claimed carries a zero cursor, and windowing `MAX_EPOCHS_PER_CLAIM` from zero would
+/// place the whole window before the first delegation and strand the funds permanently.
+fn delegate_claim_start<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    delegator: Address,
+) -> Result<Option<(u64, u64)>, ExitCode> {
+    let delegation = staking_storage()
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(delegator);
+    let delegates = delegation.delegate_queue_accessor();
+    let len = delegates.len_checked(sdk)?;
+    if len == 0 {
+        return Ok(None);
+    }
+    let cursor = delegation
+        .claimed_through_epoch_accessor()
+        .get_checked(sdk)?;
+    let first = delegates.at(0).epoch_accessor().get_checked(sdk)?;
+    let start = core::cmp::max(cursor, first);
+
+    let mut low = 0;
+    let mut high = len;
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if delegates.at(middle).epoch_accessor().get_checked(sdk)? <= start {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    Ok(Some((low - 1, start)))
+}
+
 fn capped_delegator_reward_epoch<SDK: SharedAPI>(
     sdk: &SDK,
     validator: Address,
     delegator: Address,
     before_epoch: u64,
 ) -> Result<u64, ExitCode> {
-    let delegation = staking_storage()
-        .validator_delegations_accessor()
-        .entry(validator)
-        .entry(delegator);
-    let delegates = delegation.delegate_queue_accessor();
-    let delegate_gap = delegation.delegate_gap_accessor().get_checked(sdk)?;
     let settled_epoch_p1 = staking_storage()
         .last_rewarded_epoch_p1_accessor()
         .get_checked(sdk)?;
     let before_epoch = core::cmp::min(before_epoch, settled_epoch_p1);
-    if delegate_gap >= delegates.len_checked(sdk)? {
-        return Ok(before_epoch);
-    }
-    let first = delegates
-        .at(delegate_gap)
-        .epoch_accessor()
-        .get_checked(sdk)?;
+    let start = match delegate_claim_start(sdk, validator, delegator)? {
+        Some((_, start)) => start,
+        None => return Ok(before_epoch),
+    };
     Ok(core::cmp::min(
         before_epoch,
-        first
+        start
             .checked_add(MAX_EPOCHS_PER_CLAIM)
             .ok_or(ExitCode::IntegerOverflow)?,
     ))
@@ -1515,54 +1538,42 @@ fn consume_delegator_claim<SDK: SharedAPI>(
         .entry(delegator);
     let delegates = delegation.delegate_queue_accessor();
     let delegate_len = delegates.len_checked(sdk)?;
-    let mut delegate_gap = delegation.delegate_gap_accessor().get_checked(sdk)?;
     let mut claimable = U256::ZERO;
 
-    while delegate_gap < delegate_len {
-        let operation = delegates.at(delegate_gap);
-        let mut epoch = operation.epoch_accessor().get_checked(sdk)?;
-        if epoch >= reward_before_epoch {
-            break;
-        }
-        let has_next = delegate_gap + 1 < delegate_len;
-        let changed_at = if has_next {
-            delegates
-                .at(delegate_gap + 1)
-                .epoch_accessor()
-                .get_checked(sdk)?
-        } else {
-            reward_before_epoch
-        };
-        let end = core::cmp::min(reward_before_epoch, changed_at);
-        let delegated = operation.amount_accessor().get_checked(sdk)?;
-        while epoch < end {
-            let (delegator_pool, _) = snapshot_payout(sdk, validator, epoch)?;
-            let snapshot = storage
-                .validator_snapshots_accessor()
-                .entry(validator)
-                .entry(epoch);
-            let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
-            if !total.is_zero() {
-                claimable = claimable
-                    .checked_add(
-                        delegator_pool
-                            .checked_mul(U256::from(delegated))
-                            .ok_or(ExitCode::IntegerOverflow)?
-                            / U256::from(total),
-                    )
-                    .ok_or(ExitCode::IntegerOverflow)?;
+    if let Some((mut index, mut epoch)) = delegate_claim_start(sdk, validator, delegator)? {
+        while index < delegate_len && epoch < reward_before_epoch {
+            let changed_at = if index + 1 < delegate_len {
+                delegates.at(index + 1).epoch_accessor().get_checked(sdk)?
+            } else {
+                reward_before_epoch
+            };
+            let end = core::cmp::min(reward_before_epoch, changed_at);
+            let delegated = delegates.at(index).amount_accessor().get_checked(sdk)?;
+            while epoch < end {
+                let (delegator_pool, _) = snapshot_payout(sdk, validator, epoch)?;
+                let snapshot = storage
+                    .validator_snapshots_accessor()
+                    .entry(validator)
+                    .entry(epoch);
+                let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
+                if !total.is_zero() {
+                    claimable = claimable
+                        .checked_add(
+                            delegator_pool
+                                .checked_mul(U256::from(delegated))
+                                .ok_or(ExitCode::IntegerOverflow)?
+                                / U256::from(total),
+                        )
+                        .ok_or(ExitCode::IntegerOverflow)?;
+                }
+                epoch = epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
             }
-            epoch = epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
+            index += 1;
         }
-        if !has_next || epoch < changed_at {
-            operation.epoch_accessor().set_checked(sdk, epoch)?;
-            break;
-        }
-        delegate_gap += 1;
+        delegation
+            .claimed_through_epoch_accessor()
+            .set_checked(sdk, epoch)?;
     }
-    delegation
-        .delegate_gap_accessor()
-        .set_checked(sdk, delegate_gap)?;
 
     let undelegates = delegation.undelegate_queue_accessor();
     let undelegate_len = undelegates.len_checked(sdk)?;
