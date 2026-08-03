@@ -17,10 +17,22 @@ The core validator staking contract implemented as a normal rWasm contract and d
 
 1. Deployment atomically installs and initializes staking, chain configuration, and external dependencies before public
    transactions can execute.
-2. Governance manages chain configuration and validator status.
-3. Validator creation verifies and stores consensus keys atomically; delegators approve and deposit BLEND.
-4. The system caller commits epoch committees and settles finalized epoch stipends.
-5. Liveness and equivocation paths jail or permanently tombstone validators.
+2. The initializer is permissionless and one-shot. Its `initialStakeOwner` argument is the explicit BLEND sponsor for
+   genesis validator stake; it grants no contract authority.
+3. Governance manages chain configuration, dependency rotation, and validator status.
+4. Validator creation verifies and stores consensus keys atomically; delegators approve and deposit BLEND.
+5. The system caller commits epoch committees and settles finalized epoch stipends.
+6. Liveness and equivocation paths jail or permanently tombstone validators.
+
+Governance is the compile-time `GENESIS_GOVERNANCE` address and is observable through `getGovernance()`. Changing it
+requires a coordinated code/genesis rebuild. The base genesis builder embeds staking but does not install governance
+code at the reserved address, so a production network genesis must provide the governance deployment or equivalent
+authority there before privileged staking operations are needed.
+
+The liveness-slashing and BLEND-reserve dependencies are observable and independently rotatable by governance. Every
+initial assignment and later rotation emits its previous and new address. Epoch interval, DPoS activation, and
+undelegation-period changes are rejected after a non-zero activation has passed; activation zero remains the explicit
+unarmed/non-DPoS state used by the Solidity contract.
 
 Registered validator identities are permanent. Governance may disable and reactivate validators, but disabling never
 deletes their records, consensus-key state, ownership mappings, or stake history.

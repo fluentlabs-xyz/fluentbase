@@ -628,14 +628,6 @@ pub fn next_epoch_read<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     write_abi(sdk, &next_epoch(sdk)?)
 }
 
-/// Public handler `0x8da5cb5b` (`owner`).
-///
-/// Returns the staking contract owner.
-pub fn owner<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(sdk, &staking_storage().owner_accessor().get_checked(sdk)?)
-}
-
 /// Public handler `0xfacd743b` (`isValidator`).
 ///
 /// Reports whether the address is a registered validator.

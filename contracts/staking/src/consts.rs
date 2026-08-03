@@ -25,8 +25,8 @@ pub const SIG_INITIALIZE: u32 =
 pub const SIG_CURRENT_EPOCH: u32 = derive_keccak256_id!("currentEpoch()");
 // 0xaea0e78b
 pub const SIG_NEXT_EPOCH: u32 = derive_keccak256_id!("nextEpoch()");
-// 0x8da5cb5b
-pub const SIG_OWNER: u32 = derive_keccak256_id!("owner()");
+// 0x289b3c0d
+pub const SIG_GET_GOVERNANCE: u32 = derive_keccak256_id!("getGovernance()");
 // 0xfacd743b
 pub const SIG_IS_VALIDATOR: u32 = derive_keccak256_id!("isValidator(address)");
 // 0x42ad55ac
@@ -159,6 +159,14 @@ pub const SIG_SET_BLS_VERIFIER: u32 = derive_keccak256_id!("setBlsVerifier(addre
 pub const SIG_GET_EVIDENCE_DECODER: u32 = derive_keccak256_id!("getEvidenceDecoder()");
 // 0x00857c90
 pub const SIG_SET_EVIDENCE_DECODER: u32 = derive_keccak256_id!("setEvidenceDecoder(address)");
+// 0xdb2366b4
+pub const SIG_GET_LIVENESS_SLASHING: u32 = derive_keccak256_id!("getLivenessSlashing()");
+// 0xbb32522a
+pub const SIG_SET_LIVENESS_SLASHING: u32 = derive_keccak256_id!("setLivenessSlashing(address)");
+// 0x37dff538
+pub const SIG_GET_BLEND_RESERVE: u32 = derive_keccak256_id!("getBlendReserve()");
+// 0x7899ae8f
+pub const SIG_SET_BLEND_RESERVE: u32 = derive_keccak256_id!("setBlendReserve(address)");
 // 0x457179fd
 pub const SIG_GET_VALIDATOR_FEE: u32 = derive_keccak256_id!("getValidatorFee(address)");
 // 0xc6fb9065

@@ -73,7 +73,7 @@ fn contract_storage_uses_separate_erc7201_namespaces() {
     let initializer_slot = initializer_storage().initialized_accessor().slot();
     let chain_config_slot = chain_config_storage().staking_token_accessor().slot();
     let consensus_slot = consensus_storage().consensus_keys_accessor().slot();
-    let staking_slot = staking_storage().owner_accessor().slot();
+    let staking_slot = staking_storage().validators_accessor().slot();
 
     assert_eq!(initializer_slot, INITIALIZER_STORAGE_SLOT);
     assert_eq!(chain_config_slot, CHAIN_CONFIG_STORAGE_SLOT);
@@ -171,7 +171,7 @@ impl Harness {
     ) -> InitializeCommand {
         let validator_count = validators.len();
         InitializeCommand {
-            initial_owner: owner,
+            initial_stake_owner: owner,
             validators,
             initial_stakes: stakes,
             bls_pubkeys_uncompressed: (0..validator_count)
@@ -216,7 +216,7 @@ impl Harness {
     }
 
     fn initialize_with(&mut self, command: InitializeCommand) -> ExitCode {
-        let owner = command.initial_owner;
+        let owner = command.initial_stake_owner;
         let exit = self.call(encode_args_call(SIG_INITIALIZE, &command)).0;
         self.set_caller(owner);
         exit
@@ -854,14 +854,20 @@ fn parameterized_custom_errors_use_solidity_abi() {
         ExitCode::Ok
     );
     harness.set_caller(GENESIS_GOVERNANCE);
-    let (_, output) = harness.call(encode_call(
-        SIG_SET_BLS_VERIFIER,
-        &AddressCommand {
-            value: Address::ZERO,
-        },
-    ));
-    assert_eq!(&output[..4], &ERR_ZERO_VALUE.to_be_bytes());
-    assert_eq!(decode_output::<String>(&output[4..]), "blsVerifier");
+    for (selector, field) in [
+        (SIG_SET_BLS_VERIFIER, "blsVerifier"),
+        (SIG_SET_LIVENESS_SLASHING, "livenessSlashing"),
+        (SIG_SET_BLEND_RESERVE, "blendReserve"),
+    ] {
+        let (_, output) = harness.call(encode_call(
+            selector,
+            &AddressCommand {
+                value: Address::ZERO,
+            },
+        ));
+        assert_eq!(&output[..4], &ERR_ZERO_VALUE.to_be_bytes());
+        assert_eq!(decode_output::<String>(&output[4..]), field);
+    }
 }
 
 #[test]
@@ -870,7 +876,7 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_INITIALIZE, 0x4b4b21a5),
         (SIG_CURRENT_EPOCH, 0x76671808),
         (SIG_NEXT_EPOCH, 0xaea0e78b),
-        (SIG_OWNER, 0x8da5cb5b),
+        (SIG_GET_GOVERNANCE, 0x289b3c0d),
         (SIG_GET_STAKING_TOKEN, 0x9f9106d1),
         (SIG_DEFAULT_PARTICIPATION_FLOOR_BPS, 0x2c1d88e8),
         (SIG_DEFAULT_SLASH_REPORTER_BPS, 0x6cc69027),
@@ -908,6 +914,10 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_SET_MIN_STAKING_AMOUNT, 0x612d669e),
         (SIG_SET_BLS_VERIFIER, 0x466ae541),
         (SIG_SET_EVIDENCE_DECODER, 0x00857c90),
+        (SIG_GET_LIVENESS_SLASHING, 0xdb2366b4),
+        (SIG_SET_LIVENESS_SLASHING, 0xbb32522a),
+        (SIG_GET_BLEND_RESERVE, 0x37dff538),
+        (SIG_SET_BLEND_RESERVE, 0x7899ae8f),
         (SIG_GET_VALIDATOR_FEE, 0x457179fd),
         (SIG_GET_PENDING_VALIDATOR_FEE, 0xc6fb9065),
         (SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH, 0xadf2a79c),
@@ -953,9 +963,9 @@ fn initializes_registry_and_preserves_solidity_read_abi() {
         ExitCode::Ok
     );
 
-    let (exit, output) = harness.call(encode_empty_call(SIG_OWNER));
+    let (exit, output) = harness.call(encode_empty_call(SIG_GET_GOVERNANCE));
     assert_eq!(exit, ExitCode::Ok);
-    assert_eq!(decode_output::<Address>(&output), governance);
+    assert_eq!(decode_output::<Address>(&output), GENESIS_GOVERNANCE);
 
     let (_, output) = harness.call(encode_empty_call(SIG_GET_VALIDATORS));
     assert_eq!(
@@ -1245,12 +1255,16 @@ fn governance_updates_embedded_chain_configuration() {
     let evidence_decoder = Address::with_last_byte(0xc3);
     let liveness_slashing = Address::with_last_byte(0xc4);
     let blend_reserve = Address::with_last_byte(0xc5);
+    let replacement_liveness = Address::with_last_byte(0xd4);
+    let replacement_reserve = Address::with_last_byte(0xd5);
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
     let mut command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
+    command.dpos_activation_block = 2_000;
     command.liveness_slashing = liveness_slashing;
     command.blend_reserve = blend_reserve;
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    harness.sdk.take_logs();
 
     harness.set_caller(outsider);
     assert_eq!(
@@ -1262,6 +1276,17 @@ fn governance_updates_embedded_chain_configuration() {
             .0,
         ExitCode::Panic
     );
+    for selector in [SIG_SET_LIVENESS_SLASHING, SIG_SET_BLEND_RESERVE] {
+        assert_revert_selector(
+            harness.call(encode_call(
+                selector,
+                &AddressCommand {
+                    value: Address::with_last_byte(0xee),
+                },
+            )),
+            ERR_ONLY_GOVERNANCE,
+        );
+    }
 
     harness.set_caller(GENESIS_GOVERNANCE);
     for selector in [
@@ -1295,6 +1320,8 @@ fn governance_updates_embedded_chain_configuration() {
         (SIG_SET_SLASH_FUND_ADDRESS, slash_fund),
         (SIG_SET_BLS_VERIFIER, bls_verifier),
         (SIG_SET_EVIDENCE_DECODER, evidence_decoder),
+        (SIG_SET_LIVENESS_SLASHING, replacement_liveness),
+        (SIG_SET_BLEND_RESERVE, replacement_reserve),
     ] {
         assert_eq!(
             harness
@@ -1340,6 +1367,9 @@ fn governance_updates_embedded_chain_configuration() {
         (SIG_GET_SLASH_FUND_ADDRESS, slash_fund),
         (SIG_GET_BLS_VERIFIER, bls_verifier),
         (SIG_GET_EVIDENCE_DECODER, evidence_decoder),
+        (SIG_GET_GOVERNANCE, GENESIS_GOVERNANCE),
+        (SIG_GET_LIVENESS_SLASHING, replacement_liveness),
+        (SIG_GET_BLEND_RESERVE, replacement_reserve),
     ] {
         let (exit, output) = harness.call(encode_empty_call(selector));
         assert_eq!(exit, ExitCode::Ok);
@@ -1349,6 +1379,25 @@ fn governance_updates_embedded_chain_configuration() {
     assert!(decode_output::<bool>(&output));
     let (_, output) = harness.call(encode_empty_call(SIG_GET_BLEND_STIPEND_PER_EPOCH));
     assert_eq!(decode_output::<U256>(&output), U256::from(42));
+
+    let logs = harness.sdk.take_logs();
+    for (selector, expected) in [
+        (
+            events::LivenessSlashingChanged::SELECTOR,
+            (liveness_slashing, replacement_liveness),
+        ),
+        (
+            events::BlendReserveChanged::SELECTOR,
+            (blend_reserve, replacement_reserve),
+        ),
+    ] {
+        let data = &logs
+            .iter()
+            .find(|(_, topics)| topics.first() == Some(&B256::new(selector)))
+            .expect("dependency change event")
+            .0;
+        assert_eq!(decode_output::<(Address, Address)>(data), expected);
+    }
 }
 
 #[test]
@@ -1431,10 +1480,36 @@ fn initialize_events_report_defaults_as_previous_values() {
         decode_output::<(u64, u64)>(activation_data),
         (1_000, command.dpos_activation_block)
     );
+
+    for (signature, expected_signature, selector, pinned, expected) in [
+        (
+            events::LivenessSlashingChanged::SIGNATURE,
+            "LivenessSlashingChanged(address,address)",
+            events::LivenessSlashingChanged::SELECTOR,
+            hex!("60722009eccddf6548f3d2699ac687292d370409c60e81feb25ceebd1c236c37"),
+            (Address::ZERO, command.liveness_slashing),
+        ),
+        (
+            events::BlendReserveChanged::SIGNATURE,
+            "BlendReserveChanged(address,address)",
+            events::BlendReserveChanged::SELECTOR,
+            hex!("58bf6b15bd5404c0ab55a8db9e88ce5c154feb8c288266925ea26421253a6390"),
+            (Address::ZERO, command.blend_reserve),
+        ),
+    ] {
+        assert_eq!(signature, expected_signature);
+        assert_eq!(selector, pinned);
+        let data = &logs
+            .iter()
+            .find(|(_, topics)| topics.first() == Some(&B256::new(selector)))
+            .expect("initial dependency event")
+            .0;
+        assert_eq!(decode_output::<(Address, Address)>(data), expected);
+    }
 }
 
 #[test]
-fn initializer_rejects_mismatched_arrays_without_persisting_owner() {
+fn initializer_rejects_mismatched_arrays_without_persisting_state() {
     let governance = Address::with_last_byte(0xa0);
     let mut harness = Harness::new(1_000);
     harness.set_caller(governance);
@@ -1456,8 +1531,10 @@ fn initializer_rejects_mismatched_arrays_without_persisting_owner() {
         ERR_MALFORMED_INPUT_LENGTH,
     );
 
-    let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
-    assert_eq!(decode_output::<Address>(&output), Address::ZERO);
+    assert!(!initializer_storage()
+        .initialized_accessor()
+        .get_checked(&harness.sdk)
+        .unwrap());
 }
 
 #[test]
@@ -1497,8 +1574,8 @@ fn initializer_is_permissionless_for_atomic_deployment_but_one_shot() {
 
     let command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
-    let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
-    assert_eq!(decode_output::<Address>(&output), owner);
+    let (_, output) = harness.call(encode_empty_call(SIG_GET_GOVERNANCE));
+    assert_eq!(decode_output::<Address>(&output), GENESIS_GOVERNANCE);
 
     harness.set_caller(replacement);
     let command = harness.initialize_command(replacement, Vec::new(), Vec::new(), 0);
@@ -1506,8 +1583,55 @@ fn initializer_is_permissionless_for_atomic_deployment_but_one_shot() {
         harness.call(encode_args_call(SIG_INITIALIZE, &command)),
         ERR_ALREADY_INITIALIZED,
     );
-    let (_, output) = harness.call(encode_empty_call(SIG_OWNER));
-    assert_eq!(decode_output::<Address>(&output), owner);
+    let (_, output) = harness.call(encode_empty_call(SIG_GET_GOVERNANCE));
+    assert_eq!(decode_output::<Address>(&output), GENESIS_GOVERNANCE);
+}
+
+#[test]
+fn initializer_pulls_genesis_stake_from_declared_sponsor() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let deployer = Address::with_last_byte(0xb0);
+    let validator = Address::with_last_byte(0x01);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let mut harness = Harness::new(0);
+    let token = Address::with_last_byte(0xf0);
+    let captured = Rc::new(RefCell::new(None));
+    let captured_call = captured.clone();
+    harness
+        .sdk
+        .set_call_handler(move |address, _value, input, _fuel_limit| {
+            let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
+            let output = match selector {
+                SIG_BLS_COMPRESS_G2_UNCHECKED => {
+                    let args = &input[SIG_LEN_BYTES..];
+                    let (uncompressed,) =
+                        SolidityABI::<(Bytes,)>::decode_function_args(&args).unwrap();
+                    encode_mock_return(&Bytes::from(vec![
+                        uncompressed[0].wrapping_add(0x22);
+                        BLS_PUBKEY_LENGTH
+                    ]))
+                }
+                SIG_BLS_VERIFY => encode_mock_return(&true),
+                SIG_ERC20_TRANSFER_FROM => {
+                    let (from, to, amount) =
+                        decode_output::<(Address, Address, U256)>(&input[SIG_LEN_BYTES..]);
+                    *captured_call.borrow_mut() = Some((address, from, to, amount));
+                    encode_mock_return(&true)
+                }
+                _ => {
+                    return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams)
+                }
+            };
+            SyscallResult::new(output, 0, 0, ExitCode::Ok)
+        });
+    harness.set_caller(deployer);
+
+    let command = harness.initialize_command(sponsor, vec![validator], vec![stake], 0);
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    assert_eq!(
+        *captured.borrow(),
+        Some((token, sponsor, GENESIS_STAKING, stake))
+    );
 }
 
 #[test]
@@ -2787,10 +2911,17 @@ fn chain_config_guards_match_solidity_boundaries() {
         )),
         ERR_DPOS_ALREADY_ACTIVE,
     );
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SET_UNDELEGATE_PERIOD,
+            &U32Command { value: 10 },
+        )),
+        ERR_DPOS_ALREADY_ACTIVE,
+    );
 }
 
 #[test]
-fn dpos_activation_at_block_zero_is_already_locked() {
+fn dpos_activation_at_block_zero_remains_configurable() {
     let owner = Address::with_last_byte(0xa0);
     let mut harness = Harness::new(0);
     assert_eq!(
@@ -2798,20 +2929,71 @@ fn dpos_activation_at_block_zero_is_already_locked() {
         ExitCode::Ok
     );
     harness.set_caller(GENESIS_GOVERNANCE);
+    chain_config_storage()
+        .min_undelegate_blocks_accessor()
+        .set_checked(&mut harness.sdk, U256::from(1_000))
+        .unwrap();
     assert_revert_selector(
         harness.call(encode_call(
             SIG_SET_EPOCH_BLOCK_INTERVAL,
             &U32Command { value: 100 },
         )),
-        ERR_DPOS_ALREADY_ACTIVE,
+        ERR_UNDELEGATE_WINDOW_TOO_SHORT,
     );
-    assert_revert_selector(
-        harness.call(encode_call(
-            SIG_SET_DPOS_ACTIVATION_BLOCK,
-            &U64Command { value: 200 },
-        )),
-        ERR_DPOS_ALREADY_ACTIVE,
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_EPOCH_BLOCK_INTERVAL,
+                &U32Command { value: 250 },
+            ))
+            .0,
+        ExitCode::Ok
     );
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_DPOS_ACTIVATION_BLOCK,
+                &U64Command { value: 500 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+}
+
+#[test]
+fn undelegate_period_change_does_not_shorten_queued_self_stake_lock() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let mut harness = Harness::new(0);
+    assert_eq!(
+        harness.initialize(sponsor, vec![validator], vec![stake], 0),
+        ExitCode::Ok
+    );
+
+    staking::undelegate_from(&mut harness.sdk, validator, validator, stake).unwrap();
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_VALIDATOR_SELF_STAKE_LOCK,
+        &AddressCommand { value: validator },
+    ));
+    let before = decode_output::<(bool, u64)>(&output);
+    assert!(before.0);
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_UNDELEGATE_PERIOD,
+                &U32Command { value: 1 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_VALIDATOR_SELF_STAKE_LOCK,
+        &AddressCommand { value: validator },
+    ));
+    assert_eq!(decode_output::<(bool, u64)>(&output), before);
 }
 
 #[test]

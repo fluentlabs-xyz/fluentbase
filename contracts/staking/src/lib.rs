@@ -50,6 +50,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_MAX_BLEND_STIPEND_PER_EPOCH => config::max_blend_stipend_per_epoch(sdk),
         SIG_MAX_PARTICIPATION_FLOOR_BPS => config::max_participation_floor_bps(sdk),
         SIG_MAX_SLASH_REPORTER_BPS => config::max_slash_reporter_bps(sdk),
+        SIG_GET_GOVERNANCE => config::get_governance(sdk),
         SIG_GET_STAKING_TOKEN => config::get_staking_token(sdk),
         SIG_GET_ACTIVE_VALIDATORS_LENGTH => config::get_active_validators_length(sdk),
         SIG_GET_EPOCH_BLOCK_INTERVAL => config::get_epoch_block_interval(sdk),
@@ -81,11 +82,14 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_SET_BLS_VERIFIER => config::set_bls_verifier(sdk, params),
         SIG_GET_EVIDENCE_DECODER => config::get_evidence_decoder(sdk),
         SIG_SET_EVIDENCE_DECODER => config::set_evidence_decoder(sdk, params),
+        SIG_GET_LIVENESS_SLASHING => config::get_liveness_slashing(sdk),
+        SIG_SET_LIVENESS_SLASHING => config::set_liveness_slashing(sdk, params),
+        SIG_GET_BLEND_RESERVE => config::get_blend_reserve(sdk),
+        SIG_SET_BLEND_RESERVE => config::set_blend_reserve(sdk, params),
 
         // Staking
         SIG_CURRENT_EPOCH => staking::current_epoch_read(sdk),
         SIG_NEXT_EPOCH => staking::next_epoch_read(sdk),
-        SIG_OWNER => staking::owner(sdk),
         SIG_IS_VALIDATOR => staking::is_validator(sdk, params),
         SIG_IS_VALIDATOR_ACTIVE => staking::is_validator_active(sdk, params),
         SIG_GET_VALIDATOR_STATUS => staking::get_validator_status(sdk, params),

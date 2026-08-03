@@ -14,12 +14,19 @@ use crate::{
     },
 };
 use alloc::string::String;
-use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
+use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, GENESIS_GOVERNANCE, U256};
 
 fn ensure_governance_mutation<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
     ensure_governance(sdk)
+}
+
+fn ensure_dpos_not_active<SDK: SharedAPI>(sdk: &mut SDK, activation: u64) -> Result<(), ExitCode> {
+    if activation != 0 && sdk.context().block_number() >= activation {
+        return revert(sdk, ERR_DPOS_ALREADY_ACTIVE);
+    }
+    Ok(())
 }
 
 /// Initialize all chain configuration and dependency fields.
@@ -131,6 +138,16 @@ pub(crate) fn apply_initial_config<SDK: SharedAPI>(
         }
         .emit(sdk)?;
     }
+    events::LivenessSlashingChanged {
+        prev_value: Address::ZERO,
+        new_value: command.liveness_slashing,
+    }
+    .emit(sdk)?;
+    events::BlendReserveChanged {
+        prev_value: Address::ZERO,
+        new_value: command.blend_reserve,
+    }
+    .emit(sdk)?;
     Ok(())
 }
 
@@ -238,6 +255,14 @@ pub fn get_staking_token<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> 
             .staking_token_accessor()
             .get_checked(sdk)?,
     )
+}
+
+/// Public handler `0x289b3c0d` (`getGovernance`).
+///
+/// Returns the compile-time governance authority reserved by genesis.
+pub fn get_governance<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(sdk, &GENESIS_GOVERNANCE)
 }
 
 /// Public handler `0x32cc6f08` (`getActiveValidatorsLength`).
@@ -657,10 +682,8 @@ pub fn set_epoch_block_interval<SDK: SharedAPI>(
     }
     let config = chain_config_storage();
     let activation = config.dpos_activation_block_accessor().get_checked(sdk)?;
-    if sdk.context().block_number() >= activation {
-        return revert(sdk, ERR_DPOS_ALREADY_ACTIVE);
-    }
-    if activation % value as u64 != 0 {
+    ensure_dpos_not_active(sdk, activation)?;
+    if activation != 0 && activation % value as u64 != 0 {
         return revert(sdk, ERR_UNALIGNED_ACTIVATION_BLOCK);
     }
     let undelegate = config.undelegate_period_accessor().get_checked(sdk)?;
@@ -686,9 +709,7 @@ pub fn set_dpos_activation_block<SDK: SharedAPI>(
     let value = decode::<U64Command>(input)?.value;
     let config = chain_config_storage();
     let previous = config.dpos_activation_block_accessor().get_checked(sdk)?;
-    if sdk.context().block_number() >= previous {
-        return revert(sdk, ERR_DPOS_ALREADY_ACTIVE);
-    }
+    ensure_dpos_not_active(sdk, previous)?;
     let interval = config.epoch_block_interval_accessor().get_checked(sdk)?;
     if interval == 0 || value % interval != 0 {
         return revert(sdk, ERR_UNALIGNED_ACTIVATION_BLOCK);
@@ -716,6 +737,8 @@ pub fn set_undelegate_period<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Res
         return zero_value(sdk, "undelegatePeriod");
     }
     let config = chain_config_storage();
+    let activation = config.dpos_activation_block_accessor().get_checked(sdk)?;
+    ensure_dpos_not_active(sdk, activation)?;
     require_undelegate_window(
         sdk,
         value as u64,
@@ -832,6 +855,70 @@ pub fn set_evidence_decoder<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resu
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::EvidenceDecoderChanged {
+        prev_value: previous,
+        new_value: value,
+    }
+    .emit(sdk)
+}
+
+/// Public handler `0xdb2366b4` (`getLivenessSlashing`).
+///
+/// Returns the configured liveness-slashing authority.
+pub fn get_liveness_slashing<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(
+        sdk,
+        &chain_config_storage()
+            .liveness_slashing_accessor()
+            .get_checked(sdk)?,
+    )
+}
+
+/// Public handler `0xbb32522a` (`setLivenessSlashing`).
+///
+/// Rotates the liveness-slashing authority under governance control.
+pub fn set_liveness_slashing<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
+    ensure_governance_mutation(sdk)?;
+    let value = decode::<AddressCommand>(input)?.value;
+    if value.is_zero() {
+        return zero_value(sdk, "livenessSlashing");
+    }
+    let field = chain_config_storage().liveness_slashing_accessor();
+    let previous = field.get_checked(sdk)?;
+    field.set_checked(sdk, value)?;
+    events::LivenessSlashingChanged {
+        prev_value: previous,
+        new_value: value,
+    }
+    .emit(sdk)
+}
+
+/// Public handler `0x37dff538` (`getBlendReserve`).
+///
+/// Returns the configured BLEND reserve.
+pub fn get_blend_reserve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(
+        sdk,
+        &chain_config_storage()
+            .blend_reserve_accessor()
+            .get_checked(sdk)?,
+    )
+}
+
+/// Public handler `0x7899ae8f` (`setBlendReserve`).
+///
+/// Rotates the BLEND reserve under governance control.
+pub fn set_blend_reserve<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
+    ensure_governance_mutation(sdk)?;
+    let value = decode::<AddressCommand>(input)?.value;
+    if value.is_zero() {
+        return zero_value(sdk, "blendReserve");
+    }
+    let field = chain_config_storage().blend_reserve_accessor();
+    let previous = field.get_checked(sdk)?;
+    field.set_checked(sdk, value)?;
+    events::BlendReserveChanged {
         prev_value: previous,
         new_value: value,
     }

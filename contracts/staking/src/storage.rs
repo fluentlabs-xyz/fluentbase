@@ -166,7 +166,6 @@ pub struct ConsensusStorage {
 /// deterministic while avoiding a slot constant and map type for every field.
 #[derive(Storage)]
 pub struct StakingStorage {
-    owner: StorageAddress,
     validators: StorageMap<Address, ValidatorStorage>,
     owner_validators: StorageMap<Address, StorageAddress>,
     active_validators: StorageVec<StorageAddress>,

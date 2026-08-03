@@ -20,7 +20,7 @@ sol! {
 
     interface IStakingRwasm {
         function initialize(
-            address initialOwner,
+            address initialStakeOwner,
             address[] validators,
             uint256[] initialStakes,
             bytes[] blsPubkeysUncompressed,
@@ -105,7 +105,7 @@ fn initialize_calldata(
         vec![VALIDATOR]
     };
     IStakingRwasm::initializeCall {
-        initialOwner: OWNER,
+        initialStakeOwner: OWNER,
         validators,
         initialStakes: initial_stakes,
         blsPubkeysUncompressed: if !has_initial_validator {

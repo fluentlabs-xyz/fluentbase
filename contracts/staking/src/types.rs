@@ -9,7 +9,11 @@ use fluentbase_sdk::{
 
 #[derive(Default, Debug, Codec)]
 pub struct InitializeCommand {
-    pub initial_owner: Address,
+    /// Account sponsoring the genesis validators' initial stake.
+    ///
+    /// This is intentionally separate from the permissionless atomic initializer
+    /// caller and does not grant contract authority.
+    pub initial_stake_owner: Address,
     pub validators: Vec<Address>,
     pub initial_stakes: Vec<U256>,
     pub bls_pubkeys_uncompressed: Vec<Bytes>,

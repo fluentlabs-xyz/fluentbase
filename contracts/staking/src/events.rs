@@ -133,6 +133,18 @@ pub struct EvidenceDecoderChanged {
     pub new_value: Address,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Event)]
+pub struct LivenessSlashingChanged {
+    pub prev_value: Address,
+    pub new_value: Address,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Event)]
+pub struct BlendReserveChanged {
+    pub prev_value: Address,
+    pub new_value: Address,
+}
+
 #[derive(Event)]
 pub struct ValidatorOwnerClaimed {
     #[indexed]

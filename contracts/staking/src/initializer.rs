@@ -8,15 +8,17 @@ use crate::{
         ERR_INITIAL_STAKE_TOO_LOW, ERR_MALFORMED_INPUT_LENGTH, ERR_ZERO_OWNER, STATUS_ACTIVE,
     },
     staking::set_validator,
-    storage::{initializer_storage, staking_storage},
+    storage::initializer_storage,
     types::InitializeCommand,
-    util::{decode_args, ensure_mutable, ensure_non_payable, revert, revert_with},
+    util::{
+        decode_args, ensure_mutable, ensure_non_payable, revert, revert_with, safe_transfer_from,
+    },
 };
 use fluentbase_sdk::{Address, ExitCode, SharedAPI, U256};
 
 /// Public handler `0x4b4b21a5` (`initialize`).
 ///
-/// Atomically initializes the owner, chain configuration, dependencies, and genesis validators.
+/// Atomically initializes chain configuration, dependencies, and genesis validators.
 pub fn initialize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
@@ -40,9 +42,6 @@ pub fn initialize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), Exi
         })?;
 
     config::apply_initial_config(sdk, &command)?;
-    staking_storage()
-        .owner_accessor()
-        .set_checked(sdk, command.initial_owner)?;
     // Keep the public initialized flag false while BLS verification calls are
     // in flight, and separately reject a nested initialize attempt.
     initializer.initializing_accessor().set_checked(sdk, true)?;
@@ -73,11 +72,11 @@ pub fn initialize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), Exi
     initializer
         .initializing_accessor()
         .set_checked(sdk, false)?;
-    pull_initial_stakes(sdk, command.initial_owner, total_stakes)
+    pull_initial_stakes(sdk, command.initial_stake_owner, total_stakes)
 }
 
 fn validate<SDK: SharedAPI>(sdk: &mut SDK, command: &InitializeCommand) -> Result<(), ExitCode> {
-    if command.initial_owner.is_zero() {
+    if command.initial_stake_owner.is_zero() {
         return revert(sdk, ERR_ZERO_OWNER);
     }
     if command.validators.len() != command.initial_stakes.len()
@@ -100,25 +99,13 @@ fn validate<SDK: SharedAPI>(sdk: &mut SDK, command: &InitializeCommand) -> Resul
     Ok(())
 }
 
-#[cfg(not(test))]
 fn pull_initial_stakes<SDK: SharedAPI>(
     sdk: &mut SDK,
-    owner: Address,
+    sponsor: Address,
     total_stakes: U256,
 ) -> Result<(), ExitCode> {
     if total_stakes.is_zero() {
         return Ok(());
     }
-    crate::util::safe_transfer_from(sdk, owner, total_stakes)
-}
-
-// Unit storage tests use a host without nested-call support. The real genesis
-// integration test exercises the ERC-20 pull through the compiled rWasm.
-#[cfg(test)]
-fn pull_initial_stakes<SDK: SharedAPI>(
-    _sdk: &mut SDK,
-    _owner: Address,
-    _total_stakes: U256,
-) -> Result<(), ExitCode> {
-    Ok(())
+    safe_transfer_from(sdk, sponsor, total_stakes)
 }
