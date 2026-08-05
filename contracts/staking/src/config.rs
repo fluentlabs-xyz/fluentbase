@@ -306,9 +306,7 @@ pub(crate) fn active_validators_length_at<SDK: SharedAPI>(
             return Ok(checkpoint.value_accessor().get_checked(sdk)? as u64);
         }
     }
-    config
-        .active_validators_length_accessor()
-        .get_checked(sdk)
+    config.active_validators_length_accessor().get_checked(sdk)
 }
 
 /// Records `value` as the cap from `from_epoch` onward.

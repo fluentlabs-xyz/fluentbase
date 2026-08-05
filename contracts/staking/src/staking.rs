@@ -5,7 +5,10 @@ use crate::{
     consensus::{store_consensus_keys, verify_consensus_keys},
     consts::*,
     events, liveness, math,
-    storage::{chain_config_storage, consensus_storage, production_liveness_storage, staking_storage, ValidatorSnapshotStorage},
+    storage::{
+        chain_config_storage, consensus_storage, production_liveness_storage, staking_storage,
+        ValidatorSnapshotStorage,
+    },
     types::{
         AddValidatorCommand, AddressAmountCommand, AddressCommand, AddressU16Command,
         RegisterValidatorCommand, TwoAddressesCommand, U64Command, ValidatorBlockCommand,

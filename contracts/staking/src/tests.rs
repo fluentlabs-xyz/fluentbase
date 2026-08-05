@@ -9,8 +9,8 @@ use crate::{
     },
     types::{
         AddValidatorCommand, AddressCommand, AddressU16Command, BoolCommand, ConsensusKeys,
-        EpochSignerCommand, EquivocationCommand, InitializeCommand, RegisterValidatorCommand,
-        RecordProductionCommand, TwoAddressesCommand, U256Command, U32Command, U64Command,
+        EpochSignerCommand, EquivocationCommand, InitializeCommand, RecordProductionCommand,
+        RegisterValidatorCommand, TwoAddressesCommand, U256Command, U32Command, U64Command,
         ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
     },
 };
@@ -2357,7 +2357,10 @@ fn keys_activating_after_the_selection_epoch_are_filtered_after_the_cut() {
     );
     assert_eq!(
         harness
-            .call(encode_args_call(SIG_COMMIT_EPOCH_COMMITTEE, &(vec![keyed],)))
+            .call(encode_args_call(
+                SIG_COMMIT_EPOCH_COMMITTEE,
+                &(vec![keyed],)
+            ))
             .0,
         ExitCode::Ok
     );
@@ -3971,11 +3974,16 @@ fn settlement_rejects_a_committee_without_matching_frozen_weights() {
     let consensus = consensus_storage();
     let committee = consensus.epoch_committees_accessor().entry(0);
     committee.push_checked(&mut harness.sdk, seated).unwrap();
-    committee.push_checked(&mut harness.sdk, unweighted).unwrap();
+    committee
+        .push_checked(&mut harness.sdk, unweighted)
+        .unwrap();
     consensus
         .leader_stakes_accessor()
         .entry(0)
-        .push_checked(&mut harness.sdk, crate::math::compact_balance(stake).unwrap())
+        .push_checked(
+            &mut harness.sdk,
+            crate::math::compact_balance(stake).unwrap(),
+        )
         .unwrap();
     chain_config_storage()
         .blend_stipend_per_epoch_accessor()
@@ -4258,7 +4266,7 @@ fn delayed_reward_settlement_does_not_block_matured_principal() {
             .claimed_through_epoch_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        u64::from(WARMUP_DELAY),
+        WARMUP_DELAY,
         "principal maturity must not advance the reward cursor past the settled frontier"
     );
     assert_eq!(
@@ -4301,7 +4309,7 @@ fn delayed_reward_settlement_does_not_block_matured_principal() {
             .claimed_through_epoch_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        u64::from(WARMUP_DELAY) + 1,
+        WARMUP_DELAY + 1,
         "the settled epoch is now paid, so the cursor sits one past it"
     );
 }
@@ -4313,12 +4321,7 @@ fn claiming_rewards_does_not_rewrite_historical_self_stake() {
     let mut harness = Harness::new(0);
     harness.set_caller(owner);
     assert_eq!(
-        harness.initialize(
-            owner,
-            vec![validator],
-            vec![DEFAULT_MIN_VALIDATOR_STAKE],
-            0,
-        ),
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0,),
         ExitCode::Ok
     );
 
@@ -5240,7 +5243,10 @@ fn production_liveness_ships_disabled_on_a_fresh_chain() {
     );
 
     for (selector, expected) in [
-        (SIG_GET_MIN_VERDICT_DUE_BLOCKS, DEFAULT_MIN_VERDICT_DUE_BLOCKS),
+        (
+            SIG_GET_MIN_VERDICT_DUE_BLOCKS,
+            DEFAULT_MIN_VERDICT_DUE_BLOCKS,
+        ),
         (SIG_GET_EXCLUSION_BACKOFF_CAP, DEFAULT_EXCLUSION_BACKOFF_CAP),
         (
             SIG_DEFAULT_MIN_VERDICT_DUE_BLOCKS,
@@ -5261,7 +5267,10 @@ fn production_liveness_ships_disabled_on_a_fresh_chain() {
     let disabled_data = &logs
         .iter()
         .find(|(_, topics)| {
-            topics.first() == Some(&B256::new(events::ProductionLivenessDisabledChanged::SELECTOR))
+            topics.first()
+                == Some(&B256::new(
+                    events::ProductionLivenessDisabledChanged::SELECTOR,
+                ))
         })
         .expect("kill-switch seed event")
         .0;
@@ -5657,15 +5666,14 @@ fn production_liveness_views_read_the_new_namespace() {
     let stranger = Address::with_last_byte(0x0f);
     let mut harness = Harness::new(1_000);
     assert_eq!(
-        harness.initialize(
-            owner,
-            vec![validator],
-            vec![DEFAULT_MIN_VALIDATOR_STAKE],
-            0
-        ),
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
         ExitCode::Ok
     );
-    commit_test_committee(&mut harness.sdk, 4, &[(validator, DEFAULT_MIN_VALIDATOR_STAKE)]);
+    commit_test_committee(
+        &mut harness.sdk,
+        4,
+        &[(validator, DEFAULT_MIN_VALIDATOR_STAKE)],
+    );
 
     let storage = production_liveness_storage();
     storage
@@ -5839,10 +5847,7 @@ fn close_epoch_via_record(harness: &mut Harness, epoch: u64) -> ExitCode {
     record_production(harness, boundary, 0)
 }
 
-fn production_record(
-    sdk: &TestingContextImpl,
-    validator: Address,
-) -> (u64, u64, u64, u64, u32) {
+fn production_record(sdk: &TestingContextImpl, validator: Address) -> (u64, u64, u64, u64, u32) {
     let record = production_liveness_storage()
         .validators_accessor()
         .entry(validator);
@@ -6217,7 +6222,10 @@ fn the_correlation_guard_keys_on_new_failures_and_frees_the_next_epoch() {
     );
     for member in &members[4..] {
         let record = production_record(&harness.sdk, *member);
-        assert_eq!(record.2, 1, "the failure bit is written on the guarded path");
+        assert_eq!(
+            record.2, 1,
+            "the failure bit is written on the guarded path"
+        );
         assert_eq!(record.4, 0);
     }
 
@@ -6327,7 +6335,13 @@ fn the_kill_switch_freezes_releases() {
     assert_eq!(close_epoch_via_record(&mut harness, 1), ExitCode::Ok);
 
     assert_eq!(pending_exclusion_set(&harness.sdk), vec![excluded]);
-    assert_eq!(record.readmit_at_epoch_accessor().get_checked(&harness.sdk).unwrap(), 1);
+    assert_eq!(
+        record
+            .readmit_at_epoch_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1
+    );
     assert!(!staking::selection_visible_at(&harness.sdk, excluded, 3).unwrap());
     assert!(harness
         .sdk
@@ -6350,7 +6364,13 @@ fn the_kill_switch_freezes_releases() {
     assert_eq!(close_epoch_via_record(&mut harness, 2), ExitCode::Ok);
 
     assert!(pending_exclusion_set(&harness.sdk).is_empty());
-    assert_eq!(record.readmit_at_epoch_accessor().get_checked(&harness.sdk).unwrap(), 0);
+    assert_eq!(
+        record
+            .readmit_at_epoch_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0
+    );
     assert!(staking::selection_visible_at(&harness.sdk, excluded, 4).unwrap());
 }
 

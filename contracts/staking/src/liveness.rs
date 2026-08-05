@@ -271,11 +271,7 @@ fn judge<SDK: SharedAPI>(
         return revert_with(
             sdk,
             ERR_LEADER_STAKES_LENGTH_MISMATCH,
-            &(
-                epoch,
-                U256::from(member_count),
-                U256::from(frozen_count),
-            ),
+            &(epoch, U256::from(member_count), U256::from(frozen_count)),
         );
     }
 

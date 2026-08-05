@@ -660,11 +660,7 @@ pub fn get_epoch_committee_with_stakes<SDK: SharedAPI>(
         return revert_with(
             sdk,
             ERR_LEADER_STAKES_LENGTH_MISMATCH,
-            &(
-                epoch,
-                U256::from(validators.len()),
-                U256::from(frozen_len),
-            ),
+            &(epoch, U256::from(validators.len()), U256::from(frozen_len)),
         );
     }
     let mut keys = Vec::with_capacity(validators.len());

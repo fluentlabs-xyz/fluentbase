@@ -127,7 +127,9 @@ fn static_wide_element_array_matches_alloy() {
 #[test]
 fn static_single_word_element_array_matches_alloy() {
     for n in 1..=4usize {
-        let values: Vec<Address> = (0..n).map(|i| Address::from([0x20 + i as u8; 20])).collect();
+        let values: Vec<Address> = (0..n)
+            .map(|i| Address::from([0x20 + i as u8; 20]))
+            .collect();
 
         let encoded = encode_codec(&values);
         assert_matches_alloy(n, &encoded, &values.abi_encode());
@@ -150,6 +152,9 @@ fn decodes_alloy_encoded_arrays() {
         let decoded: Vec<StaticWide> =
             SolidityABI::decode(&alloy_wide.abi_encode().as_slice(), 0).unwrap();
         let expected: Vec<StaticWide> = (0..n).map(|i| static_wide(i as u8)).collect();
-        assert_eq!(decoded, expected, "n={n}: alloy bytes -> codec (static wide)");
+        assert_eq!(
+            decoded, expected,
+            "n={n}: alloy bytes -> codec (static wide)"
+        );
     }
 }
