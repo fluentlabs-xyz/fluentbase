@@ -2,16 +2,15 @@
 
 use crate::{
     consts::*,
-    events, math,
+    events,
+    evidence::{self, EvidenceShape},
+    math,
     staking::{
         remove_active, selected_validators, selected_validators_at, set_selection_visible,
         validator_total_at,
     },
     storage::{chain_config_storage, consensus_storage, staking_storage},
-    types::{
-        AddressCommand, ConsensusKeys, DecodedEvidence, EpochSignerCommand, EquivocationCommand,
-        U64Command,
-    },
+    types::{AddressCommand, ConsensusKeys, EpochSignerCommand, EquivocationCommand, U64Command},
     util::{
         current_epoch, decode, decode_args, ensure_initialized, ensure_mutable, ensure_non_payable,
         revert, revert_with, safe_transfer, write_abi,
@@ -949,19 +948,14 @@ pub(crate) fn seize_self_stake<SDK: SharedAPI>(
 fn slash_equivocation<SDK: SharedAPI>(
     sdk: &mut SDK,
     command: EquivocationCommand,
-    decoder_selector: u32,
+    shape: EvidenceShape,
     proof_kind: u8,
 ) -> Result<(), ExitCode> {
     verify_report_commitment(sdk, &command, proof_kind)?;
     let storage = staking_storage();
     let consensus = consensus_storage();
     let config = chain_config_storage();
-    let decoder = config.evidence_decoder_accessor().get_checked(sdk)?;
-    if decoder.is_zero() {
-        return revert(sdk, ERR_EVIDENCE_DECODER_NOT_CONFIGURED);
-    }
-    let evidence =
-        call_decode::<_, _, DecodedEvidence>(sdk, decoder, decoder_selector, &(command.evidence,))?;
+    let evidence = evidence::decode(sdk, &command.evidence, shape)?;
     let committee = consensus.epoch_committees_accessor().entry(evidence.epoch);
     let committee_len = committee.len_checked(sdk)?;
     if committee_len == 0 {
@@ -1093,7 +1087,7 @@ pub fn slash_notarize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(),
     slash_equivocation(
         sdk,
         decode_equivocation(input)?,
-        SIG_DECODE_CONFLICTING_NOTARIZE,
+        EvidenceShape::ConflictingNotarize,
         EQUIVOCATION_PROOF_KIND_NOTARIZE,
     )
 }
@@ -1108,7 +1102,7 @@ pub fn slash_finalize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(),
     slash_equivocation(
         sdk,
         decode_equivocation(input)?,
-        SIG_DECODE_CONFLICTING_FINALIZE,
+        EvidenceShape::ConflictingFinalize,
         EQUIVOCATION_PROOF_KIND_FINALIZE,
     )
 }
@@ -1123,7 +1117,7 @@ pub fn slash_nullify_finalize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
     slash_equivocation(
         sdk,
         decode_equivocation(input)?,
-        SIG_DECODE_NULLIFY_FINALIZE,
+        EvidenceShape::NullifyFinalize,
         EQUIVOCATION_PROOF_KIND_NULLIFY_FINALIZE,
     )
 }

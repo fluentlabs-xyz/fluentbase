@@ -14,7 +14,7 @@ The core validator staking contract implemented as a normal rWasm contract and d
   `Fluent.storage.Consensus`, `Fluent.storage.StakingStorage`, and
   `Fluent.storage.ProductionLiveness`.
 - Keeps `StakingPool` external and unchanged; this crate does not deploy or replace it.
-- Calls configured BLS verifier, evidence decoder, and BLEND reserve contracts.
+- Calls configured BLS verifier and BLEND reserve contracts.
 
 ## Lifecycle
 

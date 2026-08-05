@@ -247,9 +247,7 @@ impl Harness {
             } else {
                 Address::with_last_byte(0xb0)
             },
-            evidence_decoder: Address::ZERO,
             min_undelegate_blocks: U256::ZERO,
-            liveness_slashing: Address::with_last_byte(0xf1),
             blend_reserve: Address::with_last_byte(0xf2),
         }
     }
@@ -934,10 +932,10 @@ fn parameterized_custom_errors_use_solidity_abi() {
     let owner = Address::with_last_byte(0xa0);
     let mut harness = Harness::new(1_000);
     let mut command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
-    command.liveness_slashing = Address::ZERO;
+    command.blend_reserve = Address::ZERO;
     let (_, output) = harness.call(encode_args_call(SIG_INITIALIZE, &command));
     assert_eq!(&output[..4], &ERR_ZERO_VALUE.to_be_bytes());
-    assert_eq!(decode_output::<String>(&output[4..]), "livenessSlashing");
+    assert_eq!(decode_output::<String>(&output[4..]), "blendReserve");
 
     assert_eq!(
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
@@ -946,7 +944,6 @@ fn parameterized_custom_errors_use_solidity_abi() {
     harness.set_caller(GENESIS_GOVERNANCE);
     for (selector, field) in [
         (SIG_SET_BLS_VERIFIER, "blsVerifier"),
-        (SIG_SET_LIVENESS_SLASHING, "livenessSlashing"),
         (SIG_SET_BLEND_RESERVE, "blendReserve"),
     ] {
         let (_, output) = harness.call(encode_call(
@@ -963,7 +960,7 @@ fn parameterized_custom_errors_use_solidity_abi() {
 #[test]
 fn derived_selectors_match_independent_hex_pins() {
     for (actual, pinned) in [
-        (SIG_INITIALIZE, 0xd86555fe),
+        (SIG_INITIALIZE, 0xdfa8efb0),
         (SIG_CURRENT_EPOCH, 0x76671808),
         (SIG_NEXT_EPOCH, 0xaea0e78b),
         (SIG_GET_STAKING_TOKEN, 0x9f9106d1),
@@ -997,9 +994,6 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT, 0xe1a2e863),
         (SIG_SET_MIN_STAKING_AMOUNT, 0x612d669e),
         (SIG_SET_BLS_VERIFIER, 0x466ae541),
-        (SIG_SET_EVIDENCE_DECODER, 0x00857c90),
-        (SIG_GET_LIVENESS_SLASHING, 0xdb2366b4),
-        (SIG_SET_LIVENESS_SLASHING, 0xbb32522a),
         (SIG_GET_BLEND_RESERVE, 0x37dff538),
         (SIG_SET_BLEND_RESERVE, 0x7899ae8f),
         (SIG_GET_VALIDATOR_FEE, 0x457179fd),
@@ -1353,7 +1347,6 @@ fn stores_chain_configuration_in_its_own_namespace() {
     command.min_staking_amount = BALANCE_COMPACT_PRECISION;
     command.dpos_activation_block = 1_000;
     command.bls_verifier = Address::with_last_byte(0xb2);
-    command.evidence_decoder = Address::with_last_byte(0xb3);
     command.min_undelegate_blocks = U256::from(701);
     assert_revert_selector(
         harness.call(encode_args_call(SIG_INITIALIZE, &command)),
@@ -1407,16 +1400,12 @@ fn governance_updates_embedded_chain_configuration() {
     let outsider = Address::with_last_byte(0xb0);
     let slash_fund = Address::with_last_byte(0xc1);
     let bls_verifier = Address::with_last_byte(0xc2);
-    let evidence_decoder = Address::with_last_byte(0xc3);
-    let liveness_slashing = Address::with_last_byte(0xc4);
     let blend_reserve = Address::with_last_byte(0xc5);
-    let replacement_liveness = Address::with_last_byte(0xd4);
     let replacement_reserve = Address::with_last_byte(0xd5);
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
     let mut command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
     command.dpos_activation_block = 2_000;
-    command.liveness_slashing = liveness_slashing;
     command.blend_reserve = blend_reserve;
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
     harness.sdk.take_logs();
@@ -1431,17 +1420,15 @@ fn governance_updates_embedded_chain_configuration() {
             .0,
         ExitCode::Panic
     );
-    for selector in [SIG_SET_LIVENESS_SLASHING, SIG_SET_BLEND_RESERVE] {
-        assert_revert_selector(
-            harness.call(encode_call(
-                selector,
-                &AddressCommand {
-                    value: Address::with_last_byte(0xee),
-                },
-            )),
-            ERR_ONLY_GOVERNANCE,
-        );
-    }
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SET_BLEND_RESERVE,
+            &AddressCommand {
+                value: Address::with_last_byte(0xee),
+            },
+        )),
+        ERR_ONLY_GOVERNANCE,
+    );
 
     harness.set_caller(GENESIS_GOVERNANCE);
     for selector in [
@@ -1471,8 +1458,6 @@ fn governance_updates_embedded_chain_configuration() {
     for (selector, value) in [
         (SIG_SET_SLASH_FUND_ADDRESS, slash_fund),
         (SIG_SET_BLS_VERIFIER, bls_verifier),
-        (SIG_SET_EVIDENCE_DECODER, evidence_decoder),
-        (SIG_SET_LIVENESS_SLASHING, replacement_liveness),
         (SIG_SET_BLEND_RESERVE, replacement_reserve),
     ] {
         assert_eq!(
@@ -1506,8 +1491,6 @@ fn governance_updates_embedded_chain_configuration() {
     for (selector, expected) in [
         (SIG_GET_SLASH_FUND_ADDRESS, slash_fund),
         (SIG_GET_BLS_VERIFIER, bls_verifier),
-        (SIG_GET_EVIDENCE_DECODER, evidence_decoder),
-        (SIG_GET_LIVENESS_SLASHING, replacement_liveness),
         (SIG_GET_BLEND_RESERVE, replacement_reserve),
     ] {
         let (exit, output) = harness.call(encode_empty_call(selector));
@@ -1518,23 +1501,17 @@ fn governance_updates_embedded_chain_configuration() {
     assert_eq!(decode_output::<U256>(&output), U256::from(42));
 
     let logs = harness.sdk.take_logs();
-    for (selector, expected) in [
-        (
-            events::LivenessSlashingChanged::SELECTOR,
-            (liveness_slashing, replacement_liveness),
-        ),
-        (
-            events::BlendReserveChanged::SELECTOR,
-            (blend_reserve, replacement_reserve),
-        ),
-    ] {
-        let data = &logs
-            .iter()
-            .find(|(_, topics)| topics.first() == Some(&B256::new(selector)))
-            .expect("dependency change event")
-            .0;
-        assert_eq!(decode_output::<(Address, Address)>(data), expected);
-    }
+    let data = &logs
+        .iter()
+        .find(|(_, topics)| {
+            topics.first() == Some(&B256::new(events::BlendReserveChanged::SELECTOR))
+        })
+        .expect("dependency change event")
+        .0;
+    assert_eq!(
+        decode_output::<(Address, Address)>(data),
+        (blend_reserve, replacement_reserve)
+    );
 }
 
 #[test]
@@ -1608,31 +1585,25 @@ fn initialize_events_report_defaults_as_previous_values() {
         (1_000, command.dpos_activation_block)
     );
 
-    for (signature, expected_signature, selector, pinned, expected) in [
-        (
-            events::LivenessSlashingChanged::SIGNATURE,
-            "LivenessSlashingChanged(address,address)",
-            events::LivenessSlashingChanged::SELECTOR,
-            hex!("60722009eccddf6548f3d2699ac687292d370409c60e81feb25ceebd1c236c37"),
-            (Address::ZERO, command.liveness_slashing),
-        ),
-        (
-            events::BlendReserveChanged::SIGNATURE,
-            "BlendReserveChanged(address,address)",
-            events::BlendReserveChanged::SELECTOR,
-            hex!("58bf6b15bd5404c0ab55a8db9e88ce5c154feb8c288266925ea26421253a6390"),
-            (Address::ZERO, command.blend_reserve),
-        ),
-    ] {
-        assert_eq!(signature, expected_signature);
-        assert_eq!(selector, pinned);
-        let data = &logs
-            .iter()
-            .find(|(_, topics)| topics.first() == Some(&B256::new(selector)))
-            .expect("initial dependency event")
-            .0;
-        assert_eq!(decode_output::<(Address, Address)>(data), expected);
-    }
+    assert_eq!(
+        events::BlendReserveChanged::SIGNATURE,
+        "BlendReserveChanged(address,address)"
+    );
+    assert_eq!(
+        events::BlendReserveChanged::SELECTOR,
+        hex!("58bf6b15bd5404c0ab55a8db9e88ce5c154feb8c288266925ea26421253a6390")
+    );
+    let data = &logs
+        .iter()
+        .find(|(_, topics)| {
+            topics.first() == Some(&B256::new(events::BlendReserveChanged::SELECTOR))
+        })
+        .expect("initial dependency event")
+        .0;
+    assert_eq!(
+        decode_output::<(Address, Address)>(data),
+        (Address::ZERO, command.blend_reserve)
+    );
 }
 
 #[test]

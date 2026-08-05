@@ -28,9 +28,7 @@ pub struct InitializeCommand {
     pub min_staking_amount: U256,
     pub dpos_activation_block: u64,
     pub bls_verifier: Address,
-    pub evidence_decoder: Address,
     pub min_undelegate_blocks: U256,
-    pub liveness_slashing: Address,
     pub blend_reserve: Address,
 }
 
@@ -146,16 +144,4 @@ pub struct EquivocationCommand {
     pub sig2_uncompressed: Bytes,
     pub beneficiary: Address,
     pub salt: B256,
-}
-
-#[derive(Default, Debug, Codec)]
-pub struct DecodedEvidence {
-    pub epoch: u64,
-    pub signer_idx: u32,
-    pub kind1: u8,
-    pub msg1: Bytes,
-    pub sig1: Bytes,
-    pub kind2: u8,
-    pub msg2: Bytes,
-    pub sig2: Bytes,
 }

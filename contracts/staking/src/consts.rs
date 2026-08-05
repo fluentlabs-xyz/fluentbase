@@ -16,10 +16,10 @@ pub const STATUS_JAIL: u8 = 3;
 // ABI selectors are derived from their canonical signatures. The pinned hex
 // values remain beside them to make ABI drift visible during review.
 
-// 0xd86555fe
+// 0xdfa8efb0
 pub const SIG_INITIALIZE: u32 =
     derive_keccak256_id!(
-        "initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],uint16,address,uint32,uint32,uint32,uint256,uint256,uint64,address,address,uint256,address,address)"
+        "initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],uint16,address,uint32,uint32,uint32,uint256,uint256,uint64,address,uint256,address)"
     );
 // 0x76671808
 pub const SIG_CURRENT_EPOCH: u32 = derive_keccak256_id!("currentEpoch()");
@@ -138,14 +138,6 @@ pub const SIG_SET_MIN_STAKING_AMOUNT: u32 = derive_keccak256_id!("setMinStakingA
 pub const SIG_GET_BLS_VERIFIER: u32 = derive_keccak256_id!("getBlsVerifier()");
 // 0x466ae541
 pub const SIG_SET_BLS_VERIFIER: u32 = derive_keccak256_id!("setBlsVerifier(address)");
-// 0xe2cf72f9
-pub const SIG_GET_EVIDENCE_DECODER: u32 = derive_keccak256_id!("getEvidenceDecoder()");
-// 0x00857c90
-pub const SIG_SET_EVIDENCE_DECODER: u32 = derive_keccak256_id!("setEvidenceDecoder(address)");
-// 0xdb2366b4
-pub const SIG_GET_LIVENESS_SLASHING: u32 = derive_keccak256_id!("getLivenessSlashing()");
-// 0xbb32522a
-pub const SIG_SET_LIVENESS_SLASHING: u32 = derive_keccak256_id!("setLivenessSlashing(address)");
 // 0x37dff538
 pub const SIG_GET_BLEND_RESERVE: u32 = derive_keccak256_id!("getBlendReserve()");
 // 0x7899ae8f
@@ -271,14 +263,6 @@ pub const SIG_SLASH_EQUIVOCATION_FINALIZE: u32 =
 pub const SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE: u32 = derive_keccak256_id!(
     "slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes,address,bytes32)"
 );
-// 0x27e7ff4b
-pub const SIG_DECODE_CONFLICTING_NOTARIZE: u32 =
-    derive_keccak256_id!("decodeConflictingNotarize(bytes)");
-// 0xce4b0b3a
-pub const SIG_DECODE_CONFLICTING_FINALIZE: u32 =
-    derive_keccak256_id!("decodeConflictingFinalize(bytes)");
-// 0x2d85f570
-pub const SIG_DECODE_NULLIFY_FINALIZE: u32 = derive_keccak256_id!("decodeNullifyFinalize(bytes)");
 // 0x8f498050
 pub const SIG_BLS_COMPRESS_G1_UNCHECKED: u32 = derive_keccak256_id!("compressG1Unchecked(bytes)");
 
@@ -367,8 +351,13 @@ pub const ERR_EQUIVOCATION_SIGNATURE_INVALID: u32 =
 pub const ERR_EQUIVOCATION_KEY_MISMATCH: u32 = derive_keccak256_id!("EquivocationKeyMismatch()");
 pub const ERR_EQUIVOCATION_EVIDENCE_EXPIRED: u32 =
     derive_keccak256_id!("EquivocationEvidenceExpired(uint64,uint64)");
-pub const ERR_EVIDENCE_DECODER_NOT_CONFIGURED: u32 =
-    derive_keccak256_id!("EvidenceDecoderNotConfigured()");
+pub const ERR_INVALID_EVIDENCE_ENCODING: u32 = derive_keccak256_id!("InvalidEvidenceEncoding()");
+pub const ERR_EVIDENCE_SIGNER_MISMATCH: u32 =
+    derive_keccak256_id!("EvidenceSignerMismatch(uint32,uint32)");
+pub const ERR_EVIDENCE_ROUND_MISMATCH: u32 =
+    derive_keccak256_id!("EvidenceRoundMismatch(uint64,uint64,uint64,uint64)");
+pub const ERR_EVIDENCE_PROPOSALS_IDENTICAL: u32 =
+    derive_keccak256_id!("EvidenceProposalsIdentical(uint64,uint64)");
 pub const ERR_ZERO_EQUIVOCATION_BENEFICIARY: u32 =
     derive_keccak256_id!("ZeroEquivocationBeneficiary()");
 pub const ERR_ZERO_EQUIVOCATION_COMMITMENT: u32 =
@@ -414,6 +403,18 @@ pub const MAX_COMMITTEE_LOOKAHEAD_EPOCHS: u64 = 2;
 pub const BLS_PUBKEY_UNCOMPRESSED_LENGTH: usize = 256;
 pub const BLS_POP_UNCOMPRESSED_LENGTH: usize = 128;
 pub const BLS_PUBKEY_LENGTH: usize = 96;
+pub const BLS_SIGNATURE_LENGTH: usize = 48;
+pub const PROPOSAL_PAYLOAD_LENGTH: usize = 32;
+
+/// Message kinds as `consensus::namespace` reads them.
+///
+/// NOT the same numbering as `EQUIVOCATION_PROOF_KIND_*` below, which indexes
+/// the commitment domain: there `1` is FINALIZE, here `1` is NULLIFY. One
+/// nullify-finalize proof carries two different message kinds, so the two
+/// spaces cannot be one enum.
+pub const EVIDENCE_MESSAGE_KIND_NOTARIZE: u8 = 0;
+pub const EVIDENCE_MESSAGE_KIND_NULLIFY: u8 = 1;
+pub const EVIDENCE_MESSAGE_KIND_FINALIZE: u8 = 2;
 
 pub const EQUIVOCATION_PROOF_KIND_NOTARIZE: u8 = 0;
 pub const EQUIVOCATION_PROOF_KIND_FINALIZE: u8 = 1;

@@ -34,13 +34,12 @@ pub struct ChainConfigStorage {
     slash_fund_address: StorageAddress,
     blend_stipend_per_epoch: StorageU256,
     bls_verifier: StorageAddress,
-    evidence_decoder: StorageAddress,
     min_undelegate_blocks: StorageU256,
-    /// Unread. The jail tier that consumed it is gone and the production-liveness
-    /// tier that replaced it runs inside this contract, so the principal is the
-    /// contract itself. Still required non-zero at initialization, and the
-    /// initializer's selector is pinned, so removing it is a deliberate ABI break.
-    liveness_slashing: StorageAddress,
+    /// Address the epoch stipend is drawn from, not a contract implementing a
+    /// reserve interface: settlement pulls with `transferFrom`, so any holder
+    /// that has approved this contract works — a wallet, a multisig, a treasury.
+    /// Revoking that approval stops payments without forfeiting them, because
+    /// the failed pull reverts and leaves the settlement cursor in place.
     blend_reserve: StorageAddress,
     /// Committee size cap history, ascending by `from_epoch`.
     ///

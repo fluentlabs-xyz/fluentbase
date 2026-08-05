@@ -63,9 +63,6 @@ pub(crate) fn apply_initial_config<SDK: SharedAPI>(
         .dpos_activation_block_accessor()
         .set_checked(sdk, command.dpos_activation_block)?;
     config
-        .liveness_slashing_accessor()
-        .set_checked(sdk, command.liveness_slashing)?;
-    config
         .blend_reserve_accessor()
         .set_checked(sdk, command.blend_reserve)?;
     config
@@ -82,11 +79,6 @@ pub(crate) fn apply_initial_config<SDK: SharedAPI>(
         config
             .bls_verifier_accessor()
             .set_checked(sdk, command.bls_verifier)?;
-    }
-    if !command.evidence_decoder.is_zero() {
-        config
-            .evidence_decoder_accessor()
-            .set_checked(sdk, command.evidence_decoder)?;
     }
 
     events::ActiveValidatorsLengthChanged {
@@ -142,18 +134,6 @@ pub(crate) fn apply_initial_config<SDK: SharedAPI>(
         }
         .emit(sdk)?;
     }
-    if !command.evidence_decoder.is_zero() {
-        events::EvidenceDecoderChanged {
-            prev_value: Address::ZERO,
-            new_value: command.evidence_decoder,
-        }
-        .emit(sdk)?;
-    }
-    events::LivenessSlashingChanged {
-        prev_value: Address::ZERO,
-        new_value: command.liveness_slashing,
-    }
-    .emit(sdk)?;
     events::BlendReserveChanged {
         prev_value: Address::ZERO,
         new_value: command.blend_reserve,
@@ -195,9 +175,6 @@ fn validate_initialization<SDK: SharedAPI>(
             ERR_UNDELEGATE_WINDOW_TOO_SHORT,
             &(undelegate_window, command.min_undelegate_blocks),
         );
-    }
-    if command.liveness_slashing.is_zero() {
-        return revert_with(sdk, ERR_ZERO_VALUE, &String::from("livenessSlashing"));
     }
     if command.blend_reserve.is_zero() {
         return revert_with(sdk, ERR_ZERO_VALUE, &String::from("blendReserve"));
@@ -869,73 +846,9 @@ pub fn set_bls_verifier<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(
     .emit(sdk)
 }
 
-/// Public handler `0xe2cf72f9` (`getEvidenceDecoder`).
-///
-/// Returns the configured evidence decoder.
-pub fn get_evidence_decoder<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(
-        sdk,
-        &chain_config_storage()
-            .evidence_decoder_accessor()
-            .get_checked(sdk)?,
-    )
-}
-
-/// Public handler `0x00857c90` (`setEvidenceDecoder`).
-///
-/// Updates the configured evidence decoder.
-pub fn set_evidence_decoder<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_governance_mutation(sdk)?;
-    let value = decode::<AddressCommand>(input)?.value;
-    if value.is_zero() {
-        return zero_value(sdk, "evidenceDecoder");
-    }
-    let field = chain_config_storage().evidence_decoder_accessor();
-    let previous = field.get_checked(sdk)?;
-    field.set_checked(sdk, value)?;
-    events::EvidenceDecoderChanged {
-        prev_value: previous,
-        new_value: value,
-    }
-    .emit(sdk)
-}
-
-/// Public handler `0xdb2366b4` (`getLivenessSlashing`).
-///
-/// Returns the configured liveness-slashing authority.
-pub fn get_liveness_slashing<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(
-        sdk,
-        &chain_config_storage()
-            .liveness_slashing_accessor()
-            .get_checked(sdk)?,
-    )
-}
-
-/// Public handler `0xbb32522a` (`setLivenessSlashing`).
-///
-/// Rotates the liveness-slashing authority under governance control.
-pub fn set_liveness_slashing<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_governance_mutation(sdk)?;
-    let value = decode::<AddressCommand>(input)?.value;
-    if value.is_zero() {
-        return zero_value(sdk, "livenessSlashing");
-    }
-    let field = chain_config_storage().liveness_slashing_accessor();
-    let previous = field.get_checked(sdk)?;
-    field.set_checked(sdk, value)?;
-    events::LivenessSlashingChanged {
-        prev_value: previous,
-        new_value: value,
-    }
-    .emit(sdk)
-}
-
 /// Public handler `0x37dff538` (`getBlendReserve`).
 ///
-/// Returns the configured BLEND reserve.
+/// Returns the address the epoch stipend is drawn from.
 pub fn get_blend_reserve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(

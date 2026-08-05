@@ -36,9 +36,7 @@ sol! {
             uint256 minStakingAmount,
             uint64 dposActivationBlock,
             address blsVerifier,
-            address evidenceDecoder,
             uint256 minUndelegateBlocks,
-            address livenessSlashing,
             address blendReserve
         ) external;
         function addValidator(
@@ -135,9 +133,7 @@ fn initialize_calldata(
         minStakingAmount: TOKEN,
         dposActivationBlock: 1_000,
         blsVerifier: bls_verifier,
-        evidenceDecoder: Address::ZERO,
         minUndelegateBlocks: U256::ZERO,
-        livenessSlashing: Address::repeat_byte(0x55),
         blendReserve: Address::repeat_byte(0x66),
     }
     .abi_encode()

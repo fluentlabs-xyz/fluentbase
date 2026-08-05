@@ -13,6 +13,7 @@ mod config;
 mod consensus;
 mod consts;
 mod events;
+mod evidence;
 mod initializer;
 mod liveness;
 mod math;
@@ -74,10 +75,6 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_SET_MIN_STAKING_AMOUNT => config::set_min_staking_amount(sdk, params),
         SIG_GET_BLS_VERIFIER => config::get_bls_verifier(sdk),
         SIG_SET_BLS_VERIFIER => config::set_bls_verifier(sdk, params),
-        SIG_GET_EVIDENCE_DECODER => config::get_evidence_decoder(sdk),
-        SIG_SET_EVIDENCE_DECODER => config::set_evidence_decoder(sdk, params),
-        SIG_GET_LIVENESS_SLASHING => config::get_liveness_slashing(sdk),
-        SIG_SET_LIVENESS_SLASHING => config::set_liveness_slashing(sdk, params),
         SIG_GET_BLEND_RESERVE => config::get_blend_reserve(sdk),
         SIG_SET_BLEND_RESERVE => config::set_blend_reserve(sdk, params),
         SIG_GET_MIN_VERDICT_DUE_BLOCKS => config::get_min_verdict_due_blocks(sdk),
