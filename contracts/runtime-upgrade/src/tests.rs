@@ -132,6 +132,35 @@ fn test_plan_upgrade_encoding() {
 }
 
 #[test]
+fn test_non_owner_plan_upgrade_rejects_count_larger_than_array_body() {
+    let call = PlanUpgradeCall::new((
+        B256::from([0xab; 32]),
+        "v1.0.0".to_string(),
+        vec![address!("2222222222222222222222222222222222222222")],
+        vec![B256::from([0x11; 32])],
+        address!("1111111111111111111111111111111111111111"),
+    ));
+    let mut encoded = call.encode().to_vec();
+
+    // The third planUpgrade argument is target_addresses. Its ABI head starts after the selector,
+    // genesis hash, and genesis version offset. Replace its body count while keeping the body tiny.
+    let target_addresses_head = 4 + 64;
+    let target_addresses_offset = u32::from_be_bytes(
+        encoded[target_addresses_head + 28..target_addresses_head + 32]
+            .try_into()
+            .expect("target_addresses offset must be a u32"),
+    ) as usize;
+    let target_addresses_length = 4 + target_addresses_offset;
+    encoded[target_addresses_length + 28..target_addresses_length + 32]
+        .copy_from_slice(&u32::MAX.to_be_bytes());
+
+    assert!(PlanUpgradeCall::decode(&&encoded[4..]).is_err());
+
+    let mut h = Harness::new();
+    assert_eq!(h.call(Bytes::from(encoded)), ExitCode::Panic);
+}
+
+#[test]
 fn test_upgrade_to_planned_encoding() {
     let target = address!("2222222222222222222222222222222222222222");
     let wasm_bytecode = Bytes::from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00].as_ref());

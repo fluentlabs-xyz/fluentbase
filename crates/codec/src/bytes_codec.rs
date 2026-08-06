@@ -1,6 +1,6 @@
 use crate::{
     alloc::string::ToString,
-    encoder::{align_up, read_u32_aligned, write_u32_aligned},
+    encoder::{align_up, checked_decode_slice, read_u32_aligned, write_u32_aligned},
     error::{CodecError, DecodingError},
 };
 use byteorder::ByteOrder;
@@ -112,12 +112,15 @@ pub fn read_bytes<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>(
     let (data_offset, data_len) = read_bytes_header::<B, ALIGN, SOL_MODE>(buf, offset)?;
 
     let data = if SOL_MODE {
-        buf.chunk()[data_offset + 32..data_offset + 32 + data_len].to_vec()
+        let data_start = data_offset
+            .checked_add(32)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        checked_decode_slice(buf, data_start, data_len, "bytes body exceeds input")?
     } else {
-        buf.chunk()[data_offset..data_offset + data_len].to_vec()
+        checked_decode_slice(buf, data_offset, data_len, "bytes body exceeds input")?
     };
 
-    Ok(Bytes::from(data))
+    Ok(Bytes::copy_from_slice(data))
 }
 
 /// Reads the header of the bytes data in Solidity or WASM compatible format
@@ -138,9 +141,16 @@ pub fn read_bytes_header_wasm<B: ByteOrder, const ALIGN: usize>(
 ) -> Result<(usize, usize), CodecError> {
     let aligned_elem_size = align_up::<ALIGN>(mem::size_of::<u32>());
 
-    if buffer.remaining() < offset + aligned_elem_size * 2 {
+    let header_size = aligned_elem_size
+        .checked_mul(2)
+        .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+    let header_end = offset
+        .checked_add(header_size)
+        .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+
+    if buffer.remaining() < header_end {
         return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-            expected: offset + aligned_elem_size * 2,
+            expected: header_end,
             found: buffer.remaining(),
             msg: "buffer too small to read bytes header".to_string(),
         }));

@@ -1,6 +1,9 @@
 use crate::{
     bytes_codec::{read_bytes_header, write_bytes, write_bytes_solidity, write_bytes_wasm},
-    encoder::{align_up, read_u32_aligned, write_u32_aligned, Encoder},
+    encoder::{
+        align_up, checked_decode_slice, checked_decode_slice_from, read_u32_aligned,
+        validate_collection_body, write_u32_aligned, Encoder,
+    },
     error::{CodecError, DecodingError},
 };
 use alloc::{format, string::ToString, vec::Vec};
@@ -66,9 +69,13 @@ where
         let aligned_header_el_size = align_up::<ALIGN>(4);
         let aligned_header_size = align_up::<ALIGN>(Self::HEADER_SIZE);
 
-        if buf.remaining() < offset + aligned_header_size {
+        let header_end = offset
+            .checked_add(aligned_header_size)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+
+        if buf.remaining() < header_end {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + aligned_header_size,
+                expected: header_end,
                 found: buf.remaining(),
                 msg: "Not enough data to decode HashMap header".to_string(),
             }));
@@ -76,26 +83,45 @@ where
 
         let length = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
 
+        let keys_header_offset = offset
+            .checked_add(aligned_header_el_size)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
         let (keys_offset, keys_length) =
-            read_bytes_header::<B, ALIGN, false>(buf, offset + aligned_header_el_size)?;
+            read_bytes_header::<B, ALIGN, false>(buf, keys_header_offset)?;
 
+        let values_header_offset = aligned_header_el_size
+            .checked_mul(3)
+            .and_then(|header_size| offset.checked_add(header_size))
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
         let (values_offset, values_length) =
-            read_bytes_header::<B, ALIGN, false>(buf, offset + aligned_header_el_size * 3)?;
+            read_bytes_header::<B, ALIGN, false>(buf, values_header_offset)?;
 
-        let key_bytes = &buf.chunk()[keys_offset..keys_offset + keys_length];
-        let value_bytes = &buf.chunk()[values_offset..values_offset + values_length];
+        let key_bytes = checked_decode_slice(buf, keys_offset, keys_length, "keys exceed input")?;
+        let value_bytes =
+            checked_decode_slice(buf, values_offset, values_length, "values exceed input")?;
+        let key_header_size = align_up::<ALIGN>(K::HEADER_SIZE);
+        let value_header_size = align_up::<ALIGN>(V::HEADER_SIZE);
+        validate_collection_body(length, key_header_size, key_bytes.len())?;
+        validate_collection_body(length, value_header_size, value_bytes.len())?;
 
-        let keys = (0..length).map(|i| {
-            let key_offset = align_up::<ALIGN>(K::HEADER_SIZE) * i;
-            K::decode(&key_bytes, key_offset).unwrap_or_default()
-        });
+        let mut result = HashMap::new();
+        result.try_reserve(length).map_err(|_| {
+            CodecError::Decoding(DecodingError::InvalidData(
+                "unable to reserve map capacity".to_string(),
+            ))
+        })?;
 
-        let values = (0..length).map(|i| {
-            let value_offset = align_up::<ALIGN>(V::HEADER_SIZE) * i;
-            V::decode(&value_bytes, value_offset).unwrap_or_default()
-        });
-
-        let result: HashMap<K, V> = keys.zip(values).collect();
+        for i in 0..length {
+            let key_offset = key_header_size
+                .checked_mul(i)
+                .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+            let value_offset = value_header_size
+                .checked_mul(i)
+                .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+            let key = K::decode(&key_bytes, key_offset)?;
+            let value = V::decode(&value_bytes, value_offset)?;
+            result.insert(key, value);
+        }
 
         if result.len() != length {
             return Err(CodecError::Decoding(DecodingError::InvalidData(format!(
@@ -216,9 +242,14 @@ where
         }
 
         // Read relative keys and values offsets (relative to the current offset)
-        let keys_offset = read_u32_aligned::<B, ALIGN>(buf, start_offset + KEYS_OFFSET)? as usize;
-        let values_offset =
-            read_u32_aligned::<B, ALIGN>(buf, start_offset + VALUES_OFFSET)? as usize;
+        let keys_offset_position = start_offset
+            .checked_add(KEYS_OFFSET)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let keys_offset = read_u32_aligned::<B, ALIGN>(buf, keys_offset_position)? as usize;
+        let values_offset_position = start_offset
+            .checked_add(VALUES_OFFSET)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let values_offset = read_u32_aligned::<B, ALIGN>(buf, values_offset_position)? as usize;
 
         // Calculate absolute offsets
         let keys_start = keys_offset
@@ -230,16 +261,32 @@ where
             .and_then(|sum| sum.checked_add(VALUES_OFFSET))
             .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
-        let mut result = HashMap::with_capacity(length);
+        let keys_data_start = keys_start
+            .checked_add(32)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let values_data_start = values_start
+            .checked_add(32)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let keys_data = checked_decode_slice_from(buf, keys_data_start, "keys body exceeds input")?;
+        let values_data =
+            checked_decode_slice_from(buf, values_data_start, "values body exceeds input")?;
+        let key_header_size = align_up::<ALIGN>(K::HEADER_SIZE);
+        let value_header_size = align_up::<ALIGN>(V::HEADER_SIZE);
+        validate_collection_body(length, key_header_size, keys_data.len())?;
+        validate_collection_body(length, value_header_size, values_data.len())?;
 
-        let keys_data = &buf.chunk()[keys_start + 32..];
-        let values_data = &buf.chunk()[values_start + 32..];
+        let mut result = HashMap::new();
+        result.try_reserve(length).map_err(|_| {
+            CodecError::Decoding(DecodingError::InvalidData(
+                "unable to reserve map capacity".to_string(),
+            ))
+        })?;
 
         for i in 0..length {
-            let key_offset = align_up::<ALIGN>(K::HEADER_SIZE)
+            let key_offset = key_header_size
                 .checked_mul(i)
                 .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
-            let value_offset = align_up::<ALIGN>(V::HEADER_SIZE)
+            let value_offset = value_header_size
                 .checked_mul(i)
                 .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
@@ -319,9 +366,13 @@ where
         let aligned_offset = align_up::<ALIGN>(offset);
         let aligned_header_size = align_up::<ALIGN>(Self::HEADER_SIZE);
 
-        if buf.remaining() < aligned_offset + aligned_header_size {
+        let header_end = aligned_offset
+            .checked_add(aligned_header_size)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+
+        if buf.remaining() < header_end {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: aligned_offset + aligned_header_size,
+                expected: header_end,
                 found: buf.remaining(),
                 msg: "Not enough data to decode HashSet header".to_string(),
             }));
@@ -329,15 +380,28 @@ where
 
         let length = read_u32_aligned::<B, ALIGN>(buf, aligned_offset)? as usize;
 
+        let data_header_offset = aligned_offset
+            .checked_add(align_up::<ALIGN>(4))
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
         let (data_offset, data_length) =
-            read_bytes_header::<B, ALIGN, false>(buf, aligned_offset + align_up::<ALIGN>(4))?;
+            read_bytes_header::<B, ALIGN, false>(buf, data_header_offset)?;
 
-        let mut result = HashSet::with_capacity(length);
+        let value_bytes =
+            checked_decode_slice(buf, data_offset, data_length, "values exceed input")?;
+        let value_header_size = align_up::<ALIGN>(T::HEADER_SIZE);
+        validate_collection_body(length, value_header_size, value_bytes.len())?;
 
-        let value_bytes = &buf.chunk()[data_offset..data_offset + data_length];
+        let mut result = HashSet::new();
+        result.try_reserve(length).map_err(|_| {
+            CodecError::Decoding(DecodingError::InvalidData(
+                "unable to reserve set capacity".to_string(),
+            ))
+        })?;
 
         for i in 0..length {
-            let value_offset = align_up::<ALIGN>(T::HEADER_SIZE) * i;
+            let value_offset = value_header_size
+                .checked_mul(i)
+                .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
             let value = T::decode(&value_bytes, value_offset)?;
             result.insert(value);
         }
@@ -447,7 +511,10 @@ where
         }
 
         // Read relative data offset (relative to the current offset)
-        let values_offset = read_u32_aligned::<B, ALIGN>(buf, start_offset + DATA_OFFSET)? as usize;
+        let values_offset_position = start_offset
+            .checked_add(DATA_OFFSET)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let values_offset = read_u32_aligned::<B, ALIGN>(buf, values_offset_position)? as usize;
 
         // Calculate absolute offset
         let values_start = values_offset
@@ -455,12 +522,23 @@ where
             .and_then(|sum| sum.checked_add(DATA_OFFSET))
             .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
-        let mut result = HashSet::with_capacity(length);
+        let values_data_start = values_start
+            .checked_add(32)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let values_data =
+            checked_decode_slice_from(buf, values_data_start, "values body exceeds input")?;
+        let value_header_size = align_up::<ALIGN>(T::HEADER_SIZE);
+        validate_collection_body(length, value_header_size, values_data.len())?;
 
-        let values_data = &buf.chunk()[values_start + 32..];
+        let mut result = HashSet::new();
+        result.try_reserve(length).map_err(|_| {
+            CodecError::Decoding(DecodingError::InvalidData(
+                "unable to reserve set capacity".to_string(),
+            ))
+        })?;
 
         for i in 0..length {
-            let value_offset = align_up::<ALIGN>(T::HEADER_SIZE)
+            let value_offset = value_header_size
                 .checked_mul(i)
                 .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
@@ -504,8 +582,44 @@ mod tests {
     };
     use alloc::vec::Vec;
     use byteorder::BE;
-    use bytes::BytesMut;
-    use hashbrown::HashMap;
+    use bytes::{Bytes, BytesMut};
+    use hashbrown::{HashMap, HashSet};
+
+    #[test]
+    fn test_compact_map_rejects_count_larger_than_bodies_before_allocation() {
+        let encoded = Bytes::from_static(&[
+            0xff, 0xff, 0xff, 0xff, // claimed entry count
+            0x14, 0x00, 0x00, 0x00, // keys body offset
+            0x00, 0x00, 0x00, 0x00, // keys body length
+            0x14, 0x00, 0x00, 0x00, // values body offset
+            0x00, 0x00, 0x00, 0x00, // values body length
+        ]);
+
+        let error = CompactABI::<HashMap<u32, u32>>::decode(&encoded, 0)
+            .expect_err("a count without key/value headers must fail before reserving capacity");
+
+        assert!(matches!(
+            error,
+            CodecError::Decoding(DecodingError::BufferTooSmall { .. } | DecodingError::Overflow)
+        ));
+    }
+
+    #[test]
+    fn test_compact_set_rejects_count_larger_than_body_before_allocation() {
+        let encoded = Bytes::from_static(&[
+            0xff, 0xff, 0xff, 0xff, // claimed entry count
+            0x0c, 0x00, 0x00, 0x00, // values body offset
+            0x00, 0x00, 0x00, 0x00, // values body length
+        ]);
+
+        let error = CompactABI::<HashSet<u32>>::decode(&encoded, 0)
+            .expect_err("a count without value headers must fail before reserving capacity");
+
+        assert!(matches!(
+            error,
+            CodecError::Decoding(DecodingError::BufferTooSmall { .. } | DecodingError::Overflow)
+        ));
+    }
 
     #[test]
     fn test_nested_map() {

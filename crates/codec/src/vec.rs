@@ -1,7 +1,10 @@
 use crate::{
     alloc::string::ToString,
     bytes_codec::{read_bytes, read_bytes_header, write_bytes_solidity, write_bytes_wasm},
-    encoder::{align_up, read_u32_aligned, write_u32_aligned, Encoder},
+    encoder::{
+        align_up, checked_decode_slice_from, read_u32_aligned, validate_collection_body,
+        write_u32_aligned, Encoder,
+    },
     error::{CodecError, DecodingError},
 };
 use alloc::vec::Vec;
@@ -70,9 +73,13 @@ where
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let aligned_header_el_size = align_up::<ALIGN>(4);
 
-        if buf.remaining() < offset + aligned_header_el_size {
+        let header_end = offset
+            .checked_add(aligned_header_el_size)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+
+        if buf.remaining() < header_end {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + aligned_header_el_size,
+                expected: header_end,
                 found: buf.remaining(),
                 msg: "failed to decode vector length".to_string(),
             }));
@@ -83,11 +90,21 @@ where
             return Ok(Vec::new());
         }
 
-        let mut result = Vec::with_capacity(data_len);
         let data = read_bytes::<B, ALIGN, false>(buf, offset + aligned_header_el_size)?;
+        let element_header_size = align_up::<ALIGN>(T::HEADER_SIZE);
+        validate_collection_body(data_len, element_header_size, data.len())?;
+
+        let mut result = Vec::new();
+        result.try_reserve(data_len).map_err(|_| {
+            CodecError::Decoding(DecodingError::InvalidData(
+                "unable to reserve vector capacity".to_string(),
+            ))
+        })?;
 
         for i in 0..data_len {
-            let elem_offset = i * align_up::<ALIGN>(T::HEADER_SIZE);
+            let elem_offset = i
+                .checked_mul(element_header_size)
+                .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
             let value = T::decode(&data, elem_offset)?;
             result.push(value);
         }
@@ -144,11 +161,24 @@ where
             return Ok(Vec::new());
         }
 
-        let mut result = Vec::with_capacity(data_len);
-        let chunk = &buf.chunk()[(data_offset + 32) as usize..];
+        let body_offset = (data_offset as usize)
+            .checked_add(32)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let chunk = checked_decode_slice_from(buf, body_offset, "vector body exceeds input")?;
+        let element_header_size = align_up::<ALIGN>(T::HEADER_SIZE);
+        validate_collection_body(data_len, element_header_size, chunk.len())?;
+
+        let mut result = Vec::new();
+        result.try_reserve(data_len).map_err(|_| {
+            CodecError::Decoding(DecodingError::InvalidData(
+                "unable to reserve vector capacity".to_string(),
+            ))
+        })?;
 
         for i in 0..data_len {
-            let elem_offset = i * align_up::<ALIGN>(T::HEADER_SIZE);
+            let elem_offset = i
+                .checked_mul(element_header_size)
+                .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
             let value = T::decode(&chunk, elem_offset)?;
             result.push(value);
         }
@@ -231,6 +261,38 @@ mod tests {
             <Vec<u8> as Encoder<LittleEndian, 4, false, false>>::decode(&encoded, 3).unwrap();
 
         assert_eq!(original, decoded);
+    }
+
+    #[test]
+    fn test_compact_vec_rejects_count_larger_than_body_before_allocation() {
+        let encoded = Bytes::from_static(&[
+            0xff, 0xff, 0xff, 0xff, // claimed element count
+            0x0c, 0x00, 0x00, 0x00, // body offset
+            0x00, 0x00, 0x00, 0x00, // body length
+        ]);
+
+        let error = <Vec<u32> as Encoder<LittleEndian, 4, false, false>>::decode(&encoded, 0)
+            .expect_err("a count without element headers must fail before reserving capacity");
+
+        assert!(matches!(
+            error,
+            CodecError::Decoding(DecodingError::BufferTooSmall { .. } | DecodingError::Overflow)
+        ));
+    }
+
+    #[test]
+    fn test_solidity_vec_rejects_count_larger_than_body_before_allocation() {
+        let mut encoded = BytesMut::zeroed(64);
+        encoded[28..32].copy_from_slice(&32_u32.to_be_bytes());
+        encoded[60..64].copy_from_slice(&u32::MAX.to_be_bytes());
+
+        let error = <Vec<u32> as Encoder<BigEndian, 32, true, false>>::decode(&encoded, 0)
+            .expect_err("a count without element headers must fail before reserving capacity");
+
+        assert!(matches!(
+            error,
+            CodecError::Decoding(DecodingError::BufferTooSmall { .. } | DecodingError::Overflow)
+        ));
     }
 
     #[test]
