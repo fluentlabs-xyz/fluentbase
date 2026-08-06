@@ -57,6 +57,7 @@ fluentbase-runtime = { workspace = true }
 fluentbase-revm = { workspace = true }
 fluentbase-genesis = { workspace = true }
 fluentbase-types = { workspace = true }
+fluentbase-release-verify = { workspace = true }
 
 # alloy
 alloy-primitives = { workspace = true }
@@ -80,12 +81,6 @@ eyre = { workspace = true }
 directories = { workspace = true }
 flate2 = { workspace = true }
 reqwest = { workspace = true }
-pgp = { workspace = true }
-sha2 = { workspace = true, features = ["std"] }
-
-[dev-dependencies]
-tempfile = { workspace = true }
-rand_08 = { workspace = true }
 
 [features]
 default = ["std"]
