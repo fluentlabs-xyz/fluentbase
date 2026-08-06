@@ -46,10 +46,25 @@ as `upgradeTo`, removes the consumed pair, and emits `RuntimeUpgraded`.
 
 Removing the pair prevents replaying the same planned target/hash entry after it has been installed.
 
+### `changeOwner(address newOwner)` / `renounceOwnership()`
+
+Owner-only ownership transitions. `renounceOwnership` moves ownership to `SYSTEM_ADDRESS` so the
+runtime becomes fork-maintained.
+
+Both cancel the pending plan atomically before the owner slot moves: the stored `upgrador`, the
+release metadata, and every remaining target/hash pair are cleared, and `UpgradePlanCancelled(
+genesisHash, upgrador, targets, wasmHashes)` is emitted describing exactly what was revoked. The
+event is skipped when no plan exists. If a transition reverts (zero address, non-owner caller), the
+plan is left untouched along with the rest of the state.
+
 ## Trust Model
 
 - `owner` can perform direct upgrades, recompile existing targets, and replace the current plan.
 - `upgrador` can execute only owner-approved target/hash pairs from the current plan.
+- Delegated upgrade authority never outlives the owner that granted it. A plan is scoped to its
+  creating owner, so ownership rotation is sufficient for compromise response and renunciation
+  cannot leave a delegated upgrader live. A new owner must call `planUpgrade` again to re-authorize
+  a delegate; it never inherits stale targets, hashes, or metadata.
 - Host-side syscall enforcement remains the final boundary: `SYSCALL_ID_UPGRADE_WASM_RUNTIME` must only
   be reachable through the runtime-upgrade precompile execution path.
 
