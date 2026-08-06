@@ -5,12 +5,12 @@ extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{system_entrypoint, ExitCode, SystemAPI};
 use revm_precompile::{
-    secp256r1::{p256_verify, P256VERIFY_BASE_GAS_FEE},
+    secp256r1::{p256_verify_osaka, P256VERIFY_BASE_GAS_FEE_OSAKA},
     PrecompileHalt,
 };
 
 /// Main entry point for the secp256r1 wrapper contract.
-/// This contract wraps the secp256r1 precompile (EIP-7212) which verifies ECDSA signatures
+/// This contract wraps the secp256r1 precompile (EIP-7951) which verifies ECDSA signatures
 /// using the secp256r1 (P-256) elliptic curve.
 ///
 /// Input format:
@@ -19,12 +19,12 @@ use revm_precompile::{
 /// |          32         | 32  | 32  |     32       |      32      |
 ///
 /// Output:
-/// - Returns a single byte with value 1 if the signature is valid
+/// - Returns a 32-byte value ending in 1 if the signature is valid
 /// - Returns an empty byte array if the signature is invalid
 pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input = sdk.bytes_input();
-    sdk.sync_evm_gas(P256VERIFY_BASE_GAS_FEE)?;
-    let result = p256_verify(input.as_ref(), u64::MAX).map_err(|err| match err {
+    sdk.sync_evm_gas(P256VERIFY_BASE_GAS_FEE_OSAKA)?;
+    let result = p256_verify_osaka(input.as_ref(), u64::MAX).map_err(|err| match err {
         PrecompileHalt::OutOfGas => ExitCode::OutOfFuel,
         _ => ExitCode::PrecompileError,
     })?;
@@ -66,7 +66,7 @@ mod tests {
         exec_evm_precompile(
             &hex!("4cee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4da73bd4903f0ce3b639bbbf6e8e80d16931ff4bcf5993d58468e8fb19086e8cac36dbcd03009df8c59286b162af3bd7fcc0450c9aa81be5d10d312af6c66b1d604aebd3099c618202fcfe16ae7770b0c49ab5eadf74b754204a3bb6060e44eff37618b065f9832de4ca6ca971a7a1adc826d0f7c00181a5fb2ddf79ae00b4e10e"),
             &B256::with_last_byte(1)[..],
-            3450,
+            P256VERIFY_BASE_GAS_FEE_OSAKA,
         );
     }
     #[test]
@@ -75,17 +75,26 @@ mod tests {
         exec_evm_precompile(
             &hex!("e775723953ead4a90411a02908fd1a629db584bc600664c609061f221ef6bf7cbe0aca61c884167420c8d16b6a22b5952ab46586c0fdba026cd0bf32258c500434091e9ec6503491ed0a820c38ad82c672d88c9fe8e681accdf7e26dbd2d7958b6114ed3a5b9bf7255eda3077b2c63ad476d481d979699a5d22bd030077dab338bea1ad18733e7d410649a8b09c6429ea065c9d66aaf6a8e793b0567eadd942d"),
             &B256::with_last_byte(1)[..],
-            3450,
+            P256VERIFY_BASE_GAS_FEE_OSAKA,
         );
     }
 
     #[test]
     fn test_invalid_signature() {
-        // Modified test vector with invalid signature
+        // Modified message hash with an otherwise well-formed signature
+        exec_evm_precompile(
+            &hex!("4dee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4da73bd4903f0ce3b639bbbf6e8e80d16931ff4bcf5993d58468e8fb19086e8cac36dbcd03009df8c59286b162af3bd7fcc0450c9aa81be5d10d312af6c66b1d604aebd3099c618202fcfe16ae7770b0c49ab5eadf74b754204a3bb6060e44eff37618b065f9832de4ca6ca971a7a1adc826d0f7c00181a5fb2ddf79ae00b4e10e"),
+            &hex!(""),
+            P256VERIFY_BASE_GAS_FEE_OSAKA,
+        );
+    }
+
+    #[test]
+    fn test_malformed_signature_scalar() {
         exec_evm_precompile(
             &hex!("4cee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4dffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff4aebd3099c618202fcfe16ae7770b0c49ab5eadf74b754204a3bb6060e44eff37618b065f9832de4ca6ca971a7a1adc826d0f7c00181a5fb2ddf79ae00b4e10e"),
             &hex!(""),
-            3450,
+            P256VERIFY_BASE_GAS_FEE_OSAKA,
         );
     }
 
@@ -95,14 +104,18 @@ mod tests {
         exec_evm_precompile(
             &hex!("4cee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4da73bd4903f0ce3b639bbbf6e8e80d16931ff4bcf5993d58468e8fb19086e8cac36dbcd03009df8c59286b162af3bd7fcc0450c9aa81be5d10d312af6c66b1d6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
             &hex!(""),
-            3450,
+            P256VERIFY_BASE_GAS_FEE_OSAKA,
         );
     }
 
     #[test]
     fn test_incorrect_input_length() {
         // Test with too short input
-        exec_evm_precompile(&hex!("4cee90eb86eaa050036147a12d49004b6a"), &hex!(""), 3450);
+        exec_evm_precompile(
+            &hex!("4cee90eb86eaa050036147a12d49004b6a"),
+            &hex!(""),
+            P256VERIFY_BASE_GAS_FEE_OSAKA,
+        );
     }
 
     #[test]
