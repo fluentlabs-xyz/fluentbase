@@ -36,6 +36,124 @@ impl Harness {
         _ = self.sdk.take_output();
         exit_code
     }
+
+    /// Inspect or drive contract state directly, bypassing the router.
+    fn with_app<R>(&mut self, f: impl FnOnce(&mut App<TestingContextImpl>) -> R) -> R {
+        let mut app = App::new(core::mem::take(&mut self.sdk));
+        let result = f(&mut app);
+        self.sdk = app.sdk;
+        result
+    }
+
+    fn owner(&mut self) -> Address {
+        self.with_app(|app| app.owner_accessor().get(&app.sdk))
+    }
+
+    fn planned_updater(&mut self) -> Address {
+        self.with_app(|app| app.planned_updater_accessor().get(&app.sdk))
+    }
+
+    fn planned_genesis(&mut self) -> (B256, String) {
+        self.with_app(|app| {
+            (
+                app.planned_genesis_hash_accessor().get(&app.sdk),
+                app.planned_genesis_version_accessor().get(&app.sdk),
+            )
+        })
+    }
+
+    fn planned_len(&mut self) -> u64 {
+        self.with_app(|app| app.planned_wasm_hashes_accessor().len(&app.sdk))
+    }
+
+    fn has_planned(&mut self, target_address: Address, wasm_code_hash: B256) -> bool {
+        self.with_app(|app| app.has_planned_upgrade(target_address, wasm_code_hash))
+    }
+
+    /// Consume a planned pair the way a successful `upgradeToPlanned` does. The install path
+    /// itself needs a real runtime syscall, which the testing context does not provide.
+    fn consume_planned(&mut self, target_address: Address, wasm_code_hash: B256) {
+        self.with_app(|app| app.remove_planned_upgrade(target_address, wasm_code_hash));
+    }
+}
+
+const OWNER: Address = DEFAULT_UPDATE_GENESIS_AUTH;
+const NEW_OWNER: Address = address!("4444444444444444444444444444444444444444");
+const UPDATER: Address = address!("1111111111111111111111111111111111111111");
+const TARGET_A: Address = address!("2222222222222222222222222222222222222222");
+const TARGET_B: Address = address!("3333333333333333333333333333333333333333");
+
+/// Minimal valid WASM (magic bytes + version) with a trailing byte to vary the hash.
+fn wasm_for(target_address: Address) -> Bytes {
+    Bytes::from(vec![
+        0x00,
+        0x61,
+        0x73,
+        0x6d,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        target_address.0[0],
+    ])
+}
+
+fn plan_two_targets(h: &mut Harness) -> (B256, B256) {
+    let hash_a = crypto_keccak256(wasm_for(TARGET_A).as_ref());
+    let hash_b = crypto_keccak256(wasm_for(TARGET_B).as_ref());
+
+    h.set_caller(OWNER);
+    let plan_call = PlanUpgradeCall::new((
+        B256::from([0xab; 32]),
+        "v1.0.0".to_string(),
+        vec![TARGET_A, TARGET_B],
+        vec![hash_a, hash_b],
+        UPDATER,
+    ));
+    assert_eq!(h.call(plan_call.encode()), ExitCode::Ok);
+
+    (hash_a, hash_b)
+}
+
+fn assert_plan_is_cancelled(h: &mut Harness, hash_a: B256, hash_b: B256) {
+    assert_eq!(
+        h.planned_updater(),
+        Address::ZERO,
+        "updater still delegated"
+    );
+    assert_eq!(h.planned_len(), 0, "planned pairs survived");
+    assert!(!h.has_planned(TARGET_A, hash_a));
+    assert!(!h.has_planned(TARGET_B, hash_b));
+    assert_eq!(
+        h.planned_genesis(),
+        (B256::ZERO, String::new()),
+        "genesis metadata survived"
+    );
+
+    // The previously delegated updater can no longer consume any leftover of the old plan.
+    h.set_caller(UPDATER);
+    for (target, wasm) in [
+        (TARGET_A, wasm_for(TARGET_A)),
+        (TARGET_B, wasm_for(TARGET_B)),
+    ] {
+        let upgrade_call = UpgradeToPlannedCall::new((target, wasm));
+        assert_eq!(
+            h.call(upgrade_call.encode()),
+            ExitCode::Panic,
+            "delegated updater still authorized for {target}"
+        );
+    }
+}
+
+fn assert_plan_is_intact(h: &mut Harness, hash_a: B256, hash_b: B256) {
+    assert_eq!(h.planned_updater(), UPDATER);
+    assert_eq!(h.planned_len(), 2);
+    assert!(h.has_planned(TARGET_A, hash_a));
+    assert!(h.has_planned(TARGET_B, hash_b));
+    assert_eq!(
+        h.planned_genesis(),
+        (B256::from([0xab; 32]), "v1.0.0".to_string())
+    );
 }
 
 #[test]
@@ -185,6 +303,152 @@ fn test_upgrade_and_recompile_event_signatures_are_distinct() {
         "ContractRecompiled(address,bytes32)"
     );
     assert_ne!(RuntimeUpgraded::SELECTOR, ContractRecompiled::SELECTOR);
+}
+
+#[test]
+fn test_upgrade_plan_cancelled_event_signature_is_distinct() {
+    assert_eq!(
+        UpgradePlanCancelled::SIGNATURE,
+        "UpgradePlanCancelled(bytes32,address,address[],bytes32[])"
+    );
+    assert_ne!(UpgradePlanCancelled::SELECTOR, UpgradePlanned::SELECTOR);
+}
+
+#[test]
+fn test_change_owner_revokes_planned_upgrade() {
+    let mut h = Harness::new();
+    let (hash_a, hash_b) = plan_two_targets(&mut h);
+    assert_plan_is_intact(&mut h, hash_a, hash_b);
+
+    h.set_caller(OWNER);
+    assert_eq!(
+        h.call(ChangeOwnerCall::new((NEW_OWNER,)).encode()),
+        ExitCode::Ok
+    );
+    assert_eq!(h.owner(), NEW_OWNER);
+
+    assert_plan_is_cancelled(&mut h, hash_a, hash_b);
+}
+
+#[test]
+fn test_renounce_ownership_revokes_planned_upgrade() {
+    let mut h = Harness::new();
+    let (hash_a, hash_b) = plan_two_targets(&mut h);
+
+    h.set_caller(OWNER);
+    assert_eq!(
+        h.call(RenounceOwnershipCall::new(()).encode()),
+        ExitCode::Ok
+    );
+    assert_eq!(h.owner(), SYSTEM_ADDRESS);
+
+    assert_plan_is_cancelled(&mut h, hash_a, hash_b);
+}
+
+#[test]
+fn test_partially_consumed_plan_is_revoked_on_owner_change() {
+    let mut h = Harness::new();
+    let (hash_a, hash_b) = plan_two_targets(&mut h);
+
+    // The delegated updater installs the first pair; the second one is still pending.
+    h.consume_planned(TARGET_A, hash_a);
+    assert_eq!(h.planned_len(), 1);
+    assert!(!h.has_planned(TARGET_A, hash_a));
+    assert!(h.has_planned(TARGET_B, hash_b));
+
+    h.set_caller(OWNER);
+    assert_eq!(
+        h.call(ChangeOwnerCall::new((NEW_OWNER,)).encode()),
+        ExitCode::Ok
+    );
+
+    assert_plan_is_cancelled(&mut h, hash_a, hash_b);
+}
+
+#[test]
+fn test_new_owner_plans_without_inheriting_stale_entries() {
+    let mut h = Harness::new();
+    let (hash_a, hash_b) = plan_two_targets(&mut h);
+
+    h.set_caller(OWNER);
+    assert_eq!(
+        h.call(ChangeOwnerCall::new((NEW_OWNER,)).encode()),
+        ExitCode::Ok
+    );
+
+    // The old owner cannot plan anymore, and the new owner's plan covers only its own pair.
+    let new_updater = address!("5555555555555555555555555555555555555555");
+    let fresh_plan = PlanUpgradeCall::new((
+        B256::from([0xcd; 32]),
+        "v2.0.0".to_string(),
+        vec![TARGET_A],
+        vec![hash_a],
+        new_updater,
+    ));
+    assert_eq!(h.call(fresh_plan.encode()), ExitCode::Panic);
+
+    h.set_caller(NEW_OWNER);
+    assert_eq!(h.call(fresh_plan.encode()), ExitCode::Ok);
+
+    assert_eq!(h.planned_len(), 1);
+    assert!(h.has_planned(TARGET_A, hash_a));
+    assert!(!h.has_planned(TARGET_B, hash_b));
+    assert_eq!(h.planned_updater(), new_updater);
+    assert_eq!(
+        h.planned_genesis(),
+        (B256::from([0xcd; 32]), "v2.0.0".to_string())
+    );
+
+    // The updater delegated by the previous owner has no authority under the new plan.
+    h.set_caller(UPDATER);
+    let upgrade_call = UpgradeToPlannedCall::new((TARGET_A, wasm_for(TARGET_A)));
+    assert_eq!(h.call(upgrade_call.encode()), ExitCode::Panic);
+}
+
+#[test]
+fn test_reverted_ownership_transition_keeps_plan_intact() {
+    let mut h = Harness::new();
+    let (hash_a, hash_b) = plan_two_targets(&mut h);
+
+    // Zero-address transfer is rejected after the plan would otherwise have been cancelled.
+    h.set_caller(OWNER);
+    assert_eq!(
+        h.call(ChangeOwnerCall::new((Address::ZERO,)).encode()),
+        ExitCode::Panic
+    );
+    assert_eq!(h.owner(), Address::ZERO, "owner slot must stay untouched");
+    assert_plan_is_intact(&mut h, hash_a, hash_b);
+
+    // Neither can a non-owner drop the plan via a failed transition.
+    h.set_caller(UPDATER);
+    assert_eq!(
+        h.call(ChangeOwnerCall::new((NEW_OWNER,)).encode()),
+        ExitCode::Panic
+    );
+    assert_eq!(
+        h.call(RenounceOwnershipCall::new(()).encode()),
+        ExitCode::Panic
+    );
+    assert_plan_is_intact(&mut h, hash_a, hash_b);
+
+    // The plan is still usable by its delegated updater.
+    assert_eq!(h.planned_updater(), UPDATER);
+}
+
+#[test]
+fn test_ownership_transition_without_plan_emits_no_cancellation() {
+    let mut h = Harness::new();
+
+    h.set_caller(OWNER);
+    _ = h.sdk.take_logs();
+    assert_eq!(
+        h.call(ChangeOwnerCall::new((NEW_OWNER,)).encode()),
+        ExitCode::Ok
+    );
+
+    let logs = h.sdk.take_logs();
+    assert_eq!(logs.len(), 1, "expected only OwnerChanged");
+    assert_eq!(logs[0].1[0].0, OwnerChanged::SELECTOR);
 }
 
 #[test]

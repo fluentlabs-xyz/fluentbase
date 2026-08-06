@@ -46,6 +46,15 @@ struct UpgradePlanned {
 }
 
 #[derive(Event)]
+struct UpgradePlanCancelled {
+    #[indexed]
+    genesis_hash: B256,
+    updater: Address,
+    target_addresses: Vec<Address>,
+    wasm_code_hashes: Vec<B256>,
+}
+
+#[derive(Event)]
 struct OwnerChanged {
     new_owner: Address,
 }
@@ -87,6 +96,9 @@ trait RuntimeUpgradeTr {
     ///
     /// The target address is part of the authorization boundary: approving only a WASM hash would
     /// let the delegated upgrader install approved bytecode at the wrong system address.
+    ///
+    /// The plan is scoped to the owner that created it: any ownership transition cancels it (see
+    /// [`RuntimeUpgradeTr::change_owner`]), so a new owner must re-authorize the delegation.
     fn plan_upgrade(
         &mut self,
         genesis_hash: B256,
@@ -99,13 +111,21 @@ trait RuntimeUpgradeTr {
     /// Upgrade WASM runtime smart contract using a previously planned target/hash pair.
     fn upgrade_to_planned(&mut self, target_address: Address, wasm_bytecode: Bytes);
 
-    /// Change contract owner
+    /// Change contract owner.
+    ///
+    /// Lifecycle invariant: delegated upgrade authority never outlives the owner that granted it.
+    /// Any pending plan (updater, genesis metadata and every remaining target/hash pair) is
+    /// cancelled atomically, so the previous updater cannot install anything under the new owner.
     fn change_owner(&mut self, new_owner: Address);
 
     /// Get the current contract owner
     fn owner(&mut self) -> Address;
 
-    /// Renounce ownership (change an owner to system contract address)
+    /// Renounce ownership (change an owner to system contract address).
+    ///
+    /// Cancels any pending upgrade plan for the same reason as
+    /// [`RuntimeUpgradeTr::change_owner`]: renunciation hands the runtime over to forks, so no
+    /// delegated updater may stay live afterwards.
     fn renounce_ownership(&mut self);
 }
 
@@ -288,6 +308,8 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
         if new_owner == Address::ZERO {
             panic!("runtime-upgrade: can't set owner to zero address");
         }
+        // Revoke before handing over: the outgoing owner's delegate must not survive the rotation.
+        self.cancel_planned_upgrade();
         self.owner_accessor().set(&mut self.sdk, new_owner);
         OwnerChanged { new_owner }.emit(&mut self.sdk).unwrap();
     }
@@ -304,6 +326,8 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
     #[function_id("renounceOwnership()")]
     fn renounce_ownership(&mut self) {
         _ = self.only_owner();
+        // Renunciation is fork-only by intent, so no delegated updater may stay live.
+        self.cancel_planned_upgrade();
         // We set to `SYSTEM_ADDRESS` to make a system fully maintained by forks (if it's required)
         self.owner_accessor().set(&mut self.sdk, SYSTEM_ADDRESS);
         OwnerChanged {
@@ -372,6 +396,45 @@ impl<SDK: SharedAPI> App<SDK> {
         };
 
         code_hash
+    }
+
+    /// Drop the whole plan: the delegated updater, the genesis metadata it was scoped to, and
+    /// every remaining target/hash pair. A no-op when nothing is planned, so ownership
+    /// transitions stay cheap and emit no misleading cancellation event.
+    fn cancel_planned_upgrade(&mut self) {
+        let updater = self.planned_updater_accessor().get(&self.sdk);
+        let planned_target_addresses = self.planned_target_addresses_accessor();
+        let planned_wasm_hashes = self.planned_wasm_hashes_accessor();
+        let hashes_len = planned_wasm_hashes.len(&self.sdk);
+        if updater == Address::ZERO && hashes_len == 0 {
+            return;
+        }
+
+        let mut target_addresses = Vec::new();
+        let mut wasm_code_hashes = Vec::new();
+        for index in 0..hashes_len {
+            target_addresses.push(planned_target_addresses.at(index).get(&self.sdk));
+            wasm_code_hashes.push(planned_wasm_hashes.at(index).get(&self.sdk));
+        }
+
+        let genesis_hash = self.planned_genesis_hash_accessor().get(&self.sdk);
+        self.clear_planned_hashes();
+        self.planned_updater_accessor()
+            .set(&mut self.sdk, Address::ZERO);
+        self.planned_genesis_hash_accessor()
+            .set(&mut self.sdk, B256::ZERO);
+        self.planned_genesis_version_accessor()
+            .clear(&mut self.sdk)
+            .expect("runtime-upgrade: can't clear planned genesis version");
+
+        UpgradePlanCancelled {
+            genesis_hash,
+            updater,
+            target_addresses,
+            wasm_code_hashes,
+        }
+        .emit(&mut self.sdk)
+        .unwrap();
     }
 
     fn clear_planned_hashes(&mut self) {
