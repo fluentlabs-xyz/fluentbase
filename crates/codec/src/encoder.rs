@@ -1,5 +1,8 @@
 use crate::func::FunctionArgs;
-use crate::{alloc::string::ToString, error::CodecError};
+use crate::{
+    alloc::string::ToString,
+    error::{CodecError, DecodingError},
+};
 use byteorder::{ByteOrder, BE, LE};
 use bytes::{Buf, BytesMut};
 use core::marker::PhantomData;
@@ -254,6 +257,67 @@ pub fn read_u32_aligned<B: ByteOrder, const ALIGN: usize>(
     } else {
         Ok(B::read_u32(&buf.chunk()[offset..offset + 4]))
     }
+}
+
+/// Returns a contiguous range from a decoder buffer without allowing attacker-controlled offsets
+/// or lengths to overflow or panic while slicing.
+pub(crate) fn checked_decode_slice<'a>(
+    buf: &'a impl Buf,
+    offset: usize,
+    len: usize,
+    msg: &'static str,
+) -> Result<&'a [u8], CodecError> {
+    let end = offset
+        .checked_add(len)
+        .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+    let chunk = buf.chunk();
+
+    chunk.get(offset..end).ok_or_else(|| {
+        CodecError::Decoding(DecodingError::BufferTooSmall {
+            expected: end,
+            found: chunk.len(),
+            msg: msg.to_string(),
+        })
+    })
+}
+
+/// Returns the remaining contiguous data starting at `offset` after validating the offset.
+pub(crate) fn checked_decode_slice_from<'a>(
+    buf: &'a impl Buf,
+    offset: usize,
+    msg: &'static str,
+) -> Result<&'a [u8], CodecError> {
+    let chunk = buf.chunk();
+
+    chunk.get(offset..).ok_or_else(|| {
+        CodecError::Decoding(DecodingError::BufferTooSmall {
+            expected: offset,
+            found: chunk.len(),
+            msg: msg.to_string(),
+        })
+    })
+}
+
+/// Checks that a collection's fixed-size element headers fit in its encoded body before any
+/// collection allocation is attempted.
+pub(crate) fn validate_collection_body(
+    len: usize,
+    element_header_size: usize,
+    body_len: usize,
+) -> Result<(), CodecError> {
+    let required = len
+        .checked_mul(element_header_size)
+        .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+
+    if body_len < required {
+        return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
+            expected: required,
+            found: body_len,
+            msg: "collection length exceeds encoded body".to_string(),
+        }));
+    }
+
+    Ok(())
 }
 
 /// Returns a mutable slice of the buffer at the specified offset, aligned to the specified
