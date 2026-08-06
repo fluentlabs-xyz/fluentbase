@@ -6,8 +6,8 @@ use crate::{
     evidence::{self, EvidenceShape},
     math,
     staking::{
-        remove_active, remove_delegation_from_totals, selected_validators, selected_validators_at,
-        set_selection_visible, validator_total_at,
+        remove_active, remove_delegation_from_totals, selected_addresses_at, selected_validators,
+        selected_validators_at, set_selection_visible,
     },
     storage::{chain_config_storage, consensus_storage, staking_storage},
     types::{AddressCommand, ConsensusKeys, EpochSignerCommand, EquivocationCommand, U64Command},
@@ -331,7 +331,7 @@ pub fn get_validators_with_keys_at<SDK: SharedAPI>(
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let epoch = decode::<U64Command>(input)?.value;
-    write_validators_with_keys(sdk, selected_validators_at(sdk, epoch)?, Some(epoch))
+    write_validators_with_keys(sdk, selected_addresses_at(sdk, epoch)?, Some(epoch))
 }
 
 /// Public handler `0xc06a82de` (`nextEpochToCommit`).
@@ -365,7 +365,7 @@ pub fn committee_selection_epoch<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), Ex
 fn committee_changed<SDK: SharedAPI>(
     sdk: &SDK,
     target: u64,
-    submitted: &[Address],
+    members: &[CommitteeMember],
 ) -> Result<bool, ExitCode> {
     if target == 0 {
         return Ok(false);
@@ -373,41 +373,73 @@ fn committee_changed<SDK: SharedAPI>(
     let incumbent = consensus_storage()
         .epoch_committees_accessor()
         .entry(target - 1);
-    if incumbent.len_checked(sdk)? as usize != submitted.len() {
+    if incumbent.len_checked(sdk)? as usize != members.len() {
         return Ok(true);
     }
-    for (index, member) in submitted.iter().enumerate() {
-        if incumbent.at(index as u64).get_checked(sdk)? != *member {
+    // Positional, and both sides are peer-key ordered, so an unchanged set
+    // cannot read as changed.
+    for (index, member) in members.iter().enumerate() {
+        if incumbent
+            .at(index as u64)
+            .validator_accessor()
+            .get_checked(sdk)?
+            != member.validator
+        {
             return Ok(true);
         }
     }
     Ok(false)
 }
 
-fn has_active_consensus_keys_at<SDK: SharedAPI>(
+/// The peer key of `validator`, if its consensus keys are active at `epoch`.
+///
+/// Deliberately narrower than `read_consensus_keys`, which also loads the
+/// three-word BLS public key: committee selection never looks at that key, and
+/// this runs once per selected candidate on the commit path. The getters that
+/// do return the BLS key keep using the wider reader.
+fn active_peer_key_at<SDK: SharedAPI>(
     sdk: &SDK,
     validator: Address,
     epoch: u64,
-) -> Result<bool, ExitCode> {
-    let keys = read_consensus_keys(sdk, validator)?;
-    Ok(!keys.peer_pubkey.is_zero() && keys.activation_epoch <= epoch)
+) -> Result<Option<B256>, ExitCode> {
+    let keys = consensus_storage()
+        .consensus_keys_accessor()
+        .entry(validator);
+    let peer_pubkey = keys.peer_pubkey_accessor().get_checked(sdk)?;
+    if peer_pubkey.is_zero() {
+        return Ok(None);
+    }
+    let activation_epoch = keys.activation_epoch_accessor().get_checked(sdk)?;
+    Ok((activation_epoch <= epoch).then_some(peer_pubkey))
+}
+
+/// A selected committee member with the two values the commit would otherwise
+/// have to read a second time.
+pub(crate) struct CommitteeMember {
+    pub validator: Address,
+    pub peer_pubkey: B256,
+    pub weight: U256,
 }
 
 /// Committee for `epoch`: the selection view, retained to members whose
 /// consensus keys are active by `epoch`.
 ///
-/// The key filter runs *after* the stake cut, never before. The off-chain
-/// deriver builds its array from `getValidatorsWithKeysAt`, which is this same
-/// selection view with inactive keys zeroed, and drops the keyless entries
-/// itself. Filtering before the cut would promote a lower-staked keyed
-/// validator into the committee and disagree with the array the deriver
-/// submits, so `commitEpochCommittee` would reject every honest submission.
-fn selected_committee_at<SDK: SharedAPI>(sdk: &SDK, epoch: u64) -> Result<Vec<Address>, ExitCode> {
+/// The key filter runs *after* the stake cut, never before. Filtering first
+/// would promote a lower-staked keyed validator into the committee, changing
+/// which validators the epoch seats.
+fn selected_committee_at<SDK: SharedAPI>(
+    sdk: &SDK,
+    epoch: u64,
+) -> Result<Vec<CommitteeMember>, ExitCode> {
     let selected = selected_validators_at(sdk, epoch)?;
     let mut eligible = Vec::with_capacity(selected.len());
-    for validator in selected {
-        if has_active_consensus_keys_at(sdk, validator, epoch)? {
-            eligible.push(validator);
+    for (validator, weight) in selected {
+        if let Some(peer_pubkey) = active_peer_key_at(sdk, validator, epoch)? {
+            eligible.push(CommitteeMember {
+                validator,
+                peer_pubkey,
+                weight,
+            });
         }
     }
     Ok(eligible)
@@ -421,9 +453,7 @@ fn prune_committees<SDK: SharedAPI>(sdk: &mut SDK, current: u64) -> Result<(), E
     // paid. Retiring a committee at or beyond it would delete the members and
     // weights that settlement still has to read; settlement would then find an
     // empty committee, credit nothing, and advance its own cursor past the epoch,
-    // writing the pot off exactly as a partial payment used to. The
-    // length-mismatch guard does not catch that, because both arrays are cleared
-    // together and it ends up comparing zero against zero.
+    // writing the pot off exactly as a partial payment used to.
     //
     // The cost is accepted: while settlement is stalled the committees stop being
     // retired and this storage grows. Recoverable state growth beats an
@@ -433,7 +463,7 @@ fn prune_committees<SDK: SharedAPI>(sdk: &mut SDK, current: u64) -> Result<(), E
         .get_checked(sdk)?;
     let mut deleted = 0;
     // Bound cleanup so a long-idle chain cannot make one system call unbounded.
-    while deleted < MAX_COMMITTEE_PRUNES_PER_CLOSE && cursor < unsettled {
+    while deleted < MAX_COMMITTEE_PRUNES_PER_COMMIT && cursor < unsettled {
         let liability_end = storage
             .committee_liability_end_epochs_accessor()
             .entry(cursor);
@@ -447,12 +477,6 @@ fn prune_committees<SDK: SharedAPI>(sdk: &mut SDK, current: u64) -> Result<(), E
             .epoch_committees_accessor()
             .entry(cursor)
             .clear_checked(sdk)?;
-        // Both arrays are positional with each other, so pruning one without the
-        // other manufactures the length mismatch the reader reverts on.
-        storage
-            .leader_stakes_accessor()
-            .entry(cursor)
-            .clear_checked(sdk)?;
         liability_end.set_checked(sdk, 0)?;
         cursor = cursor.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
         deleted += 1;
@@ -460,17 +484,28 @@ fn prune_committees<SDK: SharedAPI>(sdk: &mut SDK, current: u64) -> Result<(), E
     storage.pruned_up_to_p1_accessor().set_checked(sdk, cursor)
 }
 
-/// Public handler `0x87401d8a` (`commitEpochCommittee`).
+/// Public handler `0xe505b249` (`commitEpochCommittee`).
 ///
-/// Commits the next epoch committee after validating its membership and ordering.
-pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
+/// Derives the next epoch's committee and freezes it, with its leader weights.
+///
+/// Takes no argument. It used to accept the committee and check it against the
+/// set derived here — but that set is the authority the check compared against,
+/// so the check could only ever detect a disagreement with the *caller's*
+/// derivation, and its only remedy was to revert. With one derivation there is
+/// nothing left to disagree.
+///
+/// Every revert below stops the chain. This runs as a system call from the
+/// node's pre-execution stage, so a revert is a block-execution error on every
+/// node, before any transaction in the block runs — which means no transaction
+/// can repair the state afterwards. Each one is therefore an assertion of an
+/// assumption held elsewhere, not a condition this contract expects to meet.
+pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
     ensure_initialized(sdk)?;
     if sdk.context().contract_caller() != SYSTEM_CALLER {
         return revert(sdk, ERR_ONLY_SYSTEM_CALL);
     }
-    let (submitted,) = decode_args::<(Vec<Address>,)>(input)?;
     let storage = consensus_storage();
     let current = current_epoch(sdk)?;
     let target = storage
@@ -484,37 +519,22 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
         return revert_with(sdk, ERR_EPOCH_NOT_YET_COMMITTABLE, &(target, current));
     }
     let selection_epoch = target.saturating_sub(MAX_COMMITTEE_LOOKAHEAD_EPOCHS);
-    let eligible = selected_committee_at(sdk, selection_epoch)?;
-    if eligible.len() < MIN_COMMITTEE_LENGTH {
+    let mut members = selected_committee_at(sdk, selection_epoch)?;
+    if members.len() < MIN_COMMITTEE_LENGTH {
         return revert_with(
             sdk,
             ERR_COMMITTEE_TOO_SMALL,
-            &(U256::from(eligible.len()), U256::from(MIN_COMMITTEE_LENGTH)),
+            &(U256::from(members.len()), U256::from(MIN_COMMITTEE_LENGTH)),
         );
     }
-    if submitted.len() != eligible.len() {
-        return revert_with(
-            sdk,
-            ERR_COMMITTEE_LENGTH_MISMATCH,
-            &(U256::from(eligible.len()), U256::from(submitted.len())),
-        );
-    }
-
-    let mut previous_peer = B256::ZERO;
-    for validator in &submitted {
-        let keys = read_consensus_keys(sdk, *validator)?;
-        if keys.peer_pubkey.is_zero() || keys.activation_epoch > selection_epoch {
-            return revert_with(sdk, ERR_COMMITTEE_MEMBER_KEYLESS, validator);
-        }
-        if !eligible.contains(validator) {
-            return revert_with(sdk, ERR_COMMITTEE_MEMBER_NOT_IN_ACTIVE_SET, validator);
-        }
-        // Peer-key order gives every producer one canonical committee encoding.
-        if keys.peer_pubkey <= previous_peer {
-            return revert_with(sdk, ERR_COMMITTEE_NOT_STRICTLY_ASCENDING, validator);
-        }
-        previous_peer = keys.peer_pubkey;
-    }
+    // Peer-key ascending IS the consensus index space: `record_production`
+    // credits `committee.at(leader_index)`, and `leader_index` is the member's
+    // position in the off-chain participant set, which is sorted on this key.
+    // Producing that order here rather than checking a supplied one removes the
+    // only way the two could have disagreed. Peer keys are unique
+    // (`ERR_PEER_PUBKEY_ALREADY_IN_USE`), so there are no ties and an unstable
+    // sort is deterministic.
+    members.sort_unstable_by_key(|member| member.peer_pubkey);
 
     let liability_end_epoch = target
         .checked_add(
@@ -525,17 +545,21 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
         .and_then(|epoch| epoch.checked_add(EPOCH_COMMITTEE_RETENTION_MARGIN))
         .and_then(|epoch| epoch.checked_add(1))
         .ok_or(ExitCode::IntegerOverflow)?;
-    let changed = committee_changed(sdk, target, &submitted)?;
+    let changed = committee_changed(sdk, target, &members)?;
     let stored = storage.epoch_committees_accessor().entry(target);
-    let stored_stakes = storage.leader_stakes_accessor().entry(target);
-    for validator in &submitted {
-        stored.push_checked(sdk, *validator)?;
-        // Weights are stamped from the SELECTION epoch, the same vintage that
-        // ranked membership, so leader weight and committee order cannot
-        // disagree about a member.
-        let weight = math::compact_balance(validator_total_at(sdk, *validator, selection_epoch)?)
-            .ok_or(ExitCode::IntegerOverflow)?;
-        stored_stakes.push_checked(sdk, weight)?;
+    for member in &members {
+        let entry = stored.grow_checked(sdk)?;
+        entry
+            .validator_accessor()
+            .set_checked(sdk, member.validator)?;
+        // The weight is the one ranking already read at the SELECTION epoch —
+        // the same vintage that decided membership — carried through rather
+        // than looked up again. It is written beside its validator, in one
+        // entry, so the two cannot come apart.
+        entry.weight_accessor().set_checked(
+            sdk,
+            math::compact_balance(member.weight).ok_or(ExitCode::IntegerOverflow)?,
+        )?;
     }
     storage
         .committee_liability_end_epochs_accessor()
@@ -551,7 +575,7 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
     prune_committees(sdk, current)?;
     events::EpochCommitteeCommitted {
         epoch: target,
-        committee: submitted,
+        committee: members.iter().map(|member| member.validator).collect(),
     }
     .emit(sdk)
 }
@@ -595,7 +619,10 @@ pub fn resolve_signer<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(),
     }
     write_abi(
         sdk,
-        &committee.at(command.signer_idx as u64).get_checked(sdk)?,
+        &committee
+            .at(command.signer_idx as u64)
+            .validator_accessor()
+            .get_checked(sdk)?,
     )
 }
 
@@ -604,7 +631,7 @@ fn read_committee<SDK: SharedAPI>(sdk: &SDK, epoch: u64) -> Result<Vec<Address>,
     let len = committee.len_checked(sdk)?;
     let mut result = Vec::with_capacity(len as usize);
     for index in 0..len {
-        result.push(committee.at(index).get_checked(sdk)?);
+        result.push(committee.at(index).validator_accessor().get_checked(sdk)?);
     }
     Ok(result)
 }
@@ -652,25 +679,23 @@ pub fn get_epoch_committee_with_stakes<SDK: SharedAPI>(
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let epoch = decode::<U64Command>(input)?.value;
-    let validators = read_committee(sdk, epoch)?;
-    let frozen = consensus_storage().leader_stakes_accessor().entry(epoch);
-    let frozen_len = frozen.len_checked(sdk)?;
-    if frozen_len != validators.len() as u64 {
-        // Deliberately no fallback to a live walk: that would restore the
-        // height-dependent read this freeze exists to remove.
-        return revert_with(
-            sdk,
-            ERR_LEADER_STAKES_LENGTH_MISMATCH,
-            &(epoch, U256::from(validators.len()), U256::from(frozen_len)),
-        );
-    }
-    let mut keys = Vec::with_capacity(validators.len());
-    let mut stakes = Vec::with_capacity(validators.len());
-    for (index, validator) in validators.iter().enumerate() {
-        keys.push(read_consensus_keys(sdk, *validator)?);
+    // The three returned arrays are built from one stored vector, so they are
+    // equal-length and correctly paired by construction. This used to read two
+    // parallel vectors and revert when their lengths disagreed; there is no
+    // longer a state in which they can.
+    let committee = consensus_storage().epoch_committees_accessor().entry(epoch);
+    let len = committee.len_checked(sdk)?;
+    let mut validators = Vec::with_capacity(len as usize);
+    let mut keys = Vec::with_capacity(len as usize);
+    let mut stakes = Vec::with_capacity(len as usize);
+    for index in 0..len {
+        let entry = committee.at(index);
+        let validator = entry.validator_accessor().get_checked(sdk)?;
+        keys.push(read_consensus_keys(sdk, validator)?);
         stakes.push(math::expand_balance(
-            frozen.at(index as u64).get_checked(sdk)?,
+            entry.weight_accessor().get_checked(sdk)?,
         ));
+        validators.push(validator);
     }
     write_returns(sdk, &(validators, keys, stakes))
 }

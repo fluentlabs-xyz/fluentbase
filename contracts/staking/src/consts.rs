@@ -216,8 +216,8 @@ pub const SIG_GET_VALIDATORS_WITH_KEYS_AT: u32 =
 pub const SIG_NEXT_EPOCH_TO_COMMIT: u32 = derive_keccak256_id!("nextEpochToCommit()");
 // 0x8bd070e4
 pub const SIG_COMMITTEE_SELECTION_EPOCH: u32 = derive_keccak256_id!("committeeSelectionEpoch()");
-// 0x87401d8a
-pub const SIG_COMMIT_EPOCH_COMMITTEE: u32 = derive_keccak256_id!("commitEpochCommittee(address[])");
+// 0xe505b249
+pub const SIG_COMMIT_EPOCH_COMMITTEE: u32 = derive_keccak256_id!("commitEpochCommittee()");
 // 0x2660899f
 pub const SIG_GET_DKG_QUAL: u32 = derive_keccak256_id!("getDkgQual(uint64)");
 // 0xd7f1733d
@@ -293,6 +293,8 @@ pub const ERR_UNKNOWN_METHOD: u32 = derive_keccak256_id!("UnknownMethod()");
 pub const ERR_ONLY_SYSTEM_CALL: u32 = derive_keccak256_id!("OnlySystemCall()");
 pub const ERR_ONLY_SELF_CALL: u32 = derive_keccak256_id!("OnlySelfCall()");
 pub const ERR_ZERO_VALUE: u32 = derive_keccak256_id!("ZeroValue(string)");
+pub const ERR_ACTIVE_VALIDATORS_LENGTH_BELOW_COMMITTEE_FLOOR: u32 =
+    derive_keccak256_id!("ActiveValidatorsLengthBelowCommitteeFloor(uint32,uint32)");
 pub const ERR_MAX_ACTIVE_VALIDATORS_EXCEEDED: u32 =
     derive_keccak256_id!("MaxActiveValidatorsExceeded(uint32,uint32)");
 pub const ERR_DPOS_ALREADY_ACTIVE: u32 = derive_keccak256_id!("DposAlreadyActive()");
@@ -318,21 +320,11 @@ pub const ERR_EPOCH_COMMITTEE_NOT_COMMITTED: u32 =
     derive_keccak256_id!("EpochCommitteeNotCommitted(uint64)");
 pub const ERR_SIGNER_INDEX_OUT_OF_RANGE: u32 =
     derive_keccak256_id!("SignerIndexOutOfRange(uint64,uint32,uint256)");
-pub const ERR_COMMITTEE_LENGTH_MISMATCH: u32 =
-    derive_keccak256_id!("CommitteeLengthMismatch(uint256,uint256)");
 pub const ERR_COMMITTEE_TOO_SMALL: u32 = derive_keccak256_id!("CommitteeTooSmall(uint256,uint256)");
-pub const ERR_LEADER_STAKES_LENGTH_MISMATCH: u32 =
-    derive_keccak256_id!("LeaderStakesLengthMismatch(uint64,uint256,uint256)");
 pub const ERR_STIPEND_RATE_NOT_SNAPSHOTTED: u32 =
     derive_keccak256_id!("StipendRateNotSnapshotted(uint64)");
 pub const ERR_EPOCH_NOT_YET_COMMITTABLE: u32 =
     derive_keccak256_id!("EpochNotYetCommittable(uint64,uint64)");
-pub const ERR_COMMITTEE_MEMBER_KEYLESS: u32 =
-    derive_keccak256_id!("CommitteeMemberKeyless(address)");
-pub const ERR_COMMITTEE_MEMBER_NOT_IN_ACTIVE_SET: u32 =
-    derive_keccak256_id!("CommitteeMemberNotInActiveSet(address)");
-pub const ERR_COMMITTEE_NOT_STRICTLY_ASCENDING: u32 =
-    derive_keccak256_id!("CommitteeNotStrictlyAscending(address)");
 pub const ERR_ALREADY_SLASHED_FOR_EQUIVOCATION: u32 =
     derive_keccak256_id!("AlreadySlashedForEquivocation(address)");
 pub const ERR_BLS_VERIFIER_NOT_CONFIGURED: u32 = derive_keccak256_id!("BlsVerifierNotConfigured()");
@@ -407,12 +399,28 @@ pub const MAX_ACTIVE_VALIDATORS_LENGTH: u64 = 51;
 
 /// Smallest committee `commitEpochCommittee` will accept.
 ///
-/// One is the loosest value this bound can take, and it is not a safety floor:
-/// at `n = 1` the Simplex fault tolerance `math::fault_tolerance` returns
-/// `f = 0`, so the committee this admits tolerates no faults at all. All it
-/// rules out is committing an empty committee. No rationale is recorded for
-/// leaving it here rather than at a quorum-bearing size.
-pub const MIN_COMMITTEE_LENGTH: usize = 1;
+/// Four is the smallest `n` for which the Simplex fault tolerance
+/// `math::fault_tolerance` returns `f >= 1`, so it is the smallest committee
+/// that tolerates a single fault. The previous value of one was not a safety
+/// floor at all: at `n = 1` the tolerance is zero, and the only state it ruled
+/// out was an empty committee.
+///
+/// The chain is assumed always to have at least this many eligible validators —
+/// the operator maintains a baseline set that can carry the network — so this
+/// asserts that assumption rather than testing a condition the contract expects
+/// to meet. Failing it stops the chain: the commit is a pre-execution system
+/// call, so the revert is a block-execution error on every node, and it lands
+/// before any transaction in the block runs — nothing can repair the state
+/// afterwards.
+///
+/// The one way to break the assumption by configuration rather than by
+/// circumstance is a committee cap below this floor, since the cap truncates the
+/// selection. `setActiveValidatorsLength` refuses it — that is the unrecoverable
+/// direction, because it lands on a running chain and the commit it breaks is a
+/// pre-execution system call. `initialize` does not: a genesis with too small a
+/// cap simply never leaves block zero, which is loud, immediate, and fixed by
+/// relaunching.
+pub const MIN_COMMITTEE_LENGTH: usize = 4;
 
 /// Reported as `prev_value` in the `UndelegatePeriodChanged` init event.
 ///
@@ -475,7 +483,7 @@ pub const MAX_COMMITTEE_LOOKAHEAD_EPOCHS: u64 = 2;
 /// Bounds the cleanup loop so a long-idle chain cannot make one system call
 /// unbounded. Falling behind only defers deletions to later closes; nothing is
 /// lost.
-pub const MAX_COMMITTEE_PRUNES_PER_CLOSE: u64 = 16;
+pub const MAX_COMMITTEE_PRUNES_PER_COMMIT: u64 = 16;
 
 pub const BLS_PUBKEY_UNCOMPRESSED_LENGTH: usize = 256;
 pub const BLS_POP_UNCOMPRESSED_LENGTH: usize = 128;

@@ -381,10 +381,21 @@ pub(crate) fn release_production_exclusion<SDK: SharedAPI>(
 pub(crate) fn selected_validators_at<SDK: SharedAPI>(
     sdk: &SDK,
     epoch: u64,
-) -> Result<Vec<Address>, ExitCode> {
+) -> Result<Vec<(Address, U256)>, ExitCode> {
     let candidates = selection_candidates_at(sdk, epoch)?;
     let cap = active_validators_length_at(sdk, epoch)? as usize;
     top_k_by_stake_at(sdk, candidates, epoch, cap)
+}
+
+/// The same selection as `selected_validators_at`, without the weights.
+pub(crate) fn selected_addresses_at<SDK: SharedAPI>(
+    sdk: &SDK,
+    epoch: u64,
+) -> Result<Vec<Address>, ExitCode> {
+    Ok(selected_validators_at(sdk, epoch)?
+        .into_iter()
+        .map(|(validator, _)| validator)
+        .collect())
 }
 
 /// Live committee view.
@@ -407,19 +418,28 @@ pub(crate) fn selected_validators<SDK: SharedAPI>(sdk: &SDK) -> Result<Vec<Addre
     let cap = chain_config_storage()
         .active_validators_length_accessor()
         .get_checked(sdk)? as usize;
-    top_k_by_stake_at(sdk, candidates, epoch, cap)
+    Ok(top_k_by_stake_at(sdk, candidates, epoch, cap)?
+        .into_iter()
+        .map(|(validator, _)| validator)
+        .collect())
 }
 
 /// Match Solidity's partial selection sort exactly.
 ///
 /// Equal-stake candidates retain roster order; an address tie-breaker would
 /// choose a different committee at the top-k boundary.
+/// Returns each selected validator with the stake it was ranked on.
+///
+/// The weight is returned rather than dropped because the committee commit
+/// freezes exactly these numbers, and recomputing them there costs a second
+/// `validator_total_at` per member — each of which runs its own binary search
+/// over the validator's snapshot epochs.
 pub(crate) fn top_k_by_stake_at<SDK: SharedAPI>(
     sdk: &SDK,
     candidates: Vec<Address>,
     epoch: u64,
     cap: usize,
-) -> Result<Vec<Address>, ExitCode> {
+) -> Result<Vec<(Address, U256)>, ExitCode> {
     let mut weighted = Vec::with_capacity(candidates.len());
     for validator in candidates {
         weighted.push((validator, validator_total_at(sdk, validator, epoch)?));
@@ -438,10 +458,7 @@ pub(crate) fn top_k_by_stake_at<SDK: SharedAPI>(
         candidates.swap(index, next);
     }
     candidates.truncate(k);
-    Ok(candidates
-        .into_iter()
-        .map(|(validator, _)| validator)
-        .collect())
+    Ok(candidates)
 }
 
 fn emit_modified<SDK: SharedAPI>(sdk: &mut SDK, validator: Address) -> Result<(), ExitCode> {
@@ -1882,7 +1899,7 @@ pub fn get_epoch_rewards<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     let len = committee.len_checked(sdk)?;
     let mut total = U256::ZERO;
     for index in 0..len {
-        let validator = committee.at(index).get_checked(sdk)?;
+        let validator = committee.at(index).validator_accessor().get_checked(sdk)?;
         total = total
             .checked_add(U256::from(
                 staking_storage()
@@ -1948,22 +1965,11 @@ fn settle_one<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64, source: Address) -> Res
         // Weights are the ones frozen at commit time, not a live stake walk: the
         // committee was ranked and the leader drawn from this same vector, so a
         // stake change after the commit must not move anyone's share.
-        let frozen = consensus.leader_stakes_accessor().entry(epoch);
-        // Paying a prefix would hand the whole pot to the members that happen to
-        // have weights and then advance the cursor past the epoch, so a mismatch
-        // must stop the settlement rather than narrow it. `getEpochCommitteeWithStakes`
-        // rejects the same condition.
-        if frozen.len_checked(sdk)? != len {
-            return revert_with(
-                sdk,
-                ERR_LEADER_STAKES_LENGTH_MISMATCH,
-                &(epoch, U256::from(len), U256::from(frozen.len_checked(sdk)?)),
-            );
-        }
         let mut weights = vec![U256::ZERO; len as usize];
         let mut total_weight = U256::ZERO;
         for index in 0..len {
-            let validator = committee.at(index).get_checked(sdk)?;
+            let entry = committee.at(index);
+            let validator = entry.validator_accessor().get_checked(sdk)?;
             if consensus
                 .tombstoned_accessor()
                 .entry(validator)
@@ -1971,7 +1977,7 @@ fn settle_one<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64, source: Address) -> Res
             {
                 continue;
             }
-            let weight = U256::from(frozen.at(index).get_checked(sdk)?);
+            let weight = U256::from(entry.weight_accessor().get_checked(sdk)?);
             if weight.is_zero() {
                 continue;
             }
@@ -2009,7 +2015,10 @@ fn settle_one<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64, source: Address) -> Res
             if share.is_zero() {
                 continue;
             }
-            let validator = committee.at(index as u64).get_checked(sdk)?;
+            let validator = committee
+                .at(index as u64)
+                .validator_accessor()
+                .get_checked(sdk)?;
             let snapshot = touch_snapshot_at_or_before(sdk, validator, epoch)?;
             let share = crate::math::narrow_reward(share).ok_or(ExitCode::IntegerOverflow)?;
             let next = snapshot
@@ -2052,7 +2061,7 @@ pub(crate) fn settle_up_to<SDK: SharedAPI>(sdk: &mut SDK, up_to: u64) -> Result<
         .blend_reserve_accessor()
         .get_checked(sdk)?;
     // A committee may be committed up to two epochs ahead, so `epoch_committees`
-    // and `leader_stakes` exist for epochs that have not started. Paying one
+    // holds entries for epochs that have not started. Paying one
     // draws a full pot for an epoch with no production and advances the cursor
     // past it irrecoverably. The finished-epoch bound replaces the finality gate
     // the liveness contract used to provide; a per-epoch "has data" belt takes

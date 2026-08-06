@@ -10,7 +10,7 @@ use crate::{
     },
     util::{
         current_epoch, current_epoch_at_block, decode, ensure_initialized, ensure_mutable,
-        ensure_non_payable, revert, revert_with, write_abi,
+        ensure_non_payable, revert, write_abi,
     },
 };
 use alloc::{vec, vec::Vec};
@@ -38,7 +38,7 @@ fn committee_index_of<SDK: SharedAPI>(
     let committee = consensus_storage().epoch_committees_accessor().entry(epoch);
     let len = committee.len_checked(sdk)?;
     for index in 0..len {
-        if committee.at(index).get_checked(sdk)? == validator {
+        if committee.at(index).validator_accessor().get_checked(sdk)? == validator {
             return Ok(Some(index as u32));
         }
     }
@@ -121,6 +121,7 @@ pub fn record_production<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     )?;
     let producer = committee
         .at(u64::from(command.leader_index))
+        .validator_accessor()
         .get_checked(sdk)?;
     let record = storage.validators_accessor().entry(producer);
     let total = record.total_produced_accessor();
@@ -271,22 +272,13 @@ fn judge<SDK: SharedAPI>(
     if member_count == 0 {
         return Ok(());
     }
-    let frozen = consensus.leader_stakes_accessor().entry(epoch);
-    let frozen_count = frozen.len_checked(sdk)?;
-    if frozen_count != member_count {
-        return revert_with(
-            sdk,
-            ERR_LEADER_STAKES_LENGTH_MISMATCH,
-            &(epoch, U256::from(member_count), U256::from(frozen_count)),
-        );
-    }
-
     let mut members = Vec::with_capacity(member_count as usize);
     let mut weights = Vec::with_capacity(member_count as usize);
     let mut total_weight = U256::ZERO;
     for index in 0..member_count {
-        members.push(committee.at(index).get_checked(sdk)?);
-        let weight = math::expand_balance(frozen.at(index).get_checked(sdk)?);
+        let entry = committee.at(index);
+        members.push(entry.validator_accessor().get_checked(sdk)?);
+        let weight = math::expand_balance(entry.weight_accessor().get_checked(sdk)?);
         total_weight = total_weight
             .checked_add(weight)
             .ok_or(ExitCode::IntegerOverflow)?;

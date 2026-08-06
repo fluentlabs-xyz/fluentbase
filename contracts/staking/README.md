@@ -76,10 +76,17 @@ validator-creation call; there is no separate key-registration phase.
 - Compressed BLS public keys are stored as three fixed `bytes32` words. Validator creation rejects any verifier output
   that is not exactly 96 bytes, avoiding dynamic-bytes metadata and making malformed stored key lengths unrepresentable.
 - Committee selection ranks candidates by stake first and drops those without active, correctly
-  shaped consensus keys afterwards, and rejects empty committees without advancing the commit epoch.
-  The order matters: the off-chain deriver reads the same ranked view with inactive keys blanked and
-  discards the keyless entries itself, so filtering before the cut would promote a lower-staked
-  validator and make every honest submission fail.
+  shaped consensus keys afterwards. The order matters: filtering before the cut would promote a
+  lower-staked keyed validator into the committee, changing which validators the epoch seats.
+- `commitEpochCommittee` takes no argument. It derives the committee itself and sorts it ascending by
+  peer key, which is the order the consensus index space uses — `recordProduction` credits the member
+  at the carried leader index. Producing that order rather than checking a supplied one removes the
+  only way the two could have disagreed.
+- Every revert reachable inside a system call stops the chain. These calls run before any transaction
+  in the block, and the node treats a non-success result as a block-execution error, so there is no
+  retry and no transaction can repair the state afterwards. A committee below `MIN_COMMITTEE_LENGTH`
+  is therefore an assertion of an assumption — that the chain always has that many eligible
+  validators — not a condition the contract expects to meet.
 - The committee-size cap is epoch-addressed. Changing it schedules the new value from the next epoch,
   so an epoch that has already started keeps the cap it was selected under. The scalar getter reports
   the latest scheduled value immediately and is not epoch-correct by design.

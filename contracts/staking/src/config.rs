@@ -149,6 +149,11 @@ fn validate_initialization<SDK: SharedAPI>(
     if command.staking_token.is_zero() {
         return revert(sdk, ERR_ZERO_STAKING_TOKEN);
     }
+    // Deliberately only the zero check here, not the committee floor the setter
+    // enforces. A genesis whose cap is below the floor cannot commit a committee
+    // and the chain never leaves block zero — loud, immediate, and fixed by
+    // editing the genesis and relaunching. The setter's mistake is the
+    // unrecoverable one, because it lands on a chain that is already running.
     if command.active_validators_length == 0
         || command.active_validators_length as u64 > MAX_ACTIVE_VALIDATORS_LENGTH
         || command.epoch_block_interval == 0
@@ -549,8 +554,17 @@ pub fn set_active_validators_length<SDK: SharedAPI>(
 ) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<U32Command>(input)?.value;
-    if value == 0 {
-        return zero_value(sdk, "activeValidatorsLength");
+    // The cap truncates the selection, so a cap below the committee floor makes
+    // every commit derive fewer members than `MIN_COMMITTEE_LENGTH` and revert —
+    // on a pre-execution system call, which stops the chain with no transaction
+    // able to put the cap back. Refusing it here is the only place the two can
+    // still be reconciled by a transaction.
+    if (value as usize) < MIN_COMMITTEE_LENGTH {
+        return revert_with(
+            sdk,
+            ERR_ACTIVE_VALIDATORS_LENGTH_BELOW_COMMITTEE_FLOOR,
+            &(value, MIN_COMMITTEE_LENGTH as u32),
+        );
     }
     if value as u64 > MAX_ACTIVE_VALIDATORS_LENGTH {
         return revert_with(

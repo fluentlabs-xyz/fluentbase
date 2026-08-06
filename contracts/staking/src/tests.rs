@@ -4,8 +4,8 @@ use crate::{
     storage::{
         chain_config_storage, consensus_storage, initializer_storage, production_liveness_storage,
         staking_storage, CapCheckpointStorage, ConsensusKeysStorage, DelegationOpStorage,
-        ProductionValidatorStorage, UndelegationOpStorage, ValidatorSnapshotStorage,
-        ValidatorStorage,
+        EpochCommitteeMemberStorage, ProductionValidatorStorage, UndelegationOpStorage,
+        ValidatorSnapshotStorage, ValidatorStorage,
     },
     types::{
         AddressAmountCommand, AddressCommand, AddressU16Command, BoolCommand, ConsensusKeys,
@@ -88,6 +88,16 @@ fn compact_storage_matches_solidity_struct_layouts() {
 
     assert_eq!(CapCheckpointStorage::SLOTS, 1);
     assert_eq!(<CapCheckpointStorage as StorageLayout>::BYTES, 12);
+
+    // The committee entry replaced two parallel vectors of one slot each, so at
+    // two slots the merge is storage-neutral — it buys the impossibility of a
+    // misalignment, not a smaller footprint. It does not fit in one slot:
+    // 20 bytes of address plus 14 of `uint112` is 34.
+    assert_eq!(EpochCommitteeMemberStorage::SLOTS, 2);
+    assert_eq!(<EpochCommitteeMemberStorage as StorageLayout>::BYTES, 34);
+    let member = EpochCommitteeMemberStorage::new(slot, 0);
+    assert_eq!(member.validator_accessor().slot(), slot);
+    assert_eq!(member.weight_accessor().slot(), slot + U256::from(1));
 
     // The per-block credit writes `total_produced` and `last_produced_epoch_p1`
     // together; both must stay inside the first slot or every recorded block
@@ -291,18 +301,48 @@ fn store_test_consensus_keys(
         .unwrap();
 }
 
-/// Writes an epoch committee and its frozen leader weights, the pair
-/// `commitEpochCommittee` appends together and the stipend reads back.
+/// Writes an epoch committee with its frozen leader weights, the pair
+/// `commitEpochCommittee` appends and the stipend reads back.
 fn commit_test_committee(sdk: &mut TestingContextImpl, epoch: u64, members: &[(Address, U256)]) {
-    let consensus = consensus_storage();
-    let committee = consensus.epoch_committees_accessor().entry(epoch);
-    let stakes = consensus.leader_stakes_accessor().entry(epoch);
+    let committee = consensus_storage().epoch_committees_accessor().entry(epoch);
     for (validator, stake) in members {
-        committee.push_checked(sdk, *validator).unwrap();
-        stakes
-            .push_checked(sdk, crate::math::compact_balance(*stake).unwrap())
+        let entry = committee.grow_checked(sdk).unwrap();
+        entry
+            .validator_accessor()
+            .set_checked(sdk, *validator)
+            .unwrap();
+        entry
+            .weight_accessor()
+            .set_checked(sdk, crate::math::compact_balance(*stake).unwrap())
             .unwrap();
     }
+}
+
+/// The validators a fixture names, plus filler to reach `MIN_COMMITTEE_LENGTH`.
+///
+/// A commit refuses a committee below the minimum, so a fixture that cares about
+/// one or two validators still has to seat enough of them for the commit to be
+/// legal.
+///
+/// Filler must not displace a named validator from a capped committee, and the
+/// reason is NOT that the selection sort is stable — it is a selection sort with
+/// swaps (`staking.rs`, `top_k_by_stake_at`) and does reorder equals. The reason
+/// is that every filler carries `DEFAULT_MIN_VALIDATOR_STAKE`, the floor, so a
+/// filler can never be the strictly-greater element a swap targets. Named
+/// validators therefore only ever swap with each other and the filler stays in
+/// the tail.
+///
+/// Filler addresses start at `0xe0` deliberately: `0xf0` is `STAKING_TOKEN` and
+/// `0xf2` is the default `blend_reserve`, so filling from `0xf0` seats the
+/// stipend source as a committee member.
+fn with_filler_validators(named: &[(Address, U256)]) -> (Vec<Address>, Vec<U256>) {
+    let mut validators: Vec<Address> = named.iter().map(|(validator, _)| *validator).collect();
+    let mut stakes: Vec<U256> = named.iter().map(|(_, stake)| *stake).collect();
+    for index in 0..MIN_COMMITTEE_LENGTH.saturating_sub(named.len()) {
+        validators.push(Address::with_last_byte(0xe0 + index as u8));
+        stakes.push(DEFAULT_MIN_VALIDATOR_STAKE);
+    }
+    (validators, stakes)
 }
 
 fn record_test_production(sdk: &mut TestingContextImpl, epoch: u64, blocks: u32) {
@@ -473,7 +513,7 @@ fn stipend_test_sdk(
     let source = Address::with_last_byte(0xc0);
     let mut harness = Harness::new(1_000);
     assert_eq!(
-        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0,),
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
         ExitCode::Ok
     );
 
@@ -1058,7 +1098,7 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_CALC_AVAILABLE_FOR_REDELEGATE_AMOUNT, 0x5ef9e8c6),
         (SIG_SETTLE_EPOCH_STIPEND, 0xa631344a),
         (SIG_GET_VALIDATORS_WITH_KEYS_AT, 0x7cfba9f3),
-        (SIG_COMMIT_EPOCH_COMMITTEE, 0x87401d8a),
+        (SIG_COMMIT_EPOCH_COMMITTEE, 0xe505b249),
         (SIG_GET_EPOCH_COMMITTEE_WITH_STAKES, 0xa4d160c1),
         (SIG_COMMIT_EQUIVOCATION_REPORT, 0x32890bc0),
         (SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT, 0xc289d76e),
@@ -2342,8 +2382,9 @@ fn leader_weights_are_frozen_at_the_selection_epoch_vintage() {
     let initial = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2);
     let added = DEFAULT_MIN_STAKING_AMOUNT * U256::from(5);
     let mut harness = Harness::new(1_000);
+    let (validators, stakes) = with_filler_validators(&[(validator, initial)]);
     assert_eq!(
-        harness.initialize(owner, vec![validator], vec![initial], 0),
+        harness.initialize(owner, validators, stakes, 0),
         ExitCode::Ok
     );
 
@@ -2362,10 +2403,7 @@ fn leader_weights_are_frozen_at_the_selection_epoch_vintage() {
     for _ in 0..3 {
         assert_eq!(
             harness
-                .call(encode_args_call(
-                    SIG_COMMIT_EPOCH_COMMITTEE,
-                    &(vec![validator],),
-                ))
+                .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
                 .0,
             ExitCode::Ok
         );
@@ -2377,8 +2415,7 @@ fn leader_weights_are_frozen_at_the_selection_epoch_vintage() {
     ));
     let (_, _, stakes): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>) = decode_returns(&output);
     assert_eq!(
-        stakes,
-        vec![initial],
+        stakes[0], initial,
         "epoch 2 was selected from epoch 0 and must carry epoch 0's weight"
     );
 
@@ -2389,8 +2426,7 @@ fn leader_weights_are_frozen_at_the_selection_epoch_vintage() {
     ));
     let (_, _, stakes): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>) = decode_returns(&output);
     assert_eq!(
-        stakes,
-        vec![initial],
+        stakes[0], initial,
         "a committed epoch's weights do not move when stake changes afterwards"
     );
 }
@@ -2400,18 +2436,16 @@ fn pruning_drops_leader_weights_with_their_committee() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
     let mut harness = Harness::new(1_000);
+    let (validators, stakes) = with_filler_validators(&[(validator, DEFAULT_MIN_VALIDATOR_STAKE)]);
     assert_eq!(
-        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        harness.initialize(owner, validators, stakes, 0),
         ExitCode::Ok
     );
 
     harness.set_caller(SYSTEM_CALLER);
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(vec![validator],),
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
@@ -2425,10 +2459,7 @@ fn pruning_drops_leader_weights_with_their_committee() {
     harness.set_block_number(1_000 + 60 * DEFAULT_EPOCH_BLOCK_INTERVAL);
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(vec![validator],),
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
@@ -2456,18 +2487,16 @@ fn pruning_stops_at_the_settlement_cursor() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
     let mut harness = Harness::new(1_000);
+    let (validators, stakes) = with_filler_validators(&[(validator, DEFAULT_MIN_VALIDATOR_STAKE)]);
     assert_eq!(
-        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        harness.initialize(owner, validators, stakes, 0),
         ExitCode::Ok
     );
 
     harness.set_caller(SYSTEM_CALLER);
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(vec![validator],),
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
@@ -2477,10 +2506,7 @@ fn pruning_stops_at_the_settlement_cursor() {
     harness.set_block_number(1_000 + 60 * DEFAULT_EPOCH_BLOCK_INTERVAL);
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(vec![validator],),
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
@@ -2498,17 +2524,9 @@ fn pruning_stops_at_the_settlement_cursor() {
             .epoch_committees_accessor()
             .entry(0)
             .len_checked(&harness.sdk)
-            .unwrap(),
-        1,
+            .unwrap() as usize,
+        MIN_COMMITTEE_LENGTH,
         "an unsettled epoch keeps the committee its stipend still has to read"
-    );
-    assert_eq!(
-        consensus
-            .leader_stakes_accessor()
-            .entry(0)
-            .len_checked(&harness.sdk)
-            .unwrap(),
-        1
     );
 
     // Settling epoch 0 releases it, and the next commit retires it.
@@ -2518,10 +2536,7 @@ fn pruning_stops_at_the_settlement_cursor() {
         .unwrap();
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(vec![validator],),
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
@@ -2566,8 +2581,8 @@ fn raising_the_cap_leaves_already_started_epochs_untouched() {
     command.active_validators_length = 1;
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
     assert_eq!(
-        staking::selected_validators_at(&harness.sdk, 0).unwrap(),
-        vec![big]
+        staking::selected_addresses_at(&harness.sdk, 0).unwrap()[0],
+        big
     );
 
     harness.set_caller(GENESIS_GOVERNANCE);
@@ -2576,7 +2591,9 @@ fn raising_the_cap_leaves_already_started_epochs_untouched() {
         harness
             .call(encode_call(
                 SIG_SET_ACTIVE_VALIDATORS_LENGTH,
-                &U32Command { value: 2 },
+                &U32Command {
+                    value: MIN_COMMITTEE_LENGTH as u32,
+                },
             ))
             .0,
         ExitCode::Ok
@@ -2590,18 +2607,19 @@ fn raising_the_cap_leaves_already_started_epochs_untouched() {
         .expect("cap change event");
     assert_eq!(
         decode_output::<(u32, u32, u64)>(data),
-        (1, 2, 1),
+        (1, MIN_COMMITTEE_LENGTH as u32, 1),
         "the event must announce the epoch the new cap first governs, not the current one"
     );
 
     assert_eq!(
-        staking::selected_validators_at(&harness.sdk, 0).unwrap(),
+        staking::selected_addresses_at(&harness.sdk, 0).unwrap(),
         vec![big],
         "epoch 0 has already started and keeps the cap it was selected under"
     );
     assert_eq!(
-        staking::selected_validators_at(&harness.sdk, 1).unwrap(),
-        vec![big, small]
+        staking::selected_addresses_at(&harness.sdk, 1).unwrap(),
+        vec![big, small],
+        "the next epoch is governed by the raised cap"
     );
 
     let (_, output) = harness.call(encode_call(
@@ -2613,11 +2631,11 @@ fn raising_the_cap_leaves_already_started_epochs_untouched() {
         SIG_GET_ACTIVE_VALIDATORS_LENGTH_AT,
         &U64Command { value: 1 },
     ));
-    assert_eq!(decode_output::<u64>(&output), 2);
+    assert_eq!(decode_output::<u64>(&output), MIN_COMMITTEE_LENGTH as u64);
     let (_, output) = harness.call(encode_empty_call(SIG_GET_ACTIVE_VALIDATORS_LENGTH));
     assert_eq!(
         decode_output::<u64>(&output),
-        2,
+        MIN_COMMITTEE_LENGTH as u64,
         "the scalar reports the latest scheduled value immediately"
     );
 }
@@ -2628,20 +2646,27 @@ fn raising_the_cap_leaves_already_started_epochs_untouched() {
 fn keys_activating_after_the_selection_epoch_are_filtered_after_the_cut() {
     let owner = Address::with_last_byte(0xa0);
     let future = Address::with_last_byte(0x01);
-    let keyed = Address::with_last_byte(0x02);
-    let spare = Address::with_last_byte(0x03);
+    let keyed: Vec<Address> = (2..=MIN_COMMITTEE_LENGTH + 1)
+        .map(|index| Address::with_last_byte(index as u8))
+        .collect();
+    let spare = Address::with_last_byte(0xee);
     let mut harness = Harness::new(1_000);
-    let mut command = harness.initialize_command(
-        owner,
-        vec![future, keyed, spare],
-        vec![
-            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(9),
-            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3),
-            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
-        ],
-        500,
+    // The cap seats `future` plus every `keyed` member and leaves `spare` below
+    // the cut. Dropping `future` for its late activation must leave exactly the
+    // committee floor — not reach past the cut for `spare`.
+    let cap = MIN_COMMITTEE_LENGTH + 1;
+    let mut validators = vec![future];
+    validators.extend(keyed.iter().copied());
+    validators.push(spare);
+    let mut stakes = vec![DEFAULT_MIN_VALIDATOR_STAKE * U256::from(9)];
+    stakes.extend(
+        keyed
+            .iter()
+            .map(|_| DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3)),
     );
-    command.active_validators_length = 2;
+    stakes.push(DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2));
+    let mut command = harness.initialize_command(owner, validators, stakes, 500);
+    command.active_validators_length = cap as u32;
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
 
     consensus_storage()
@@ -2656,57 +2681,32 @@ fn keys_activating_after_the_selection_epoch_are_filtered_after_the_cut() {
         &U64Command { value: 0 },
     ));
     let (view, view_keys): (Vec<Address>, Vec<ConsensusKeys>) = decode_returns(&output);
+    assert_eq!(view.len(), cap);
     assert_eq!(
-        view,
-        vec![future, keyed],
+        view[0], future,
         "the not-yet-activated validator still occupies its top-k slot"
+    );
+    assert!(
+        !view.contains(&spare),
+        "the below-the-cut validator is not seated"
     );
     assert!(view_keys[0].bls_pubkey.is_empty());
 
     harness.set_caller(SYSTEM_CALLER);
-    assert_revert_selector(
-        harness.call(encode_args_call(
-            SIG_COMMIT_EPOCH_COMMITTEE,
-            &(vec![keyed, spare],),
-        )),
-        ERR_COMMITTEE_LENGTH_MISMATCH,
-    );
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(vec![keyed],)
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
-}
-
-#[test]
-fn committee_stake_read_rejects_a_committee_without_matching_frozen_weights() {
-    let owner = Address::with_last_byte(0xa0);
-    let validator = Address::with_last_byte(0x01);
-    let mut harness = Harness::new(1_000);
-    assert_eq!(
-        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
-        ExitCode::Ok
-    );
-
-    // A committee whose weights were never stamped: the reader must refuse it
-    // rather than fall back to a live, height-dependent walk.
-    consensus_storage()
-        .epoch_committees_accessor()
-        .entry(4)
-        .push_checked(&mut harness.sdk, validator)
-        .unwrap();
-
-    assert_revert_selector(
-        harness.call(encode_call(
-            SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
-            &U64Command { value: 4 },
-        )),
-        ERR_LEADER_STAKES_LENGTH_MISMATCH,
-    );
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE,
+        &U64Command { value: 0 },
+    ));
+    // `spare` is never promoted into the slot the not-yet-activated validator
+    // vacates: the key filter runs after the stake cut, so the committee shrinks
+    // rather than reaching further down the ranking.
+    assert_eq!(decode_output::<Vec<Address>>(&output), keyed);
 }
 
 #[test]
@@ -2720,7 +2720,11 @@ fn repeated_cap_changes_in_one_epoch_collapse_into_a_single_checkpoint() {
     );
 
     harness.set_caller(GENESIS_GOVERNANCE);
-    for value in [2u32, 3, 4] {
+    for value in [
+        MIN_COMMITTEE_LENGTH as u32,
+        MIN_COMMITTEE_LENGTH as u32 + 1,
+        MIN_COMMITTEE_LENGTH as u32 + 2,
+    ] {
         assert_eq!(
             harness
                 .call(encode_call(
@@ -2744,7 +2748,11 @@ fn repeated_cap_changes_in_one_epoch_collapse_into_a_single_checkpoint() {
         SIG_GET_ACTIVE_VALIDATORS_LENGTH_AT,
         &U64Command { value: 1 },
     ));
-    assert_eq!(decode_output::<u64>(&output), 4);
+    assert_eq!(
+        decode_output::<u64>(&output),
+        MIN_COMMITTEE_LENGTH as u64 + 2,
+        "the collapsed checkpoint carries the last value of the walk"
+    );
 }
 
 #[test]
@@ -2773,7 +2781,9 @@ fn future_delegation_and_noop_commission_do_not_bypass_warmup() {
         harness
             .call(encode_call(
                 SIG_SET_ACTIVE_VALIDATORS_LENGTH,
-                &U32Command { value: 1 },
+                &U32Command {
+                    value: MIN_COMMITTEE_LENGTH as u32,
+                },
             ))
             .0,
         ExitCode::Ok
@@ -2804,12 +2814,14 @@ fn future_delegation_and_noop_commission_do_not_bypass_warmup() {
         initial_a + delegated
     );
     assert_eq!(
-        staking::selected_validators_at(&harness.sdk, 1).unwrap(),
-        vec![validator_b]
+        staking::selected_addresses_at(&harness.sdk, 1).unwrap()[0],
+        validator_b,
+        "the E+2 delegation must not lift validator_a above validator_b at E+1"
     );
     assert_eq!(
-        staking::selected_validators_at(&harness.sdk, 2).unwrap(),
-        vec![validator_a]
+        staking::selected_addresses_at(&harness.sdk, 2).unwrap()[0],
+        validator_a,
+        "the matured delegation lifts validator_a to the top at E+2"
     );
 
     let reward = DEFAULT_MIN_STAKING_AMOUNT;
@@ -3377,27 +3389,25 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
     let stake_b = U256::from(20) * DEFAULT_MIN_VALIDATOR_STAKE;
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
+    let (validators, stakes) =
+        with_filler_validators(&[(validator_a, stake_a), (validator_b, stake_b)]);
+    let expected_committee = validators.clone();
+    let expected_stakes = stakes.clone();
     assert_eq!(
-        harness.initialize(
-            owner,
-            vec![validator_a, validator_b],
-            vec![stake_a, stake_b],
-            500,
-        ),
+        harness.initialize(owner, validators, stakes, 500),
         ExitCode::Ok
     );
 
-    let committee = (vec![validator_a, validator_b],);
     assert_eq!(
         harness
-            .call(encode_args_call(SIG_COMMIT_EPOCH_COMMITTEE, &committee))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Panic
     );
     harness.set_caller(SYSTEM_CALLER);
     assert_eq!(
         harness
-            .call(encode_args_call(SIG_COMMIT_EPOCH_COMMITTEE, &committee))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
@@ -3406,10 +3416,9 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
         SIG_GET_EPOCH_COMMITTEE,
         &U64Command { value: 0 },
     ));
-    assert_eq!(
-        decode_output::<Vec<Address>>(&output),
-        vec![validator_a, validator_b]
-    );
+    // Peer keys are handed out in fixture order and the sort is on that key, so
+    // the committed committee is the fixture list exactly — pin all of it.
+    assert_eq!(decode_output::<Vec<Address>>(&output), expected_committee);
     let (_, output) = harness.call(encode_call(
         SIG_RESOLVE_SIGNER,
         &EpochSignerCommand {
@@ -3426,14 +3435,14 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
     ));
     let (validators, keys, stakes): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>) =
         decode_returns(&output);
-    assert_eq!(validators, vec![validator_a, validator_b]);
+    assert_eq!(validators, expected_committee);
     assert_eq!(
         keys.iter()
             .map(|value| value.bls_pubkey[0])
             .collect::<Vec<_>>(),
-        vec![0x33, 0x34]
+        vec![0x33, 0x34, 0x35, 0x36]
     );
-    assert_eq!(stakes, vec![stake_a, stake_b]);
+    assert_eq!(stakes, expected_stakes);
 
     let logs = harness.sdk.take_logs();
     let (_, topics) = logs
@@ -3450,7 +3459,128 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
         })
         .expect("committee event");
     let (event_committee,): (Vec<Address>,) = decode_returns(data);
-    assert_eq!(event_committee, vec![validator_a, validator_b]);
+    assert_eq!(event_committee, expected_committee);
+}
+
+// The cap truncates the selection, so a cap below the committee floor makes every
+// commit derive too few members and revert — on a pre-execution system call,
+// which stops the chain with nothing able to put the cap back. The setter is the
+// last place the two can still be reconciled by a transaction.
+#[test]
+fn the_cap_setter_refuses_a_value_below_the_committee_floor() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SET_ACTIVE_VALIDATORS_LENGTH,
+            &U32Command {
+                value: MIN_COMMITTEE_LENGTH as u32 - 1,
+            },
+        )),
+        ERR_ACTIVE_VALIDATORS_LENGTH_BELOW_COMMITTEE_FLOOR,
+    );
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_ACTIVE_VALIDATORS_LENGTH,
+                &U32Command {
+                    value: MIN_COMMITTEE_LENGTH as u32,
+                },
+            ))
+            .0,
+        ExitCode::Ok,
+        "the floor itself is legal"
+    );
+}
+
+// A committee every member of which carries a zero frozen weight is committable:
+// selection applies no stake floor, by design. Settlement then pays nobody and
+// ADVANCES its cursor, so the epoch's pot is forfeited rather than deferred.
+//
+// This pins the behaviour rather than endorsing it. The state used to be caught
+// by a length-mismatch revert that the paired-storage change made unreachable;
+// what that revert stood in for is this, and nothing else covered it.
+#[test]
+fn a_committee_with_only_zero_weights_forfeits_its_epoch_rather_than_deferring() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let reserve = Address::with_last_byte(0xc0);
+    let mut harness = Harness::new(1_000);
+    let mut command =
+        harness.initialize_command(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0);
+    command.blend_reserve = reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    commit_test_committee(&mut harness.sdk, 0, &[(validator, U256::ZERO)]);
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::from(100))
+        .unwrap();
+    install_stipend_token(&harness.sdk, reserve, U256::from(1_000), U256::from(1_000));
+    record_test_production(&mut harness.sdk, 0, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
+
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL);
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 0 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(epoch_reward(&harness.sdk, validator, 0), U256::ZERO);
+    assert_eq!(
+        staking_storage()
+            .last_rewarded_epoch_p1_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1,
+        "the cursor advances past an epoch nobody was paid for — the pot is gone"
+    );
+}
+
+#[test]
+fn an_eligible_set_one_short_of_the_floor_is_refused() {
+    let owner = Address::with_last_byte(0xa0);
+    // One below `MIN_COMMITTEE_LENGTH`: enough for a committee to exist, not
+    // enough for one that tolerates a fault.
+    let validators: Vec<Address> = (1..MIN_COMMITTEE_LENGTH)
+        .map(|index| Address::with_last_byte(index as u8))
+        .collect();
+    assert_eq!(validators.len(), MIN_COMMITTEE_LENGTH - 1);
+    // The floor is not an arbitrary number: it is the SMALLEST committee that
+    // tolerates a fault. Pinning that relationship rather than the literal keeps
+    // this test from being invariant to the constant it exists to defend — a
+    // fixture written purely in terms of `MIN_COMMITTEE_LENGTH` survives any
+    // value of it, including the value this change replaced.
+    assert_eq!(crate::math::fault_tolerance(MIN_COMMITTEE_LENGTH), 1);
+    assert_eq!(crate::math::fault_tolerance(MIN_COMMITTEE_LENGTH - 1), 0);
+
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(
+            owner,
+            validators.clone(),
+            vec![DEFAULT_MIN_VALIDATOR_STAKE; validators.len()],
+            0,
+        ),
+        ExitCode::Ok
+    );
+
+    harness.set_caller(SYSTEM_CALLER);
+    assert_revert_selector(
+        harness.call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE)),
+        ERR_COMMITTEE_TOO_SMALL,
+    );
 }
 
 // A keyless validator outranking a keyed one by stake occupies a top-k slot and
@@ -3458,24 +3588,30 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
 // keeps `getValidatorsWithKeysAt` — the array the off-chain deriver builds from —
 // in agreement with the committee `commitEpochCommittee` will accept.
 #[test]
-fn committee_verify_matches_the_selection_view_the_deriver_reads() {
+fn the_committee_drops_keyless_members_after_the_stake_cut() {
     let owner = Address::with_last_byte(0xa0);
     let keyless = Address::with_last_byte(0x01);
-    let keyed_a = Address::with_last_byte(0x02);
-    let keyed_b = Address::with_last_byte(0x03);
-    let validators = vec![keyless, keyed_a, keyed_b];
+    let keyed: Vec<Address> = (2..=MIN_COMMITTEE_LENGTH + 1)
+        .map(|index| Address::with_last_byte(index as u8))
+        .collect();
+    let below_cut = Address::with_last_byte(0xee);
     let mut harness = Harness::new(1_000);
-    let mut command = harness.initialize_command(
-        owner,
-        validators.clone(),
-        vec![
-            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(100),
-            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3),
-            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
-        ],
-        500,
+    // The cap seats `keyless` — top-ranked on stake — plus every `keyed` member,
+    // leaving `below_cut` outside. Blanking the keyless member's key must leave
+    // exactly the committee floor rather than promote `below_cut` into the gap.
+    let cap = MIN_COMMITTEE_LENGTH + 1;
+    let mut validators = vec![keyless];
+    validators.extend(keyed.iter().copied());
+    validators.push(below_cut);
+    let mut stakes = vec![DEFAULT_MIN_VALIDATOR_STAKE * U256::from(100)];
+    stakes.extend(
+        keyed
+            .iter()
+            .map(|_| DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3)),
     );
-    command.active_validators_length = 2;
+    stakes.push(DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2));
+    let mut command = harness.initialize_command(owner, validators, stakes, 500);
+    command.active_validators_length = cap as u32;
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
 
     let keyless_keys = consensus_storage().consensus_keys_accessor().entry(keyless);
@@ -3489,30 +3625,21 @@ fn committee_verify_matches_the_selection_view_the_deriver_reads() {
         &U64Command { value: 0 },
     ));
     let (view, view_keys): (Vec<Address>, Vec<ConsensusKeys>) = decode_returns(&output);
+    assert_eq!(view.len(), cap);
     assert_eq!(
-        view,
-        vec![keyless, keyed_a],
+        view[0], keyless,
         "the selection view ranks by stake before any key filtering"
     );
+    assert!(!view.contains(&below_cut));
     assert!(
         view_keys[0].bls_pubkey.is_empty(),
         "the keyless top-ranked validator is surfaced with blank keys, not omitted"
     );
 
     harness.set_caller(SYSTEM_CALLER);
-    assert_revert_selector(
-        harness.call(encode_args_call(
-            SIG_COMMIT_EPOCH_COMMITTEE,
-            &(vec![keyed_a, keyed_b],),
-        )),
-        ERR_COMMITTEE_LENGTH_MISMATCH,
-    );
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(vec![keyed_a],),
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
@@ -3520,13 +3647,22 @@ fn committee_verify_matches_the_selection_view_the_deriver_reads() {
         SIG_GET_EPOCH_COMMITTEE,
         &U64Command { value: 0 },
     ));
-    assert_eq!(decode_output::<Vec<Address>>(&output), vec![keyed_a]);
+    // The cut takes `keyless` on stake plus every `keyed` member; the key filter
+    // then drops `keyless`. `below_cut` is never promoted into the vacancy — that
+    // is the whole point of filtering after the cut rather than before it.
+    assert_eq!(decode_output::<Vec<Address>>(&output), keyed);
 }
 
+// A refused commit must leave no partial state — the cursor stays put and no
+// committee is written. In production nobody gets to use that: the commit is a
+// pre-execution system call, so this revert halts the chain rather than being
+// retried. The property is about state consistency, not about a second attempt.
 #[test]
-fn fully_keyless_committee_reverts_without_advancing_commit_pointer() {
+fn a_refused_commit_writes_neither_committee_nor_cursor() {
     let owner = Address::with_last_byte(0xa0);
-    let validators = vec![Address::with_last_byte(0x01), Address::with_last_byte(0x02)];
+    let validators: Vec<Address> = (1..=MIN_COMMITTEE_LENGTH)
+        .map(|index| Address::with_last_byte(index as u8))
+        .collect();
     let mut harness = Harness::new(1_000);
     assert_eq!(
         harness.initialize(
@@ -3547,10 +3683,7 @@ fn fully_keyless_committee_reverts_without_advancing_commit_pointer() {
     }
     harness.set_caller(SYSTEM_CALLER);
     assert_revert_selector(
-        harness.call(encode_args_call(
-            SIG_COMMIT_EPOCH_COMMITTEE,
-            &(Vec::<Address>::new(),),
-        )),
+        harness.call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE)),
         ERR_COMMITTEE_TOO_SMALL,
     );
 
@@ -3574,10 +3707,7 @@ fn fully_keyless_committee_reverts_without_advancing_commit_pointer() {
     }
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(validators.clone(),),
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
@@ -3618,27 +3748,19 @@ fn a_raised_minimum_does_not_empty_the_next_committee() {
     let owner = Address::with_last_byte(0xa0);
     let first = Address::with_last_byte(0x01);
     let second = Address::with_last_byte(0x02);
-    let validators = vec![first, second];
+    let (validators, stakes) = with_filler_validators(&[
+        (first, DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3)),
+        (second, DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2)),
+    ]);
     let mut harness = Harness::new(1_000);
-    let mut command = harness.initialize_command(
-        owner,
-        validators.clone(),
-        vec![
-            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3),
-            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
-        ],
-        0,
-    );
-    command.active_validators_length = 2;
+    let mut command = harness.initialize_command(owner, validators.clone(), stakes, 0);
+    command.active_validators_length = MIN_COMMITTEE_LENGTH as u32;
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
 
     harness.set_caller(SYSTEM_CALLER);
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(validators.clone(),),
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
@@ -3662,16 +3784,13 @@ fn a_raised_minimum_does_not_empty_the_next_committee() {
     );
 
     assert_eq!(
-        staking::selected_validators_at(&harness.sdk, 0).unwrap(),
+        staking::selected_addresses_at(&harness.sdk, 0).unwrap(),
         validators
     );
     harness.set_caller(SYSTEM_CALLER);
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(validators.clone(),),
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
@@ -3689,8 +3808,9 @@ fn committee_pruning_keeps_dkg_history() {
     let activation_block = 1_000;
     let mut harness = Harness::new(activation_block);
     harness.set_caller(owner);
+    let (validators, stakes) = with_filler_validators(&[(validator, DEFAULT_MIN_VALIDATOR_STAKE)]);
     assert_eq!(
-        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0,),
+        harness.initialize(owner, validators, stakes, 0),
         ExitCode::Ok
     );
     harness.set_block_number(
@@ -3707,10 +3827,7 @@ fn committee_pruning_keeps_dkg_history() {
     harness.set_caller(SYSTEM_CALLER);
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(vec![validator],),
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
@@ -4110,11 +4227,11 @@ fn sole_validator_owner_full_exit_deactivates_without_leaving_subminimum_dust() 
         1
     );
     assert_eq!(
-        staking::selected_validators_at(&harness.sdk, 0).unwrap(),
+        staking::selected_addresses_at(&harness.sdk, 0).unwrap(),
         vec![validator],
         "the completed epoch remains available for historical committee validation"
     );
-    assert!(staking::selected_validators_at(&harness.sdk, 1)
+    assert!(staking::selected_addresses_at(&harness.sdk, 1)
         .unwrap()
         .is_empty());
 }
@@ -4317,8 +4434,9 @@ fn stipend_pays_the_frozen_weights_not_the_stake_at_settlement_time() {
     let validator_b = Address::with_last_byte(0x02);
     let stake = DEFAULT_MIN_VALIDATOR_STAKE;
     let mut harness = Harness::new(1_000);
-    let mut command =
-        harness.initialize_command(owner, vec![validator_a, validator_b], vec![stake, stake], 0);
+    let (validators, stakes) =
+        with_filler_validators(&[(validator_a, stake), (validator_b, stake)]);
+    let mut command = harness.initialize_command(owner, validators, stakes, 0);
     command.blend_reserve = reserve;
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
 
@@ -4326,10 +4444,7 @@ fn stipend_pays_the_frozen_weights_not_the_stake_at_settlement_time() {
     for _ in 0..3 {
         assert_eq!(
             harness
-                .call(encode_args_call(
-                    SIG_COMMIT_EPOCH_COMMITTEE,
-                    &(vec![validator_a, validator_b],),
-                ))
+                .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
                 .0,
             ExitCode::Ok
         );
@@ -4367,8 +4482,12 @@ fn stipend_pays_the_frozen_weights_not_the_stake_at_settlement_time() {
             .0,
         ExitCode::Ok
     );
-    assert_eq!(epoch_reward(&harness.sdk, validator_a, 2), U256::from(50));
-    assert_eq!(epoch_reward(&harness.sdk, validator_b, 2), U256::from(50));
+    // Equal frozen weights across the whole committee, so the pot splits evenly
+    // over `MIN_COMMITTEE_LENGTH` members — the point is that both named members
+    // are paid the SAME share despite one of them gaining stake afterwards.
+    let share = U256::from(100 / MIN_COMMITTEE_LENGTH);
+    assert_eq!(epoch_reward(&harness.sdk, validator_a, 2), share);
+    assert_eq!(epoch_reward(&harness.sdk, validator_b, 2), share);
 }
 
 // A committee may be committed two epochs ahead, so the weights an unfinished
@@ -4627,60 +4746,6 @@ fn settling_an_unclosed_epoch_reverts_instead_of_forfeiting_it() {
             .unwrap(),
         0,
         "a revert leaves the epoch for a retry; a guard return would forfeit it"
-    );
-}
-
-#[test]
-fn settlement_rejects_a_committee_without_matching_frozen_weights() {
-    let owner = Address::with_last_byte(0xa0);
-    let seated = Address::with_last_byte(0x01);
-    let unweighted = Address::with_last_byte(0x02);
-    let reserve = Address::with_last_byte(0xc0);
-    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
-    let mut harness = Harness::new(1_000);
-    let mut command =
-        harness.initialize_command(owner, vec![seated, unweighted], vec![stake, stake], 0);
-    command.blend_reserve = reserve;
-    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
-
-    // Two committee members, one frozen weight.
-    let consensus = consensus_storage();
-    let committee = consensus.epoch_committees_accessor().entry(0);
-    committee.push_checked(&mut harness.sdk, seated).unwrap();
-    committee
-        .push_checked(&mut harness.sdk, unweighted)
-        .unwrap();
-    consensus
-        .leader_stakes_accessor()
-        .entry(0)
-        .push_checked(
-            &mut harness.sdk,
-            crate::math::compact_balance(stake).unwrap(),
-        )
-        .unwrap();
-    chain_config_storage()
-        .blend_stipend_per_epoch_accessor()
-        .set_checked(&mut harness.sdk, U256::from(100))
-        .unwrap();
-    install_stipend_token(&harness.sdk, reserve, U256::from(1_000), U256::from(1_000));
-    record_test_production(&mut harness.sdk, 0, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
-
-    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL);
-    harness.set_caller(SYSTEM_CALLER);
-    assert_revert_selector(
-        harness.call(encode_call(
-            SIG_SETTLE_EPOCH_STIPEND,
-            &U64Command { value: 0 },
-        )),
-        ERR_LEADER_STAKES_LENGTH_MISMATCH,
-    );
-    assert_eq!(
-        staking_storage()
-            .last_rewarded_epoch_p1_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        0,
-        "a refused settlement must not advance the cursor past the epoch"
     );
 }
 
@@ -4990,7 +5055,7 @@ fn claiming_rewards_does_not_rewrite_historical_self_stake() {
     let mut harness = Harness::new(0);
     harness.set_caller(owner);
     assert_eq!(
-        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0,),
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
         ExitCode::Ok
     );
 
@@ -5006,7 +5071,7 @@ fn claiming_rewards_does_not_rewrite_historical_self_stake() {
     let stake_before =
         staking::delegated_amount_at(&harness.sdk, validator, validator, past_epoch).unwrap();
     assert!(!stake_before.is_zero());
-    assert!(staking::selected_validators_at(&harness.sdk, past_epoch)
+    assert!(staking::selected_addresses_at(&harness.sdk, past_epoch)
         .unwrap()
         .contains(&validator));
 
@@ -5027,7 +5092,7 @@ fn claiming_rewards_does_not_rewrite_historical_self_stake() {
         "a claim must not change what the self-stake was at an already-committed epoch"
     );
     assert!(
-        staking::selected_validators_at(&harness.sdk, past_epoch)
+        staking::selected_addresses_at(&harness.sdk, past_epoch)
             .unwrap()
             .contains(&validator),
         "the off-chain deriver re-reads past-epoch selection to rebuild committees; a claim must \
@@ -5124,44 +5189,67 @@ fn reward_claims_are_bounded_to_one_thousand_epochs() {
 }
 
 #[test]
-fn committee_validation_is_canonical_and_membership_changes_mint_dkg_bit() {
+fn the_commit_orders_by_peer_key_and_membership_changes_mint_the_dkg_bit() {
     let owner = Address::with_last_byte(0xa0);
     let validator_a = Address::with_last_byte(0x01);
     let validator_b = Address::with_last_byte(0x02);
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
+    // One member is disabled part-way through, so seat one more than the floor:
+    // the commits after the disable must still find a legal committee.
+    // Stakes ASCEND with the roster, and peer keys ascend with it too. Ranking is
+    // by stake DESCENDING, so it hands the sort a peer-key-descending list and the
+    // sort has real work to do. Get this backwards — stakes descending — and the
+    // ranked order already equals the sorted order, deleting the sort changes
+    // nothing, and the assertion below passes on a contract that never sorts.
+    let mut named = vec![
+        (validator_a, DEFAULT_MIN_VALIDATOR_STAKE * U256::from(7)),
+        (validator_b, DEFAULT_MIN_VALIDATOR_STAKE * U256::from(8)),
+    ];
+    named.push((
+        Address::with_last_byte(0x03),
+        DEFAULT_MIN_VALIDATOR_STAKE * U256::from(9),
+    ));
+    let (mut validators, mut stakes) = with_filler_validators(&named);
+    validators.push(Address::with_last_byte(0xd0));
+    stakes.push(DEFAULT_MIN_VALIDATOR_STAKE);
     assert_eq!(
-        harness.initialize(
-            owner,
-            vec![validator_a, validator_b],
-            vec![DEFAULT_MIN_VALIDATOR_STAKE, DEFAULT_MIN_VALIDATOR_STAKE,],
-            500,
-        ),
+        harness.initialize(owner, validators, stakes, 500),
         ExitCode::Ok
     );
 
     harness.set_caller(SYSTEM_CALLER);
-    assert_revert_selector(
-        harness.call(encode_args_call(
-            SIG_COMMIT_EPOCH_COMMITTEE,
-            &(vec![validator_b, validator_a],),
-        )),
-        ERR_COMMITTEE_NOT_STRICTLY_ASCENDING,
-    );
-    assert_revert_selector(
-        harness.call(encode_args_call(
-            SIG_COMMIT_EPOCH_COMMITTEE,
-            &(vec![validator_a],),
-        )),
-        ERR_COMMITTEE_LENGTH_MISMATCH,
-    );
-    let both = (vec![validator_a, validator_b],);
     assert_eq!(
         harness
-            .call(encode_args_call(SIG_COMMIT_EPOCH_COMMITTEE, &both))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
+
+    // Canonical order is now PRODUCED, not checked: nobody told the contract
+    // which permutation to store. Assert the property itself rather than a
+    // specific address order, which depends on how the harness happens to
+    // assign peer keys.
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE,
+        &U64Command { value: 0 },
+    ));
+    let committed = decode_output::<Vec<Address>>(&output);
+    assert_eq!(committed.len(), MIN_COMMITTEE_LENGTH + 1);
+    let peer_of = |sdk: &TestingContextImpl, validator: Address| {
+        consensus_storage()
+            .consensus_keys_accessor()
+            .entry(validator)
+            .peer_pubkey_accessor()
+            .get_checked(sdk)
+            .unwrap()
+    };
+    for pair in committed.windows(2) {
+        assert!(
+            peer_of(&harness.sdk, pair[0]) < peer_of(&harness.sdk, pair[1]),
+            "the committee the contract derived must be strictly ascending by peer key"
+        );
+    }
 
     harness.set_caller(GENESIS_GOVERNANCE);
     assert_eq!(
@@ -5177,7 +5265,7 @@ fn committee_validation_is_canonical_and_membership_changes_mint_dkg_bit() {
     for _ in 0..2 {
         assert_eq!(
             harness
-                .call(encode_args_call(SIG_COMMIT_EPOCH_COMMITTEE, &both))
+                .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
                 .0,
             ExitCode::Ok
         );
@@ -5185,13 +5273,22 @@ fn committee_validation_is_canonical_and_membership_changes_mint_dkg_bit() {
     harness.set_block_number(1_200);
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(vec![validator_a],),
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
+    for unchanged_epoch in [1u64, 2] {
+        let (_, output) = harness.call(encode_call(
+            SIG_GET_DKG_QUAL,
+            &U64Command {
+                value: unchanged_epoch,
+            },
+        ));
+        assert!(
+            !decode_output::<bool>(&output),
+            "an unchanged committee must not mint a DKG ceremony for epoch {unchanged_epoch}"
+        );
+    }
     let (_, output) = harness.call(encode_call(SIG_GET_DKG_QUAL, &U64Command { value: 3 }));
     assert!(decode_output::<bool>(&output));
 }
@@ -6162,13 +6259,9 @@ fn a_pruned_evidence_epoch_no_longer_blocks_a_slash() {
     let offender = Address::with_last_byte(0x01);
     let reporter = Address::with_last_byte(0xb0);
     let mut harness = Harness::new(1_000);
+    let (validators, stakes) = with_filler_validators(&[(offender, DEFAULT_MIN_VALIDATOR_STAKE)]);
     assert_eq!(
-        harness.initialize(
-            sponsor,
-            vec![offender],
-            vec![DEFAULT_MIN_VALIDATOR_STAKE],
-            0,
-        ),
+        harness.initialize(sponsor, validators, stakes, 0),
         ExitCode::Ok
     );
 
@@ -6179,10 +6272,7 @@ fn a_pruned_evidence_epoch_no_longer_blocks_a_slash() {
         harness.set_block_number(1_000 + epoch * DEFAULT_EPOCH_BLOCK_INTERVAL);
         assert_eq!(
             harness
-                .call(encode_args_call(
-                    SIG_COMMIT_EPOCH_COMMITTEE,
-                    &(vec![offender],),
-                ))
+                .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
                 .0,
             ExitCode::Ok
         );
@@ -6193,8 +6283,8 @@ fn a_pruned_evidence_epoch_no_longer_blocks_a_slash() {
             .epoch_committees_accessor()
             .entry(CORPUS_EPOCH)
             .len_checked(&harness.sdk)
-            .unwrap(),
-        1
+            .unwrap() as usize,
+        MIN_COMMITTEE_LENGTH
     );
 
     // Pruning is held behind the settlement cursor and the liability deadline, so
@@ -6206,10 +6296,7 @@ fn a_pruned_evidence_epoch_no_longer_blocks_a_slash() {
     harness.set_block_number(1_000 + 60 * DEFAULT_EPOCH_BLOCK_INTERVAL);
     assert_eq!(
         harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(vec![offender],),
-            ))
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
             .0,
         ExitCode::Ok
     );
@@ -6734,7 +6821,7 @@ fn production_exclusion_refuses_without_a_replacement_and_leaves_no_trace() {
     );
     assert!(staking::selection_visible_at(&harness.sdk, second, 1).unwrap());
     assert_eq!(
-        staking::selected_validators_at(&harness.sdk, 1).unwrap(),
+        staking::selected_addresses_at(&harness.sdk, 1).unwrap(),
         vec![first, second]
     );
     assert!(
@@ -6771,11 +6858,11 @@ fn production_exclusion_bites_at_the_next_epoch_and_not_before() {
     );
     assert!(!staking::selection_visible_at(&harness.sdk, second, 1).unwrap());
     assert_eq!(
-        staking::selected_validators_at(&harness.sdk, 0).unwrap(),
+        staking::selected_addresses_at(&harness.sdk, 0).unwrap(),
         vec![first, second]
     );
     assert_eq!(
-        staking::selected_validators_at(&harness.sdk, 1).unwrap(),
+        staking::selected_addresses_at(&harness.sdk, 1).unwrap(),
         vec![first, third],
         "the freed seat is taken by the replacement the refusal rule required"
     );
@@ -6916,7 +7003,7 @@ fn governance_activation_does_not_cancel_a_running_exclusion() {
         "re-activation must not re-stamp visibility while an exclusion is running"
     );
     assert_eq!(
-        staking::selected_validators_at(&harness.sdk, 1).unwrap(),
+        staking::selected_addresses_at(&harness.sdk, 1).unwrap(),
         vec![keeper]
     );
 

@@ -175,12 +175,33 @@ pub struct EquivocationCommitmentStorage {
     committed_at: StorageU64,
 }
 
+/// One committed committee member: the validator and the weight frozen with it.
+///
+/// These used to be two parallel vectors, aligned only by every writer doing the
+/// right thing. Nothing in the layout made a misalignment unrepresentable, three
+/// separate readers each carried a length check against it, and the failure was
+/// silent where it mattered most: the node zips the two arrays positionally and
+/// keys its leader-election weight map by each entry's peer key, so a same-length
+/// misalignment would have reweighted the leader lottery without reverting
+/// anywhere. One vector of pairs removes the state rather than guarding it.
+#[derive(Storage)]
+pub struct EpochCommitteeMemberStorage {
+    validator: StorageAddress,
+    /// Leader weight in `BALANCE_COMPACT_PRECISION` units, stamped at commit
+    /// time from the selection epoch.
+    ///
+    /// Computing it live at read time makes it depend on the block height each
+    /// node happens to read at, and the leader is drawn from these weights — so
+    /// an unfrozen weight is a per-node leader split, not a rounding error.
+    weight: StorageUint112,
+}
+
 /// ERC-7201 namespaced consensus, committee, and equivocation state.
 #[derive(Storage)]
 pub struct ConsensusStorage {
     consensus_keys: StorageMap<Address, ConsensusKeysStorage>,
     peer_pubkey_owner: StorageMap<B256, StorageAddress>,
-    epoch_committees: StorageMap<u64, StorageVec<StorageAddress>>,
+    epoch_committees: StorageMap<u64, StorageVec<EpochCommitteeMemberStorage>>,
     dkg_qual: StorageMap<u64, StorageBool>,
     last_committed_epoch_p1: StorageU64,
     pruned_up_to_p1: StorageU64,
@@ -193,13 +214,6 @@ pub struct ConsensusStorage {
     /// Exclusive epoch through which each committee's record must be kept, the
     /// bound pruning stops at.
     committee_liability_end_epochs: StorageMap<u64, StorageU64>,
-    /// Leader weights stamped at commit time, positional with `epoch_committees`.
-    ///
-    /// Stored in `BALANCE_COMPACT_PRECISION` units. Computing the weight live at
-    /// read time makes it depend on the block height each node happens to read
-    /// at, and the leader is drawn from those weights — so an unfrozen weight is
-    /// a per-node leader split, not an accounting rounding error.
-    leader_stakes: StorageMap<u64, StorageVec<StorageUint112>>,
 }
 
 /// Single ERC-7201 namespaced storage root for staking.
