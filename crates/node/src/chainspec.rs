@@ -1,5 +1,5 @@
-use crate::utils::download_and_cache_genesis_verified;
-use alloy_primitives::b256;
+use crate::utils::{download_and_cache_genesis_verified, GenesisArtifact};
+use alloy_primitives::{b256, hex};
 use fluentbase_genesis::local_genesis_from_file;
 use reth_chainspec::{
     make_genesis_header, BaseFeeParams, BaseFeeParamsKind, Chain, ChainHardforks, ChainSpec,
@@ -11,14 +11,50 @@ use reth_revm::primitives::U256;
 use std::sync::{Arc, LazyLock};
 use tracing::warn;
 
-/// Release tag for Fluent Mainnet genesis
-const FLUENT_MAINNET_GENESIS_TAG: &str = "v1.0.0";
+// Genesis artifacts for the built-in networks.
+//
+// Each entry names a GitHub release asset and pins the SHA-256 of the exact `.json.gz` published
+// there. The pins are checked in addition to the detached OpenPGP signature; when a tag is bumped,
+// re-pin with `shasum -a 256 <asset>` after confirming the asset's `.asc` verifies against the
+// release key embedded in `utils.rs`, and refresh `crates/node/testdata/<asset>.asc`.
 
-/// Release tag for Fluent Testnet genesis (GitHub releases).
-const FLUENT_TESTNET_GENESIS_TAG: &str = "v0.3.4-dev";
+/// Genesis artifact for Fluent Devnet (GitHub releases).
+const FLUENT_DEVNET_GENESIS: GenesisArtifact = GenesisArtifact {
+    tag: "v0.5.7",
+    channel: None,
+    sha256: Some(hex!(
+        "91b9a427805d45dd14e46a0cd517bcc85f350fe7dfc38fa96f6ff0ebf5e864da"
+    )),
+};
 
-/// Release tag for Fluent Devnet genesis (GitHub releases).
-const FLUENT_DEVNET_GENESIS_TAG: &str = "v0.5.7";
+/// Genesis artifact for Fluent Testnet (GitHub releases).
+const FLUENT_TESTNET_GENESIS: GenesisArtifact = GenesisArtifact {
+    tag: "v0.3.4-dev",
+    channel: None,
+    sha256: Some(hex!(
+        "8cd30358c5664375e6739bc48302445e7ee10fd0158bedb788505e5c590983bd"
+    )),
+};
+
+/// Genesis artifact for Fluent Mainnet (GitHub releases).
+const FLUENT_MAINNET_GENESIS: GenesisArtifact = GenesisArtifact {
+    tag: "v1.0.0",
+    channel: Some("mainnet"),
+    sha256: Some(hex!(
+        "72cb4b3b7b15de952bd1094281a1f2430cb711bc473a0520f92aa3e2b1bdb643"
+    )),
+};
+
+/// Every genesis artifact a built-in network can be started from.
+///
+/// Kept as a table so tests can assert the fail-closed guarantees hold for all of them; keep it in
+/// sync when a network is added.
+#[cfg(test)]
+pub(crate) const BUILT_IN_GENESIS_ARTIFACTS: &[(&str, &GenesisArtifact)] = &[
+    ("fluent-devnet", &FLUENT_DEVNET_GENESIS),
+    ("fluent-testnet", &FLUENT_TESTNET_GENESIS),
+    ("fluent-mainnet", &FLUENT_MAINNET_GENESIS),
+];
 
 pub const FLUENT_LOCALNET_CHAIN_ID: u64 = 1337;
 pub const FLUENT_DEVNET_CHAIN_ID: u64 = 0x5201;
@@ -44,7 +80,7 @@ pub static FLUENT_LOCAL: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
 
 /// Fluent Devnet
 pub static FLUENT_DEVNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
-    let genesis = download_and_cache_genesis_verified(FLUENT_DEVNET_GENESIS_TAG, None)
+    let genesis = download_and_cache_genesis_verified(&FLUENT_DEVNET_GENESIS)
         .expect("failed to download/verify Fluent devnet genesis");
     let hardforks = fluent_default_chain_hardforks(ForkCondition::Block(0));
     ChainSpec {
@@ -62,7 +98,7 @@ pub static FLUENT_DEVNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
 
 /// Fluent Testnet
 pub static FLUENT_TESTNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
-    let genesis = download_and_cache_genesis_verified(FLUENT_TESTNET_GENESIS_TAG, None)
+    let genesis = download_and_cache_genesis_verified(&FLUENT_TESTNET_GENESIS)
         .expect("failed to download/verify Fluent testnet genesis");
     let hardforks = fluent_default_chain_hardforks(ForkCondition::Block(21_300_000));
     ChainSpec {
@@ -80,7 +116,7 @@ pub static FLUENT_TESTNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
 
 /// Fluent Mainnet
 pub static FLUENT_MAINNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
-    let genesis = download_and_cache_genesis_verified(FLUENT_MAINNET_GENESIS_TAG, Some("mainnet"))
+    let genesis = download_and_cache_genesis_verified(&FLUENT_MAINNET_GENESIS)
         .expect("failed to download/verify Fluent mainnet genesis");
     let hardforks = fluent_default_chain_hardforks(ForkCondition::Timestamp(0));
     let genesis_header = SealedHeader::new_unhashed(make_genesis_header(&genesis, &hardforks));
