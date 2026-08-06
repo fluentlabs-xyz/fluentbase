@@ -307,7 +307,7 @@ impl<'a> Cursor<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use alloc::{vec, vec::Vec};
     use fluentbase_sdk::hex;
@@ -316,7 +316,7 @@ mod tests {
     /// Golden corpus, copied verbatim from the node-side conformance fixture
     /// `fluentbase:crates/dpos/consensus/tests/equivocation_evidence_conformance.rs`,
     /// which pins these bytes against the production `commonware` encoder.
-    const CONFLICTING_NOTARIZE: [u8; 168] = hex!(
+    pub(crate) const CONFLICTING_NOTARIZE: [u8; 168] = hex!(
         "072a29aa000000000000000000000000000000000000000000000000000000000000aa
          038aa1d24f195fc333878b14744f62a363acf0051249c949c4cc473850991aa708
          41eea2171a333b13de2e61fed4936305
@@ -324,7 +324,7 @@ mod tests {
          03923c9abd2f0abe63eed5a2d9ac175032b2b48685c61f9e6a7c8b7419d7807782
          1d82a3bfd41a5f10bcfcd8434444f820"
     );
-    const CONFLICTING_FINALIZE: [u8; 168] = hex!(
+    pub(crate) const CONFLICTING_FINALIZE: [u8; 168] = hex!(
         "072a29cc000000000000000000000000000000000000000000000000000000000000cc
          039936ff0962301d36721c6d9e7947ec8a340bb9b5b7fcfa74ba2582918c9b3358
          b31c15c2a8ae372f3340e8c7706d32a6
@@ -332,7 +332,7 @@ mod tests {
          03877570329a653f6cf0916cd5332247cd29a73d60a867dc1d710d5fe1bb4449b1
          e9393d5f9aed23bb08a2f9aed0e65af2"
     );
-    const NULLIFY_FINALIZE: [u8; 135] = hex!(
+    pub(crate) const NULLIFY_FINALIZE: [u8; 135] = hex!(
         "072a
          03b9d1ed34ffda9193ce95eee9ab8db558f4e923a1b58a6f80ca0bf221f7567f72
          d65132b103190fd5c687f7f7a6cdc3db

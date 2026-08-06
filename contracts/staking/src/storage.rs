@@ -1,7 +1,7 @@
 //! ERC-7201 storage layout.
 
 use crate::consts::{
-    CHAIN_CONFIG_STORAGE_SLOT, CONSENSUS_STORAGE_SLOT, INITIALIZER_STORAGE_SLOT,
+    BLS_PUBKEY_WORDS, CHAIN_CONFIG_STORAGE_SLOT, CONSENSUS_STORAGE_SLOT, INITIALIZER_STORAGE_SLOT,
     PRODUCTION_LIVENESS_STORAGE_SLOT, STAKING_STORAGE_SLOT,
 };
 use fluentbase_sdk::{
@@ -71,11 +71,6 @@ pub struct ValidatorStorage {
     /// Appended to preserve the existing storage layout while bounding
     /// historical snapshot lookups.
     first_snapshot_epoch_p1: StorageU64,
-    /// Latest exclusive unlock epoch among queued self-principal operations.
-    ///
-    /// New owner undelegations extend it; a complete claim or equivocation
-    /// seizure clears it. Claim accounting uses each operation's own deadline.
-    self_stake_unlock_epoch: StorageU64,
 }
 
 /// Per-epoch validator accounting snapshot.
@@ -114,9 +109,6 @@ pub struct UndelegationOpStorage {
     /// Stake in `BALANCE_COMPACT_PRECISION` units.
     amount: StorageUint112,
     epoch: StorageU64,
-    /// Exclusive epoch when validator-owner principal stops being slashable.
-    /// Zero for ordinary delegators.
-    self_stake_unlock_epoch: StorageU64,
 }
 
 /// Delegation history for one validator/delegator pair.
@@ -142,19 +134,36 @@ pub struct ValidatorDelegationStorage {
 
 /// Epoch-stamped selection visibility. Status changes become visible from the
 /// following epoch so an in-flight committee derivation cannot drift.
+///
+/// The record carries three transitions, not one: a single `prev_visible` is
+/// only correct until the second stamp overwrites it, after which epochs below
+/// the first stamp start answering with the value that took effect between the
+/// two. Committed committees read two selection epochs back, so a governance
+/// pair in consecutive epochs was enough to rewrite an epoch already in force.
+///
+/// All three pairs share one slot, so the extra depth costs no extra store.
 #[derive(Storage)]
 pub struct SelectionMembershipStorage {
     visible: StorageBool,
     prev_visible: StorageBool,
     effective_from: StorageU64,
     rostered: StorageBool,
+    /// Epoch from which `prev_visible` took effect.
+    ///
+    /// Appended, never inserted: declaration order is the storage layout.
+    prev_from: StorageU64,
+    /// Visibility that was in force before `prev_visible`.
+    prev2_visible: StorageBool,
+    /// Epoch from which `prev2_visible` took effect. Epochs below it answer
+    /// `false`: the history is exactly three transitions deep.
+    prev2_from: StorageU64,
 }
 
 /// One validator's immutable v1 consensus identity.
 #[derive(Storage)]
 pub struct ConsensusKeysStorage {
     /// Compressed 96-byte BLS12-381 G2 key, stored without dynamic-bytes metadata.
-    bls_pubkey: StorageArray<StorageBytes32, 3>,
+    bls_pubkey: StorageArray<StorageBytes32, { BLS_PUBKEY_WORDS }>,
     peer_pubkey: StorageBytes32,
     activation_epoch: StorageU64,
 }
@@ -181,7 +190,8 @@ pub struct ConsensusStorage {
     ///
     /// Consensus identities are immutable in v1, so ownership is never released.
     bls_pubkey_owner: StorageMap<B256, StorageAddress>,
-    /// Exclusive equivocation-evidence deadline snapshotted for each committee.
+    /// Exclusive epoch through which each committee's record must be kept, the
+    /// bound pruning stops at.
     committee_liability_end_epochs: StorageMap<u64, StorageU64>,
     /// Leader weights stamped at commit time, positional with `epoch_committees`.
     ///

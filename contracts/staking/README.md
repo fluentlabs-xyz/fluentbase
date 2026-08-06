@@ -57,10 +57,9 @@ key, proof of possession, and peer key in the validator-creation call; there is 
 - Undelegated principal is released only after its maturity epoch and is claimed through the reward path.
 - Reward claims and views never consume epochs at or beyond the exclusive settled frontier. Matured undelegated
   principal is processed against its own bounded cursor, so delayed reward settlement cannot block withdrawals.
-- Each validator-owner undelegation snapshots a fixed liability deadline covering the committee lookahead and evidence
-  retention window. Later committees secured by the remaining self-stake do not extend queued principal, and stalled
-  committee pruning cannot delay release. The same absolute committee deadlines expire equivocation evidence;
-  `getValidatorSelfStakeLock` exposes the current lock state and exclusive unlock epoch.
+- A validator owner's undelegated principal matures on the ordinary schedule; no separate liability deadline applies.
+- Equivocation evidence does not expire. The offender is resolved from the signing key, which is recorded permanently,
+  so a report stays valid for as long as there is stake to seize.
 - Equivocation seizure consumes both active and pending self-principal.
 - Claims, stipend catch-up, and committee pruning are bounded per call.
 - BLEND transfers accept ERC-20 tokens that return `true` or no data; explicit `false` reverts.
@@ -149,10 +148,14 @@ bytes are unchanged.
 The system caller reports every block's producer through `recordProduction`. When the epoch rolls
 over, the close runs three legs with three deliberately different failure policies:
 
-1. **Releases** — unconditional, and frozen by the `productionLivenessDisabled` kill switch.
-2. **Verdicts** — fail-loud. An epoch whose recorded block count does not match the epoch interval is
-   tainted: it emits `PartialEpoch` and is not judged at all, because a partial record cannot
-   distinguish an idle validator from a missing report.
+1. **Releases** — unconditional. Neither a tainted epoch nor the `productionLivenessDisabled` kill
+   switch holds an expiring exclusion back: tying releases to either would freeze them during
+   exactly the outage they exist for, and would make the exclusion duration depend on when the
+   switch was flipped. A release is not a punishment, so the switch has no business stopping it.
+2. **Verdicts** — fail-loud, and the one leg the kill switch does hold. An epoch whose recorded
+   block count does not match the epoch interval is tainted: it emits `PartialEpoch` and is not
+   judged at all, because a partial record cannot distinguish an idle validator from a missing
+   report. With the switch on, no new verdicts and no new stamps.
 3. **Stipend** — tolerant. It runs in a fuel-capped self-call so a failing payment cannot roll back
    the releases and verdicts of the same close; a failure emits `StipendLegSkipped` from the outer
    frame.

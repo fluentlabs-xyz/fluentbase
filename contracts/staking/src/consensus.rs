@@ -6,14 +6,14 @@ use crate::{
     evidence::{self, EvidenceShape},
     math,
     staking::{
-        remove_active, selected_validators, selected_validators_at, set_selection_visible,
-        validator_total_at,
+        remove_active, remove_delegation_from_totals, selected_validators, selected_validators_at,
+        set_selection_visible, validator_total_at,
     },
     storage::{chain_config_storage, consensus_storage, staking_storage},
     types::{AddressCommand, ConsensusKeys, EpochSignerCommand, EquivocationCommand, U64Command},
     util::{
         current_epoch, decode, decode_args, ensure_initialized, ensure_mutable, ensure_non_payable,
-        revert, revert_with, safe_transfer, write_abi,
+        next_epoch, revert, revert_with, try_transfer, write_abi,
     },
 };
 use alloc::vec::Vec;
@@ -97,7 +97,7 @@ pub(crate) fn read_bls_pubkey<SDK: SharedAPI>(
         .entry(validator)
         .bls_pubkey_accessor();
     let mut key = Vec::with_capacity(BLS_PUBKEY_LENGTH);
-    for index in 0..3 {
+    for index in 0..BLS_PUBKEY_WORDS {
         key.extend_from_slice(parts.at(index).get_checked(sdk)?.as_slice());
     }
     Ok(Bytes::from(key))
@@ -110,7 +110,7 @@ fn fluent_namespace<SDK: SharedAPI>(sdk: &SDK) -> Bytes {
 }
 
 pub(crate) struct VerifiedConsensusKeys {
-    bls_pubkey: [B256; 3],
+    bls_pubkey: [B256; BLS_PUBKEY_WORDS],
     bls_pubkey_hash: B256,
     encoded_bls_pubkey: Bytes,
     peer_pubkey: B256,
@@ -192,12 +192,18 @@ pub(crate) fn verify_consensus_keys<SDK: SharedAPI>(
         return revert_with(sdk, ERR_INVALID_PROOF_OF_POSSESSION, &validator);
     }
 
+    // The length check above already pinned `compressed` to exactly
+    // `BLS_PUBKEY_WORDS` whole words, so the chunking cannot leave a remainder.
+    let mut bls_pubkey = [B256::ZERO; BLS_PUBKEY_WORDS];
+    for (word, chunk) in bls_pubkey
+        .iter_mut()
+        .zip(compressed.chunks_exact(U256::BYTES))
+    {
+        *word = B256::from_slice(chunk);
+    }
+
     Ok(VerifiedConsensusKeys {
-        bls_pubkey: [
-            B256::from_slice(&compressed[..32]),
-            B256::from_slice(&compressed[32..64]),
-            B256::from_slice(&compressed[64..]),
-        ],
+        bls_pubkey,
         bls_pubkey_hash,
         encoded_bls_pubkey: compressed,
         peer_pubkey,
@@ -351,7 +357,9 @@ pub fn committee_selection_epoch<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), Ex
     let target = consensus_storage()
         .last_committed_epoch_p1_accessor()
         .get_checked(sdk)?;
-    write_abi(sdk, &target.saturating_sub(2))
+    // Must stay the same offset `commit_epoch_committee` selects from, or the
+    // node ranks the wrong epoch's stake and its submission is rejected.
+    write_abi(sdk, &target.saturating_sub(MAX_COMMITTEE_LOOKAHEAD_EPOCHS))
 }
 
 fn committee_changed<SDK: SharedAPI>(
@@ -408,9 +416,24 @@ fn selected_committee_at<SDK: SharedAPI>(sdk: &SDK, epoch: u64) -> Result<Vec<Ad
 fn prune_committees<SDK: SharedAPI>(sdk: &mut SDK, current: u64) -> Result<(), ExitCode> {
     let storage = consensus_storage();
     let mut cursor = storage.pruned_up_to_p1_accessor().get_checked(sdk)?;
+    // The first epoch the stipend has NOT settled: `settle_up_to` starts its walk
+    // at this value, so it names the next epoch to pay rather than the last one
+    // paid. Retiring a committee at or beyond it would delete the members and
+    // weights that settlement still has to read; settlement would then find an
+    // empty committee, credit nothing, and advance its own cursor past the epoch,
+    // writing the pot off exactly as a partial payment used to. The
+    // length-mismatch guard does not catch that, because both arrays are cleared
+    // together and it ends up comparing zero against zero.
+    //
+    // The cost is accepted: while settlement is stalled the committees stop being
+    // retired and this storage grows. Recoverable state growth beats an
+    // unrecoverable loss.
+    let unsettled = staking_storage()
+        .last_rewarded_epoch_p1_accessor()
+        .get_checked(sdk)?;
     let mut deleted = 0;
     // Bound cleanup so a long-idle chain cannot make one system call unbounded.
-    while deleted < 16 {
+    while deleted < MAX_COMMITTEE_PRUNES_PER_CLOSE && cursor < unsettled {
         let liability_end = storage
             .committee_liability_end_epochs_accessor()
             .entry(cursor);
@@ -435,27 +458,6 @@ fn prune_committees<SDK: SharedAPI>(sdk: &mut SDK, current: u64) -> Result<(), E
         deleted += 1;
     }
     storage.pruned_up_to_p1_accessor().set_checked(sdk, cursor)
-}
-
-pub(crate) fn ensure_equivocation_evidence_unexpired<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    epoch: u64,
-) -> Result<(), ExitCode> {
-    let liability_end_epoch = consensus_storage()
-        .committee_liability_end_epochs_accessor()
-        .entry(epoch)
-        .get_checked(sdk)?;
-    if liability_end_epoch == 0 {
-        return revert_with(sdk, ERR_EPOCH_COMMITTEE_NOT_COMMITTED, &epoch);
-    }
-    if current_epoch(sdk)? >= liability_end_epoch {
-        return revert_with(
-            sdk,
-            ERR_EQUIVOCATION_EVIDENCE_EXPIRED,
-            &(epoch, liability_end_epoch),
-        );
-    }
-    Ok(())
 }
 
 /// Public handler `0x87401d8a` (`commitEpochCommittee`).
@@ -690,7 +692,12 @@ pub(crate) fn report_commitment_hash(
     beneficiary: Address,
     salt: B256,
 ) -> B256 {
-    let mut encoded = Vec::with_capacity(32 * 7);
+    /// Word-wide fields in the preimage below, in `extend_from_slice` order:
+    /// domain hash, chain id, staking address, proof kind, evidence hash,
+    /// beneficiary, salt.
+    const FIELDS: usize = 7;
+
+    let mut encoded = Vec::with_capacity(U256::BYTES * FIELDS);
     encoded.extend_from_slice(keccak256(REPORT_COMMITMENT_DOMAIN).as_slice());
     encoded.extend_from_slice(&U256::from(chain_id).to_be_bytes::<{ U256::BYTES }>());
     encoded.extend_from_slice(staking.into_word().as_slice());
@@ -855,12 +862,16 @@ where
     SolidityABI::<R>::decode(&output, 0).map_err(|_| ExitCode::MalformedBuiltinParams)
 }
 
+/// `kind` is an `EVIDENCE_MESSAGE_KIND_*`, NOT an `EQUIVOCATION_PROOF_KIND_*`.
+/// The two spaces disagree on `1` — nullify here, finalize there — and every
+/// caller reaches this through a decoded evidence message, never through a
+/// proof kind.
 fn namespace<SDK: SharedAPI>(sdk: &SDK, kind: u8) -> Bytes {
     let mut result = b"FLUENT_DPOS_V1_".to_vec();
     result.extend_from_slice(&sdk.context().block_chain_id().to_be_bytes());
     result.extend_from_slice(match kind {
-        0 => b"_NOTARIZE",
-        1 => b"_NULLIFY",
+        EVIDENCE_MESSAGE_KIND_NOTARIZE => b"_NOTARIZE",
+        EVIDENCE_MESSAGE_KIND_NULLIFY => b"_NULLIFY",
         _ => b"_FINALIZE",
     });
     Bytes::from(result)
@@ -889,14 +900,17 @@ pub(crate) fn seize_self_stake<SDK: SharedAPI>(
     seized = seized
         .checked_add(pending_undelegated.get_checked(sdk)?)
         .ok_or(ExitCode::IntegerOverflow)?;
-    storage
-        .validators_accessor()
-        .entry(validator)
-        .self_stake_unlock_epoch_accessor()
-        .set_checked(sdk, 0)?;
     if seized.is_zero() {
         return Ok(());
     }
+
+    // Stake on its way to the burn sink must stop counting as bonded. The
+    // decrease starts at the next epoch for the same reason `undelegate_from`
+    // does: earlier snapshots denominate rewards that already accrued, and the
+    // committee for the current epoch is frozen. It has to run before the queue
+    // below is cleared, because it reads the queue to learn what each snapshot
+    // was actually counting.
+    remove_delegation_from_totals(sdk, validator, owner, next_epoch(sdk)?)?;
 
     queue.clear_checked(sdk)?;
     delegation
@@ -918,15 +932,20 @@ pub(crate) fn seize_self_stake<SDK: SharedAPI>(
     let mut reporter_reward = seized
         .checked_mul(U256::from(bps))
         .ok_or(ExitCode::IntegerOverflow)?
-        / U256::from(10_000);
+        / U256::from(BPS_DENOMINATOR);
     let mut remainder = seized - reporter_reward;
-    if reporter.is_zero() {
+    // The seizure must never revert on a payout. The tombstone, the jail and the
+    // active-set removal are already written and would roll back with it, so a
+    // token that refuses a recipient could otherwise make equivocation
+    // unslashable — and the remainder's default recipient is a burn sink the
+    // caller does not choose. A refused reporter forfeits its cut into the
+    // remainder, the same way a zero reporter does; a refused remainder stays
+    // here. Both amounts reported below are what actually moved.
+    if reporter.is_zero() || !try_transfer(sdk, reporter, reporter_reward)? {
         remainder = remainder
             .checked_add(reporter_reward)
             .ok_or(ExitCode::IntegerOverflow)?;
         reporter_reward = U256::ZERO;
-    } else {
-        safe_transfer(sdk, reporter, reporter_reward)?;
     }
     let configured_fund = config.slash_fund_address_accessor().get_checked(sdk)?;
     let recipient = if configured_fund.is_zero() {
@@ -934,7 +953,9 @@ pub(crate) fn seize_self_stake<SDK: SharedAPI>(
     } else {
         configured_fund
     };
-    safe_transfer(sdk, recipient, remainder)?;
+    if !try_transfer(sdk, recipient, remainder)? {
+        remainder = U256::ZERO;
+    }
     events::EquivocationStakeSeized {
         validator,
         reporter,
@@ -956,36 +977,6 @@ fn slash_equivocation<SDK: SharedAPI>(
     let consensus = consensus_storage();
     let config = chain_config_storage();
     let evidence = evidence::decode(sdk, &command.evidence, shape)?;
-    let committee = consensus.epoch_committees_accessor().entry(evidence.epoch);
-    let committee_len = committee.len_checked(sdk)?;
-    if committee_len == 0 {
-        return revert_with(sdk, ERR_EPOCH_COMMITTEE_NOT_COMMITTED, &evidence.epoch);
-    }
-    ensure_equivocation_evidence_unexpired(sdk, evidence.epoch)?;
-    if evidence.signer_idx as u64 >= committee_len {
-        return revert_with(
-            sdk,
-            ERR_SIGNER_INDEX_OUT_OF_RANGE,
-            &(
-                evidence.epoch,
-                evidence.signer_idx,
-                U256::from(committee_len),
-            ),
-        );
-    }
-    let validator = committee.at(evidence.signer_idx as u64).get_checked(sdk)?;
-    if consensus
-        .tombstoned_accessor()
-        .entry(validator)
-        .get_checked(sdk)?
-    {
-        return revert_with(sdk, ERR_ALREADY_SLASHED_FOR_EQUIVOCATION, &validator);
-    }
-    let registered_keys = read_consensus_keys(sdk, validator)?;
-    if registered_keys.peer_pubkey.is_zero() {
-        return revert_with(sdk, ERR_CONSENSUS_KEYS_NOT_SET, &validator);
-    }
-    let stored_key = registered_keys.bls_pubkey;
     let verifier = config.bls_verifier_accessor().get_checked(sdk)?;
     if verifier.is_zero() {
         return revert(sdk, ERR_BLS_VERIFIER_NOT_CONFIGURED);
@@ -996,8 +987,30 @@ fn slash_equivocation<SDK: SharedAPI>(
         SIG_BLS_COMPRESS_G2_UNCHECKED,
         &(command.pk_uncompressed.clone(),),
     )?;
-    if keccak256(&supplied_key) != keccak256(&stored_key) {
-        return revert(sdk, ERR_EQUIVOCATION_KEY_MISMATCH);
+    // Identity comes from the key, not from a historical committee seat.
+    // `bls_pubkey_owner` is write-once and never released, so this answer cannot
+    // be pruned out from under a late reporter. The compression is unchecked by
+    // construction; what makes the binding sound is the PAIRING-routed verify
+    // below, not this lookup.
+    let validator = consensus
+        .bls_pubkey_owner_accessor()
+        .entry(keccak256(&supplied_key))
+        .get_checked(sdk)?;
+    if validator.is_zero() {
+        return revert(sdk, ERR_EQUIVOCATION_KEY_NOT_REGISTERED);
+    }
+    // The crate's only re-slash guard: without it the same evidence tombstones,
+    // jails and seizes twice.
+    if consensus
+        .tombstoned_accessor()
+        .entry(validator)
+        .get_checked(sdk)?
+    {
+        return revert_with(sdk, ERR_ALREADY_SLASHED_FOR_EQUIVOCATION, &validator);
+    }
+    let registered_keys = read_consensus_keys(sdk, validator)?;
+    if registered_keys.peer_pubkey.is_zero() {
+        return revert_with(sdk, ERR_CONSENSUS_KEYS_NOT_SET, &validator);
     }
     let supplied_sig1 = call_decode::<_, _, Bytes>(
         sdk,

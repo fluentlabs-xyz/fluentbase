@@ -232,10 +232,12 @@ pub fn default_exclusion_backoff_cap<SDK: SharedAPI>(sdk: &mut SDK) -> Result<()
 
 /// Public handler `0x9b9a11ba` (`MAX_MIN_VERDICT_DUE_BLOCKS`).
 ///
-/// Returns the protocol ceiling on the verdict due-block floor.
+/// Returns the protocol ceiling on the verdict due-block floor, which is the
+/// shipped default: it is already where the verdict test is conclusive, so
+/// governance may lower the floor and never raise it.
 pub fn max_min_verdict_due_blocks<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
-    write_abi(sdk, &MAX_MIN_VERDICT_DUE_BLOCKS)
+    write_abi(sdk, &DEFAULT_MIN_VERDICT_DUE_BLOCKS)
 }
 
 /// Public handler `0x9f9106d1` (`getStakingToken`).
@@ -719,8 +721,15 @@ pub fn get_min_verdict_due_blocks<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), E
 ///
 /// Updates the due-block floor below which a committee member holds no verdict.
 ///
-/// Zero would judge a member that was never due a single slot; the ceiling
-/// keeps the floor from silently disabling the tier for every member at once.
+/// The floor is a minimum stake share in disguise — a member is judged once its
+/// share reaches `minVerdictDueBlocks / epochBlockInterval`. Zero would judge a
+/// member that was never due a single slot, and the shipped default is the
+/// ceiling: it already sits where the verdict test is conclusive, so lowering it
+/// trades confidence for reach and raising it would buy nothing.
+///
+/// That ceiling is an absolute bound on the parameter, not a guarantee that any
+/// member ends up judgeable: which shares are met is decided by the live stake
+/// distribution, not by this setting.
 pub fn set_min_verdict_due_blocks<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
@@ -730,11 +739,11 @@ pub fn set_min_verdict_due_blocks<SDK: SharedAPI>(
     if value == 0 {
         return zero_value(sdk, "minVerdictDueBlocks");
     }
-    if value > MAX_MIN_VERDICT_DUE_BLOCKS {
+    if value > DEFAULT_MIN_VERDICT_DUE_BLOCKS {
         return revert_with(
             sdk,
             ERR_MIN_VERDICT_DUE_BLOCKS_TOO_HIGH,
-            &(value, MAX_MIN_VERDICT_DUE_BLOCKS),
+            &(value, DEFAULT_MIN_VERDICT_DUE_BLOCKS),
         );
     }
     let field = chain_config_storage().min_verdict_due_blocks_accessor();
@@ -861,7 +870,9 @@ pub fn get_blend_reserve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> 
 
 /// Public handler `0x7899ae8f` (`setBlendReserve`).
 ///
-/// Rotates the BLEND reserve under governance control.
+/// Rotates the address the epoch stipend is drawn from, under governance
+/// control. The new address must have approved this contract for BLEND, or
+/// settlement defers every epoch until it does.
 pub fn set_blend_reserve<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<AddressCommand>(input)?.value;

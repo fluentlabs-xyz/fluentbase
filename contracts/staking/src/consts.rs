@@ -3,7 +3,7 @@
 use fluentbase_sdk::{
     address,
     derive::{derive_keccak256_id, erc7201_slot},
-    Address, FUEL_DENOM_RATE, U256,
+    uint, Address, FUEL_DENOM_RATE, U256,
 };
 
 pub const SIG_LEN_BYTES: usize = 4;
@@ -188,9 +188,6 @@ pub const SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH: u32 =
     derive_keccak256_id!("claimValidatorFeeAtEpoch(address,uint64)");
 // 0x52b7bea2
 pub const SIG_GET_DELEGATOR_FEE: u32 = derive_keccak256_id!("getDelegatorFee(address,address)");
-// 0xc72e0d73
-pub const SIG_GET_VALIDATOR_SELF_STAKE_LOCK: u32 =
-    derive_keccak256_id!("getValidatorSelfStakeLock(address)");
 // 0xc2fd58fc
 pub const SIG_GET_PENDING_DELEGATOR_FEE: u32 =
     derive_keccak256_id!("getPendingDelegatorFee(address,address)");
@@ -240,10 +237,6 @@ pub const SIG_GET_EPOCH_COMMITTEE_WITH_STAKES: u32 =
 pub const SIG_BLS_COMPRESS_G2_UNCHECKED: u32 = derive_keccak256_id!("compressG2Unchecked(bytes)");
 // 0x8bf26133
 pub const SIG_BLS_VERIFY: u32 = derive_keccak256_id!("verify(bytes,bytes,bytes,bytes,bytes)");
-// 0xa10954fe
-pub const SIG_RESERVE_BALANCE: u32 = derive_keccak256_id!("reserveBalance()");
-// 0x7f3bd56e
-pub const SIG_RESERVE_DISBURSE: u32 = derive_keccak256_id!("disburse(address,uint256)");
 // 0x32890bc0
 pub const SIG_COMMIT_EQUIVOCATION_REPORT: u32 =
     derive_keccak256_id!("commitEquivocationReport(bytes32)");
@@ -277,6 +270,7 @@ pub const ERR_BAD_COMMISSION_RATE: u32 = derive_keccak256_id!("BadCommissionRate
 pub const ERR_VALIDATOR_ALREADY_EXISTS: u32 =
     derive_keccak256_id!("ValidatorAlreadyExists(address)");
 pub const ERR_VALIDATOR_NOT_FOUND: u32 = derive_keccak256_id!("ValidatorNotFound(address)");
+pub const ERR_VALIDATOR_TOMBSTONED: u32 = derive_keccak256_id!("ValidatorTombstoned(address)");
 pub const ERR_VALIDATOR_OWNER_ALREADY_IN_USE: u32 =
     derive_keccak256_id!("ValidatorOwnerAlreadyInUse(address)");
 pub const ERR_NOT_PENDING_VALIDATOR: u32 = derive_keccak256_id!("NotPendingValidator(address)");
@@ -286,6 +280,8 @@ pub const ERR_VALIDATOR_OWNER_IMMUTABLE: u32 = derive_keccak256_id!("ValidatorOw
 pub const ERR_ZERO_STAKING_TOKEN: u32 = derive_keccak256_id!("ZeroStakingToken()");
 pub const ERR_INVALID_CHAIN_CONFIG: u32 = derive_keccak256_id!("InvalidChainConfig()");
 pub const ERR_AMOUNT_TOO_LOW: u32 = derive_keccak256_id!("AmountTooLow(uint256)");
+pub const ERR_REMAINING_DELEGATION_TOO_LOW: u32 =
+    derive_keccak256_id!("RemainingDelegationTooLow(uint256,uint256)");
 pub const ERR_INITIAL_STAKE_TOO_LOW: u32 = derive_keccak256_id!("InitialStakeTooLow(uint256)");
 pub const ERR_OWNER_SELF_STAKE_BELOW_MINIMUM: u32 =
     derive_keccak256_id!("OwnerSelfStakeBelowMinimum()");
@@ -348,9 +344,8 @@ pub const ERR_INVALID_CONSENSUS_KEY_ENCODING: u32 =
     derive_keccak256_id!("InvalidConsensusKeyEncoding()");
 pub const ERR_EQUIVOCATION_SIGNATURE_INVALID: u32 =
     derive_keccak256_id!("EquivocationSignatureInvalid()");
-pub const ERR_EQUIVOCATION_KEY_MISMATCH: u32 = derive_keccak256_id!("EquivocationKeyMismatch()");
-pub const ERR_EQUIVOCATION_EVIDENCE_EXPIRED: u32 =
-    derive_keccak256_id!("EquivocationEvidenceExpired(uint64,uint64)");
+pub const ERR_EQUIVOCATION_KEY_NOT_REGISTERED: u32 =
+    derive_keccak256_id!("EquivocationKeyNotRegistered()");
 pub const ERR_INVALID_EVIDENCE_ENCODING: u32 = derive_keccak256_id!("InvalidEvidenceEncoding()");
 pub const ERR_EVIDENCE_SIGNER_MISMATCH: u32 =
     derive_keccak256_id!("EvidenceSignerMismatch(uint32,uint32)");
@@ -371,15 +366,77 @@ pub const ERR_EQUIVOCATION_COMMITMENT_NOT_MATURE: u32 =
 pub const ERR_INVALID_EQUIVOCATION_PROOF_KIND: u32 =
     derive_keccak256_id!("InvalidEquivocationProofKind(uint8)");
 
-pub const BALANCE_COMPACT_PRECISION: U256 = U256::from_limbs([10_000_000_000, 0, 0, 0]);
+/// Scale of every rate expressed in basis points: `10_000` bps == 100%.
+///
+/// Every bps figure in this file — `COMMISSION_RATE_MAX`,
+/// `DEFAULT_SLASH_REPORTER_REWARD_BPS`, `MAX_SLASH_REPORTER_REWARD_BPS` — is
+/// meaningless without it, and both sites that apply a rate divide by it.
+pub const BPS_DENOMINATOR: u32 = 10_000;
+
+/// Wei per compact stake unit: `10^10`.
+///
+/// Stake is stored as a `uint112` count of these units, so any amount that is
+/// not a whole multiple of it cannot be represented and is rejected by
+/// `math::compact_balance`.
+pub const BALANCE_COMPACT_PRECISION: U256 = uint!(10_000_000_000_U256);
+
+/// Highest commission a validator may charge its delegators: 3000 bps == 30%.
+///
+/// A policy figure, not a derived one: nothing in this crate breaks at a
+/// different value. No derivation is recorded for the choice of 30%.
 pub const COMMISSION_RATE_MAX: u16 = 3_000;
+
+/// Reported as `prev_value` in the `EpochBlockIntervalChanged` init event.
+///
+/// Not a default: `apply_initial_config` always writes
+/// `InitializeCommand::epoch_block_interval` to storage, and this constant is
+/// only the "before" side of the event that records it.
 pub const DEFAULT_EPOCH_BLOCK_INTERVAL: u64 = 200;
+
+/// Reported as `prev_value` in the `ActiveValidatorsLengthChanged` init event.
+///
+/// Not a default — see [`DEFAULT_EPOCH_BLOCK_INTERVAL`].
 pub const DEFAULT_ACTIVE_VALIDATORS_LENGTH: u64 = 21;
+
+/// Hard ceiling on the configured active-set size, enforced at initialization
+/// and by `setActiveValidatorsLength`.
+///
+/// It is what bounds every committee-wide loop in this crate — committee
+/// commit, the liveness verdict pass, the stipend split — so it is the figure
+/// that keeps those loops payable. No derivation is recorded for 51, and it has
+/// not been measured against rWasm fuel on this runtime.
 pub const MAX_ACTIVE_VALIDATORS_LENGTH: u64 = 51;
+
+/// Smallest committee `commitEpochCommittee` will accept.
+///
+/// One is the loosest value this bound can take, and it is not a safety floor:
+/// at `n = 1` the Simplex fault tolerance `math::fault_tolerance` returns
+/// `f = 0`, so the committee this admits tolerates no faults at all. All it
+/// rules out is committing an empty committee. No rationale is recorded for
+/// leaving it here rather than at a quorum-bearing size.
 pub const MIN_COMMITTEE_LENGTH: usize = 1;
+
+/// Reported as `prev_value` in the `UndelegatePeriodChanged` init event.
+///
+/// Not a default — see [`DEFAULT_EPOCH_BLOCK_INTERVAL`].
 pub const DEFAULT_UNDELEGATE_PERIOD: u64 = 7;
+
+/// Epochs between a delegation being booked and it counting toward stake.
+///
+/// `delegate_to` books stake at `current_epoch + WARMUP_DELAY`, so a delegation
+/// can never move a total that the current epoch's frozen committee — or any
+/// committee already selected against an earlier epoch — was chosen from. Any
+/// value above zero satisfies that; no derivation is recorded for exactly 2,
+/// and it is not tied to `MAX_COMMITTEE_LOOKAHEAD_EPOCHS` despite matching it.
 pub const WARMUP_DELAY: u64 = 2;
+
+/// Epochs one reward claim may walk before it must be resumed by another call.
+///
+/// Bounds the per-call loop so a delegator that never claimed cannot build a
+/// claim too large to execute. No derivation is recorded for 1000, and it has
+/// not been measured against rWasm fuel on this runtime.
 pub const MAX_EPOCHS_PER_CLAIM: u64 = 1_000;
+
 /// Inherited from the Solidity, where it was sized against measured EVM gas for
 /// one settled epoch inside a 12M caller bound. rWasm meters fuel, not gas, so
 /// the bound this number encodes has not been measured on this runtime yet.
@@ -398,11 +455,38 @@ pub const MAX_STAMPS_PER_CLOSE: usize = 2;
 /// `MAX_SETTLE_CATCHUP`, the 12M itself is a measured EVM budget that has not
 /// been re-measured against rWasm fuel.
 pub const STIPEND_FUEL_CAP: u64 = 12_000_000 * FUEL_DENOM_RATE;
+/// Slack added on top of `target + undelegatePeriod` when a commit stamps a
+/// committee's liability deadline, after which `prune_committees` may delete
+/// it.
+///
+/// The undelegate period is when a member's stake can still be reached; the
+/// margin is the grace beyond it, so a committee is not discarded the same
+/// epoch its exposure ends. No derivation is recorded for 8.
 pub const EPOCH_COMMITTEE_RETENTION_MARGIN: u64 = 8;
+
+/// How far ahead of the current epoch a committee may be committed, and — the
+/// same number, because they are the same offset — how far back of the target
+/// epoch its membership is selected from.
+///
+/// Both `commit_epoch_committee` and the `committeeSelectionEpoch` getter must
+/// read it, or the node selects from an epoch the contract will reject.
 pub const MAX_COMMITTEE_LOOKAHEAD_EPOCHS: u64 = 2;
+
+/// Committees prune-able by one epoch close.
+///
+/// Bounds the cleanup loop so a long-idle chain cannot make one system call
+/// unbounded. Falling behind only defers deletions to later closes; nothing is
+/// lost.
+pub const MAX_COMMITTEE_PRUNES_PER_CLOSE: u64 = 16;
+
 pub const BLS_PUBKEY_UNCOMPRESSED_LENGTH: usize = 256;
 pub const BLS_POP_UNCOMPRESSED_LENGTH: usize = 128;
 pub const BLS_PUBKEY_LENGTH: usize = 96;
+/// 32-byte words a compressed BLS12-381 G2 key occupies in storage.
+///
+/// The storage array width, the split of the verifier's compressed output, and
+/// the read that reassembles it all have to agree with this.
+pub const BLS_PUBKEY_WORDS: usize = BLS_PUBKEY_LENGTH / U256::BYTES;
 pub const BLS_SIGNATURE_LENGTH: usize = 48;
 pub const PROPOSAL_PAYLOAD_LENGTH: usize = 32;
 
@@ -421,21 +505,67 @@ pub const EQUIVOCATION_PROOF_KIND_FINALIZE: u8 = 1;
 pub const EQUIVOCATION_PROOF_KIND_NULLIFY_FINALIZE: u8 = 2;
 pub const EQUIVOCATION_PROOF_KIND_COUNT: u8 = 3;
 
+/// Share of seized self-stake paid to an equivocation reporter when governance
+/// has not configured one: 3000 bps == 30% of the seizure.
+///
+/// Applied by `consensus::seize_self_stake`, which reads it whenever the stored
+/// value is zero. The remainder goes to [`EQUIVOCATION_BURN_SINK`].
 pub const DEFAULT_SLASH_REPORTER_REWARD_BPS: u32 = 3_000;
+
+/// Highest reporter share governance may set: 5000 bps == 50% of the seizure.
+///
+/// Keeps the majority of a seizure out of the reporter's hands whatever
+/// governance chooses. No derivation is recorded for 50%.
 pub const MAX_SLASH_REPORTER_REWARD_BPS: u32 = 5_000;
+
+/// A committee member passes an epoch's liveness verdict when it produced at
+/// least `1 / MIN_PRODUCTION_SHARE_DENOMINATOR` of the blocks its stake weight
+/// was due — half, today.
+///
+/// The floor in [`DEFAULT_MIN_VERDICT_DUE_BLOCKS`] is a confidence gate on
+/// exactly this test and its derivation quotes this ratio, so the two move
+/// together: a different share invalidates the sample size chosen there.
+pub const MIN_PRODUCTION_SHARE_DENOMINATOR: u64 = 2;
+/// Both the shipped floor and the highest one governance may set — the setter
+/// bounds against this constant and `MAX_MIN_VERDICT_DUE_BLOCKS()` returns it.
+///
+/// One number does both jobs because one fact decides both. The floor is a
+/// confidence gate on a statistical test: a member fails at `produced * 2 < due`,
+/// which is only meaningful once the sample is large enough for the shortfall to
+/// mean something. At a due of 100 that threshold already sits five standard
+/// deviations out, so 100 is at once the value worth shipping and the value above
+/// which raising it buys nothing. Governance may lower it — trading confidence
+/// for reach — and may never raise it.
+///
+/// The floor is also a minimum stake share in disguise: a member is judged once
+/// its share reaches `minVerdictDueBlocks / epochBlockInterval`. The bound is
+/// absolute and nothing more; it does not promise that any given member is
+/// judgeable, because which shares are met depends on the live stake
+/// distribution, which governance does not set and which moves every epoch.
 pub const DEFAULT_MIN_VERDICT_DUE_BLOCKS: u32 = 100;
+/// Longest exclusion the liveness backoff ladder can reach, in epochs, as
+/// shipped: an excluded validator waits `min(kick_count, cap)` epochs.
+///
+/// Governance may lower it. No derivation is recorded for 128.
 pub const DEFAULT_EXCLUSION_BACKOFF_CAP: u32 = 128;
-/// A due-block floor above the epoch length makes `due >= floor` unsatisfiable
-/// for every member at any stake, disabling the tier while it still reads as
-/// enabled. Bounded absolutely so the check cannot become interval-dependent.
-pub const MAX_MIN_VERDICT_DUE_BLOCKS: u32 = 1_000_000;
-pub const MAX_BLEND_STIPEND_PER_EPOCH: U256 =
-    U256::from_limbs([2_003_764_205_206_896_640, 54_210, 0, 0]);
+
+/// Ceiling on the per-epoch stipend governance may configure: `10^24` wei,
+/// i.e. 1,000,000 BLEND per epoch. No derivation is recorded for the figure.
+pub const MAX_BLEND_STIPEND_PER_EPOCH: U256 = uint!(1_000_000_000_000_000_000_000_000_U256);
 pub const SYSTEM_CALLER: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
 pub const EQUIVOCATION_BURN_SINK: Address = address!("0x000000000000000000000000000000000000dead");
-pub const DEFAULT_MIN_VALIDATOR_STAKE: U256 =
-    U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
-pub const DEFAULT_MIN_STAKING_AMOUNT: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+
+/// Reported as `prev_value` in the `MinValidatorStakeAmountChanged` init event:
+/// `10^18` wei, i.e. 1 BLEND.
+///
+/// Not a default — see [`DEFAULT_EPOCH_BLOCK_INTERVAL`].
+pub const DEFAULT_MIN_VALIDATOR_STAKE: U256 = uint!(1_000_000_000_000_000_000_U256);
+
+/// Reported as `prev_value` in the `MinStakingAmountChanged` init event:
+/// `10^18` wei, i.e. 1 BLEND.
+///
+/// Not a default — see [`DEFAULT_EPOCH_BLOCK_INTERVAL`].
+pub const DEFAULT_MIN_STAKING_AMOUNT: U256 = uint!(1_000_000_000_000_000_000_U256);
 
 pub const INITIALIZER_STORAGE_SLOT: U256 = erc7201_slot!("Fluent.storage.Initializer");
 pub const CHAIN_CONFIG_STORAGE_SLOT: U256 = erc7201_slot!("Fluent.storage.ChainConfig");

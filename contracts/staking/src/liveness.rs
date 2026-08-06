@@ -139,7 +139,8 @@ pub fn record_production<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
 /// Close `epoch`: releases, verdicts, stipend.
 ///
 /// Three legs in that order and with three different failure policies. Releases
-/// first, so an expiring exclusion cannot be held hostage by the guard.
+/// first and unconditionally, so an expiring exclusion cannot be held hostage by
+/// the correlation guard or by the kill switch.
 /// Verdicts second and fail-loud, because a rolled-back no-op would retry every
 /// block forever with a warning as its only symptom. The stipend last and
 /// tolerant, because it is the one leg where a frozen payment is preferable to
@@ -147,18 +148,19 @@ pub fn record_production<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
 fn close_epoch<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<(), ExitCode> {
     let config = chain_config_storage();
     let current = current_epoch(sdk)?;
-    let disabled = config
-        .production_liveness_disabled_accessor()
-        .get_checked(sdk)?;
 
-    // Unconditional on the correlation guard: tying releases to it would freeze
-    // them during exactly the outage they exist for, and would make the
-    // exclusion duration non-deterministic against a fixed ladder. Frozen with
-    // the rest of the verdict state under the kill switch, so no exclusion
-    // expires unnoticed while the tier is off.
-    if !disabled {
-        release_expired(sdk, current)?;
-    }
+    // Unconditional on both the correlation guard and the kill switch: tying
+    // releases to either would freeze them during exactly the outage they exist
+    // for, and would make the exclusion duration non-deterministic against a
+    // fixed ladder. The switch exists to stop the tier punishing, and a release
+    // is not a punishment — it only undoes a stamp the tier itself issued, and
+    // the Active/tombstone guard inside the callee still applies. Gating it
+    // would freeze the stamp, not the clock: `readmit_at_epoch` would sit still
+    // while `current` ran past it, silently lengthening the exclusion, and
+    // `activate_validator` refuses to rescue a validator that still carries an
+    // outstanding stamp. So an exclusion cannot outlive its term while the tier
+    // is off; only judging is suspended.
+    release_expired(sdk, current)?;
 
     let recorded = production_liveness_storage()
         .blocks_in_epoch_accessor()
@@ -178,7 +180,11 @@ fn close_epoch<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<(), ExitCode
             expected: interval as u32,
         }
         .emit(sdk)?;
-    } else if !disabled {
+    } else if !config
+        .production_liveness_disabled_accessor()
+        .get_checked(sdk)?
+    {
+        // The one leg the kill switch holds: no new verdicts, no new stamps.
         judge(sdk, epoch, current, recorded)?;
     }
 
@@ -320,7 +326,7 @@ fn judge<SDK: SharedAPI>(
             .entry(index as u32)
             .get_checked(sdk)?;
         if U256::from(produced)
-            .checked_mul(U256::from(2))
+            .checked_mul(U256::from(MIN_PRODUCTION_SHARE_DENOMINATOR))
             .ok_or(ExitCode::IntegerOverflow)?
             .checked_mul(total_weight)
             .ok_or(ExitCode::IntegerOverflow)?
