@@ -528,8 +528,9 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitC
         );
     }
     // Peer-key ascending IS the consensus index space: `record_production`
-    // credits `committee.at(leader_index)`, and `leader_index` is the member's
-    // position in the off-chain participant set, which is sorted on this key.
+    // credits `produced[epoch][leader_index]` and `judge` resolves that same
+    // index against this array, and `leader_index` is the member's position in
+    // the off-chain participant set, which is sorted on this key.
     // Producing that order here rather than checking a supplied one removes the
     // only way the two could have disagreed. Peer keys are unique
     // (`ERR_PEER_PUBKEY_ALREADY_IN_USE`), so there are no ties and an unstable

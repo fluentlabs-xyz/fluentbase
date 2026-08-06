@@ -87,11 +87,13 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         }
 
         // ProductionLiveness
-        SIG_GET_PRODUCTION_STATS => liveness::get_production_stats(sdk, params),
+        #[cfg(feature = "devnet-views")]
         SIG_BLOCKS_IN_EPOCH => liveness::blocks_in_epoch(sdk, params),
+        #[cfg(feature = "devnet-views")]
         SIG_PRODUCED_AT => liveness::produced_at(sdk, params),
+        #[cfg(feature = "devnet-views")]
         SIG_PENDING_EXCLUSIONS => liveness::pending_exclusions(sdk),
-        SIG_READMIT_AT_EPOCH => liveness::readmit_at_epoch(sdk, params),
+        #[cfg(feature = "devnet-views")]
         SIG_LAST_PROCESSED_BLOCK => liveness::last_processed_block(sdk),
         SIG_RECORD_PRODUCTION => liveness::record_production(sdk, params),
 

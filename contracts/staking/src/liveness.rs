@@ -4,15 +4,14 @@ use crate::{
     consts::*,
     events, math, staking,
     storage::{chain_config_storage, consensus_storage, production_liveness_storage},
-    types::{
-        AddressCommand, EpochSignerCommand, RecordProductionCommand, U64Command,
-        ValidatorEpochCommand,
-    },
+    types::{RecordProductionCommand, U64Command},
     util::{
         current_epoch, current_epoch_at_block, decode, ensure_initialized, ensure_mutable,
-        ensure_non_payable, revert, write_abi,
+        ensure_non_payable, revert,
     },
 };
+#[cfg(feature = "devnet-views")]
+use crate::{types::EpochSignerCommand, util::write_abi};
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{
     bytes::BytesMut, codec::SolidityABI, Address, ContextReader, ExitCode, SharedAPI, U256,
@@ -30,29 +29,19 @@ pub(crate) fn readmit_at_epoch_of<SDK: SharedAPI>(
         .get_checked(sdk)
 }
 
-fn committee_index_of<SDK: SharedAPI>(
-    sdk: &SDK,
-    validator: Address,
-    epoch: u64,
-) -> Result<Option<u32>, ExitCode> {
-    let committee = consensus_storage().epoch_committees_accessor().entry(epoch);
-    let len = committee.len_checked(sdk)?;
-    for index in 0..len {
-        if committee.at(index).validator_accessor().get_checked(sdk)? == validator {
-            return Ok(Some(index as u32));
-        }
-    }
-    Ok(None)
-}
-
-/// Public handler `0x8244a2c2` (`recordProduction`).
+/// Public handler `0x1752910e` (`recordProduction`).
 ///
 /// Records one block's producer and, when the block crosses an epoch boundary,
 /// closes the epoch that just ended.
 ///
-/// `block_number` is an idempotency key, never an epoch tag: the epoch is
-/// derived from it, because a height is deterministic over agreed state while a
-/// proposer-supplied tag is not.
+/// The height is read from the block context, never supplied. It is the same
+/// value the node would have passed, and a height the contract derives cannot
+/// disagree with the block it is executing in. It serves as both the idempotency
+/// key and the epoch cursor, because a height is deterministic over agreed state
+/// while a proposer-supplied tag is not.
+///
+/// `leader_index` is the asymmetric half: it cannot be derived on-chain, which
+/// is why it is verified at vote time instead.
 pub fn record_production<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
@@ -62,18 +51,19 @@ pub fn record_production<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     }
     let command = decode::<RecordProductionCommand>(input)?;
     let storage = production_liveness_storage();
+    let block_number = sdk.context().block_number();
     let last_processed = storage.last_processed_block_accessor().get_checked(sdk)?;
-    if command.block_number <= last_processed {
+    if block_number <= last_processed {
         return Ok(());
     }
     // Read before the belt overwrites the height. The epoch cursor has no
     // storage of its own — it is a pure function of the recorded block, and two
     // cursors obliged to agree can disagree.
     let previous_epoch = current_epoch_at_block(sdk, last_processed)?;
-    let epoch = current_epoch_at_block(sdk, command.block_number)?;
+    let epoch = current_epoch(sdk)?;
     storage
         .last_processed_block_accessor()
-        .set_checked(sdk, command.block_number)?;
+        .set_checked(sdk, block_number)?;
     // The close reads the counters of the epoch that ended; the credit below is
     // keyed by the one this block starts, so the two never touch the same key.
     // Keeping the close first is a robustness choice, not an invariant the key
@@ -89,7 +79,13 @@ pub fn record_production<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     let committee_size = committee.len_checked(sdk)?;
     // Not yet committed: park the block. It is neither counted nor credited,
     // which keeps `sum(produced) == blocks_in_epoch` true by construction and
-    // leaves the epoch short of the interval, i.e. tainted.
+    // leaves the epoch short of its expectation, i.e. tainted.
+    //
+    // Both park arms are deliberately silent. A system call's logs never reach a
+    // receipt — the node hands them to its close-observability hook and commits
+    // only the state — so an event here would reach nobody without a matching
+    // node change. The epoch's shortfall is the whole trace a parked block
+    // leaves, and `PartialEpoch` already reports its magnitude.
     if committee_size == 0 {
         return Ok(());
     }
@@ -118,23 +114,7 @@ pub fn record_production<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
             .get_checked(sdk)?
             .checked_add(1)
             .ok_or(ExitCode::IntegerOverflow)?,
-    )?;
-    let producer = committee
-        .at(u64::from(command.leader_index))
-        .validator_accessor()
-        .get_checked(sdk)?;
-    let record = storage.validators_accessor().entry(producer);
-    let total = record.total_produced_accessor();
-    total.set_checked(
-        sdk,
-        total
-            .get_checked(sdk)?
-            .checked_add(1)
-            .ok_or(ExitCode::IntegerOverflow)?,
-    )?;
-    record
-        .last_produced_epoch_p1_accessor()
-        .set_checked(sdk, epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?)
+    )
 }
 
 /// Close `epoch`: releases, verdicts, stipend.
@@ -168,17 +148,30 @@ fn close_epoch<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<(), ExitCode
         .entry(epoch)
         .get_checked(sdk)?;
     let interval = config.epoch_block_interval_accessor().get_checked(sdk)?;
+    // Epoch 0 has one fewer recordable height than every later epoch: the
+    // activation block was produced by the pre-DPoS sequencer, which holds no
+    // committee position, so its header carries empty `extra_data` and the node
+    // issues no record for it (node `evm.rs`, `len == 0 => no syscall`). Expecting
+    // `interval` there would taint a healthy epoch 0 on every chain and fire
+    // `PartialEpoch` on schedule — an anomaly signal that always fires teaches
+    // operators to stop reading it. `saturating_sub` is free insurance only: a
+    // zero interval cannot reach here, because deriving the epoch fails first.
+    let expected = if epoch == 0 {
+        interval.saturating_sub(1)
+    } else {
+        interval
+    };
 
     // The taint is derived, not stored: epochs are height-defined and every
-    // finalized block carries a record, so a complete epoch records exactly
-    // `interval` of them. That is wider than a stored flag — it also catches an
+    // recordable block carries a record, so a complete epoch records exactly
+    // `expected` of them. That is wider than a stored flag — it also catches an
     // executor skip and an out-of-range belt drop, both of which deflate the
     // denominator while tainting nothing.
-    if u64::from(recorded) != interval {
+    if u64::from(recorded) != expected {
         events::PartialEpoch {
             epoch,
             recorded,
-            expected: interval as u32,
+            expected: expected as u32,
         }
         .emit(sdk)?;
     } else if !config
@@ -494,46 +487,15 @@ fn settle_stipend_leg<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<(), E
     Ok(())
 }
 
-/// Public handler `0x8e948ac1` (`getProductionStats`).
-///
-/// Returns the delegator-facing production record for `validator` at `epoch`.
-pub fn get_production_stats<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    // Reads the committee, so it follows the consensus readers rather than the
-    // config getters: all-zeros must not be indistinguishable from uninitialized.
-    ensure_initialized(sdk)?;
-    let command = decode::<ValidatorEpochCommand>(input)?;
-    let epoch = command.before_epoch;
-    let storage = production_liveness_storage();
-    let record = storage.validators_accessor().entry(command.validator);
-    let produced_this_epoch = match committee_index_of(sdk, command.validator, epoch)? {
-        Some(index) => storage
-            .produced_accessor()
-            .entry(epoch)
-            .entry(index)
-            .get_checked(sdk)?,
-        None => 0,
-    };
-    let result = (
-        produced_this_epoch,
-        record.total_produced_accessor().get_checked(sdk)?,
-        record
-            .last_produced_epoch_p1_accessor()
-            .get_checked(sdk)?
-            .saturating_sub(1),
-        record
-            .last_failed_epoch_p1_accessor()
-            .get_checked(sdk)?
-            .saturating_sub(1),
-        record.kick_count_accessor().get_checked(sdk)?,
-        record.readmit_at_epoch_accessor().get_checked(sdk)?,
-    );
-    write_abi(sdk, &result)
-}
-
 /// Public handler `0xf06be669` (`blocksInEpoch`).
 ///
 /// Returns the number of blocks recorded for `epoch`.
+///
+/// This and the three views below it have no production consumer — `e2e/` and
+/// the node repo's devnet smoke/soak harness are the only callers — so they are
+/// compiled out unless `devnet-views` is on. The rest of the contract's read
+/// surface is unaffected; it is these four that nothing in production serves.
+#[cfg(feature = "devnet-views")]
 pub fn blocks_in_epoch<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     let epoch = decode::<U64Command>(input)?.value;
@@ -549,6 +511,7 @@ pub fn blocks_in_epoch<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<()
 /// Public handler `0x91c7d453` (`producedAt`).
 ///
 /// Returns the blocks credited to a committee index in `epoch`.
+#[cfg(feature = "devnet-views")]
 pub fn produced_at<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     let command = decode::<EpochSignerCommand>(input)?;
@@ -565,6 +528,7 @@ pub fn produced_at<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), Ex
 /// Public handler `0xaef690f9` (`pendingExclusions`).
 ///
 /// Returns the validators currently serving an exclusion.
+#[cfg(feature = "devnet-views")]
 pub fn pending_exclusions<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     let entries = production_liveness_storage().pending_exclusions_accessor();
@@ -576,18 +540,10 @@ pub fn pending_exclusions<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode>
     write_abi(sdk, &result)
 }
 
-/// Public handler `0x32066046` (`readmitAtEpoch`).
-///
-/// Returns the epoch at whose close `validator` is released from exclusion.
-pub fn readmit_at_epoch<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    let validator = decode::<AddressCommand>(input)?.value;
-    write_abi(sdk, &readmit_at_epoch_of(sdk, validator)?)
-}
-
 /// Public handler `0x33de61d2` (`lastProcessedBlock`).
 ///
 /// Returns the most recent block for which production was recorded.
+#[cfg(feature = "devnet-views")]
 pub fn last_processed_block<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(

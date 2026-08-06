@@ -239,6 +239,7 @@ fn main() {
     // Make sure we rerun the build if the feature has changed
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_STD");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_DEBUG_PRINT");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_DEVNET_VIEWS");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WASMTIME");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_FLUENT_TESTNET");
     println!("cargo:rerun-if-env-changed=PROFILE");
@@ -266,9 +267,20 @@ fn main() {
 
     let is_debug_profile = env::var("PROFILE").unwrap() == "debug";
 
+    let wants_devnet_views = env::var("CARGO_FEATURE_DEVNET_VIEWS").is_ok();
     for contracts_manifest_path in &packages_resolver.manifest_dirs {
+        let mut workspace_args = build_args.clone();
+        // Only the contracts workspace has this package. Naming a package the
+        // selected workspace does not contain is a hard cargo error, so this
+        // cannot ride along on the examples build below it, nor on the
+        // single-package permissive build further down.
+        if wants_devnet_views && contracts_manifest_path.ends_with("contracts/Cargo.toml") {
+            workspace_args
+                .features
+                .push("fluentbase-contracts-staking/devnet-views".to_string());
+        }
         run_workspace_build(
-            &build_args,
+            &workspace_args,
             contracts_manifest_path,
             &target2_dir,
             is_debug_profile,

@@ -240,14 +240,11 @@ pub struct StakingStorage {
 
 /// One validator's block-production record.
 ///
-/// Field order is split by write frequency: the two counters the per-block
-/// credit touches share one slot, so recording a block costs a single store no
-/// matter how the epoch-close fields below them grow.
+/// Every field here is an epoch-close write. The per-block credit touches none
+/// of them — it keys its counter by committee index instead — so the record is
+/// read and written once per epoch at most, and fits a single slot.
 #[derive(Storage)]
 pub struct ProductionValidatorStorage {
-    total_produced: StorageU64,
-    /// Epoch of the most recent credited block plus one (`0` means never).
-    last_produced_epoch_p1: StorageU64,
     /// Epoch of the most recent failing verdict plus one (`0` means never).
     last_failed_epoch_p1: StorageU64,
     /// Epoch at whose close the exclusion is released (`0` means not excluded).
@@ -267,7 +264,15 @@ pub struct ProductionLivenessStorage {
     /// Blocks credited per (epoch, committee index).
     ///
     /// Keyed by index rather than by address because index `i` names a
-    /// different validator in every epoch.
+    /// different validator in every epoch, and safely so: an epoch's committee
+    /// is committed once before the epoch starts and never mutated inside it, so
+    /// the index cannot come to mean someone else while the counter is live.
+    ///
+    /// Never pruned, deliberately. Nothing reads an epoch's entries after its
+    /// close — in a devnet build the `producedAt` getter can, in a production
+    /// build nothing can — and clearing them would cost one store per committee
+    /// member on the close path, the most expensive path in the tier, to reclaim
+    /// about fifty slots a day at the production epoch interval.
     produced: StorageMap<u64, StorageMap<u32, StorageU32>>,
     blocks_in_epoch: StorageMap<u64, StorageU32>,
     /// Live exclusions; the length is the concurrent count.

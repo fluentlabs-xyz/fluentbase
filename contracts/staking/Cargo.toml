@@ -17,3 +17,7 @@ path = "src/lib.rs"
 default = ["std"]
 std = ["fluentbase-sdk/std", "fluentbase-testing/std"]
 debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print"]
+# Views with no production consumer: `e2e/` and the node repo's devnet
+# smoke/soak harness are the only callers. Off by default so the production
+# artifact carries no view surface it has nothing in production to serve.
+devnet-views = []

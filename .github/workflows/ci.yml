@@ -45,6 +45,15 @@ jobs:
             kind: workspace
             cache-key: contracts-std
 
+          # Second shape for the staking contract: its devnet-only views are
+          # compiled out by default, so the run above never reaches them, their
+          # handlers, or their selector pins.
+          - name: contracts / std,devnet-views
+            manifest: ./contracts/Cargo.toml
+            features: std,fluentbase-contracts-staking/devnet-views
+            kind: workspace
+            cache-key: contracts-std-devnet-views
+
           - name: examples / std
             manifest: ./examples/Cargo.toml
             features: std

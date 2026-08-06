@@ -155,21 +155,20 @@ pub const SIG_GET_PRODUCTION_LIVENESS_DISABLED: u32 =
 // 0x8fc07556
 pub const SIG_SET_PRODUCTION_LIVENESS_DISABLED: u32 =
     derive_keccak256_id!("setProductionLivenessDisabled(bool)");
-// 0x8e948ac1
-pub const SIG_GET_PRODUCTION_STATS: u32 =
-    derive_keccak256_id!("getProductionStats(address,uint64)");
 // 0xf06be669
+#[cfg(feature = "devnet-views")]
 pub const SIG_BLOCKS_IN_EPOCH: u32 = derive_keccak256_id!("blocksInEpoch(uint64)");
 // 0x91c7d453
+#[cfg(feature = "devnet-views")]
 pub const SIG_PRODUCED_AT: u32 = derive_keccak256_id!("producedAt(uint64,uint32)");
 // 0xaef690f9
+#[cfg(feature = "devnet-views")]
 pub const SIG_PENDING_EXCLUSIONS: u32 = derive_keccak256_id!("pendingExclusions()");
-// 0x32066046
-pub const SIG_READMIT_AT_EPOCH: u32 = derive_keccak256_id!("readmitAtEpoch(address)");
 // 0x33de61d2
+#[cfg(feature = "devnet-views")]
 pub const SIG_LAST_PROCESSED_BLOCK: u32 = derive_keccak256_id!("lastProcessedBlock()");
-// 0x8244a2c2
-pub const SIG_RECORD_PRODUCTION: u32 = derive_keccak256_id!("recordProduction(uint64,uint8)");
+// 0x1752910e
+pub const SIG_RECORD_PRODUCTION: u32 = derive_keccak256_id!("recordProduction(uint8)");
 // 0x92d321ab
 pub const SIG_SETTLE_EPOCH_STIPEND_FROM: u32 =
     derive_keccak256_id!("settleEpochStipendFrom(uint64)");

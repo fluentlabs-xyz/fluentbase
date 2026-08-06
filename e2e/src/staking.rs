@@ -58,7 +58,7 @@ sol! {
             external
             view
             returns (uint256 delegatedAmount, uint64 atEpoch);
-        function recordProduction(uint64 blockNumber, uint8 leaderIndex) external;
+        function recordProduction(uint8 leaderIndex) external;
         function settleEpochStipendFrom(uint64 epoch) external;
         function lastProcessedBlock() external view returns (uint64);
         function blocksInEpoch(uint64 epoch) external view returns (uint32);
@@ -356,13 +356,10 @@ fn record_production_drives_the_epoch_close_through_real_rwasm() {
         initialize_calldata(Address::repeat_byte(0x44), verifier, Vec::new()),
     );
 
-    let record = |block_number: u64| {
-        IStakingRwasm::recordProductionCall {
-            blockNumber: block_number,
-            leaderIndex: 0,
-        }
-        .abi_encode()
-    };
+    // The height is the block context now, so the closure keeps its parameter
+    // only to name which block each assertion is about.
+    let record =
+        |_block_number: u64| IStakingRwasm::recordProductionCall { leaderIndex: 0 }.abi_encode();
     assert_reverts(&mut context, OWNER, GENESIS_STAKING, record(1_000));
     assert_reverts(
         &mut context,

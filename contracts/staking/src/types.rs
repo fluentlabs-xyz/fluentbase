@@ -116,7 +116,6 @@ pub struct ConsensusKeys {
 
 #[derive(Default, Debug, Codec)]
 pub struct RecordProductionCommand {
-    pub block_number: u64,
     pub leader_index: u8,
 }
 

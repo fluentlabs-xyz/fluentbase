@@ -32,6 +32,9 @@ fluentbase-evm = { workspace = true }
 [features]
 default = ["std"]
 debug-print = ["fluentbase-sdk/debug-print"]
+# Builds the staking artifact with its devnet-only view handlers. Consumed by
+# `e2e` and by the devnet genesis; the production artifact leaves it off.
+devnet-views = []
 svm = []
 wasmtime = []
 std = [

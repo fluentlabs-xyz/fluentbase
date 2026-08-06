@@ -164,9 +164,15 @@ over, the close runs three legs with three deliberately different failure polici
    exactly the outage they exist for, and would make the exclusion duration depend on when the
    switch was flipped. A release is not a punishment, so the switch has no business stopping it.
 2. **Verdicts** — fail-loud, and the one leg the kill switch does hold. An epoch whose recorded
-   block count does not match the epoch interval is tainted: it emits `PartialEpoch` and is not
-   judged at all, because a partial record cannot distinguish an idle validator from a missing
-   report. With the switch on, no new verdicts and no new stamps.
+   block count does not match the number of heights it could have recorded is tainted: it emits
+   `PartialEpoch` and is not judged at all, because a partial record cannot distinguish an idle
+   validator from a missing report. With the switch on, no new verdicts and no new stamps.
+
+   That number is the epoch interval for every epoch but the first. Epoch 0 owns one height fewer:
+   the DPoS activation block is produced by the pre-DPoS sequencer, which holds no committee
+   position, so its header carries empty `extra_data` and the node issues no record for it. Epoch 0
+   is therefore complete at `interval - 1`, and expecting the full interval there would taint a
+   healthy first day on every chain and leave it permanently unjudged.
 3. **Stipend** — tolerant. It runs in a fuel-capped self-call so a failing payment cannot roll back
    the releases and verdicts of the same close; a failure emits `StipendLegSkipped` from the outer
    frame.
@@ -183,5 +189,13 @@ forfeited, not deferred.
 
 ```bash
 cargo test --manifest-path contracts/Cargo.toml -p fluentbase-contracts-staking
+cargo test --manifest-path contracts/Cargo.toml -p fluentbase-contracts-staking --features devnet-views
 cargo test -p fluentbase-e2e staking
 ```
+
+The first run is the shape that ships. Four liveness views — `producedAt`, `blocksInEpoch`,
+`pendingExclusions`, `lastProcessedBlock` — have no production consumer and are compiled out unless
+`devnet-views` is on, so that run also asserts the contract works with none of them present. The
+second run covers the four. The e2e suite always gets them: it activates the feature through
+`[dev-dependencies]`, which are built for tests and never for `cargo build`, so no ordinary build —
+including the one that produces the published genesis — can pick them up.
