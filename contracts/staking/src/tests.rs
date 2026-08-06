@@ -8,7 +8,7 @@ use crate::{
         ValidatorStorage,
     },
     types::{
-        AddValidatorCommand, AddressCommand, AddressU16Command, BoolCommand, ConsensusKeys,
+        AddressAmountCommand, AddressCommand, AddressU16Command, BoolCommand, ConsensusKeys,
         EpochSignerCommand, EquivocationCommand, InitializeCommand, RecordProductionCommand,
         RegisterValidatorCommand, TwoAddressesCommand, U256Command, U32Command, U64Command,
         ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
@@ -624,7 +624,7 @@ fn solidity_bytes_calldata_reaches_staking_handlers() {
 }
 
 #[test]
-fn add_validator_cast_calldata_registers_consensus_keys_atomically() {
+fn register_validator_cast_calldata_registers_consensus_keys_atomically() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
     let verifier = Address::with_last_byte(0xb0);
@@ -634,7 +634,6 @@ fn add_validator_cast_calldata_registers_consensus_keys_atomically() {
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    harness.set_caller(GENESIS_GOVERNANCE);
     chain_config_storage()
         .bls_verifier_accessor()
         .set_checked(&mut harness.sdk, verifier)
@@ -642,12 +641,22 @@ fn add_validator_cast_calldata_registers_consensus_keys_atomically() {
 
     let calls = Rc::new(RefCell::new(Vec::new()));
     let recorded_calls = calls.clone();
+    let pulls = Rc::new(RefCell::new(Vec::new()));
+    let recorded_pulls = pulls.clone();
     harness
         .sdk
         .set_call_handler(move |address, _value, input, _fuel_limit| {
+            let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
+            if selector == SIG_ERC20_TRANSFER_FROM {
+                let (from, to, amount) =
+                    decode_output::<(Address, Address, U256)>(&input[SIG_LEN_BYTES..]);
+                recorded_pulls
+                    .borrow_mut()
+                    .push((address, from, to, amount));
+                return SyscallResult::new(encode_mock_return(&true), 0, 0, ExitCode::Ok);
+            }
             assert_eq!(address, verifier);
             recorded_calls.borrow_mut().push(input.to_vec());
-            let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
             let output = match selector {
                 SIG_BLS_COMPRESS_G2_UNCHECKED => hex!(
                     "0000000000000000000000000000000000000000000000000000000000000020
@@ -669,13 +678,15 @@ fn add_validator_cast_calldata_registers_consensus_keys_atomically() {
         });
 
     // cast calldata
-    // "addValidator(address,bytes,bytes,bytes32)"
-    // 0x...01 0x{11 * 256} 0x{22 * 128} 0x...01
+    // "registerValidator(address,uint16,uint256,bytes,bytes,bytes32)"
+    // 0x...01 0 1000000000000000000 0x{11 * 256} 0x{22 * 128} 0x...01
     let calldata = hex!(
-        "fff952d5
+        "8d6067ed
          0000000000000000000000000000000000000000000000000000000000000001
-         0000000000000000000000000000000000000000000000000000000000000080
-         00000000000000000000000000000000000000000000000000000000000001a0
+         0000000000000000000000000000000000000000000000000000000000000000
+         0000000000000000000000000000000000000000000000000de0b6b3a7640000
+         00000000000000000000000000000000000000000000000000000000000000c0
+         00000000000000000000000000000000000000000000000000000000000001e0
          0000000000000000000000000000000000000000000000000000000000000001
          0000000000000000000000000000000000000000000000000000000000000100
          1111111111111111111111111111111111111111111111111111111111111111
@@ -702,6 +713,15 @@ fn add_validator_cast_calldata_registers_consensus_keys_atomically() {
         &SIG_BLS_COMPRESS_G2_UNCHECKED.to_be_bytes()
     );
     assert_eq!(&calls[1][..SIG_LEN_BYTES], &SIG_BLS_VERIFY.to_be_bytes());
+    assert_eq!(
+        *pulls.borrow(),
+        vec![(
+            STAKING_TOKEN,
+            owner,
+            GENESIS_STAKING,
+            DEFAULT_MIN_VALIDATOR_STAKE
+        )]
+    );
 
     let stored = consensus_storage()
         .consensus_keys_accessor()
@@ -1013,7 +1033,6 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_GET_VALIDATOR_STATUS, 0xa310624f),
         (SIG_GET_VALIDATOR_BY_OWNER, 0x30108c22),
         (SIG_GET_VALIDATORS, 0xb7ab4db5),
-        (SIG_ADD_VALIDATOR, 0xfff952d5),
         (SIG_ACTIVATE_VALIDATOR, 0xb46e5520),
         (SIG_DISABLE_VALIDATOR, 0x1fe97684),
         (SIG_CHANGE_VALIDATOR_COMMISSION_RATE, 0x14f8649f),
@@ -1219,26 +1238,22 @@ fn governance_lifecycle_updates_active_registry() {
         .set_checked(&mut harness.sdk, Address::with_last_byte(0xb0))
         .unwrap();
 
-    let add_validator_command = || AddValidatorCommand {
-        validator,
-        bls_pubkey_uncompressed: Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
-        bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
-        peer_pubkey: B256::with_last_byte(1),
-    };
-
-    harness.set_caller(outsider);
-    let (exit, _) = harness.call(encode_args_call(
-        SIG_ADD_VALIDATOR,
-        &add_validator_command(),
-    ));
-    assert_eq!(exit, ExitCode::Panic);
-
-    harness.set_caller(GENESIS_GOVERNANCE);
+    harness.set_caller(validator);
     assert_eq!(
         harness
             .call(encode_args_call(
-                SIG_ADD_VALIDATOR,
-                &add_validator_command(),
+                SIG_REGISTER_VALIDATOR,
+                &RegisterValidatorCommand {
+                    validator,
+                    commission_rate: 0,
+                    initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                    bls_pubkey_uncompressed: Bytes::from(vec![
+                        0x11;
+                        BLS_PUBKEY_UNCOMPRESSED_LENGTH
+                    ]),
+                    bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
+                    peer_pubkey: B256::with_last_byte(1),
+                },
             ))
             .0,
         ExitCode::Ok
@@ -1247,7 +1262,7 @@ fn governance_lifecycle_updates_active_registry() {
     assert_eq!(
         record.status_accessor().get_checked(&harness.sdk).unwrap(),
         STATUS_PENDING,
-        "governance additions cannot start active without self-stake"
+        "registration cannot start a validator active"
     );
     let (_, output) = harness.call(encode_call(
         SIG_IS_VALIDATOR_ACTIVE,
@@ -1255,29 +1270,14 @@ fn governance_lifecycle_updates_active_registry() {
     ));
     assert!(!decode_output::<bool>(&output));
 
-    assert_revert_selector(
-        harness.call(encode_call(
-            SIG_ACTIVATE_VALIDATOR,
-            &AddressCommand { value: validator },
-        )),
-        ERR_OWNER_SELF_STAKE_BELOW_MINIMUM,
-    );
-    staking::delegate_to(
-        &mut harness.sdk,
-        validator,
-        validator,
-        DEFAULT_MIN_VALIDATOR_STAKE,
-        false,
-    )
-    .unwrap();
-    assert_revert_selector(
-        harness.call(encode_call(
-            SIG_ACTIVATE_VALIDATOR,
-            &AddressCommand { value: validator },
-        )),
-        ERR_OWNER_SELF_STAKE_BELOW_MINIMUM,
-    );
+    harness.set_caller(outsider);
+    let (exit, _) = harness.call(encode_call(
+        SIG_ACTIVATE_VALIDATOR,
+        &AddressCommand { value: validator },
+    ));
+    assert_eq!(exit, ExitCode::Panic);
 
+    harness.set_caller(GENESIS_GOVERNANCE);
     harness.set_block_number(1_200);
     assert_eq!(
         harness
@@ -1335,6 +1335,213 @@ fn governance_lifecycle_updates_active_registry() {
             ))
             .0,
         ExitCode::Ok
+    );
+}
+
+// Registration is the only place a sub-minimum bond is refused: the activation
+// backstop was removed once the bar was pinned to the moment the money is taken.
+#[test]
+fn register_validator_rejects_a_subminimum_bond() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .bls_verifier_accessor()
+        .set_checked(&mut harness.sdk, Address::with_last_byte(0xb0))
+        .unwrap();
+    harness.set_caller(validator);
+
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_REGISTER_VALIDATOR,
+            &RegisterValidatorCommand {
+                validator,
+                commission_rate: 0,
+                initial_stake: DEFAULT_MIN_VALIDATOR_STAKE - BALANCE_COMPACT_PRECISION,
+                bls_pubkey_uncompressed: Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
+                bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
+                peer_pubkey: B256::with_last_byte(1),
+            },
+        )),
+        ERR_INITIAL_STAKE_TOO_LOW,
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_NOT_FOUND
+    );
+}
+
+// `minValidatorStakeAmount` binds where the bond is taken, not at activation. A
+// registrant who paid the bar in force when he registered stays activatable
+// after governance raises it; the raise governs the next registration, not the
+// money already locked.
+#[test]
+fn a_raised_validator_minimum_does_not_block_activating_an_earlier_registrant() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .bls_verifier_accessor()
+        .set_checked(&mut harness.sdk, Address::with_last_byte(0xb0))
+        .unwrap();
+
+    harness.set_caller(validator);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_REGISTER_VALIDATOR,
+                &RegisterValidatorCommand {
+                    validator,
+                    commission_rate: 0,
+                    initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                    bls_pubkey_uncompressed: Bytes::from(vec![
+                        0x11;
+                        BLS_PUBKEY_UNCOMPRESSED_LENGTH
+                    ]),
+                    bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
+                    peer_pubkey: B256::with_last_byte(1),
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT,
+                &U256Command {
+                    value: DEFAULT_MIN_VALIDATOR_STAKE * U256::from(10),
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    let (_, raised) = harness.call(encode_empty_call(SIG_GET_MIN_VALIDATOR_STAKE_AMOUNT));
+    assert_eq!(
+        decode_output::<U256>(&raised),
+        DEFAULT_MIN_VALIDATOR_STAKE * U256::from(10)
+    );
+
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_ACTIVATE_VALIDATOR,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_ACTIVE
+    );
+}
+
+// A full owner exit leaves the validator pending, the same status a fresh
+// registration carries, so nothing in the status alone separates a paid-up
+// registrant from one who has taken his bond back and withdrawn it.
+#[test]
+fn an_owner_who_withdrew_his_whole_bond_cannot_be_activated() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(sponsor, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .bls_verifier_accessor()
+        .set_checked(&mut harness.sdk, Address::with_last_byte(0xb0))
+        .unwrap();
+
+    harness.set_caller(validator);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_REGISTER_VALIDATOR,
+                &RegisterValidatorCommand {
+                    validator,
+                    commission_rate: 0,
+                    initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                    bls_pubkey_uncompressed: Bytes::from(vec![
+                        0x11;
+                        BLS_PUBKEY_UNCOMPRESSED_LENGTH
+                    ]),
+                    bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
+                    peer_pubkey: B256::with_last_byte(1),
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_UNDELEGATE,
+                &AddressAmountCommand {
+                    validator,
+                    amount: DEFAULT_MIN_VALIDATOR_STAKE,
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    // The exit books at epoch 1 and the principal matures `undelegatePeriod`
+    // epochs later, so epoch 8 is the first one that can withdraw it. Block 2_600
+    // is epoch 8, which makes 9 the activation epoch the guard reads.
+    harness.set_block_number(2_600);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CLAIM_DELEGATOR_FEE,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        staking::delegated_amount_at(&harness.sdk, validator, validator, 9).unwrap(),
+        math::U112::ZERO
+    );
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_ACTIVATE_VALIDATOR,
+            &AddressCommand { value: validator },
+        )),
+        ERR_ZERO_OWNER_SELF_STAKE,
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_PENDING
     );
 }
 
@@ -3403,38 +3610,76 @@ fn equal_stake_top_k_preserves_solidity_roster_order() {
     assert_eq!(decode_output::<Vec<Address>>(&output), vec![first]);
 }
 
+// A minimum raised above every seated validator's self-stake is a single
+// governance transaction. Were selection to re-read it live, that one call would
+// leave nothing to commit and the chain would have no committee at all.
 #[test]
-fn selection_filters_active_validator_below_current_minimum() {
+fn a_raised_minimum_does_not_empty_the_next_committee() {
     let owner = Address::with_last_byte(0xa0);
-    let validator = Address::with_last_byte(0x01);
+    let first = Address::with_last_byte(0x01);
+    let second = Address::with_last_byte(0x02);
+    let validators = vec![first, second];
     let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(
+        owner,
+        validators.clone(),
+        vec![
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3),
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
+        ],
+        0,
+    );
+    command.active_validators_length = 2;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    harness.set_caller(SYSTEM_CALLER);
     assert_eq!(
-        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0,),
+        harness
+            .call(encode_args_call(
+                SIG_COMMIT_EPOCH_COMMITTEE,
+                &(validators.clone(),),
+            ))
+            .0,
         ExitCode::Ok
     );
-    chain_config_storage()
-        .min_validator_stake_amount_accessor()
-        .set_checked(
-            &mut harness.sdk,
-            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
-        )
-        .unwrap();
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT,
+                &U256Command {
+                    value: DEFAULT_MIN_VALIDATOR_STAKE * U256::from(10),
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    let (_, raised) = harness.call(encode_empty_call(SIG_GET_MIN_VALIDATOR_STAKE_AMOUNT));
+    assert_eq!(
+        decode_output::<U256>(&raised),
+        DEFAULT_MIN_VALIDATOR_STAKE * U256::from(10)
+    );
 
     assert_eq!(
-        staking_storage()
-            .validators_accessor()
-            .entry(validator)
-            .status_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        STATUS_ACTIVE,
-        "selection must defend independently from lifecycle status"
+        staking::selected_validators_at(&harness.sdk, 0).unwrap(),
+        validators
     );
-    let (_, output) = harness.call(encode_empty_call(SIG_GET_VALIDATORS));
-    assert!(decode_output::<Vec<Address>>(&output).is_empty());
-    assert!(staking::selected_validators_at(&harness.sdk, 0)
-        .unwrap()
-        .is_empty());
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_COMMIT_EPOCH_COMMITTEE,
+                &(validators.clone(),),
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE,
+        &U64Command { value: 1 },
+    ));
+    assert_eq!(decode_output::<Vec<Address>>(&output), validators);
 }
 
 #[test]
@@ -4759,7 +5004,7 @@ fn claiming_rewards_does_not_rewrite_historical_self_stake() {
         .unwrap();
 
     let stake_before =
-        staking::validator_self_stake_at(&harness.sdk, validator, past_epoch).unwrap();
+        staking::delegated_amount_at(&harness.sdk, validator, validator, past_epoch).unwrap();
     assert!(!stake_before.is_zero());
     assert!(staking::selected_validators_at(&harness.sdk, past_epoch)
         .unwrap()
@@ -4777,7 +5022,7 @@ fn claiming_rewards_does_not_rewrite_historical_self_stake() {
     );
 
     assert_eq!(
-        staking::validator_self_stake_at(&harness.sdk, validator, past_epoch).unwrap(),
+        staking::delegated_amount_at(&harness.sdk, validator, validator, past_epoch).unwrap(),
         stake_before,
         "a claim must not change what the self-stake was at an already-committed epoch"
     );
@@ -6138,17 +6383,19 @@ fn a_slash_with_nothing_to_seize_still_tombstones() {
         harness.initialize(sponsor, vec![seated], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
         ExitCode::Ok
     );
-    let transfers = record_transfers(&harness, true);
 
-    // `addValidator` registers keys without a bond, so the offender holds nothing
-    // the seizure can reach.
-    harness.set_caller(GENESIS_GOVERNANCE);
+    // Registration always bonds the minimum, so the only route to a validator
+    // with registered keys and nothing to seize is a full owner exit followed by
+    // the withdrawal of the matured principal.
+    harness.set_caller(offender);
     assert_eq!(
         harness
             .call(encode_args_call(
-                SIG_ADD_VALIDATOR,
-                &AddValidatorCommand {
+                SIG_REGISTER_VALIDATOR,
+                &RegisterValidatorCommand {
                     validator: offender,
+                    commission_rate: 0,
+                    initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
                     bls_pubkey_uncompressed: Bytes::from(vec![
                         0x40;
                         BLS_PUBKEY_UNCOMPRESSED_LENGTH
@@ -6160,7 +6407,43 @@ fn a_slash_with_nothing_to_seize_still_tombstones() {
             .0,
         ExitCode::Ok
     );
+    staking::undelegate_from(
+        &mut harness.sdk,
+        offender,
+        offender,
+        DEFAULT_MIN_VALIDATOR_STAKE,
+    )
+    .unwrap();
+    // The exit books at epoch 1 and the principal matures `undelegatePeriod`
+    // epochs later, so epoch 8 is the first one that can withdraw it.
+    harness.set_block_number(2_600);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CLAIM_DELEGATOR_FEE,
+                &AddressCommand { value: offender },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    // The two amounts `seize_self_stake` adds up.
+    let delegation = staking_storage()
+        .validator_delegations_accessor()
+        .entry(offender)
+        .entry(offender);
+    assert_eq!(
+        staking::delegated_amount_at(&harness.sdk, offender, offender, 8).unwrap(),
+        math::U112::ZERO
+    );
+    assert_eq!(
+        delegation
+            .pending_undelegated_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        U256::ZERO
+    );
 
+    let transfers = record_transfers(&harness, true);
     let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x40, reporter);
     assert_eq!(
         commit_and_slash(&mut harness, &NOTARIZE_ROUTE, &command).0,
@@ -6426,65 +6709,6 @@ fn production_liveness_setters_enforce_their_bounds() {
     );
 }
 
-// A roster member that is selection-visible but below the minimum self-stake can
-// never be seated, so it is not a replacement. Counting visibility alone
-// over-reports the pool and hands out a stamp whose seat then simply vanishes.
-// The Solidity has no such filter, so this gap exists only in the port.
-#[test]
-fn exclusion_does_not_count_a_validator_that_cannot_be_seated_as_a_replacement() {
-    let owner = Address::with_last_byte(0xa0);
-    let rich = Address::with_last_byte(0x01);
-    let middle = Address::with_last_byte(0x02);
-    let poor = Address::with_last_byte(0x03);
-    let mut harness = Harness::new(1_000);
-    let mut command = harness.initialize_command(
-        owner,
-        vec![rich, middle, poor],
-        vec![
-            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(5),
-            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3),
-            DEFAULT_MIN_VALIDATOR_STAKE,
-        ],
-        0,
-    );
-    command.active_validators_length = 2;
-    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
-
-    // `poor` stays visible but drops below the bar, so the eligible pool is 2 —
-    // exactly the cap, leaving nothing to replace an excluded member with.
-    harness.set_caller(GENESIS_GOVERNANCE);
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT,
-                &U256Command {
-                    value: DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
-                },
-            ))
-            .0,
-        ExitCode::Ok
-    );
-
-    let next = crate::util::next_epoch(&harness.sdk).unwrap();
-    assert_eq!(
-        staking::selected_validators_at(&harness.sdk, next).unwrap(),
-        vec![rich, middle],
-        "the pool that can actually be seated is already at the cap"
-    );
-
-    harness.sdk.take_logs();
-    assert!(
-        !staking::apply_production_exclusion(&mut harness.sdk, middle).unwrap(),
-        "an unseatable roster member is not a replacement"
-    );
-    assert!(harness.sdk.take_logs().is_empty());
-    assert_eq!(
-        staking::selected_validators_at(&harness.sdk, next).unwrap(),
-        vec![rich, middle],
-        "the refused stamp must not have shrunk the committee"
-    );
-}
-
 #[test]
 fn production_exclusion_refuses_without_a_replacement_and_leaves_no_trace() {
     let owner = Address::with_last_byte(0xa0);
@@ -6737,15 +6961,17 @@ fn a_second_status_transition_does_not_rewrite_the_epoch_before_the_first() {
         ExitCode::Ok
     );
 
-    // A validator added by governance is Pending and invisible, so the two
+    // A freshly registered validator is Pending and invisible, so the two
     // transitions below are the first two this record ever holds.
-    harness.set_caller(GENESIS_GOVERNANCE);
+    harness.set_caller(subject);
     assert_eq!(
         harness
             .call(encode_args_call(
-                SIG_ADD_VALIDATOR,
-                &AddValidatorCommand {
+                SIG_REGISTER_VALIDATOR,
+                &RegisterValidatorCommand {
                     validator: subject,
+                    commission_rate: 0,
+                    initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
                     bls_pubkey_uncompressed: Bytes::from(vec![
                         0x33;
                         BLS_PUBKEY_UNCOMPRESSED_LENGTH
@@ -6757,14 +6983,7 @@ fn a_second_status_transition_does_not_rewrite_the_epoch_before_the_first() {
             .0,
         ExitCode::Ok
     );
-    staking::delegate_to(
-        &mut harness.sdk,
-        subject,
-        subject,
-        DEFAULT_MIN_VALIDATOR_STAKE,
-        false,
-    )
-    .unwrap();
+    harness.set_caller(GENESIS_GOVERNANCE);
 
     // Epoch 1: the first transition, visible from epoch 2 onward.
     harness.set_block_number(1_200);

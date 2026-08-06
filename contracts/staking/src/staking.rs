@@ -10,9 +10,9 @@ use crate::{
         ValidatorSnapshotStorage,
     },
     types::{
-        AddValidatorCommand, AddressAmountCommand, AddressCommand, AddressU16Command,
-        RegisterValidatorCommand, TwoAddressesCommand, U64Command, ValidatorBlockCommand,
-        ValidatorDelegatorCommand, ValidatorEpochCommand,
+        AddressAmountCommand, AddressCommand, AddressU16Command, RegisterValidatorCommand,
+        TwoAddressesCommand, U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand,
+        ValidatorEpochCommand,
     },
     util::{
         current_epoch, current_epoch_at_block, decode, decode_args, ensure_governance,
@@ -297,14 +297,8 @@ pub(crate) fn selection_candidates_at<SDK: SharedAPI>(
 
 /// Number of roster members that could actually be seated at `epoch`.
 ///
-/// This counts the population `top_k_by_stake_at` cuts from, not the one
-/// `selection_candidates_at` returns: the Rust drops candidates below the
-/// minimum self-stake before the cut, which the Solidity does not. Counting
-/// visibility alone would over-report, and the exclusion rule would then hand
-/// out a stamp whose seat has no replacement — destroying it rather than
-/// rotating it.
-///
-/// Measured rather than materialized because it runs at every epoch close.
+/// Counts the same population `selection_candidates_at` returns, measured
+/// rather than materialized because it runs at every epoch close.
 pub(crate) fn count_selection_visible_at<SDK: SharedAPI>(
     sdk: &SDK,
     epoch: u64,
@@ -314,9 +308,7 @@ pub(crate) fn count_selection_visible_at<SDK: SharedAPI>(
     let mut visible = 0;
     for index in 0..len {
         let validator = roster.at(index).get_checked(sdk)?;
-        if selection_visible_at(sdk, validator, epoch)?
-            && validator_has_minimum_self_stake_at(sdk, validator, epoch)?
-        {
+        if selection_visible_at(sdk, validator, epoch)? {
             visible += 1;
         }
     }
@@ -428,13 +420,11 @@ pub(crate) fn top_k_by_stake_at<SDK: SharedAPI>(
     epoch: u64,
     cap: usize,
 ) -> Result<Vec<Address>, ExitCode> {
-    let mut eligible = Vec::with_capacity(candidates.len());
+    let mut weighted = Vec::with_capacity(candidates.len());
     for validator in candidates {
-        if validator_has_minimum_self_stake_at(sdk, validator, epoch)? {
-            eligible.push((validator, validator_total_at(sdk, validator, epoch)?));
-        }
+        weighted.push((validator, validator_total_at(sdk, validator, epoch)?));
     }
-    let mut candidates = eligible;
+    let mut candidates = weighted;
     let k = core::cmp::min(cap, candidates.len());
     for index in 0..k {
         let mut next = index;
@@ -739,7 +729,7 @@ pub(crate) fn validator_total_at<SDK: SharedAPI>(
 /// Queue entries carry the cumulative balance effective from their own epoch, so
 /// the answer is the last entry that had already taken effect — or zero when
 /// none had.
-fn delegated_amount_at<SDK: SharedAPI>(
+pub(crate) fn delegated_amount_at<SDK: SharedAPI>(
     sdk: &SDK,
     validator: Address,
     delegator: Address,
@@ -765,35 +755,6 @@ fn delegated_amount_at<SDK: SharedAPI>(
         return Ok(math::U112::ZERO);
     }
     queue.at(low - 1).amount_accessor().get_checked(sdk)
-}
-
-pub(crate) fn validator_self_stake_at<SDK: SharedAPI>(
-    sdk: &SDK,
-    validator: Address,
-    epoch: u64,
-) -> Result<U256, ExitCode> {
-    let owner = staking_storage()
-        .validators_accessor()
-        .entry(validator)
-        .owner_accessor()
-        .get_checked(sdk)?;
-    if owner.is_zero() {
-        return Ok(U256::ZERO);
-    }
-    Ok(math::expand_balance(delegated_amount_at(
-        sdk, validator, owner, epoch,
-    )?))
-}
-
-pub(crate) fn validator_has_minimum_self_stake_at<SDK: SharedAPI>(
-    sdk: &SDK,
-    validator: Address,
-    epoch: u64,
-) -> Result<bool, ExitCode> {
-    let minimum = chain_config_storage()
-        .min_validator_stake_amount_accessor()
-        .get_checked(sdk)?;
-    Ok(validator_self_stake_at(sdk, validator, epoch)? >= minimum)
 }
 
 /// Public handler `0x76671808` (`currentEpoch`).
@@ -877,40 +838,6 @@ pub fn get_validators<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     write_abi(sdk, &selected_validators(sdk)?)
 }
 
-/// Public handler `addValidator(address,bytes,bytes,bytes32)`.
-///
-/// Adds a pending validator under governance control.
-///
-/// The validator must self-delegate the configured minimum before governance
-/// can activate it.
-pub fn add_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_mutable(sdk)?;
-    ensure_governance(sdk)?;
-    let command = decode_args::<AddValidatorCommand>(input)?;
-    if validator_status(sdk, command.validator)? != STATUS_NOT_FOUND {
-        return revert_with(sdk, ERR_VALIDATOR_ALREADY_EXISTS, &command.validator);
-    }
-    let verified = verify_consensus_keys(
-        sdk,
-        command.validator,
-        command.bls_pubkey_uncompressed,
-        command.bls_pop_uncompressed,
-        command.peer_pubkey,
-    )?;
-    let changed_at = next_epoch(sdk)?;
-    set_validator(
-        sdk,
-        command.validator,
-        command.validator,
-        STATUS_PENDING,
-        0,
-        U256::ZERO,
-        changed_at,
-    )?;
-    store_consensus_keys(sdk, command.validator, verified, changed_at)
-}
-
 /// Public handler `0xb46e5520` (`activateValidator`).
 ///
 /// Activates a pending validator under governance control.
@@ -923,10 +850,26 @@ pub fn activate_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
         return revert_with(sdk, ERR_NOT_PENDING_VALIDATOR, &validator);
     }
     let activation_epoch = next_epoch(sdk)?;
-    if !validator_has_minimum_self_stake_at(sdk, validator, activation_epoch)? {
-        return revert(sdk, ERR_OWNER_SELF_STAKE_BELOW_MINIMUM);
-    }
     let storage = staking_storage();
+    let owner = storage
+        .validators_accessor()
+        .entry(validator)
+        .owner_accessor()
+        .get_checked(sdk)?;
+    // A full owner exit leaves the validator pending, which is the status a fresh
+    // registration also carries, so without this the owner can take the bond back
+    // and still be seated with nothing at stake.
+    //
+    // This is not the `minValidatorStakeAmount` check that used to stand here.
+    // That one read a governance-mutable threshold, so raising the bar could
+    // refuse a registrant who had already paid the bar in force and still held
+    // every token of it. Zero is not a parameter: an owner who kept his bond
+    // passes at any threshold. And because a partial withdrawal below the minimum
+    // is already refused, self-stake here is either zero or at least the
+    // threshold that governed it when it was posted.
+    if delegated_amount_at(sdk, validator, owner, activation_epoch)?.is_zero() {
+        return revert(sdk, ERR_ZERO_OWNER_SELF_STAKE);
+    }
     storage
         .validators_accessor()
         .entry(validator)

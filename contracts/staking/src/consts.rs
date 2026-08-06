@@ -35,9 +35,6 @@ pub const SIG_GET_VALIDATOR_STATUS: u32 = derive_keccak256_id!("getValidatorStat
 pub const SIG_GET_VALIDATOR_BY_OWNER: u32 = derive_keccak256_id!("getValidatorByOwner(address)");
 // 0xb7ab4db5
 pub const SIG_GET_VALIDATORS: u32 = derive_keccak256_id!("getValidators()");
-// 0xfff952d5
-pub const SIG_ADD_VALIDATOR: u32 =
-    derive_keccak256_id!("addValidator(address,bytes,bytes,bytes32)");
 // 0xb46e5520
 pub const SIG_ACTIVATE_VALIDATOR: u32 = derive_keccak256_id!("activateValidator(address)");
 // 0x1fe97684
@@ -285,6 +282,7 @@ pub const ERR_REMAINING_DELEGATION_TOO_LOW: u32 =
 pub const ERR_INITIAL_STAKE_TOO_LOW: u32 = derive_keccak256_id!("InitialStakeTooLow(uint256)");
 pub const ERR_OWNER_SELF_STAKE_BELOW_MINIMUM: u32 =
     derive_keccak256_id!("OwnerSelfStakeBelowMinimum()");
+pub const ERR_ZERO_OWNER_SELF_STAKE: u32 = derive_keccak256_id!("ZeroOwnerSelfStake()");
 pub const ERR_INSUFFICIENT_BALANCE: u32 = derive_keccak256_id!("InsufficientBalance()");
 pub const ERR_DELEGATION_QUEUE_EMPTY: u32 = derive_keccak256_id!("DelegationQueueEmpty()");
 pub const ERR_DELEGATION_QUEUE_NOT_EMPTY: u32 =

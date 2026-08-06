@@ -40,9 +40,10 @@ unarmed/non-DPoS state used by the Solidity contract.
 
 Registered validator identities are permanent. Governance may disable and reactivate validators, but disabling never
 deletes their records, consensus-key state, ownership mappings, or stake history.
-Governance-added validators begin pending with zero stake and cannot become active until their self-stake is effective
-at or above the configured validator minimum. Genesis, governance, and permissionless registration all require the BLS
-key, proof of possession, and peer key in the validator-creation call; there is no separate key-registration phase.
+There are two validator creation paths: the initializer, which seats its validators active with the genesis stake pulled
+from the sponsor, and permissionless registration, which bonds the registrant's own self-stake and leaves the validator
+pending until governance activates it. Both require the BLS key, proof of possession, and peer key in the
+validator-creation call; there is no separate key-registration phase.
 
 ## Accounting Invariants
 
@@ -50,9 +51,12 @@ key, proof of possession, and peer key in the validator-creation call; there is 
   epoch.
 - A newly materialized snapshot copies only the latest state already effective at that epoch. Earlier-effective stake
   and commission changes are carried forward through any scheduled warm-up snapshots, never copied backward from them.
-- Initialization, activation, and committee selection each require the validator owner's effective
-  self-stake to meet the configured minimum. A full owner exit moves an active validator to pending in the same
-  transaction and removes its next-epoch selection visibility.
+- The configured validator minimum binds where the bond is posted — initialization and permissionless registration — and
+  again on a partial owner withdrawal, which may not leave a self-stake remainder below it. Activation requires only that
+  the owner's effective self-stake be non-zero, so raising the minimum never strands an earlier registrant while an owner
+  who withdrew his whole bond still cannot be seated. Committee selection applies no self-stake minimum of its own.
+- A full owner exit moves an active validator to pending in the same transaction and removes its next-epoch selection
+  visibility.
 - Delegation amounts must use `BALANCE_COMPACT_PRECISION`.
 - Undelegated principal is released only after its maturity epoch and is claimed through the reward path.
 - Reward claims and views never consume epochs at or beyond the exclusive settled frontier. Matured undelegated

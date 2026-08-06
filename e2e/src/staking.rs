@@ -39,8 +39,10 @@ sol! {
             uint256 minUndelegateBlocks,
             address blendReserve
         ) external;
-        function addValidator(
+        function registerValidator(
             address validator,
+            uint16 commissionRate,
+            uint256 initialStake,
             bytes calldata blsPubkeyUncompressed,
             bytes calldata blsPopUncompressed,
             bytes32 peerPubkey
@@ -172,6 +174,19 @@ fn deploy_mock_bls_verifier(context: &mut EvmTestingContext) -> Address {
 fn staking_accepts_solidity_bytes_for_consensus_keys() {
     let mut context = EvmTestingContext::default().with_full_genesis();
     let verifier = deploy_mock_bls_verifier(&mut context);
+    let token = context.deploy_evm_tx(
+        OWNER,
+        InitialSettings {
+            token_name: "Blend".into(),
+            token_symbol: "BLEND".into(),
+            decimals: 18,
+            initial_supply: TOKEN * U256::from(1_000),
+            minter: OWNER,
+            pauser: Address::ZERO,
+            wrapped: None,
+        }
+        .encode_with_prefix(),
+    );
 
     // Keep key activation explicitly pre-activation: the current epoch is
     // clamped to zero.
@@ -180,14 +195,23 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
         &mut context,
         GENESIS_GOVERNANCE,
         GENESIS_STAKING,
-        initialize_calldata(Address::repeat_byte(0x44), verifier, Vec::new()),
+        initialize_calldata(token, verifier, Vec::new()),
     );
+    let mut approve = Vec::new();
+    ApproveCommand {
+        spender: GENESIS_STAKING,
+        amount: TOKEN,
+    }
+    .encode_for_send(&mut approve);
+    call(&mut context, OWNER, token, approve);
     call(
         &mut context,
-        GENESIS_GOVERNANCE,
+        OWNER,
         GENESIS_STAKING,
-        IStakingRwasm::addValidatorCall {
+        IStakingRwasm::registerValidatorCall {
             validator: VALIDATOR,
+            commissionRate: 0,
+            initialStake: TOKEN,
             blsPubkeyUncompressed: vec![0x11; 256].into(),
             blsPopUncompressed: vec![0x22; 128].into(),
             peerPubkey: B256::with_last_byte(0x01),

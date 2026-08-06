@@ -76,16 +76,6 @@ pub struct ValidatorEpochCommand {
 }
 
 #[derive(Default, Debug, Codec)]
-pub struct AddValidatorCommand {
-    pub validator: Address,
-    pub bls_pubkey_uncompressed: Bytes,
-    pub bls_pop_uncompressed: Bytes,
-    pub peer_pubkey: B256,
-}
-
-impl FunctionArgs<BE, 32, true, false> for AddValidatorCommand {}
-
-#[derive(Default, Debug, Codec)]
 pub struct RegisterValidatorCommand {
     pub validator: Address,
     pub commission_rate: u16,

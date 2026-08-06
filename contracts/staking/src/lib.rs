@@ -103,7 +103,6 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_GET_VALIDATOR_STATUS => staking::get_validator_status(sdk, params),
         SIG_GET_VALIDATOR_BY_OWNER => staking::get_validator_by_owner(sdk, params),
         SIG_GET_VALIDATORS => staking::get_validators(sdk),
-        SIG_ADD_VALIDATOR => staking::add_validator(sdk, params),
         SIG_ACTIVATE_VALIDATOR => staking::activate_validator(sdk, params),
         SIG_DISABLE_VALIDATOR => staking::disable_validator(sdk, params),
         SIG_CHANGE_VALIDATOR_COMMISSION_RATE => staking::change_commission(sdk, params),
