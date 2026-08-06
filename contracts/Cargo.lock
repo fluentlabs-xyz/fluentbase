@@ -4187,9 +4187,9 @@ dependencies = [
 
 [[package]]
 name = "rwasm"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44e76cddefd31473f933059faa2b11efca2489337b2b785c2e2b7110fac45e1f"
+checksum = "f01cfed0a61eba768d862177034af80731bbcfe0a9ab5ecc96a5f49bc5e222c8"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
