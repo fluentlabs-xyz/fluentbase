@@ -1,3 +1,6 @@
+mod provenance;
+
+use crate::provenance::{load_release, ManifestBinding, ReleaseProvenance};
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use ethers::{
@@ -6,7 +9,6 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest, U64},
 };
-use flate2::read::GzDecoder;
 use fluentbase_sdk::{
     bytes::BytesMut, codec::SolidityABI, crypto::crypto_keccak256, Address, Bytes, B256,
     PRECOMPILE_BIG_MODEXP, PRECOMPILE_BLAKE2F, PRECOMPILE_BLS12_381_G1_ADD,
@@ -29,7 +31,7 @@ use serde::Serialize;
 use std::{
     collections::HashMap,
     fs,
-    io::{Read, Write},
+    io::Write,
     path::{Path, PathBuf},
     sync::LazyLock,
     time::{SystemTime, UNIX_EPOCH},
@@ -60,6 +62,12 @@ struct CommonArgs {
     #[arg(long)]
     genesis: String,
 
+    /// Release channel of the genesis asset (e.g. `mainnet`). Omit for the default asset.
+    /// This selects which published artifact is authenticated, so it must match the network the
+    /// upgrade targets. Implied by --mainnet, which is why the two cannot be combined.
+    #[arg(long, conflicts_with = "mainnet")]
+    genesis_channel: Option<String>,
+
     /// Contract key name (e.g. PRECOMPILE_EVM_RUNTIME) from CONTRACTS_TO_UPGRADE.
     /// If omitted, upgrades all known contracts (with a prompt).
     #[arg(long)]
@@ -77,10 +85,32 @@ struct CommonArgs {
     #[arg(long)]
     test: bool,
 
-    /// A custom RPC endpoint (overrides --local, --dev, --test)
+    /// Use mainnet RPC (https://rpc.fluent.xyz) and the `mainnet` genesis asset
+    #[arg(long)]
+    mainnet: bool,
+
+    /// A custom RPC endpoint (overrides --local, --dev, --test, --mainnet).
+    /// Does not affect which genesis asset is used — pass --genesis-channel for that.
     #[arg(long)]
     rpc: Option<String>,
 }
+
+impl CommonArgs {
+    /// Release channel of the genesis asset to authenticate.
+    ///
+    /// `--mainnet` implies the `mainnet` channel so the artifact cannot silently disagree with the
+    /// network being upgraded; clap rejects passing both.
+    fn genesis_channel(&self) -> Option<&str> {
+        match self.genesis_channel.as_deref() {
+            Some(channel) => Some(channel),
+            None if self.mainnet => Some(MAINNET_GENESIS_CHANNEL),
+            None => None,
+        }
+    }
+}
+
+/// Genesis release channel for Fluent Mainnet artifacts.
+const MAINNET_GENESIS_CHANNEL: &str = "mainnet";
 
 #[derive(Args, Debug)]
 struct TxArgs {
@@ -156,7 +186,9 @@ enum TransactionOutcome {
 }
 
 #[derive(Serialize)]
-struct UpgradeResultManifest {
+struct UpgradeResultManifest<'a> {
+    /// What the release artifact these payloads came from was proven to be.
+    provenance: &'a ReleaseProvenance,
     entries: Vec<UpgradeResultEntry>,
 }
 
@@ -244,49 +276,27 @@ fn contracts_to_upgrade() -> HashMap<&'static str, Address> {
     ])
 }
 
-async fn download_genesis_file(genesis_version: &str) -> Result<alloy_genesis::Genesis> {
-    let output_file = format!("genesis-{}.json", genesis_version);
-    if Path::new(&output_file).exists() {
-        let json = fs::read_to_string(&output_file)
-            .with_context(|| format!("reading cached {}", output_file))?;
-        let result = serde_json::from_str::<alloy_genesis::Genesis>(json.as_str())
-            .expect("failed to parse genesis json file");
-        return Ok(result);
-    }
-
-    let url = format!(
-        "https://github.com/fluentlabs-xyz/fluentbase/releases/download/{0}/genesis-{0}.json.gz",
-        genesis_version
+/// Prints what the artifact's provenance was proven to be, before anything privileged happens.
+fn report_provenance(provenance: &ReleaseProvenance) {
+    println!(
+        "Using {} from release {} (sha256 {})",
+        provenance.asset, provenance.tag, provenance.sha256
     );
-
-    print!("Downloading genesis file from {}... ", url);
-    std::io::stdout().flush().ok();
-
-    let resp = reqwest::Client::builder()
-        .user_agent("fluent-chainspec/1.0")
-        .timeout(std::time::Duration::from_secs(60))
-        .build()?
-        .get(url)
-        .send()
-        .await?
-        .error_for_status()?;
-    if !resp.status().is_success() {
-        bail!("HTTP error! {}", resp.status());
+    match &provenance.manifest {
+        ManifestBinding::Verified => {
+            let commit = provenance.commit.as_deref().unwrap_or("unknown");
+            println!("  provenance: signed release manifest verified (commit {commit})");
+        }
+        ManifestBinding::Unavailable { reason } => {
+            println!("  provenance: detached signature verified");
+            eprintln!(
+                "  WARNING: release {} publishes no signed digest manifest ({reason}).\n\
+                 \x20          The artifact is bound by its detached signature only — there is no\n\
+                 \x20          independent binding of asset name and digest to this release.",
+                provenance.tag
+            );
+        }
     }
-    let bytes = resp.bytes().await?;
-
-    let mut decoder = GzDecoder::new(&bytes[..]);
-    let mut json = String::new();
-    decoder
-        .read_to_string(&mut json)
-        .context("gunzip+read_to_string")?;
-
-    fs::write(&output_file, json.as_bytes()).with_context(|| format!("writing {}", output_file))?;
-    println!("DONE");
-
-    let result = serde_json::from_str::<alloy_genesis::Genesis>(json.as_str())
-        .expect("failed to parse genesis json file");
-    Ok(result)
 }
 
 fn ask_for(prompt: &str) -> Result<String> {
@@ -308,19 +318,21 @@ fn pick_rpc(args: &CommonArgs) -> Result<String> {
     if let Some(rpc) = &args.rpc {
         return Ok(rpc.clone());
     }
-    let flags = [args.local, args.dev, args.test]
+    let flags = [args.local, args.dev, args.test, args.mainnet]
         .into_iter()
         .filter(|x| *x)
         .count();
     if flags != 1 {
-        bail!("You must specify exactly one of --local, --dev, or --test");
+        bail!("You must specify exactly one of --local, --dev, --test, or --mainnet");
     }
     Ok(if args.local {
         "http://localhost:8545".to_string()
     } else if args.dev {
         "https://rpc.devnet.fluent.xyz".to_string()
-    } else {
+    } else if args.test {
         "https://rpc.testnet.fluent.xyz".to_string()
+    } else {
+        "https://rpc.fluent.xyz".to_string()
     })
 }
 
@@ -350,12 +362,14 @@ fn contract_key_for(contracts: &HashMap<&'static str, Address>, contract: Addres
 const PLAN_UPGRADE_PREFIX: [u8; 4] = [0x50, 0xc9, 0xc6, 0x68];
 const UPGRADE_TO_PLANNED_SIGNATURE: &[u8] = b"upgradeToPlanned(address,bytes)";
 
+#[allow(clippy::too_many_arguments)]
 fn write_safe_bundle(
     path: &Path,
     genesis_version: &str,
     genesis_hash: B256,
     chain_id: u64,
     updater: Address,
+    provenance: &ReleaseProvenance,
     planned_upgrades: &[PlannedUpgrade],
 ) -> Result<()> {
     if planned_upgrades.is_empty() {
@@ -379,9 +393,16 @@ fn write_safe_bundle(
         .collect::<Vec<_>>()
         .join("\n");
     let description = format!(
-        "Fluent runtime upgrade plan bundle\nGenesis version: {}\nGenesis hash: {}\nUpdater: {}\nPlanned upgrades:\n{}",
+        "Fluent runtime upgrade plan bundle\nGenesis version: {}\nGenesis hash: {}\nGenesis artifact: {} (sha256 {})\nArtifact provenance: {}\nUpdater: {}\nPlanned upgrades:\n{}",
         genesis_version,
         genesis_hash,
+        provenance.asset,
+        provenance.sha256,
+        match &provenance.manifest {
+            ManifestBinding::Verified => "signed release manifest verified".to_string(),
+            ManifestBinding::Unavailable { .. } =>
+                "detached signature only (release publishes no manifest)".to_string(),
+        },
         address_hex(updater),
         metadata
     );
@@ -684,7 +705,17 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let common = cli.command.common();
 
-    let genesis = download_genesis_file(&common.genesis).await?;
+    // Provenance first: nothing below this point may run against an unauthenticated artifact, and
+    // the operator wallet is not touched until it has passed.
+    let release = load_release(
+        &common.genesis,
+        common.genesis_channel(),
+        &provenance::cache_dir(),
+    )
+    .await?;
+    report_provenance(&release.provenance);
+    let provenance = release.provenance;
+    let genesis = release.genesis;
     let genesis_header = make_genesis_header(&genesis, &FLUENT_HARDFORKS);
     let genesis_hash = genesis_header.hash_slow();
 
@@ -742,6 +773,7 @@ async fn main() -> Result<()> {
                 genesis_hash,
                 chain_id,
                 args.updater,
+                &provenance,
                 &planned_upgrades,
             )?;
         }
@@ -750,6 +782,7 @@ async fn main() -> Result<()> {
                 &args.tx,
                 &provider,
                 chain_id,
+                &provenance,
                 &rwasm_module_by_address,
                 upgrade_list,
                 |contract, wasm_bytecode| {
@@ -768,6 +801,7 @@ async fn main() -> Result<()> {
                 &args.tx,
                 &provider,
                 chain_id,
+                &provenance,
                 &rwasm_module_by_address,
                 upgrade_list,
                 encode_planned_upgrade_call,
@@ -779,10 +813,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_upgrade_transactions(
     tx_args: &TxArgs,
     provider: &Provider<Http>,
     chain_id: u64,
+    provenance: &ReleaseProvenance,
     rwasm_module_by_address: &HashMap<Address, RwasmModule>,
     upgrade_list: Vec<Address>,
     encode_call: impl Fn(Address, &[u8]) -> Vec<u8>,
@@ -792,6 +828,7 @@ async fn run_upgrade_transactions(
     let wallet = wallet.with_chain_id(chain_id);
     let signer = SignerMiddleware::new(provider.clone(), wallet);
     let mut manifest = UpgradeResultManifest {
+        provenance,
         entries: Vec::new(),
     };
 
@@ -914,7 +951,7 @@ fn receipt_status(outcome: TransactionOutcome) -> Option<u64> {
     }
 }
 
-fn print_result_manifest(manifest: &UpgradeResultManifest) -> Result<()> {
+fn print_result_manifest(manifest: &UpgradeResultManifest<'_>) -> Result<()> {
     let json = serde_json::to_string(manifest).context("serializing result manifest")?;
     println!("RESULT_MANIFEST_JSON={}", json);
     Ok(())
@@ -923,6 +960,78 @@ fn print_result_manifest(manifest: &UpgradeResultManifest) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn common_args(argv: &[&str]) -> CommonArgs {
+        #[derive(Parser, Debug)]
+        struct Harness {
+            #[command(flatten)]
+            common: CommonArgs,
+        }
+        let mut full = vec!["runtime-upgrade", "--genesis", "v1.3.2"];
+        full.extend_from_slice(argv);
+        Harness::try_parse_from(full)
+            .unwrap_or_else(|err| panic!("parsing {argv:?}: {err}"))
+            .common
+    }
+
+    #[test]
+    fn mainnet_flag_selects_the_mainnet_rpc_and_genesis_channel() {
+        let args = common_args(&["--mainnet"]);
+        assert_eq!(pick_rpc(&args).unwrap(), "https://rpc.fluent.xyz");
+        assert_eq!(args.genesis_channel(), Some("mainnet"));
+    }
+
+    #[test]
+    fn other_networks_keep_the_default_genesis_channel() {
+        for (flag, rpc) in [
+            ("--local", "http://localhost:8545"),
+            ("--dev", "https://rpc.devnet.fluent.xyz"),
+            ("--test", "https://rpc.testnet.fluent.xyz"),
+        ] {
+            let args = common_args(&[flag]);
+            assert_eq!(pick_rpc(&args).unwrap(), rpc, "{flag}");
+            assert_eq!(args.genesis_channel(), None, "{flag}");
+        }
+    }
+
+    #[test]
+    fn genesis_channel_can_be_set_explicitly_without_mainnet() {
+        // A custom mainnet RPC still needs the mainnet artifact, so the two stay separable.
+        let args = common_args(&[
+            "--rpc",
+            "https://internal.example",
+            "--genesis-channel",
+            "mainnet",
+        ]);
+        assert_eq!(pick_rpc(&args).unwrap(), "https://internal.example");
+        assert_eq!(args.genesis_channel(), Some("mainnet"));
+    }
+
+    #[test]
+    fn mainnet_cannot_be_combined_with_an_explicit_genesis_channel() {
+        // Letting these disagree would authenticate one network's artifact for another's upgrade.
+        #[derive(Parser, Debug)]
+        struct Harness {
+            #[command(flatten)]
+            common: CommonArgs,
+        }
+        Harness::try_parse_from([
+            "runtime-upgrade",
+            "--genesis",
+            "v1.3.2",
+            "--mainnet",
+            "--genesis-channel",
+            "devnet",
+        ])
+        .expect_err("conflicting channel selection must be rejected");
+    }
+
+    #[test]
+    fn exactly_one_network_flag_is_required() {
+        pick_rpc(&common_args(&[])).expect_err("no network flag must be rejected");
+        pick_rpc(&common_args(&["--mainnet", "--dev"]))
+            .expect_err("two network flags must be rejected");
+    }
 
     #[test]
     fn preflight_fails_when_selected_contract_is_missing() {

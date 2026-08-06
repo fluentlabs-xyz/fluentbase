@@ -1,0 +1,12 @@
+version=v1.3.2
+commit=d6d8d2e739f50daa8174b299cb5170a9ce7e7974
+
+[raw]
+4fcdd3610da44467e709972b638097cd2bdb5377dd8adb792e8c2328c1e41dc0  ./crates/genesis/genesis-devnet.json
+8d6443bdb150a5ff5a74fa81a9ce6d33d7d2276c508d2bff32b5e9e07e8bc0a0  ./crates/genesis/genesis-mainnet.json
+50245996aeaebe6a47a87981d8e52f939f042257b10e0dcd341a900bddb50087  ./crates/genesis/evm-runtime-permissive.rwasm
+
+[compressed]
+92704da98369998447aae3a4bca614b1e1b5f989e9c05f12d300dc933ffade73  ./artifacts/genesis-v1.3.2.json.gz
+3086b3bf0ceeb1ea7ebb5ea5a523a12df72c100f2d723fcf75486a7e1a7382d1  ./artifacts/genesis-mainnet-v1.3.2.json.gz
+b2374989ad77c54dda2c2b6252ff6fcbf86543cf57388558a881ae63b5c2a55a  ./artifacts/evm-runtime-permissive-v1.3.2.rwasm.gz

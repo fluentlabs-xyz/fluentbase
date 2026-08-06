@@ -1,0 +1,31 @@
+[package]
+name = "fluentbase-release-verify"
+version.workspace = true
+description = "Fail-closed authentication of Fluent release artifacts against the pinned release key"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[dependencies]
+alloy-genesis = { workspace = true }
+flate2 = { workspace = true }
+hex = { workspace = true, features = ["std"] }
+pgp = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+sha2 = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+# Only pulled in by `test-support`; rPGP is built against rand 0.8, so signing fixtures need it.
+rand_08 = { workspace = true, optional = true }
+
+[features]
+# Fixtures for building throwaway releases in downstream tests. Dev-dependencies only.
+test-support = ["dep:rand_08"]
+
+[dev-dependencies]
+rand_08 = { workspace = true }
+tempfile = { workspace = true }

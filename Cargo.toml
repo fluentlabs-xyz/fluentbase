@@ -39,6 +39,7 @@ fluentbase-crypto = { path = "./crates/crypto", default-features = false, versio
 fluentbase-evm = { path = "./crates/evm", default-features = false, version = "1.3.3" }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false, version = "1.3.3" }
 fluentbase-node = { path = "./crates/node", default-features = false, version = "1.3.3" }
+fluentbase-release-verify = { path = "./crates/release-verify", default-features = false, version = "1.3.3" }
 fluentbase-revm = { path = "./crates/revm", default-features = false, version = "1.3.3" }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false, version = "1.3.3" }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false, version = "1.3.3" }

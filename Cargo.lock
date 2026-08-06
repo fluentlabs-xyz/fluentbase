@@ -4890,11 +4890,10 @@ dependencies = [
  "eyre",
  "flate2",
  "fluentbase-genesis",
+ "fluentbase-release-verify",
  "fluentbase-revm",
  "fluentbase-runtime",
  "fluentbase-types",
- "pgp",
- "rand 0.8.6",
  "reqwest 0.12.28",
  "reth-chainspec",
  "reth-cli",
@@ -4937,9 +4936,23 @@ dependencies = [
  "reth-tasks",
  "reth-transaction-pool",
  "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "fluentbase-release-verify"
+version = "1.3.3"
+dependencies = [
+ "alloy-genesis",
+ "flate2",
+ "hex",
+ "pgp",
+ "rand 0.8.6",
+ "serde_json",
  "sha2",
  "tempfile",
- "tokio",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -4992,6 +5005,7 @@ dependencies = [
  "clap",
  "ethers",
  "flate2",
+ "fluentbase-release-verify",
  "fluentbase-sdk",
  "futures-util",
  "hex",
@@ -5001,6 +5015,8 @@ dependencies = [
  "rwasm",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "tokio",
 ]
 
