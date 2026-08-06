@@ -32,13 +32,21 @@ pub trait FeeManagerTr {
     /// Withdraw balance from the contract
     fn withdraw(&mut self, recipient: Address);
 
-    /// Change contract owner
+    /// Change contract owner.
+    ///
+    /// `new_owner` must be non-zero: an empty owner slot means "genesis bootstrap authority", so a
+    /// zero transfer would hand control back to the launch key instead of clearing it. Once
+    /// ownership has moved off the bootstrap key, only an explicit transfer naming
+    /// `DEFAULT_FEE_MANAGER_AUTH` can bring it back.
     fn change_owner(&mut self, new_owner: Address);
 
     /// Get the current contract owner
     fn owner(&mut self) -> Address;
 
-    /// Renounce ownership (change an owner to system contract address)
+    /// Renounce ownership (change an owner to system contract address).
+    ///
+    /// This is the only way to give up ownership, and it is fork-only by intent: `SYSTEM_ADDRESS`
+    /// is unreachable as a caller, unlike the zero address.
     fn renounce_ownership(&mut self);
 }
 
@@ -60,6 +68,13 @@ impl<SDK: SharedAPI> FeeManagerTr for App<SDK> {
 
     fn change_owner(&mut self, new_owner: Address) {
         _ = self.only_owner();
+        // Zero is not a neutral value here: `owner()` and `only_owner()` map an empty slot back to
+        // the genesis bootstrap key, so storing zero would silently reactivate a retired authority
+        // after governance has already handed control over. `renounceOwnership` stays the explicit
+        // fork-only transition.
+        if new_owner == Address::ZERO {
+            panic!("fee-manager: can't set owner to zero address");
+        }
         self.owner_accessor().set(&mut self.sdk, new_owner);
         OwnerChanged { new_owner }.emit(&mut self.sdk).unwrap();
     }
