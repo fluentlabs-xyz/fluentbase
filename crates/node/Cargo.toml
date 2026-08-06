@@ -80,6 +80,12 @@ eyre = { workspace = true }
 directories = { workspace = true }
 flate2 = { workspace = true }
 reqwest = { workspace = true }
+pgp = { workspace = true }
+sha2 = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+rand_08 = { workspace = true }
 
 [features]
 default = ["std"]

@@ -255,6 +255,12 @@ num-bigint = { version = "0.4.6", default-features = false, features = [] }
 curve25519-dalek = { version = "4.1.3", default-features = false, features = ["alloc"] }
 flate2 = "1.1.9"
 parking_lot = "0.12"
+# OpenPGP (rPGP), used to authenticate released genesis artifacts.
+# `default-features = false` drops the bzip2 C dependency, which we never need for detached
+# signature verification.
+pgp = { version = "0.20.0", default-features = false }
+# rPGP is built against rand 0.8, so tests that produce signatures need that exact major version.
+rand_08 = { package = "rand", version = "0.8" }
 
 # dev-dependencies
 serde_derive = { version = "1.0", default-features = false }
