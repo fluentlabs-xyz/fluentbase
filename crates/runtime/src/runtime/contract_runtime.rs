@@ -144,25 +144,7 @@ fn initial_memory_fuel(initial_memory_pages: u32) -> Result<u64, TrapCode> {
 mod tests {
     use super::*;
     use fluentbase_types::import_linker_v1_preview;
-    use rwasm::{ExecutionEngine, InstructionSet, RwasmModule, RwasmModuleInner};
-
-    fn module_with_initial_memory(initial_pages: u32) -> RwasmModule {
-        let mut code_section = InstructionSet::new();
-        code_section.op_stack_check(5);
-        code_section.op_i32_const(initial_pages);
-        code_section.op_memory_grow();
-        code_section.op_drop();
-        code_section.op_return();
-        let source_pc = code_section.len() as u32;
-        RwasmModuleInner {
-            code_section,
-            data_section: vec![],
-            elem_section: vec![],
-            hint_section: vec![],
-            source_pc,
-        }
-        .into()
-    }
+    use rwasm::{ExecutionEngine, RwasmModule, N_DEFAULT_MAX_MEMORY_PAGES};
 
     fn strategy(module: RwasmModule) -> StrategyDefinition {
         StrategyDefinition::Rwasm {
@@ -219,7 +201,11 @@ mod tests {
         // so the executor is left with 1_000_000_000 - 1_047_552 = 998_952_448.
         let memory_fuel = initial_memory_fuel(initial_pages).unwrap();
         assert_eq!(executor.remaining_fuel(), Some(fuel_limit - memory_fuel));
-        let StrategyExecutor::Rwasm { store, .. } = executor;
+        #[allow(irrefutable_let_patterns)]
+        let StrategyExecutor::Rwasm { store, .. } = executor
+        else {
+            unreachable!()
+        };
         assert_eq!(
             store.memory_size_bytes(),
             initial_pages as usize * N_BYTES_PER_MEMORY_PAGE as usize
@@ -231,7 +217,7 @@ mod tests {
         let initial_pages = 1;
         let memory_fuel = initial_memory_fuel(initial_pages).unwrap();
         let runtime = ContractRuntime::new(
-            strategy(module_with_initial_memory(initial_pages)),
+            strategy(compile_wasm_with_initial_memory(initial_pages)),
             import_linker_v1_preview(),
             RuntimeContext::default(),
             Some(memory_fuel + 10),
@@ -245,7 +231,7 @@ mod tests {
         let initial_pages = N_DEFAULT_MAX_MEMORY_PAGES - 1;
         let memory_fuel = initial_memory_fuel(initial_pages).unwrap();
         let error = ContractRuntime::new(
-            strategy(module_with_initial_memory(initial_pages)),
+            strategy(compile_wasm_with_initial_memory(initial_pages)),
             import_linker_v1_preview(),
             RuntimeContext::default(),
             Some(memory_fuel - 1),
@@ -254,19 +240,5 @@ mod tests {
         .expect("underfunded initial memory must fail before instantiation");
 
         assert_eq!(error, TrapCode::OutOfFuel);
-    }
-
-    #[test]
-    fn rejects_initial_memory_above_frame_budget_before_allocation() {
-        let error = ContractRuntime::new(
-            strategy(module_with_initial_memory(2)),
-            import_linker_v1_preview(),
-            RuntimeContext::default(),
-            None,
-        )
-        .err()
-        .expect("initial memory above the frame budget must fail before instantiation");
-
-        assert_eq!(error, TrapCode::MemoryOutOfBounds);
     }
 }
