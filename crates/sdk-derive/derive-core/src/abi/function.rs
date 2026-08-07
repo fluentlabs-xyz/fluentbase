@@ -1,5 +1,5 @@
 use super::types::{rust_to_sol, ConversionError};
-use crate::abi::{error::ABIError, parameter::Parameter};
+use crate::abi::{error::ABIError, parameter::Parameter, structs::StructResolver};
 use convert_case::{Case, Casing};
 use crypto_hashes::{digest::Digest, sha3::Keccak256};
 use serde::{Deserialize, Serialize};
@@ -56,6 +56,39 @@ impl FunctionABI {
             state_mutability: StateMutability::NonPayable,
             fn_type: FUNCTION_ABI_TYPE.to_string(),
         })
+    }
+
+    /// Builds the ABI with every struct parameter expanded into its components
+    ///
+    /// This is the representation both the router selector and the published artifacts are derived
+    /// from; see [`crate::abi::structs`].
+    pub fn from_signature_with(
+        sig: &Signature,
+        resolver: &StructResolver,
+    ) -> Result<Self, ABIError> {
+        let mut abi = Self::from_signature(sig)?;
+        abi.resolve_structs(resolver)?;
+        Ok(abi)
+    }
+
+    /// Expands the components of every struct parameter, if any parameter needs it
+    pub fn resolve_structs(&mut self, resolver: &StructResolver) -> Result<(), ABIError> {
+        if !self
+            .inputs
+            .iter()
+            .chain(self.outputs.iter())
+            .any(Parameter::has_unresolved_struct)
+        {
+            return Ok(());
+        }
+
+        let structs = resolver.structs()?;
+        for parameter in self.inputs.iter_mut().chain(self.outputs.iter_mut()) {
+            // Contract signatures live in the crate root, so they resolve from there
+            parameter.resolve_structs(structs, "")?;
+        }
+
+        Ok(())
     }
 
     fn convert_inputs(inputs: &[&FnArg]) -> Result<Vec<Parameter>, ABIError> {

@@ -70,14 +70,10 @@ impl Parameter {
                 internal_type: format!("struct {struct_name}"),
                 ty: "tuple".to_string(),
                 name,
-                components: Some(
-                    fields
-                        .iter()
-                        .map(|(field_name, field_type)| {
-                            Self::from_sol_type(field_type.clone(), field_name.clone())
-                        })
-                        .collect(),
-                ),
+                // A struct type carries no fields at this point unless the caller already knows
+                // them; `None` marks it as still to be resolved, which is what keeps an
+                // unresolved struct from silently hashing as an empty tuple
+                components: struct_components(fields),
             },
             SolType::Tuple(types) => Self {
                 internal_type: "tuple".to_string(),
@@ -108,17 +104,8 @@ impl Parameter {
 
                 // For arrays of structs, we need to provide components
                 let components = match &**inner {
-                    SolType::Struct { fields, .. } => {
-                        // Create components from struct fields
-                        Some(
-                            fields
-                                .iter()
-                                .map(|(field_name, field_type)| {
-                                    Self::from_sol_type(field_type.clone(), field_name.clone())
-                                })
-                                .collect(),
-                        )
-                    }
+                    // Create components from struct fields
+                    SolType::Struct { fields, .. } => struct_components(fields),
                     SolType::Tuple(types) => {
                         // For tuple arrays, provide tuple components
                         Some(
@@ -153,14 +140,7 @@ impl Parameter {
                 };
 
                 let components = match &**inner {
-                    SolType::Struct { fields, .. } => Some(
-                        fields
-                            .iter()
-                            .map(|(field_name, field_type)| {
-                                Self::from_sol_type(field_type.clone(), field_name.clone())
-                            })
-                            .collect(),
-                    ),
+                    SolType::Struct { fields, .. } => struct_components(fields),
                     SolType::Tuple(types) => Some(
                         types
                             .iter()
@@ -187,29 +167,75 @@ impl Parameter {
         }
     }
 
+    /// Canonical Solidity type of this parameter, as it appears in a function signature
+    ///
+    /// Tuples - including struct and tuple arrays - expand to their components, because the
+    /// selector is hashed from this string and callers expand structs the same way. A struct whose
+    /// components have not been resolved has no canonical form: emitting `()` for it would fix the
+    /// router selector on a signature no caller can reproduce, so it is an error instead. See
+    /// [`crate::abi::structs`] for how components are resolved before this point.
     pub fn get_canonical_type(&self) -> Result<String, ConversionError> {
-        if self.ty == "tuple" {
-            let components = self.components.as_ref().ok_or_else(|| {
-                ConversionError::UnsupportedType("Tuple without components".to_string())
-            })?;
+        let (base_type, array_suffix) = split_array_suffix(&self.ty);
 
-            let inner_types = components
-                .iter()
-                .map(Parameter::get_canonical_type)
-                .collect::<Result<Vec<_>, _>>()?;
-
-            Ok(format!("({})", inner_types.join(",")))
-        } else if self.ty.ends_with("[]") {
-            let base_type = &self.ty[..self.ty.len() - 2];
-            Ok(format!("{base_type}[]"))
-        } else {
-            Ok(self.ty.clone())
+        if base_type != "tuple" {
+            return Ok(self.ty.clone());
         }
+
+        let components = self.components.as_ref().ok_or_else(|| {
+            if self.is_struct() {
+                ConversionError::UnsupportedType(format!(
+                    "components of `{}` are unresolved, so the canonical type of parameter `{}` \
+                     cannot be computed",
+                    self.internal_type
+                        .strip_prefix("struct ")
+                        .unwrap_or(&self.internal_type),
+                    self.name
+                ))
+            } else {
+                ConversionError::UnsupportedType("Tuple without components".to_string())
+            }
+        })?;
+
+        let inner_types = components
+            .iter()
+            .map(Parameter::get_canonical_type)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(format!("({}){array_suffix}", inner_types.join(",")))
     }
 
     #[must_use]
     pub fn is_struct(&self) -> bool {
         self.internal_type.starts_with("struct")
+    }
+}
+
+/// Components of a struct type, or `None` while its fields are still unknown
+///
+/// A struct that reaches [`Parameter`] without fields has not been resolved against the crate's
+/// `#[derive(Codec)]` definitions yet; see [`crate::abi::structs`].
+fn struct_components(fields: &[(String, SolType)]) -> Option<Vec<Parameter>> {
+    if fields.is_empty() {
+        return None;
+    }
+
+    Some(
+        fields
+            .iter()
+            .map(|(field_name, field_type)| {
+                Parameter::from_sol_type(field_type.clone(), field_name.clone())
+            })
+            .collect(),
+    )
+}
+
+/// Split an ABI type into its base type and the array suffixes attached to it
+///
+/// `tuple[3][]` -> `("tuple", "[3][]")`, `uint256` -> `("uint256", "")`
+fn split_array_suffix(ty: &str) -> (&str, &str) {
+    match ty.find('[') {
+        Some(index) => ty.split_at(index),
+        None => (ty, ""),
     }
 }
 

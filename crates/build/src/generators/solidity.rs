@@ -1,19 +1,21 @@
 //! Solidity ABI and interface generation from Rust smart contracts
 
-use crate::generators::struct_parser::{
-    enrich_abi_entry, parse_structs_from_crate, StructRegistry,
-};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use convert_case::{Case, Casing};
 use fluentbase_sdk_derive_core::{
-    constructor::{process_constructor, Constructor},
-    router::{process_router, Router},
+    abi::{
+        function::FunctionABI,
+        structs::{StructRegistry, StructResolver},
+    },
+    constructor::{process_constructor_with_structs, Constructor},
+    method::ParsedMethod,
+    router::{process_router_with_structs, Router},
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::ToTokens;
 use serde_json::Value;
 use std::{collections::HashSet, path::Path};
-use syn::{parse_file, visit::Visit, Attribute, ItemImpl};
+use syn::{parse_file, visit::Visit, Attribute, ImplItemFn, ItemImpl};
 
 /// Solidity ABI represented as JSON values
 pub type Abi = Vec<Value>;
@@ -39,14 +41,17 @@ pub fn generate_abi(contract_dir: &Path) -> Result<Abi> {
         ));
     };
 
-    // Parse all Codec structs reachable from the crate root
-    let structs = parse_structs_from_crate(&main_file)?;
+    // Parse all Codec structs reachable from the crate root, so that struct parameters are
+    // expanded into their components before any selector is calculated - exactly as the
+    // #[router] macro does when it compiles the dispatch table
+    let structs = StructRegistry::parse_crate(&main_file)?;
+    let resolver = StructResolver::registry(structs);
 
     // Parse contract methods (routers and constructors) from the main file
-    let methods = parse_contract_methods(&main_file)?;
+    let methods = parse_contract_methods(&main_file, &resolver)?;
 
-    // Generate ABI from contract methods with struct enrichment
-    generate_abi_from_methods(&methods, &structs)
+    // Generate ABI from contract methods
+    generate_abi_from_methods(&methods, &resolver)
 }
 
 /// Generate Solidity interface from ABI
@@ -112,7 +117,7 @@ struct ContractMethods {
 }
 
 /// Parses a Rust file and extracts all contract elements (routers and constructors)
-fn parse_contract_methods(path: &Path) -> Result<ContractMethods> {
+fn parse_contract_methods(path: &Path, resolver: &StructResolver) -> Result<ContractMethods> {
     // Read file content
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read file: {}", path.display()))?;
@@ -122,7 +127,7 @@ fn parse_contract_methods(path: &Path) -> Result<ContractMethods> {
         parse_file(&content).map_err(|e| anyhow::anyhow!("Failed to parse Rust file: {}", e))?;
 
     // Find contract methods
-    let mut finder = ContractMethodFinder::new();
+    let mut finder = ContractMethodFinder::new(resolver);
     finder.visit_file(&ast);
 
     // Return first error if any occurred during processing
@@ -136,20 +141,19 @@ fn parse_contract_methods(path: &Path) -> Result<ContractMethods> {
     })
 }
 
-/// Generates ABI from parsed contract methods with struct enrichment
-fn generate_abi_from_methods(methods: &ContractMethods, structs: &StructRegistry) -> Result<Abi> {
+/// Generates ABI from parsed contract methods
+///
+/// Every entry comes from the same resolved representation the router selector was calculated
+/// from, and each function entry is checked against that selector before it is published.
+fn generate_abi_from_methods(methods: &ContractMethods, resolver: &StructResolver) -> Result<Abi> {
     let mut entries = Vec::new();
 
     // Process constructor first (they appear first in standard ABIs)
     if let Some(constructor) = &methods.constructor {
-        let constructor_method = constructor.constructor_method();
-        if let Ok(constructor_abi) = constructor_method.parsed_signature().constructor_abi() {
-            if let Ok(mut json) = constructor_abi.to_json_value() {
-                // Enrich the ABI entry with struct components
-                enrich_abi_entry(&mut json, structs)?;
-                entries.push(json);
-            }
-        }
+        entries.push(constructor_entry(
+            constructor.constructor_method(),
+            resolver,
+        )?);
     }
 
     // Process routers - take first router if multiple exist
@@ -158,48 +162,111 @@ fn generate_abi_from_methods(methods: &ContractMethods, structs: &StructRegistry
         // Skip it if we already processed standalone constructors
         if methods.constructor.is_none() {
             if let Some(constructor) = router.constructor() {
-                if let Ok(constructor_abi) = constructor.parsed_signature().constructor_abi() {
-                    if let Ok(mut json) = constructor_abi.to_json_value() {
-                        enrich_abi_entry(&mut json, structs)?;
-                        entries.push(json);
-                    }
-                }
+                entries.push(constructor_entry(constructor, resolver)?);
             }
         }
 
         // Add all functions from the router
         for method in router.available_methods() {
-            if let Ok(func_abi) = method.parsed_signature().function_abi() {
-                if let Ok(mut json) = func_abi.to_json_value() {
-                    enrich_abi_entry(&mut json, structs)?;
-                    entries.push(json);
-                }
-            }
+            let name = method.parsed_signature().rust_name();
+            let abi = method.function_abi().ok_or_else(|| {
+                anyhow!(
+                    "method `{name}` pins a custom selector for a signature that cannot be \
+                     derived from its Rust types, so no ABI entry can be published for it"
+                )
+            })?;
+
+            let entry = abi
+                .to_json_value()
+                .with_context(|| format!("Failed to serialize the ABI entry of `{name}`"))?;
+
+            verify_selector(&entry, method.function_id(), method.signature())
+                .with_context(|| format!("ABI entry of `{name}` does not match its router"))?;
+
+            entries.push(entry);
         }
     }
 
     Ok(entries)
 }
 
+/// Serializes a constructor into its ABI entry
+///
+/// Constructors are called by the deployer without a selector, so there is nothing to cross-check
+/// here - only the parameter components matter.
+fn constructor_entry(
+    constructor: &ParsedMethod<ImplItemFn>,
+    resolver: &StructResolver,
+) -> Result<Value> {
+    constructor
+        .parsed_signature()
+        .constructor_abi_with(resolver)
+        .map_err(|error| anyhow!("Failed to build the constructor ABI: {error}"))?
+        .to_json_value()
+        .context("Failed to serialize the constructor ABI")
+}
+
+/// Rejects an ABI entry whose selector differs from the one the compiled router dispatches on
+///
+/// The published entry is the only thing callers see, so a selector recomputed from it has to
+/// reproduce the router's. When it does not, tooling would encode calls the deployed contract
+/// rejects - or, on a collision, calls it routes somewhere else entirely.
+fn verify_selector(entry: &Value, router_selector: [u8; 4], router_signature: &str) -> Result<()> {
+    let published = FunctionABI::from_json_value(entry.clone())
+        .context("Failed to read back the generated ABI entry")?;
+
+    let published_signature = published
+        .signature()
+        .map_err(|error| anyhow!("Failed to derive the signature of the ABI entry: {error}"))?;
+    let published_selector = published
+        .function_id()
+        .map_err(|error| anyhow!("Failed to derive the selector of the ABI entry: {error}"))?;
+
+    if published_selector == router_selector {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "published signature `{published_signature}` hashes to 0x{}, but the router dispatches \
+         `{router_signature}` on 0x{}. Callers using the published ABI would not reach this \
+         method; changing the router selector is an ABI migration.",
+        hex_selector(published_selector),
+        hex_selector(router_selector),
+    ))
+}
+
+fn hex_selector(selector: [u8; 4]) -> String {
+    selector
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
 /// Internal visitor for finding contract elements (routers and constructors)
-struct ContractMethodFinder {
+struct ContractMethodFinder<'a> {
     routers: Vec<Router>,
     constructor: Option<Constructor>,
     errors: Vec<syn::Error>,
+    resolver: &'a StructResolver,
 }
 
-impl ContractMethodFinder {
-    fn new() -> Self {
+impl<'a> ContractMethodFinder<'a> {
+    fn new(resolver: &'a StructResolver) -> Self {
         Self {
             routers: Vec::new(),
             constructor: None,
             errors: Vec::new(),
+            resolver,
         }
     }
 
     fn process_router_impl(&mut self, attr: &Attribute, impl_block: &ItemImpl) {
         match extract_attribute_tokens(attr) {
-            Ok(attr_tokens) => match process_router(attr_tokens, impl_block.to_token_stream()) {
+            Ok(attr_tokens) => match process_router_with_structs(
+                attr_tokens,
+                impl_block.to_token_stream(),
+                self.resolver,
+            ) {
                 Ok(router) => self.routers.push(router),
                 Err(error) => self.errors.push(error),
             },
@@ -209,18 +276,20 @@ impl ContractMethodFinder {
 
     fn process_constructor_impl(&mut self, attr: &Attribute, impl_block: &ItemImpl) {
         match extract_attribute_tokens(attr) {
-            Ok(attr_tokens) => {
-                match process_constructor(attr_tokens, impl_block.to_token_stream()) {
-                    Ok(constructor) => self.constructor = Some(constructor),
-                    Err(error) => self.errors.push(error),
-                }
-            }
+            Ok(attr_tokens) => match process_constructor_with_structs(
+                attr_tokens,
+                impl_block.to_token_stream(),
+                self.resolver,
+            ) {
+                Ok(constructor) => self.constructor = Some(constructor),
+                Err(error) => self.errors.push(error),
+            },
             Err(error) => self.errors.push(error),
         }
     }
 }
 
-impl<'ast> Visit<'ast> for ContractMethodFinder {
+impl<'ast> Visit<'ast> for ContractMethodFinder<'_> {
     fn visit_item_impl(&mut self, node: &'ast ItemImpl) {
         // Look for router or constructor attributes
         for attr in &node.attrs {

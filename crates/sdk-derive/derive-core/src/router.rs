@@ -1,12 +1,12 @@
 use crate::{
+    abi::structs::StructResolver,
     attr::{mode::Mode, STATE_MUTABILITY_ATTR},
     codec::CodecGenerator,
-    method::{MethodCollector, ParsedMethod},
+    method::{combine_errors, MethodCollector, ParsedMethod},
 };
 use convert_case::{Case, Casing};
 use darling::{ast::NestedMeta, FromMeta};
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use proc_macro_error::{abort, abort_call_site, emit_error};
 use quote::{format_ident, quote, ToTokens};
 use syn::{spanned::Spanned, visit, Error, Ident, ImplItemFn, ItemImpl, Result};
 /// Attributes for the router configuration.
@@ -33,12 +33,27 @@ pub struct Router {
 }
 
 /// Parses and validates a router from token streams.
+///
+/// Struct parameters are expanded from the sources of the crate being compiled, so the selectors
+/// baked into the dispatch table match the ones callers derive from the published ABI.
 pub fn process_router(attr: TokenStream2, input: TokenStream2) -> Result<Router> {
+    process_router_with_structs(attr, input, &StructResolver::crate_sources())
+}
+
+/// Parses and validates a router, resolving struct parameters through the given resolver.
+///
+/// Build tooling uses this to reuse the registry it has already parsed, which is what keeps the
+/// artifacts it generates in step with the router the macro compiles.
+pub fn process_router_with_structs(
+    attr: TokenStream2,
+    input: TokenStream2,
+    resolver: &StructResolver,
+) -> Result<Router> {
     let attributes = parse_attributes(attr)?;
 
     let impl_block = syn::parse2::<ItemImpl>(input)?;
 
-    let router = Router::new(attributes, impl_block)?;
+    let router = Router::new(attributes, impl_block, resolver)?;
 
     Ok(router)
 }
@@ -51,45 +66,52 @@ fn parse_attributes(attr: TokenStream2) -> Result<RouterAttributes> {
 
 impl Router {
     /// Creates a new Router instance by parsing the implementation block.
-    pub fn new(attributes: RouterAttributes, impl_block: ItemImpl) -> Result<Self> {
+    pub fn new(
+        attributes: RouterAttributes,
+        impl_block: ItemImpl,
+        resolver: &StructResolver,
+    ) -> Result<Self> {
         let is_trait_impl = impl_block.trait_.is_some();
 
         let mut collector =
-            MethodCollector::<ImplItemFn>::new_for_impl(impl_block.span(), is_trait_impl);
+            MethodCollector::<ImplItemFn>::new_for_impl(impl_block.span(), is_trait_impl, resolver);
         visit::visit_item_impl(&mut collector, &impl_block);
 
-        if collector.methods.is_empty() && collector.constructor.is_none() {
-            abort!(
-                collector.span,
-                "Router has no methods or constructor. Make sure your implementation contains at least one public method or a constructor.";
-                help = "Check that methods are public (pub fn) for regular implementations";
-                help = if is_trait_impl {
-                    "For trait implementations, make sure the trait contains method declarations"
-                } else {
-                    "Consider marking your methods as public: pub fn method_name(...)"
-                }
-            );
+        // Errors are returned rather than reported through `proc_macro_error`, because the build
+        // tooling drives this same code outside of a proc-macro expansion. They are also reported
+        // before the emptiness check, since a method that failed to parse was never collected.
+        if let Some(error) = combine_errors(std::mem::take(&mut collector.errors)) {
+            return Err(error);
         }
 
-        if collector.has_errors() {
-            for err in &collector.errors {
-                emit_error!(err.span(), "{}", err.to_string());
-            }
+        if collector.methods.is_empty() && collector.constructor.is_none() {
+            let help = if is_trait_impl {
+                "For trait implementations, make sure the trait contains method declarations"
+            } else {
+                "Consider marking your methods as public: pub fn method_name(...)"
+            };
 
-            abort_call_site!(
-                "Failed to process router implementation due to method parsing errors"
-            );
+            return Err(Error::new(
+                collector.span,
+                format!(
+                    "Router has no methods or constructor. Make sure your implementation contains \
+                     at least one public method or a constructor.\n\
+                     help: Check that methods are public (pub fn) for regular implementations\n\
+                     help: {help}"
+                ),
+            ));
         }
 
         if let Err(collision_error) = collector.validate_selectors() {
-            abort!(
+            return Err(Error::new(
                 collision_error.span(),
-                "{}",
-                collision_error.to_string();
-                help = "Function selectors must be unique across all methods";
-                help = "You can use custom selectors with #[function_id(\"custom_signature\")]";
-                help = "Or rename your methods to have different signatures"
-            );
+                format!(
+                    "{collision_error}\n\
+                     help: Function selectors must be unique across all methods\n\
+                     help: You can use custom selectors with #[function_id(\"custom_signature\")]\n\
+                     help: Or rename your methods to have different signatures"
+                ),
+            ));
         }
 
         Ok(Self {
@@ -454,7 +476,136 @@ mod tests {
     use insta::assert_snapshot;
     use prettyplease;
     use quote::quote;
+    use std::fs;
     use syn::{parse_file, parse_quote};
+    use tempfile::TempDir;
+
+    /// A resolver over a crate consisting of the given root source
+    fn resolver_for(source: &str) -> (TempDir, StructResolver) {
+        let temp_dir = TempDir::new().unwrap();
+        let entry_file = temp_dir.path().join("lib.rs");
+        fs::write(&entry_file, source).unwrap();
+        let registry = crate::abi::structs::StructRegistry::parse_crate(&entry_file).unwrap();
+        (temp_dir, StructResolver::registry(registry))
+    }
+
+    /// A struct the crate does not define cannot be hashed into a selector, so it fails the build
+    /// instead of silently collapsing into an empty tuple
+    #[test]
+    fn test_unresolved_struct_parameter_is_rejected() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn create_user(&mut self, user: User) -> bool {
+                    true
+                }
+            }
+        };
+
+        let (_temp, resolver) = resolver_for("#[derive(Codec)] pub struct Other { pub v: U256 }");
+
+        let error = process_router_with_structs(
+            quote! { mode = "solidity" },
+            impl_block.into_token_stream(),
+            &resolver,
+        )
+        .expect_err("an unresolved struct parameter should fail")
+        .to_string();
+
+        assert!(
+            error.contains("no `#[derive(Codec)]` definition"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// A struct whose name matches several modules is rejected rather than resolved arbitrarily
+    #[test]
+    fn test_ambiguous_struct_parameter_is_rejected() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn set(&mut self, config: Config) -> bool {
+                    true
+                }
+            }
+        };
+
+        let (_temp, resolver) = resolver_for(
+            r#"
+mod a {
+    #[derive(Codec)]
+    pub struct Config { pub value: U256 }
+}
+
+mod b {
+    #[derive(Codec)]
+    pub struct Config { pub owner: Address }
+}
+"#,
+        );
+
+        let error = process_router_with_structs(
+            quote! { mode = "solidity" },
+            impl_block.into_token_stream(),
+            &resolver,
+        )
+        .expect_err("an ambiguous struct parameter should fail")
+        .to_string();
+
+        assert!(error.contains("ambiguous"), "unexpected error: {error}");
+    }
+
+    /// Struct components are expanded before the selector is hashed
+    #[test]
+    fn test_struct_parameter_selector_uses_resolved_components() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn set_a(&mut self, config: Config) -> bool {
+                    true
+                }
+            }
+        };
+
+        let (_temp, resolver) = resolver_for(
+            "#[derive(Codec)] pub struct Config { pub value: U256, pub enabled: bool }",
+        );
+
+        let router = process_router_with_structs(
+            quote! { mode = "solidity" },
+            impl_block.into_token_stream(),
+            &resolver,
+        )
+        .expect("Failed to process router");
+
+        let method = router.available_methods()[0];
+        assert_eq!(method.signature(), "setA((uint256,bool))");
+        // keccak256("setA((uint256,bool))")[..4]
+        assert_eq!(method.function_id(), [0xb6, 0xea, 0x7d, 0x04]);
+    }
+
+    /// A pinned selector still works when the struct cannot be resolved here at all
+    #[test]
+    fn test_function_id_pins_the_selector_of_an_unresolved_struct() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                #[function_id("setA((uint256,bool))")]
+                pub fn set_a(&mut self, config: external_crate::Config) -> bool {
+                    true
+                }
+            }
+        };
+
+        let (_temp, resolver) = resolver_for("");
+
+        let router = process_router_with_structs(
+            quote! { mode = "solidity" },
+            impl_block.into_token_stream(),
+            &resolver,
+        )
+        .expect("a pinned selector should not need the struct definition");
+
+        let method = router.available_methods()[0];
+        assert_eq!(method.signature(), "setA((uint256,bool))");
+        assert_eq!(method.function_id(), [0xb6, 0xea, 0x7d, 0x04]);
+    }
 
     #[test]
     fn test_trait_router_generation() {

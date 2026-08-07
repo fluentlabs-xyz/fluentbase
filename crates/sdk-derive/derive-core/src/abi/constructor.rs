@@ -1,5 +1,5 @@
 use super::types::rust_to_sol;
-use crate::abi::{error::ABIError, parameter::Parameter};
+use crate::abi::{error::ABIError, parameter::Parameter, structs::StructResolver};
 use serde::{Deserialize, Serialize};
 use syn::{FnArg, Pat, Signature};
 
@@ -27,6 +27,31 @@ impl ConstructorABI {
             state_mutability: "nonpayable".to_string(),
             abi_type: CONSTRUCTOR_ABI_TYPE.to_string(),
         })
+    }
+
+    /// Builds the ABI with every struct parameter expanded into its components
+    pub fn from_signature_with(
+        sig: &Signature,
+        resolver: &StructResolver,
+    ) -> Result<Self, ABIError> {
+        let mut abi = Self::from_signature(sig)?;
+        abi.resolve_structs(resolver)?;
+        Ok(abi)
+    }
+
+    /// Expands the components of every struct parameter, if any parameter needs it
+    pub fn resolve_structs(&mut self, resolver: &StructResolver) -> Result<(), ABIError> {
+        if !self.inputs.iter().any(Parameter::has_unresolved_struct) {
+            return Ok(());
+        }
+
+        let structs = resolver.structs()?;
+        for parameter in &mut self.inputs {
+            // Contract signatures live in the crate root, so they resolve from there
+            parameter.resolve_structs(structs, "")?;
+        }
+
+        Ok(())
     }
 
     fn convert_inputs(inputs: &[&FnArg]) -> Result<Vec<Parameter>, ABIError> {

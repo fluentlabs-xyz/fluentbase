@@ -32,6 +32,7 @@ tracing = { version = "0.1.40", default-features = false }
 bytes = "1.0"
 insta = { version = "1.43.1", features = ["yaml"] }
 prettyplease = "0.2.32"
+tempfile = { workspace = true }
 
 [features]
 default = []
