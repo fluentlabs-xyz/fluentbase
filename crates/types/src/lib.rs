@@ -134,6 +134,9 @@ pub const MAX_IN_FLIGHT_MEMORY_BYTES: u64 = 1536 * 1024 * 1024;
 ///
 /// This value is temporary for testing purposes, requires recalculation.
 /// The limit is equal to 2Mb.
+///
+/// Scope: this bounds untrusted deployment (`CREATE`/`CREATE2`). Runtime upgrades are exempt by
+/// design — see `compile_and_install` in `contracts/runtime-upgrade`.
 pub const WASM_MAX_CODE_SIZE: usize = 0x100000;
 #[cfg(feature = "svm")]
 pub const SVM_MAX_CODE_SIZE: usize = 0x200000;
@@ -142,6 +145,9 @@ pub const SVM_MAX_CODE_SIZE: usize = 0x200000;
 ///
 /// This limit is required to limit the number of bytes produced after Wasm binary compilation.
 /// There are several attack vectors on this that produces abnormal amount of instructions.
+///
+/// Scope: this bounds compilation reachable by untrusted callers. Runtime upgrades are exempt by
+/// design — see `compile_and_install` in `contracts/runtime-upgrade`.
 pub const RWASM_MAX_CODE_SIZE: usize = 12 * 1024 * 1024;
 
 /// WebAssembly magic bytes
