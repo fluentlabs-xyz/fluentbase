@@ -194,6 +194,33 @@ mod tests {
     }
 
     #[test]
+    fn test_fixed_byte_arrays_advertise_the_type_the_codec_encodes() {
+        // `[u8; N]` is encoded one word per element, so the selector must say `uint8[N]`.
+        // Advertising `bytes32` here would let canonical calldata pick the route and then fail
+        // to decode.
+        let sig: Signature = parse_quote! {
+            fn store(root: [u8; 32]) -> [u8; 32]
+        };
+        let abi = FunctionABI::from_signature(&sig).unwrap();
+        assert_eq!(abi.inputs[0].ty, "uint8[32]");
+        assert_eq!(abi.outputs[0].ty, "uint8[32]");
+        assert_eq!(abi.signature().unwrap(), "store(uint8[32])");
+
+        // `bytes32` stays reachable through the types that carry a real `bytesN` codec.
+        let sig: Signature = parse_quote! {
+            fn store(root: FixedBytes<32>)
+        };
+        let abi = FunctionABI::from_signature(&sig).unwrap();
+        assert_eq!(abi.signature().unwrap(), "store(bytes32)");
+
+        let sig: Signature = parse_quote! {
+            fn store(root: B256)
+        };
+        let abi = FunctionABI::from_signature(&sig).unwrap();
+        assert_eq!(abi.signature().unwrap(), "store(bytes32)");
+    }
+
+    #[test]
     fn test_function_with_no_return() {
         let sig: Signature = parse_quote! {
             fn initialize(admin: Address)

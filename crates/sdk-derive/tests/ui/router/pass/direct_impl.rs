@@ -7,6 +7,7 @@ use fluentbase_sdk::{
     derive::{router, Contract},
     Address,
     Bytes,
+    FixedBytes,
     SharedAPI,
     I256,
     U256,
@@ -30,7 +31,12 @@ impl<SDK: SharedAPI> App<SDK> {
     }
 
     #[function_id("fixedBytesTest(bytes32)", validate(true))]
-    pub fn fixed_bytes_test(&self, data: [u8; 32]) -> [u8; 32] {
+    pub fn fixed_bytes_test(&self, data: FixedBytes<32>) -> FixedBytes<32> {
+        data
+    }
+
+    #[function_id("byteArrayTest(uint8[32])", validate(true))]
+    pub fn byte_array_test(&self, data: [u8; 32]) -> [u8; 32] {
         data
     }
 

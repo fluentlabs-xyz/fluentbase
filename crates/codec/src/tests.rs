@@ -618,3 +618,41 @@ fn test_map_wasm_nested() {
     let decoded = CompactABI::<HashMap<u32, HashMap<u32, u32>>>::decode(&encoded, 0).unwrap();
     assert_eq!(decoded, test_value, "Round-trip encoding/decoding failed");
 }
+
+/// `bytesN` and `uint8[N]` are distinct Solidity types with distinct layouts: `bytesN` occupies a
+/// single right-padded word, `uint8[N]` occupies one left-padded word per element. The router
+/// derives a selector from the Rust type and then encodes the calldata body with these codecs, so
+/// both must agree with a real Solidity encoder — otherwise canonical calldata selects a route the
+/// contract cannot decode. Checked against `alloy-sol-types` for every `N` Solidity supports.
+#[test]
+fn test_fixed_byte_layouts_match_solidity_encoder() {
+    macro_rules! assert_matches_alloy {
+        ($($n:literal),+ $(,)?) => {$({
+            let bytes: [u8; $n] = core::array::from_fn(|i| (i + 1) as u8);
+
+            let mut buf = BytesMut::new();
+            SolidityABI::encode(&FixedBytes::<$n>::from(bytes), &mut buf, 0).unwrap();
+            assert_eq!(
+                buf.to_vec(),
+                <alloy_sol_types::sol_data::FixedBytes<$n> as alloy_sol_types::SolType>::abi_encode(
+                    &FixedBytes::<$n>::from(bytes),
+                ),
+                concat!("bytes", $n, " encoding diverges from the Solidity encoder"),
+            );
+
+            let mut buf = BytesMut::new();
+            SolidityABI::encode(&bytes, &mut buf, 0).unwrap();
+            assert_eq!(
+                buf.to_vec(),
+                <alloy_sol_types::sol_data::FixedArray<alloy_sol_types::sol_data::Uint<8>, $n>
+                    as alloy_sol_types::SolType>::abi_encode(&bytes),
+                concat!("uint8[", $n, "] encoding diverges from the Solidity encoder"),
+            );
+        })+};
+    }
+
+    assert_matches_alloy!(
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+        26, 27, 28, 29, 30, 31, 32
+    );
+}

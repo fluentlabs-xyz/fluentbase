@@ -7,6 +7,7 @@ use fluentbase_sdk::{
     derive::{router, Contract},
     Address,
     Bytes,
+    FixedBytes,
     SharedAPI,
     I256,
     U256,
@@ -21,7 +22,8 @@ pub trait SolidityTypesAPI {
     // Test various Solidity types mapping to Rust types
     fn address_test(&self, addr: Address) -> Address;
     fn bytes_test(&self, data: Bytes) -> Bytes;
-    fn fixed_bytes_test(&self, data: [u8; 32]) -> [u8; 32];
+    fn fixed_bytes_test(&self, data: FixedBytes<32>) -> FixedBytes<32>;
+    fn byte_array_test(&self, data: [u8; 32]) -> [u8; 32];
     fn uint256_test(&self, value: U256) -> U256;
     fn int256_test(&self, value: I256) -> I256;
     fn bool_test(&self, value: bool) -> bool;
@@ -43,7 +45,12 @@ impl<SDK: SharedAPI> SolidityTypesAPI for App<SDK> {
     }
 
     #[function_id("fixedBytesTest(bytes32)", validate(true))]
-    fn fixed_bytes_test(&self, data: [u8; 32]) -> [u8; 32] {
+    fn fixed_bytes_test(&self, data: FixedBytes<32>) -> FixedBytes<32> {
+        data
+    }
+
+    #[function_id("byteArrayTest(uint8[32])", validate(true))]
+    fn byte_array_test(&self, data: [u8; 32]) -> [u8; 32] {
         data
     }
 
