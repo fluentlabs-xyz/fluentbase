@@ -236,6 +236,9 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     // The active hardfork is deliberately absent: delegated runtimes pin their own spec and are
     // versioned by contract upgrade instead of fork activation (see the `fluentbase_evm::evm`
     // module docs), so there is nothing here for them to follow.
+    //
+    // EIP-4844 blob fields are absent for a different reason: Fluent does not support blob
+    // transactions at all, so there is no value to carry (see `SharedContextInputV1::tx`).
     let context_input = SharedContextInput::V1(SharedContextInputV1 {
         block: BlockContextV1 {
             chain_id: ctx.cfg().chain_id(),

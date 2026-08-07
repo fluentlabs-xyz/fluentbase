@@ -55,6 +55,9 @@ impl<'a, SDK: SystemAPI> Host for HostWrapperImpl<'a, SDK> {
         self.sdk.context().block_base_fee()
     }
 
+    /// Always zero: Fluent has no blob transactions.
+    ///
+    /// See [`Self::blob_hash`] for why this is intended rather than a missing context field.
     fn blob_gasprice(&self) -> U256 {
         U256::ZERO
     }
@@ -95,6 +98,17 @@ impl<'a, SDK: SystemAPI> Host for HostWrapperImpl<'a, SDK> {
         self.sdk.context().tx_origin()
     }
 
+    /// Always zero: Fluent has no blob transactions.
+    ///
+    /// EIP-4844 is not supported by the chain — blocks carry no `excess_blob_gas` / `blob_gas_used`
+    /// and the blob schedule is empty (`crates/genesis/build.rs`), so a type-3 transaction can
+    /// never be included. Every transaction therefore has an empty versioned-hash list, and
+    /// canonical EVM semantics for `BLOBHASH` with an out-of-range index are exactly this: push
+    /// zero. `BLOBBASEFEE` ([`Self::blob_gasprice`]) is zero for the same reason.
+    ///
+    /// This is why the shared context carries no blob fields (see [`fluentbase_sdk::TxContextV1`]):
+    /// there is no value to plumb through. If Fluent ever gains blob transactions, both methods and
+    /// the context must be extended together.
     fn blob_hash(&self, _number: usize) -> Option<U256> {
         Some(U256::ZERO)
     }
