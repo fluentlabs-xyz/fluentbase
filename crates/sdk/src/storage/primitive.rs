@@ -1,5 +1,5 @@
 use crate::{
-    storage::{PackableCodec, StorageDescriptor, StorageLayout, StorageOps},
+    storage::{MapKeyCodec, PackableCodec, StorageDescriptor, StorageLayout, StorageOps},
     Address, FixedBytes, Signed, StorageAPI, Uint, U256,
 };
 use core::marker::PhantomData;
@@ -120,6 +120,59 @@ macro_rules! impl_int_codec {
 
 impl_int_codec!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
 
+// --- MapKeyCodec implementations ---
+//
+// Solidity pads a mapping key the way its type is laid out in memory, which is not
+// the packed storage layout: `intN` is sign-extended and `bytesN` is left-aligned.
+
+/// `h(k)` for types Solidity right-aligns in a word: `uintN`, `address`, `bool`.
+fn zero_extended_key<T: PackableCodec>(value: &T) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    value.encode_into(&mut word[32 - T::ENCODED_SIZE..]);
+    word
+}
+
+/// `h(k)` for `intN`: the two's complement encoding widened to 32 bytes.
+fn sign_extended_key<T: PackableCodec>(value: &T, is_negative: bool) -> [u8; 32] {
+    let mut word = if is_negative { [0xffu8; 32] } else { [0u8; 32] };
+    value.encode_into(&mut word[32 - T::ENCODED_SIZE..]);
+    word
+}
+
+/// `h(k)` for `bytesN`: left-aligned, zero-padded on the right.
+fn right_padded_key<T: PackableCodec>(value: &T) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    value.encode_into(&mut word[..T::ENCODED_SIZE]);
+    word
+}
+
+macro_rules! impl_zero_extended_key {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl MapKeyCodec for $ty {
+                fn encode_key_word(&self) -> [u8; 32] {
+                    zero_extended_key(self)
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_sign_extended_key {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl MapKeyCodec for $ty {
+                fn encode_key_word(&self) -> [u8; 32] {
+                    sign_extended_key(self, self.is_negative())
+                }
+            }
+        )*
+    };
+}
+
+impl_zero_extended_key!(bool, Address, u8, u16, u32, u64, u128);
+impl_sign_extended_key!(i8, i16, i32, i64, i128);
+
 // Macro for Uint types (standard Solidity sizes)
 macro_rules! impl_uint_codec {
     ($($bits:literal => $limbs:literal),*) => {
@@ -136,6 +189,12 @@ macro_rules! impl_uint_codec {
                 fn decode(bytes: &[u8]) -> Self {
                     debug_assert_eq!(bytes.len(), Self::ENCODED_SIZE);
                     Self::from_be_bytes::<{ $bits / 8 }>(bytes.try_into().unwrap())
+                }
+            }
+
+            impl MapKeyCodec for Uint<$bits, $limbs> {
+                fn encode_key_word(&self) -> [u8; 32] {
+                    zero_extended_key(self)
                 }
             }
         )*
@@ -160,6 +219,12 @@ macro_rules! impl_signed_codec {
                     Self::from_be_bytes::<{ $bits / 8 }>(bytes.try_into().unwrap())
                 }
             }
+
+            impl MapKeyCodec for Signed<$bits, $limbs> {
+                fn encode_key_word(&self) -> [u8; 32] {
+                    sign_extended_key(self, self.is_negative())
+                }
+            }
         )*
     };
 }
@@ -179,6 +244,12 @@ macro_rules! impl_fixed_bytes_codec {
                 fn decode(bytes: &[u8]) -> Self {
                     debug_assert_eq!(bytes.len(), Self::ENCODED_SIZE);
                     FixedBytes::from_slice(bytes)
+                }
+            }
+
+            impl MapKeyCodec for FixedBytes<$n> {
+                fn encode_key_word(&self) -> [u8; 32] {
+                    right_padded_key(self)
                 }
             }
         )*
