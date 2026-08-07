@@ -37,14 +37,40 @@ impl From<&str> for TokenNameOrSymbol {
 }
 
 impl TokenNameOrSymbol {
+    /// Wraps a raw 32-byte metadata word as it appears in calldata or storage.
+    ///
+    /// The bytes are not validated; use [`Self::as_str`] to decode them.
+    pub const fn from_word(bytes: B256) -> Self {
+        Self { bytes }
+    }
+
+    /// Encodes `value` as a 32-byte short string, or returns `None` if it does not fit.
+    ///
+    /// Prefer this over [`Self::from_str`]: it reports overlong metadata instead of
+    /// silently shortening it to a different token name.
+    pub fn try_from_str(value: &str) -> Option<Self> {
+        if value.len() > B256::len_bytes() {
+            return None;
+        }
+        let mut bytes = B256::ZERO;
+        bytes[..value.len()].copy_from_slice(value.as_bytes());
+        Some(Self { bytes })
+    }
+
+    /// Encodes `value` as a 32-byte short string, truncating anything longer.
+    ///
+    /// Truncation is lossy and silent — it behaves the same in debug and release, so it
+    /// cannot be relied on to surface overlong metadata. Use [`Self::try_from_str`] when
+    /// the caller needs to know the name did not fit.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(value: &str) -> Self {
-        debug_assert!(value.len() <= B256::len_bytes());
+        // Truncate on a char boundary. Slicing at a fixed 32 bytes can land inside a
+        // multi-byte code point, and the resulting word decodes nowhere.
+        let mut len = core::cmp::min(B256::len_bytes(), value.len());
+        while len > 0 && !value.is_char_boundary(len) {
+            len -= 1;
+        }
         let mut bytes = B256::ZERO;
-        let len = core::cmp::min(B256::len_bytes(), value.len());
-        // Slice the source too: when value is longer than 32 bytes, `len` is
-        // clamped to 32 but `value.as_bytes()` is not, so copy_from_slice would
-        // panic on the length mismatch. Truncate to the first `len` bytes.
         bytes[..len].copy_from_slice(&value.as_bytes()[..len]);
         Self { bytes }
     }
@@ -360,7 +386,53 @@ mod tests {
     use crate::universal_token::storage::{
         InitialSettings, TokenNameOrSymbol, INITIAL_SETTINGS_V1_SIZE, INITIAL_SETTINGS_V2_SIZE,
     };
-    use fluentbase_types::{address, Address, U256};
+    use alloc::format;
+    use fluentbase_types::{address, Address, B256, U256};
+
+    #[test]
+    fn test_token_name_boundaries() {
+        // 32 bytes is the inclusive limit, for ASCII and multibyte alike.
+        let ascii = "a".repeat(32);
+        assert_eq!(
+            TokenNameOrSymbol::try_from_str(&ascii).unwrap().as_str(),
+            Some(ascii.as_str())
+        );
+        let multibyte = "😀".repeat(8);
+        assert_eq!(
+            TokenNameOrSymbol::try_from_str(&multibyte)
+                .unwrap()
+                .as_str(),
+            Some(multibyte.as_str())
+        );
+
+        // Overlong input is rejected rather than reshaped into a different token.
+        assert!(TokenNameOrSymbol::try_from_str(&"a".repeat(33)).is_none());
+        assert!(TokenNameOrSymbol::try_from_str(&format!("{}é", "a".repeat(31))).is_none());
+    }
+
+    #[test]
+    fn test_token_name_truncation_stays_decodable() {
+        // The infallible constructor still truncates, but never mid-code-point: a 33-byte
+        // input whose 32-byte prefix splits `é` must drop the whole character.
+        let split = format!("{}é", "a".repeat(31));
+        assert_eq!(split.len(), 33);
+        assert_eq!(
+            TokenNameOrSymbol::from_str(&split).as_str(),
+            Some("a".repeat(31).as_str())
+        );
+        assert_eq!(
+            TokenNameOrSymbol::from_str(&"😀".repeat(9)).as_str(),
+            Some("😀".repeat(8).as_str())
+        );
+    }
+
+    #[test]
+    fn test_token_name_from_word_rejects_malformed() {
+        // Raw words arrive from calldata and legacy layouts unvalidated.
+        let mut word = B256::ZERO;
+        word[0] = 0x80; // lone continuation byte
+        assert_eq!(TokenNameOrSymbol::from_word(word).as_str(), None);
+    }
 
     #[test]
     fn test_ops_u256_overflow() {

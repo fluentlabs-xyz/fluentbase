@@ -11,8 +11,8 @@ use fluentbase_sdk::{
     evm::write_evm_exit_message,
     storage::{StorageMap, StorageU256},
     universal_token::*,
-    Address, Bytes, ContextReader, ContractContextV1, ExitCode, SharedAPI, B256, FUEL_DENOM_RATE,
-    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
+    Address, Bytes, ContextReader, ContractContextV1, ExitCode, SharedAPI, StorageAPI, B256,
+    FUEL_DENOM_RATE, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, U256,
 };
 use fluentbase_testing::TestingContextImpl;
 
@@ -1047,6 +1047,111 @@ fn calldata_prefix_is_big_endian_selector() {
     let cd = with_sig(sig, &data);
     assert_eq!(&cd[0..4], &sig.to_be_bytes());
     assert_eq!(&cd[4..], &data);
+}
+
+/// Builds a metadata word from raw bytes, bypassing the encoder's validation the way
+/// hand-crafted calldata or a legacy payload would.
+fn raw_metadata_word(bytes: &[u8]) -> TokenNameOrSymbol {
+    assert!(bytes.len() <= 32);
+    let mut word = B256::ZERO;
+    word[..bytes.len()].copy_from_slice(bytes);
+    TokenNameOrSymbol::from_word(word)
+}
+
+#[test]
+fn deploy_accepts_metadata_at_the_32_byte_boundary() {
+    let token = Address::with_last_byte(1);
+    let deployer = Address::with_last_byte(2);
+    let mut h = Harness::new(token);
+
+    let long_name = "a".repeat(32);
+    let multibyte_symbol = "😀".repeat(8); // exactly 32 bytes
+
+    let mut s = InitialSettings::default();
+    s.token_name = TokenNameOrSymbol::from_str(&long_name);
+    s.token_symbol = TokenNameOrSymbol::from_str(&multibyte_symbol);
+    s.decimals = 18;
+    let (ec, _) = h.deploy(s.encode_with_prefix(), deployer);
+    assert_eq!(ec, ExitCode::Ok, "32-byte metadata must deploy");
+
+    let (ec, out) = h.call(with_sig(SIG_ERC20_NAME, &[]));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(abi_decode_string(&out), long_name);
+
+    let (ec, out) = h.call(with_sig(SIG_ERC20_SYMBOL, &[]));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(abi_decode_string(&out), multibyte_symbol);
+}
+
+#[test]
+fn deploy_rejects_malformed_metadata_without_persisting_it() {
+    // A 32-byte word ending mid-code-point: what a naive 32-byte truncation of a longer
+    // name produces. The symbol is well-formed, so this also pins down that the name is
+    // rejected before *either* slot is written.
+    let mut split_multibyte = "a".repeat(31).into_bytes();
+    split_multibyte.push(0xC3); // leading byte of `é`, continuation byte missing
+
+    for (name, symbol) in [
+        (
+            raw_metadata_word(&split_multibyte),
+            TokenNameOrSymbol::from_str("SYM"),
+        ),
+        (
+            TokenNameOrSymbol::from_str("Token"),
+            raw_metadata_word(&[0x80]), // lone continuation byte
+        ),
+    ] {
+        let token = Address::with_last_byte(1);
+        let deployer = Address::with_last_byte(2);
+        let mut h = Harness::new(token);
+
+        let mut s = InitialSettings::default();
+        s.token_name = name;
+        s.token_symbol = symbol;
+        s.decimals = 18;
+        let (ec, _) = h.deploy(s.encode_with_prefix(), deployer);
+        assert_eq!(
+            ec,
+            ExitCode::MalformedBuiltinParams,
+            "malformed metadata must revert the constructor"
+        );
+
+        // Nothing was persisted, so reads stay live instead of panicking.
+        let (ec, out) = h.call(with_sig(SIG_ERC20_NAME, &[]));
+        assert_eq!(ec, ExitCode::Ok);
+        assert_eq!(abi_decode_string(&out), "");
+
+        let (ec, out) = h.call(with_sig(SIG_ERC20_SYMBOL, &[]));
+        assert_eq!(ec, ExitCode::Ok);
+        assert_eq!(abi_decode_string(&out), "");
+    }
+}
+
+#[test]
+fn malformed_stored_metadata_errors_instead_of_panicking() {
+    let token = Address::with_last_byte(1);
+    let deployer = Address::with_last_byte(2);
+    let mut h = Harness::new(token);
+    deploy_with_supply_to(&mut h, deployer, U256::ZERO);
+
+    // Simulate a token whose name slot already holds invalid UTF-8 (genesis state or a
+    // pre-fix deployment). Reads must return a deterministic error, not a panic.
+    let mut word = [0u8; 32];
+    word[0] = 0x80;
+    h.sdk
+        .write_storage(NAME_STORAGE_SLOT, U256::from_be_bytes(word));
+
+    let (ec, _) = h.call(with_sig(SIG_ERC20_NAME, &[]));
+    assert_eq!(ec, ExitCode::MalformedBuiltinParams);
+
+    // The permit domain separator reads the same slot and must fail the same way.
+    let (ec, _) = h.call(with_sig(SIG_ERC20_DOMAIN_SEPARATOR, &[]));
+    assert_eq!(ec, ExitCode::MalformedBuiltinParams);
+
+    // Unrelated paths keep working: the poison is scoped to the name slot.
+    let (ec, out) = h.call(with_sig(SIG_ERC20_SYMBOL, &[]));
+    assert_eq!(ec, ExitCode::Ok);
+    assert_eq!(abi_decode_string(&out), "TST");
 }
 
 #[test]
