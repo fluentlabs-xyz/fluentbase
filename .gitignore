@@ -38,3 +38,6 @@ node_modules
 evm-e2e/tests/
 datadir
 graphify-out/
+
+# proptest writes failing-case seeds here when a property test fails locally
+proptest-regressions/

@@ -303,11 +303,13 @@ impl CodecStruct {
             quote! {
                 let mut aligned_offset = #crate_path::align_up::<ALIGN>(offset);
 
+                // Both heads are attacker-controlled once the struct is decoded from calldata, so
+                // they go through the codec's checked-range helper instead of slicing directly.
                 let mut tmp = if <Self as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::IS_DYNAMIC {
                     let offset = #crate_path::read_u32_aligned::<B, ALIGN>(&buf.chunk(), aligned_offset)? as usize;
-                    &buf.chunk()[offset..]
+                    #crate_path::checked_decode_slice_from(buf, offset, "struct body exceeds input")?
                 } else {
-                    &buf.chunk()[aligned_offset..]
+                    #crate_path::checked_decode_slice_from(buf, aligned_offset, "struct head exceeds input")?
                 };
 
                 let mut current_offset = 0;

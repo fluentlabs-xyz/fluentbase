@@ -1,7 +1,10 @@
 use crate::{
     alloc::string::ToString,
     bytes_codec::{read_bytes, read_bytes_header, write_bytes},
-    encoder::{align_up, get_aligned_slice, is_big_endian, write_u32_aligned, Encoder},
+    encoder::{
+        align_up, checked_decode_slice, get_aligned_slice, is_big_endian, write_u32_aligned,
+        Encoder,
+    },
     error::{CodecError, DecodingError},
 };
 use alloc::string::String;
@@ -161,15 +164,8 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     /// Decode the fixed bytes from the buffer.
     /// Reads the fixed bytes directly from the buffer at the given offset.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        if buf.remaining() < offset + N {
-            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + N,
-                found: buf.remaining(),
-                msg: "Buffer too small to decode FixedBytes".to_string(),
-            }));
-        }
-        let data = buf.chunk()[offset..offset + N].to_vec();
-        Ok(FixedBytes::from_slice(&data))
+        let data = checked_decode_slice(buf, offset, N, "FixedBytes exceeds input")?;
+        Ok(FixedBytes::from_slice(data))
     }
 
     /// Partially decode the fixed bytes from the buffer.
@@ -201,15 +197,8 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     /// alignment.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let offset = align_up::<32>(offset); // Always 32-byte aligned for Solidity
-        if buf.remaining() < offset + 32 {
-            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + 32,
-                found: buf.remaining(),
-                msg: "Buffer too small to decode FixedBytes".to_string(),
-            }));
-        }
-        let data = buf.chunk()[offset..offset + N].to_vec();
-        Ok(FixedBytes::from_slice(&data))
+        let word = checked_decode_slice(buf, offset, N.max(32), "FixedBytes exceeds input")?;
+        Ok(FixedBytes::from_slice(&word[..N]))
     }
 
     /// Partially decode the fixed bytes from the buffer for Solidity mode.
@@ -239,15 +228,8 @@ macro_rules! impl_evm_fixed {
             /// Reads the fixed bytes directly from the buffer at the given offset.
             fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
                 let size = <$type>::len_bytes();
-                if buf.remaining() < offset + size {
-                    return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                        expected: offset + size,
-                        found: buf.remaining(),
-                        msg: "Buffer too small to decode fixed bytes".to_string(),
-                    }));
-                }
-                let data = buf.chunk()[offset..offset + size].to_vec();
-                Ok(<$type>::from_slice(&data))
+                let data = checked_decode_slice(buf, offset, size, "fixed bytes exceed input")?;
+                Ok(<$type>::from_slice(data))
             }
 
             /// Partially decode the fixed bytes from the buffer.
@@ -284,15 +266,8 @@ macro_rules! impl_evm_fixed {
             /// alignment.
             fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
                 let size = <$type>::len_bytes();
-                if buf.remaining() < offset + 32 {
-                    return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                        expected: offset + 32,
-                        found: buf.remaining(),
-                        msg: "Buffer too small to decode fixed bytes".to_string(),
-                    }));
-                }
-                let data = buf.chunk()[offset + 32 - size..offset + 32].to_vec();
-                Ok(<$type>::from_slice(&data))
+                let word = checked_decode_slice(buf, offset, 32, "fixed bytes exceed input")?;
+                Ok(<$type>::from_slice(&word[32 - size..]))
             }
 
             /// Partially decode the fixed bytes from the buffer for Solidity mode.
@@ -339,15 +314,7 @@ impl<
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let word_size = align_up::<ALIGN>(Self::BYTES);
 
-        if buf.remaining() < offset + word_size {
-            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + word_size,
-                found: buf.remaining(),
-                msg: "buf too small to read Uint".to_string(),
-            }));
-        }
-
-        let chunk = &buf.chunk()[offset..offset + word_size];
+        let chunk = checked_decode_slice(buf, offset, word_size, "Uint exceeds input")?;
         let value_slice = &chunk[..Self::BYTES];
 
         let value = if is_big_endian::<B>() {
@@ -393,15 +360,7 @@ impl<
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        if buf.remaining() < offset + 32 {
-            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + 32,
-                found: buf.remaining(),
-                msg: "buf too small to read Uint".to_string(),
-            }));
-        }
-
-        let chunk = &buf.chunk()[offset..offset + 32];
+        let chunk = checked_decode_slice(buf, offset, 32, "Uint exceeds input")?;
         let value_slice = &chunk[32 - Self::BYTES..];
 
         let value = if is_big_endian::<B>() {
@@ -448,15 +407,7 @@ impl<
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let word_size = align_up::<ALIGN>(Self::BYTES);
 
-        if buf.remaining() < offset + word_size {
-            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + word_size,
-                found: buf.remaining(),
-                msg: "buf too small to read Signed".to_string(),
-            }));
-        }
-
-        let chunk = &buf.chunk()[offset..offset + word_size];
+        let chunk = checked_decode_slice(buf, offset, word_size, "Signed exceeds input")?;
         let value_slice = &chunk[..Self::BYTES];
 
         let value = if is_big_endian::<B>() {
@@ -510,15 +461,7 @@ impl<
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        if buf.remaining() < offset + 32 {
-            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + 32,
-                found: buf.remaining(),
-                msg: "buf too small to read Signed".to_string(),
-            }));
-        }
-
-        let chunk = &buf.chunk()[offset..offset + 32];
+        let chunk = checked_decode_slice(buf, offset, 32, "Signed exceeds input")?;
         let value_slice = &chunk[32 - Self::BYTES..];
 
         let value = if is_big_endian::<B>() {

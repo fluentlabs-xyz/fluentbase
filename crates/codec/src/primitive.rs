@@ -1,6 +1,9 @@
 use crate::{
     alloc::string::ToString,
-    encoder::{align_up, get_aligned_indices, get_aligned_slice, is_big_endian, Encoder},
+    encoder::{
+        align_up, checked_decode_slice, checked_decode_slice_from, get_aligned_indices,
+        get_aligned_slice, is_big_endian, Encoder,
+    },
     error::{CodecError, DecodingError},
 };
 use byteorder::ByteOrder;
@@ -51,15 +54,7 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bo
         let word_size =
             align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE);
 
-        if buf.remaining() < offset + word_size {
-            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + word_size,
-                found: buf.remaining(),
-                msg: "buf too small to read aligned u8".to_string(),
-            }));
-        }
-
-        let chunk = &buf.chunk()[offset..];
+        let chunk = checked_decode_slice(buf, offset, word_size, "aligned u8 exceeds input")?;
         let value = if is_big_endian::<B>() {
             chunk[word_size - 1]
         } else {
@@ -149,15 +144,7 @@ macro_rules! impl_int {
                     <Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE,
                 );
 
-                if buf.remaining() < offset + ALIGN {
-                    return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                        expected: offset + ALIGN,
-                        found: buf.remaining(),
-                        msg: "buf too small to decode value".to_string(),
-                    }));
-                }
-
-                let chunk = &buf.chunk()[offset..];
+                let chunk = checked_decode_slice(buf, offset, word_size, "integer exceeds input")?;
                 let value = if is_big_endian::<B>() {
                     B::$read_method(
                         &chunk[word_size
@@ -231,22 +218,18 @@ where
         let aligned_header =
             align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE);
 
-        if buf.remaining() < offset + aligned_header {
-            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + aligned_header,
-                found: buf.remaining(),
-                msg: "buf too small".to_string(),
-            }));
-        }
-
-        let chunk = &buf.chunk()[offset..];
+        let head =
+            checked_decode_slice(buf, offset, aligned_header, "option header exceeds input")?;
         let option_flag = if is_big_endian::<B>() {
-            chunk[aligned_header - 1]
+            head[aligned_header - 1]
         } else {
-            chunk[0]
+            head[0]
         };
 
-        let chunk = &buf.chunk()[offset + ALIGN..];
+        let body_offset = offset
+            .checked_add(ALIGN)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let chunk = checked_decode_slice_from(buf, body_offset, "option body exceeds input")?;
 
         if option_flag != 0 {
             let inner_value = T::decode(&chunk, 0)?;
@@ -260,22 +243,18 @@ where
         let aligned_header =
             align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE);
 
-        if buf.remaining() < offset + aligned_header {
-            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + aligned_header,
-                found: buf.remaining(),
-                msg: "buf too small".to_string(),
-            }));
-        }
-
-        let chunk = &buf.chunk()[offset..];
+        let head =
+            checked_decode_slice(buf, offset, aligned_header, "option header exceeds input")?;
         let option_flag = if is_big_endian::<B>() {
-            chunk[ALIGN - 1]
+            head[ALIGN - 1]
         } else {
-            chunk[0]
+            head[0]
         };
 
-        let chunk = &buf.chunk()[offset + ALIGN..];
+        let body_offset = offset
+            .checked_add(ALIGN)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let chunk = checked_decode_slice_from(buf, body_offset, "option body exceeds input")?;
 
         if option_flag != 0 {
             let (_, inner_size) = T::partial_decode(&chunk, 0)?;

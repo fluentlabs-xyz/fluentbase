@@ -1,7 +1,7 @@
-use crate::func::FunctionArgs;
 use crate::{
     alloc::string::ToString,
     error::{CodecError, DecodingError},
+    func::FunctionArgs,
 };
 use byteorder::{ByteOrder, BE, LE};
 use bytes::{Buf, BytesMut};
@@ -233,35 +233,23 @@ pub fn read_u32_aligned<B: ByteOrder, const ALIGN: usize>(
     offset: usize,
 ) -> Result<u32, CodecError> {
     let aligned_value_size = align_up::<ALIGN>(4);
-
-    // Check for overflow
-    let end_offset = offset.checked_add(aligned_value_size).ok_or_else(|| {
-        CodecError::Decoding(crate::error::DecodingError::BufferOverflow {
-            msg: "Overflow occurred when calculating end offset while reading aligned u32"
-                .to_string(),
-        })
-    })?;
-
-    if buf.remaining() < end_offset {
-        return Err(CodecError::Decoding(
-            crate::error::DecodingError::BufferTooSmall {
-                expected: end_offset,
-                found: buf.remaining(),
-                msg: "Buffer underflow occurred while reading aligned u32".to_string(),
-            },
-        ));
-    }
+    let word = checked_decode_slice(buf, offset, aligned_value_size, "aligned u32 exceeds input")?;
 
     if is_big_endian::<B>() {
-        Ok(B::read_u32(&buf.chunk()[end_offset - 4..end_offset]))
+        Ok(B::read_u32(&word[aligned_value_size - 4..]))
     } else {
-        Ok(B::read_u32(&buf.chunk()[offset..offset + 4]))
+        Ok(B::read_u32(&word[..4]))
     }
 }
 
 /// Returns a contiguous range from a decoder buffer without allowing attacker-controlled offsets
 /// or lengths to overflow or panic while slicing.
-pub(crate) fn checked_decode_slice<'a>(
+///
+/// Every decoder range check funnels through here: `checked_add` rules out an offset/length pair
+/// that wraps, and `get` rules out a range that runs past the contiguous chunk. The chunk — not
+/// `Buf::remaining()` — is the bound that matters, because a non-contiguous buffer can report more
+/// remaining bytes than the slice we are about to index.
+pub fn checked_decode_slice<'a>(
     buf: &'a impl Buf,
     offset: usize,
     len: usize,
@@ -282,7 +270,7 @@ pub(crate) fn checked_decode_slice<'a>(
 }
 
 /// Returns the remaining contiguous data starting at `offset` after validating the offset.
-pub(crate) fn checked_decode_slice_from<'a>(
+pub fn checked_decode_slice_from<'a>(
     buf: &'a impl Buf,
     offset: usize,
     msg: &'static str,
