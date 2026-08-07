@@ -717,19 +717,16 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
         wrapped,
     } = InitialSettings::decode_with_prefix(&input).ok_or(ExitCode::MalformedBuiltinParams)?;
 
-    // Write token name and token decimals (make sure both are properly UTF-8 encoded)
-    sdk.write_storage_short_string(
-        NAME_STORAGE_SLOT,
-        token_name
-            .as_str()
-            .ok_or(ExitCode::MalformedBuiltinParams)?,
-    )?;
-    sdk.write_storage_short_string(
-        SYMBOL_STORAGE_SLOT,
-        token_symbol
-            .as_str()
-            .ok_or(ExitCode::MalformedBuiltinParams)?,
-    )?;
+    // Decode both metadata fields before writing either one, so a malformed symbol can
+    // never leave a half-initialized token with its name already committed.
+    let token_name = token_name
+        .as_str()
+        .ok_or(ExitCode::MalformedBuiltinParams)?;
+    let token_symbol = token_symbol
+        .as_str()
+        .ok_or(ExitCode::MalformedBuiltinParams)?;
+    sdk.write_storage_short_string(NAME_STORAGE_SLOT, token_name)?;
+    sdk.write_storage_short_string(SYMBOL_STORAGE_SLOT, token_symbol)?;
     // We should store decimals in the storage
     sdk.write_storage(DECIMALS_STORAGE_SLOT, U256::from(decimals))
         .ok()?;

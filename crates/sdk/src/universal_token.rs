@@ -20,7 +20,7 @@
 
 extern crate alloc;
 
-use crate::{Address, Bytes, U256};
+use crate::{Address, Bytes, B256, U256};
 use alloc::string::String;
 /// Re-export the precompile address for convenience
 pub use fluentbase_types::PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME;
@@ -179,9 +179,19 @@ impl TokenConfigBuilder {
 
     /// Build the `TokenConfig` or return an error
     pub fn try_build(self) -> Result<TokenConfig, TokenConfigError> {
+        let name = self.name.ok_or(TokenConfigError::MissingName)?;
+        let symbol = self.symbol.ok_or(TokenConfigError::MissingSymbol)?;
+        // Metadata is stored as a single 32-byte word. Reject overlong values here rather
+        // than truncating them into a token that deploys under a different name.
+        if name.len() > B256::len_bytes() {
+            return Err(TokenConfigError::NameTooLong);
+        }
+        if symbol.len() > B256::len_bytes() {
+            return Err(TokenConfigError::SymbolTooLong);
+        }
         Ok(TokenConfig {
-            name: self.name.ok_or(TokenConfigError::MissingName)?,
-            symbol: self.symbol.ok_or(TokenConfigError::MissingSymbol)?,
+            name,
+            symbol,
             decimals: self.decimals.unwrap_or(18),
             initial_supply: self.initial_supply.unwrap_or(U256::ZERO),
             minter: self.minter,
@@ -198,6 +208,10 @@ pub enum TokenConfigError {
     MissingName,
     /// Token symbol was not provided
     MissingSymbol,
+    /// Token name exceeds the 32-byte short-string limit
+    NameTooLong,
+    /// Token symbol exceeds the 32-byte short-string limit
+    SymbolTooLong,
 }
 
 impl core::fmt::Display for TokenConfigError {
@@ -205,6 +219,8 @@ impl core::fmt::Display for TokenConfigError {
         match self {
             TokenConfigError::MissingName => write!(f, "token name is required"),
             TokenConfigError::MissingSymbol => write!(f, "token symbol is required"),
+            TokenConfigError::NameTooLong => write!(f, "token name must not exceed 32 bytes"),
+            TokenConfigError::SymbolTooLong => write!(f, "token symbol must not exceed 32 bytes"),
         }
     }
 }
