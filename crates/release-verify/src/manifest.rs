@@ -41,10 +41,16 @@ impl ReleaseManifest {
                 continue;
             }
             if let Some(value) = line.strip_prefix("version=") {
+                if version.is_some() {
+                    return Err(VerifyError::Manifest("multiple version= lines".to_owned()));
+                }
                 version = Some(value.to_owned());
                 continue;
             }
             if let Some(value) = line.strip_prefix("commit=") {
+                if commit.is_some() {
+                    return Err(VerifyError::Manifest("multiple commit= lines".to_owned()));
+                }
                 commit = Some(value.to_owned());
                 continue;
             }

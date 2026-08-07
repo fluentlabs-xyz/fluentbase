@@ -26,7 +26,7 @@
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let key = ReleaseKey::fluent()?;
-//! let asset = ReleaseAsset::genesis("v1.3.2", None);
+//! let asset = ReleaseAsset::genesis("v1.3.2", None)?;
 //! let artifact = load_verified(Some(std::path::Path::new("/tmp/cache")), &asset, &key, &|_, _| {
 //!     unimplemented!("plug in an HTTP client")
 //! })?;

@@ -1,6 +1,6 @@
 use crate::{
     error::{Result, VerifyError},
-    key::ReleaseKey,
+    key::{primary_can_sign_at, subkey_can_sign_at, ReleaseKey},
 };
 use pgp::{
     composed::{Deserializable as _, DetachedSignature, SignedPublicKey, SignedPublicSubKey},
@@ -42,13 +42,35 @@ pub fn verify_detached_signature(data: &[u8], armored_sig: &[u8], key: &ReleaseK
         return Err(VerifyError::WeakDigest(format!("{hash_alg:?}")));
     }
 
+    let now = pgp::types::Timestamp::now().as_secs() as u64;
+    if let Some(created) = sig.created().map(|created| created.as_secs() as u64) {
+        let expired = sig.signature_expiration_time().is_some_and(|lifetime| {
+            lifetime.as_secs() != 0 && created.saturating_add(lifetime.as_secs() as u64) <= now
+        });
+        if created > now || expired {
+            return Err(VerifyError::KeyPolicy(
+                "the detached signature is not currently valid".to_owned(),
+            ));
+        }
+    } else {
+        return Err(VerifyError::KeyPolicy(
+            "the detached signature has no creation time".to_owned(),
+        ));
+    }
+
     let issuer_fingerprints: Vec<&Fingerprint> = sig.issuer_fingerprint();
     let issuer_key_ids: Vec<&KeyId> = sig.issuer_key_id();
     if issuer_fingerprints.is_empty() && issuer_key_ids.is_empty() {
         return Err(VerifyError::MissingIssuer);
     }
 
-    for candidate in signing_candidates(key.cert()) {
+    let candidates = signing_candidates_at(key.cert(), now);
+    if candidates.is_empty() {
+        return Err(VerifyError::KeyPolicy(
+            "the release key has no currently valid signing component".to_owned(),
+        ));
+    }
+    for candidate in candidates {
         let is_issuer = issuer_fingerprints
             .iter()
             .any(|fpr| **fpr == candidate.fingerprint())
@@ -96,12 +118,20 @@ impl SigningCandidate<'_> {
 }
 
 /// The primary key plus every signing-capable subkey of `cert`.
+#[cfg(test)]
 pub(crate) fn signing_candidates(cert: &SignedPublicKey) -> Vec<SigningCandidate<'_>> {
-    let mut candidates = vec![SigningCandidate::Primary(&cert.primary_key)];
+    signing_candidates_at(cert, pgp::types::Timestamp::now().as_secs() as u64)
+}
+
+fn signing_candidates_at(cert: &SignedPublicKey, now: u64) -> Vec<SigningCandidate<'_>> {
+    let mut candidates = Vec::new();
+    if primary_can_sign_at(cert, now) {
+        candidates.push(SigningCandidate::Primary(&cert.primary_key));
+    }
     candidates.extend(
         cert.public_subkeys
             .iter()
-            .filter(|subkey| subkey.signatures.iter().any(|sig| sig.key_flags().sign()))
+            .filter(|subkey| subkey_can_sign_at(subkey, now))
             .map(SigningCandidate::Subkey),
     );
     candidates

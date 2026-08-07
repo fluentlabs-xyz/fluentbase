@@ -21,23 +21,29 @@ use tracing::warn;
 
 /// Genesis asset for Fluent Devnet (GitHub releases).
 fn devnet_genesis() -> ReleaseAsset {
-    ReleaseAsset::genesis("v0.5.7", None).with_sha256(hex!(
-        "91b9a427805d45dd14e46a0cd517bcc85f350fe7dfc38fa96f6ff0ebf5e864da"
-    ))
+    ReleaseAsset::genesis("v0.5.7", None)
+        .expect("built-in devnet release asset must be valid")
+        .with_sha256(hex!(
+            "91b9a427805d45dd14e46a0cd517bcc85f350fe7dfc38fa96f6ff0ebf5e864da"
+        ))
 }
 
 /// Genesis asset for Fluent Testnet (GitHub releases).
 fn testnet_genesis() -> ReleaseAsset {
-    ReleaseAsset::genesis("v0.3.4-dev", None).with_sha256(hex!(
-        "8cd30358c5664375e6739bc48302445e7ee10fd0158bedb788505e5c590983bd"
-    ))
+    ReleaseAsset::genesis("v0.3.4-dev", None)
+        .expect("built-in testnet release asset must be valid")
+        .with_sha256(hex!(
+            "8cd30358c5664375e6739bc48302445e7ee10fd0158bedb788505e5c590983bd"
+        ))
 }
 
 /// Genesis asset for Fluent Mainnet (GitHub releases).
 fn mainnet_genesis() -> ReleaseAsset {
-    ReleaseAsset::genesis("v1.0.0", Some("mainnet")).with_sha256(hex!(
-        "72cb4b3b7b15de952bd1094281a1f2430cb711bc473a0520f92aa3e2b1bdb643"
-    ))
+    ReleaseAsset::genesis("v1.0.0", Some("mainnet"))
+        .expect("built-in mainnet release asset must be valid")
+        .with_sha256(hex!(
+            "72cb4b3b7b15de952bd1094281a1f2430cb711bc473a0520f92aa3e2b1bdb643"
+        ))
 }
 
 /// Every genesis asset a built-in network can be started from.

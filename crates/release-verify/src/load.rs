@@ -8,9 +8,10 @@ use alloy_genesis::Genesis;
 use sha2::{Digest as _, Sha256};
 use std::{
     ffi::OsString,
-    fs,
+    fs::{self, OpenOptions},
     io::{Read as _, Write as _},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 use tracing::warn;
 
@@ -203,9 +204,8 @@ fn cache_pair(
 
 /// Writes `bytes` to `path` atomically (write to temp, then rename).
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut tmp_name = OsString::from(path.as_os_str());
-    tmp_name.push(".tmp");
-    let tmp = PathBuf::from(tmp_name);
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
     let io_err = |path: &Path| {
         let path = path.display().to_string();
         move |source| VerifyError::Io {
@@ -214,11 +214,26 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         }
     };
 
-    {
-        let mut f = fs::File::create(&tmp).map_err(io_err(&tmp))?;
-        f.write_all(bytes).map_err(io_err(&tmp))?;
-        f.sync_all().map_err(io_err(&tmp))?;
-    }
+    let (tmp, mut file) = loop {
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let mut tmp_name = OsString::from(path.as_os_str());
+        tmp_name.push(format!(".{}.{}.tmp", std::process::id(), id));
+        let tmp = PathBuf::from(tmp_name);
+        match OpenOptions::new().write(true).create_new(true).open(&tmp) {
+            Ok(file) => break (tmp, file),
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(source) => return Err(io_err(&tmp)(source)),
+        }
+    };
 
-    fs::rename(&tmp, path).map_err(io_err(path))
+    let write_result = (|| {
+        file.write_all(bytes).map_err(io_err(&tmp))?;
+        file.sync_all().map_err(io_err(&tmp))?;
+        drop(file);
+        fs::rename(&tmp, path).map_err(io_err(path))
+    })();
+    if write_result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    write_result
 }

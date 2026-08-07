@@ -548,7 +548,7 @@ fn runtime_labels(runtime: &ExecutionMode) -> (RuntimeModeLabel, &'static str) {
 mod tests {
     use crate::{
         executor::{ExecutionInterruption, RuntimeExecutor, RuntimeFactoryExecutor, RuntimeResult},
-        runtime::{ContractRuntime, ExecutionMode},
+        runtime::{test_contract_module_with_memory, ContractRuntime, ExecutionMode},
         RuntimeContext,
     };
     use fluentbase_types::{
@@ -597,24 +597,8 @@ mod tests {
     /// own; both `contracts/bn256` and `examples/greeting` compile down to exactly this.
     const TYPICAL_CONTRACT_PAGES: u64 = 17;
 
-    fn module_with_memory(pages: u32) -> RwasmModule {
-        let wasm = wat::parse_str(format!(
-            r#"
-                (module
-                    (memory (export "memory") {pages})
-                    (func (export "main"))
-                    (func (export "deploy"))
-                )
-            "#
-        ))
-        .expect("test WAT must be valid");
-        let config = rwasm::CompilationConfig::default().with_entrypoint_name("main".into());
-        let (module, _) = RwasmModule::compile(config, &wasm).expect("test module must compile");
-        module
-    }
-
     fn contract_bytecode_with_memory(pages: u32) -> BytecodeOrHash {
-        let module = module_with_memory(pages);
+        let module = test_contract_module_with_memory(pages);
         BytecodeOrHash::Bytecode {
             hash: B256::with_last_byte(pages as u8),
             bytecode: module,
@@ -623,7 +607,7 @@ mod tests {
     }
 
     fn suspended_frame_with_memory(executor: &RuntimeFactoryExecutor, pages: u32) -> ExecutionMode {
-        suspended_frame(executor, module_with_memory(pages))
+        suspended_frame(executor, test_contract_module_with_memory(pages))
     }
 
     fn suspended_frame(executor: &RuntimeFactoryExecutor, module: RwasmModule) -> ExecutionMode {
@@ -716,7 +700,7 @@ mod tests {
     /// admitted frame is parked in `recoverable_runtimes`, which is exactly the state a suspended
     /// parent leaves behind on the production path.
     fn run_call_chain(executor: &mut RuntimeFactoryExecutor, frame_pages: u32) -> u32 {
-        let module = module_with_memory(frame_pages);
+        let module = test_contract_module_with_memory(frame_pages);
         let bytecode = BytecodeOrHash::Bytecode {
             hash: B256::with_last_byte(frame_pages as u8),
             bytecode: module.clone(),
