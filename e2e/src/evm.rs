@@ -3,7 +3,7 @@ use alloy_sol_types::{sol, SolCall};
 use core::str::from_utf8;
 use fluentbase_contracts::{FLUENTBASE_EXAMPLES_ERC20, FLUENTBASE_EXAMPLES_GREETING};
 use fluentbase_sdk::{
-    address, bytes, calc_create_address, constructor::encode_constructor_params, Address,
+    address, bytes, calc_create_address, constructor::encode_constructor_params, Address, Bytes,
     PRECOMPILE_BLAKE2F, PRECOMPILE_CREATE2_FACTORY, PRECOMPILE_SECP256K1_RECOVER, U256,
 };
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
@@ -629,4 +629,160 @@ fn test_create2_factory() {
     }
     let output = U256::from_be_slice(result.output().unwrap().as_ref());
     assert_eq!(output, U256::from(123));
+}
+
+/// Offset that cannot be narrowed to a host `usize`. Canonical EVM ignores it entirely when the
+/// paired length is zero, so every opcode below must succeed instead of halting.
+const UNREPRESENTABLE_OFFSET: U256 = U256::from_limbs([0, 0, 0, 1 << 63]);
+
+fn push_u256(bytecode: &mut Vec<u8>, value: U256) {
+    bytecode.push(opcode::PUSH32);
+    bytecode.extend_from_slice(&value.to_be_bytes::<32>());
+}
+
+/// `EXTCODECOPY` with the given destination offset and length, copying from `callee`.
+fn extcodecopy_bytecode(callee: Address, memory_offset: U256, len: U256) -> Vec<u8> {
+    let mut bytecode = Vec::new();
+    push_u256(&mut bytecode, len);
+    bytecode.push(opcode::PUSH0); // code offset
+    push_u256(&mut bytecode, memory_offset);
+    bytecode.push(opcode::PUSH20);
+    bytecode.extend_from_slice(callee.as_slice());
+    bytecode.push(opcode::EXTCODECOPY);
+    bytecode.push(opcode::STOP);
+    bytecode
+}
+
+/// A call opcode with the given output range. `CALL`/`CALLCODE` also take a (zero) value argument.
+fn call_bytecode(op: u8, callee: Address, out_offset: U256, out_len: U256) -> Vec<u8> {
+    let mut bytecode = Vec::new();
+    push_u256(&mut bytecode, out_len);
+    push_u256(&mut bytecode, out_offset);
+    bytecode.push(opcode::PUSH0); // args length
+    bytecode.push(opcode::PUSH0); // args offset
+    if op == opcode::CALL || op == opcode::CALLCODE {
+        bytecode.push(opcode::PUSH0); // value
+    }
+    bytecode.push(opcode::PUSH20);
+    bytecode.extend_from_slice(callee.as_slice());
+    bytecode.push(opcode::PUSH2); // forwarded gas
+    bytecode.extend_from_slice(&[0xff, 0xff]);
+    bytecode.push(op);
+    bytecode.push(opcode::STOP);
+    bytecode
+}
+
+/// Deploys `bytecode` at a fresh address alongside a trivial callee, and runs it.
+fn run_bytecode(bytecode: Vec<u8>) -> bool {
+    const CALLER_ADDRESS: Address = Address::repeat_byte(0x11);
+    const CONTRACT_ADDRESS: Address = Address::repeat_byte(0x22);
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    ctx.add_evm_contract(CALLEE_ADDRESS, [opcode::STOP]);
+    ctx.add_evm_contract(CONTRACT_ADDRESS, bytecode);
+    let result = ctx.call_evm_tx(
+        CALLER_ADDRESS,
+        CONTRACT_ADDRESS,
+        Bytes::new(),
+        Some(1_000_000),
+        None,
+    );
+    println!("{:?}", result);
+    result.is_success()
+}
+
+/// Callee used by the zero-length output tests; holds a non-empty bytecode so `EXTCODECOPY` has
+/// something it could copy if the length were not zero.
+const CALLEE_ADDRESS: Address = Address::repeat_byte(0x33);
+
+#[test]
+fn test_zero_length_extcodecopy_ignores_unrepresentable_offset() {
+    assert!(
+        run_bytecode(extcodecopy_bytecode(
+            CALLEE_ADDRESS,
+            UNREPRESENTABLE_OFFSET,
+            U256::ZERO
+        )),
+        "EXTCODECOPY with zero length must ignore the destination offset"
+    );
+    // A representable offset with zero length is the same no-op.
+    assert!(run_bytecode(extcodecopy_bytecode(
+        CALLEE_ADDRESS,
+        U256::from(64),
+        U256::ZERO
+    )));
+}
+
+#[test]
+fn test_nonzero_length_extcodecopy_rejects_unrepresentable_offset() {
+    assert!(
+        !run_bytecode(extcodecopy_bytecode(
+            CALLEE_ADDRESS,
+            UNREPRESENTABLE_OFFSET,
+            U256::ONE
+        )),
+        "EXTCODECOPY with non-zero length must still reject an unrepresentable offset"
+    );
+    assert!(
+        !run_bytecode(extcodecopy_bytecode(
+            CALLEE_ADDRESS,
+            U256::ZERO,
+            UNREPRESENTABLE_OFFSET
+        )),
+        "EXTCODECOPY must reject an unrepresentable length"
+    );
+}
+
+#[test]
+fn test_zero_length_call_output_ignores_unrepresentable_offset() {
+    for op in [
+        opcode::CALL,
+        opcode::CALLCODE,
+        opcode::DELEGATECALL,
+        opcode::STATICCALL,
+    ] {
+        assert!(
+            run_bytecode(call_bytecode(
+                op,
+                CALLEE_ADDRESS,
+                UNREPRESENTABLE_OFFSET,
+                U256::ZERO
+            )),
+            "opcode {op:#04x} with a zero-length output range must ignore the output offset"
+        );
+        assert!(run_bytecode(call_bytecode(
+            op,
+            CALLEE_ADDRESS,
+            U256::from(64),
+            U256::ZERO
+        )));
+    }
+}
+
+#[test]
+fn test_nonzero_length_call_output_rejects_unrepresentable_offset() {
+    for op in [
+        opcode::CALL,
+        opcode::CALLCODE,
+        opcode::DELEGATECALL,
+        opcode::STATICCALL,
+    ] {
+        assert!(
+            !run_bytecode(call_bytecode(
+                op,
+                CALLEE_ADDRESS,
+                UNREPRESENTABLE_OFFSET,
+                U256::ONE
+            )),
+            "opcode {op:#04x} must still reject an unrepresentable output offset"
+        );
+        assert!(
+            !run_bytecode(call_bytecode(
+                op,
+                CALLEE_ADDRESS,
+                U256::ZERO,
+                UNREPRESENTABLE_OFFSET
+            )),
+            "opcode {op:#04x} must reject an unrepresentable output length"
+        );
+    }
 }

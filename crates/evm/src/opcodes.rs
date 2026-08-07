@@ -147,6 +147,12 @@ fn extcodecopy<
         );
         let code = interruption_outcome.output;
         let len = as_usize_or_fail!(context.interpreter, len_u256);
+        // A zero length ignores the memory offset, so it must not be narrowed here
+        // either, otherwise we'd reject an offset the pre-interruption phase accepted.
+        if len == 0 {
+            return;
+        }
+        // Non-zero length means the offset was already validated before the interruption.
         let memory_offset_usize = as_usize_or_fail!(context.interpreter, memory_offset);
         context
             .interpreter
@@ -548,9 +554,15 @@ fn get_memory_output_range<
         interpreter,
         None
     );
-    let out_offset = as_usize_or_fail_ret!(interpreter, out_offset, None);
     let out_len = as_usize_or_fail_ret!(interpreter, out_len, None);
-    Some(out_offset..out_offset + out_len)
+    if out_len == 0 {
+        // Same sentinel `resize_memory` returns for an empty range: the offset is
+        // ignored, so narrowing it here would reject an otherwise valid output range.
+        return Some(usize::MAX..usize::MAX);
+    }
+    // Non-zero length means [get_memory_input_range] already validated and resized this range.
+    let out_offset = as_usize_or_fail_ret!(interpreter, out_offset, None);
+    Some(out_offset..out_offset.saturating_add(out_len))
 }
 
 fn call<
