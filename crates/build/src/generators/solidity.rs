@@ -1,6 +1,8 @@
 //! Solidity ABI and interface generation from Rust smart contracts
 
-use crate::generators::struct_parser::{enrich_abi_entry, parse_structs_from_dir};
+use crate::generators::struct_parser::{
+    enrich_abi_entry, parse_structs_from_crate, StructRegistry,
+};
 use anyhow::{Context, Result};
 use convert_case::{Case, Casing};
 use fluentbase_sdk_derive_core::{
@@ -10,11 +12,8 @@ use fluentbase_sdk_derive_core::{
 use proc_macro2::TokenStream as TokenStream2;
 use quote::ToTokens;
 use serde_json::Value;
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-};
-use syn::{parse_file, visit::Visit, Attribute, DeriveInput, ItemImpl};
+use std::{collections::HashSet, path::Path};
+use syn::{parse_file, visit::Visit, Attribute, ItemImpl};
 
 /// Solidity ABI represented as JSON values
 pub type Abi = Vec<Value>;
@@ -40,8 +39,8 @@ pub fn generate_abi(contract_dir: &Path) -> Result<Abi> {
         ));
     };
 
-    // Parse all structs from the src directory
-    let structs = parse_structs_from_dir(&src_dir)?;
+    // Parse all Codec structs reachable from the crate root
+    let structs = parse_structs_from_crate(&main_file)?;
 
     // Parse contract methods (routers and constructors) from the main file
     let methods = parse_contract_methods(&main_file)?;
@@ -138,10 +137,7 @@ fn parse_contract_methods(path: &Path) -> Result<ContractMethods> {
 }
 
 /// Generates ABI from parsed contract methods with struct enrichment
-fn generate_abi_from_methods(
-    methods: &ContractMethods,
-    structs: &HashMap<String, DeriveInput>,
-) -> Result<Abi> {
+fn generate_abi_from_methods(methods: &ContractMethods, structs: &StructRegistry) -> Result<Abi> {
     let mut entries = Vec::new();
 
     // Process constructor first (they appear first in standard ABIs)
