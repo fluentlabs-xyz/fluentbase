@@ -87,6 +87,18 @@ impl ExecutionMode {
         }
     }
 
+    /// Returns the linear memory this frame holds on its own, in bytes.
+    ///
+    /// Only contract frames report memory here. A `System` runtime executes against a compiled
+    /// store that is cached and reused across calls rather than allocated per frame, so charging
+    /// its memory to every frame would count one allocation many times over.
+    pub fn frame_memory_size_bytes(&self) -> usize {
+        match self {
+            ExecutionMode::Contract(runtime) => runtime.memory_size_bytes(),
+            ExecutionMode::System(_) => 0,
+        }
+    }
+
     /// Returns the remaining execution fuel, if fuel metering is enabled.
     ///
     /// Some runtimes may choose not to expose fuel accounting; in that case

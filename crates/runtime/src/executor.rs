@@ -7,6 +7,7 @@ use crate::{
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     import_linker_v1_preview, Address, BytecodeOrHash, ExitCode, HashMap, B256,
+    MAX_IN_FLIGHT_MEMORY_BYTES,
 };
 use rwasm::{ExecutionEngine, ImportLinker, RwasmModule, StrategyDefinition, TrapCode};
 use std::{cell::RefCell, mem::take, sync::Arc};
@@ -187,6 +188,11 @@ pub struct RuntimeFactoryExecutor {
     pub import_linker: Arc<ImportLinker>,
     /// Monotonically increasing counter for assigning call identifiers.
     pub transaction_call_id_counter: u32,
+    /// Ceiling on linear memory held simultaneously by all live frames of one transaction.
+    ///
+    /// Defaults to [`MAX_IN_FLIGHT_MEMORY_BYTES`]; overridable so tests can exercise the limit
+    /// without allocating gigabytes.
+    pub max_in_flight_memory_bytes: u64,
 }
 
 impl RuntimeFactoryExecutor {
@@ -196,7 +202,22 @@ impl RuntimeFactoryExecutor {
             recoverable_runtimes: HashMap::new(),
             import_linker,
             transaction_call_id_counter: 1,
+            max_in_flight_memory_bytes: MAX_IN_FLIGHT_MEMORY_BYTES,
         }
+    }
+
+    /// Returns the linear memory held by every frame of this transaction that is currently
+    /// suspended awaiting resumption.
+    ///
+    /// This is derived from `recoverable_runtimes` on demand rather than tracked incrementally,
+    /// so it cannot drift out of sync with the frames that are actually alive. The map holds
+    /// every ancestor of the frame being created, which is precisely the set whose memory is
+    /// resident at the same time.
+    pub fn in_flight_memory_bytes(&self) -> u64 {
+        self.recoverable_runtimes
+            .values()
+            .map(|runtime| runtime.frame_memory_size_bytes() as u64)
+            .sum()
     }
 
     /// Saves the current runtime instance for later resumption and returns its call identifier.
@@ -384,6 +405,31 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         };
         let mode = runtime_mode_label(&exec_mode);
 
+        // Bound the linear memory held simultaneously by every live frame of this transaction.
+        //
+        // Each suspended parent keeps its whole store alive in `recoverable_runtimes`, so a deep
+        // enough call chain pins `depth * frame_size` bytes of resident memory while paying only
+        // the per-frame fuel charge for it. Fuel prices a single allocation; it cannot bound the
+        // sum across frames, which is what exhausts the node.
+        //
+        // The check runs after construction rather than before: the page count a module declares
+        // is not a field on the module, it is encoded in the entrypoint bytecode, and decoding it
+        // would tie this to rWasm's codegen. Measuring the frame we just built avoids that
+        // entirely, and the resulting overshoot is bounded by one frame.
+        let in_flight = self.in_flight_memory_bytes() + exec_mode.frame_memory_size_bytes() as u64;
+        if in_flight > self.max_in_flight_memory_bytes {
+            // Dropping `exec_mode` here releases the frame that pushed us over the limit.
+            let result = ExecutionResult {
+                exit_code: ExitCode::OutOfMemory.into_i32(),
+                fuel_consumed: fuel_limit_value,
+                fuel_refunded: 0,
+                output: vec![],
+                return_data: vec![],
+            };
+            metrics::record_execution(mode, state, &timer, &result);
+            return result;
+        }
+
         // Execute program
         let result = exec_mode.execute();
         let fuel_consumed = exec_mode
@@ -501,12 +547,18 @@ fn runtime_labels(runtime: &ExecutionMode) -> (RuntimeModeLabel, &'static str) {
 #[cfg(test)]
 mod tests {
     use crate::{
-        executor::{ExecutionInterruption, RuntimeFactoryExecutor, RuntimeResult},
+        executor::{ExecutionInterruption, RuntimeExecutor, RuntimeFactoryExecutor, RuntimeResult},
         runtime::{ContractRuntime, ExecutionMode},
         RuntimeContext,
     };
-    use fluentbase_types::{import_linker_v1_preview, ExitCode};
-    use rwasm::{ExecutionEngine, RwasmModule, StrategyDefinition};
+    use fluentbase_types::{
+        import_linker_v1_preview, Address, BytecodeOrHash, ExitCode, B256, CALL_STACK_LIMIT,
+        MAX_IN_FLIGHT_MEMORY_BYTES,
+    };
+    use rwasm::{
+        ExecutionEngine, RwasmModule, StrategyDefinition, N_BYTES_PER_MEMORY_PAGE,
+        N_DEFAULT_MAX_MEMORY_PAGES,
+    };
 
     #[test]
     fn call_id_overflow() {
@@ -539,5 +591,262 @@ mod tests {
         assert_eq!(result.fuel_consumed, 100);
         assert_eq!(result.fuel_refunded, 0);
         assert!(result.output.is_empty());
+    }
+
+    /// Initial pages the Rust/Wasm toolchain emits for a contract that allocates nothing of its
+    /// own; both `contracts/bn256` and `examples/greeting` compile down to exactly this.
+    const TYPICAL_CONTRACT_PAGES: u64 = 17;
+
+    fn module_with_memory(pages: u32) -> RwasmModule {
+        let wasm = wat::parse_str(format!(
+            r#"
+                (module
+                    (memory (export "memory") {pages})
+                    (func (export "main"))
+                    (func (export "deploy"))
+                )
+            "#
+        ))
+        .expect("test WAT must be valid");
+        let config = rwasm::CompilationConfig::default().with_entrypoint_name("main".into());
+        let (module, _) = RwasmModule::compile(config, &wasm).expect("test module must compile");
+        module
+    }
+
+    fn contract_bytecode_with_memory(pages: u32) -> BytecodeOrHash {
+        let module = module_with_memory(pages);
+        BytecodeOrHash::Bytecode {
+            hash: B256::with_last_byte(pages as u8),
+            bytecode: module,
+            address: Address::ZERO,
+        }
+    }
+
+    fn suspended_frame_with_memory(executor: &RuntimeFactoryExecutor, pages: u32) -> ExecutionMode {
+        suspended_frame(executor, module_with_memory(pages))
+    }
+
+    fn suspended_frame(executor: &RuntimeFactoryExecutor, module: RwasmModule) -> ExecutionMode {
+        let runtime = ContractRuntime::new(
+            StrategyDefinition::Rwasm {
+                module,
+                engine: ExecutionEngine::acquire_shared(),
+            },
+            executor.import_linker.clone(),
+            RuntimeContext::default(),
+            None,
+        )
+        .expect("test frame must instantiate");
+        ExecutionMode::Contract(runtime)
+    }
+
+    #[test]
+    fn in_flight_memory_sums_every_suspended_frame() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        assert_eq!(executor.in_flight_memory_bytes(), 0);
+
+        // Frames stay resident while suspended, so the cost of a call chain is the sum over
+        // frames, not the size of the largest one.
+        for (call_id, pages) in [(1u32, 3u32), (2, 5)] {
+            let frame = suspended_frame_with_memory(&executor, pages);
+            executor.recoverable_runtimes.insert(call_id, frame);
+        }
+
+        assert_eq!(
+            executor.in_flight_memory_bytes(),
+            (3 + 5) * N_BYTES_PER_MEMORY_PAGE as u64
+        );
+    }
+
+    #[test]
+    fn in_flight_memory_ignores_frames_that_were_forgotten() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        let frame = suspended_frame_with_memory(&executor, 4);
+        executor.recoverable_runtimes.insert(7, frame);
+        assert_eq!(
+            executor.in_flight_memory_bytes(),
+            4 * N_BYTES_PER_MEMORY_PAGE as u64
+        );
+
+        executor.forget_runtime(7);
+        assert_eq!(executor.in_flight_memory_bytes(), 0);
+    }
+
+    #[test]
+    fn frame_exceeding_the_in_flight_cap_is_rejected() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        // Room for the four pages already suspended, but not for the frame about to be built.
+        executor.max_in_flight_memory_bytes = 5 * N_BYTES_PER_MEMORY_PAGE as u64;
+        let frame = suspended_frame_with_memory(&executor, 4);
+        executor.recoverable_runtimes.insert(1, frame);
+
+        let result = executor.execute(
+            contract_bytecode_with_memory(3),
+            RuntimeContext::default().with_fuel_limit(1_000_000),
+        );
+
+        assert_eq!(result.exit_code, ExitCode::OutOfMemory.into_i32());
+        // The rejected frame must not stay resident.
+        assert_eq!(
+            executor.in_flight_memory_bytes(),
+            4 * N_BYTES_PER_MEMORY_PAGE as u64
+        );
+    }
+
+    #[test]
+    fn frame_within_the_in_flight_cap_executes() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        executor.max_in_flight_memory_bytes = 8 * N_BYTES_PER_MEMORY_PAGE as u64;
+        let frame = suspended_frame_with_memory(&executor, 4);
+        executor.recoverable_runtimes.insert(1, frame);
+
+        let result = executor.execute(
+            contract_bytecode_with_memory(3),
+            RuntimeContext::default().with_fuel_limit(1_000_000),
+        );
+
+        assert_ne!(result.exit_code, ExitCode::OutOfMemory.into_i32());
+    }
+
+    /// Drives a recursive call chain frame by frame, suspending each one the way a nested call
+    /// does, and reports how many frames were admitted before the cap refused one.
+    ///
+    /// The real attack is `depth * frame_size`, so the shape reproduces at any frame size: many
+    /// small frames stand in for the few huge ones that would need 64 GiB to run for real. Each
+    /// admitted frame is parked in `recoverable_runtimes`, which is exactly the state a suspended
+    /// parent leaves behind on the production path.
+    fn run_call_chain(executor: &mut RuntimeFactoryExecutor, frame_pages: u32) -> u32 {
+        let module = module_with_memory(frame_pages);
+        let bytecode = BytecodeOrHash::Bytecode {
+            hash: B256::with_last_byte(frame_pages as u8),
+            bytecode: module.clone(),
+            address: Address::ZERO,
+        };
+
+        let mut admitted = 0u32;
+        for call_id in 1..=CALL_STACK_LIMIT {
+            // Generous enough to cover the initial-memory charge of even a maximum-size frame
+            // (1023 pages costs 1_047_552 fuel), so fuel never masks the memory cap.
+            let result = executor.execute(
+                bytecode.clone(),
+                RuntimeContext::default().with_fuel_limit(1_000_000_000),
+            );
+            if result.exit_code == ExitCode::OutOfMemory.into_i32() {
+                break;
+            }
+            assert_eq!(
+                result.exit_code, 0,
+                "frame {call_id} failed for another reason"
+            );
+            let frame = suspended_frame(executor, module.clone());
+            executor.recoverable_runtimes.insert(call_id, frame);
+            admitted += 1;
+        }
+        admitted
+    }
+
+    #[test]
+    fn full_depth_chain_of_ordinary_frames_is_admitted() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        // Scaled to the same ratio the production cap has against ordinary contracts: enough
+        // headroom for every frame the call stack permits.
+        executor.max_in_flight_memory_bytes =
+            CALL_STACK_LIMIT as u64 * N_BYTES_PER_MEMORY_PAGE as u64;
+
+        let admitted = run_call_chain(&mut executor, 1);
+
+        // Depth on its own must never trip the cap — only total memory may.
+        assert_eq!(admitted, CALL_STACK_LIMIT);
+    }
+
+    #[test]
+    fn deep_chain_of_memory_heavy_frames_is_cut_off_long_before_full_depth() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        executor.max_in_flight_memory_bytes =
+            CALL_STACK_LIMIT as u64 * N_BYTES_PER_MEMORY_PAGE as u64;
+
+        // Same budget, same depth limit, frames eight times fatter: the chain must die at an
+        // eighth of the depth rather than running to 1024 and pinning eight times the memory.
+        let admitted = run_call_chain(&mut executor, 8);
+
+        assert_eq!(admitted, CALL_STACK_LIMIT / 8);
+        assert!(
+            executor.in_flight_memory_bytes() <= executor.max_in_flight_memory_bytes,
+            "peak memory must never exceed the cap",
+        );
+    }
+
+    /// The attack at full scale: a recursion that asks for `CALL_STACK_LIMIT` frames of the
+    /// largest memory a module may declare — about 64 GiB — must come away with no more than
+    /// [`MAX_IN_FLIGHT_MEMORY_BYTES`].
+    ///
+    /// Unlike the scaled tests above, this one runs the production cap against production frame
+    /// sizes, so it really does allocate ~1.5 GiB of resident memory before the cap refuses the
+    /// next frame. That is the point — the cap is what stops it becoming 64 GiB — but it makes
+    /// the test too memory-hungry for a default `cargo test` run on a constrained machine.
+    ///
+    /// Run it explicitly with:
+    /// `cargo test -p fluentbase-runtime --lib recursion_demanding -- --ignored --nocapture`
+    #[test]
+    #[ignore = "allocates ~1.5 GiB of resident memory by design"]
+    fn recursion_demanding_64_gib_is_capped_at_the_in_flight_limit() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        assert_eq!(
+            executor.max_in_flight_memory_bytes, MAX_IN_FLIGHT_MEMORY_BYTES,
+            "this test must exercise the production cap",
+        );
+
+        let largest_frame_pages = N_DEFAULT_MAX_MEMORY_PAGES - 1;
+        let frame_bytes = largest_frame_pages as u64 * N_BYTES_PER_MEMORY_PAGE as u64;
+        let demanded = CALL_STACK_LIMIT as u64 * frame_bytes;
+        assert!(
+            demanded > 60 * 1024 * 1024 * 1024,
+            "the chain should be demanding tens of GiB, got {demanded} bytes",
+        );
+
+        let admitted = run_call_chain(&mut executor, largest_frame_pages);
+        let held = executor.in_flight_memory_bytes();
+
+        // The chain dies at the cap, not at the call-stack limit.
+        assert_eq!(admitted, (MAX_IN_FLIGHT_MEMORY_BYTES / frame_bytes) as u32);
+        assert!(admitted < CALL_STACK_LIMIT);
+        assert!(
+            held <= MAX_IN_FLIGHT_MEMORY_BYTES,
+            "held {held} bytes, cap is {MAX_IN_FLIGHT_MEMORY_BYTES}",
+        );
+        // What the attacker actually got is a small fraction of what was asked for.
+        assert!(held * 40 < demanded);
+    }
+
+    #[test]
+    fn cap_admits_full_depth_recursion_of_ordinary_contracts() {
+        // Compatibility floor: nothing a normal contract can do today may start failing. The
+        // deepest legitimate chain is `CALL_STACK_LIMIT` frames of a default-sized contract.
+        let worst_legitimate =
+            CALL_STACK_LIMIT as u64 * TYPICAL_CONTRACT_PAGES * N_BYTES_PER_MEMORY_PAGE as u64;
+
+        assert!(
+            MAX_IN_FLIGHT_MEMORY_BYTES > worst_legitimate,
+            "cap {MAX_IN_FLIGHT_MEMORY_BYTES} would break legitimate depth-{CALL_STACK_LIMIT} \
+             recursion needing {worst_legitimate} bytes",
+        );
+    }
+
+    #[test]
+    fn cap_bounds_frames_holding_the_largest_permitted_memory() {
+        // Security ceiling: the same depth filled with maximum-memory frames must be cut off
+        // far below the ~64 GiB it would otherwise reach.
+        let largest_frame =
+            (N_DEFAULT_MAX_MEMORY_PAGES - 1) as u64 * N_BYTES_PER_MEMORY_PAGE as u64;
+        let affordable_frames = MAX_IN_FLIGHT_MEMORY_BYTES / largest_frame;
+
+        assert!(
+            affordable_frames < 32,
+            "cap admits {affordable_frames} maximum-memory frames",
+        );
+        assert!(
+            affordable_frames * largest_frame < 2 * 1024 * 1024 * 1024,
+            "peak memory must stay under 2 GiB",
+        );
     }
 }

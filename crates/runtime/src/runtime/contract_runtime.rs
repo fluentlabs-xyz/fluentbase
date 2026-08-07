@@ -110,6 +110,19 @@ impl ContractRuntime {
         self.executor.memory_read(offset, buffer)
     }
 
+    /// Returns the linear memory currently allocated to this frame, in bytes.
+    ///
+    /// The store owns this memory for as long as the frame is alive — including while the frame
+    /// sits suspended waiting to be resumed — so this is the quantity a caller must sum to bound
+    /// the memory held simultaneously across a call chain.
+    pub fn memory_size_bytes(&self) -> usize {
+        match &self.executor {
+            StrategyExecutor::Rwasm { store, .. } => store.memory_size_bytes(),
+            #[allow(unreachable_patterns)]
+            _ => 0,
+        }
+    }
+
     /// Returns the remaining execution fuel if fuel metering is enabled.
     ///
     /// Returns `None` if fuel accounting is disabled for this execution.
