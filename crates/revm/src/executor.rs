@@ -2,6 +2,7 @@ use crate::{
     api::RwasmFrame,
     eip2935::eip2935_compute_storage_keys,
     inspector::inspect_syscall,
+    spend_gas_on_exceptional_halt,
     syscall::{execute_rwasm_interruption, DefaultRuntimeExecutorMemoryReader},
     ExecutionResult, NextAction,
 };
@@ -862,6 +863,12 @@ fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
     return_data: Bytes,
 ) -> NextAction {
     let result = instruction_result_from_exit_code(exit_code, return_data.is_empty());
+
+    // An exceptional halt must consume the frame's entire remaining gas, matching native REVM.
+    // A system precompile that rejects its input errors out before it charges anything, and the
+    // engine reports no consumed fuel for the non-metered ones, so the frame would otherwise
+    // report a full tank on a halt.
+    spend_gas_on_exceptional_halt(result, &mut frame.interpreter.gas);
 
     if let Some(inspector) = inspector {
         let evm_opcode = match result {

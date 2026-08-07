@@ -72,6 +72,8 @@ mod oauth2;
 #[cfg(test)]
 mod oom;
 #[cfg(test)]
+mod precompile_halt;
+#[cfg(test)]
 mod universal_token;
 #[cfg(test)]
 mod universal_token_solidity;
