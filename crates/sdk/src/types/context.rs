@@ -78,6 +78,13 @@ pub struct ContractContextV1 {
     pub gas_limit: u64,
 }
 
+/// Transaction-level context handed to delegated runtimes.
+///
+/// Deliberately carries no EIP-4844 blob fields (versioned hashes, max fee per blob gas). Fluent
+/// does not support blob transactions: blocks carry no `excess_blob_gas` / `blob_gas_used` and the
+/// blob schedule is empty (`crates/genesis/build.rs`), so a type-3 transaction can never be
+/// included and there is nothing to plumb through. The delegated EVM's `BLOBHASH` / `BLOBBASEFEE`
+/// consequently return zero by design — see `fluentbase_evm::host`.
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct TxContextV1 {
     pub gas_limit: u64,
@@ -85,8 +92,6 @@ pub struct TxContextV1 {
     pub gas_price: U256,
     pub gas_priority_fee: Option<U256>,
     pub origin: Address,
-    // pub blob_hashes: Vec<B256>,
-    // pub max_fee_per_blob_gas: Option<U256>,
     pub value: U256,
 }
 
