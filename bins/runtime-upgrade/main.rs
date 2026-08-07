@@ -89,8 +89,8 @@ struct CommonArgs {
     #[arg(long)]
     mainnet: bool,
 
-    /// A custom RPC endpoint (overrides --local, --dev, --test, --mainnet).
-    /// Does not affect which genesis asset is used — pass --genesis-channel for that.
+    /// A custom RPC endpoint. Also select its network with --local/--dev/--test/--mainnet, or pass
+    /// --genesis-channel explicitly, so the authenticated genesis choice is never implicit.
     #[arg(long)]
     rpc: Option<String>,
 }
@@ -315,13 +315,22 @@ fn ask_for_secret(prompt: &str) -> Result<String> {
 }
 
 fn pick_rpc(args: &CommonArgs) -> Result<String> {
-    if let Some(rpc) = &args.rpc {
-        return Ok(rpc.clone());
-    }
     let flags = [args.local, args.dev, args.test, args.mainnet]
         .into_iter()
         .filter(|x| *x)
         .count();
+    if let Some(rpc) = &args.rpc {
+        if flags > 1 {
+            bail!("You may select at most one of --local, --dev, --test, or --mainnet with --rpc");
+        }
+        if flags == 0 && args.genesis_channel.is_none() {
+            bail!(
+                "--rpc requires an explicit network flag or --genesis-channel so the genesis \
+                 asset is not selected implicitly"
+            );
+        }
+        return Ok(rpc.clone());
+    }
     if flags != 1 {
         bail!("You must specify exactly one of --local, --dev, --test, or --mainnet");
     }
@@ -334,6 +343,16 @@ fn pick_rpc(args: &CommonArgs) -> Result<String> {
     } else {
         "https://rpc.fluent.xyz".to_string()
     })
+}
+
+fn validate_genesis_chain_id(genesis_chain_id: u64, rpc_chain_id: u64) -> Result<()> {
+    if genesis_chain_id != rpc_chain_id {
+        bail!(
+            "authenticated genesis chain id {genesis_chain_id} does not match RPC chain id \
+             {rpc_chain_id}; refusing to build or submit an upgrade"
+        );
+    }
+    Ok(())
 }
 
 fn strip_0x(s: &str) -> &str {
@@ -736,6 +755,7 @@ async fn main() -> Result<()> {
         .await
         .context("get_chainid")?
         .as_u64();
+    validate_genesis_chain_id(genesis.config.chain_id, chain_id)?;
 
     match &cli.command {
         Command::PlanUpgrade(args) => {
@@ -1005,6 +1025,25 @@ mod tests {
         ]);
         assert_eq!(pick_rpc(&args).unwrap(), "https://internal.example");
         assert_eq!(args.genesis_channel(), Some("mainnet"));
+    }
+
+    #[test]
+    fn custom_rpc_requires_an_explicit_genesis_selection() {
+        let err = pick_rpc(&common_args(&["--rpc", "https://internal.example"]))
+            .expect_err("a custom RPC must not silently select the default genesis asset");
+        assert!(err.to_string().contains("genesis"), "{err:#}");
+
+        let args = common_args(&["--rpc", "https://internal.example", "--dev"]);
+        assert_eq!(pick_rpc(&args).unwrap(), "https://internal.example");
+        assert_eq!(args.genesis_channel(), None);
+    }
+
+    #[test]
+    fn rpc_chain_must_match_authenticated_genesis() {
+        validate_genesis_chain_id(25_363, 25_363).unwrap();
+        let err = validate_genesis_chain_id(25_363, 20_993)
+            .expect_err("a mainnet genesis must not target a devnet RPC");
+        assert!(err.to_string().contains("does not match"), "{err:#}");
     }
 
     #[test]

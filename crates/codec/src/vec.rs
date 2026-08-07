@@ -278,6 +278,15 @@ mod tests {
             error,
             CodecError::Decoding(DecodingError::BufferTooSmall { .. } | DecodingError::Overflow)
         ));
+
+        let one_element_short = Bytes::from_static(&[
+            0x02, 0x00, 0x00, 0x00, // two elements claimed
+            0x0c, 0x00, 0x00, 0x00, // body offset
+            0x04, 0x00, 0x00, 0x00, // one u32 body
+            0x00, 0x00, 0x00, 0x00,
+        ]);
+        <Vec<u32> as Encoder<LittleEndian, 4, false, false>>::decode(&one_element_short, 0)
+            .expect_err("a count one larger than body capacity must be rejected");
     }
 
     #[test]
@@ -292,6 +301,28 @@ mod tests {
         assert!(matches!(
             error,
             CodecError::Decoding(DecodingError::BufferTooSmall { .. } | DecodingError::Overflow)
+        ));
+
+        let mut one_element_short = BytesMut::zeroed(96);
+        one_element_short[28..32].copy_from_slice(&32_u32.to_be_bytes());
+        one_element_short[60..64].copy_from_slice(&2_u32.to_be_bytes());
+        <Vec<u32> as Encoder<BigEndian, 32, true, false>>::decode(&one_element_short, 0)
+            .expect_err("a Solidity count one larger than body capacity must be rejected");
+    }
+
+    #[test]
+    fn test_non_empty_zero_sized_vector_is_rejected() {
+        let encoded = Bytes::from_static(&[
+            0x01, 0x00, 0x00, 0x00, // one zero-sized element claimed
+            0x0c, 0x00, 0x00, 0x00, // body offset
+            0x00, 0x00, 0x00, 0x00, // empty body
+        ]);
+
+        let error = <Vec<()> as Encoder<LittleEndian, 4, false, false>>::decode(&encoded, 0)
+            .expect_err("a zero-byte body must not authorize an attacker-controlled decode loop");
+        assert!(matches!(
+            error,
+            CodecError::Decoding(DecodingError::InvalidData(_))
         ));
     }
 

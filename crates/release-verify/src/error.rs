@@ -15,6 +15,12 @@ pub enum VerifyError {
     #[error("release public key fingerprint mismatch: expected {expected}, got {actual}")]
     KeyFingerprint { expected: String, actual: String },
 
+    #[error("release public key violates verifier policy: {0}")]
+    KeyPolicy(String),
+
+    #[error("invalid release asset: {0}")]
+    Asset(String),
+
     #[error("failed to parse detached signature: {0}")]
     SignatureParse(String),
 
@@ -72,12 +78,33 @@ pub enum VerifyError {
 /// Deliberately a flat string: it exists so callers can plug in any HTTP client without this crate
 /// having to agree with them on an error type.
 #[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct FetchError(String);
+#[error("{message}")]
+pub struct FetchError {
+    message: String,
+    not_found: bool,
+}
 
 impl FetchError {
     pub fn new(error: impl Display) -> Self {
-        Self(error.to_string())
+        Self {
+            message: error.to_string(),
+            not_found: false,
+        }
+    }
+
+    /// Reports that the requested release asset does not exist.
+    ///
+    /// Callers may distinguish this from transient transport failures when an optional asset is
+    /// genuinely absent from older releases.
+    pub fn not_found(error: impl Display) -> Self {
+        Self {
+            message: error.to_string(),
+            not_found: true,
+        }
+    }
+
+    pub fn is_not_found(&self) -> bool {
+        self.not_found
     }
 }
 

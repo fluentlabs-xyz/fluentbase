@@ -583,8 +583,6 @@ mod tests {
     use alloc::vec::Vec;
     use byteorder::BE;
     use bytes::{Bytes, BytesMut};
-    use hashbrown::{HashMap, HashSet};
-
     #[test]
     fn test_compact_map_rejects_count_larger_than_bodies_before_allocation() {
         let encoded = Bytes::from_static(&[
@@ -614,6 +612,39 @@ mod tests {
 
         let error = CompactABI::<HashSet<u32>>::decode(&encoded, 0)
             .expect_err("a count without value headers must fail before reserving capacity");
+
+        assert!(matches!(
+            error,
+            CodecError::Decoding(DecodingError::BufferTooSmall { .. } | DecodingError::Overflow)
+        ));
+    }
+
+    #[test]
+    fn test_solidity_map_rejects_count_larger_than_bodies_before_allocation() {
+        let mut encoded = BytesMut::zeroed(160);
+        encoded[28..32].copy_from_slice(&32_u32.to_be_bytes());
+        encoded[60..64].copy_from_slice(&u32::MAX.to_be_bytes());
+        encoded[92..96].copy_from_slice(&32_u32.to_be_bytes());
+        encoded[124..128].copy_from_slice(&32_u32.to_be_bytes());
+
+        let error = SolidityABI::<HashMap<u32, u32>>::decode(&encoded, 0)
+            .expect_err("an oversized count must fail before reserving map capacity");
+
+        assert!(matches!(
+            error,
+            CodecError::Decoding(DecodingError::BufferTooSmall { .. } | DecodingError::Overflow)
+        ));
+    }
+
+    #[test]
+    fn test_solidity_set_rejects_count_larger_than_body_before_allocation() {
+        let mut encoded = BytesMut::zeroed(128);
+        encoded[28..32].copy_from_slice(&32_u32.to_be_bytes());
+        encoded[60..64].copy_from_slice(&u32::MAX.to_be_bytes());
+        encoded[92..96].copy_from_slice(&32_u32.to_be_bytes());
+
+        let error = SolidityABI::<HashSet<u32>>::decode(&encoded, 0)
+            .expect_err("an oversized count must fail before reserving set capacity");
 
         assert!(matches!(
             error,

@@ -1,3 +1,4 @@
+use crate::{Result, VerifyError};
 use std::borrow::Cow;
 
 /// Where Fluent release assets are published.
@@ -30,30 +31,40 @@ pub struct ReleaseAsset {
 
 impl ReleaseAsset {
     /// An arbitrary asset of release `tag`.
-    pub fn new(tag: impl Into<Cow<'static, str>>, name: impl Into<Cow<'static, str>>) -> Self {
-        Self {
-            tag: tag.into(),
-            name: name.into(),
+    pub fn new(
+        tag: impl Into<Cow<'static, str>>,
+        name: impl Into<Cow<'static, str>>,
+    ) -> Result<Self> {
+        let tag = tag.into();
+        let name = name.into();
+        validate_component("release tag", &tag)?;
+        validate_component("asset name", &name)?;
+        Ok(Self {
+            tag,
+            name,
             sha256: None,
             max_bytes: MAX_ARTIFACT_BYTES,
-        }
+        })
     }
 
     /// The compressed genesis asset of release `tag`, for the given channel (`None` = devnet).
-    pub fn genesis(tag: impl Into<Cow<'static, str>>, channel: Option<&str>) -> Self {
+    pub fn genesis(tag: impl Into<Cow<'static, str>>, channel: Option<&str>) -> Result<Self> {
         let tag = tag.into();
         let name = match channel {
-            Some(channel) => format!("genesis-{channel}-{tag}.json.gz"),
+            Some(channel) => {
+                validate_component("release channel", channel)?;
+                format!("genesis-{channel}-{tag}.json.gz")
+            }
             None => format!("genesis-{tag}.json.gz"),
         };
         Self::new(tag, name)
     }
 
     /// The signed digest manifest of release `tag`.
-    pub fn manifest(tag: impl Into<Cow<'static, str>>) -> Self {
+    pub fn manifest(tag: impl Into<Cow<'static, str>>) -> Result<Self> {
         let tag = tag.into();
         let name = format!("genesis-manifest-{tag}.txt");
-        Self::new(tag, name).with_max_bytes(MAX_MANIFEST_BYTES)
+        Ok(Self::new(tag, name)?.with_max_bytes(MAX_MANIFEST_BYTES))
     }
 
     /// Pins the exact SHA-256 this asset must have.
@@ -96,4 +107,20 @@ impl ReleaseAsset {
     pub fn signature_url(&self) -> String {
         format!("{}.asc", self.url())
     }
+}
+
+/// GitHub release tags and asset names are single URL/path components. Keeping a narrow character
+/// set prevents cache traversal and URL path/query injection before either string reaches a sink.
+fn validate_component(kind: &str, value: &str) -> Result<()> {
+    if value.is_empty()
+        || matches!(value, "." | "..")
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-'))
+    {
+        return Err(VerifyError::Asset(format!(
+            "{kind} {value:?} must be a non-empty ASCII path component"
+        )));
+    }
+    Ok(())
 }

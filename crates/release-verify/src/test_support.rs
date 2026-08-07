@@ -138,7 +138,7 @@ impl FakeRelease {
             .iter()
             .find(|(published, _)| published == url)
             .map(|(_, bytes)| bytes.clone())
-            .ok_or_else(|| FetchError::new(format!("404 for {url}")))?;
+            .ok_or_else(|| FetchError::not_found(format!("404 for {url}")))?;
         if body.len() > max_bytes {
             return Err(FetchError::new(format!("{url} is over the byte limit")));
         }

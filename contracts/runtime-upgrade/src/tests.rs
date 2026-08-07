@@ -319,6 +319,7 @@ fn test_change_owner_revokes_planned_upgrade() {
     let mut h = Harness::new();
     let (hash_a, hash_b) = plan_two_targets(&mut h);
     assert_plan_is_intact(&mut h, hash_a, hash_b);
+    _ = h.sdk.take_logs();
 
     h.set_caller(OWNER);
     assert_eq!(
@@ -326,6 +327,17 @@ fn test_change_owner_revokes_planned_upgrade() {
         ExitCode::Ok
     );
     assert_eq!(h.owner(), NEW_OWNER);
+
+    let logs = h.sdk.take_logs();
+    assert_eq!(logs.len(), 2, "expected cancellation then owner change");
+    assert_eq!(logs[0].1[0].0, UpgradePlanCancelled::SELECTOR);
+    assert_eq!(logs[1].1[0].0, OwnerChanged::SELECTOR);
+    let (genesis_hash, updater, target_addresses, wasm_code_hashes) =
+        log_data_abi::decode_upgrade_plan_cancelled(&logs[0].1, &logs[0].0);
+    assert_eq!(genesis_hash, B256::from([0xab; 32]));
+    assert_eq!(updater, UPDATER);
+    assert_eq!(target_addresses, vec![TARGET_A, TARGET_B]);
+    assert_eq!(wasm_code_hashes, vec![hash_a, hash_b]);
 
     assert_plan_is_cancelled(&mut h, hash_a, hash_b);
 }
@@ -505,6 +517,13 @@ mod log_data_abi {
                 address updater
             );
 
+            event UpgradePlanCancelled(
+                bytes32 indexed genesis_hash,
+                address updater,
+                address[] target_addresses,
+                bytes32[] wasm_code_hashes
+            );
+
             event OwnerChanged(address new_owner);
 
             event Mixed(address indexed who, uint256 amount, string note, address tail);
@@ -530,6 +549,20 @@ mod log_data_abi {
         assert_eq!(logs.len(), 1, "expected exactly one log");
         let (data, topics) = logs.remove(0);
         (topics, data)
+    }
+
+    pub(super) fn decode_upgrade_plan_cancelled(
+        topics: &[B256],
+        data: &[u8],
+    ) -> (B256, Address, Vec<Address>, Vec<B256>) {
+        let decoded = sol_abi::UpgradePlanCancelled::decode_raw_log(topics, data)
+            .expect("standard cancellation event decoder");
+        (
+            decoded.genesis_hash,
+            decoded.updater,
+            decoded.target_addresses,
+            decoded.wasm_code_hashes,
+        )
     }
 
     /// Concatenates 32-byte words into the expected `data` blob.

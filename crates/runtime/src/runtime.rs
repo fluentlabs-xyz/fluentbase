@@ -12,6 +12,8 @@ use crate::RuntimeContext;
 use rwasm::TrapCode;
 
 mod contract_runtime;
+#[cfg(test)]
+pub(crate) use contract_runtime::test_contract_module_with_memory;
 pub use contract_runtime::ContractRuntime;
 
 mod system_runtime;

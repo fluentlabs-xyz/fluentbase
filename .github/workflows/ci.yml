@@ -27,6 +27,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Check release workflow hardening
         run: ./.github/scripts/check-release-supply-chain.sh .github/workflows/release.yml
+      - name: Authenticate built-in genesis assets
+        run: bash ./.github/scripts/verify-built-in-genesis.sh
 
   tests:
     name: Tests (${{ matrix.name }})

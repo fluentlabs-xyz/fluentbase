@@ -1,7 +1,7 @@
 use crate::{
     asset::ReleaseAsset,
     error::VerifyError,
-    key::{ReleaseKey, FLUENT_RELEASE_KEY_FINGERPRINT},
+    key::{validate_certificate_policy_at, ReleaseKey, FLUENT_RELEASE_KEY_FINGERPRINT},
     load::{authenticate, load_verified, parse_genesis_gz, read_capped, VerifiedArtifact},
     manifest::ReleaseManifest,
     signature::{signing_candidates, verify_detached_signature, ACCEPTED_HASH_ALGORITHMS},
@@ -9,12 +9,16 @@ use crate::{
     MAX_SIGNATURE_BYTES,
 };
 use pgp::{
-    composed::{Deserializable as _, DetachedSignature},
+    composed::{Deserializable as _, DetachedSignature, SignedPublicKey},
     crypto::hash::HashAlgorithm,
     packet::{Signature, SignatureType},
 };
 use sha2::Digest as _;
-use std::{fs, io::Cursor};
+use std::{
+    fs,
+    io::Cursor,
+    sync::{Arc, Barrier},
+};
 
 /// Minimal but valid genesis JSON, gzipped, used as a stand-in for a release artifact.
 fn sample_genesis_gz() -> Vec<u8> {
@@ -38,7 +42,61 @@ fn parse_sig(asc: &[u8]) -> DetachedSignature {
 }
 
 fn asset() -> ReleaseAsset {
-    ReleaseAsset::genesis("v9.9.9", None)
+    ReleaseAsset::genesis("v9.9.9", None).expect("valid test asset")
+}
+
+#[test]
+fn release_asset_rejects_path_and_url_metacharacters() {
+    for tag in ["", "../v1.0.0", "v1.0.0?download=1", "release/name"] {
+        let err = ReleaseAsset::genesis(tag.to_owned(), None)
+            .expect_err("an invalid release tag must be rejected before URL construction");
+        assert!(matches!(err, VerifyError::Asset(_)), "{tag:?}: {err}");
+    }
+
+    for channel in ["../mainnet", "mainnet#fragment", "main/net"] {
+        let err = ReleaseAsset::genesis("v1.0.0", Some(channel))
+            .expect_err("an invalid channel must be rejected before filename construction");
+        assert!(matches!(err, VerifyError::Asset(_)), "{channel:?}: {err}");
+    }
+
+    for name in ["../artifact", "/tmp/artifact", "artifact?raw=1"] {
+        let err = ReleaseAsset::new("v1.0.0", name.to_owned())
+            .expect_err("an invalid asset name must be rejected before cache construction");
+        assert!(matches!(err, VerifyError::Asset(_)), "{name:?}: {err}");
+    }
+}
+
+#[test]
+fn concurrent_atomic_writers_do_not_share_a_temporary_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("artifact");
+    let barrier = Arc::new(Barrier::new(3));
+    let payloads = [vec![0x11; 1024 * 1024], vec![0x22; 1024 * 1024]];
+    let expected_payloads = payloads.clone();
+    let writers: Vec<_> = payloads
+        .into_iter()
+        .map(|payload| {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                crate::write_atomic(&path, &payload)
+            })
+        })
+        .collect();
+
+    barrier.wait();
+    for writer in writers {
+        writer
+            .join()
+            .expect("writer thread must not panic")
+            .expect("concurrent atomic write must succeed");
+    }
+
+    let stored = fs::read(path).unwrap();
+    assert!(expected_payloads
+        .iter()
+        .any(|payload| payload.as_slice() == stored.as_slice()));
 }
 
 fn verified(bytes: Vec<u8>) -> VerifiedArtifact {
@@ -76,6 +134,20 @@ fn malformed_release_key_is_rejected() {
     let err = ReleaseKey::new("not a pgp key at all", FLUENT_RELEASE_KEY_FINGERPRINT)
         .expect_err("must reject garbage key");
     assert!(matches!(err, VerifyError::KeyParse(_)), "{err}");
+}
+
+#[test]
+fn release_key_policy_rejects_a_revoked_primary_key() {
+    let release = TestKey::release();
+    let (mut cert, _) = SignedPublicKey::from_string(&release.armored).unwrap();
+    let simulated_revocation = cert.details.users[0].signatures[0].clone();
+    cert.details
+        .revocation_signatures
+        .push(simulated_revocation);
+
+    let err = validate_certificate_policy_at(&cert, u64::MAX)
+        .expect_err("a certificate snapshot containing a primary revocation must be rejected");
+    assert!(matches!(err, VerifyError::KeyPolicy(_)), "{err}");
 }
 
 // -------------------------------------------------------------------------
@@ -535,6 +607,18 @@ fn manifest_with_conflicting_digests_for_one_name_is_rejected() {
     assert!(matches!(err, VerifyError::Manifest(_)), "{err}");
 }
 
+#[test]
+fn manifest_with_duplicate_release_metadata_is_rejected() {
+    for duplicate in [
+        "version=v1.3.2\nversion=v1.3.2\ncommit=deadbeef\n",
+        "version=v1.3.2\ncommit=deadbeef\ncommit=deadbeef\n",
+    ] {
+        let err = ReleaseManifest::parse(duplicate.as_bytes())
+            .expect_err("release metadata must be unique even when repeated values agree");
+        assert!(matches!(err, VerifyError::Manifest(_)), "{err}");
+    }
+}
+
 // -------------------------------------------------------------------------
 // Genesis parsing
 // -------------------------------------------------------------------------
@@ -612,6 +696,13 @@ fn published_signatures_are_issued_by_the_pinned_release_key() {
 /// The real manifest, verbatim from the v1.3.2 release, must parse and bind its assets.
 #[test]
 fn published_manifest_parses_and_binds_its_assets() {
+    verify_detached_signature(
+        include_bytes!("../testdata/genesis-manifest-v1.3.2.txt"),
+        include_bytes!("../testdata/genesis-manifest-v1.3.2.txt.asc"),
+        &ReleaseKey::fluent().expect("embedded key must load"),
+    )
+    .expect("the published manifest signature must verify against the pinned release key");
+
     let manifest =
         ReleaseManifest::parse(include_bytes!("../testdata/genesis-manifest-v1.3.2.txt"))
             .expect("published manifest must parse");

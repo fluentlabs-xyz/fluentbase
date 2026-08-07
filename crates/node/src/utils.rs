@@ -48,34 +48,39 @@ fn genesis_cache_dir() -> eyre::Result<PathBuf> {
 
 /// Downloads `url` into memory, refusing responses larger than `max_bytes`.
 fn http_fetch(url: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
-    fetch_inner(url, max_bytes).map_err(|err: eyre::Report| FetchError::new(format!("{err:#}")))
-}
-
-fn fetch_inner(url: &str, max_bytes: usize) -> eyre::Result<Vec<u8>> {
     // NOTE: blocking client avoids pulling tokio into a CLI dependency tree.
-    let resp = reqwest::blocking::Client::builder()
+    let client = reqwest::blocking::Client::builder()
         .user_agent("fluent-chainspec/1.0")
         .timeout(DOWNLOAD_TIMEOUT)
         .build()
-        .wrap_err("failed to build HTTP client")?
+        .map_err(|err| FetchError::new(format!("failed to build HTTP client: {err}")))?;
+    let resp = client
         .get(url)
         .send()
-        .wrap_err_with(|| format!("GET {url}"))?
+        .map_err(|err| FetchError::new(format!("GET {url}: {err}")))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(FetchError::not_found(format!("GET {url} returned 404")));
+    }
+    let resp = resp
         .error_for_status()
-        .wrap_err_with(|| format!("GET {url} returned non-success"))?;
+        .map_err(|err| FetchError::new(format!("GET {url} returned non-success: {err}")))?;
 
     if let Some(len) = resp.content_length() {
         if len > max_bytes as u64 {
-            eyre::bail!("advertises {len} bytes, over the {max_bytes} byte limit");
+            return Err(FetchError::new(format!(
+                "advertises {len} bytes, over the {max_bytes} byte limit"
+            )));
         }
     }
 
     let mut buf = Vec::new();
     resp.take(max_bytes as u64 + 1)
         .read_to_end(&mut buf)
-        .wrap_err("reading response body")?;
+        .map_err(|err| FetchError::new(format!("reading response body: {err}")))?;
     if buf.len() > max_bytes {
-        eyre::bail!("exceeds the {max_bytes} byte limit");
+        return Err(FetchError::new(format!(
+            "exceeds the {max_bytes} byte limit"
+        )));
     }
     Ok(buf)
 }

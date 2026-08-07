@@ -92,7 +92,8 @@ pub(crate) fn load_release_blocking(
     key: &ReleaseKey,
     fetch: &Fetcher<'_>,
 ) -> Result<VerifiedRelease> {
-    let asset = ReleaseAsset::genesis(tag.to_owned(), channel);
+    let asset = ReleaseAsset::genesis(tag.to_owned(), channel)
+        .context("invalid genesis release tag or channel")?;
 
     let artifact = load_verified(Some(cache_dir), &asset, key, fetch)
         .with_context(|| format!("refusing to use {}: it is not authentic", asset.name()))?;
@@ -125,20 +126,20 @@ pub(crate) fn load_release_blocking(
 
 /// Loads the release's signed digest manifest, if it publishes one.
 ///
-/// A manifest that cannot be fetched is treated as "this release has none" — the detached signature
-/// has already bound the artifact, and older releases genuinely predate manifests. A manifest that
-/// *is* present but fails to authenticate or parse is fatal: that is tampering, not absence.
+/// A manifest that returns `404 Not Found` is treated as "this release has none" — the detached
+/// signature has already bound the artifact, and older releases genuinely predate manifests. Any
+/// other transport, authentication, or parse failure is fatal rather than a verification downgrade.
 fn load_manifest(
     tag: &str,
     cache_dir: &Path,
     key: &ReleaseKey,
     fetch: &Fetcher<'_>,
 ) -> Result<(Option<ReleaseManifest>, ManifestBinding)> {
-    let asset = ReleaseAsset::manifest(tag.to_owned());
+    let asset = ReleaseAsset::manifest(tag.to_owned()).context("invalid release tag")?;
 
     let artifact = match load_verified(Some(cache_dir), &asset, key, fetch) {
         Ok(artifact) => artifact,
-        Err(VerifyError::Fetch { source, .. }) => {
+        Err(VerifyError::Fetch { url, source }) if source.is_not_found() && url == asset.url() => {
             return Ok((
                 None,
                 ManifestBinding::Unavailable {
@@ -165,33 +166,38 @@ fn load_manifest(
 
 /// Downloads `url` into memory, refusing responses larger than `max_bytes`.
 fn blocking_fetch(url: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
-    fetch_inner(url, max_bytes).map_err(|err| FetchError::new(format!("{err:#}")))
-}
-
-fn fetch_inner(url: &str, max_bytes: usize) -> Result<Vec<u8>> {
-    let resp = reqwest::blocking::Client::builder()
+    let client = reqwest::blocking::Client::builder()
         .user_agent("fluent-runtime-upgrade/1.0")
         .timeout(DOWNLOAD_TIMEOUT)
         .build()
-        .context("failed to build HTTP client")?
+        .map_err(|err| FetchError::new(format!("failed to build HTTP client: {err}")))?;
+    let resp = client
         .get(url)
         .send()
-        .with_context(|| format!("GET {url}"))?
+        .map_err(|err| FetchError::new(format!("GET {url}: {err}")))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(FetchError::not_found(format!("GET {url} returned 404")));
+    }
+    let resp = resp
         .error_for_status()
-        .with_context(|| format!("GET {url} returned non-success"))?;
+        .map_err(|err| FetchError::new(format!("GET {url} returned non-success: {err}")))?;
 
     if let Some(len) = resp.content_length() {
         if len > max_bytes as u64 {
-            anyhow::bail!("advertises {len} bytes, over the {max_bytes} byte limit");
+            return Err(FetchError::new(format!(
+                "advertises {len} bytes, over the {max_bytes} byte limit"
+            )));
         }
     }
 
     let mut buf = Vec::new();
     resp.take(max_bytes as u64 + 1)
         .read_to_end(&mut buf)
-        .context("reading response body")?;
+        .map_err(|err| FetchError::new(format!("reading response body: {err}")))?;
     if buf.len() > max_bytes {
-        anyhow::bail!("exceeds the {max_bytes} byte limit");
+        return Err(FetchError::new(format!(
+            "exceeds the {max_bytes} byte limit"
+        )));
     }
     Ok(buf)
 }
@@ -239,8 +245,10 @@ mod tests {
         channel: Option<&str>,
         gz: &[u8],
     ) -> (ReleaseAsset, FakeRelease) {
-        let asset = ReleaseAsset::genesis(tag.to_owned(), channel);
-        let manifest_asset = ReleaseAsset::manifest(tag.to_owned());
+        let asset =
+            ReleaseAsset::genesis(tag.to_owned(), channel).expect("valid test genesis asset");
+        let manifest_asset =
+            ReleaseAsset::manifest(tag.to_owned()).expect("valid test manifest asset");
         let manifest = manifest_for(tag, &[(asset.name(), gz)]);
         let feed = FakeRelease::new()
             .publish(&asset, gz.to_vec(), release.sign(gz))
@@ -277,7 +285,7 @@ mod tests {
         let attacker = TestKey::attacker();
         let dir = tempfile::tempdir().unwrap();
         let evil = substituted_gz();
-        let asset = ReleaseAsset::genesis(TAG.to_owned(), None);
+        let asset = ReleaseAsset::genesis(TAG.to_owned(), None).unwrap();
         plant_cache(dir.path(), &asset, &evil, &attacker.sign(&evil));
 
         load_release_blocking(TAG, None, dir.path(), &release.key(), &offline)
@@ -317,7 +325,7 @@ mod tests {
         // A single flipped byte in an otherwise genuine artifact.
         let mut modified = gz.clone();
         *modified.last_mut().unwrap() ^= 0x01;
-        let manifest_asset = ReleaseAsset::manifest(TAG.to_owned());
+        let manifest_asset = ReleaseAsset::manifest(TAG.to_owned()).unwrap();
         let manifest = manifest_for(TAG, &[(asset.name(), &gz)]);
         let feed = FakeRelease::new()
             .publish(&asset, modified, release.sign(&gz))
@@ -349,8 +357,8 @@ mod tests {
         let release = TestKey::release();
         let dir = tempfile::tempdir().unwrap();
         let gz = genesis_gz();
-        let asset = ReleaseAsset::genesis(TAG.to_owned(), None);
-        let manifest_asset = ReleaseAsset::manifest(TAG.to_owned());
+        let asset = ReleaseAsset::genesis(TAG.to_owned(), None).unwrap();
+        let manifest_asset = ReleaseAsset::manifest(TAG.to_owned()).unwrap();
 
         // Validly signed, but cut from a different release.
         let manifest = manifest_for("v1.3.1", &[(asset.name(), &gz)]);
@@ -375,9 +383,9 @@ mod tests {
         let release = TestKey::release();
         let dir = tempfile::tempdir().unwrap();
         let gz = genesis_gz();
-        let devnet = ReleaseAsset::genesis(TAG.to_owned(), None);
-        let mainnet = ReleaseAsset::genesis(TAG.to_owned(), Some("mainnet"));
-        let manifest_asset = ReleaseAsset::manifest(TAG.to_owned());
+        let devnet = ReleaseAsset::genesis(TAG.to_owned(), None).unwrap();
+        let mainnet = ReleaseAsset::genesis(TAG.to_owned(), Some("mainnet")).unwrap();
+        let manifest_asset = ReleaseAsset::manifest(TAG.to_owned()).unwrap();
 
         let manifest = manifest_for(TAG, &[(devnet.name(), &gz)]);
         let feed = FakeRelease::new()
@@ -404,8 +412,8 @@ mod tests {
         let attacker = TestKey::attacker();
         let dir = tempfile::tempdir().unwrap();
         let gz = genesis_gz();
-        let asset = ReleaseAsset::genesis(TAG.to_owned(), None);
-        let manifest_asset = ReleaseAsset::manifest(TAG.to_owned());
+        let asset = ReleaseAsset::genesis(TAG.to_owned(), None).unwrap();
+        let manifest_asset = ReleaseAsset::manifest(TAG.to_owned()).unwrap();
         let manifest = manifest_for(TAG, &[(asset.name(), &gz)]);
 
         let feed = FakeRelease::new()
@@ -423,12 +431,39 @@ mod tests {
     }
 
     #[test]
+    fn unsigned_manifest_is_fatal_not_treated_as_absent() {
+        let release = TestKey::release();
+        let dir = tempfile::tempdir().unwrap();
+        let gz = genesis_gz();
+        let asset = ReleaseAsset::genesis(TAG.to_owned(), None).unwrap();
+        let manifest_asset = ReleaseAsset::manifest(TAG.to_owned()).unwrap();
+        let manifest = manifest_for(TAG, &[(asset.name(), &gz)]);
+        let feed = FakeRelease::new()
+            .publish(&asset, gz.clone(), release.sign(&gz))
+            // Publish the manifest body without its detached signature.
+            .publish(&manifest_asset, manifest.clone(), Vec::new());
+
+        let err = load_release_blocking(TAG, None, dir.path(), &release.key(), &|url, max| {
+            if url == manifest_asset.signature_url() {
+                Err(FetchError::not_found("manifest signature returned 404"))
+            } else {
+                feed.fetch(url, max)
+            }
+        })
+        .expect_err("a manifest without its detached signature must abort the run");
+        assert!(
+            format!("{err:#}").contains("did not authenticate"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
     fn release_without_a_manifest_is_accepted_and_flagged() {
         // Pre-v1.3.x releases publish no manifest; the detached signature still has to hold.
         let release = TestKey::release();
         let dir = tempfile::tempdir().unwrap();
         let gz = genesis_gz();
-        let asset = ReleaseAsset::genesis("v0.5.7".to_owned(), None);
+        let asset = ReleaseAsset::genesis("v0.5.7".to_owned(), None).unwrap();
         let feed = FakeRelease::new().publish(&asset, gz.clone(), release.sign(&gz));
 
         let loaded =
@@ -444,12 +479,32 @@ mod tests {
     }
 
     #[test]
+    fn manifest_transport_failure_is_fatal() {
+        let release = TestKey::release();
+        let dir = tempfile::tempdir().unwrap();
+        let gz = genesis_gz();
+        let asset = ReleaseAsset::genesis("v0.5.7".to_owned(), None).unwrap();
+        let feed = FakeRelease::new().publish(&asset, gz.clone(), release.sign(&gz));
+
+        let err = load_release_blocking("v0.5.7", None, dir.path(), &release.key(), &|url, max| {
+            if url.contains("genesis-manifest-") {
+                Err(FetchError::new("network timeout"))
+            } else {
+                feed.fetch(url, max)
+            }
+        })
+        .expect_err("a timeout must not masquerade as a release without a manifest");
+
+        assert!(format!("{err:#}").contains("network timeout"), "{err:#}");
+    }
+
+    #[test]
     fn unmanifested_release_still_requires_a_valid_signature() {
         let release = TestKey::release();
         let attacker = TestKey::attacker();
         let dir = tempfile::tempdir().unwrap();
         let gz = genesis_gz();
-        let asset = ReleaseAsset::genesis("v0.5.7".to_owned(), None);
+        let asset = ReleaseAsset::genesis("v0.5.7".to_owned(), None).unwrap();
         let feed = FakeRelease::new().publish(&asset, gz.clone(), attacker.sign(&gz));
 
         load_release_blocking("v0.5.7", None, dir.path(), &release.key(), &|url, max| {

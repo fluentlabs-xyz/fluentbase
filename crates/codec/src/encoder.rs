@@ -1,7 +1,7 @@
-use crate::func::FunctionArgs;
 use crate::{
     alloc::string::ToString,
     error::{CodecError, DecodingError},
+    func::FunctionArgs,
 };
 use byteorder::{ByteOrder, BE, LE};
 use bytes::{Buf, BytesMut};
@@ -305,6 +305,11 @@ pub(crate) fn validate_collection_body(
     element_header_size: usize,
     body_len: usize,
 ) -> Result<(), CodecError> {
+    if len != 0 && element_header_size == 0 {
+        return Err(CodecError::Decoding(DecodingError::InvalidData(
+            "non-empty collections of zero-sized elements are not supported".to_string(),
+        )));
+    }
     let required = len
         .checked_mul(element_header_size)
         .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
