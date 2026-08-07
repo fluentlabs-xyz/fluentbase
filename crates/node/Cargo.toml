@@ -57,7 +57,7 @@ fluentbase-runtime = { workspace = true }
 fluentbase-revm = { workspace = true }
 fluentbase-genesis = { workspace = true }
 fluentbase-types = { workspace = true }
-fluentbase-release-verify = { workspace = true }
+fluentbase-release-verify = { workspace = true, features = ["reqwest"] }
 
 # alloy
 alloy-primitives = { workspace = true }
@@ -80,7 +80,6 @@ serde_json = { workspace = true }
 eyre = { workspace = true }
 directories = { workspace = true }
 flate2 = { workspace = true }
-reqwest = { workspace = true }
 
 [features]
 default = ["std"]

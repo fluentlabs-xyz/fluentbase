@@ -17,12 +17,11 @@
 use alloy_genesis::Genesis;
 use anyhow::{anyhow, Context, Result};
 use fluentbase_release_verify::{
-    load_verified, parse_genesis_gz, FetchError, Fetcher, ReleaseAsset, ReleaseKey,
-    ReleaseManifest, VerifyError,
+    bounded_http_fetch, load_verified, parse_genesis_gz, FetchError, Fetcher, ReleaseAsset,
+    ReleaseKey, ReleaseManifest, VerifyError,
 };
 use serde::Serialize;
 use std::{
-    io::Read as _,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -166,40 +165,12 @@ fn load_manifest(
 
 /// Downloads `url` into memory, refusing responses larger than `max_bytes`.
 fn blocking_fetch(url: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("fluent-runtime-upgrade/1.0")
-        .timeout(DOWNLOAD_TIMEOUT)
-        .build()
-        .map_err(|err| FetchError::new(format!("failed to build HTTP client: {err}")))?;
-    let resp = client
-        .get(url)
-        .send()
-        .map_err(|err| FetchError::new(format!("GET {url}: {err}")))?;
-    if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err(FetchError::not_found(format!("GET {url} returned 404")));
-    }
-    let resp = resp
-        .error_for_status()
-        .map_err(|err| FetchError::new(format!("GET {url} returned non-success: {err}")))?;
-
-    if let Some(len) = resp.content_length() {
-        if len > max_bytes as u64 {
-            return Err(FetchError::new(format!(
-                "advertises {len} bytes, over the {max_bytes} byte limit"
-            )));
-        }
-    }
-
-    let mut buf = Vec::new();
-    resp.take(max_bytes as u64 + 1)
-        .read_to_end(&mut buf)
-        .map_err(|err| FetchError::new(format!("reading response body: {err}")))?;
-    if buf.len() > max_bytes {
-        return Err(FetchError::new(format!(
-            "exceeds the {max_bytes} byte limit"
-        )));
-    }
-    Ok(buf)
+    bounded_http_fetch(
+        "fluent-runtime-upgrade/1.0",
+        DOWNLOAD_TIMEOUT,
+        url,
+        max_bytes,
+    )
 }
 
 /// Where authenticated artifacts are cached: alongside the working directory, as before.

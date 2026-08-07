@@ -15,6 +15,7 @@ alloy-genesis = { workspace = true }
 flate2 = { workspace = true }
 hex = { workspace = true, features = ["std"] }
 pgp = { workspace = true }
+reqwest = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["std"] }
 sha2 = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
@@ -23,6 +24,8 @@ tracing = { workspace = true }
 rand_08 = { workspace = true, optional = true }
 
 [features]
+# Shared bounded blocking HTTP transport for release-asset consumers.
+reqwest = ["dep:reqwest"]
 # Fixtures for building throwaway releases in downstream tests. Dev-dependencies only.
 test-support = ["dep:rand_08"]
 
