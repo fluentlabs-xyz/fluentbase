@@ -2092,6 +2092,7 @@ dependencies = [
 name = "fluentbase-contracts-runtime-upgrade"
 version = "0.1.0"
 dependencies = [
+ "alloy-sol-types",
  "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-testing",
