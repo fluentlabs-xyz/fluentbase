@@ -1239,6 +1239,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 return_halt!(MemoryOutOfBounds);
             };
             let rwasm_binary: Bytes = rwasm_binary.into();
+            // No `RWASM_MAX_CODE_SIZE` check here, intentionally, and note the contrast with the
+            // EVM branch below which does enforce `EVM_MAX_CODE_SIZE`. The caller is pinned to
+            // `PRECOMPILE_RUNTIME_UPGRADE` by the assert above, and that contract only reaches this
+            // syscall after checking upgrade authority, so the size caps that bound untrusted
+            // deployment add nothing here. Bounding system runtimes by the deploy-time limit would
+            // make a genesis contract that outgrows it un-upgradeable without a fork — the exact
+            // situation this syscall exists to avoid. See `compile_and_install` in
+            // `contracts/runtime-upgrade` for the full argument (audit FLU-1075, closed as intended).
             #[cfg(feature = "std")]
             warn!(
                 ?target_address,

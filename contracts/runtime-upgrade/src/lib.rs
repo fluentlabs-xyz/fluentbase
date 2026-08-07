@@ -339,6 +339,32 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
 }
 
 impl<SDK: SharedAPI> App<SDK> {
+    /// Compile raw WASM and install the resulting rWasm at `target_address`.
+    ///
+    /// Deliberately unbounded: neither `WASM_MAX_CODE_SIZE` nor `RWASM_MAX_CODE_SIZE` is applied
+    /// here, and that is not an oversight. Those caps exist to bound what an *untrusted* deployer
+    /// can push into state and how much compilation an untrusted caller can force through `CREATE`.
+    /// Every path into this function is already gated on upgrade authority — the owner directly, or
+    /// a delegated updater presenting a target/hash pair the owner approved in advance — so the
+    /// bytecode and the compilation work both come from a trusted source and the caps protect
+    /// against nothing that authority does not already imply.
+    ///
+    /// Applying them would instead cost us something real: system runtimes are the largest binaries
+    /// on the chain and already sit near the deploy-time WASM cap, so a genesis contract that
+    /// outgrows it must stay upgradeable without a fork to raise a constant. That is precisely what
+    /// this contract exists to make possible.
+    ///
+    /// Note the deliberate asymmetry with [`App::install_evm`] below, which *does* enforce
+    /// `EVM_MAX_CODE_SIZE`: EIP-170 is consensus-visible for EVM accounts, so an oversized EVM
+    /// runtime would be observably out of spec rather than merely large.
+    ///
+    /// The one caveat worth knowing: `EXT_CODE_COPY_MAX_COPY_SIZE` bounds a single `CODE_COPY`
+    /// request, and [`RuntimeUpgradeTr::recompile`] reads a target back in one full-length copy. A
+    /// target installed above that bound therefore cannot be recompiled through this contract and
+    /// would need a fresh `upgradeTo` carrying the WASM again.
+    ///
+    /// Audit note: raised and closed as intended behaviour (FLU-1075). Please do not "fix" this by
+    /// adding a size check without revisiting the upgrade-authority argument above.
     fn compile_and_install(&mut self, target_address: Address, wasm_bytecode: Bytes) -> B256 {
         if !wasm_bytecode.starts_with(&WASM_MAGIC_BYTES) {
             panic!("runtime-upgrade: malformed wasm bytecode");
