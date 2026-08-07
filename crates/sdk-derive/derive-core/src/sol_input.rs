@@ -1,4 +1,10 @@
-use crate::abi::types::{convert_solidity_type, sol_to_rust};
+use crate::{
+    abi::{
+        function::StateMutability,
+        types::{convert_solidity_type, sol_to_rust},
+    },
+    attr::{StateMutabilityExt, STATE_MUTABILITY_ATTR},
+};
 use alloy_sol_macro_input::{SolInput, SolInputKind};
 use convert_case::{Case, Casing};
 use proc_macro2::{Span, TokenStream};
@@ -35,7 +41,8 @@ impl<'a> Visit<'a> for Collector<'a> {
 ///
 /// A TokenStream representing the generated Rust trait
 pub fn to_rust_trait(input: SolInput) -> syn::Result<TokenStream> {
-    let (structs, trait_name, trait_fns) = convert_sol_to_rust(input)?;
+    // A plain trait is compiled as-is, so it must not carry helper attributes.
+    let (structs, trait_name, trait_fns) = convert_sol_to_rust(input, false)?;
 
     // Generate the final output for trait
     Ok(quote! {
@@ -56,7 +63,9 @@ pub fn to_rust_trait(input: SolInput) -> syn::Result<TokenStream> {
 ///
 /// A TokenStream representing the generated Rust client trait
 pub fn to_sol_client(input: SolInput) -> syn::Result<TokenStream> {
-    let (structs, trait_name, trait_fns) = convert_sol_to_rust(input)?;
+    // The `client` macro consumes the trait, so mutability can be carried over
+    // as an attribute and decide which host call each method issues.
+    let (structs, trait_name, trait_fns) = convert_sol_to_rust(input, true)?;
 
     // Generate the final output for client trait with attribute
     Ok(quote! {
@@ -73,12 +82,15 @@ pub fn to_sol_client(input: SolInput) -> syn::Result<TokenStream> {
 /// # Arguments
 ///
 /// * `input` - The Solidity input to convert
+/// * `emit_mutability` - Whether to annotate methods with their Solidity state
+///   mutability, which is only valid for traits consumed by a macro
 ///
 /// # Returns
 ///
 /// A tuple of (structs, trait_name, trait_methods) to be assembled
 fn convert_sol_to_rust(
     input: SolInput,
+    emit_mutability: bool,
 ) -> syn::Result<(Vec<TokenStream>, Ident, Vec<TokenStream>)> {
     // Get the Solidity file from the input
     let file = match input.kind {
@@ -112,7 +124,7 @@ fn convert_sol_to_rust(
     let mut trait_fns = Vec::new();
     let mut errors = Vec::new();
     for func in &visitor.functions {
-        match sol_fn_to_trait_method(func) {
+        match sol_fn_to_trait_method(func, emit_mutability) {
             Ok(tokens) if tokens.is_empty() => {}
             Ok(tokens) => trait_fns.push(tokens),
             Err(err) => errors.push(err),
@@ -186,9 +198,33 @@ fn derive_trait_name(file: &File) -> syn::Result<Ident> {
 ///
 /// A TokenStream representing the receiver (&self or &mut self)
 fn determine_method_receiver(func: &ItemFunction) -> TokenStream {
+    if sol_state_mutability(func).is_static() {
+        quote! { &self }
+    } else {
+        quote! { &mut self }
+    }
+}
+
+/// Reads the state mutability of a Solidity function.
+///
+/// It is carried over to the generated trait so client generation keeps issuing
+/// the host call the Solidity declaration asks for, instead of defaulting every
+/// method to a mutable `CALL` with a value.
+///
+/// # Arguments
+///
+/// * `func` - The Solidity function
+///
+/// # Returns
+///
+/// The state mutability of the function
+fn sol_state_mutability(func: &ItemFunction) -> StateMutability {
     match func.attributes.mutability() {
-        Some(Mutability::View(_)) | Some(Mutability::Pure(_)) => quote! { &self },
-        _ => quote! { &mut self },
+        Some(Mutability::Pure(_)) => StateMutability::Pure,
+        // `constant` is the legacy spelling of `view`
+        Some(Mutability::View(_) | Mutability::Constant(_)) => StateMutability::View,
+        Some(Mutability::Payable(_)) => StateMutability::Payable,
+        None => StateMutability::NonPayable,
     }
 }
 
@@ -242,11 +278,13 @@ fn sol_struct_to_rust_tokens(sol_struct: &ItemStruct) -> syn::Result<TokenStream
 /// # Arguments
 ///
 /// * `func` - The Solidity function
+/// * `emit_mutability` - Whether to annotate the method with its Solidity state
+///   mutability
 ///
 /// # Returns
 ///
 /// A TokenStream representing the generated trait method
-fn sol_fn_to_trait_method(func: &ItemFunction) -> syn::Result<TokenStream> {
+fn sol_fn_to_trait_method(func: &ItemFunction, emit_mutability: bool) -> syn::Result<TokenStream> {
     // Skip functions without a name or special functions
     let Some(name) = &func.name else {
         return Ok(quote! {});
@@ -284,8 +322,17 @@ fn sol_fn_to_trait_method(func: &ItemFunction) -> syn::Result<TokenStream> {
         return Err(err);
     }
 
+    let mutability_attr = if emit_mutability {
+        let mutability = sol_state_mutability(func).as_str();
+        let attr = format_ident!("{}", STATE_MUTABILITY_ATTR);
+        quote! { #[#attr(#mutability)] }
+    } else {
+        quote! {}
+    };
+
     // Generate the function signature
     Ok(quote! {
+        #mutability_attr
         fn #fn_name(#receiver #(, #args)*) #ret;
     })
 }
@@ -534,5 +581,80 @@ library SomeLibrary {
         let formatted = prettyplease::unparse(&parsed);
 
         assert_snapshot!("sol_to_sol_client_nested_struct", formatted);
+    }
+
+    /// Generates the client of a Solidity interface and strips whitespace, so
+    /// assertions can pin the exact host call without depending on formatting
+    fn sol_client_source(solidity_code: &str) -> String {
+        let input: alloy_sol_macro_input::SolInput = parse_str(solidity_code).unwrap();
+
+        // The trait produced here is what the `client` macro receives
+        let trait_def: syn::ItemTrait = syn::parse2(to_sol_client(input).unwrap()).unwrap();
+        let client = crate::client::Client::new(Default::default(), trait_def).unwrap();
+
+        client
+            .generate()
+            .unwrap()
+            .to_string()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
+
+    #[test]
+    fn test_solidity_mutability_decides_the_host_call() {
+        let generated = sol_client_source(
+            r#"
+        interface IProgram {
+            function answer() external pure returns (uint256);
+            function balance() external view returns (uint256);
+            function reset() external;
+            function deposit() external payable;
+        }
+    "#,
+        );
+
+        // `pure` and `view` cannot mutate state, so they must be static calls
+        // and must not be able to attach a value
+        assert!(generated.contains(
+            "pubfnanswer(&mutself,contract_address:fluentbase_sdk::Address,gas_limit:u64,)"
+        ));
+        assert!(generated.contains(
+            "pubfnbalance(&mutself,contract_address:fluentbase_sdk::Address,gas_limit:u64,)"
+        ));
+        assert_eq!(
+            generated
+                .matches("self.sdk.static_call(contract_address,&input,Some(gas_limit),)")
+                .count(),
+            2
+        );
+
+        // `nonpayable` mutates but rejects value, `payable` forwards it
+        assert!(generated.contains(
+            "pubfnreset(&mutself,contract_address:fluentbase_sdk::Address,gas_limit:u64,)"
+        ));
+        assert!(generated.contains(
+            "self.sdk.call(contract_address,fluentbase_sdk::U256::ZERO,&input,Some(gas_limit),)"
+        ));
+        assert!(generated.contains(
+            "pubfndeposit(&mutself,contract_address:fluentbase_sdk::Address,value:fluentbase_sdk::U256,gas_limit:u64,)"
+        ));
+        assert!(generated.contains("self.sdk.call(contract_address,value,&input,Some(gas_limit),)"));
+    }
+
+    #[test]
+    fn test_legacy_constant_functions_are_read_only() {
+        let generated = sol_client_source(
+            r#"
+        interface IProgram {
+            function balance() external constant returns (uint256);
+        }
+    "#,
+        );
+
+        assert!(
+            generated.contains("self.sdk.static_call(contract_address,&input,Some(gas_limit),)")
+        );
+        assert!(!generated.contains("self.sdk.call("));
     }
 }

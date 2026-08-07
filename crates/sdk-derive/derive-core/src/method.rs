@@ -1,5 +1,8 @@
 use crate::{
-    attr::{function_id::FunctionID, FunctionIDAttribute},
+    abi::function::StateMutability,
+    attr::{
+        function_id::FunctionID, state_mutability::resolve_state_mutability, FunctionIDAttribute,
+    },
     signature::ParsedSignature,
 };
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -83,6 +86,11 @@ pub trait MethodLike: Sized {
             })
             .transpose()
     }
+
+    /// Resolves the Solidity state mutability of the method
+    fn state_mutability(&self) -> syn::Result<StateMutability> {
+        resolve_state_mutability(self.attrs(), self.sig())
+    }
 }
 
 // Implement MethodLike for TraitItemFn
@@ -114,6 +122,8 @@ pub struct ParsedMethod<T: MethodLike> {
     function_id: FunctionID,
     /// Parsed signature of the method
     sig: ParsedSignature,
+    /// Solidity state mutability, deciding which host call the method may issue
+    state_mutability: StateMutability,
     /// Inner function implementation
     inner: T,
 }
@@ -123,6 +133,7 @@ impl<T: MethodLike> ParsedMethod<T> {
     pub fn new(inner: T) -> syn::Result<Self> {
         let sig = ParsedSignature::new(inner.sig().clone());
         let function_id = sig.function_abi()?.function_id()?;
+        let state_mutability = inner.state_mutability()?;
 
         // Handle custom function ID if defined via attribute
         if let Some((attr, attr_span)) = inner.function_id_attr()? {
@@ -146,6 +157,7 @@ impl<T: MethodLike> ParsedMethod<T> {
                 return Ok(Self {
                     function_id: function_id_attr,
                     sig,
+                    state_mutability,
                     inner,
                 });
             }
@@ -154,6 +166,7 @@ impl<T: MethodLike> ParsedMethod<T> {
         Ok(Self {
             function_id,
             sig,
+            state_mutability,
             inner,
         })
     }
@@ -161,11 +174,13 @@ impl<T: MethodLike> ParsedMethod<T> {
     /// Creates a new ParsedMethod for constructor (without function_id calculation)
     pub fn new_constructor(inner: T) -> syn::Result<Self> {
         let sig = ParsedSignature::new(inner.sig().clone());
+        let state_mutability = inner.state_mutability()?;
 
         // For constructor, use zero function_id as it doesn't need a selector
         Ok(Self {
             function_id: [0, 0, 0, 0],
             sig,
+            state_mutability,
             inner,
         })
     }
@@ -191,6 +206,11 @@ impl<T: MethodLike> ParsedMethod<T> {
     /// Returns the function's parsed signature
     pub fn parsed_signature(&self) -> &ParsedSignature {
         &self.sig
+    }
+
+    /// Returns the Solidity state mutability of the method
+    pub fn state_mutability(&self) -> StateMutability {
+        self.state_mutability
     }
 
     /// Returns a reference to the inner implementation

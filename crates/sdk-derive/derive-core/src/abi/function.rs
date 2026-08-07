@@ -28,7 +28,7 @@ pub struct FunctionABI {
 }
 
 /// Represents state mutability in Solidity
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum StateMutability {
     /// Can't read state

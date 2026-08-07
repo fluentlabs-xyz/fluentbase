@@ -13,5 +13,6 @@ pub struct Outer {
 }
 #[client(mode = "solidity")]
 pub trait IProgram {
+    #[state_mutability("view")]
     fn ping(&self, input: Outer) -> Outer;
 }

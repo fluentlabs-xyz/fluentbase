@@ -1,5 +1,5 @@
 use crate::{
-    attr::mode::Mode,
+    attr::{mode::Mode, STATE_MUTABILITY_ATTR},
     codec::CodecGenerator,
     method::{MethodCollector, ParsedMethod},
 };
@@ -201,9 +201,10 @@ impl Router {
 
         for item in &mut clean_impl_block.items {
             if let syn::ImplItem::Fn(method) = item {
-                method
-                    .attrs
-                    .retain(|attr| !attr.path().is_ident("function_id"));
+                method.attrs.retain(|attr| {
+                    !attr.path().is_ident("function_id")
+                        && !attr.path().is_ident(STATE_MUTABILITY_ATTR)
+                });
             }
         }
 
