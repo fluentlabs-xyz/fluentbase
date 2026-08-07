@@ -49,6 +49,13 @@ impl SharedContextInput {
     }
 }
 
+/// Block-level context handed to delegated runtimes.
+///
+/// Deliberately carries no active hardfork / `SpecId`. Delegated runtimes are versioned by
+/// contract upgrade rather than by fork activation, so the EVM runtime pins its own spec instead
+/// of following the chain spec — see the `fluentbase_evm::evm` module docs. Adding a fork field
+/// here to gate delegated opcodes would reintroduce the hardfork coupling that forkless runtime
+/// upgrades exist to avoid.
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct BlockContextV1 {
     pub chain_id: u64,

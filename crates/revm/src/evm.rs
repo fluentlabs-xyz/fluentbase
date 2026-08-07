@@ -48,6 +48,10 @@ impl<CTX: ContextTr, INSP>
         Self(Evm {
             ctx,
             inspector,
+            // Pinned to match the delegated EVM runtime, which always executes at Osaka because
+            // it is versioned by contract upgrade rather than by hardfork (see the
+            // `fluentbase_evm::evm` module docs). Deriving this from the chain spec instead
+            // would make the two interpreters disagree on which opcodes exist.
             instruction: EthInstructions::new_mainnet_with_spec(SpecId::OSAKA),
             precompiles: RwasmPrecompiles::default(),
             frame_stack: FrameStack::new(),
