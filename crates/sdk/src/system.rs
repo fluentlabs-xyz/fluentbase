@@ -12,6 +12,28 @@ use fluentbase_types::{
 };
 pub use state::lock_state_context;
 
+/// SDK context for genesis system contracts, which settle their effects as one batch.
+///
+/// Unlike the syscall-based contexts used by user contracts, storage writes and logs made through
+/// this type are *buffered*, not executed: [`Self::finalize`] packs them into a
+/// [`RuntimeExecutionOutcomeV1`] that the host commits after the frame returns.
+///
+/// # Why the buffered writes and logs are not gas-charged
+///
+/// [`StorageAPI::write_storage`] and [`SharedAPI::emit_log`] here issue no syscall, so nothing
+/// charges the canonical `SSTORE` transition cost/refund or `LOG{n}` cost for them. That is
+/// intended, not an oversight:
+///
+/// - This type is only reachable from `system_entrypoint!`, i.e. from genesis contracts such as
+///   `contracts/universal-token`. The host mirrors that restriction and honors a batched outcome
+///   only for the fixed allowlist of system runtime addresses, so untrusted code cannot write
+///   storage or emit logs this way. User contracts use the syscall path, which charges full price.
+/// - These runtimes are engine-metered, so their execution is paid for in fuel, and the host
+///   precharges the cold/warm access cost of every slot it prefetches for the frame.
+/// - The resulting prices are consensus for tokens already deployed; changing them is a runtime
+///   upgrade, not a patch.
+///
+/// See `process_runtime_execution_outcome` in `fluentbase-revm` for the host half of this contract.
 pub struct SystemContextImpl<API> {
     native_sdk: API,
     state: RecoverableState,
@@ -173,6 +195,10 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
         unimplemented!("transient_storage")
     }
 
+    /// Buffers a log into the batch returned by [`SystemContextImpl::finalize`].
+    ///
+    /// No syscall is issued and no `LOG{n}` gas is charged — see the type-level docs. Only the
+    /// engine's fuel accounting covers the call.
     fn emit_log<D: AsRef<[u8]>>(&mut self, topics: &[B256], data: D) -> SyscallResult<()> {
         self.state
             .storage
@@ -262,12 +288,21 @@ impl<API: NativeAPI + CryptoAPI> SharedAPI for SystemContextImpl<API> {
 }
 
 impl<API: NativeAPI + CryptoAPI> StorageAPI for SystemContextImpl<API> {
+    /// Records a storage write into the batch returned by [`SystemContextImpl::finalize`].
+    ///
+    /// No syscall is issued and no `SSTORE` gas is charged — see the type-level docs. The host
+    /// precharges the slot's cold/warm access cost before the frame starts; the write transition
+    /// itself is deliberately free on this path.
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
         self.state.storage.write_storage(slot, value);
         // Note: Storage write here can't fail, that's why we always return `Ok`
         SyscallResult::default()
     }
 
+    /// Reads a slot out of the state the host prefetched for this frame.
+    ///
+    /// Reads never reach the database from here: a slot the host did not preload is reported as
+    /// `MissingStorageSlot` rather than silently loading (and skipping the access charge).
     fn storage(&self, slot: &U256) -> SyscallResult<U256> {
         if let Some(value) = self.state.storage.storage(slot) {
             return SyscallResult::new(*value, 0, 0, ExitCode::Ok);

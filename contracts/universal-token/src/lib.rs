@@ -3,6 +3,24 @@
 //!
 //! The contract exposes a selector-based ABI (4-byte big-endian selectors) and stores balances, allowances,
 //! and optional plugin configuration in Fluentbase storage.
+//!
+//! # Gas model
+//!
+//! This is a genesis system contract: it runs under `system_entrypoint!` /
+//! [`SystemContextImpl`](fluentbase_sdk::system::SystemContextImpl), so the storage writes and
+//! events below are buffered and handed to the host as one batch when the call returns, rather than
+//! executed as individual syscalls.
+//!
+//! As a result the handlers here do **not** pay canonical EVM `SSTORE` transition gas or `LOG{n}`
+//! gas. This is deliberate. Execution is metered — the runtime is engine-metered in fuel, and the
+//! host precharges the cold/warm access cost of every slot it prefetches for the frame — and the
+//! path is unreachable from untrusted code, since only allowlisted genesis addresses may return a
+//! batched outcome. The one place this contract does mirror an EVM price explicitly is
+//! `CODE_DEPOSIT_GAS_PER_BYTE`, because metadata is persisted as account code.
+//!
+//! These costs are consensus for every token already deployed, so introducing the missing charges
+//! is a runtime upgrade rather than a bug fix. See `process_runtime_execution_outcome` in
+//! `fluentbase-revm` for the full rationale.
 
 extern crate alloc;
 extern crate core;

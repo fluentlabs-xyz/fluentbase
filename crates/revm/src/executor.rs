@@ -343,7 +343,11 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                     } else {
                         ctx.cfg().gas_params().warm_storage_read_cost()
                     };
-                    // We charge for gas in advance because we don't charge inside system contracts
+                    // We charge for gas in advance because we don't charge inside system contracts.
+                    //
+                    // This SLOAD-like access cost is the *only* storage gas this path charges: the
+                    // write transitions the runtime reports back are committed without the dynamic
+                    // SSTORE surcharge, on purpose. See `process_runtime_execution_outcome`.
                     if !interpreter.gas.record_regular_cost(gas_cost) {
                         return Ok(NextAction::out_of_fuel(Gas::new_spent(
                             interpreter.gas.remaining(),
@@ -615,6 +619,34 @@ fn get_ownable_account_mut<'a, CTX: ContextTr + 'a>(
 /// - update ownable account metadata if present
 ///
 /// This is effectively the bridge from system runtime semantics back into REVM journal writes.
+///
+/// # Why batched effects are not charged canonical SSTORE/LOG gas
+///
+/// The storage writes and logs committed below deliberately do **not** pay the transition-dependent
+/// `SSTORE` cost/refund or the `LOG{n}` cost that the EVM opcodes would charge. This is intended
+/// behavior, not a missing charge, and it should not be "fixed":
+///
+/// - **Only trusted code can reach this path.** A batched outcome is honored only when the frame's
+///   effective bytecode address is a system runtime ([`is_execute_using_system_runtime`]) — a fixed
+///   allowlist of genesis addresses. Anyone may *own* such an account (deploying a Universal Token
+///   does exactly that), but the code that runs is always the genesis runtime's, never the
+///   deployer's: producing a batch requires `SystemContextImpl` (see [`fluentbase_sdk::system`]),
+///   which is only reachable through `system_entrypoint!` in genesis contracts, and
+///   `is_delegated_runtime_address` rejects these addresses as direct call or bytecode targets.
+///   User code writes storage and emits logs through the syscall path instead
+///   (`SYSCALL_ID_STORAGE_WRITE` / `SYSCALL_ID_EMIT_LOG` in [`crate::syscall`]), which does charge
+///   the full canonical cost.
+/// - **Execution is still metered.** These runtimes are engine-metered
+///   ([`ENGINE_METERED_PRECOMPILES`]), so their work is paid for in fuel, denominated back into gas
+///   by the caller. Storage *access* is also paid for: `execute_rwasm_frame` precharges the
+///   SLOAD-like cold/warm cost of every prefetched slot before entering the runtime, and refunds
+///   the slots the runtime reports as untouched (see the `preloaded_slot_costs` reconciliation
+///   below). What is skipped is the write-transition surcharge, not the access cost.
+/// - **The prices are consensus.** Adding these charges changes the gas cost of every Universal
+///   Token transfer, approval, and metadata update already on chain, so it breaks backward
+///   compatibility and belongs in a runtime upgrade, not a patch.
+///
+/// [`ENGINE_METERED_PRECOMPILES`]: fluentbase_sdk::ENGINE_METERED_PRECOMPILES
 fn process_runtime_execution_outcome<CTX: ContextTr>(
     target_address: &Address,
     ctx: &mut CTX,
@@ -678,6 +710,10 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
         return Ok(());
     }
 
+    // Intentionally committed without charging dynamic SSTORE cost/refund or LOG gas: only
+    // allowlisted genesis runtimes can produce this batch, their execution is fuel-metered, and the
+    // slot access was already precharged above. See this function's docs before adding a charge
+    // here — it is a consensus gas change, not a bug fix.
     for (k, v) in storage.unwrap_or_default() {
         ctx.journal_mut().sstore(*target_address, k, v)?;
     }
