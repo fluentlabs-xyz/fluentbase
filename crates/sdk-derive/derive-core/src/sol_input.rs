@@ -590,7 +590,12 @@ library SomeLibrary {
 
         // The trait produced here is what the `client` macro receives
         let trait_def: syn::ItemTrait = syn::parse2(to_sol_client(input).unwrap()).unwrap();
-        let client = crate::client::Client::new(Default::default(), trait_def).unwrap();
+        let client = crate::client::Client::new(
+            Default::default(),
+            trait_def,
+            &crate::abi::structs::StructResolver::default(),
+        )
+        .unwrap();
 
         client
             .generate()

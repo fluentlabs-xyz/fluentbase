@@ -1,11 +1,11 @@
 use crate::{
+    abi::structs::StructResolver,
     attr::mode::Mode,
     codec::CodecGenerator,
-    method::{MethodCollector, ParsedMethod},
+    method::{combine_errors, MethodCollector, ParsedMethod},
 };
 use darling::{ast::NestedMeta, FromMeta};
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use proc_macro_error::{abort, abort_call_site, emit_error};
 use quote::{quote, ToTokens};
 use syn::{spanned::Spanned, visit, Error, ImplItemFn, ItemImpl, Result};
 
@@ -30,10 +30,19 @@ pub struct Constructor {
 
 /// Parses and validates a constructor from token streams.
 pub fn process_constructor(attr: TokenStream2, input: TokenStream2) -> Result<Constructor> {
+    process_constructor_with_structs(attr, input, &StructResolver::crate_sources())
+}
+
+/// Parses and validates a constructor, resolving struct parameters through the given resolver.
+pub fn process_constructor_with_structs(
+    attr: TokenStream2,
+    input: TokenStream2,
+    resolver: &StructResolver,
+) -> Result<Constructor> {
     let attributes = parse_attributes(attr)?;
     let impl_block = syn::parse2::<ItemImpl>(input)?;
 
-    Constructor::new(attributes, impl_block)
+    Constructor::new(attributes, impl_block, resolver)
 }
 
 /// Parses constructor attributes from a TokenStream.
@@ -45,33 +54,35 @@ fn parse_attributes(attr: TokenStream2) -> Result<ConstructorAttributes> {
 
 impl Constructor {
     /// Creates a new Constructor instance by parsing the implementation block.
-    pub fn new(attributes: ConstructorAttributes, impl_block: ItemImpl) -> Result<Self> {
+    pub fn new(
+        attributes: ConstructorAttributes,
+        impl_block: ItemImpl,
+        resolver: &StructResolver,
+    ) -> Result<Self> {
         // Use the existing MethodCollector to find the constructor
         let is_trait_impl = impl_block.trait_.is_some();
         let mut collector =
-            MethodCollector::<ImplItemFn>::new_for_impl(impl_block.span(), is_trait_impl);
+            MethodCollector::<ImplItemFn>::new_for_impl(impl_block.span(), is_trait_impl, resolver);
 
         visit::visit_item_impl(&mut collector, &impl_block);
 
+        // Errors are returned rather than reported through `proc_macro_error`, because the build
+        // tooling drives this same code outside of a proc-macro expansion
+        if let Some(error) = combine_errors(std::mem::take(&mut collector.errors)) {
+            return Err(error);
+        }
+
         // Validate we have exactly one constructor
         if collector.constructor.is_none() {
-            abort!(
+            return Err(Error::new(
                 impl_block.span(),
-                "No constructor method found in implementation block";
-                help = "Add a method named 'constructor' to initialize the contract";
-                help = "Example: pub fn constructor(&mut self, initial_value: U256) {{ ... }}"
-            );
+                "No constructor method found in implementation block\n\
+                 help: Add a method named 'constructor' to initialize the contract\n\
+                 help: Example: pub fn constructor(&mut self, initial_value: U256) { ... }",
+            ));
         }
 
-        // Check for any errors during collection
-        if collector.has_errors() {
-            for err in &collector.errors {
-                emit_error!(err.span(), "{}", err.to_string());
-            }
-            abort_call_site!("Failed to process constructor due to parsing errors");
-        }
-
-        // Warn if regular methods were found (they'll be ignored)
+        // Reject regular methods, which this macro would otherwise silently ignore
         if !collector.methods.is_empty() {
             let method_names: Vec<String> = collector
                 .methods
@@ -79,14 +90,16 @@ impl Constructor {
                 .map(|m| m.parsed_signature().rust_name())
                 .collect();
 
-            emit_error!(
+            return Err(Error::new(
                 impl_block.span(),
-                "Found {} non-constructor methods that will be ignored: {}",
-                collector.methods.len(),
-                method_names.join(", ");
-                note = "The #[constructor] macro only processes the 'constructor' method";
-                help = "Use #[router] macro if you need to handle other methods"
-            );
+                format!(
+                    "Found {} non-constructor methods that will be ignored: {}\n\
+                     note: The #[constructor] macro only processes the 'constructor' method\n\
+                     help: Use #[router] macro if you need to handle other methods",
+                    collector.methods.len(),
+                    method_names.join(", ")
+                ),
+            ));
         }
 
         let constructor_method = collector

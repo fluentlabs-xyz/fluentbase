@@ -69,7 +69,8 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
         let crate_path = self.get_crate_path();
         let codec_type = self.get_codec_type();
         let selector = self.route.function_id();
-        let signature = self.route.parsed_signature().function_abi()?.signature()?;
+        // The signature the selector was hashed from, so the two never describe different calls
+        let signature = self.route.signature();
 
         // Encode method (with or without selector)
         let encode_method = if self.route.is_constructor() {
@@ -209,12 +210,13 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::structs::StructResolver;
     use insta::assert_snapshot;
     use proc_macro2::TokenStream as TokenStream2;
     use syn::{parse_file, parse_quote, ImplItemFn};
 
     fn create_route(item: ImplItemFn) -> ParsedMethod<ImplItemFn> {
-        ParsedMethod::from_ref(&item).unwrap()
+        ParsedMethod::from_ref(&item, &StructResolver::default()).unwrap()
     }
 
     fn create_generator(

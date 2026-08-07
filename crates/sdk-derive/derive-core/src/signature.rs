@@ -1,5 +1,10 @@
-use crate::abi::{constructor::ConstructorABI, error::ABIError, function::FunctionABI};
-use crate::method::CONSTRUCTOR_METHOD;
+use crate::{
+    abi::{
+        constructor::ConstructorABI, error::ABIError, function::FunctionABI,
+        structs::StructResolver,
+    },
+    method::CONSTRUCTOR_METHOD,
+};
 use convert_case::{Case, Casing};
 use quote::ToTokens;
 use std::ops::Deref;
@@ -97,12 +102,29 @@ impl ParsedSignature {
             .collect()
     }
 
-    /// Returns the ABI representation of the function
+    /// Returns the ABI representation of the function, without resolving struct parameters
+    ///
+    /// Anything that hashes a selector or publishes an artifact must use
+    /// [`Self::function_abi_with`] instead, so that struct parameters carry their components.
     pub fn function_abi(&self) -> Result<FunctionABI, ABIError> {
         FunctionABI::from_signature(&self.0)
     }
+
+    /// Returns the ABI representation of the function with struct parameters resolved
+    pub fn function_abi_with(&self, resolver: &StructResolver) -> Result<FunctionABI, ABIError> {
+        FunctionABI::from_signature_with(&self.0, resolver)
+    }
+
     pub fn constructor_abi(&self) -> Result<ConstructorABI, ABIError> {
         ConstructorABI::from_signature(&self.0)
+    }
+
+    /// Returns the constructor ABI with struct parameters resolved
+    pub fn constructor_abi_with(
+        &self,
+        resolver: &StructResolver,
+    ) -> Result<ConstructorABI, ABIError> {
+        ConstructorABI::from_signature_with(&self.0, resolver)
     }
 
     pub fn is_fallback(&self) -> bool {

@@ -18,6 +18,9 @@ pub enum ABIError {
     #[error("Unsupported pattern: {0}")]
     UnsupportedPattern(String),
 
+    #[error("Struct resolution error: {0}")]
+    StructResolution(String),
+
     #[error("Syntax error: {0}")]
     Syntax(String),
 

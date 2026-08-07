@@ -1,4 +1,5 @@
 use crate::{
+    abi::structs::StructResolver,
     attr::{mode::Mode, StateMutabilityExt},
     codec::CodecGenerator,
     method::{MethodCollector, MethodLike, ParsedMethod},
@@ -31,11 +32,20 @@ pub struct Client<T: MethodLike> {
 
 /// Parses and validates a client from token streams.
 pub fn process_client(attr: TokenStream2, input: TokenStream2) -> Result<Client<TraitItemFn>> {
+    process_client_with_structs(attr, input, &StructResolver::crate_sources())
+}
+
+/// Parses and validates a client, resolving struct parameters through the given resolver.
+pub fn process_client_with_structs(
+    attr: TokenStream2,
+    input: TokenStream2,
+    resolver: &StructResolver,
+) -> Result<Client<TraitItemFn>> {
     let attributes = parse_attributes(attr)?;
 
     let trait_def = syn::parse2::<ItemTrait>(input)?;
 
-    let client = Client::new(attributes, trait_def)?;
+    let client = Client::new(attributes, trait_def, resolver)?;
 
     Ok(client)
 }
@@ -47,8 +57,12 @@ fn parse_attributes(attr: TokenStream2) -> Result<ClientAttributes> {
 }
 
 impl Client<TraitItemFn> {
-    pub fn new(attributes: ClientAttributes, trait_def: ItemTrait) -> Result<Self> {
-        let mut collector = MethodCollector::<TraitItemFn>::new(trait_def.span());
+    pub fn new(
+        attributes: ClientAttributes,
+        trait_def: ItemTrait,
+        resolver: &StructResolver,
+    ) -> Result<Self> {
+        let mut collector = MethodCollector::<TraitItemFn>::new(trait_def.span(), resolver);
         visit::visit_item_trait(&mut collector, &trait_def);
 
         if collector.methods.is_empty() {
@@ -337,7 +351,7 @@ mod tests {
         };
 
         let attributes = ClientAttributes::default();
-        let client = Client::new(attributes, trait_def).unwrap();
+        let client = Client::new(attributes, trait_def, &StructResolver::default()).unwrap();
 
         let generated = client.generate().unwrap();
 
@@ -356,7 +370,12 @@ mod tests {
             }
         };
 
-        let client = Client::new(ClientAttributes::default(), trait_def).unwrap();
+        let client = Client::new(
+            ClientAttributes::default(),
+            trait_def,
+            &StructResolver::default(),
+        )
+        .unwrap();
         let generated = client.generate().unwrap();
 
         generated

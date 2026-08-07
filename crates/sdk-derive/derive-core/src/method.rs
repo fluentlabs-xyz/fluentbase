@@ -1,5 +1,9 @@
 use crate::{
-    abi::function::StateMutability,
+    abi::{
+        error::ABIError,
+        function::{FunctionABI, StateMutability},
+        structs::StructResolver,
+    },
     attr::{
         function_id::FunctionID, state_mutability::resolve_state_mutability, FunctionIDAttribute,
     },
@@ -120,6 +124,13 @@ impl MethodLike for ImplItemFn {
 pub struct ParsedMethod<T: MethodLike> {
     /// Function ID calculated from the method signature
     function_id: FunctionID,
+    /// Canonical Solidity signature the function ID was calculated from
+    signature: String,
+    /// ABI the signature was derived from, with struct parameters resolved
+    ///
+    /// `None` only when a custom selector stands in for a signature that cannot be derived here,
+    /// in which case there is no ABI entry to publish for this method either.
+    abi: Option<FunctionABI>,
     /// Parsed signature of the method
     sig: ParsedSignature,
     /// Solidity state mutability, deciding which host call the method may issue
@@ -130,32 +141,31 @@ pub struct ParsedMethod<T: MethodLike> {
 
 impl<T: MethodLike> ParsedMethod<T> {
     /// Creates a new ParsedMethod with given inner implementation
-    pub fn new(inner: T) -> syn::Result<Self> {
+    ///
+    /// `resolver` supplies the struct definitions needed to expand struct parameters into their
+    /// components; the selector is calculated from that expanded form, so it matches the signature
+    /// callers and the published ABI use.
+    pub fn new(inner: T, resolver: &StructResolver) -> syn::Result<Self> {
         let sig = ParsedSignature::new(inner.sig().clone());
-        let function_id = sig.function_abi()?.function_id()?;
         let state_mutability = inner.state_mutability()?;
+        let attr = inner.function_id_attr()?;
 
-        // Handle custom function ID if defined via attribute
-        if let Some((attr, attr_span)) = inner.function_id_attr()? {
-            let function_id_attr = attr.function_id_bytes()?;
+        // A custom selector without validation is authoritative, and is also the escape hatch for
+        // signatures this macro cannot derive on its own - a struct declared in another crate, for
+        // instance. Deriving the ABI must therefore not be a precondition for using it.
+        if let Some((attr, _)) = &attr {
+            if !attr.is_validation_enabled() {
+                let function_id = attr.function_id_bytes()?;
+                let abi = sig.function_abi_with(resolver).ok();
+                let signature = attr
+                    .signature()
+                    .or_else(|| abi.as_ref().and_then(|abi| abi.signature().ok()))
+                    .unwrap_or_else(|| format!("0x{}", hex::encode(function_id)));
 
-            if attr.is_validation_enabled() && function_id_attr != function_id {
-                abort!(
-                    attr_span,
-                    "Function ID mismatch: Expected 0x{} for '{}', but got 0x{}",
-                    hex::encode(function_id),
-                    sig.function_abi()?.signature()?,
-                    hex::encode(function_id_attr);
-                    note = "You're seeing this error because you have validation enabled (validate(true))";
-                    help = "To fix this, you can either:";
-                    help = "1. Use the expected function ID: #[function_id(\"{}\")]", sig.function_abi()?.signature()?;
-                    help = "2. Remove the validate parameter entirely: #[function_id(\"{}\")]", attr.signature().unwrap_or_else(|| "your_signature".to_string());
-                    help = "3. Or explicitly disable validation: #[function_id(\"{}\", validate(false))]", attr.signature().unwrap_or_else(|| "your_signature".to_string())
-                );
-            } else if !attr.is_validation_enabled() {
-                // If validation is disabled, use the function ID from the attribute
                 return Ok(Self {
-                    function_id: function_id_attr,
+                    function_id,
+                    signature,
+                    abi,
                     sig,
                     state_mutability,
                     inner,
@@ -163,8 +173,41 @@ impl<T: MethodLike> ParsedMethod<T> {
             }
         }
 
+        let abi = sig.function_abi_with(resolver).map_err(|error| {
+            let help = matches!(error, ABIError::StructResolution(_)).then_some(
+                "\nhelp: define the struct in this crate, or pin the selector with \
+                 #[function_id(\"name((...))\")] using the components callers encode",
+            );
+
+            syn::Error::new(sig.span(), format!("{error}{}", help.unwrap_or_default()))
+        })?;
+        let signature = abi.signature()?;
+        let function_id = abi.function_id()?;
+
+        // Validation is enabled, so the attribute has to agree with the derived signature
+        if let Some((attr, attr_span)) = &attr {
+            let function_id_attr = attr.function_id_bytes()?;
+
+            if function_id_attr != function_id {
+                abort!(
+                    *attr_span,
+                    "Function ID mismatch: Expected 0x{} for '{}', but got 0x{}",
+                    hex::encode(function_id),
+                    signature,
+                    hex::encode(function_id_attr);
+                    note = "You're seeing this error because you have validation enabled (validate(true))";
+                    help = "To fix this, you can either:";
+                    help = "1. Use the expected function ID: #[function_id(\"{}\")]", signature;
+                    help = "2. Remove the validate parameter entirely: #[function_id(\"{}\")]", attr.signature().unwrap_or_else(|| "your_signature".to_string());
+                    help = "3. Or explicitly disable validation: #[function_id(\"{}\", validate(false))]", attr.signature().unwrap_or_else(|| "your_signature".to_string())
+                );
+            }
+        }
+
         Ok(Self {
             function_id,
+            signature,
+            abi: Some(abi),
             sig,
             state_mutability,
             inner,
@@ -172,13 +215,17 @@ impl<T: MethodLike> ParsedMethod<T> {
     }
 
     /// Creates a new ParsedMethod for constructor (without function_id calculation)
-    pub fn new_constructor(inner: T) -> syn::Result<Self> {
+    pub fn new_constructor(inner: T, resolver: &StructResolver) -> syn::Result<Self> {
         let sig = ParsedSignature::new(inner.sig().clone());
         let state_mutability = inner.state_mutability()?;
+        let abi = sig.function_abi_with(resolver)?;
+        let signature = abi.signature()?;
 
         // For constructor, use zero function_id as it doesn't need a selector
         Ok(Self {
             function_id: [0, 0, 0, 0],
+            signature,
+            abi: Some(abi),
             sig,
             state_mutability,
             inner,
@@ -186,16 +233,26 @@ impl<T: MethodLike> ParsedMethod<T> {
     }
 
     /// Creates a new ParsedMethod from a reference
-    pub fn from_ref(inner: &T) -> syn::Result<Self>
+    pub fn from_ref(inner: &T, resolver: &StructResolver) -> syn::Result<Self>
     where
         T: Clone,
     {
-        Self::new(inner.clone())
+        Self::new(inner.clone(), resolver)
     }
 
     /// Returns the function ID
     pub fn function_id(&self) -> FunctionID {
         self.function_id
+    }
+
+    /// Returns the canonical signature the function ID was calculated from
+    pub fn signature(&self) -> &str {
+        &self.signature
+    }
+
+    /// Returns the ABI of the method, with struct parameters resolved
+    pub fn function_abi(&self) -> Option<&FunctionABI> {
+        self.abi.as_ref()
     }
 
     /// Returns a reference to the inner signature
@@ -290,8 +347,19 @@ impl<T: MethodLike> ParsedMethod<T> {
     }
 }
 
+/// Folds collected errors into a single `syn::Error`, keeping every span
+///
+/// Diagnostics travel as values instead of `proc_macro_error` aborts because the build tooling
+/// parses the very same routers outside of a proc-macro expansion, where aborting panics.
+pub fn combine_errors(errors: Vec<Error>) -> Option<Error> {
+    errors.into_iter().reduce(|mut combined, error| {
+        combined.combine(error);
+        combined
+    })
+}
+
 /// Collector for gathering methods from trait or impl blocks
-pub struct MethodCollector<T: MethodLike> {
+pub struct MethodCollector<'a, T: MethodLike> {
     /// Collected methods
     pub methods: Vec<ParsedMethod<T>>,
     /// Constructor method
@@ -304,11 +372,13 @@ pub struct MethodCollector<T: MethodLike> {
     pub selectors: HashSet<FunctionID>,
     /// Whether this is a trait implementation (for router)
     pub is_trait_impl: bool,
+    /// Struct definitions used to expand struct parameters before hashing selectors
+    resolver: &'a StructResolver,
 }
 
-impl<T: MethodLike> MethodCollector<T> {
+impl<'a, T: MethodLike> MethodCollector<'a, T> {
     /// Creates a new method collector for trait methods
-    pub fn new(span: Span) -> Self {
+    pub fn new(span: Span, resolver: &'a StructResolver) -> Self {
         Self {
             methods: Vec::new(),
             constructor: None,
@@ -316,11 +386,12 @@ impl<T: MethodLike> MethodCollector<T> {
             errors: Vec::new(),
             selectors: HashSet::new(),
             is_trait_impl: false,
+            resolver,
         }
     }
 
     /// Creates a new method collector for impl methods with trait flag
-    pub fn new_for_impl(span: Span, is_trait_impl: bool) -> Self {
+    pub fn new_for_impl(span: Span, is_trait_impl: bool, resolver: &'a StructResolver) -> Self {
         Self {
             methods: Vec::new(),
             constructor: None,
@@ -328,6 +399,7 @@ impl<T: MethodLike> MethodCollector<T> {
             errors: Vec::new(),
             selectors: HashSet::new(),
             is_trait_impl,
+            resolver,
         }
     }
 
@@ -429,7 +501,7 @@ impl<T: MethodLike> MethodCollector<T> {
         }
 
         // Create ParsedMethod for constructor without function_id calculation
-        match ParsedMethod::new_constructor(method.clone()) {
+        match ParsedMethod::new_constructor(method.clone(), self.resolver) {
             Ok(parsed_constructor) => {
                 self.constructor = Some(parsed_constructor);
             }
@@ -447,7 +519,7 @@ impl<T: MethodLike> MethodCollector<T> {
     where
         T: Clone,
     {
-        match ParsedMethod::from_ref(method) {
+        match ParsedMethod::from_ref(method, self.resolver) {
             Ok(parsed_method) => {
                 self.add_method(parsed_method);
             }
@@ -461,7 +533,7 @@ impl<T: MethodLike> MethodCollector<T> {
     }
 }
 // Implementation for MethodCollector<TraitItemFn>
-impl Visit<'_> for MethodCollector<TraitItemFn> {
+impl Visit<'_> for MethodCollector<'_, TraitItemFn> {
     fn visit_trait_item_fn(&mut self, method: &TraitItemFn) {
         match method.sig.ident.to_string().as_str() {
             // Reserved methods that cannot be defined by user
@@ -489,7 +561,7 @@ impl Visit<'_> for MethodCollector<TraitItemFn> {
 }
 
 // Implementation for MethodCollector<ImplItemFn>
-impl Visit<'_> for MethodCollector<ImplItemFn> {
+impl Visit<'_> for MethodCollector<'_, ImplItemFn> {
     fn visit_impl_item_fn(&mut self, method: &ImplItemFn) {
         match method.sig.ident.to_string().as_str() {
             // Reserved methods that cannot be defined by user in router
@@ -529,7 +601,7 @@ impl Visit<'_> for MethodCollector<ImplItemFn> {
 // Implement From for ImplItemFn
 impl From<ImplItemFn> for ParsedMethod<ImplItemFn> {
     fn from(function: ImplItemFn) -> Self {
-        match Self::new(function) {
+        match Self::new(function, &StructResolver::default()) {
             Ok(method) => method,
             Err(err) => abort_call_site!("Failed to parse method: {}", err),
         }
@@ -539,7 +611,7 @@ impl From<ImplItemFn> for ParsedMethod<ImplItemFn> {
 // Implement From for reference to ImplItemFn
 impl From<&ImplItemFn> for ParsedMethod<ImplItemFn> {
     fn from(function: &ImplItemFn) -> Self {
-        match Self::from_ref(function) {
+        match Self::from_ref(function, &StructResolver::default()) {
             Ok(method) => method,
             Err(err) => abort_call_site!("Failed to parse method from reference: {}", err),
         }
@@ -549,7 +621,7 @@ impl From<&ImplItemFn> for ParsedMethod<ImplItemFn> {
 // Implement From for TraitItemFn
 impl From<TraitItemFn> for ParsedMethod<TraitItemFn> {
     fn from(function: TraitItemFn) -> Self {
-        match Self::new(function) {
+        match Self::new(function, &StructResolver::default()) {
             Ok(method) => method,
             Err(err) => abort_call_site!("Failed to parse method: {}", err),
         }
@@ -559,7 +631,7 @@ impl From<TraitItemFn> for ParsedMethod<TraitItemFn> {
 // Implement From for reference to TraitItemFn
 impl From<&TraitItemFn> for ParsedMethod<TraitItemFn> {
     fn from(function: &TraitItemFn) -> Self {
-        match Self::from_ref(function) {
+        match Self::from_ref(function, &StructResolver::default()) {
             Ok(method) => method,
             Err(err) => abort_call_site!("Failed to parse method from reference: {}", err),
         }
@@ -572,7 +644,8 @@ mod tests {
 
     #[test]
     fn test_validate_fallback_signature() {
-        let collector = MethodCollector::<TraitItemFn>::new(Span::call_site());
+        let resolver = StructResolver::default();
+        let collector = MethodCollector::<TraitItemFn>::new(Span::call_site(), &resolver);
 
         // Valid fallback signature
         let valid_sig: Signature = parse_quote! {
@@ -601,7 +674,8 @@ mod tests {
 
     #[test]
     fn test_function_id_collision() {
-        let mut collector = MethodCollector::<TraitItemFn>::new(Span::call_site());
+        let resolver = StructResolver::default();
+        let mut collector = MethodCollector::<TraitItemFn>::new(Span::call_site(), &resolver);
 
         // Create two trait methods with the same function ID selector
         let trait_fn1: TraitItemFn = parse_quote! {
@@ -632,19 +706,22 @@ mod tests {
 
     #[test]
     fn test_from_ref_impl() {
+        let resolver = StructResolver::default();
         // Create a simple impl item function
         let impl_fn: ImplItemFn = parse_quote! {
             pub fn simple_function(&self) {}
         };
 
         // Test that from_ref works without cloning unnecessarily
-        let result = ParsedMethod::from_ref(&impl_fn);
+        let result = ParsedMethod::from_ref(&impl_fn, &resolver);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_constructor_method_collection() {
-        let mut collector = MethodCollector::<ImplItemFn>::new_for_impl(Span::call_site(), false);
+        let resolver = StructResolver::default();
+        let mut collector =
+            MethodCollector::<ImplItemFn>::new_for_impl(Span::call_site(), false, &resolver);
 
         // Create a constructor method
         let constructor_fn: ImplItemFn = parse_quote! {
@@ -668,7 +745,9 @@ mod tests {
 
     #[test]
     fn test_multiple_constructors_error() {
-        let mut collector = MethodCollector::<ImplItemFn>::new_for_impl(Span::call_site(), false);
+        let resolver = StructResolver::default();
+        let mut collector =
+            MethodCollector::<ImplItemFn>::new_for_impl(Span::call_site(), false, &resolver);
 
         // Create two constructor methods
         let constructor1: ImplItemFn = parse_quote! {
@@ -694,7 +773,9 @@ mod tests {
 
     #[test]
     fn test_deploy_method_forbidden() {
-        let mut collector = MethodCollector::<ImplItemFn>::new_for_impl(Span::call_site(), false);
+        let resolver = StructResolver::default();
+        let mut collector =
+            MethodCollector::<ImplItemFn>::new_for_impl(Span::call_site(), false, &resolver);
 
         // Create a deploy method (should be forbidden)
         let deploy_fn: ImplItemFn = parse_quote! {
@@ -718,7 +799,9 @@ mod tests {
 
     #[test]
     fn test_constructor_with_regular_methods() {
-        let mut collector = MethodCollector::<ImplItemFn>::new_for_impl(Span::call_site(), false);
+        let resolver = StructResolver::default();
+        let mut collector =
+            MethodCollector::<ImplItemFn>::new_for_impl(Span::call_site(), false, &resolver);
 
         // Create a mix of methods
         let constructor_fn: ImplItemFn = parse_quote! {
@@ -758,12 +841,13 @@ mod tests {
 
     #[test]
     fn test_parsed_method_is_constructor() {
+        let resolver = StructResolver::default();
         // Test constructor method
         let constructor_fn: ImplItemFn = parse_quote! {
             pub fn constructor(&mut self, value: u32) {}
         };
 
-        let parsed_constructor = ParsedMethod::new_constructor(constructor_fn).unwrap();
+        let parsed_constructor = ParsedMethod::new_constructor(constructor_fn, &resolver).unwrap();
         assert!(parsed_constructor.is_constructor());
         assert_eq!(parsed_constructor.function_id(), [0, 0, 0, 0]);
 
@@ -772,7 +856,7 @@ mod tests {
             pub fn transfer(&mut self, to: Address, amount: u32) {}
         };
 
-        let parsed_regular = ParsedMethod::new(regular_fn).unwrap();
+        let parsed_regular = ParsedMethod::new(regular_fn, &resolver).unwrap();
         assert!(!parsed_regular.is_constructor());
         assert_ne!(parsed_regular.function_id(), [0, 0, 0, 0]);
     }

@@ -1,16 +1,23 @@
-//! Parser for extracting structs with Codec derive from Rust source files
+//! Resolution of `#[derive(Codec)]` structs used as contract parameters
+//!
+//! A Rust struct in a contract signature carries no field information at the point where a
+//! parameter is converted to its Solidity type: `rust_to_sol` only sees the type path. Leaving it
+//! that way makes the router selector fall out of an empty tuple while artifact generation later
+//! publishes the real components, so callers hash a different signature than the deployed router
+//! dispatches on. Both sides therefore resolve components through this module before any selector
+//! is calculated.
 //!
 //! Discovery walks the crate's module tree starting from `lib.rs`/`main.rs` and follows `mod`
 //! declarations in source order, so the registry never depends on filesystem enumeration order.
 //! Structs are keyed by their module-qualified path (`types::Config`) rather than the bare
 //! identifier, so two modules declaring the same struct name no longer overwrite each other.
 
-use anyhow::{anyhow, bail, Context, Result};
-use fluentbase_sdk_derive_core::abi::parameter::Parameter;
+use crate::abi::{error::ABIError, parameter::Parameter};
 use quote::ToTokens;
-use serde_json::Value;
 use std::{
+    cell::OnceCell,
     collections::{BTreeMap, HashSet},
+    env, fmt,
     path::{Path, PathBuf},
 };
 use syn::{
@@ -18,17 +25,61 @@ use syn::{
     ItemStruct, Meta, Path as SynPath, Token,
 };
 
+/// Crate root candidates, in the order cargo itself would pick them
+const CRATE_ROOT_CANDIDATES: [&str; 4] = ["src/lib.rs", "src/main.rs", "lib.rs", "main.rs"];
+
 /// Registry of `#[derive(Codec)]` structs found in a contract crate.
 ///
 /// Keys are module-qualified paths relative to the crate root: `Config` for a struct in the root
 /// module, `types::Config` for one declared inside `mod types`.
-#[derive(Debug, Default)]
+#[derive(Default, Clone)]
 pub struct StructRegistry {
     // A `BTreeMap` keeps iteration - and therefore lookups and diagnostics - deterministic.
     structs: BTreeMap<String, Vec<DeriveInput>>,
 }
 
+// `syn::DeriveInput` only implements `Debug` under the `extra-traits` feature, so the registry
+// reports the paths it holds instead of the definitions themselves.
+impl fmt::Debug for StructRegistry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StructRegistry")
+            .field("structs", &self.structs.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
 impl StructRegistry {
+    /// Parse every `#[derive(Codec)]` struct reachable from a crate entry file
+    ///
+    /// # Arguments
+    /// * `entry_file` - Path to the crate root (`src/lib.rs` or `src/main.rs`)
+    pub fn parse_crate(entry_file: &Path) -> Result<Self, ABIError> {
+        let mod_dir = entry_file
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+
+        let mut walker = CrateWalker::default();
+        walker.walk_file(entry_file, &mod_dir, &mut Vec::new())?;
+        Ok(walker.registry)
+    }
+
+    /// Parse the crate rooted at a package directory, locating its entry file
+    pub fn parse_package(package_dir: &Path) -> Result<Self, ABIError> {
+        let entry_file = CRATE_ROOT_CANDIDATES
+            .iter()
+            .map(|candidate| package_dir.join(candidate))
+            .find(|candidate| candidate.is_file())
+            .ok_or_else(|| {
+                ABIError::StructResolution(format!(
+                    "no crate root (lib.rs or main.rs) found in {}",
+                    package_dir.display()
+                ))
+            })?;
+
+        Self::parse_crate(&entry_file)
+    }
+
     /// Resolve a type path exactly as it was written in a contract signature
     ///
     /// # Arguments
@@ -39,7 +90,11 @@ impl StructRegistry {
     /// * `Ok(Some((path, def)))` - The matched module-qualified path and its definition
     /// * `Ok(None)` - No `Codec` struct of this crate matches
     /// * `Err(_)` - The name is ambiguous, so picking a definition would be arbitrary
-    pub fn resolve(&self, path: &str, scope: &str) -> Result<Option<(&str, &DeriveInput)>> {
+    pub fn resolve(
+        &self,
+        path: &str,
+        scope: &str,
+    ) -> Result<Option<(&str, &DeriveInput)>, ABIError> {
         let segments = split_path(path);
         if segments.is_empty() {
             return Ok(None);
@@ -67,11 +122,11 @@ impl StructRegistry {
         match matches.as_slice() {
             [] => Ok(None),
             [only] => single_definition(only, &self.structs[*only]).map(Some),
-            ambiguous => bail!(
+            ambiguous => Err(ABIError::StructResolution(format!(
                 "type `{path}` is ambiguous: it matches {}. \
                  Use the module-qualified path in the contract signature.",
                 quoted_list(ambiguous.iter().map(|key| key.as_str()))
-            ),
+            ))),
         }
     }
 
@@ -93,57 +148,143 @@ impl StructRegistry {
     }
 }
 
-/// Parse every `#[derive(Codec)]` struct reachable from a crate entry file
+/// Where struct definitions come from when a parameter has to be resolved.
 ///
-/// # Arguments
-/// * `entry_file` - Path to the crate root (`src/lib.rs` or `src/main.rs`)
-///
-/// # Returns
-/// * `StructRegistry` - Structs keyed by module-qualified path
-pub fn parse_structs_from_crate(entry_file: &Path) -> Result<StructRegistry> {
-    let mod_dir = entry_file
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-
-    let mut walker = CrateWalker::default();
-    walker.walk_file(entry_file, &mod_dir, &mut Vec::new())?;
-    Ok(walker.registry)
+/// Resolution is lazy: a contract whose methods only take primitive types never reaches the
+/// filesystem, so the cost is paid exactly by the contracts that need it.
+pub enum StructResolver {
+    /// Structs of the crate currently being compiled, parsed on demand from `CARGO_MANIFEST_DIR`.
+    ///
+    /// This is what the `#[router]`, `#[constructor]` and `#[client]` macros use: the selector
+    /// they bake into the dispatch table has to be computed from the same components the build
+    /// tooling later publishes.
+    CrateSources(OnceCell<Result<StructRegistry, String>>),
+    /// A registry the caller has already parsed, used by the build tooling.
+    Registry(StructRegistry),
 }
 
-/// Enrich a complete ABI entry (function) with struct components
-///
-/// # Arguments
-/// * `entry` - Mutable reference to the ABI entry (JSON value)
-/// * `structs` - Registry of parsed struct definitions
-///
-/// # Returns
-/// * `Result<()>` - Ok if enrichment succeeded
-pub fn enrich_abi_entry(entry: &mut Value, structs: &StructRegistry) -> Result<()> {
-    // Enrich inputs
-    if let Some(inputs) = entry.get_mut("inputs") {
-        enrich_parameters(inputs, structs)?;
+impl Default for StructResolver {
+    fn default() -> Self {
+        Self::crate_sources()
     }
-
-    // Enrich outputs
-    if let Some(outputs) = entry.get_mut("outputs") {
-        enrich_parameters(outputs, structs)?;
-    }
-
-    Ok(())
 }
 
-/// Enrich parameters in ABI with struct component information
-///
-/// # Arguments
-/// * `params` - Mutable reference to parameters array (JSON value)
-/// * `structs` - Registry of parsed struct definitions
-///
-/// # Returns
-/// * `Result<()>` - Ok if enrichment succeeded
-pub fn enrich_parameters(params: &mut Value, structs: &StructRegistry) -> Result<()> {
-    // Contract signatures live in the crate root, so top-level parameters resolve from there
-    enrich_parameters_in_scope(params, structs, "")
+impl StructResolver {
+    /// Resolver that parses the crate being compiled when a struct is first encountered
+    #[must_use]
+    pub fn crate_sources() -> Self {
+        Self::CrateSources(OnceCell::new())
+    }
+
+    /// Resolver backed by an already parsed registry
+    #[must_use]
+    pub fn registry(registry: StructRegistry) -> Self {
+        Self::Registry(registry)
+    }
+
+    /// Returns the struct definitions, parsing the crate sources on first use
+    pub fn structs(&self) -> Result<&StructRegistry, ABIError> {
+        match self {
+            Self::Registry(registry) => Ok(registry),
+            Self::CrateSources(cell) => cell
+                .get_or_init(|| {
+                    let package_dir = env::var("CARGO_MANIFEST_DIR").map_err(|_| {
+                        "CARGO_MANIFEST_DIR is not set, so the crate sources cannot be located"
+                            .to_string()
+                    })?;
+                    StructRegistry::parse_package(Path::new(&package_dir))
+                        .map_err(|error| error.to_string())
+                })
+                .as_ref()
+                .map_err(|error| {
+                    ABIError::StructResolution(format!(
+                        "cannot resolve struct parameters: {error}. Annotate the method with \
+                         #[function_id(\"...\")] to pin its selector explicitly."
+                    ))
+                }),
+        }
+    }
+}
+
+impl Parameter {
+    /// Path of the struct this parameter holds, with any array suffixes removed
+    #[must_use]
+    pub fn struct_path(&self) -> Option<&str> {
+        self.internal_type
+            .strip_prefix("struct ")
+            .map(|name| strip_array_suffixes(name).trim())
+    }
+
+    /// Whether this parameter (or any component of it) is a struct whose fields are still unknown
+    #[must_use]
+    pub fn has_unresolved_struct(&self) -> bool {
+        let unresolved = self.struct_path().is_some() && self.components.is_none();
+
+        unresolved
+            || self
+                .components
+                .iter()
+                .flatten()
+                .any(Parameter::has_unresolved_struct)
+    }
+
+    /// Fill in the components of every struct this parameter is built from
+    ///
+    /// `scope` is the module whose namespace the parameter's type was written in: the crate root
+    /// for contract signatures, and the struct's own module for the components of an expanded
+    /// struct.
+    pub fn resolve_structs(
+        &mut self,
+        structs: &StructRegistry,
+        scope: &str,
+    ) -> Result<(), ABIError> {
+        self.resolve_structs_inner(structs, scope, &mut Vec::new())
+    }
+
+    fn resolve_structs_inner(
+        &mut self,
+        structs: &StructRegistry,
+        scope: &str,
+        expanding: &mut Vec<String>,
+    ) -> Result<(), ABIError> {
+        // Components of an expanded struct are written in that struct's module, not in `scope`
+        let mut nested_scope = scope.to_string();
+        let mut expanded_path = None;
+
+        if let Some(name) = self.struct_path().map(str::to_string) {
+            let (path, definition) = structs.resolve(&name, scope)?.ok_or_else(|| {
+                ABIError::StructResolution(format!(
+                    "struct `{name}` appears in the contract ABI but has no `#[derive(Codec)]` \
+                     definition in this crate; the generated ABI would have no components for it"
+                ))
+            })?;
+
+            // A struct that contains itself has no finite ABI signature, and expanding it would
+            // otherwise recurse until the stack runs out.
+            if expanding.iter().any(|open| open == path) {
+                return Err(ABIError::StructResolution(format!(
+                    "struct `{path}` is recursive, so it has no Solidity ABI representation"
+                )));
+            }
+
+            nested_scope = module_of(path).to_string();
+            let path = path.to_string();
+            let expanded = Parameter::from_derive_input(definition)?;
+            self.components = expanded.components;
+            expanding.push(path.clone());
+            expanded_path = Some(path);
+        }
+
+        for component in self.components.iter_mut().flatten() {
+            component.resolve_structs_inner(structs, &nested_scope, expanding)?;
+        }
+
+        if expanded_path.is_some() {
+            expanding.pop();
+        }
+
+        Ok(())
+    }
 }
 
 /// Walks a crate's module tree, collecting structs with `#[derive(Codec)]`
@@ -157,17 +298,27 @@ impl CrateWalker {
     /// Parse one source file and descend into the modules it declares
     ///
     /// `mod_dir` is the directory holding the child modules of this file.
-    fn walk_file(&mut self, file: &Path, mod_dir: &Path, module: &mut Vec<String>) -> Result<()> {
+    fn walk_file(
+        &mut self,
+        file: &Path,
+        mod_dir: &Path,
+        module: &mut Vec<String>,
+    ) -> Result<(), ABIError> {
         // `#[path]` attributes make it possible to reach the same file twice
         let marker = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
         if !self.visited.insert(marker) {
             return Ok(());
         }
 
-        let content = std::fs::read_to_string(file)
-            .with_context(|| format!("Failed to read file: {}", file.display()))?;
-        let ast = parse_file(&content)
-            .map_err(|e| anyhow!("Failed to parse Rust file {}: {e}", file.display()))?;
+        let content = std::fs::read_to_string(file).map_err(|error| {
+            ABIError::StructResolution(format!("failed to read {}: {error}", file.display()))
+        })?;
+        let ast = parse_file(&content).map_err(|error| {
+            ABIError::StructResolution(format!(
+                "failed to parse Rust file {}: {error}",
+                file.display()
+            ))
+        })?;
 
         self.walk_items(&ast.items, mod_dir, module)
     }
@@ -177,7 +328,7 @@ impl CrateWalker {
         items: &[Item],
         mod_dir: &Path,
         module: &mut Vec<String>,
-    ) -> Result<()> {
+    ) -> Result<(), ABIError> {
         for item in items {
             match item {
                 Item::Struct(item_struct) if has_codec_derive(&item_struct.attrs) => {
@@ -195,7 +346,7 @@ impl CrateWalker {
         item_mod: &ItemMod,
         mod_dir: &Path,
         module: &mut Vec<String>,
-    ) -> Result<()> {
+    ) -> Result<(), ABIError> {
         let name = item_mod.ident.to_string();
 
         // Inline module: its own children live one directory deeper
@@ -267,7 +418,6 @@ fn child_mod_dir(file: &Path) -> PathBuf {
     }
 }
 
-/// Check if attributes contain #[derive(...)] with Codec
 /// Returns true if attributes contain `#[derive(Codec)]`
 fn has_codec_derive(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| match &attr.meta {
@@ -284,7 +434,7 @@ fn has_codec_derive(attrs: &[Attribute]) -> bool {
     })
 }
 
-/// Convert ItemStruct to DeriveInput
+/// Convert `ItemStruct` to `DeriveInput`
 fn item_struct_to_derive_input(item: &ItemStruct) -> DeriveInput {
     DeriveInput {
         attrs: item.attrs.clone(),
@@ -339,14 +489,14 @@ fn quoted_list<'a>(items: impl Iterator<Item = &'a str>) -> String {
 fn single_definition<'a>(
     path: &'a str,
     definitions: &'a [DeriveInput],
-) -> Result<(&'a str, &'a DeriveInput)> {
+) -> Result<(&'a str, &'a DeriveInput), ABIError> {
     match definitions {
         [only] => Ok((path, only)),
-        _ => bail!(
+        _ => Err(ABIError::StructResolution(format!(
             "`{path}` has {} conflicting `#[derive(Codec)]` definitions; \
              the generated ABI would depend on which one is picked",
             definitions.len()
-        ),
+        ))),
     }
 }
 
@@ -358,71 +508,10 @@ fn strip_array_suffixes(name: &str) -> &str {
     }
 }
 
-fn enrich_parameters_in_scope(
-    params: &mut Value,
-    structs: &StructRegistry,
-    scope: &str,
-) -> Result<()> {
-    // params should be an array of parameters
-    if let Some(params_array) = params.as_array_mut() {
-        for param in params_array.iter_mut() {
-            enrich_single_parameter(param, structs, scope)?;
-        }
-    }
-    Ok(())
-}
-
-/// Enrich a single parameter with struct components if applicable
-///
-/// `scope` is the module whose namespace the parameter's type was written in: the crate root for
-/// contract signatures, and the struct's own module for the components of an expanded struct.
-fn enrich_single_parameter(param: &mut Value, structs: &StructRegistry, scope: &str) -> Result<()> {
-    // Struct parameters carry `internalType: "struct <path>"`, with array suffixes for
-    // `tuple[]`/`tuple[N]` parameters
-    let struct_path = param
-        .get("internalType")
-        .and_then(Value::as_str)
-        .and_then(|internal_type| internal_type.strip_prefix("struct "))
-        .map(|name| strip_array_suffixes(name).trim().to_string());
-
-    // Components of an expanded struct are written in that struct's module, not in `scope`
-    let mut nested_scope = scope.to_string();
-
-    if let Some(name) = struct_path {
-        let (path, derive_input) = structs.resolve(&name, scope)?.ok_or_else(|| {
-            anyhow!(
-                "struct `{name}` appears in the contract ABI but has no `#[derive(Codec)]` \
-                 definition in this crate; the generated ABI would have no components for it"
-            )
-        })?;
-        nested_scope = module_of(path).to_string();
-
-        // Use Parameter::from_derive_input to get proper components
-        let expanded = Parameter::from_derive_input(derive_input)
-            .map_err(|e| anyhow!("Failed to enrich struct `{path}`: {e:?}"))?;
-        let expanded = serde_json::to_value(&expanded)
-            .with_context(|| format!("Failed to serialize components of struct `{path}`"))?;
-
-        // Replace empty components with the correct ones
-        if let Some(components) = expanded.get("components") {
-            param["components"] = components.clone();
-        }
-    }
-
-    // Recursively process nested components (for nested structs)
-    if let Some(components) = param.get_mut("components").and_then(Value::as_array_mut) {
-        for component in components.iter_mut() {
-            enrich_single_parameter(component, structs, &nested_scope)?;
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     mod parse {
-        use crate::generators::struct_parser::{parse_structs_from_crate, StructRegistry};
+        use crate::abi::structs::StructRegistry;
         use std::fs;
         use tempfile::TempDir;
 
@@ -436,7 +525,7 @@ mod tests {
 
         fn parse(content: &str) -> (TempDir, StructRegistry) {
             let (temp_dir, file_path) = crate_with_root(content);
-            let registry = parse_structs_from_crate(&file_path).unwrap();
+            let registry = StructRegistry::parse_crate(&file_path).unwrap();
             (temp_dir, registry)
         }
 
@@ -665,7 +754,7 @@ pub struct Known {
             )
             .unwrap();
 
-            let structs = parse_structs_from_crate(&src.join("lib.rs")).unwrap();
+            let structs = StructRegistry::parse_crate(&src.join("lib.rs")).unwrap();
 
             assert_eq!(
                 paths(&structs),
@@ -690,7 +779,7 @@ pub struct Known {
             )
             .unwrap();
 
-            let structs = parse_structs_from_crate(&src.join("lib.rs")).unwrap();
+            let structs = StructRegistry::parse_crate(&src.join("lib.rs")).unwrap();
 
             assert_eq!(paths(&structs), vec!["types::Config"]);
         }
@@ -717,6 +806,27 @@ pub struct Config {
             assert!(error.contains("conflicting"), "unexpected error: {error}");
         }
 
+        #[test]
+        fn test_package_root_is_located_from_the_package_directory() {
+            let temp_dir = TempDir::new().unwrap();
+            let package = temp_dir.path();
+            fs::create_dir(package.join("src")).unwrap();
+            fs::write(
+                package.join("src").join("lib.rs"),
+                "#[derive(Codec)] pub struct Config { pub value: U256 }",
+            )
+            .unwrap();
+
+            let structs = StructRegistry::parse_package(package).unwrap();
+            assert_eq!(paths(&structs), vec!["Config"]);
+
+            let missing = TempDir::new().unwrap();
+            let error = StructRegistry::parse_package(missing.path())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("no crate root"), "unexpected error: {error}");
+        }
+
         fn field_names(definition: &syn::DeriveInput) -> Vec<String> {
             match &definition.data {
                 syn::Data::Struct(data) => data
@@ -729,23 +839,42 @@ pub struct Config {
         }
     }
 
-    mod enrich {
-        use crate::generators::struct_parser::{enrich_parameters, parse_structs_from_crate};
-        use serde_json::json;
+    mod resolve {
+        use crate::abi::{parameter::Parameter, structs::StructRegistry};
         use std::fs;
         use tempfile::TempDir;
 
         /// Helper to build a registry from crate root source
-        fn registry(content: &str) -> (TempDir, crate::generators::struct_parser::StructRegistry) {
+        fn registry(content: &str) -> (TempDir, StructRegistry) {
             let temp_dir = TempDir::new().unwrap();
             let file_path = temp_dir.path().join("lib.rs");
             fs::write(&file_path, content).unwrap();
-            let registry = parse_structs_from_crate(&file_path).unwrap();
+            let registry = StructRegistry::parse_crate(&file_path).unwrap();
             (temp_dir, registry)
         }
 
+        /// A struct parameter as it comes out of a contract signature: named, but componentless
+        fn struct_parameter(name: &str, internal_type: &str, ty: &str) -> Parameter {
+            Parameter {
+                internal_type: internal_type.to_string(),
+                ty: ty.to_string(),
+                name: name.to_string(),
+                components: None,
+            }
+        }
+
+        fn component_names(param: &Parameter) -> Vec<&str> {
+            param
+                .components
+                .as_ref()
+                .expect("components")
+                .iter()
+                .map(|component| component.name.as_str())
+                .collect()
+        }
+
         #[test]
-        fn test_enrich_simple_struct_parameter() {
+        fn test_resolve_simple_struct_parameter() {
             let (_temp, structs) = registry(
                 r#"
 #[derive(Codec)]
@@ -758,36 +887,27 @@ pub struct SlippageParams {
 "#,
             );
 
-            // Create a parameter with empty components
-            let mut params = json!([{
-                "name": "params",
-                "type": "tuple",
-                "internalType": "struct SlippageParams",
-                "components": []  // Empty components to be filled
-            }]);
+            let mut param = struct_parameter("params", "struct SlippageParams", "tuple");
+            assert!(param.has_unresolved_struct());
 
-            // Enrich the parameters
-            enrich_parameters(&mut params, &structs).unwrap();
+            param.resolve_structs(&structs, "").unwrap();
 
-            // Check that components were added
-            let components = params[0]["components"].as_array().unwrap();
-            assert_eq!(components.len(), 4, "Should have 4 components");
-
-            // Verify field names
-            assert_eq!(components[0]["name"], "amount_in");
-            assert_eq!(components[1]["name"], "reserve_in");
-            assert_eq!(components[2]["name"], "reserve_out");
-            assert_eq!(components[3]["name"], "fee_rate");
-
-            // Verify field types (U256 should map to uint256)
-            assert_eq!(components[0]["type"], "uint256");
-            assert_eq!(components[1]["type"], "uint256");
-            assert_eq!(components[2]["type"], "uint256");
-            assert_eq!(components[3]["type"], "uint256");
+            assert!(!param.has_unresolved_struct());
+            assert_eq!(
+                component_names(&param),
+                vec!["amount_in", "reserve_in", "reserve_out", "fee_rate"]
+            );
+            for component in param.components.as_ref().unwrap() {
+                assert_eq!(component.ty, "uint256");
+            }
+            assert_eq!(
+                param.get_canonical_type().unwrap(),
+                "(uint256,uint256,uint256,uint256)"
+            );
         }
 
         #[test]
-        fn test_enrich_uses_qualified_path_from_signature() {
+        fn test_resolve_uses_qualified_path_from_signature() {
             let (_temp, structs) = registry(
                 r#"
 mod a {
@@ -807,23 +927,14 @@ mod b {
 "#,
             );
 
-            let mut params = json!([{
-                "name": "config",
-                "type": "tuple",
-                "internalType": "struct b::Config",
-                "components": []
-            }]);
+            let mut param = struct_parameter("config", "struct b::Config", "tuple");
+            param.resolve_structs(&structs, "").unwrap();
 
-            enrich_parameters(&mut params, &structs).unwrap();
-
-            let components = params[0]["components"].as_array().unwrap();
-            assert_eq!(components.len(), 2);
-            assert_eq!(components[0]["name"], "owner");
-            assert_eq!(components[1]["name"], "flag");
+            assert_eq!(component_names(&param), vec!["owner", "flag"]);
         }
 
         #[test]
-        fn test_enrich_rejects_ambiguous_bare_name() {
+        fn test_resolve_rejects_ambiguous_bare_name() {
             let (_temp, structs) = registry(
                 r#"
 mod a {
@@ -842,33 +953,17 @@ mod b {
 "#,
             );
 
-            let mut params = json!([{
-                "name": "config",
-                "type": "tuple",
-                "internalType": "struct Config",
-                "components": []
-            }]);
-
-            let error = enrich_parameters(&mut params, &structs)
-                .unwrap_err()
-                .to_string();
+            let mut param = struct_parameter("config", "struct Config", "tuple");
+            let error = param.resolve_structs(&structs, "").unwrap_err().to_string();
             assert!(error.contains("ambiguous"), "unexpected error: {error}");
         }
 
         #[test]
-        fn test_enrich_rejects_unknown_struct() {
+        fn test_resolve_rejects_unknown_struct() {
             let (_temp, structs) = registry("#[derive(Codec)] pub struct Known { pub v: U256 }");
 
-            let mut params = json!([{
-                "name": "value",
-                "type": "tuple",
-                "internalType": "struct Missing",
-                "components": []
-            }]);
-
-            let error = enrich_parameters(&mut params, &structs)
-                .unwrap_err()
-                .to_string();
+            let mut param = struct_parameter("value", "struct Missing", "tuple");
+            let error = param.resolve_structs(&structs, "").unwrap_err().to_string();
             assert!(
                 error.contains("no `#[derive(Codec)]` definition"),
                 "unexpected error: {error}"
@@ -876,7 +971,7 @@ mod b {
         }
 
         #[test]
-        fn test_enrich_nested_struct_resolves_in_its_own_module() {
+        fn test_resolve_nested_struct_in_its_own_module() {
             // `Outer` lives in `a` and refers to a bare `Inner` that also exists in `b`;
             // the nested lookup must stay inside `a`.
             let (_temp, structs) = registry(
@@ -903,23 +998,16 @@ mod b {
 "#,
             );
 
-            let mut params = json!([{
-                "name": "outer",
-                "type": "tuple",
-                "internalType": "struct a::Outer",
-                "components": []
-            }]);
+            let mut param = struct_parameter("outer", "struct a::Outer", "tuple");
+            param.resolve_structs(&structs, "").unwrap();
 
-            enrich_parameters(&mut params, &structs).unwrap();
-
-            let inner = &params[0]["components"][0];
-            let inner_components = inner["components"].as_array().unwrap();
-            assert_eq!(inner_components.len(), 1);
-            assert_eq!(inner_components[0]["name"], "value");
+            let inner = &param.components.as_ref().unwrap()[0];
+            assert_eq!(component_names(inner), vec!["value"]);
+            assert_eq!(param.get_canonical_type().unwrap(), "((uint256))");
         }
 
         #[test]
-        fn test_enrich_struct_array_parameters() {
+        fn test_resolve_struct_array_parameters() {
             let (_temp, structs) = registry(
                 r#"
 #[derive(Codec)]
@@ -930,29 +1018,33 @@ pub struct Item {
 "#,
             );
 
-            let mut params = json!([
-                {
-                    "name": "dynamic",
-                    "type": "tuple[]",
-                    "internalType": "struct Item[]",
-                    "components": []
-                },
-                {
-                    "name": "fixed",
-                    "type": "tuple[3]",
-                    "internalType": "struct Item[3]",
-                    "components": []
-                }
-            ]);
+            let mut dynamic = struct_parameter("dynamic", "struct Item[]", "tuple[]");
+            let mut fixed = struct_parameter("fixed", "struct Item[3]", "tuple[3]");
 
-            enrich_parameters(&mut params, &structs).unwrap();
+            dynamic.resolve_structs(&structs, "").unwrap();
+            fixed.resolve_structs(&structs, "").unwrap();
 
-            for index in 0..2 {
-                let components = params[index]["components"].as_array().unwrap();
-                assert_eq!(components.len(), 2, "parameter {index} should be enriched");
-                assert_eq!(components[0]["name"], "id");
-                assert_eq!(components[1]["name"], "owner");
+            for param in [&dynamic, &fixed] {
+                assert_eq!(component_names(param), vec!["id", "owner"]);
             }
+            assert_eq!(dynamic.get_canonical_type().unwrap(), "(uint256,address)[]");
+            assert_eq!(fixed.get_canonical_type().unwrap(), "(uint256,address)[3]");
+        }
+
+        #[test]
+        fn test_recursive_struct_is_rejected() {
+            let (_temp, structs) = registry(
+                r#"
+#[derive(Codec)]
+pub struct Node {
+    pub children: Vec<Node>,
+}
+"#,
+            );
+
+            let mut param = struct_parameter("node", "struct Node", "tuple");
+            let error = param.resolve_structs(&structs, "").unwrap_err().to_string();
+            assert!(error.contains("recursive"), "unexpected error: {error}");
         }
     }
 }
