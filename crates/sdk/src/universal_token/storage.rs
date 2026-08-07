@@ -96,8 +96,13 @@ pub struct LegacyInitialSettings {
 }
 
 impl LegacyInitialSettings {
+    /// Decodes a legacy payload, requiring the input to be exactly one payload long.
+    ///
+    /// The decoder itself only checks that the buffer is *at least* large enough, so an exact
+    /// length check here is what stops a caller from accepting — and later persisting — bytes
+    /// that carry no token semantics.
     pub fn decode_with_prefix(buf: &[u8]) -> Option<Self> {
-        if buf.len() < 4 {
+        if buf.len() != INITIAL_SETTINGS_LEGACY_SIZE {
             return None;
         }
         let (sig, buf) = buf.split_at(4);
@@ -112,6 +117,16 @@ impl LegacyInitialSettings {
 /// Initial settings payload sizes including magic prefix.
 pub const INITIAL_SETTINGS_V1_SIZE: usize = 4 + 6 * 32;
 pub const INITIAL_SETTINGS_V2_SIZE: usize = 4 + 7 * 32;
+
+/// Legacy payload size including magic prefix.
+///
+/// The legacy layout stores `token_name`/`token_symbol` as `[u8; 32]`, and the Solidity encoder
+/// gives every `u8` element its own word — hence 64 words of names against 4 words of everything
+/// else. `test_legacy_size_matches_the_encoder` pins this constant to the encoder.
+pub const INITIAL_SETTINGS_LEGACY_SIZE: usize = 4 + 68 * 32;
+
+/// Largest payload any accepted creation form occupies, prefix included.
+pub const INITIAL_SETTINGS_MAX_SIZE: usize = INITIAL_SETTINGS_LEGACY_SIZE;
 
 #[derive(Default, Debug, PartialEq, Codec)]
 struct InitialSettingsV1 {
@@ -179,6 +194,13 @@ impl InitialSettings {
         output.into()
     }
 
+    /// Decodes a creation payload, accepting only the exact canonical V1, V2 and legacy forms.
+    ///
+    /// Length is matched exactly rather than as a lower bound. The underlying Solidity decoder is
+    /// happy to stop short of the end of its buffer, so a lower bound would let a creator append
+    /// arbitrary bytes that decode to the same token — bytes the constructor would then persist as
+    /// account metadata. Re-encoding the result via [`Self::encode_with_prefix`] is therefore
+    /// always canonical and never longer than the input.
     pub fn decode_with_prefix(buf: &[u8]) -> Option<Self> {
         if buf.len() < 4 {
             return None;
@@ -213,7 +235,7 @@ impl InitialSettings {
                     wrapped: Some(settings.wrapped),
                 })
             }
-            _ if buf.len() > INITIAL_SETTINGS_V1_SIZE => {
+            INITIAL_SETTINGS_LEGACY_SIZE => {
                 // Legacy format uses a different layout and larger payload.
                 let settings = LegacyInitialSettings::decode_with_prefix(buf)?;
                 Some(Self {
@@ -384,10 +406,14 @@ pub fn erc20_compute_storage_keys(
 #[cfg(test)]
 mod tests {
     use crate::universal_token::storage::{
-        InitialSettings, TokenNameOrSymbol, INITIAL_SETTINGS_V1_SIZE, INITIAL_SETTINGS_V2_SIZE,
+        InitialSettings, LegacyInitialSettings, TokenNameOrSymbol, INITIAL_SETTINGS_LEGACY_SIZE,
+        INITIAL_SETTINGS_V1_SIZE, INITIAL_SETTINGS_V2_SIZE,
     };
-    use alloc::format;
-    use fluentbase_types::{address, Address, B256, U256};
+    use alloc::{format, vec::Vec};
+    use fluentbase_codec::SolidityABI;
+    use fluentbase_types::{
+        address, bytes::BytesMut, Address, Bytes, B256, U256, UNIVERSAL_TOKEN_MAGIC_BYTES,
+    };
 
     #[test]
     fn test_token_name_boundaries() {
@@ -484,5 +510,171 @@ mod tests {
         assert_eq!(settings_vec.len(), INITIAL_SETTINGS_V2_SIZE);
         let settings_restored = InitialSettings::decode_with_prefix(settings_vec.as_ref()).unwrap();
         assert_eq!(settings, settings_restored);
+    }
+
+    /// Builds a canonical legacy payload for `name`/`symbol` short strings.
+    fn legacy_payload(name: &str, symbol: &str) -> Bytes {
+        let mut token_name = [0u8; 32];
+        token_name[..name.len()].copy_from_slice(name.as_bytes());
+        let mut token_symbol = [0u8; 32];
+        token_symbol[..symbol.len()].copy_from_slice(symbol.as_bytes());
+
+        let settings = LegacyInitialSettings {
+            token_name,
+            token_symbol,
+            decimals: 6,
+            initial_supply: U256::from(7),
+            minter: address!("0303000200500020400000040000002000809020"),
+            pauser: address!("0003000200500000400000040000002000800020"),
+        };
+        let mut payload = BytesMut::new();
+        SolidityABI::encode(&settings, &mut payload, 0).unwrap();
+
+        let mut out = Vec::with_capacity(UNIVERSAL_TOKEN_MAGIC_BYTES.len() + payload.len());
+        out.extend_from_slice(&UNIVERSAL_TOKEN_MAGIC_BYTES[..]);
+        out.extend_from_slice(&payload);
+        out.into()
+    }
+
+    #[test]
+    fn test_legacy_size_matches_the_encoder() {
+        // Pins `INITIAL_SETTINGS_LEGACY_SIZE` to what the encoder actually produces, so the exact
+        // length check cannot silently start rejecting every legacy payload.
+        assert_eq!(
+            legacy_payload("Legacy", "LGC").len(),
+            INITIAL_SETTINGS_LEGACY_SIZE
+        );
+    }
+
+    #[test]
+    fn test_legacy_payload_decodes_to_v1_settings() {
+        let decoded =
+            InitialSettings::decode_with_prefix(&legacy_payload("Legacy", "LGC")).unwrap();
+        assert_eq!(decoded.token_name.as_str(), Some("Legacy"));
+        assert_eq!(decoded.token_symbol.as_str(), Some("LGC"));
+        assert_eq!(decoded.decimals, 6);
+        assert_eq!(decoded.initial_supply, U256::from(7));
+        assert_eq!(decoded.wrapped, None);
+
+        // Legacy carries no wrapped flag, so its canonical form is V1 — an order of magnitude
+        // smaller than the payload it came from.
+        assert_eq!(decoded.encode_with_prefix().len(), INITIAL_SETTINGS_V1_SIZE);
+    }
+
+    fn is_canonical_len(len: usize) -> bool {
+        matches!(
+            len,
+            INITIAL_SETTINGS_V1_SIZE | INITIAL_SETTINGS_V2_SIZE | INITIAL_SETTINGS_LEGACY_SIZE
+        )
+    }
+
+    /// The three payload forms that must decode, and nothing else.
+    fn canonical_payloads() -> Vec<(&'static str, Bytes)> {
+        let v1 = InitialSettings {
+            token_name: TokenNameOrSymbol::from_str("Hello"),
+            token_symbol: TokenNameOrSymbol::from_str("HLO"),
+            decimals: 12,
+            initial_supply: U256::from(2),
+            minter: address!("0303000200500020400000040000002000809020"),
+            pauser: Address::ZERO,
+            wrapped: None,
+        };
+        let v2 = InitialSettings {
+            wrapped: Some(true),
+            minter: Address::ZERO,
+            ..InitialSettings::default()
+        };
+        alloc::vec![
+            ("v1", v1.encode_with_prefix()),
+            ("v2", v2.encode_with_prefix()),
+            ("legacy", legacy_payload("Legacy", "LGC")),
+        ]
+    }
+
+    #[test]
+    fn test_canonical_payloads_decode() {
+        for (label, payload) in canonical_payloads() {
+            assert!(
+                InitialSettings::decode_with_prefix(&payload).is_some(),
+                "{label} payload must decode"
+            );
+        }
+    }
+
+    #[test]
+    fn test_trailing_bytes_are_rejected() {
+        for (label, payload) in canonical_payloads() {
+            for suffix_len in [1usize, 2, 31, 32, 33, 1024] {
+                // A V1 payload plus exactly one word *is* a canonical V2 payload; that is a
+                // different form, not an ignored suffix.
+                if is_canonical_len(payload.len() + suffix_len) {
+                    continue;
+                }
+                let mut padded = payload.to_vec();
+                padded.extend(core::iter::repeat_n(0u8, suffix_len));
+                assert!(
+                    InitialSettings::decode_with_prefix(&padded).is_none(),
+                    "{label} payload with {suffix_len} trailing bytes must be rejected"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_truncated_payloads_are_rejected() {
+        for (label, payload) in canonical_payloads() {
+            let truncated = &payload[..payload.len() - 1];
+            assert!(
+                InitialSettings::decode_with_prefix(truncated).is_none(),
+                "{label} payload missing its last byte must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_only_canonical_lengths_are_accepted() {
+        // Sweep every length up to and past the legacy form: the accepted set is exactly the
+        // three canonical sizes, so no length can carry an ignored suffix.
+        let template = legacy_payload("Legacy", "LGC");
+        for len in 0..=INITIAL_SETTINGS_LEGACY_SIZE + 64 {
+            let mut payload = Vec::with_capacity(len);
+            payload.extend_from_slice(&template[..len.min(template.len())]);
+            payload.resize(len, 0);
+
+            let accepted = InitialSettings::decode_with_prefix(&payload).is_some();
+            let canonical = is_canonical_len(len);
+            // Only the legacy length is a real payload here; the shorter canonical lengths are
+            // truncations of it, so they may or may not decode. What must hold is that no
+            // non-canonical length ever decodes.
+            assert!(
+                !accepted || canonical,
+                "length {len} is not canonical but decoded"
+            );
+        }
+    }
+
+    #[test]
+    fn test_reencoding_a_decoded_payload_is_canonical() {
+        for (label, payload) in canonical_payloads() {
+            let decoded = InitialSettings::decode_with_prefix(&payload).unwrap();
+            let reencoded = decoded.encode_with_prefix();
+
+            assert!(
+                reencoded.len() <= payload.len(),
+                "{label}: canonical form must never grow"
+            );
+            // Re-encoding is a fixed point: decoding the canonical bytes yields the same settings.
+            assert_eq!(
+                InitialSettings::decode_with_prefix(&reencoded).unwrap(),
+                decoded,
+                "{label}: canonical form must round-trip"
+            );
+            if label != "legacy" {
+                assert_eq!(
+                    reencoded, payload,
+                    "{label}: already-canonical input must be preserved byte for byte"
+                );
+            }
+        }
     }
 }
