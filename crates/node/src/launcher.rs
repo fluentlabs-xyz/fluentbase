@@ -16,7 +16,7 @@ use reth_payload_primitives::{
 use reth_primitives_traits::{HeaderTy, NodePrimitives, SealedBlock, SealedHeaderFor};
 use reth_storage_api::BlockReader;
 use reth_tasks::shutdown::GracefulShutdown;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use tokio::{sync::mpsc, time::Interval};
 use tracing::{error, info};
 
@@ -179,10 +179,26 @@ where
 
     let block_provider =
         RpcBlockProvider::<AnyNetwork, _>::new(consensus_url.as_str(), |block_response| {
-            let json =
-                serde_json::to_value(block_response).expect("Block serialization cannot fail");
-            let rpc_block =
-                serde_json::from_value(json).expect("Block deserialization cannot fail");
+            let number = block_response.header.number;
+            let hash = block_response.header.hash;
+            // The conversion hook of `BlockProvider` is infallible, so a block this node cannot
+            // decode -- an unknown transaction envelope, for instance -- can only be reported by
+            // unwinding. `new_block_fetcher` supervises the subscription, so the unwind reaches
+            // the critical task supervisor and takes the node down. That is deliberate: a node
+            // that cannot decode what the sequencer produces must not keep running on a stale
+            // head as if nothing happened.
+            let rpc_block = serde_json::to_value(&block_response)
+                .and_then(serde_json::from_value)
+                .unwrap_or_else(|err| {
+                    error!(
+                        target: "reth::cli",
+                        %err,
+                        number,
+                        %hash,
+                        "Consensus block does not match the RPC block type of this node",
+                    );
+                    panic!("cannot decode consensus block {number} ({hash}): {err}")
+                });
             Node::Types::rpc_to_primitive_block(rpc_block)
         })
         .await?;
@@ -192,33 +208,144 @@ where
         .node
         .task_executor
         .spawn_critical_task("consensus node worker", async move {
-            new_block_fetcher(beacon_engine_handle, Arc::new(block_provider)).await
+            new_block_fetcher(beacon_engine_handle, block_provider).await
         });
     Ok(())
 }
 
 async fn new_block_fetcher<
-    P: BlockProvider + Clone,
+    P: BlockProvider,
     T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = P::Block>>>,
 >(
     engine_handle: ConsensusEngineHandle<T>,
     block_provider: P,
 ) {
-    let mut block_stream = {
-        let (tx, rx) = mpsc::channel::<P::Block>(64);
-        let block_provider = block_provider.clone();
-        tokio::spawn(async move {
-            block_provider.subscribe_blocks(tx).await;
-        });
-        rx
-    };
+    let (tx, mut block_stream) = mpsc::channel::<P::Block>(64);
+    // The subscription stays on its own task so it can keep buffering blocks while the engine
+    // processes the previous one, but its handle is kept here so that the task is supervised
+    // instead of detached.
+    let mut subscription = tokio::spawn(async move { block_provider.subscribe_blocks(tx).await });
 
-    while let Some(block) = block_stream.recv().await {
-        let payload = T::block_to_payload(SealedBlock::new_unhashed(block));
-        let block_hash = payload.block_hash();
-        // Send new events to execution client
-        let _ = engine_handle.new_payload(payload).await;
-        let state = ForkchoiceState::same_hash(block_hash);
-        let _ = engine_handle.fork_choice_updated(state, None).await;
+    loop {
+        tokio::select! {
+            joined = &mut subscription => subscription_ended(joined),
+            block = block_stream.recv() => {
+                let Some(block) = block else {
+                    // The sender only disappears together with the subscription task, so join it
+                    // to report the failure that actually stopped block ingestion.
+                    subscription_ended((&mut subscription).await)
+                };
+                let payload = T::block_to_payload(SealedBlock::new_unhashed(block));
+                let block_hash = payload.block_hash();
+                // Send new events to execution client
+                let _ = engine_handle.new_payload(payload).await;
+                let state = ForkchoiceState::same_hash(block_hash);
+                let _ = engine_handle.fork_choice_updated(state, None).await;
+            }
+        }
+    }
+}
+
+/// Turns the end of the block subscription task into a fatal error.
+///
+/// `subscribe_blocks` reconnects on its own and only returns once its receiver is gone, so as long
+/// as [`new_block_fetcher`] holds that receiver any termination means block ingestion is dead.
+/// Unwinding here propagates to the critical task supervisor, which shuts the node down instead of
+/// leaving it silently parked on the last ingested block.
+fn subscription_ended(joined: Result<(), tokio::task::JoinError>) -> ! {
+    match joined {
+        Err(err) if err.is_panic() => {
+            error!(target: "reth::cli", "Consensus block subscription panicked");
+            std::panic::resume_unwind(err.into_panic())
+        }
+        Err(err) => panic!("consensus block subscription task was cancelled: {err}"),
+        Ok(()) => panic!("consensus block subscription ended while the node was following blocks"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reth_engine_primitives::BeaconEngineMessage;
+    use reth_ethereum_engine_primitives::EthPayloadTypes;
+    use reth_ethereum_primitives::Block;
+    use std::future::pending;
+    use tokio::sync::mpsc::UnboundedReceiver;
+
+    enum TestBlockProvider {
+        /// Unwinds inside the subscription, the way the conversion hook does when the sequencer
+        /// sends a block this node cannot decode.
+        PanicsOnConversion,
+        /// Returns from the subscription without ever sending a block.
+        EndsSubscription,
+        /// Sends `usize` blocks and then keeps the subscription open forever.
+        Sends(usize),
+    }
+
+    impl BlockProvider for TestBlockProvider {
+        type Block = Block;
+
+        async fn subscribe_blocks(&self, tx: mpsc::Sender<Self::Block>) {
+            match *self {
+                Self::PanicsOnConversion => panic!("cannot decode consensus block"),
+                Self::EndsSubscription => (),
+                Self::Sends(count) => {
+                    for _ in 0..count {
+                        if tx.send(Block::default()).await.is_err() {
+                            return;
+                        }
+                    }
+                    pending().await
+                }
+            }
+        }
+
+        async fn get_block(&self, _block_number: u64) -> eyre::Result<Self::Block> {
+            eyre::bail!("not used by these tests")
+        }
+    }
+
+    fn engine_channel() -> (
+        ConsensusEngineHandle<EthPayloadTypes>,
+        UnboundedReceiver<BeaconEngineMessage<EthPayloadTypes>>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (ConsensusEngineHandle::new(tx), rx)
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "cannot decode consensus block")]
+    async fn undecodable_block_takes_the_fetcher_down() {
+        let (engine_handle, _engine_rx) = engine_channel();
+        new_block_fetcher(engine_handle, TestBlockProvider::PanicsOnConversion).await;
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "subscription ended")]
+    async fn subscription_end_takes_the_fetcher_down() {
+        let (engine_handle, _engine_rx) = engine_channel();
+        new_block_fetcher(engine_handle, TestBlockProvider::EndsSubscription).await;
+    }
+
+    #[tokio::test]
+    async fn blocks_keep_reaching_the_engine() {
+        let (engine_handle, mut engine_rx) = engine_channel();
+        tokio::spawn(new_block_fetcher(
+            engine_handle,
+            TestBlockProvider::Sends(2),
+        ));
+
+        for _ in 0..2 {
+            // Both responders are dropped on purpose: the fetcher ignores engine errors and has
+            // to keep going to the next block either way.
+            assert!(matches!(
+                engine_rx.recv().await,
+                Some(BeaconEngineMessage::NewPayload { .. })
+            ));
+            assert!(matches!(
+                engine_rx.recv().await,
+                Some(BeaconEngineMessage::ForkchoiceUpdated { .. })
+            ));
+        }
     }
 }
