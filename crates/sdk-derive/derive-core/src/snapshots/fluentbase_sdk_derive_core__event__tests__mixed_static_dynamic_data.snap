@@ -16,7 +16,6 @@ impl Mixed {
         &self,
         sdk: &mut SDK,
     ) -> Result<(), fluentbase_sdk::ExitCode> {
-        use fluentbase_sdk::codec::SolidityABI;
         let topics: [fluentbase_sdk::B256; 2usize] = [
             fluentbase_sdk::B256::new([
                 104u8, 13u8, 224u8, 66u8, 250u8, 86u8, 81u8, 19u8, 19u8, 71u8, 122u8,
@@ -24,22 +23,22 @@ impl Mixed {
                 171u8, 242u8, 65u8, 31u8, 44u8, 221u8, 77u8, 182u8, 181u8, 214u8, 190u8,
             ]),
             {
-                let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-                let value = self.who.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
-                if SolidityABI::<Address>::is_dynamic() {
-                    fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
-                } else {
-                    let mut bytes = [0u8; 32];
-                    bytes.copy_from_slice(&buf[..32]);
-                    fluentbase_sdk::B256::new(bytes)
+                let topic = fluentbase_sdk::codec::encode_indexed_topic(&self.who)
+                    .expect("encode indexed field");
+                match topic {
+                    fluentbase_sdk::codec::IndexedTopic::Word(word) => {
+                        fluentbase_sdk::B256::new(word)
+                    }
+                    fluentbase_sdk::codec::IndexedTopic::Preimage(preimage) => {
+                        fluentbase_sdk::B256::new(SDK::keccak256(&preimage).0)
+                    }
                 }
             },
         ];
         let data = {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
             let values = (self.amount.clone(), self.note.clone(), self.extra.clone());
-            SolidityABI::encode_function_args(&values, &mut buf)
+            fluentbase_sdk::codec::SolidityABI::encode_function_args(&values, &mut buf)
                 .expect("encode data fields");
             buf.freeze()
         };

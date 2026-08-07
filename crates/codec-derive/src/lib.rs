@@ -359,6 +359,50 @@ impl CodecStruct {
         }
     }
 
+    /// Generate the `SolidityEventTopic` implementation used when the struct is an indexed event
+    /// parameter.
+    ///
+    /// A struct is a Solidity reference type, so its topic is a hash over its members concatenated
+    /// in place -- no length prefixes and no head/tail offsets, unlike ordinary ABI encoding.
+    fn generate_event_topic_impl(&self) -> TokenStream2 {
+        let struct_name = &self.struct_name;
+        let crate_path = Self::get_crate_path();
+        let (impl_generics, ty_generics, existing_where) = self.generics.split_for_impl();
+
+        let mut where_clause = existing_where
+            .cloned()
+            .unwrap_or_else(|| parse_quote!(where));
+        for field in &self.fields {
+            let ty = &field.ty;
+            where_clause
+                .predicates
+                .push(parse_quote!(#ty: #crate_path::SolidityEventTopic));
+        }
+
+        let encode_fields = self.fields.iter().map(|field| {
+            let ident = &field.ident;
+            quote! {
+                #crate_path::SolidityEventTopic::encode_topic_preimage(&self.#ident, out)?;
+            }
+        });
+
+        quote! {
+            impl #impl_generics #crate_path::SolidityEventTopic for #struct_name #ty_generics
+                #where_clause
+            {
+                const IS_REFERENCE_TYPE: bool = true;
+
+                fn encode_topic_preimage(
+                    &self,
+                    out: &mut #crate_path::bytes::BytesMut,
+                ) -> Result<(), #crate_path::CodecError> {
+                    #(#encode_fields)*
+                    Ok(())
+                }
+            }
+        }
+    }
+
     /// Generate the complete trait implementation for a specific mode and static/dynamic setting
     fn generate_impl(&self, sol_mode: bool, is_static: bool) -> TokenStream2 {
         let struct_name = &self.struct_name;
@@ -412,12 +456,14 @@ impl ToTokens for CodecStruct {
         let sol_impl_dynamic = self.generate_impl(true, false);
         let wasm_impl_static = self.generate_impl(false, true);
         let wasm_impl_dynamic = self.generate_impl(false, false);
+        let event_topic_impl = self.generate_event_topic_impl();
 
         tokens.extend(quote! {
             #sol_impl_static
             #sol_impl_dynamic
             #wasm_impl_static
             #wasm_impl_dynamic
+            #event_topic_impl
         });
     }
 }

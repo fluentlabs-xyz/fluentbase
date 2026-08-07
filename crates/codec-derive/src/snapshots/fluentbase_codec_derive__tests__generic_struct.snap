@@ -939,3 +939,25 @@ where
         ))
     }
 }
+impl<T> ::fluentbase_sdk::codec::SolidityEventTopic for GenericStruct<T>
+where
+    T: Clone + Default,
+    T: ::fluentbase_sdk::codec::SolidityEventTopic,
+    Vec<T>: ::fluentbase_sdk::codec::SolidityEventTopic,
+{
+    const IS_REFERENCE_TYPE: bool = true;
+    fn encode_topic_preimage(
+        &self,
+        out: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
+    ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
+        ::fluentbase_sdk::codec::SolidityEventTopic::encode_topic_preimage(
+            &self.field1,
+            out,
+        )?;
+        ::fluentbase_sdk::codec::SolidityEventTopic::encode_topic_preimage(
+            &self.field2,
+            out,
+        )?;
+        Ok(())
+    }
+}

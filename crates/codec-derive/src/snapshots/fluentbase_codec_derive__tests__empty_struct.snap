@@ -292,3 +292,12 @@ impl<
         ))
     }
 }
+impl ::fluentbase_sdk::codec::SolidityEventTopic for EmptyStruct {
+    const IS_REFERENCE_TYPE: bool = true;
+    fn encode_topic_preimage(
+        &self,
+        out: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
+    ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
+        Ok(())
+    }
+}

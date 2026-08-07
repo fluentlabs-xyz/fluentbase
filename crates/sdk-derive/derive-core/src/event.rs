@@ -164,8 +164,6 @@ fn generate_event_impl(event: &ParsedEvent) -> Result<TokenStream2> {
 
             /// Emits this event as an EVM log.
             pub fn emit<SDK: fluentbase_sdk::SharedAPI>(&self, sdk: &mut SDK) -> Result<(), fluentbase_sdk::ExitCode> {
-                use fluentbase_sdk::codec::SolidityABI;
-
                 let topics: [fluentbase_sdk::B256; #topic_count] = #topics_code;
                 #data_code
                 sdk.emit_log(&topics, &data).ok()
@@ -176,13 +174,15 @@ fn generate_event_impl(event: &ParsedEvent) -> Result<TokenStream2> {
 
 /// Generates topic encoding for indexed fields.
 ///
-/// Topics are 32-byte values used for bloom filter indexing:
-/// - Static types (address, uint256, bool, etc.): ABI-encoded directly (always 32 bytes)
-/// - Dynamic types (string, bytes, arrays, dynamic structs): keccak256 of ABI-encoded value
-///   (computed at runtime via SDK::keccak256)
+/// Topics are 32-byte values used for bloom filter indexing, so Solidity splits indexed
+/// parameters by *type category* rather than by whether the ABI encoding is dynamic:
+/// - Value types (address, uint256, bool, bytesN, etc.): the ABI word is the topic.
+/// - Reference types (string, bytes, arrays — fixed ones included — and structs): the topic is
+///   keccak256 of a preimage that is not ordinary ABI encoding, hashed at runtime via
+///   SDK::keccak256.
 ///
-/// This distinction exists because bloom filters require fixed-size data.
-/// Dynamic types are hashed, losing original value but enabling equality filtering.
+/// `fluentbase_sdk::codec::encode_indexed_topic` builds both cases; hashing stays here because it
+/// goes through the host function rather than a software keccak256.
 fn generate_topics(indexed: &[&EventField], anonymous: bool, selector: &[u8; 32]) -> TokenStream2 {
     let mut exprs = Vec::new();
 
@@ -193,22 +193,19 @@ fn generate_topics(indexed: &[&EventField], anonymous: bool, selector: &[u8; 32]
 
     for field in indexed {
         let name = &field.name;
-        let ty = &field.ty;
 
         exprs.push(quote! {
             {
-                let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-                let value = self.#name.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                let topic = fluentbase_sdk::codec::encode_indexed_topic(&self.#name)
+                    .expect("encode indexed field");
 
-                if SolidityABI::<#ty>::is_dynamic() {
-                    // Dynamic type: hash at runtime via SDK
-                    fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
-                } else {
-                    // Static type: use ABI-encoded value directly (32 bytes)
-                    let mut bytes = [0u8; 32];
-                    bytes.copy_from_slice(&buf[..32]);
-                    fluentbase_sdk::B256::new(bytes)
+                match topic {
+                    fluentbase_sdk::codec::IndexedTopic::Word(word) => {
+                        fluentbase_sdk::B256::new(word)
+                    }
+                    fluentbase_sdk::codec::IndexedTopic::Preimage(preimage) => {
+                        fluentbase_sdk::B256::new(SDK::keccak256(&preimage).0)
+                    }
                 }
             }
         });
@@ -236,7 +233,8 @@ fn generate_data(fields: &[&EventField]) -> TokenStream2 {
         let data = {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
             let values = (#(self.#names.clone(),)*);
-            SolidityABI::encode_function_args(&values, &mut buf).expect("encode data fields");
+            fluentbase_sdk::codec::SolidityABI::encode_function_args(&values, &mut buf)
+                .expect("encode data fields");
             buf.freeze()
         };
     }
